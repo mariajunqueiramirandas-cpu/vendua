@@ -7,8 +7,11 @@ import {
   isPaymentMethod,
   type PaymentMethod,
 } from '../payment-adjustments.ts';
+import { instagramHandle, whatsappDigits } from '../store.ts';
 
 export type { PaymentMethod };
+// contacts take the store's own rules, so an import stores what /storefront/v1/store serves
+export { instagramHandle, whatsappDigits as normalizeWhatsapp };
 
 export const PLATFORMS = [
   'instadelivery',
@@ -320,15 +323,6 @@ export function cut(s: string, max: number, onWord = false): string {
     if (out.length < max) out += '…';
   }
   return out.trim();
-}
-
-/** "+55 (22) 98144-8322" → "22981448322"; null when it isn't 10–13 digits. */
-export function normalizeWhatsapp(v: unknown): string | null {
-  if (typeof v !== 'string' && typeof v !== 'number') return null;
-  let d = String(v).replace(/\D/g, '');
-  if (d.length >= 12 && d.startsWith('55')) d = d.slice(2);
-  d = d.replace(/^0+/, '');
-  return /^\d{10,11}$/.test(d) ? d : null;
 }
 
 export function httpsUrl(v: unknown): string | null {
@@ -645,7 +639,7 @@ function storeOf(s: MenuImportV1['store'], note: Note): MenuImportV1['store'] {
     }
   }
   if (s.whatsapp !== undefined) {
-    const w = normalizeWhatsapp(s.whatsapp);
+    const w = whatsappDigits(s.whatsapp);
     if (w) out.whatsapp = w;
     else note({ scope: 'store', code: 'whatsapp_invalid' });
   }
@@ -671,16 +665,6 @@ function storeOf(s: MenuImportV1['store'], note: Note): MenuImportV1['store'] {
   if (s.brandColor && /^#[0-9a-f]{6}$/i.test(s.brandColor))
     out.brandColor = s.brandColor.toUpperCase();
   return out;
-}
-
-/** "https://instagram.com/foo", "@foo" → "@foo" */
-export function instagramHandle(v: unknown): string | null {
-  if (typeof v !== 'string') return null;
-  const s = v.trim();
-  const m =
-    /^(?:https?:\/\/)?(?:www\.)?instagram\.com\/([A-Za-z0-9._]{1,30})\/?(?:\?.*)?$/i.exec(s) ??
-    /^@?([A-Za-z0-9._]{1,30})$/.exec(s);
-  return m ? `@${m[1]}` : null;
 }
 
 function hoursOf(h: ImportWindow[] | undefined, note: Note): ImportWindow[] | undefined {

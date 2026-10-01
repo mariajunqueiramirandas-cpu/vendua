@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
+import { couponLabel, type CouponRow } from './coupons.ts';
 import type { LoyaltyProgram, StoreSettingsRow } from './store.ts';
 
 // "Sem senha, sem cadastro" (roadmap 2a/2c). Anyone can type any phone at checkout, so a
@@ -214,8 +215,14 @@ export async function ordersByPhone(
 
 // ── loyalty ──────────────────────────────────────────────────────────────────
 
-export function parseLoyalty(v: unknown): LoyaltyProgram | null {
-  const l = v as LoyaltyProgram | null;
+/** store_settings.loyalty as stored: `reward.label` is the merchant's own words, null when none */
+export type StoredLoyalty = Omit<LoyaltyProgram, 'reward'> & {
+  reward: Omit<LoyaltyProgram['reward'], 'label'> & { label: string | null };
+};
+
+/** Validates a program (a write, or the stored row) without inventing a reward label. */
+export function readLoyalty(v: unknown): StoredLoyalty | null {
+  const l = v as StoredLoyalty | null;
   if (!l || typeof l !== 'object') return null;
   if (!Number.isInteger(l.stampsRequired) || l.stampsRequired < 2 || l.stampsRequired > 50)
     return null;
@@ -226,10 +233,17 @@ export function parseLoyalty(v: unknown): LoyaltyProgram | null {
     reward: {
       kind: l.reward.kind,
       value: Math.max(0, Number(l.reward.value) || 0),
-      label: String(l.reward.label ?? '').slice(0, 120) || 'Recompensa',
+      label:
+        typeof l.reward.label === 'string' ? l.reward.label.trim().slice(0, 120) || null : null,
     },
     rewardValidDays: Math.min(365, Math.max(1, Number(l.rewardValidDays) || 60)),
   };
+}
+
+/** The program as shoppers and staff read it: an unnamed reward is named like a coupon. */
+export function parseLoyalty(v: unknown): LoyaltyProgram | null {
+  const p = readLoyalty(v);
+  return p && { ...p, reward: { ...p.reward, label: couponLabel(p.reward) } };
 }
 
 export interface LoyaltyCard {
@@ -243,7 +257,12 @@ export interface LoyaltyCard {
   rewards: { code: string; label: string; expiresAt: string | null }[];
 }
 
-async function stampCounts(tx: Sql, tenantId: string, phone: string, program: LoyaltyProgram) {
+async function stampCounts(
+  tx: Sql,
+  tenantId: string,
+  phone: string,
+  program: Pick<StoredLoyalty, 'minOrderCents'>,
+) {
   const earned = (
     await tx<{ n: number }[]>`
       select count(*)::int as n from orders
@@ -283,8 +302,16 @@ export async function loyaltyCard(
   const rewards =
     opts.withRewards === false
       ? []
-      : await tx<{ code: string; label: string | null; ends_at: Date | null }[]>`
-    select c.code, c.label, c.ends_at from coupons c
+      : await tx<
+          {
+            code: string;
+            kind: CouponRow['kind'];
+            value: number;
+            label: string | null;
+            ends_at: Date | null;
+          }[]
+        >`
+    select c.code, c.kind, c.value, c.label, c.ends_at from coupons c
     where c.tenant_id = ${tenantId} and c.source = 'loyalty' and c.phone = ${phone} and c.active
       and (c.ends_at is null or c.ends_at > ${now})
       and not exists (
@@ -301,7 +328,7 @@ export async function loyaltyCard(
     rewardLabel: program.reward.label,
     rewards: rewards.map((r) => ({
       code: r.code,
-      label: r.label ?? program.reward.label,
+      label: couponLabel(r),
       expiresAt: r.ends_at ? new Date(r.ends_at).toISOString() : null,
     })),
   };
@@ -325,7 +352,8 @@ export async function mintLoyaltyRewards(
       { loyalty: unknown }[]
     >`select loyalty from store_settings where tenant_id = ${tenantId}`
   )[0];
-  const program = parseLoyalty(settings?.loyalty);
+  // a reward the merchant didn't name stays unnamed: couponLabel names it from the coupon itself
+  const program = readLoyalty(settings?.loyalty);
   if (!program) return [];
   // serialize per phone — two deliveries landing together must not double-mint
   await tx`select pg_advisory_xact_lock(hashtextextended(${`loyalty|${tenantId}|${phone}`}, 0))`;

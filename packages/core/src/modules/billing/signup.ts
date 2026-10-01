@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomInt, timingSafeEqual } from 'node:crypto';
-import type { MerchantNotify } from '../../admin/context.ts';
+import { foldSlug, type MerchantNotify } from '../../admin/context.ts';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { platformHost } from '../../platform/store-origin.ts';
@@ -68,18 +68,9 @@ export const RESERVED_SLUGS = new Set([
 
 const SLUG_RE = /^[a-z0-9]([a-z0-9-]{1,38}[a-z0-9])$/;
 
-/** slugify's rules (accents folded, a–z0–9 and dashes), capped at 40; '' when nothing is left */
+/** slugify's fold capped at 40; '' when nothing is left */
 export function normalizeSlug(raw: unknown): string {
-  if (typeof raw !== 'string') return '';
-  return raw
-    .slice(0, 120)
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40)
-    .replace(/-+$/g, '');
+  return typeof raw === 'string' ? foldSlug(raw.slice(0, 120), 40) : '';
 }
 
 export type SlugReason = 'taken' | 'reserved' | 'invalid';

@@ -7,6 +7,7 @@ import {
   loadOrderView,
   recordOrderStep,
   transitionOrder,
+  type DeliveryMode,
   type OrderState,
   type OrderView,
 } from '../modules/orders.ts';
@@ -427,11 +428,12 @@ export function mountOrders(d: AdminDeps) {
         {
           number: number;
           state: OrderState;
+          mode: DeliveryMode;
           total_cents: number;
           payment: { online?: boolean; status?: string } & Record<string, unknown>;
         }[]
       >`
-        select number, state, total_cents, payment from orders
+        select number, state, delivery ->> 'mode' as mode, total_cents, payment from orders
         where tenant_id = ${tenantId} and id = ${id} for update
       `
     )[0];
@@ -522,8 +524,8 @@ export function mountOrders(d: AdminDeps) {
       const to = c.req.query('to');
       if (!from || !to || !DATE_RE.test(from) || !DATE_RE.test(to))
         throw new HttpError(400, 'BAD_REQUEST', 'from and to are required (YYYY-MM-DD)');
-      const days = (Date.parse(to) - Date.parse(from)) / 86_400_000;
-      if (!(days >= 0 && days <= 62))
+      const span = (Date.parse(to) - Date.parse(from)) / 86_400_000;
+      if (!(span >= 0 && span <= 62))
         throw new HttpError(400, 'BAD_REQUEST', 'the range must be 0–62 days');
       const rows = await tx<OrderListRow[]>`
         select ${orderListColumns(tx)} from orders o
@@ -532,7 +534,17 @@ export function mountOrders(d: AdminDeps) {
         order by o.scheduled_for, o.placed_at
         limit 500
       `;
-      return { orders: rows };
+      // over the whole range, not just the 500 rows listed
+      const days = await tx<{ date: string; count: number; totalCents: number }[]>`
+        select o.scheduled_for::text as date, count(*)::int as count,
+               coalesce(sum(o.total_cents), 0)::int as "totalCents"
+        from orders o
+        where o.tenant_id = ${t.id} and o.scheduled_for between ${from}::date and ${to}::date
+          and o.state not in ('cancelled', 'refunded')
+        group by o.scheduled_for
+        order by o.scheduled_for
+      `;
+      return { orders: rows, days };
     }),
   );
 
@@ -586,8 +598,15 @@ export function mountOrders(d: AdminDeps) {
       t0.id,
       async (tx) =>
         (
-          await tx<{ state: OrderState; payment: { online?: boolean; status?: string } }[]>`
-            select state, payment from orders where tenant_id = ${t0.id} and id = ${id}
+          await tx<
+            {
+              state: OrderState;
+              mode: DeliveryMode;
+              payment: { online?: boolean; status?: string };
+            }[]
+          >`
+            select state, delivery ->> 'mode' as mode, payment
+            from orders where tenant_id = ${t0.id} and id = ${id}
           `
         )[0],
     );
@@ -600,7 +619,7 @@ export function mountOrders(d: AdminDeps) {
     )
       need(c, 'manager');
     let refunded = 0;
-    if (canTransition(pre.state, to) && pre.payment.online) {
+    if (canTransition(pre.state, to, pre.mode) && pre.payment.online) {
       if (
         (to === 'cancelled' || to === 'refunded') &&
         PAID_ONLINE.includes(String(pre.payment.status))
@@ -727,7 +746,7 @@ export function mountOrders(d: AdminDeps) {
       const cur = await lockPayment(tx, t.id, id);
       if (!cur) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
       if (!out) {
-        if (!canTransition(cur.state, 'refunded'))
+        if (!canTransition(cur.state, 'refunded', cur.mode))
           throw new HttpError(
             409,
             'INVALID_ORDER_TRANSITION',
@@ -746,7 +765,7 @@ export function mountOrders(d: AdminDeps) {
           after: { state: 'refunded' },
         });
       } else {
-        if (out.remainingCents === 0 && canTransition(cur.state, 'refunded'))
+        if (out.remainingCents === 0 && canTransition(cur.state, 'refunded', cur.mode))
           await transitionOrder(tx, t.id, id, 'refunded', 'merchant', {
             by: m.name,
             refundedCents: out.refundedCents,

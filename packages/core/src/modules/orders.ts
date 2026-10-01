@@ -33,8 +33,15 @@ export const TERMINAL_STATES: ReadonlySet<string> = new Set(['delivered', 'cance
 /** LISTEN channel for order changes — payload is the order id (see order-live.ts). */
 export const ORDER_CHANNEL = 'vendua_order';
 
-export function canTransition(from: OrderState, to: OrderState): boolean {
-  return TRANSITIONS[from].includes(to);
+export type DeliveryMode = 'pickup' | 'delivery';
+
+/** a pickup order is handed over at the counter: it never goes out for delivery */
+function modeAllows(to: OrderState, mode: DeliveryMode): boolean {
+  return to !== 'out_for_delivery' || mode !== 'pickup';
+}
+
+export function canTransition(from: OrderState, to: OrderState, mode: DeliveryMode): boolean {
+  return TRANSITIONS[from].includes(to) && modeAllows(to, mode);
 }
 
 export interface OrderRow {
@@ -257,13 +264,20 @@ export async function transitionOrder(
   actor: string,
   meta: Record<string, unknown> = {},
 ): Promise<void> {
-  const rows = await tx<{ state: OrderState; customer_phone: string | null; number: number }[]>`
-    select state, customer_phone, number from orders where tenant_id = ${tenantId} and id = ${orderId} for update
+  const rows = await tx<
+    { state: OrderState; mode: DeliveryMode; customer_phone: string | null; number: number }[]
+  >`
+    select state, delivery ->> 'mode' as mode, customer_phone, number
+    from orders where tenant_id = ${tenantId} and id = ${orderId} for update
   `;
   const order = rows[0];
   if (!order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
-  if (!canTransition(order.state, to)) {
-    throw new HttpError(409, 'INVALID_ORDER_TRANSITION', `cannot move ${order.state} → ${to}`);
+  if (!canTransition(order.state, to, order.mode)) {
+    const why = `cannot move ${order.state} → ${to}`;
+    // 409: the order moved on (a stale screen); 422: this order can never take that step
+    throw modeAllows(to, order.mode)
+      ? new HttpError(409, 'INVALID_ORDER_TRANSITION', why)
+      : new HttpError(422, 'INVALID_ORDER_TRANSITION', `${why} on a ${order.mode} order`);
   }
   await tx`update orders set state = ${to}, updated_at = now() where id = ${orderId}`;
   await tx`

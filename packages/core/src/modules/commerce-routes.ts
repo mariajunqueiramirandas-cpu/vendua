@@ -38,7 +38,7 @@ import {
   loyaltyCard,
   mintCustomerToken,
   ordersByPhone,
-  parseLoyalty,
+  readLoyalty,
   recordSessionFailure,
   requireCustomer,
   resolveCustomer,
@@ -55,6 +55,7 @@ import {
   canTransition,
   loadOrderView,
   transitionOrder,
+  type DeliveryMode,
   type OrderState,
   type OrderView,
 } from './orders.ts';
@@ -809,7 +810,7 @@ export function mountCommerce(d: Deps) {
         }
       }
       if (body.loyalty !== undefined) {
-        const program = body.loyalty === null ? null : parseLoyalty(body.loyalty);
+        const program = body.loyalty === null ? null : readLoyalty(body.loyalty);
         if (body.loyalty !== null && !program)
           throw new HttpError(400, 'BAD_REQUEST', 'loyalty needs stampsRequired 2–50 and a reward');
         await tx`update store_settings set loyalty = ${program ? tx.json(program as never) : null} where tenant_id = ${t.id}`;
@@ -999,13 +1000,21 @@ export function mountCommerce(d: Deps) {
       t.id,
       async (tx) =>
         (
-          await tx<{ state: OrderState; online: boolean | null; status: string | null }[]>`
-            select state, (payment ->> 'online')::boolean as online, payment ->> 'status' as status
+          await tx<
+            {
+              state: OrderState;
+              mode: DeliveryMode;
+              online: boolean | null;
+              status: string | null;
+            }[]
+          >`
+            select state, delivery ->> 'mode' as mode, (payment ->> 'online')::boolean as online,
+                   payment ->> 'status' as status
             from orders where tenant_id = ${t.id} and id = ${orderId}
           `
         )[0],
     );
-    if (pre?.online && canTransition(pre.state, to)) {
+    if (pre?.online && canTransition(pre.state, to, pre.mode)) {
       const pay = { sql, provider: d.provider, sessionSecret };
       if (
         (to === 'cancelled' || to === 'refunded') &&

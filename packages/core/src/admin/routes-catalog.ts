@@ -1,10 +1,13 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE, bodyJson, uuidParam } from '../platform/http.ts';
 import {
+  isLowStock,
+  liveStatus,
   loadComboSlots,
   parseAvailabilitySchedule,
   parsePromoSchedule,
   scheduleOpen,
+  storefrontPreview,
   storeTimezone,
   type AvailabilitySchedule,
   type PromoSchedule,
@@ -60,9 +63,13 @@ export interface AdminProductRow {
   /** display-only strike-through price; null = no promo */
   compareAtPriceCents: number | null;
   status: 'active' | 'sold_out' | 'archived';
+  /** Core's live status: stock 0 reads sold out; archived stays archived */
+  liveStatus: 'active' | 'sold_out' | 'archived';
   kind: 'simple' | 'combo';
   stockQuantity: number | null;
   lowStockThreshold: number | null;
+  /** Core's low-stock call, the storefront's own */
+  lowStock: boolean;
   requiresPreorder: boolean;
   preorderLeadDays: number;
   sort: number;
@@ -98,13 +105,15 @@ const productCols = (tx: Sql) => tx`
   (select count(*)::int from notify_requests n where n.product_id = p.id and n.notified_at is null) as waiting
 `;
 
-/** availableNow from the schedule, in the store's timezone */
+/** availableNow and promoNow from the schedules, in the store's timezone; Core's stock calls */
 async function withNow(tx: Sql, tenantId: string, rows: AdminProductRow[]) {
   const tz = rows.some((r) => r.availabilitySchedule || r.promoSchedule)
     ? await storeTimezone(tx, tenantId)
     : 'America/Sao_Paulo';
   const now = new Date();
   for (const r of rows) {
+    r.liveStatus = liveStatus(r.status, r.stockQuantity) as AdminProductRow['liveStatus'];
+    r.lowStock = isLowStock(r.stockQuantity, r.lowStockThreshold);
     r.availableNow = scheduleOpen(r.availabilitySchedule, now, tz);
     r.promoNow =
       !!r.promoSchedule &&
@@ -193,6 +202,8 @@ async function productDetail(tx: Sql, tenantId: string, id: string) {
       gallery,
       comboSlots: product.kind === 'combo' ? await loadComboSlots(tx, tenantId, id) : [],
       sales30: sales,
+      // what the shopper sees now — the storefront's own summary, schedules in Core's words
+      storefront: (await storefrontPreview(tx, tenantId, id))!,
     },
   };
 }

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
+import { foldSlug, slugify } from '../src/admin/context.ts';
 import { createApp } from '../src/app.ts';
 import { runBillingTick } from '../src/modules/billing/jobs.ts';
 import {
@@ -19,6 +20,22 @@ describe('signup units', () => {
     expect(normalizeSlug('  --Doces   da Maria-- ')).toBe('doces-da-maria');
     expect(normalizeSlug('!!!')).toBe('');
     expect(normalizeSlug('a'.repeat(50))).toHaveLength(40);
+  });
+
+  test('& reads as "e", and slugify shares the same fold', () => {
+    expect(normalizeSlug('Pão & Mel')).toBe('pao-e-mel');
+    expect(normalizeSlug('Doces&Cia')).toBe('doces-e-cia');
+    expect(slugify('Pão & Mel')).toBe('pao-e-mel');
+    expect(slugify('!!!')).toBe('item');
+    for (const name of [
+      'Açaí & Cia',
+      '  --Bolo   de Pote-- ',
+      'x'.repeat(80),
+      'R&B Café'.repeat(9),
+    ]) {
+      expect(normalizeSlug(name)).toBe(foldSlug(name, 40));
+      expect(slugify(name)).toBe(foldSlug(name, 60));
+    }
   });
 
   test('signup tokens are signed, bound to the phone, and expire', () => {

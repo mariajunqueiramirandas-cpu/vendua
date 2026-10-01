@@ -308,7 +308,7 @@ describe('validateDoc limits (§4.6)', () => {
   });
 
   test('WhatsApp normalised, Pix beneficiary and city shortened for the merchant to confirm', () => {
-    expect(normalizeWhatsapp('+55 (22) 98144-8322')).toBe('22981448322');
+    expect(normalizeWhatsapp('+55 (22) 98144-8322')).toBe('5522981448322');
     expect(normalizeWhatsapp('2299')).toBeNull();
     expect(shortenName('Maria do Carmo Junqueira Miranda Silva', 25)).toBe('Maria C J M Silva');
     const { doc } = validateDoc(
@@ -618,8 +618,8 @@ describe('instadelivery.map', () => {
     expect(doc.store).toMatchObject({
       name: 'Doceria Exemplo',
       tagline: 'Doces e bolos',
-      whatsapp: '21999990000',
-      instagram: '@doceria.exemplo',
+      whatsapp: '5521999990000',
+      instagram: 'doceria.exemplo',
       address: 'Rua das Flores, 100',
       announcement: {
         title: 'Seja bem-vindo(a) à Doceria Exemplo!',
@@ -962,8 +962,8 @@ describe('cardapioweb', () => {
     expect(doc.store).toMatchObject({
       name: 'Pizzaria Exemplo',
       tagline: 'Pizzas de fermentação natural',
-      whatsapp: '21999990000',
-      instagram: '@pizzaria.exemplo',
+      whatsapp: '5521999990000',
+      instagram: 'pizzaria.exemplo',
       address: 'Rua das Pizzas, 42 - Loja 2 - Centro',
       city: 'Cidade Exemplo',
       coords: { lat: -22.9, lng: -43.2 },
@@ -1262,7 +1262,7 @@ describe('olaclick', () => {
   test('store: profile, colour, hours past midnight, minimum, payments', () => {
     expect(doc.store).toMatchObject({
       name: 'Lanchonete Exemplo',
-      whatsapp: '21999990000',
+      whatsapp: '5521999990000',
       coords: { lat: -22.9, lng: -43.2 },
       brandColor: '#E4572E',
     });
@@ -1446,8 +1446,8 @@ describe('takeat', () => {
     expect(doc.store).toMatchObject({
       name: 'Pizzaria Exemplo',
       announcement: { title: 'Bem-vindo à Pizzaria Exemplo!', body: 'Peça pelo site.' },
-      whatsapp: '21999990000',
-      instagram: '@pizzaria.exemplo',
+      whatsapp: '5521999990000',
+      instagram: 'pizzaria.exemplo',
       address: 'Rua das Pizzas, 42 - Loja 2 - Centro',
       brandColor: '#8E44AD',
     });
@@ -1678,8 +1678,8 @@ describe('deliverydireto', () => {
   test('store: unit profile, wall-clock hours, zones from polygons and circles, payments', () => {
     expect(doc.store).toMatchObject({
       name: 'Pizzaria Exemplo - Centro',
-      whatsapp: '21999990000',
-      instagram: '@pizzaria.exemplo',
+      whatsapp: '5521999990000',
+      instagram: 'pizzaria.exemplo',
       address: 'Rua das Pizzas, 42 - Loja 2 - Centro',
       brandColor: '#C0392B',
     });
@@ -2263,7 +2263,7 @@ describe('goomer', () => {
     expect(doc.store).toEqual({
       name: 'Pizzaria Exemplo',
       announcement: { title: 'Pizza no forno a lenha' },
-      whatsapp: '21999990000',
+      whatsapp: '5521999990000',
       address: 'Rua das Pizzas, 42 - Loja 2 - Centro',
       city: 'Cidade Exemplo',
       coords: { lat: -22.9, lng: -43.2 },

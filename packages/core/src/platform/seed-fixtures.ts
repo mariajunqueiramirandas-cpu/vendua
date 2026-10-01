@@ -6,6 +6,7 @@ import { readTemplatesDir } from '@vendua/templates/node';
 import { createSql } from './db.ts';
 import { log } from './log.ts';
 import { isPublicHost } from './store-origin.ts';
+import { instagramHandle, whatsappDigits } from '../modules/store.ts';
 
 const slog = log.child({ mod: 'seed' });
 
@@ -130,7 +131,7 @@ const TENANTS: SeedTenant[] = [
       description:
         'Pudins sem furinhos e sacolés bem cremosos, feitos à mão em Saquarema, RJ. Encomende para retirada ou entrega.',
       whatsapp: '5522999999999',
-      instagram: '@queropudim_gourmet',
+      instagram: 'queropudim_gourmet',
       city: 'Saquarema · RJ',
       address: 'Rua das Amendoeiras, 120 — Centro, Saquarema',
       windows: [{ days: ALL, open: '09:00', close: '22:00' }],
@@ -407,7 +408,7 @@ for (const t of TENANTS) {
     await tx`
       insert into store_settings (tenant_id, tagline, description, whatsapp, instagram, city, address,
         hours, prep_time_minutes, min_order_cents, pickup_enabled, delivery_enabled, promo, currency, vocabulary)
-      values (${tid}, ${s.tagline ?? null}, ${s.description ?? null}, ${s.whatsapp ?? null}, ${s.instagram ?? null},
+      values (${tid}, ${s.tagline ?? null}, ${s.description ?? null}, ${whatsappDigits(s.whatsapp)}, ${instagramHandle(s.instagram)},
         ${s.city ?? null}, ${s.address ?? null}, ${tx.json({ timezone: 'America/Sao_Paulo', windows: s.windows })},
         ${s.prepTimeMinutes ?? 30}, ${s.minOrderCents ?? 0}, ${s.pickup ?? true}, ${s.delivery ?? true},
         ${s.promo ? tx.json(s.promo) : null}, ${s.currency ?? 'BRL'}, ${tx.json(s.vocabulary ?? {})})

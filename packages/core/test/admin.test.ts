@@ -262,7 +262,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     });
     expect(ok.status).toBe(200);
     expect(ok.body.profile.name).toBe('Doces da Maria');
-    expect(ok.body.profile.whatsapp).toBe('22999991234');
+    expect(ok.body.profile.whatsapp).toBe('5522999991234');
     expect(ok.body.specialDays).toHaveLength(1);
     expect(
       (
