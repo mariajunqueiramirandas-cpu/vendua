@@ -13,6 +13,7 @@
       "id": "header",
       "type": "sdk:header",
       "settings": {
+        "showStatus": false,
         "links": [
           {
             "label": "Pedidos",
