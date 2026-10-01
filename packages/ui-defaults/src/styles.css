@@ -22,6 +22,10 @@
     --v-announcement-fg: var(--v-color-on-accent, #fff);
     --v-header-height: 64px;
     --v-focus: 2px solid var(--v-color-accent, #3f5e4e);
+    /* private: the page gutter, widened into the notch when the store sets viewport-fit=cover */
+    --_v-gutter: max(16px, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 
   /* ── type ──────────────────────────────────────────────────────────────────
@@ -175,18 +179,21 @@
       box-shadow var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
   .v-btn:active:not(:disabled) {
-    transform: translateY(1px) scale(0.99);
+    transform: translateY(1px) scale(0.98);
+    transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
   }
   .v-btn-accent {
     background: var(--v-color-accent, #3f5e4e);
     color: var(--v-color-on-accent, #fff);
     box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 80%, transparent);
   }
-  .v-btn-accent:hover:not(:disabled) {
-    filter: brightness(1.08);
-    box-shadow:
-      0 1px 2px rgb(0 0 0 / 0.12),
-      0 8px 20px -6px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 70%, transparent);
+  @media (hover: hover) and (pointer: fine) {
+    .v-btn-accent:hover:not(:disabled) {
+      filter: brightness(1.08);
+      box-shadow:
+        0 1px 2px rgb(0 0 0 / 0.12),
+        0 8px 20px -6px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 70%, transparent);
+    }
   }
   .v-btn-ghost {
     background: transparent;
@@ -229,10 +236,13 @@
     text-underline-offset: 3px;
     text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
     cursor: pointer;
+    transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
-  .v-link-btn:hover:not(:disabled) {
-    color: var(--v-color-text, #1c1b1a);
-    text-decoration-color: currentColor;
+  @media (hover: hover) and (pointer: fine) {
+    .v-link-btn:hover:not(:disabled) {
+      color: var(--v-color-text, #1c1b1a);
+      text-decoration-color: currentColor;
+    }
   }
   .v-link-btn:disabled {
     opacity: 0.55;
@@ -249,7 +259,8 @@
       inset: auto 0 0 0;
       z-index: 50;
       display: block;
-      padding: 8px 12px max(12px, env(safe-area-inset-bottom));
+      padding: 8px max(12px, env(safe-area-inset-right, 0px))
+        max(12px, env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
       pointer-events: none;
       animation: v-bag-rise 260ms var(--v-motion-easing, ease) both;
     }
@@ -269,6 +280,11 @@
       font-weight: 600;
       cursor: pointer;
       box-shadow: 0 12px 28px -10px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 70%, #000);
+      transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+    }
+    .v-bag-bar-btn:active {
+      transform: scale(0.98);
+      transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
     }
     .v-bag-bar-count {
       display: grid;
@@ -285,7 +301,11 @@
       text-align: left;
     }
     body:has(.v-bag-bar) {
-      padding-bottom: 76px;
+      padding-bottom: calc(64px + max(12px, env(safe-area-inset-bottom, 0px)));
+    }
+    /* the cookie notice rides above the bag bar instead of covering it */
+    body:has(.v-bag-bar) .v-consent {
+      bottom: calc(72px + max(12px, env(safe-area-inset-bottom, 0px)));
     }
   }
   @keyframes v-bag-rise {
@@ -447,7 +467,8 @@
   }
   .v-consent {
     position: fixed;
-    inset: auto 8px 8px 8px;
+    inset: auto max(8px, env(safe-area-inset-right, 0px))
+      calc(8px + env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
     z-index: 9980;
     display: flex;
     flex-wrap: wrap;
@@ -504,10 +525,21 @@
     font: inherit;
     font-size: 18px;
     line-height: 1;
+    transition:
+      transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease),
+      background-color var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
-  .v-qty button:hover:not(:disabled),
-  [data-vendua='qty-stepper'] button:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--v-color-text, #1a1714) 7%, transparent);
+  @media (hover: hover) and (pointer: fine) {
+    .v-qty button:hover:not(:disabled),
+    [data-vendua='qty-stepper'] button:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--v-color-text, #1a1714) 7%, transparent);
+    }
+  }
+  .v-qty button:active:not(:disabled),
+  [data-vendua='qty-stepper'] button:active:not(:disabled) {
+    transform: scale(0.86);
+    background: color-mix(in srgb, var(--v-color-text, #1a1714) 10%, transparent);
+    transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
   }
   .v-qty button:disabled,
   [data-vendua='qty-stepper'] button:disabled {
@@ -574,13 +606,13 @@
     width: 100%;
     max-width: var(--v-page-max);
     margin: 0 auto;
-    padding: 32px 16px 64px;
+    padding: 32px var(--_v-gutter) 64px;
   }
   .v-section {
     width: 100%;
     max-width: var(--v-page-max);
     margin: 0 auto;
-    padding: var(--v-section-pad) 16px;
+    padding: var(--v-section-pad) var(--_v-gutter);
   }
   .v-section-head {
     margin-bottom: 24px;
@@ -675,11 +707,14 @@
     box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 60%, transparent);
     transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
-  .v-card > button[data-vendua='add-to-cart']:hover .v-card-quick {
-    transform: scale(1.1);
+  @media (hover: hover) and (pointer: fine) {
+    .v-card > button[data-vendua='add-to-cart']:hover .v-card-quick {
+      transform: scale(1.1);
+    }
   }
   .v-card > button[data-vendua='add-to-cart']:active .v-card-quick {
-    transform: scale(0.92);
+    transform: scale(0.88);
+    transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
   }
   .v-card > button[data-vendua='add-to-cart'][aria-busy='true'] .v-card-quick {
     opacity: 0.55;
@@ -698,6 +733,8 @@
     text-decoration: none;
     border-radius: var(--v-card-radius);
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    -webkit-touch-callout: none;
   }
   .v-card a:focus-visible {
     outline: var(--v-focus);
@@ -723,7 +760,14 @@
       ),
       color-mix(in srgb, var(--v-color-accent, #3f5e4e) 7%, var(--v-color-surface, #fff));
     margin-bottom: 10px;
-    transition: box-shadow var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+    transition:
+      box-shadow var(--v-motion-duration, 180ms) var(--v-motion-easing, ease),
+      transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+  }
+  /* a pressed card sinks its picture — the tap lands before the page changes */
+  .v-card a:active .v-card-media {
+    transform: scale(0.97);
+    transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
   }
   .v-card-media img {
     width: 100%;
@@ -731,11 +775,13 @@
     object-fit: cover;
     transition: transform 400ms var(--v-motion-easing, ease);
   }
-  .v-card a:hover .v-card-media {
-    box-shadow: 0 12px 28px -14px rgb(0 0 0 / 0.35);
-  }
-  .v-card a:hover .v-card-media img {
-    transform: scale(1.04);
+  @media (hover: hover) and (pointer: fine) {
+    .v-card a:hover .v-card-media {
+      box-shadow: 0 12px 28px -14px rgb(0 0 0 / 0.35);
+    }
+    .v-card a:hover .v-card-media img {
+      transform: scale(1.04);
+    }
   }
   .v-card-initial {
     display: grid;
@@ -753,8 +799,10 @@
       0 10px 30px -12px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 50%, transparent);
     transition: transform 400ms var(--v-motion-easing, ease);
   }
-  .v-card a:hover .v-card-initial {
-    transform: scale(1.05) rotate(-3deg);
+  @media (hover: hover) and (pointer: fine) {
+    .v-card a:hover .v-card-initial {
+      transform: scale(1.05) rotate(-3deg);
+    }
   }
   /* the letter is trimmed to cap height so it sits on the circle's optical centre */
   .v-card-initial > span,
@@ -833,10 +881,12 @@
     color: var(--v-color-accent, #3f5e4e);
     transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
-  .v-card a:hover .v-card-go {
-    background: var(--v-color-accent, #3f5e4e);
-    color: var(--v-color-on-accent, #fff);
-    transform: rotate(90deg);
+  @media (hover: hover) and (pointer: fine) {
+    .v-card a:hover .v-card-go {
+      background: var(--v-color-accent, #3f5e4e);
+      color: var(--v-color-on-accent, #fff);
+      transform: rotate(90deg);
+    }
   }
   .v-card[data-status='sold_out'] .v-card-media {
     filter: grayscale(0.7);
@@ -859,12 +909,13 @@
     display: flex;
     flex-wrap: nowrap;
     gap: 8px;
-    margin: 0 -16px 24px;
-    padding: 2px 16px;
+    margin: 0 calc(-1 * var(--_v-gutter)) 24px;
+    padding: 2px var(--_v-gutter);
     overflow-x: auto;
-    scroll-padding-inline: 16px;
+    scroll-padding-inline: var(--_v-gutter);
     scroll-snap-type: x proximity;
     scrollbar-width: none;
+    overscroll-behavior-x: contain;
   }
   .v-tabs::-webkit-scrollbar {
     display: none;
@@ -892,9 +943,20 @@
     cursor: pointer;
     font-size: 0.9375rem;
     line-height: 1.3;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
-  .v-tab:hover:not([aria-pressed='true']) {
-    border-color: color-mix(in srgb, var(--v-color-text, #1c1b1a) 40%, transparent);
+  .v-tab:active {
+    transform: scale(0.95);
+    transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .v-tab:hover:not([aria-pressed='true']) {
+      border-color: color-mix(in srgb, var(--v-color-text, #1c1b1a) 40%, transparent);
+    }
   }
   .v-tab[aria-pressed='true'] {
     background: var(--v-color-text, #1c1b1a);
@@ -1548,8 +1610,10 @@
   .v-order-row-state:is([data-state='cancelled'], [data-state='refunded']) {
     background: color-mix(in srgb, var(--v-color-danger, #a33b32) 12%, transparent);
   }
-  .v-order-list a:hover {
-    border-color: color-mix(in srgb, var(--v-color-text, #1c1b1a) 30%, transparent);
+  @media (hover: hover) and (pointer: fine) {
+    .v-order-list a:hover {
+      border-color: color-mix(in srgb, var(--v-color-text, #1c1b1a) 30%, transparent);
+    }
   }
 
   /* ── hours ──────────────────────────────────────────────────────────────── */
@@ -1659,7 +1723,7 @@
     background: var(--v-announcement-bg);
     color: var(--v-announcement-fg);
     text-align: center;
-    padding: 8px 16px;
+    padding: 8px var(--_v-gutter);
     font-size: 0.9375rem;
   }
   .v-announcement a {
@@ -1682,13 +1746,14 @@
     backdrop-filter: saturate(1.4) blur(14px);
     border-bottom: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
     font-family: var(--v-font-body, system-ui, sans-serif);
+    padding-top: env(safe-area-inset-top, 0px);
   }
   .v-header-inner {
     box-sizing: border-box;
     max-width: var(--v-page-max);
     margin: 0 auto;
     min-height: var(--v-header-height);
-    padding: 8px 16px;
+    padding: 8px var(--_v-gutter);
     display: flex;
     align-items: center;
     gap: 8px 24px;
@@ -1740,9 +1805,13 @@
     transform: scaleX(0);
     transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
-  .v-nav a:hover::after,
   .v-nav a[aria-current='page']::after {
     transform: scaleX(1);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .v-nav a:hover::after {
+      transform: scaleX(1);
+    }
   }
   .v-header-actions {
     display: flex;
@@ -1757,10 +1826,11 @@
     }
     .v-nav {
       order: 3;
-      width: calc(100% + 32px);
-      margin-inline: -16px;
-      padding-inline: 16px;
+      width: calc(100% + 2 * var(--_v-gutter));
+      margin-inline: calc(-1 * var(--_v-gutter));
+      padding-inline: var(--_v-gutter);
       overflow-x: auto;
+      overscroll-behavior-x: contain;
       scrollbar-width: none;
       border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 6%, transparent);
     }
@@ -1796,11 +1866,14 @@
     transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
     font-size: 0.9375rem;
   }
-  .v-cart-pill:hover {
-    transform: translateY(-1px);
+  @media (hover: hover) and (pointer: fine) {
+    .v-cart-pill:hover {
+      transform: translateY(-1px);
+    }
   }
   .v-cart-pill:active {
-    transform: translateY(0) scale(0.98);
+    transform: translateY(0) scale(0.96);
+    transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
   }
   .v-cart-glyph {
     flex: none;
@@ -1836,7 +1909,7 @@
   .v-footer {
     box-sizing: border-box;
     margin-top: 64px;
-    padding: 48px 16px calc(40px + env(safe-area-inset-bottom, 0px));
+    padding: 48px var(--_v-gutter) calc(40px + env(safe-area-inset-bottom, 0px));
     border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
     background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 3%, var(--v-color-bg, #f7f6f4));
     font-family: var(--v-font-body, system-ui, sans-serif);
@@ -1876,8 +1949,10 @@
     line-height: 1.2;
     text-decoration: none;
   }
-  .v-footer-contacts a:hover {
-    border-color: color-mix(in srgb, var(--v-color-text, #1c1b1a) 40%, transparent);
+  @media (hover: hover) and (pointer: fine) {
+    .v-footer-contacts a:hover {
+      border-color: color-mix(in srgb, var(--v-color-text, #1c1b1a) 40%, transparent);
+    }
   }
   .v-footer-inner {
     max-width: var(--v-page-max);
@@ -2049,8 +2124,8 @@
       position: sticky;
       bottom: 0;
       z-index: 5;
-      margin-inline: -16px;
-      padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+      margin-inline: calc(-1 * var(--_v-gutter));
+      padding: 12px var(--_v-gutter) calc(12px + env(safe-area-inset-bottom, 0px));
       background: color-mix(in srgb, var(--v-color-bg, #f7f6f4) 90%, transparent);
       -webkit-backdrop-filter: blur(12px);
       backdrop-filter: blur(12px);
@@ -2186,23 +2261,89 @@
     padding-left: 8px;
     font-weight: 600;
   }
+  /* phones: swipe between photos (one per snap, dots over the picture); ≥ 860 px adds thumbs */
   .v-gallery {
+    position: relative;
     display: grid;
     gap: 8px;
-  }
-  .v-gallery > img {
     width: 100%;
-    aspect-ratio: var(--v-purchase-panel-media-ratio);
-    object-fit: cover;
-    border-radius: var(--v-card-radius);
+    min-width: 0;
+    align-self: stretch;
   }
-  .v-gallery-thumbs {
+  /* the gallery brings its own frame: the media box grows to hold the thumbs instead of
+     clipping them to the square */
+  .v-pp-media:has(> .v-gallery) {
+    aspect-ratio: auto;
+    overflow: visible;
+    background: none;
+  }
+  .v-gallery-track {
     list-style: none;
     margin: 0;
     padding: 0;
     display: flex;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    border-radius: var(--v-card-radius);
+  }
+  .v-gallery-track::-webkit-scrollbar {
+    display: none;
+  }
+  .v-gallery-track:focus-visible {
+    outline: var(--v-focus);
+    outline-offset: -3px;
+  }
+  .v-gallery-slide {
+    flex: 0 0 100%;
+    scroll-snap-align: center;
+    scroll-snap-stop: always;
+  }
+  .v-gallery-slide img {
+    display: block;
+    width: 100%;
+    aspect-ratio: var(--v-purchase-panel-media-ratio);
+    object-fit: cover;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .v-gallery-dots {
+    position: absolute;
+    left: 50%;
+    bottom: 12px;
+    translate: -50% 0;
+    display: flex;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: 999px;
+    background: rgb(0 0 0 / 0.32);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+  }
+  .v-gallery-dots > span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 0.5);
+    transition:
+      transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease),
+      background-color var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+  }
+  .v-gallery-dots > span[data-current] {
+    background: #fff;
+    transform: scale(1.34);
+  }
+  .v-gallery-thumbs {
+    list-style: none;
+    margin: 0;
+    padding: 2px;
+    display: flex;
     gap: 8px;
     overflow-x: auto;
+    overscroll-behavior-x: contain;
   }
   .v-gallery-thumbs button {
     padding: 0;
@@ -2210,6 +2351,11 @@
     border-radius: var(--v-radius-sm, 4px);
     background: none;
     cursor: pointer;
+    transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+  }
+  .v-gallery-thumbs button:active {
+    transform: scale(0.94);
+    transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
   }
   .v-gallery-thumbs button[aria-current] {
     border-color: var(--v-color-accent, #3f5e4e);
@@ -2220,6 +2366,16 @@
     height: 56px;
     object-fit: cover;
     border-radius: var(--v-radius-sm, 4px);
+  }
+  @media (max-width: 859px) {
+    .v-gallery-thumbs {
+      display: none;
+    }
+  }
+  @media (min-width: 860px) {
+    .v-gallery-dots {
+      display: none;
+    }
   }
   .v-coupon {
     display: grid;
@@ -2754,6 +2910,72 @@
     margin-top: 16px;
   }
 
+  /* ── touch: every tap target answers the finger ──────────────────────────────
+     No grey tap flash and no double-tap-zoom delay; the press shows as a quick scale
+     (in fast, out at the motion token) and hover styling needs a real pointer. */
+  :is(
+    .v-btn,
+    .v-link-btn,
+    .v-back,
+    .v-brand,
+    .v-nav a,
+    .v-cart-pill,
+    .v-search-clear,
+    .v-notice-dismiss,
+    .v-notice-action,
+    .v-order-list a,
+    .v-footer-contacts a,
+    .v-mod,
+    .v-option,
+    .v-combo-item,
+    button.v-step-btn,
+    .v-calendar-day,
+    .v-calendar-nav,
+    .v-gallery-thumbs button,
+    .v-qty button,
+    [data-vendua='qty-stepper'] button
+  ) {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  :is(
+    .v-back,
+    .v-link-btn,
+    .v-search-clear,
+    .v-notice-dismiss,
+    .v-order-list a,
+    .v-footer-contacts a,
+    .v-mod,
+    .v-option,
+    button.v-step-btn,
+    .v-calendar-day,
+    .v-calendar-nav
+  ) {
+    transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+  }
+  :is(.v-back, .v-link-btn, .v-footer-contacts a, .v-calendar-nav, button.v-step-btn):active:not(
+      :disabled
+    ) {
+    transform: scale(0.95);
+    transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
+  }
+  :is(.v-search-clear, .v-notice-dismiss, .v-calendar-day):active:not(
+      :disabled,
+      [aria-disabled='true']
+    ) {
+    transform: scale(0.9);
+    transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
+  }
+  :is(.v-order-list a, .v-mod, .v-option):active:not(:disabled, :has(input:disabled)) {
+    transform: scale(0.985);
+    transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
+  }
+  /* inline links can't scale: they dim */
+  .v-nav a:active,
+  .v-brand:active {
+    opacity: 0.6;
+  }
+
   /* ── loading skeletons ───────────────────────────────────────────────────── */
   .v-skeleton,
   .v-page > .v-panel[aria-busy='true'],
@@ -2810,6 +3032,11 @@
       transform: scale(1);
     }
   }
+  @keyframes v-fade {
+    from {
+      opacity: 0;
+    }
+  }
   @keyframes v-pop {
     from {
       transform: scale(0.6);
@@ -2853,8 +3080,6 @@
     .v-page > .v-panel[aria-busy='true'],
     .v-section[aria-busy='true'] .v-pp-media,
     .v-cart-count,
-    .v-bag-bar,
-    .v-bag-bar-count,
     .v-success-icon,
     .v-order-progress li::before,
     .v-pix-wait-dot,
@@ -2869,13 +3094,77 @@
     .v-btn[aria-busy='true']::after {
       animation-duration: 2s;
     }
+    /* the bag bar and its count arrive as a short fade instead of a rise and a bump */
+    .v-bag-bar,
+    .v-bag-bar-count {
+      animation: v-fade 120ms linear both;
+    }
+    /* presses and hovers: no scale, no zoom, no slide — a 120 ms dim says "got it" */
     .v-btn,
+    .v-link-btn,
+    .v-back,
     .v-cart-pill,
+    .v-bag-bar-btn,
+    .v-tab,
+    .v-card-media,
     .v-card-media img,
     .v-card-initial,
-    .v-card-go {
-      transition: none;
+    .v-card-go,
+    .v-card-quick,
+    .v-search-clear,
+    .v-notice-dismiss,
+    .v-order-list a,
+    .v-footer-contacts a,
+    .v-mod,
+    .v-option,
+    button.v-step-btn,
+    .v-calendar-day,
+    .v-calendar-nav,
+    .v-gallery-thumbs button,
+    .v-gallery-dots > span,
+    .v-qty button,
+    [data-vendua='qty-stepper'] button {
+      transition: opacity 120ms linear;
       transform: none !important;
+    }
+    :is(
+        .v-btn,
+        .v-link-btn,
+        .v-back,
+        .v-cart-pill,
+        .v-bag-bar-btn,
+        .v-tab,
+        .v-order-list a,
+        .v-footer-contacts a,
+        .v-mod,
+        .v-option,
+        button.v-step-btn,
+        .v-calendar-day,
+        .v-calendar-nav,
+        .v-gallery-thumbs button,
+        .v-qty button,
+        [data-vendua='qty-stepper'] button
+      ):active:not(:disabled),
+    .v-card a:active .v-card-media,
+    .v-card > button[data-vendua='add-to-cart']:active .v-card-quick {
+      opacity: 0.7;
+    }
+    /* the nav underline fades in place instead of growing */
+    .v-nav a::after {
+      transform: none;
+      opacity: 0;
+      transition: opacity 120ms linear;
+    }
+    .v-nav a[aria-current='page']::after {
+      opacity: 1;
+    }
+    .v-gallery-track {
+      scroll-behavior: auto;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) and (hover: hover) and (pointer: fine) {
+    .v-nav a:hover::after {
+      opacity: 1;
     }
   }
 
