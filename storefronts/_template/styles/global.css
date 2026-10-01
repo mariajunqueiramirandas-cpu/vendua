@@ -743,6 +743,15 @@ img {
   margin-bottom: 12px;
 }
 
+.menu-cat-desc {
+  margin: -4px 0 14px;
+  max-width: 60ch;
+  color: var(--v-color-muted, #4f6a5e);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
 .menu-count {
   padding: 6px 9px;
   border-radius: 999px;
@@ -824,7 +833,13 @@ img {
   box-shadow: var(--shadow-1);
 }
 
-.dish[data-hit] {
+/* a #produto-<slug> link: the Kernel scrolls the dish to the top of its scroll margin (here,
+ * mid-screen below the sticky bars) and marks it data-target for a moment */
+.dish {
+  scroll-margin-top: max(calc(var(--v-header-height) + 88px), calc(50vh - 72px));
+}
+
+.dish[data-target] {
   box-shadow:
     0 0 0 3px var(--spark),
     var(--shadow-2);
@@ -918,6 +933,8 @@ img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  /* the photo alone may be the morph's snapshot: keep the box's corners */
+  border-radius: inherit;
 }
 
 .dish-art {
@@ -1075,6 +1092,19 @@ img {
   font-size: 0.8em;
   font-weight: 500;
   letter-spacing: 0;
+}
+
+.price-cur[data-after] {
+  margin: 0 0 0 0.18em;
+}
+
+/* a promotion: the regular price struck, quiet, before the one paid */
+.dish-struck {
+  margin-right: 0.2em;
+  color: var(--v-color-muted, #4f6a5e);
+  font-size: 0.85em;
+  font-weight: var(--w-body);
+  text-decoration-thickness: 1.5px;
 }
 
 /* ── store:dish-media (the product page's picture) ────────────────────────── */

@@ -65,17 +65,11 @@ const byId = async (dir: string) =>
 const config = (extra: string) =>
   BASE['vendua.config.ts']!.replace("budgets: 'default',", `budgets: 'default',\n${extra}`);
 
-// storefronts/_template is moving to the Kernel's own helpers (K17-K22). Once it passes them,
-// delete this set and the template must pass every rule.
-const STILL_MIGRATING = new Set(['K17', 'K18', 'K19', 'K20', 'K21', 'K22']);
-
 describe('runStatic', () => {
   test('storefronts/_template passes every K-check', async () => {
     const results = await runStatic(TEMPLATE);
     expect(
-      results
-        .filter((r) => r.status !== 'pass' && !STILL_MIGRATING.has(r.id))
-        .map((r) => `${r.id} ${r.detail ?? ''}`),
+      results.filter((r) => r.status !== 'pass').map((r) => `${r.id} ${r.detail ?? ''}`),
     ).toEqual([]);
     expect(results.map((r) => r.id)).toEqual([
       'K01',

@@ -1,12 +1,13 @@
 import { RefreshCw, Search, SearchX, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   BlockArea,
   defineSection,
   text,
-  useCatalog,
+  useMenu,
   usePageContext,
-  useStore,
+  useReducedMotion,
+  useScrollSpy,
   type SectionProps,
 } from '@vendua/kernel';
 import { DishRow, type DishLabels } from './_shared/Dish.tsx';
@@ -37,22 +38,21 @@ export const schema = defineSection({
   areas: { 'before-grid': { accepts: ['promo', 'info'], max: 2 } },
 });
 
-const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
-
-const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+// a category lights its tab once its top passes under the header and the tab strip
+const SPY_MARGIN = '-140px 0px -55% 0px';
 
 export default function Menu({ settings: s }: SectionProps<typeof schema>) {
-  const { categories, loading, error, refetch } = useCatalog();
-  const { store } = useStore();
-  const { page } = usePageContext();
-  const currency = store?.currency ?? 'BRL';
   const [query, setQuery] = useState('');
-  const [active, setActive] = useState<string | null>(null);
-  const [highlighted, setHighlighted] = useState<string | null>(null);
+  // the whole menu feeds the tab strip; the searched one, the results
+  const { categories: menu, loading, error, refetch } = useMenu();
+  const found = useMenu({ query });
+  const { page } = usePageContext();
+  const still = useReducedMotion();
+  const q = query.trim();
   const tabsRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const hashDone = useRef(false);
   const jumping = useRef(false);
+  const [tapped, setTapped] = useState<string | null>(null);
 
   const labels: DishLabels = {
     add: s.addLabel,
@@ -63,57 +63,18 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
     allInBag: s.allInBagLabel,
   };
 
-  // sold-out dishes sink to the end of their category
-  const menu = useMemo(
-    () =>
-      categories
-        .map((c) => ({
-          ...c,
-          products: c.products
-            .filter((p) => p.status !== 'archived')
-            .sort((a, b) => Number(a.status !== 'active') - Number(b.status !== 'active')),
-        }))
-        .filter((c) => c.products.length > 0),
-    [categories],
-  );
+  const results = q
+    ? found.categories.flatMap((c) => c.products.map((p) => ({ product: p, category: c.name })))
+    : [];
 
-  const q = normalize(query.trim());
-  const results = useMemo(
-    () =>
-      q
-        ? menu.flatMap((c) =>
-            c.products
-              .filter(
-                (p) =>
-                  normalize(p.name).includes(q) ||
-                  normalize(p.description ?? '').includes(q) ||
-                  normalize(c.name).includes(q),
-              )
-              .map((p) => ({ product: p, category: c.name })),
-          )
-        : [],
-    [menu, q],
-  );
-
-  // scroll-spy: the category nearest the top of the viewport lights its tab
+  const spied = useScrollSpy(q ? [] : menu.map((c) => `cat-${c.slug}`), {
+    rootMargin: SPY_MARGIN,
+  });
+  // a tapped tab owns the highlight until its scroll lands and the reading moves on
   useEffect(() => {
-    if (q || menu.length === 0) return;
-    const els = menu
-      .map((c) => document.getElementById(`cat-${c.slug}`))
-      .filter((el): el is HTMLElement => !!el);
-    const seen = new Map<string, boolean>();
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) seen.set(e.target.id, e.isIntersecting);
-        const first = els.find((el) => seen.get(el.id));
-        // a tapped tab owns the highlight until its scroll lands
-        if (first && !jumping.current) setActive(first.id.slice(4));
-      },
-      { rootMargin: '-140px 0px -55% 0px' },
-    );
-    els.forEach((el) => io.observe(el));
-    return () => io.disconnect();
-  }, [menu, q]);
+    if (!jumping.current) setTapped(null);
+  }, [spied]);
+  const active = tapped ?? spied?.slice(4) ?? null;
 
   // keep the lit tab in view inside the strip, without moving the page
   useEffect(() => {
@@ -121,28 +82,12 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
     const tab = strip?.querySelector<HTMLElement>(`[data-cat="${active}"]`);
     if (!strip || !tab) return;
     const left = tab.offsetLeft - strip.clientWidth / 2 + tab.clientWidth / 2;
-    strip.scrollTo({ left, behavior: reducedMotion() ? 'auto' : 'smooth' });
-  }, [active]);
-
-  // one-shot #produto-<slug> deep link: scroll to the dish and light it up
-  useEffect(() => {
-    if (hashDone.current || menu.length === 0) return;
-    const hash = window.location.hash;
-    if (!hash.startsWith('#produto-')) return;
-    hashDone.current = true;
-    const id = hash.slice(1);
-    requestAnimationFrame(() => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
-      setHighlighted(id);
-      window.setTimeout(() => setHighlighted((cur) => (cur === id ? null : cur)), 2200);
-    });
-  }, [menu]);
+    strip.scrollTo({ left, behavior: still ? 'auto' : 'smooth' });
+  }, [active, still]);
 
   const goTo = (slug: string) => {
     setQuery('');
-    setActive(slug);
+    setTapped(slug);
     jumping.current = true;
     const release = () => {
       jumping.current = false;
@@ -154,7 +99,7 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
     requestAnimationFrame(() =>
       document
         .getElementById(`cat-${slug}`)
-        ?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' }),
+        ?.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' }),
     );
   };
 
@@ -222,7 +167,7 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
 
       <BlockArea name="before-grid" className="menu-blocks" />
 
-      {loading && categories.length === 0 ? (
+      {loading && menu.length === 0 ? (
         <div className="menu-cat" aria-busy="true">
           <span className="skel skel-title" />
           <ol className="menu-list">
@@ -238,7 +183,7 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
             ))}
           </ol>
         </div>
-      ) : error && categories.length === 0 ? (
+      ) : error && menu.length === 0 ? (
         <div role="alert" className="menu-empty">
           <RefreshCw size={24} aria-hidden="true" />
           <p className="menu-empty-title">{s.errorTitle}</p>
@@ -254,13 +199,7 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
             </h3>
             <ol className="menu-list">
               {results.map(({ product, category }) => (
-                <DishRow
-                  key={product.id}
-                  product={product}
-                  category={category}
-                  currency={currency}
-                  labels={labels}
-                />
+                <DishRow key={product.id} product={product} category={category} labels={labels} />
               ))}
             </ol>
           </div>
@@ -289,16 +228,10 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
             <h3 id={`cat-${c.slug}-h`} className="menu-cat-title">
               {c.name} <span className="menu-count tnum">{c.products.length}</span>
             </h3>
+            {c.description ? <p className="menu-cat-desc">{c.description}</p> : null}
             <ol className="menu-list">
               {c.products.map((p) => (
-                <DishRow
-                  key={p.id}
-                  product={p}
-                  category={c.name}
-                  currency={currency}
-                  labels={labels}
-                  highlighted={highlighted === `produto-${p.slug}`}
-                />
+                <DishRow key={p.id} product={p} category={c.name} labels={labels} />
               ))}
             </ol>
           </section>
