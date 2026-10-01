@@ -5,7 +5,10 @@ import {
   useId,
   useRef,
   useState,
+  type ChangeEvent,
   type ComponentProps,
+  type KeyboardEvent,
+  type Ref,
   type InputHTMLAttributes,
   type ReactNode,
   type TextareaHTMLAttributes,
@@ -84,12 +87,91 @@ export const inputCls =
   'hover:ring-line-strong focus:bg-surface focus:ring-2 focus:ring-primary focus:outline-none ' +
   'aria-invalid:ring-2 aria-invalid:ring-danger disabled:opacity-50 lg:h-12 lg:text-[0.9375rem]';
 
+const LINE_TYPES = new Set(['text', 'email', 'tel', 'search', 'url']);
+const MODE: Record<string, InputHTMLAttributes<HTMLInputElement>['inputMode']> = {
+  email: 'email',
+  tel: 'tel',
+  search: 'search',
+  url: 'url',
+};
+
+type LineProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'prefix'>;
+
+/**
+ * Chrome on Android shows its passwords/cards/addresses bar above the keyboard on every
+ * <input>, ignoring autocomplete="off", but never on a <textarea>. So text-like fields are a
+ * one-line textarea that behaves as an input: Enter submits the form, line breaks become spaces.
+ */
+export const LineInput = forwardRef<HTMLInputElement, LineProps>(function LineInput(
+  { type = 'text', className, onChange, onKeyDown, inputMode, enterKeyHint, ...rest },
+  ref,
+) {
+  if (!LINE_TYPES.has(type))
+    return (
+      <input
+        ref={ref}
+        type={type}
+        autoComplete="off"
+        inputMode={inputMode}
+        enterKeyHint={enterKeyHint}
+        onChange={onChange}
+        onKeyDown={onKeyDown}
+        className={className}
+        {...rest}
+      />
+    );
+  const {
+    size: _size,
+    multiple: _m,
+    accept: _a,
+    list: _l,
+    pattern: _p,
+    min: _min,
+    max: _max,
+    step: _s,
+    ...ta
+  } = rest;
+  return (
+    <textarea
+      ref={ref as unknown as Ref<HTMLTextAreaElement>}
+      rows={1}
+      wrap="off"
+      autoComplete="off"
+      autoCorrect={type === 'text' ? undefined : 'off'}
+      autoCapitalize={type === 'text' ? undefined : 'none'}
+      spellCheck={type === 'text' ? undefined : false}
+      inputMode={inputMode ?? MODE[type]}
+      enterKeyHint={enterKeyHint ?? (type === 'search' ? 'search' : undefined)}
+      {...(ta as TextareaHTMLAttributes<HTMLTextAreaElement>)}
+      className={cn(
+        'resize-none overflow-hidden whitespace-pre py-3.5 leading-6 lg:py-3',
+        className,
+      )}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (/[\r\n]/.test(v)) e.target.value = v.replace(/\r?\n|\r/g, ' ');
+        onChange?.(e as unknown as ChangeEvent<HTMLInputElement>);
+      }}
+      onKeyDown={(e) => {
+        onKeyDown?.(e as unknown as KeyboardEvent<HTMLInputElement>);
+        if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+        const handled = e.defaultPrevented;
+        e.preventDefault();
+        if (!handled) e.currentTarget.form?.requestSubmit();
+      }}
+    />
+  );
+});
+
+/** a one-line textarea needs its text centred by padding: (h-13 − leading-6) / 2 */
+const lineCls = 'py-3.5 leading-6 lg:py-3';
+
 export const TextInput = forwardRef<
   HTMLInputElement,
-  Omit<InputHTMLAttributes<HTMLInputElement>, 'prefix'> & { lead?: ReactNode; trail?: ReactNode }
+  LineProps & { lead?: ReactNode; trail?: ReactNode }
 >(function TextInput({ className, lead, trail, ...rest }, ref) {
   if (!lead && !trail)
-    return <input ref={ref} autoComplete="off" className={cn(inputCls, className)} {...rest} />;
+    return <LineInput ref={ref} className={cn(inputCls, lineCls, className)} {...rest} />;
   return (
     <div className="relative">
       {lead ? (
@@ -97,10 +179,9 @@ export const TextInput = forwardRef<
           {lead}
         </span>
       ) : null}
-      <input
+      <LineInput
         ref={ref}
-        autoComplete="off"
-        className={cn(inputCls, lead ? 'pl-12' : '', trail ? 'pr-14' : '', className)}
+        className={cn(inputCls, lineCls, lead ? 'pl-12' : '', trail ? 'pr-14' : '', className)}
         {...rest}
       />
       {trail ? (
@@ -285,7 +366,7 @@ export function TimeInput({
   const [bad, setBad] = useState(false);
   useEffect(() => setDraft(value), [value]);
   return (
-    <input
+    <LineInput
       id={id}
       aria-label={label}
       autoComplete="off"
@@ -302,7 +383,7 @@ export function TimeInput({
         }
       }}
       onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-      className={cn(inputCls, 'tnum h-12 w-24 px-3 text-center')}
+      className={cn(inputCls, 'tnum h-12 w-24 px-3 py-3 text-center leading-6')}
     />
   );
 }
