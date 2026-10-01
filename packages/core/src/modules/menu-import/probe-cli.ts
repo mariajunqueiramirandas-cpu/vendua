@@ -2,9 +2,11 @@
 //   bun run import:probe <url> [--keys]
 // Runs read + map + validateDoc and prints counts and what wouldn't come over. Never prints the
 // raw payload; --keys lists its field names only, to fix an adapter after the platform drifts;
-// --codes prints counts and a tally of note codes only.
+// --codes prints counts and a tally of note codes only. A custom domain is placed first, as
+// the read job does.
 
 import { recognise } from './adapters/index.ts';
+import { placeHost } from './custom-domain.ts';
 import { validateDoc } from './doc.ts';
 import { createImportHttp, ImportFailure } from './http.ts';
 
@@ -15,15 +17,31 @@ if (!url) {
   process.exit(2);
 }
 
-const r = recognise(url);
-if (r.kind !== 'ok') {
+const recognised = recognise(url);
+if (recognised.kind !== 'ok' && recognised.kind !== 'custom') {
   console.error(
-    r.kind === 'invalid'
+    recognised.kind === 'invalid'
       ? 'not a link'
-      : `${r.kind}: ${'platform' in r ? (r.platform ?? 'unknown platform') : ''}`,
+      : `${recognised.kind}: ${recognised.platform ?? 'unknown platform'}`,
   );
   process.exit(1);
 }
+
+async function placed(host: string, link: URL) {
+  try {
+    const p = await placeHost(host);
+    if (p) {
+      console.log(`${host}: claimed by ${p.adapter.platform} (${p.ref})`);
+      return { ...p, url: link };
+    }
+    console.error(`${host}: no platform claims it`);
+  } catch (e) {
+    if (!(e instanceof ImportFailure)) throw e;
+    console.error(`${host}: placing failed: ${e.code} — ${e.message}`);
+  }
+  process.exit(1);
+}
+const r = recognised.kind === 'ok' ? recognised : await placed(recognised.host, recognised.url);
 
 function keys(v: unknown, path = '', out = new Map<string, Set<string>>(), depth = 0) {
   if (depth > 12) return out;

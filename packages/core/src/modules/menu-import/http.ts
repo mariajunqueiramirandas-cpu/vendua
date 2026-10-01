@@ -129,7 +129,7 @@ async function readCapped(res: Response, max: number): Promise<Uint8Array> {
   return out;
 }
 
-const CHALLENGE =
+export const CHALLENGE =
   /cf-chl|challenge-platform|just a moment|attention required|sorry, you have been blocked/i;
 
 interface Got {

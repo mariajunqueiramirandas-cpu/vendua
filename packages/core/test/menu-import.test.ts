@@ -16,6 +16,7 @@ import { saipos } from '../src/modules/menu-import/adapters/saipos.ts';
 import { goomer } from '../src/modules/menu-import/adapters/goomer.ts';
 import { instadelivery } from '../src/modules/menu-import/adapters/instadelivery.ts';
 import { TEMPLATE_TOKENS } from '../src/modules/menu-import/apply.ts';
+import { liftFloor } from '../src/modules/menu-import/adapters/shared.ts';
 import { unitPriceCents } from '../src/modules/cart.ts';
 import { haversineKm, pointInPolygon } from '../src/modules/geo.ts';
 import {
@@ -91,6 +92,79 @@ describe('toCents', () => {
   });
 });
 
+describe('timed promotions and the floor lift', () => {
+  test('a promotion below the price with readable windows comes along; any other is a note', () => {
+    const windows = [{ days: [5], from: '18:00', to: '23:00' }];
+    const kept = one(prod({ priceCents: 3000, promoSchedule: { priceCents: 2000, windows } }));
+    expect(kept.doc.categories[0]!.products[0]!.promoSchedule).toEqual({
+      priceCents: 2000,
+      windows,
+    });
+    for (const promoSchedule of [
+      { priceCents: 3000, windows },
+      { priceCents: 2000, windows: [{ days: [9] }] },
+      {
+        priceCents: 2000,
+        windows: Array.from({ length: 8 }, (_, d) => ({
+          days: [d % 7],
+          from: `0${d}:00`,
+          to: `0${d}:30`,
+        })),
+      },
+    ]) {
+      const r = one(prod({ priceCents: 3000, promoSchedule }));
+      expect(r.doc.categories[0]!.products[0]!.promoSchedule).toBeUndefined();
+      expect(r.doc.lost.map((l) => l.code)).toContain('promo_schedule');
+    }
+  });
+
+  test('a sum list of exactly N units lifts N floors; prices stay', () => {
+    const p = prod({
+      priceCents: 0,
+      optionGroups: [
+        {
+          name: 'Três sabores',
+          min: 3,
+          max: 3,
+          options: [
+            { name: 'A', priceDeltaCents: 900, maxQty: 3 },
+            { name: 'B', priceDeltaCents: 1200, maxQty: 3 },
+          ],
+        },
+      ],
+    });
+    liftFloor(p);
+    expect(p.priceCents).toBe(2700);
+    expect(p.optionGroups[0]!.options.map((o) => o.priceDeltaCents)).toEqual([0, 300]);
+    // 2×A + B: 0 + 2×900 + 1200 there, 2700 + 300 here
+    expect(
+      unitPriceCents(p.priceCents, [
+        {
+          pricingRule: 'sum',
+          picks: [
+            { priceDeltaCents: 0, qty: 2 },
+            { priceDeltaCents: 300, qty: 1 },
+          ],
+        },
+      ]),
+    ).toBe(3000);
+    // between a minimum and a maximum the units vary: no exact floor to lift
+    const open = prod({
+      priceCents: 0,
+      optionGroups: [
+        {
+          name: 'Sabores',
+          min: 1,
+          max: 10,
+          options: [{ name: 'A', priceDeltaCents: 900, maxQty: 10 }],
+        },
+      ],
+    });
+    liftFloor(open);
+    expect(open.priceCents).toBe(0);
+  });
+});
+
 describe('validateDoc limits (§4.6)', () => {
   test('long names and descriptions are cut and noted', () => {
     const { doc } = validateDoc(
@@ -153,7 +227,11 @@ describe('validateDoc limits (§4.6)', () => {
     expect(many.doc.categories[0]!.products[0]!.status).toBe('archived');
     expect(many.doc.categories[0]!.products[0]!.optionGroups).toHaveLength(12);
     expect(many.doc.lost[0]!.code).toBe('too_many_option_groups');
-    const wide = one(prod({ optionGroups: [group(41)] }));
+    // a pizzeria's long flavour list fits; past 100 it can't be shown as it was
+    expect(one(prod({ optionGroups: [group(100)] })).doc.categories[0]!.products[0]!.status).toBe(
+      'active',
+    );
+    const wide = one(prod({ optionGroups: [group(101)] }));
     expect(wide.doc.categories[0]!.products[0]!.status).toBe('archived');
     expect(wide.doc.lost[0]!.code).toBe('too_many_options');
   });
@@ -364,7 +442,7 @@ describe('recognise', () => {
     expect(recognise('x'.repeat(501)).kind).toBe('invalid');
   });
 
-  test('anota.ai and iFood are blocked; other hosts are no platform', () => {
+  test('anota.ai and iFood are blocked; a platform page is not a store', () => {
     expect(recognise('https://pedido.anota.ai/loja/x')).toEqual({
       kind: 'blocked',
       platform: 'anotaai',
@@ -374,7 +452,11 @@ describe('recognise', () => {
       platform: 'ifood',
     });
     expect(recognise('https://www.saipos.com')).toEqual({ kind: 'unsupported', platform: null });
-    expect(recognise('https://minha-loja.com.br')).toEqual({ kind: 'unsupported', platform: null });
+    // a store on its own domain is placed by the read job (step 4)
+    expect(recognise('https://minha-loja.com.br')).toMatchObject({
+      kind: 'custom',
+      host: 'minha-loja.com.br',
+    });
   });
 });
 
@@ -835,16 +917,20 @@ describe('cardapioweb', () => {
     expect(p.status).toBe('archived');
   });
 
-  test('promo price only when it runs every day; hours of sale; stock; preorder', () => {
+  test('a promo price every day, or in its days; hours of sale; stock; preorder', () => {
     expect(byName.get('X-Burguer')).toMatchObject({
       priceCents: 2490,
       compareAtPriceCents: 2990,
       tags: ['Destaque'],
     });
     expect(byName.get('X-Burguer')!.optionGroups[0]!.options[0]).toMatchObject({ maxQty: 2 });
-    expect(byName.get('X-Salada')).toMatchObject({ priceCents: 2790 });
+    // R$ 22,90 on tuesdays and wednesdays: the regular price, with the promotion's days
+    expect(byName.get('X-Salada')).toMatchObject({
+      priceCents: 2790,
+      promoSchedule: { priceCents: 2290, windows: [{ days: [2, 3] }] },
+    });
     expect(byName.get('X-Salada')!.compareAtPriceCents).toBeUndefined();
-    expect(lostCodes).toContain('X-Salada:promo_schedule');
+    expect(lostCodes).not.toContain('X-Salada:promo_schedule');
     // the category sells from 18h; the item only on weekends: both apply
     expect(byName.get('X-Fim de semana')!.availability).toEqual({
       windows: [{ days: [0, 6], from: '18:00', to: '23:59' }],
@@ -1849,17 +1935,42 @@ describe('saipos', () => {
     expect(lostCodes).toContain('Pizza de três:pizza_pricing');
   });
 
-  test('promotions: a standing one is the price; one with hours is a note; an odd flag hides', () => {
+  test('promotions: a standing one is the price; one with hours rides along; an odd flag hides', () => {
     expect(byName.get('Promo X')).toMatchObject({ priceCents: 2500, compareAtPriceCents: 3000 });
-    expect(byName.get('Promo noite')).toMatchObject({ priceCents: 3000, status: 'active' });
-    expect(doc.lost).toContainEqual({
-      scope: 'product',
-      subject: 'Promo noite',
-      code: 'promo_schedule',
-      detail: 'R$ 20,00',
+    // R$ 20 on fridays from 18h to 23h, as there
+    expect(byName.get('Promo noite')).toMatchObject({
+      priceCents: 3000,
+      status: 'active',
+      promoSchedule: { priceCents: 2000, windows: [{ days: [5], from: '18:00', to: '23:00' }] },
     });
+    expect(lostCodes).not.toContain('Promo noite:promo_schedule');
     expect(byName.get('Promo estranha')!.status).toBe('archived');
     expect(lostCodes).toContain('Promo estranha:promo_unreadable');
+  });
+
+  test('a timed promotion on one size: each size its own product, the promotion on its own', () => {
+    const raw = structuredClone(spFixture) as typeof spFixture & Record<string, any>;
+    const suco = raw.items.find((i) => i.desc_store_item === 'Suco')!;
+    (suco.variations[1] as Record<string, unknown>).promotions = [
+      {
+        id_partner_sale: 7,
+        enabled: true,
+        price: 10,
+        availabilities: [{ day_week: 2, start_time: '14:00', end_time: '17:00' }],
+      },
+    ];
+    const ps = new Map(
+      mapped(saipos, raw)
+        .doc.categories.flatMap((c) => c.products)
+        .map((p) => [p.name, p]),
+    );
+    expect(ps.has('Suco')).toBe(false);
+    expect(ps.get('Suco — 300 ml')).toMatchObject({ priceCents: 800 });
+    expect(ps.get('Suco — 300 ml')!.promoSchedule).toBeUndefined();
+    expect(ps.get('Suco — 500 ml')).toMatchObject({
+      priceCents: 1200,
+      promoSchedule: { priceCents: 1000, windows: [{ days: [1], from: '14:00', to: '17:00' }] },
+    });
   });
 
   test('sale windows: the site channel only, a late one is that day early and late', () => {

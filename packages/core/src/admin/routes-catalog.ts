@@ -3,9 +3,11 @@ import { HttpError, UUID_RE, bodyJson, uuidParam } from '../platform/http.ts';
 import {
   loadComboSlots,
   parseAvailabilitySchedule,
+  parsePromoSchedule,
   scheduleOpen,
   storeTimezone,
   type AvailabilitySchedule,
+  type PromoSchedule,
 } from '../modules/catalog.ts';
 import { setStock } from '../modules/stock.ts';
 import { audit } from './audit.ts';
@@ -26,6 +28,8 @@ import { emitAdminTx } from './live.ts';
 import { storeTz } from './routes-orders.ts';
 
 const MAX_PRICE = 10_000_000;
+// options in one group: a pizzeria's flavour list
+const MAX_OPTIONS = 100;
 const PRICING_RULES = ['sum', 'average', 'most_expensive'] as const;
 
 /** Photo links: https:// or root-relative (an upload's /v1/media/…), never protocol-relative. */
@@ -66,6 +70,10 @@ export interface AdminProductRow {
   availabilitySchedule: AvailabilitySchedule | null;
   /** false while outside its schedule */
   availableNow: boolean;
+  /** a lower price on some weekdays and hours; null = none */
+  promoSchedule: PromoSchedule | null;
+  /** true while one of its windows holds */
+  promoNow: boolean;
   tags: string[];
   imageUrl: string | null;
   dominant: string | null;
@@ -80,6 +88,7 @@ const productCols = (tx: Sql) => tx`
   p.stock_quantity as "stockQuantity", p.low_stock_threshold as "lowStockThreshold",
   p.requires_preorder as "requiresPreorder", p.preorder_lead_days as "preorderLeadDays", p.sort,
   p.sold_out_until as "soldOutUntil", p.tags, p.availability_schedule as "availabilitySchedule",
+  p.promo_schedule as "promoSchedule",
   (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as "imageUrl",
   (select mo.dominant from product_media m join media_objects mo
      on m.url like '/v1/media/%' and mo.id::text = split_part(split_part(m.url, '/', 5), '.', 1)
@@ -91,11 +100,17 @@ const productCols = (tx: Sql) => tx`
 
 /** availableNow from the schedule, in the store's timezone */
 async function withNow(tx: Sql, tenantId: string, rows: AdminProductRow[]) {
-  const tz = rows.some((r) => r.availabilitySchedule)
+  const tz = rows.some((r) => r.availabilitySchedule || r.promoSchedule)
     ? await storeTimezone(tx, tenantId)
     : 'America/Sao_Paulo';
   const now = new Date();
-  for (const r of rows) r.availableNow = scheduleOpen(r.availabilitySchedule, now, tz);
+  for (const r of rows) {
+    r.availableNow = scheduleOpen(r.availabilitySchedule, now, tz);
+    r.promoNow =
+      !!r.promoSchedule &&
+      r.promoSchedule.priceCents < r.priceCents &&
+      scheduleOpen({ windows: r.promoSchedule.windows, outside: 'unavailable' }, now, tz);
+  }
   return rows;
 }
 
@@ -480,6 +495,22 @@ export function mountCatalog(d: AdminDeps) {
           field: 'compareAtPriceCents',
         });
       }
+      const promo =
+        body.promoSchedule !== undefined
+          ? parsePromoSchedule(body.promoSchedule, MAX_PRICE)
+          : before.promoSchedule;
+      if (
+        (body.promoSchedule !== undefined || set.base_price_cents !== undefined) &&
+        promo &&
+        promo.priceCents >= ((set.base_price_cents as number | undefined) ?? before.priceCents)
+      )
+        throw new HttpError(422, 'BAD_REQUEST', 'the promotion price must be below the price', {
+          field: 'promoSchedule.priceCents',
+        });
+      if (body.promoSchedule !== undefined) {
+        set.promo_schedule = promo ? tx.json(promo as never) : null;
+        changes.push('promoção por horário');
+      }
       if (body.categoryId !== undefined) {
         set.category_id = await categoryOf(tx, t.id, body.categoryId);
         changes.push('categoria');
@@ -576,11 +607,11 @@ export function mountCatalog(d: AdminDeps) {
       const copy = (
         await tx<{ id: string }[]>`
           insert into products (tenant_id, category_id, slug, name, description, base_price_cents,
-                                compare_at_price_cents, status, figure_variant, tags, kind, requires_preorder,
-                                preorder_lead_days, sort, low_stock_threshold)
+                                compare_at_price_cents, promo_schedule, status, figure_variant, tags, kind,
+                                requires_preorder, preorder_lead_days, sort, low_stock_threshold)
           select tenant_id, category_id, ${await uniqueSlug(tx, 'products', t.id, name)}, ${name}, description,
-                 base_price_cents, compare_at_price_cents, 'archived', figure_variant, tags, kind, requires_preorder,
-                 preorder_lead_days, sort + 1, low_stock_threshold
+                 base_price_cents, compare_at_price_cents, promo_schedule, 'archived', figure_variant, tags, kind,
+                 requires_preorder, preorder_lead_days, sort + 1, low_stock_threshold
           from products where tenant_id = ${t.id} and id = ${id}
           returning id
         `
@@ -676,16 +707,22 @@ export function mountCatalog(d: AdminDeps) {
     '/products/:id/options',
     write('manager', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
-      const body = await bodyJson(c, 64 * 1024);
+      // a pizzeria's flavour lists run long: up to 12 groups of 100 options
+      const body = await bodyJson(c, 256 * 1024);
       if (!Array.isArray(body.groups) || body.groups.length > 12)
         throw new HttpError(422, 'BAD_REQUEST', 'at most 12 option groups', { field: 'groups' });
       const groups = (body.groups as unknown[]).map((g, gi) => {
         if (!isObj(g)) throw new HttpError(422, 'BAD_REQUEST', `groups[${gi}] must be an object`);
         const options = Array.isArray(g.options) ? g.options : [];
-        if (options.length === 0 || options.length > 40)
-          throw new HttpError(422, 'BAD_REQUEST', `"${String(g.name ?? '')}" needs 1–40 options`, {
-            field: `groups[${gi}].options`,
-          });
+        if (options.length === 0 || options.length > MAX_OPTIONS)
+          throw new HttpError(
+            422,
+            'BAD_REQUEST',
+            `"${String(g.name ?? '')}" needs 1–${MAX_OPTIONS} options`,
+            {
+              field: `groups[${gi}].options`,
+            },
+          );
         const minSelect = int(g.minSelect ?? 0, `groups[${gi}].minSelect`, 0, 40);
         const maxSelect = int(g.maxSelect ?? 1, `groups[${gi}].maxSelect`, 1, 40);
         if (minSelect > maxSelect)
@@ -723,6 +760,16 @@ export function mountCatalog(d: AdminDeps) {
                 : mediaUrl(o.imageUrl, `${field}.imageUrl`),
           };
         });
+        // one row per id: a repeated id would leave which edit wins to chance
+        const seen = new Set<string>();
+        for (const [oi, o] of parsed.entries()) {
+          if (!o.id) continue;
+          if (seen.has(o.id))
+            throw new HttpError(422, 'BAD_REQUEST', 'an option appears twice', {
+              field: `groups[${gi}].options[${oi}].id`,
+            });
+          seen.add(o.id);
+        }
         return {
           id: typeof g.id === 'string' && UUID_RE.test(g.id) ? g.id : null,
           name: text(g.name, `groups[${gi}].name`, 60, 1),
@@ -767,24 +814,40 @@ export function mountCatalog(d: AdminDeps) {
         await tx`
           delete from modifiers where tenant_id = ${t.id} and group_id = ${gid} and not (id = any(${keepOpts}::uuid[]))
         `;
-        for (const [os, o] of g.options.entries()) {
-          const upd = o.id
+        // one statement for the kept options and one for the new ones, however long the list
+        const rows = g.options.map((o, os) => ({ ...o, sort: os }));
+        const col = <K extends keyof (typeof rows)[number]>(xs: typeof rows, k: K) =>
+          xs.map((r) => r[k]);
+        const kept = rows.filter((r) => r.id);
+        const updated = new Set(
+          kept.length
             ? (
-                await tx`
-                  update modifiers set name = ${o.name}, price_delta_cents = ${o.priceDeltaCents}, status = ${o.status},
-                    max_qty = ${o.maxQty}, description = ${o.description}, image_url = ${o.imageUrl}, sort = ${os}
-                  where tenant_id = ${t.id} and group_id = ${gid} and id = ${o.id} returning id
+                await tx<{ id: string }[]>`
+                  update modifiers m set name = v.name, price_delta_cents = v.delta, status = v.status,
+                    max_qty = v.max_qty, description = v.description, image_url = v.image_url, sort = v.sort
+                  from unnest(${col(kept, 'id')}::uuid[], ${col(kept, 'name')}::text[],
+                              ${col(kept, 'priceDeltaCents')}::int[], ${col(kept, 'status')}::text[],
+                              ${col(kept, 'maxQty')}::int[], ${col(kept, 'description')}::text[],
+                              ${col(kept, 'imageUrl')}::text[], ${col(kept, 'sort')}::int[])
+                    as v(id, name, delta, status, max_qty, description, image_url, sort)
+                  where m.tenant_id = ${t.id} and m.group_id = ${gid} and m.id = v.id
+                  returning m.id
                 `
-              )[0]
-            : undefined;
-          if (!upd)
-            await tx`
-              insert into modifiers (tenant_id, group_id, name, price_delta_cents, status, max_qty, description,
-                                     image_url, sort)
-              values (${t.id}, ${gid}, ${o.name}, ${o.priceDeltaCents}, ${o.status}, ${o.maxQty}, ${o.description},
-                      ${o.imageUrl}, ${os})
-            `;
-        }
+              ).map((r) => r.id)
+            : [],
+        );
+        const fresh = rows.filter((r) => !r.id || !updated.has(r.id));
+        if (fresh.length)
+          await tx`
+            insert into modifiers (tenant_id, group_id, name, price_delta_cents, status, max_qty, description,
+                                   image_url, sort)
+            select ${t.id}, ${gid}, v.name, v.delta, v.status, v.max_qty, v.description, v.image_url, v.sort
+            from unnest(${col(fresh, 'name')}::text[], ${col(fresh, 'priceDeltaCents')}::int[],
+                        ${col(fresh, 'status')}::text[], ${col(fresh, 'maxQty')}::int[],
+                        ${col(fresh, 'description')}::text[], ${col(fresh, 'imageUrl')}::text[],
+                        ${col(fresh, 'sort')}::int[])
+              as v(name, delta, status, max_qty, description, image_url, sort)
+          `;
       }
       await audit(tx, t.id, m, {
         action: 'product.options',
@@ -912,11 +975,14 @@ export function mountCatalog(d: AdminDeps) {
         // the "de" price moves with it and drops when it no longer sits above the price
         await tx`
           update products p set base_price_cents = n.base,
-            compare_at_price_cents = case when n.cmp > n.base then n.cmp end
+            compare_at_price_cents = case when n.cmp > n.base then n.cmp end,
+            promo_schedule = case when n.promo < n.base
+              then jsonb_set(p.promo_schedule, '{priceCents}', to_jsonb(n.promo)) end
           from (
             select id,
               least(${MAX_PRICE}, greatest(0, (round(base_price_cents * (100 + ${pct}) / 1000.0) * 10)::int)) as base,
-              least(${MAX_PRICE}, greatest(0, (round(compare_at_price_cents * (100 + ${pct}) / 1000.0) * 10)::int)) as cmp
+              least(${MAX_PRICE}, greatest(0, (round(compare_at_price_cents * (100 + ${pct}) / 1000.0) * 10)::int)) as cmp,
+              least(${MAX_PRICE}, greatest(0, (round((promo_schedule ->> 'priceCents')::int * (100 + ${pct}) / 1000.0) * 10)::int)) as promo
             from products where tenant_id = ${t.id} and id = any(${ids}::uuid[])
           ) n
           where p.tenant_id = ${t.id} and p.id = n.id

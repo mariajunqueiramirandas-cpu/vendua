@@ -192,6 +192,49 @@ export function unitPriceCents(basePriceCents: number, groups: GroupPicks[]): nu
   return basePriceCents + groups.reduce((sum, g) => sum + groupDeltaCents(g), 0);
 }
 
+/**
+ * The least one configured unit can cost — "a partir de", display only. For a fixed number of
+ * units the cheapest units are the cheapest pick under every rule, so each group takes the
+ * best over every count it allows (a required group at least one); null when one can't be
+ * filled.
+ */
+export function fromPriceCents(
+  basePriceCents: number,
+  groups: readonly Pick<
+    ModifierGroup,
+    'required' | 'minSelect' | 'maxSelect' | 'pricingRule' | 'modifiers'
+  >[],
+): number | null {
+  let total = basePriceCents;
+  for (const g of groups) {
+    const need = g.required ? Math.max(1, g.minSelect) : g.minSelect;
+    const units: number[] = [];
+    for (const m of g.modifiers
+      .filter((m) => m.status === 'active')
+      .sort((a, b) => a.priceDeltaCents - b.priceDeltaCents))
+      for (let q = 0; q < (m.maxQty || 1) && units.length < g.maxSelect; q++)
+        units.push(m.priceDeltaCents);
+    if (units.length < need) return null;
+    const rule = g.pricingRule ?? 'sum';
+    let best = need === 0 ? 0 : Infinity;
+    let sum = 0;
+    for (let k = 1; k <= units.length; k++) {
+      sum += units[k - 1]!;
+      if (k < need) continue;
+      // groupDeltaCents over the k cheapest units, its rounding included
+      const d =
+        rule === 'most_expensive'
+          ? units[k - 1]!
+          : rule === 'average'
+            ? Math.floor((2 * sum + k) / (2 * k))
+            : sum;
+      best = Math.min(best, d);
+    }
+    total += best;
+  }
+  return total;
+}
+
 /** The options a line picks, grouped with each group's rule — the input to unitPriceCents. */
 export function pickedOptions(
   product: Pick<ProductDetail, 'modifierGroups'>,

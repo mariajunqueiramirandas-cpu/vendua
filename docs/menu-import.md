@@ -196,6 +196,7 @@ interface ImportProduct {
   description?: string;
   priceCents: number; // the selling price: a promo price lands here
   compareAtPriceCents?: number; // the old, struck-through price; must be > priceCents
+  promoSchedule?: { priceCents: number; windows: Window[] }; // a lower price in some days/hours
   tags: string[]; // badges: "Novidade", "Mais vendido", …
   images: string[]; // source CDN URLs, at most 12
   status: 'active' | 'sold_out' | 'archived';
@@ -267,31 +268,26 @@ writer for "a whole menu", tested once.
 6. **Expiry** — a `ready` import not applied within 24 h becomes `expired` and its document is
    cleared; its prices would be stale.
 
-**Custom domains (phase 3, step 4 — proposed, not built).** A store on the merchant's own
-domain matches no adapter by host. The design keeps the rule that no user-supplied host receives
-a request wherever a platform allows it:
+**Custom domains (phase 3, step 4).** A public hostname that no adapter, blocked platform or
+platform domain matches (a dot, `[a-z0-9-]` labels, an alphabetic TLD; no IP literal, port or
+local suffix like `.local`, `.internal`, `.test`) is accepted as a pending read: `platform` null,
+`source_ref` the host (migration 0070; the lease count treats null as its own platform). The job
+places it (`custom-domain.ts`), stopping at the first claim, then reads as usual:
 
-1. **Start.** A URL whose host matches no adapter and no blocked platform, and is a public
-   hostname (a dot, no IP literal, not `localhost`/`.local`/`.internal`, ≤ 253 characters), is
-   accepted as a pending read: `platform` null, `source_ref` the lowercased host, the same
-   rate limits. Migration: `menu_imports.platform` drops `not null`; the per-platform lease
-   count treats null as its own platform.
-2. **Placing the host.** An adapter may have `lookup(host, http)` → its ref or null, on its own
-   allowlisted hosts. The job asks them in a fixed order and the first claim sets the row's
-   `platform` and `source_ref` before the normal read, within the same budget:
-   - OlaClick: `api.olaclick.app/ms-companies/public/hosts/<host>` (its read already starts
-     there).
-   - Saipos: `delivery-api.saipos.com/v1/stores?filter={"domain_name":"<host>"}` (same).
-   - Goomer: a DNS CNAME query for the host; `<slug>.goomer.app` gives the slug. DNS only —
-     nothing is sent to the merchant's server.
-3. **Nothing claims it** → `NOT_FOUND`, and the admin asks for the platform's own link
-   ("cole o link da loja no Cardápio Web, Delivery Direto, …").
-4. **Not covered without a fingerprinting GET:** Cardápio Web (the server writes the slug into
-   the page it serves for the host) and Delivery Direto (the domain's `/` redirects to
-   `/<brand>`). Both would need §4.5's single GET to the merchant's host (DNS resolved once,
-   private/loopback/link-local refused, connect to the checked IP, no redirects followed,
-   ≤ 256 KB). Built only if the user approves it; until then those merchants paste the
-   platform link.
+1. Goomer: a DNS CNAME to `<slug>.goomer.app` — DNS only, nothing sent to the merchant.
+2. OlaClick's host lookup (`api.olaclick.app/ms-companies/public/hosts/<host>`).
+3. Saipos's `domain_name` filter (`delivery-api.saipos.com/v1/stores`).
+4. The one GET to `https://<host>/`: DNS resolved once, any private answer refused, a socket to
+   the checked IP with SNI and certificate for the host, no redirect followed, ≤ 256 KB, 8 s.
+   Cardápio Web's page sets `companySlug`; Delivery Direto's loads
+   `deliverydireto.com.br/bs/<brand>/dist/` or redirects to `/<brand>`.
+
+Nothing claims it → `NOT_FOUND`, and the admin asks for the store's link on its platform. The
+read lease adds placement's worst case (38 s). A lookup that refuses us only rules its platform
+out (`BLOCKED` when nothing else claims the host); a host placed onto a platform already
+reading twice waits for a slot, its attempt not charged. Any port in a pasted link makes it
+`invalid`. Rollout: an instance without 0070's code fails a custom-domain row as
+`UNREADABLE`, so deploy it with no overlap, as 0065.
 
 `menu_imports` (migration 0069): `id`, `tenant_id` (RLS like every table), `created_by`,
 `platform`, `source_url`, `source_ref`, `status`, `error_code`, `doc jsonb` (≤ 2 MB), `counts
@@ -326,12 +322,12 @@ As built:
 - `http.ts` only calls hosts the adapter declares, on URLs the adapter builds from the `ref` that
   `match` extracted. An image host many tenants share is declared with its path prefix
   (`storage.googleapis.com/prod-cardapio-web/`). Redirects are handled manually and re-checked
-  against the allowlist. No user-supplied host reaches a request in v1, so there is no SSRF
-  surface. Custom domains
-  (phase 3) are resolved through the platforms' own host lookups where they exist. Only a
-  platform with no lookup needs one fingerprinting GET to the merchant's own host, through a
-  resolver that refuses private, loopback and link-local addresses after DNS
-  ([plan, step 4](menu-import-phase3.md#5-step-4--custom-domains-one-pr-after-the-adapters-it-needs)).
+  against the allowlist. A user-supplied host reaches a request in one place only: placing a
+  custom domain ([§4.4](#44-flow-and-endpoints)) asks the platforms' own host lookups first,
+  and only then sends one GET to the merchant's host — resolved once, refused if any address is
+  private, loopback, link-local, CGNAT, ULA, multicast or a mapped private one
+  (`platform/net-guard.ts`, shared with discovery), connected to the checked address, no
+  redirects, ≤ 256 KB.
 - Caps: 10 s per request, 60 s per import, 5 MB per JSON response, 8 MB per image, 300 requests
   per import, at least 250 ms between requests to one host, at most two concurrent imports per
   platform. An adapter can carry a larger budget (`limits`): Goomer, which asks for each
@@ -358,7 +354,7 @@ oversized store fails the import.
 | Product description   | 1000                            | truncate on a word boundary                               |
 | Tags                  | 12 × 30                         | keep the first 12                                         |
 | Option groups         | 12 per product                  | product imported hidden + `lost`                          |
-| Options               | 40 per group                    | product imported hidden + `lost`                          |
+| Options               | 100 per group                   | product imported hidden + `lost`                          |
 | Photos                | 12 per product                  | keep the first 12                                         |
 | Price                 | 0–10,000,000 cents              | product imported hidden + `lost`                          |
 | WhatsApp              | 10–13 digits                    | normalise (`+55`, drop formatting); drop if still invalid |
@@ -383,34 +379,34 @@ oversized store fails the import.
 
 ## 5. Mapping onto Venduá today
 
-| On the other platforms                                       | Venduá today                                                        | The import                                                                                |
-| ------------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Category and its order                                       | `categories` (name, sort)                                           | ✓                                                                                         |
-| Category description                                         | `categories.description`                                            | ✓ — a category image is `lost`                                                            |
-| Category / product hours by weekday                          | `products.availability_schedule` (≤ 7 windows)                      | ✓ — category hours are pushed down to its products                                        |
-| Name, description, price, photo, badges                      | `products`, `product_media`, `tags`                                 | ✓ — badges become tags                                                                    |
-| "A partir de" price                                          | base price + a required option group                                | ✓ when the options carry the price                                                        |
-| Sizes / variants (Goomer, OlaClick, Saipos)                  | required group "Tamanho" (min 1, max 1)                             | ✓ exact: base = cheapest size, delta = size − cheapest                                    |
-| Promo price with strike-through                              | `products.compare_at_price_cents`                                   | ✓ — sells at the promo price, old price struck through; a promo on some days → full price |
-| Option groups: min, max, required, price                     | `modifier_groups`, `modifiers`                                      | ✓                                                                                         |
-| The same option more than once ("2x coco")                   | `modifiers.max_qty`, `cart_items.modifier_qty`                      | ✓ — priced × quantity in Core                                                             |
-| Option description or image                                  | `modifiers.description`, `modifiers.image_url`                      | ✓ — image re-hosted                                                                       |
-| Pizza: most expensive or average flavour                     | `modifier_groups.pricing_rule` (`sum`, `average`, `most_expensive`) | ✓ — computed by the cart                                                                  |
-| Combos / kits                                                | `combo_slots`, `combo_slot_items` (≤ 8 slots)                       | ✓ when slots reference products; otherwise hidden + `lost`                                |
-| Stock count, sold out                                        | `stock_quantity`, `sold_out`                                        | ✓                                                                                         |
-| Hidden or paused items                                       | —                                                                   | absent from Instadelivery's payload, flagged elsewhere: skipped; empty categories noted   |
-| Dine-in-only items and prices (Takeat, Saipos)               | —                                                                   | skipped; the delivery price wins                                                          |
-| Hours with several shifts a day                              | `hours` windows (≤ 28)                                              | ✓                                                                                         |
-| Delivery fee by neighbourhood                                | neighbourhood zones                                                 | ✓ — one zone per distinct fee                                                             |
-| Delivery fee by km tier or per km                            | radius zones (smallest containing radius wins), `fee_per_km`        | ✓ — Venduá measures straight-line distance, platforms may use route distance: noted       |
-| Delivery polygons (Delivery Direto, OlaClick, Saipos)        | `delivery_zones` kind `polygon`                                     | ✓ — neighbourhood, then polygon, then radius                                              |
-| Fee only computed per address (Cardápio Web, Takeat, Saipos) | —                                                                   | `lost`; the merchant sets zones                                                           |
-| Minimum order, prep time, pickup, ETA                        | `store_settings` operations, zone ETA                               | ✓                                                                                         |
-| Payment methods                                              | `pix`, `cash`, `card_on_delivery`, `card_online`, `meal_voucher`    | ✓ by name; per-method discount or surcharge in `store_settings.payment_adjustments`       |
-| Pix key and beneficiary                                      | `payments.pix`                                                      | ✓ (beneficiary ≤ 25)                                                                      |
-| Logo, cover, colours                                         | `logo_url`, home hero `cover`, `storefront_tokens`                  | ✓ — re-hosted; one brand colour drives the token set                                      |
-| Loyalty (points, cashback, stamps)                           | stamp card                                                          | `lost` — the merchant sets up the stamp card; balances aren't public                      |
-| Coupons, referral, WhatsApp automations, upsell, time slots  | —                                                                   | `lost` (store-level notes)                                                                |
+| On the other platforms                                       | Venduá today                                                        | The import                                                                                                         |
+| ------------------------------------------------------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Category and its order                                       | `categories` (name, sort)                                           | ✓                                                                                                                  |
+| Category description                                         | `categories.description`                                            | ✓ — a category image is `lost`                                                                                     |
+| Category / product hours by weekday                          | `products.availability_schedule` (≤ 7 windows)                      | ✓ — category hours are pushed down to its products                                                                 |
+| Name, description, price, photo, badges                      | `products`, `product_media`, `tags`                                 | ✓ — badges become tags                                                                                             |
+| "A partir de" price                                          | base price + a required option group                                | ✓ when the options carry the price                                                                                 |
+| Sizes / variants (Goomer, OlaClick, Saipos)                  | required group "Tamanho" (min 1, max 1)                             | ✓ exact: base = cheapest size, delta = size − cheapest                                                             |
+| Promo price with strike-through                              | `products.compare_at_price_cents`                                   | ✓ — sells at the promo price, old price struck through; a promo on some days and hours → `products.promo_schedule` |
+| Option groups: min, max, required, price                     | `modifier_groups`, `modifiers`                                      | ✓                                                                                                                  |
+| The same option more than once ("2x coco")                   | `modifiers.max_qty`, `cart_items.modifier_qty`                      | ✓ — priced × quantity in Core                                                                                      |
+| Option description or image                                  | `modifiers.description`, `modifiers.image_url`                      | ✓ — image re-hosted                                                                                                |
+| Pizza: most expensive or average flavour                     | `modifier_groups.pricing_rule` (`sum`, `average`, `most_expensive`) | ✓ — computed by the cart                                                                                           |
+| Combos / kits                                                | `combo_slots`, `combo_slot_items` (≤ 8 slots)                       | ✓ when slots reference products; otherwise hidden + `lost`                                                         |
+| Stock count, sold out                                        | `stock_quantity`, `sold_out`                                        | ✓                                                                                                                  |
+| Hidden or paused items                                       | —                                                                   | absent from Instadelivery's payload, flagged elsewhere: skipped; empty categories noted                            |
+| Dine-in-only items and prices (Takeat, Saipos)               | —                                                                   | skipped; the delivery price wins                                                                                   |
+| Hours with several shifts a day                              | `hours` windows (≤ 28)                                              | ✓                                                                                                                  |
+| Delivery fee by neighbourhood                                | neighbourhood zones                                                 | ✓ — one zone per distinct fee                                                                                      |
+| Delivery fee by km tier or per km                            | radius zones (smallest containing radius wins), `fee_per_km`        | ✓ — Venduá measures straight-line distance, platforms may use route distance: noted                                |
+| Delivery polygons (Delivery Direto, OlaClick, Saipos)        | `delivery_zones` kind `polygon`                                     | ✓ — neighbourhood, then polygon, then radius                                                                       |
+| Fee only computed per address (Cardápio Web, Takeat, Saipos) | —                                                                   | `lost`; the merchant sets zones                                                                                    |
+| Minimum order, prep time, pickup, ETA                        | `store_settings` operations, zone ETA                               | ✓                                                                                                                  |
+| Payment methods                                              | `pix`, `cash`, `card_on_delivery`, `card_online`, `meal_voucher`    | ✓ by name; per-method discount or surcharge in `store_settings.payment_adjustments`                                |
+| Pix key and beneficiary                                      | `payments.pix`                                                      | ✓ (beneficiary ≤ 25)                                                                                               |
+| Logo, cover, colours                                         | `logo_url`, home hero `cover`, `storefront_tokens`                  | ✓ — re-hosted; one brand colour drives the token set                                                               |
+| Loyalty (points, cashback, stamps)                           | stamp card                                                          | `lost` — the merchant sets up the stamp card; balances aren't public                                               |
+| Coupons, referral, WhatsApp automations, upsell, time slots  | —                                                                   | `lost` (store-level notes)                                                                                         |
 
 ## 6. Model gaps — closed first
 
@@ -424,15 +420,16 @@ migration, the Core API, the admin editor, and one Kernel minor (1.12.0: `API.md
 `CHANGELOG.md`; no new runtime export, so `test/api-surface.test.ts` is unchanged). Money stays
 integer cents, computed in Core. Ranked by how many platforms need them:
 
-| #   | Gap                                                                                                                            | Model                                                                                                                                                                                                                                                       | Migration |
-| --- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| 1   | **Promo price** — Instadelivery, Cardápio Web, OlaClick, Takeat, Saipos, anota.ai                                              | `products.compare_at_price_cents`, display only: the base price remains what the shopper pays; must exceed it                                                                                                                                               | 0065      |
-| 2   | **Option quantity** — Instadelivery, Cardápio Web, OlaClick, Takeat, Delivery Direto                                           | `modifiers.max_qty` (1–20, default 1) and `cart_items.modifier_qty`; add-to-cart accepts `modifiers: [{id, qty}]`; group min/max count quantities; snapshots and reorder carry `qty`                                                                        | 0065      |
-| 3   | **Flavour pricing rule** — Instadelivery, Cardápio Web, Delivery Direto, Saipos, Takeat, anota.ai. Makes pizzerias importable. | `modifier_groups.pricing_rule`: `sum` (today), `most_expensive`, or `average` (round half up over selected units); `unitPriceCents` is group-aware                                                                                                          | 0065      |
-| 4   | **Category description** — Quero Pudim, Cardápio Web, OlaClick                                                                 | `categories.description` (≤ 500)                                                                                                                                                                                                                            | 0065      |
-| 5   | **Option description and image** — Takeat, Cardápio Web, OlaClick                                                              | `modifiers.description` (≤ 200), `modifiers.image_url` (`https://` or `/v1/media/`)                                                                                                                                                                         | 0065      |
-| 6   | **Delivery polygons** — Delivery Direto, OlaClick, Saipos                                                                      | zone kind `polygon`, `delivery_zones.polygon` (3–200 vertices); `resolveZone` order: neighbourhood, polygon (smallest area wins), radius; needs coordinates                                                                                                 | 0066      |
-| 7   | **Per-payment discount or surcharge, meal vouchers** — Instadelivery, Cardápio Web, Delivery Direto                            | method `meal_voucher`; `store_settings.payment_adjustments` = `{ method: { percentBps?, fixedCents? } }`, signed, applied to subtotal minus coupon (never the delivery fee); `orders.payment_adjustment_cents`; the quote takes an optional `paymentMethod` | 0067      |
+| #   | Gap                                                                                                                            | Model                                                                                                                                                                                                                                                                                                                                                                                                            | Migration |
+| --- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| 1   | **Promo price** — Instadelivery, Cardápio Web, OlaClick, Takeat, Saipos, anota.ai                                              | `products.compare_at_price_cents`, display only: the base price remains what the shopper pays; must exceed it                                                                                                                                                                                                                                                                                                    | 0065      |
+| 2   | **Option quantity** — Instadelivery, Cardápio Web, OlaClick, Takeat, Delivery Direto                                           | `modifiers.max_qty` (1–20, default 1) and `cart_items.modifier_qty`; add-to-cart accepts `modifiers: [{id, qty}]`; group min/max count quantities; snapshots and reorder carry `qty`                                                                                                                                                                                                                             | 0065      |
+| 3   | **Flavour pricing rule** — Instadelivery, Cardápio Web, Delivery Direto, Saipos, Takeat, anota.ai. Makes pizzerias importable. | `modifier_groups.pricing_rule`: `sum` (today), `most_expensive`, or `average` (round half up over selected units); `unitPriceCents` is group-aware                                                                                                                                                                                                                                                               | 0065      |
+| 4   | **Category description** — Quero Pudim, Cardápio Web, OlaClick                                                                 | `categories.description` (≤ 500)                                                                                                                                                                                                                                                                                                                                                                                 | 0065      |
+| 5   | **Option description and image** — Takeat, Cardápio Web, OlaClick                                                              | `modifiers.description` (≤ 200), `modifiers.image_url` (`https://` or `/v1/media/`)                                                                                                                                                                                                                                                                                                                              | 0065      |
+| 6   | **Delivery polygons** — Delivery Direto, OlaClick, Saipos                                                                      | zone kind `polygon`, `delivery_zones.polygon` (3–200 vertices); `resolveZone` order: neighbourhood, polygon (smallest area wins), radius; needs coordinates                                                                                                                                                                                                                                                      | 0066      |
+| 7   | **Per-payment discount or surcharge, meal vouchers** — Instadelivery, Cardápio Web, Delivery Direto                            | method `meal_voucher`; `store_settings.payment_adjustments` = `{ method: { percentBps?, fixedCents? } }`, signed, applied to subtotal minus coupon (never the delivery fee); `orders.payment_adjustment_cents`; the quote takes an optional `paymentMethod`                                                                                                                                                      | 0067      |
+| 8   | **Timed promotion** — Saipos, Cardápio Web                                                                                     | `products.promo_schedule` = `{ priceCents, windows }` (the availability windows' shape, store time); Core's catalog serves the promo as the price inside a window, the regular one as the "de"; cart, checkout's reprice and the order read it from there (the price at checkout, as the platforms do, also for an order scheduled later); the catalog's `nextChangeAt` tells an open page when to read it again | 0071      |
 
 Rollout: migration 0065 rebuilds the `cart_items` unique index to include `modifier_qty`, so an old
 instance's add-to-cart (`on conflict` on the old columns) fails until it drains. Deploy 0065 with no
@@ -442,7 +439,7 @@ from zero and apply to the subtotal after the coupon, while the store offers tha
 
 Once a gap lands, its adapter `lost` code (`promo_price`, `option_quantity`, `pizza_pricing`,
 `category_description`, `option_details`, `delivery_polygon`, `payment_adjustment`) is retired.
-Still `lost`: category image, promo schedules, per-option stock, fee computed only per address,
+Still `lost`: category image, per-option stock, fee computed only per address,
 loyalty and the rest of §5.
 
 ## 7. Quero Pudim — the acceptance case
@@ -556,9 +553,13 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
       e-mail a merchant typed into a label: `validateDoc` blanks them. An average maps only where it can't fall on a
       half cent: each platform rounds a float its own way. A minimum that applies to delivery only there goes on the delivery
       zones: a store minimum here binds pickup too. Items priced only by a required list where the customer picks a
-      quantity (a can of soda "×N") keep a base of R$ 0,00, exactly as there; the storefront
-      shows that base, not the "a partir de" the old store showed.
-   4. Custom domains.
+      quantity (a can of soda "×N") keep a base of R$ 0,00, exactly as there; Core serves the
+      cheapest configuration as `fromPriceCents` and the storefront shows "a partir de" it, as
+      the old store did. A list of exactly N units lifts N floors into the base instead.
+      Afterwards: an option list holds up to 100 options (a pizzeria's flavours), and timed
+      promotions are Venduá's own (`products.promo_schedule`, gap 8 in §5).
+   4. Custom domains. Done 2026-10-01 ([§4.4](#44-flow-and-endpoints)), the fingerprinting GET
+      included for Cardápio Web and Delivery Direto.
 4. **iFood** through the official Merchant API: Venduá registered as an iFood app, the merchant
    authorizes it in the Portal do Parceiro ("Conectar iFood"), the catalog comes from
    `catalog/v2.0`. Its own design doc.
@@ -614,9 +615,10 @@ largest store read.
   `local.`, `delivery.`). Reais as numbers. Categories and items with `status` `ACTIVE` (an
   item `MISSING` is sold out); `available_for` without `delivery` or order types without
   delivery and takeout → `dine_in_only`; `allowed_times` of the category and the item intersect
-  into the product's availability. Promo: `promotional_price` when `promotional_price_active`
-  and it runs every day all day (`promotional_price_schedules`, else
-  `promotional_price_availability`), else the full price and `promo_schedule`. Add-ons:
+  into the product's availability. Promo: `promotional_price` when `promotional_price_active`:
+  every day all day (`promotional_price_schedules`, else `promotional_price_availability`) it is
+  the price, the regular one struck through; on some days and hours it rides along as the
+  product's `promoSchedule`; never, nothing. Add-ons:
   `SINGLE` (max 1), `MULTIPLE` (each once), `SUMMABLE` (a quantity per option, `max_quantity` or
   the group's maximum); `price_calculation_type` `SUM` → sum, `MEAN` → average where it can't
   fall on a half cent (at most two units, every price of one parity: the storefront rounds a
@@ -778,8 +780,9 @@ delivery-api.saipos.com/v1/stores?filter={"domain_name":"<host>"}` (`[]` → `NO
   when there are others; one → the product; several → a `Tamanho` list, or one product per size
   ("Pizza — G") when any option costs differently per size. A promotion for the site channel
   (`id_partner_sale` 7), the first enabled one and cheaper: with no `availabilities` it is the
-  price, struck through over the regular one; with hours, the regular price and a
-  `promo_schedule` note; an `enabled` that isn't a boolean hides the product
+  price, struck through over the regular one; with hours, the regular price and the promotion as
+  the product's `promoSchedule` (an item whose sizes are a list splits into one product per size
+  so each carries its own); an `enabled` that isn't a boolean hides the product
   (`promo_unreadable`). Sale windows: the item's and its category's `availability` rows for the
   site channel (or none), weekday 1 = Sunday, a row ending before it starts covering that day's
   early hours and its evening, intersected; items vanish outside them there (`outside: hidden`).

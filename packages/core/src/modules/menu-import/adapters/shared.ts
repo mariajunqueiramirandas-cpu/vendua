@@ -190,20 +190,24 @@ export function sizeGroup(
 /**
  * "A partir de": a product whose base is 0 and whose price lives in one required list where a
  * pick always costs at least the cheapest option (single choice, dearest or average) — move
- * that floor into the base, so the menu shows the real starting price. Prices don't change.
+ * that floor into the base, so the menu shows the real starting price. A sum list of exactly N
+ * units moves N floors. Prices don't change.
  */
 export function liftFloor(p: ImportProduct): void {
   if (p.priceCents !== 0) return;
   const req = p.optionGroups.find(
     (g) =>
       g.min >= 1 &&
-      (g.max === 1 || g.pricingRule === 'most_expensive' || g.pricingRule === 'average') &&
+      (g.max === 1 ||
+        g.min === g.max ||
+        g.pricingRule === 'most_expensive' ||
+        g.pricingRule === 'average') &&
       g.options.length > 0 &&
       g.options.every((o) => o.priceDeltaCents > 0),
   );
   if (!req) return;
   const floor = Math.min(...req.options.map((o) => o.priceDeltaCents));
-  p.priceCents = floor;
+  p.priceCents = floor * ((req.pricingRule ?? 'sum') === 'sum' ? req.min : 1);
   for (const o of req.options) o.priceDeltaCents -= floor;
 }
 

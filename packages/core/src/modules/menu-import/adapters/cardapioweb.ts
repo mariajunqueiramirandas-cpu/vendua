@@ -6,6 +6,7 @@ import {
   type ImportCategory,
   type ImportOptionGroup,
   type ImportProduct,
+  type ImportSchedule,
   type Lost,
   type MenuImportV1,
   type PaymentMethod,
@@ -76,29 +77,24 @@ function allowedTimes(v: unknown): Map<number, [string, string][]> | null {
 }
 
 /**
- * The promo runs only on its schedule (`promotional_price_schedules`, else
- * `promotional_price_availability`); Venduá has no promo schedule, so a promo counts only when it
- * runs every day, all day.
+ * The promo's days and hours (`promotional_price_schedules`, else the days in
+ * `promotional_price_availability`): 'always' when every day all day, null when never.
  */
-function promoEveryDay(item: Raw): boolean {
-  const sched = Array.isArray(item.promotional_price_schedules)
-    ? list(item.promotional_price_schedules)
-    : [];
-  if (sched.length) {
-    const days = new Set<number>();
+function promoWindows(item: Raw): ImportSchedule['windows'] | 'always' | null {
+  const perDay = new Map<number, [string, string][]>(WEEKDAYS.map((_, i) => [i, []]));
+  const sched = list(item.promotional_price_schedules);
+  if (sched.length)
     for (const s of sched) {
-      const start = hhmm(s.start);
-      const end = hhmm(s.end);
-      // a time window inside the day is a promo of some hours
-      if ((start || end) && !(start === '00:00' && (end === '23:59' || !end))) return false;
-      days.add(dayOf(s.day));
+      const d = dayOf(s.day);
+      if (d >= 0) perDay.get(d)!.push([hhmm(s.start) ?? '00:00', hhmm(s.end) ?? '23:59']);
     }
-    return WEEKDAYS.every((_, i) => days.has(i));
-  }
-  const avail = Array.isArray(item.promotional_price_availability)
-    ? item.promotional_price_availability.map(dayOf)
-    : [];
-  return WEEKDAYS.every((_, i) => avail.includes(i));
+  else
+    for (const d of Array.isArray(item.promotional_price_availability)
+      ? item.promotional_price_availability.map(dayOf)
+      : [])
+      if (d >= 0) perDay.get(d)!.push(['00:00', '23:59']);
+  const s = scheduleOf(perDay);
+  return s === 'never' ? null : s === undefined ? 'always' : s.windows;
 }
 
 /**
@@ -218,10 +214,12 @@ function product(
 
   const promo = toCents(item.promotional_price);
   if (flag(item.promotional_price_active) && promo !== null && price !== null && promo < price) {
-    if (promoEveryDay(item)) {
+    const windows = promoWindows(item);
+    if (windows === 'always') {
       p.priceCents = promo;
       p.compareAtPriceCents = price;
-    } else
+    } else if (windows) p.promoSchedule = { priceCents: promo, windows };
+    else
       lost.push({ scope: 'product', subject: name, code: 'promo_schedule', detail: reais(promo) });
   }
 
@@ -282,6 +280,16 @@ function product(
     if (ok) {
       p.priceCents = base;
       p.kit = { slots };
+      // a combo is priced by its steps: an item's promotion has no price of its own to apply to
+      if (p.promoSchedule) {
+        lost.push({
+          scope: 'product',
+          subject: name,
+          code: 'promo_schedule',
+          detail: reais(p.promoSchedule.priceCents),
+        });
+        delete p.promoSchedule;
+      }
     } else hide('kit_unresolved');
   }
 

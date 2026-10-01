@@ -4,7 +4,9 @@ import postgres from 'postgres';
 import fixture from './fixtures/menu-import/instadelivery.json';
 import { createApp } from '../src/app.ts';
 import { migrate } from '../src/platform/db.ts';
+import cwFixture from './fixtures/menu-import/cardapioweb.json';
 import { runImages, runReads, sweepImports } from '../src/modules/menu-import/jobs.ts';
+import type { Page } from '../src/modules/menu-import/custom-domain.ts';
 
 // Menu import end to end on the test database (docs/menu-import.md §8): paste → read →
 // preview → apply (add and replace) → photos re-hosted; tenancy, idempotency, expiry, limits.
@@ -25,7 +27,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
   });
   const nonce = crypto.randomUUID().slice(0, 8);
   const stamp = String(Date.now()).slice(-7);
-  const phones = { owner: `2191${stamp}`, manager: `2192${stamp}`, other: `2193${stamp}` };
+  const phones = {
+    owner: `2191${stamp}`,
+    manager: `2192${stamp}`,
+    other: `2193${stamp}`,
+    custom: `2194${stamp}`,
+  };
   const tenants: string[] = [];
   let tenantId = '';
   let idem = 0;
@@ -89,6 +96,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
   let owner: As;
   let manager: As;
   let stranger: As;
+  let ownDomain: As;
 
   const newTenant = async (slug: string) => {
     const id = (
@@ -126,6 +134,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
     owner = await signIn(phones.owner);
     manager = await signIn(phones.manager);
     stranger = await signIn(phones.other);
+    const customId = await newTenant(`mi3-${nonce}`);
+    await sql`insert into merchant_users (tenant_id, name, phone, role) values (${customId}, 'Dona', ${phones.custom}, 'manager')`;
+    ownDomain = await signIn(phones.custom);
     // a product the merchant already had, to see "add" keep it and "replace" archive it
     const cat = (
       await sql<{ id: string }[]>`
@@ -148,9 +159,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
   test('links we cannot read answer stable 4xx, before anything is stored', async () => {
     expect((await manager('POST', '/imports', {})).status).toBe(422);
     expect((await manager('POST', '/imports', { url: 'x'.repeat(501) })).status).toBe(422);
-    const unsupported = await manager('POST', '/imports', { url: 'https://minha-loja.com.br' });
-    expect(unsupported.status).toBe(422);
-    expect(unsupported.body.error.code).toBe('IMPORT_UNSUPPORTED');
+    for (const url of ['https://192.168.0.10/cardapio', 'https://loja.local/', 'intranet']) {
+      const unsupported = await manager('POST', '/imports', { url });
+      expect(unsupported.status).toBe(422);
+      expect(unsupported.body.error.code).toBe('IMPORT_UNSUPPORTED');
+    }
+    expect((await manager('POST', '/imports', { url: 'minha-loja.com.br:8080' })).status).toBe(422);
     // a platform's own page is not a store
     const page = await manager('POST', '/imports', { url: 'https://www.goomer.app/' });
     expect(page.status).toBe(422);
@@ -530,5 +544,114 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
     `;
     expect(audit[0]).toMatchObject({ actor_user_id: null, actor_label: 'equipe Venduá' });
     expect((await ctl('GET', `/imports/${crypto.randomUUID()}`)).status).toBe(404);
+  });
+  describe('the merchant’s own domain', () => {
+    const CW = 'https://integracao.cardapioweb.com/api/menu/company';
+    const pages = new Map<string, Page>();
+    const gets: string[] = [];
+    const custom = {
+      sql,
+      fetch: async (url: string): Promise<Response> => {
+        hits.push(url);
+        if (url === `${CW}/profile?company=pizzaria_exemplo`)
+          return new Response(JSON.stringify(cwFixture.profile));
+        if (url === `${CW}/categories?only_available_for=delivery`)
+          return new Response(JSON.stringify(cwFixture.categories));
+        if (url.startsWith('https://delivery-api.saipos.com/')) return new Response('[]');
+        return new Response('{"message":"not found"}', { status: 404 });
+      },
+      dns: {
+        cname: async () => [] as string[],
+        lookup: async (host: string) =>
+          host.startsWith('interno.') ? ['203.0.113.7', '10.0.0.5'] : ['203.0.113.7'],
+      },
+      fingerprint: async (host: string): Promise<Page> => {
+        gets.push(host);
+        return pages.get(host) ?? { status: 200, location: null, body: '<html></html>' };
+      },
+    };
+    const start = async (url: string) => {
+      const r = await ownDomain('POST', '/imports', { url });
+      expect(r.status).toBe(202);
+      expect(r.body.platform).toBeNull();
+      return r.body.id as string;
+    };
+
+    test('a custom domain is read as a host: 202, no platform yet', async () => {
+      const id = await start('https://Pedidos.PizzariaExemplo.com.br/cardapio');
+      const g = await ownDomain('GET', `/imports/${id}`);
+      expect(g.body).toMatchObject({
+        status: 'reading',
+        platform: null,
+        sourceUrl: 'https://pedidos.pizzariaexemplo.com.br/cardapio',
+      });
+      const row = await sql`select platform, source_ref from menu_imports where id = ${id}`;
+      expect(row[0]).toEqual({ platform: null, source_ref: 'pedidos.pizzariaexemplo.com.br' });
+      // still one in flight per store
+      const again = await ownDomain('POST', '/imports', { url: 'outra.com.br' });
+      expect(again.status).toBe(409);
+
+      // the job places it (Cardápio Web writes the slug into the page), then reads it
+      pages.set('pedidos.pizzariaexemplo.com.br', {
+        status: 200,
+        location: null,
+        body: '<script>Object.defineProperty(window,"companySlug",{value:"pizzaria_exemplo"})</script>',
+      });
+      await runReads(custom);
+      expect(gets).toEqual(['pedidos.pizzariaexemplo.com.br']);
+      const done = await ownDomain('GET', `/imports/${id}`);
+      expect(done.body).toMatchObject({ status: 'ready', platform: 'cardapioweb' });
+      expect(done.body.counts.products).toBeGreaterThan(0);
+      const placed = await sql`select platform, source_ref from menu_imports where id = ${id}`;
+      expect(placed[0]).toEqual({ platform: 'cardapioweb', source_ref: 'pizzaria_exemplo' });
+      expect((await ownDomain('POST', `/imports/${id}/discard`)).status).toBe(200);
+    });
+
+    test('placed onto a platform already reading twice: it waits for a slot, then reads', async () => {
+      const busy = await sql<{ id: string }[]>`
+        insert into menu_imports (tenant_id, platform, source_url, source_ref, lease_until)
+        values (${tenants[0]!}, 'cardapioweb', 'https://app.cardapioweb.com/a', 'a', now() + interval '1 minute'),
+               (${tenants[1]!}, 'cardapioweb', 'https://app.cardapioweb.com/b', 'b', now() + interval '1 minute')
+        returning id
+      `;
+      const id = await start('https://pedidos2.pizzariaexemplo.com.br/');
+      pages.set('pedidos2.pizzariaexemplo.com.br', {
+        status: 200,
+        location: null,
+        body: '<script>Object.defineProperty(window,"companySlug",{value:"pizzaria_exemplo"})</script>',
+      });
+      await runReads(custom);
+      const held =
+        await sql`select platform, status, lease_until, attempts from menu_imports where id = ${id}`;
+      expect(held[0]).toMatchObject({
+        platform: 'cardapioweb',
+        status: 'reading',
+        lease_until: null,
+        attempts: 0,
+      });
+      await sql`delete from menu_imports where id = any(${busy.map((b) => b.id)}::uuid[])`;
+      await runReads(custom);
+      expect((await ownDomain('GET', `/imports/${id}`)).body).toMatchObject({
+        status: 'ready',
+        platform: 'cardapioweb',
+      });
+      expect((await ownDomain('POST', `/imports/${id}/discard`)).status).toBe(200);
+    });
+
+    test('nothing claims it: failed NOT_FOUND, platform still null', async () => {
+      const id = await start('cardapio.lanchonete-exemplo.com.br');
+      await runReads(custom);
+      const g = await ownDomain('GET', `/imports/${id}`);
+      expect(g.body).toMatchObject({ status: 'failed', errorCode: 'NOT_FOUND', platform: null });
+    });
+
+    test('a name that resolves inside is refused before any GET', async () => {
+      gets.length = 0;
+      const id = await start('interno.lanchonete-exemplo.com.br');
+      await runReads(custom);
+      expect(gets).toEqual([]);
+      const g = await ownDomain('GET', `/imports/${id}`);
+      expect(g.body).toMatchObject({ status: 'failed', errorCode: 'NOT_FOUND', platform: null });
+    });
   });
 });

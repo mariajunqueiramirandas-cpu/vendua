@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   computeTotals,
+  fromPriceCents,
   groupDeltaCents,
   normalizeModifiers,
   pickedOptions,
@@ -8,7 +9,7 @@ import {
   validateItemModifiers,
   matchZone,
 } from '../src/modules/cart.ts';
-import type { Modifier, ProductDetail } from '../src/modules/catalog.ts';
+import { nextChangeAt, type Modifier, type ProductDetail } from '../src/modules/catalog.ts';
 
 const picks = (...p: [number, number][]) =>
   p.map(([priceDeltaCents, qty]) => ({ priceDeltaCents, qty }));
@@ -108,6 +109,7 @@ const product: ProductDetail = {
   description: null,
   basePriceCents: 1000,
   compareAtPriceCents: null,
+  fromPriceCents: null,
   status: 'active',
   figureVariant: 'default',
   tags: [],
@@ -226,5 +228,131 @@ describe('matchZone', () => {
   });
   test('undefined → null', () => {
     expect(matchZone(zones, undefined)).toBeNull();
+  });
+});
+
+describe('"a partir de" — the cheapest configured unit', () => {
+  const opt = (priceDeltaCents: number, maxQty = 1, status: 'active' | 'sold_out' = 'active') => ({
+    priceDeltaCents,
+    maxQty,
+    status,
+  });
+  const group = (
+    minSelect: number,
+    maxSelect: number,
+    modifiers: ReturnType<typeof opt>[],
+    pricingRule: 'sum' | 'average' | 'most_expensive' = 'sum',
+  ) => ({
+    required: minSelect > 0,
+    minSelect,
+    maxSelect,
+    pricingRule,
+    modifiers: modifiers as unknown as Modifier[],
+  });
+
+  test('a required quantity list: its minimum in the cheapest units', () => {
+    // mini pastéis: R$ 0 plus at least one of R$ 25,90 / R$ 22,90, up to 10
+    expect(fromPriceCents(0, [group(1, 10, [opt(2590, 10), opt(2290, 10)])])).toBe(2290);
+    // three units, the cheapest can be taken twice
+    expect(fromPriceCents(500, [group(3, 3, [opt(300, 2), opt(100, 2), opt(200)])])).toBe(
+      500 + 100 * 2 + 200,
+    );
+  });
+  test('dearest and average rules price the cheapest picks their way', () => {
+    // two distinct flavours, the dearest of them counts
+    expect(
+      fromPriceCents(4000, [group(2, 2, [opt(0), opt(1000), opt(400)], 'most_expensive')]),
+    ).toBe(4400);
+    // the average of the two cheapest, half up as Core rounds
+    expect(fromPriceCents(4000, [group(2, 2, [opt(101), opt(1000), opt(400)], 'average')])).toBe(
+      4000 + 251,
+    );
+  });
+  test('sold out options are skipped; a list that cannot be filled has no price', () => {
+    expect(fromPriceCents(0, [group(1, 1, [opt(500, 1, 'sold_out'), opt(800)])])).toBe(800);
+    expect(fromPriceCents(0, [group(2, 2, [opt(500), opt(800, 1, 'sold_out')])])).toBeNull();
+  });
+  test('an optional list adds nothing, unless it offers a discount — under any rule', () => {
+    expect(fromPriceCents(3000, [group(0, 3, [opt(500), opt(200)])])).toBe(3000);
+    expect(fromPriceCents(3000, [group(0, 2, [opt(-300), opt(200)])])).toBe(2700);
+    expect(
+      fromPriceCents(3000, [
+        group(1, 2, [opt(1000), opt(1500)], 'most_expensive'),
+        group(0, 1, [opt(-500)], 'most_expensive'),
+      ]),
+    ).toBe(3500);
+    // an averaged list: one more cheap unit can pull the average down
+    expect(fromPriceCents(0, [group(1, 3, [opt(1000), opt(-200), opt(600)], 'average')])).toBe(
+      -200,
+    );
+  });
+  test('never above a price the shopper can configure (every pick checked)', () => {
+    const groups = [
+      group(1, 3, [opt(700, 2), opt(300), opt(-100)], 'average'),
+      group(0, 2, [opt(400), opt(-50)], 'most_expensive'),
+      group(2, 2, [opt(250, 2), opt(90)], 'sum'),
+    ];
+    const from = fromPriceCents(1000, groups)!;
+    // every way to fill each group within its units, priced the way Core prices a line
+    const ways = (g: (typeof groups)[number]) => {
+      const out: { priceDeltaCents: number; qty: number }[][] = [[]];
+      for (const m of g.modifiers as unknown as ReturnType<typeof opt>[]) {
+        const next: typeof out = [];
+        for (const w of out)
+          for (let q = 0; q <= m.maxQty; q++)
+            next.push(q ? [...w, { priceDeltaCents: m.priceDeltaCents, qty: q }] : w);
+        out.splice(0, out.length, ...next);
+      }
+      const need = g.required ? Math.max(1, g.minSelect) : g.minSelect;
+      return out.filter((w) => {
+        const u = w.reduce((n, p) => n + p.qty, 0);
+        return u >= need && u <= g.maxSelect;
+      });
+    };
+    let cheapest = Infinity;
+    for (const a of ways(groups[0]!))
+      for (const b of ways(groups[1]!))
+        for (const c of ways(groups[2]!))
+          cheapest = Math.min(
+            cheapest,
+            unitPriceCents(1000, [
+              { pricingRule: 'average', picks: a },
+              { pricingRule: 'most_expensive', picks: b },
+              { pricingRule: 'sum', picks: c },
+            ]),
+          );
+    expect(from).toBe(cheapest);
+  });
+});
+
+describe('when the catalog next changes', () => {
+  // 2026-10-01 (a thursday) 17:59:30 in São Paulo (UTC−3)
+  const now = new Date('2026-10-01T20:59:30Z');
+  const tz = 'America/Sao_Paulo';
+  test('the next window edge, from this minute', () => {
+    expect(nextChangeAt([[{ days: [4], from: '18:00', to: '20:00' }]], now, tz)).toEqual(
+      new Date('2026-10-01T21:00:00Z'),
+    );
+    // a day-only window turns at midnight; the nearer of two schedules wins
+    expect(
+      nextChangeAt([[{ days: [5] }], [{ days: [4], from: '10:00', to: '11:00' }]], now, tz),
+    ).toEqual(new Date('2026-10-02T03:00:00Z'));
+  });
+  test('an edge already passed this week comes round next week; none at all is null', () => {
+    expect(nextChangeAt([[{ days: [4], from: '09:00', to: '10:00' }]], now, tz)).toEqual(
+      new Date('2026-10-08T12:00:00Z'),
+    );
+    expect(nextChangeAt([undefined, []], now, tz)).toBeNull();
+  });
+  test('across a daylight-saving change, the wall-clock moment', () => {
+    // saturday noon in New York (EDT); sunday 09:00 falls after the switch to EST
+    const sat = new Date('2026-10-31T16:00:00Z');
+    expect(
+      nextChangeAt([[{ days: [0], from: '09:00', to: '10:00' }]], sat, 'America/New_York'),
+    ).toEqual(new Date('2026-11-01T14:00:00Z'));
+  });
+  test('a malformed stored window is skipped, never thrown on', () => {
+    const bad = [{}, { days: 'x' }, { days: [9] }, { days: [4], from: '20:00', to: '18:00' }];
+    expect(nextChangeAt([bad as never], now, tz)).toBeNull();
   });
 });

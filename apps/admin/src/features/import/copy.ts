@@ -67,7 +67,7 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'too_many_option_groups':
       return `${s} tem mais de 12 grupos de opções.`;
     case 'too_many_options':
-      return `${s}: o grupo ${q(d)} tem mais de 40 opções.`;
+      return `${s}: o grupo ${q(d)} tem mais de 100 opções.`;
     case 'options_unreadable':
       return d
         ? `${s}: não conseguimos ler as opções de ${q(d)}.`
@@ -103,7 +103,7 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'pizza_flavours':
       return `Em ${s}, cada sabor veio como um produto. Pizza meio a meio você monta em Opções.`;
     case 'promo_schedule':
-      return `${s} tinha preço promocional${d ? ` de ${d}` : ''} só em alguns dias ou horários. Aqui veio pelo preço normal; para uma promoção, crie um cupom em Marketing.`;
+      return `${s} tinha preço promocional${d ? ` de ${d}` : ''} só em alguns dias ou horários. Não deu para trazer os dias e horários dela: veio pelo preço normal. Cadastre a promoção por horário no produto.`;
     case 'pickup_only':
       return `${s} era só para retirar na loja. Aqui ele vale para entrega também: confira se é isso.`;
     case 'adults_only':
@@ -235,6 +235,16 @@ export function startError(code: string, platform: string | null | undefined): s
 
 /** Why reading the store failed. */
 export function readError(imp: MenuImport): string {
+  // the store's own domain, and no platform we read answered for it
+  if (!imp.platform)
+    switch (imp.errorCode) {
+      case 'NOT_FOUND':
+        return `Não achamos um cardápio nesse endereço. Cole o link da loja no ${readableNames()}: abra a loja por lá e copie o endereço do navegador.`;
+      case 'BLOCKED':
+        return `Não deixaram a gente ler esse endereço agora. Tente de novo mais tarde ou cole o link da loja no ${readableNames()}.`;
+      case 'TIMEOUT':
+        return 'Esse endereço demorou demais para responder. Tente de novo em instantes.';
+    }
   const from = platformName(imp.platform);
   switch (imp.errorCode) {
     case 'NOT_FOUND':

@@ -421,6 +421,49 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(again.body.product.groups[0].options.map((o: any) => o.id)).toEqual(
       group.options.map((o: any) => o.id),
     );
+    // a pizzeria's long list: kept ids and new options saved together, in the order sent
+    const kept = again.body.product.groups[0];
+    const long = await owner('PUT', `/products/${productId}/options`, {
+      groups: [
+        {
+          ...kept,
+          maxSelect: 2,
+          options: [
+            ...Array.from({ length: 98 }, (_, i) => ({
+              name: `Sabor ${i}`,
+              priceDeltaCents: i * 10,
+              ...(i % 2 ? { description: 'com borda' } : {}),
+            })),
+            ...[...kept.options].reverse().map((o: any) => ({ ...o, name: `${o.name}?` })),
+          ],
+        },
+      ],
+    });
+    expect(long.status).toBe(200);
+    const longOpts = long.body.product.groups[0].options;
+    expect(longOpts).toHaveLength(100);
+    expect(longOpts.slice(98).map((o: any) => o.id)).toEqual(
+      [...kept.options].reverse().map((o: any) => o.id),
+    );
+    expect(longOpts[5]).toMatchObject({
+      name: 'Sabor 5',
+      priceDeltaCents: 50,
+      description: 'com borda',
+    });
+    expect(longOpts[98].name).toBe(`${kept.options[1].name}?`);
+    const twice = await owner('PUT', `/products/${productId}/options`, {
+      groups: [{ ...kept, options: [kept.options[0], { ...kept.options[0], name: 'Outra' }] }],
+    });
+    expect(twice.status).toBe(422);
+    const tooMany = await owner('PUT', `/products/${productId}/options`, {
+      groups: [
+        { name: 'Sabores', options: Array.from({ length: 101 }, (_, i) => ({ name: `o${i}` })) },
+      ],
+    });
+    expect(tooMany.status).toBe(422);
+    expect((await owner('PUT', `/products/${productId}/options`, { groups: [kept] })).status).toBe(
+      200,
+    );
 
     const out = await owner('PATCH', `/products/${productId}`, { availability: 'sold_out_today' });
     expect(out.body.product.status).toBe('sold_out');

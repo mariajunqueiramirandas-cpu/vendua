@@ -104,6 +104,8 @@ export interface ImportProduct {
   /** null/absent = not tracked */
   stockQuantity?: number | null;
   availability?: ImportSchedule;
+  /** a lower price on some weekdays and hours (store time); applies while below priceCents */
+  promoSchedule?: { priceCents: number; windows: ImportSchedule['windows'] };
   requiresPreorder?: boolean;
   optionGroups: ImportOptionGroup[];
   kit?: ImportKit;
@@ -235,7 +237,7 @@ export const LIMITS = {
   tag: 30,
   photos: 12,
   groups: 12,
-  options: 40,
+  options: 100,
   groupName: 60,
   optionName: 60,
   optionDescription: 200,
@@ -538,6 +540,20 @@ export function validateDoc(input: MenuImportV1): { doc: MenuImportV1; counts: I
     const sched = schedule(p.availability);
     if (sched === 'overflow')
       note({ scope: 'product', subject: name, code: 'availability_simplified' });
+    let promo: ImportProduct['promoSchedule'];
+    if (p.promoSchedule) {
+      const ps = p.promoSchedule;
+      const ws = schedule({ windows: ps.windows, outside: 'unavailable' });
+      if (
+        intIn(ps.priceCents, 0, LIMITS.price) &&
+        ps.priceCents < priceCents &&
+        ws &&
+        ws !== 'overflow'
+      )
+        promo = { priceCents: ps.priceCents, windows: ws.windows };
+      // a promotion Venduá can't hold as it was comes at the regular price, said so
+      else note({ scope: 'product', subject: name, code: 'promo_schedule' });
+    }
 
     let stock: number | null | undefined = p.stockQuantity;
     if (stock !== undefined && stock !== null) stock = intIn(stock, 0, 1_000_000) ? stock : null;
@@ -553,6 +569,7 @@ export function validateDoc(input: MenuImportV1): { doc: MenuImportV1; counts: I
       status: hidden ? 'archived' : p.status,
       ...(stock !== undefined ? { stockQuantity: stock } : {}),
       ...(sched && sched !== 'overflow' ? { availability: sched } : {}),
+      ...(promo ? { promoSchedule: promo } : {}),
       ...(p.requiresPreorder ? { requiresPreorder: true } : {}),
       optionGroups,
       ...(kit ? { kit } : {}),

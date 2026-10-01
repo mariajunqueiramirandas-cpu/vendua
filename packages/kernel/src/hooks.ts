@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { useKernel, useQuery, invalidateQuery } from './provider.tsx';
+import { useKernel, useQuery, invalidateQuery, invalidateMatching } from './provider.tsx';
 import type {
   Cart,
   CartItem,
@@ -68,6 +68,23 @@ export function useCatalog(): {
 } {
   const { api } = useKernel();
   const q = useQuery('catalog', () => api.catalog());
+  // Kernel 1.13 — Core says when the catalog next changes by itself (a timed promotion or a
+  // product's hours starting or ending): the catalog and open product pages are read again then
+  // armed again on every read: the 6-hour cap (or a clock running ahead) can read the catalog
+  // before the moment and get the same instant back
+  const data = q.data;
+  useEffect(() => {
+    const next = data?.nextChangeAt;
+    const at = next ? Date.parse(next) : NaN;
+    if (!Number.isFinite(at)) return;
+    // a sleeping laptop wakes past the moment: a capped wait re-reads and asks again
+    const wait = Math.min(Math.max(at - Date.now(), 0) + 1000, 6 * 3_600_000);
+    const t = setTimeout(
+      () => invalidateMatching((key) => key === 'catalog' || key.startsWith('product:')),
+      wait,
+    );
+    return () => clearTimeout(t);
+  }, [data]);
   return {
     categories: q.data?.categories ?? [],
     loading: q.loading,

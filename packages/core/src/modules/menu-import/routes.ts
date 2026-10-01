@@ -15,7 +15,8 @@ const PER_HOUR = 5;
 
 interface ImportRow {
   id: string;
-  platform: string;
+  /** null while a custom domain waits to be placed (custom-domain.ts) */
+  platform: string | null;
   source_url: string;
   status: 'reading' | 'ready' | 'failed' | 'applying' | 'applied' | 'expired';
   error_code: string | null;
@@ -165,7 +166,7 @@ export async function startImportTx(
   tenantId: string,
   createdBy: string | null,
   body: Record<string, unknown>,
-): Promise<{ id: string; platform: string }> {
+): Promise<{ id: string; platform: string | null }> {
   if (typeof body.url !== 'string' || !body.url.trim() || body.url.length > 500)
     throw new HttpError(422, 'BAD_REQUEST', 'paste the link to your store', { field: 'url' });
   const r = recognise(body.url);
@@ -198,17 +199,20 @@ export async function startImportTx(
   )[0]!.n;
   if (recent >= PER_HOUR)
     throw new HttpError(429, 'IMPORT_RATE_LIMITED', 'too many imports in the last hour');
+  // a custom domain is read as a host; the job places it on a platform first
+  const platform = r.kind === 'ok' ? r.adapter.platform : null;
   const row = (
     await tx<{ id: string }[]>`
       insert into menu_imports (tenant_id, created_by, platform, source_url, source_ref)
-      values (${tenantId}, ${createdBy}, ${r.adapter.platform}, ${r.url.href.slice(0, 500)}, ${r.ref})
+      values (${tenantId}, ${createdBy}, ${platform}, ${r.url.href.slice(0, 500)},
+        ${r.kind === 'ok' ? r.ref : r.host})
       returning id
     `
   )[0]!;
   await emitAdminTx(tx, tenantId, 'import', row.id);
   // the job starts it once this commits; the tick picks it up regardless
   setTimeout(kickImports, 50);
-  return { id: row.id, platform: r.adapter.platform };
+  return { id: row.id, platform };
 }
 
 /** The apply body: mode + sections. Pagamentos only for whoever may change payments. */

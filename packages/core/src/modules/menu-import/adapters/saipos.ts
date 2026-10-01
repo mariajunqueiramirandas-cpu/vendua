@@ -9,6 +9,7 @@ import {
   type ImportCategory,
   type ImportOptionGroup,
   type ImportProduct,
+  type ImportSchedule,
   type Lost,
   type MenuImportV1,
   type PaymentMethod,
@@ -161,13 +162,7 @@ function forSize(
     p.optionGroups.push(r.group);
   }
   if (lift) liftFloor(p);
-  if (price.later !== undefined)
-    lost.push({
-      scope: 'product',
-      subject: name,
-      code: 'promo_schedule',
-      detail: reais(price.later),
-    });
+  if (price.promo) p.promoSchedule = price.promo;
   if (price.unreadable) {
     p.status = 'archived';
     lost.push({ scope: 'product', subject: name, code: 'promo_unreadable' });
@@ -179,8 +174,8 @@ interface Price {
   cents: number | null;
   /** the struck-through price under a standing promotion */
   was?: number;
-  /** a promotion with its own hours: the normal price comes, this is a note */
-  later?: number;
+  /** a promotion with its own hours: Venduá applies it in them */
+  promo?: { priceCents: number; windows: ImportSchedule['windows'] };
   unreadable?: boolean;
 }
 
@@ -198,7 +193,12 @@ function priced(v: Raw): Price {
   const pc = toCents(promo.price);
   if (pc === null) return { cents, unreadable: true };
   if (pc >= cents) return { cents };
-  if (list(promo.availabilities).length) return { cents, later: pc };
+  if (list(promo.availabilities).length) {
+    // the same rows and reading as the sale windows
+    const sched = scheduleOf(windows(promo.availabilities)!);
+    if (sched === 'never') return { cents };
+    if (sched) return { cents, promo: { priceCents: pc, windows: sched.windows } };
+  }
   return { cents: pc, was: cents };
 }
 
@@ -270,7 +270,8 @@ function products(item: Raw, choices: Map<number, Raw>, lost: Lost[]): ImportPro
         return new Set(prices).size > 1;
       });
     });
-    if (perSize) {
+    // a timed promotion is the product's price in its hours: each size carries its own
+    if (perSize || sizes.some((v) => priced(v).promo)) {
       out = sizes.map((v) =>
         forSize(
           item,
@@ -285,14 +286,6 @@ function products(item: Raw, choices: Map<number, Raw>, lost: Lost[]): ImportPro
       const prices = sizes.map(priced);
       // the lists cost the same for every size: price them for the first, lift once below
       const p = forSize(item, name, { cents: 0 }, ids[0] ?? null, choices, lost, false);
-      const later = prices.find((pr) => pr.later !== undefined)?.later;
-      if (later !== undefined)
-        lost.push({
-          scope: 'product',
-          subject: name,
-          code: 'promo_schedule',
-          detail: reais(later),
-        });
       if (prices.some((pr) => pr.unreadable)) {
         p.status = 'archived';
         lost.push({ scope: 'product', subject: name, code: 'promo_unreadable' });

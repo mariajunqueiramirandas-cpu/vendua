@@ -28,8 +28,35 @@ const BLOCKED: [Platform, RegExp][] = [
 ];
 const NOT_YET: [Platform, RegExp][] = [];
 
+// a page on a platform's own domain that no adapter matched is the platform's, not a store
+const PLATFORM_DOMAIN =
+  /(^|\.)(instadelivery\.com\.br|cardapioweb\.com|cardapioweb\.com\.br|ola\.click|olaclick\.app|deliverydireto\.com\.br|takeat\.app|saipos\.com|goomer\.app|anota\.ai|ifood\.com\.br)$/;
+// names that never reach the public internet (RFC 2606, 6761, 8375 and the usual LAN ones)
+const LOCAL_SUFFIXES = [
+  'localhost',
+  'local',
+  'internal',
+  'lan',
+  'home.arpa',
+  'test',
+  'invalid',
+  'example',
+];
+
+/** A name on the public DNS: labels of letters, digits and inner hyphens under an alphabetic
+ *  TLD, which also rules out IPv4 and IPv6 literals. */
+export function isPublicHostname(host: string): boolean {
+  if (host.length > 253 || !host.includes('.')) return false;
+  const labels = host.split('.');
+  if (!labels.every((l) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(l))) return false;
+  if (!/^[a-z]{2,}$/.test(labels[labels.length - 1]!)) return false;
+  return !LOCAL_SUFFIXES.some((s) => host === s || host.endsWith(`.${s}`));
+}
+
 export type Recognised =
   | { kind: 'ok'; adapter: Adapter; ref: string; url: URL }
+  /** the merchant's own domain: the read job asks which platform serves it (custom-domain.ts) */
+  | { kind: 'custom'; host: string; url: URL }
   | { kind: 'blocked'; platform: Platform }
   | { kind: 'unsupported'; platform: Platform | null }
   | { kind: 'invalid' };
@@ -46,7 +73,7 @@ export function recognise(input: string): Recognised {
     return { kind: 'invalid' };
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return { kind: 'invalid' };
-  if (url.username || url.password) return { kind: 'invalid' };
+  if (url.username || url.password || url.port) return { kind: 'invalid' };
   if (url.protocol === 'http:') url.protocol = 'https:';
   const host = url.hostname.toLowerCase();
   for (const adapter of ADAPTERS) {
@@ -55,6 +82,7 @@ export function recognise(input: string): Recognised {
   }
   for (const [platform, re] of BLOCKED) if (re.test(host)) return { kind: 'blocked', platform };
   for (const [platform, re] of NOT_YET) if (re.test(host)) return { kind: 'unsupported', platform };
+  if (!PLATFORM_DOMAIN.test(host) && isPublicHostname(host)) return { kind: 'custom', host, url };
   return { kind: 'unsupported', platform: null };
 }
 

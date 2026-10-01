@@ -439,6 +439,16 @@ export function prefetchQuery<T>(api: VenduaApi, key: string, fetcher: () => Pro
   cache.set(key, entry);
 }
 
+/** Evicts every cached read whose key matches, so mounted readers refetch in place. */
+export function invalidateMatching(match: (key: string) => boolean) {
+  for (const live of liveProviders)
+    for (const key of [...live.cache.keys()])
+      if (match(key)) {
+        live.cache.delete(key);
+        live.invalidate(key);
+      }
+}
+
 export function invalidateQuery(key: string, data?: unknown) {
   // evict + notify so mounted hooks refetch; seed when the mutation already
   // holds the fresh value (cart mutations return Cart) — an evict→refetch gap

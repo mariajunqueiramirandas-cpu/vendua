@@ -8,14 +8,16 @@ import { emitAdminTx } from '../../admin/live.ts';
 import { controlTx } from '../control.ts';
 import { ADAPTERS, adapterFor } from './adapters/index.ts';
 import { TooLarge, validateDoc } from './doc.ts';
+import { PLACE_MS, placeHost, type Dns, type Fingerprint } from './custom-domain.ts';
 import { createImportHttp, ImportFailure, LIMITS, type FailCode } from './http.ts';
 import { IMAGE_ATTEMPTS, runImageJob, type ImageJob } from './images.ts';
 
 const importLog = log.child({ mod: 'menu-import' });
 
 const TICK_MS = 3_000;
-// a read must end before its lease does, or a second worker reclaims the row mid-read
-const READ_LEASE = `${Math.max(LIMITS.importMs, ...ADAPTERS.map((a) => a.limits?.importMs ?? 0)) / 1000 + 30} seconds`;
+// a read must end before its lease does, or a second worker reclaims the row mid-read; a
+// custom domain is placed first
+const READ_LEASE = `${(Math.max(LIMITS.importMs, ...ADAPTERS.map((a) => a.limits?.importMs ?? 0)) + PLACE_MS) / 1000 + 30} seconds`;
 const IMAGE_LEASE = '2 minutes';
 const READ_ATTEMPTS = 3;
 const PER_PLATFORM = 2;
@@ -27,12 +29,16 @@ export interface ImportJobDeps {
   sql: Sql;
   /** tests point this at a fixture server */
   fetch?: Fetch;
+  /** tests fake the custom-domain DNS and the GET to the merchant's host */
+  dns?: Partial<Dns>;
+  fingerprint?: Fingerprint;
 }
 
 interface Claimed {
   id: string;
   tenant_id: string;
-  platform: string;
+  /** null until a custom domain is placed */
+  platform: string | null;
   source_url: string;
   source_ref: string;
   attempts: number;
@@ -48,7 +54,8 @@ async function claimRead(sql: Sql): Promise<Claimed | null> {
         where m.status = 'reading' and (m.lease_until is null or m.lease_until < now())
           and (
             select count(*) from menu_imports o
-            where o.platform = m.platform and o.status = 'reading' and o.lease_until > now()
+            where o.platform is not distinct from m.platform and o.status = 'reading'
+              and o.lease_until > now()
           ) < ${PER_PLATFORM}
         order by m.created_at
         limit 1
@@ -70,12 +77,64 @@ async function fail(sql: Sql, row: Claimed, code: FailCode) {
   });
 }
 
+/** A custom domain's platform and ref, set on the row before the read; false if the row has
+ *  left `reading` meanwhile (discarded) or its platform has no read to spare right now. */
+async function place(d: ImportJobDeps, row: Claimed): Promise<Claimed | false> {
+  const placed = await placeHost(row.source_ref, {
+    ...(d.fetch ? { fetch: d.fetch } : {}),
+    ...(d.dns ? { dns: d.dns } : {}),
+    ...(d.fingerprint ? { fingerprint: d.fingerprint } : {}),
+  });
+  if (!placed) throw new ImportFailure('NOT_FOUND', 'no platform claims the host');
+  const platform = placed.adapter.platform;
+  // that platform's reads already at the cap (across every store): its read waits for a later
+  // claim, which counts it there; this attempt isn't charged
+  const busy = await controlTx(
+    d.sql,
+    async (tx) =>
+      (
+        await tx<{ n: number }[]>`
+          select count(*)::int as n from menu_imports
+          where platform = ${platform} and status = 'reading' and lease_until > now() and id <> ${row.id}
+        `
+      )[0]!.n,
+  );
+  const wait = busy >= PER_PLATFORM;
+  const updated = await withTenant(d.sql, row.tenant_id, async (tx) => {
+    const rows = wait
+      ? await tx`
+          update menu_imports set platform = ${platform}, source_ref = ${placed.ref},
+            lease_until = null, attempts = greatest(attempts - 1, 0)
+          where id = ${row.id} and tenant_id = ${row.tenant_id} and status = 'reading'
+          returning id
+        `
+      : await tx`
+          update menu_imports set platform = ${platform}, source_ref = ${placed.ref}
+          where id = ${row.id} and tenant_id = ${row.tenant_id} and status = 'reading'
+          returning id
+        `;
+    if (rows.length) await emitAdminTx(tx, row.tenant_id, 'import', row.id);
+    return rows.length > 0;
+  });
+  importLog.info(
+    { import: row.id, host: row.source_ref, platform, waiting: wait },
+    'custom domain placed',
+  );
+  return updated && !wait && { ...row, platform, source_ref: placed.ref };
+}
+
 /** read → map → validateDoc; stores only the validated document. */
-export async function readImport(d: ImportJobDeps, row: Claimed): Promise<void> {
-  const adapter = adapterFor(row.platform);
-  if (!adapter) return fail(d.sql, row, 'UNREADABLE');
+export async function readImport(d: ImportJobDeps, claimed: Claimed): Promise<void> {
+  let row = claimed;
   const started = Date.now();
   try {
+    if (!row.platform) {
+      const placed = await place(d, row);
+      if (!placed) return;
+      row = placed;
+    }
+    const adapter = adapterFor(row.platform ?? '');
+    if (!adapter) return fail(d.sql, row, 'UNREADABLE');
     const http = createImportHttp({
       hosts: adapter.hosts.api,
       ...(adapter.limits ? { limits: adapter.limits } : {}),
