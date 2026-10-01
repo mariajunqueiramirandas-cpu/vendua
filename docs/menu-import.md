@@ -348,6 +348,12 @@ integer cents, computed in Core. Ranked by how many platforms need them:
 | 6   | **Delivery polygons** — Delivery Direto, OlaClick, Saipos                                                                      | zone kind `polygon`, `delivery_zones.polygon` (3–200 vertices); `resolveZone` order: neighbourhood, polygon (smallest area wins), radius; needs coordinates                                                                                                 | 0066      |
 | 7   | **Per-payment discount or surcharge, meal vouchers** — Instadelivery, Cardápio Web, Delivery Direto                            | method `meal_voucher`; `store_settings.payment_adjustments` = `{ method: { percentBps?, fixedCents? } }`, signed, applied to subtotal minus coupon (never the delivery fee); `orders.payment_adjustment_cents`; the quote takes an optional `paymentMethod` | 0067      |
 
+Rollout: migration 0065 rebuilds the `cart_items` unique index to include `modifier_qty`, so an old
+instance's add-to-cart (`on conflict` on the old columns) fails until it drains. Deploy 0065 with no
+overlap between old and new instances. An option with a negative price can be picked only once, and
+a line priced below zero is refused (422 `INVALID_MODIFIER`). Payment adjustments round halves away
+from zero and apply to the subtotal after the coupon, while the store offers that method.
+
 Once a gap lands, its adapter `lost` code (`promo_price`, `option_quantity`, `pizza_pricing`,
 `category_description`, `option_details`, `delivery_polygon`, `payment_adjustment`) is retired.
 Still `lost`: category image, promo schedules, per-option stock, fee computed only per address,

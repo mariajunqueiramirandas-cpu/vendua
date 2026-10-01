@@ -679,6 +679,8 @@ export async function insertLine(
   // against the live catalog (repriceLines)
   const chosen = pickedOptions(product, modifierIds, modifierQty);
   const unit = unitPriceCents(product.basePriceCents, chosen.groups) + comboDelta(picks);
+  if (unit < 0)
+    throw new HttpError(422, 'INVALID_MODIFIER', 'the selected options price this item below zero');
 
   // same product + modifier set + kit composition merges into one line; merged
   // qty capped by CHECK (qty <= 99) → INVALID_QTY like PATCH
@@ -720,6 +722,12 @@ export async function repriceLines(
     const picks =
       product.kind === 'combo' ? validateCombo(product.comboSlots, item.comboSelections).picks : [];
     const unit = unitPriceCents(product.basePriceCents, chosen.groups) + comboDelta(picks);
+    if (unit < 0)
+      throw new HttpError(
+        422,
+        'INVALID_MODIFIER',
+        'the selected options price this item below zero',
+      );
     if (unit === item.unitPriceCents) continue;
     changed++;
     await tx`

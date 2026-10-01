@@ -268,6 +268,32 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('catalog model gaps (db)', () =>
     expect(mg[1].modifiers[1]).toMatchObject({ maxQty: 1, description: null, imageUrl: null });
   });
 
+  test('a discount option cannot be repeated, and never prices a line below zero', async () => {
+    const p = await admin('POST', '/products', { name: 'Brinde', categoryId, priceCents: 100 });
+    expect(p.status).toBe(201);
+    const id = p.body.product.id;
+    const put = (maxQty: number) =>
+      admin('PUT', `/products/${id}/options`, {
+        groups: [
+          {
+            name: 'Cupom',
+            minSelect: 0,
+            maxSelect: 5,
+            options: [{ name: 'Desconto', priceDeltaCents: -300, maxQty }],
+          },
+        ],
+      });
+    expect((await put(5)).status).toBe(422);
+    const ok = await put(1);
+    expect(ok.status).toBe(200);
+    const discount = ok.body.product.groups[0].options[0].id;
+
+    const auth = await session();
+    const r = await addItem(auth, { productId: id, qty: 1, modifierIds: [discount] });
+    expect(r.status).toBe(422);
+    expect(r.body.error.code).toBe('INVALID_MODIFIER');
+  });
+
   let orderId = '';
   let orderToken = '';
 

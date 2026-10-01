@@ -695,6 +695,21 @@ export function mountCatalog(d: AdminDeps) {
         const parsed = options.map((o: unknown, oi: number) => {
           if (!isObj(o)) throw new HttpError(422, 'BAD_REQUEST', 'option must be an object');
           const field = `groups[${gi}].options[${oi}]`;
+          // a repeatable discount would let the shopper multiply a line below zero
+          if (
+            typeof o.priceDeltaCents === 'number' &&
+            o.priceDeltaCents < 0 &&
+            typeof o.maxQty === 'number' &&
+            o.maxQty > 1
+          )
+            throw new HttpError(
+              422,
+              'BAD_REQUEST',
+              'an option with a discount can be picked only once',
+              {
+                field: `${field}.maxQty`,
+              },
+            );
           return {
             id: typeof o.id === 'string' && UUID_RE.test(o.id) ? o.id : null,
             name: text(o.name, `${field}.name`, 60, 1),
