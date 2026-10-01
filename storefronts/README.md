@@ -9,7 +9,7 @@ the Kernel surface: [packages/kernel/API.md](../packages/kernel/API.md).
 
 `package.json` → `vendua.tenant` names the Core tenant a store builds for (the
 fleet commands use it). In-repo stores: `_template` → `loja-modelo` (:5175),
-`quero-pudim` (:5174), `_examples/quero-pudim` → `example-quero-pudim` (:5176).
+`quero-pudim` (:5174).
 
 Shipping: every deploy runs `vendua release publish --all` (the compose `publish` service).
 Each storefront folder is a **bundle**; its build becomes an immutable release the edge serves
@@ -20,9 +20,8 @@ store's ([07](../docs/architecture/07-deployment-and-hosting.md),
 
 Reserved directories:
 
-- `_template/` — `vendua scaffold` source; always green (Phase 1).
-- `_examples/` — curated golden storefronts; the only sibling read set for
-  agents (seeded from the strongest Phase 0 spike storefronts).
+- `_template/` — `vendua scaffold` source and the platform's only reference storefront;
+  always green (Phase 1).
 
 Isolation is enforced, not conventional: a `storefront:<slug>` PR may only
 touch `storefronts/<slug>/**` (changed-path CI check, Phase 1).

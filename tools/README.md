@@ -43,7 +43,6 @@ Mapping:
 | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | `packages/{kernel,cli,conformance,ui-defaults}/**`, root `package.json`, `bun.lock`, `tsconfig.base.json` | `allStorefronts: true` + that workspace listed |
 | `storefronts/<slug>/**`                                                                                   | `storefronts/<slug>`                           |
-| `storefronts/_examples/<slug>/**`                                                                         | `storefronts/_examples/<slug>`                 |
 | other paths under `storefronts/` (Dockerfile, README — shared infra that can't be attributed to one slug) | `allStorefronts: true`                         |
 | `packages/<other>/**`                                                                                     | `packages/<name>`                              |
 | `site/**`                                                                                                 | `site`                                         |
@@ -51,6 +50,5 @@ Mapping:
 
 `packages` lists workspace _directories_, not package names — consumers
 `cd` into them and run the script they need (`build`, `check`). When
-`allStorefronts` is true, expand to every `storefronts/*/` and
-`storefronts/_examples/*/` dir. Used by the `check` job's Builds step; on
+`allStorefronts` is true, expand to every `storefronts/*/` dir. Used by the `check` job's Builds step; on
 push to main CI builds all storefronts instead of diffing.

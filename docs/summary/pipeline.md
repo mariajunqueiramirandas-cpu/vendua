@@ -23,7 +23,7 @@ conversation → DesignSpec (validated JSON) → agent_tasks queue
   `vendua scaffold` yields a storefront that already passes conformance;
   generation is _transformation_, and only the diff is judged.
 - **Task contract**: sparse checkout (Kernel + docs + `_template` +
-  `_examples` + the slug); reads never include the rest of the fleet; writes
+  the slug); reads never include the rest of the fleet; writes
   only `storefronts/<slug>/**`; done-when = conformance green + generation QA.
 - **Fix loop**: each CI failure → failure bundle (logs, test IDs, screenshots,
   trace) → agent resumes with it. Cap 4 iterations → human with full history.

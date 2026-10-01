@@ -5,7 +5,7 @@ Condenses `architecture/06–11`. Full docs are normative.
 ## Monorepo (`06`)
 
 One repo: `packages/` (core, kernel, ui-defaults, cli, conformance, codemods,
-loader, control-plane, admin, edge) + `storefronts/` (`_template`, `_examples`,
+loader, control-plane, admin, edge) + `storefronts/` (`_template`,
 `<slug>…`). Storefronts consume Kernel via workspace deps — no publishing.
 
 - **Isolation (enforced)**: `storefront:<slug>` PRs may only touch
@@ -18,9 +18,9 @@ loader, control-plane, admin, edge) + `storefronts/` (`_template`, `_examples`,
 - **Assets**: binaries never in git — `assets/manifest.json` → content-hash
   keys in the assets bucket; build uploads + rewrites to CDN URLs.
 - **Agents**: sparse, read-scoped checkout
-  (`--filter=blob:none --sparse`; Kernel + `docs` + `_template` + `_examples` +
-  the slug); write scope = the slug only. `_examples/` = curated golden stores,
-  the only sibling read set. Codemods are full-clone CI batch jobs.
+  (`--filter=blob:none --sparse`; Kernel + `docs` + `_template` + the slug);
+  write scope = the slug only. `_template` is the only reference store.
+  Codemods are full-clone CI batch jobs.
 - **Sharding trigger**: clone >10 min shallow, `git status` >30 s, or GitHub UI
   degradation → split into 2–4 `fleet-*` repos on published Kernel versions;
   Control Plane already tracks `storefront → repo/path`.

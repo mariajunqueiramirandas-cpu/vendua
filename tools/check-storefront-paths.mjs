@@ -95,7 +95,7 @@ if (unique.length > 1) {
 }
 if (unique.length === 0) {
   // unlabelled ≠ unbounded: any diff touching a non-reserved storefront is a
-  // storefront PR; underscored dirs (_template, _examples) are exempt
+  // storefront PR; underscored dirs (`_template`) are platform-owned and exempt
   files ??= changedFiles(opts.base ?? 'origin/main');
   const sfRe = /^storefronts\/([^/]+)\//;
   const scoped = files.map((f) => sfRe.exec(f)?.[1]);

@@ -22,7 +22,6 @@
 # touching the platform rules.
 /storefronts/                  @mariajunqueiramirandas-cpu
 
-# The scaffold template and golden examples are platform-owned canonical
-# references, not customer storefronts.
+# The scaffold template is the platform-owned canonical reference, not a
+# customer storefront.
 /storefronts/_template/        @mariajunqueiramirandas-cpu
-/storefronts/_examples/        @mariajunqueiramirandas-cpu

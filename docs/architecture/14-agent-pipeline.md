@@ -72,11 +72,11 @@ Agent task contract:
 
 ```
 checkout: sparse clone — `packages/kernel`, `packages/conformance`, `docs`,
-          `storefronts/_template`, `storefronts/_examples`,
-          `storefronts/<slug>` (see [06](06-monorepo.md#agents-in-the-monorepo))
+          `storefronts/_template`, `storefronts/<slug>`
+          (see [06](06-monorepo.md#agents-in-the-monorepo))
 inputs:   storefronts/<slug>/ (scaffolded), DesignSpec, docs/contract summary,
           Kernel docs index
-reads:    Kernel source, _template, _examples — never the rest of the fleet
+reads:    Kernel source, _template, its own store — never the rest of the fleet
 allowed:  edits under storefronts/<slug>/** only (CI changed-path check)
 forbidden: packages/**, other storefronts, contract-required files' semantics
 done-when: conformance green + generation QA produced
@@ -112,7 +112,7 @@ Per `agent_tasks` row: `cost_usd`, wall time, iterations, outcome. Track:
 ## Honest risks with agents
 
 - **Variance**: two runs of the same spec produce different quality. Mitigate:
-  DesignSpec richness, golden example storefronts as reference, human gate at
+  DesignSpec richness, `_template` as the reference storefront, human gate at
   launch.
 - **Contract drift over time**: agents trained on old scaffolds produce old
   patterns — keep the scaffold and agent docs generated from the same source.

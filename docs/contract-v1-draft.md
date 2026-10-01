@@ -7,8 +7,8 @@
 > [03 — The Storefront Contract](architecture/03-storefront-contract.md); where
 > they disagree, this draft records what the spikes proved we need.
 >
-> Sources: `storefronts/quero-pudim/OBSERVATIONS.md`,
-> `storefronts/brasa/OBSERVATIONS.md`, `storefronts/forn/OBSERVATIONS.md` —
+> Sources: the spikes' observations, collected in
+> [phase-0-findings.md](phase-0-findings.md) (quero-pudim, brasa, forn) —
 > three feature-complete storefronts driven entirely through this contract.
 
 Everything in 03 remains normative. This draft adds what building the spike

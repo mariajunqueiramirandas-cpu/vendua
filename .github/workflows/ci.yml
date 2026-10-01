@@ -110,7 +110,7 @@ jobs:
       - name: Typecheck
         run: |
           # every workspace dir with a `check` script — new packages need zero CI edits
-          for dir in packages/* site apps/* storefronts/* storefronts/_examples/*; do
+          for dir in packages/* site apps/* storefronts/*; do
             [ -d "$dir" ] || continue
             [ -f "$dir/package.json" ] || continue
             if jq -e '.scripts.check' "$dir/package.json" > /dev/null; then
@@ -139,7 +139,7 @@ jobs:
           targets="$(echo "$affected" | jq -r '.packages[]')"
           if [ "$(echo "$affected" | jq -r '.allStorefronts')" = "true" ]; then
             targets="$targets
-          $(ls -d storefronts/*/ storefronts/_examples/*/ 2>/dev/null)"
+          $(ls -d storefronts/*/ 2>/dev/null)"
           fi
           for dir in $targets; do
             dir="${dir%/}"

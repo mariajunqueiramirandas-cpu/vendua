@@ -1,9 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
-// The in-repo fleet: every storefront package (storefronts/* and
-// storefronts/_examples/*). `vendua.tenant` in its package.json names the Core
-// tenant it builds for (default: the package slug).
+// The in-repo fleet: every storefront package under storefronts/ (`_template` included).
+// `vendua.tenant` in its package.json names the Core tenant it builds for (default: the
+// package slug).
 
 export interface FleetStore {
   dir: string;
@@ -25,14 +25,12 @@ function read(dir: string): FleetStore | null {
 
 export function fleet(root: string): FleetStore[] {
   const out: FleetStore[] = [];
-  for (const base of ['storefronts', join('storefronts', '_examples')]) {
-    const abs = join(root, base);
-    if (!existsSync(abs)) continue;
-    for (const name of readdirSync(abs).sort()) {
-      if (name.startsWith('.')) continue;
-      const s = read(join(abs, name));
-      if (s) out.push({ ...s, rel: relative(root, s.dir) });
-    }
+  const abs = join(root, 'storefronts');
+  if (!existsSync(abs)) return out;
+  for (const name of readdirSync(abs).sort()) {
+    if (name.startsWith('.')) continue;
+    const s = read(join(abs, name));
+    if (s) out.push({ ...s, rel: relative(root, s.dir) });
   }
   return out;
 }

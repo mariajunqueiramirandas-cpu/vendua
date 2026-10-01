@@ -3,7 +3,7 @@
 // docs/architecture/06-monorepo.md). Prints
 // `{"packages": [<workspace dirs>], "allStorefronts": <bool>, "coreTests": <bool>, "conformance": <bool>, "adminGate": <bool>, "edgeSmoke": <bool>}`
 // — `packages` lists directories consumers `cd` into; `allStorefronts: true` expands
-// to every `storefronts/*/` and `storefronts/_examples/*/` dir; `coreTests` /
+// to every `storefronts/*/` dir; `coreTests` /
 // `conformance` gate the CI jobs of the same name; `adminGate` gates the merchant admin's
 // screenshot/axe job (it runs against Core + the Kernel's section catalog); `edgeSmoke` gates
 // the Control Plane smoke (Core + the edge + `vendua release` serving the `_template` build).
@@ -58,7 +58,7 @@ export function mapFiles(files) {
   let rootChanged = false;
   for (const f of files) {
     const parts = f.split('/');
-    const [top, second, third] = parts;
+    const [top, second] = parts;
     const depth = parts.length;
     if (top === 'packages') {
       if (depth === 2) continue; // file directly under packages/ — not a workspace
@@ -67,10 +67,6 @@ export function mapFiles(files) {
     } else if (top === 'storefronts') {
       if (depth === 2) {
         allStorefronts = true; // shared storefront infra — can't attribute to one slug
-      } else if (second === '_examples') {
-        if (depth === 3)
-          allStorefronts = true; // file directly under _examples/
-        else packages.add(`storefronts/_examples/${third}`);
       } else {
         packages.add(`storefronts/${second}`);
       }

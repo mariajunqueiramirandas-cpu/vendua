@@ -163,7 +163,7 @@ export async function cmdRelease(args: string[], root: string): Promise<never> {
   const known = new Set(['--no-build', '--no-register', '--all', '--core', '--artifacts']);
   const unknown = rest.find((a) => a.startsWith('--') && !known.has(a));
   if (unknown) die(`unknown option '${unknown}'\nusage:\n${USAGE}`, 2);
-  // bundle names (`_template`, `_examples/quero-pudim`) work as well as slugs and tenants
+  // bundle names (`_template`, `quero-pudim`) work as well as slugs and tenants
   const slugs = rest
     .filter((a, i) => !a.startsWith('--') && (ai < 0 || i !== ai + 1))
     .map((a) => (fleet(root).some((f) => f.rel === `storefronts/${a}`) ? `storefronts/${a}` : a));
