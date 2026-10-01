@@ -1,0 +1,46 @@
+name: Playwright Chromium
+description: >-
+  Chromium for the repo's Playwright, cached across runs, plus only the system libraries the runner
+  lacks. `playwright install --with-deps` also pulls CJK/Thai/Unicode fallback fonts and xvfb (no
+  check here renders non-Latin pages or runs headed) and upgrades mesa; that apt download from the
+  runner's mirror has taken over 5 minutes.
+runs:
+  using: composite
+  steps:
+    # packages/conformance pins @playwright/test; a bare `bunx playwright` at the root resolves
+    # whatever version npm serves, whose browser build the tests wouldn't use
+    - name: Playwright version
+      id: version
+      shell: bash
+      working-directory: packages/conformance
+      run: echo "v=$(bunx playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-chromium-${{ runner.os }}-${{ steps.version.outputs.v }}
+    - name: System libraries
+      shell: bash
+      run: |
+        # Playwright's Chromium list for ubuntu24.04, plus its Latin and emoji fonts
+        need=(
+          libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2
+          libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 libnspr4 libnss3
+          libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3
+          libxkbcommon0 libxrandr2
+          libfontconfig1 libfreetype6 fonts-liberation fonts-noto-color-emoji
+        )
+        missing=()
+        for p in "${need[@]}"; do
+          dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || missing+=("$p")
+        done
+        if [ ${#missing[@]} -gt 0 ]; then
+          echo "installing: ${missing[*]}"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends "${missing[@]}"
+        else
+          echo "all present"
+        fi
+    - name: Browser
+      shell: bash
+      working-directory: packages/conformance
+      run: bunx playwright install chromium

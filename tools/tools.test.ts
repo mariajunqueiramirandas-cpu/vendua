@@ -103,8 +103,12 @@ describe('mapFiles', () => {
     expect(mapFiles(['storefronts/acme/routes/index.tsx']).conformance).toBe(false);
   });
 
-  test('workflow or root dependency changes run everything', () => {
-    for (const f of ['.github/workflows/ci.yml', 'bun.lock']) {
+  test('workflow, CI action or root dependency changes run everything', () => {
+    for (const f of [
+      '.github/workflows/ci.yml',
+      '.github/actions/playwright-chromium/action.yml',
+      'bun.lock',
+    ]) {
       const r = mapFiles([f]);
       expect([r.coreTests, r.conformance]).toEqual([true, true]);
     }
