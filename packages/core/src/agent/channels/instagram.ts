@@ -11,6 +11,7 @@ import { HttpError } from '../../platform/http.ts';
 import { controlTx } from '../../modules/control.ts';
 import { emitControlEvent } from '../../modules/control-events.ts';
 import { DEFAULT_SECRET, getIntegration, type IntegrationRow } from '../../modules/integrations.ts';
+import { recordChannelState } from '../../modules/system-events.ts';
 import { instagramHandle } from '../../modules/threads.ts';
 import { log } from '../../platform/log.ts';
 
@@ -69,7 +70,8 @@ export function igState(): IgState {
   return last.state;
 }
 
-function setStatus(next: IgStatus) {
+function setStatus(sql: Sql, next: IgStatus) {
+  const prev = last.state;
   const changed =
     next.state !== last.state ||
     next.error?.code !== last.error?.code ||
@@ -77,6 +79,41 @@ function setStatus(next: IgStatus) {
     next.login?.stepId !== last.login?.stepId;
   last = next;
   if (changed) emitControlEvent('channel.health', 'instagram');
+  watchOutage(sql, prev, next);
+}
+
+// Staff hear when the account stops working (ADR 0023): a session Instagram killed at once,
+// any other error only if it outlasts this — a sidecar redeploy is a minute of 'error'.
+const OUTAGE_AFTER_MS = 3 * 60_000;
+let notOpenSince: number | null = null;
+let downSent = false;
+
+function watchOutage(sql: Sql, prev: IgState, next: IgStatus) {
+  if (next.state === 'open') {
+    notOpenSince = null;
+    downSent = false;
+    if (prev !== 'open') {
+      const who = next.account?.username ? ` como @${next.account.username}` : '';
+      void recordChannelState(sql, 'instagram', 'up', `conectado${who}`);
+    }
+    return;
+  }
+  // off = the driver turned off or staff logged out, not an outage
+  if (next.state === 'off') {
+    notOpenSince = null;
+    return;
+  }
+  notOpenSince ??= Date.now();
+  if (next.state !== 'error' || downSent) return;
+  const dead = DEAD_SESSION.has(next.error?.code ?? '');
+  if (!dead && Date.now() - notOpenSince < OUTAGE_AFTER_MS) return;
+  downSent = true;
+  void recordChannelState(
+    sql,
+    'instagram',
+    'down',
+    next.error?.message || next.error?.code || 'o sidecar do instagram está em erro',
+  );
 }
 
 function sidecarUrl(): string {
@@ -308,7 +345,7 @@ async function reconcileOnce(sql: Sql, integration: IntegrationRow | null): Prom
         (e) => e instanceof SidecarError && e.code === 'no_secret',
       );
     }
-    setStatus({ state: 'off' });
+    setStatus(sql, { state: 'off' });
     return;
   }
   stopSent = false;
@@ -325,11 +362,11 @@ async function reconcileOnce(sql: Sql, integration: IntegrationRow | null): Prom
         igLog.info('stored session pushed to sidecar');
       }
     }
-    setStatus(st);
+    setStatus(sql, st);
   } catch (e) {
     const err = e instanceof SidecarError ? e : sidecarHttpErrorish(e);
     igLog.warn({ err: err.message }, 'sidecar reconcile failed');
-    setStatus({ state: 'error', error: { code: err.code, message: err.message } });
+    setStatus(sql, { state: 'error', error: { code: err.code, message: err.message } });
   }
 }
 
@@ -438,7 +475,7 @@ export async function igLogout(sql: Sql): Promise<void> {
       throw sidecarHttpError(e);
     });
   }
-  setStatus({ state: 'off' });
+  setStatus(sql, { state: 'off' });
   igLog.info('instagram logged out — session wiped');
 }
 
@@ -597,7 +634,7 @@ export async function applyIgEvent(
     if (evt.status.state === 'error' && DEAD_SESSION.has(evt.status.error?.code ?? '')) {
       await clearSession(sql);
     }
-    setStatus({ ...evt.status, login: last.login ?? null });
+    setStatus(sql, { ...evt.status, login: last.login ?? null });
     return null;
   }
   if (evt.type === 'session') {

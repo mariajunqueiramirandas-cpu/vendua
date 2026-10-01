@@ -190,6 +190,66 @@ export interface Integration {
   createdAt: string;
   updatedAt: string;
 }
+export type DiscordLevel = 'off' | 'silent' | 'normal' | 'ping';
+export interface DiscordKind {
+  kind: string;
+  category: string;
+  level: DiscordLevel;
+  label: string;
+  hint: string | null;
+  /** edits an earlier card; its level only governs the extra reply */
+  follows: boolean;
+}
+export interface DiscordSetting {
+  channels: Record<string, string>;
+  levels: Record<string, DiscordLevel>;
+  staffRoleId: string | null;
+  digest: { enabled: boolean; hour: number };
+  excerpts: boolean;
+}
+export interface DiscordOverview {
+  catalog: {
+    levels: DiscordLevel[];
+    categories: { key: string; emoji: string; label: string; hint: string }[];
+    kinds: DiscordKind[];
+    channelKeys: string[];
+  };
+  app: {
+    ok: boolean;
+    reason: string | null;
+    enabled: boolean;
+    applicationId: string | null;
+    guildId: string | null;
+    publicKey: string | null;
+    tokenEnv: string;
+    tokenPresent: boolean;
+    invite: string | null;
+    endpointPath: string;
+  };
+  setting: DiscordSetting;
+  state: {
+    mutes: Record<string, string>;
+    commands: { hash: string; at: string } | null;
+    commandsCurrent: boolean;
+    commandsError: { at: string; message: string } | null;
+    lastError: { at: string; message: string } | null;
+  };
+  queue: {
+    pending: number;
+    failed: number;
+    skipped: number;
+    sent: number;
+    last: string | null;
+    oldest: string | null;
+  };
+  failures: { kind: string; error: string | null; at: string }[];
+  team: { members: number; linked: number };
+}
+export interface DiscordGuild {
+  guild: { id: string; name: string };
+  channels: { id: string; name: string; category: string | null }[];
+  roles: { id: string; name: string; color: number }[];
+}
 export interface AgentRun {
   id: string;
   kind: string;
@@ -538,6 +598,27 @@ const apiBase = {
     }>('/staff/test', { method: 'POST' }),
   testIntegration: (kind: string) =>
     req<{ ok: boolean; detail: string }>(`/integrations/${kind}/test`, { method: 'POST' }),
+
+  discord: () => req<DiscordOverview>('/discord'),
+  discordGuild: () => req<DiscordGuild>('/discord/guild'),
+  discordSetup: (staffRoleId: string) =>
+    req<{ channels: Record<string, string>; created: string[] }>('/discord/setup', {
+      method: 'POST',
+      body: JSON.stringify({ staffRoleId }),
+    }),
+  discordTest: () =>
+    req<{
+      results: { channelId: string; categories: string[]; ok: boolean; error?: string }[];
+    }>('/discord/test', { method: 'POST' }),
+  discordCommands: () =>
+    req<{ ok: boolean; error: string | null; commands: number }>('/discord/commands', {
+      method: 'POST',
+    }),
+  discordMute: (category: string, minutes: number) =>
+    req<{ mutes: Record<string, string> }>(`/discord/mutes/${category}`, {
+      method: 'PUT',
+      body: JSON.stringify({ minutes }),
+    }),
 
   runs: (
     q: {

@@ -11,6 +11,7 @@ import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts'
 import { offlinePayment, onlineOffer, onlinePayment } from './payments/store-payments.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 import { validateSchedule } from './preorder.ts';
+import { recordStaffEventTx } from './staff-events.ts';
 import { drawStock, stockDemand } from './stock.ts';
 import { deriveStatus, type StoreSettingsRow } from './store.ts';
 
@@ -242,5 +243,45 @@ export async function placeOrderTx(
     // the merchant admin's live board rings on commit
     emitAdminTx(tx, tenantId, 'order.placed', orderId),
   ]);
+
+  // staff events (ADR 0023) after the batch: each one is a savepoint, which must not interleave
+  // with other statements of this tx
+  const store = (
+    await tx<{ name: string; orders: number }[]>`
+      select name,
+        (select count(*) from (select 1 from orders where tenant_id = ${tenantId} limit 2) o)::int as orders
+      from tenants where id = ${tenantId}
+    `
+  )[0];
+  const storeName = store?.name ?? '';
+  await recordStaffEventTx(
+    tx,
+    'order.placed',
+    {
+      orderId,
+      number,
+      storeName,
+      totalCents: total,
+      method,
+      fulfillment: delivery.mode,
+      items: cart.items.reduce((n, i) => n + i.qty, 0),
+      scheduledFor,
+    },
+    { tenantId },
+  );
+  if (store?.orders === 1) {
+    await recordStaffEventTx(
+      tx,
+      'store.first_order',
+      { orderId, number, storeName, totalCents: total, method },
+      { tenantId, dedupeKey: `first_order:${tenantId}` },
+    );
+    await recordStaffEventTx(
+      tx,
+      'store.onboarding',
+      { step: 'first_order' },
+      { tenantId, dedupeKey: `onboarding:${tenantId}:first_order` },
+    );
+  }
   return orderId;
 }

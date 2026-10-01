@@ -2,6 +2,7 @@ import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { mintLoyaltyRewards } from './customer.ts';
+import { recordStaffEventTx, type OrderStep } from './staff-events.ts';
 import { restoreStock } from './stock.ts';
 
 export const ORDER_STATES = [
@@ -227,6 +228,26 @@ export async function loadOrderView(
   };
 }
 
+/** The order's staff card (ADR 0023) moves on — at most once per order and step. */
+export async function recordOrderStep(
+  tx: Sql,
+  tenantId: string,
+  order: { id: string; number: number },
+  to: OrderStep,
+  actor: string | null,
+): Promise<void> {
+  const store = (await tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`)[0];
+  await recordStaffEventTx(
+    tx,
+    'order.updated',
+    { orderId: order.id, number: order.number, storeName: store?.name ?? '', to, actor },
+    { tenantId, dedupeKey: `order:${order.id}:${to}` },
+  );
+}
+
+/** the steps the staff card shows; the kitchen's intermediate ones would only be noise */
+const STAFF_STEPS: ReadonlySet<OrderState> = new Set(['delivered', 'cancelled', 'refunded']);
+
 /** Applies a transition inside the tenant tx — order update + event + outbox commit atomically. */
 export async function transitionOrder(
   tx: Sql,
@@ -236,8 +257,8 @@ export async function transitionOrder(
   actor: string,
   meta: Record<string, unknown> = {},
 ): Promise<void> {
-  const rows = await tx<{ state: OrderState; customer_phone: string | null }[]>`
-    select state, customer_phone from orders where tenant_id = ${tenantId} and id = ${orderId} for update
+  const rows = await tx<{ state: OrderState; customer_phone: string | null; number: number }[]>`
+    select state, customer_phone, number from orders where tenant_id = ${tenantId} and id = ${orderId} for update
   `;
   const order = rows[0];
   if (!order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
@@ -255,6 +276,14 @@ export async function transitionOrder(
   `;
   if (to === 'cancelled') await restoreStock(tx, tenantId, orderId);
   if (to === 'delivered') await mintLoyaltyRewards(tx, tenantId, order.customer_phone);
+  if (STAFF_STEPS.has(to))
+    await recordOrderStep(
+      tx,
+      tenantId,
+      { id: orderId, number: order.number },
+      to as OrderStep,
+      actor,
+    );
   // delivered on commit — live waiters (order-live.ts) wake then, never on a rolled-back change
   await tx`select pg_notify(${ORDER_CHANNEL}, ${orderId})`;
   await emitAdminTx(tx, tenantId, 'order.changed', orderId);

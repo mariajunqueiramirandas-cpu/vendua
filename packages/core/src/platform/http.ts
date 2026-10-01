@@ -19,6 +19,15 @@ export class HttpError extends Error {
   }
 }
 
+type UnhandledErrorHook = (err: unknown, info: { method: string; path: string }) => void;
+let unhandledErrorHook: UnhandledErrorHook | null = null;
+
+/** One observer of the errors answered with a 500 (index.ts: the staff `system.error`
+ *  reporter). It must not throw or block; null removes it. */
+export function onUnhandledError(fn: UnhandledErrorHook | null): void {
+  unhandledErrorHook = fn;
+}
+
 export function errorJson(err: unknown, c: Context) {
   if (err instanceof HttpError) {
     const body: Record<string, unknown> = {
@@ -36,6 +45,11 @@ export function errorJson(err: unknown, c: Context) {
     },
     'unhandled error',
   );
+  try {
+    unhandledErrorHook?.(err, { method: c.req.method, path: c.req.path });
+  } catch {
+    /* reporting never changes the answer */
+  }
   return c.json({ error: { code: 'INTERNAL', message: 'internal error' } }, 500);
 }
 

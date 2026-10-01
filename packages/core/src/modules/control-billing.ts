@@ -230,7 +230,7 @@ export function mountControlBilling(o: {
           where id = ${id}
         `;
       }
-      if (!(await markInvoicePaid(ctx, tx, inv.tenant_id, id, now, now)))
+      if (!(await markInvoicePaid(ctx, tx, inv.tenant_id, id, now, now, { method: 'manual' })))
         throw new HttpError(409, 'INVOICE_PAID', 'already paid');
       return { status: 200, body: { ok: true } };
     });

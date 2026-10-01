@@ -13,6 +13,7 @@ import {
 } from '../modules/payments/connections.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import { paymentReviews } from '../modules/payments/store-payments.ts';
+import { recordStaffEventTx } from '../modules/staff-events.ts';
 import {
   DEFAULT_PAYMENT_METHODS,
   MAX_FIXED_CENTS,
@@ -318,6 +319,18 @@ export function mountPayments(d: AdminDeps) {
         after: { accountId: tokens.providerUserId, liveMode: tokens.liveMode },
       });
       await emitAdminTx(tx, t.id, 'billing');
+      await recordStaffEventTx(
+        tx,
+        'payments.connection',
+        { storeName: t.name, connected: true, detail: tokens.liveMode ? null : 'modo de teste' },
+        { tenantId: t.id },
+      );
+      await recordStaffEventTx(
+        tx,
+        'store.onboarding',
+        { step: 'payments' },
+        { tenantId: t.id, dedupeKey: `onboarding:${t.id}:payments` },
+      );
     });
     return back('mp=connected');
   });
@@ -336,6 +349,12 @@ export function mountPayments(d: AdminDeps) {
         });
         await emitAdminTx(tx, t.id, 'billing');
         await emitAdminTx(tx, t.id, 'store');
+        await recordStaffEventTx(
+          tx,
+          'payments.connection',
+          { storeName: t.name, connected: false, detail: 'pelo lojista' },
+          { tenantId: t.id },
+        );
       }
       return { status: 200, body: await paymentsView(tx, t.id, provider) };
     }),

@@ -1,6 +1,7 @@
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
-import { DEFAULT_BUNDLE, type FleetDeps } from './deps.ts';
+import { recordStaffEventTx } from '../staff-events.ts';
+import { DEFAULT_BUNDLE, storeNameTx, type FleetDeps } from './deps.ts';
 import { openIncidentTx, type IncidentRow } from './incidents.ts';
 import { latestPassedTx, type ReleaseRow } from './releases.ts';
 
@@ -128,6 +129,19 @@ export async function promoteTx(
   `;
   // verify soon instead of at the next 60 s slot
   await tx`update fleet_probes set next_check_at = now() where tenant_id = ${tenantId}`;
+  // only staff promote by hand; rollbackTx records its own
+  if (o.kind === 'promote')
+    await recordStaffEventTx(
+      tx,
+      'deployment.manual',
+      {
+        action: 'promote',
+        storeName: (await storeNameTx(tx, tenantId)) ?? tenantId,
+        releaseId,
+        by: o.actor,
+      },
+      { tenantId },
+    );
   return row;
 }
 
@@ -155,7 +169,7 @@ export async function rollbackTx(
     where tenant_id = ${tenantId} and release_id = ${current} and status in ('pending', 'live')
   `;
   const reason = o.reason?.trim() || 'voltou para a versão anterior';
-  return (await promoteTx(tx, d, tenantId, target, {
+  const dep = (await promoteTx(tx, d, tenantId, target, {
     kind: 'rollback',
     actor: o.actor,
     reason,
@@ -163,6 +177,18 @@ export async function rollbackTx(
     pinnedReason: reason,
     force: true,
   }))!;
+  await recordStaffEventTx(
+    tx,
+    'deployment.manual',
+    {
+      action: 'rollback',
+      storeName: (await storeNameTx(tx, tenantId)) ?? tenantId,
+      releaseId: target,
+      by: o.actor,
+    },
+    { tenantId },
+  );
+  return dep;
 }
 
 /** Desired vs live: an auto store runs its bundle's newest passed release. */
@@ -256,9 +282,14 @@ export async function failDeploymentTx(
     where id = ${dep.id} and status = 'pending' returning id
   `;
   if (!failed[0]) return { rollback: null, incident: null };
-  const slug =
-    (await tx<{ slug: string }[]>`select slug from tenants where id = ${dep.tenant_id}`)[0]?.slug ??
-    dep.tenant_id;
+  const store = (
+    await tx<{ slug: string; name: string; host: string | null }[]>`
+      select slug, name, (select host from domains where tenant_id = t.id
+                          order by is_primary desc, length(host), host limit 1) as host
+      from tenants t where id = ${dep.tenant_id}
+    `
+  )[0];
+  const slug = store?.slug ?? dep.tenant_id;
   const previous = dep.previous_release_id
     ? ((await tx<ReleaseRow[]>`select * from releases where id = ${dep.previous_release_id}`)[0] ??
       null)
@@ -277,6 +308,19 @@ export async function failDeploymentTx(
       force: true,
     });
   }
+  await recordStaffEventTx(
+    tx,
+    'deployment.failed',
+    {
+      deploymentId: dep.id,
+      storeName: store?.name ?? slug,
+      host: store?.host ?? null,
+      releaseId: dep.release_id,
+      rolledBackTo: canRollBack ? previous.id : null,
+      reason: why,
+    },
+    { tenantId: dep.tenant_id, dedupeKey: `deployment:${dep.id}:failed` },
+  );
   const incident = await openIncidentTx(tx, {
     tenantId: dep.tenant_id,
     kind: 'deployment_failed',

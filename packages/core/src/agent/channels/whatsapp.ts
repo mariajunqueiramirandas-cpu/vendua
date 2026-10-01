@@ -2,6 +2,7 @@ import type { Sql } from '../../platform/db.ts';
 import { getIntegration, type IntegrationRow } from '../../modules/integrations.ts';
 import { controlTx } from '../../modules/control.ts';
 import { emitControlEvent } from '../../modules/control-events.ts';
+import { recordChannelState } from '../../modules/system-events.ts';
 import { log } from '../../platform/log.ts';
 
 const waLog = log.child({ mod: 'whatsapp' });
@@ -295,6 +296,43 @@ function dbAuthState(
   };
 }
 
+// Staff hear when the paired number stops working (ADR 0023): a logout at once, any other close
+// only if the socket isn't open again within this — the 5 s reconnect after a blip is no outage.
+const OUTAGE_AFTER_MS = 3 * 60_000;
+let outageTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearOutageTimer() {
+  if (outageTimer) clearTimeout(outageTimer);
+  outageTimer = null;
+}
+
+function watchOutage(sql: Sql, statusCode: number | undefined) {
+  // the first close of an outage starts the clock; later ones (a reconnect loop) don't reset it
+  if (outageTimer) return;
+  outageTimer = setTimeout(() => {
+    outageTimer = null;
+    void checkWhatsAppOutage(sql, statusCode).catch((e) =>
+      waLog.warn({ err: e }, 'outage check failed'),
+    );
+  }, OUTAGE_AFTER_MS);
+  outageTimer.unref?.();
+}
+
+/** The outage clock ran out: still not open while the driver is meant to be on → channel.down.
+ *  Exported for tests (the timer calls it). */
+export async function checkWhatsAppOutage(sql: Sql, statusCode?: number): Promise<boolean> {
+  const i = await getIntegration(sql, 'whatsapp');
+  if (waStatus() === 'open' || loggingOut) return false;
+  // a driver staff turned off is not an outage
+  if (!i || i.driver !== 'baileys' || !i.enabled) return false;
+  return recordChannelState(
+    sql,
+    'whatsapp',
+    'down',
+    `a conexão caiu${statusCode ? ` (código ${statusCode})` : ''} e não voltou em ${OUTAGE_AFTER_MS / 60_000} min`,
+  );
+}
+
 async function startSocket(sql: Sql, integration: IntegrationRow): Promise<BaileysSocket> {
   const myGen = startGen;
   const baileys = (await import('baileys')) as unknown as {
@@ -422,6 +460,13 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       waMe = readIdentity(sock);
       waLog.info({ phone: waMe?.phone, name: waMe?.name }, 'socket open — account linked');
       void persistQr(sql, accountId, null, gen).then(() => emitControlEvent('channel.health'));
+      clearOutageTimer();
+      void recordChannelState(
+        sql,
+        'whatsapp',
+        'up',
+        waMe?.phone ? `conectado como +${waMe.phone}` : 'conectado',
+      );
     }
     if (u.connection === 'close') {
       connState = 'off';
@@ -436,6 +481,18 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       // 401 = logged out (nothing to reconnect to until re-paired); otherwise
       // restart inbound instead of staying offline until an outbound send reopens it
       const statusCode = u.lastDisconnect?.error?.output?.statusCode;
+      // a socket never paired (a QR nobody scanned) has no number to lose; staff's own
+      // logoutWa is not an outage
+      const paired = pairingConfirmed(creds) && !loggingOut;
+      if (paired && statusCode === 401) {
+        clearOutageTimer();
+        void recordChannelState(
+          sql,
+          'whatsapp',
+          'down',
+          'o whatsapp desvinculou o aparelho (logout) — pareie o número de novo em Config',
+        );
+      } else if (paired) watchOutage(sql, statusCode);
       if (statusCode === 401) {
         waLog.warn({ statusCode }, 'socket closed by whatsapp (logged out) — re-pair required');
         // drop the server-granted identity so the next start re-registers and
@@ -839,6 +896,7 @@ export function logoutWa(sql: Sql, accountId: string): Promise<void> {
 }
 
 async function logoutOnce(sql: Sql, accountId: string): Promise<void> {
+  clearOutageTimer();
   const s = socket;
   // unlink while the socket is still tracked — a rejected logout() leaves it
   // owned for retry; its close clears globals mid-await under the held flag

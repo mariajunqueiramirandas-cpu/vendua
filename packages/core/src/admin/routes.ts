@@ -5,6 +5,7 @@ import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE, bodyJson, clientIp, windowCounter } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
+import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { notifyStaff } from '../modules/staff.ts';
 import { audit } from './audit.ts';
 import {
@@ -706,6 +707,19 @@ export function mountAdmin(o: MountAdminOpts) {
         summary: `pediu ajuda (${topic})`,
         after: { topic, message },
       });
+      await recordStaffEventTx(
+        tx,
+        'merchant.help',
+        {
+          storeName: tenant.name,
+          slug: tenant.slug,
+          who: m.name,
+          topic,
+          message,
+          contact: m.phone ? formatPhone(m.phone) : null,
+        },
+        { tenantId: tenant.id },
+      );
       // delivery happens after the claim commits; the staff channel never blocks the reply
       queueMicrotask(() => {
         void notifyStaff(sql, null, {

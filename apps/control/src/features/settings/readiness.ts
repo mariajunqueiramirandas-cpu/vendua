@@ -1,4 +1,4 @@
-import type { IgStatus, Integration, MeetingStatus } from '@/lib/api.ts';
+import type { DiscordOverview, IgStatus, Integration, MeetingStatus } from '@/lib/api.ts';
 import { KINDS, providerStatus, WA_IDLE, type ProvTone, type WaState } from './providers.ts';
 import { num, obj, str, type SettingsMap } from './queries.ts';
 
@@ -7,6 +7,7 @@ export const AREAS = [
   { key: 'conexoes', label: 'conexões' },
   { key: 'agenda', label: 'agenda' },
   { key: 'equipe', label: 'equipe' },
+  { key: 'discord', label: 'discord' },
   { key: 'relatorios', label: 'relatórios' },
 ] as const;
 export type AreaKey = (typeof AREAS)[number]['key'];
@@ -48,6 +49,7 @@ export function computeReadiness({
   wa,
   ig,
   mStatus,
+  discord,
 }: {
   integrations: Integration[];
   integErr: boolean;
@@ -56,6 +58,8 @@ export function computeReadiness({
   wa: WaState;
   ig: IgStatus | null;
   mStatus: MeetingStatus | 'err' | null;
+  /** null while the first read is in flight, 'err' when it failed */
+  discord: DiscordOverview | 'err' | null;
 }): Readiness {
   const provTones = KINDS.map(
     (k) =>
@@ -199,6 +203,8 @@ export function computeReadiness({
         },
       ];
 
+  routine.push(discordCheck(discord));
+
   const ready = essential.filter((c) => c.tone === 'live').length;
   const attn = [...essential, ...routine].filter((c) => c.tone === 'warn').length;
   const connMark: ProvTone = integErr
@@ -210,4 +216,27 @@ export function computeReadiness({
         : 'off';
 
   return { essential, routine, ready, attn, provLive, connMark, agendaCheck };
+}
+
+function discordCheck(d: DiscordOverview | 'err' | null): Check {
+  const c = (state: string, tone: ProvTone): Check => ({
+    key: 'discord',
+    label: 'avisos no discord',
+    state,
+    tone,
+    to: 'discord',
+  });
+  if (d === null) return c('lendo status…', 'off');
+  if (d === 'err') return c('falha ao ler', 'warn');
+  if (!d.app.enabled) return c('desligado — avisos só por email e whatsapp', 'off');
+  if (!d.app.ok) return c(d.app.reason ?? 'incompleto', 'warn');
+  const recentError =
+    d.state.lastError && Date.now() - new Date(d.state.lastError.at).getTime() < 86_400_000;
+  if (recentError) return c(`erro: ${d.state.lastError!.message}`, 'warn');
+  const mapped = Object.values(d.setting.channels).filter(Boolean).length;
+  if (!mapped) return c('nenhum canal escolhido', 'warn');
+  return c(
+    `${mapped} ${mapped === 1 ? 'canal' : 'canais'} · ${d.team.linked}/${d.team.members} da equipe`,
+    'live',
+  );
 }

@@ -1,6 +1,17 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
 import { digestConfigTx, digestNextAtTx, sweepDigest } from '../modules/digest.ts';
+import {
+  deliverStaffEvents,
+  discordEnabledTx,
+  discordNextAtTx,
+} from '../modules/discord/deliver.ts';
+import {
+  discordDigestCadenceTx,
+  discordDigestNextAtTx,
+  sweepDiscordDigest,
+} from '../modules/discord/digest.ts';
+import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { nextReminderAtTx, sendMeetingReminders, syncMeetingEffects } from '../modules/meetings.ts';
 import { log } from '../platform/log.ts';
@@ -167,6 +178,25 @@ export const JOBS: readonly ScheduledJob[] = [
     wakesOn: on('control_settings'),
     run: flagCappedLeads,
   },
+  {
+    name: 'discord',
+    label: 'avisos da equipe no Discord',
+    cadence: async () => 'na hora de cada evento',
+    nextAt: discordNextAtTx,
+    // a new staff event, or the bot's config changing
+    wakesOn: on('staff_events', 'control_integrations', 'control_settings'),
+    enabled: discordEnabledTx,
+    run: (sql) => deliverStaffEvents(sql),
+  },
+  {
+    name: 'discord-digest',
+    label: 'resumo diário no Discord',
+    cadence: discordDigestCadenceTx,
+    nextAt: discordDigestNextAtTx,
+    wakesOn: on('control_settings', 'control_integrations'),
+    enabled: discordEnabledTx,
+    run: sweepDiscordDigest,
+  },
 ];
 
 /** the work loop, recorded alongside the jobs so a stuck queue shows up the same way */
@@ -196,9 +226,11 @@ async function record(
   const ok = outcome.ok;
   const result = outcome.ok ? outcome.result : null;
   const error = outcome.ok ? null : outcome.error.slice(0, 1000);
-  await controlTx(
-    sql,
-    (tx) => tx`
+  await controlTx(sql, async (tx) => {
+    const [prev] = await tx<{ failing_since: Date | null }[]>`
+      select failing_since from scheduled_jobs where name = ${name} for update
+    `;
+    await tx`
       insert into scheduled_jobs as j
         (name, last_started_at, last_finished_at, last_ok, last_error, last_result,
          last_work_at, failing_since, runs, failures)
@@ -215,8 +247,43 @@ async function record(
         failing_since = case when ${ok} then null else coalesce(j.failing_since, now()) end,
         runs = j.runs + 1,
         failures = j.failures + ${ok ? 0 : 1}
-    `,
-  ).catch((e) => agentLog.warn({ err: e, job: name }, 'could not record job run'));
+    `;
+    await staffJobEventTx(tx, name, prev?.failing_since ?? null, error);
+  }).catch((e) => agentLog.warn({ err: e, job: name }, 'could not record job run'));
+}
+
+/** a job still failing this long (≥2 runs, with the backoff) is worth telling the team */
+const FAILING_ALERT_MS = 2 * 60_000;
+
+/** One `job.failing` per failing episode, and a `job.recovered` only for an alerted one. */
+async function staffJobEventTx(
+  tx: Sql,
+  name: string,
+  failingSince: Date | null,
+  error: string | null,
+): Promise<void> {
+  if (!failingSince) return;
+  const label =
+    JOBS.find((j) => j.name === name)?.label ?? (name === QUEUE_JOB.name ? QUEUE_JOB.label : name);
+  const episode = `job.failing:${name}:${new Date(failingSince).getTime()}`;
+  if (error !== null) {
+    if (Date.now() - new Date(failingSince).getTime() < FAILING_ALERT_MS) return;
+    await recordStaffEventTx(
+      tx,
+      'job.failing',
+      { job: name, label, error },
+      { dedupeKey: episode },
+    );
+    return;
+  }
+  const alerted = await tx`select 1 from staff_events where dedupe_key = ${episode}`;
+  if (alerted[0])
+    await recordStaffEventTx(
+      tx,
+      'job.recovered',
+      { job: name, label, failingSince: new Date(failingSince).toISOString() },
+      { dedupeKey: `job.recovered:${name}:${new Date(failingSince).getTime()}` },
+    );
 }
 
 type JobRun = { ok: true; n: number; retryInMs?: number | undefined } | { ok: false };

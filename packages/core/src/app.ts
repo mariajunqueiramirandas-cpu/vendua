@@ -187,6 +187,9 @@ import {
 } from './modules/payment-adjustments.ts';
 import { mountControlBilling } from './modules/control-billing.ts';
 import { mountIncidentsControl } from './modules/incidents.ts';
+import { mountDiscord } from './modules/discord/routes.ts';
+import { recordStaffEventTx } from './modules/staff-events.ts';
+import type { DiscordFetch } from './modules/discord/rest.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 const waLog = log.child({ mod: 'whatsapp' });
@@ -216,6 +219,8 @@ export interface AppDeps {
   fleet?: FleetDeps | undefined;
   /** the edge's key for /edge/v1 (default VENDUA_EDGE_SECRET) */
   edgeSecret?: string | undefined;
+  /** Discord's network for the bot's control routes (default: fetch); tests swap it */
+  discordFetch?: DiscordFetch | undefined;
 }
 
 async function loadSettings(
@@ -354,6 +359,24 @@ async function testIntegration(
       const r = await timed(d.search('padaria', 'teste de conectividade'), 'tinyfish');
       return { ok: true, detail: `tinyfish respondeu — ${r.results.length} resultados` };
     }
+    if (kind === 'discord') {
+      const { discordAppOf } = await import('./modules/discord/config.ts');
+      const { discordClient } = await import('./modules/discord/rest.ts');
+      const st = discordAppOf(integration);
+      if (!st.ok) return { ok: false, detail: st.reason };
+      const client = discordClient(st.app.token);
+      const me = await timed(client.request<{ username: string }>('GET', '/users/@me'), 'discord');
+      const guild = await timed(
+        client.request<{ name: string }>('GET', `/guilds/${st.app.guildId}`),
+        'discord',
+      ).catch(() => null);
+      return guild
+        ? { ok: true, detail: `bot ${me.username} no servidor ${guild.name}` }
+        : {
+            ok: false,
+            detail: `bot ${me.username} autenticado, mas fora do servidor — use o convite`,
+          };
+    }
     return { ok: false, detail: `tipo desconhecido: ${kind}` };
   };
   try {
@@ -377,6 +400,7 @@ export function createApp({
   notify,
   fleet,
   edgeSecret,
+  discordFetch,
 }: AppDeps) {
   const provider = paymentProvider ?? createPaymentProvider();
   const merchantNotify = notify ?? platformNotify(sql);
@@ -1234,9 +1258,9 @@ export function createApp({
     const id = uuidParam(c, 'id');
     let transitioned = false;
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
-      const rows = await tx`
+      const rows = await tx<{ id: string; name: string; business_name: string | null }[]>`
         update leads set unsubscribed_at = now(), updated_at = now()
-        where id = ${id} and unsubscribed_at is null returning id
+        where id = ${id} and unsubscribed_at is null returning id, name, business_name
       `;
       const exists = rows[0] ?? (await tx`select id from leads where id = ${id}`)[0];
       if (!exists) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
@@ -1251,6 +1275,13 @@ export function createApp({
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${id}, 'system', 'Descadastrado pela equipe', 'staff')
         `;
+        await recordStaffEventTx(tx, 'lead.unsubscribed', {
+          leadId: id,
+          leadName: rows[0].name,
+          business: rows[0].business_name,
+          by: 'staff',
+          reason: null,
+        });
       }
       return { status: 200, body: { ok: true } };
     });
@@ -1337,7 +1368,13 @@ export function createApp({
   app.patch('/control/v1/tasks/:id', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
-    const res = await completeTask(sql, uuidParam(c, 'id'), body.done !== false, requireIdemKey(c));
+    const res = await completeTask(
+      sql,
+      uuidParam(c, 'id'),
+      body.done !== false,
+      requireIdemKey(c),
+      'staff',
+    );
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     return c.json(res.body);
   });
@@ -1434,7 +1471,7 @@ export function createApp({
 
   app.post('/control/v1/messages/:id/reject', async (c) => {
     controlGate(c);
-    const res = await rejectMessage(sql, uuidParam(c, 'id'), requireIdemKey(c));
+    const res = await rejectMessage(sql, uuidParam(c, 'id'), requireIdemKey(c), 'staff');
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     return c.json(res.body);
   });
@@ -2675,6 +2712,7 @@ export function createApp({
   });
   mountIncidentsControl({ app, sql, controlGate });
   mountImportsControl({ app, sql, controlGate });
+  mountDiscord({ app, sql, controlGate, kickDrain, fetch: discordFetch });
   mountFleet({
     app,
     sql,

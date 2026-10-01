@@ -3,9 +3,10 @@ import { withTenant, type Sql } from '../../platform/db.ts';
 import { HttpError, UUID_RE } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
 import { storeOrigin } from '../../platform/store-origin.ts';
-import { ORDER_CHANNEL, loadOrderView, type OrderView } from '../orders.ts';
+import { ORDER_CHANNEL, loadOrderView, recordOrderStep, type OrderView } from '../orders.ts';
 import type { PaymentAdjustment, PaymentAdjustments } from '../payment-adjustments.ts';
 import { pixPayload, type PixKeyType } from '../pix.ts';
+import { recordStaffEventTx } from '../staff-events.ts';
 import type { StoreSettingsRow } from '../store.ts';
 import {
   isOnline,
@@ -33,6 +34,8 @@ const MAX_ATTEMPTS = 20;
 
 const SETTLED = ['approved', 'partially_refunded', 'refunded', 'charged_back', 'in_mediation'];
 const OPEN = ['creating', 'pending'];
+/** disputed or reversed money: the team hears about it (ADR 0023 `payment.problem`) */
+const PROBLEMS = ['charged_back', 'in_mediation', 'refunded'];
 
 export interface PaymentRow {
   id: string;
@@ -633,8 +636,8 @@ export async function syncOrderPayment(
   orderId: string,
 ): Promise<{ changed: boolean; status: string | null }> {
   const cur = (
-    await tx<{ payment: Record<string, unknown> }[]>`
-      select payment from orders where tenant_id = ${tenantId} and id = ${orderId}
+    await tx<{ number: number; payment: Record<string, unknown> }[]>`
+      select number, payment from orders where tenant_id = ${tenantId} and id = ${orderId}
     `
   )[0];
   if (!cur) return { changed: false, status: null };
@@ -696,8 +699,16 @@ export async function syncOrderPayment(
   await tx`select pg_notify(${ORDER_CHANNEL}, ${orderId})`;
   await emitAdminTx(tx, tenantId, 'order.changed', orderId);
   // the "Pix recebido" push: once, when money first lands on this order
-  if (patch.paidAt && !cur.payment.paidAt)
+  if (patch.paidAt && !cur.payment.paidAt) {
     await emitAdminTx(tx, tenantId, 'payment.received', orderId);
+    await recordOrderStep(
+      tx,
+      tenantId,
+      { id: orderId, number: cur.number },
+      'paid',
+      settled[0]!.provider,
+    );
+  }
   return { changed: true, status };
 }
 
@@ -770,8 +781,8 @@ export async function applyProviderPayment(
   const orderId = p.externalReference ?? '';
   if (!UUID_RE.test(orderId)) return { applied: false, reason: 'reference' };
   const order = (
-    await tx<{ id: string; total_cents: number; state: string }[]>`
-      select id, total_cents, state from orders where tenant_id = ${tenantId} and id = ${orderId} for update
+    await tx<{ id: string; number: number; total_cents: number; state: string }[]>`
+      select id, number, total_cents, state from orders where tenant_id = ${tenantId} and id = ${orderId} for update
     `
   )[0];
   if (!order) return { applied: false, reason: 'reference' };
@@ -895,6 +906,34 @@ export async function applyProviderPayment(
       where id = ${row.id}
     `;
   await reconcileRefunds(tx, row.id, p.refundedCents, opts.release);
+  if (next.status !== row.status && PROBLEMS.includes(next.status)) {
+    // a refund the store asked for through us is not a problem; one made at the provider is
+    const asked =
+      next.status === 'refunded' &&
+      (
+        await tx<{ n: number }[]>`
+          select coalesce(sum(amount_cents), 0)::int as n from payment_refunds
+          where payment_id = ${row.id} and status <> 'rejected'
+        `
+      )[0]!.n >= next.refunded_cents;
+    if (!asked) {
+      const store = (
+        await tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`
+      )[0];
+      await recordStaffEventTx(
+        tx,
+        'payment.problem',
+        {
+          orderId,
+          number: order.number,
+          storeName: store?.name ?? '',
+          status: next.status,
+          amountCents: row.amount_cents,
+        },
+        { tenantId, dedupeKey: `payment:${row.id}:${next.status}` },
+      );
+    }
+  }
   const synced = await syncOrderPayment(tx, tenantId, orderId);
   return {
     applied: true,

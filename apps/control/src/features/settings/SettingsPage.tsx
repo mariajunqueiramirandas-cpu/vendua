@@ -9,6 +9,8 @@ import { tabTriggerClass } from '@/components/ui/controls.tsx';
 import { TzList } from './bits.tsx';
 import { AgendaArea } from './AgendaArea.tsx';
 import { ConnectionsArea } from './ConnectionsArea.tsx';
+import { DiscordArea } from './DiscordArea.tsx';
+import { useDiscord } from './discord/queries.ts';
 import { OverviewArea } from './OverviewArea.tsx';
 import { KINDS, WA_IDLE, type ProvTone } from './providers.ts';
 import { AREAS, computeReadiness, STUDIO, type AreaKey } from './readiness.ts';
@@ -43,6 +45,7 @@ export default function SettingsPage() {
   const waQ = useWaQr();
   const igQ = useIgStatus();
   const mQ = useMeetingsStatus();
+  const dQ = useDiscord();
   const saveSetting = useSaveSetting();
 
   // pre-redesign links used ?s=; the agent sections moved to the Estúdio
@@ -84,9 +87,12 @@ export default function SettingsPage() {
     wa,
     ig: igQ.data ?? null,
     mStatus,
+    discord: dQ.isError ? 'err' : (dQ.data ?? null),
   });
   const marks: Partial<Record<AreaKey, ProvTone>> = {};
   if (mStatus && r.agendaCheck.tone !== 'live') marks.agenda = r.agendaCheck.tone;
+  const discordTone = r.routine.find((c) => c.key === 'discord')?.tone;
+  if (discordTone === 'warn') marks.discord = 'warn';
 
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -195,6 +201,9 @@ export default function SettingsPage() {
               onSave={save('staff')}
               saving={savingKey === 'staff'}
             />
+          </div>
+          <div hidden={area !== 'discord'}>
+            <DiscordArea onGoTeam={() => go('equipe')} />
           </div>
           <div hidden={area !== 'relatorios'}>
             <ReportsArea

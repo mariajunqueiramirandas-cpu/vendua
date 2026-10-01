@@ -5,6 +5,7 @@ import { HttpError, str } from '../../platform/http.ts';
 import { getIntegration } from '../../modules/integrations.ts';
 import { controlTx } from '../../modules/control.ts';
 import { emitControlEvent } from '../../modules/control-events.ts';
+import { recordStaffEventTx } from '../../modules/staff-events.ts';
 import type { InboundResult } from '../../modules/threads.ts';
 import { ingestInbound } from '../inbound.ts';
 
@@ -267,12 +268,12 @@ export async function applyDeliveryEventTx(
 
     if (type === 'email.complained') {
       // Transition-only write: `returning` keeps the activity single-shot across retries.
-      const upd = await tx`
+      const upd = await tx<{ id: string; name: string; business_name: string | null }[]>`
         update leads set unsubscribed_at = now(), updated_at = now()
         where id = ${leadId} and unsubscribed_at is null
-        returning id
+        returning id, name, business_name
       `;
-      if (upd.length) {
+      if (upd[0]) {
         // Opt-out never lifts — cancel the lead's queued runs.
         await tx`
           update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
@@ -280,8 +281,15 @@ export async function applyDeliveryEventTx(
         `;
         await tx`
           insert into lead_activities (lead_id, kind, body, created_by)
-          values (${leadId}, 'system', 'Reclamação de spam (${type}) — descadastrado', 'system')
+          values (${leadId}, 'system', ${`Reclamação de spam (${type}) — descadastrado`}, 'system')
         `;
+        await recordStaffEventTx(tx, 'lead.unsubscribed', {
+          leadId,
+          leadName: upd[0].name,
+          business: upd[0].business_name,
+          by: 'complaint',
+          reason: null,
+        });
       }
     } else {
       const upd = await tx`

@@ -3,6 +3,7 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { claimControl } from './control.ts';
+import { recordStaffEventTx } from './staff-events.ts';
 
 // Platform incidents: staff post "a Venduá está com instabilidade" from the CRM; every
 // store's Ajuda reads it (GET /admin/v1/help/status), and so does status.vendua.com.br
@@ -13,6 +14,15 @@ const SEVERITIES = ['info', 'degraded', 'outage'] as const;
 const cols = (tx: Sql) => tx`
   id, title, body, severity, started_at as "startedAt", resolved_at as "resolvedAt"
 `;
+
+interface StatusRow {
+  id: string;
+  title: string;
+  body: string | null;
+  severity: string;
+  startedAt: Date;
+  resolvedAt: Date | null;
+}
 
 function str(v: unknown, name: string, min: number, max: number): string {
   if (typeof v !== 'string' || v.trim().length < min || v.trim().length > max)
@@ -74,17 +84,21 @@ export function mountIncidentsControl(o: {
         ? null
         : str(body.body, 'body', 1, 1000);
     const sev = body.severity === undefined ? 'degraded' : severity(body.severity);
-    const res = await claimControl(sql, key, async (tx) => ({
-      status: 201,
-      body: {
-        incident: (
-          await tx`
-            insert into platform_incidents (title, body, severity)
-            values (${title}, ${text}, ${sev}) returning ${cols(tx)}
-          `
-        )[0],
-      },
-    }));
+    const res = await claimControl(sql, key, async (tx) => {
+      const incident = (
+        await tx<StatusRow[]>`
+          insert into platform_incidents (title, body, severity)
+          values (${title}, ${text}, ${sev}) returning ${cols(tx)}
+        `
+      )[0]!;
+      await recordStaffEventTx(tx, 'status.opened', {
+        incidentId: incident.id,
+        title: incident.title,
+        severity: incident.severity,
+        body: incident.body,
+      });
+      return { status: 201, body: { incident } };
+    });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     return c.json(res.body, res.status as 201);
   });
@@ -104,8 +118,14 @@ export function mountIncidentsControl(o: {
     if (!Object.keys(set).length && body.resolved !== true)
       throw new HttpError(422, 'BAD_REQUEST', 'nothing to change');
     const res = await claimControl(sql, key, async (tx) => {
+      const before = (
+        await tx<StatusRow[]>`
+          select ${cols(tx)} from platform_incidents where id = ${id} for update
+        `
+      )[0];
+      if (!before) throw new HttpError(404, 'INCIDENT_NOT_FOUND', 'incident not found');
       const row = (
-        await tx`
+        await tx<StatusRow[]>`
           update platform_incidents set
             title = ${set.title === undefined ? tx`title` : (set.title as string)},
             body = ${set.body === undefined ? tx`body` : (set.body as string | null)},
@@ -114,8 +134,20 @@ export function mountIncidentsControl(o: {
             updated_at = now()
           where id = ${id} returning ${cols(tx)}
         `
-      )[0];
-      if (!row) throw new HttpError(404, 'INCIDENT_NOT_FOUND', 'incident not found');
+      )[0]!;
+      const resolved = before.resolvedAt === null && row.resolvedAt !== null;
+      if (
+        resolved ||
+        row.title !== before.title ||
+        row.body !== before.body ||
+        row.severity !== before.severity
+      )
+        await recordStaffEventTx(tx, 'status.updated', {
+          incidentId: row.id,
+          title: row.title,
+          severity: row.severity,
+          resolved,
+        });
       return { status: 200, body: { incident: row } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');

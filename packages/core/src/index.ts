@@ -24,6 +24,8 @@ import { signupAccessCode } from './modules/billing/signup.ts';
 import { fleetDeps } from './modules/fleet/deps.ts';
 import { startFleetJobs } from './modules/fleet/jobs.ts';
 import { startMenuImportJobs } from './modules/menu-import/jobs.ts';
+import { onUnhandledError } from './platform/http.ts';
+import { recordBoot, unhandledErrorReporter } from './modules/system-events.ts';
 
 const databaseUrl =
   process.env.DATABASE_URL ?? 'postgres://vendua_app:vendua_app@localhost:5433/vendua';
@@ -148,10 +150,14 @@ void getIntegration(sql, 'whatsapp')
 // Instagram's live session sits in the ig-sidecar; this re-pushes the stored one after a sidecar restart.
 const stopInstagramReconcile = startInstagramReconcile(sql);
 
+// a 500 and a boot reach the team (ADR 0023): system.error is throttled per route
+onUnhandledError(unhandledErrorReporter(sql));
+
 // idleTimeout must clear the SSE heartbeat (20s): Bun's default 10s kills a
 // quiet event stream before the first `:ka`, looping clients forever.
 const server = Bun.serve({ port, fetch: app.fetch, idleTimeout: 60 });
 log.info({ port }, 'listening');
+void recordBoot(sql);
 
 // Deploys send SIGTERM: stop taking requests and let those in flight finish, stop claiming,
 // let the run in hand finish (bounded), then exit — a run cut off anyway is recovered by

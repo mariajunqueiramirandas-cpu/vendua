@@ -9,6 +9,7 @@ import {
   newLeadModesOf,
   type Guardrails,
 } from './integrations.ts';
+import { recordStaffEventTx } from './staff-events.ts';
 
 // Unified inbox: one thread per (lead, channel); owns persistence + the
 // draft→approve→dispatch lifecycle — provider sends live in agent/channels.
@@ -484,12 +485,37 @@ export async function addInboundMessage(
       update lead_threads set last_message_at = greatest(last_message_at, ${input.sentAt ?? new Date()})
       where id = ${thread.id}
     `;
-    await tx`update leads set updated_at = now() where id = ${leadId}`;
+    const lead = (
+      await tx<{ name: string; business_name: string | null }[]>`
+        update leads set updated_at = now() where id = ${leadId} returning name, business_name
+      `
+    )[0]!;
     if (direction === 'in' && !input.historical) {
       // A reply retires the agent's own pending follow-ups (the reply run re-commits what's
       // still wanted); callbacks the lead asked for and staff dates are promises and stay.
       const { retireWakeupsOnInboundTx } = await import('../agent/wakeups.ts');
       await retireWakeupsOnInboundTx(tx, leadId);
+      const who = { leadId, leadName: lead.name, business: lead.business_name };
+      if (leadCreated) {
+        await recordStaffEventTx(tx, 'lead.created', {
+          ...who,
+          channel: input.channel,
+          excerpt: body,
+        });
+      } else {
+        await recordStaffEventTx(
+          tx,
+          'lead.replied',
+          {
+            ...who,
+            channel: input.channel,
+            threadId: thread.id,
+            messageId: message.id,
+            excerpt: body,
+          },
+          { dedupeKey: `lead.replied:${message.id}` },
+        );
+      }
     }
     // History import would flood the activity feed.
     if (!input.historical) {
@@ -582,8 +608,12 @@ export async function composeMessageTx(
       { field: 'body' },
     );
   }
-  const exists = await tx`select 1 from leads where id = ${input.leadId}`;
-  if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+  const lead = (
+    await tx<{ name: string; business_name: string | null }[]>`
+      select name, business_name from leads where id = ${input.leadId}
+    `
+  )[0];
+  if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
   const thread = await ensureThread(tx, input.leadId, input.channel, {
     subject: input.subject ?? null,
   });
@@ -601,6 +631,18 @@ export async function composeMessageTx(
     `
   )[0]!;
   await tx`update lead_threads set last_message_at = now() where id = ${thread.id}`;
+  if (input.author === 'agent' && message.status === 'draft') {
+    await recordStaffEventTx(tx, 'draft.pending', {
+      messageId: message.id,
+      threadId: thread.id,
+      leadId: input.leadId,
+      leadName: lead.name,
+      business: lead.business_name,
+      channel: thread.channel,
+      subject: message.subject,
+      body: message.body,
+    });
+  }
   return { status: 201, body: { thread: threadJson(thread), message: messageJson(message) } };
 }
 
@@ -752,6 +794,11 @@ export async function approveMessage(
                     ${`rascunho expirado (${staleDays}d) — regenerando contra o estado atual`},
                     ${tx.json({ messageId, runId } as never)}, 'system')
           `;
+          await recordStaffEventTx(tx, 'draft.resolved', {
+            messageId: stale[0].id,
+            outcome: 'superseded',
+            by: null,
+          });
           return {
             status: 200,
             body: {
@@ -796,6 +843,13 @@ export async function approveMessage(
       returning *
     `;
     if (!rows[0]) throw new HttpError(404, 'MESSAGE_NOT_FOUND', 'draft message not found');
+    if (rows[0].author === 'agent') {
+      await recordStaffEventTx(tx, 'draft.resolved', {
+        messageId: rows[0].id,
+        outcome: 'approved',
+        by: approvedBy,
+      });
+    }
     return { status: 200, body: { message: messageJson(rows[0]!) } };
   });
   if (!res.replayed) {
@@ -812,6 +866,7 @@ export async function rejectMessage(
   sql: Sql,
   messageId: string,
   idemKey: string,
+  rejectedBy: string | null = null,
 ): Promise<ClaimResult<{ message: ReturnType<typeof messageJson> }>> {
   const res = await claimControl(sql, idemKey, async (tx) => {
     // capfin before the reject (same ordering as approveMessage): a reject committing
@@ -831,6 +886,13 @@ export async function rejectMessage(
       returning *
     `;
     if (!rows[0]) throw new HttpError(404, 'MESSAGE_NOT_FOUND', 'draft message not found');
+    if (rows[0].author === 'agent') {
+      await recordStaffEventTx(tx, 'draft.resolved', {
+        messageId: rows[0].id,
+        outcome: 'rejected',
+        by: rejectedBy,
+      });
+    }
     return { status: 200, body: { message: messageJson(rows[0]!) } };
   });
   if (!res.replayed) {

@@ -34,6 +34,7 @@ import {
   upsertLeadFactTx,
 } from '../modules/agent-memory.ts';
 import { recordBlockedSendTx } from '../modules/channel-health.ts';
+import { recordStaffEventTx } from '../modules/staff-events.ts';
 import {
   agentPausedForChannelTx,
   checkSendAllowedTx,
@@ -1764,14 +1765,18 @@ export async function executeTool(
       // on crash and a retry would duplicate the task/note.
       const res = await claimControl(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
-        const exists = await tx<{ name: string }[]>`select name from leads where id = ${leadId}`;
+        const exists = await tx<{ name: string; business_name: string | null }[]>`
+          select name, business_name from leads where id = ${leadId}
+        `;
         if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+        let thread: { id: string; channel: string } | null = null;
         if (ctx.threadId) {
-          const rows = await tx`
+          const rows = await tx<{ id: string; channel: string }[]>`
             update lead_threads set agent_enabled = false where id = ${ctx.threadId}
-            returning id
+            returning id, channel
           `;
           if (!rows[0]) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
+          thread = rows[0];
         } else {
           // unbound run: lead-wide pause marker — blocks every channel until staff lifts it; per-thread toggles untouched.
           await tx`
@@ -1779,14 +1784,26 @@ export async function executeTool(
             where id = ${leadId} and agent_paused_at is null
           `;
         }
-        await tx`
-          insert into lead_tasks (lead_id, title, due_at, created_by)
-          values (${leadId}, ${`[humano] ${reason.slice(0, 200)}`}, null, 'agent')
-        `;
+        const task = (
+          await tx<{ id: string }[]>`
+            insert into lead_tasks (lead_id, title, due_at, created_by)
+            values (${leadId}, ${`[humano] ${reason.slice(0, 200)}`}, null, 'agent')
+            returning id
+          `
+        )[0]!;
         await tx`
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${leadId}, 'system', ${`Handoff para humano — ${reason}`}, 'agent')
         `;
+        await recordStaffEventTx(tx, 'handoff.requested', {
+          taskId: task.id,
+          leadId,
+          leadName: exists[0].name,
+          business: exists[0].business_name,
+          channel: thread?.channel ?? null,
+          threadId: thread?.id ?? null,
+          reason,
+        });
         return { status: 200, body: { handedOff: true, leadName: exists[0].name } };
       });
       if (!res.replayed) {
@@ -1852,12 +1869,12 @@ export async function executeTool(
             }
           }
         }
-        const changed = await tx<{ id: string }[]>`
+        const changed = await tx<{ id: string; name: string; business_name: string | null }[]>`
           update leads set unsubscribed_at = now(), updated_at = now()
           where id = ${leadId} and unsubscribed_at is null
-          returning id
+          returning id, name, business_name
         `;
-        if (changed.length) {
+        if (changed[0]) {
           // opt-out never lifts — kill queued runs now instead of parking them as zombies.
           await tx`
             update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
@@ -1872,6 +1889,13 @@ export async function executeTool(
             insert into lead_activities (lead_id, kind, body, created_by)
             values (${leadId}, 'system', ${`Pediu para sair — opt-out registrado${reason ? ` (${reason})` : ''}`}, 'agent')
           `;
+          await recordStaffEventTx(tx, 'lead.unsubscribed', {
+            leadId,
+            leadName: changed[0].name,
+            business: changed[0].business_name,
+            by: 'agent',
+            reason,
+          });
         }
         return {
           status: 200,
