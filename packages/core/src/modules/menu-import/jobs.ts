@@ -242,6 +242,7 @@ function loop(name: string, work: () => Promise<void>) {
 export function startMenuImportJobs(d: ImportJobDeps): () => void {
   let lastSweep = 0;
   let reading = 0;
+  let stopped = false;
   // reads never wait behind a long photo queue, nor behind each other: a Goomer read asks
   // for every product and can take minutes
   const reads = loop('read', async () => {
@@ -249,7 +250,7 @@ export function startMenuImportJobs(d: ImportJobDeps): () => void {
       lastSweep = Date.now();
       await sweepImports(d.sql);
     }
-    while (reading < MAX_READS) {
+    while (!stopped && reading < MAX_READS) {
       const row = await claimRead(d.sql);
       if (!row) break;
       reading++;
@@ -257,7 +258,8 @@ export function startMenuImportJobs(d: ImportJobDeps): () => void {
         .catch((err) => importLog.error({ err, import: row.id }, 'menu read failed to settle'))
         .finally(() => {
           reading--;
-          tick();
+          // after shutdown a read that ends claims nothing more
+          if (!stopped) tick();
         });
     }
   });
@@ -270,6 +272,7 @@ export function startMenuImportJobs(d: ImportJobDeps): () => void {
   const first = setTimeout(tick, 4_000);
   const every = setInterval(tick, TICK_MS);
   return () => {
+    stopped = true;
     wake = null;
     clearTimeout(first);
     clearInterval(every);

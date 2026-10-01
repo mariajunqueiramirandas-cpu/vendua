@@ -2193,6 +2193,8 @@ describe('goomer', () => {
       '21999990000', // a CPF or a mobile
       'abcdef1234567890abcdefabcdefabcd', // a random key without its hyphens
       '(011) 98765-4321',
+      '(011) 8765-4321', // no area code starts with 0
+      '+7 995 123-4567', // another country's number
       '@pizzaria',
       '',
     ])

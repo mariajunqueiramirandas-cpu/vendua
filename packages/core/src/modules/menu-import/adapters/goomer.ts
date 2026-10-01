@@ -201,12 +201,15 @@ function pixOf(info: unknown, city: string): NonNullable<MenuImportV1['payments'
   else if (/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(key)) type = 'random';
   else if (/^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(key)) type = 'cpf';
   else if (/^\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}$/.test(key)) type = 'cnpj';
-  // eleven bare digits are a CPF or a mobile number: not guessed
-  else if (
-    /^\+?[\d\s().-]+$/.test(key) &&
-    (key.startsWith('+') || key.includes('(') || digits.length !== 11)
-  )
-    type = 'phone';
+  // eleven bare digits are a CPF or a mobile number: not guessed; a "+" is Brazil's or nothing
+  else if (/^\+?[\d\s().-]+$/.test(key) && !/^\+(?!55)/.test(key.replace(/\s/g, ''))) {
+    const national = key.startsWith('+') ? digits.slice(2) : digits;
+    if (
+      !national.startsWith('0') &&
+      (key.startsWith('+') || key.includes('(') || digits.length !== 11)
+    )
+      type = 'phone';
+  }
   // and a key Venduá couldn't charge to never stands in for the store's
   if (!type || !normalizePixKey(key, type)) return null;
   return { key, type, beneficiary: str(o.accountName).trim(), ...(city ? { city } : {}) };
