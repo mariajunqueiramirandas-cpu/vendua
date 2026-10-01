@@ -77,6 +77,7 @@ import { isSendChannel, SEND_CHANNELS } from '../modules/threads.ts';
 import { bookingLinkForRunner } from '../modules/meetings.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { blockedPhonesTx } from '../modules/staff.ts';
+import { recordStaffEventTx } from '../modules/staff-events.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -146,7 +147,33 @@ export async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVe
             ${`[humano] ${name}: custo do agente ≥ US$ ${capUsd} — suba o teto ou encerre a automação`.slice(0, 300)},
             null, 'agent')
   `;
+  const capCents = capCentsOf(g);
+  await recordStaffEventTx(
+    tx,
+    'agent.cost_cap',
+    { leadId, leadName: name, spentCents: spent, capCents },
+    { dedupeKey: `costcap:${leadId}:${capCents}` },
+  );
   return 'flagged';
+}
+
+/** One event per run, whichever path lands it 'failed' for good. */
+async function recordRunFailedTx(
+  tx: Sql,
+  run: { id: string; kind: string; lead_id: string | null },
+  error: string,
+  attempts: number,
+): Promise<void> {
+  const leadName = run.lead_id
+    ? ((await tx<{ name: string }[]>`select name from leads where id = ${run.lead_id}`)[0]?.name ??
+      null)
+    : null;
+  await recordStaffEventTx(
+    tx,
+    'agent.run_failed',
+    { runId: run.id, job: run.kind, leadId: run.lead_id, leadName, error, attempts },
+    { dedupeKey: `run:${run.id}:failed` },
+  );
 }
 
 type ActiveRow = {
@@ -612,7 +639,7 @@ async function finishRun(
     const deadAction = liveRows !== null && liveRows.length === 0;
     const updated = deadAction
       ? []
-      : await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
+      : await tx<{ id: string; lead_id: string | null; kind: RunRow['kind']; attempts: number }[]>`
     update agent_runs set
       status = ${result.status},
       steps = ${tx.json(result.steps as never[])},
@@ -622,7 +649,7 @@ async function finishRun(
       error = ${result.error ?? null},
       finished_at = now()
     where id = ${run.id} and status = 'running' and claim_token = ${run.claimToken}
-    returning id, lead_id, kind
+    returning id, lead_id, kind, attempts
     `;
     const r = updated[0];
     // Dual-write the journal into agent_run_steps in the same commit.
@@ -640,6 +667,10 @@ async function finishRun(
                 ${`[humano] ${name}: run ${r.kind} falhou — ${(result.error ?? 'sem detalhe').slice(0, 200)}`.slice(0, 300)},
                 null, 'agent')
       `;
+    }
+    // attempts counts reclaimed executions; this one died too
+    if (r && result.status === 'failed') {
+      await recordRunFailedTx(tx, r, result.error ?? 'sem detalhe', r.attempts + 1);
     }
     // The crossing run is the only flag write covering "spent past the ceiling" (queued siblings never reach claim).
     const cap = r?.lead_id ? await leadUnderCostCapTx(tx, r.lead_id) : 'under';
@@ -2572,7 +2603,9 @@ async function drainOnce(sql: Sql, limit: number, orphans: boolean): Promise<num
       // capfin first inside each small tx (see capLockTx).
       if (f.lead_id) await capLockTx(tx, f.lead_id);
       // One commit, fenced on staleness — a revived row skips the whole finalize.
-      const rows = await tx<{ id: string; lead_id: string | null }[]>`
+      const rows = await tx<
+        { id: string; lead_id: string | null; attempts: number; error: string }[]
+      >`
         update agent_runs set
           attempts = attempts + 1,
           status = 'failed',
@@ -2592,12 +2625,13 @@ async function drainOnce(sql: Sql, limit: number, orphans: boolean): Promise<num
           ) * 100)::int
         where id = ${f.id} and status = 'running'
           and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
-        returning id, lead_id
+        returning id, lead_id, attempts, error
       `;
       const row = rows[0];
       if (!row) return { task: false, cap: false };
       // The dead run's consumed mail re-pends in the same commit — the inbox sweep respawns it.
       await releaseInboxTx(tx, row.id);
+      await recordRunFailedTx(tx, { ...row, kind: f.kind }, row.error, row.attempts);
       // Spend lives only in the journal: model entries are DELTAS (sum), monid_spend markers
       // are CUMULATIVE (read the last). Board-scoped failures roll into the digest — no task, no emit.
       if (!row.lead_id) return { task: false, cap: false };

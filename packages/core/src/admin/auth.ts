@@ -4,6 +4,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { sendWhatsApp } from '../agent/channels/whatsapp.ts';
 import { getIntegration } from '../modules/integrations.ts';
 import { normalizePhone } from '../modules/customer.ts';
+import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE, windowCounter } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
@@ -290,7 +291,20 @@ export async function createSession(
         returning id
       `
     )[0]!;
-    await tx`update merchant_users set last_seen_at = now() where id = ${m.user_id}`;
+    const first = (
+      await tx<{ first: boolean }[]>`
+        with before as (select last_seen_at from merchant_users where id = ${m.user_id})
+        update merchant_users set last_seen_at = now() where id = ${m.user_id}
+        returning (select last_seen_at is null from before) as first
+      `
+    )[0]?.first;
+    if (first)
+      await recordStaffEventTx(
+        tx,
+        'store.onboarding',
+        { step: 'first_login' },
+        { tenantId: m.tenant_id, dedupeKey: `onboarding:${m.tenant_id}:first_login` },
+      );
     return row.id;
   });
   return `${m.tenant_id}.${id}.${secret}`;

@@ -16,7 +16,13 @@ import {
   type InvoiceRow,
   type PixCharge,
 } from './invoices.ts';
-import { messageOwners, pastDueMessage, queueOwners, reminderMessage } from './notices.ts';
+import {
+  dayMonth,
+  messageOwners,
+  pastDueMessage,
+  queueOwners,
+  reminderMessage,
+} from './notices.ts';
 import { planRow } from './plans.ts';
 import {
   applyHold,
@@ -28,6 +34,8 @@ import {
   ensureRenewal,
   lockSub,
   noticeCancelled,
+  recordBillingProblem,
+  recordManualInvoice,
   RENEW_AHEAD_MS,
   settlePixPayment,
   stopPreapproval,
@@ -372,6 +380,13 @@ const markPastDue: Step = async (sql, base, now) => {
           pastDueMessage(plan?.name ?? late.plan_id, late.current_period_end, ctx.origin),
           `billing:past_due:${tenant_id}:${late.current_period_end.toISOString()}`,
         );
+        await recordBillingProblem(
+          tx,
+          tenant_id,
+          'past_due',
+          `O período do plano ${plan?.name ?? late.plan_id} terminou em ${dayMonth(late.current_period_end)} sem pagamento.`,
+          late.current_period_end.toISOString(),
+        );
       }),
     );
   });
@@ -407,6 +422,8 @@ const issueRenewals: Step = async (sql, base, now) => {
         const inv = await ensureRenewal(ctx, tx, sub, now, { issue: false });
         if (!inv) return null;
         await emitAdminTx(tx, tenant_id, 'billing', inv.id);
+        if (!pix && inv.status === 'open')
+          await recordManualInvoice(tx, inv, (await planRow(tx, inv.plan_id))?.name ?? inv.plan_id);
         if (!pix || inv.status !== 'open' || pixIsLive(inv, now)) return null;
         const payerEmail = await payerEmailFor(tx, tenant_id, sub.payer_email);
         const plan = payerEmail ? await planRow(tx, inv.plan_id) : null;

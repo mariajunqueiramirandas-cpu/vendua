@@ -8,6 +8,7 @@ import {
   whatsappHistoryOf,
 } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
+import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { capLockTx, drain, releaseInboxTx } from './runner.ts';
 import { requestAgentTx } from './dispatch.ts';
 import { automationAllowedTx } from './policy.ts';
@@ -124,7 +125,7 @@ export async function ingestInbound(
     `;
     // retire the agent's own unanswered outreach drafts — obsolete once the lead writes;
     // promises and staff asks survive, running runs untouched
-    const drafts = await tx<{ thread_id: string }[]>`
+    const drafts = await tx<{ id: string; thread_id: string }[]>`
       update lead_messages m
       set status = 'rejected', error = 'lead respondeu', updated_at = now()
       where m.status = 'draft'
@@ -133,9 +134,16 @@ export async function ingestInbound(
           where r.lead_id = ${res.leadId} and r.kind = 'outreach'
             and r.source = any(${RETIRED_BY_INBOUND as string[]}::text[]) and not r.promised
         )
-      returning m.thread_id
+      returning m.id, m.thread_id
     `;
     supersededThreads.push(...drafts.map((d) => d.thread_id));
+    for (const d of drafts) {
+      await recordStaffEventTx(tx, 'draft.resolved', {
+        messageId: d.id,
+        outcome: 'superseded',
+        by: null,
+      });
+    }
     // queued auto outreach retires too — it can't serve the mail and would fire
     // a "reopening"; the 'queued' predicate keeps its row locks behind the l,t lock
     const canceled = await tx<{ id: string }[]>`

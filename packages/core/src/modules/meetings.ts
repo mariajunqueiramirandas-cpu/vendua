@@ -7,10 +7,11 @@ import { addDays, hhmmToMinutes, localDateOf, localParts, zonedInstant } from '.
 import { claimControl, controlTx } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 import { getSettingTx, type Guardrails } from './integrations.ts';
-import type { LeadRow } from './leads.ts';
+import { recordMilestoneTx, type LeadRow } from './leads.ts';
 import * as gcal from './gcal.ts';
 import * as rooms from './rooms.ts';
 import { notifyStaff } from './staff.ts';
+import { recordStaffEventTx } from './staff-events.ts';
 
 const mlog = log.child({ mod: 'meetings' });
 
@@ -400,6 +401,27 @@ async function writeActivityTx(
   await tx`update leads set updated_at = now() where id = ${leadId}`;
 }
 
+async function recordMeetingChangedTx(
+  tx: Sql,
+  meeting: MeetingRow,
+  change: 'cancelled' | 'rescheduled',
+  by: 'lead' | 'staff',
+): Promise<void> {
+  if (!meeting.lead_id) return;
+  const lead = (
+    await tx<{ name: string }[]>`select name from leads where id = ${meeting.lead_id}`
+  )[0];
+  if (!lead) return;
+  await recordStaffEventTx(tx, 'meeting.changed', {
+    meetingId: meeting.id,
+    leadId: meeting.lead_id,
+    leadName: lead.name,
+    change,
+    by,
+    startsAt: new Date(meeting.starts_at).toISOString(),
+  });
+}
+
 export interface BookInput {
   leadId: string;
   /** ISO-8601 instant — must be a legal grid slot start */
@@ -565,6 +587,7 @@ export async function bookMeetingTx(
                 ${tx.json({ from: lead.state, to: 'invited', via: 'meeting_booked' } as never)},
                 ${actor})
       `;
+      await recordMilestoneTx(tx, lead, lead.state, 'invited', actor);
     }
     await writeActivityTx(
       tx,
@@ -574,6 +597,15 @@ export async function bookMeetingTx(
       { meetingId: row.id, startsAt: row.starts_at, endsAt: row.ends_at, source: input.source },
       actor,
     );
+    await recordStaffEventTx(tx, 'meeting.booked', {
+      meetingId: row.id,
+      leadId,
+      leadName: lead.name,
+      business: lead.business_name,
+      startsAt: new Date(row.starts_at).toISOString(),
+      source: input.source,
+      roomUrl: row.room_url,
+    });
     return { meeting: row, created: true as const, cfg, lead };
   }
 }
@@ -830,6 +862,7 @@ export async function cancelByLead(
         { meetingId: target.id, startsAt: target.starts_at, via: 'booking_link' },
         'system',
       );
+      await recordMeetingChangedTx(tx, cancelled, 'cancelled', 'lead');
       return { row: cancelled, fresh: true as const };
     }
     const row = (
@@ -870,6 +903,7 @@ export async function cancelByLead(
       { meetingId: row.id, startsAt: row.starts_at, via: 'booking_link' },
       'system',
     );
+    await recordMeetingChangedTx(tx, cancelled, 'cancelled', 'lead');
     return { row: cancelled, fresh: true as const };
   });
   if (out.fresh) {
@@ -1064,6 +1098,9 @@ export async function patchMeeting(
               and title like 'Reengajar após no-show da call%'
           `;
         }
+        if (target === 'cancelled') {
+          await recordMeetingChangedTx(tx, updated, 'cancelled', 'staff');
+        }
       }
       committed.row = updated;
       committed.cfg = cfg;
@@ -1118,6 +1155,7 @@ export async function patchMeeting(
         },
         'staff',
       );
+      await recordMeetingChangedTx(tx, updated, 'rescheduled', 'staff');
     }
     committed.row = updated;
     committed.cfg = cfg;

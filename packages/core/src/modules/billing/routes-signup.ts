@@ -11,6 +11,7 @@ import { text, type AdminApp, type AdminDeps, type Merchant } from '../../admin/
 import { withTenant, type Sql } from '../../platform/db.ts';
 import { HttpError, bodyJson, clientIp, windowCounter } from '../../platform/http.ts';
 import { platformHost } from '../../platform/store-origin.ts';
+import { recordStaffEventTx } from '../staff-events.ts';
 import { mountBillingDev } from './dev-routes.ts';
 import { validEmail } from './input.ts';
 import { publicPlanOr422, publicPlans, type PlanRow } from './plans.ts';
@@ -158,10 +159,27 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
           )[0]!.n;
           if (recent >= STORES_PER_PHONE_PER_DAY)
             throw new HttpError(429, 'SIGNUP_LIMIT', 'this phone opened too many stores today');
-          await tx`
-            select provision_store(${slug}, ${storeName}, ${plan.id}, ${platformHost(slug, d.storeDomain)},
-                                   ${ownerName}, ${phone}, ${email})
-          `;
+          const tenantId = (
+            await tx<{ id: string }[]>`
+              select provision_store(${slug}, ${storeName}, ${plan.id}, ${platformHost(slug, d.storeDomain)},
+                                     ${ownerName}, ${phone}, ${email}) as id
+            `
+          )[0]!.id;
+          // as the new store: its own transaction may record an event about itself
+          await tx`select set_config('vendua.tenant_id', ${tenantId}, true)`;
+          await recordStaffEventTx(
+            tx,
+            'store.created',
+            {
+              storeName,
+              slug,
+              source: manual ? 'access_code' : 'signup',
+              owner: ownerName,
+              leadId: null,
+              plan: plan.name,
+            },
+            { tenantId, dedupeKey: `store.created:${tenantId}` },
+          );
         });
       } catch (err) {
         // a concurrent signup won the slug: it's ours if this phone owns it

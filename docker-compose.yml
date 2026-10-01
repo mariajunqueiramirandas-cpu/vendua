@@ -91,6 +91,11 @@ services:
       GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON: ${GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON:-}
       GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-}
       DAILY_API_KEY: ${DAILY_API_KEY:-}
+      # The team's Discord bot (ADR 0023, docs/deploy/discord.md): the token only — the
+      # application id, public key, server and channels are set in the CRM (Config → Discord).
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      # optional: the commit the "Core reiniciou" card shows
+      GIT_COMMIT: ${GIT_COMMIT:-}
       # Instagram DMs via the ig-sidecar service below; the same secret signs both directions.
       IG_SIDECAR_URL: http://ig-sidecar:8790
       IG_SIDECAR_SECRET: ${IG_SIDECAR_SECRET:-}

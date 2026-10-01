@@ -55,3 +55,10 @@ const NO_TENANT = '00000000-0000-0000-0000-000000000000';
 export function scoped(tx: Sql, d: FleetDeps, col: string) {
   return d.only ? tx`and ${tx(col)} in ${tx(d.only.length ? d.only : [NO_TENANT])}` : tx``;
 }
+
+/** what staff events call a store */
+export async function storeNameTx(tx: Sql, tenantId: string): Promise<string | null> {
+  return (
+    (await tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`)[0]?.name ?? null
+  );
+}
