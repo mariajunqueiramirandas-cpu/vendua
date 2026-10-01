@@ -394,21 +394,26 @@ describe('the sheet and its surroundings', () => {
     const held = holdAnimations();
     mockCore();
     m = await mount({ path: '/' });
-    await act(async () => showInfo('t2', 'Oi'));
-    const node = $('[data-part="toast"]');
-    expect(node).not.toBeNull();
+    await act(async () => showInfo('t2', 'Oi, toast de teste'));
+    // the notice store is module state: other tests' toasts may still be on screen
+    const mine = () =>
+      [...document.querySelectorAll('[data-part="toast"]')].find((n) =>
+        n.textContent?.includes('Oi, toast de teste'),
+      );
+    const node = mine();
+    expect(node).toBeDefined();
     const added: Node[] = [];
     const mo = new MutationObserver((rs) => rs.forEach((r) => added.push(...r.addedNodes)));
     mo.observe(document.body, { childList: true, subtree: true });
     await act(async () => dismissError('info:t2'));
     await flush(1);
     mo.disconnect();
-    expect($('[data-part="toast"]')).toBe(node);
+    expect(mine()).toBe(node);
     expect(node!.getAttribute('aria-hidden')).toBe('true');
     expect(added.filter((n) => n instanceof Element && n.closest('.v-toast-region'))).toEqual([]);
     await act(async () => held.forEach((a) => a.finish()));
     await flush();
-    expect($('[data-part="toast"]')).toBeNull();
+    expect(node!.isConnected).toBe(false);
   });
 
   test('forward again while the back press animates the sheet away keeps it open', async () => {
