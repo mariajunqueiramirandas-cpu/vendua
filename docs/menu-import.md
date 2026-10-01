@@ -1,6 +1,6 @@
 # Menu import — "Cole o link do seu cardápio"
 
-> Status: Phase 2 built (Instadelivery end to end: Core 0068 + `modules/menu-import`, admin onboarding step and Cardápio › Importar) · Last reviewed: 2026-10-01 · Model gaps (§6) are built (Core 0065–0067, Kernel 1.12.0, admin) · What's left: §9
+> Status: Phase 2 built (Instadelivery end to end: Core 0068 + `modules/menu-import`, admin onboarding step and Cardápio › Importar, CRM import on a lead's store) · Last reviewed: 2026-10-01 · Model gaps (§6) are built (Core 0065–0067, Kernel 1.12.0, admin) · Next: phase 3, planned step by step in [menu-import-phase3.md](menu-import-phase3.md)
 > Roadmap: first tenant ([Phase 4](roadmap.md#phase-4--one-tenant-operated-for-real-weeks-1420-overlaps)) — Quero Pudim Gourmet moves from Instadelivery
 
 Almost every merchant Venduá sells to already has a cardápio digital (Instadelivery, anota.ai,
@@ -79,6 +79,9 @@ Venduá".
 ## 3. Platforms
 
 Checked 2026-10-01, one or two public stores each, with a plain HTTP client and a headless browser.
+Phase 3 re-checks every chain before writing an adapter for it
+([plan, step 1](menu-import-phase3.md#2-step-1--verify-the-payloads-gate)) and records the
+verdicts here.
 
 | Platform        | Link the merchant pastes                        | How the menu is read                             | Verdict                                                   |
 | --------------- | ----------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
@@ -115,8 +118,10 @@ A Core module per [ADR 0013](adr/0013-modular-monolith-core.md),
 | `http.ts`            | The module's only outbound HTTP: host allowlist, caps, pacing                           |
 | `apply.ts`           | Writes a validated document into one tenant, in one transaction                         |
 | `images.ts`          | Downloads, re-encodes and attaches photos, logo and cover                               |
-| `routes.ts`          | `/admin/v1/imports/*` (and `/control/v1/…` in phase 2)                                  |
+| `routes.ts`          | `/admin/v1/imports/*`                                                                   |
+| `routes-control.ts`  | the staff versions, `/control/v1/stores/:slug/imports` and `/control/v1/imports/:id…`   |
 | `jobs.ts`            | `startMenuImportJobs()`, shaped like `startFleetJobs()` (`modules/fleet/jobs.ts`)       |
+| `probe-cli.ts`       | `bun run import:probe`, the staff check against the live platform ([§8](#8-testing))    |
 
 ### 4.2 Adapter contract
 
@@ -289,8 +294,10 @@ As built:
 - `http.ts` only calls hosts the adapter declares, on URLs the adapter builds from the `ref` that
   `match` extracted. Redirects are handled manually and re-checked against the allowlist. No
   user-supplied host reaches a request in v1, so there is no SSRF surface. Custom domains
-  (phase 2) need one fingerprinting GET to the merchant's own host, through a resolver that
-  refuses private, loopback and link-local addresses after DNS.
+  (phase 3) are resolved through the platforms' own host lookups where they exist. Only a
+  platform with no lookup needs one fingerprinting GET to the merchant's own host, through a
+  resolver that refuses private, loopback and link-local addresses after DNS
+  ([plan, step 4](menu-import-phase3.md#5-step-4--custom-domains-one-pr-after-the-adapters-it-needs)).
 - Caps: 10 s per request, 60 s per import, 5 MB per JSON response, 8 MB per image, 300 requests
   per import (Goomer reads options per product), at least 250 ms between requests to one host,
   at most two concurrent imports per platform.
@@ -346,7 +353,7 @@ oversized store fails the import.
 | Name, description, price, photo, badges                      | `products`, `product_media`, `tags`                                 | ✓ — badges become tags                                                                    |
 | "A partir de" price                                          | base price + a required option group                                | ✓ when the options carry the price                                                        |
 | Sizes / variants (Goomer, OlaClick, Saipos)                  | required group "Tamanho" (min 1, max 1)                             | ✓ exact: base = cheapest size, delta = size − cheapest                                    |
-| Promo price with strike-through                              | `products.compare_at_price_cents`                                   | ✓ — sells at the promo price, the old price is struck through; promo schedules are `lost` |
+| Promo price with strike-through                              | `products.compare_at_price_cents`                                   | ✓ — sells at the promo price, old price struck through; a promo on some days → full price |
 | Option groups: min, max, required, price                     | `modifier_groups`, `modifiers`                                      | ✓                                                                                         |
 | The same option more than once ("2x coco")                   | `modifiers.max_qty`, `cart_items.modifier_qty`                      | ✓ — priced × quantity in Core                                                             |
 | Option description or image                                  | `modifiers.description`, `modifiers.image_url`                      | ✓ — image re-hosted                                                                       |
@@ -475,9 +482,15 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
      (product hidden), a second price (`price2`, product hidden), sized pizza categories
      (`size1`/`size2`, products hidden), per-method discount/surcharge fields, free-delivery
      rules on fees (`free_delivery`, `price_free`), and a "no delivery" km band inside the area.
-     Reading those values needs a broader permission in the session than this one had.
-3. **More adapters**, one PR each with its fixtures: Cardápio Web, OlaClick, Delivery Direto,
-   Takeat, Saipos, Goomer. Custom domains. The CRM import on a lead's store.
+     Settling them means reading values from other merchants' stores, which phase 2's session
+     couldn't do; phase 3 step 2 does it.
+   - The CRM import on a lead's store, planned for phase 3, was built here.
+3. **More adapters**, planned step by step in [menu-import-phase3.md](menu-import-phase3.md):
+   1. Re-verify every platform's request chain (the gate).
+   2. Settle the Instadelivery fields above.
+   3. One adapter per PR, with its fixtures: Cardápio Web, OlaClick, Takeat, Delivery Direto,
+      Saipos, Goomer.
+   4. Custom domains.
 4. **iFood** through the official Merchant API: Venduá registered as an iFood app, the merchant
    authorizes it in the Portal do Parceiro ("Conectar iFood"), the catalog comes from
    `catalog/v2.0`. Its own design doc.
@@ -501,7 +514,9 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
 
 ## Appendix A — platform notes
 
-What a public store returned on 2026-10-01. Internal APIs; expect drift.
+What a public store returned on 2026-10-01. Internal APIs; expect drift. Phase 3 adds a "Checked
+<date>" line under each platform as it re-verifies the chain, and replaces the entry with the
+fields as built once its adapter lands.
 
 - **Instadelivery** — `GET app.instadelivery.com.br/api/stores/by-slug/<slug>`. `groups[]` (order,
   `is_pizza`, weekday flags, hours) → `itens[]` (`price1` in reais, `from_price`, `strike_price`,
