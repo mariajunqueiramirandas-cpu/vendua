@@ -158,7 +158,8 @@ export async function restoreStock(tx: Sql, tenantId: string, orderId: string): 
       .filter((l) => l.product_id)
       .map((l) => ({ productId: l.product_id!, qty: l.qty, combo: l.combo })),
   );
-  for (const [id, n] of demand) {
+  // id order, like checkout and the Estoque batch, so concurrent row locks never deadlock
+  for (const [id, n] of [...demand].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const before = (
       await tx<{ stock_quantity: number; status: string }[]>`
         update products set stock_quantity = stock_quantity + ${n}
