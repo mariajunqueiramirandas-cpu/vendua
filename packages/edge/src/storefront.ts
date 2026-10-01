@@ -5,6 +5,14 @@ import { SECURITY_HEADERS, acceptsGzip, etagMatches, shouldGzip, withGzip } from
 import { injectState } from './inject.ts';
 import { log } from './log.ts';
 import { isTextType, type StorefrontManifest } from './manifest.ts';
+import {
+  injectMeta,
+  pageHead,
+  productPattern,
+  productSlug,
+  storeMeta,
+  type ProductHead,
+} from './meta.ts';
 import { UNAVAILABLE_HTML, UNKNOWN_STORE_HTML } from './pages.ts';
 
 const IMMUTABLE = 'public, max-age=31536000, immutable';
@@ -61,22 +69,24 @@ export interface StorefrontDeps {
   /** host → until when Core's UNKNOWN_HOST answer stands */
   unknownHosts: Lru<string, number>;
   states: SwrCache<unknown>;
+  /** `<host> <slug>` → a product page's head (null: Core has no such product) */
+  products: SwrCache<ProductHead | null>;
   releases: Releases;
-  /** how long a first HTML request waits for a state Core has not given us yet */
+  /** how long a first HTML request waits for a state (or product) Core has not given us yet */
   stateWaitMs: number;
 }
 
-export function createStorefront(d: StorefrontDeps) {
-  async function stateFor(host: string): Promise<{ value: unknown } | null> {
-    try {
-      const wait = new Promise<null>((r) => setTimeout(r, d.stateWaitMs, null).unref?.());
-      const got = await Promise.race([d.states.get(host), wait]);
-      return got ? { value: got.value } : null;
-    } catch {
-      return null;
-    }
+/** `got`'s value if it lands before `deadline`; null when it is late or fails. */
+async function within<T>(got: Promise<{ value: T }>, deadline: Promise<null>) {
+  try {
+    const r = await Promise.race([got, deadline]);
+    return r ? { value: r.value } : null;
+  } catch {
+    return null;
   }
+}
 
+export function createStorefront(d: StorefrontDeps) {
   return async function serve(req: Request, url: URL, host: string): Promise<Response> {
     if (req.method !== 'GET' && req.method !== 'HEAD')
       return plain('method not allowed', 405, { allow: 'GET, HEAD' });
@@ -124,8 +134,22 @@ export function createStorefront(d: StorefrontDeps) {
       headers.set('vary', 'accept-encoding');
       if (req.method === 'HEAD') return new Response(null, { headers });
       let html = new TextDecoder().decode(body);
-      const state = await stateFor(host);
-      if (state) html = injectState(html, state.value);
+      // the head is the SPA shell's; another HTML file the store ships keeps its own
+      const slug = file === m.entry ? productSlug(url.pathname, productPattern(m.build)) : null;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<null>((r) => {
+        timer = setTimeout(r, d.stateWaitMs, null);
+      });
+      const [state, product] = await Promise.all([
+        within(d.states.get(host), deadline),
+        slug ? within(d.products.get(`${host} ${slug}`), deadline) : null,
+      ]);
+      clearTimeout(timer);
+      if (state) {
+        const store = file === m.entry ? storeMeta(state.value) : null;
+        if (store) html = injectMeta(html, pageHead(store, url.pathname, product?.value ?? null));
+        html = injectState(html, state.value);
+      }
       return withGzip(new TextEncoder().encode(html), headers, gz);
     }
 

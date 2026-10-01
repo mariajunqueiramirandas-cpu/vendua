@@ -5,11 +5,13 @@ import { Lru, SwrCache } from './cache.ts';
 import { CoreHealth, UnknownHost, coreClient, type FetchImpl, type Route } from './core.ts';
 import { createReleases } from './files.ts';
 import { log } from './log.ts';
+import type { ProductHead } from './meta.ts';
 import { API_RE, createProxy, type Lkg } from './proxy.ts';
 import { readSnapshot, writeSnapshot, type Snapshot } from './snapshot.ts';
 import { createStorefront } from './storefront.ts';
 
 export { injectState } from './inject.ts';
+export { injectMeta } from './meta.ts';
 
 export interface EdgeOptions {
   coreUrl: string;
@@ -98,6 +100,11 @@ export function createEdge(o: EdgeOptions): Edge {
     async (host) => ({ value: await core.surfaces(host), ttl: stateTtl }),
     changed,
   );
+  // product heads stay out of the snapshot: without one a page falls back to the store's head
+  const products = new SwrCache<ProductHead | null>(maxHosts, async (key) => {
+    const at = key.indexOf(' ');
+    return { value: await core.product(key.slice(0, at), key.slice(at + 1)), ttl: stateTtl };
+  });
   const lkg = new Lru<string, Lkg>(maxHosts);
 
   const snap = readSnapshot(snapshotFile);
@@ -141,6 +148,7 @@ export function createEdge(o: EdgeOptions): Edge {
     routes,
     unknownHosts,
     states,
+    products,
     releases: createReleases({ store: o.store, cacheDir: o.cacheDir }),
     stateWaitMs: o.stateWaitMs ?? Math.min(timeoutMs, 1_500),
   });

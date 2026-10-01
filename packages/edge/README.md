@@ -10,6 +10,12 @@ content-addressed release artifacts (docs/architecture/07-deployment-and-hosting
   everything else `no-cache`; ETag/304 and gzip for text.
 - HTML gets `<script id="vendua-state">window.__VENDUA_STATE__=…</script>` before `</head>`
   (Core `GET /storefront/v1/surfaces` for that host, cached per host).
+- The entry HTML's head gets the page's `<title>`, description, Open Graph, Twitter card and
+  canonical link (`src/meta.ts`) from that envelope's `meta` — link previews (WhatsApp,
+  Instagram) don't run JS. A product route (`/produto/:slug`) adds Core's
+  `GET /storefront/v1/products/:slug` (cached per host + slug). Both wait at most
+  `stateWaitMs`; a late or failed product falls back to the store's head, no `meta` (older
+  Core) leaves the head as built.
 - `/checkout/v1`, `/storefront/v1` and `/v1` proxy to Core (streamed, SSE included). The last
   good `/storefront/v1/state`, `/storefront/v1/surfaces` and `/v1/v.js` are served with
   `x-vendua-edge-stale: 1` while Core errors.
