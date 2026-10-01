@@ -2,6 +2,7 @@ import { ClipboardText } from '@phosphor-icons/react';
 import { forwardRef, useImperativeHandle, useRef } from 'react';
 import { Button } from './Button.tsx';
 import { cn } from './cn.ts';
+import { LineInput } from './fields.tsx';
 
 export interface CodeInputHandle {
   focus: () => void;
@@ -45,7 +46,7 @@ export const CodeInput = forwardRef<
         <legend className="sr-only">código de 6 números</legend>
         <div className="flex justify-between gap-2">
           {Array.from({ length: 6 }, (_, i) => (
-            <input
+            <LineInput
               key={i}
               ref={(el) => (inputs.current[i] = el)}
               aria-label={`número ${i + 1}`}
@@ -60,7 +61,7 @@ export const CodeInput = forwardRef<
               }}
               aria-invalid={invalid ? true : undefined}
               className={cn(
-                'tnum h-16 w-full min-w-0 rounded-md bg-sunken text-center font-display text-3xl font-semibold ring-1 ring-transparent',
+                'tnum h-16 w-full min-w-0 rounded-md py-3.5 leading-9 bg-sunken text-center font-display text-3xl font-semibold ring-1 ring-transparent',
                 'focus:bg-surface focus:ring-2 focus:ring-primary focus:outline-none aria-invalid:ring-danger',
               )}
             />
