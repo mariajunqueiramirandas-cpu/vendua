@@ -555,20 +555,23 @@ test('[S05] override crash → error boundary renders Kernel default, failure re
     page.getByText('Cardápio do fixture'),
     'a crashing section took its siblings down',
   ).toBeVisible();
-  const reports = await page.evaluate(
-    () => ((window as any).__VENDUA_REPORTS__ ?? []) as { kind: string; target: string }[],
-  );
-  const got = new Set(reports.map((r) => `${r.kind}:${r.target}`));
+  // an override is lazy: its slot shows the Kernel default while the module loads, so the default
+  // can be on screen before the override has loaded, thrown and been reported — wait for the report
+  const reported = () =>
+    page.evaluate(() =>
+      (((window as any).__VENDUA_REPORTS__ ?? []) as { kind: string; target: string }[]).map(
+        (r) => `${r.kind}:${r.target}`,
+      ),
+    );
   for (const want of [
     'slot_error:system.PromoNotice',
     'slot_error:catalog.ProductCard',
     'section_error:store:boom#boom',
     'section_unknown:sdk:not-shipped-yet',
   ])
-    expect(
-      got.has(want),
-      `failure not reported: ${want} (got ${[...got].join(', ')})`,
-    ).toBeTruthy();
+    await expect
+      .poll(reported, { message: `failure not reported: ${want}`, timeout: 10_000 })
+      .toContain(want);
 
   // blocking path: the paused override (registered under its old alias) throws too
   await page.goto(fixtureBase(PAUSED));
@@ -579,10 +582,9 @@ test('[S05] override crash → error boundary renders Kernel default, failure re
   ).toBeVisible({
     timeout: 15_000,
   });
-  const pausedReports = await page.evaluate(
-    () => ((window as any).__VENDUA_REPORTS__ ?? []) as { target: string }[],
-  );
-  expect(pausedReports.some((r) => r.target === 'system.PauseNotice')).toBeTruthy();
+  await expect
+    .poll(reported, { message: 'paused override failure not reported', timeout: 10_000 })
+    .toContain('slot_error:system.PauseNotice');
   expect(errs, `uncaught page errors: ${errs.join('; ')}`).toHaveLength(0);
 });
 
