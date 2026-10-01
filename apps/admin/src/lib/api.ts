@@ -1162,6 +1162,14 @@ export const api = {
     send<{ product: ProductDetail }>('PUT', `/products/${id}/kit`, { slots }),
   orderProducts: (categoryId: string, ids: string[]) =>
     send('PUT', '/products/order', { categoryId, ids }),
+  /** relative changes (+5, −2): a sale drawn meanwhile still counts; Core floors at 0 */
+  // keepalive: the Estoque screen sends its last taps as the app closes
+  adjustStock: (changes: { productId: string; add: number }[]) =>
+    req<{ stock: Record<string, number>; waitlistWoken: number }>('/products/stock', {
+      method: 'POST',
+      body: JSON.stringify({ changes }),
+      keepalive: true,
+    }),
   bulk: (ids: string[], action: string, extra: Record<string, unknown> = {}) =>
     send<{ updated: number }>('POST', '/products/bulk', { ids, action, ...extra }),
   importPreview: (text: string) =>

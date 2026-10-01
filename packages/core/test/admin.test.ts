@@ -481,6 +481,37 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(bulk.body.updated).toBe(2);
     expect((await owner('GET', `/products/${productId}`)).body.product.priceCents).toBe(2750);
 
+    // Estoque: taps are relative (a sale drawn meanwhile still counts), floored at 0
+    const p2id = p2.body.product.id as string;
+    await owner('PATCH', `/products/${p2id}`, { stockQuantity: 3 });
+    await sql`update products set stock_quantity = stock_quantity - 1 where id = ${p2id}`;
+    const adj = await owner('POST', '/products/stock', {
+      changes: [
+        { productId: p2id, add: 4 },
+        { productId: p2id.toUpperCase(), add: 1 },
+        { productId, add: 2 },
+        { productId: crypto.randomUUID(), add: 1 },
+      ],
+    });
+    expect(adj.status).toBe(200);
+    // untracked and unknown products are left alone
+    expect(adj.body.stock).toEqual({ [p2id]: 7 });
+    expect((await owner('GET', `/products/${productId}`)).body.product.stockQuantity).toBeNull();
+    const floor = await owner('POST', '/products/stock', {
+      changes: [{ productId: p2id, add: -50 }],
+    });
+    expect(floor.body.stock).toEqual({ [p2id]: 0 });
+    expect((await owner('GET', `/products/${p2id}`)).body.product.liveStatus).toBe('sold_out');
+    for (const bad of [
+      {},
+      { changes: [] },
+      { changes: [{ productId: 'nope', add: 1 }] },
+      { changes: [{ productId: p2id, add: 1.5 }] },
+      { changes: Array.from({ length: 101 }, () => ({ productId: p2id, add: 1 })) },
+    ])
+      expect((await owner('POST', '/products/stock', bad)).status).toBe(422);
+    await owner('PATCH', `/products/${p2id}`, { stockQuantity: null });
+
     const preview = await owner('POST', '/products/import/preview', {
       text: 'Sacolé de uva - 4,50\nBolo de pote 12',
     });

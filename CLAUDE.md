@@ -140,6 +140,4 @@ Running agents (learned the hard way on the site rebuild):
 
 ## PRs
 
-No automated reviewer runs on PRs — don't wait for review comments. Once CI is green the PR
-is ready to merge. If a human leaves review comments, fix real ones, reply on every thread
-(with the commit) and resolve it.
+Once CI is green the PR is ready to merge.
