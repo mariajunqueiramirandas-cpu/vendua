@@ -75,21 +75,14 @@ export function transitionFor(from: Loc | null, to: Loc): { type: VtType; dir: D
   if (fb && tb) return null;
   const a = fb ?? from;
   const b = tb ?? to;
-  let dir: Dir;
-  let type: VtType;
-  if (a.pathname === b.pathname) {
-    const sa = stateOf(a)?.vStepN ?? 0;
-    const sb = stateOf(b)?.vStepN ?? 0;
-    if (sa === sb) return stateOf(to)?.vt ? { type: stateOf(to)!.vt!, dir: 'none' } : null;
-    dir = sb > sa ? 'push' : 'pop';
-    type = dir;
-  } else {
-    const da = depthOf(a.pathname);
-    const db = depthOf(b.pathname);
-    dir = db > da ? 'push' : db < da ? 'pop' : 'none';
-    type = dir === 'none' ? 'tab' : dir;
-  }
-  type = stateOf(to)?.vt ?? type;
+  // same page (a checkout step, a filter): no page transition — it would swallow the next
+  // tap while it runs; the page animates its own content
+  if (a.pathname === b.pathname)
+    return stateOf(to)?.vt ? { type: stateOf(to)!.vt!, dir: 'none' } : null;
+  const da = depthOf(a.pathname);
+  const db = depthOf(b.pathname);
+  const dir: Dir = db > da ? 'push' : db < da ? 'pop' : 'none';
+  let type: VtType = stateOf(to)?.vt ?? (dir === 'none' ? 'tab' : dir);
   if ((type === 'push' || type === 'pop') && wide()) type = 'fade';
   return { type, dir };
 }

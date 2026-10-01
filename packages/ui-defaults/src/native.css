@@ -89,6 +89,32 @@
       animation-duration: 120ms;
     }
   }
+  /* a checkout step is a change inside the page, not a page transition: the new step's form
+     slides in from the side it came from and stays tappable the whole time */
+  [data-vendua-page='checkout'] form[data-step][data-dir] {
+    animation: v-step-in 240ms var(--_v-vt-ease) both;
+  }
+  [data-vendua-page='checkout'] form[data-step][data-dir='pop'] {
+    animation-name: v-step-back;
+  }
+  @keyframes v-step-in {
+    from {
+      opacity: 0;
+      transform: translateX(20px);
+    }
+  }
+  @keyframes v-step-back {
+    from {
+      opacity: 0;
+      transform: translateX(-20px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    [data-vendua-page='checkout'] form[data-step][data-dir] {
+      animation: v-fade-in 120ms linear both;
+    }
+  }
+
   @keyframes v-vt-in {
     from {
       transform: translateX(100%);

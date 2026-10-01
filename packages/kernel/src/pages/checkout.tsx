@@ -97,6 +97,13 @@ export function CheckoutPage() {
   const reachable = ORDER.slice(0, ORDER.indexOf(asked)).every((s) => done.has(s));
   const step: StepId = reachable ? asked : 'dados';
   const stepHeading = useRef<HTMLHeadingElement>(null);
+  // which way the last step change went: the new step's form slides in from that side
+  const prevStep = useRef(step);
+  const stepDir = useRef<'push' | 'pop' | undefined>(undefined);
+  if (prevStep.current !== step) {
+    stepDir.current = ORDER.indexOf(step) > ORDER.indexOf(prevStep.current) ? 'push' : 'pop';
+    prevStep.current = step;
+  }
   const pushedStep = useRef(false);
   const firstStep = useRef(true);
   const [draft, setDraft] = useState<CustomerDraft>(() => ({
@@ -439,8 +446,10 @@ export function CheckoutPage() {
       <div className="v-checkout-grid">
         <Slot name="checkout.Layout" steps={steps} current={step} onStep={(id) => setStep(id)}>
           <form
+            key={step}
             noValidate
             data-step={step}
+            data-dir={stepDir.current}
             onSubmit={(e) => {
               e.preventDefault();
               if (step === 'pagamento') void place();

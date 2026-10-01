@@ -25,7 +25,9 @@ Additive; no storefront edit, no new runtime export.
 - `catalog.Gallery` (default): a swipe gallery with page dots on phones; `data-part="main"` is
   now the swiping strip (a list of `data-part="slide"`), thumbnails stay from 860 px.
 - Checkout steps are history entries (`state.vStep`): back returns to the previous step; a
-  new step starts at the top with focus on its heading.
+  new step slides in from its side, starts at the top with focus on its heading. Changes
+  inside one page (steps, filters) are never page transitions, which would swallow the next
+  tap while they run.
 - `<meta name="theme-color">` follows the live `bg` token (created when the page has none)
   and dims while the sheet is open.
 - Toasts sit in the top layer (above the header, the bag bar and the sheet), enter and leave
