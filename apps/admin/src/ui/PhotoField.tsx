@@ -114,16 +114,18 @@ export function PhotoField({
               trocar
             </button>
           ) : (
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<Camera />}
-              className="absolute bottom-3 right-3"
-              disabled={photos.length >= max}
-              onClick={() => input.current?.click()}
-            >
-              adicionar foto
-            </Button>
+            // Button's own `relative` would win over an `absolute` passed in (cn doesn't merge)
+            <div className="absolute bottom-3 right-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Camera />}
+                disabled={photos.length >= max}
+                onClick={() => input.current?.click()}
+              >
+                adicionar foto
+              </Button>
+            </div>
           )}
         </div>
       ) : (
@@ -145,7 +147,8 @@ export function PhotoField({
       )}
       {max > 1 && photos.length >= 1 ? (
         <ul
-          className="mt-3 flex gap-2 overflow-x-auto pb-1"
+          // the padding keeps the cover's ring inside the scroller, which clips it otherwise
+          className="-mx-1 mt-2 flex gap-2 overflow-x-auto p-1"
           aria-label="fotos (a primeira é a capa)"
         >
           {photos.map((p, i) => (
