@@ -28,13 +28,26 @@ Priority: `P0` merchants churn or don't convert without it · `P1` frequent ask
 
 ## Competitor set
 
-Not yet agreed. Proposed starting point, to confirm:
+Primary: the platforms our merchants already use, as named in
+[`menu-import.md` §3](menu-import.md#3-platforms). Their public stores are the
+evidence base, and each one is also an import adapter.
 
-| Segment                    | Candidates                             |
-| -------------------------- | -------------------------------------- |
-| BR generalist storefronts  | Nuvemshop, Tray, Loja Integrada, Yampi |
-| Global generalist          | Shopify                                |
-| Food / delivery (our core) | iFood, Anota AI, Goomer, Menudino      |
+| Platform        | Role                        | Import status (menu-import §3)  |
+| --------------- | --------------------------- | ------------------------------- |
+| anota.ai        | Primary (cardápio digital)  | Blocked from our test network   |
+| Goomer          | Primary                     | Doable                          |
+| Instadelivery   | Primary                     | Easy                            |
+| Cardápio Web    | Primary                     | Easy                            |
+| OlaClick        | Primary                     | Easy                            |
+| Delivery Direto | Primary                     | Easy                            |
+| Takeat          | Primary                     | Easy                            |
+| Saipos          | Primary                     | Easy                            |
+| iFood           | Marketplace we sell against | Blocked; later via official API |
+
+Secondary, for reference only (generalist storefronts, weaker signal for a
+food merchant): Nuvemshop, Tray, Loja Integrada, Yampi, Shopify. Menudino was in
+the first proposal but is in no existing doc; keep it out unless a merchant
+names it.
 
 ## Confirmed gaps
 
