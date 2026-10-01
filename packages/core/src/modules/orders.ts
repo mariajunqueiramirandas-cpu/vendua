@@ -94,7 +94,7 @@ export interface OrderItemView {
   name: string;
   qty: number;
   unitPriceCents: number;
-  modifiers: { name: string; priceDeltaCents: number }[];
+  modifiers: { name: string; priceDeltaCents: number; qty: number }[];
   combo: { slotName: string; name: string; qty: number }[];
   lineTotalCents: number;
 }
@@ -177,7 +177,7 @@ export async function loadOrderView(
       name: string;
       qty: number;
       unit_price_cents: number;
-      modifiers: { name: string; priceDeltaCents: number }[];
+      modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
       combo: { slotName: string; name: string; qty: number }[];
       line_total_cents: number;
     }[]
@@ -198,7 +198,11 @@ export async function loadOrderView(
       name: i.name,
       qty: i.qty,
       unitPriceCents: i.unit_price_cents,
-      modifiers: i.modifiers.map((m) => ({ name: m.name, priceDeltaCents: m.priceDeltaCents })),
+      modifiers: i.modifiers.map((m) => ({
+        name: m.name,
+        priceDeltaCents: m.priceDeltaCents,
+        qty: m.qty ?? 1,
+      })),
       combo: i.combo.map((c) => ({ slotName: c.slotName, name: c.name, qty: c.qty })),
       lineTotalCents: i.line_total_cents,
     })),

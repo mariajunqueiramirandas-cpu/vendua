@@ -206,7 +206,7 @@ export async function placeOrderTx(
         insert into order_items (tenant_id, order_id, product_id, slug, name, qty, unit_price_cents,
                                  modifiers, combo, line_total_cents, sort)
         values (${tenantId}, ${orderId}, ${i.productId}, ${i.slug}, ${i.name}, ${i.qty}, ${i.unitPriceCents},
-                ${tx.json(i.modifiers.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })))},
+                ${tx.json(i.modifiers.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents, qty: m.qty })))},
                 ${tx.json(
                   i.combo.map((c) => ({
                     slotId: c.slotId,

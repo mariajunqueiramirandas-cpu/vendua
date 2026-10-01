@@ -26,6 +26,25 @@ import { emitAdminTx } from './live.ts';
 import { storeTz } from './routes-orders.ts';
 
 const MAX_PRICE = 10_000_000;
+const PRICING_RULES = ['sum', 'average', 'most_expensive'] as const;
+
+/** Photo links: https:// or root-relative (an upload's /v1/media/…), never protocol-relative. */
+function mediaUrl(v: unknown, field: string): string {
+  const url = text(v, field, 1000, 1);
+  if (!/^(https:\/\/|\/)/.test(url) || url.startsWith('//'))
+    throw new HttpError(422, 'BAD_REQUEST', 'photo links must be https:// or uploaded', { field });
+  return url;
+}
+
+/** "de" price: null clears; otherwise strictly above the selling price. */
+function compareAt(v: unknown, priceCents: number): number | null {
+  const cents = optInt(v, 'compareAtPriceCents', 1, MAX_PRICE) ?? null;
+  if (cents !== null && cents <= priceCents)
+    throw new HttpError(422, 'BAD_REQUEST', 'the "de" price must be above the price', {
+      field: 'compareAtPriceCents',
+    });
+  return cents;
+}
 
 export interface AdminProductRow {
   id: string;
@@ -34,6 +53,8 @@ export interface AdminProductRow {
   name: string;
   description: string | null;
   priceCents: number;
+  /** display-only strike-through price; null = no promo */
+  compareAtPriceCents: number | null;
   status: 'active' | 'sold_out' | 'archived';
   kind: 'simple' | 'combo';
   stockQuantity: number | null;
@@ -55,7 +76,8 @@ export interface AdminProductRow {
 
 const productCols = (tx: Sql) => tx`
   p.id, p.category_id as "categoryId", p.slug, p.name, p.description, p.base_price_cents as "priceCents",
-  p.status, p.kind, p.stock_quantity as "stockQuantity", p.low_stock_threshold as "lowStockThreshold",
+  p.compare_at_price_cents as "compareAtPriceCents", p.status, p.kind,
+  p.stock_quantity as "stockQuantity", p.low_stock_threshold as "lowStockThreshold",
   p.requires_preorder as "requiresPreorder", p.preorder_lead_days as "preorderLeadDays", p.sort,
   p.sold_out_until as "soldOutUntil", p.tags, p.availability_schedule as "availabilitySchedule",
   (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as "imageUrl",
@@ -90,15 +112,32 @@ async function productRow(tx: Sql, tenantId: string, id: string): Promise<AdminP
 async function productDetail(tx: Sql, tenantId: string, id: string) {
   const product = await productRow(tx, tenantId, id);
   const groups = await tx<
-    { id: string; name: string; required: boolean; min_select: number; max_select: number }[]
+    {
+      id: string;
+      name: string;
+      required: boolean;
+      min_select: number;
+      max_select: number;
+      pricing_rule: string;
+    }[]
   >`
-    select id, name, required, min_select, max_select from modifier_groups
+    select id, name, required, min_select, max_select, pricing_rule from modifier_groups
     where tenant_id = ${tenantId} and product_id = ${id} order by sort, name
   `;
   const options = await tx<
-    { id: string; group_id: string; name: string; price_delta_cents: number; status: string }[]
+    {
+      id: string;
+      group_id: string;
+      name: string;
+      price_delta_cents: number;
+      status: string;
+      max_qty: number;
+      description: string | null;
+      image_url: string | null;
+    }[]
   >`
-    select m.id, m.group_id, m.name, m.price_delta_cents, m.status from modifiers m
+    select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.max_qty, m.description,
+           m.image_url from modifiers m
       join modifier_groups g on g.id = m.group_id
     where m.tenant_id = ${tenantId} and g.product_id = ${id} order by m.sort, m.name
   `;
@@ -123,6 +162,7 @@ async function productDetail(tx: Sql, tenantId: string, id: string) {
         required: g.required,
         minSelect: g.min_select,
         maxSelect: g.max_select,
+        pricingRule: g.pricing_rule,
         options: options
           .filter((o) => o.group_id === g.id)
           .map((o) => ({
@@ -130,6 +170,9 @@ async function productDetail(tx: Sql, tenantId: string, id: string) {
             name: o.name,
             priceDeltaCents: o.price_delta_cents,
             status: o.status,
+            maxQty: o.max_qty,
+            description: o.description,
+            imageUrl: o.image_url,
           })),
       })),
       gallery,
@@ -219,8 +262,10 @@ export function mountCatalog(d: AdminDeps) {
   admin.get(
     '/catalog',
     read('manager', async (tx, t) => {
-      const categories = await tx<{ id: string; slug: string; name: string; sort: number }[]>`
-        select id, slug, name, sort from categories where tenant_id = ${t.id} order by sort, name
+      const categories = await tx<
+        { id: string; slug: string; name: string; description: string | null; sort: number }[]
+      >`
+        select id, slug, name, description, sort from categories where tenant_id = ${t.id} order by sort, name
       `;
       const products = await withNow(
         tx,
@@ -251,6 +296,7 @@ export function mountCatalog(d: AdminDeps) {
     write('manager', async (tx, t, m, c) => {
       const body = await bodyJson(c);
       const name = text(body.name, 'name', 60, 1);
+      const description = optText(body.description, 'description', 500) ?? null;
       const sort = (
         await tx<
           { n: number }[]
@@ -258,9 +304,9 @@ export function mountCatalog(d: AdminDeps) {
       )[0]!.n;
       const row = (
         await tx`
-          insert into categories (tenant_id, slug, name, sort)
-          values (${t.id}, ${await uniqueSlug(tx, 'categories', t.id, name)}, ${name}, ${sort})
-          returning id, slug, name, sort
+          insert into categories (tenant_id, slug, name, description, sort)
+          values (${t.id}, ${await uniqueSlug(tx, 'categories', t.id, name)}, ${name}, ${description}, ${sort})
+          returning id, slug, name, description, sort
         `
       )[0]!;
       await audit(tx, t.id, m, {
@@ -280,21 +326,33 @@ export function mountCatalog(d: AdminDeps) {
     write('manager', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
       const body = await bodyJson(c);
-      const name = text(body.name, 'name', 60, 1);
+      const set: Record<string, unknown> = {};
+      if (body.name !== undefined) set.name = text(body.name, 'name', 60, 1);
+      if (body.description !== undefined)
+        set.description = optText(body.description, 'description', 500) ?? null;
+      if (!Object.keys(set).length) throw new HttpError(422, 'BAD_REQUEST', 'nothing to change');
       const before = (
-        await tx`select name from categories where tenant_id = ${t.id} and id = ${id}`
+        await tx<{ name: string; description: string | null }[]>`
+          select name, description from categories where tenant_id = ${t.id} and id = ${id}
+        `
       )[0];
       if (!before) throw new HttpError(404, 'CATEGORY_NOT_FOUND', 'category not found');
       const row = (
-        await tx`update categories set name = ${name} where tenant_id = ${t.id} and id = ${id} returning id, slug, name, sort`
+        await tx`
+          update categories set ${tx(set as never)} where tenant_id = ${t.id} and id = ${id}
+          returning id, slug, name, description, sort
+        `
       )[0]!;
+      const renamed = set.name !== undefined && set.name !== before.name;
       await audit(tx, t.id, m, {
-        action: 'category.rename',
+        action: renamed ? 'category.rename' : 'category.update',
         entity: 'category',
         entityId: id,
-        summary: `renomeou "${before.name}" para "${name}"`,
+        summary: renamed
+          ? `renomeou "${before.name}" para "${row.name}"`
+          : `alterou a descrição de "${row.name}"`,
         before,
-        after: { name },
+        after: set,
       });
       await emitAdminTx(tx, t.id, 'catalog');
       return { status: 200, body: { category: row } };
@@ -359,6 +417,7 @@ export function mountCatalog(d: AdminDeps) {
       const name = text(body.name, 'name', 120, 2);
       const categoryId = await categoryOf(tx, t.id, body.categoryId);
       const price = int(body.priceCents, 'priceCents', 0, MAX_PRICE);
+      const compareAtCents = compareAt(body.compareAtPriceCents, price);
       const description = optText(body.description, 'description', 1000) ?? null;
       const sort = (
         await tx<{ n: number }[]>`
@@ -367,8 +426,10 @@ export function mountCatalog(d: AdminDeps) {
       )[0]!.n;
       const id = (
         await tx<{ id: string }[]>`
-          insert into products (tenant_id, category_id, slug, name, description, base_price_cents, sort)
-          values (${t.id}, ${categoryId}, ${await uniqueSlug(tx, 'products', t.id, name)}, ${name}, ${description}, ${price}, ${sort})
+          insert into products (tenant_id, category_id, slug, name, description, base_price_cents,
+                                compare_at_price_cents, sort)
+          values (${t.id}, ${categoryId}, ${await uniqueSlug(tx, 'products', t.id, name)}, ${name}, ${description}, ${price},
+                  ${compareAtCents}, ${sort})
           returning id
         `
       )[0]!.id;
@@ -377,7 +438,7 @@ export function mountCatalog(d: AdminDeps) {
         entity: 'product',
         entityId: id,
         summary: `criou "${name}"`,
-        after: { name, priceCents: price },
+        after: { name, priceCents: price, compareAtPriceCents: compareAtCents },
       });
       await emitAdminTx(tx, t.id, 'catalog');
       return { status: 201, body: await productDetail(tx, t.id, id) };
@@ -403,6 +464,21 @@ export function mountCatalog(d: AdminDeps) {
       if (body.priceCents !== undefined) {
         set.base_price_cents = int(body.priceCents, 'priceCents', 0, MAX_PRICE);
         changes.push('preço');
+      }
+      if (body.compareAtPriceCents !== undefined) {
+        set.compare_at_price_cents = compareAt(
+          body.compareAtPriceCents,
+          (set.base_price_cents as number | undefined) ?? before.priceCents,
+        );
+        changes.push('preço "de"');
+      } else if (
+        set.base_price_cents !== undefined &&
+        before.compareAtPriceCents !== null &&
+        before.compareAtPriceCents <= (set.base_price_cents as number)
+      ) {
+        throw new HttpError(422, 'BAD_REQUEST', 'the "de" price must be above the price', {
+          field: 'compareAtPriceCents',
+        });
       }
       if (body.categoryId !== undefined) {
         set.category_id = await categoryOf(tx, t.id, body.categoryId);
@@ -466,8 +542,22 @@ export function mountCatalog(d: AdminDeps) {
         entity: 'product',
         entityId: id,
         summary: `alterou ${changes.join(', ')} de "${after.name}"`,
-        before: pick(before, ['name', 'priceCents', 'status', 'stockQuantity', 'categoryId']),
-        after: pick(after, ['name', 'priceCents', 'status', 'stockQuantity', 'categoryId']),
+        before: pick(before, [
+          'name',
+          'priceCents',
+          'compareAtPriceCents',
+          'status',
+          'stockQuantity',
+          'categoryId',
+        ]),
+        after: pick(after, [
+          'name',
+          'priceCents',
+          'compareAtPriceCents',
+          'status',
+          'stockQuantity',
+          'categoryId',
+        ]),
       });
       await emitAdminTx(tx, t.id, 'catalog', id);
       return {
@@ -485,11 +575,12 @@ export function mountCatalog(d: AdminDeps) {
       const name = `${src.name} (cópia)`.slice(0, 120);
       const copy = (
         await tx<{ id: string }[]>`
-          insert into products (tenant_id, category_id, slug, name, description, base_price_cents, status, figure_variant,
-                                tags, kind, requires_preorder, preorder_lead_days, sort, low_stock_threshold)
+          insert into products (tenant_id, category_id, slug, name, description, base_price_cents,
+                                compare_at_price_cents, status, figure_variant, tags, kind, requires_preorder,
+                                preorder_lead_days, sort, low_stock_threshold)
           select tenant_id, category_id, ${await uniqueSlug(tx, 'products', t.id, name)}, ${name}, description,
-                 base_price_cents, 'archived', figure_variant, tags, kind, requires_preorder, preorder_lead_days,
-                 sort + 1, low_stock_threshold
+                 base_price_cents, compare_at_price_cents, 'archived', figure_variant, tags, kind, requires_preorder,
+                 preorder_lead_days, sort + 1, low_stock_threshold
           from products where tenant_id = ${t.id} and id = ${id}
           returning id
         `
@@ -504,14 +595,18 @@ export function mountCatalog(d: AdminDeps) {
       for (const g of groups) {
         const ng = (
           await tx<{ id: string }[]>`
-            insert into modifier_groups (tenant_id, product_id, name, required, min_select, max_select, sort)
-            select tenant_id, ${copy}, name, required, min_select, max_select, sort from modifier_groups where id = ${g.id}
+            insert into modifier_groups (tenant_id, product_id, name, required, min_select, max_select,
+                                         pricing_rule, sort)
+            select tenant_id, ${copy}, name, required, min_select, max_select, pricing_rule, sort
+            from modifier_groups where id = ${g.id}
             returning id
           `
         )[0]!.id;
         await tx`
-          insert into modifiers (tenant_id, group_id, name, price_delta_cents, status, sort)
-          select tenant_id, ${ng}, name, price_delta_cents, status, sort from modifiers where group_id = ${g.id}
+          insert into modifiers (tenant_id, group_id, name, price_delta_cents, status, max_qty, description,
+                                 image_url, sort)
+          select tenant_id, ${ng}, name, price_delta_cents, status, max_qty, description, image_url, sort
+          from modifiers where group_id = ${g.id}
         `;
       }
       const slots = await tx<
@@ -550,11 +645,8 @@ export function mountCatalog(d: AdminDeps) {
         throw new HttpError(422, 'BAD_REQUEST', 'at most 12 photos', { field: 'media' });
       const media = (body.media as unknown[]).map((x, i) => {
         if (!isObj(x)) throw new HttpError(422, 'BAD_REQUEST', `media[${i}] must be an object`);
-        const url = text(x.url, `media[${i}].url`, 1000, 1);
-        if (!/^(https:\/\/|\/)/.test(url) || url.startsWith('//'))
-          throw new HttpError(422, 'BAD_REQUEST', 'photo links must be https:// or uploaded');
         return {
-          url,
+          url: mediaUrl(x.url, `media[${i}].url`),
           alt: optText(x.alt, `media[${i}].alt`, 200) ?? null,
           width: optInt(x.width, 'width', 1, 10_000) ?? null,
           height: optInt(x.height, 'height', 1, 10_000) ?? null,
@@ -600,26 +692,34 @@ export function mountCatalog(d: AdminDeps) {
           throw new HttpError(422, 'BAD_REQUEST', 'the minimum is above the maximum', {
             field: `groups[${gi}].minSelect`,
           });
+        const parsed = options.map((o: unknown, oi: number) => {
+          if (!isObj(o)) throw new HttpError(422, 'BAD_REQUEST', 'option must be an object');
+          const field = `groups[${gi}].options[${oi}]`;
+          return {
+            id: typeof o.id === 'string' && UUID_RE.test(o.id) ? o.id : null,
+            name: text(o.name, `${field}.name`, 60, 1),
+            priceDeltaCents: int(o.priceDeltaCents ?? 0, 'priceDeltaCents', -MAX_PRICE, MAX_PRICE),
+            status: o.status === 'sold_out' ? 'sold_out' : 'active',
+            maxQty: int(o.maxQty ?? 1, `${field}.maxQty`, 1, 20),
+            description: optText(o.description, `${field}.description`, 200) ?? null,
+            imageUrl:
+              o.imageUrl === undefined || o.imageUrl === null || o.imageUrl === ''
+                ? null
+                : mediaUrl(o.imageUrl, `${field}.imageUrl`),
+          };
+        });
         return {
           id: typeof g.id === 'string' && UUID_RE.test(g.id) ? g.id : null,
           name: text(g.name, `groups[${gi}].name`, 60, 1),
           required: minSelect > 0,
           minSelect,
-          maxSelect: Math.min(maxSelect, options.length),
-          options: options.map((o: unknown, oi: number) => {
-            if (!isObj(o)) throw new HttpError(422, 'BAD_REQUEST', 'option must be an object');
-            return {
-              id: typeof o.id === 'string' && UUID_RE.test(o.id) ? o.id : null,
-              name: text(o.name, `groups[${gi}].options[${oi}].name`, 60, 1),
-              priceDeltaCents: int(
-                o.priceDeltaCents ?? 0,
-                'priceDeltaCents',
-                -MAX_PRICE,
-                MAX_PRICE,
-              ),
-              status: o.status === 'sold_out' ? 'sold_out' : 'active',
-            };
-          }),
+          // a group can't ask for more units than its options offer together
+          maxSelect: Math.min(
+            maxSelect,
+            parsed.reduce((n, o) => n + o.maxQty, 0),
+          ),
+          pricingRule: oneOf(g.pricingRule ?? 'sum', `groups[${gi}].pricingRule`, PRICING_RULES),
+          options: parsed,
         };
       });
       const p = await productRow(tx, t.id, id);
@@ -633,7 +733,7 @@ export function mountCatalog(d: AdminDeps) {
           ? (
               await tx<{ id: string }[]>`
                 update modifier_groups set name = ${g.name}, required = ${g.required}, min_select = ${g.minSelect},
-                  max_select = ${g.maxSelect}, sort = ${gs}
+                  max_select = ${g.maxSelect}, pricing_rule = ${g.pricingRule}, sort = ${gs}
                 where tenant_id = ${t.id} and product_id = ${id} and id = ${g.id} returning id
               `
             )[0]
@@ -642,8 +742,10 @@ export function mountCatalog(d: AdminDeps) {
           existing?.id ??
           (
             await tx<{ id: string }[]>`
-              insert into modifier_groups (tenant_id, product_id, name, required, min_select, max_select, sort)
-              values (${t.id}, ${id}, ${g.name}, ${g.required}, ${g.minSelect}, ${g.maxSelect}, ${gs}) returning id
+              insert into modifier_groups (tenant_id, product_id, name, required, min_select, max_select,
+                                           pricing_rule, sort)
+              values (${t.id}, ${id}, ${g.name}, ${g.required}, ${g.minSelect}, ${g.maxSelect}, ${g.pricingRule}, ${gs})
+              returning id
             `
           )[0]!.id;
         const keepOpts = g.options.map((o) => o.id).filter(Boolean) as string[];
@@ -654,15 +756,18 @@ export function mountCatalog(d: AdminDeps) {
           const upd = o.id
             ? (
                 await tx`
-                  update modifiers set name = ${o.name}, price_delta_cents = ${o.priceDeltaCents}, status = ${o.status}, sort = ${os}
+                  update modifiers set name = ${o.name}, price_delta_cents = ${o.priceDeltaCents}, status = ${o.status},
+                    max_qty = ${o.maxQty}, description = ${o.description}, image_url = ${o.imageUrl}, sort = ${os}
                   where tenant_id = ${t.id} and group_id = ${gid} and id = ${o.id} returning id
                 `
               )[0]
             : undefined;
           if (!upd)
             await tx`
-              insert into modifiers (tenant_id, group_id, name, price_delta_cents, status, sort)
-              values (${t.id}, ${gid}, ${o.name}, ${o.priceDeltaCents}, ${o.status}, ${os})
+              insert into modifiers (tenant_id, group_id, name, price_delta_cents, status, max_qty, description,
+                                     image_url, sort)
+              values (${t.id}, ${gid}, ${o.name}, ${o.priceDeltaCents}, ${o.status}, ${o.maxQty}, ${o.description},
+                      ${o.imageUrl}, ${os})
             `;
         }
       }
@@ -788,11 +893,18 @@ export function mountCatalog(d: AdminDeps) {
         const pct = int(body.percent, 'percent', -90, 300);
         if (pct === 0)
           throw new HttpError(422, 'BAD_REQUEST', 'percent cannot be 0', { field: 'percent' });
-        // integer cents, rounded to the nearest 10 cents — merchants price in round numbers
+        // integer cents, rounded to the nearest 10 cents — merchants price in round numbers;
+        // the "de" price moves with it and drops when it no longer sits above the price
         await tx`
-          update products set base_price_cents = least(${MAX_PRICE}, greatest(0,
-            (round(base_price_cents * (100 + ${pct}) / 1000.0) * 10)::int))
-          where tenant_id = ${t.id} and id = any(${ids}::uuid[])
+          update products p set base_price_cents = n.base,
+            compare_at_price_cents = case when n.cmp > n.base then n.cmp end
+          from (
+            select id,
+              least(${MAX_PRICE}, greatest(0, (round(base_price_cents * (100 + ${pct}) / 1000.0) * 10)::int)) as base,
+              least(${MAX_PRICE}, greatest(0, (round(compare_at_price_cents * (100 + ${pct}) / 1000.0) * 10)::int)) as cmp
+            from products where tenant_id = ${t.id} and id = any(${ids}::uuid[])
+          ) n
+          where p.tenant_id = ${t.id} and p.id = n.id
         `;
         summary = `${pct > 0 ? 'aumentou' : 'baixou'} em ${Math.abs(pct)}% o preço de ${ids.length} produtos`;
       } else {

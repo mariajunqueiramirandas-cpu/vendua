@@ -140,6 +140,8 @@ export interface ProductSummary {
   name: string;
   description: string | null;
   basePriceCents: number;
+  /** display-only "de" price (strike-through), always above basePriceCents; null = no promo */
+  compareAtPriceCents: number | null;
   /** stock-derived: an active product with stockQuantity 0 reads 'sold_out' */
   status: 'active' | 'sold_out' | 'archived';
   figureVariant: 'default' | 'alt';
@@ -164,6 +166,7 @@ export interface CategoryWithProducts {
   id: string;
   slug: string;
   name: string;
+  description: string | null;
   sort: number;
   products: ProductSummary[];
 }
@@ -173,14 +176,23 @@ export interface Modifier {
   name: string;
   priceDeltaCents: number;
   status: 'active' | 'sold_out';
+  /** units of this option one item can take; 1 = a toggle */
+  maxQty: number;
+  description: string | null;
+  imageUrl: string | null;
 }
+
+/** how a group's picks add to the unit price — Core computes it, clients never do */
+export type PricingRule = 'sum' | 'average' | 'most_expensive';
 
 export interface ModifierGroup {
   id: string;
   name: string;
   required: boolean;
+  /** min/max count option units (Σ qty), not distinct options */
   minSelect: number;
   maxSelect: number;
+  pricingRule: PricingRule;
   modifiers: Modifier[];
 }
 
@@ -204,6 +216,7 @@ interface CategoryRow {
   id: string;
   slug: string;
   name: string;
+  description: string | null;
   sort: number;
 }
 
@@ -214,6 +227,7 @@ interface ProductRow {
   name: string;
   description: string | null;
   base_price_cents: number;
+  compare_at_price_cents: number | null;
   status: ProductSummary['status'];
   figure_variant: ProductSummary['figureVariant'];
   tags: string[];
@@ -248,6 +262,7 @@ function toSummary(row: ProductRow, now: Date, tz: string): ProductSummary {
     name: row.name,
     description: row.description,
     basePriceCents: row.base_price_cents,
+    compareAtPriceCents: row.compare_at_price_cents,
     status: off && status === 'active' ? 'sold_out' : status,
     figureVariant: row.figure_variant,
     tags: row.tags ?? [],
@@ -268,7 +283,8 @@ function toSummary(row: ProductRow, now: Date, tz: string): ProductSummary {
 }
 
 const productColumns = (tx: Sql) => tx`
-  p.id, p.category_id, p.slug, p.name, p.description, p.base_price_cents, p.status, p.figure_variant,
+  p.id, p.category_id, p.slug, p.name, p.description, p.base_price_cents, p.compare_at_price_cents,
+  p.status, p.figure_variant,
   p.tags, p.kind, p.stock_quantity, p.low_stock_threshold, p.requires_preorder, p.preorder_lead_days,
   p.availability_schedule,
   (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as image_url,
@@ -283,7 +299,7 @@ export async function getCatalog(
   // independent reads go out together — postgres.js pipelines them on the tx's connection
   const [categories, products, tz] = await Promise.all([
     tx<CategoryRow[]>`
-      select id, slug, name, sort from categories
+      select id, slug, name, description, sort from categories
       where tenant_id = ${tenantId} order by sort, name
     `,
     tx<ProductRow[]>`
@@ -299,6 +315,7 @@ export async function getCatalog(
     id: cat.id,
     slug: cat.slug,
     name: cat.name,
+    description: cat.description,
     sort: cat.sort,
     products: listed.filter((p) => p.category_id === cat.id).map((p) => toSummary(p, now, tz)),
   }));
@@ -382,10 +399,11 @@ async function attachDetails(
         required: boolean;
         min_select: number;
         max_select: number;
+        pricing_rule: PricingRule;
         sort: number;
       }[]
     >`
-      select id, product_id, name, required, min_select, max_select, sort from modifier_groups
+      select id, product_id, name, required, min_select, max_select, pricing_rule, sort from modifier_groups
       where tenant_id = ${tenantId} and product_id = any(${ids}::uuid[])
       order by product_id, sort, name ${lock}
     `,
@@ -396,10 +414,14 @@ async function attachDetails(
         name: string;
         price_delta_cents: number;
         status: 'active' | 'sold_out';
+        max_qty: number;
+        description: string | null;
+        image_url: string | null;
         sort: number;
       }[]
     >`
-      select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.sort
+      select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.max_qty, m.description,
+             m.image_url, m.sort
       from modifiers m join modifier_groups g on g.id = m.group_id
       where m.tenant_id = ${tenantId} and g.product_id = any(${ids}::uuid[])
       order by g.product_id, m.sort, m.name ${lock}
@@ -448,6 +470,7 @@ async function attachDetails(
           required: g.required,
           minSelect: g.min_select,
           maxSelect: g.max_select,
+          pricingRule: g.pricing_rule,
           modifiers: modifiers
             .filter((m) => m.group_id === g.id)
             .map((m) => ({
@@ -455,6 +478,9 @@ async function attachDetails(
               name: m.name,
               priceDeltaCents: m.price_delta_cents,
               status: m.status,
+              maxQty: m.max_qty,
+              description: m.description,
+              imageUrl: m.image_url,
             })),
         })),
       gallery: gallery
