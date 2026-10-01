@@ -10,6 +10,7 @@ import { RESERVED_SLUGS, normalizeSlug, slugStatus } from '../billing/signup.ts'
 import { claimControl, controlTx } from '../control.ts';
 import { emitControlEvent } from '../control-events.ts';
 import { validPhone } from '../customer.ts';
+import { recordStaffEventTx } from '../staff-events.ts';
 import { RINGS } from '../storefront-platform.ts';
 import { BUNDLE_RE, DEFAULT_BUNDLE, RELEASE_RE, type FleetDeps } from './deps.ts';
 import {
@@ -21,7 +22,7 @@ import {
   reconcileTx,
   rollbackTx,
 } from './deploy.ts';
-import { incidentJson, type IncidentRow } from './incidents.ts';
+import { ackIncident, incidentJson, type IncidentRow } from './incidents.ts';
 import { probeStoreNow } from './probe.ts';
 import {
   advance,
@@ -168,6 +169,18 @@ export function mountFleet(o: {
       const { row, created } = await registerReleaseTx(tx, parsed);
       await adoptBundleTx(tx, row);
       const promoted = row.qa_status === 'passed' ? await reconcileBundleTx(tx, d, row.bundle) : [];
+      if (created)
+        await recordStaffEventTx(
+          tx,
+          'release.published',
+          {
+            releaseId: row.id,
+            bundle: row.bundle,
+            kernel: row.kernel_version,
+            promoted: promoted.length,
+          },
+          { dedupeKey: `release:${row.id}` },
+        );
       const slugs = promoted.length
         ? await tx<{ id: string; slug: string }[]>`
             select id, slug from tenants where id in ${tx(promoted.map((p) => p.tenantId))}
@@ -275,6 +288,26 @@ export function mountFleet(o: {
           where tenant_id = ${t.id}
         `;
       const dep = await reconcileTx(tx, d, t.id, { actor: 'equipe' });
+      const action =
+        policy === 'pinned' && ops.release_policy !== 'pinned'
+          ? 'pin'
+          : policy === 'auto' && ops.release_policy === 'pinned'
+            ? 'unpin'
+            : dep && bundle !== undefined && bundle !== ops.bundle
+              ? 'promote'
+              : null;
+      if (action)
+        await recordStaffEventTx(
+          tx,
+          'deployment.manual',
+          {
+            action,
+            storeName: t.name,
+            releaseId: dep?.release_id ?? ops.live_release_id,
+            by: 'equipe',
+          },
+          { tenantId: t.id },
+        );
       return {
         status: 200,
         body: {
@@ -475,22 +508,10 @@ export function mountFleet(o: {
     const id = uuidParam(c, 'id');
     const key = idemKey(c, `incident:${id}`);
     const body = await bodyJson(c);
-    if (body.ack !== true && body.resolved !== true)
-      throw new HttpError(422, 'BAD_REQUEST', 'send ack: true or resolved: true');
-    const res = await claimControl(sql, key, async (tx) => {
-      const row = (
-        await tx<IncidentRow[]>`
-          update fleet_incidents set
-            acked_at = ${body.ack === true || body.resolved === true ? tx`coalesce(acked_at, now())` : tx`acked_at`},
-            resolved_at = ${body.resolved === true ? tx`coalesce(resolved_at, now())` : tx`resolved_at`},
-            updated_at = now()
-          where id = ${id} returning *
-        `
-      )[0];
-      if (!row) throw new HttpError(404, 'INCIDENT_NOT_FOUND', 'incident not found');
-      return { status: 200, body: { incident: incidentJson(row) } };
-    });
-    if (!res.replayed) emitControlEvent('fleet.change');
-    return reply(c, res);
+    const op = {
+      ...(body.ack === true ? { ack: true as const } : {}),
+      ...(body.resolved === true ? { resolved: true as const } : {}),
+    };
+    return reply(c, await ackIncident(sql, id, op, 'equipe', key));
   });
 }

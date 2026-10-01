@@ -5,6 +5,7 @@ import { withTenant, type Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { platformHost } from '../../platform/store-origin.ts';
 import { controlTx } from '../control.ts';
+import { recordStaffEventTx } from '../staff-events.ts';
 import { DAY_MS } from './invoices.ts';
 import { billingStaff } from './subscriptions.ts';
 
@@ -178,6 +179,20 @@ export async function checkCustomDomain(
         `
       )[0];
       if (row) await emitAdminTx(tx, o.tenantId, 'billing');
+      if (row?.status === 'dns_ok') {
+        await recordStaffEventTx(
+          tx,
+          'domain.ready',
+          { storeName: found.tname, host: found.host },
+          { tenantId: o.tenantId, dedupeKey: `domain.ready:${found.id}` },
+        );
+        await recordStaffEventTx(
+          tx,
+          'store.onboarding',
+          { step: 'domain' },
+          { tenantId: o.tenantId, dedupeKey: `onboarding:${o.tenantId}:domain` },
+        );
+      }
       return row ?? null;
     });
   } catch (err) {

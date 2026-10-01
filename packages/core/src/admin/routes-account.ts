@@ -26,6 +26,7 @@ import { audit } from './audit.ts';
 import { oneOf, text, type AdminDeps, type Merchant } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
+import { recordStaffEventTx } from '../modules/staff-events.ts';
 
 const METHODS = ['card', 'pix'] as const;
 const validPayerEmail = (v: unknown) => validEmail(v, 'payerEmail');
@@ -289,6 +290,8 @@ export function mountAccount(d: AdminDeps) {
         where tenant_id = ${t.id} and status in ('requested', 'in_progress')
       `;
       if (!updated.count) await openSiteRequest(ctxFor(c), tx, t.id, brief);
+      // a request opened at checkout has no brief yet — the team hears when it arrives
+      else await siteBriefEventTx(tx, t, brief);
       await emitAdminTx(tx, t.id, 'billing');
       await log(tx, t, m, 'site_request.create', 'pediu o site PRO+', { brief });
       return { status: updated.count ? 200 : 201, body: await view(tx, t) };
@@ -307,9 +310,19 @@ export function mountAccount(d: AdminDeps) {
       `;
       if (!updated.count)
         throw new HttpError(404, 'SITE_REQUEST_NOT_FOUND', 'there is no open site request');
+      await siteBriefEventTx(tx, t, brief);
       await emitAdminTx(tx, t.id, 'billing');
       await log(tx, t, m, 'site_request.update', 'atualizou o pedido de site PRO+', { brief });
       return { status: 200, body: await view(tx, t) };
     }),
+  );
+}
+
+function siteBriefEventTx(tx: Sql, t: { id: string; name: string }, brief: string) {
+  return recordStaffEventTx(
+    tx,
+    'store.request',
+    { storeName: t.name, title: 'briefing do site PRO+', detail: brief },
+    { tenantId: t.id },
   );
 }

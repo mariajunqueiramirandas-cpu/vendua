@@ -5,6 +5,7 @@ import { controlTx } from '../control.ts';
 import { emitControlEvent } from '../control-events.ts';
 import { addActivity } from '../activities.ts';
 import { updateLead } from '../leads.ts';
+import { recordStaffEventTx } from '../staff-events.ts';
 import type { FleetDeps } from './deps.ts';
 import { lockOpsTx, pendingTx, reconcileTx } from './deploy.ts';
 import {
@@ -253,6 +254,18 @@ async function pass(d: FleetDeps, id: string, invite: Invite | null): Promise<Pa
           out.leadMoves.push({ leadId, state: 'invited' });
         if (step.next === 'live') {
           out.wentLive = true;
+          await recordStaffEventTx(
+            tx,
+            'store.live',
+            { storeName: facts.name, host: facts.origin.replace(/^https?:\/\//, '') },
+            { tenantId: p.tenant_id, dedupeKey: `store.live:${p.tenant_id}` },
+          );
+          await recordStaffEventTx(
+            tx,
+            'store.onboarding',
+            { step: 'live' },
+            { tenantId: p.tenant_id, dedupeKey: `onboarding:${p.tenant_id}:live` },
+          );
           if (leadId) out.leadMoves.push({ leadId, state: 'live', note: facts.origin });
           const closed = await resolveIncidentTx(
             tx,
@@ -452,6 +465,19 @@ export async function createInviteTx(
       throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
     throw err;
   }
+  await recordStaffEventTx(
+    tx,
+    'store.created',
+    {
+      storeName: i.storeName,
+      slug: i.slug,
+      source: 'invite',
+      owner: i.ownerName,
+      leadId: i.leadId,
+      plan: null,
+    },
+    { tenantId, dedupeKey: `store.created:${tenantId}` },
+  );
   return (
     await tx<ProvisioningRow[]>`select * from provisionings where tenant_id = ${tenantId}`
   )[0]!;

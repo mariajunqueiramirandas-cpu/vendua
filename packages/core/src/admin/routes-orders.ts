@@ -5,6 +5,7 @@ import {
   ORDER_STATES,
   canTransition,
   loadOrderView,
+  recordOrderStep,
   transitionOrder,
   type OrderState,
   type OrderView,
@@ -674,6 +675,8 @@ export function mountOrders(d: AdminDeps) {
         update orders set payment = payment || ${tx.json(patch as never)}, updated_at = now()
         where tenant_id = ${t.id} and id = ${id}
       `;
+      if (status === 'paid')
+        await recordOrderStep(tx, t.id, { id, number: cur.number }, 'paid', 'merchant');
       await audit(tx, t.id, m, {
         action: `order.payment.${status}`,
         entity: 'order',

@@ -2,6 +2,7 @@ import type { MerchantNotify } from '../../admin/context.ts';
 import { emitAdminTx } from '../../admin/live.ts';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
+import { recordStaffEventTx, type StaffEventMap } from '../staff-events.ts';
 import { notifyStaff, type StaffNotice } from '../staff.ts';
 import {
   ProviderError,
@@ -26,6 +27,7 @@ import {
   cancelledMessage,
   cancelScheduledMessage,
   chargeFailedMessage,
+  dayMonth,
   queueOwners,
 } from './notices.ts';
 import { formatBRL, planRow, type PlanRow } from './plans.ts';
@@ -75,6 +77,7 @@ export interface SubRow {
   upgrade_plan_id: string | null;
   upgrade_invoice_id: string | null;
   created_at: Date;
+  status_changed_at: Date;
 }
 
 export interface BillingCtx {
@@ -91,6 +94,44 @@ export interface BillingCtx {
 export const billingStaff = {
   notify: (sql: Sql, notice: StaffNotice): Promise<unknown> => notifyStaff(sql, null, notice),
 };
+
+async function storeName(tx: Sql, tenantId: string) {
+  return (
+    (await tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`)[0]?.name ??
+    tenantId
+  );
+}
+
+/** An invoice the team marks paid in the CRM (access code: no Mercado Pago). */
+export async function recordManualInvoice(tx: Sql, inv: InvoiceRow, planName: string) {
+  await recordStaffEventTx(
+    tx,
+    'billing.manual',
+    {
+      storeName: await storeName(tx, inv.tenant_id),
+      invoiceId: inv.id,
+      amountCents: inv.amount_cents,
+      plan: planName,
+    },
+    { tenantId: inv.tenant_id, dedupeKey: `billing.manual:${inv.id}` },
+  );
+}
+
+/** One event per `key` (an invoice, a period, a payment): a replay or a sweep adds nothing. */
+export async function recordBillingProblem(
+  tx: Sql,
+  tenantId: string,
+  problem: StaffEventMap['billing.problem']['problem'],
+  detail: string,
+  key: string,
+) {
+  await recordStaffEventTx(
+    tx,
+    'billing.problem',
+    { storeName: await storeName(tx, tenantId), problem, detail },
+    { tenantId, dedupeKey: `billing.problem:${tenantId}:${problem}:${key}` },
+  );
+}
 
 /** `later` for request paths: after the handler returns (its tx commits right after). */
 export const afterResponse = (fn: () => Promise<unknown>) => {
@@ -224,7 +265,10 @@ export async function beginPayment(
       dueAt: now,
       reuse: reuse ?? null,
     });
-    if (o.manual) return { kind: 'manual', invoiceId: inv.id };
+    if (o.manual) {
+      await recordManualInvoice(tx, inv, plan.name);
+      return { kind: 'manual', invoiceId: inv.id };
+    }
     if (!pixIsLive(inv, now))
       inv = await viaProvider(() =>
         issuePix(tx, ctx.provider, inv, {
@@ -738,6 +782,7 @@ export async function resumeSubscription(ctx: BillingCtx, tx: Sql, tenantId: str
 /**
  * An invoice was paid (Pix approved, or the card charge for its period). Idempotent: a paid
  * invoice is never paid twice. The first payment activates the plan and opens the store.
+ * `method` overrides the invoice's for the team's event ('manual': marked paid in the CRM).
  */
 export async function markInvoicePaid(
   ctx: BillingCtx,
@@ -746,6 +791,7 @@ export async function markInvoicePaid(
   invoiceId: string,
   paidAt: Date,
   now: Date,
+  o: { method?: string } = {},
 ): Promise<boolean> {
   const sub = await lockSub(tx, tenantId);
   const inv = (
@@ -765,13 +811,15 @@ export async function markInvoicePaid(
           { name: string; slug: string }[]
         >`select name, slug from tenants where id = ${tenantId}`
       )[0];
+      const body = `A fatura ${inv.number} (diferença de plano, ${formatBRL(inv.amount_cents)}) da loja ${t?.name} (${t?.slug}) foi paga depois de cancelada ou vencida. O plano não mudou: devolva pelo Mercado Pago.`;
       ctx.later(() =>
         billingStaff.notify(ctx.sql, {
           subject: `Upgrade pago fora do prazo: ${t?.name ?? tenantId}`,
-          body: `A fatura ${inv.number} (diferença de plano, ${formatBRL(inv.amount_cents)}) da loja ${t?.name} (${t?.slug}) foi paga depois de cancelada ou vencida. O plano não mudou: devolva pelo Mercado Pago.`,
+          body,
           idemKey: `invoice-upgrade-late:${inv.id}`,
         }),
       );
+      await recordBillingProblem(tx, tenantId, 'pix_mismatch', body, `upgrade-late:${inv.id}`);
     }
   } else if (sub.status === 'pending' || sub.status === 'cancelled') {
     await activate(ctx, tx, sub, inv, paidAt);
@@ -787,8 +835,40 @@ export async function markInvoicePaid(
     if (downgradeDue(sub, inv.period_start, now))
       await applyPendingPlan(ctx, tx, tenantId, sub.pending_plan_id!);
   }
+  await recordPaid(tx, tenantId, inv, o.method ?? inv.method);
   await emitAdminTx(tx, tenantId, 'billing', inv.id);
   return true;
+}
+
+/** The team hears of every payment; the store's first one also moves its onboarding card. */
+async function recordPaid(tx: Sql, tenantId: string, inv: InvoiceRow, method: string) {
+  const first = (
+    await tx<{ first: boolean }[]>`
+      select not exists (
+        select 1 from invoices where tenant_id = ${tenantId} and status = 'paid' and id <> ${inv.id}
+      ) as first
+    `
+  )[0]!.first;
+  await recordStaffEventTx(
+    tx,
+    'billing.paid',
+    {
+      storeName: await storeName(tx, tenantId),
+      invoiceId: inv.id,
+      amountCents: inv.amount_cents,
+      first,
+      method,
+      plan: (await planRow(tx, inv.plan_id))?.name ?? inv.plan_id,
+    },
+    { tenantId, dedupeKey: `billing.paid:${inv.id}` },
+  );
+  if (first)
+    await recordStaffEventTx(
+      tx,
+      'store.onboarding',
+      { step: 'paid' },
+      { tenantId, dedupeKey: `onboarding:${tenantId}:paid` },
+    );
 }
 
 async function activate(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceRow, paidAt: Date) {
@@ -891,6 +971,12 @@ export async function openSiteRequest(
       idemKey: `site-request:${row.id}`,
     }),
   );
+  await recordStaffEventTx(
+    tx,
+    'store.request',
+    { storeName: t?.name ?? tenantId, title: 'site PRO+', detail: brief },
+    { tenantId, dedupeKey: `store.request:site:${row.id}` },
+  );
   await emitAdminTx(tx, tenantId, 'billing');
   return row.id;
 }
@@ -974,6 +1060,14 @@ export async function recordCardCharge(
       chargeFailedMessage(plan.name, charge.amountCents, ctx.origin),
       `billing:charge_failed:${charge.id}`,
     );
+    // once per invoice: MP's retries of the same month stay one event
+    await recordBillingProblem(
+      tx,
+      tenantId,
+      'card_rejected',
+      `A cobrança de ${formatBRL(charge.amountCents)} no cartão (plano ${plan.name}) não foi aprovada.`,
+      inv.id,
+    );
   }
 }
 
@@ -1005,11 +1099,11 @@ export async function syncPreapproval(
         where tenant_id = ${tenantId}
       `;
       await tx`update invoices set status = 'void' where tenant_id = ${tenantId} and status in ('open', 'failed')`;
-      await noticeCancelled(ctx, tx, sub, false);
+      await noticeCancelled(ctx, tx, sub, false, 'mercadopago');
     } else if (sub.status !== 'cancelled' && !sub.cancel_at_period_end) {
       // cancelled on MP's side: the paid period is still the store's, then it ends (jobs.ts)
       await tx`update subscriptions set cancel_at_period_end = true, updated_at = now() where tenant_id = ${tenantId}`;
-      await noticeCancelScheduled(ctx, tx, sub);
+      await noticeCancelScheduled(ctx, tx, sub, 'mercadopago');
     }
   } else return;
   await emitAdminTx(tx, tenantId, 'billing');
@@ -1017,7 +1111,21 @@ export async function syncPreapproval(
 
 export { stopPreapproval };
 
-export async function noticeCancelScheduled(ctx: BillingCtx, tx: Sql, sub: SubRow) {
+type CancelledBy = 'owner' | 'mercadopago';
+
+const cancelledBy = (by: CancelledBy, planName: string) =>
+  by === 'owner'
+    ? `O lojista cancelou o plano ${planName}`
+    : `A assinatura do plano ${planName} foi cancelada no Mercado Pago`;
+
+// The team's event is keyed by the period (or, before any payment, the subscription's start),
+// so a replayed webhook or a re-run sweep never repeats it.
+export async function noticeCancelScheduled(
+  ctx: BillingCtx,
+  tx: Sql,
+  sub: SubRow,
+  by: CancelledBy = 'owner',
+) {
   const plan = await planOrThrow(tx, sub.plan_id);
   queueOwners(
     ctx,
@@ -1025,15 +1133,42 @@ export async function noticeCancelScheduled(ctx: BillingCtx, tx: Sql, sub: SubRo
     cancelScheduledMessage(plan.name, sub.current_period_end, ctx.origin),
     `billing:cancel_scheduled:${sub.tenant_id}:${Date.now()}`,
   );
+  const until = sub.current_period_end
+    ? `; vale até ${dayMonth(sub.current_period_end)}, depois a loja fecha`
+    : '';
+  await recordBillingProblem(
+    tx,
+    sub.tenant_id,
+    'cancelled',
+    `${cancelledBy(by, plan.name)}${until}.`,
+    `scheduled:${(sub.current_period_end ?? sub.status_changed_at).toISOString()}`,
+  );
 }
 
-export async function noticeCancelled(ctx: BillingCtx, tx: Sql, sub: SubRow, closed: boolean) {
+export async function noticeCancelled(
+  ctx: BillingCtx,
+  tx: Sql,
+  sub: SubRow,
+  closed: boolean,
+  by: CancelledBy = 'owner',
+) {
   const plan = await planOrThrow(tx, sub.plan_id);
   queueOwners(
     ctx,
     sub.tenant_id,
     cancelledMessage(plan.name, closed, ctx.origin),
     `billing:cancelled:${sub.tenant_id}:${Date.now()}`,
+  );
+  await recordBillingProblem(
+    tx,
+    sub.tenant_id,
+    'cancelled',
+    closed
+      ? `O plano ${plan.name} terminou e a loja está fechada.`
+      : `${cancelledBy(by, plan.name)} antes do primeiro pagamento.`,
+    closed
+      ? `ended:${(sub.current_period_end ?? sub.status_changed_at).toISOString()}`
+      : `pending:${sub.status_changed_at.toISOString()}`,
   );
 }
 
@@ -1063,11 +1198,13 @@ export async function settlePixPayment(
       { name: string; slug: string }[]
     >`select name, slug from tenants where id = ${tenantId}`
   )[0];
-  const flag = (subject: string, body: string, key: string) =>
+  const flag = async (subject: string, body: string, key: string) => {
     ctx.later(() => billingStaff.notify(ctx.sql, { subject, body, idemKey: key }));
+    await recordBillingProblem(tx, tenantId, 'pix_mismatch', body, key);
+  };
   if (inv.status === 'paid') {
     if (inv.provider_payment_id !== pay.id)
-      flag(
+      await flag(
         `Fatura paga duas vezes: ${t?.name ?? tenantId}`,
         `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) já estava paga e recebeu outro Pix (${pay.id}, ${formatBRL(pay.amountCents)}). Confira e devolva pelo Mercado Pago.`,
         `invoice-dup:${pay.id}`,
@@ -1078,7 +1215,7 @@ export async function settlePixPayment(
     // a QR for an older, lower price: the invoice stays open at its amount
     if (!inv.short_payments.includes(pay.id))
       await tx`update invoices set short_payments = array_append(short_payments, ${pay.id}) where id = ${inv.id}`;
-    flag(
+    await flag(
       `Pix com valor menor: ${t?.name ?? tenantId}`,
       `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) é de ${formatBRL(inv.amount_cents)} e recebeu ${formatBRL(pay.amountCents)} (Pix ${pay.id}, emitido antes de uma mudança de preço). A fatura continua em aberto: devolva esse Pix pelo Mercado Pago ou acerte a diferença.`,
       `invoice-amount:${pay.id}`,
@@ -1087,7 +1224,7 @@ export async function settlePixPayment(
     return false;
   }
   if (pay.amountCents > inv.amount_cents)
-    flag(
+    await flag(
       `Pix com valor diferente: ${t?.name ?? tenantId}`,
       `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) era de ${formatBRL(inv.amount_cents)} e foi paga com ${formatBRL(pay.amountCents)} (Pix ${pay.id}). A fatura foi dada como paga; devolva a diferença pelo Mercado Pago.`,
       `invoice-amount:${pay.id}`,

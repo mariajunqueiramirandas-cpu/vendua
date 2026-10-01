@@ -1,6 +1,7 @@
 import type { MerchantNotify } from '../../admin/context.ts';
 import { withTenant, type Sql } from '../../platform/db.ts';
 import { log } from '../../platform/log.ts';
+import { recordStaffEventTx } from '../staff-events.ts';
 import { unseal } from '../../platform/secrets.ts';
 import {
   setConnectionStatus,
@@ -161,17 +162,37 @@ export async function notifyConnectionChanges(sql: Sql, o: PaymentJobDeps) {
   for (const { tenant_id: tenantId } of await connectedTenants(sql, 'all', new Date(), o.only)) {
     try {
       const job = await withTenant(sql, tenantId, async (tx) => {
-        const claimed = await tx<{ status: ConnectionStatus; prev: string | null }[]>`
+        const claimed = await tx<
+          { status: ConnectionStatus; prev: string | null; status_changed_at: Date }[]
+        >`
           update payment_connections c set notified_status = c.status
           from (select notified_status as prev from payment_connections where tenant_id = ${tenantId}) p
           where c.tenant_id = ${tenantId} and c.notified_status is distinct from c.status
-          returning c.status, p.prev
+          returning c.status, p.prev, c.status_changed_at
         `;
         const row = claimed[0];
         if (!row || row.status === 'connected') return null;
         const store = (
           await tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`
         )[0]?.name;
+        // the store stopped taking online payments on its own (an un-claim re-runs: dedupe)
+        if (row.status === 'disconnected' || row.status === 'restricted')
+          await recordStaffEventTx(
+            tx,
+            'payments.connection',
+            {
+              storeName: store ?? 'loja',
+              connected: false,
+              detail:
+                row.status === 'restricted'
+                  ? 'restrição na conta do Mercado Pago'
+                  : 'o acesso ao Mercado Pago expirou ou foi revogado',
+            },
+            {
+              tenantId,
+              dedupeKey: `mp:${tenantId}:${row.status}:${new Date(row.status_changed_at).getTime()}`,
+            },
+          );
         const owners = await tx<{ phone: string }[]>`
           select phone from merchant_users
           where tenant_id = ${tenantId} and role = 'owner' and status = 'active'

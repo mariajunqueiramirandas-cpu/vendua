@@ -5,11 +5,19 @@ import { emitControlEvent } from './control-events.ts';
 import { LEAD_STATES, type LeadState } from './leads.ts';
 import { JOB_KINDS } from '../agent/tool-meta.ts';
 import { normalizeStaff } from './staff-config.ts';
+import { validateDiscordConfig, validateDiscordSetting } from './discord/config.ts';
 
 // modular provider config: `secret_ref` is the NAME of the env var holding the
 // credential — secret values never enter the DB
 
-export const INTEGRATION_KINDS = ['llm', 'email', 'whatsapp', 'instagram', 'discovery'] as const;
+export const INTEGRATION_KINDS = [
+  'llm',
+  'email',
+  'whatsapp',
+  'instagram',
+  'discovery',
+  'discord',
+] as const;
 export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
 
 // driver names per kind — the API and the driver registry agree here
@@ -19,6 +27,7 @@ export const DRIVERS: Record<IntegrationKind, readonly string[]> = {
   whatsapp: ['baileys', 'log'],
   instagram: ['sidecar', 'log'],
   discovery: ['tinyfish', 'mock'],
+  discord: ['bot'],
 };
 
 // fallback env var per driver when secret_ref is null — mirrors the drivers'
@@ -31,11 +40,12 @@ export const DEFAULT_SECRET: Record<string, string> = {
   resend: 'RESEND_API_KEY',
   tinyfish: 'TINYFISH_API_KEY',
   sidecar: 'IG_SIDECAR_SECRET',
+  bot: 'DISCORD_BOT_TOKEN',
 };
 
 // drivers that read `(env[ref]) ?? env[DEFAULT]` — a configured-but-missing
 // ref still authenticates via the default; LLM drivers are strict
-const SECRET_FALLBACK: ReadonlySet<string> = new Set(['resend', 'tinyfish', 'sidecar']);
+const SECRET_FALLBACK: ReadonlySet<string> = new Set(['resend', 'tinyfish', 'sidecar', 'bot']);
 
 export interface IntegrationRow {
   id: string;
@@ -140,6 +150,7 @@ export async function upsertIntegration(
   ) {
     throw new HttpError(422, 'BAD_REQUEST', 'config must be an object', { field: 'config' });
   }
+  if (kind === 'discord' && input.config) validateDiscordConfig(input.config);
   const secretRef =
     input.secretRef === undefined || input.secretRef === null
       ? null
@@ -583,6 +594,11 @@ export function validateSetting(key: string, value: unknown): void {
 
   if (key === 'staff') {
     normalizeStaff(value);
+    return;
+  }
+
+  if (key === 'discord') {
+    validateDiscordSetting(value);
     return;
   }
 

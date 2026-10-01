@@ -2,6 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError, str, UUID_RE } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
+import { recordStaffEventTx } from './staff-events.ts';
 
 /**
  * Lead CRM module — `leads` is platform data under the `vendua.control`
@@ -793,11 +794,30 @@ export async function updateLead(
         values (${id}, 'state_change', ${`${cur.state} → ${set.state}`},
                 ${tx.json({ from: cur.state, to: set.state })}, ${actor})
       `;
+      if (set.state === 'invited' || set.state === 'live') {
+        await recordMilestoneTx(tx, rows[0]!, cur.state, set.state, actor);
+      }
     }
     return { status: 200, body: { lead: leadJson(rows[0]!) } };
   });
   if (!res.replayed) emitControlEvent('lead.change', res.body.lead.id);
   return res;
+}
+
+/** Once per lead and state: a card dragged back and forth on the board announces it once. */
+export async function recordMilestoneTx(
+  tx: Sql,
+  lead: Pick<LeadRow, 'id' | 'name' | 'business_name'>,
+  from: string,
+  to: 'invited' | 'live',
+  by: string,
+): Promise<void> {
+  await recordStaffEventTx(
+    tx,
+    'lead.milestone',
+    { leadId: lead.id, leadName: lead.name, business: lead.business_name, from, to, by },
+    { dedupeKey: `milestone:${lead.id}:${to}` },
+  );
 }
 
 export async function deleteLead(

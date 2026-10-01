@@ -2,6 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
+import { recordStaffEventTx } from './staff-events.ts';
 
 export const ACTIVITY_KINDS = [
   'note',
@@ -179,6 +180,7 @@ export async function completeTask(
   taskId: string,
   done: boolean,
   idemKey: string,
+  by: string | null = null,
 ): Promise<ClaimResult<{ task: ReturnType<typeof taskJson> }>> {
   const res = await claimControl(sql, idemKey, async (tx) => {
     const rows = await tx<TaskRow[]>`
@@ -186,6 +188,20 @@ export async function completeTask(
       where id = ${taskId} returning *
     `;
     if (!rows[0]) throw new HttpError(404, 'TASK_NOT_FOUND', 'task not found');
+    // only an agent handoff has a card to close — the runner's '[humano]' cost-cap and
+    // failed-run tasks don't; a reopened-and-closed task is still one resolution
+    const handoff =
+      done &&
+      rows[0].title.startsWith('[humano]') &&
+      (await tx`select 1 from staff_events where anchor = ${`handoff:${rows[0].id}`} limit 1`)[0];
+    if (handoff) {
+      await recordStaffEventTx(
+        tx,
+        'handoff.resolved',
+        { taskId: rows[0].id, leadId: rows[0].lead_id, by },
+        { dedupeKey: `handoff:${rows[0].id}:resolved` },
+      );
+    }
     return { status: 200, body: { task: taskJson(rows[0]!) } };
   });
   if (!res.replayed) emitControlEvent('lead.change', res.body.task.leadId);
