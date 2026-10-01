@@ -128,7 +128,13 @@ export type OrderState =
   | 'cancelled'
   | 'refunded';
 export type StoreStatus = 'open' | 'closed' | 'paused';
-export type PayMethod = 'pix' | 'card_online' | 'card_on_delivery' | 'cash';
+export type PayMethod = 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher';
+/** signed: negative = discount, positive = surcharge; Core applies it to subtotal − coupon */
+export interface PaymentAdjustment {
+  percentBps?: number;
+  fixedCents?: number;
+}
+export type PaymentAdjustments = Partial<Record<PayMethod, PaymentAdjustment>>;
 export type PaymentStatus =
   | 'pending'
   | 'paid'
@@ -227,7 +233,7 @@ export interface Order {
     name: string;
     qty: number;
     unitPriceCents: number;
-    modifiers: { name: string; priceDeltaCents: number }[];
+    modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
     combo: { slotName: string; name: string; qty: number }[];
     lineTotalCents: number;
   }[];
@@ -236,6 +242,8 @@ export interface Order {
   subtotalCents: number;
   deliveryFeeCents: number;
   discountCents: number;
+  /** the payment method's discount (negative) or surcharge; 0 when none */
+  paymentAdjustmentCents?: number;
   coupon: { code: string } | null;
   totalCents: number;
   placedAt: string;
@@ -312,6 +320,8 @@ export interface Product {
   name: string;
   description: string | null;
   priceCents: number;
+  /** "de" price, display-only strike-through; always above priceCents */
+  compareAtPriceCents: number | null;
   status: 'active' | 'sold_out' | 'archived';
   kind: 'simple' | 'combo';
   stockQuantity: number | null;
@@ -338,13 +348,28 @@ export interface AvailabilitySchedule {
   outside: 'unavailable' | 'hidden';
 }
 
+export type PricingRule = 'sum' | 'average' | 'most_expensive';
+
+export interface OptionItem {
+  id?: string;
+  name: string;
+  priceDeltaCents: number;
+  status: 'active' | 'sold_out';
+  /** how many of this one a shopper may take (1..20; 1 = a toggle) */
+  maxQty?: number;
+  description?: string | null;
+  imageUrl?: string | null;
+}
+
 export interface OptionGroup {
   id?: string;
   name: string;
   required?: boolean;
   minSelect: number;
+  /** counts units: up to the sum of the options' maxQty */
   maxSelect: number;
-  options: { id?: string; name: string; priceDeltaCents: number; status: 'active' | 'sold_out' }[];
+  pricingRule?: PricingRule;
+  options: OptionItem[];
 }
 
 export interface KitSlot {
@@ -367,6 +392,7 @@ export interface Category {
   id: string;
   slug: string;
   name: string;
+  description: string | null;
   sort: number;
   products: Product[];
 }
@@ -386,8 +412,10 @@ export interface SpecialDay {
 export interface Zone {
   id: string;
   name: string;
-  kind: 'neighborhood' | 'radius';
+  kind: 'neighborhood' | 'radius' | 'polygon';
   neighborhoods: string[];
+  /** [lat, lng] vertices, ring not closed; only for kind 'polygon' */
+  polygon: [number, number][] | null;
   feeCents: number;
   minOrderCents: number;
   etaMin: number;
@@ -633,6 +661,7 @@ export interface ActivityEntry {
 
 export interface Payments {
   methods: PayMethod[];
+  adjustments: PaymentAdjustments;
   pix: { key: string; keyType: string; beneficiary: string; city: string; sample: string } | null;
   mercadoPago: {
     /** the install has Mercado Pago credentials */
@@ -1010,8 +1039,13 @@ export const api = {
     }),
   importProducts: (text: string, categoryId: string) =>
     send<{ created: number }>('POST', '/products/import', { text, categoryId }),
-  createCategory: (name: string) => send<{ category: Category }>('POST', '/categories', { name }),
-  renameCategory: (id: string, name: string) => send('PATCH', `/categories/${id}`, { name }),
+  createCategory: (name: string, description?: string | null) =>
+    send<{ category: Category }>('POST', '/categories', {
+      name,
+      ...(description ? { description } : {}),
+    }),
+  updateCategory: (id: string, c: { name?: string; description?: string | null }) =>
+    send('PATCH', `/categories/${id}`, c),
   deleteCategory: (id: string) => send('DELETE', `/categories/${id}`),
   orderCategories: (ids: string[]) => send('PUT', '/categories/order', { ids }),
 
@@ -1049,8 +1083,12 @@ export const api = {
   deleteZone: (id: string) => send<{ zones: Zone[] }>('DELETE', `/zones/${id}`),
 
   payments: () => get<Payments>('/payments'),
-  updatePayments: (p: { methods?: PayMethod[]; pix?: Record<string, unknown> | null }) =>
-    send<Payments>('PATCH', '/payments', p),
+  updatePayments: (p: {
+    methods?: PayMethod[];
+    pix?: Record<string, unknown> | null;
+    /** replaces the whole map */
+    adjustments?: PaymentAdjustments | null;
+  }) => send<Payments>('PATCH', '/payments', p),
   mpConnect: () => send<{ url: string }>('POST', '/payments/mercadopago/connect'),
   mpDisconnect: () => send<Payments>('POST', '/payments/mercadopago/disconnect'),
   statement: (month: string) => get<Statement>(`/payments/statement?month=${month}`),

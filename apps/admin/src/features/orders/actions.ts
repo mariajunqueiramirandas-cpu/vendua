@@ -224,7 +224,7 @@ export function printTicket(o: Order, storeName: string) {
       (i) =>
         `<div class="it"><b>${i.qty}×</b> ${esc(i.name)}${
           i.modifiers.length
-            ? `<div class="sub">${i.modifiers.map((m) => esc(m.name)).join(' · ')}</div>`
+            ? `<div class="sub">${i.modifiers.map((m) => esc((m.qty ?? 1) > 1 ? `${m.qty}x ${m.name}` : m.name)).join(' · ')}</div>`
             : ''
         }${i.combo.length ? `<div class="sub">${i.combo.map((c) => `${c.qty}× ${esc(c.name)}`).join(' · ')}</div>` : ''}</div>`,
     )
@@ -241,7 +241,7 @@ ${o.scheduledFor ? `<div class="m">ENCOMENDA PARA ${esc(o.scheduledFor)}</div>` 
 <div class="m">${new Date(o.placedAt).toLocaleString('pt-BR')}</div>
 <div style="margin-top:8px">${items}</div>
 ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
-<div class="t">${esc(money(o.totalCents))} · ${o.payment.method === 'pix' ? 'Pix' : o.payment.method === 'cash' ? 'Dinheiro' : 'Cartão'}${
+<div class="t">${esc(money(o.totalCents))} · ${o.payment.method === 'pix' ? 'Pix' : o.payment.method === 'cash' ? 'Dinheiro' : o.payment.method === 'meal_voucher' ? 'Vale-refeição' : 'Cartão'}${
     o.payment.status === 'paid' ? ' (pago)' : ''
   }</div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),300)}</script></body></html>`;
