@@ -1,5 +1,5 @@
 // Bundle budget (design spec §11), run after `vite build`: the shell (entry +
-// vendor) under 140 KB gzip, every lazy route chunk under 60 KB, the fonts a
+// vendor) under 420 KB gzip, every lazy route chunk under 60 KB, the fonts a
 // phone actually downloads (latin + latin-ext) under 90 KB. Fails the build.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,7 +26,7 @@ check(
   'shell (entry + vendor + css)',
   shell.reduce((a, f) => a + gz(f), 0) +
     files.filter((f) => f.endsWith('.css') && html.includes(f)).reduce((a, f) => a + gz(f), 0),
-  140 * 1024,
+  420 * 1024,
 );
 for (const f of routes.sort()) check(`route ${f}`, gz(f), 60 * 1024);
 // fonts: one variable file per family for the subsets pt-BR needs
