@@ -70,7 +70,10 @@ export function OrderDetail({
 
   return (
     <div className={cn('space-y-4', inPanel ? '' : 'pb-24 md:pb-0')}>
-      <div className="flex items-start justify-between gap-4">
+      <div
+        className="flex items-start justify-between gap-4"
+        {...(inPanel ? {} : { 'data-vt-dst': `order:${order.id}` })}
+      >
         <div>
           <p className="t-caption text-muted">{when(order.placedAt)}</p>
           <h2 className="t-display tnum">#{order.number}</h2>
@@ -194,7 +197,7 @@ export function OrderDetail({
               href={whatsappUrl(order, s.store.name)}
               target="_blank"
               rel="noreferrer"
-              className="t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-[#1f7a4d] px-4 text-white hover:opacity-90"
+              className="press t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-[#1f7a4d] px-4 text-white hover:opacity-90"
             >
               <WhatsappLogo weight="fill" className="size-5" /> WhatsApp
             </a>
@@ -231,7 +234,7 @@ export function OrderDetail({
               href={mapHref}
               target="_blank"
               rel="noreferrer"
-              className="t-label inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-muted hover:bg-hover"
+              className="press t-label inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-muted hover:bg-hover"
             >
               <MapPin className="size-5" /> mapa
             </a>
@@ -299,7 +302,7 @@ export function OrderDetail({
         {!inPanel ? null : (
           <Link
             to={`/pedidos/${order.id}`}
-            className="t-label inline-flex min-h-12 items-center gap-2 rounded-md px-4 text-muted hover:bg-hover"
+            className="press t-label inline-flex min-h-12 items-center gap-2 rounded-md px-4 text-muted hover:bg-hover"
           >
             <ArrowSquareOut className="size-5" /> abrir em tela cheia
           </Link>
@@ -342,7 +345,10 @@ export function OrderDetail({
         </div>
       ) : null}
       {next && !inPanel ? (
-        <div className="glass fixed inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom))] z-30 border-t border-line px-4 py-3 md:hidden">
+        <div
+          data-action-bar
+          className="glass fixed inset-x-0 bottom-[var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))] z-30 border-t border-line px-4 py-3 md:hidden"
+        >
           <Button
             size="lg"
             block

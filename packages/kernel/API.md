@@ -194,7 +194,31 @@ Additive — no storefront edit, no new runtime export.
   over `config.tokens`: a merchant's token edit is live at the next page load, with no rebuild.
   Templates: live `/state?templates=1` over the injected ones over the build's snapshot.
 
-### Catalog model gaps (Kernel 1.11)
+### Native feel (Kernel 1.11)
+
+Additive — no storefront edit, no new runtime export. Stores stay a plain web app.
+
+- **Page transitions.** Navigations inside `<StorefrontRoutes />` (Kernel links, store
+  `<Link>`/`useNavigate()`, back/forward) run as View Transitions where supported:
+  `html[data-vt]` is `push` (deeper: product, sacola, checkout), `pop`, `tab` (same depth) or
+  `fade` (always on ≥ 768 px); reduced motion gets a 120 ms crossfade. A replace animates only
+  when its `state.vt` names a type. The `.v-header` and bag bar are pinned by their own
+  transition names. Never on top of the browser's own swipe animation.
+- **Shared photo.** Put `data-vt-src="product:<slug>"` on the tappable photo and
+  `data-vt-dst="product:<slug>"` on the next page's photo: the photo morphs across (and back on
+  pop). The source is the tapped element's `[data-vt-src]`, or the one inside the tapped
+  link/button; the destination is the innermost visible match. The default product card and
+  `sdk:purchase-panel` media already carry them.
+- **The sacola as a sheet.** `CartTrigger` (and the bag bar) pushes `/sacola` with
+  `state.vBackground` (the current location): the page stays rendered and the cart opens over
+  it in a `<dialog data-vendua="cart-sheet">` through `cart.Drawer` with
+  `presentation="drawer"`. A direct visit, a trigger on `/checkout` and `afterAdd: 'cart'` get
+  the full page, as before. Store CSS styles it only through `--v-*` tokens and `[data-part]`
+  hooks.
+- **Checkout steps** are history entries (`state.vStep`); back returns to the previous step.
+- `<meta name="theme-color">` follows the `bg` token; toasts live in the top layer.
+
+### Catalog model gaps (Kernel 1.12)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's: the Kernel shows
 Core's numbers and labels Core's rules, it never prices options or payment methods itself.
@@ -259,7 +283,7 @@ Three layers, in order of preference (17 — styling API):
    `--v-purchase-panel-media-ratio`, `--v-announcement-bg`, `--v-announcement-fg`,
    `--v-header-height`, `--v-focus`.
 
-Parts added in Kernel 1.11: `compare-at` (the struck "de" price, in the product card's and
+Parts added in Kernel 1.12: `compare-at` (the struck "de" price, in the product card's and
 `sdk:purchase-panel`'s `price`), `category-description` (`sdk:catalog-grid`), and inside
 `[data-vendua="modifier-picker"]` `pricing-rule`, `option-image`, `option-description` and
 `option-qty` (a `modifier` with units is `data-kind="qty"`); in the checkout
@@ -277,7 +301,7 @@ the last resort — each one is counted in the artifact manifest.
 `Order`, `Notice`, `StateEnvelope`, …). Kernel 1.2 types: `ComboSlot`, `ComboSelection`,
 `CartCoupon`, `CartSchedule`, `CouponCheck`, `DeliveryAddress`, `CepResult`, `ImportLine`,
 `ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo` (Kernel 1.7: `PaymentNext`;
-Kernel 1.11: `PaymentAdjustment`, `ModifierPricingRule`); every new DTO field
+Kernel 1.12: `PaymentAdjustment`, `ModifierPricingRule`); every new DTO field
 is optional so a Kernel 1.2 storefront still runs against an older Core. Slot prop types: `SlotProps`, `CheckoutStep`,
 `CustomerDraft`, `DeliveryOption`, `PaymentMethod`, `ModifierGroup`, `PaymentStatusKind` (1.7).
 

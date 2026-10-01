@@ -8,7 +8,7 @@ type Size = 'sm' | 'md' | 'lg';
 
 const base =
   'relative inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-md t-label ' +
-  'transition-[transform,background-color,box-shadow,color] duration-(--duration-instant) ease-out ' +
+  'transition-[scale,background-color,box-shadow,color] duration-(--duration-instant) ease-out ' +
   'active:scale-[0.97] disabled:pointer-events-none disabled:opacity-45 aria-busy:pointer-events-none';
 
 const variants: Record<Variant, string> = {

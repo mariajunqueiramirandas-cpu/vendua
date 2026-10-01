@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   useCart,
   useCep,
@@ -20,7 +22,8 @@ import { money } from '@vendua/ui-defaults';
 
 // /checkout — the Kernel-owned checkout (ADR 0004): a three-step machine
 // (dados → entrega → pagamento). Validation here is shape-only; every business
-// rule (zone, minimum, pause) is Core's answer, surfaced as-is.
+// rule (zone, minimum, pause) is Core's answer, surfaced as-is. Each step is a history entry
+// (state.vStep), so the back button/gesture returns to the previous step, not out of checkout.
 
 type StepId = CheckoutStep['id'];
 const ORDER: StepId[] = ['dados', 'entrega', 'pagamento'];
@@ -103,8 +106,30 @@ export function CheckoutPage() {
   const paths = resolvePaths(config);
   const currency = store?.currency ?? 'BRL';
 
-  const [step, setStep] = useState<StepId>('dados');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const nav = location.state as { vStep?: unknown; vFrom?: unknown } | null;
+  const lastStep = useRef<StepId | null>(null);
+  // a state-less entry that only adds a hash (the header's skip link) stays on its step
+  const hashOnly = !nav?.vStep && location.hash !== '' && lastStep.current !== null;
+  const asked = ORDER.find((s) => s === nav?.vStep) ?? (hashOnly ? lastStep.current! : 'dados');
   const [done, setDone] = useState<Set<StepId>>(new Set());
+  // a reload keeps the entry but not the answers: start over from the first step
+  const reachable = ORDER.slice(0, ORDER.indexOf(asked)).every((s) => done.has(s));
+  const step: StepId = reachable ? asked : 'dados';
+  lastStep.current = step;
+  const keyNow = useRef(location.key);
+  keyNow.current = location.key;
+  const stepHeading = useRef<HTMLHeadingElement>(null);
+  // which way the last step change went: the new step's form slides in from that side
+  const prevStep = useRef(step);
+  const stepDir = useRef<'push' | 'pop' | undefined>(undefined);
+  if (prevStep.current !== step) {
+    stepDir.current = ORDER.indexOf(step) > ORDER.indexOf(prevStep.current) ? 'push' : 'pop';
+    prevStep.current = step;
+  }
+  const pushedStep = useRef(false);
+  const firstStep = useRef(true);
   const [draft, setDraft] = useState<CustomerDraft>(() => ({
     name: customer?.name ?? '',
     phone: customer?.phone ?? '',
@@ -142,6 +167,55 @@ export function CheckoutPage() {
     emit('checkout_step', { step, duration_ms: Date.now() - stepStarted.current });
     stepStarted.current = Date.now();
   }, [step]);
+
+  // step entries that can't be shown are skipped, never rewritten into copies of the first
+  // step: a reload mid-checkout lands on the first step's entry; with the order placed (no
+  // open cart), back leaves checkout in one press
+  const closed = !loading && (!cart || cart.status !== 'open' || cart.items.length === 0);
+  const skipped = useRef<string | null>(null);
+  useEffect(() => {
+    if (skipped.current === location.key) return;
+    if (hashOnly) {
+      navigate(location, { replace: true, state: { vStep: asked, vStepN: ORDER.indexOf(asked) } });
+      return;
+    }
+    if (submitting.current || leaving || loading) return;
+    const n = ORDER.indexOf(asked);
+    const back = closed && n > 0 ? n + 1 : reachable ? 0 : n;
+    if (!back) return;
+    skipped.current = location.key;
+    const idx = (globalThis.history?.state as { idx?: unknown } | null)?.idx;
+    if (typeof idx !== 'number' || idx >= back) navigate(-back);
+    else navigate({ pathname: location.pathname, search: location.search }, { replace: true });
+  });
+
+  // a new step starts at its top with focus on its heading; back/forward lets the scroll
+  // manager put the page where it was
+  useLayoutEffect(() => {
+    if (firstStep.current) {
+      firstStep.current = false;
+      return;
+    }
+    if (pushedStep.current) window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    pushedStep.current = false;
+    stepHeading.current?.focus({ preventScroll: true });
+  }, [step]);
+
+  // a step change lands a frame later (it's a view transition): a second tap meanwhile is ignored
+  const stepping = useRef(false);
+  useLayoutEffect(() => {
+    stepping.current = false;
+  }, [location.key]);
+  const setStep = (next: StepId) => {
+    if (next === step || stepping.current) return;
+    stepping.current = true;
+    if (nav?.vFrom === next) return navigate(-1);
+    pushedStep.current = true;
+    navigate(
+      { pathname: location.pathname, search: location.search },
+      { state: { vStep: next, vStepN: ORDER.indexOf(next), vFrom: step } },
+    );
+  };
 
   const neighborhoods = useMemo(() => zones.flatMap((z) => z.neighborhoods), [zones]);
   // distance-priced and drawn (polygon) zones both resolve from the shopper's location
@@ -181,7 +255,7 @@ export function CheckoutPage() {
   useEffect(() => {
     if (methods.length && !methods.some((m) => m.id === pay)) setPay(methods[0]!.id);
   }, [methods, pay]);
-  // Kernel 1.11: on the payment step Core prices the chosen method's discount/surcharge into
+  // Kernel 1.12: on the payment step Core prices the chosen method's discount/surcharge into
   // the cart's totals (`GET /cart?paymentMethod=`); the page never adds it up itself. The key
   // ties an answer to the cart it priced, so a coupon or a delivery change asks again.
   const [priced, setPriced] = useState<{ key: string; totals: CartTotals } | null>(null);
@@ -368,6 +442,7 @@ export function CheckoutPage() {
       // is shown but doesn't trap the customer — submit gets Core's final answer
       setSyncing(true);
       setDeliveryIssue(null);
+      const at = keyNow.current;
       try {
         await mutations.setDelivery(deliveryPayload());
       } catch (err) {
@@ -375,8 +450,11 @@ export function CheckoutPage() {
       } finally {
         setSyncing(false);
       }
+      // the shopper went back (or forward) while it synced: don't pull them on
+      if (keyNow.current !== at) return;
     }
-    setDone((d) => new Set(d).add(step));
+    // committed before the push, so the next step is already reachable when it renders
+    flushSync(() => setDone((d) => new Set(d).add(step)));
     setStep(ORDER[ORDER.indexOf(step) + 1] ?? step);
   };
 
@@ -434,7 +512,7 @@ export function CheckoutPage() {
       if (code === 'SCHEDULE_REQUIRED' || code === 'INVALID_SCHEDULE')
         setScheduleError(errorCopy(code).title);
       if (COUPON_CODES.has(code)) setCouponError(errorCopy(code).title);
-    } finally {
+      // only a failure reopens the button: after an order the page is on its way out
       submitting.current = false;
     }
   };
@@ -448,14 +526,19 @@ export function CheckoutPage() {
       <div className="v-checkout-grid">
         <Slot name="checkout.Layout" steps={steps} current={step} onStep={(id) => setStep(id)}>
           <form
+            key={step}
             noValidate
             data-step={step}
+            data-dir={stepDir.current}
             onSubmit={(e) => {
               e.preventDefault();
               if (step === 'pagamento') void place();
               else void advance();
             }}
           >
+            <h2 className="v-sr" ref={stepHeading} tabIndex={-1}>
+              Etapa {ORDER.indexOf(step) + 1} de {ORDER.length}: {LABEL[step]}
+            </h2>
             {step === 'dados' ? (
               <Slot
                 name="checkout.AddressForm"

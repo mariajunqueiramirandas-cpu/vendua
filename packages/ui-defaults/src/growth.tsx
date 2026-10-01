@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { SlotProps } from '@vendua/kernel';
-import { COUPON_REASON, countdown, dayLabel, money } from './format.ts';
+import { COUPON_REASON, countdown, dayLabel, mediaSrcSet, money } from './format.ts';
 import { qrMatrix, qrSvgPath } from './qr.ts';
 import { Calendar } from './calendar.tsx';
 
@@ -121,37 +121,113 @@ export function Gallery({
   figureVariant,
 }: SlotProps['catalog.Gallery']) {
   const [i, setI] = useState(0);
-  const cur = images[Math.min(i, images.length - 1)];
-  if (!cur)
+  const track = useRef<HTMLUListElement>(null);
+  const n = images.length;
+  // the scroll position is the source of truth: a swipe, a thumb tap and an arrow key all land here
+  useEffect(() => {
+    const el = track.current;
+    if (!el || n < 2) return;
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const w = el.clientWidth;
+        if (w) setI(Math.max(0, Math.min(n - 1, Math.round(el.scrollLeft / w))));
+      });
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(raf);
+    };
+  }, [n]);
+  if (!n)
     return (
       <span className="v-card-initial" aria-hidden="true" data-figure={figureVariant}>
         <span>{name.slice(0, 1).toUpperCase()}</span>
       </span>
     );
+  const go = (k: number) => {
+    const el = track.current;
+    const to = Math.max(0, Math.min(n - 1, k));
+    setI(to);
+    if (!el) return;
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    el.scrollTo({ left: to * el.clientWidth, behavior: still ? 'auto' : 'smooth' });
+  };
+  const onKey = (e: KeyboardEvent<HTMLUListElement>) => {
+    const to =
+      e.key === 'ArrowRight'
+        ? i + 1
+        : e.key === 'ArrowLeft'
+          ? i - 1
+          : e.key === 'Home'
+            ? 0
+            : e.key === 'End'
+              ? n - 1
+              : null;
+    if (to === null) return;
+    e.preventDefault();
+    go(to);
+  };
   return (
-    <div className="v-gallery" data-vendua="gallery" data-part="root">
-      <img
-        src={cur.url}
-        alt={cur.alt ?? name}
-        {...{ fetchpriority: i === 0 ? 'high' : 'auto' }}
-        decoding="async"
+    <div
+      className="v-gallery"
+      data-vendua="gallery"
+      data-part="root"
+      role="region"
+      aria-label={`Fotos: ${name}`}
+    >
+      <ul
+        ref={track}
+        className="v-gallery-track"
         data-part="main"
-      />
-      {images.length > 1 ? (
-        <ol className="v-gallery-thumbs" data-part="thumbs" aria-label="Fotos">
-          {images.map((img, k) => (
-            <li key={img.url}>
-              <button
-                type="button"
-                aria-label={`Foto ${k + 1} de ${images.length}`}
-                aria-current={k === i || undefined}
-                onClick={() => setI(k)}
-              >
-                <img src={img.url} alt="" loading="lazy" decoding="async" />
-              </button>
-            </li>
-          ))}
-        </ol>
+        tabIndex={n > 1 ? 0 : undefined}
+        onKeyDown={n > 1 ? onKey : undefined}
+      >
+        {images.map((img, k) => (
+          <li
+            key={`${k}:${img.url}`}
+            className="v-gallery-slide"
+            data-part="slide"
+            aria-label={n > 1 ? `Foto ${k + 1} de ${n}` : undefined}
+          >
+            <img
+              src={img.url}
+              {...(mediaSrcSet(img.url)
+                ? { srcSet: mediaSrcSet(img.url), sizes: '(max-width: 859px) 100vw, 560px' }
+                : {})}
+              alt={img.alt ?? name}
+              loading={k === 0 ? 'eager' : 'lazy'}
+              {...{ fetchpriority: k === 0 ? 'high' : 'auto' }}
+              decoding="async"
+              draggable={false}
+            />
+          </li>
+        ))}
+      </ul>
+      {n > 1 ? (
+        <>
+          <span className="v-gallery-dots" data-part="dots" aria-hidden="true">
+            {images.map((img, k) => (
+              <span key={`${k}:${img.url}`} data-current={k === i || undefined} />
+            ))}
+          </span>
+          <ol className="v-gallery-thumbs" data-part="thumbs" aria-label="Fotos">
+            {images.map((img, k) => (
+              <li key={`${k}:${img.url}`}>
+                <button
+                  type="button"
+                  aria-label={`Foto ${k + 1} de ${n}`}
+                  aria-current={k === i || undefined}
+                  onClick={() => go(k)}
+                >
+                  <img src={img.url} alt="" loading="lazy" decoding="async" draggable={false} />
+                </button>
+              </li>
+            ))}
+          </ol>
+        </>
       ) : null}
     </div>
   );

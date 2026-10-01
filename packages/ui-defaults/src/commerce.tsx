@@ -67,6 +67,8 @@ export function CartDrawer({
   summary,
   onClose,
 }: SlotProps['cart.Drawer']) {
+  const drawer = presentation === 'drawer';
+  const Title = drawer ? 'h2' : 'h1';
   return (
     <section
       className="v-cart"
@@ -75,18 +77,27 @@ export function CartDrawer({
       aria-label="Sacola"
     >
       <header className="v-cart-head" data-part="head">
-        <h1 className="v-page-title">Sacola</h1>
+        <Title className="v-page-title">Sacola</Title>
         <p className="v-muted">
           {cart.totals.itemCount} {cart.totals.itemCount === 1 ? 'item' : 'itens'}
         </p>
-        {presentation === 'drawer' ? (
+        {drawer ? (
           <button
             type="button"
-            className="v-btn v-btn-ghost"
+            className="v-cart-close"
+            data-part="close"
             onClick={onClose}
             aria-label="Fechar sacola"
           >
-            ×
+            <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
+              <path
+                d="M5 5l10 10M15 5L5 15"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                fill="none"
+                strokeLinecap="round"
+              />
+            </svg>
           </button>
         ) : null}
       </header>
@@ -425,7 +436,12 @@ export function ProductCard({
     <article className="v-card" data-part="root" data-status={product.status}>
       {link(
         <>
-          <div className="v-card-media" data-part="media" aria-hidden="true">
+          <div
+            className="v-card-media"
+            data-part="media"
+            data-vt-src={`product:${product.slug}`}
+            aria-hidden="true"
+          >
             {badge ? (
               <span className="v-card-badge" data-part="badge" data-tone={badge.tone}>
                 {badge.text}

@@ -1,6 +1,7 @@
 import { ArrowLeft, Question } from '@phosphor-icons/react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { prevIs } from '../app/Router.tsx';
 import { cn } from './cn.ts';
 import { Button, IconButton } from './Button.tsx';
 import { openHelp } from './help.ts';
@@ -22,7 +23,10 @@ export function HelpButton({ className }: { className?: string }) {
   );
 }
 
-/** Page title block: back (phones), title, subtitle, primary action top-right on desktop. */
+/**
+ * Page title block: title, subtitle, primary action top-right on desktop. `back` shows from
+ * tablet up; phones go back from the header (Shell), where the store avatar sits.
+ */
 export function PageHeader({
   title,
   subtitle,
@@ -45,8 +49,10 @@ export function PageHeader({
       {back ? (
         <IconButton
           label="voltar"
-          className="-ml-3 shrink-0"
-          onClick={() => (back === true ? nav(-1) : nav(back))}
+          className="-ml-3 shrink-0 max-md:hidden"
+          onClick={() =>
+            back === true || prevIs(back) ? nav(-1) : nav(back, { state: { vt: 'pop' } })
+          }
         >
           <ArrowLeft />
         </IconButton>
@@ -87,8 +93,9 @@ export function PageBody({
 export function ActionBar({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div
+      data-action-bar
       className={cn(
-        'glass fixed inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom))] z-30 border-t border-line px-4 py-3 md:hidden',
+        'glass fixed inset-x-0 bottom-(--tabbar-h) z-30 border-t border-line px-4 py-3 md:hidden',
         className,
       )}
     >

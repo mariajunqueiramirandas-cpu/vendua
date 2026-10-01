@@ -162,7 +162,7 @@ function Hit({
       <button
         type="button"
         onClick={onClick}
-        className="flex min-h-16 w-full items-center gap-3 px-3 text-left hover:bg-hover"
+        className="press-row flex min-h-16 w-full items-center gap-3 px-3 text-left hover:bg-hover"
       >
         <span className="grid size-10 shrink-0 place-items-center text-muted">{icon}</span>
         {children}

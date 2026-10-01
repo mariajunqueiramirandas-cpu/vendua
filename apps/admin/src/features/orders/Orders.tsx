@@ -219,7 +219,7 @@ export default function Orders() {
             onClick={awake.toggle}
             title={awake.on ? 'A tela fica ligada nesta página' : 'Manter a tela ligada'}
             className={cn(
-              't-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1',
+              'press t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1',
               awake.on ? 'bg-spark-soft ring-spark' : 'ring-line hover:bg-hover',
             )}
           >
@@ -232,7 +232,7 @@ export default function Orders() {
           to="/pedidos/agendados"
           {...preload('/pedidos/agendados')}
           aria-label="Encomendas"
-          className="t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1 ring-line hover:bg-hover"
+          className="press t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1 ring-line hover:bg-hover"
         >
           <CalendarBlank className="size-5" /> <span className="hidden sm:inline">Encomendas</span>
           {data?.scheduledUpcoming ? (
@@ -245,7 +245,7 @@ export default function Orders() {
           to="/pedidos/historico"
           {...preload('/pedidos/historico')}
           aria-label="Histórico"
-          className="t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1 ring-line hover:bg-hover"
+          className="press t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1 ring-line hover:bg-hover"
         >
           <ClockCounterClockwise className="size-5" />{' '}
           <span className="hidden sm:inline">Histórico</span>
@@ -372,7 +372,7 @@ export default function Orders() {
               href={whatsappUrl(more, s.store.name)}
               target="_blank"
               rel="noreferrer"
-              className="t-label flex min-h-14 items-center justify-center rounded-lg bg-[#1f7a4d] text-white"
+              className="press t-label flex min-h-14 items-center justify-center rounded-lg bg-[#1f7a4d] text-white"
             >
               chamar no WhatsApp
             </a>

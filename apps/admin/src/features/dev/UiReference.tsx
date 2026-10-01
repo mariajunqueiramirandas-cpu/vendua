@@ -1,4 +1,12 @@
-import { Bell, EnvelopeSimple, Moon, Plus, Sun, WhatsappLogo } from '@phosphor-icons/react';
+import {
+  Bell,
+  CaretLeft,
+  EnvelopeSimple,
+  Moon,
+  Plus,
+  Sun,
+  WhatsappLogo,
+} from '@phosphor-icons/react';
 import { useState, type ReactNode } from 'react';
 import type { Order, Plan, Product } from '../../lib/api.ts';
 import { setTheme } from '../../lib/theme.ts';
@@ -219,6 +227,40 @@ export default function UiReference() {
         </div>
         <div className="mt-4 max-w-sm">
           <HoldButton onConfirm={() => toast('Confirmado')}>segure para cancelar</HoldButton>
+        </div>
+      </Block>
+
+      <Block title="Toque e navegação">
+        <p className="t-body mb-4 max-w-prose text-muted">
+          Sem depender de hover: <code>press</code> encolhe o que é tocado (cards, ícones, botões
+          soltos); <code>press-row</code> escurece linhas de lista. No celular, uma tela um nível
+          abaixo troca a foto da loja no topo por “voltar”.
+        </p>
+        <div className="grid gap-4 md:grid-cols-3">
+          <button
+            type="button"
+            className="press t-label rounded-md bg-surface p-5 text-left depth-1"
+          >
+            press · card
+          </button>
+          <ul className="overflow-hidden rounded-md bg-surface depth-1">
+            {['press-row · linha', 'segunda linha'].map((t) => (
+              <li key={t} className="border-b border-line last:border-0">
+                <button type="button" className="press-row t-body w-full px-4 py-3 text-left">
+                  {t}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="flex items-center rounded-md bg-bg px-2 ring-1 ring-line">
+            <button
+              type="button"
+              className="press flex h-12 items-center gap-0.5 rounded-full pl-1 pr-3"
+            >
+              <CaretLeft weight="bold" className="size-6" aria-hidden />
+              <span className="t-label">Pedidos</span>
+            </button>
+          </div>
         </div>
       </Block>
 

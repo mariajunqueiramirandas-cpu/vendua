@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { DETAIL, PRODUCT, STORE, flush, mockCore, mount, type Mounted } from './harness.tsx';
 
-// Kernel 1.11 — the catalog model gaps: promo ("de/por") prices, option quantities, option
+// Kernel 1.12 — the catalog model gaps: promo ("de/por") prices, option quantities, option
 // details and group pricing rules, category descriptions, payment-method adjustments and
 // the meal voucher, polygon delivery zones.
 

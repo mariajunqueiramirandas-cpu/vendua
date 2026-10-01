@@ -41,7 +41,7 @@ function MoreSheet({
             <NavLink
               to={n.to}
               {...intent(qc, n.to)}
-              className="flex min-h-28 flex-col justify-between rounded-lg bg-sunken p-4 transition-transform hover:bg-press active:scale-[0.98]"
+              className="press flex min-h-28 flex-col justify-between rounded-lg bg-sunken p-4 hover:bg-press active:bg-press"
             >
               <n.Icon weight="duotone" className="size-8" />
               <span>
@@ -92,7 +92,7 @@ export function SwitchStoreSheet({
                 await resetClient(qc);
                 window.location.assign('/admin/');
               }}
-              className="flex min-h-16 w-full items-center gap-3 rounded-md px-4 text-left ring-1 ring-line hover:bg-hover disabled:bg-spark-soft disabled:ring-spark"
+              className="press-row flex min-h-16 w-full items-center gap-3 rounded-md px-4 text-left ring-1 ring-line hover:bg-hover disabled:bg-spark-soft disabled:ring-spark"
             >
               <span className="min-w-0 flex-1">
                 <span className="block font-semibold">{st.name}</span>

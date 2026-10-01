@@ -1,6 +1,6 @@
 # Menu import — "Cole o link do seu cardápio"
 
-> Status: Proposed · Last reviewed: 2026-10-01 · Model gaps (§6) are built (Core 0065–0067, Kernel 1.11.0, admin); the importer is next
+> Status: Proposed · Last reviewed: 2026-10-01 · Model gaps (§6) are built (Core 0065–0067, Kernel 1.12.0, admin); the importer is next
 > Roadmap: first tenant ([Phase 4](roadmap.md#phase-4--one-tenant-operated-for-real-weeks-1420-overlaps)) — Quero Pudim Gourmet moves from Instadelivery
 
 Almost every merchant Venduá sells to already has a cardápio digital (Instadelivery, anota.ai,
@@ -332,13 +332,13 @@ oversized store fails the import.
 
 ## 6. Model gaps — closed first
 
-Status: built and merged with Kernel 1.11.0. Still to do: the store sections that draw their own
+Status: built and merged with Kernel 1.12.0. Still to do: the store sections that draw their own
 prices (`storefronts/_template/sections/_shared/Dish.tsx`, the quero-pudim `ProductCard`) show the
 struck-through price only once they render `compareAtPriceCents`.
 
 Decision (2026-10-01): the seven gaps below are closed **before** the importer, so no adapter ever
 emits their `lost` codes. Each is additive and optional on every public surface (Contract 2): a Core
-migration, the Core API, the admin editor, and one Kernel minor (1.11.0: `API.md`,
+migration, the Core API, the admin editor, and one Kernel minor (1.12.0: `API.md`,
 `CHANGELOG.md`; no new runtime export, so `test/api-surface.test.ts` is unchanged). Money stays
 integer cents, computed in Core. Ranked by how many platforms need them:
 
@@ -407,7 +407,7 @@ The quero-pudim seed fixtures are a hand-made approximation of the store and dif
 ## 9. Phases
 
 1. **Model gaps** from [§6](#6-model-gaps--closed-first), first: Core migrations 0065–0067, the
-   admin editors, and Kernel 1.11.0 with the storefront rendering (struck-through price, option
+   admin editors, and Kernel 1.12.0 with the storefront rendering (struck-through price, option
    quantity stepper and thumbnails, category description, payment adjustment line). Exit: each
    gap exercised end to end in Core tests and on a local store.
 2. **Instadelivery end to end.** Core: document, `validateDoc`, `apply`, the image job, routes,

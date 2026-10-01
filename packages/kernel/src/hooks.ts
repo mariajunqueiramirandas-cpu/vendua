@@ -128,7 +128,7 @@ export interface CartMutations {
     modifierIds?: string[],
     /** Kernel 1.2 — kit picks for a `kind: 'combo'` product */
     comboSelections?: ComboSelection[],
-    /** Kernel 1.11 — units per option id, for options with `maxQty` > 1 (absent = 1 each) */
+    /** Kernel 1.12 — units per option id, for options with `maxQty` > 1 (absent = 1 each) */
     modifierQty?: Record<string, number>,
   ) => Promise<Cart>;
   updateQty: (itemId: string, qty: number) => Promise<Cart>;
@@ -472,7 +472,7 @@ export function useCheckout(): {
 
 /** Zone check for a neighborhood — fee, ETA and eligibility are Core's answer. */
 export function useDeliveryQuote(): {
-  /** a bairro, or Kernel 1.2 `{ lat, lng }` (e.g. from the device's location); Kernel 1.11
+  /** a bairro, or Kernel 1.2 `{ lat, lng }` (e.g. from the device's location); Kernel 1.12
    *  `paymentMethod` adds the cart's `totals` priced for it */
   quote: (
     where: string | { neighborhood?: string; lat?: number; lng?: number; paymentMethod?: string },

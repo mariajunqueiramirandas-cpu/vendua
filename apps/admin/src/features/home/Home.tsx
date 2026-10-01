@@ -209,7 +209,7 @@ function Hero({ data }: { data: HomeData }) {
             type="button"
             onClick={() => setSheet(true)}
             className={cn(
-              't-label inline-flex min-h-10 items-center gap-2 rounded-full px-3.5 ring-1',
+              'press t-label inline-flex min-h-10 items-center gap-2 rounded-full px-3.5 ring-1',
               light ? 'bg-white/10 ring-white/20' : 'bg-surface/70 ring-line',
             )}
           >
@@ -229,7 +229,7 @@ function Hero({ data }: { data: HomeData }) {
           owner ? (
             <Link
               to="/conta"
-              className="t-label inline-flex min-h-10 items-center gap-1.5 rounded-full bg-warning-soft px-3.5 text-warning"
+              className="press t-label inline-flex min-h-10 items-center gap-1.5 rounded-full bg-warning-soft px-3.5 text-warning"
             >
               <CreditCard weight="bold" className="size-4" /> pagar o plano para abrir
             </Link>
@@ -242,7 +242,7 @@ function Hero({ data }: { data: HomeData }) {
           <button
             type="button"
             onClick={() => resume.mutate()}
-            className="t-label inline-flex min-h-10 items-center gap-1.5 rounded-full bg-primary px-3.5 text-on-primary"
+            className="press t-label inline-flex min-h-10 items-center gap-1.5 rounded-full bg-primary px-3.5 text-on-primary"
           >
             <Play weight="fill" className="size-4" /> voltar agora
           </button>
@@ -251,7 +251,7 @@ function Hero({ data }: { data: HomeData }) {
             type="button"
             onClick={() => setSheet(true)}
             className={cn(
-              't-label inline-flex min-h-10 items-center gap-1.5 rounded-full px-3',
+              'press t-label inline-flex min-h-10 items-center gap-1.5 rounded-full px-3',
               muted,
               'hover:bg-hover',
             )}
@@ -369,7 +369,7 @@ function Attention({ data }: { data: HomeData }) {
           <Link
             key={i}
             to={a.href}
-            className="flex min-h-18 items-center gap-3 px-4 py-3 hover:bg-hover"
+            className="press-row flex min-h-18 items-center gap-3 px-4 py-3 hover:bg-hover"
           >
             <span
               className={cn(
@@ -443,7 +443,7 @@ function Checklist({ items }: { items: HomeData['checklist'] }) {
             <Link
               to={i.href}
               className={cn(
-                'flex min-h-12 items-center gap-3 rounded-md px-2 hover:bg-hover',
+                'press-row flex min-h-12 items-center gap-3 rounded-md px-2 hover:bg-hover',
                 i.done && 'text-muted',
               )}
             >
@@ -498,7 +498,8 @@ function Feed({ data }: { data: HomeData }) {
                 <Link
                   to={`/pedidos/${f.orderId}`}
                   {...preload(`/pedidos/${f.orderId}`)}
-                  className="flex min-h-16 items-center gap-3 px-4 py-2.5 hover:bg-hover"
+                  data-vt-src={`order:${f.orderId}`}
+                  className="press-row flex min-h-16 items-center gap-3 px-4 py-2.5 hover:bg-hover"
                 >
                   <span
                     className="grid size-9 shrink-0 place-items-center rounded-full"

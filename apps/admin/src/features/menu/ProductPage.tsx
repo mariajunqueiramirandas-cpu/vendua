@@ -195,6 +195,7 @@ function Editor({
             photos={p.gallery}
             autoOpen={openPhoto}
             initialFile={sharedFile}
+            vtKey={`product:${p.id}`}
             onChange={(next) =>
               media.mutateAsync(
                 next.map((x) => ({
@@ -640,7 +641,7 @@ function OptionsEditor({ p, onSaved }: { p: ProductDetail; onSaved: (p: ProductD
                           })
                         }
                         className={cn(
-                          't-caption min-h-11 shrink-0 rounded-full px-2.5 font-semibold ring-1',
+                          'press t-caption min-h-11 shrink-0 rounded-full px-2.5 font-semibold ring-1',
                           o.status === 'sold_out'
                             ? 'bg-danger-soft text-danger ring-danger/30'
                             : 'text-muted ring-line',

@@ -73,10 +73,23 @@ The admin is meant to live on the merchant's home screen. What that takes, and w
   notifications close when the board is seen; "Tela ligada" on Pedidos holds a screen
   wake lock (`lib/wakeLock.ts`); Início offers install (Chromium prompt or iPhone steps)
   and then push (`features/home/DeviceCard.tsx`).
-- **Native feel** (`app/nativeFeel.ts`, `app/PullToRefresh.tsx`, `ui/Sheet.tsx`): back
-  closes an open sheet instead of leaving the screen, back/forward restore scroll, a tap
-  on the current tab scrolls to the top, tab changes are view transitions (off under
-  reduced motion), and pulling down at the top refetches the screen.
+- **Native feel** (`app/Router.tsx`, `app/nativeFeel.ts`, `app/nav.ts`,
+  `app/PullToRefresh.tsx`, `ui/Sheet.tsx`): every screen change is a View Transition
+  started in one place, the Router's history listener. `html[data-vt]` names it: `push`
+  (one level deeper: slides in from the right), `pop` (the mirror), `tab` (sibling roots,
+  a cross-fade) or `fade`; the depth table in `nav.ts` decides. From 768 px push and pop
+  cross-fade, and reduced motion makes every one a 120 ms fade. When the browser animated
+  a back gesture itself (`hasUAVisualTransition`, the iOS edge swipe) nothing runs on top.
+  Shared elements: a tappable carries `data-vt-src="order:<id>"` and the next screen
+  `data-vt-dst="order:<id>"`; the Router morphs one into the other (and back on pop).
+  On phones a drill-down's header shows "‹ Pedidos" (the screen it returns to) in place of
+  the store avatar. A navigation from inside a sheet replaces the sheet's history entry.
+  Back closes an open sheet, back/forward restore scroll, a tap on the current tab scrolls
+  to the top (deeper in it, returns to its root), pulling down refetches the screen, and
+  `html[data-kb]` (keyboard up) hides the tab bar. Touch feedback is `press` (scale) and
+  `press-row` (rows darken), never hover; offsets above the tab bar use `--tabbar-h`.
+  `vite.config.ts` strips Phosphor's unused thin/light weights (re-add one there before
+  using it).
 - **Install art** (`scripts/pwa-assets.ts`, committed to `public/`): the badge, shortcut
   icons and the iOS splash screens (`scripts/splash-devices.ts`; the `<link>`s are
   written at build). `--screenshots` recaptures the store screenshots from a running app.

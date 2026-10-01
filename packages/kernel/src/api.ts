@@ -52,12 +52,12 @@ export interface StoreProfile {
   pickup?: { address: string | null; instructions: string | null };
   /** Kernel 1.7 — which methods Mercado Pago takes online right now */
   onlinePayments?: { pix: boolean; card: boolean };
-  /** Kernel 1.11 — discount/surcharge per offered method (only methods that have one), for
+  /** Kernel 1.12 — discount/surcharge per offered method (only methods that have one), for
    *  labels; Core computes the cents (`CartTotals.paymentAdjustmentCents`) */
   paymentAdjustments?: Record<string, PaymentAdjustment>;
 }
 
-/** Kernel 1.11 — a payment method's rule, signed: negative = discount, positive = surcharge.
+/** Kernel 1.12 — a payment method's rule, signed: negative = discount, positive = surcharge.
  *  Applied by Core to subtotal minus the coupon discount (never to delivery). */
 export interface PaymentAdjustment {
   /** basis points of the base (−500 = −5%) */
@@ -65,7 +65,7 @@ export interface PaymentAdjustment {
   fixedCents?: number;
 }
 
-/** Kernel 1.11 — how a modifier group prices several picks (Core applies it):
+/** Kernel 1.12 — how a modifier group prices several picks (Core applies it):
  *  sum = every unit's delta; average = the mean delta over the picked units;
  *  most_expensive = the highest delta once (pizza halves) */
 export type ModifierPricingRule = 'sum' | 'average' | 'most_expensive';
@@ -103,7 +103,7 @@ export interface CatalogProduct {
   /** Kernel 1.7 — a `sold_out` product outside its schedule says when it comes back
    *  (Core's copy, e.g. "Só sábados, 9h–13h") */
   availabilityLabel?: string | null;
-  /** Kernel 1.11 — the "de" price, display-only (struck through when above `basePriceCents`,
+  /** Kernel 1.12 — the "de" price, display-only (struck through when above `basePriceCents`,
    *  which stays what the shopper pays) */
   compareAtPriceCents?: number | null;
 }
@@ -143,7 +143,7 @@ export interface CatalogCategory {
   name: string;
   sort: number;
   products: CatalogProduct[];
-  /** Kernel 1.11 — a line under the category heading */
+  /** Kernel 1.12 — a line under the category heading */
   description?: string | null;
 }
 
@@ -159,12 +159,12 @@ export interface ProductDetail extends CatalogProduct {
       name: string;
       priceDeltaCents: number;
       status: string;
-      /** Kernel 1.11 — how many units of this option one item may take (1 = a toggle) */
+      /** Kernel 1.12 — how many units of this option one item may take (1 = a toggle) */
       maxQty?: number;
       description?: string | null;
       imageUrl?: string | null;
     }[];
-    /** Kernel 1.11 — absent = 'sum' */
+    /** Kernel 1.12 — absent = 'sum' */
     pricingRule?: ModifierPricingRule;
   }[];
   /** Kernel 1.2 */
@@ -227,7 +227,7 @@ export interface CartItem {
   unitPriceCents: number;
   /** Live product availability — 'active' | 'sold_out' | 'archived'. */
   productStatus: string;
-  /** Kernel 1.11: `qty` = units of the option (priceDeltaCents is per unit) */
+  /** Kernel 1.12: `qty` = units of the option (priceDeltaCents is per unit) */
   modifiers: { id: string; name: string; priceDeltaCents: number; status: string; qty?: number }[];
   lineTotalCents: number;
   /** Kernel 1.2 */
@@ -247,7 +247,7 @@ export interface CartItem {
   stockQuantity?: number | null;
   requiresPreorder?: boolean;
   preorderLeadDays?: number;
-  /** Kernel 1.11 — option quantities above 1, by modifier id */
+  /** Kernel 1.12 — option quantities above 1, by modifier id */
   modifierQty?: Record<string, number>;
 }
 
@@ -266,7 +266,7 @@ export interface CartTotals {
   freeDeliveryThresholdCents?: number | null;
   /** cents short of free delivery; 0 once reached */
   freeDeliveryRemainingCents?: number | null;
-  /** Kernel 1.11 — the chosen payment method's discount (<0) or surcharge (>0), already in
+  /** Kernel 1.12 — the chosen payment method's discount (<0) or surcharge (>0), already in
    *  `totalCents`; 0 without one. Priced for a method by `api.cart(method)` / `quote` */
   paymentAdjustmentCents?: number;
 }
@@ -342,9 +342,9 @@ export interface DeliveryZone {
   minOrderCents: number;
   etaMin: number;
   etaMax: number;
-  /** Kernel 1.11 adds 'polygon' (an area drawn on the map; needs the shopper's location) */
+  /** Kernel 1.12 adds 'polygon' (an area drawn on the map; needs the shopper's location) */
   kind?: 'neighborhood' | 'radius' | 'polygon';
-  /** Kernel 1.11 — the drawn area, `[lat, lng]` vertices (kind 'polygon') */
+  /** Kernel 1.12 — the drawn area, `[lat, lng]` vertices (kind 'polygon') */
   polygon?: [number, number][] | null;
   maxDistanceKm?: number | null;
   feePerKmCents?: number;
@@ -362,9 +362,9 @@ export interface QuoteResult {
   distanceKm?: number | null;
   minOrderCents?: number;
   freeDeliveryOverCents?: number | null;
-  /** Kernel 1.11 — the matched zone's kind (a polygon match has `distanceKm: null`) */
+  /** Kernel 1.12 — the matched zone's kind (a polygon match has `distanceKm: null`) */
   zoneKind?: DeliveryZone['kind'];
-  /** Kernel 1.11 — with a cart session: its totals delivered here (and paid with
+  /** Kernel 1.12 — with a cart session: its totals delivered here (and paid with
    *  `paymentMethod`, when sent) */
   totals?: CartTotals;
 }
@@ -400,7 +400,7 @@ export interface ImportLine {
   slug?: string;
   qty: number;
   modifierIds?: string[];
-  /** Kernel 1.11 — option quantities (ids in `modifierIds` count as 1) */
+  /** Kernel 1.12 — option quantities (ids in `modifierIds` count as 1) */
   modifiers?: { id: string; qty?: number }[];
   comboSelections?: ComboSelection[];
 }
@@ -482,7 +482,7 @@ export interface Order {
   notes?: string | null;
   scheduledFor?: string | null;
   discountCents?: number;
-  /** Kernel 1.11 — the payment method's discount (<0) or surcharge (>0), in `totalCents` */
+  /** Kernel 1.12 — the payment method's discount (<0) or surcharge (>0), in `totalCents` */
   paymentAdjustmentCents?: number;
   coupon?: { code: string } | null;
   updatedAt?: string;
@@ -502,7 +502,7 @@ export interface OrderItem {
   name: string;
   qty: number;
   unitPriceCents: number;
-  /** Kernel 1.11: `qty` = units of the option */
+  /** Kernel 1.12: `qty` = units of the option */
   modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
   combo: { slotName: string; name: string; qty: number }[];
   lineTotalCents: number;
@@ -652,7 +652,7 @@ export function createApi(baseUrl = '') {
   };
 
   // Closure-scoped so a destructured `checkout` behaves identically to `api.checkout()`.
-  // Kernel 1.11: with a payment method, Core prices its discount/surcharge into the totals.
+  // Kernel 1.12: with a payment method, Core prices its discount/surcharge into the totals.
   const cartGet = (paymentMethod?: string) =>
     apiFetch<{ cart: Cart }>(
       co(`/cart${paymentMethod ? `?paymentMethod=${encodeURIComponent(paymentMethod)}` : ''}`),
@@ -721,7 +721,7 @@ export function createApi(baseUrl = '') {
       return [...ids].reverse();
     },
     /** a bairro name, or Kernel 1.2: `{ lat, lng }` from the device / `{ neighborhood }`.
-     *  Kernel 1.11: with `paymentMethod` the quote rides the cart session and `totals` come
+     *  Kernel 1.12: with `paymentMethod` the quote rides the cart session and `totals` come
      *  back priced for that method */
     quote: (
       where: string | { neighborhood?: string; lat?: number; lng?: number; paymentMethod?: string },
@@ -810,7 +810,7 @@ export function createApi(baseUrl = '') {
       qty = 1,
       modifierIds: string[] = [],
       comboSelections?: ComboSelection[],
-      /** Kernel 1.11 — units per option id (absent or 1 = one unit) */
+      /** Kernel 1.12 — units per option id (absent or 1 = one unit) */
       modifierQty?: Record<string, number>,
     ): Promise<Cart> {
       await ensureSessionNow();
