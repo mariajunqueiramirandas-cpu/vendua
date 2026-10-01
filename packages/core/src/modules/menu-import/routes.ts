@@ -7,7 +7,7 @@ import { oneOf, roleAtLeast, type AdminDeps, type Merchant } from '../../admin/c
 import { handlers } from '../../admin/handlers.ts';
 import { emitAdminTx } from '../../admin/live.ts';
 import { recognise } from './adapters/index.ts';
-import { applyImport, type ApplyResult } from './apply.ts';
+import { applyImport, type ApplyOptions, type ApplyResult } from './apply.ts';
 import { SECTIONS, type ImportCounts, type Lost, type MenuImportV1, type Section } from './doc.ts';
 import { kickImports } from './jobs.ts';
 
@@ -39,7 +39,7 @@ function maskKey(key: string) {
 }
 
 /** The preview: what the merchant confirms. Source thumbnails are the platform's CDN links. */
-function preview(doc: MenuImportV1, m: Merchant) {
+function preview(doc: MenuImportV1, seePix: boolean) {
   const p = doc.payments;
   return {
     store: doc.store,
@@ -63,7 +63,7 @@ function preview(doc: MenuImportV1, m: Merchant) {
           pix: p.pix
             ? {
                 type: p.pix.type,
-                key: roleAtLeast(m.role, 'owner') ? p.pix.key : maskKey(p.pix.key),
+                key: seePix ? p.pix.key : maskKey(p.pix.key),
                 beneficiary: p.pix.beneficiary,
                 city: p.pix.city ?? null,
               }
@@ -95,7 +95,7 @@ function preview(doc: MenuImportV1, m: Merchant) {
   };
 }
 
-async function view(tx: Sql, tenantId: string, r: ImportRow, m: Merchant) {
+export async function importView(tx: Sql, tenantId: string, r: ImportRow, seePix: boolean) {
   // a re-hosted cover narrower than a phone hero looks soft: suggest a better one (§7)
   const cover =
     r.status === 'applied'
@@ -135,7 +135,7 @@ async function view(tx: Sql, tenantId: string, r: ImportRow, m: Merchant) {
     readAt: r.read_at,
     appliedAt: r.applied_at,
     counts: r.counts,
-    preview: r.doc && r.status !== 'expired' ? preview(r.doc, m) : null,
+    preview: r.doc && r.status !== 'expired' ? preview(r.doc, seePix) : null,
     lost,
     mode: r.mode,
     sections: r.sections,
@@ -149,7 +149,7 @@ async function view(tx: Sql, tenantId: string, r: ImportRow, m: Merchant) {
   };
 }
 
-async function load(tx: Sql, tenantId: string, id: string): Promise<ImportRow> {
+export async function loadImport(tx: Sql, tenantId: string, id: string): Promise<ImportRow> {
   const row = (
     await tx<ImportRow[]>`select * from menu_imports where tenant_id = ${tenantId} and id = ${id}`
   )[0];
@@ -157,82 +157,169 @@ async function load(tx: Sql, tenantId: string, id: string): Promise<ImportRow> {
   return row;
 }
 
+type Actor = { userId: string | null; name: string };
+
+/** A pasted link → a `reading` row the job picks up; refusals are stable 4xx. */
+export async function startImportTx(
+  tx: Sql,
+  tenantId: string,
+  createdBy: string | null,
+  body: Record<string, unknown>,
+): Promise<{ id: string; platform: string }> {
+  if (typeof body.url !== 'string' || !body.url.trim() || body.url.length > 500)
+    throw new HttpError(422, 'BAD_REQUEST', 'paste the link to your store', { field: 'url' });
+  const r = recognise(body.url);
+  if (r.kind === 'invalid')
+    throw new HttpError(422, 'BAD_REQUEST', 'that does not look like a link', { field: 'url' });
+  if (r.kind === 'blocked')
+    throw new HttpError(422, 'IMPORT_BLOCKED', 'this platform does not let us read its menus', {
+      platform: r.platform,
+    });
+  if (r.kind === 'unsupported')
+    throw new HttpError(422, 'IMPORT_UNSUPPORTED', 'we cannot read menus from this link yet', {
+      platform: r.platform,
+    });
+  // one in flight per store, a handful an hour
+  await tx`select pg_advisory_xact_lock(hashtext(${`menu-import:${tenantId}`}))`;
+  const reading = (
+    await tx<{ id: string }[]>`
+      select id from menu_imports where tenant_id = ${tenantId} and status = 'reading' limit 1
+    `
+  )[0];
+  if (reading)
+    throw new HttpError(409, 'IMPORT_IN_PROGRESS', 'an import is already being read', {
+      id: reading.id,
+    });
+  const recent = (
+    await tx<{ n: number }[]>`
+      select count(*)::int as n from menu_imports
+      where tenant_id = ${tenantId} and created_at > now() - interval '1 hour'
+    `
+  )[0]!.n;
+  if (recent >= PER_HOUR)
+    throw new HttpError(429, 'IMPORT_RATE_LIMITED', 'too many imports in the last hour');
+  const row = (
+    await tx<{ id: string }[]>`
+      insert into menu_imports (tenant_id, created_by, platform, source_url, source_ref)
+      values (${tenantId}, ${createdBy}, ${r.adapter.platform}, ${r.url.href.slice(0, 500)}, ${r.ref})
+      returning id
+    `
+  )[0]!;
+  await emitAdminTx(tx, tenantId, 'import', row.id);
+  // the job starts it once this commits; the tick picks it up regardless
+  setTimeout(kickImports, 50);
+  return { id: row.id, platform: r.adapter.platform };
+}
+
+/** The apply body: mode + sections. Pagamentos only for whoever may change payments. */
+export function parseApply(body: Record<string, unknown>, mayPayments: boolean): ApplyOptions {
+  const mode = oneOf(body.mode ?? 'add', 'mode', ['add', 'replace'] as const);
+  if (!Array.isArray(body.sections) || body.sections.length > SECTIONS.length)
+    throw new HttpError(422, 'BAD_REQUEST', 'sections must be a list', { field: 'sections' });
+  const sections = [...new Set(body.sections.map((s, i) => oneOf(s, `sections[${i}]`, SECTIONS)))];
+  if (sections.includes('payments') && !mayPayments)
+    throw new HttpError(403, 'FORBIDDEN', 'only the owner changes payments', { need: 'owner' });
+  return { mode, sections };
+}
+
+/** ready → applying → applied in the caller's tx: a double tap applies once, a second is a 409. */
+export async function applyImportTx(
+  tx: Sql,
+  tenantId: string,
+  actor: Actor,
+  id: string,
+  opts: ApplyOptions,
+  seePix: boolean,
+) {
+  // one apply per store at a time; slugs and "same name" categories read a snapshot
+  await tx`select pg_advisory_xact_lock(hashtext(${`menu-import:${tenantId}`}))`;
+  const row = (
+    await tx<ImportRow[]>`
+      update menu_imports set status = 'applying'
+      where tenant_id = ${tenantId} and id = ${id} and status = 'ready'
+      returning *
+    `
+  )[0];
+  if (!row) {
+    const cur = await loadImport(tx, tenantId, id);
+    throw new HttpError(409, 'IMPORT_NOT_READY', `this import is ${cur.status}`, {
+      status: cur.status,
+    });
+  }
+  if (!row.doc) throw new HttpError(409, 'IMPORT_NOT_READY', 'this import expired');
+  const result = await applyImport(tx, tenantId, actor, id, row.doc, opts);
+  // another preview of the old store would apply the same menu twice
+  await tx`
+    update menu_imports set status = 'expired', doc = null
+    where tenant_id = ${tenantId} and status = 'ready' and id <> ${id}
+  `;
+  const done = (
+    await tx<ImportRow[]>`
+      update menu_imports set status = 'applied', mode = ${opts.mode}, sections = ${tx.json(opts.sections)},
+        result = ${tx.json(result as never)}, images_total = ${result.images}, images_done = 0,
+        applied_at = now(), finished_at = ${result.images ? null : tx`now()`}
+      where tenant_id = ${tenantId} and id = ${id}
+      returning *
+    `
+  )[0]!;
+  await emitAdminTx(tx, tenantId, 'import', id);
+  if (result.images) setTimeout(kickImports, 50);
+  return importView(tx, tenantId, done, seePix);
+}
+
+/** Cancels a read or drops a preview; an expired one answers as it is. */
+export async function discardImportTx(tx: Sql, tenantId: string, id: string, seePix: boolean) {
+  const row = (
+    await tx<ImportRow[]>`
+      update menu_imports set status = 'expired', doc = null, lease_until = null
+      where tenant_id = ${tenantId} and id = ${id} and status in ('reading', 'ready', 'failed')
+      returning *
+    `
+  )[0];
+  if (!row) {
+    const cur = await loadImport(tx, tenantId, id);
+    if (cur.status !== 'expired')
+      throw new HttpError(409, 'IMPORT_NOT_READY', `this import is ${cur.status}`, {
+        status: cur.status,
+      });
+    return importView(tx, tenantId, cur, seePix);
+  }
+  await emitAdminTx(tx, tenantId, 'import', id);
+  return importView(tx, tenantId, row, seePix);
+}
+
+/** The last five, for "pick up where you left off": counts, not whole previews. */
+export async function listImportsTx(tx: Sql, tenantId: string, seePix: boolean) {
+  const rows = await tx<ImportRow[]>`
+    select * from menu_imports where tenant_id = ${tenantId} order by created_at desc limit 5
+  `;
+  return Promise.all(
+    rows.map(async (r) => ({ ...(await importView(tx, tenantId, r, seePix)), preview: null })),
+  );
+}
+
 export function mountImports(d: AdminDeps) {
   const { admin } = d;
   const { read, write } = handlers(d);
+  const owner = (m: Merchant) => roleAtLeast(m.role, 'owner');
 
   admin.post(
     '/imports',
-    write('manager', async (tx, t, m, c) => {
-      const body = await bodyJson(c, 4 * 1024);
-      if (typeof body.url !== 'string' || !body.url.trim() || body.url.length > 500)
-        throw new HttpError(422, 'BAD_REQUEST', 'paste the link to your store', { field: 'url' });
-      const r = recognise(body.url);
-      if (r.kind === 'invalid')
-        throw new HttpError(422, 'BAD_REQUEST', 'that does not look like a link', { field: 'url' });
-      if (r.kind === 'blocked')
-        throw new HttpError(422, 'IMPORT_BLOCKED', 'this platform does not let us read its menus', {
-          platform: r.platform,
-        });
-      if (r.kind === 'unsupported')
-        throw new HttpError(422, 'IMPORT_UNSUPPORTED', 'we cannot read menus from this link yet', {
-          platform: r.platform,
-        });
-      // one in flight per store, a handful an hour
-      await tx`select pg_advisory_xact_lock(hashtext(${`menu-import:${t.id}`}))`;
-      const reading = (
-        await tx<{ id: string }[]>`
-          select id from menu_imports where tenant_id = ${t.id} and status = 'reading' limit 1
-        `
-      )[0];
-      if (reading)
-        throw new HttpError(409, 'IMPORT_IN_PROGRESS', 'an import is already being read', {
-          id: reading.id,
-        });
-      const recent = (
-        await tx<{ n: number }[]>`
-          select count(*)::int as n from menu_imports
-          where tenant_id = ${t.id} and created_at > now() - interval '1 hour'
-        `
-      )[0]!.n;
-      if (recent >= PER_HOUR)
-        throw new HttpError(429, 'IMPORT_RATE_LIMITED', 'too many imports in the last hour');
-      const row = (
-        await tx<{ id: string }[]>`
-          insert into menu_imports (tenant_id, created_by, platform, source_url, source_ref)
-          values (${t.id}, ${m.userId}, ${r.adapter.platform}, ${r.url.href.slice(0, 500)}, ${r.ref})
-          returning id
-        `
-      )[0]!;
-      await emitAdminTx(tx, t.id, 'import', row.id);
-      // the job starts it once this commits; the tick picks it up regardless
-      setTimeout(kickImports, 50);
-      return { status: 202, body: { id: row.id, platform: r.adapter.platform } };
-    }),
+    write('manager', async (tx, t, m, c) => ({
+      status: 202,
+      body: await startImportTx(tx, t.id, m.userId, await bodyJson(c, 4 * 1024)),
+    })),
   );
 
   admin.get(
     '/imports',
-    read('manager', async (tx, t, m) => {
-      const rows = await tx<ImportRow[]>`
-        select * from menu_imports where tenant_id = ${t.id} order by created_at desc limit 5
-      `;
-      return {
-        imports: await Promise.all(
-          rows.map(async (r) => {
-            const v = await view(tx, t.id, r, m);
-            // the list is for "pick up where you left off": counts, not whole previews
-            return { ...v, preview: null };
-          }),
-        ),
-      };
-    }),
+    read('manager', async (tx, t, m) => ({ imports: await listImportsTx(tx, t.id, owner(m)) })),
   );
 
   admin.get(
     '/imports/:id',
     read('manager', async (tx, t, m, c) =>
-      view(tx, t.id, await load(tx, t.id, uuidParam(c, 'id')), m),
+      importView(tx, t.id, await loadImport(tx, t.id, uuidParam(c, 'id')), owner(m)),
     ),
   );
 
@@ -240,69 +327,16 @@ export function mountImports(d: AdminDeps) {
     '/imports/:id/apply',
     write('manager', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
-      const body = await bodyJson(c, 4 * 1024);
-      const mode = oneOf(body.mode ?? 'add', 'mode', ['add', 'replace'] as const);
-      if (!Array.isArray(body.sections) || body.sections.length > SECTIONS.length)
-        throw new HttpError(422, 'BAD_REQUEST', 'sections must be a list', { field: 'sections' });
-      const sections = [
-        ...new Set(body.sections.map((s, i) => oneOf(s, `sections[${i}]`, SECTIONS))),
-      ];
-      if (sections.includes('payments') && !roleAtLeast(m.role, 'owner'))
-        throw new HttpError(403, 'FORBIDDEN', 'only the owner changes payments', {
-          need: 'owner',
-        });
-      // the guarded transition: a double tap applies once, a second apply is a 409
-      const row = (
-        await tx<ImportRow[]>`
-          update menu_imports set status = 'applying'
-          where tenant_id = ${t.id} and id = ${id} and status = 'ready'
-          returning *
-        `
-      )[0];
-      if (!row) {
-        const cur = await load(tx, t.id, id);
-        throw new HttpError(409, 'IMPORT_NOT_READY', `this import is ${cur.status}`, {
-          status: cur.status,
-        });
-      }
-      if (!row.doc) throw new HttpError(409, 'IMPORT_NOT_READY', 'this import expired');
-      const result = await applyImport(tx, t.id, m, id, row.doc, { mode, sections });
-      const done = (
-        await tx<ImportRow[]>`
-          update menu_imports set status = 'applied', mode = ${mode}, sections = ${tx.json(sections)},
-            result = ${tx.json(result as never)}, images_total = ${result.images}, images_done = 0,
-            applied_at = now(), finished_at = ${result.images ? null : tx`now()`}
-          where tenant_id = ${t.id} and id = ${id}
-          returning *
-        `
-      )[0]!;
-      await emitAdminTx(tx, t.id, 'import', id);
-      if (result.images) setTimeout(kickImports, 50);
-      return { status: 200, body: await view(tx, t.id, done, m) };
+      const opts = parseApply(await bodyJson(c, 4 * 1024), owner(m));
+      return { status: 200, body: await applyImportTx(tx, t.id, m, id, opts, owner(m)) };
     }),
   );
 
   admin.post(
     '/imports/:id/discard',
-    write('manager', async (tx, t, m, c) => {
-      const id = uuidParam(c, 'id');
-      const row = (
-        await tx<ImportRow[]>`
-          update menu_imports set status = 'expired', doc = null, lease_until = null
-          where tenant_id = ${t.id} and id = ${id} and status in ('reading', 'ready', 'failed')
-          returning *
-        `
-      )[0];
-      if (!row) {
-        const cur = await load(tx, t.id, id);
-        if (cur.status !== 'expired')
-          throw new HttpError(409, 'IMPORT_NOT_READY', `this import is ${cur.status}`, {
-            status: cur.status,
-          });
-        return { status: 200, body: await view(tx, t.id, cur, m) };
-      }
-      await emitAdminTx(tx, t.id, 'import', id);
-      return { status: 200, body: await view(tx, t.id, row, m) };
-    }),
+    write('manager', async (tx, t, m, c) => ({
+      status: 200,
+      body: await discardImportTx(tx, t.id, uuidParam(c, 'id'), owner(m)),
+    })),
   );
 }

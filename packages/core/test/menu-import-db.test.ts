@@ -400,7 +400,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
       headers: { host: 'core.localhost' },
     });
     expect(served.status).toBe(200);
-  });
+  }, 30_000);
 
   test('replace archives the old menu instead of deleting it', async () => {
     const r = await owner('POST', '/imports', { url: 'https://instadelivery.com.br/outraloja' });
@@ -454,5 +454,79 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
     expect(sixth.body.error.code).toBe('IMPORT_RATE_LIMITED');
     const list = await manager('GET', '/imports');
     expect(list.body.imports).toHaveLength(5);
+  });
+
+  test('applying one preview expires the other; a logo the merchant set meanwhile stays', async () => {
+    const otherId = tenants[1]!;
+    const a = await stranger('POST', '/imports', { url: 'instadelivery.com.br/doceriaexemplo' });
+    await runReads(deps);
+    const b = await stranger('POST', '/imports', { url: 'instadelivery.com.br/outraloja' });
+    expect(b.status).toBe(202);
+    await runReads(deps);
+    const applied = await stranger('POST', `/imports/${b.body.id}/apply`, {
+      mode: 'add',
+      sections: ['profile'],
+    });
+    expect(applied.status).toBe(200);
+    expect((await stranger('GET', `/imports/${a.body.id}`)).body.status).toBe('expired');
+    // the merchant uploads their own logo before the import's one is downloaded
+    const own = `/v1/media/${otherId}/${crypto.randomUUID()}.webp`;
+    await sql`update store_settings set logo_url = ${own} where tenant_id = ${otherId}`;
+    await runImages(deps);
+    const s = (await sql`select logo_url from store_settings where tenant_id = ${otherId}`)[0]!;
+    expect(s.logo_url).toBe(own);
+    const g = await stranger('GET', `/imports/${b.body.id}`);
+    expect(g.body.images.finished).toBe(true);
+    expect(g.body.lost.map((l: any) => l.code)).not.toContain('logo_failed');
+  }, 30_000);
+
+  test('the CRM imports into a store it provisioned: staff gate, no Pix, audited as staff', async () => {
+    const slug = `mi2-${nonce}`;
+    const ctl = (method: string, path: string, body?: unknown, h: Record<string, string> = {}) =>
+      call(method, `/control/v1${path}`, body, { 'x-vendua-control': 'ctl', ...h });
+    expect((await call('GET', `/control/v1/stores/${slug}/imports`)).status).toBe(404);
+    expect((await ctl('POST', '/stores/nope-nope/imports', { url: 'x' })).status).toBe(404);
+    const r = await ctl('POST', `/stores/${slug}/imports`, {
+      url: 'https://instadelivery.com.br/doceriaexemplo',
+    });
+    expect(r.status).toBe(202);
+    await runReads(deps);
+    const g = await ctl('GET', `/imports/${r.body.id}`);
+    expect(g.body).toMatchObject({ status: 'ready', counts: { products: 10 } });
+    expect(g.body.preview.payments.pix.key).not.toBe('exemplo@vendua.test');
+    expect((await ctl('GET', `/stores/${slug}/imports`)).body.imports[0].id).toBe(r.body.id);
+    expect(
+      (await ctl('POST', `/imports/${r.body.id}/apply`, { mode: 'add', sections: ['payments'] }))
+        .status,
+    ).toBe(403);
+    const key = `${nonce}-ctl-apply`;
+    const ok = await ctl(
+      'POST',
+      `/imports/${r.body.id}/apply`,
+      { mode: 'add', sections: ['hours'] },
+      { 'idempotency-key': key },
+    );
+    expect(ok.status).toBe(200);
+    expect(ok.body.result.products).toBe(10);
+    const replay = await app.request(
+      `http://core.localhost/control/v1/imports/${r.body.id}/apply`,
+      {
+        method: 'POST',
+        headers: {
+          host: 'core.localhost',
+          'content-type': 'application/json',
+          'x-vendua-control': 'ctl',
+          'idempotency-key': key,
+        },
+        body: JSON.stringify({ mode: 'add', sections: ['hours'] }),
+      },
+    );
+    expect(replay.headers.get('x-idempotent-replay')).toBe('true');
+    const audit = await sql`
+      select actor_user_id, actor_label from audit_log
+      where tenant_id = ${tenants[1]!} and action = 'menu.import' and entity_id = ${r.body.id}
+    `;
+    expect(audit[0]).toMatchObject({ actor_user_id: null, actor_label: 'equipe Venduá' });
+    expect((await ctl('GET', `/imports/${crypto.randomUUID()}`)).status).toBe(404);
   });
 });

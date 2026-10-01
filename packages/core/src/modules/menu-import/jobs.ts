@@ -129,11 +129,13 @@ async function claimImages(sql: Sql, n: number): Promise<ImageJob[]> {
       where id in (
         select id from menu_import_images
         where status = 'pending' and (lease_until is null or lease_until < now())
-        order by created_at, sort
+        -- the store's face first: a logo behind 200 photos would land minutes late
+        order by (kind in ('logo', 'cover')) desc, created_at, sort
         limit ${n}
         for update skip locked
       )
-      returning id, tenant_id, import_id, kind, product_id, modifier_id, sort, subject, source_url, attempts
+      returning id, tenant_id, import_id, kind, product_id, modifier_id, sort, subject, source_url,
+        replaces, attempts
     `,
   );
 }
@@ -156,14 +158,15 @@ export async function sweepImports(sql: Sql): Promise<void> {
       update menu_import_images set status = 'failed', error = 'gave up after retries', lease_until = null
       where status = 'pending' and attempts >= ${IMAGE_ATTEMPTS} and lease_until < now()
     `;
-    await tx`
+    const finished = await tx<{ id: string; tenant_id: string }[]>`
       update menu_imports m set
         images_done = (select count(*) from menu_import_images i where i.import_id = m.id and i.status <> 'pending'),
         finished_at = now()
       where m.status = 'applied' and m.finished_at is null and m.images_total > 0
         and not exists (select 1 from menu_import_images i where i.import_id = m.id and i.status = 'pending')
+      returning id, tenant_id
     `;
-    return [...expired, ...stuck];
+    return [...expired, ...stuck, ...finished];
   });
   for (const r of touched)
     await withTenant(sql, r.tenant_id, (tx) => emitAdminTx(tx, r.tenant_id, 'import', r.id));

@@ -7,8 +7,10 @@ import { TEMPLATE_TOKENS } from '../src/modules/menu-import/apply.ts';
 import {
   LIMITS,
   TooLarge,
+  httpsUrl,
   normalizeWhatsapp,
   shortenName,
+  storedBytes,
   toCents,
   validateDoc,
   type ImportProduct,
@@ -266,6 +268,27 @@ describe('validateDoc limits (§4.6)', () => {
     expect(new Set(doc.zones!.map((z) => z.feeCents))).toEqual(new Set([700]));
     expect(doc.hours).toHaveLength(28);
     expect(doc.lost.map((l) => l.code)).toContain('hours_dropped');
+  });
+
+  test('URLs are bounded after normalising; notes are capped and trimmed', () => {
+    expect(httpsUrl(`https://cdn.example/${'ç'.repeat(200)}.jpg`)).toBeNull();
+    expect(httpsUrl('https://cdn.example/a.jpg')).toBe('https://cdn.example/a.jpg');
+    const { doc } = validateDoc(
+      base({
+        lost: Array.from({ length: 600 }, (_, i) => ({
+          scope: 'store' as const,
+          code: `c${i}`,
+          detail: 'x'.repeat(2000),
+        })),
+      }),
+    );
+    expect(doc.lost).toHaveLength(500);
+    expect(doc.lost[0]!.detail!.length).toBeLessThanOrEqual(300);
+  });
+
+  test("the size bound covers jsonb's text form", () => {
+    // '{"a": "é"}' in Postgres: 11 bytes
+    expect(storedBytes({ a: 'é' })).toBe(11);
   });
 
   test('over 1000 products fails TOO_LARGE', () => {

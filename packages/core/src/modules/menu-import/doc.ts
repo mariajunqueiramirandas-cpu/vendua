@@ -266,6 +266,18 @@ export const LIMITS = {
 
 export class TooLarge extends Error {}
 
+/** An upper bound on `octet_length(doc::text)`: UTF-8 bytes, plus the space jsonb's text form
+ *  puts after every `:` and `,` (counting those inside strings too keeps it conservative). */
+export function storedBytes(v: unknown): number {
+  const json = JSON.stringify(v);
+  let seps = 0;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json.charCodeAt(i);
+    if (ch === 44 || ch === 58) seps++;
+  }
+  return Buffer.byteLength(json) + seps;
+}
+
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** Collapses whitespace and strips tags/control characters a source may carry. */
@@ -315,7 +327,10 @@ export function httpsUrl(v: unknown): string | null {
   if (typeof v !== 'string' || v.length > LIMITS.url) return null;
   try {
     const u = new URL(v.trim());
-    return u.protocol === 'https:' && !u.username && !u.password ? u.href : null;
+    // the normalised form is what gets stored: percent-encoding can lengthen it
+    return u.protocol === 'https:' && !u.username && !u.password && u.href.length <= LIMITS.url
+      ? u.href
+      : null;
   } catch {
     return null;
   }
@@ -353,10 +368,19 @@ const intIn = (v: unknown, min: number, max: number): v is number =>
  * Throws TooLarge only for an oversized store.
  */
 export function validateDoc(input: MenuImportV1): { doc: MenuImportV1; counts: ImportCounts } {
-  const lost: Lost[] = [...input.lost];
+  const lost: Lost[] = [];
   const note = (l: Lost) => {
-    if (lost.length < 500) lost.push(l);
+    if (lost.length >= 500) return;
+    const subject = l.subject ? cut(oneLine(clean(l.subject)), 120, true) : '';
+    const detail = l.detail ? cut(oneLine(clean(l.detail)), 300, true) : '';
+    lost.push({
+      scope: l.scope,
+      ...(subject ? { subject } : {}),
+      code: l.code.slice(0, 60),
+      ...(detail ? { detail } : {}),
+    });
   };
+  for (const l of input.lost) note(l);
   const total = input.categories.reduce((n, c) => n + c.products.length, 0);
   if (total > LIMITS.products) throw new TooLarge(`${total} products`);
 
@@ -555,7 +579,7 @@ export function validateDoc(input: MenuImportV1): { doc: MenuImportV1; counts: I
     categories: kept,
     lost,
   };
-  if (JSON.stringify(doc).length > LIMITS.docBytes) throw new TooLarge('document over 2 MB');
+  if (storedBytes(doc) > LIMITS.docBytes) throw new TooLarge('document over 2 MB');
 
   const products = kept.flatMap((c) => c.products);
   return {

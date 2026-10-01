@@ -102,12 +102,14 @@ interface Queued {
   sort: number;
   subject: string | null;
   source_url: string;
+  /** logo/cover: what it replaces, so a merchant's own upload meanwhile wins */
+  replaces: string | null;
 }
 
 export async function applyImport(
   tx: Sql,
   tenantId: string,
-  actor: Merchant,
+  actor: Pick<Merchant, 'name'> & { userId: string | null },
   importId: string,
   doc: MenuImportV1,
   opts: ApplyOptions,
@@ -232,6 +234,7 @@ export async function applyImport(
           sort: i,
           subject: p.name,
           source_url: url,
+          replaces: null,
         }),
       );
       p.optionGroups.forEach((g, gi) =>
@@ -290,6 +293,7 @@ export async function applyImport(
         sort: 0,
         subject: img.subject,
         source_url: img.url,
+        replaces: null,
       });
   }
 
@@ -342,10 +346,12 @@ export async function applyImport(
         sort: 0,
         subject: null,
         source_url: s.logoUrl,
+        replaces: settings.logo_url ?? null,
       });
     // the cover fills the default home hero; a storefront with its own hero keeps its photo
     const home = s.coverUrl ? await currentTemplateTx(tx, tenantId, 'home') : null;
-    if (s.coverUrl && home?.template.sections.some((x) => x.type === 'store:menu-hero'))
+    const hero = home?.template.sections.find((x) => x.type === 'store:menu-hero');
+    if (s.coverUrl && hero)
       queue.push({
         kind: 'cover',
         product_id: null,
@@ -353,6 +359,7 @@ export async function applyImport(
         sort: 0,
         subject: null,
         source_url: s.coverUrl,
+        replaces: typeof hero.settings?.cover === 'string' ? hero.settings.cover : null,
       });
     if (s.brandColor) {
       const base = (await currentTokensTx(tx, tenantId))?.tokens ?? TEMPLATE_TOKENS;

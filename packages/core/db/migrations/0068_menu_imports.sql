@@ -49,6 +49,8 @@ create table if not exists menu_import_images (
   sort int not null default 0,
   subject text check (char_length(subject) <= 200),
   source_url text not null check (char_length(source_url) <= 1000),
+  -- logo/cover: the value it replaces at apply; a merchant who sets their own meanwhile keeps it
+  replaces text check (char_length(replaces) <= 1000),
   status text not null default 'pending' check (status in ('pending', 'done', 'failed')),
   attempts int not null default 0,
   lease_until timestamptz,

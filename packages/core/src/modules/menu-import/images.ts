@@ -20,6 +20,7 @@ export interface ImageJob {
   sort: number;
   subject: string | null;
   source_url: string;
+  replaces: string | null;
   attempts: number;
 }
 
@@ -27,12 +28,15 @@ export const IMAGE_ATTEMPTS = 3;
 
 type Fetch = (input: string, init: RequestInit) => Promise<Response>;
 
-/** The home template with the hero's cover set, or null when the home page has no hero. */
-async function withCover(tx: Sql, tenantId: string, url: string) {
+/** The home template with the hero's cover set; null when there's no hero, 'kept' when the
+ *  merchant changed the cover after the import. */
+async function withCover(tx: Sql, tenantId: string, url: string, replaces: string | null) {
   const cur = await currentTemplateTx(tx, tenantId, 'home');
   const sections = cur?.template.sections ?? [];
   const hero = sections.findIndex((s) => s.type === 'store:menu-hero');
   if (!cur || hero < 0) return null;
+  const now = sections[hero]!.settings?.cover;
+  if ((typeof now === 'string' ? now : null) !== replaces) return 'kept' as const;
   return {
     ...cur.template,
     sections: sections.map((s, i) =>
@@ -45,14 +49,14 @@ async function withCover(tx: Sql, tenantId: string, url: string) {
 async function finishTx(
   tx: Sql,
   job: ImageJob,
-  outcome: { mediaId: string } | { error: string },
+  outcome: { mediaId: string } | { error: string } | { kept: true },
 ): Promise<boolean> {
   const moved = (
     await tx`
       update menu_import_images
-      set status = ${'mediaId' in outcome ? 'done' : 'failed'},
+      set status = ${'error' in outcome ? 'failed' : 'done'},
           media_id = ${'mediaId' in outcome ? outcome.mediaId : null},
-          error = ${'error' in outcome ? outcome.error.slice(0, 200) : null},
+          error = ${'error' in outcome ? outcome.error.slice(0, 200) : 'kept' in outcome ? 'kept the store’s own' : null},
           lease_until = null
       where id = ${job.id} and tenant_id = ${job.tenant_id} and status = 'pending'
       returning id
@@ -119,9 +123,23 @@ export async function runImageJob(sql: Sql, job: ImageJob, fetcher?: Fetch): Pro
     if (!still) return;
     const id = crypto.randomUUID();
     const url = `/v1/media/${job.tenant_id}/${id}.webp`;
-    const cover = job.kind === 'cover' ? await withCover(tx, job.tenant_id, url) : null;
+    const cover =
+      job.kind === 'cover' ? await withCover(tx, job.tenant_id, url, job.replaces) : null;
     if (job.kind === 'cover' && !cover) {
       await finishTx(tx, job, { error: 'the home page has no cover to fill' });
+      return;
+    }
+    // the merchant set their own logo or cover after importing: theirs stays
+    const logoNow =
+      job.kind === 'logo'
+        ? ((
+            await tx<{ logo_url: string | null }[]>`
+              select logo_url from store_settings where tenant_id = ${job.tenant_id}
+            `
+          )[0]?.logo_url ?? null)
+        : null;
+    if (cover === 'kept' || (job.kind === 'logo' && logoNow !== job.replaces)) {
+      await finishTx(tx, job, { kept: true });
       return;
     }
     await tx`
