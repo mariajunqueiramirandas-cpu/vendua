@@ -154,8 +154,14 @@ export function CheckoutPage() {
     stepHeading.current?.focus({ preventScroll: true });
   }, [step]);
 
+  // a step change lands a frame later (it's a view transition): a second tap meanwhile is ignored
+  const stepping = useRef(false);
+  useLayoutEffect(() => {
+    stepping.current = false;
+  }, [location.key]);
   const setStep = (next: StepId) => {
-    if (next === step) return;
+    if (next === step || stepping.current) return;
+    stepping.current = true;
     if (nav?.vFrom === next) return navigate(-1);
     pushedStep.current = true;
     navigate(
@@ -419,7 +425,7 @@ export function CheckoutPage() {
       if (code === 'SCHEDULE_REQUIRED' || code === 'INVALID_SCHEDULE')
         setScheduleError(errorCopy(code).title);
       if (COUPON_CODES.has(code)) setCouponError(errorCopy(code).title);
-    } finally {
+      // only a failure reopens the button: after an order the page is on its way out
       submitting.current = false;
     }
   };

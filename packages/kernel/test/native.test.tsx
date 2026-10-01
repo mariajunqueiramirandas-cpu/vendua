@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
-import { useNavigate, useNavigationType } from 'react-router-dom';
+import { useEffect } from 'react';
+import { useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { defineSection } from '../src/index.ts';
 import { PRODUCT, flush, mockCore, mount, type Mounted } from './harness.tsx';
 
@@ -51,8 +52,8 @@ const OPEN_CART = {
 };
 
 /** mockCore with a cart that already holds a line */
-function coreWithCart() {
-  const core = mockCore();
+function coreWithCart(over: Parameters<typeof mockCore>[0] = {}) {
+  const core = mockCore(over);
   const base = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://shop.test');
@@ -219,5 +220,35 @@ describe('pages under the modal-route table', () => {
     await act(async () => nav(1));
     await flush();
     expect($('[data-nav-type]')?.textContent).toBe('POP');
+  });
+
+  test('keep their location while the sheet opens over them', async () => {
+    const schema = defineSection({ type: 'store:loc', settings: {} });
+    let runs = 0;
+    coreWithCart({
+      templates: {
+        home: { version: 1, page: 'home', sections: [{ id: 'l', type: 'store:loc' }] },
+      },
+    });
+    m = await mount({
+      path: '/',
+      session: 'tok',
+      sections: {
+        '/sections/loc.tsx': {
+          schema,
+          default: function Loc() {
+            const location = useLocation();
+            useEffect(() => void runs++, [location]);
+            return null;
+          },
+        },
+      },
+    });
+    const before = runs;
+    expect(before).toBeGreaterThan(0);
+    await act(async () => ($('.v-header [data-vendua="cart-trigger"]') as HTMLElement).click());
+    await flush();
+    expect($('dialog[data-vendua="cart-sheet"]')).not.toBeNull();
+    expect(runs).toBe(before);
   });
 });

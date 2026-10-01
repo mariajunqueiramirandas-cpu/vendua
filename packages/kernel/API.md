@@ -209,11 +209,12 @@ Additive — no storefront edit, no new runtime export. Stores stay a plain web 
   pop). The source is the tapped element's `[data-vt-src]`, or the one inside the tapped
   link/button; the destination is the innermost visible match. The default product card and
   `sdk:purchase-panel` media already carry them.
-- **The sacola as a sheet.** `CartTrigger` (and `afterAdd: 'cart'`) pushes `/sacola` with
+- **The sacola as a sheet.** `CartTrigger` (and the bag bar) pushes `/sacola` with
   `state.vBackground` (the current location): the page stays rendered and the cart opens over
   it in a `<dialog data-vendua="cart-sheet">` through `cart.Drawer` with
-  `presentation="drawer"`. A direct visit (or a trigger on `/checkout`) is the full page. Store
-  CSS styles it only through `--v-*` tokens and `[data-part]` hooks.
+  `presentation="drawer"`. A direct visit, a trigger on `/checkout` and `afterAdd: 'cart'` get
+  the full page, as before. Store CSS styles it only through `--v-*` tokens and `[data-part]`
+  hooks.
 - **Checkout steps** are history entries (`state.vStep`); back returns to the previous step.
 - `<meta name="theme-color">` follows the `bg` token; toasts live in the top layer.
 

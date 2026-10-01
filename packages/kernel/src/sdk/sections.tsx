@@ -16,7 +16,6 @@ import {
   ProductLink,
   StoreStatusBadge,
   useNavigateTo,
-  useOpenBag,
 } from '../primitives.tsx';
 import { haptic } from '../haptics.ts';
 import { BlockArea, useAreaHas, usePageContext } from '../composition/runtime.tsx';
@@ -262,7 +261,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const { product, loading, error, refetch } = useProduct(slug);
   const { store, status } = useStore();
   const { config } = useKernel();
-  const openBag = useOpenBag();
+  const go = useNavigateTo();
   const [selected, setSelected] = useState<Record<string, string[]>>({});
   const [combo, setCombo] = useState<ComboSelection[]>([]);
   const [qty, setQty] = useState(1);
@@ -489,7 +488,8 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                 asChild
                 onAdded={() => {
                   setAdded(true);
-                  if (settings.afterAdd === 'cart') openBag();
+                  // the full sacola, as before 1.11: a sheet would sit over the page's own triggers
+                  if (settings.afterAdd === 'cart') go(resolvePaths(config).cart);
                 }}
                 onError={(err) =>
                   setCartError(

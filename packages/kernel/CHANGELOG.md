@@ -16,12 +16,14 @@ Additive; no storefront edit, no new runtime export.
 - Shared photo: a tapped element with `data-vt-src="product:<slug>"` morphs into the
   `data-vt-dst` with the same key on the next page (and back). The default product card and
   `sdk:purchase-panel` media carry them; stores may put them on their own markup.
-- The sacola opens as a sheet over the page it was opened from (`CartTrigger`, the bag bar,
-  `afterAdd: 'cart'`): `/sacola` is pushed with `state.vBackground` and the cart renders in a
-  `<dialog>` (`cart.Drawer`, `presentation="drawer"`). Phones: a bottom sheet you drag down to
-  close; ≥ 768 px: a side panel. Drag, ×, Esc, a tap outside and the back button all animate
-  it away before the route pops. A direct visit to `/sacola` is still the full page; from
-  checkout the trigger still goes to the page.
+- The sacola opens as a sheet over the page it was opened from (`CartTrigger`, the bag bar):
+  `/sacola` is pushed with `state.vBackground` and the cart renders in a `<dialog>`
+  (`cart.Drawer`, `presentation="drawer"`). Phones: a bottom sheet you drag down to close;
+  ≥ 768 px: a side panel. Drag, ×, Esc, a tap outside and the back button all animate it away
+  before the route pops. A direct visit to `/sacola`, a trigger on checkout and
+  `afterAdd: 'cart'` still go to the full page.
+- `catalog.Gallery` (default): a swipe gallery with page dots on phones; `data-part="main"` is
+  now the swiping strip (a list of `data-part="slide"`), thumbnails stay from 860 px.
 - Checkout steps are history entries (`state.vStep`): back returns to the previous step; a
   new step starts at the top with focus on its heading.
 - `<meta name="theme-color">` follows the live `bg` token (created when the page has none)

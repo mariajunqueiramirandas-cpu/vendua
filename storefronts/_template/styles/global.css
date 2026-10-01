@@ -175,28 +175,21 @@ img {
   margin-top: 48px;
 }
 
-/* At the top of the page the header is part of the paper; once the menu slides under it, the
- * frosted bar and its hairline fade in and the name settles a size smaller — tied to the
- * scroll position, so it never lags the finger. Browsers without scroll timelines keep the
- * Kernel's always-frosted header. */
+/* At the top of the page the frosted header already reads as paper; its hairline waits until
+ * the menu slides under it, and the name settles a size smaller — tied to the scroll position,
+ * so it never lags the finger. Without scroll timelines the hairline is simply always there. */
 @supports (animation-timeline: scroll()) {
   @media (prefers-reduced-motion: no-preference) {
     [data-section='sdk:header'] [data-part='root'] {
-      isolation: isolate;
-      background: transparent;
-      border-bottom-color: transparent;
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
+      border-bottom-color: var(--v-color-bg, #f7f4ea);
     }
-    [data-section='sdk:header'] [data-part='root']::before {
+    [data-section='sdk:header'] [data-part='root']::after {
       content: '';
       position: absolute;
-      inset: 0;
-      z-index: -1;
-      background: color-mix(in srgb, var(--v-color-bg, #f7f4ea) 86%, transparent);
-      -webkit-backdrop-filter: saturate(1.4) blur(14px);
-      backdrop-filter: saturate(1.4) blur(14px);
-      border-bottom: 1px solid var(--line);
+      inset: auto 0 -1px;
+      height: 1px;
+      background: var(--line);
+      pointer-events: none;
       opacity: 0;
       animation: bar-in linear both;
       animation-timeline: scroll(root);

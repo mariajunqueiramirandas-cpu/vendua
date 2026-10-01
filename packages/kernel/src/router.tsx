@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import {
   matchPath,
   Navigate,
@@ -55,11 +55,22 @@ function PageViews() {
   return null;
 }
 
-// <Routes location> reports every navigation as POP to the pages under it; they keep seeing
-// the real one, as they did before the sheet needed a fixed location
+// <Routes location> hands the pages a fresh location object and a POP type on every render;
+// they keep seeing the real type and a location that only changes when the page does (the
+// sheet opening over it is not a page change)
 function RealNavigationType({ type, children }: { type: NavigationType; children: ReactNode }) {
-  const ctx = useContext(UNSAFE_LocationContext);
-  const value = useMemo(() => ({ ...ctx, navigationType: type }), [ctx, type]);
+  const { location } = useContext(UNSAFE_LocationContext);
+  const same = useRef(location);
+  const prev = same.current;
+  if (
+    prev.key !== location.key ||
+    prev.pathname !== location.pathname ||
+    prev.search !== location.search ||
+    prev.hash !== location.hash
+  )
+    same.current = location;
+  const stable = same.current;
+  const value = useMemo(() => ({ location: stable, navigationType: type }), [stable, type]);
   return (
     <UNSAFE_LocationContext.Provider value={value}>{children}</UNSAFE_LocationContext.Provider>
   );
