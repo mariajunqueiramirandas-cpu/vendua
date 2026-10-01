@@ -49,6 +49,7 @@ import { mountPaymentsPublic } from '../modules/payments/routes-public.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import { mountSignup } from '../modules/billing/routes-signup.ts';
 import { publicIncidents } from '../modules/incidents.ts';
+import { mountImports } from '../modules/menu-import/routes.ts';
 import { mountAccount } from './routes-account.ts';
 import { mountAppearance } from './routes-appearance.ts';
 import { mountCatalog } from './routes-catalog.ts';
@@ -728,6 +729,7 @@ export function mountAdmin(o: MountAdminOpts) {
   mountTeam(deps);
   mountAccount(deps);
   mountAppearance(deps);
+  mountImports(deps);
 
   // public media read — storefront hosts proxy /v1 to Core, so the same URL works everywhere.
   // ?w= picks the smallest stored width that covers it (Kernel Img's srcset), else the original.

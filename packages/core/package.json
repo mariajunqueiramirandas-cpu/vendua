@@ -13,7 +13,8 @@
     "seed:fixtures": "bun src/platform/seed-fixtures.ts",
     "seed:fleet": "bun src/platform/seed-fleet.ts",
     "check": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test"
+    "test": "bun test",
+    "import:probe": "bun src/modules/menu-import/probe-cli.ts"
   },
   "dependencies": {
     "@openrouter/sdk": "1.3.2",
