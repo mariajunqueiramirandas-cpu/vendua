@@ -2,6 +2,7 @@ import {
   ArrowDown,
   ArrowUp,
   ClipboardText,
+  DownloadSimple,
   Clock,
   FolderSimplePlus,
   GridFour,
@@ -84,6 +85,8 @@ export default function Menu() {
     setSearch({}, { replace: true });
   }, [search, shared, setSearch]);
   const [availFor, setAvailFor] = useState<Product | null>(null);
+  const preloadRoute = usePreload();
+  const toImport = () => nav('/cardapio/importar');
   const cats = data?.categories ?? [];
   useEffect(() => {
     try {
@@ -190,6 +193,14 @@ export default function Menu() {
         subtitle={data ? `${total} produtos em ${cats.length} categorias` : undefined}
         actions={
           <>
+            <Button
+              variant="secondary"
+              icon={<DownloadSimple />}
+              onClick={toImport}
+              {...preloadRoute('/cardapio/importar')}
+            >
+              importar
+            </Button>
             <Button variant="secondary" icon={<ClipboardText />} onClick={() => setSheet('import')}>
               colar lista
             </Button>
@@ -287,10 +298,21 @@ export default function Menu() {
         <EmptyState
           art={<Mascote pose="catalogo" />}
           title="Seu cardápio está vazio"
-          body="Comece criando uma categoria, como “Doces” ou “Lanches”. Se já tem o cardápio no WhatsApp, é só colar."
+          body="Já vende em outro app de cardápio? Traga tudo de lá. Ou comece criando uma categoria, como “Doces” ou “Lanches”."
           action={
             <div className="flex flex-wrap justify-center gap-2">
-              <Button icon={<FolderSimplePlus />} onClick={() => setSheet('category')}>
+              <Button
+                icon={<DownloadSimple />}
+                onClick={toImport}
+                {...preloadRoute('/cardapio/importar')}
+              >
+                importar de outro app
+              </Button>
+              <Button
+                variant="secondary"
+                icon={<FolderSimplePlus />}
+                onClick={() => setSheet('category')}
+              >
                 criar categoria
               </Button>
               <Button
@@ -352,6 +374,22 @@ export default function Menu() {
               )}
             </section>
           ))}
+          <button
+            type="button"
+            onClick={toImport}
+            {...preloadRoute('/cardapio/importar')}
+            className="press-row flex min-h-16 w-full items-center gap-3 rounded-lg bg-surface px-4 py-3 text-left depth-1 md:hidden"
+          >
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sunken">
+              <DownloadSimple className="size-5" aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block font-semibold">Importar de outro app</span>
+              <span className="t-caption block text-muted">
+                Cole o link do seu cardápio no Instadelivery
+              </span>
+            </span>
+          </button>
         </div>
       )}
 

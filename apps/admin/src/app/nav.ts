@@ -47,6 +47,7 @@ const DEEP: { match: RegExp; parent: string; title: string }[] = [
   { match: /^\/pedidos\/agendados$/, parent: '/pedidos', title: 'Encomendas' },
   { match: /^\/pedidos\/[^/]+$/, parent: '/pedidos', title: 'Pedido' },
   { match: /^\/cardapio\/produto\/[^/]+$/, parent: '/cardapio', title: 'Produto' },
+  { match: /^\/cardapio\/importar$/, parent: '/cardapio', title: 'Importar' },
   { match: /^\/clientes\/[^/]+$/, parent: '/clientes', title: 'Cliente' },
 ];
 

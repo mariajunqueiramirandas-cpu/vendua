@@ -10,6 +10,7 @@ const still = () =>
 
 const POSE: Record<string, Pose> = {
   oi: 'avatar-ola',
+  importar: 'catalogo',
   nome: 'loja',
   logo: 'personalizar',
   whatsapp: 'avatar-pensando',

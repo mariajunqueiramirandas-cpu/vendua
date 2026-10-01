@@ -1,6 +1,6 @@
 import { ArrowRight, Eye, EyeSlash, X } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type StoreView } from '../../lib/api.ts';
 import { qk } from '../../lib/query.ts';
@@ -12,6 +12,7 @@ import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { toWeek } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { ImportFlow } from '../import/ImportFlow.tsx';
 import { Finale, type Pending } from './Finale.tsx';
 import { Guide } from './Guide.tsx';
 import { MiniStore, type Draft } from './MiniStore.tsx';
@@ -34,6 +35,7 @@ import {
 
 const ORDER = [
   'oi',
+  'importar',
   'nome',
   'logo',
   'whatsapp',
@@ -48,6 +50,7 @@ type StepId = (typeof ORDER)[number];
 
 const LINE: Record<StepId, string> = {
   oi: 'Vou montar a sua loja junto com você, sem pressa e sem palavra difícil.',
+  importar: 'Se você já tem um cardápio digital, eu trago tudo de lá para cá.',
   nome: 'Primeiro o mais importante: o nome!',
   logo: 'Agora um rostinho para a loja.',
   whatsapp: 'Como os clientes vão falar com você?',
@@ -58,6 +61,15 @@ const LINE: Record<StepId, string> = {
   produtos: 'A parte mais gostosa: o cardápio!',
   pronto: 'Olha só o que a gente fez juntos!',
 };
+
+const draftOf = (s: StoreView): Draft => ({
+  name: s.profile.name,
+  tagline: s.profile.tagline ?? '',
+  logoUrl: s.profile.logoUrl,
+  week: toWeek(s.hours.windows),
+  pickup: s.operations.pickupEnabled,
+  delivery: s.operations.deliveryEnabled,
+});
 
 export default function Onboarding() {
   const store = useQuery({ queryKey: qk.store, queryFn: api.store });
@@ -127,15 +139,13 @@ function Flow({
   });
   const [praise, setPraise] = useState<string | null>(null);
   const [peek, setPeek] = useState(false);
-  const [draft, setDraft] = useState<Draft>(() => ({
-    name: s.profile.name,
-    tagline: s.profile.tagline ?? '',
-    logoUrl: s.profile.logoUrl,
-    week: toWeek(s.hours.windows),
-    pickup: s.operations.pickupEnabled,
-    delivery: s.operations.deliveryEnabled,
-  }));
+  const [draft, setDraft] = useState<Draft>(() => draftOf(s));
   const patch = (d: Partial<Draft>) => setDraft((x) => ({ ...x, ...d }));
+  // an imported logo lands a few seconds after the import (the photos move in the background)
+  const liveLogo = s.profile.logoUrl;
+  useEffect(() => {
+    if (liveLogo) setDraft((x) => (x.logoUrl ? x : { ...x, logoUrl: liveLogo }));
+  }, [liveLogo]);
 
   const save = (body: Record<string, unknown>) =>
     api.updateStore(body).then(
@@ -250,8 +260,31 @@ function Flow({
                 já sei mexer, ir direto ao painel
               </Link>
             </div>
+          ) : step === 'importar' ? (
+            <ImportFlow
+              where="onboarding"
+              owner={owner}
+              hasProducts={false}
+              intro={
+                <div>
+                  <h2 className="t-title-1 md:text-[2rem]">Já vende em outro app de cardápio?</h2>
+                  <p className="t-body-lg mt-2 text-muted">
+                    Cole o link da sua loja e eu trago produtos, fotos, horários e Pix. Você confere
+                    tudo antes de entrar.
+                  </p>
+                </div>
+              }
+              onSkip={() => next()}
+              onApplied={() =>
+                void qc
+                  .fetchQuery({ queryKey: qk.store, queryFn: api.store, staleTime: 0 })
+                  .then((fresh) => setDraft(draftOf(fresh)))
+                  .catch(() => undefined)
+                  .finally(() => next('Trouxe tudo! Agora é só conferir.'))
+              }
+            />
           ) : step === 'nome' ? (
-            <NameStep {...props} back={null} />
+            <NameStep {...props} />
           ) : step === 'logo' ? (
             <LogoStep {...props} />
           ) : step === 'whatsapp' ? (
