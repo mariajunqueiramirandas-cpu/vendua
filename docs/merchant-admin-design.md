@@ -591,7 +591,7 @@ Not a checklist at the end; it's part of "user friendly" for this audience.
 | First load, LCP                           | < 2.0 s                            |
 | Installed PWA, cold open to usable Início | < 1.0 s (cached shell + last data) |
 | Tap → visual response                     | < 100 ms (INP < 200 ms)            |
-| Route JS (gzip), per route                | < 60 KB; shell < 120 KB            |
+| Route JS (gzip), per route                | < 60 KB; shell < 140 KB            |
 | Fonts                                     | 3 files, subset, < 90 KB total     |
 | New order push → card on screen           | < 2 s                              |
 
