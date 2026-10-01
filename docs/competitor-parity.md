@@ -51,31 +51,53 @@ names it.
 
 ## Confirmed gaps
 
-| ID  | Feature | Competitors | Status | Pri | Evidence | Notes |
-| --- | ------- | ----------- | ------ | --- | -------- | ----- |
-|     |         |             |        |     |          |       |
+Code status verified 2026-10-01 against Core, admin, kernel, ui-defaults and
+`storefronts/`. Competitor counts are out of the 9 food-segment platforms
+(8 primary + iFood) unless noted; "generalists" are Nuvemshop, Tray, Loja
+Integrada, Yampi and Shopify. Counts only include what a source states, so
+they are floors. Priorities are **proposed** and need the owner's call.
+Profiles: [`competitors/`](competitors/README.md).
 
-## Unverified candidates
+### Food segment (our core market)
 
-Seeded from general market knowledge, **not yet checked** against the
-competitors or the codebase. Verify, then promote to _Confirmed gaps_ or drop.
+| ID    | Feature                                          | Who has it                                                                | Our status                                                | Pri (proposed)                           |
+| ----- | ------------------------------------------------ | ------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------- |
+| P-015 | Dine-in: QR table ordering, comanda              | 7 of 8 primary (all but Saipos explicit)                                  | gap: delivery and pickup only (`place-order.ts:182`)      | P0 if we serve restaurants, else decline |
+| P-013 | iFood / marketplace order and menu sync          | 5 of 8 primary (Instadelivery, Cardápio Web, OlaClick, Takeat, Saipos)    | gap: iFood import only planned, via the Merchant API      | P0                                       |
+| P-017 | Shopper-facing WhatsApp ordering bot / attendant | 6 of 8 primary (AI at anota.ai, Cardápio Web, OlaClick, Takeat)           | gap: click-out link only (`OrderDetail.tsx:197`)          | P1                                       |
+| P-023 | PDV / counter sales                              | all primary, built in or integrated                                       | gap                                                       | P1, scope decision                       |
+| P-016 | Kitchen printing (thermal, auto) and KDS screen  | KDS: anota.ai, Goomer, Cardápio Web, Takeat, Saipos; print: Instadelivery | partial: browser-print ticket only, no KDS (`actions.ts`) | P1                                       |
+| P-004 | Fiscal documents (NF-e / NFC-e)                  | 5 of 8 primary; Nuvemshop, Tray, Loja Integrada                           | gap                                                       | P1                                       |
+| P-019 | Courier management and tracking                  | anota.ai, Instadelivery, Cardápio Web, OlaClick, Saipos                   | gap, deferred after Phase 8 (`roadmap.md:618`)            | P1                                       |
+| P-018 | WhatsApp campaigns / broadcasts to customers     | anota.ai, Instadelivery, Cardápio Web, OlaClick                           | gap                                                       | P1                                       |
+| P-010 | Cashback / referral on top of loyalty            | cashback: anota.ai, Instadelivery, Cardápio Web, Takeat; Yampi            | partial: stamps and rewards only                          | P2                                       |
+| P-001 | Abandoned-cart recovery                          | anota.ai, Cardápio Web, Delivery Direto; every generalist                 | partial: `'abandoned'` is a type nothing sets             | P1 (cheap, WhatsApp-native)              |
+| P-022 | Delivery / pickup time slots                     | Instadelivery, Cardápio Web                                               | partial: date-based encomendas only (`preorder.ts`)       | P2                                       |
+| P-021 | Custom domain, fully automated                   | OlaClick, Delivery Direto                                                 | partial: planned, ADR 0010 Proposed, staff-activated      | planned                                  |
+| P-020 | AI-generated product descriptions                | Instadelivery; AI features at 5 of 6 cardápio platforms                   | gap                                                       | P2                                       |
+| P-002 | Store and product reviews                        | Instadelivery, Cardápio Web, Takeat (feedback); Tray, Yampi               | gap                                                       | P2                                       |
+| P-005 | Ad pixels and conversions API                    | anota.ai, Cardápio Web; every generalist (Meta CAPI at three)             | gap                                                       | P1 for paid-traffic merchants            |
 
-| ID    | Feature                                                     | Area       | Check first                        |
-| ----- | ----------------------------------------------------------- | ---------- | ---------------------------------- |
-| P-001 | Abandoned-cart recovery (WhatsApp / email)                  | Marketing  | `abandoned` exists in Core: scope  |
-| P-002 | Product reviews and ratings                                 | Storefront | no hits in Core or admin           |
-| P-003 | Carrier shipping quotes and labels (Correios, Melhor Envio) | Loja       | zones/flat fees only today         |
-| P-004 | Fiscal documents (NF-e / NFC-e) issuance                    | Pagamentos | no hits in Core or admin           |
-| P-005 | Ad pixels and conversions API (Meta, Google, TikTok)        | Marketing  | one `pixel` hit: scope             |
-| P-006 | Product feeds for Google Merchant / Meta catalog            | Marketing  | no hits                            |
-| P-007 | Instagram / WhatsApp catalog sync                           | Marketing  | Instagram hits are likely import   |
-| P-008 | Customer accounts (order history, saved addresses)          | Storefront | see ADR 0019 (deliberately none)   |
-| P-009 | Gift cards / store credit                                   | Marketing  | two `gift` hits: scope             |
-| P-010 | Referral and cashback programs                              | Marketing  | loyalty stamps only                |
-| P-011 | Multi-language / multi-currency storefront                  | Storefront | no i18n; likely `declined` (pt-BR) |
-| P-012 | Per-page SEO controls (titles, meta, redirects, sitemap)    | Storefront | three `seo` hits: scope            |
-| P-013 | Marketplace and POS integrations (iFood, Rappi, PDV)        | Pedidos    | none today                         |
-| P-014 | Scheduled / recurring orders (subscriptions)                | Pedidos    | encomendas only                    |
+### Generalist storefront features (weaker signal for food)
+
+| ID    | Feature                                            | Who has it                                     | Our status                                   | Pri (proposed)    |
+| ----- | -------------------------------------------------- | ---------------------------------------------- | -------------------------------------------- | ----------------- |
+| P-012 | Per-page SEO, redirects, sitemap                   | Nuvemshop, Tray, Yampi; Shopify partial        | gap (SSR host conditional, `roadmap.md:613`) | P1                |
+| P-006 | Google Merchant / Meta product feeds               | Tray, Loja Integrada, Nuvemshop; Shopify       | gap                                          | P2                |
+| P-007 | Instagram / WhatsApp catalog sync                  | Nuvemshop; partial elsewhere; 0 food platforms | gap                                          | P2                |
+| P-003 | Carrier quotes and labels (Correios, Melhor Envio) | all four BR generalists; no food platform      | gap: zones and fees only                     | P2                |
+| P-014 | Subscriptions / recurring orders                   | Nuvemshop, Yampi, Shopify; no food platform    | gap (adjacent: encomendas)                   | P2                |
+| P-009 | Gift cards / store credit                          | Shopify; Yampi partial                         | gap                                          | P2                |
+| P-008 | Customer accounts                                  | Yampi, Shopify                                 | declined by ADR 0019 (OTP "later")           | declined          |
+| P-011 | Multi-language / currency                          | Nuvemshop, Shopify; no food platform           | gap, no ADR (pt-BR and BRL hardcoded)        | decline candidate |
+
+## Open decisions
+
+- **Do we serve dine-in?** P-015, P-016 (KDS), P-023 (PDV) and part of P-017
+  hinge on it. Every primary competitor except iFood sells a restaurant
+  system, not just a storefront. This is a product-scope call.
+- **Is P-011 declined?** There is no ADR; `docs/adr/` would record it.
+- **Priorities** above are proposals, not decisions.
 
 ## Shipped / declined log
 
