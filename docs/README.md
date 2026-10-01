@@ -60,6 +60,7 @@ Then per topic as needed:
 | Event taxonomy, funnels            | [15-analytics](architecture/15-analytics.md)                                     |
 | SLOs, incidents, kill switch       | [16-operations-and-incidents](architecture/16-operations-and-incidents.md)       |
 | Templates, sections, blocks        | [17-page-composition](architecture/17-page-composition.md)                       |
+| Menu import ("cole o link")        | [menu-import](menu-import.md)                                                    |
 
 ## ADRs
 
