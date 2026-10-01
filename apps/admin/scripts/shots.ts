@@ -23,6 +23,7 @@ const routes = process.argv.slice(2).length
       '/pedidos/agendados',
       '/cardapio',
       '/cardapio/importar',
+      '/cardapio/estoque',
       '/loja',
       '/pagamentos',
       '/clientes',

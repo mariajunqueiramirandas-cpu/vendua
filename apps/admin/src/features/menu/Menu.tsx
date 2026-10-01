@@ -1,12 +1,14 @@
 import {
   ArrowDown,
   ArrowUp,
+  CaretRight,
   ClipboardText,
   DownloadSimple,
   Clock,
   FolderSimplePlus,
   GridFour,
   ListBullets,
+  Package,
   PencilSimple,
   Plus,
   Selection,
@@ -21,7 +23,7 @@ import { money } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { reducedMotion, SPRING, springEasing } from '../../lib/spring.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
-import { Button, IconButton } from '../../ui/Button.tsx';
+import { Button, ButtonLink, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState, Hint, messageOf } from '../../ui/feedback.tsx';
@@ -190,6 +192,12 @@ export default function Menu() {
     });
 
   const total = cats.reduce((a, c) => a + c.products.length, 0);
+  const restock = cats
+    .flatMap((c) => c.products)
+    .filter(
+      (p) =>
+        p.status !== 'archived' && p.stockQuantity != null && (p.stockQuantity === 0 || p.lowStock),
+    ).length;
 
   return (
     <PageBody wide>
@@ -261,8 +269,38 @@ export default function Menu() {
           >
             categorias
           </Button>
+          <ButtonLink
+            to="/cardapio/estoque"
+            variant="ghost"
+            className="max-md:hidden"
+            icon={<Package />}
+            {...preloadRoute('/cardapio/estoque')}
+          >
+            estoque
+          </ButtonLink>
         </div>
       </div>
+
+      {total ? (
+        <Link
+          to="/cardapio/estoque"
+          {...preloadRoute('/cardapio/estoque')}
+          className="press-row mb-4 flex min-h-16 w-full items-center gap-3 rounded-lg bg-surface px-4 py-3 depth-1 md:hidden"
+        >
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sunken">
+            <Package className="size-5" aria-hidden />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-semibold">Estoque</span>
+            <span className={cn('t-caption block', restock ? 'text-warning' : 'text-muted')}>
+              {restock
+                ? `${restock} ${restock === 1 ? 'produto para repor' : 'produtos para repor'}`
+                : 'Conte e reponha tudo numa tela só'}
+            </span>
+          </span>
+          <CaretRight className="size-5 shrink-0 text-muted" aria-hidden />
+        </Link>
+      ) : null}
 
       {cats.length > 1 ? (
         <nav aria-label="categorias" className="scroll-row -mx-4 mb-5 px-4 md:-mx-8 md:px-8">

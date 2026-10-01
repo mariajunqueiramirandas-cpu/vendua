@@ -159,7 +159,7 @@ export const TOPICS: Record<TopicId, Topic> = {
       },
       {
         q: 'Sabores, tamanhos, estoque e kits',
-        a: 'Dentro do produto: “Opções” para sabor e tamanho, “Estoque” para contar unidades, “Encomenda” para pedir com antecedência e “Kit” para o cliente montar.',
+        a: 'Dentro do produto: “Opções” para sabor e tamanho, “Estoque” para contar unidades (ou todos de uma vez em Cardápio › estoque), “Encomenda” para pedir com antecedência e “Kit” para o cliente montar.',
       },
     ],
   },

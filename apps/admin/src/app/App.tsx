@@ -22,6 +22,7 @@ const OrderPage = screen(chunks.order, (m) => m.default);
 const Menu = screen(chunks.menu, (m) => m.default);
 const ProductPage = screen(chunks.product, (m) => m.default);
 const ImportPage = screen(chunks.importMenu, (m) => m.default);
+const Stock = screen(chunks.stock, (m) => m.default);
 const Store = screen(chunks.store, (m) => m.default);
 const Payments = screen(chunks.payments, (m) => m.default);
 const Customers = screen(chunks.customers, (m) => m.default);
@@ -159,6 +160,7 @@ export default function App() {
                   <Route path="cardapio" element={<Menu />} />
                   <Route path="cardapio/produto/:id" element={<ProductPage />} />
                   <Route path="cardapio/importar" element={<ImportPage />} />
+                  <Route path="cardapio/estoque" element={<Stock />} />
                   <Route path="loja" element={<Store />} />
                   <Route path="pagamentos" element={<Payments />} />
                   <Route path="clientes" element={<Customers />} />

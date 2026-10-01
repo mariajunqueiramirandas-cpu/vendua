@@ -32,6 +32,7 @@ export const chunks = {
   menu: once(() => import('../features/menu/Menu.tsx')),
   product: once(() => import('../features/menu/ProductPage.tsx')),
   importMenu: once(() => import('../features/import/ImportPage.tsx')),
+  stock: once(() => import('../features/menu/Stock.tsx')),
   store: once(() => import('../features/store/Store.tsx')),
   payments: once(() => import('../features/payments/Payments.tsx')),
   customers: once(() => import('../features/customers/Customers.tsx')),
@@ -73,6 +74,7 @@ export type RouteId =
   | 'orders'
   | 'product'
   | 'importMenu'
+  | 'stock'
   | 'menu'
   | 'store'
   | 'payments'
@@ -147,6 +149,12 @@ const ROUTES: RouteDef[] = [
     match: /^\/cardapio\/importar$/,
     chunk: chunks.importMenu,
     data: (qc) => q(qc, qk.imports, api.imports),
+  },
+  {
+    id: 'stock',
+    match: /^\/cardapio\/estoque$/,
+    chunk: chunks.stock,
+    data: (qc) => q(qc, qk.catalog, api.catalog),
   },
   {
     id: 'menu',
@@ -283,6 +291,7 @@ export function warmUp(paths: string[]) {
     ...paths.map((p) => matchRoute(p)?.r.chunk).filter((x): x is () => Promise<unknown> => !!x),
     chunks.order,
     chunks.product,
+    chunks.stock,
     chunks.customer,
     chunks.history,
   ];

@@ -1162,6 +1162,11 @@ export const api = {
     send<{ product: ProductDetail }>('PUT', `/products/${id}/kit`, { slots }),
   orderProducts: (categoryId: string, ids: string[]) =>
     send('PUT', '/products/order', { categoryId, ids }),
+  /** relative changes (+5, −2): a sale drawn meanwhile still counts; Core floors at 0 */
+  adjustStock: (changes: { productId: string; add: number }[]) =>
+    send<{ stock: Record<string, number>; waitlistWoken: number }>('POST', '/products/stock', {
+      changes,
+    }),
   bulk: (ids: string[], action: string, extra: Record<string, unknown> = {}) =>
     send<{ updated: number }>('POST', '/products/bulk', { ids, action, ...extra }),
   importPreview: (text: string) =>

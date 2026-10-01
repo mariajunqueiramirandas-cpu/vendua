@@ -121,7 +121,7 @@ export function mountHome(d: AdminDeps) {
             kind: 'low_stock',
             count: p.stock,
             title: p.stock === 0 ? `${p.name} acabou` : `${p.name}: só ${p.stock} no estoque`,
-            href: `/cardapio/produto/${p.id}`,
+            href: `/cardapio/estoque?p=${p.id}`,
             productId: p.id,
           });
         const wl = await tx<{ id: string; name: string; n: number }[]>`

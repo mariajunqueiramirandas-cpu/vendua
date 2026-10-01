@@ -108,6 +108,29 @@ export async function setStock(
   return { restocked: true, waiting: await wakeWaitlist(tx, tenantId, productId) };
 }
 
+export const MAX_STOCK = 1_000_000;
+
+/**
+ * Adds (or takes) units relative to what's there now, so a sale drawn while the merchant was
+ * tapping isn't overwritten. Floors at 0. null = not found or not tracked: left alone.
+ */
+export async function adjustStock(
+  tx: Sql,
+  tenantId: string,
+  productId: string,
+  add: number,
+): Promise<{ before: number; after: number; waiting: number } | null> {
+  const cur = (
+    await tx<{ stock_quantity: number | null }[]>`
+      select stock_quantity from products where tenant_id = ${tenantId} and id = ${productId} for update
+    `
+  )[0];
+  if (cur?.stock_quantity == null) return null;
+  const after = Math.min(MAX_STOCK, Math.max(0, cur.stock_quantity + add));
+  const r = await setStock(tx, tenantId, productId, { stockQuantity: after });
+  return { before: cur.stock_quantity, after, waiting: r.waiting };
+}
+
 /** Marks the product's pending subscriptions notified and hands the contacts to the outbox. */
 export async function wakeWaitlist(tx: Sql, tenantId: string, productId: string): Promise<number> {
   const woken = await tx<{ contact: string }[]>`

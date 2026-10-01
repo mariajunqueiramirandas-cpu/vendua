@@ -12,7 +12,7 @@ import {
   type AvailabilitySchedule,
   type PromoSchedule,
 } from '../modules/catalog.ts';
-import { setStock } from '../modules/stock.ts';
+import { adjustStock, MAX_STOCK, setStock } from '../modules/stock.ts';
 import { audit } from './audit.ts';
 import {
   bool,
@@ -1019,6 +1019,64 @@ export function mountCatalog(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'catalog');
       return { status: 200, body: { updated: ids.length } };
+    }),
+  );
+
+  // The Estoque screen's taps: relative changes, so a sale drawn meanwhile still counts.
+  // An absolute count ("contei 24") goes through PATCH /products/:id.
+  admin.post(
+    '/products/stock',
+    write('manager', async (tx, t, m, c) => {
+      const body = await bodyJson(c);
+      if (!Array.isArray(body.changes) || body.changes.length === 0 || body.changes.length > 100)
+        throw new HttpError(422, 'BAD_REQUEST', 'changes must list 1–100 products', {
+          field: 'changes',
+        });
+      const adds = new Map<string, number>();
+      body.changes.forEach((x: unknown, i: number) => {
+        if (!isObj(x) || typeof x.productId !== 'string' || !UUID_RE.test(x.productId))
+          throw new HttpError(422, 'BAD_REQUEST', `changes[${i}].productId must be an id`, {
+            field: `changes[${i}].productId`,
+          });
+        const add = int(x.add, `changes[${i}].add`, -MAX_STOCK, MAX_STOCK);
+        const id = x.productId.toLowerCase();
+        adds.set(id, (adds.get(id) ?? 0) + add);
+      });
+      // id order, the same as checkout's row locks, so the two never deadlock
+      const ids = [...adds.keys()].filter((id) => adds.get(id) !== 0).sort();
+      const stock: Record<string, number> = {};
+      const before: Record<string, number> = {};
+      let woken = 0;
+      for (const id of ids) {
+        const r = await adjustStock(tx, t.id, id, adds.get(id)!);
+        if (!r) continue;
+        before[id] = r.before;
+        stock[id] = r.after;
+        woken += r.waiting;
+      }
+      const changed = Object.keys(stock);
+      if (changed.length) {
+        const one =
+          changed.length === 1
+            ? (
+                await tx<
+                  { name: string }[]
+                >`select name from products where tenant_id = ${t.id} and id = ${changed[0]!}`
+              )[0]!.name
+            : null;
+        await audit(tx, t.id, m, {
+          action: 'product.stock.adjust',
+          entity: 'product',
+          entityId: one ? changed[0]! : null,
+          summary: one
+            ? `ajustou o estoque de "${one}" (${before[changed[0]!]} → ${stock[changed[0]!]})`
+            : `ajustou o estoque de ${changed.length} produtos`,
+          before,
+          after: stock,
+        });
+        await emitAdminTx(tx, t.id, 'catalog');
+      }
+      return { status: 200, body: { stock, waitlistWoken: woken } };
     }),
   );
 
