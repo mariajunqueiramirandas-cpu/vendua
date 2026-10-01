@@ -47,7 +47,7 @@ import {
   verifyByOrder,
   verifyCustomerToken,
 } from './customer.ts';
-import { normalizeCep, resolveZone, type CepLookup } from './geo.ts';
+import { normalizeCep, parsePolygon, resolveZone, type CepLookup, type LatLng } from './geo.ts';
 import type { OrderHub } from './order-live.ts';
 import {
   ORDER_STATES,
@@ -866,10 +866,19 @@ export function mountCommerce(d: Deps) {
     const want = (k: string) => !partial || b[k] !== undefined;
     if (want('name')) out.name = str(b.name, 'name', 80);
     if (b.kind !== undefined) {
-      if (b.kind !== 'neighborhood' && b.kind !== 'radius')
-        throw new HttpError(400, 'BAD_REQUEST', 'kind must be neighborhood or radius');
+      if (b.kind !== 'neighborhood' && b.kind !== 'radius' && b.kind !== 'polygon')
+        throw new HttpError(400, 'BAD_REQUEST', 'kind must be neighborhood, radius or polygon');
       out.kind = b.kind;
     }
+    // a new zone without a kind is a neighborhood zone (the column default)
+    const kind = out.kind ?? (partial ? undefined : 'neighborhood');
+    if (b.polygon !== undefined && b.polygon !== null) {
+      const r = parsePolygon(b.polygon);
+      if ('error' in r) throw new HttpError(400, 'BAD_REQUEST', r.error);
+      if (kind !== undefined && kind !== 'polygon')
+        throw new HttpError(400, 'BAD_REQUEST', 'only polygon zones take a polygon');
+      out.polygon = r.polygon;
+    } else if (kind !== undefined && kind !== 'polygon') out.polygon = null;
     if (b.neighborhoods !== undefined) {
       if (!Array.isArray(b.neighborhoods) || b.neighborhoods.length > 200)
         throw new HttpError(400, 'BAD_REQUEST', 'neighborhoods must be an array');
@@ -904,8 +913,15 @@ export function mountCommerce(d: Deps) {
     }
     if (out.kind === 'radius' && !partial && out.max_distance_km == null)
       throw new HttpError(400, 'BAD_REQUEST', 'radius zones need maxDistanceKm');
+    if (out.kind === 'polygon' && !partial && !out.polygon)
+      throw new HttpError(400, 'BAD_REQUEST', 'polygon zones need a polygon');
     return out;
   };
+  const zoneColumns = (tx: Sql, f: Record<string, unknown>) => ({
+    ...f,
+    ...(f.neighborhoods ? { neighborhoods: tx.json(f.neighborhoods as string[]) } : {}),
+    ...(f.polygon ? { polygon: tx.json(f.polygon as LatLng[]) } : {}),
+  });
 
   app.post(`${base}/zones`, async (c) => {
     controlGate(c);
@@ -914,7 +930,7 @@ export function mountCommerce(d: Deps) {
     const res = await claimTenant(c, t.id, async (tx) => {
       const row = (
         await tx`
-          insert into delivery_zones ${tx({ tenant_id: t.id, ...fields, ...(fields.neighborhoods ? { neighborhoods: tx.json(fields.neighborhoods as string[]) } : {}) } as never)}
+          insert into delivery_zones ${tx(zoneColumns(tx, { tenant_id: t.id, ...fields }) as never)}
           returning *
         `
       )[0];
@@ -932,16 +948,16 @@ export function mountCommerce(d: Deps) {
     if (Object.keys(fields).length === 0)
       throw new HttpError(400, 'BAD_REQUEST', 'nothing to update');
     const res = await claimTenant(c, t.id, async (tx) => {
-      const set = {
-        ...fields,
-        ...(fields.neighborhoods
-          ? { neighborhoods: tx.json(fields.neighborhoods as string[]) }
-          : {}),
-      };
       const row = (
         await tx`
-          update delivery_zones set ${tx(set as never)} where tenant_id = ${t.id} and id = ${zoneId} returning *
-        `
+          update delivery_zones set ${tx(zoneColumns(tx, fields) as never)} where tenant_id = ${t.id} and id = ${zoneId} returning *
+        `.catch((err: unknown) => {
+          if (
+            (err as { constraint_name?: string }).constraint_name === 'delivery_zones_polygon_check'
+          )
+            throw new HttpError(400, 'BAD_REQUEST', 'polygon zones need a polygon, and only they');
+          throw err;
+        })
       )[0];
       if (!row) throw new HttpError(404, 'ZONE_NOT_FOUND', 'zone not found');
       await emitAdminTx(tx, t.id, 'store');

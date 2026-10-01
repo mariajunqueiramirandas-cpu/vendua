@@ -361,7 +361,7 @@ export async function assertCartOpen(tx: Sql, tenantId: string, cartId: string):
 }
 
 export interface ZoneRow extends ZoneLike {
-  kind: 'neighborhood' | 'radius';
+  kind: 'neighborhood' | 'radius' | 'polygon';
   max_distance_km: string | null;
   fee_per_km_cents: number;
   free_delivery_over_cents: number | null;
@@ -375,7 +375,7 @@ export async function loadZoneRows(
   const lock = opts.forUpdate ? tx`for update` : tx``;
   return tx<ZoneRow[]>`
     select id, name, kind, neighborhoods, fee_cents, min_order_cents, eta_min_minutes, eta_max_minutes,
-           max_distance_km, fee_per_km_cents, free_delivery_over_cents
+           max_distance_km, fee_per_km_cents, free_delivery_over_cents, polygon
     from delivery_zones where tenant_id = ${tenantId} and active order by name ${lock}
   `;
 }

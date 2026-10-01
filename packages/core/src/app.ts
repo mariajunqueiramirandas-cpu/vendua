@@ -563,6 +563,7 @@ export function createApp({
         maxDistanceKm: z.max_distance_km == null ? null : Number(z.max_distance_km),
         feePerKmCents: z.fee_per_km_cents,
         freeDeliveryOverCents: z.free_delivery_over_cents,
+        polygon: z.polygon ?? null,
       })),
     });
   });
@@ -790,6 +791,7 @@ export function createApp({
           eligible: true,
           zoneId: match.zone.id,
           zoneName: match.zone.name,
+          zoneKind: match.zone.kind,
           feeCents: match.feeCents,
           etaMin: match.zone.eta_min_minutes,
           etaMax: match.zone.eta_max_minutes,

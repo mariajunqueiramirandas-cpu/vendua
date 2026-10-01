@@ -141,6 +141,27 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
         })
       ).status,
     ).toBe(201);
+    // control-plane zones accept polygons too (far from the store, so later quotes are unaffected)
+    const ring = [
+      [10, 10],
+      [10, 10.1],
+      [10.1, 10.1],
+    ];
+    const poly = await ctl('POST', '/zones', { name: 'Mapa', kind: 'polygon', polygon: ring });
+    expect(poly.status).toBe(201);
+    expect(poly.body.zone).toMatchObject({ kind: 'polygon', polygon: ring });
+    expect((await ctl('POST', '/zones', { name: 'Mapa 2', kind: 'polygon' })).status).toBe(400);
+    expect(
+      (await ctl('POST', '/zones', { name: 'Mapa 3', kind: 'polygon', polygon: [[1, 1]] })).status,
+    ).toBe(400);
+    expect(
+      (await ctl('PATCH', `/zones/${poly.body.zone.id}`, { kind: 'polygon', polygon: 'x' })).status,
+    ).toBe(400);
+    const flat = await ctl('PATCH', `/zones/${poly.body.zone.id}`, {
+      kind: 'neighborhood',
+      neighborhoods: ['Longe'],
+    });
+    expect(flat.body.zone).toMatchObject({ kind: 'neighborhood', polygon: null });
     expect(
       (
         await ctl('PATCH', '/settings', {
