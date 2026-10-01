@@ -86,6 +86,7 @@ export interface MountAdminOpts {
   provider: PaymentProvider;
   notify: MerchantNotify;
   publicOrigin: (c: Context) => string;
+  geocode: AdminDeps['geocode'];
 }
 
 const STREAM_HEARTBEAT_MS = 20_000;
@@ -211,6 +212,7 @@ export function mountAdmin(o: MountAdminOpts) {
     provider: o.provider,
     notify: o.notify,
     publicOrigin: o.publicOrigin,
+    geocode: o.geocode,
   };
   mountPaymentsPublic(admin, shared);
   mountSignup(admin, shared);

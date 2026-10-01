@@ -56,6 +56,8 @@ import {
   assertLineQty,
   loadCartView,
   loadZoneRows,
+  deliveryPricing,
+  distancePricingOf,
   priceLine,
   quoteInput,
   storeCoords,
@@ -72,13 +74,21 @@ import {
   verifyCustomerToken,
 } from './modules/customer.ts';
 import {
+  distanceFeeCents,
   normalizeCep,
-  resolveZone,
+  resolveDelivery,
   validCoords,
   viaCep,
   zoneMinFeeCents,
   type CepLookup,
 } from './modules/geo.ts';
+import {
+  mapTilesFromEnv,
+  nominatimGeocoder,
+  type Geocoder,
+  type MapTiles,
+} from './modules/geocode.ts';
+import { orsRouter, routeQuoter, type Router } from './modules/routing.ts';
 import { OrderHub } from './modules/order-live.ts';
 import { pixPayload, type PixKeyType } from './modules/pix.ts';
 import { bookableDates } from './modules/preorder.ts';
@@ -219,6 +229,13 @@ export interface AppDeps {
   autoDrain?: boolean | undefined;
   /** CEP → address; tests inject a stub (default: ViaCEP) */
   cepLookup?: CepLookup | undefined;
+  /** address → approximate point for the pin maps (default: Nominatim); tests inject a stub */
+  geocoder?: Geocoder | undefined;
+  /** road distance for distance pricing (default: OpenRouteService when ORS_API_KEY is set;
+   *  null = none, Core estimates) */
+  router?: Router | null | undefined;
+  /** raster tiles for the pin maps (default: MAP_TILE_URL or OpenStreetMap's) */
+  mapTiles?: MapTiles | undefined;
   /** merchant admin sign-in codes; tests capture them (default: WhatsApp) */
   otpSender?: OtpSender | undefined;
   /** shared with the push worker in index.ts; tests let the app make its own */
@@ -422,6 +439,9 @@ export function createApp({
   controlSecret,
   autoDrain,
   cepLookup,
+  geocoder,
+  router,
+  mapTiles,
   otpSender,
   adminHub,
   storeDomain,
@@ -433,6 +453,20 @@ export function createApp({
   discordFetch,
 }: AppDeps) {
   const provider = paymentProvider ?? createPaymentProvider();
+  const geocode = geocoder ?? nominatimGeocoder();
+  const tiles = mapTiles ?? mapTilesFromEnv();
+  const routeQuote = routeQuoter(router === undefined ? orsRouter() : router);
+  /** The road leg store → this pin, fetched before the request's tx (an HTTP call never holds
+   *  one open); null when the store doesn't price by distance or no route could be had. */
+  const routeFor = async (tenantId: string, lat: unknown, lng: unknown) => {
+    const to = validCoords(lat, lng);
+    if (!to) return null;
+    const settings = await withTenant(sql, tenantId, (tx) => loadSettings(tx, tenantId));
+    const from = storeCoords(settings);
+    return from && distancePricingOf(settings) ? routeQuote(from, to) : null;
+  };
+  /** the pre-tx read of a JSON body (Hono caches it for the handler's own read) */
+  const peekBody = (c: Context) => bodyJson(c).catch(() => null);
   const merchantNotify = notify ?? platformNotify(sql);
   const orderHub = new OrderHub(sql);
   const liveHub = adminHub ?? new AdminHub(sql);
@@ -548,6 +582,21 @@ export function createApp({
       minOrderCents: settings?.min_order_cents ?? 0,
       pickupEnabled: settings?.pickup_enabled ?? true,
       deliveryEnabled: settings?.delivery_enabled ?? true,
+      // ADR 0024: on only with the store's own pin — without it every address prices by zone
+      distancePricing: (() => {
+        const p = distancePricingOf(settings);
+        const at = storeCoords(settings);
+        if (!p || !at) return null;
+        const r3 = (n: number) => Math.round(n * 1000) / 1000;
+        return {
+          ...p,
+          // the "a partir de" label: what an address next door pays
+          fromFeeCents: distanceFeeCents(p, 0),
+          // where the pin map opens when the address can't be placed (~100 m off the door)
+          center: { lat: r3(at.lat), lng: r3(at.lng) },
+          tiles,
+        };
+      })(),
       currency: settings?.currency ?? 'BRL',
       vocabulary: settings?.vocabulary ?? {},
       pix: pixProfile(settings),
@@ -866,6 +915,8 @@ export function createApp({
 
   checkout.post('/cart/delivery', async (c) => {
     const tenant = c.get('tenant');
+    const peek = await peekBody(c);
+    const route = peek?.mode === 'delivery' ? await routeFor(tenant.id, peek.lat, peek.lng) : null;
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
@@ -895,8 +946,12 @@ export function createApp({
         lng: coords?.lng ?? null,
       };
       await assertCartOpen(tx, tenant.id, cartId);
+      // the leg is kept only for the pin it was fetched for (loadCartView re-checks the store's)
+      const leg =
+        route && coords && route.to[0] === coords.lat && route.to[1] === coords.lng ? route : null;
       await tx`
-        update carts set delivery = ${tx.json(delivery)}, updated_at = now()
+        update carts set delivery = ${tx.json(delivery)},
+          delivery_route = ${leg ? tx.json({ ...leg }) : null}, updated_at = now()
         where tenant_id = ${tenant.id} and id = ${cartId}
       `;
       const cart = await loadCartView(tx, tenant.id, cartId);
@@ -906,6 +961,8 @@ export function createApp({
 
   checkout.post('/quote', async (c) => {
     const tenant = c.get('tenant');
+    const peek = await peekBody(c);
+    const route = peek ? await routeFor(tenant.id, peek.lat, peek.lng) : null;
     return idempotency(sql, async (c, tx) => {
       const body = await bodyJson(c);
       const neighborhood =
@@ -919,7 +976,12 @@ export function createApp({
       const paymentMethod = paymentMethodParam(body.paymentMethod);
       const zones = await loadZones(tx, tenant.id);
       const settings = await loadSettings(tx, tenant.id);
-      const match = resolveZone(zones, { neighborhood, coords }, storeCoords(settings));
+      const match = resolveDelivery(
+        zones,
+        { neighborhood, coords },
+        storeCoords(settings),
+        deliveryPricing(settings, route),
+      );
       // Relatórios' zone conversion: who asked for delivery where (server-side, like order_placed);
       // a quote without a cart session still answers, it just isn't counted
       const cartId = await sessionCartId(c, sessionSecret).catch(() => null);
@@ -945,6 +1007,7 @@ export function createApp({
               lat: coords?.lat ?? null,
               lng: coords?.lng ?? null,
             },
+            route,
           }).then(
             (v) => v.totals,
             (err) => {
@@ -964,6 +1027,7 @@ export function createApp({
           etaMin: match.zone.eta_min_minutes,
           etaMax: match.zone.eta_max_minutes,
           distanceKm: match.distanceKm,
+          distanceSource: match.distanceSource ?? null,
           minOrderCents: Math.max(settings?.min_order_cents ?? 0, match.zone.min_order_cents),
           freeDeliveryOverCents: match.zone.free_delivery_over_cents,
           ...(totals ? { totals } : {}),
@@ -974,6 +1038,10 @@ export function createApp({
 
   checkout.post('/checkout', async (c) => {
     const tenant = c.get('tenant');
+    const peek = await peekBody(c);
+    const d = peek?.delivery as Record<string, unknown> | undefined;
+    // usually a cache hit: the quote and the address step already fetched this leg
+    const route = d?.mode === 'delivery' ? await routeFor(tenant.id, d.lat, d.lng) : null;
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
@@ -988,6 +1056,7 @@ export function createApp({
       try {
         order = await placeOrderTx(tx, tenant.id, cartId, body, new Date(), provider, {
           provenPhone: known?.proven ? known.phone : null,
+          route,
         });
       } catch (err) {
         // the repriced lines must commit with the refusal (a thrown error rolls them back)
@@ -2789,6 +2858,7 @@ export function createApp({
     trustProxy,
     proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
     cepLookup: cepLookup ?? viaCep,
+    geocode,
     orderHub,
     provider,
     publicOrigin: (c) => adminOrigin(c),
@@ -2948,6 +3018,7 @@ export function createApp({
     provider,
     notify: merchantNotify,
     publicOrigin: adminOrigin,
+    geocode,
   });
   app.route('/admin/v1', admin);
   app.get('/admin', (c) => c.redirect('/admin/'));

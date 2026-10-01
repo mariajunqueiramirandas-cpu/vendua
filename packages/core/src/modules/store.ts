@@ -63,6 +63,14 @@ export interface StoreSettingsRow {
   pix_city?: string | null;
   latitude?: number | null;
   longitude?: number | null;
+  // distance pricing (migration 0073, ADR 0024)
+  distance_pricing?: boolean;
+  delivery_base_fee_cents?: number;
+  delivery_fee_per_km_cents?: number;
+  delivery_min_fee_cents?: number;
+  /** numeric — postgres.js reads it as a string */
+  delivery_max_km?: string | number;
+  delivery_free_over_cents?: number | null;
   // merchant admin (migration 0052)
   logo_url?: string | null;
   pause_message?: string | null;

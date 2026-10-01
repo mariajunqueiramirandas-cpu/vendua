@@ -15,10 +15,12 @@ import {
   bool,
   int,
   isObj,
+  need,
   oneOf,
   optInt,
   optText,
   text,
+  type AdminCtx,
   type AdminDeps,
 } from './context.ts';
 import { handlers } from './handlers.ts';
@@ -149,6 +151,14 @@ export async function storeView(
       s.latitude != null && s.longitude != null
         ? { latitude: Number(s.latitude), longitude: Number(s.longitude) }
         : null,
+    distancePricing: {
+      enabled: s.distance_pricing ?? false,
+      baseFeeCents: s.delivery_base_fee_cents ?? 0,
+      feePerKmCents: s.delivery_fee_per_km_cents ?? 0,
+      minFeeCents: s.delivery_min_fee_cents ?? 0,
+      maxKm: Number(s.delivery_max_km ?? 8),
+      freeOverCents: s.delivery_free_over_cents ?? null,
+    },
     preorder: {
       paymentMethods: s.preorder_payment_methods ?? ['pix'],
       maxDays: s.preorder_max_days ?? 30,
@@ -319,6 +329,26 @@ export function mountStore(d: AdminDeps) {
   const view = (tx: Sql, t: { id: string; slug: string; name: string }) =>
     storeView(tx, t.id, t.slug, t.name, d.storeDomain);
 
+  // where the store's pin map opens (ADR 0024) — no tx: it's a call to the geocoder
+  admin.get('/geocode', async (c) => {
+    need(c as AdminCtx, 'manager');
+    const q = (k: string, max: number) => {
+      const v = c.req.query(k)?.trim();
+      if (v && v.length > max) throw new HttpError(400, 'BAD_REQUEST', `${k} is too long`);
+      return v || null;
+    };
+    const point = await d.geocode({
+      text: q('q', 300),
+      cep: q('cep', 12),
+      street: q('street', 120),
+      number: q('number', 10),
+      city: q('city', 80),
+      state: q('state', 40),
+    });
+    c.header('cache-control', 'no-store');
+    return c.json({ point });
+  });
+
   // attendants read it too: the status pill and today's hours are on every screen
   admin.get(
     '/store',
@@ -449,6 +479,37 @@ export function mountStore(d: AdminDeps) {
         }
         changed.push('localização');
       }
+      const dp = isObj(body.distancePricing) ? body.distancePricing : null;
+      if (dp) {
+        if (dp.enabled !== undefined) set.distance_pricing = bool(dp.enabled, 'enabled');
+        if (dp.baseFeeCents !== undefined)
+          set.delivery_base_fee_cents = int(dp.baseFeeCents, 'baseFeeCents', 0, 100_000);
+        if (dp.feePerKmCents !== undefined)
+          set.delivery_fee_per_km_cents = int(dp.feePerKmCents, 'feePerKmCents', 0, 100_000);
+        if (dp.minFeeCents !== undefined)
+          set.delivery_min_fee_cents = int(dp.minFeeCents, 'minFeeCents', 0, 100_000);
+        if (dp.maxKm !== undefined) {
+          const km = dp.maxKm;
+          if (typeof km !== 'number' || !Number.isFinite(km) || km < 0.5 || km > 100)
+            throw new HttpError(422, 'BAD_REQUEST', 'maxKm must be between 0.5 and 100', {
+              field: 'maxKm',
+            });
+          set.delivery_max_km = Math.round(km * 10) / 10;
+        }
+        if (dp.freeOverCents !== undefined)
+          set.delivery_free_over_cents =
+            dp.freeOverCents === null
+              ? null
+              : int(dp.freeOverCents, 'freeOverCents', 0, 10_000_000);
+        changed.push('frete por distância');
+      }
+      // distance pricing measures from the store's pin: it can't be on without one
+      const pricedByDistance = (set.distance_pricing as boolean | undefined) ?? s.distance_pricing;
+      const pinned = 'latitude' in set ? set.latitude != null : s.latitude != null;
+      if ((dp || body.location !== undefined) && pricedByDistance && !pinned)
+        throw new HttpError(422, 'LOCATION_REQUIRED', 'mark the store on the map first', {
+          field: 'location',
+        });
       const pre = isObj(body.preorder) ? body.preorder : null;
       if (pre) {
         if (pre.paymentMethods !== undefined) {

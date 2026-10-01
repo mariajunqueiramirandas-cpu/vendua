@@ -377,4 +377,19 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
     currency: 'BRL',
     action: { label: 'Tentar de novo', onClick: noop },
   },
+  'checkout.LocationPicker': {
+    center: { lat: -22.9301, lng: -42.4801 },
+    precision: 'street',
+    value: { lat: -22.9301, lng: -42.4801 },
+    tiles: {
+      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '© OpenStreetMap',
+      maxZoom: 19,
+    },
+    status: 'confirmed',
+    hint: '3,2 km · entrega R$ 9,50 · 40–50 min',
+    onConfirm: noop,
+    onLocate: noop,
+    locateStatus: 'idle',
+  },
 };

@@ -6,7 +6,7 @@ import { getProductsById, type ProductDetail } from './catalog.ts';
 import { addressParts, composeAddress, validateCheckout, type CheckoutInput } from './checkout.ts';
 import { couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
 import { normalizePhone } from './customer.ts';
-import { effectiveFee } from './geo.ts';
+import { effectiveFee, routeMatches, validCoords, type RouteQuote } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
 import { offlinePayment, onlineOffer, onlinePayment } from './payments/store-payments.ts';
 import type { PaymentProvider } from './payments/provider.ts';
@@ -29,10 +29,16 @@ export async function placeOrderTx(
   /** the install's driver; without it the stored connection alone decides (older callers) */
   provider?: PaymentProvider,
   /** the phone a proven customer token vouches for — personal coupons need it */
-  opts: { provenPhone?: string | null } = {},
+  opts: {
+    provenPhone?: string | null;
+    /** distance pricing: a road leg fetched for this pin before the tx (when the cart has none) */
+    route?: RouteQuote | null;
+  } = {},
 ): Promise<string> {
   // Lock the cart row first — concurrent checkouts would both see 'open' and mint duplicates.
-  await tx`select id from carts where tenant_id = ${tenantId} and id = ${cartId} for update`;
+  const [locked] = await tx<{ delivery_route: RouteQuote | null }[]>`
+    select delivery_route from carts where tenant_id = ${tenantId} and id = ${cartId} for update
+  `;
   const cart = await loadCartView(tx, tenantId, cartId, now);
   // A completed cart must not mint a second order.
   if (cart.status !== 'open') {
@@ -70,6 +76,12 @@ export async function placeOrderTx(
     now,
     settings?.special_days ?? [],
   );
+  // the leg the shopper's quote was priced on wins, so checkout charges what they saw
+  const storeAt = storeCoords(settings);
+  const pin = validCoords(body.delivery.lat, body.delivery.lng);
+  const stored = locked?.delivery_route ?? null;
+  const route =
+    storeAt && pin && routeMatches(stored, storeAt, pin) ? stored : (opts.route ?? null);
   const match = validateCheckout(
     status,
     settings,
@@ -77,8 +89,9 @@ export async function placeOrderTx(
     body,
     zones,
     products,
-    storeCoords(settings),
+    storeAt,
     { card: offer.online },
+    route,
   );
   const scheduledFor = validateSchedule(
     cart.schedule,
@@ -173,6 +186,7 @@ export async function placeOrderTx(
             : {}),
           zoneName: match.zone?.name ?? null,
           distanceKm: match.distanceKm,
+          ...(match.distanceSource ? { distanceSource: match.distanceSource } : {}),
           feeCents: deliveryFee,
           etaMin: match.zone?.eta_min_minutes ?? null,
           etaMax: match.zone?.eta_max_minutes ?? null,

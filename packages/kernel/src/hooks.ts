@@ -613,12 +613,18 @@ export interface CustomerProfile {
     complement: string;
     /** Kernel 1.2 */
     cep?: string;
+    /** Kernel 1.15 — the delivery pin the shopper confirmed on the map */
+    lat?: number;
+    lng?: number;
   };
 }
 
 const CUSTOMER_KEY = 'vendua.customer';
 let customerMem: CustomerProfile | null | undefined;
 const customerListeners = new Set<() => void>();
+
+const isPin = (lat: unknown, lng: unknown): boolean =>
+  typeof lat === 'number' && typeof lng === 'number' && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 
 function readCustomer(): CustomerProfile | null {
   if (customerMem !== undefined) return customerMem;
@@ -659,6 +665,7 @@ export function useCustomer(): {
         neighborhood: p.address.neighborhood.slice(0, 80),
         complement: p.address.complement.slice(0, 80),
         ...(p.address.cep ? { cep: digitsOf(p.address.cep).slice(0, 8) } : {}),
+        ...(isPin(p.address.lat, p.address.lng) ? { lat: p.address.lat, lng: p.address.lng } : {}),
       },
     };
     customerMem = clean;

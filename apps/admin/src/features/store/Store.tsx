@@ -4,6 +4,7 @@ import {
   Clock,
   Crosshair,
   Fire,
+  MagnifyingGlass,
   MapPin,
   Moped,
   PencilSimple,
@@ -353,7 +354,30 @@ function Delivery({
   const qc = useQueryClient();
   const [edit, setEdit] = useState<Zone | 'new' | null>(null);
   const [locating, setLocating] = useState(false);
+  const [finding, setFinding] = useState(false);
   const o = s.operations;
+  // a first guess from the store's address; the merchant fixes it with a tap on the map
+  const findByAddress = async () => {
+    const line = [s.profile.address, s.profile.city].filter(Boolean).join(', ');
+    setFinding(true);
+    try {
+      const { point } = await api.geocode(line);
+      if (!point) {
+        toast.error('Não achamos esse endereço no mapa. Toque em “marcar loja” e marque à mão.');
+        return;
+      }
+      patch({ location: { latitude: point.lat, longitude: point.lng } });
+      toast(
+        point.precision === 'address'
+          ? 'Loja marcada pelo endereço. Confira o pino no mapa.'
+          : 'Marcamos perto do endereço. Ajuste o pino tocando em “mudar local”.',
+      );
+    } catch (e) {
+      toast.error(messageOf(e));
+    } finally {
+      setFinding(false);
+    }
+  };
   const neighborhoodZones = s.zones.filter((z) => z.kind === 'neighborhood');
   return (
     <Section id="entrega" title="Entrega e retirada">
@@ -415,7 +439,11 @@ function Delivery({
           checked={o.deliveryEnabled}
           onChange={(v) => patch({ operations: { deliveryEnabled: v } })}
           label="Entrega"
-          description="Nos bairros ou raio abaixo."
+          description={
+            s.distancePricing.enabled
+              ? 'Pela distância até a porta do cliente.'
+              : 'Nos bairros ou raio abaixo.'
+          }
         />
         {!o.pickupEnabled && !o.deliveryEnabled ? (
           <Notice tone="danger" title="Ninguém consegue pedir" role="alert">
@@ -459,23 +487,38 @@ function Delivery({
       {o.deliveryEnabled ? (
         <div className="mt-4 space-y-4">
           <Card className="overflow-hidden">
-            <div className="flex items-center justify-between gap-3 p-4">
-              <div>
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+              <div className="min-w-0 flex-1 basis-60">
                 <p className="font-semibold">Área de entrega</p>
                 <p className="t-caption text-muted">
-                  {s.location
-                    ? 'Os círculos e as áreas desenhadas mostram até onde vai cada taxa.'
-                    : 'Marque onde fica a loja para entregar por distância.'}
+                  {!s.location
+                    ? 'Marque onde fica a loja para entregar por distância.'
+                    : s.distancePricing.enabled
+                      ? 'O pino da loja é de onde a distância é medida.'
+                      : 'Os círculos e as áreas desenhadas mostram até onde vai cada taxa.'}
                 </p>
               </div>
-              <Button
-                variant={locating ? 'primary' : 'secondary'}
-                size="sm"
-                icon={<Crosshair />}
-                onClick={() => setLocating((v) => !v)}
-              >
-                {locating ? 'toque no mapa' : s.location ? 'mudar local' : 'marcar loja'}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                {s.profile.address && !locating ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<MagnifyingGlass />}
+                    loading={finding}
+                    onClick={() => void findByAddress()}
+                  >
+                    pelo endereço
+                  </Button>
+                ) : null}
+                <Button
+                  variant={locating ? 'primary' : 'secondary'}
+                  size="sm"
+                  icon={<Crosshair />}
+                  onClick={() => setLocating((v) => !v)}
+                >
+                  {locating ? 'toque no mapa' : s.location ? 'mudar local' : 'marcar loja'}
+                </Button>
+              </div>
             </div>
             <Suspense fallback={<div className="skeleton h-72" />}>
               <ZoneMap
@@ -494,6 +537,15 @@ function Delivery({
               />
             </Suspense>
           </Card>
+          <DistancePricing s={s} patch={patch} run={run} />
+          {s.distancePricing.enabled ? (
+            <div className="px-1 pt-2">
+              <p className="font-semibold">Áreas de reserva</p>
+              <p className="t-caption text-muted">
+                Valem só quando o endereço chega sem o local no mapa.
+              </p>
+            </div>
+          ) : null}
           <Card className="divide-y divide-line">
             {s.zones.map((z) => (
               <button
@@ -560,6 +612,110 @@ function Delivery({
         onSaved={() => void qc.invalidateQueries({ queryKey: qk.store })}
       />
     </Section>
+  );
+}
+
+const FEE_MAX = 100_000;
+const feeRule = (c: number) => (c > FEE_MAX ? `Até ${money(FEE_MAX)}.` : null);
+
+/** ADR 0024: base + R$/started km from the store's pin, Core computes every fee. */
+function DistancePricing({
+  s,
+  patch,
+  run,
+}: {
+  s: StoreView;
+  patch: (b: Record<string, unknown>) => void;
+  run: (b: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const d = s.distancePricing;
+  const set = (p: Partial<StoreView['distancePricing']>) => patch({ distancePricing: p });
+  const rule = [
+    `${money(d.baseFeeCents)} de saída`,
+    d.feePerKmCents ? `mais ${money(d.feePerKmCents)} por km` : null,
+    d.minFeeCents ? `no mínimo ${money(d.minFeeCents)}` : null,
+    `até ${d.maxKm.toLocaleString('pt-BR')} km`,
+    d.freeOverCents ? `grátis em pedidos a partir de ${money(d.freeOverCents)}` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+  return (
+    <Card className="space-y-2 p-5">
+      <Toggle
+        checked={d.enabled}
+        disabled={!s.location && !d.enabled}
+        onChange={(v) => set({ enabled: v })}
+        label="Cobrar pela distância"
+        description={
+          !s.location
+            ? 'Marque a loja no mapa acima para cobrar pela distância.'
+            : 'O cliente confirma no mapa onde entregar, e a taxa sai pelo caminho de carro da loja até lá.'
+        }
+      />
+      {d.enabled ? (
+        <div className="animate-fade-up space-y-4 rounded-md p-4 ring-1 ring-line">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Taxa de saída" htmlFor="dp-base" helper="Cobrada em toda entrega.">
+              <MoneyField
+                id="dp-base"
+                cents={d.baseFeeCents}
+                validate={feeRule}
+                onCommit={(v) => set({ baseFeeCents: v ?? 0 })}
+              />
+            </Field>
+            <Field label="Por km" htmlFor="dp-km" helper="Cada km começado conta inteiro.">
+              <MoneyField
+                id="dp-km"
+                cents={d.feePerKmCents}
+                validate={feeRule}
+                onCommit={(v) => set({ feePerKmCents: v ?? 0 })}
+              />
+            </Field>
+            <Field
+              label="Taxa mínima"
+              optional
+              htmlFor="dp-min"
+              helper="Nenhuma entrega sai por menos que isso."
+            >
+              <MoneyField
+                id="dp-min"
+                allowEmpty
+                cents={d.minFeeCents || null}
+                validate={feeRule}
+                onCommit={(v) => set({ minFeeCents: v ?? 0 })}
+              />
+            </Field>
+            <Field
+              label="Grátis acima de"
+              optional
+              htmlFor="dp-free"
+              helper="Pedidos a partir desse valor não pagam entrega."
+            >
+              <MoneyField
+                id="dp-free"
+                allowEmpty
+                cents={d.freeOverCents}
+                onCommit={(v) => set({ freeOverCents: v })}
+              />
+            </Field>
+            <Field label="Entrega até" helper="Mais longe que isso, a loja não entrega.">
+              <SavedStepper
+                label="distância máxima"
+                value={d.maxKm}
+                min={1}
+                max={50}
+                suffix=" km"
+                onSave={(v) => run({ distancePricing: { maxKm: v } }).catch(() => undefined)}
+              />
+            </Field>
+          </div>
+          <p className="t-caption text-muted">
+            A entrega fica em {rule}. Sem caminho de carro disponível na hora, a distância em linha
+            reta conta com 30% a mais.
+          </p>
+        </div>
+      ) : null}
+    </Card>
   );
 }
 

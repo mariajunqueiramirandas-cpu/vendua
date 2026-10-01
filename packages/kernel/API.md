@@ -236,6 +236,31 @@ Additive — no storefront edit, no new runtime export. Stores stay a plain web 
 - **Checkout steps** are history entries (`state.vStep`); back returns to the previous step.
 - `<meta name="theme-color">` follows the `bg` token; toasts live in the top layer.
 
+### Delivery priced by distance (Kernel 1.15)
+
+Additive — no storefront edit, no new runtime export. Money stays Core's (ADR 0024).
+
+- `StoreProfile.distancePricing` (`DistancePricing`, null/absent = zones price every address):
+  the store prices delivery by road distance from a pin the shopper confirms. Its numbers
+  (`baseFeeCents`, `feePerKmCents`, `minFeeCents`, `maxKm`, `freeOverCents`, `fromFeeCents`)
+  are for labels — "a partir de" is `fromFeeCents` — never for computing a fee; `center`
+  (`LatLng`) is where the map opens when the address can't be placed and `tiles` (`MapTiles`)
+  the raster XYZ tiles to draw.
+- New slot `checkout.LocationPicker`, rendered on the delivery step under the address form when
+  the store prices by distance: `center` + `precision` (where to open the map and how close),
+  `value` (the confirmed `LatLng`, or null), `tiles`, `status` (idle, finding, quoting,
+  confirmed, out_of_zone, error), optional `hint` (Core's price line for the confirmed point),
+  `error`, `onConfirm(point)`, `onLocate`/`locateStatus` (the device's location). The default
+  is a dependency-free tile map under a fixed pin (drag, tap, pinch, + / −, arrow keys).
+- The checkout places the typed address with `api.geocode({ cep?, street?, number?, city?,
+state? })` → `GET /storefront/v1/geocode` (`{ point: GeoPoint | null }`), quotes a confirmed
+  pin (`api.quote({ lat, lng, paymentMethod })`) and won't leave the delivery step without
+  one. A new street, number or CEP drops the pin. "Lembrar meus dados" keeps the pin
+  (`CustomerProfile.address.lat/lng`), so a returning shopper confirms nothing.
+- `QuoteResult.distanceSource` and `Cart.delivery.distanceSource`: `'route'` (a road route) or
+  `'estimate'` (straight line × 1.3, while no route could be had); `zoneKind`/`DeliveryZone.kind`
+  may be `'distance'` (a quote only — never in the zone list).
+
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's.
@@ -538,7 +563,8 @@ an override, and K07 allows `@vendua/kernel/rules` in store code.
 `Order`, `Notice`, `StateEnvelope`, …). Kernel 1.2 types: `ComboSlot`, `ComboSelection`,
 `CartCoupon`, `CartSchedule`, `CouponCheck`, `DeliveryAddress`, `CepResult`, `ImportLine`,
 `ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo` (Kernel 1.7: `PaymentNext`;
-Kernel 1.12: `PaymentAdjustment`, `ModifierPricingRule`); every new DTO field
+Kernel 1.12: `PaymentAdjustment`, `ModifierPricingRule`; Kernel 1.15: `DistancePricing`,
+`GeoPoint`, `LatLng`, `MapTiles`); every new DTO field
 is optional so a Kernel 1.2 storefront still runs against an older Core. Slot prop types: `SlotProps`, `CheckoutStep`,
 `CustomerDraft`, `DeliveryOption`, `PaymentMethod`, `ModifierGroup`, `PaymentStatusKind` (1.7).
 

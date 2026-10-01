@@ -2635,6 +2635,148 @@
     gap: 8px;
     margin-bottom: 12px;
   }
+  /* Delivery pin (checkout.LocationPicker, Kernel 1.15): tiles under a fixed pin. */
+  .v-pin-map {
+    position: relative;
+    height: clamp(220px, 56vw, 300px);
+    overflow: hidden;
+    isolation: isolate;
+    border-radius: var(--v-radius-lg, 12px);
+    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 14%, transparent);
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 6%, var(--v-color-surface, #fff));
+    touch-action: none;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .v-pin-map:active {
+    cursor: grabbing;
+  }
+  .v-pin-map:focus-visible {
+    outline: var(--v-focus);
+    outline-offset: 2px;
+  }
+  .v-pin-tiles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .v-pin-tile {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 256px;
+    height: 256px;
+    max-width: none;
+    pointer-events: none;
+  }
+  /* the pin's tip sits on the centre; a soft shadow marks the exact point */
+  .v-pin-map::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 14px;
+    height: 6px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: rgb(0 0 0 / 0.28);
+    pointer-events: none;
+  }
+  .v-pin-marker {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 1;
+    transform: translate(-50%, -100%);
+    filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.3));
+    pointer-events: none;
+    transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+  }
+  .v-pin-marker[data-moved] {
+    transform: translate(-50%, calc(-100% - 6px));
+  }
+  .v-pin-marker path {
+    fill: var(--v-color-accent, #3f5e4e);
+    stroke: var(--v-color-on-accent, #fff);
+    stroke-width: 1.5;
+  }
+  .v-pin-marker circle {
+    fill: var(--v-color-on-accent, #fff);
+  }
+  .v-pin-zoom {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    display: grid;
+    border-radius: var(--v-radius-md, 8px);
+    overflow: hidden;
+    background: var(--v-color-surface, #fff);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 0.2);
+  }
+  .v-pin-zoom button {
+    width: 40px;
+    height: 40px;
+    border: 0;
+    background: transparent;
+    color: var(--v-color-text, #1c1b1a);
+    font: inherit;
+    font-size: 1.25rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .v-pin-zoom button + button {
+    border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 12%, transparent);
+  }
+  .v-pin-zoom button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .v-pin-zoom button:focus-visible {
+    outline: var(--v-focus);
+    outline-offset: -2px;
+  }
+  .v-pin-credit {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    padding: 2px 6px;
+    border-top-left-radius: var(--v-radius-sm, 4px);
+    background: color-mix(in srgb, var(--v-color-surface, #fff) 82%, transparent);
+    color: var(--v-color-text, #1c1b1a);
+    font-size: 0.6875rem;
+    line-height: 1.4;
+  }
+  .v-pin-credit a {
+    color: inherit;
+  }
+  .v-pin-status {
+    margin: 10px 0 0;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+  }
+  .v-pin[data-status='confirmed'] .v-pin-status {
+    font-weight: 600;
+  }
+  .v-pin-status[data-tone='warn'] {
+    color: var(--v-color-danger, #a33b32);
+  }
+  .v-pin .v-field-error {
+    margin-top: 6px;
+  }
+  .v-pin-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .v-pin-marker {
+      transition: none;
+    }
+  }
   /* Pix payment — phone: amount, copy, steps, then QR as the other-device path.
      ≥720px: QR tile left, the rest right. */
   .v-pix {

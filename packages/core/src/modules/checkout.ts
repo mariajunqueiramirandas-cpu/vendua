@@ -1,7 +1,15 @@
 import { HttpError } from '../platform/http.ts';
-import { validateLine, type CartView } from './cart.ts';
+import { deliveryPricing, validateLine, type CartView } from './cart.ts';
 import type { ProductDetail } from './catalog.ts';
-import { normalizeCep, resolveZone, validCoords, type Coords, type ZoneLike } from './geo.ts';
+import {
+  normalizeCep,
+  resolveDelivery,
+  validCoords,
+  type Coords,
+  type DistanceZone,
+  type RouteQuote,
+  type ZoneLike,
+} from './geo.ts';
 import { isPaymentMethod, offeredMethods, type PaymentMethod } from './payment-adjustments.ts';
 import type { DerivedStatus, StoreSettingsRow } from './store.ts';
 
@@ -72,7 +80,14 @@ export function validateCheckout<Z extends ZoneLike>(
   store: Coords | null = null,
   /** the store's Mercado Pago connection can take a card right now */
   online: { card: boolean } = { card: false },
-): { zone: Z | null; distanceKm: number | null; feeCents: number } {
+  /** distance pricing: the road leg the cart's quote was priced on (ignored for another pin) */
+  route: RouteQuote | null = null,
+): {
+  zone: Z | DistanceZone | null;
+  distanceKm: number | null;
+  feeCents: number;
+  distanceSource?: 'route' | 'estimate';
+} {
   if (status.status === 'paused') {
     throw new HttpError(423, 'STORE_PAUSED', 'store is paused', {
       ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
@@ -132,13 +147,14 @@ export function validateCheckout<Z extends ZoneLike>(
     if (!(settings?.delivery_enabled ?? true)) {
       throw new HttpError(422, 'DELIVERY_UNAVAILABLE', 'delivery is not available');
     }
-    const match = resolveZone(
+    const match = resolveDelivery(
       zones,
       {
         neighborhood: input.delivery.neighborhood,
         coords: validCoords(input.delivery.lat, input.delivery.lng),
       },
       store,
+      deliveryPricing(settings, route),
     );
     if (!match) throw new HttpError(422, 'OUT_OF_ZONE', 'address is outside the delivery area');
     const minOrder = Math.max(settings?.min_order_cents ?? 0, match.zone.min_order_cents);
@@ -147,7 +163,12 @@ export function validateCheckout<Z extends ZoneLike>(
         minOrderCents: minOrder,
       });
     }
-    return { zone: match.zone, distanceKm: match.distanceKm, feeCents: match.feeCents };
+    return {
+      zone: match.zone,
+      distanceKm: match.distanceKm,
+      feeCents: match.feeCents,
+      ...(match.distanceSource ? { distanceSource: match.distanceSource } : {}),
+    };
   }
   const minOrder = settings?.min_order_cents ?? 0;
   if (cart.totals.subtotalCents < minOrder) {

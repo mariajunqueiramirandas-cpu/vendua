@@ -56,6 +56,8 @@ export interface OrderRow {
     addressParts?: Record<string, string | null>;
     zoneName?: string | null;
     distanceKm?: number | null;
+    /** distance pricing: road route, or the straight line × detour factor */
+    distanceSource?: 'route' | 'estimate';
     feeCents?: number;
     etaMin?: number;
     etaMax?: number;
