@@ -18,7 +18,7 @@ export const PLATFORM: Record<string, string> = {
 export const platformName = (p: string | null | undefined) => (p && PLATFORM[p]) || 'outro app';
 
 /** The platforms Core reads today (its `ADAPTERS`), in the order merchants know them. */
-export const READABLE = ['instadelivery', 'cardapioweb', 'olaclick', 'takeat'];
+export const READABLE = ['instadelivery', 'cardapioweb', 'olaclick', 'takeat', 'deliverydireto'];
 
 /** "Instadelivery ou Cardápio Web" — the readable platforms in one phrase. */
 export const readableNames = () => {
@@ -86,6 +86,8 @@ export function lostLine(l: ImportLost, platform: string): string {
     // ── products and categories
     case 'hidden_items':
       return `A categoria ${s} veio vazia: os itens dela estão ocultos no ${from}. Mostre lá e importe de novo, ou cadastre aqui.${d ? ' A descrição dela também ficou de fora.' : ''}`;
+    case 'category_unreadable':
+      return `Não conseguimos ler a categoria ${s}. Importe de novo ou cadastre os produtos dela aqui.`;
     case 'empty_category':
       return `A categoria ${s} não tinha produtos.`;
     case 'category_image':
@@ -168,8 +170,12 @@ export function lostLine(l: ImportLost, platform: string): string {
       return `No ${from}, a taxa de entrega era calculada pelo endereço de cada pedido${d ? ` (entregava em ${d})` : ''}. Aqui a taxa vem da região: cadastre as regiões em Loja › Entrega.`;
     case 'delivery_minimum':
       return `No ${from}, o pedido mínimo${d ? ` de ${d}` : ''} valia só para entrega. Aqui ele fica na região de entrega: coloque-o ao cadastrar as regiões em Loja › Entrega.`;
+    case 'delivery_minimum_lower':
+      return `No ${from}, ${d ? `o pedido mínimo da entrega (${d}) era menor que o da retirada` : 'só a retirada tinha pedido mínimo'}. Aqui o mínimo vale para a loja toda e ficou o da retirada: confira em Loja › Entrega.`;
     case 'delivery_out_of_area':
       return `No ${from}, a loja aceitava pedidos fora das áreas desenhadas. Aqui a entrega é só dentro das regiões: confira em Loja › Entrega.`;
+    case 'delivery_overlap':
+      return `No ${from}, as áreas de entrega se sobrepunham e o app escolhia a taxa. Aqui vale a menor área que contém o endereço: confira as taxas em Loja › Entrega.`;
     case 'delivery_fee_later':
       return `No ${from}, a taxa de entrega era combinada depois do pedido. Aqui a taxa vem da região: se você entrega, cadastre as regiões em Loja › Entrega.`;
     case 'delivery_flat_fee':

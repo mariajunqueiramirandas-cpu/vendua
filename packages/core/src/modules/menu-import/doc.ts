@@ -301,6 +301,12 @@ export function clean(v: unknown): string {
 
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
 
+/** A note quotes merchant-typed labels, where a CNPJ, phone or e-mail sometimes sits. */
+const noIds = (s: string) =>
+  s
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '…')
+    .replace(/[(+]?\d[\d.\-/() ]{6,}\d/g, (m) => (m.replace(/\D/g, '').length >= 8 ? '…' : m));
+
 /** Cut to `max` characters, on a word boundary when one is near. */
 export function cut(s: string, max: number, onWord = false): string {
   if (s.length <= max) return s;
@@ -372,7 +378,7 @@ export function validateDoc(input: MenuImportV1): { doc: MenuImportV1; counts: I
   const note = (l: Lost) => {
     if (lost.length >= 500) return;
     const subject = l.subject ? cut(oneLine(clean(l.subject)), 120, true) : '';
-    const detail = l.detail ? cut(oneLine(clean(l.detail)), 300, true) : '';
+    const detail = l.detail ? cut(oneLine(noIds(clean(l.detail))), 300, true) : '';
     lost.push({
       scope: l.scope,
       ...(subject ? { subject } : {}),

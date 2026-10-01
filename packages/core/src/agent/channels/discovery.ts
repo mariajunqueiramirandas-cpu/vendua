@@ -99,6 +99,7 @@ const LISTING_HOSTS = new Set([
   'instadelivery.com.br',
   'cardapioweb.com',
   'ola.click',
+  'deliverydireto.com.br',
   'goomer.app',
   'takeat.app',
   'ueniweb.com',

@@ -519,8 +519,9 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
       answers ([§3](#3-platforms)); the drift is in [Appendix A](#appendix-a--platform-notes).
    2. Settle the Instadelivery fields above. Done 2026-10-01.
    3. One adapter per PR, with its fixtures: Cardápio Web, OlaClick, Takeat, Delivery Direto,
-      Saipos, Goomer. Built: Cardápio Web, OlaClick and Takeat (helpers two adapters share live
-      in `adapters/shared.ts`). A minimum that applies to delivery only there goes on the delivery
+      Saipos, Goomer. Built: Cardápio Web, OlaClick, Takeat and Delivery Direto (helpers two
+      adapters share live in `adapters/shared.ts`). An average maps only where it can't fall on a
+      half cent: each platform rounds a float its own way. A minimum that applies to delivery only there goes on the delivery
       zones: a store minimum here binds pickup too. Items priced only by a required list where the customer picks a
       quantity (a can of soda "×N") keep a base of R$ 0,00, exactly as there; the storefront
       shows that base, not the "a partir de" the old store showed.
@@ -646,10 +647,31 @@ largest store read.
     when `required` is true; pizza flavours cost 0 and the product carries the price. Variant
     `cost` is the merchant's cost and company `token` is credential-like: never copied. Images:
     `assets.olaclick.app`. Custom domain: the same host lookup.
-- **Delivery Direto** — `GET <base>/categories`, then `<base>/categories/<id>?include=items,properties`
-  per category, plus `<base>/delivery/fees` and `<base>/payment-forms`. `price_calculation_type`
-  AVERAGE or HIGHER; options with `max_choices`; per-weekday availability; fees by circle or
-  polygon.
+- **Delivery Direto** — as built (phase 3): the link is `deliverydireto.com.br/<brand>/<unit>`
+  (pages under it too) or `/<brand>`, which opens its only unit; a brand with several units
+  answers `NOT_FOUND` so the merchant pastes the unit's link. `GET <brand>/basic_info` → the units
+  (the unit is checked against it: a wrong slug there redirects to a page dump), then
+  `<base>/categories`, `<base>/categories/<id>?include=items,properties` four at a time, the pizza
+  module when a category is `pizza_module` (`get_pizza_sizes`, then flavours and extras per
+  size), `<base>/delivery/fees` and `<base>/payment-forms`. Items: `HIDDEN` skipped,
+  `SHORT_SUPPLY` sold out, `UNAVAILABLE` (only outside its hours now) active; `filters` without
+  delivery or takeout → `dine_in_only`; `items_availability` ∩ `categoryavailabilities` → the
+  schedule; badges and `is_new` → tags. Properties: RADIO / CHECKBOX / MULTIPLE (`max_choices`
+  the quantity), `combo_min_choices`/`combo_max_choices`; SUM, HIGHER → most expensive, AVERAGE →
+  average only where it can't fall on a half cent (the storefront rounds a float's printed
+  digits), SMALLER → hidden `pizza_pricing`. The pizza module: one product per size, its
+  flavours priced for that size under the size's `pizzasetting`. Store from the unit: name,
+  `description`'s first line, phone, Instagram, address (unless `hide_address`), coordinates,
+  logo (not the placeholder), cover, `settings.primary_color`, hours from `business_hours`
+  (the digits of a placeholder ISO time), `switch_delivery`, `takeout_status`; minimums: pickup's
+  as the store's, delivery's on the zones when higher. Zones: `POLYGON` (`"lng,lat|…"`, closed,
+  padded) as polygons; `CIRCLE` (any centre, radius in metres) as a 48-sided polygon just
+  outside it; overlapping circles are a `delivery_overlap` note; free above
+  `settings.free_delivery_minimum_order` (≥ there too); no area at all is `delivery_flat_fee`
+  (free). Payments: `money`, Pix by name or `pix`, VOUCHER or voucher brands, CREDIT/DEBIT or a
+  card brand, else the label; a `discount_percentage` (cash, on an amount the code doesn't make
+  clear) is a note; the Pix key isn't read out of a form's name. Images:
+  `duisktnou8b89.cloudfront.net`, `img.deliverydireto.com.br`.
   - _Checked 2026-10-01_ (a five-unit pizzeria, an ice-cream shop and a pizzeria, plus seven to
     settle fields): works with drift. `<base>` is the store link itself,
     `deliverydireto.com.br/<brand>/<store>`, with no header. Hours, minimum order, prep times, the

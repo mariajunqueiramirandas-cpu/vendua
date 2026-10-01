@@ -49,6 +49,7 @@ const NOTE: Record<string, string> = {
   option_minimum: 'mínimo de opções afrouxado',
   delivery_minimum: 'mínimo só para entrega',
   delivery_out_of_area: 'entregava fora das áreas',
+  delivery_overlap: 'áreas de entrega sobrepostas',
   delivery_flat_fee: 'taxa fixa para qualquer endereço',
   sold_by_weight: 'vendido por peso (produto oculto)',
   price_unreadable: 'regra de preço ilegível (produto oculto)',
@@ -69,6 +70,7 @@ const READABLE: [name: string, host: RegExp][] = [
   ['cardápio web', /(^|\.)cardapioweb\.com$/i],
   ['olaclick', /\.ola\.click$/i],
   ['takeat', /^pedido\.takeat\.app$/i],
+  ['delivery direto', /(^|\.)deliverydireto\.com\.br$/i],
 ];
 const readable = (site: string | null | undefined) => {
   try {

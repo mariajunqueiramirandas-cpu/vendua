@@ -362,8 +362,14 @@ export const takeat: Adapter = {
         if (!zones.length) zones = undefined;
       }
       if (!zones) lost.push({ scope: 'store', code: 'delivery_by_address' });
-      // a lower delivery minimum than pickup's, or one with no zone to carry it
-      if (deliveryMin < pickupMin || (!zones && deliveryMin > pickupMin))
+      if (deliveryMin < pickupMin)
+        lost.push({
+          scope: 'store',
+          code: 'delivery_minimum_lower',
+          ...(deliveryMin ? { detail: reais(deliveryMin) } : {}),
+        });
+      // one with no zone to carry it
+      if (!zones && deliveryMin > pickupMin)
         lost.push({ scope: 'store', code: 'delivery_minimum', detail: reais(deliveryMin) });
     }
     if (flag(store.is_order_scheduling_active)) lost.push({ scope: 'store', code: 'time_slots' });

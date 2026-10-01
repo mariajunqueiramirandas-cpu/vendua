@@ -4,13 +4,16 @@ import fixture from './fixtures/menu-import/instadelivery.json';
 import cwFixture from './fixtures/menu-import/cardapioweb.json';
 import olaFixture from './fixtures/menu-import/olaclick.json';
 import tkFixture from './fixtures/menu-import/takeat.json';
+import ddFixture from './fixtures/menu-import/deliverydireto.json';
 import { recognise, type Adapter } from '../src/modules/menu-import/adapters/index.ts';
 import { cardapioweb } from '../src/modules/menu-import/adapters/cardapioweb.ts';
 import { olaclick } from '../src/modules/menu-import/adapters/olaclick.ts';
 import { takeat } from '../src/modules/menu-import/adapters/takeat.ts';
+import { deliverydireto } from '../src/modules/menu-import/adapters/deliverydireto.ts';
 import { instadelivery } from '../src/modules/menu-import/adapters/instadelivery.ts';
 import { TEMPLATE_TOKENS } from '../src/modules/menu-import/apply.ts';
 import { unitPriceCents } from '../src/modules/cart.ts';
+import { haversineKm, pointInPolygon } from '../src/modules/geo.ts';
 import {
   LIMITS,
   TooLarge,
@@ -1327,7 +1330,11 @@ describe('takeat', () => {
     // pickup's R$ 40 binds every order here, so the lower delivery minimum is a note
     expect(d.operations?.minOrderCents).toBe(4000);
     expect(d.zones!.every((z) => z.minOrderCents === undefined)).toBe(true);
-    expect(d.lost).toContainEqual({ scope: 'store', code: 'delivery_minimum', detail: 'R$ 30,00' });
+    expect(d.lost).toContainEqual({
+      scope: 'store',
+      code: 'delivery_minimum_lower',
+      detail: 'R$ 30,00',
+    });
     // no pickup: the delivery minimum is the store's
     raw.store.delivery_info.is_withdrawal_allowed = false;
     expect(mapped(takeat, raw).doc.operations).toMatchObject({
@@ -1403,6 +1410,295 @@ describe('takeat', () => {
       products: 9,
       hidden: 3,
       optionGroups: 6,
+      hours: 2,
+      zones: 2,
+      paymentMethods: 4,
+      logo: true,
+      cover: true,
+    });
+  });
+});
+
+describe('deliverydireto', () => {
+  const { doc, counts } = mapped(deliverydireto, ddFixture, 'pizzariaexemplo/centro');
+  const byName = new Map(doc.categories.flatMap((c) => c.products).map((p) => [p.name, p]));
+  const lostCodes = doc.lost.map((l) => `${l.subject ?? ''}:${l.code}`);
+
+  test('recognise: the store link, a brand link, and the pages under them', () => {
+    const ref = (u: string) => {
+      const r = recognise(u);
+      return r.kind === 'ok' && r.adapter.platform === 'deliverydireto' ? r.ref : null;
+    };
+    expect(ref('https://deliverydireto.com.br/pizzariaexemplo/centro')).toBe(
+      'pizzariaexemplo/centro',
+    );
+    expect(ref('deliverydireto.com.br/PizzariaExemplo/Centro/pages/area-de-entrega')).toBe(
+      'pizzariaexemplo/centro',
+    );
+    expect(ref('https://www.deliverydireto.com.br/pizzariaexemplo')).toBe('pizzariaexemplo');
+    expect(ref('https://deliverydireto.com.br/pizzariaexemplo/pages/sobre')).toBe(
+      'pizzariaexemplo',
+    );
+    for (const u of ['https://deliverydireto.com.br/', 'https://deliverydireto.com.br/ss/x/y/z.js'])
+      expect(recognise(u).kind).toBe('unsupported');
+  });
+
+  test('read: units, categories one by one, the pizza module, fees, payment forms', async () => {
+    const o = 'https://deliverydireto.com.br';
+    const base = `${o}/pizzariaexemplo/centro`;
+    const routes: Record<string, unknown> = {
+      [`${o}/pizzariaexemplo/basic_info`]: {
+        status: 'success',
+        data: { brand: { stores: [ddFixture.unit] } },
+      },
+      [`${base}/categories`]: {
+        status: 'success',
+        data: {
+          categories: [
+            ...ddFixture.categories.map((c) => ({ ...c, items: [] })),
+            { id: 9999, name: 'Bebidas', encoded_name: 'bebidas' },
+          ],
+        },
+      },
+      [`${base}/categories/9999?include=items,properties`]: { status: 'error' },
+      [`${base}/pizza_module/get_pizza_sizes`]: {
+        status: 'success',
+        data: { items: ddFixture.pizza.sizes },
+      },
+      [`${base}/delivery/fees`]: { status: 'success', data: ddFixture.fees },
+      [`${base}/payment-forms`]: { status: 'success', data: ddFixture.forms },
+    };
+    for (const c of ddFixture.categories)
+      routes[`${base}/categories/${c.id}?include=items,properties`] = {
+        status: 'success',
+        data: { category: c },
+      };
+    for (const sz of ddFixture.pizza.sizes) {
+      routes[`${base}/pizza_module/get_pizza_flavors?size=${sz.id}`] = {
+        status: 'success',
+        data: { items: (ddFixture.pizza.flavors as Record<string, unknown>)[String(sz.id)] ?? [] },
+      };
+      routes[`${base}/pizza_module/get_pizza_additionals?size=${sz.id}`] = {
+        status: 'success',
+        data: { properties: [] },
+      };
+    }
+    const { raw, seen } = await fakeRead(deliverydireto, 'pizzariaexemplo/centro', routes);
+    expect(new Set(seen.map((s) => s.url))).toEqual(new Set(Object.keys(routes)));
+    expect(seen.every((s) => Object.keys(s.headers).length === 2)).toBe(true);
+    const doc2 = mapped(deliverydireto, raw).doc;
+    expect(doc2.categories.flatMap((c) => c.products).map((p) => [p.name, p.priceCents])).toEqual(
+      doc.categories.flatMap((c) => c.products).map((p) => [p.name, p.priceCents]),
+    );
+    // a category that wouldn't read is a note, not a silent gap
+    expect(doc2.lost).toContainEqual({
+      scope: 'category',
+      subject: 'Bebidas',
+      code: 'category_unreadable',
+    });
+    // a brand link opens its only unit; a unit that isn't the brand's is not found
+    const brandOnly = await fakeRead(deliverydireto, 'pizzariaexemplo', routes);
+    expect(brandOnly.seen[1]!.url).toBe(`${base}/categories`);
+    await expect(fakeRead(deliverydireto, 'pizzariaexemplo/outra', routes)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    // several units and a brand link: the merchant pastes the unit's link
+    const two = {
+      ...routes,
+      [`${o}/pizzariaexemplo/basic_info`]: {
+        status: 'success',
+        data: { brand: { stores: [ddFixture.unit, { ...ddFixture.unit, encoded_name: 'praia' }] } },
+      },
+    };
+    await expect(fakeRead(deliverydireto, 'pizzariaexemplo', two)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  }, 30_000);
+
+  test('allowlisted fields only — no fiscal id, platform id or merchant id survives', () => {
+    const json = JSON.stringify(doc);
+    expect(json).not.toContain('should-not-appear');
+    expect(json).not.toContain('00000000000000');
+    expect(json).not.toContain('00.000.000');
+  });
+
+  test('flavours: the dearest maps; an average only off half cents; the cheapest hides', () => {
+    const pizza = byName.get('Pizza meio a meio')!;
+    expect(pizza.priceCents).toBe(4990);
+    const [flavours, crust] = pizza.optionGroups;
+    expect(flavours).toMatchObject({ pricingRule: 'average', min: 1, max: 2 });
+    // ½ Calabresa + ½ Camarão there: (49,90 + 64,90) / 2 = 57,40
+    expect(
+      unitPriceCents(pizza.priceCents, [
+        {
+          pricingRule: 'average',
+          picks: [0, 2].map((i) => ({
+            priceDeltaCents: flavours!.options[i]!.priceDeltaCents,
+            qty: 1,
+          })),
+        },
+      ]),
+    ).toBe(5740);
+    expect(crust!.options[1]).toMatchObject({ name: 'Cheddar', soldOut: true });
+    expect(byName.get('Pizza do mais caro')!.optionGroups[0]).toMatchObject({
+      pricingRule: 'most_expensive',
+    });
+    expect(byName.get('Pizza do mais barato')!.status).toBe('archived');
+    expect(byName.get('Pizza média torta')!.status).toBe('archived');
+    expect(lostCodes).toEqual(
+      expect.arrayContaining([
+        'Pizza do mais barato:pizza_pricing',
+        'Pizza média torta:pizza_pricing',
+      ]),
+    );
+  });
+
+  test('the pizza module: a product per size, its flavours priced for that size', () => {
+    const big = byName.get('Grande')!;
+    expect(big.priceCents).toBe(5490);
+    expect(big.optionGroups.map((g) => g.name)).toEqual(['Escolha até 2 sabores', 'Borda']);
+    expect(
+      big.optionGroups[0]!.options.map((o) => [o.name, o.priceDeltaCents, !!o.soldOut]),
+    ).toEqual([
+      ['Mussarela', 0, false],
+      ['Portuguesa', 400, false],
+      ['Chocolate', 200, true],
+    ]);
+    expect(byName.has('Família escondida')).toBe(false);
+  });
+
+  test('items: statuses, order types, hours of sale, quantities', () => {
+    expect(byName.get('X-Burguer')).toMatchObject({ priceCents: 2500, tags: ['Novidade'] });
+    expect(byName.get('X-Burguer')!.optionGroups[0]!.options).toEqual([
+      { name: 'Bacon', priceDeltaCents: 400, maxQty: 3 },
+      { name: 'Ovo', priceDeltaCents: 250 },
+    ]);
+    expect(byName.get('X-Pausado')!.status).toBe('sold_out');
+    // UNAVAILABLE is only "outside its hours right now"
+    expect(byName.get('X-Fora de hora')).toMatchObject({
+      status: 'active',
+      availability: {
+        windows: [{ days: [0, 6], from: '18:00', to: '23:00' }],
+        outside: 'unavailable',
+      },
+    });
+    expect(byName.has('X-Salão')).toBe(false);
+    expect(lostCodes).toContain('X-Salão:dine_in_only');
+    expect(byName.has('Escondido')).toBe(false);
+  });
+
+  test('store: unit profile, wall-clock hours, zones from polygons and circles, payments', () => {
+    expect(doc.store).toMatchObject({
+      name: 'Pizzaria Exemplo - Centro',
+      whatsapp: '21999990000',
+      instagram: '@pizzaria.exemplo',
+      address: 'Rua das Pizzas, 42 - Loja 2 - Centro',
+      brandColor: '#C0392B',
+    });
+    expect(doc.hours).toEqual([
+      { days: [0, 2, 3, 4], open: '18:00', close: '23:30' },
+      { days: [5, 6], open: '18:00', close: '01:00' },
+    ]);
+    const [centre, disc] = doc.zones!;
+    // lng,lat pairs, closed and padded: a [lat, lng] ring of 4
+    expect(centre).toMatchObject({
+      kind: 'polygon',
+      feeCents: 500,
+      minOrderCents: 3000,
+      freeDeliveryOverCents: 9000,
+      etaMin: 30,
+      etaMax: 45,
+    });
+    expect(centre!.polygon).toEqual([
+      [-22.9, -43.2],
+      [-22.9, -43.21],
+      [-22.91, -43.21],
+      [-22.91, -43.2],
+    ]);
+    // a 5 km circle: a 48-sided polygon drawn just outside it
+    expect(disc).toMatchObject({ name: 'Até 5 km', kind: 'polygon', feeCents: 900 });
+    expect(disc!.polygon).toHaveLength(48);
+    // every address 5 km away (Core's haversine) is inside; 5.2 km is not
+    const at = (km: number, deg: number) => {
+      const [φ, λ, δ, θ] = [-22.9, -43.2, km / 6371, deg].map((x, i) =>
+        i < 2 || i === 3 ? (x * Math.PI) / 180 : x,
+      ) as [number, number, number, number];
+      const φ2 = Math.asin(Math.sin(φ) * Math.cos(δ) + Math.cos(φ) * Math.sin(δ) * Math.cos(θ));
+      const λ2 =
+        λ +
+        Math.atan2(
+          Math.sin(θ) * Math.sin(δ) * Math.cos(φ),
+          Math.cos(δ) - Math.sin(φ) * Math.sin(φ2),
+        );
+      return { lat: (φ2 * 180) / Math.PI, lng: (λ2 * 180) / Math.PI };
+    };
+    for (let deg = 0; deg < 360; deg += 0.5) {
+      const p = at(5, deg);
+      expect(haversineKm({ lat: -22.9, lng: -43.2 }, p)).toBeCloseTo(5, 6);
+      expect(pointInPolygon(p, disc!.polygon!)).toBe(true);
+      expect(pointInPolygon(at(5.2, deg), disc!.polygon!)).toBe(false);
+    }
+    expect(doc.zones).toHaveLength(2);
+    expect(doc.operations).toEqual({ prepTimeMinutes: 40, pickup: true, delivery: true });
+    expect(doc.payments).toEqual({ methods: ['cash', 'card_on_delivery', 'meal_voucher', 'pix'] });
+    // Centro sits inside the disc; a CNPJ or phone in a form's name never reaches a note
+    expect(
+      doc.lost.filter((l) => l.scope === 'store').map((l) => [l.code, l.detail ?? '']),
+    ).toEqual([
+      ['delivery_overlap', ''],
+      ['payment_adjustment', 'Dinheiro'],
+      ['payment_adjustment', 'PIX - CNPJ: …'],
+      ['payment_method', 'Fiado'],
+      ['payment_method', 'Transferência CNPJ … ou fone …'],
+      ['pix_unreadable', ''],
+    ]);
+  });
+
+  test('minimums: a lower delivery one, or one with no area to carry it, is a note', () => {
+    const raw = structuredClone(ddFixture) as typeof ddFixture & Record<string, any>;
+    raw.unit.takeout_minimum_order = 40;
+    let d = mapped(deliverydireto, raw).doc;
+    expect(d.operations?.minOrderCents).toBe(4000);
+    expect(d.zones!.every((z) => z.minOrderCents === undefined)).toBe(true);
+    expect(d.lost).toContainEqual({
+      scope: 'store',
+      code: 'delivery_minimum_lower',
+      detail: 'R$ 30,00',
+    });
+    raw.unit.takeout_minimum_order = 0;
+    raw.fees.fees = [];
+    d = mapped(deliverydireto, raw).doc;
+    expect(d.operations?.minOrderCents).toBeUndefined();
+    expect(d.lost).toContainEqual({ scope: 'store', code: 'delivery_minimum', detail: 'R$ 30,00' });
+    expect(d.lost).toContainEqual({ scope: 'store', code: 'delivery_flat_fee', detail: 'grátis' });
+  });
+
+  test('a quantity group averaged: exact up to two units of one parity, else hidden', () => {
+    const raw = structuredClone(ddFixture) as typeof ddFixture & Record<string, any>;
+    const burger = () =>
+      raw.categories.flatMap((c: any) => c.items ?? []).find((i: any) => i.name === 'X-Burguer');
+    const extras = burger().properties[0];
+    extras.price_calculation_type = 'AVERAGE';
+    let p = mapped(deliverydireto, raw)
+      .doc.categories.flatMap((c) => c.products)
+      .find((x) => x.name === 'X-Burguer')!;
+    expect(p.status).toBe('archived');
+    extras.combo_max_choices = 2;
+    for (const o of extras.options) o.price = 4;
+    p = mapped(deliverydireto, raw)
+      .doc.categories.flatMap((c) => c.products)
+      .find((x) => x.name === 'X-Burguer')!;
+    expect(p.status).not.toBe('archived');
+    expect(p.optionGroups[0]).toMatchObject({ pricingRule: 'average', max: 2 });
+    expect(p.optionGroups[0]!.options[0]!.maxQty).toBe(2);
+  });
+
+  test('counts', () => {
+    expect(counts).toMatchObject({
+      categories: 3,
+      products: 8,
+      hidden: 2,
+      optionGroups: 8,
       hours: 2,
       zones: 2,
       paymentMethods: 4,
