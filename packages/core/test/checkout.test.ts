@@ -85,6 +85,7 @@ function cart(subtotalCents: number): CartView {
       remainingMinOrderCents: Math.max(0, 1000 - subtotalCents),
       belowMinOrder: subtotalCents < 1000,
       discountCents: 0,
+      paymentAdjustmentCents: 0,
       freeDeliveryThresholdCents: null,
       freeDeliveryRemainingCents: null,
     },

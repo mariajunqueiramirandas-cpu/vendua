@@ -142,7 +142,7 @@ export function mountCustomers(d: AdminDeps) {
       const phone = phoneParam(c);
       const orders = await tx`
         select number, state, customer, delivery, payment, notes, subtotal_cents, delivery_fee_cents,
-               discount_cents, total_cents, coupon_code, scheduled_for, placed_at,
+               discount_cents, payment_adjustment_cents, total_cents, coupon_code, scheduled_for, placed_at,
                (select json_agg(json_build_object('name', i.name, 'qty', i.qty, 'lineTotalCents', i.line_total_cents)
                                 order by i.sort) from order_items i where i.order_id = orders.id) as items
         from orders where tenant_id = ${t.id} and customer_phone = ${phone} order by placed_at

@@ -4,6 +4,7 @@ import { HttpError, UUID_RE } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
 import { storeOrigin } from '../../platform/store-origin.ts';
 import { ORDER_CHANNEL, loadOrderView, type OrderView } from '../orders.ts';
+import type { PaymentAdjustment, PaymentAdjustments } from '../payment-adjustments.ts';
 import { pixPayload, type PixKeyType } from '../pix.ts';
 import type { StoreSettingsRow } from '../store.ts';
 import {
@@ -74,14 +75,24 @@ export async function storePaymentsPublic(
   tenantId: string,
   provider: PaymentProvider,
   methods: string[],
-): Promise<{ onlinePayments: { pix: boolean; card: boolean }; paymentMethods: string[] }> {
+  adjustments: PaymentAdjustments = {},
+): Promise<{
+  onlinePayments: { pix: boolean; card: boolean };
+  paymentMethods: string[];
+  /** offered methods with a discount/surcharge only — labels; Core computes the cents */
+  paymentAdjustments: Record<string, PaymentAdjustment>;
+}> {
   const online = isOnline(await loadConnection(tx, tenantId), provider);
+  const paymentMethods = online ? methods : methods.filter((m) => m !== 'card_online');
   return {
     onlinePayments: {
       pix: online && methods.includes('pix'),
       card: online && methods.includes('card_online'),
     },
-    paymentMethods: online ? methods : methods.filter((m) => m !== 'card_online'),
+    paymentMethods,
+    paymentAdjustments: Object.fromEntries(
+      Object.entries(adjustments).filter(([m]) => paymentMethods.includes(m)),
+    ),
   };
 }
 
@@ -129,7 +140,9 @@ export function offlinePayment(
         ? profile
           ? `Pague ${brl(totalCents)} no Pix copia e cola abaixo — o pedido #${number} aparece para a loja.`
           : 'Pagamento PIX combinado na entrega/retirada.'
-        : 'Pagamento na entrega ou retirada.',
+        : method === 'meal_voucher'
+          ? 'Pagamento com vale-refeição na entrega ou retirada.'
+          : 'Pagamento na entrega ou retirada.',
     pix: profile
       ? {
           key: profile.key,
