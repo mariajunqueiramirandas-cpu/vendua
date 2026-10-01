@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
+import { runBillingTick } from '../src/modules/billing/jobs.ts';
 import {
   normalizeSlug,
   readSignupToken,
@@ -357,5 +358,169 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     } finally {
       fake.platformConfigured = true;
     }
+  });
+
+  test('access code: no Mercado Pago, the store waits on its invoice until the team marks it paid', async () => {
+    const other = createApp(deps);
+    const token = (await verified(mkPhone(7), other)).signupToken;
+    const slug = `signup-${nonce}-code`;
+    const before = process.env.VENDUA_SIGNUP_ACCESS_CODE;
+    fake.platformConfigured = false;
+    try {
+      process.env.VENDUA_SIGNUP_ACCESS_CODE = 'short-code';
+      expect((await call('GET', '/admin/v1/signup/plans')).body.billing).toEqual({
+        available: false,
+        accessCode: false,
+      });
+      const short = await signup(token, slug, { accessCode: 'short-code' }, other);
+      expect(short.body.error.code).toBe('INVALID_ACCESS_CODE');
+
+      process.env.VENDUA_SIGNUP_ACCESS_CODE = ' abre-sem-mp-1234 ';
+      expect((await call('GET', '/admin/v1/signup/plans')).body.billing.accessCode).toBe(true);
+      const wrong = await signup(token, slug, { accessCode: 'abre-sem-mp-0000' }, other);
+      expect(wrong.status).toBe(422);
+      expect(wrong.body.error).toMatchObject({
+        code: 'INVALID_ACCESS_CODE',
+        details: { field: 'accessCode' },
+      });
+      // no code still needs billing
+      expect((await signup(token, slug, {}, other)).status).toBe(503);
+
+      const r = await signup(
+        token,
+        slug,
+        { accessCode: 'abre-sem-mp-1234', method: undefined },
+        other,
+      );
+      expect(r.status).toBe(201);
+      expect(r.body.next).toMatchObject({ kind: 'manual' });
+      const id = r.body.store.id;
+      const invoiceId = r.body.next.invoiceId;
+      const hold = async () =>
+        (
+          await sql`select billing_hold, status_override from store_settings where tenant_id = ${id}`
+        )[0]!;
+      // still closed behind the hold; one open invoice, no Pix asked of the provider
+      expect(await hold()).toMatchObject({ billing_hold: true, status_override: 'paused' });
+      const sub = (await sql`select status, method from subscriptions where tenant_id = ${id}`)[0]!;
+      expect(sub).toEqual({ status: 'pending', method: 'pix' });
+      const inv = (
+        await sql`select id, status, amount_cents, pix_copy_paste, provider_payment_id
+                  from invoices where tenant_id = ${id}`
+      )[0]!;
+      expect(inv).toMatchObject({
+        id: invoiceId,
+        status: 'open',
+        amount_cents: 3990,
+        pix_copy_paste: null,
+        provider_payment_id: null,
+      });
+
+      // a replay finds the same store and invoice, and audits once
+      const again = await signup(token, slug, { accessCode: 'abre-sem-mp-1234' }, other);
+      expect(again.status).toBe(201);
+      expect(again.body.next).toEqual({ kind: 'manual', invoiceId });
+      const audit =
+        await sql`select action from audit_log where tenant_id = ${id} and action = 'store.signup'`;
+      expect(audit).toHaveLength(1);
+
+      // the CRM sees the invoice, and marking it paid activates the plan and opens the store
+      const control = (method: string, path: string, key = crypto.randomUUID()) =>
+        call(method, path, method === 'GET' ? undefined : {}, {
+          'x-vendua-control': 'ctl',
+          'idempotency-key': key,
+        });
+      const list = await control('GET', '/control/v1/billing/stores');
+      const row = list.body.stores.find((st: { tenantId: string }) => st.tenantId === id);
+      expect(row.subscription.status).toBe('pending');
+      expect(row.openInvoice).toMatchObject({ id: invoiceId, number: 1, amountCents: 3990 });
+      expect(
+        (await call('POST', `/control/v1/billing/invoices/${invoiceId}/mark-paid`, {})).status,
+      ).toBe(404);
+      const key = crypto.randomUUID();
+      const paid = await control(
+        'POST',
+        `/control/v1/billing/invoices/${invoiceId}/mark-paid`,
+        key,
+      );
+      expect(paid.status).toBe(200);
+      expect(await hold()).toEqual({ billing_hold: false, status_override: null });
+      const acct = await session(r.cookie)('GET', '/account');
+      expect(acct.body.subscription.status).toBe('active');
+      expect(acct.body.invoices[0].status).toBe('paid');
+      // the same click replays; a second one is refused
+      expect(
+        (await control('POST', `/control/v1/billing/invoices/${invoiceId}/mark-paid`, key)).status,
+      ).toBe(200);
+      const twice = await control('POST', `/control/v1/billing/invoices/${invoiceId}/mark-paid`);
+      expect(twice.status).toBe(409);
+      expect(twice.body.error.code).toBe('INVOICE_PAID');
+      expect(
+        (await control('POST', `/control/v1/billing/invoices/${crypto.randomUUID()}/mark-paid`))
+          .status,
+      ).toBe(404);
+      const after = await control('GET', '/control/v1/billing/stores');
+      expect(
+        after.body.stores.find((st: { tenantId: string }) => st.tenantId === id).openInvoice,
+      ).toBeNull();
+
+      // without MP the renewal is an invoice for the team to mark, made once, never a Pix retry
+      await sql`update subscriptions set current_period_end = now() + interval '1 day' where tenant_id = ${id}`;
+      const jobOpts = {
+        provider: fake,
+        notify: deps.notify,
+        adminOrigin: null,
+        storeDomain: 'vendua.test',
+      };
+      await runBillingTick(appSql, jobOpts, new Date());
+      await runBillingTick(appSql, jobOpts, new Date());
+      const renewals = await sql`
+        select status, pix_copy_paste, pix_attempt from invoices
+        where tenant_id = ${id} and status = 'open'
+      `;
+      expect(renewals).toHaveLength(1);
+      expect(renewals[0]).toMatchObject({ pix_copy_paste: null, pix_attempt: 0 });
+    } finally {
+      fake.platformConfigured = true;
+      if (before === undefined) delete process.env.VENDUA_SIGNUP_ACCESS_CODE;
+      else process.env.VENDUA_SIGNUP_ACCESS_CODE = before;
+    }
+  });
+
+  test('CRM mark-paid with MP on: a live Pix is cancelled; a card assinatura is never doubled', async () => {
+    const control = (path: string) =>
+      call('POST', path, {}, { 'x-vendua-control': 'ctl', 'idempotency-key': crypto.randomUUID() });
+    const other = createApp(deps);
+    const token = (await verified(mkPhone(8), other)).signupToken;
+    const pix = await signup(token, `signup-${nonce}-crm-pix`, {}, other);
+    expect(pix.body.next.kind).toBe('pix');
+    const before = (
+      await sql`select provider_payment_id from invoices where id = ${pix.body.next.invoiceId}`
+    )[0]!;
+    expect(before.provider_payment_id).toBeTruthy();
+    const ok = await control(`/control/v1/billing/invoices/${pix.body.next.invoiceId}/mark-paid`);
+    expect(ok.status).toBe(200);
+    const inv = (
+      await sql`select status, provider_payment_id, pix_copy_paste, pix_superseded
+                from invoices where id = ${pix.body.next.invoiceId}`
+    )[0]!;
+    expect(inv).toMatchObject({ status: 'paid', provider_payment_id: null, pix_copy_paste: null });
+    expect(inv.pix_superseded).toContain(before.provider_payment_id);
+    expect(fake.payments.get(before.provider_payment_id)!.status).toBe('cancelled');
+
+    const card = await signup(token, `signup-${nonce}-crm-card`, { method: 'card' }, other);
+    expect(card.body).toMatchObject({ next: { kind: 'card' } });
+    const cardInv = (
+      await sql`
+        insert into invoices (tenant_id, number, plan_id, amount_cents, method, status, provider,
+                              period_start, period_end, due_at)
+        values (${card.body.store.id}, 1, 'basic', 3990, 'card', 'open', 'fake',
+                now(), now() + interval '1 month', now())
+        returning id
+      `
+    )[0]!;
+    const refused = await control(`/control/v1/billing/invoices/${cardInv.id}/mark-paid`);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.code).toBe('CARD_SUBSCRIPTION');
   });
 });

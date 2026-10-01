@@ -748,6 +748,15 @@ export interface BillingStore {
     brief: string | null;
     staffNote?: string | null | undefined;
   } | null;
+  /** the oldest plan invoice still to pay — "marcar como pago" settles it */
+  openInvoice?: {
+    id: string;
+    number: number;
+    amountCents: number;
+    kind: 'period' | 'upgrade';
+    periodStart: string;
+    dueAt: string;
+  } | null;
 }
 export interface ControlPlan {
   id: string;
@@ -775,6 +784,8 @@ const fleet = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+  markInvoicePaid: (id: string) =>
+    req<{ ok: boolean }>(`/billing/invoices/${id}/mark-paid`, { method: 'POST' }),
   activateDomain: (id: string) =>
     req<{ ok: boolean }>(`/custom-domains/${id}/activate`, { method: 'POST' }),
   patchSiteRequest: (id: string, patch: { status: SiteRequestStatus; staffNote?: string }) =>

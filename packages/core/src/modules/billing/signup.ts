@@ -194,6 +194,19 @@ export async function verifySignupOtp(sql: Sql, phone: string, code: string): Pr
   });
 }
 
+/** VENDUA_SIGNUP_ACCESS_CODE: signup without Mercado Pago — the store waits on its first invoice
+ *  and the team marks it paid in the CRM. Shorter than 12 characters counts as unset: guessable. */
+export function signupAccessCode(): string | null {
+  const code = process.env.VENDUA_SIGNUP_ACCESS_CODE?.trim() ?? '';
+  return code.length >= 12 ? code : null;
+}
+
+export function accessCodeMatches(given: unknown): boolean {
+  const want = signupAccessCode();
+  if (!want || typeof given !== 'string' || given.length > 200) return false;
+  return safeEq(sha256(given.trim()), sha256(want));
+}
+
 /** proof that a phone just verified, for the signup form (30 min) */
 export function signupToken(secret: string, phone: string, now = Date.now()): string {
   const body = `${phone}.${now + TOKEN_TTL_MS}`;

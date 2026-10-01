@@ -800,7 +800,11 @@ export type SignInResult =
   | { signedIn: true; store: StoreRef }
   | { signedIn: false; pickerToken: string; stores: StoreRef[] };
 
-export type PayNext = { kind: 'card'; url: string } | { kind: 'pix'; invoiceId: string };
+export type PayNext =
+  | { kind: 'card'; url: string }
+  | { kind: 'pix'; invoiceId: string }
+  /** signed up with an access code: the team confirms this invoice by hand */
+  | { kind: 'manual'; invoiceId: string };
 
 export interface TemplateSection {
   id: string;
@@ -882,7 +886,11 @@ export const api = {
   },
   signup: {
     plans: () =>
-      get<{ plans: Plan[]; billing: { available: boolean }; storeDomain: string }>('/signup/plans'),
+      get<{
+        plans: Plan[];
+        billing: { available: boolean; accessCode: boolean };
+        storeDomain: string;
+      }>('/signup/plans'),
     slug: (slug: string) =>
       get<{
         slug: string;
@@ -907,6 +915,7 @@ export const api = {
       slug: string;
       ownerName: string;
       email: string;
+      accessCode?: string;
     }) => send<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
   },
   session: () => get<Session>('/session'),

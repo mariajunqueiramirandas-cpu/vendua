@@ -12,6 +12,16 @@ export const useControlPlans = () =>
 export const useIncidents = () =>
   useQuery({ queryKey: qk.incidents(), queryFn: api.incidents, select: (r) => r.incidents });
 
+export function useMarkInvoicePaid() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.markInvoicePaid(id),
+    onSuccess: () => toast.success('pagamento confirmado'),
+    onError: (e) => toast.error(`não confirmou: ${errorMessage(e)}`),
+    onSettled: () => void qc.invalidateQueries({ queryKey: qk.billingStores() }),
+  });
+}
+
 export function useActivateDomain() {
   const qc = useQueryClient();
   return useMutation({

@@ -1,12 +1,14 @@
 import type { Context, Hono } from 'hono';
+import type { MerchantNotify } from '../admin/context.ts';
 import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 import type { Tenant } from '../platform/tenancy.ts';
-import { billingLog } from './billing/invoices.ts';
+import { billingLog, supersedePix } from './billing/invoices.ts';
 import { syncPlanPrices } from './billing/jobs.ts';
 import { planView, type PlanRow } from './billing/plans.ts';
+import { dropPix, lockSub, markInvoicePaid, type BillingCtx } from './billing/subscriptions.ts';
 import { claimControl, controlTx } from './control.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 
@@ -19,23 +21,23 @@ export function mountControlBilling(o: {
   sql: Sql;
   controlGate: (c: Context) => void;
   provider: PaymentProvider;
+  notify?: MerchantNotify;
   /** `<slug>.<storeDomain>` fallback for a store's address (default VENDUA_STORE_DOMAIN) */
   storeDomain?: string;
 }) {
   const { app, sql, controlGate } = o;
   const storeDomain = o.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br';
   const adminHost = process.env.VENDUA_ADMIN_HOST?.trim().toLowerCase();
+  const billingBase: Omit<BillingCtx, 'later'> = {
+    sql,
+    provider: o.provider,
+    notify: o.notify ?? { whatsapp: async () => {}, email: async () => {} },
+    origin: adminHost ? `https://${adminHost}` : null,
+  };
   const syncPrices = () =>
-    syncPlanPrices(
-      sql,
-      {
-        sql,
-        provider: o.provider,
-        notify: { whatsapp: async () => {}, email: async () => {} },
-        origin: adminHost ? `https://${adminHost}` : null,
-      },
-      new Date(),
-    ).catch((err) => billingLog.warn({ err }, 'plan price sync failed'));
+    syncPlanPrices(sql, billingBase, new Date()).catch((err) =>
+      billingLog.warn({ err }, 'plan price sync failed'),
+    );
   const idemKey = (c: Context) => {
     const key = c.req.header('idempotency-key');
     if (!key)
@@ -66,13 +68,21 @@ export function mountControlBilling(o: {
           sr_status: string | null;
           sr_brief: string | null;
           sr_note: string | null;
+          inv_id: string | null;
+          inv_number: number | null;
+          inv_amount: number | null;
+          inv_kind: string | null;
+          inv_start: Date | null;
+          inv_due: Date | null;
         }[]
       >`
         select t.id, t.slug, t.name, t.created_at, t.plan, p.name as plan_name,
                s.status as sub_status, s.method as sub_method, s.current_period_end as sub_period_end,
                pc.status as mp,
                cd.id as cd_id, cd.host as cd_host, cd.status as cd_status,
-               sr.id as sr_id, sr.status as sr_status, sr.brief as sr_brief, sr.staff_note as sr_note
+               sr.id as sr_id, sr.status as sr_status, sr.brief as sr_brief, sr.staff_note as sr_note,
+               inv.id as inv_id, inv.number as inv_number, inv.amount_cents as inv_amount,
+               inv.kind as inv_kind, inv.period_start as inv_start, inv.due_at as inv_due
         from tenants t
           left join plans p on p.id = t.plan
           left join subscriptions s on s.tenant_id = t.id
@@ -85,6 +95,12 @@ export function mountControlBilling(o: {
             select id, status, brief, staff_note from site_requests where tenant_id = t.id
             order by (status in ('requested', 'in_progress')) desc, created_at desc limit 1
           ) sr on true
+          -- the oldest plan invoice still to pay: the one "marcar como pago" settles next
+          left join lateral (
+            select id, number, amount_cents, kind, period_start, due_at from invoices
+            where tenant_id = t.id and status in ('open', 'failed')
+            order by period_start, number limit 1
+          ) inv on true
         order by t.created_at desc
         limit 500
       `;
@@ -104,6 +120,16 @@ export function mountControlBilling(o: {
           customDomain: r.cd_id ? { id: r.cd_id, host: r.cd_host, status: r.cd_status } : null,
           siteRequest: r.sr_id
             ? { id: r.sr_id, status: r.sr_status, brief: r.sr_brief, staffNote: r.sr_note }
+            : null,
+          openInvoice: r.inv_id
+            ? {
+                id: r.inv_id,
+                number: r.inv_number,
+                amountCents: r.inv_amount,
+                kind: r.inv_kind,
+                periodStart: r.inv_start,
+                dueAt: r.inv_due,
+              }
             : null,
         });
       return out;
@@ -162,6 +188,54 @@ export function mountControlBilling(o: {
     });
     // a new price applies to future charges; the billing job repeats this every tick
     if (typeof price === 'number' && !res.replayed) setTimeout(() => void syncPrices(), 0);
+    return c.json(res.body, res.status as 200);
+  });
+
+  // Payment received outside Mercado Pago (access-code signups, a transfer): the invoice is paid
+  // exactly as a settled Pix would be — the first one activates the plan and opens the store.
+  app.post('/control/v1/billing/invoices/:id/mark-paid', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const effects: (() => Promise<unknown>)[] = [];
+    const res = await claimControl(sql, idemKey(c), async (tx) => {
+      const inv = (
+        await tx<
+          { tenant_id: string; status: string; kind: string; provider_payment_id: string | null }[]
+        >`
+          select tenant_id, status, kind, provider_payment_id from invoices where id = ${id}
+        `
+      )[0];
+      if (!inv) throw new HttpError(404, 'NOT_FOUND', 'invoice not found');
+      if (inv.status === 'paid') throw new HttpError(409, 'INVOICE_PAID', 'already paid');
+      if (inv.status === 'void')
+        throw new HttpError(409, 'INVOICE_VOID', 'this invoice was voided');
+      // the store's own tables (settings, plan) are tenant-scoped: act as the store from here
+      await tx`select set_config('vendua.tenant_id', ${inv.tenant_id}, true)`;
+      const now = new Date();
+      const ctx: BillingCtx = { ...billingBase, later: (fn) => void effects.push(fn) };
+      // never two ways to pay one month: MP's card assinatura would still charge this period,
+      // and a Pix already issued for it is cancelled (still matchable if paid anyway)
+      const sub = await lockSub(tx, inv.tenant_id);
+      if (inv.kind === 'period' && sub?.method === 'card' && sub.provider_subscription_id)
+        throw new HttpError(
+          409,
+          'CARD_SUBSCRIPTION',
+          'Mercado Pago charges this store by card — cancel that first',
+        );
+      if (inv.provider_payment_id) {
+        dropPix(ctx)(inv.provider_payment_id);
+        await tx`
+          update invoices set ${supersedePix(tx)}, provider_payment_id = null,
+            pix_copy_paste = null, pix_expires_at = null
+          where id = ${id}
+        `;
+      }
+      if (!(await markInvoicePaid(ctx, tx, inv.tenant_id, id, now, now)))
+        throw new HttpError(409, 'INVOICE_PAID', 'already paid');
+      return { status: 200, body: { ok: true } };
+    });
+    for (const fn of effects)
+      await fn().catch((err) => billingLog.warn({ err }, 'billing effect failed'));
     return c.json(res.body, res.status as 200);
   });
 

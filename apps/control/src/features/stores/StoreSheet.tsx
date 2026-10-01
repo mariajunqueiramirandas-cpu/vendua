@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Globe, SearchX } from 'lucide-react';
 import type { BillingStore, SiteRequestStatus } from '@/lib/api.ts';
-import { fmtDate, fmtDay } from '@/lib/format.ts';
+import { fmtDate, fmtDay, fmtMoney } from '@/lib/format.ts';
 import { EmptyState, Fact, LoadingRows } from '@/components/common.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Checkbox } from '@/components/ui/controls.tsx';
@@ -18,7 +18,7 @@ import {
   SUB_STATUS,
   Tag,
 } from './bits.tsx';
-import { useActivateDomain, usePatchSiteRequest } from './queries.ts';
+import { useActivateDomain, useMarkInvoicePaid, usePatchSiteRequest } from './queries.ts';
 
 const NOTE_MAX = 500;
 
@@ -44,7 +44,56 @@ function Billing({ s }: { s: BillingStore }) {
         </Fact>
         <Fact label="criada">{fmtDate(s.createdAt)}</Fact>
       </div>
+      {s.openInvoice ? <OpenInvoice s={s} inv={s.openInvoice} /> : null}
     </SheetSection>
+  );
+}
+
+/** Payment received outside Mercado Pago (access-code signups, a transfer): settle it by hand. */
+function OpenInvoice({
+  s,
+  inv,
+}: {
+  s: BillingStore;
+  inv: NonNullable<BillingStore['openInvoice']>;
+}) {
+  const [received, setReceived] = useState(false);
+  const mark = useMarkInvoicePaid();
+  useEffect(() => setReceived(false), [inv.id]);
+  const first = s.subscription?.status === 'pending';
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border bg-card p-3 shadow-card">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-sm font-medium">
+          fatura {inv.number}
+          {inv.kind === 'upgrade' ? ' · troca de plano' : ''}
+        </p>
+        <p className="tnum text-sm font-semibold">{fmtMoney(inv.amountCents)}</p>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {first
+          ? 'A loja está fechada até o primeiro pagamento. Confirmar abre a loja e inicia o mês do plano.'
+          : `Em aberto desde ${fmtDay(inv.dueAt)}. Confirmar dá o mês seguinte como pago.`}
+      </p>
+      <label className="flex cursor-pointer items-start gap-2.5 text-sm">
+        <Checkbox
+          checked={received}
+          onCheckedChange={(v) => setReceived(v === true)}
+          className="mt-0.5"
+        />
+        <span>
+          recebi <span className="tnum font-medium">{fmtMoney(inv.amountCents)}</span> de{' '}
+          <span className="font-medium">{s.name}</span>
+        </span>
+      </label>
+      <Button
+        className="self-start max-md:w-full"
+        disabled={!received || mark.isPending}
+        onClick={() => mark.mutate(inv.id)}
+      >
+        {mark.isPending ? 'confirmando…' : 'marcar como pago'}
+      </Button>
+    </div>
   );
 }
 

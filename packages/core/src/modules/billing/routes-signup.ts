@@ -15,9 +15,11 @@ import { mountBillingDev } from './dev-routes.ts';
 import { validEmail } from './input.ts';
 import { publicPlanOr422, publicPlans, type PlanRow } from './plans.ts';
 import {
+  accessCodeMatches,
   normalizeSlug,
   readSignupToken,
   RESERVED_SLUGS,
+  signupAccessCode,
   signupToken,
   slugStatus,
   startSignupOtp,
@@ -71,7 +73,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     c.header('cache-control', 'no-store');
     return c.json({
       plans: await publicPlans(sql),
-      billing: { available: d.provider.platformConfigured },
+      billing: { available: d.provider.platformConfigured, accessCode: !!signupAccessCode() },
       storeDomain: d.storeDomain,
     });
   });
@@ -112,12 +114,17 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     const body = await bodyJson(c);
     const phone = readSignupToken(d.sessionSecret, body.signupToken);
     if (!phone) throw new HttpError(401, 'SIGNUP_EXPIRED', 'confirm your phone again');
-    if (!d.provider.platformConfigured)
+    // an access code skips Mercado Pago: the store waits on its first invoice like any other,
+    // and the team marks that invoice paid in the CRM (Lojas)
+    const manual = body.accessCode !== undefined && body.accessCode !== '';
+    if (manual && !accessCodeMatches(body.accessCode))
+      throw new HttpError(422, 'INVALID_ACCESS_CODE', 'wrong access code', { field: 'accessCode' });
+    if (!manual && !d.provider.platformConfigured)
       throw new HttpError(503, 'BILLING_UNAVAILABLE', 'plan billing is not set up on this install');
     const plan = await publicPlanOr422(sql, body.planId);
-    if (body.method !== 'card' && body.method !== 'pix')
+    if (!manual && body.method !== 'card' && body.method !== 'pix')
       throw new HttpError(422, 'BAD_REQUEST', 'method must be card or pix', { field: 'method' });
-    const method: 'card' | 'pix' = body.method;
+    const method: 'card' | 'pix' = manual || body.method === 'pix' ? 'pix' : 'card';
     const storeName = text(body.storeName, 'storeName', 60, 2);
     const ownerName = text(body.ownerName, 'ownerName', 80, 2);
     const email = validEmail(body.email, 'email');
@@ -165,7 +172,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
         throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
     }
 
-    const next = await ensureFirstCharge(d, c, owned, { plan, method, email, ownerName });
+    const next = await ensureFirstCharge(d, c, owned, { plan, method, email, ownerName, manual });
     setAdminCookie(
       c,
       await createSession(sql, owned, c.req.header('user-agent'), {
@@ -192,7 +199,7 @@ async function ensureFirstCharge(
   d: Omit<AdminDeps, 'admin'>,
   c: Context,
   owner: Membership,
-  o: { plan: PlanRow; method: 'card' | 'pix'; email: string; ownerName: string },
+  o: { plan: PlanRow; method: 'card' | 'pix'; email: string; ownerName: string; manual: boolean },
 ): Promise<PayNext> {
   const origin = d.publicOrigin(c);
   const now = new Date();
@@ -213,18 +220,21 @@ async function ensureFirstCharge(
           payerEmail: o.email,
           key: `signup:${owner.tenant_id}`,
           now,
+          manual: o.manual,
         });
         await audit(tx, owner.tenant_id, actor, {
           action: 'store.signup',
           entity: 'account',
           entityId: owner.tenant_id,
-          summary: `criou a loja no plano ${o.plan.name} (${o.method === 'card' ? 'cartão' : 'Pix'})`,
-          after: { planId: o.plan.id, method: o.method },
+          summary: `criou a loja no plano ${o.plan.name} (${o.manual ? 'código de acesso, pagamento confirmado pela equipe' : o.method === 'card' ? 'cartão' : 'Pix'})`,
+          after: { planId: o.plan.id, method: o.manual ? 'manual' : o.method },
         });
         return next;
       }
       if (sub.status === 'pending')
-        return beginPayment(ctx, tx, sub, `signup:${owner.tenant_id}`, now);
+        return beginPayment(ctx, tx, sub, `signup:${owner.tenant_id}`, now, {
+          manual: o.manual && sub.method === 'pix',
+        });
       // already paid (a late replay): point at what was paid
       if (sub.method === 'pix') {
         const inv = (
