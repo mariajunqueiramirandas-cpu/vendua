@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import type { Sql } from '../../platform/db.ts';
 import { getIntegration, type IntegrationRow } from '../../modules/integrations.ts';
+import { ipv4ToU32, isPrivateHost } from '../../platform/net-guard.ts';
 
 // TinyFish discovery driver — Search + Fetch (markdown + every link on the
 // page, which is where contact channels live); `mock` needs no credentials.
@@ -97,6 +98,10 @@ const LISTING_HOSTS = new Set([
   // store URL is still lead evidence, just a weak contact source
   'anota.ai',
   'instadelivery.com.br',
+  'cardapioweb.com',
+  'ola.click',
+  'deliverydireto.com.br',
+  'saipos.com',
   'goomer.app',
   'takeat.app',
   'ueniweb.com',
@@ -653,81 +658,6 @@ function tinyfishBase(raw: unknown, fallback: string): string {
     throw new Error(`tinyfish driver: url must be https under *.tinyfish.ai (got ${value})`);
   }
   return value.replace(/\/+$/, '');
-}
-
-/** inet_aton semantics — 1–4 parts, decimal/octal/hex; catches every notation
- *  smuggled past string-prefix checks (0177.0.0.1, 0x7f…1, 2130706433) */
-function ipv4ToU32(host: string): number | null {
-  const parts = host.split('.');
-  if (parts.length > 4) return null;
-  const nums = parts.map((p) =>
-    /^0x[0-9a-f]+$/i.test(p)
-      ? parseInt(p, 16)
-      : /^0[0-7]+$/.test(p)
-        ? parseInt(p, 8)
-        : /^[0-9]+$/.test(p)
-          ? parseInt(p, 10)
-          : NaN,
-  );
-  if (nums.some((n) => !Number.isFinite(n))) return null;
-  const last = nums[nums.length - 1]!;
-  const lastBytes = 5 - nums.length; // bytes the last part must hold
-  if (nums.slice(0, -1).some((n) => n > 255) || last >= 256 ** lastBytes) return null;
-  let ip = 0;
-  for (const n of nums.slice(0, -1)) ip = ip * 256 + n;
-  return ip * 256 ** lastBytes + last;
-}
-
-/** Private/reserved IPv4 ranges — the targets a fetched URL must never
- *  name. */
-function isPrivateV4(ip: number): boolean {
-  const top = (bits: number) => ip >>> (32 - bits);
-  return (
-    top(8) === 0 || // 0.0.0.0/8 "this host"
-    top(8) === 10 ||
-    top(8) === 127 ||
-    top(12) === 0xac1 || // 172.16/12
-    top(16) === 0xa9fe || // 169.254/16 link-local (incl. 169.254.169.254)
-    top(16) === 0xc0a8 || // 192.168/16
-    top(10) === 0x191 || // 100.64/10 CGNAT
-    top(15) === 0x6309 || // 198.18/15 benchmarking
-    top(4) >= 0xe // 224/4 multicast + 240/4 reserved
-  );
-}
-
-/** a hostname or IP literal (v4 in any inet_aton notation, v6 bracket-free) that names
- *  a loopback/private/link-local/CGNAT/ULA/mapped/reserved target */
-function isPrivateHost(rawHost: string): boolean {
-  const host = rawHost
-    .toLowerCase()
-    .replace(/^\[|\]$/g, '')
-    .replace(/\.$/, '');
-  if (
-    host === 'localhost' ||
-    host.endsWith('.local') ||
-    host.endsWith('.internal') ||
-    host.endsWith('.localhost')
-  ) {
-    return true;
-  }
-  if (host.includes(':')) {
-    // IPv6 literal: ::/::1 (unspecified/loopback), fc00::/7 unique-local,
-    // fe80::/10 link-local, ff00::/8 multicast, and any ::ffff:-mapped or
-    // dotted-quad tail whose v4 part is private.
-    const head = parseInt(host.split(':')[0] || '0', 16);
-    const v4Tail = /([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$/.exec(host)?.[1];
-    return (
-      host === '::' ||
-      host === '::1' ||
-      host.startsWith('::ffff:') ||
-      (head & 0xfe00) === 0xfc00 ||
-      (head & 0xffc0) === 0xfe80 ||
-      (head & 0xff00) === 0xff00 ||
-      (v4Tail !== undefined && isPrivateV4(ipv4ToU32(v4Tail) ?? 0))
-    );
-  }
-  const ip = ipv4ToU32(host);
-  return ip !== null && isPrivateV4(ip);
 }
 
 /** the provider fetches, not us — but an agent-controlled URL must still

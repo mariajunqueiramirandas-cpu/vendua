@@ -1,0 +1,485 @@
+{
+  "info": {
+    "id": 4242,
+    "name": "Pizzaria Exemplo",
+    "address": "Rua das Pizzas, 42 - Centro, Cidade Exemplo - EX",
+    "menu": "https://www.goomer.app/webmenu/pizzariaexemplo/menu/1790000000000",
+    "hours": [
+      {
+        "from": "Ter",
+        "to": "Qui",
+        "open": "18:00",
+        "close": "23:00"
+      },
+      {
+        "from": "Sex",
+        "to": "Sab",
+        "open": "18:0",
+        "close": "1:30"
+      },
+      {
+        "from": "Dom",
+        "to": "Dom",
+        "open": "00:00",
+        "close": "00:00"
+      }
+    ],
+    "open_hours": "",
+    "order_phone": "",
+    "coupons": [
+      {
+        "code": "BEMVINDO"
+      }
+    ],
+    "welcome_message": "Pizza no forno a lenha",
+    "color_1": "#c0392b",
+    "color_3": "#c0392b",
+    "logo": "https://static.goomer.app/stores/1/logo.png",
+    "order_whatsapp": 0,
+    "takeaway_discount": {
+      "type": "percent",
+      "value": 10
+    },
+    "delivery_fee": 0,
+    "delivery_required_amount": 0
+  },
+  "settings": {
+    "id": 4242,
+    "name": "Pizzaria Exemplo",
+    "slug": "pizzariaexemplo",
+    "store_code": "should-not-appear",
+    "menu_url": "https://www.goomer.app/webmenu/pizzariaexemplo/menu/1790000000000",
+    "is_abrahao": "false",
+    "mm_enabled": "true",
+    "address": {
+      "zipcode": "00000-000",
+      "country": "Brasil",
+      "number": "42",
+      "city": "Cidade Exemplo",
+      "street": "Rua das Pizzas",
+      "latitude": "-22.900000",
+      "state": "EX",
+      "neighborhood": "Centro",
+      "complement": "Loja 2",
+      "longitude": "-43.200000"
+    },
+    "mm_main_color": "#c0392b",
+    "mm_secondary_color": "#2B0D61",
+    "mm_logo_url": "https://static.goomer.app/stores/1/logo.png",
+    "mm_whatsapp_phone_number": "21999990000",
+    "mm_whatsapp_order_enabled": "true",
+    "mm_splash_screen_message": "Pizza no forno a lenha",
+    "mm_hours_mode": "custom",
+    "mm_always_open": "false",
+    "mm_fixed_hours": "",
+    "mm_operating_hours": "",
+    "mm_delivery_enabled": "true",
+    "mm_delivery_zone_type": "dynamic",
+    "mm_delivery_zone_options_dynamic": "[{\"id\":\"1\",\"radius\":3,\"pricing\":\"5.00\",\"time\":{\"from\":30,\"to\":50},\"status\":true,\"hide_time\":false},{\"id\":\"2\",\"radius\":6,\"pricing\":\"8.50\",\"time\":{\"from\":0,\"to\":0},\"status\":true,\"hide_time\":true},{\"id\":\"3\",\"radius\":9,\"pricing\":\"15.00\",\"time\":{\"from\":0,\"to\":0},\"status\":false,\"hide_time\":true}]",
+    "mm_delivery_zone_options_static": "{\"pricing\":\"10.00\",\"time\":{\"from\":30,\"to\":90},\"delivery_time_enabled\":false}",
+    "mm_delivery_zone_options_neighborhood": "",
+    "mm_delivery_zone_options_neighborhood_enabled": "false",
+    "mm_delivery_fee": "0",
+    "mm_delivery_fee_enabled": "false",
+    "mm_delivery_minimum_value": "25",
+    "mm_delivery_minimum_value_enabled": "true",
+    "mm_free_delivery_enabled": "true",
+    "mm_free_delivery_minimum_value": "100",
+    "mm_takeaway_enabled": "true",
+    "mm_takeaway_time": "40",
+    "mm_takeaway_discount_enabled": "true",
+    "mm_takeaway_discount": "10",
+    "mm_coupon_enabled": "true",
+    "mm_order_scheduling_enabled": "true",
+    "mm_in_store_enabled": "false",
+    "mm_payment_cash_enabled": "true",
+    "mm_payment_credit_enabled": "true",
+    "mm_payment_debit_enabled": "false",
+    "mm_payment_voucher_enabled": "false",
+    "mm_payment_pix_enabled": "true",
+    "mm_payment_pix_info": "{\"key\":\"00.000.000/0001-00\",\"accountName\":\"Pizzaria Exemplo\"}",
+    "mm_payment_mpago_link_enabled": "true",
+    "mm_payment_mpago_checkout_enabled": "false",
+    "mm_facebook_business_access_token": "should-not-appear",
+    "mm_payment_mpago_store_public_key": "should-not-appear",
+    "mm_facebook_pixel_id": "should-not-appear",
+    "mm_store_domain": ""
+  },
+  "products": [
+    {
+      "group_id": 1,
+      "limit_age": false,
+      "group_name": "Pizzas",
+      "id": 100,
+      "name": "Pizza",
+      "description": "Molho da casa",
+      "group_hours": [],
+      "hours": [],
+      "images": {
+        "small": "https://www.goomer.app/webmenu/pizzariaexemplo/product/101/picture/small/260101000000",
+        "medium": "https://www.goomer.app/webmenu/pizzariaexemplo/product/101/picture/medium/260101000000",
+        "large": "https://www.goomer.app/webmenu/pizzariaexemplo/product/101/picture/large/260101000000"
+      },
+      "suggestions": [],
+      "version": "260101000000",
+      "prices": [
+        {
+          "name": "Média",
+          "price": 40,
+          "code": "0",
+          "hash": "should-not-appear"
+        },
+        {
+          "name": "Grande",
+          "price": 50,
+          "code": "0",
+          "hash": "should-not-appear"
+        }
+      ],
+      "price_tag": 40,
+      "min_price_flag": true
+    },
+    {
+      "group_id": 1,
+      "limit_age": false,
+      "group_name": "Pizzas",
+      "id": 110,
+      "name": "Pizza do dia",
+      "description": "",
+      "group_hours": [],
+      "hours": [],
+      "images": {
+        "small": "https://www.goomer.app/webmenu/pizzariaexemplo/product/111/picture/small/260101000000",
+        "medium": "https://www.goomer.app/webmenu/pizzariaexemplo/product/111/picture/medium/260101000000",
+        "large": "https://www.goomer.app/webmenu/pizzariaexemplo/product/111/picture/large/260101000000"
+      },
+      "suggestions": [],
+      "version": "260101000000",
+      "prices": [
+        {
+          "name": "",
+          "price": 45,
+          "code": "0",
+          "hash": "should-not-appear"
+        }
+      ],
+      "price_tag": 45,
+      "min_price_flag": false
+    },
+    {
+      "group_id": 2,
+      "limit_age": false,
+      "group_name": "Bebidas",
+      "id": 200,
+      "name": "Refrigerante",
+      "description": "",
+      "group_hours": [],
+      "hours": [],
+      "images": {
+        "small": "https://www.goomer.app/webmenu/pizzariaexemplo/product/201/picture/small/260101000000",
+        "medium": "https://www.goomer.app/webmenu/pizzariaexemplo/product/201/picture/medium/260101000000",
+        "large": "https://www.goomer.app/webmenu/pizzariaexemplo/product/201/picture/large/260101000000"
+      },
+      "suggestions": [],
+      "version": "260101000000",
+      "prices": [
+        {
+          "name": "Coca-Cola",
+          "price": 8,
+          "code": "0",
+          "hash": "should-not-appear"
+        },
+        {
+          "name": "Guaraná",
+          "price": 7,
+          "code": "0",
+          "hash": "should-not-appear"
+        }
+      ],
+      "price_tag": 8,
+      "min_price_flag": true
+    },
+    {
+      "group_id": 2,
+      "limit_age": true,
+      "group_name": "Bebidas",
+      "id": 210,
+      "name": "Cerveja",
+      "description": "",
+      "group_hours": [],
+      "hours": [],
+      "images": {
+        "small": "https://www.goomer.app/webmenu/pizzariaexemplo/product/211/picture/small/260101000000",
+        "medium": "https://www.goomer.app/webmenu/pizzariaexemplo/product/211/picture/medium/260101000000",
+        "large": "https://www.goomer.app/webmenu/pizzariaexemplo/product/211/picture/large/260101000000"
+      },
+      "suggestions": [],
+      "version": "260101000000",
+      "prices": [
+        {
+          "name": "",
+          "price": 9,
+          "code": "0",
+          "hash": "should-not-appear"
+        }
+      ],
+      "price_tag": 9,
+      "min_price_flag": false
+    },
+    {
+      "group_id": 3,
+      "limit_age": false,
+      "group_name": "Lanches",
+      "id": 300,
+      "name": "Hambúrguer",
+      "description": "",
+      "group_hours": [],
+      "hours": [],
+      "images": {
+        "small": "https://www.goomer.app/webmenu/pizzariaexemplo/product/301/picture/small/260101000000",
+        "medium": "https://www.goomer.app/webmenu/pizzariaexemplo/product/301/picture/medium/260101000000",
+        "large": "https://www.goomer.app/webmenu/pizzariaexemplo/product/301/picture/large/260101000000"
+      },
+      "suggestions": [210],
+      "version": "260101000000",
+      "prices": [
+        {
+          "name": "",
+          "price": 25,
+          "code": "0",
+          "hash": "should-not-appear"
+        }
+      ],
+      "price_tag": 25,
+      "min_price_flag": false
+    },
+    {
+      "group_id": 3,
+      "limit_age": false,
+      "group_name": "Lanches",
+      "id": 310,
+      "name": "Açaí",
+      "description": "",
+      "group_hours": [],
+      "hours": [],
+      "images": {},
+      "suggestions": [],
+      "version": "260101000000",
+      "prices": [
+        {
+          "name": "",
+          "price": 0,
+          "code": "0",
+          "hash": "should-not-appear"
+        }
+      ],
+      "price_tag": 0,
+      "min_price_flag": false
+    },
+    {
+      "group_id": 3,
+      "limit_age": false,
+      "group_name": "Lanches",
+      "id": 320,
+      "name": "Sem listas",
+      "description": "",
+      "group_hours": [],
+      "hours": [],
+      "images": {
+        "small": "https://www.goomer.app/webmenu/pizzariaexemplo/product/321/picture/small/260101000000",
+        "medium": "https://www.goomer.app/webmenu/pizzariaexemplo/product/321/picture/medium/260101000000",
+        "large": "https://www.goomer.app/webmenu/pizzariaexemplo/product/321/picture/large/260101000000"
+      },
+      "suggestions": [],
+      "version": "260101000000",
+      "prices": [
+        {
+          "name": "",
+          "price": 20,
+          "code": "0",
+          "hash": "should-not-appear"
+        }
+      ],
+      "price_tag": 20,
+      "min_price_flag": false
+    },
+    {
+      "group_id": 3,
+      "limit_age": false,
+      "group_name": "Lanches",
+      "id": 330,
+      "name": "Preço estranho",
+      "description": "",
+      "group_hours": [],
+      "hours": [],
+      "images": {
+        "small": "https://www.goomer.app/webmenu/pizzariaexemplo/product/331/picture/small/260101000000",
+        "medium": "https://www.goomer.app/webmenu/pizzariaexemplo/product/331/picture/medium/260101000000",
+        "large": "https://www.goomer.app/webmenu/pizzariaexemplo/product/331/picture/large/260101000000"
+      },
+      "suggestions": [],
+      "version": "260101000000",
+      "prices": [
+        {
+          "name": "",
+          "price": "abc",
+          "code": "0",
+          "hash": "should-not-appear"
+        }
+      ],
+      "price_tag": "abc",
+      "min_price_flag": false
+    },
+    {
+      "group_id": 1,
+      "limit_age": false,
+      "group_name": "Pizzas",
+      "id": 120,
+      "name": "Calzone",
+      "description": "",
+      "group_hours": [],
+      "hours": [],
+      "images": {
+        "small": "https://www.goomer.app/webmenu/pizzariaexemplo/product/121/picture/small/260101000000",
+        "medium": "https://www.goomer.app/webmenu/pizzariaexemplo/product/121/picture/medium/260101000000",
+        "large": "https://www.goomer.app/webmenu/pizzariaexemplo/product/121/picture/large/260101000000"
+      },
+      "suggestions": [],
+      "version": "260101000000",
+      "prices": [
+        {
+          "name": "",
+          "price": 38,
+          "code": "0",
+          "hash": "should-not-appear"
+        }
+      ],
+      "price_tag": 38,
+      "min_price_flag": false
+    }
+  ],
+  "groups": [
+    [
+      {
+        "id": 1,
+        "name": "Sabores",
+        "min": 1,
+        "max": 2,
+        "repeat": 0,
+        "options": [
+          {
+            "id": 10,
+            "name": "Calabresa",
+            "price": 0,
+            "code": null,
+            "hash": "should-not-appear"
+          },
+          {
+            "id": 11,
+            "name": "Camarão",
+            "price": 10,
+            "code": null,
+            "hash": "should-not-appear"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Borda",
+        "min": 0,
+        "max": 1,
+        "repeat": 0,
+        "options": [
+          {
+            "id": 20,
+            "name": "Catupiry",
+            "price": 8,
+            "code": null,
+            "hash": "should-not-appear"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Vazio",
+        "min": 0,
+        "max": 3,
+        "repeat": 0,
+        "options": []
+      }
+    ],
+    [],
+    [],
+    [],
+    [
+      {
+        "id": 4,
+        "name": "Adicionais",
+        "min": 0,
+        "max": 3,
+        "repeat": 1,
+        "options": [
+          {
+            "id": 40,
+            "name": "Bacon",
+            "price": 4,
+            "code": null,
+            "hash": "should-not-appear"
+          },
+          {
+            "id": 41,
+            "name": "Ovo",
+            "price": 2.5,
+            "code": null,
+            "hash": "should-not-appear"
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "id": 5,
+        "name": "Copo",
+        "min": 1,
+        "max": 1,
+        "repeat": 0,
+        "options": [
+          {
+            "id": 50,
+            "name": "300 ml",
+            "price": 12,
+            "code": null,
+            "hash": "should-not-appear"
+          },
+          {
+            "id": 51,
+            "name": "500 ml",
+            "price": 18,
+            "code": null,
+            "hash": "should-not-appear"
+          }
+        ]
+      }
+    ],
+    null,
+    [],
+    [
+      {
+        "id": 6,
+        "name": "Recheio",
+        "min": 1,
+        "max": 1,
+        "repeat": 0,
+        "options": [
+          {
+            "id": 60,
+            "name": "",
+            "price": 0,
+            "code": null,
+            "hash": "should-not-appear"
+          }
+        ]
+      }
+    ]
+  ]
+}

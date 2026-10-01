@@ -106,6 +106,13 @@ export interface CatalogProduct {
   /** Kernel 1.12 — the "de" price, display-only (struck through when above `basePriceCents`,
    *  which stays what the shopper pays) */
   compareAtPriceCents?: number | null;
+  /** Kernel 1.13 — display-only "a partir de": the cheapest configured unit, set only when it is
+   *  above `basePriceCents` (a product priced by a required list) */
+  fromPriceCents?: number | null;
+  /** Kernel 1.13 — the product has a timed promotion: its days and hours (Core's copy, e.g.
+   *  "Seg a sex, 18h–20h"). Inside them `basePriceCents` is already the promotion's price and
+   *  `compareAtPriceCents` the regular one */
+  promoLabel?: string | null;
 }
 
 export interface ComboSlot {
@@ -700,7 +707,8 @@ export function createApi(baseUrl = '') {
     },
 
     store: () => apiFetch<StoreProfile>(sf('/store')),
-    catalog: () => apiFetch<{ categories: CatalogCategory[] }>(sf('/catalog')),
+    catalog: () =>
+      apiFetch<{ categories: CatalogCategory[]; nextChangeAt?: string }>(sf('/catalog')),
     product: (slug: string) => apiFetch<{ product: ProductDetail }>(sf(`/products/${slug}`)),
     surfaces: (zoneMatched?: boolean) =>
       apiFetch<SurfacesEnvelope>(

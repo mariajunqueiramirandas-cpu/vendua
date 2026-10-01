@@ -64,6 +64,12 @@ describe('assertFetchableResolved', () => {
       'fd00::1',
       'fe80::1',
       '::ffff:10.0.0.1',
+      // translation prefixes that can route to an inside v4 address, and 192.0.0/24
+      '64:ff9b::a9fe:a9fe',
+      '64:ff9b:1::a00:1',
+      '2002:a00:1::1',
+      '2001:0:4136:e378::1',
+      '192.0.0.170',
     ]) {
       setDnsLookupForTest(async () => ['93.184.216.34', addr]);
       await expect(assertFetchableResolved('https://innocent.example/x')).rejects.toThrow(

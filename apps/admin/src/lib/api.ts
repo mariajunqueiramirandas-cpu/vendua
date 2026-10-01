@@ -333,6 +333,10 @@ export interface Product {
   availabilitySchedule?: AvailabilitySchedule | null;
   /** false while outside its schedule */
   availableNow?: boolean;
+  /** a lower price on some days and hours; it applies only while below priceCents */
+  promoSchedule?: PromoSchedule | null;
+  /** true while one of the promotion's windows holds */
+  promoNow?: boolean;
   tags: string[];
   imageUrl: string | null;
   dominant: string | null;
@@ -346,6 +350,12 @@ export interface AvailabilitySchedule {
   windows: { days: number[]; from?: string; to?: string }[];
   /** outside the windows: listed as unavailable, or not listed at all */
   outside: 'unavailable' | 'hidden';
+}
+
+export interface PromoSchedule {
+  priceCents: number;
+  /** the same windows as AvailabilitySchedule, in store time */
+  windows: AvailabilitySchedule['windows'];
 }
 
 export type PricingRule = 'sum' | 'average' | 'most_expensive';
@@ -922,7 +932,8 @@ export interface ImportPreviewProduct {
 }
 export interface MenuImport {
   id: string;
-  platform: string;
+  /** null until a custom domain's platform is found */
+  platform: string | null;
   sourceUrl: string;
   status: ImportStatus;
   errorCode: 'NOT_FOUND' | 'BLOCKED' | 'UNREADABLE' | 'TOO_LARGE' | 'TIMEOUT' | null;
@@ -1281,7 +1292,8 @@ export const api = {
   saveTokens: (tokens: StoreTokens) =>
     send<{ version: number }>('PUT', '/appearance/tokens', { tokens }),
 
-  startImport: (url: string) => send<{ id: string; platform: string }>('POST', '/imports', { url }),
+  startImport: (url: string) =>
+    send<{ id: string; platform: string | null }>('POST', '/imports', { url }),
   importOf: (id: string) => get<MenuImport>(`/imports/${id}`),
   imports: () => get<{ imports: MenuImport[] }>('/imports'),
   applyImport: (id: string, body: { mode: 'add' | 'replace'; sections: ImportSection[] }) =>

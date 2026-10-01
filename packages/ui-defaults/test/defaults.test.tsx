@@ -88,4 +88,42 @@ describe('slot defaults', () => {
     expect(card({ lowStock: true, stockQuantity: 2 })).toContain('Últimas 2');
     expect(card({ requiresPreorder: true })).toContain('Encomenda');
   });
+
+  test('a card priced by a required list shows Core’s "a partir de"', () => {
+    const C = SLOT_DEFAULTS['catalog.ProductCard'];
+    const fx = SLOT_FIXTURES['catalog.ProductCard'];
+    const card = (extra: object) =>
+      renderToStaticMarkup(<C {...fx} product={{ ...fx.product, ...extra }} />);
+    const from = card({ basePriceCents: 0, compareAtPriceCents: null, fromPriceCents: 2290 });
+    expect(from).toContain('data-part="from"');
+    expect(from).toMatch(/a partir de <\/span>R\$\s22,90/);
+    expect(from).not.toContain('0,00');
+    // not above the price: the price itself
+    expect(card({ fromPriceCents: 1800 })).not.toContain('a partir de');
+  });
+
+  test('an option list longer than 12 gets a filter, a short one does not', () => {
+    const C = SLOT_DEFAULTS['catalog.ModifierPicker'];
+    const fx = SLOT_FIXTURES['catalog.ModifierPicker'];
+    const group = (n: number, name: string) => ({
+      id: `g${n}`,
+      name,
+      required: false,
+      minSelect: 0,
+      maxSelect: 1,
+      modifiers: Array.from({ length: n }, (_, i) => ({
+        id: `m${i}`,
+        name: `Opção ${i + 1}`,
+        priceDeltaCents: 0,
+        status: 'active',
+      })),
+    });
+    const html = (g: ReturnType<typeof group>) =>
+      renderToStaticMarkup(<C {...fx} groups={[g]} value={{}} errors={{}} />);
+    expect(html(group(12, 'Bordas'))).not.toContain('data-part="option-search"');
+    const long = html(group(13, 'Sabores da pizza'));
+    expect(long).toContain('data-part="option-search"');
+    expect(long).toContain('placeholder="Buscar sabor"');
+    expect(html(group(40, 'Adicionais'))).toContain('placeholder="Buscar opção"');
+  });
 });

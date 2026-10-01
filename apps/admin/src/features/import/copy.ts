@@ -17,6 +17,23 @@ export const PLATFORM: Record<string, string> = {
 
 export const platformName = (p: string | null | undefined) => (p && PLATFORM[p]) || 'outro app';
 
+/** The platforms Core reads today (its `ADAPTERS`), in the order merchants know them. */
+export const READABLE = [
+  'instadelivery',
+  'cardapioweb',
+  'olaclick',
+  'takeat',
+  'deliverydireto',
+  'saipos',
+  'goomer',
+];
+
+/** "Instadelivery ou Cardápio Web" — the readable platforms in one phrase. */
+export const readableNames = () => {
+  const names = READABLE.map((p) => PLATFORM[p]!);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} ou ${names.at(-1)}` : names[0]!;
+};
+
 /** Codes that mean "the product came over hidden, for you to check before showing it". */
 const HIDES = new Set([
   'price_out_of_range',
@@ -29,6 +46,9 @@ const HIDES = new Set([
   'pizza_pricing',
   'pizza_sizes',
   'second_price',
+  'sold_by_weight',
+  'price_unreadable',
+  'packaging_fee',
 ]);
 
 export const hidesProduct = (l: ImportLost) => l.scope === 'product' && HIDES.has(l.code);
@@ -36,7 +56,7 @@ export const hidesProduct = (l: ImportLost) => l.scope === 'product' && HIDES.ha
 const q = (s: string | undefined) => (s ? `“${s}”` : 'um produto');
 
 /** One sentence per thing that didn't come over (or came over changed). */
-export function lostLine(l: ImportLost, platform: string): string {
+export function lostLine(l: ImportLost, platform: string | null): string {
   const from = platformName(platform);
   const s = q(l.subject);
   const d = l.detail;
@@ -47,7 +67,7 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'too_many_option_groups':
       return `${s} tem mais de 12 grupos de opções.`;
     case 'too_many_options':
-      return `${s}: o grupo ${q(d)} tem mais de 40 opções.`;
+      return `${s}: o grupo ${q(d)} tem mais de 100 opções.`;
     case 'options_unreadable':
       return d
         ? `${s}: não conseguimos ler as opções de ${q(d)}.`
@@ -59,7 +79,13 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'promo_unreadable':
       return `${s} tem um desconto que não conseguimos ler. Confira o preço.`;
     case 'pizza_pricing':
-      return `${s}: não deu para saber se vários sabores cobram o mais caro ou a soma. Confira em Opções.`;
+      return `${s}: o jeito de cobrar os sabores${d ? ` de ${q(d)}` : ''} não tem igual aqui. Confira o preço em Opções antes de mostrar.`;
+    case 'price_unreadable':
+      return `${s} tinha uma regra de preço que não conseguimos ler. Confira o preço antes de mostrar.`;
+    case 'packaging_fee':
+      return `${s} cobrava embalagem à parte no ${from}. Aqui não há essa taxa: some ao preço, se for o caso, antes de mostrar.`;
+    case 'sold_by_weight':
+      return `${s} é vendido por peso no ${from}. Aqui o preço é por unidade: confira antes de mostrar.`;
     case 'second_price':
       return `${s} tem dois preços no ${from}. Confira qual vale e mostre.`;
     case 'pizza_sizes':
@@ -68,18 +94,30 @@ export function lostLine(l: ImportLost, platform: string): string {
     // ── products and categories
     case 'hidden_items':
       return `A categoria ${s} veio vazia: os itens dela estão ocultos no ${from}. Mostre lá e importe de novo, ou cadastre aqui.${d ? ' A descrição dela também ficou de fora.' : ''}`;
+    case 'category_unreadable':
+      return `Não conseguimos ler a categoria ${s}. Importe de novo ou cadastre os produtos dela aqui.`;
     case 'empty_category':
       return `A categoria ${s} não tinha produtos.`;
     case 'category_image':
       return `A foto da categoria ${s} não vem: aqui as categorias não têm foto.`;
     case 'pizza_flavours':
       return `Em ${s}, cada sabor veio como um produto. Pizza meio a meio você monta em Opções.`;
+    case 'promo_schedule':
+      return `${s} tinha preço promocional${d ? ` de ${d}` : ''} só em alguns dias ou horários. Não deu para trazer os dias e horários dela: veio pelo preço normal. Cadastre de novo no produto, em Promoção por horário.`;
+    case 'pickup_only':
+      return `${s} era só para retirar na loja. Aqui ele vale para entrega também: confira se é isso.`;
+    case 'adults_only':
+      return `${s} era só para maiores de 18 anos. Aqui o pedido não pede essa confirmação.`;
+    case 'option_minimum':
+      return `${s}: no ${from}, ${d ? q(d) : 'um grupo de opções'} era “nenhuma ou pelo menos algumas”. Aqui ele ficou opcional, sem mínimo: confira em Opções.`;
     case 'dine_in_only':
       return `${s} é só para consumo no local e ficou de fora.`;
     case 'never_available':
       return `${s} não está à venda em nenhum dia e ficou de fora.`;
     case 'minimum_quantity':
       return `${s} pedia no mínimo ${d ?? 'algumas'} unidades. Aqui não tem mínimo por produto.`;
+    case 'link_discount':
+      return `${s} tinha ${d ? `${d}% de ` : ''}desconto só para quem abria o link dele. Aqui veio pelo preço do cardápio; para um desconto, crie um cupom em Marketing.`;
     case 'free_delivery':
       return `${s} tinha entrega grátis. Aqui a entrega grátis é por região, em Loja › Entrega.`;
     case 'name_shortened':
@@ -96,6 +134,10 @@ export function lostLine(l: ImportLost, platform: string): string {
       return `Uma foto de ${s} não veio. Ele fica com o desenho até você colocar outra.`;
 
     // ── the store
+    case 'site_categories_stale':
+      return `No ${from}, a lista de categorias do site estava desatualizada e o site não mostrava nenhum produto. Trouxemos todas as categorias ativas: oculte em Cardápio as que não vende pela internet.`;
+    case 'required_item':
+      return `No ${from}, quem pedia da categoria ${s} tinha que levar também ${d ? q(d) : 'outro produto'}. Aqui não há essa regra.`;
     case 'loyalty':
       return `O programa de pontos${d ? ` (${d} prêmios)` : ''} e o saldo dos clientes não vêm. Aqui tem o cartão fidelidade, em Marketing.`;
     case 'cashback':
@@ -111,7 +153,9 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'upsell':
       return 'A sugestão de produto no fim do pedido não vem.';
     case 'time_slots':
-      return `O agendamento em horários de ${d ?? 'alguns'} em ${d ?? 'alguns'} minutos não vem.`;
+      return d
+        ? `O agendamento em horários de ${d} em ${d} minutos não vem.`
+        : 'O agendamento de pedidos não vem.';
     case 'coupons':
       return 'Os cupons não vêm. Crie de novo em Marketing.';
     case 'night_fee':
@@ -123,7 +167,9 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'payment_method':
       return `A forma de pagamento ${q(d)} não tem igual aqui e ficou de fora.`;
     case 'payment_adjustment':
-      return `O desconto ou acréscimo para pagar com ${d ?? 'uma forma de pagamento'} não vem. Configure em Pagamentos.`;
+      if (d === 'retirada')
+        return 'O desconto para quem retira na loja não vem: aqui o desconto é por forma de pagamento, em Pagamentos.';
+      return `O desconto ou acréscimo para pagar com ${d ?? 'uma forma de pagamento'} não vem igual${d === 'cartão' ? ' (aqui débito e crédito são uma forma só)' : ''}. Configure em Pagamentos.`;
     case 'pix_unreadable':
       return 'Não conseguimos ler a chave Pix. Cadastre em Pagamentos.';
     case 'pix_beneficiary_shortened':
@@ -133,9 +179,23 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'delivery_fees_unreadable':
       return 'Não conseguimos ler as taxas de entrega. Cadastre as regiões em Loja › Entrega.';
     case 'delivery_gap':
-      return `No ${from}, a faixa até ${d ?? '?'} km não tinha entrega. Aqui as faixas por km são círculos: confira as regiões em Loja › Entrega.`;
+      return `No ${from}, não havia entrega na faixa até ${d ?? '?'} km, dentro da área. Aqui cada faixa por km é um círculo inteiro, então quem mora ali cai na faixa seguinte e pode pedir. Se não entrega lá, desenhe a área em Loja › Entrega.`;
+    case 'delivery_by_address':
+      return `No ${from}, a taxa de entrega era calculada pelo endereço de cada pedido${d ? ` (entregava em ${d})` : ''}. Aqui a taxa vem da região: cadastre as regiões em Loja › Entrega.`;
+    case 'delivery_minimum':
+      return `No ${from}, o pedido mínimo${d ? ` de ${d}` : ''} valia só para entrega. Aqui ele fica na região de entrega: coloque-o ao cadastrar as regiões em Loja › Entrega.`;
+    case 'delivery_minimum_lower':
+      return `No ${from}, ${d ? `o pedido mínimo da entrega (${d}) era menor que o da retirada` : 'só a retirada tinha pedido mínimo'}. Aqui o mínimo vale para a loja toda e ficou o da retirada: confira em Loja › Entrega.`;
+    case 'delivery_out_of_area':
+      return `No ${from}, a loja aceitava pedidos fora das áreas desenhadas. Aqui a entrega é só dentro das regiões: confira em Loja › Entrega.`;
+    case 'delivery_overlap':
+      return `No ${from}, as áreas de entrega se sobrepunham e o app escolhia a taxa. Aqui vale a menor área que contém o endereço: confira as taxas em Loja › Entrega.`;
+    case 'delivery_fee_later':
+      return `No ${from}, a taxa de entrega era combinada depois do pedido. Aqui a taxa vem da região: se você entrega, cadastre as regiões em Loja › Entrega.`;
+    case 'delivery_flat_fee':
+      return `No ${from}, a entrega ${d === 'grátis' ? 'era grátis' : `custava ${d ?? 'o mesmo'}`} para qualquer endereço. Aqui a entrega é por região: cadastre a sua área em Loja › Entrega.`;
     case 'free_delivery_rule':
-      return `A entrega grátis do ${from} não vem. Configure por região em Loja › Entrega.`;
+      return `A entrega grátis do ${from}${d ? ` (acima de ${d})` : ''} não vem. Configure por região em Loja › Entrega.`;
     case 'delivery_distance_straight_line':
       return 'As taxas por km aqui contam a distância em linha reta, não pelo caminho.';
     case 'announcement_shortened':
@@ -165,16 +225,26 @@ export function startError(code: string, platform: string | null | undefined): s
     return `O ${platformName(platform)} não deixa ninguém de fora ler o cardápio. Dá para cadastrar aqui mesmo: com foto, leva um minutinho por produto.`;
   if (code === 'IMPORT_UNSUPPORTED')
     return platform
-      ? `Ainda não lemos cardápios do ${platformName(platform)}. Por enquanto, só do Instadelivery.`
-      : 'Esse link não parece de um cardápio que a gente lê. Por enquanto, só do Instadelivery: instadelivery.com.br/sualoja.';
+      ? `Ainda não lemos cardápios do ${platformName(platform)}. Por enquanto, do ${readableNames()}.`
+      : `Esse link não parece de um cardápio que a gente lê. Por enquanto, do ${readableNames()}: cole o link da loja como aparece no navegador.`;
   if (code === 'IMPORT_RATE_LIMITED')
     return 'Foram muitas tentativas nesta hora. Espere um pouco e tente de novo.';
-  if (code === 'BAD_REQUEST') return 'Cole o link inteiro, como instadelivery.com.br/sualoja.';
+  if (code === 'BAD_REQUEST') return 'Cole o link inteiro da sua loja, como aparece no navegador.';
   return null;
 }
 
 /** Why reading the store failed. */
 export function readError(imp: MenuImport): string {
+  // the store's own domain, and no platform we read answered for it
+  if (!imp.platform)
+    switch (imp.errorCode) {
+      case 'NOT_FOUND':
+        return `Não achamos um cardápio nesse endereço. Cole o link da loja no ${readableNames()}: abra a loja por lá e copie o endereço do navegador.`;
+      case 'BLOCKED':
+        return `Não deixaram a gente ler esse endereço agora. Tente de novo mais tarde ou cole o link da loja no ${readableNames()}.`;
+      case 'TIMEOUT':
+        return 'Esse endereço demorou demais para responder. Tente de novo em instantes.';
+    }
   const from = platformName(imp.platform);
   switch (imp.errorCode) {
     case 'NOT_FOUND':

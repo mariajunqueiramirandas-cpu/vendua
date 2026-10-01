@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { localParts, type LocalParts } from '../platform/tz.ts';
+import { fromPriceCents } from './cart.ts';
 import type { ComboSlot, ComboSlotItem } from './combos.ts';
 
 /** a kit pick outside its own schedule reads sold out and carries the label */
@@ -28,18 +29,11 @@ function bad(message: string, field = 'availabilitySchedule'): never {
   throw new HttpError(422, 'BAD_REQUEST', message, { field });
 }
 
-/** null clears; anything else must be a well-formed schedule (≤ 7 windows). */
-export function parseAvailabilitySchedule(v: unknown): AvailabilitySchedule | null {
-  if (v === null) return null;
-  if (typeof v !== 'object' || Array.isArray(v)) bad('availabilitySchedule must be an object');
-  const o = v as Record<string, unknown>;
-  const outside = o.outside === undefined ? 'unavailable' : o.outside;
-  if (outside !== 'unavailable' && outside !== 'hidden')
-    bad('outside must be unavailable or hidden', 'availabilitySchedule.outside');
-  if (!Array.isArray(o.windows) || o.windows.length < 1 || o.windows.length > 7)
-    bad('a schedule has 1–7 windows', 'availabilitySchedule.windows');
-  const windows = o.windows.map((w, i): AvailabilityWindow => {
-    const field = `availabilitySchedule.windows[${i}]`;
+/** 1–7 well-formed windows; `at` names the field in errors. */
+function parseWindows(v: unknown, at: string): AvailabilityWindow[] {
+  if (!Array.isArray(v) || v.length < 1 || v.length > 7) bad('a schedule has 1–7 windows', at);
+  return v.map((w, i): AvailabilityWindow => {
+    const field = `${at}[${i}]`;
     if (typeof w !== 'object' || w === null || Array.isArray(w))
       bad('each window is an object', field);
     const x = w as Record<string, unknown>;
@@ -66,7 +60,37 @@ export function parseAvailabilitySchedule(v: unknown): AvailabilitySchedule | nu
     out.to = x.to;
     return out;
   });
-  return { windows, outside };
+}
+
+/** null clears; anything else must be a well-formed schedule (≤ 7 windows). */
+export function parseAvailabilitySchedule(v: unknown): AvailabilitySchedule | null {
+  if (v === null) return null;
+  if (typeof v !== 'object' || Array.isArray(v)) bad('availabilitySchedule must be an object');
+  const o = v as Record<string, unknown>;
+  const outside = o.outside === undefined ? 'unavailable' : o.outside;
+  if (outside !== 'unavailable' && outside !== 'hidden')
+    bad('outside must be unavailable or hidden', 'availabilitySchedule.outside');
+  return { windows: parseWindows(o.windows, 'availabilitySchedule.windows'), outside };
+}
+
+// ── timed promotions ("seg a sex, 18h–20h, por R$ 29,90") ──────────────────
+
+export interface PromoSchedule {
+  /** the price inside the windows; it applies only while below the regular price */
+  priceCents: number;
+  windows: AvailabilityWindow[];
+}
+
+/** null clears; a price and 1–7 windows otherwise. The route checks it against the price. */
+export function parsePromoSchedule(v: unknown, maxPrice: number): PromoSchedule | null {
+  if (v === null) return null;
+  if (typeof v !== 'object' || Array.isArray(v))
+    bad('promoSchedule must be an object', 'promoSchedule');
+  const o = v as Record<string, unknown>;
+  const price = o.priceCents;
+  if (typeof price !== 'number' || !Number.isInteger(price) || price < 0 || price > maxPrice)
+    bad('priceCents is a whole number of cents', 'promoSchedule.priceCents');
+  return { priceCents: price, windows: parseWindows(o.windows, 'promoSchedule.windows') };
 }
 
 /** local weekday + 'HH:MM' in the store's timezone */
@@ -142,6 +166,10 @@ export interface ProductSummary {
   basePriceCents: number;
   /** display-only "de" price (strike-through), always above basePriceCents; null = no promo */
   compareAtPriceCents: number | null;
+  /** display-only "a partir de": the cheapest configured unit, when above basePriceCents */
+  fromPriceCents: number | null;
+  /** when the product has a timed promotion: its days and hours ("Seg a sex, 18h–20h") */
+  promoLabel?: string;
   /** stock-derived: an active product with stockQuantity 0 reads 'sold_out' */
   status: 'active' | 'sold_out' | 'archived';
   figureVariant: 'default' | 'alt';
@@ -239,6 +267,7 @@ interface ProductRow {
   preorder_lead_days: number;
   needs_choices: boolean;
   availability_schedule: AvailabilitySchedule | null;
+  promo_schedule: PromoSchedule | null;
 }
 
 /** Live availability — stock 0 is sold out without anyone flipping a status. */
@@ -252,17 +281,79 @@ function scheduled(row: ProductRow, now: Date, tz: string) {
   return { label: availabilityLabel(s), hidden: s.outside === 'hidden' };
 }
 
-function toSummary(row: ProductRow, now: Date, tz: string): ProductSummary {
+/** A timed promotion that can apply: its price is below the regular one and it has windows. */
+/** A stored window read back defensively: a malformed one never reaches the clock math. */
+const goodWindow = (w: unknown): w is AvailabilityWindow => {
+  if (typeof w !== 'object' || w === null) return false;
+  const x = w as Record<string, unknown>;
+  const days = x.days;
+  if (
+    !Array.isArray(days) ||
+    !days.length ||
+    days.some((d) => !Number.isInteger(d) || (d as number) < 0 || (d as number) > 6)
+  )
+    return false;
+  if (x.from === undefined && x.to === undefined) return true;
+  return (
+    typeof x.from === 'string' &&
+    typeof x.to === 'string' &&
+    HHMM.test(x.from) &&
+    HHMM.test(x.to) &&
+    x.from < x.to
+  );
+};
+
+function promoOf(row: ProductRow): PromoSchedule | null {
+  const p = row.promo_schedule;
+  if (
+    !p ||
+    !Number.isInteger(p.priceCents) ||
+    p.priceCents < 0 ||
+    p.priceCents >= row.base_price_cents ||
+    !Array.isArray(p.windows)
+  )
+    return null;
+  const windows = p.windows.filter(goodWindow);
+  return windows.length ? { priceCents: p.priceCents, windows } : null;
+}
+
+/**
+ * The price a shopper pays now — inside a promotion's window its price, the regular one struck
+ * through. Cart lines, checkout's reprice and the order all read it from here.
+ */
+function priceNow(row: ProductRow, now: Date, tz: string) {
+  const promo = promoOf(row);
+  if (!promo || !scheduleOpen({ windows: promo.windows, outside: 'unavailable' }, now, tz))
+    return { base: row.base_price_cents, compareAt: row.compare_at_price_cents };
+  return {
+    base: promo.priceCents,
+    compareAt: Math.max(row.compare_at_price_cents ?? 0, row.base_price_cents),
+  };
+}
+
+function toSummary(
+  row: ProductRow,
+  now: Date,
+  tz: string,
+  groups: readonly ModifierGroup[] = [],
+): ProductSummary {
   const stock = row.stock_quantity;
   const off = scheduled(row, now, tz);
   const status = liveStatus(row.status, stock) as ProductSummary['status'];
+  const price = priceNow(row, now, tz);
+  const promo = promoOf(row);
+  const from = row.kind === 'combo' ? null : fromPriceCents(price.base, groups);
   return {
     id: row.id,
     slug: row.slug,
     name: row.name,
     description: row.description,
-    basePriceCents: row.base_price_cents,
-    compareAtPriceCents: row.compare_at_price_cents,
+    basePriceCents: price.base,
+    compareAtPriceCents: price.compareAt,
+    fromPriceCents: from !== null && from > price.base ? from : null,
+    ...(promo
+      ? { promoLabel: availabilityLabel({ windows: promo.windows, outside: 'unavailable' }) }
+      : {}),
     status: off && status === 'active' ? 'sold_out' : status,
     figureVariant: row.figure_variant,
     tags: row.tags ?? [],
@@ -286,16 +377,59 @@ const productColumns = (tx: Sql) => tx`
   p.id, p.category_id, p.slug, p.name, p.description, p.base_price_cents, p.compare_at_price_cents,
   p.status, p.figure_variant,
   p.tags, p.kind, p.stock_quantity, p.low_stock_threshold, p.requires_preorder, p.preorder_lead_days,
-  p.availability_schedule,
+  p.availability_schedule, p.promo_schedule,
   (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as image_url,
   (p.kind = 'combo' or exists (select 1 from modifier_groups g where g.product_id = p.id)) as needs_choices
 `;
+
+/** When the next window in these schedules opens or closes (store time); null when none. */
+export function nextChangeAt(
+  schedules: readonly (readonly AvailabilityWindow[] | undefined)[],
+  now: Date,
+  tz: string,
+): Date | null {
+  const { day, hhmm } = localClock(now, tz);
+  const minutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+  const at = minutes(hhmm);
+  let best = Infinity;
+  for (const windows of schedules)
+    for (const w of windows ?? []) {
+      if (!goodWindow(w)) continue;
+      for (const d of w.days)
+        for (const mark of w.from && w.to ? [minutes(w.from), minutes(w.to)] : [0, 1440]) {
+          let ahead = ((d - day + 7) % 7) * 1440 + mark - at;
+          if (ahead <= 0) ahead += 7 * 1440;
+          best = Math.min(best, ahead);
+        }
+    }
+  if (!Number.isFinite(best)) return null;
+  const guess = Math.floor(now.getTime() / 60_000) * 60_000 + best * 60_000;
+  // that was wall-clock minutes; a daylight-saving change in between moves the instant
+  const target = (day * 1440 + at + best) % (7 * 1440);
+  const there = localClock(new Date(guess), tz);
+  let drift = target - (there.day * 1440 + minutes(there.hhmm));
+  if (drift > 3.5 * 1440) drift -= 7 * 1440;
+  if (drift < -3.5 * 1440) drift += 7 * 1440;
+  return new Date(guess + drift * 60_000);
+}
 
 export async function getCatalog(
   tx: Sql,
   tenantId: string,
   now = new Date(),
 ): Promise<CategoryWithProducts[]> {
+  return (await getCatalogView(tx, tenantId, now)).categories;
+}
+
+/**
+ * The storefront's catalog, and when it next changes by itself (a promotion or a product's
+ * hours starting or ending), so an open page knows to fetch it again.
+ */
+export async function getCatalogView(
+  tx: Sql,
+  tenantId: string,
+  now = new Date(),
+): Promise<{ categories: CategoryWithProducts[]; nextChangeAt: Date | null }> {
   // independent reads go out together — postgres.js pipelines them on the tx's connection
   const [categories, products, tz] = await Promise.all([
     tx<CategoryRow[]>`
@@ -311,14 +445,106 @@ export async function getCatalog(
     storeTimezone(tx, tenantId),
   ]);
   const listed = products.filter((p) => !scheduled(p, now, tz)?.hidden);
-  return categories.map((cat) => ({
-    id: cat.id,
-    slug: cat.slug,
-    name: cat.name,
-    description: cat.description,
-    sort: cat.sort,
-    products: listed.filter((p) => p.category_id === cat.id).map((p) => toSummary(p, now, tz)),
-  }));
+  // "a partir de" needs each listed product's lists
+  const groups = await loadGroups(
+    tx,
+    tenantId,
+    listed.filter((p) => p.needs_choices && p.kind !== 'combo').map((p) => p.id),
+  );
+  return {
+    categories: categories.map((cat) => ({
+      id: cat.id,
+      slug: cat.slug,
+      name: cat.name,
+      description: cat.description,
+      sort: cat.sort,
+      products: listed
+        .filter((p) => p.category_id === cat.id)
+        .map((p) => toSummary(p, now, tz, groups.get(p.id))),
+    })),
+    nextChangeAt: nextChangeAt(
+      products.flatMap((p) => [p.availability_schedule?.windows, promoOf(p)?.windows]),
+      now,
+      tz,
+    ),
+  };
+}
+
+/** Each product's option groups with their options, in display order. */
+async function loadGroups(
+  tx: Sql,
+  tenantId: string,
+  ids: readonly string[],
+  opts: { forUpdate?: boolean } = {},
+): Promise<Map<string, ModifierGroup[]>> {
+  const out = new Map<string, ModifierGroup[]>();
+  if (ids.length === 0) return out;
+  const lock = opts.forUpdate ? tx`for update` : tx``;
+  const [groups, modifiers] = await Promise.all([
+    tx<
+      {
+        id: string;
+        product_id: string;
+        name: string;
+        required: boolean;
+        min_select: number;
+        max_select: number;
+        pricing_rule: PricingRule;
+        sort: number;
+      }[]
+    >`
+      select id, product_id, name, required, min_select, max_select, pricing_rule, sort from modifier_groups
+      where tenant_id = ${tenantId} and product_id = any(${ids as string[]}::uuid[])
+      order by product_id, sort, name ${lock}
+    `,
+    tx<
+      {
+        id: string;
+        group_id: string;
+        name: string;
+        price_delta_cents: number;
+        status: 'active' | 'sold_out';
+        max_qty: number;
+        description: string | null;
+        image_url: string | null;
+        sort: number;
+      }[]
+    >`
+      select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.max_qty, m.description,
+             m.image_url, m.sort
+      from modifiers m join modifier_groups g on g.id = m.group_id
+      where m.tenant_id = ${tenantId} and g.product_id = any(${ids as string[]}::uuid[])
+      order by g.product_id, m.sort, m.name ${lock}
+    `,
+  ]);
+  const byGroup = new Map<string, Modifier[]>();
+  for (const m of modifiers) {
+    const list = byGroup.get(m.group_id) ?? [];
+    list.push({
+      id: m.id,
+      name: m.name,
+      priceDeltaCents: m.price_delta_cents,
+      status: m.status,
+      maxQty: m.max_qty,
+      description: m.description,
+      imageUrl: m.image_url,
+    });
+    byGroup.set(m.group_id, list);
+  }
+  for (const g of groups) {
+    const list = out.get(g.product_id) ?? [];
+    list.push({
+      id: g.id,
+      name: g.name,
+      required: g.required,
+      minSelect: g.min_select,
+      maxSelect: g.max_select,
+      pricingRule: g.pricing_rule,
+      modifiers: byGroup.get(g.id) ?? [],
+    });
+    out.set(g.product_id, list);
+  }
+  return out;
 }
 
 export async function getProduct(
@@ -389,43 +615,8 @@ async function attachDetails(
   const out = new Map<string, ProductDetail>();
   if (rows.length === 0) return out;
   const ids = rows.map((r) => r.id);
-  const lock = opts.forUpdate ? tx`for update` : tx``;
-  const [groups, modifiers, gallery, tz] = await Promise.all([
-    tx<
-      {
-        id: string;
-        product_id: string;
-        name: string;
-        required: boolean;
-        min_select: number;
-        max_select: number;
-        pricing_rule: PricingRule;
-        sort: number;
-      }[]
-    >`
-      select id, product_id, name, required, min_select, max_select, pricing_rule, sort from modifier_groups
-      where tenant_id = ${tenantId} and product_id = any(${ids}::uuid[])
-      order by product_id, sort, name ${lock}
-    `,
-    tx<
-      {
-        id: string;
-        group_id: string;
-        name: string;
-        price_delta_cents: number;
-        status: 'active' | 'sold_out';
-        max_qty: number;
-        description: string | null;
-        image_url: string | null;
-        sort: number;
-      }[]
-    >`
-      select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.max_qty, m.description,
-             m.image_url, m.sort
-      from modifiers m join modifier_groups g on g.id = m.group_id
-      where m.tenant_id = ${tenantId} and g.product_id = any(${ids}::uuid[])
-      order by g.product_id, m.sort, m.name ${lock}
-    `,
+  const [groups, gallery, tz] = await Promise.all([
+    loadGroups(tx, tenantId, ids, opts),
     tx<(MediaItem & { product_id: string })[]>`
       select product_id, url, alt, width, height from product_media
       where tenant_id = ${tenantId} and product_id = any(${ids}::uuid[])
@@ -435,7 +626,7 @@ async function attachDetails(
   ]);
   // a 'hidden' product still opens from a shared link: it reads sold out with its label
   const now = new Date();
-  const summaries = new Map(rows.map((r) => [r.id, toSummary(r, now, tz)]));
+  const summaries = new Map(rows.map((r) => [r.id, toSummary(r, now, tz, groups.get(r.id))]));
   const soldOut = rows.filter((r) => summaries.get(r.id)!.status === 'sold_out').map((r) => r.id);
   const [waiting, combos] = await Promise.all([
     soldOut.length
@@ -462,27 +653,7 @@ async function attachDetails(
   for (const product of rows) {
     out.set(product.id, {
       ...summaries.get(product.id)!,
-      modifierGroups: groups
-        .filter((g) => g.product_id === product.id)
-        .map((g) => ({
-          id: g.id,
-          name: g.name,
-          required: g.required,
-          minSelect: g.min_select,
-          maxSelect: g.max_select,
-          pricingRule: g.pricing_rule,
-          modifiers: modifiers
-            .filter((m) => m.group_id === g.id)
-            .map((m) => ({
-              id: m.id,
-              name: m.name,
-              priceDeltaCents: m.price_delta_cents,
-              status: m.status,
-              maxQty: m.max_qty,
-              description: m.description,
-              imageUrl: m.image_url,
-            })),
-        })),
+      modifierGroups: groups.get(product.id) ?? [],
       gallery: gallery
         .filter((m) => m.product_id === product.id)
         .map((m) => ({ url: m.url, alt: m.alt, width: m.width, height: m.height })),

@@ -11,10 +11,22 @@ import {
   type Lost,
   type MenuImportV1,
   type PaymentMethod,
-  type PixKeyType,
   type SourceInfo,
 } from '../doc.ts';
 import { ImportFailure, type ImportHttp } from '../http.ts';
+import { MAX_PERCENT_BPS } from '../../payment-adjustments.ts';
+import {
+  colour,
+  eta,
+  hhmm,
+  intOf,
+  liftFloor,
+  methodOf,
+  pixType,
+  positiveCents,
+  reais,
+  windowsOf,
+} from './shared.ts';
 import { flag, isRaw, list, str, type Adapter, type Raw } from './types.ts';
 
 const API = 'app.instadelivery.com.br';
@@ -45,13 +57,6 @@ const RESERVED = new Set([
 ]);
 
 const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d/;
-
-const hhmm = (v: unknown): string | null => {
-  const m = HHMM.exec(str(v));
-  return m ? m[0] : null;
-};
-
 function weekdays(o: Raw): number[] {
   return DAYS.map((d, i) => (o[d] === false || o[d] === 0 || o[d] === '0' ? -1 : i)).filter(
     (i) => i >= 0,
@@ -90,32 +95,17 @@ function availability(item: Raw, group: Raw): ImportSchedule | undefined | 'neve
   };
 }
 
-const first = (o: Raw, keys: string[]): unknown => {
-  for (const k of keys) if (o[k] !== undefined && o[k] !== null) return o[k];
-  return undefined;
-};
-
-const truthy = (v: unknown) =>
-  v !== null &&
-  v !== undefined &&
-  v !== false &&
-  v !== 0 &&
-  v !== '0' &&
-  v !== '' &&
-  !(Array.isArray(v) && v.length === 0);
-
-const intOf = (v: unknown): number | null => {
-  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
-  return typeof n === 'number' && Number.isInteger(n) ? n : null;
-};
-
 /**
  * An add-on list (`complementos[]`): `min`, `max` (0 = no cap), `is_pizza` (the "Lista de
- * Sabores de Pizza": several flavours charge the dearest), `only_one` (each option once), and
- * its options in `complements[]` (`price` in reais, `max_quantity`, `is_invisible`, stock).
- * Field names confirmed on live stores (2026-10-01); a list that doesn't read hides the product.
+ * Sabores de Pizza"), `only_one` (each option once), and its options in `complements[]` (`price`
+ * in reais, `max_quantity`, `is_invisible`, stock). Field names confirmed on live stores
+ * (2026-10-01); a list that doesn't read hides the product.
+ *
+ * A pizza list charges every unit picked at the dearest pick's price (the storefront's item
+ * total; ½ R$ 20 + ½ R$ 25,50 = R$ 51,00): n × dearest. Venduá's `most_expensive` charges the
+ * dearest once, so it's exact only when n is fixed (min = max), with each price × n.
  */
-function optionGroup(c: Raw): ImportOptionGroup | 'empty' | null {
+function optionGroup(c: Raw): { group: ImportOptionGroup; exact: boolean } | 'empty' | null {
   const name = str(c.name).trim();
   if (!name || !Array.isArray(c.complements)) return null;
   const once = flag(c.only_one);
@@ -143,152 +133,236 @@ function optionGroup(c: Raw): ImportOptionGroup | 'empty' | null {
   if (!options.length) return min > 0 ? null : 'empty';
   const max = intOf(c.max) ?? 0;
   if (min < 0 || max < 0) return null;
+  const pizza = flag(c.is_pizza) && max !== 1;
+  // max 0 is "no cap": the number of flavours varies
+  const fixed = pizza && max > 0 && min === max;
+  if (fixed) for (const o of options) o.priceDeltaCents *= min;
   return {
-    name,
-    min,
-    // validateDoc caps it at what the options add up to
-    max: max === 0 ? 1000 : max,
-    ...(flag(c.is_pizza) && max !== 1 ? { pricingRule: 'most_expensive' as const } : {}),
-    options,
+    group: {
+      name,
+      min,
+      // validateDoc caps it at what the options add up to
+      max: max === 0 ? 1000 : max,
+      ...(pizza ? { pricingRule: 'most_expensive' as const } : {}),
+      options,
+    },
+    exact: !pizza || fixed,
   };
 }
 
-/** "40", "30-50", "30 a 50 min" → minutes; anything else none. */
-function eta(v: unknown): { etaMin?: number; etaMax?: number } {
-  const m = /^\s*(\d{1,4})(?:\s*(?:-|a|até)\s*(\d{1,4}))?\s*(?:min|minutos)?\s*$/i.exec(str(v));
-  if (!m) return {};
-  const lo = Number(m[1]);
-  const hi = m[2] ? Number(m[2]) : lo;
-  return lo <= hi && hi <= 1440 ? { etaMin: lo, etaMax: hi } : {};
-}
+// The storefront's checkout (its own code): one discount per order, the first that applies —
+// store-wide `discount`, then `takeaway_discount` on pickup, then the payment's own; increments
+// add on top. All are percents of the subtotal. Payment ids are the platform's fixed ones.
+const CASH = [2];
+const PIX = [1307, 46];
+const DEBIT = [7];
+const CREDIT = [8, 42, 49];
+const VOUCHER = [45];
 
-const ADJUSTMENTS: [string, string][] = [
-  ['pix_discount', 'Pix'],
-  ['cash_discount', 'dinheiro'],
-  ['debit_card_discount', 'cartão de débito'],
-  ['debt_increment', 'cartão de débito'],
-  ['credit_increment', 'cartão de crédito'],
-  ['ticket_increment', 'vale-refeição'],
-  ['takeaway_discount', 'retirada'],
-  ['discount', 'pedido'],
-];
-
-function methodOf(name: string): PaymentMethod | null {
-  const n = name.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-  if (/\bpix\b/.test(n)) return 'pix';
-  if (/dinheiro|especie/.test(n)) return 'cash';
-  if (/vale|ticket|sodexo|alelo|pluxee|\bvr\b|refeicao|alimentacao|\bben\b|flash|caju/.test(n))
-    return 'meal_voucher';
-  if (/cartao|credito|debito|maquin|\belo\b|visa|master/.test(n)) return 'card_on_delivery';
-  return null;
-}
-
-function pixType(type: string, key: string): PixKeyType | null {
-  const t = type.toLowerCase();
-  const digits = key.replace(/\D/g, '');
-  if (/mail/.test(t) || key.includes('@')) return 'email';
-  if (/aleat|random|evp/.test(t) || /^[0-9a-f-]{36}$/i.test(key.trim())) return 'random';
-  if (/telefone|celular|phone/.test(t)) return 'phone';
-  if (/cpf|cnpj/.test(t) || /^[\d.\-/ ]+$/.test(key.trim())) {
-    if (digits.length === 11) return 'cpf';
-    if (digits.length === 14) return 'cnpj';
-  }
-  return null;
-}
-
-/** "#######" is the platform's "no colour"; anything else must be a 6-digit hex. */
-const colour = (v: unknown): string | null => {
-  const s = str(v).trim();
-  if (/^#[0-9a-f]{6}$/i.test(s)) return s;
-  if (/^#[0-9a-f]{3}$/i.test(s)) return `#${[...s.slice(1)].map((c) => c + c).join('')}`;
-  return null;
+const LABEL: Record<PaymentMethod, string> = {
+  pix: 'Pix',
+  cash: 'dinheiro',
+  card_on_delivery: 'cartão',
+  card_online: 'cartão online',
+  meal_voucher: 'vale-refeição',
 };
+
+const pct = (raw: Raw, k: string) => {
+  const n = Number(raw[k]);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+/**
+ * Per Venduá method, the signed percent every source method mapped to it carries; a method whose
+ * source methods disagree, or that the old store priced in a way we can't repeat, is a note.
+ */
+function adjustments(
+  raw: Raw,
+  sources: { id: number; method: PaymentMethod }[],
+  pickup: boolean,
+  lost: Lost[],
+): NonNullable<MenuImportV1['payments']>['adjustments'] {
+  const storeWide = pct(raw, 'discount');
+  const takeaway = pct(raw, 'takeaway_discount');
+  // a pickup discount wins over the payment's own on pickup orders: the payment's isn't one rule
+  const perMethod = storeWide === 0 && !(pickup && takeaway > 0);
+  if (storeWide === 0 && pickup && takeaway > 0)
+    lost.push({ scope: 'store', code: 'payment_adjustment', detail: 'retirada' });
+  const discount = (id: number) =>
+    storeWide > 0
+      ? storeWide
+      : !perMethod
+        ? 0
+        : CASH.includes(id)
+          ? pct(raw, 'cash_discount')
+          : PIX.includes(id)
+            ? pct(raw, 'pix_discount')
+            : DEBIT.includes(id)
+              ? pct(raw, 'debit_card_discount')
+              : 0;
+  const increment = (id: number) =>
+    DEBIT.includes(id)
+      ? pct(raw, 'debt_increment')
+      : CREDIT.includes(id)
+        ? pct(raw, 'credit_increment')
+        : VOUCHER.includes(id)
+          ? pct(raw, 'ticket_increment')
+          : 0;
+  const missed = new Set<PaymentMethod>();
+  // pickup orders got the pickup discount instead of these; a store-wide one replaces them always
+  if (!perMethod && storeWide === 0)
+    for (const { id, method } of sources)
+      if (
+        (CASH.includes(id) && pct(raw, 'cash_discount')) ||
+        (PIX.includes(id) && pct(raw, 'pix_discount')) ||
+        (DEBIT.includes(id) && pct(raw, 'debit_card_discount'))
+      )
+        missed.add(method);
+  const net = new Map<PaymentMethod, Set<number>>();
+  for (const { id, method } of sources) {
+    const d = discount(id);
+    const i = increment(id);
+    // each is rounded on its own there; one net percent could land a cent apart
+    if (d > 0 && i > 0) missed.add(method);
+    // a percent finer than a basis point has no exact equivalent
+    const bps = Math.round((i - d) * 100);
+    if (Math.abs((i - d) * 100 - bps) > 1e-6) missed.add(method);
+    const set = net.get(method) ?? new Set<number>();
+    net.set(method, set.add(bps));
+  }
+  const out: NonNullable<MenuImportV1['payments']>['adjustments'] = {};
+  for (const [method, set] of net) {
+    const [bps] = [...set];
+    if (missed.has(method) || set.size > 1 || Math.abs(bps!) > MAX_PERCENT_BPS)
+      lost.push({ scope: 'store', code: 'payment_adjustment', detail: LABEL[method] });
+    else if (bps) out[method] = { percentBps: bps };
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 function hours(times: unknown, alwaysOpen: boolean): ImportWindow[] {
   if (alwaysOpen) return [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '23:59' }];
   const shifts = isRaw(times) ? Object.values(times) : Array.isArray(times) ? times : [];
-  const byRange = new Map<string, Set<number>>();
+  const ranges: { day: number; open: string; close: string }[] = [];
   for (const t of shifts.flatMap((s) => list(s))) {
     const day = intOf(t.day);
     const open = hhmm(t.time_open);
     const close = hhmm(t.time_close);
-    if (day === null || day < 0 || day > 6 || !open || !close || open === close) continue;
-    const k = `${open}-${close}`;
-    byRange.set(k, (byRange.get(k) ?? new Set()).add(day));
+    if (day !== null && open && close) ranges.push({ day, open, close });
   }
-  return [...byRange.entries()]
-    .map(([k, days]) => {
-      const [open, close] = k.split('-') as [string, string];
-      return { days: [...days].sort((a, b) => a - b), open, close };
-    })
-    .sort((a, b) => a.days[0]! - b.days[0]! || a.open.localeCompare(b.open));
+  return windowsOf(ranges);
 }
 
+const least = (...v: (number | null)[]) => {
+  const xs = v.filter((x): x is number => x !== null);
+  return xs.length ? Math.min(...xs) : null;
+};
+
 /**
- * Neighbourhood fees (`fees[]`: `name`, `price`, `estimate`) become one zone per fee and time;
- * km tiers (`feesKm[]`: `km`, `price`, `estimate`) become radius zones. Free-delivery rules and
- * "no delivery" tiers aren't copied (their exact meaning isn't confirmed): they're noted.
+ * `fee_type` picks the fee the storefront charges (its checkout code): −1 the neighbourhood
+ * list (`fees[]`: `name`, `price`, `estimate`, `free_delivery`), −2 the km tiers (`feesKm[]`:
+ * `km`, `price`, `estimate`, `price_free`, `no_delivery`), −3 a fee agreed after the order, any
+ * other value a flat fee in reais. Stores keep the list they don't use, so only the live one is
+ * read. Free delivery: subtotal ≥ a neighbourhood's `free_delivery`, subtotal > a tier's
+ * `price_free`, or subtotal ≥ the store's `free_delivery`, whatever the fee.
  */
 function zones(raw: Raw, lost: Lost[]): ImportZone[] | undefined {
   const fees = list(raw.fees).filter((f) => !f.deleted_at);
   const km = list(raw.feesKm).filter((k) => !k.deleted_at);
-  if (!fees.length && !km.length) return undefined;
-  let rules = false;
-  const byFee = new Map<string, { fee: number; t: ReturnType<typeof eta>; names: string[] }>();
-  for (const f of fees) {
-    const name = str(f.name).trim();
-    const fee = toCents(f.price ?? 0);
-    if (!name || fee === null) {
-      lost.push({ scope: 'store', code: 'delivery_fees_unreadable' });
-      return undefined;
-    }
-    if (truthy(f.free_delivery)) rules = true;
-    const t = eta(f.estimate);
-    const k = `${fee}|${t.etaMin ?? ''}|${t.etaMax ?? ''}`;
-    const e = byFee.get(k) ?? { fee, t, names: [] };
-    e.names.push(name);
-    byFee.set(k, e);
+  const storeFree = positiveCents(raw.free_delivery);
+  const type =
+    raw.fee_type === null || raw.fee_type === undefined || raw.fee_type === ''
+      ? null
+      : Number(raw.fee_type);
+  if (type === -3) {
+    lost.push({ scope: 'store', code: 'delivery_fee_later' });
+    return undefined;
   }
-  const out: ImportZone[] = [...byFee.values()]
-    .sort((a, b) => a.fee - b.fee)
-    .map(({ fee, t, names }) => ({
-      name: fee === 0 ? 'Entrega grátis' : `Taxa R$ ${(fee / 100).toFixed(2).replace('.', ',')}`,
-      kind: 'neighborhood',
-      neighborhoods: names,
-      feeCents: fee,
-      ...t,
-    }));
-  const tiers: ImportZone[] = [];
-  const gaps: number[] = [];
-  for (const k of km) {
-    const dist = Number(k.km);
-    const fee = toCents(k.price ?? 0);
-    if (!(dist > 0) || fee === null) {
-      lost.push({ scope: 'store', code: 'delivery_fees_unreadable' });
-      return out.length ? out : undefined;
-    }
-    if (flag(k.no_delivery)) {
-      gaps.push(dist);
-      continue;
-    }
-    if (truthy(k.price_free)) rules = true;
-    tiers.push({
-      name: `Até ${String(dist).replace('.', ',')} km`,
-      kind: 'radius',
-      maxDistanceKm: dist,
-      feeCents: fee,
-      ...eta(k.estimate),
+  if (type !== null && Number.isFinite(type) && type >= 0) {
+    const fee = toCents(type);
+    lost.push({
+      scope: 'store',
+      code: 'delivery_flat_fee',
+      ...(fee !== null ? { detail: fee === 0 ? 'grátis' : reais(fee) } : {}),
     });
+    return undefined;
   }
-  // "no delivery" past the farthest tier is just where delivery ends; inside it, a hole a
-  // straight-line radius can't express
-  const far = Math.max(0, ...tiers.map((t) => t.maxDistanceKm!));
-  for (const g of gaps.filter((d) => d < far).sort((a, b) => a - b))
-    lost.push({ scope: 'store', code: 'delivery_gap', detail: String(g).replace('.', ',') });
-  if (rules) lost.push({ scope: 'store', code: 'free_delivery_rule' });
-  if (tiers.length) lost.push({ scope: 'store', code: 'delivery_distance_straight_line' });
-  const all = [...out, ...tiers.sort((a, b) => a.maxDistanceKm! - b.maxDistanceKm!)];
-  return all.length ? all : undefined;
+  // a store that predates fee_type: whichever list it has
+  const useFees = type === -1 || (type === null && fees.length > 0);
+  const useKm = type === -2 || (type === null && !fees.length);
+  if (type !== null && !useFees && !useKm) {
+    lost.push({ scope: 'store', code: 'delivery_fees_unreadable' });
+    return undefined;
+  }
+
+  const out: ImportZone[] = [];
+  if (useFees) {
+    const byFee = new Map<
+      string,
+      { fee: number; free: number | null; t: ReturnType<typeof eta>; names: string[] }
+    >();
+    for (const f of fees) {
+      const name = str(f.name).trim();
+      const fee = toCents(f.price ?? 0);
+      if (!name || fee === null) {
+        lost.push({ scope: 'store', code: 'delivery_fees_unreadable' });
+        return undefined;
+      }
+      const free = least(positiveCents(f.free_delivery), storeFree);
+      const t = eta(f.estimate);
+      const k = `${fee}|${free ?? ''}|${t.etaMin ?? ''}|${t.etaMax ?? ''}`;
+      const e = byFee.get(k) ?? { fee, free, t, names: [] };
+      e.names.push(name);
+      byFee.set(k, e);
+    }
+    out.push(
+      ...[...byFee.values()]
+        .sort((a, b) => a.fee - b.fee || (a.free ?? 0) - (b.free ?? 0))
+        .map(({ fee, free, t, names }) => ({
+          name: fee === 0 ? 'Entrega grátis' : `Taxa ${reais(fee)}`,
+          kind: 'neighborhood' as const,
+          neighborhoods: names,
+          feeCents: fee,
+          ...t,
+          ...(free !== null && fee > 0 ? { freeDeliveryOverCents: free } : {}),
+        })),
+    );
+  }
+  if (useKm) {
+    const tiers: ImportZone[] = [];
+    const gaps: number[] = [];
+    for (const k of km) {
+      const dist = Number(k.km);
+      const fee = toCents(k.price ?? 0);
+      if (!(dist > 0) || fee === null) {
+        lost.push({ scope: 'store', code: 'delivery_fees_unreadable' });
+        return out.length ? out : undefined;
+      }
+      if (flag(k.no_delivery)) {
+        gaps.push(dist);
+        continue;
+      }
+      // strictly above the tier's price_free: one cent past it in whole cents
+      const tierFree = positiveCents(k.price_free);
+      const free = least(tierFree === null ? null : tierFree + 1, storeFree);
+      tiers.push({
+        name: `Até ${String(dist).replace('.', ',')} km`,
+        kind: 'radius',
+        maxDistanceKm: dist,
+        feeCents: fee,
+        ...eta(k.estimate),
+        ...(free !== null && fee > 0 ? { freeDeliveryOverCents: free } : {}),
+      });
+    }
+    // "no delivery" past the farthest tier is just where delivery ends; inside it, a hole a
+    // straight-line radius can't express
+    const far = Math.max(0, ...tiers.map((t) => t.maxDistanceKm!));
+    for (const g of gaps.filter((d) => d < far).sort((a, b) => a - b))
+      lost.push({ scope: 'store', code: 'delivery_gap', detail: String(g).replace('.', ',') });
+    if (tiers.length) lost.push({ scope: 'store', code: 'delivery_distance_straight_line' });
+    out.push(...tiers.sort((a, b) => a.maxDistanceKm! - b.maxDistanceKm!));
+  }
+  return out.length ? out : undefined;
 }
 
 function product(item: Raw, group: Raw, lost: Lost[]): ImportProduct | null {
@@ -321,7 +395,16 @@ function product(item: Raw, group: Raw, lost: Lost[]): ImportProduct | null {
   };
   const strike = toCents(item.strike_price);
   if (strike !== null && strike > p.priceCents) p.compareAtPriceCents = strike;
-  if (Number(item.item_discount) > 0) hide('promo_unreadable');
+  // a discount only through the item's own share link; the menu sells at price1
+  if (Number(item.item_discount) > 0)
+    lost.push({
+      scope: 'product',
+      subject: name,
+      code: 'link_discount',
+      detail: String(Number(item.item_discount)),
+    });
+  // type 2: price1 is per kg and the quantity in grams
+  if (intOf(item.type) === 2) hide('sold_by_weight');
 
   if (flag(item.is_newest)) p.tags.push('Novidade');
   if (flag(item.is_best_seller)) p.tags.push('Mais vendido');
@@ -350,30 +433,14 @@ function product(item: Raw, group: Raw, lost: Lost[]): ImportProduct | null {
       hide('options_unreadable', str(c.name) || undefined);
       continue;
     }
-    p.optionGroups.push(g);
+    // a pizza list where the number of flavours varies: n × dearest has no rule here
+    if (!g.exact) hide('pizza_pricing', g.group.name);
+    p.optionGroups.push(g.group);
   }
 
-  // "a partir de": the price lives in one required single-choice list — move its floor up
-  if (p.priceCents === 0) {
-    const req = p.optionGroups.find(
-      (g) =>
-        g.min >= 1 &&
-        (g.max === 1 || g.pricingRule === 'most_expensive') &&
-        g.options.every((o) => o.priceDeltaCents > 0),
-    );
-    if (req) {
-      const floor = Math.min(...req.options.map((o) => o.priceDeltaCents));
-      p.priceCents = floor;
-      for (const o of req.options) o.priceDeltaCents -= floor;
-    }
-  }
+  liftFloor(p);
 
-  // a pizza category priced by size (size1/size2 with price1/price2), or a second price we
-  // can't place: which one the old store charges depends on choices we don't carry over
-  if (flag(group.is_pizza) && (group.size1 || group.size2 || intOf(group.size)))
-    hide('pizza_sizes');
-  else if ((toCents(item.price2) ?? 0) > 0 && toCents(item.price2) !== p.priceCents)
-    hide('second_price');
+  // price2 and a pizza category's size1/size2 are never read by the storefront: it charges price1
   return p;
 }
 
@@ -455,22 +522,22 @@ export const instadelivery: Adapter = {
     storeLost(raw, lost);
 
     const methods: PaymentMethod[] = [];
+    const sources: { id: number; method: PaymentMethod }[] = [];
     for (const m of list(raw.payment_methods)) {
       if (m.external_visible !== undefined && !flag(m.external_visible)) continue;
       const method = methodOf(str(m.name));
       if (method) {
         if (!methods.includes(method)) methods.push(method);
+        sources.push({ id: intOf(m.real_id) ?? intOf(m.id) ?? 0, method });
       } else lost.push({ scope: 'store', code: 'payment_method', detail: str(m.name) });
     }
-    for (const [k, label] of ADJUSTMENTS)
-      if (Number(raw[k]) > 0)
-        lost.push({ scope: 'store', code: 'payment_adjustment', detail: label });
 
     const key = str(raw.pix).trim();
     const type = key ? pixType(str(raw.pix_type), key) : null;
     if (key && !type) lost.push({ scope: 'store', code: 'pix_unreadable' });
 
     const takeOut = flag(raw.take_out);
+    const adjusted = adjustments(raw, sources, takeOut, lost);
     const zoneList = zones(raw, lost);
     const prep =
       intOf(takeOut && !zoneList ? raw.wait_time_takeaway : raw.wait_time) || intOf(raw.wait_time);
@@ -506,6 +573,7 @@ export const instadelivery: Adapter = {
       ...(zoneList ? { zones: zoneList } : {}),
       payments: {
         methods,
+        ...(adjusted ? { adjustments: adjusted } : {}),
         ...(key && type
           ? {
               pix: {

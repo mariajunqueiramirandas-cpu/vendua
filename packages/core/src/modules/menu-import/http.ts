@@ -35,10 +35,17 @@ export interface ImportHttp {
   readonly used: number;
 }
 
+export interface ImportLimits {
+  importMs?: number;
+  requests?: number;
+}
+
 export interface HttpOptions {
   hosts: string[];
   fetch?: Fetch;
-  /** overall deadline (epoch ms); defaults to now + LIMITS.importMs */
+  /** an adapter's own budget, in place of LIMITS.importMs / LIMITS.requests */
+  limits?: ImportLimits;
+  /** overall deadline (epoch ms); defaults to now + the budget's importMs */
   deadline?: number;
   maxRequests?: number;
 }
@@ -54,6 +61,14 @@ async function paced(host: string): Promise<void> {
   if (at > now) await new Promise((r) => setTimeout(r, at - now));
 }
 
+/** An entry is a host, or a host and a path prefix ("storage.googleapis.com/bucket/") for a
+ *  host many tenants share. */
+const covers = (entry: string, u: URL) => {
+  const slash = entry.indexOf('/');
+  if (slash < 0) return entry === u.hostname;
+  return entry.slice(0, slash) === u.hostname && u.pathname.startsWith(entry.slice(slash));
+};
+
 function allowed(raw: string, hosts: string[]): URL {
   let u: URL;
   try {
@@ -61,7 +76,13 @@ function allowed(raw: string, hosts: string[]): URL {
   } catch {
     throw new ImportFailure('UNREADABLE', 'adapter built an invalid url');
   }
-  if (u.protocol !== 'https:' || u.username || u.password || u.port || !hosts.includes(u.hostname))
+  if (
+    u.protocol !== 'https:' ||
+    u.username ||
+    u.password ||
+    u.port ||
+    !hosts.some((h) => covers(h, u))
+  )
     throw new ImportFailure('BLOCKED', `host not allowlisted: ${u.hostname}`);
   return u;
 }
@@ -108,7 +129,7 @@ async function readCapped(res: Response, max: number): Promise<Uint8Array> {
   return out;
 }
 
-const CHALLENGE =
+export const CHALLENGE =
   /cf-chl|challenge-platform|just a moment|attention required|sorry, you have been blocked/i;
 
 interface Got {
@@ -155,8 +176,8 @@ async function get(
 
 export function createImportHttp(opts: HttpOptions): ImportHttp {
   const doFetch: Fetch = opts.fetch ?? ((input, init) => fetch(input, init));
-  const deadline = opts.deadline ?? Date.now() + LIMITS.importMs;
-  const max = opts.maxRequests ?? LIMITS.requests;
+  const deadline = opts.deadline ?? Date.now() + (opts.limits?.importMs ?? LIMITS.importMs);
+  const max = opts.maxRequests ?? opts.limits?.requests ?? LIMITS.requests;
   let used = 0;
   const spend = () => {
     if (++used > max) throw new ImportFailure('TOO_LARGE', `over ${max} requests`);

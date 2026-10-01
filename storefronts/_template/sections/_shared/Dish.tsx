@@ -162,13 +162,26 @@ function AddButton({ p, d, labels }: { p: CatalogProduct; d: DishState; labels: 
   );
 }
 
+// Core's "a partir de": priced by a required list, the cheapest choice
+const fromOf = (p: CatalogProduct) =>
+  p.fromPriceCents != null && p.fromPriceCents > p.basePriceCents ? p.fromPriceCents : null;
+
+function DishPrice({ p, price }: { p: CatalogProduct; price: string }) {
+  if (fromOf(p) === null) return <Price text={price} className="dish-price" />;
+  return (
+    <span className="dish-price">
+      <span className="price-cur">a partir de</span> <Price text={price} />
+    </span>
+  );
+}
+
 const linkLabel = (p: CatalogProduct, price: string, d: DishState, labels: DishLabels) =>
-  `${p.name}, ${price}${d.soldOut ? `, ${labels.soldOut}` : ''}${d.inBag ? `, ${d.inBag} ${labels.inBag}` : ''}`;
+  `${p.name}, ${fromOf(p) !== null ? 'a partir de ' : ''}${price}${d.soldOut ? `, ${labels.soldOut}` : ''}${d.inBag ? `, ${d.inBag} ${labels.inBag}` : ''}`;
 
 /** A menu line: words on the left, the dish on the right, one-tap add on the photo's corner. */
 export function DishRow({ product: p, category, currency, labels, highlighted }: DishProps) {
   const d = useDish(p);
-  const price = formatCents(p.basePriceCents, currency);
+  const price = formatCents(fromOf(p) ?? p.basePriceCents, currency);
   return (
     <li
       id={`produto-${p.slug}`}
@@ -182,7 +195,7 @@ export function DishRow({ product: p, category, currency, labels, highlighted }:
             <span className="dish-name">{p.name}</span>
             {p.description ? <span className="dish-desc">{p.description}</span> : null}
             <span className="dish-foot">
-              <Price text={price} className="dish-price" />
+              <DishPrice p={p} price={price} />
               <Tags p={p} d={d} labels={labels} />
             </span>
           </span>
@@ -197,7 +210,7 @@ export function DishRow({ product: p, category, currency, labels, highlighted }:
 /** The same dish as a small upright card, for rails of highlights. */
 export function DishCard({ product: p, category, currency, labels }: DishProps) {
   const d = useDish(p);
-  const price = formatCents(p.basePriceCents, currency);
+  const price = formatCents(fromOf(p) ?? p.basePriceCents, currency);
   return (
     <li className="dish-card" data-soldout={d.soldOut || undefined}>
       <ProductLink product={p} asChild>
@@ -205,7 +218,7 @@ export function DishCard({ product: p, category, currency, labels }: DishProps) 
           <Media p={p} category={category} d={d} labels={labels} />
           <span className="dish-name">{p.name}</span>
           <span className="dish-foot">
-            <Price text={price} className="dish-price" />
+            <DishPrice p={p} price={price} />
             <Tags p={p} d={d} labels={labels} />
           </span>
         </a>

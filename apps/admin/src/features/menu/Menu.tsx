@@ -40,6 +40,7 @@ import { usePreload } from '../../app/routes.ts';
 import { MenuSkeleton } from '../../ui/skeletons.tsx';
 import { availability, ProductTile } from '../../ui/ProductTile.tsx';
 import { outsideNow } from './schedule.ts';
+import { readableNames } from '../import/copy.ts';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -386,7 +387,7 @@ export default function Menu() {
             <span className="min-w-0 flex-1">
               <span className="block font-semibold">Importar de outro app</span>
               <span className="t-caption block text-muted">
-                Cole o link do seu cardápio no Instadelivery
+                Cole o link da sua loja no {readableNames()}
               </span>
             </span>
           </button>

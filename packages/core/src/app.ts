@@ -38,7 +38,7 @@ import {
   revokeControlSession,
   touchControlSession,
 } from './modules/control-sessions.ts';
-import { getCatalog, getProduct, getProductById } from './modules/catalog.ts';
+import { getCatalogView, getProduct, getProductById } from './modules/catalog.ts';
 import { deriveStatus, type StoreSettingsRow } from './modules/store.ts';
 import { notifyStaff } from './modules/staff.ts';
 import { normalizeStaff } from './modules/staff-config.ts';
@@ -537,8 +537,14 @@ export function createApp({
 
   storefront.get('/catalog', async (c) => {
     const tenant = c.get('tenant');
-    const catalog = await withTenant(sql, tenant.id, (tx) => getCatalog(tx, tenant.id));
-    return c.json({ categories: catalog });
+    const { categories, nextChangeAt } = await withTenant(sql, tenant.id, (tx) =>
+      getCatalogView(tx, tenant.id),
+    );
+    // a promotion or a product's hours turning: an open page fetches the catalog again then
+    return c.json({
+      categories,
+      ...(nextChangeAt ? { nextChangeAt: nextChangeAt.toISOString() } : {}),
+    });
   });
 
   storefront.get('/products/:slug', async (c) => {

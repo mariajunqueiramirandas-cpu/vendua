@@ -129,20 +129,24 @@ export function ScheduleEditor({
   );
 }
 
-function WindowRow({
+/** One window: its days, and the whole day or a range. The promotion's editor uses it too. */
+export function WindowRow({
   n,
   w,
   many,
   onChange,
   onRemove,
+  error,
 }: {
   n: number;
   w: ScheduleWindow;
   many: boolean;
   onChange: (w: ScheduleWindow) => void;
   onRemove: () => void;
+  /** Core's word on this window, when it refused it */
+  error?: string | null | undefined;
 }) {
-  const problem = windowProblem(w);
+  const problem = windowProblem(w) ?? error ?? null;
   const ranged = !!(w.from || w.to);
   const label = `horário ${n + 1}`;
   return (

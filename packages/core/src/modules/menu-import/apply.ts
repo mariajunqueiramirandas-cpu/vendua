@@ -209,6 +209,7 @@ export async function applyImport(
       tags: tx.json(p.tags),
       stock_quantity: p.stockQuantity ?? null,
       availability_schedule: p.availability ? tx.json(p.availability as never) : null,
+      promo_schedule: p.promoSchedule ? tx.json(p.promoSchedule as never) : null,
       requires_preorder: !!p.requiresPreorder,
       sort: ++sort,
     }));

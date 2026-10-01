@@ -298,8 +298,11 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const pricedByOptions = groups.some((g) =>
     g.modifiers.some((m) => m.priceDeltaCents !== 0 && pickedIds.includes(m.id)),
   );
+  const from = product ? fromPrice(product) : null;
+  const shown = from ?? product?.basePriceCents ?? 0;
+  // a "de" price is the base's; beside a from-price that includes options it would mislead
   const compareAt =
-    product?.compareAtPriceCents != null && product.compareAtPriceCents > product.basePriceCents
+    from === null && product?.compareAtPriceCents != null && product.compareAtPriceCents > shown
       ? product.compareAtPriceCents
       : null;
   const errors = Object.fromEntries(
@@ -425,9 +428,18 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                 <span className="v-sr">por </span>
               </>
             ) : null}
-            {slots.some((sl) => sl.items.some((i) => i.priceDeltaCents > 0)) ? 'a partir de ' : ''}
-            {money(product.basePriceCents, currency)}
+            {from !== null || slots.some((sl) => sl.items.some((i) => i.priceDeltaCents > 0)) ? (
+              <span className="v-price-from" data-part="from">
+                a partir de{' '}
+              </span>
+            ) : null}
+            {money(shown, currency)}
           </p>
+          {product.promoLabel ? (
+            <p className="v-pp-promo" data-part="promo">
+              Promoção: {product.promoLabel}
+            </p>
+          ) : null}
           {product.requiresPreorder ? (
             <p className="v-note" data-part="preorder" role="note">
               Sob encomenda
@@ -559,7 +571,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                   disabled={missing.length > 0 || comboMissing.length > 0 || status === 'paused'}
                   data-part="add"
                 >
-                  {slots.length || pricedByOptions ? (
+                  {slots.length || pricedByOptions || from !== null ? (
                     settings.addLabel
                   ) : (
                     <>
@@ -617,6 +629,20 @@ const COPY_CODES: Record<string, true> = {
   MODIFIER_SOLD_OUT: true,
 };
 
+/** Kernel 1.13 — Core's "a partir de" (the cheapest configured unit), only when above the price */
+const fromPrice = (p: CatalogProduct): number | null =>
+  p.fromPriceCents != null && p.fromPriceCents > p.basePriceCents ? p.fromPriceCents : null;
+
+/** a card's price read aloud: "de R$ 24,00 por R$ 18,00", "a partir de R$ 22,90" */
+function priceWords(p: CatalogProduct, currency: string): string {
+  const from = fromPrice(p);
+  const shown = from ?? p.basePriceCents;
+  const price = `${from !== null ? 'a partir de ' : ''}${money(shown, currency)}`;
+  return from === null && p.compareAtPriceCents != null && p.compareAtPriceCents > shown
+    ? `de ${money(p.compareAtPriceCents, currency)} por ${price}`
+    : price;
+}
+
 const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
 
 function ProductGrid({
@@ -648,9 +674,7 @@ function ProductGrid({
                   aria-label={
                     p.status !== 'active'
                       ? `${p.name}, esgotado`
-                      : p.compareAtPriceCents != null && p.compareAtPriceCents > p.basePriceCents
-                        ? `${p.name}, de ${money(p.compareAtPriceCents, currency)} por ${money(p.basePriceCents, currency)}`
-                        : `${p.name}, ${money(p.basePriceCents, currency)}`
+                      : `${p.name}, ${priceWords(p, currency)}`
                   }
                 >
                   {children}

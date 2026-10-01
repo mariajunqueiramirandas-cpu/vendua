@@ -47,6 +47,10 @@ export function ProductCard({
   const quick =
     !soldOut && !allInBag && p.needsChoices === false && p.kind !== 'combo' && !p.requiresPreorder;
   const tag = allInBag ? 'Tudo na sacola' : p.requiresPreorder ? 'Sob encomenda' : null;
+  // Core's "a partir de": priced by a required list, the cheapest choice
+  const from =
+    p.fromPriceCents != null && p.fromPriceCents > p.basePriceCents ? p.fromPriceCents : null;
+  const price = formatBRL(from ?? p.basePriceCents);
 
   return (
     <li
@@ -60,7 +64,7 @@ export function ProductCard({
       <ProductLink product={p} asChild>
         <a
           className="pcard-link"
-          aria-label={`${p.name}, ${formatBRL(p.basePriceCents)}${soldOut ? `, ${soldOutLabel}` : ''}`}
+          aria-label={`${p.name}, ${from !== null ? 'a partir de ' : ''}${price}${soldOut ? `, ${soldOutLabel}` : ''}`}
         >
           <div className="pcard-media">
             {p.imageUrl && !imgFailed ? (
@@ -92,7 +96,12 @@ export function ProductCard({
             <h3 className="pcard-name">{p.name}</h3>
             {p.description ? <p className="pcard-desc">{p.description}</p> : null}
             <p className="pcard-foot">
-              <span className="pcard-price">{formatBRL(p.basePriceCents)}</span>
+              <span className="pcard-price">
+                {from !== null ? (
+                  <small style={{ fontSize: '0.8em', fontWeight: 500 }}>a partir de </small>
+                ) : null}
+                {price}
+              </span>
               {!quick && !soldOut && cta ? <span className="pcard-cta">{cta}</span> : null}
             </p>
           </div>

@@ -41,14 +41,59 @@ const NOTE: Record<string, string> = {
   payment_method: 'forma de pagamento sem igual',
   payment_adjustment: 'desconto/acréscimo por pagamento',
   options_unreadable: 'opções ilegíveis (produto oculto)',
-  pizza_pricing: 'regra de sabores incerta (produto oculto)',
+  pizza_pricing: 'regra de sabores sem igual (produto oculto)',
+  promo_schedule: 'promoção só em alguns dias (preço normal)',
+  delivery_by_address: 'taxa de entrega por endereço',
+  pickup_only: 'produto só para retirada',
+  adults_only: 'produto +18',
+  option_minimum: 'mínimo de opções afrouxado',
+  delivery_minimum: 'mínimo só para entrega',
+  delivery_out_of_area: 'entregava fora das áreas',
+  delivery_overlap: 'áreas de entrega sobrepostas',
+  delivery_flat_fee: 'taxa fixa para qualquer endereço',
+  sold_by_weight: 'vendido por peso (produto oculto)',
+  price_unreadable: 'regra de preço ilegível (produto oculto)',
+  packaging_fee: 'taxa de embalagem (produto oculto)',
+  link_discount: 'desconto só pelo link do produto',
+  delivery_fee_later: 'taxa de entrega combinada depois',
   promo_unreadable: 'desconto ilegível (produto oculto)',
   delivery_fees_unreadable: 'taxas de entrega ilegíveis',
   photo_failed: 'foto não veio',
   second_price: 'dois preços (produto oculto)',
   delivery_gap: 'faixa de km sem entrega',
   free_delivery_rule: 'regra de entrega grátis',
+  delivery_minimum_lower: 'mínimo da entrega menor que o da retirada',
+  category_unreadable: 'categoria ilegível',
+  site_categories_stale: 'lista de categorias do site desatualizada (vieram todas)',
+  required_item: 'categoria exigia outro produto',
+  never_available: 'produto nunca à venda',
 };
+
+/** The store links Core reads today (its `ADAPTERS`); a lead's site on one of them prefills. */
+const READABLE: [name: string, host: RegExp][] = [
+  ['instadelivery', /(^|\.)instadelivery\.com\.br$/i],
+  ['cardápio web', /(^|\.)cardapioweb\.com$/i],
+  ['olaclick', /\.ola\.click$/i],
+  ['takeat', /^pedido\.takeat\.app$/i],
+  ['delivery direto', /(^|\.)deliverydireto\.com\.br$/i],
+  [
+    'saipos',
+    /^(?!(www|app|api|conta|meajuda|delivery-api|static|blog)\.)[a-z0-9-]+\.saipos\.com$/i,
+  ],
+  [
+    'goomer',
+    /^(?!(api|api-go|mobile|static|ssr-api|blog|app|admin|painel|ajuda|help|status)\.)([a-z0-9-]+\.)?goomer\.app$/i,
+  ],
+];
+const readable = (site: string | null | undefined) => {
+  try {
+    const host = new URL(/^https?:\/\//i.test(site ?? '') ? site! : `https://${site}`).hostname;
+    return READABLE.some(([, re]) => re.test(host));
+  } catch {
+    return false;
+  }
+};
+const READABLE_NAMES = READABLE.map(([n]) => n).join(', ');
 
 const brl = (cents: number) =>
   (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -67,7 +112,7 @@ export function LeadImport({
   const qc = useQueryClient();
   const [id, setId] = useState<string | null>(null);
   const [url, setUrl] = useState(() =>
-    lead.website && /instadelivery\.com\.br/i.test(lead.website) ? lead.website : '',
+    lead.website && readable(lead.website) ? lead.website : '',
   );
   const [sections, setSections] = useState<Set<ImportSection>>(
     () => new Set(['profile', 'hours', 'delivery']),
@@ -115,7 +160,7 @@ export function LeadImport({
         e instanceof ApiError && e.code === 'IMPORT_UNSUPPORTED'
           ? platform
             ? `ainda não lemos ${platform}`
-            : 'link não reconhecido — por enquanto só instadelivery'
+            : `link não reconhecido — por enquanto: ${READABLE_NAMES}`
           : e instanceof ApiError && e.code === 'IMPORT_BLOCKED'
             ? `${platform} bloqueia leitura externa`
             : errorMessage(e),
@@ -191,14 +236,14 @@ export function LeadImport({
             <Field
               label="link da loja antiga"
               htmlFor="lead-import-url"
-              hint="por enquanto: instadelivery"
+              hint={`por enquanto: ${READABLE_NAMES}`}
             >
               <Input
                 id="lead-import-url"
                 inputMode="url"
                 autoCapitalize="none"
                 spellCheck={false}
-                placeholder="instadelivery.com.br/loja"
+                placeholder="link da loja no app antigo"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
               />
