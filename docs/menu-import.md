@@ -1,6 +1,6 @@
 # Menu import — "Cole o link do seu cardápio"
 
-> Status: Proposed · Last reviewed: 2026-10-01 · Model gaps (§6) are being built first
+> Status: Proposed · Last reviewed: 2026-10-01 · Model gaps (§6) are built (Core 0065–0067, Kernel 1.11.0, admin); the importer is next
 > Roadmap: first tenant ([Phase 4](roadmap.md#phase-4--one-tenant-operated-for-real-weeks-1420-overlaps)) — Quero Pudim Gourmet moves from Instadelivery
 
 Almost every merchant Venduá sells to already has a cardápio digital (Instadelivery, anota.ai,
@@ -331,6 +331,10 @@ oversized store fails the import.
 | Coupons, referral, WhatsApp automations, upsell, time slots  | —                                                                   | `lost` (store-level notes)                                                                |
 
 ## 6. Model gaps — closed first
+
+Status: built and merged with Kernel 1.11.0. Still to do: the store sections that draw their own
+prices (`storefronts/_template/sections/_shared/Dish.tsx`, the quero-pudim `ProductCard`) show the
+struck-through price only once they render `compareAtPriceCents`.
 
 Decision (2026-10-01): the seven gaps below are closed **before** the importer, so no adapter ever
 emits their `lost` codes. Each is additive and optional on every public surface (Contract 2): a Core
