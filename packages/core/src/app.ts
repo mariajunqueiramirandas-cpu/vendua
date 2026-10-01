@@ -668,12 +668,24 @@ export function createApp({
       const modifierIds = Array.isArray(body.modifierIds)
         ? body.modifierIds.map((m) => str(m, 'modifierId', 64))
         : [];
+      if (Array.isArray(body.modifiers) && body.modifiers.length > 32) {
+        throw new HttpError(422, 'BAD_REQUEST', 'modifiers accepts at most 32 entries');
+      }
+      const modifiers = Array.isArray(body.modifiers)
+        ? body.modifiers.map((m) => {
+            const o = (m ?? {}) as Record<string, unknown>;
+            return {
+              id: str(o.id, 'modifiers.id', 64),
+              qty: o.qty === undefined ? 1 : Number(o.qty),
+            };
+          })
+        : [];
       const comboSelections = parseSelections(body.comboSelections);
       const cart = await addItem(
         tx,
         tenant.id,
         cartId,
-        { productId, qty, modifierIds, comboSelections },
+        { productId, qty, modifierIds, modifiers, comboSelections },
         getProductById,
       );
       return { status: 200, body: { cart } };

@@ -97,7 +97,12 @@ export function validateCheckout<Z extends ZoneLike>(
   for (const item of cart.items) {
     const product = products?.get(item.productId);
     if (product) {
-      const invalid = validateLine(product, item.modifierIds, item.comboSelections ?? []);
+      const invalid = validateLine(
+        product,
+        item.modifierIds,
+        item.comboSelections ?? [],
+        item.modifierQty ?? {},
+      );
       if (invalid) {
         invalid.details = { ...invalid.details, productId: item.productId };
         throw invalid;

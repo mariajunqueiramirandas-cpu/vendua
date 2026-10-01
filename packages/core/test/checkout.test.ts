@@ -66,6 +66,7 @@ function cart(subtotalCents: number): CartView {
         unitPriceCents: subtotalCents,
         productStatus: 'active',
         modifierIds: [],
+        modifierQty: {},
         modifiers: [],
         combo: [],
         comboSelections: [],
