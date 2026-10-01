@@ -1,5 +1,5 @@
 import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
-import { contrastRatio } from '@vendua/templates';
+import { contrastRatio, onColor, paletteFrom, readableAccent, toHex as hex } from '@vendua/templates';
 import { useEffect, useState } from 'react';
 import type { StoreTokens } from '../../lib/api.ts';
 import { cn } from '../../ui/cn.ts';
@@ -30,60 +30,6 @@ export const readable = (t: StoreTokens) =>
   (contrastRatio(t.color.muted, t.color.surface) ?? 0) >= 4.5 &&
   (contrastRatio(t.color.danger, t.color.bg) ?? 0) >= 4.5 &&
   (contrastRatio(t.color.danger, t.color.surface) ?? 0) >= 4.5;
-
-/** The text colour that reads best on a fill. */
-function onColor(fill: string) {
-  const w = contrastRatio('#ffffff', fill) ?? 0;
-  const k = contrastRatio('#141414', fill) ?? 0;
-  return w >= k ? '#FFFFFF' : '#141414';
-}
-
-function hex(r: number, g: number, b: number) {
-  return `#${[r, g, b]
-    .map((v) =>
-      Math.round(Math.max(0, Math.min(255, v)))
-        .toString(16)
-        .padStart(2, '0'),
-    )
-    .join('')}`.toUpperCase();
-}
-
-/** Darken until it carries text at AA on the given background. */
-function readableAccent(c: string) {
-  let [r, g, b] = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16)) as [number, number, number];
-  for (let i = 0; i < 20 && (contrastRatio(onColor(hex(r, g, b)), hex(r, g, b)) ?? 0) < 4.5; i++) {
-    r *= 0.9;
-    g *= 0.9;
-    b *= 0.9;
-  }
-  return hex(r, g, b);
-}
-
-function paletteFrom(accentIn: string, base: StoreTokens, dark = false): StoreTokens {
-  const accent = readableAccent(accentIn);
-  const color = dark
-    ? {
-        bg: '#14110F',
-        surface: '#1E1A17',
-        text: '#F5F1EA',
-        muted: '#BDB3A5',
-        accent,
-        onAccent: onColor(accent),
-        danger: '#FF8A7F',
-        success: '#6FD39C',
-      }
-    : {
-        bg: '#FCFBF8',
-        surface: '#FFFFFF',
-        text: '#1A1714',
-        muted: '#6B6456',
-        accent,
-        onAccent: onColor(accent),
-        danger: '#B3372F',
-        success: '#3D7A4F',
-      };
-  return { ...base, color };
-}
 
 /** A handful of saturated colours from the logo, most frequent first. */
 async function logoColors(url: string): Promise<string[]> {
