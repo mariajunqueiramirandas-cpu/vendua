@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useKernel, useQuery, invalidateQuery, invalidateMatching } from './provider.tsx';
 import type {
+  AddedLine,
   Cart,
+  CartCoupon,
   CartItem,
   CatalogCategory,
   CepResult,
   CheckoutInput,
   ComboSelection,
+  CouponCheck,
   DeliveryAddress,
   DeliveryZone,
   ImportLine,
   ImportReport,
+  LinePicks,
+  LineQuote,
   LoyaltyCard,
   Notice,
   Order,
@@ -21,6 +26,31 @@ import type {
 } from './api.ts';
 import { ApiError } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
+import { cardState, type CardInput, type CardState } from './rules/card.ts';
+import { couponMessage } from './rules/errors.ts';
+import { countdown, formatCents, interpolate } from './rules/format.ts';
+import { deliverySummary, type DeliverySummary } from './rules/delivery.ts';
+import {
+  hoursRows,
+  statusHint,
+  statusWords,
+  todayHours,
+  type HoursRow,
+  type StatusHint,
+  type TodayHours,
+} from './rules/hours.ts';
+import {
+  absoluteUrl,
+  catalogHref,
+  contactLinks,
+  productAnchor,
+  productHref,
+  type ContactLinks,
+} from './rules/links.ts';
+import { arrangeMenu } from './rules/menu.ts';
+import { TERMINAL_ORDER_STATES } from './rules/orders.ts';
+import { isBlocking, visibleNotices } from './rules/notices.ts';
+import { vocabularyOf, type Vocabulary } from './rules/copy.ts';
 import {
   currentConsent,
   emit,
@@ -122,8 +152,23 @@ export function useNotices(zoneMatched?: boolean): {
   const { api } = useKernel();
   const key = `surfaces:${zoneMatched ?? 'any'}`;
   const q = useQuery(key, () => api.surfaces(zoneMatched));
-  const notices = q.data?.notices ?? [];
-  const blocking = notices.filter((n) => n.severity === 'blocking' || n.kind === 'emergency');
+  const all = q.data?.notices;
+  // Kernel 1.14: only notices inside their window, re-read when the next one opens or closes
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const now = Date.now();
+    let nearest = Infinity;
+    for (const n of all ?? [])
+      for (const b of [n.startsAt, n.endsAt]) {
+        const t = b ? Date.parse(b) : NaN;
+        if (t > now && t < nearest) nearest = t;
+      }
+    if (nearest === Infinity) return;
+    const id = setTimeout(() => setTick((t) => t + 1), Math.min(nearest - now + 50, 2 ** 31 - 1));
+    return () => clearTimeout(id);
+  }, [all, tick]);
+  const notices = visibleNotices(all ?? []);
+  const blocking = notices.filter(isBlocking);
   return { notices, blocking, store: q.data?.store, loading: q.loading, refetch: q.refetch };
 }
 
@@ -148,6 +193,14 @@ export interface CartMutations {
     /** Kernel 1.12 — units per option id, for options with `maxQty` > 1 (absent = 1 each) */
     modifierQty?: Record<string, number>,
   ) => Promise<Cart>;
+  /** Kernel 1.14 — `add`, also answering what Core added (`added`: units and Core's price) */
+  addLine: (
+    productId: string,
+    qty?: number,
+    modifierIds?: string[],
+    comboSelections?: ComboSelection[],
+    modifierQty?: Record<string, number>,
+  ) => Promise<{ cart: Cart; added?: AddedLine }>;
   updateQty: (itemId: string, qty: number) => Promise<Cart>;
   remove: (itemId: string) => Promise<Cart>;
   setDelivery: (d: { mode: 'pickup' | 'delivery' } & DeliveryAddress) => Promise<Cart>;
@@ -190,6 +243,11 @@ export function useCart(): {
     () => ({
       add: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty) =>
         api.addItem(productId, qty, modifierIds, comboSelections, modifierQty).then(bump),
+      addLine: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty) =>
+        api.addLine(productId, qty, modifierIds, comboSelections, modifierQty).then((r) => {
+          bump(r.cart);
+          return r;
+        }),
       updateQty: (itemId, qty) => api.updateItem(itemId, qty).then(bump),
       remove: (itemId) => api.removeItem(itemId).then(bump),
       setDelivery: (d) => api.setDelivery(d).then(bump),
@@ -302,7 +360,7 @@ export function useStockLeft(
   return Math.max(0, stock - cartDemand(cart, product.id));
 }
 
-const TERMINAL_ORDER = new Set(['delivered', 'cancelled', 'refunded']);
+const TERMINAL_ORDER = TERMINAL_ORDER_STATES;
 const FIRST_WAIT_DELAY_MS = 1500;
 
 /** Live by default (Kernel 1.2; SSE since 1.3): a Kernel-owned stream of the
@@ -788,4 +846,415 @@ export function useWaitlist(productId: string | undefined): {
     [api, productId],
   );
   return { join, waiting, joined: waiting !== undefined, pending, error };
+}
+
+// ── Kernel 1.14: the rules (`./rules`) bound to the store's live data ──────────────────────
+
+const STORE_TIME_ZONE = 'America/Sao_Paulo';
+
+/** A product card's state (sold out, all in the bag, low stock, quick add, badge) from Core's
+ *  fields and the stock the cart leaves. */
+export function useCardState(
+  product: CardInput & { id: string; stockQuantity?: number | null },
+): CardState {
+  const left = useStockLeft(product);
+  return cardState(product, left);
+}
+
+/** The catalog arranged for browsing: `query` searches (accents ignored), empty categories
+ *  drop out, sold-out products sink within their category. */
+export function useMenu(opts: { query?: string } = {}): {
+  categories: CatalogCategory[];
+  /** products shown */
+  count: number;
+  loading: boolean;
+  error: QueryError | undefined;
+  refetch: () => void;
+} {
+  const { categories, loading, error, refetch } = useCatalog();
+  const query = opts.query ?? '';
+  const arranged = useMemo(() => arrangeMenu(categories, { query }), [categories, query]);
+  return {
+    categories: arranged,
+    count: arranged.reduce((n, c) => n + c.products.length, 0),
+    loading,
+    error,
+    refetch,
+  };
+}
+
+/** Open, closed or paused, with Core's `closesAt`/`resumesAt` as a line ("Aberto até 18:00",
+ *  "Abre amanhã às 09:00") in the store's zone. Reads the store again when that moment passes. */
+export function useStoreStatus(): {
+  status: StoreProfile['status'] | undefined;
+  closesAt: string | undefined;
+  resumesAt: string | undefined;
+  hint: StatusHint | null;
+  label: string | null;
+  timeZone: string;
+  loading: boolean;
+} {
+  const { store, loading } = useStore();
+  const timeZone = store?.hours.timezone || STORE_TIME_ZONE;
+  const status = store?.status;
+  const closesAt = store?.closesAt;
+  const resumesAt = store?.resumesAt;
+  const next = status === 'open' ? closesAt : resumesAt;
+  useEffect(() => {
+    const at = next ? Date.parse(next) : NaN;
+    const wait = at - Date.now();
+    if (!(wait > 0)) return;
+    const t = setTimeout(
+      () => invalidateMatching((key) => key === 'store'),
+      Math.min(wait + 1000, 2 ** 31 - 1),
+    );
+    return () => clearTimeout(t);
+  }, [next]);
+  const hint = status ? statusHint({ status, closesAt, resumesAt }) : null;
+  return {
+    status,
+    closesAt,
+    resumesAt,
+    hint,
+    label: hint ? statusWords(hint, timeZone) : null,
+    timeZone,
+    loading,
+  };
+}
+
+/** The weekly hours table (Monday first, folded) and today's hours, special days included. */
+export function useStoreHours(): {
+  rows: HoursRow[];
+  today: TodayHours | null;
+  timeZone: string;
+} {
+  const { store } = useStore();
+  const hours = store?.hours;
+  return useMemo(
+    () => ({
+      rows: hours ? hoursRows(hours) : [],
+      today: hours ? todayHours(hours) : null,
+      timeZone: hours?.timezone || STORE_TIME_ZONE,
+    }),
+    [hours],
+  );
+}
+
+/** Delivery fee/ETA/minimum and pickup time, summed up from Core's zones. */
+export function useDeliverySummary(): DeliverySummary & { loading: boolean } {
+  const { store, loading } = useStore();
+  const { zones, loading: zonesLoading } = useDeliveryZones();
+  const summary = useMemo(
+    () => (store ? deliverySummary(store, zones) : { delivery: null, pickup: null }),
+    [store, zones],
+  );
+  return { ...summary, loading: loading || zonesLoading };
+}
+
+/** Cents → money in the store's currency. */
+export function useMoney(): (cents: number) => string {
+  const { store } = useStore();
+  const currency = store?.currency ?? 'BRL';
+  return useCallback((cents: number) => formatCents(cents, currency), [currency]);
+}
+
+/** The store's URLs: its routes, the catalog deep link, absolute links (the store's public URL,
+ *  else this page's origin) and its WhatsApp/Instagram. */
+export function useLinks(): {
+  product: (slug: string) => string;
+  catalog: string;
+  anchor: (slug: string) => string;
+  absolute: (path: string) => string;
+  contacts: ContactLinks;
+} {
+  const { config } = useKernel();
+  const { store } = useStore();
+  const base = store?.publicUrl || globalThis.location?.origin || '';
+  return useMemo(
+    () => ({
+      product: (slug: string) => productHref(config, slug),
+      catalog: catalogHref(config),
+      anchor: productAnchor,
+      absolute: (path: string) => absoluteUrl(base, path),
+      contacts: contactLinks(store),
+    }),
+    [config, base, store],
+  );
+}
+
+/** The store's words (`store.vocabulary` over the defaults) and `{store}`/`{city}` filled in. */
+export function useCopy(): { vocabulary: Vocabulary; interpolate: (text: string) => string } {
+  const { store } = useStore();
+  return useMemo(
+    () => ({
+      vocabulary: vocabularyOf(store),
+      interpolate: (text: string) =>
+        interpolate(text, { store: store?.name ?? '', city: store?.city ?? '' }),
+    }),
+    [store],
+  );
+}
+
+/** Units in the open bag (Core's count; 0 with no open cart). */
+export function useCartCount(): number {
+  const { cart } = useCart();
+  return cart?.status === 'open' ? cart.totals.itemCount : 0;
+}
+
+/** The bag's coupon: apply/remove through Core, with the messages in words. Never throws. */
+export function useCoupon(): {
+  coupon: CartCoupon | null;
+  discountCents: number;
+  apply: (code: string) => Promise<boolean>;
+  remove: () => Promise<boolean>;
+  pending: boolean;
+  /** the last apply/remove failure, in words */
+  message: string | null;
+  /** its error code */
+  error: string | null;
+  /** why the coupon on the bag isn't discounting now, in words */
+  reason: string | null;
+} {
+  const { cart, mutations } = useCart();
+  const { store } = useStore();
+  const currency = store?.currency ?? 'BRL';
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<{ code: string; details?: Record<string, unknown> } | null>(
+    null,
+  );
+  const run = useCallback(async (fn: () => Promise<unknown>) => {
+    setPending(true);
+    setError(null);
+    try {
+      await fn();
+      return true;
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? { code: err.code, ...(err.details ? { details: err.details } : {}) }
+          : { code: 'INTERNAL' },
+      );
+      return false;
+    } finally {
+      setPending(false);
+    }
+  }, []);
+  const apply = useCallback(
+    (code: string) => {
+      const c = code.trim().slice(0, 40);
+      return c ? run(() => mutations.applyCoupon(c)) : Promise.resolve(false);
+    },
+    [mutations, run],
+  );
+  const remove = useCallback(() => run(() => mutations.removeCoupon()), [mutations, run]);
+  const coupon = cart?.coupon ?? null;
+  return {
+    coupon,
+    discountCents: cart?.totals.discountCents ?? 0,
+    apply,
+    remove,
+    pending,
+    message: error ? couponMessage(error.code, error.details, currency) : null,
+    error: error?.code ?? null,
+    reason:
+      coupon && !coupon.applies && coupon.reason
+        ? couponMessage(coupon.reason, coupon.details, currency)
+        : null,
+  };
+}
+
+/** Ask Core whether a code is valid for this bag, without applying it. */
+export function useCouponCheck(): {
+  check: (code: string) => Promise<CouponCheck | null>;
+  result: CouponCheck | undefined;
+  pending: boolean;
+  /** why it isn't valid, in words */
+  message: string | null;
+  error: QueryError | undefined;
+} {
+  const { api } = useKernel();
+  const { store } = useStore();
+  const currency = store?.currency ?? 'BRL';
+  const [result, setResult] = useState<CouponCheck>();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<QueryError>();
+  const seq = useRef(0);
+  const check = useCallback(
+    async (code: string) => {
+      const c = code.trim().slice(0, 40);
+      if (!c) return null;
+      const n = ++seq.current;
+      setPending(true);
+      setError(undefined);
+      try {
+        const r = await api.validateCoupon(c);
+        if (n === seq.current) setResult(r);
+        return r;
+      } catch (err) {
+        if (n === seq.current) setError(toQueryError(err, 'coupon check failed'));
+        return null;
+      } finally {
+        if (n === seq.current) setPending(false);
+      }
+    },
+    [api],
+  );
+  const message =
+    result && !result.valid
+      ? couponMessage(result.reason ?? 'INVALID_COUPON', result.details, currency)
+      : error
+        ? couponMessage(error.code, error.details, currency)
+        : null;
+  return { check, result, pending, message, error };
+}
+
+const QUOTE_DEBOUNCE_MS = 150;
+
+/** Core's price for a configured line (options, kit picks, quantity) before it's added — the
+ *  same pricing as add-to-cart. Debounced; a newer configuration cancels the older request;
+ *  `quote` keeps the last answer while the next is pending. A refusal (`MODIFIER_REQUIRED`,
+ *  `SOLD_OUT`, …) is `error`, its code — never thrown. */
+export function useLineQuote(
+  product: { slug: string } | null | undefined,
+  picks: LinePicks | null | undefined,
+  qty: number,
+): { quote: LineQuote | null; pending: boolean; error: string | null } {
+  const { api } = useKernel();
+  const key =
+    product?.slug && Number.isInteger(qty) && qty >= 1
+      ? JSON.stringify([
+          product.slug,
+          qty,
+          (picks?.modifiers ?? []).map((m) => [m.id, m.qty ?? 1]),
+          (picks?.comboSelections ?? []).map((c) => [c.slotId, c.productId, c.qty]),
+        ])
+      : null;
+  const [state, setState] = useState<{
+    key: string | null;
+    quote: LineQuote | null;
+    error: string | null;
+  }>({ key: null, quote: null, error: null });
+  useEffect(() => {
+    if (!key) return;
+    const [slug, n, mods, combo] = JSON.parse(key) as [
+      string,
+      number,
+      [string, number][],
+      [string, string, number][],
+    ];
+    const ctrl = new AbortController();
+    const t = setTimeout(() => {
+      api
+        .quoteLine(
+          slug,
+          {
+            qty: n,
+            ...(mods.length ? { modifiers: mods.map(([id, q]) => ({ id, qty: q })) } : {}),
+            ...(combo.length
+              ? {
+                  comboSelections: combo.map(([slotId, productId, q]) => ({
+                    slotId,
+                    productId,
+                    qty: q,
+                  })),
+                }
+              : {}),
+          },
+          ctrl.signal,
+        )
+        .then(
+          (quote) => {
+            if (!ctrl.signal.aborted) setState({ key, quote, error: null });
+          },
+          (err: unknown) => {
+            if (ctrl.signal.aborted) return;
+            setState({
+              key,
+              quote: null,
+              error: err instanceof ApiError ? err.code : 'INTERNAL',
+            });
+          },
+        );
+    }, QUOTE_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [api, key]);
+  if (!key) return { quote: null, pending: false, error: null };
+  const settled = state.key === key;
+  return { quote: state.quote, pending: !settled, error: settled ? state.error : null };
+}
+
+/** A Pix's countdown on the shopper's clock ("29:41"); `expired` once it passes. */
+export function usePixTimer(expiresAt: string | null | undefined): {
+  expired: boolean;
+  msLeft: number | null;
+  label: string | null;
+} {
+  const deadline = expiresAt ? Date.parse(expiresAt) : NaN;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!Number.isFinite(deadline)) return;
+    setNow(Date.now());
+    if (Date.now() >= deadline) return;
+    const t = setInterval(() => {
+      const n = Date.now();
+      setNow(n);
+      if (n >= deadline) clearInterval(t);
+    }, 1000);
+    return () => clearInterval(t);
+  }, [deadline]);
+  if (!Number.isFinite(deadline)) return { expired: false, msLeft: null, label: null };
+  const msLeft = Math.max(0, deadline - now);
+  return { expired: msLeft === 0, msLeft, label: countdown(deadline, now) };
+}
+
+const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
+const motionQuery = () =>
+  typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia(REDUCED_MOTION) : null;
+
+/** The shopper asked for less motion (live: follows the system setting). */
+export function useReducedMotion(): boolean {
+  return useSyncExternalStore(
+    (fn) => {
+      const mq = motionQuery();
+      mq?.addEventListener?.('change', fn);
+      return () => mq?.removeEventListener?.('change', fn);
+    },
+    () => motionQuery()?.matches ?? false,
+    () => false,
+  );
+}
+
+/** Which of `ids` (element ids, in page order) is being read: the first one inside the band
+ *  below `offset` px (a sticky header) and above the lower 60% of the viewport. Keeps the last
+ *  answer while none is; null before any. */
+export function useScrollSpy(
+  ids: readonly string[],
+  opts: { offset?: number; rootMargin?: string } = {},
+): string | null {
+  const [active, setActive] = useState<string | null>(null);
+  const key = ids.join('\n');
+  const rootMargin = opts.rootMargin ?? `-${Math.max(0, opts.offset ?? 0)}px 0px -60% 0px`;
+  useEffect(() => {
+    const list = key ? key.split('\n') : [];
+    const doc = globalThis.document;
+    if (typeof globalThis.IntersectionObserver !== 'function' || !doc || list.length === 0) return;
+    const inside = new Map<string, boolean>();
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) inside.set(e.target.id, e.isIntersecting);
+        const first = list.find((id) => inside.get(id));
+        if (first) setActive(first);
+      },
+      { rootMargin, threshold: 0 },
+    );
+    for (const id of list) {
+      const el = doc.getElementById(id);
+      if (el) io.observe(el);
+    }
+    return () => io.disconnect();
+  }, [key, rootMargin]);
+  return active !== null && ids.includes(active) ? active : null;
 }

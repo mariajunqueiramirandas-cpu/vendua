@@ -1,4 +1,8 @@
 import type { StorefrontTokens, TemplateSet } from '@vendua/templates';
+import { formatCents } from './rules/format.ts';
+import { phoneKey } from './rules/phone.ts';
+
+export { formatCents, phoneKey };
 
 // The only supported path from a storefront to Core (no fetch/axios in storefront
 // code). Mutations send a fresh Idempotency-Key; the session token rides as Bearer.
@@ -29,7 +33,14 @@ export interface StoreProfile {
   address: string | null;
   status: 'open' | 'closed' | 'paused';
   resumesAt?: string;
-  hours: { timezone: string; windows: { days: number[]; open: string; close: string }[] };
+  /** Kernel 1.14 — while open by its hours: when the current window ends (Core's clock) */
+  closesAt?: string;
+  hours: {
+    timezone: string;
+    windows: { days: number[]; open: string; close: string }[];
+    /** Kernel 1.14 — holidays and short days, today (store zone) and later, sorted */
+    specialDays?: SpecialDay[];
+  };
   prepTimeMinutes: number;
   minOrderCents: number;
   pickupEnabled: boolean;
@@ -55,6 +66,19 @@ export interface StoreProfile {
   /** Kernel 1.12 — discount/surcharge per offered method (only methods that have one), for
    *  labels; Core computes the cents (`CartTotals.paymentAdjustmentCents`) */
   paymentAdjustments?: Record<string, PaymentAdjustment>;
+  /** Kernel 1.14 — the store's canonical origin (`https://host`, no trailing slash), for
+   *  share links, QR codes and JSON-LD */
+  publicUrl?: string;
+}
+
+/** Kernel 1.14 — a date with its own hours (`closed`, or one `open`–`close` window). */
+export interface SpecialDay {
+  /** the store's local date, YYYY-MM-DD */
+  date: string;
+  closed: boolean;
+  open?: string;
+  close?: string;
+  label?: string;
 }
 
 /** Kernel 1.12 — a payment method's rule, signed: negative = discount, positive = surcharge.
@@ -207,17 +231,31 @@ export interface Notice {
 
 export interface SurfacesEnvelope {
   version: 1;
-  store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string };
+  /** Kernel 1.14 adds `closesAt` (see `StoreProfile.closesAt`) */
+  store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string; closesAt?: string };
   notices: Notice[];
   /** Kernel 1.10: only in the edge-injected `window.__VENDUA_STATE__` — the store's live design */
   templates?: TemplateSet;
   tokens?: StorefrontTokens | null;
+  /** Kernel 1.14 — with `?design=1` (the edge): the store's head meta */
+  meta?: StoreMeta;
+}
+
+/** Kernel 1.14 — `<head>` meta Core derives from the store (`title` = name — tagline). */
+export interface StoreMeta {
+  title: string;
+  description: string | null;
+  /** absolute logo URL */
+  image: string | null;
+  /** the store's public URL */
+  url: string;
+  siteName: string;
 }
 
 /** `/storefront/v1/state` — the loader's snapshot; `templates` when asked for. */
 export interface StateEnvelope {
   version: 1;
-  store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string };
+  store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string; closesAt?: string };
   notices: Notice[];
   loader: { state: 'normal' | 'maintenance'; title?: string; message?: string; href?: string };
   templates?: TemplateSet;
@@ -497,6 +535,30 @@ export interface Order {
   version?: number;
 }
 
+/** Kernel 1.14 — Core's price for one configured line (`GET /products/:slug/quote`), the
+ *  same pricing as add-to-cart. */
+export interface LineQuote {
+  qty: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+}
+
+/** Kernel 1.14 — what one add-to-cart call added (Core-priced; absent from an older Core). */
+export interface AddedLine {
+  itemId: string;
+  /** the units this call added */
+  qty: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+}
+
+/** Kernel 1.14 — a line's configuration for `api.quoteLine` / `useLineQuote`. */
+export interface LinePicks {
+  /** picked options with their units (absent qty = 1) */
+  modifiers?: { id: string; qty?: number }[];
+  comboSelections?: ComboSelection[];
+}
+
 /** Kernel 1.7 — what `POST /orders/:id/pay` asks the shopper to do next. */
 export type PaymentNext =
   | { kind: 'pix'; copyPaste: string; expiresAt: string | null }
@@ -573,12 +635,6 @@ function writeCustomerTokens(t: CustomerTokens) {
   } catch {
     /* private mode — verification lasts for this page */
   }
-}
-
-/** National digits — the shape Core keys phones by. */
-export function phoneKey(phone: string): string {
-  const d = phone.replace(/\D/g, '');
-  return d.length >= 12 && d.startsWith('55') ? d.slice(2) : d;
 }
 
 function readStoredToken(): string | null {
@@ -701,6 +757,31 @@ export function createApi(baseUrl = '') {
     return sessionPromise;
   };
 
+  const addLine = async (
+    productId: string,
+    qty = 1,
+    modifierIds: string[] = [],
+    comboSelections?: ComboSelection[],
+    modifierQty?: Record<string, number>,
+  ): Promise<{ cart: Cart; added?: AddedLine }> => {
+    await ensureSessionNow();
+    const modifiers = modifierIds
+      .filter((id) => (modifierQty?.[id] ?? 1) > 1)
+      .map((id) => ({ id, qty: modifierQty![id]! }));
+    const res = await apiFetch<{ cart: Cart; added?: AddedLine }>(co('/cart/items'), {
+      method: 'POST',
+      headers: { ...auth(), 'idempotency-key': idemKey() },
+      body: JSON.stringify({
+        productId,
+        qty,
+        modifierIds,
+        ...(modifiers.length ? { modifiers } : {}),
+        ...(comboSelections?.length ? { comboSelections } : {}),
+      }),
+    });
+    return res.added ? { cart: res.cart, added: res.added } : { cart: res.cart };
+  };
+
   return {
     get sessionToken() {
       return token;
@@ -821,22 +902,33 @@ export function createApi(baseUrl = '') {
       /** Kernel 1.12 — units per option id (absent or 1 = one unit) */
       modifierQty?: Record<string, number>,
     ): Promise<Cart> {
-      await ensureSessionNow();
-      const modifiers = modifierIds
-        .filter((id) => (modifierQty?.[id] ?? 1) > 1)
-        .map((id) => ({ id, qty: modifierQty![id]! }));
-      const res = await apiFetch<{ cart: Cart }>(co('/cart/items'), {
-        method: 'POST',
-        headers: { ...auth(), 'idempotency-key': idemKey() },
-        body: JSON.stringify({
-          productId,
-          qty,
-          modifierIds,
-          ...(modifiers.length ? { modifiers } : {}),
-          ...(comboSelections?.length ? { comboSelections } : {}),
-        }),
-      });
-      return res.cart;
+      return (await addLine(productId, qty, modifierIds, comboSelections, modifierQty)).cart;
+    },
+    /** Kernel 1.14 — `addItem` with Core's `added` (what this call added, priced by Core) */
+    addLine,
+    /** Kernel 1.14 — Core's price for a configured line, without adding it (no session) */
+    quoteLine: (
+      slug: string,
+      line: { qty: number } & LinePicks,
+      signal?: AbortSignal,
+    ): Promise<LineQuote> => {
+      const q = [`qty=${encodeURIComponent(String(line.qty))}`];
+      if (line.modifiers?.length)
+        q.push(
+          `modifiers=${line.modifiers.map((m) => `${encodeURIComponent(m.id)}:${m.qty ?? 1}`).join(',')}`,
+        );
+      if (line.comboSelections?.length)
+        q.push(
+          `combo=${line.comboSelections
+            .map(
+              (c) => `${encodeURIComponent(c.slotId)}:${encodeURIComponent(c.productId)}:${c.qty}`,
+            )
+            .join(',')}`,
+        );
+      return apiFetch<LineQuote>(
+        sf(`/products/${encodeURIComponent(slug)}/quote?${q.join('&')}`),
+        signal ? { signal } : undefined,
+      );
     },
     updateItem: (itemId: string, qty: number) =>
       apiFetch<{ cart: Cart }>(co(`/cart/items/${itemId}`), {
@@ -1121,11 +1213,6 @@ export const ERROR_CODES = [
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export type VenduaApi = ReturnType<typeof createApi>;
-
-// The shared money formatter — pass the tenant currency from `useStore().store.currency`.
-export function formatCents(cents: number, currency = 'BRL', locale = 'pt-BR'): string {
-  return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(cents / 100);
-}
 
 function isHttps(url: string) {
   try {

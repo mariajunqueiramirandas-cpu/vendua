@@ -1,11 +1,12 @@
 {
   "name": "@vendua/kernel",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./config": "./src/config.ts",
+    "./rules": "./src/rules/index.ts",
     "./styles.css": "./src/styles.css",
     "./vite": "./src/vite.ts",
     "./sdk-catalog": "./src/sdk/schemas.ts",

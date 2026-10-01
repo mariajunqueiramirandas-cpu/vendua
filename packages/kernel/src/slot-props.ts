@@ -15,6 +15,7 @@ import type {
   CatalogProduct,
 } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
+import type { Vocabulary } from './rules/copy.ts';
 
 // Typed props per slot (04 — "data in, callbacks out"). Additive-only within a
 // Contract major: optional props may be added, nothing removed or retyped.
@@ -81,6 +82,20 @@ export type PaymentStatusKind =
 
 export type ModifierGroup = ProductDetail['modifierGroups'][number];
 
+/** Kernel 1.14 — what a default needs to format in the store's terms: dates and times in the
+ *  store's zone, money in its currency, its words (`store.vocabulary` over the defaults). The
+ *  Kernel passes them; an override may ignore them. */
+export type StoreTime = {
+  /** IANA zone of the store (`store.hours.timezone`) */
+  timeZone?: string;
+};
+export type StoreMoney = {
+  currency?: string;
+};
+export type StoreWords = {
+  vocabulary?: Vocabulary;
+};
+
 export interface SlotProps {
   'system.Notice': { notice: Notice; onDismiss?: () => void; onAction?: (a: NoticeAction) => void };
   'system.PauseNotice': {
@@ -89,8 +104,12 @@ export interface SlotProps {
     actions: NoticeAction[];
     onNotifyMe?: () => void;
     onDismiss?: () => void;
-  };
-  'system.StoreClosedNotice': { notice: Notice; opensAt?: string; onDismiss?: () => void };
+  } & StoreTime;
+  'system.StoreClosedNotice': {
+    notice: Notice;
+    opensAt?: string;
+    onDismiss?: () => void;
+  } & StoreTime;
   'system.PromoNotice': { notice: Notice; onDismiss?: () => void };
   'system.ConsentBanner': {
     purposes: { id: ConsentPurpose; label: string }[];
@@ -112,7 +131,7 @@ export interface SlotProps {
     /** Kernel 1.12 — the chosen payment method's name, for the
      *  `totals.paymentAdjustmentCents` line ("Desconto · Pix") */
     paymentLabel?: string;
-  };
+  } & StoreWords;
   'checkout.AddressForm': {
     value: CustomerDraft;
     onChange: (patch: Partial<CustomerDraft>) => void;
@@ -133,14 +152,14 @@ export interface SlotProps {
     options: DeliveryOption[];
     selected: DeliveryOption['mode'];
     onSelect: (mode: DeliveryOption['mode']) => void;
-  };
+  } & StoreMoney;
   'checkout.PaymentMethods': {
     methods: PaymentMethod[];
     selected: PaymentMethod['id'];
     onSelect: (id: PaymentMethod['id']) => void;
-  };
-  'checkout.SuccessPage': { order: Order; currency: string };
-  'checkout.EmptyCart': { onBrowse: () => void };
+  } & StoreMoney;
+  'checkout.SuccessPage': { order: Order; currency: string } & StoreTime;
+  'checkout.EmptyCart': { onBrowse: () => void } & StoreWords;
   'cart.Drawer': {
     cart: Cart;
     currency: string;
@@ -150,7 +169,7 @@ export interface SlotProps {
     checkout: ReactNode;
     lines: ReactNode;
     summary: ReactNode;
-  };
+  } & StoreWords;
   'cart.LineItem': {
     item: CartItem;
     currency: string;
@@ -159,15 +178,15 @@ export interface SlotProps {
     max?: number;
     onQty: (qty: number) => void;
     onRemove: () => void;
-  };
+  } & StoreWords;
   'order.StatusPage': {
     order: Order;
     currency: string;
     timeline: ReactNode;
     /** Kernel 1.7 — the store's pickup address/instructions, for pickup orders */
     pickup?: { address: string | null; instructions: string | null };
-  };
-  'order.Timeline': { events: Order['timeline'] };
+  } & StoreTime;
+  'order.Timeline': { events: Order['timeline'] } & StoreTime;
   'store.HoursTable': { hours: StoreProfile['hours']; status?: StoreProfile['status'] };
   'catalog.ProductCard': {
     product: CatalogProduct;
@@ -181,7 +200,7 @@ export interface SlotProps {
     /** Kernel 1.9 — tracked stock minus what the cart holds (absent = not tracked);
      *  `product.stockQuantity` stays Core's number */
     stockLeft?: number;
-  };
+  } & StoreWords;
   'catalog.ComboPicker': {
     slots: ComboSlot[];
     value: ComboSelection[];
@@ -225,7 +244,7 @@ export interface SlotProps {
     /** Kernel 1.7 — an online Pix (Mercado Pago): confirms by itself, expires at `expiresAt` */
     online?: boolean;
     expiresAt?: string | null;
-  };
+  } & StoreTime;
   /** Kernel 1.7 — an online payment's state (card via Mercado Pago, online Pix) */
   'checkout.PaymentStatus': {
     status: PaymentStatusKind;
@@ -254,8 +273,8 @@ export interface SlotProps {
     /** "pedir de novo" — present when the Kernel can replay the order */
     onReorder?: () => void;
     reorderPending?: boolean;
-  };
-  'customer.LoyaltyCard': { card: LoyaltyCard; currency: string };
+  } & StoreWords;
+  'customer.LoyaltyCard': { card: LoyaltyCard; currency: string } & StoreTime;
   'customer.PhoneVerify': {
     phone: string;
     pending: boolean;

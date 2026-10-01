@@ -16,12 +16,23 @@ import {
 
 // SDK section/block schemas — pure data (no React) so the build plugin can
 // publish the catalog in the artifact manifest. Settings are additive-only
-// within a Contract major, like slot props.
+// within a Contract major, like slot props. Kernel 1.14: also what the merchant
+// admin needs from the Kernel (`@vendua/kernel/sdk-catalog`): section names, the
+// default templates, the settings resolver and the editor-preview messages.
 
-export const pageContent = defineSection({ type: 'sdk:page-content', settings: {} });
+export { DEFAULT_TEMPLATES } from './defaults.ts';
+export { resolveSettings } from '../composition/schema.ts';
+export { PREVIEW_MESSAGE, PREVIEW_QUERY_PARAM } from '../preview-protocol.ts';
+
+export const pageContent = defineSection({
+  type: 'sdk:page-content',
+  title: 'Conteúdo da página',
+  settings: {},
+});
 
 export const header = defineSection({
   type: 'sdk:header',
+  title: 'Topo da loja',
   settings: {
     brand: text({ max: 60 }),
     logo: url(),
@@ -34,6 +45,7 @@ export const header = defineSection({
 
 export const footer = defineSection({
   type: 'sdk:footer',
+  title: 'Rodapé',
   settings: {
     note: text({ max: 160 }),
     showHours: boolean({ default: true }),
@@ -45,6 +57,8 @@ export const footer = defineSection({
 
 export const announcementBar = defineSection({
   type: 'sdk:announcement-bar',
+  title: 'Faixa de aviso',
+  addable: true,
   settings: {
     text: text({ max: 140, default: '' }),
     href: url(),
@@ -55,6 +69,7 @@ export const announcementBar = defineSection({
 
 export const headerCart = defineSection({
   type: 'sdk:header-cart',
+  title: 'Botão da sacola',
   settings: {
     label: text({ max: 30, default: 'Sacola' }),
     variant: select(['pill', 'text'], { default: 'pill' }),
@@ -64,6 +79,7 @@ export const headerCart = defineSection({
 /** Kernel 1.5 — phones: a sticky "ver sacola" bar with the count and Core's subtotal. */
 export const bagBar = defineSection({
   type: 'sdk:bag-bar',
+  title: 'Barra da sacola',
   settings: {
     label: text({ max: 30, default: 'Ver sacola' }),
   },
@@ -71,6 +87,7 @@ export const bagBar = defineSection({
 
 export const purchasePanel = defineSection({
   type: 'sdk:purchase-panel',
+  title: 'Produto e botão de comprar',
   settings: {
     variant: select(['split', 'compact', 'editorial'], { default: 'split' }),
     /** feature a fixed product (e.g. on home); empty = the route's product */
@@ -90,6 +107,8 @@ export const purchasePanel = defineSection({
 
 export const catalogGrid = defineSection({
   type: 'sdk:catalog-grid',
+  title: 'Cardápio com fotos',
+  addable: true,
   settings: {
     eyebrow: text({ max: 60 }),
     title: text({ max: 80 }),
@@ -106,6 +125,8 @@ export const catalogGrid = defineSection({
 
 export const productList = defineSection({
   type: 'sdk:product-list',
+  title: 'Vitrine de produtos',
+  addable: true,
   settings: {
     eyebrow: text({ max: 60 }),
     title: text({ max: 80 }),
@@ -120,6 +141,8 @@ export const productList = defineSection({
 
 export const storeStatus = defineSection({
   type: 'sdk:store-status',
+  title: 'Horários e endereço',
+  addable: true,
   settings: {
     title: text({ max: 80, default: 'Horários' }),
     showHours: boolean({ default: true }),
@@ -130,6 +153,8 @@ export const storeStatus = defineSection({
 
 export const richTextSection = defineSection({
   type: 'sdk:rich-text',
+  title: 'Texto',
+  addable: true,
   settings: {
     eyebrow: text({ max: 60 }),
     title: text({ max: 120 }),

@@ -3,6 +3,55 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.14.0
+
+The Kernel owns its presentation rules — additive; no storefront edit. One implementation of
+every rule over Core's fields, which the Kernel's defaults, `@vendua/ui-defaults`, stores and the
+merchant admin share; Core still decides anything that needs the clock, the zones, the stock
+ledger or money (API.md, "Rules and display helpers").
+
+- New pure subpath `@vendua/kernel/rules` (no React, no DOM), every name also exported from
+  `@vendua/kernel`: format (`LOCALE`, `formatCents` — moved, `formatCentsParts`,
+  `formatDateTime`, `formatTime`, `formatDay`, `formatWhen`, `localNow`, `plural`, `foldText`,
+  `interpolate`, `countdown`, `MEDIA_WIDTHS`, `mediaSrcSet`); price and card (`priceDisplay`,
+  `priceWords`, `MAX_LINE_QTY`, `cardState`); menu (`arrangeMenu`, `matchProduct`); hours
+  (`hoursRows`, `todayHours`, `statusHint`, `statusWords`); delivery (`zoneFeeFloor` — a per-km
+  zone is never "grátis", `deliverySummary`, `deliveryWords`); links (`KERNEL_PATHS`,
+  `DEFAULT_PATHS`, `resolvePaths`, `productHref`, `catalogHref`, `productAnchor`, `absoluteUrl`,
+  `whatsappDigits`, `whatsappUrl`, `instagramHandle`, `instagramUrl`, `phoneDisplay`,
+  `contactLinks`); phone (`digitsOf`, `isValidPhone`, `phoneKey`, `maskPhone`, `maskCep`,
+  `isValidCep`); notices (`noticeSeverity`, `noticeLinks`, `isBlocking`, `visibleNotices`);
+  orders (`ORDER_STATE_LABEL`, `TERMINAL_ORDER_STATES`, `orderPath`, `orderProgress`,
+  `orderStepLabel`, `PAYMENT_METHOD_LABEL` + alias `PAYMENT_LABEL`, `PAYMENT_METHOD_ORDER`,
+  `PAYMENT_METHOD_DETAIL`, `PAYMENT_STATUS_LABEL`, `PIX_KEY_LABEL`, `adjustmentKind`,
+  `adjustmentShort`, `adjustmentText`, `lineSummary`); errors (`ERROR_COPY`, `errorCopy`,
+  `couponMessage`, `COUPON_REASON`, `isCouponError`); QR (`qrMatrix`, `qrSvgPath`, `qrSvg`);
+  copy (`DEFAULT_VOCABULARY`, `vocabularyOf`). `@vendua/ui-defaults`' `money`, `dateTime`,
+  `time`, `dayLabel`, `ORDER_STATE_LABEL`, `PAYMENT_LABEL`, `COUPON_REASON`, `MEDIA_WIDTHS`,
+  `mediaSrcSet`, `countdown`, `qrMatrix`, `qrSvgPath`, `noticeSeverity` and `noticeLinks` are now
+  these (same names; it peer-depends on the Kernel). Its coupon reasons read the one table
+  ("Esse cupom expirou").
+- Hooks: `useCardState`, `useMenu`, `useStoreStatus`, `useStoreHours`, `useDeliverySummary`,
+  `useMoney`, `useLinks`, `useCopy`, `useCartCount`, `useCoupon`, `useCouponCheck`,
+  `useLineQuote` (Core's price for a configured line, debounced), `usePixTimer`,
+  `useReducedMotion`, `useScrollSpy`. Components: `ProductPrice`, `ProductImage`, `QrCode`.
+  Also exported: `haptic`, `Slot`.
+- Fix: `useNotices` returns only notices inside their `startsAt`/`endsAt` window (re-reading at
+  the next boundary), and `blocking` uses `isBlocking` (unknown severities read as info).
+- Core fields (all optional for an older Core): `StoreProfile.closesAt`, `publicUrl`,
+  `hours.specialDays` (`SpecialDay`); `closesAt` on the surfaces/state `store`;
+  `SurfacesEnvelope.meta` (`StoreMeta`, the edge's head meta). Client: `api.quoteLine` (`GET
+/storefront/v1/products/:slug/quote`, `LinePicks` → `LineQuote`); `api.addLine` and
+  `useCart().mutations.addLine` answer Core's `added` (`AddedLine`).
+- Slot props (types now; the Kernel passes them next): optional `timeZone` (`StoreTime`),
+  `currency` (`StoreMoney`) and `vocabulary` (`StoreWords`) on the slots whose defaults format
+  times, money or the store's words.
+- `@vendua/kernel/sdk-catalog` adds `DEFAULT_TEMPLATES`, `resolveSettings`,
+  `PREVIEW_QUERY_PARAM`, `PREVIEW_MESSAGE`; section schemas take optional `title` and `addable`
+  (filled for the SDK sections).
+- API.md: commerce funnel events come only from the primitives — a store UI must add, open the
+  bag and start checkout through them.
+
 ## 1.13.0
 
 Timed promotions and "a partir de" — additive; no storefront edit, no new runtime export. Every

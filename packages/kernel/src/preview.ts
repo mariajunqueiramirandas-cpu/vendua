@@ -6,6 +6,7 @@ import {
   type StorefrontTokens,
   type TemplateSet,
 } from '@vendua/templates';
+import { PREVIEW_MESSAGE, PREVIEW_QUERY_PARAM } from './preview-protocol.ts';
 
 // Editor preview (Kernel 1.4): the merchant admin frames the real storefront with
 // `?vendua-preview=1` and posts draft templates, so edits show before "publicar".
@@ -19,7 +20,7 @@ import {
 const active =
   typeof window !== 'undefined' &&
   window.parent !== window &&
-  new URLSearchParams(window.location.search).has('vendua-preview');
+  new URLSearchParams(window.location.search).has(PREVIEW_QUERY_PARAM);
 
 let drafts: TemplateSet | null = null;
 let draftTokens: StorefrontTokens | null = null;
@@ -45,7 +46,7 @@ function start() {
       tokens?: unknown;
       selected?: unknown;
     } | null;
-    if (!d || d.type !== 'vendua:preview' || e.source !== window.parent) return;
+    if (!d || d.type !== PREVIEW_MESSAGE.draft || e.source !== window.parent) return;
     if (!adminOrigin || e.origin !== adminOrigin) return;
     if (d.templates && typeof d.templates === 'object') {
       const next: TemplateSet = {};
@@ -82,7 +83,7 @@ function start() {
       e.preventDefault();
       e.stopPropagation();
       window.parent.postMessage(
-        { type: 'vendua:preview-select', id: el.getAttribute('data-section-id') },
+        { type: PREVIEW_MESSAGE.select, id: el.getAttribute('data-section-id') },
         adminOrigin,
       );
     },
@@ -93,7 +94,7 @@ function start() {
 
 function announce() {
   if (!adminOrigin) return;
-  window.parent.postMessage({ type: 'vendua:preview-ready', tokens: current, paths }, adminOrigin);
+  window.parent.postMessage({ type: PREVIEW_MESSAGE.ready, tokens: current, paths }, adminOrigin);
 }
 
 /** The merchant admin's origin, from Core — the only parent the preview listens to. */

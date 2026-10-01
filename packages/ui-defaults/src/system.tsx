@@ -1,26 +1,12 @@
-import type { Notice, NoticeAction, SlotProps } from '@vendua/kernel';
+import type { SlotProps } from '@vendua/kernel';
+import { noticeLinks, noticeSeverity } from '@vendua/kernel/rules';
 import { dateTime } from './format.ts';
 
 // system.* defaults — the generic notice is THE fallback for every future kind
 // (05 — forward-compatibility rules), so it must read well for anything.
 
-const SEVERITIES = new Set(['info', 'warning', 'blocking']);
-
-export function noticeSeverity(n: Notice): 'info' | 'warning' | 'blocking' {
-  if (n.kind === 'emergency') return 'blocking';
-  const s = String(n.severity);
-  return SEVERITIES.has(s) ? (s as 'info' | 'warning' | 'blocking') : 'info';
-}
-
-/** Unknown action types degrade to a link when they carry an href, else are omitted. */
-export function noticeLinks(n: Notice): { label: string; href: string; action: NoticeAction }[] {
-  return (n.actions ?? []).slice(0, 2).flatMap((a) => {
-    const href = (a as Record<string, unknown>).href;
-    return typeof href === 'string' && typeof a.label === 'string'
-      ? [{ label: a.label, href, action: a }]
-      : [];
-  });
-}
+// moved to the Kernel's pure rules (one implementation for the Kernel and these defaults)
+export { noticeSeverity, noticeLinks };
 
 function Dismiss({ onDismiss }: { onDismiss: () => void }) {
   return (

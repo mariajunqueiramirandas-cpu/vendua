@@ -1,9 +1,11 @@
 # @vendua/kernel — v1 API (frozen)
 
 Kernel 1.x serves **Contract 2** (ADR 0018). Everything a storefront may touch is
-listed here; the package `exports` map (`.`, `./config`, `./styles.css`, `./vite`,
+listed here; the package `exports` map (`.`, `./config`, `./rules`, `./styles.css`, `./vite`,
 `./sdk-catalog`) hides everything else, and `test/api-surface.test.ts`
-fails on any unlisted runtime export. Within Contract 2, changes are additive:
+fails on any unlisted runtime export. `./rules` (Kernel 1.14) is the pure half of the Kernel —
+presentation rules over Core's fields, no React, no DOM — for `@vendua/ui-defaults` and the
+merchant admin; a store imports the same names from `@vendua/kernel`. Within Contract 2, changes are additive:
 new exports, optional props, new slots/sections/blocks — never removals, renames or
 retypes (those need a Contract major, a codemod and an alias window).
 
@@ -60,6 +62,12 @@ stock minus what the cart holds, kit picks included; `null` when stock isn't tra
 instead of `stockQuantity` in store cards). `@vendua/ui-defaults` also exports `Calendar`
 (the month grid behind `checkout.SchedulePicker`) for store sections that need one.
 
+Since 1.14, hooks that bind the rules (below) to the store's live data: `useCardState`,
+`useMenu`, `useStoreStatus`, `useStoreHours`, `useDeliverySummary`, `useMoney`, `useLinks`,
+`useCopy`, `useCartCount`, `useCoupon`, `useCouponCheck`, `useLineQuote`, `usePixTimer`,
+`useReducedMotion` and `useScrollSpy`; `useNotices` returns only notices inside their
+`startsAt`/`endsAt` window and `blocking` follows `isBlocking`.
+
 Hooks never compute prices or eligibility; every read exposes `refetch`. Since 1.6 the
 reads behind `useCatalog`, `useProduct`, `useStore`, `useDeliveryZones` and `useNotices` also refresh by
 themselves when Core's live stream says they changed (no API change).
@@ -93,6 +101,16 @@ themselves when Core's live stream says they changed (no API change).
 
 Every primitive accepts `asChild`. A primitive with no `onError` hands typed errors to
 the default error surface.
+
+The commerce funnel (`add_to_cart`, `cart_open`, `checkout_start`, `notify_me`, …) is emitted
+only by these primitives (and the Kernel's pages): a store UI that adds to the bag, opens it or
+starts checkout must do it through `AddToCart`, `CartTrigger` and `CheckoutButton` (with
+`asChild` for its own look), or the merchant's funnel loses those steps. `useAnalytics` only
+takes `custom.*` events.
+
+Since 1.14 the main entry also exports `Slot` (mount a slot — e.g. `store.HoursTable` — with
+its override and default, as the Kernel does) and `haptic` (`haptic.tick()` / `haptic.commit()`:
+Android vibration, a no-op elsewhere; `AddToCart` already ticks — don't buzz twice).
 
 ## Page composition
 
@@ -267,6 +285,145 @@ comboSelections?, modifierQty?)` and `AddToCart`'s `modifierQty` prop (only unit
   `paymentMethod` (then `QuoteResult.totals`) and answer `zoneKind`.
 - Delivery zones: `DeliveryZone.kind` may be `'polygon'` with `polygon: [lat, lng][]`; the
   checkout offers "Usar minha localização" when any radius or polygon zone exists.
+
+## Rules and display helpers (Kernel 1.14)
+
+One implementation of every presentation rule over Core's fields, in `@vendua/kernel/rules`
+(pure) and re-exported from `@vendua/kernel`. Core still decides anything that needs the clock,
+the zones, the stock ledger or money; a rule returns the _decision_, and the pt-BR words are a
+separate function a store may skip for its own voice. Additive — no storefront edit.
+
+**Format** (`rules/format.ts`)
+
+- `LOCALE` — `'pt-BR'`, the default locale of every formatter.
+- `formatCents` `(cents, currency?, locale?)` — money (moved here; same function as before).
+- `formatCentsParts` `(cents, currency?)` — `{ symbol, amount, symbolFirst }` for a split price.
+- `formatDateTime` `(iso, timeZone?)` — `sáb., 26 set., 18:00` (ui-defaults' `dateTime`).
+- `formatTime` `(iso, timeZone?)` — `18:00` (ui-defaults' `time`).
+- `formatDay` `(date)` — `sáb., 26 set.` for a store-local `YYYY-MM-DD` (ui-defaults' `dayLabel`).
+- `formatWhen` `(iso, timeZone, now?)` — the next-instant phrase: `hoje às 18:00`, `amanhã às 09:00`, `sáb às 09:00`, `12/10 às 09:00`.
+- `localNow` `(timeZone, now?)` — the store's wall clock: `{ date, weekday, minutes }`.
+- `plural` `(n, one, many)` — the word for `n` (only 1 is singular).
+- `foldText` `(s)` — accent- and case-blind text for matching.
+- `interpolate` `(text, vars)` — `{key}` placeholders filled; a missing value reads as nothing.
+- `countdown` `(to, now)` — `29:41` until a deadline.
+- `MEDIA_WIDTHS` / `mediaSrcSet` `(src, widths?)` — Core's resized copies of an upload, as a srcset.
+
+**Price and card** (`rules/price.ts`, `rules/card.ts`)
+
+- `priceDisplay` `(product)` — `{ form: 'plain' | 'from' | 'promo', cents, struckCents, promoLabel }`: from-price above the base wins and is never struck; else a "de" price above the base.
+- `priceWords` `(display, currency?)` — `a partir de R$ 22,90` / `de R$ 24,00 por R$ 18,00` / `R$ 18,00`.
+- `MAX_LINE_QTY` — 99, the most units one line takes.
+- `cardState` `(product, stockLeft)` — `{ soldOut, scheduleLabel, stockLeft, allInBag, lowStock, canQuickAdd, maxQty, badge }`; low stock is Core's (`lowStock`, or `lowStockThreshold` on the stock the bag leaves); badge priority sold-out > all-in-bag > low-stock > preorder.
+
+**Menu** (`rules/menu.ts`)
+
+- `arrangeMenu` `(categories, { query? })` — search, empty categories dropped, sold out last within a category.
+- `matchProduct` `(product, categoryName, query)` — the search rule: name, description or category name, accents ignored.
+
+**Hours and status** (`rules/hours.ts`)
+
+- `hoursRows` `(hours, now?)` — the weekly table, Monday first, same-hours days folded (`Seg – Sex`, `Todos os dias`), closed days included, `today` in the store's zone.
+- `todayHours` `(hours, now?)` — today's windows, a special day (`hours.specialDays`) first.
+- `statusHint` `({ status, closesAt?, resumesAt? })` — `open-until` / `opens` / `paused-until` / `open` / `closed` / `paused`; a time only when Core served one.
+- `statusWords` `(hint, timeZone, now?)` — `Aberto até 18:00`, `Abre amanhã às 09:00`, `Pausado até 14:30`, `Fechado`.
+
+**Delivery** (`rules/delivery.ts`)
+
+- `zoneFeeFloor` `(zone)` — the least a zone charges (a per-km zone costs at least one km).
+- `deliverySummary` `(store, zones)` — `{ delivery: { etaMin, etaMax, fee: { form, cents }, freeOverCents, minOrderCents, minOrderVaries } | null, pickup: { prepMinutes } | null }`.
+- `deliveryWords` `(summary, currency?)` — `{ fee, eta, minOrder, freeOver }`: `entrega a partir de R$ 5,00`, `30–50 min`.
+
+**Links** (`rules/links.ts`)
+
+- `KERNEL_PATHS` — also here (pure), unchanged.
+- `DEFAULT_PATHS` — every route with no `paths` in the config (`/cardapio`, `/produto/:slug`, the Kernel's pages).
+- `resolvePaths` `(config)` / `productHref` `(config, slug)` / `catalogHref` `(config)` — the store's routes.
+- `productAnchor` `(slug)` — `produto-<slug>`, the catalog's deep-link id (the Kernel scrolls to `#produto-<slug>`).
+- `absoluteUrl` `(base, path)` — an absolute link (share, QR, JSON-LD) from `StoreProfile.publicUrl`.
+- `whatsappDigits` `(raw)` / `whatsappUrl` `(raw, text?)` — Core's normalisation (country code 55) and the `wa.me` link.
+- `instagramHandle` `(raw)` / `instagramUrl` `(raw)` — the bare handle from any form, and the profile link.
+- `phoneDisplay` `(digits)` — `(22) 98179-5040` (no-break space after the area code).
+- `contactLinks` `(store, text?)` — `{ whatsapp: { href, display } | null, instagram: { href, handle } | null }`; open them in a new tab.
+
+**Phone and CEP** (`rules/phone.ts`)
+
+- `digitsOf` `(s)` / `phoneKey` `(s)` — digits; national digits (Core's phone key).
+- `isValidPhone` `(s)` — 10–11 digits, or 12–13 starting with 55.
+- `maskPhone` `(s)` / `maskCep` `(s)` — progressive input masks `(22) 98179-5040`, `00000-000`.
+- `isValidCep` `(s)` — 8 digits.
+
+**Notices** (`rules/notices.ts`)
+
+- `noticeSeverity` `(notice)` / `noticeLinks` `(notice)` — the forward-compatible severity and links (moved from ui-defaults).
+- `isBlocking` `(notice)` — blocks the page (blocking severity or an emergency).
+- `visibleNotices` `(notices, now?)` — the ones inside their window.
+
+**Orders and payment** (`rules/orders.ts`)
+
+- `ORDER_STATE_LABEL` / `TERMINAL_ORDER_STATES` — order states in words; the ones that end it.
+- `orderPath` `(mode)` — `placed → confirmed → preparing → ready → [out_for_delivery →] delivered`.
+- `orderProgress` `(order)` — `{ steps, current, terminal, outcome }` along the order's path.
+- `orderStepLabel` `(state, mode)` — a step's short name (`Preparo`, `A caminho`, `Retirado`).
+- `PAYMENT_METHOD_LABEL` (alias `PAYMENT_LABEL`), `PAYMENT_METHOD_ORDER`, `PAYMENT_METHOD_DETAIL` — methods in the shopper's words, in checkout order.
+- `PAYMENT_STATUS_LABEL` — an online payment's status in words.
+- `PIX_KEY_LABEL` — a Pix key's type in words (`chave aleatória`).
+- `adjustmentKind` `(a)` / `adjustmentShort` `(a, currency?)` / `adjustmentText` `(a, currency?)` — a method's discount/surcharge: `discount`, `−5%`, `5% de desconto`.
+- `lineSummary` `(item, currency?)` — a line's options and kit picks: `2× Calda (+R$ 2,00), Granulado`.
+
+**Errors and coupons** (`rules/errors.ts`)
+
+- `ERROR_COPY` / `errorCopy` `(code)` — default pt-BR `{ title, body? }` per Core error code.
+- `couponMessage` `(code, details?, currency?)` — a coupon's refusal in words (`Faltam R$ 12,00 para usar este cupom.`).
+- `COUPON_REASON` — coupon code → message (ui-defaults' name); `isCouponError` `(code)` — the code is about the coupon.
+
+**QR and copy** (`rules/qr.ts`, `rules/copy.ts`)
+
+- `qrMatrix` `(text)` / `qrSvgPath` `(matrix, quiet?)` / `qrSvg` `(text, opts?)` — the dependency-free QR encoder; `qrSvg` is a standalone SVG document.
+- `DEFAULT_VOCABULARY` / `vocabularyOf` `(store)` — `itemSingular`, `itemPlural`, `bag`, `cta`: the store's words over the defaults.
+
+**Hooks** (main entry only)
+
+- `useCardState` `(product)` — `cardState` with the stock the bag leaves.
+- `useMenu` `({ query? })` — `arrangeMenu` over `useCatalog` `()`, plus `count`.
+- `useStoreStatus` `()` — `{ status, closesAt, resumesAt, hint, label, timeZone, loading }`; reads the store again when Core's moment passes.
+- `useStoreHours` `()` — `{ rows, today, timeZone }`.
+- `useDeliverySummary` `()` — `deliverySummary` over the store and its zones, plus `loading`.
+- `useMoney` `()` — `(cents) => string` in the store's currency.
+- `useLinks` `()` — `{ product(slug), catalog, anchor(slug), absolute(path), contacts }` (`absolute` uses `publicUrl`, else this page's origin).
+- `useCopy` `()` — `{ vocabulary, interpolate(text) }` with `{store}` and `{city}`.
+- `useCartCount` `()` — units in the open bag.
+- `useCoupon` `()` — `{ coupon, discountCents, apply, remove, pending, message, error, reason }`; never throws.
+- `useCouponCheck` `()` — `{ check(code), result, pending, message, error }` (Core validates without applying).
+- `useLineQuote` `(product, picks, qty)` — Core's price for a configured line, debounced: `{ quote, pending, error }` (`error` is the code, never thrown).
+- `usePixTimer` `(expiresAt)` — `{ expired, msLeft, label }` on the shopper's clock.
+- `useReducedMotion` `()` — the system's reduced-motion setting, live.
+- `useScrollSpy` `(ids, { offset?, rootMargin? })` — which id is being read (IntersectionObserver).
+
+**Components** (main entry only; parts are Contract surface)
+
+- `ProductPrice` — `{ product, className? }`: Core's price as decided by `priceDisplay`; `[data-vendua="product-price"]` with `data-form`, parts `price`, `struck`, `amount`, `from`, `promo`.
+- `ProductImage` — `{ product, sizes?, priority?, fallback?, width?, height?, alt?, className? }`: `Img` with Core's srcset, `data-vt-src="product:<slug>"`, `fallback` with no photo or on error.
+- `QrCode` — `{ value, size?, dark?, light?, title? }`: an inline SVG (`[data-vendua="qr-code"]`).
+
+**Core fields and client** — `StoreProfile` gains optional `closesAt`, `publicUrl` and
+`hours.specialDays` (`SpecialDay`); `SurfacesEnvelope`/`StateEnvelope` `store` gain `closesAt`
+and the edge's `SurfacesEnvelope` gains `meta` (`StoreMeta`). `useCart().mutations.addLine`
+(and `api.addLine`) answer Core's `added` (`AddedLine`: the units added and their price) — what
+analytics should count; `api.quoteLine(slug, { qty, modifiers?, comboSelections? })` (`LinePicks`
+→ `LineQuote`) is `useLineQuote`'s read.
+
+**Slot props** — `StoreTime` (`timeZone?`) on `system.PauseNotice`, `system.StoreClosedNotice`,
+`order.StatusPage`, `order.Timeline`, `checkout.SuccessPage`, `checkout.PixPayment`,
+`customer.LoyaltyCard`; `StoreMoney` (`currency?`) on `checkout.DeliveryOptions`,
+`checkout.PaymentMethods`; `StoreWords` (`vocabulary?`) on `cart.Drawer`, `cart.LineItem`,
+`checkout.Summary`, `checkout.EmptyCart`, `catalog.ProductCard`, `order.Items`. Optional: a
+default formats with them when given.
+
+**`@vendua/kernel/sdk-catalog`** also exports `DEFAULT_TEMPLATES` (what a page renders with no
+template), `resolveSettings` `(schema, raw)` (the settings coercion the Kernel renders with),
+`PREVIEW_QUERY_PARAM` and `PREVIEW_MESSAGE` (the editor-preview protocol below), and SDK
+section schemas carry `title` (the merchant's name for it) and `addable`.
 
 ### Editor preview (Kernel 1.4)
 
