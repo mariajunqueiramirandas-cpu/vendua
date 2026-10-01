@@ -23,6 +23,7 @@ import { startBillingJobs } from './modules/billing/jobs.ts';
 import { signupAccessCode } from './modules/billing/signup.ts';
 import { fleetDeps } from './modules/fleet/deps.ts';
 import { startFleetJobs } from './modules/fleet/jobs.ts';
+import { startMenuImportJobs } from './modules/menu-import/jobs.ts';
 import { onUnhandledError } from './platform/http.ts';
 import { recordBoot, unhandledErrorReporter } from './modules/system-events.ts';
 
@@ -99,6 +100,9 @@ const stopBillingJobs = startBillingJobs(sql, {
 // Control Plane (Phase 4): provisioner, synthetic probes, deployment verification, drift
 const stopFleetJobs = startFleetJobs(fleetDeps(sql, { notify }));
 
+// menu import ("cole o link do seu cardápio"): reads pasted stores, re-hosts their photos
+const stopMenuImportJobs = startMenuImportJobs({ sql });
+
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
 const stopPushNotifier = startPushNotifier(sql, adminHub);
 const stopAdminSweeper = startAdminSweeper(sql, { notify, adminOrigin });
@@ -168,6 +172,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     stopPaymentJobs();
     stopBillingJobs();
     stopFleetJobs();
+    stopMenuImportJobs();
     stopInstagramReconcile();
     void stopPushNotifier.then((stop) => stop()).catch(() => undefined);
     // event streams never finish on their own: requests get a few seconds, then the rest close

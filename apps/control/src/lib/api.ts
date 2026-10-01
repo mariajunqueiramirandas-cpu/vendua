@@ -1116,4 +1116,63 @@ const controlPlane = {
 };
 
 // one client — the v2 section merges in so callers keep a single import
-export const api = Object.assign(apiBase, agentV2, fleet, controlPlane);
+
+/** A menu import (docs/menu-import.md) — the subset the CRM shows. */
+export interface MenuImport {
+  id: string;
+  platform: string;
+  sourceUrl: string;
+  status: 'reading' | 'ready' | 'failed' | 'applying' | 'applied' | 'expired';
+  errorCode: 'NOT_FOUND' | 'BLOCKED' | 'UNREADABLE' | 'TOO_LARGE' | 'TIMEOUT' | null;
+  createdAt: string;
+  counts: {
+    categories: number;
+    products: number;
+    hidden: number;
+    photos: number;
+    optionGroups: number;
+    hours: number;
+    zones: number;
+    paymentMethods: number;
+    pix: boolean;
+    logo: boolean;
+    cover: boolean;
+    lost: number;
+  } | null;
+  preview: {
+    store: { name?: string | undefined };
+    categories: {
+      name: string;
+      products: { name: string; priceCents: number; status: string }[];
+    }[];
+  } | null;
+  lost: {
+    scope: 'store' | 'category' | 'product';
+    subject?: string;
+    code: string;
+    detail?: string;
+  }[];
+  result: { products: number; hidden: number; archived: number; images: number } | null;
+  images: { total: number; done: number; failed: number; finished: boolean };
+}
+export type ImportSection = 'profile' | 'hours' | 'delivery';
+
+const menuImports = {
+  storeImports: (slug: string) =>
+    req<{ imports: MenuImport[] }>(`/stores/${encodeURIComponent(slug)}/imports`),
+  startStoreImport: (slug: string, url: string) =>
+    req<{ id: string; platform: string }>(`/stores/${encodeURIComponent(slug)}/imports`, {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
+  menuImport: (id: string) => req<MenuImport>(`/imports/${encodeURIComponent(id)}`),
+  applyMenuImport: (id: string, body: { mode: 'add' | 'replace'; sections: ImportSection[] }) =>
+    req<MenuImport>(`/imports/${encodeURIComponent(id)}/apply`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  discardMenuImport: (id: string) =>
+    req<MenuImport>(`/imports/${encodeURIComponent(id)}/discard`, { method: 'POST' }),
+};
+
+export const api = Object.assign(apiBase, agentV2, fleet, { ...controlPlane, ...menuImports });

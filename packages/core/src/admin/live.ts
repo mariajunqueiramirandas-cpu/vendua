@@ -22,7 +22,9 @@ export type AdminTopic =
   // Mercado Pago connection, plan, invoices, domains
   | 'billing'
   // an alert attempt was recorded (devices, missed alerts)
-  | 'alerts';
+  | 'alerts'
+  // a menu import moved: read, applied, photos re-hosted (id = import id)
+  | 'import';
 
 const liveLog = log.child({ mod: 'admin-live' });
 

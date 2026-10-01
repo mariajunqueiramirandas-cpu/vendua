@@ -177,6 +177,7 @@ import type { MerchantNotify } from './admin/context.ts';
 import { platformNotify } from './admin/notify.ts';
 import { fleetDeps, type FleetDeps } from './modules/fleet/deps.ts';
 import { mountFleet } from './modules/fleet/routes.ts';
+import { mountImportsControl } from './modules/menu-import/routes-control.ts';
 import { createPaymentProvider, type PaymentProvider } from './modules/payments/index.ts';
 import { storePaymentsPublic } from './modules/payments/store-payments.ts';
 import {
@@ -2710,6 +2711,7 @@ export function createApp({
     storeDomain: publicStoreDomain,
   });
   mountIncidentsControl({ app, sql, controlGate });
+  mountImportsControl({ app, sql, controlGate });
   mountDiscord({ app, sql, controlGate, kickDrain, fetch: discordFetch });
   mountFleet({
     app,

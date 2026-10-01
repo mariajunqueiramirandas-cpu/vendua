@@ -5,7 +5,8 @@ import type { Merchant } from './context.ts';
 export async function audit(
   tx: Sql,
   tenantId: string,
-  actor: Merchant,
+  // staff (the CRM's menu import) have no merchant_users row: userId null, a label for the log
+  actor: Pick<Merchant, 'name'> & { userId: string | null },
   entry: {
     action: string;
     entity: string;

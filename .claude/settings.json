@@ -11,6 +11,12 @@
     }
   },
   "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(bun x tsc --noEmit -p tsconfig.json)",
+      "mcp__github__pull_request_read"
+    ],
     "deny": [
       "Read(./packages/conformance/stale/*/dist/**)",
       "Read(./apps/*/dist/**)",

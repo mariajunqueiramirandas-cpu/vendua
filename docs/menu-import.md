@@ -1,6 +1,6 @@
 # Menu import — "Cole o link do seu cardápio"
 
-> Status: Proposed · Last reviewed: 2026-10-01 · Model gaps (§6) are built (Core 0065–0067, Kernel 1.12.0, admin); the importer is next
+> Status: Phase 2 built (Instadelivery end to end: Core 0069 + `modules/menu-import`, admin onboarding step and Cardápio › Importar, CRM import on a lead's store) · Last reviewed: 2026-10-01 · Model gaps (§6) are built (Core 0065–0067, Kernel 1.12.0, admin) · Next: phase 3, planned step by step in [menu-import-phase3.md](menu-import-phase3.md)
 > Roadmap: first tenant ([Phase 4](roadmap.md#phase-4--one-tenant-operated-for-real-weeks-1420-overlaps)) — Quero Pudim Gourmet moves from Instadelivery
 
 Almost every merchant Venduá sells to already has a cardápio digital (Instadelivery, anota.ai,
@@ -43,7 +43,7 @@ Non-goals (v1):
 The UI is designed separately, under `apps/admin/CLAUDE.md`; this section fixes the behaviour
 and the API it consumes.
 
-**Onboarding (`/bem-vindo`).** A new step `importar` right after `oi`
+**Onboarding (`/bem-vindo`).** A step `importar` right after `oi`
 (`apps/admin/src/features/onboarding/Onboarding.tsx`, `ORDER`): "Já vende online? Cole o link do
 seu cardápio", with a "Começar do zero" way out. While Core reads the store the step shows
 progress; then a summary ("Encontramos 4 categorias, 23 produtos, 23 fotos, horários, Pix e 4
@@ -51,20 +51,37 @@ formas de pagamento") and the list of what won't come over. "Importar" applies i
 steps (`nome`, `logo`, `whatsapp`, `frase`, `horarios`, `como`, `pix`, `produtos`) open prefilled,
 so the merchant confirms instead of typing.
 
-**Catálogo → "Importar cardápio"** for a store that already runs: the same preview, plus a choice
+**Catálogo → "Importar cardápio"** (`/cardapio/importar`; header button, empty state, and a row
+under the list on phones) for a store that already runs: the same preview, plus a choice
 between adding to the current menu and replacing it. Replacing archives the current products
 (orders keep referencing them) rather than deleting. The settings sections are checkboxes —
 _Perfil e visual_, _Horários_, _Entrega e retirada_, _Pagamentos_ — on by default in onboarding,
 off by default here.
 
-**CRM (phase 2).** Lead discovery already classifies anota.ai, Instadelivery, Goomer and Takeat
+Both use one component, `apps/admin/src/features/import/ImportFlow.tsx`: paste → "Lendo o
+cardápio…" (polls, and the live stream's `import` topic refreshes it) → preview (counts, the menu
+with source thumbnails, the section toggles, "o que não vem igual" split into products that come
+over hidden for review and everything else) → "Essa loja é minha" (§10.1) → "Importar" → photos
+progress. The pt-BR line for every `lost` code lives in `features/import/copy.ts`. An unfinished
+import (reading, or a preview not applied within a day) is picked up again when the screen opens.
+
+**CRM.** Lead discovery already classifies anota.ai, Instadelivery, Goomer and Takeat
 URLs as listing evidence (`agent/channels/discovery.ts`, `LISTING_HOSTS`). On a lead with such a
 URL, staff can import it into the store "criar loja" provisions, so the owner's invite lands on a
 store that already has their menu. Same module, exposed on the control API with staff auth.
+Built: "importar cardápio" in the lead's _loja_ panel (`apps/control/src/features/lead/LeadImport.tsx`,
+prefilled from the lead's site when it is an Instadelivery link) over
+`/control/v1/stores/:slug/imports` and `/control/v1/imports/:id[/apply|/discard]`. Staff tick
+_Perfil e visual_, _Horários_ and _Entrega e retirada_, never _Pagamentos_ (the owner's, and the
+Pix key is masked for them), confirm the merchant asked for it, and the audit entry reads "equipe
+Venduá".
 
 ## 3. Platforms
 
 Checked 2026-10-01, one or two public stores each, with a plain HTTP client and a headless browser.
+Phase 3 re-checks every chain before writing an adapter for it
+([plan, step 1](menu-import-phase3.md#2-step-1--verify-the-payloads-gate)) and records the
+verdicts here.
 
 | Platform        | Link the merchant pastes                        | How the menu is read                             | Verdict                                                   |
 | --------------- | ----------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
@@ -101,8 +118,10 @@ A Core module per [ADR 0013](adr/0013-modular-monolith-core.md),
 | `http.ts`            | The module's only outbound HTTP: host allowlist, caps, pacing                           |
 | `apply.ts`           | Writes a validated document into one tenant, in one transaction                         |
 | `images.ts`          | Downloads, re-encodes and attaches photos, logo and cover                               |
-| `routes.ts`          | `/admin/v1/imports/*` (and `/control/v1/…` in phase 2)                                  |
+| `routes.ts`          | `/admin/v1/imports/*`                                                                   |
+| `routes-control.ts`  | the staff versions, `/control/v1/stores/:slug/imports` and `/control/v1/imports/:id…`   |
 | `jobs.ts`            | `startMenuImportJobs()`, shaped like `startFleetJobs()` (`modules/fleet/jobs.ts`)       |
+| `probe-cli.ts`       | `bun run import:probe`, the staff check against the live platform ([§8](#8-testing))    |
 
 ### 4.2 Adapter contract
 
@@ -242,18 +261,43 @@ writer for "a whole menu", tested once.
 6. **Expiry** — a `ready` import not applied within 24 h becomes `expired` and its document is
    cleared; its prices would be stale.
 
-`menu_imports` (one migration): `id`, `tenant_id` (RLS like every table), `created_by`,
-`platform`, `source_url`, `status`, `error_code`, `doc jsonb` (≤ 2 MB), `counts jsonb`,
-`mode`, `sections jsonb`, `images_total`, `images_done`, `created_at`, `applied_at`; index on
-`(tenant_id, created_at desc)`.
+`menu_imports` (migration 0069): `id`, `tenant_id` (RLS like every table), `created_by`,
+`platform`, `source_url`, `source_ref`, `status`, `error_code`, `doc jsonb` (≤ 2 MB), `counts
+jsonb`, `mode`, `sections jsonb`, `result jsonb`, `images_total`, `images_done`, the job's
+`attempts`/`lease_until`, `created_at`, `read_at`, `applied_at`, `finished_at`; index on
+`(tenant_id, created_at desc)`. `menu_import_images` is the photo queue (kind `product`,
+`option`, `logo` or `cover`, the target row, the source URL, `status`, `media_id`). Both tables
+also carry a `control_access` policy: the job claims work across stores under `vendua.control`
+(as the fleet loop does) and does each piece under the row's tenant.
+
+As built:
+
+- The pasted link may omit `https://` (most merchants copy `instadelivery.com.br/loja`); an
+  `http://` link is upgraded. Outbound requests are always https to the adapter's own hosts.
+- Refusals: 422 `BAD_REQUEST` (not a link), `IMPORT_BLOCKED` and `IMPORT_UNSUPPORTED` with
+  `details.platform` (a known platform without an adapter yet is named, so the admin can say
+  "ainda não lemos cardápios do Goomer"); 409 `IMPORT_IN_PROGRESS` with `details.id` (the admin
+  resumes it); 429 `IMPORT_RATE_LIMITED`; 409 `IMPORT_NOT_READY` on an apply that isn't `ready`;
+  403 when a manager ticks _Pagamentos_.
+- Also `GET /admin/v1/imports` (the last five, for resuming) and
+  `POST /admin/v1/imports/:id/discard` (cancel a read, drop a preview).
+- A manager sees the Pix key masked in the preview; the owner sees it.
+- The cover fills the default home hero (`store:menu-hero`'s `cover`). A storefront with its own
+  hero keeps its photo and the cover isn't queued. A re-hosted cover under 1000 px wide adds a
+  `cover_small` note suggesting a bigger photo (§7: Instadelivery's is 475×230).
+- Re-hosted photos keep their source order (`product_media.sort`); the import's own audit entry
+  is `menu.import`, and every write emits the admin stream topics it touches (`catalog`,
+  `store`, `appearance`, `import`).
 
 ### 4.5 Outbound requests
 
 - `http.ts` only calls hosts the adapter declares, on URLs the adapter builds from the `ref` that
   `match` extracted. Redirects are handled manually and re-checked against the allowlist. No
   user-supplied host reaches a request in v1, so there is no SSRF surface. Custom domains
-  (phase 2) need one fingerprinting GET to the merchant's own host, through a resolver that
-  refuses private, loopback and link-local addresses after DNS.
+  (phase 3) are resolved through the platforms' own host lookups where they exist. Only a
+  platform with no lookup needs one fingerprinting GET to the merchant's own host, through a
+  resolver that refuses private, loopback and link-local addresses after DNS
+  ([plan, step 4](menu-import-phase3.md#5-step-4--custom-domains-one-pr-after-the-adapters-it-needs)).
 - Caps: 10 s per request, 60 s per import, 5 MB per JSON response, 8 MB per image, 300 requests
   per import (Goomer reads options per product), at least 250 ms between requests to one host,
   at most two concurrent imports per platform.
@@ -309,7 +353,7 @@ oversized store fails the import.
 | Name, description, price, photo, badges                      | `products`, `product_media`, `tags`                                 | ✓ — badges become tags                                                                    |
 | "A partir de" price                                          | base price + a required option group                                | ✓ when the options carry the price                                                        |
 | Sizes / variants (Goomer, OlaClick, Saipos)                  | required group "Tamanho" (min 1, max 1)                             | ✓ exact: base = cheapest size, delta = size − cheapest                                    |
-| Promo price with strike-through                              | `products.compare_at_price_cents`                                   | ✓ — sells at the promo price, the old price is struck through; promo schedules are `lost` |
+| Promo price with strike-through                              | `products.compare_at_price_cents`                                   | ✓ — sells at the promo price, old price struck through; a promo on some days → full price |
 | Option groups: min, max, required, price                     | `modifier_groups`, `modifiers`                                      | ✓                                                                                         |
 | The same option more than once ("2x coco")                   | `modifiers.max_qty`, `cart_items.modifier_qty`                      | ✓ — priced × quantity in Core                                                             |
 | Option description or image                                  | `modifiers.description`, `modifiers.image_url`                      | ✓ — image re-hosted                                                                       |
@@ -399,10 +443,21 @@ The quero-pudim seed fixtures are a hand-made approximation of the store and dif
 - **`apply`** on the `vendua_test` database: fresh tenant, `add` and `replace`, a double apply
   writing once, another tenant's id answering 404, each truncation in [§4.6](#46-limits-truncate-dont-fail).
 - **Images** against a local HTTP fixture server: off-allowlist host, oversized, wrong type.
-- **No live calls in CI.** A staff script, `bun run import:probe <url>` in `packages/core`, runs
-  `read` + `map` against the live platform and prints counts and `lost` — before a release, and
-  when a merchant reports a failed import. Later, a weekly canary per platform from the fleet
-  jobs can alert staff when an adapter starts failing.
+- **No live calls in CI.** A staff script, `bun run import:probe <url> [--keys|--codes]` in
+  `packages/core`, runs `read` + `map` + `validateDoc` against the live platform and prints
+  counts and `lost` — before a release, and when a merchant reports a failed import. `--keys`
+  lists the payload's field names (never values), to fix an adapter after the platform drifts.
+  Later, a weekly canary per platform from the fleet jobs can alert staff when an adapter starts
+  failing.
+
+As built: `test/menu-import.test.ts` (money, every §4.6 limit, link recognition, the Instadelivery
+mapping on `fixtures/menu-import/instadelivery.json` — synthetic content in the platform's shape,
+including a credential-like field that must not survive — and the outbound HTTP rules) and
+`test/menu-import-db.test.ts` (refusals, read → ready, preview and Pix masking, another store's id,
+the owner-only section, apply with every section, a double apply, photos re-hosted and a failed
+one reported, replace mode, `NOT_FOUND`, expiry and the hourly limit). The probe against the live
+Quero Pudim store returns exactly the §7 lost list, and the store was imported end to end through
+the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
 
 ## 9. Phases
 
@@ -413,8 +468,29 @@ The quero-pudim seed fixtures are a hand-made approximation of the store and dif
 2. **Instadelivery end to end.** Core: document, `validateDoc`, `apply`, the image job, routes,
    the Instadelivery adapter; the seed writes through `apply`. Admin: the onboarding step and the
    Catálogo entry. Exit: Quero Pudim imported in production.
-3. **More adapters**, one PR each with its fixtures: Cardápio Web, OlaClick, Delivery Direto,
-   Takeat, Saipos, Goomer. Custom domains. The CRM import on a lead's store.
+   - Built: everything but the seed, which still writes its own rows (its fixtures carry fields
+     the document doesn't: slugs CI depends on, figure variants, coupons, loyalty).
+   - Confirmed on live stores (2026-10-01, field names via `import:probe --keys`, outcomes via
+     `--codes`, which prints counts and a tally of note codes and nothing of the store): option
+     lists are `complementos[]` with `min`, `max` (0 = no cap), `is_pizza` (most expensive
+     flavour), `only_one` (no repeats) and options in `complements[]` (`price`, `max_quantity`,
+     `is_invisible`, stock); neighbourhood fees are `fees[]` (`name`, `price`, `estimate`); km
+     tiers are `feesKm[]` (`km`, `price`, `estimate`, `no_delivery`). A pizzeria with 78 option
+     lists imports with one product hidden (a required list with nothing visible), and km tiers
+     past the last delivering one are read as the edge of the area, not a gap.
+   - Still not applied, only noted (their exact meaning isn't confirmed): `item_discount`
+     (product hidden), a second price (`price2`, product hidden), sized pizza categories
+     (`size1`/`size2`, products hidden), per-method discount/surcharge fields, free-delivery
+     rules on fees (`free_delivery`, `price_free`), and a "no delivery" km band inside the area.
+     Settling them means reading values from other merchants' stores, which phase 2's session
+     couldn't do; phase 3 step 2 does it.
+   - The CRM import on a lead's store, planned for phase 3, was built here.
+3. **More adapters**, planned step by step in [menu-import-phase3.md](menu-import-phase3.md):
+   1. Re-verify every platform's request chain (the gate).
+   2. Settle the Instadelivery fields above.
+   3. One adapter per PR, with its fixtures: Cardápio Web, OlaClick, Takeat, Delivery Direto,
+      Saipos, Goomer.
+   4. Custom domains.
 4. **iFood** through the official Merchant API: Venduá registered as an iFood app, the merchant
    authorizes it in the Portal do Parceiro ("Conectar iFood"), the catalog comes from
    `catalog/v2.0`. Its own design doc.
@@ -423,7 +499,8 @@ The quero-pudim seed fixtures are a hand-made approximation of the store and dif
 
 1. **Terms of use.** The merchant consents to copying their own store; the platforms don't, and
    these are their internal APIs. Proposal: require the merchant's confirmation that the store is
-   theirs, read nothing beyond the pasted store, and stop a platform if it asks.
+   theirs, read nothing beyond the pasted store, and stop a platform if it asks. Built: "Essa
+   loja é minha" must be on before "Importar", and only the pasted store is read.
 2. **anota.ai** depends on where the block applies. One command on the production VPS decides it:
    `curl -sS -o /dev/null -w "%{http_code}\n" https://pedido.anota.ai/loja/<slug>`. A 200 means an
    adapter is worth building; a 403 means no server-side import, and the admin points those
@@ -437,13 +514,16 @@ The quero-pudim seed fixtures are a hand-made approximation of the store and dif
 
 ## Appendix A — platform notes
 
-What a public store returned on 2026-10-01. Internal APIs; expect drift.
+What a public store returned on 2026-10-01. Internal APIs; expect drift. Phase 3 adds a "Checked
+<date>" line under each platform as it re-verifies the chain, and replaces the entry with the
+fields as built once its adapter lands.
 
 - **Instadelivery** — `GET app.instadelivery.com.br/api/stores/by-slug/<slug>`. `groups[]` (order,
   `is_pizza`, weekday flags, hours) → `itens[]` (`price1` in reais, `from_price`, `strike_price`,
   `image` + `image_2…5` on a DigitalOcean Spaces CDN, `stock_control`/`stock`, `is_best_seller`,
-  `is_newest`, `custom_tag*`, `points`, weekday flags) → `complementos[]` (min, max, options with
-  price; options can repeat; pizza groups charge the most expensive flavour). Store: `times`
+  `is_newest`, `custom_tag*`, `points`, weekday flags) → `complementos[]` (`min`, `max`,
+  `is_pizza`, `only_one`, options in `complements[]` with `price`, `max_quantity`, `is_invisible`,
+  stock; pizza lists charge the most expensive flavour). Store: `times`
   (per shift), `payment_methods[]` by name, `fees` (neighbourhood), `feesKm`, `minimum_order`,
   `wait_time`, `take_out`, `pix`/`pix_type`/`pix_infos`, `design` (logo, background, colours).
   Hidden items are absent.

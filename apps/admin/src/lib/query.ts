@@ -33,6 +33,8 @@ export const qk = {
   alerts: ['alerts'] as const,
   helpStatus: ['help', 'status'] as const,
   signupPlans: ['signup', 'plans'] as const,
+  imports: ['imports'] as const,
+  importOf: (id: string) => ['imports', id] as const,
 };
 
 // 408 and 429 pass with time; other 4xx won't change by asking again

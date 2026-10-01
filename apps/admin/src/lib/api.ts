@@ -895,6 +895,102 @@ export interface SearchResult {
 
 // ── endpoints ───────────────────────────────────────────────────────────────
 
+// ── menu import ("cole o link do seu cardápio") ─────────────────────────────
+
+export type ImportSection = 'profile' | 'hours' | 'delivery' | 'payments';
+export type ImportStatus = 'reading' | 'ready' | 'failed' | 'applying' | 'applied' | 'expired';
+export interface ImportLost {
+  scope: 'store' | 'category' | 'product';
+  subject?: string;
+  code: string;
+  detail?: string;
+}
+export interface ImportPreviewProduct {
+  name: string;
+  description: string | null;
+  priceCents: number;
+  compareAtPriceCents: number | null;
+  /** archived = comes over hidden, for the merchant to check */
+  status: 'active' | 'sold_out' | 'archived';
+  stockQuantity: number | null;
+  tags: string[];
+  /** the old platform's thumbnail; re-hosted on apply */
+  image: string | null;
+  photos: number;
+  optionGroups: { name: string; min: number; max: number; options: number }[];
+  scheduled: boolean;
+}
+export interface MenuImport {
+  id: string;
+  platform: string;
+  sourceUrl: string;
+  status: ImportStatus;
+  errorCode: 'NOT_FOUND' | 'BLOCKED' | 'UNREADABLE' | 'TOO_LARGE' | 'TIMEOUT' | null;
+  createdAt: string;
+  readAt: string | null;
+  appliedAt: string | null;
+  counts: {
+    categories: number;
+    products: number;
+    hidden: number;
+    photos: number;
+    optionGroups: number;
+    hours: number;
+    zones: number;
+    paymentMethods: number;
+    pix: boolean;
+    logo: boolean;
+    cover: boolean;
+    lost: number;
+  } | null;
+  preview: {
+    store: {
+      name?: string;
+      tagline?: string;
+      announcement?: { title: string; body?: string };
+      whatsapp?: string;
+      instagram?: string;
+      address?: string;
+      city?: string;
+      logoUrl?: string;
+      coverUrl?: string;
+      brandColor?: string;
+    };
+    hours: { days: number[]; open: string; close: string }[];
+    operations: {
+      minOrderCents?: number;
+      prepTimeMinutes?: number;
+      pickup?: boolean;
+      delivery?: boolean;
+    };
+    zones: {
+      name: string;
+      kind: 'neighborhood' | 'radius' | 'polygon';
+      feeCents: number;
+      neighborhoods: number;
+      maxDistanceKm: number | null;
+    }[];
+    payments: {
+      methods: PayMethod[];
+      adjustments: PaymentAdjustments;
+      pix: { type: string; key: string; beneficiary: string; city: string | null } | null;
+    } | null;
+    categories: { name: string; description: string | null; products: ImportPreviewProduct[] }[];
+  } | null;
+  lost: ImportLost[];
+  mode: 'add' | 'replace' | null;
+  sections: ImportSection[] | null;
+  result: {
+    categories: { created: number; reused: number };
+    products: number;
+    hidden: number;
+    archived: number;
+    images: number;
+    sections: ImportSection[];
+  } | null;
+  images: { total: number; done: number; failed: number; finished: boolean };
+}
+
 export const api = {
   auth: {
     start: (phone: string) =>
@@ -1184,6 +1280,13 @@ export const api = {
     }),
   saveTokens: (tokens: StoreTokens) =>
     send<{ version: number }>('PUT', '/appearance/tokens', { tokens }),
+
+  startImport: (url: string) => send<{ id: string; platform: string }>('POST', '/imports', { url }),
+  importOf: (id: string) => get<MenuImport>(`/imports/${id}`),
+  imports: () => get<{ imports: MenuImport[] }>('/imports'),
+  applyImport: (id: string, body: { mode: 'add' | 'replace'; sections: ImportSection[] }) =>
+    send<MenuImport>('POST', `/imports/${id}/apply`, body),
+  discardImport: (id: string) => send<MenuImport>('POST', `/imports/${id}/discard`),
 
   help: (message: string, topic?: string) =>
     send<{ sent: true }>('POST', '/help', { message, topic }),
