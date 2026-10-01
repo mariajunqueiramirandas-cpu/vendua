@@ -1,5 +1,11 @@
 import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
-import { contrastRatio, onColor, paletteFrom, readableAccent, toHex as hex } from '@vendua/templates';
+import {
+  contrastRatio,
+  onColor,
+  paletteFrom,
+  readableAccent,
+  toHex as hex,
+} from '@vendua/templates';
 import { useEffect, useState } from 'react';
 import type { StoreTokens } from '../../lib/api.ts';
 import { cn } from '../../ui/cn.ts';
