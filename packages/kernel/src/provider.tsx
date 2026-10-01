@@ -269,7 +269,8 @@ export function VenduaProvider({
 
   // the browser chrome wears the page's own background (Android status bar, Safari tint)
   const bg = shown.color.bg;
-  useEffect(() => setThemeColor(bg), [bg]);
+  const text = shown.color.text;
+  useEffect(() => setThemeColor(bg, text), [bg, text]);
 
   // font-display: swap — contract default; brand fonts must never block first paint
   useEffect(() => {

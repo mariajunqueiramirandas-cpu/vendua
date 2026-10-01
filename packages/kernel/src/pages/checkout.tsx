@@ -91,11 +91,17 @@ export function CheckoutPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const nav = location.state as { vStep?: unknown; vFrom?: unknown } | null;
-  const asked = ORDER.find((s) => s === nav?.vStep) ?? 'dados';
+  const lastStep = useRef<StepId | null>(null);
+  // a state-less entry that only adds a hash (the header's skip link) stays on its step
+  const hashOnly = !nav?.vStep && location.hash !== '' && lastStep.current !== null;
+  const asked = ORDER.find((s) => s === nav?.vStep) ?? (hashOnly ? lastStep.current! : 'dados');
   const [done, setDone] = useState<Set<StepId>>(new Set());
   // a reload keeps the entry but not the answers: start over from the first step
   const reachable = ORDER.slice(0, ORDER.indexOf(asked)).every((s) => done.has(s));
   const step: StepId = reachable ? asked : 'dados';
+  lastStep.current = step;
+  const keyNow = useRef(location.key);
+  keyNow.current = location.key;
   const stepHeading = useRef<HTMLHeadingElement>(null);
   // which way the last step change went: the new step's form slides in from that side
   const prevStep = useRef(step);
@@ -144,10 +150,26 @@ export function CheckoutPage() {
     stepStarted.current = Date.now();
   }, [step]);
 
+  // step entries that can't be shown are skipped, never rewritten into copies of the first
+  // step: a reload mid-checkout lands on the first step's entry; with the order placed (no
+  // open cart), back leaves checkout in one press
+  const closed = !loading && (!cart || cart.status !== 'open' || cart.items.length === 0);
+  const skipped = useRef<string | null>(null);
   useEffect(() => {
-    if (!reachable)
-      navigate({ pathname: location.pathname, search: location.search }, { replace: true });
-  }, [reachable, navigate, location.pathname, location.search]);
+    if (skipped.current === location.key) return;
+    if (hashOnly) {
+      navigate(location, { replace: true, state: { vStep: asked, vStepN: ORDER.indexOf(asked) } });
+      return;
+    }
+    if (submitting.current || leaving || loading) return;
+    const n = ORDER.indexOf(asked);
+    const back = closed && n > 0 ? n + 1 : reachable ? 0 : n;
+    if (!back) return;
+    skipped.current = location.key;
+    const idx = (globalThis.history?.state as { idx?: unknown } | null)?.idx;
+    if (typeof idx !== 'number' || idx >= back) navigate(-back);
+    else navigate({ pathname: location.pathname, search: location.search }, { replace: true });
+  });
 
   // a new step starts at its top with focus on its heading; back/forward lets the scroll
   // manager put the page where it was
@@ -365,6 +387,7 @@ export function CheckoutPage() {
       // is shown but doesn't trap the customer — submit gets Core's final answer
       setSyncing(true);
       setDeliveryIssue(null);
+      const at = keyNow.current;
       try {
         await mutations.setDelivery(deliveryPayload());
       } catch (err) {
@@ -372,6 +395,8 @@ export function CheckoutPage() {
       } finally {
         setSyncing(false);
       }
+      // the shopper went back (or forward) while it synced: don't pull them on
+      if (keyNow.current !== at) return;
     }
     // committed before the push, so the next step is already reachable when it renders
     flushSync(() => setDone((d) => new Set(d).add(step)));

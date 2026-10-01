@@ -372,7 +372,8 @@
   .v-banner-stack > .v-notice .v-notice-dismiss {
     top: 50%;
     right: 6px;
-    transform: translateY(-50%);
+    /* translate, not transform: the press scale and reduced motion own transform */
+    translate: 0 -50%;
   }
   .v-toast-region {
     position: fixed;

@@ -36,14 +36,14 @@
   ::view-transition-new(v-header) {
     animation: none;
   }
-  ::view-transition-old(v-bag-bar):only-child {
-    animation: v-vt-drop 200ms ease-in both;
-  }
-  ::view-transition-new(v-bag-bar):only-child {
-    animation: v-vt-drop 260ms var(--_v-vt-ease) reverse both;
-  }
 
   @media (prefers-reduced-motion: no-preference) {
+    ::view-transition-old(v-bag-bar):only-child {
+      animation: v-vt-drop 200ms ease-in both;
+    }
+    ::view-transition-new(v-bag-bar):only-child {
+      animation: v-vt-drop 260ms var(--_v-vt-ease) reverse both;
+    }
     html[data-vt='push']::view-transition-old(root),
     html[data-vt='push']::view-transition-new(root),
     html[data-vt='pop']::view-transition-old(root),
@@ -330,11 +330,17 @@
       bottom: calc(84px + env(safe-area-inset-bottom, 0px));
     }
   }
-  /* over an open bottom sheet the free space is above it, not over its buttons */
+  /* over an open bottom sheet the free space is above it, not over its buttons; beside the
+     side panel, over the page */
   @media (max-width: 767px) {
     html:has(.v-sheet[open]) .v-toast-region {
       top: max(12px, env(safe-area-inset-top, 0px));
       bottom: auto;
+    }
+  }
+  @media (min-width: 768px) {
+    .v-sheet .v-toast-region {
+      right: min(440px, 100%);
     }
   }
   @media (prefers-reduced-motion: reduce) {

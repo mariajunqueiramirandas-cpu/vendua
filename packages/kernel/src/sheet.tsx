@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type MouseEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useKernel } from './provider.tsx';
+import { resolvePaths } from './config.ts';
 import { CartContents } from './pages/cart.tsx';
-import { registerSheet, transitionRunning, type Loc } from './transitions.tsx';
+import {
+  registerSheet,
+  sheetBlocked,
+  transitionRunning,
+  uaTraversal,
+  type Loc,
+} from './transitions.tsx';
 import { reducedMotion, SPRING, springEasing } from './spring.ts';
-import { raiseToasts } from './toast-layer.ts';
+import { setToastHost, toastHost } from './toast-layer.ts';
 import { dimThemeColor } from './theme-color.ts';
 import { haptic } from './haptics.ts';
 
@@ -17,6 +25,7 @@ const GRAB = '.v-sheet-grip, [data-part="head"]';
 
 export function CartSheet({ background }: { background: Loc }) {
   const navigate = useNavigate();
+  const { key } = useLocation();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const scrimRef = useRef<HTMLDivElement>(null);
@@ -37,9 +46,12 @@ export function CartSheet({ background }: { background: Loc }) {
       );
   }, [navigate, background]);
 
-  /** animate out from wherever the finger left it, then `then` (default: pop the route) */
+  /**
+   * animate out from wherever the finger left it, then `then` (default: pop the route);
+   * returns `reopen`, which calls the close off while it animates
+   */
   const close = useCallback(
-    (velocity = 0, then?: () => void) => {
+    (velocity = 0, then?: () => void): (() => void) | undefined => {
       if (closing.current) return;
       closing.current = true;
       unregister.current?.();
@@ -52,7 +64,10 @@ export function CartSheet({ background }: { background: Loc }) {
       };
       const panel = panelRef.current;
       const scrim = scrimRef.current;
-      if (!panel || typeof panel.animate !== 'function') return finish();
+      if (!panel || typeof panel.animate !== 'function') {
+        finish();
+        return;
+      }
       const reduce = reducedMotion();
       const axis = wide() ? 'X' : 'Y';
       const from = offset.current;
@@ -77,6 +92,26 @@ export function CartSheet({ background }: { background: Loc }) {
         fill: 'forwards',
       });
       anim.finished.then(finish, finish);
+      return function reopen() {
+        if (called || !mounted.current) return;
+        called = true;
+        const t = reduce ? 120 : 240;
+        for (const el of [panel, scrim]) {
+          if (!el) continue;
+          const cs = getComputedStyle(el);
+          const now = { transform: cs.transform, opacity: cs.opacity };
+          for (const a of el.getAnimations()) a.cancel();
+          el.animate([now, { transform: 'none', opacity: 1 }], {
+            duration: t,
+            easing: 'cubic-bezier(0.32, 0.72, 0, 1)',
+          });
+        }
+        if (scrim) scrim.style.opacity = '';
+        offset.current = 0;
+        closing.current = false;
+        dimThemeColor(true);
+        unregister.current = registerSheet((done) => close(0, done));
+      };
     },
     [leave],
   );
@@ -93,11 +128,13 @@ export function CartSheet({ background }: { background: Loc }) {
     } catch {
       d.setAttribute('open', '');
     }
-    raiseToasts();
+    setToastHost(d);
     dimThemeColor(true);
     unregister.current = registerSheet((done) => close(0, done));
-    // inside a page transition (back from checkout) the sheet is simply there
-    if (!transitionRunning() && typeof panel.animate === 'function') {
+    // inside a page transition (back from checkout), or after the browser's own swipe
+    // animation, the sheet is simply there
+    if (sheetBlocked()) close();
+    else if (!transitionRunning() && !uaTraversal(key) && typeof panel.animate === 'function') {
       const reduce = reducedMotion();
       if (reduce) panel.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120 });
       else
@@ -114,11 +151,17 @@ export function CartSheet({ background }: { background: Loc }) {
       mounted.current = false;
       unregister.current?.();
       dimThemeColor(false);
+      if (toastHost() === d) setToastHost(null);
       try {
         if (d.open) d.close();
       } catch {
         d.removeAttribute('open');
       }
+      // closing the dialog hands focus back to its opener; a blocking notice needs it instead
+      if (sheetBlocked())
+        document
+          .querySelector<HTMLElement>('[data-vendua="blocking-overlay"] [role="alertdialog"]')
+          ?.focus({ preventScroll: true });
     };
     // opens once per mount; `close` is stable for the sheet's life
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -213,8 +256,11 @@ export function CartSheet({ background }: { background: Loc }) {
 
     const ts = (e: TouchEvent) => {
       const t = e.touches[0];
-      if (e.touches.length !== 1 || !t) g = null;
-      else begin(t.clientX, t.clientY, e.target);
+      if (e.touches.length === 1 && t) return begin(t.clientX, t.clientY, e.target);
+      // a second finger mid-drag: the sheet goes back to rest rather than stay parked
+      const was = g;
+      g = null;
+      if (was?.on) settle(0);
     };
     const tm = (e: TouchEvent) => {
       const t = e.touches[0];
@@ -257,6 +303,16 @@ export function CartSheet({ background }: { background: Loc }) {
     };
   }, [close]);
 
+  // the empty bag's "Ver cardápio": the sheet leaves, and its entry becomes the menu
+  const { config } = useKernel();
+  const catalog = resolvePaths(config).catalog;
+  const browse = () =>
+    background.pathname === catalog
+      ? close()
+      : close(0, () => {
+          if (mounted.current) navigate(catalog, { replace: true, state: { vt: 'fade' } });
+        });
+
   const onScrim = (e: MouseEvent) => {
     if (e.target === dialogRef.current || e.target === scrimRef.current) close();
   };
@@ -286,7 +342,7 @@ export function CartSheet({ background }: { background: Loc }) {
       <div className="v-sheet-panel" ref={panelRef} data-part="panel">
         <div className="v-sheet-grip" data-part="grip" aria-hidden="true" />
         <div className="v-sheet-body" ref={bodyRef} data-part="body" data-vendua-page="cart">
-          <CartContents presentation="drawer" onClose={() => close()} />
+          <CartContents presentation="drawer" onClose={() => close()} onBrowse={browse} />
         </div>
       </div>
     </dialog>

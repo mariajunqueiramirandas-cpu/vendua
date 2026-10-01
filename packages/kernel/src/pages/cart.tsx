@@ -111,10 +111,13 @@ function Coupon({ cart, currency }: { cart: Cart; currency: string }) {
 export function CartContents({
   presentation,
   onClose,
+  onBrowse,
 }: {
   presentation: 'page' | 'drawer';
   /** drawer: close the sheet; page: back to browsing */
   onClose?: () => void;
+  /** the empty bag's way to the menu (default: go to the catalog) */
+  onBrowse?: () => void;
 }) {
   const { cart, loading } = useCart();
   const { store } = useStore();
@@ -126,7 +129,13 @@ export function CartContents({
 
   if (loading && !cart)
     return <div aria-busy="true" aria-label="Carregando sacola" className="v-panel" />;
-  if (!open) return <Slot name="checkout.EmptyCart" onBrowse={browse} />;
+  if (!open)
+    return (
+      <Slot
+        name="checkout.EmptyCart"
+        onBrowse={onBrowse ?? (() => go(resolvePaths(config).catalog))}
+      />
+    );
   return (
     <Slot
       name="cart.Drawer"

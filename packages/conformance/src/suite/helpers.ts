@@ -158,6 +158,9 @@ export async function gotoProductPage(
     if ((await link.count()) > 0) {
       await link.click();
       await page.waitForLoadState('networkidle').catch(() => {});
+      // an SPA may commit the URL a frame or more after the click (a view transition, a data
+      // router's loader): give the navigation time to land before reading the URL
+      await page.waitForURL((u) => u.href.includes(slug), { timeout: 5000 }).catch(() => {});
       if (page.url().includes(slug)) return true;
     }
   }

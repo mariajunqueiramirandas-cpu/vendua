@@ -36,7 +36,15 @@ let seen: Loc | null = null;
 let pointer: { el: Element; t: number } | null = null;
 let active: ViewTransitionLike | null = null;
 let replaying = false;
-let sheetCloser: ((done: () => void) => void) | null = null;
+/** closes the open bag sheet (animated), then `done` instead of popping its route; returns
+ * a way to call the close off while it animates */
+type SheetCloser = (done?: () => void) => (() => void) | void;
+let sheetCloser: SheetCloser | null = null;
+/** a back press the sheet is animating away for (the router hasn't seen it yet) */
+let held: { reopen: (() => void) | void } | null = null;
+let blocked = false;
+/** the entry the browser itself animated the last traversal to */
+let uaKey: string | null = null;
 
 interface ViewTransitionLike {
   finished: Promise<void>;
@@ -57,13 +65,23 @@ const wide = () => typeof matchMedia !== 'undefined' && matchMedia('(min-width: 
 /** True while a page transition runs (rendering is frozen; the sheet skips its own entrance). */
 export const transitionRunning = () => active !== null;
 
+/** True when the browser animated the traversal to this entry itself (no entrance on top). */
+export const uaTraversal = (key: string) => uaKey === key;
+
 /** The bag sheet hands the popstate listener its animated close while it is open. */
-export function registerSheet(close: (done: () => void) => void): () => void {
+export function registerSheet(close: SheetCloser): () => void {
   sheetCloser = close;
   return () => {
     if (sheetCloser === close) sheetCloser = null;
   };
 }
+
+/** A blocking notice is up: no sheet stays open over it. */
+export function blockSheet(on: boolean) {
+  blocked = on;
+  if (on) sheetCloser?.();
+}
+export const sheetBlocked = () => blocked;
 
 export function transitionFor(from: Loc | null, to: Loc): { type: VtType; dir: Dir } | null {
   if (!from) return null;
@@ -217,12 +235,26 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       const ua = (e as PopStateEvent & { hasUAVisualTransition?: boolean }).hasUAVisualTransition;
       const from = seen;
       const to = windowLoc();
+      uaKey = ua ? to.key : null;
       const fb = backgroundOf(from);
+      // forward again while the sheet animates away for a back press: it stays open
+      if (held && to.key === from.key) {
+        const h = held;
+        held = null;
+        e.stopImmediatePropagation();
+        h.reopen?.();
+        return;
+      }
       if (sheetCloser && fb && !backgroundOf(to) && to.pathname === fb.pathname) {
         if (ua) return;
         e.stopImmediatePropagation();
         const state = e.state;
-        sheetCloser(() => replay(state));
+        const h: { reopen: (() => void) | void } = { reopen: undefined };
+        held = h;
+        h.reopen = sheetCloser(() => {
+          if (held === h) held = null;
+          replay(state);
+        });
         return;
       }
       if (ua || !startVT()) return;
@@ -260,6 +292,7 @@ function wrap<N extends Nav>(real: N): N {
   const via = (method: 'push' | 'replace') => (to: To, state?: unknown, opts?: unknown) => {
     const call = () => real[method](to, state, opts);
     const from = seen;
+    uaKey = null;
     // a replace (filters, redirects) never animates unless it asks to
     if (!from || !startVT() || (method === 'replace' && !stateOf({ state })?.vt)) return call();
     const t = transitionFor(from, target(to, state, from));
