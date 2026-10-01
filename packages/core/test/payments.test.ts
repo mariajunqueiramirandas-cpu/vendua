@@ -563,6 +563,28 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     expect(cc.status).toBe(200);
   });
 
+  // the orders CSV read as a spreadsheet would (quotes, "" escapes, CR/LF row breaks)
+  const parseCsv = (body: string) => {
+    const rows: string[][] = [[]];
+    let cellText = '';
+    let quoted = false;
+    for (let i = 0; i < body.length; i++) {
+      const ch = body[i]!;
+      if (quoted) {
+        if (ch === '"' && body[i + 1] === '"') ((cellText += '"'), i++);
+        else if (ch === '"') quoted = false;
+        else cellText += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === ';') (rows.at(-1)!.push(cellText), (cellText = ''));
+      else if (ch === '\n' || ch === '\r') {
+        (rows.at(-1)!.push(cellText), (cellText = ''));
+        if (ch === '\r' && body[i + 1] === '\n') i++;
+        rows.push([]);
+      } else cellText += ch;
+    }
+    return rows;
+  };
+
   test('orders CSV: a CR, quotes and leading blanks never start a row or a formula', async () => {
     const o = await place('cash');
     const evil = "Ana\r=cmd|' /C calc'!A0";
@@ -585,27 +607,46 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     expect(body).toContain(`;"${evil}";`);
     expect(body).toContain(`;"' \t=HYPERLINK(""x"")";`);
     // parsed as a spreadsheet would: the CR stays inside its cell, and no cell is a formula
-    const rows: string[][] = [[]];
-    let cellText = '';
-    let quoted = false;
-    for (let i = 0; i < body.length; i++) {
-      const ch = body[i]!;
-      if (quoted) {
-        if (ch === '"' && body[i + 1] === '"') ((cellText += '"'), i++);
-        else if (ch === '"') quoted = false;
-        else cellText += ch;
-      } else if (ch === '"') quoted = true;
-      else if (ch === ';') (rows.at(-1)!.push(cellText), (cellText = ''));
-      else if (ch === '\n' || ch === '\r') {
-        (rows.at(-1)!.push(cellText), (cellText = ''));
-        if (ch === '\r' && body[i + 1] === '\n') i++;
-        rows.push([]);
-      } else cellText += ch;
-    }
+    const rows = parseCsv(body);
     const names = rows.map((r) => r[3]);
     expect(names).toContain(evil);
     expect(names).toContain(`' \t=HYPERLINK("x")`);
     for (const r of rows) for (const v of r) expect(v).not.toMatch(/^[\s\x00-\x1f]*[=+@]/);
+  });
+
+  test('orders CSV: the payment adjustment column makes the total add up', async () => {
+    const set = await owner('PATCH', '/payments', {
+      adjustments: { cash: { percentBps: -1000, fixedCents: 50 } },
+    });
+    expect(set.status).toBe(200);
+    expect(set.body.adjustments).toEqual({ cash: { percentBps: -1000, fixedCents: 50 } });
+    try {
+      const o = await place('cash');
+      expect(o.status).toBe(201);
+      const order = o.body.order;
+      expect(order.paymentAdjustmentCents).toBeLessThan(0);
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(
+        new Date(),
+      );
+      const csv = await owner('GET', `/reports/orders.csv?from=${today}&to=${today}`);
+      expect(csv.status).toBe(200);
+      const [head, ...rows] = parseCsv((csv.body as string).replace(/^\uFEFF/, ''));
+      const col = (name: string) => head!.indexOf(name);
+      expect(col('ajuste de pagamento')).toBe(col('desconto') + 1);
+      const row = rows.find((r) => r[0] === String(order.number))!;
+      const cents = (name: string) => Math.round(Number(row[col(name)]!.replace(',', '.')) * 100);
+      // a signed amount stays a number for the spreadsheet (no formula-guard quote)
+      expect(row[col('ajuste de pagamento')]).toBe(
+        (order.paymentAdjustmentCents / 100).toFixed(2).replace('.', ','),
+      );
+      expect(cents('ajuste de pagamento')).toBe(order.paymentAdjustmentCents);
+      expect(
+        cents('subtotal') + cents('entrega') - cents('desconto') + cents('ajuste de pagamento'),
+      ).toBe(cents('total'));
+      expect(cents('total')).toBe(order.totalCents);
+    } finally {
+      expect((await owner('PATCH', '/payments', { adjustments: null })).status).toBe(200);
+    }
   });
 
   test('expired Pix → a new attempt with a new QR; the job expires what nobody paid', async () => {

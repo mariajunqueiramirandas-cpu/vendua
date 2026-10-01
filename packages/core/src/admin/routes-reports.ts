@@ -238,6 +238,7 @@ export function mountReports(d: AdminDeps) {
           subtotal: number;
           fee: number;
           discount: number;
+          adjustment: number;
           total: number;
           coupon: string | null;
         }[]
@@ -247,7 +248,7 @@ export function mountReports(d: AdminDeps) {
                o.delivery ->> 'zoneName' as zone, o.payment ->> 'method' as method, o.payment ->> 'status' as pstatus,
                coalesce((select string_agg(i.qty || 'x ' || i.name, ', ' order by i.sort) from order_items i where i.order_id = o.id), '') as items,
                o.subtotal_cents as subtotal, o.delivery_fee_cents as fee, o.discount_cents as discount,
-               o.total_cents as total, o.coupon_code as coupon
+               o.payment_adjustment_cents as adjustment, o.total_cents as total, o.coupon_code as coupon
         from orders o
         where o.tenant_id = ${t.id}
           and (o.placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
@@ -259,7 +260,8 @@ export function mountReports(d: AdminDeps) {
     const cell = (v: unknown) => {
       const s = v === null || v === undefined ? '' : String(v);
       // formula injection guard for spreadsheet apps, which skip leading blanks/controls
-      const safe = /^[\s\x00-\x1f\x7f]*[=+\-@]/.test(s) ? `'${s}` : s;
+      // (a plain signed amount like -1,50 is a number, not a formula)
+      const safe = !/^-\d+(,\d+)?$/.test(s) && /^[\s\x00-\x1f\x7f]*[=+\-@]/.test(s) ? `'${s}` : s;
       return /[";,\n\r]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
     };
     const head = [
@@ -276,6 +278,8 @@ export function mountReports(d: AdminDeps) {
       'subtotal',
       'entrega',
       'desconto',
+      // signed: negative = discount for the payment method (total = subtotal + entrega - desconto + ajuste)
+      'ajuste de pagamento',
       'total',
       'cupom',
     ];
@@ -294,6 +298,7 @@ export function mountReports(d: AdminDeps) {
         money(o.subtotal),
         money(o.fee),
         money(o.discount),
+        money(o.adjustment),
         money(o.total),
         o.coupon,
       ]
