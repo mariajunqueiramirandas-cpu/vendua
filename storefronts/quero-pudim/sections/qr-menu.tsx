@@ -161,7 +161,10 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
                     className="display display-md"
                     style={{ color: 'var(--caramel-800)', marginTop: 4 }}
                   >
-                    {formatBRL(selected.basePriceCents)}
+                    {selected.fromPriceCents != null ? (
+                      <small style={{ fontSize: '0.5em', fontWeight: 500 }}>a partir de </small>
+                    ) : null}
+                    {formatBRL(selected.fromPriceCents ?? selected.basePriceCents)}
                   </p>
                 </div>
               ) : (
