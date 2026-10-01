@@ -11,6 +11,7 @@
     }
   },
   "permissions": {
+    "allow": ["Bash(curl:*)", "Bash(python3:*)"],
     "deny": [
       "Read(./packages/conformance/stale/*/dist/**)",
       "Read(./apps/*/dist/**)",
