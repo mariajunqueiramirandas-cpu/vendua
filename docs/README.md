@@ -62,6 +62,7 @@ Then per topic as needed:
 | Templates, sections, blocks        | [17-page-composition](architecture/17-page-composition.md)                       |
 | Menu import ("cole o link")        | [menu-import](menu-import.md)                                                    |
 | Competitor feature gaps (tracker)  | [competitor-parity](competitor-parity.md)                                        |
+| Per-competitor profiles            | [competitors/](competitors/README.md)                                            |
 
 ## ADRs
 
