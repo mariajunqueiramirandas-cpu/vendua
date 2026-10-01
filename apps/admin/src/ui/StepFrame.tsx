@@ -3,65 +3,6 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { Button } from './Button.tsx';
 
 /**
- * iOS Safari (and Android without resizes-content) overlays the keyboard instead of shrinking
- * the layout: expose the covered height as --kb and keep the focused field, plus the button
- * under it, in view.
- */
-export function useKeyboardInset() {
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const root = document.documentElement;
-    const typing = () => {
-      const el = document.activeElement;
-      return el instanceof HTMLElement && el.matches(TEXT_FIELD);
-    };
-    const reveal = () => {
-      const el = document.activeElement;
-      if (typing() && el instanceof HTMLElement) el.scrollIntoView({ block: 'center' });
-    };
-    const update = (e?: Event) => {
-      // pinch-zoom also shrinks the visual viewport; that is not a keyboard. Neither is Chrome's
-      // toolbar sliding back in on a fast scroll up: for a moment the visual viewport is shorter
-      // than innerHeight, which lifted the button off the bottom. Only a text field brings up a
-      // keyboard, and a keyboard is far taller than any toolbar.
-      const gap = Math.round(window.innerHeight - vv.height - vv.offsetTop);
-      const covered = vv.scale <= 1.01 && typing() && gap > MIN_KEYBOARD ? gap : 0;
-      root.style.setProperty('--kb', `${covered}px`);
-      // scroll events fire continuously while reveal() scrolls: only a resize may trigger it
-      if (covered > 0 && e?.type === 'resize') reveal();
-    };
-    const onFocus = () => {
-      update();
-      reveal();
-    };
-    // Chrome with resizes-content shrinks the page instead and scrolls the field only just into
-    // view, where a docked button covers it
-    const resized = () => {
-      if (typing()) reveal();
-    };
-    window.addEventListener('resize', resized);
-    vv.addEventListener('resize', update);
-    vv.addEventListener('scroll', update);
-    document.addEventListener('focusin', onFocus);
-    document.addEventListener('focusout', update);
-    update();
-    return () => {
-      window.removeEventListener('resize', resized);
-      vv.removeEventListener('resize', update);
-      vv.removeEventListener('scroll', update);
-      document.removeEventListener('focusin', onFocus);
-      document.removeEventListener('focusout', update);
-      root.style.removeProperty('--kb');
-    };
-  }, []);
-}
-
-const TEXT_FIELD =
-  'textarea, [contenteditable=""], [contenteditable="true"], input:not([type=checkbox], [type=radio], [type=button], [type=submit], [type=reset], [type=range], [type=color], [type=file], [type=hidden])';
-const MIN_KEYBOARD = 150;
-
-/**
  * One question per screen: a big title, one plain sentence, the answer, and one obvious
  * button that rides above the keyboard on phones.
  */
@@ -115,7 +56,10 @@ export function StepFrame({
         {hint ? <p className="t-body-lg mt-2 text-muted">{hint}</p> : null}
       </div>
       {children}
-      <div className="sticky bottom-[var(--kb,0px)] z-20 -mx-4 flex scroll-mb-24 flex-col-reverse gap-3 border-t border-line bg-bg/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-sm sm:flex-row sm:items-center md:-mx-8 md:px-8 lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:pb-0 lg:backdrop-blur-none">
+      <div
+        data-kb-reveal
+        className="sticky bottom-0 z-20 -mx-4 flex flex-col-reverse gap-3 border-t border-line bg-bg/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-sm sm:flex-row sm:items-center md:-mx-8 md:px-8 lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:pb-0 lg:backdrop-blur-none kb:static kb:border-0 kb:bg-transparent kb:pb-2 kb:backdrop-blur-none"
+      >
         {back ? (
           <Button variant="ghost" size="lg" icon={<ArrowLeft />} onClick={back}>
             voltar

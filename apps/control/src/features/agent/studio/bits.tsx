@@ -90,7 +90,7 @@ export function SaveBar({
         'mt-3 flex flex-wrap items-center gap-2',
         // phones: pending edits pin the bar to the bottom of the scroll area
         dirty &&
-          'sticky bottom-0 z-10 -mx-3 -mb-3 border-t bg-card px-3 py-2 md:static md:mx-0 md:mb-0 md:border-t-0 md:bg-transparent md:px-0 md:py-0',
+          'sticky bottom-0 z-10 -mx-3 -mb-3 border-t bg-card px-3 py-2 md:static md:mx-0 md:mb-0 md:border-t-0 md:bg-transparent md:px-0 md:py-0 kb:static kb:mx-0 kb:mb-0 kb:border-t-0 kb:bg-transparent kb:p-0',
       )}
     >
       <Button disabled={!dirty || disabled || pending} onClick={onSave}>

@@ -99,7 +99,7 @@ export function Onboarding() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="fixed right-3 bottom-[calc(64px+env(safe-area-inset-bottom,0px))] z-40 inline-flex h-9 items-center gap-2 rounded-full border bg-card px-3.5 text-[13px] font-medium shadow-pop hover:bg-muted md:right-5 md:bottom-5 [&_svg]:size-4"
+          className="fixed right-3 bottom-[calc(64px+env(safe-area-inset-bottom,0px))] z-40 inline-flex h-9 items-center gap-2 rounded-full border bg-card px-3.5 text-[13px] font-medium shadow-pop hover:bg-muted md:right-5 md:bottom-5 kb:hidden [&_svg]:size-4"
         >
           <ListChecks className="text-muted-foreground" />
           configuração

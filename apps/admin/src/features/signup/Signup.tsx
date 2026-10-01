@@ -8,7 +8,7 @@ import { qk } from '../../lib/query.ts';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState } from '../../ui/feedback.tsx';
 import type { Pose } from '../../ui/Mascote.tsx';
-import { useKeyboardInset } from '../../ui/StepFrame.tsx';
+import { useKeyboard } from '../../ui/keyboard.ts';
 import { Toaster } from '../../ui/Toast.tsx';
 import { Guide } from '../onboarding/Guide.tsx';
 import { CardConfirm, CardHandoff, PixPay, Welcome } from './after.tsx';
@@ -111,7 +111,7 @@ function resume(d: Draft): { d: Draft; notice: string | null } {
 }
 
 export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
-  useKeyboardInset();
+  useKeyboard();
   const qc = useQueryClient();
   const nav = useNavigate();
   const plans = useQuery({
@@ -284,7 +284,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
 
   return (
     <div className="min-h-dvh overflow-x-clip">
-      <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-bg/95 px-4 py-3 backdrop-blur-sm md:px-8">
+      <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-bg/95 px-4 py-3 backdrop-blur-sm md:px-8 kb:static">
         <p className="font-display text-lg font-semibold">venduá</p>
         <div
           className="flex flex-1 items-center justify-center gap-3"

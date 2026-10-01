@@ -399,7 +399,7 @@ export default function Menu() {
         <button
           type="button"
           onClick={() => setSheet('new')}
-          className="press t-label fixed bottom-[calc(var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))+16px)] right-4 z-30 inline-flex h-14 items-center gap-2 rounded-full bg-primary px-5 text-on-primary depth-3 md:hidden"
+          className="press t-label fixed bottom-[calc(var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))+16px)] right-4 z-30 inline-flex h-14 items-center gap-2 rounded-full bg-primary px-5 text-on-primary depth-3 md:hidden kb:hidden"
         >
           <Plus weight="bold" className="size-5" /> produto
         </button>

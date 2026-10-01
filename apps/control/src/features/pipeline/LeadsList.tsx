@@ -258,7 +258,7 @@ export function LeadsList({
 
       {/* Pinned to the scrollport bottom so dispatch controls ride with a long list. */}
       {sel.size > 0 && (
-        <div className="sticky bottom-3 z-20 mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-popover p-2 pl-3 shadow-lg">
+        <div className="sticky bottom-3 z-20 mt-3 flex kb:hidden flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-popover p-2 pl-3 shadow-lg">
           <span className="flex items-center gap-1 text-sm font-semibold">
             {sel.size} selecionado{sel.size === 1 ? '' : 's'}
             <Button

@@ -89,7 +89,7 @@ export function Sheet({
         >
           {!desktop ? (
             <div
-              className="mx-auto mt-2.5 h-1.5 w-11 shrink-0 rounded-full bg-line-strong"
+              className="mx-auto mt-2.5 h-1.5 w-11 shrink-0 rounded-full bg-line-strong kb:hidden"
               aria-hidden
             />
           ) : null}
@@ -97,7 +97,7 @@ export function Sheet({
             <div className="min-w-0 flex-1">
               <Drawer.Title className="t-title-2">{title}</Drawer.Title>
               {description ? (
-                <Drawer.Description className="t-body mt-1 text-muted">
+                <Drawer.Description className="t-body mt-1 text-muted kb:sr-only">
                   {description}
                 </Drawer.Description>
               ) : null}

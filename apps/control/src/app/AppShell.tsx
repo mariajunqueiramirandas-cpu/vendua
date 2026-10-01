@@ -337,7 +337,7 @@ function TabBar({ badges }: { badges: Record<string, number> }) {
   return (
     <nav
       aria-label="seções"
-      className="pb-safe px-safe flex shrink-0 border-t bg-background/85 backdrop-blur-xl backdrop-saturate-150 md:hidden"
+      className="pb-safe px-safe flex shrink-0 border-t bg-background/85 backdrop-blur-xl backdrop-saturate-150 md:hidden kb:hidden"
     >
       {HUBS.map((h) => {
         const n = h.badge ? (badges[h.badge] ?? 0) : 0;

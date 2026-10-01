@@ -236,10 +236,6 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      # download Chromium while Postgres + Core boot; awaited before qa
-      - name: Playwright browser (background)
-        if: steps.scope.outputs.run == 'true'
-        run: (bunx playwright install --with-deps chromium > /tmp/pw.log 2>&1; echo $? > /tmp/pw.exit) &
       - name: Postgres + migrate
         if: steps.scope.outputs.run == 'true'
         run: |
@@ -260,10 +256,7 @@ jobs:
           done
       - name: Playwright browser
         if: steps.scope.outputs.run == 'true'
-        run: |
-          for i in $(seq 1 300); do [ -f /tmp/pw.exit ] && break; sleep 1; done
-          cat /tmp/pw.log
-          [ "$(cat /tmp/pw.exit 2>/dev/null)" = 0 ]
+        uses: ./.github/actions/playwright-chromium
       - name: Scaffold + check + qa (exit criterion)
         if: steps.scope.outputs.run == 'true'
         run: |
@@ -364,9 +357,6 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      - name: Playwright browser (background)
-        if: steps.scope.outputs.run == 'true'
-        run: (cd apps/admin && bunx playwright install --with-deps chromium > /tmp/pw.log 2>&1; echo $? > /tmp/pw.exit) &
       - name: Build the admin
         if: steps.scope.outputs.run == 'true'
         run: cd apps/admin && bun run build
@@ -392,11 +382,7 @@ jobs:
         run: cd apps/admin && bun scripts/demo-orders.ts 40
       - name: Playwright browser
         if: steps.scope.outputs.run == 'true'
-        run: |
-          # the --with-deps apt download from the runner's mirror has taken over 5 minutes
-          for i in $(seq 1 900); do [ -f /tmp/pw.exit ] && break; sleep 1; done
-          cat /tmp/pw.log
-          [ "$(cat /tmp/pw.exit 2>/dev/null)" = 0 ]
+        uses: ./.github/actions/playwright-chromium
       - name: Screenshots + overflow + axe
         if: steps.scope.outputs.run == 'true'
         run: cd apps/admin && BASE=http://localhost:8787/admin/ AXE=1 bun scripts/shots.ts
@@ -460,7 +446,7 @@ jobs:
           done
       - name: Playwright browser
         if: steps.scope.outputs.run == 'true'
-        run: bunx playwright install --with-deps chromium
+        uses: ./.github/actions/playwright-chromium
       - name: S-series on the Kernel 1.0.0 artifact
         if: steps.scope.outputs.run == 'true'
         run: bunx vendua-conformance e2e packages/conformance/stale/kernel-1.0.0 --prebuilt --grep '\[(S0|K16)'

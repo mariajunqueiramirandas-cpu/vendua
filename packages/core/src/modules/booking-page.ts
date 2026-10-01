@@ -3,7 +3,7 @@ export const BOOKING_PAGE = `<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#f7f4ea">
 <title>venduá · agendar call</title>
@@ -140,6 +140,16 @@ h1 {
   border-radius: 12px;
   padding: 18px;
   box-shadow: 0 -12px 30px rgba(18, 60, 50, .12);
+}
+/* on a touch screen, while the keyboard is up the field owns the screen: the panel flows in
+   the page so the browser can scroll the field into view */
+@media (pointer: coarse) {
+  .details.show:has(:is(input:not([type=checkbox],[type=radio],[type=range],[type=color],[type=file],[type=button],[type=submit],[type=reset],[type=hidden]), textarea, [contenteditable]:not([contenteditable=false])):focus) {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    box-shadow: none;
+  }
 }
 .details .eyebrow { margin-block-end: 16px; }
 .field { margin-block-end: 12px; }

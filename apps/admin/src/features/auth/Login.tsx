@@ -21,7 +21,7 @@ import { messageOf } from '../../ui/feedback.tsx';
 import { Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
 import { Mascote, type Pose } from '../../ui/Mascote.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
-import { useKeyboardInset } from '../../ui/StepFrame.tsx';
+import { useKeyboard } from '../../ui/keyboard.ts';
 import { EMAIL_RE, expiry, loadPending, savePending } from './pending.ts';
 
 type Step =
@@ -43,7 +43,7 @@ function firstStep(): Step {
 export function Login() {
   const [step, setStep] = useState<Step>(firstStep);
   const qc = useQueryClient();
-  useKeyboardInset();
+  useKeyboard();
   // Signed out is the one moment a new version costs nothing: take it here, not with a banner.
   // At once on arrival; later only while the merchant is away (reading the code in WhatsApp),
   // since the code step survives a reload. Not while picking a store or opening an e-mail link:
@@ -204,8 +204,8 @@ function BackLink({ onClick, children }: { onClick: () => void; children: string
 }
 
 /**
- * The step's main button. On phones it rides above the keyboard (sticky to --kb, or to the
- * resized viewport where Chrome shrinks it), so the merchant never types blind to it.
+ * The step's main button, pinned to the bottom of the phone screen; while the keyboard is up it
+ * sits right under the field instead, so the field gets the screen.
  */
 function Dock({ children }: { children: ReactNode }) {
   const bar = useRef<HTMLDivElement>(null);
@@ -235,7 +235,8 @@ function Dock({ children }: { children: ReactNode }) {
       <div
         ref={bar}
         data-stuck={stuck || undefined}
-        className="sticky bottom-[var(--kb,0px)] z-20 -mx-5 mt-2 px-5 py-2 data-stuck:bg-surface data-stuck:pb-3 data-stuck:before:pointer-events-none data-stuck:before:absolute data-stuck:before:inset-x-0 data-stuck:before:-top-4 data-stuck:before:h-4 data-stuck:before:bg-linear-to-t data-stuck:before:from-surface md:-mx-7 md:px-7 lg:static lg:mx-0 lg:mt-4 lg:p-0"
+        data-kb-reveal
+        className="sticky bottom-0 z-20 -mx-5 mt-2 px-5 py-2 data-stuck:bg-surface data-stuck:pb-3 data-stuck:before:pointer-events-none data-stuck:before:absolute data-stuck:before:inset-x-0 data-stuck:before:-top-4 data-stuck:before:h-4 data-stuck:before:bg-linear-to-t data-stuck:before:from-surface md:-mx-7 md:px-7 lg:static lg:mx-0 lg:mt-4 lg:p-0 kb:static"
       >
         {children}
       </div>
