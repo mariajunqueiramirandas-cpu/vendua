@@ -3,6 +3,35 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.11.0
+
+The catalog model gaps — additive; no storefront edit, no new runtime export. Every price
+shown is still Core's.
+
+- Promo price: `CatalogProduct.compareAtPriceCents`; the default product card and
+  `sdk:purchase-panel` strike the "de" price through (with "de"/"por" for screen readers) only
+  when it is above the price.
+- Option quantity: modifiers get `maxQty`, `description`, `imageUrl`; groups get `pricingRule`
+  (new type `ModifierPricingRule`). `catalog.ModifierPicker` gains optional `quantities` and
+  `onQtyChange` (steppers in the default, clamped to `maxQty` and the group's `maxSelect`; old
+  overrides keep `value`/`onChange`), plus the option's photo, description and a "vale o preço
+  da opção mais cara" / "média" hint. Units ride the add as an optional 5th argument of
+  `api.addItem` / `mutations.add` and `AddToCart`'s `modifierQty`; `CartItem`, `OrderItem` and
+  `ImportLine` carry them. The add button drops its `base × qty` price once a picked option
+  changes the price (Core prices the line).
+- `CatalogCategory.description` under the category heading in `sdk:catalog-grid`.
+- Payment: `meal_voucher` ("Vale-refeição"); `StoreProfile.paymentAdjustments` (new type
+  `PaymentAdjustment`) labels each method ("−5%", "+R$ 1,50") via the new optional
+  `PaymentMethod.adjustment`. The payment step reads the cart priced for the chosen method
+  (`api.cart(paymentMethod)`), shows `CartTotals.paymentAdjustmentCents` as its own line
+  (hidden at 0) and Core's total; `checkout.Summary` gains `paymentLabel`, `order.Items`
+  gains `paymentAdjustmentCents` + `paymentLabel` (`Order.paymentAdjustmentCents`).
+  `quote` takes `paymentMethod` (→ `totals`) and returns `zoneKind`.
+- Delivery: `DeliveryZone.kind` `'polygon'` + `polygon`; the checkout asks for the shopper's
+  location when any radius or polygon zone exists.
+- New parts: `compare-at`, `category-description`, `pricing-rule`, `option-image`,
+  `option-description`, `option-qty`, `adjustment`, `payment-adjustment`.
+
 ## 1.10.0
 
 The store's live design at first paint (Phase 4 edge) — additive; no storefront edit, no new

@@ -476,6 +476,8 @@ export function OrderItems({
   scheduledFor,
   discountCents,
   couponCode,
+  paymentAdjustmentCents,
+  paymentLabel,
   onReorder,
   reorderPending,
 }: SlotProps['order.Items']) {
@@ -490,7 +492,10 @@ export function OrderItems({
               {i.modifiers.length ? (
                 <span className="v-muted v-line-mods">
                   {' '}
-                  — {i.modifiers.map((m) => m.name).join(', ')}
+                  —{' '}
+                  {i.modifiers
+                    .map((m) => ((m.qty ?? 1) > 1 ? `${m.qty}× ${m.name}` : m.name))
+                    .join(', ')}
                 </span>
               ) : null}
               {i.combo.length ? (
@@ -507,6 +512,18 @@ export function OrderItems({
           <li className="v-summary-line" data-part="discount">
             <span>Desconto{couponCode ? ` (${couponCode})` : ''}</span>
             <span className="v-num">−{money(discountCents, currency)}</span>
+          </li>
+        ) : null}
+        {paymentAdjustmentCents ? (
+          <li className="v-summary-line" data-part="payment-adjustment">
+            <span>
+              {paymentAdjustmentCents < 0 ? 'Desconto' : 'Acréscimo'}
+              {paymentLabel ? ` (${paymentLabel})` : ' do pagamento'}
+            </span>
+            <span className="v-num">
+              {paymentAdjustmentCents < 0 ? '−' : '+'}
+              {money(Math.abs(paymentAdjustmentCents), currency)}
+            </span>
           </li>
         ) : null}
       </ul>

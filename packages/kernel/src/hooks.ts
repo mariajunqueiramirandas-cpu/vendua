@@ -128,6 +128,8 @@ export interface CartMutations {
     modifierIds?: string[],
     /** Kernel 1.2 — kit picks for a `kind: 'combo'` product */
     comboSelections?: ComboSelection[],
+    /** Kernel 1.11 — units per option id, for options with `maxQty` > 1 (absent = 1 each) */
+    modifierQty?: Record<string, number>,
   ) => Promise<Cart>;
   updateQty: (itemId: string, qty: number) => Promise<Cart>;
   remove: (itemId: string) => Promise<Cart>;
@@ -169,8 +171,8 @@ export function useCart(): {
 
   const mutations = useMemo<CartMutations>(
     () => ({
-      add: (productId, qty = 1, modifierIds = [], comboSelections) =>
-        api.addItem(productId, qty, modifierIds, comboSelections).then(bump),
+      add: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty) =>
+        api.addItem(productId, qty, modifierIds, comboSelections, modifierQty).then(bump),
       updateQty: (itemId, qty) => api.updateItem(itemId, qty).then(bump),
       remove: (itemId) => api.removeItem(itemId).then(bump),
       setDelivery: (d) => api.setDelivery(d).then(bump),
@@ -470,9 +472,10 @@ export function useCheckout(): {
 
 /** Zone check for a neighborhood — fee, ETA and eligibility are Core's answer. */
 export function useDeliveryQuote(): {
-  /** a bairro, or Kernel 1.2 `{ lat, lng }` (e.g. from the device's location) */
+  /** a bairro, or Kernel 1.2 `{ lat, lng }` (e.g. from the device's location); Kernel 1.11
+   *  `paymentMethod` adds the cart's `totals` priced for it */
   quote: (
-    where: string | { neighborhood?: string; lat?: number; lng?: number },
+    where: string | { neighborhood?: string; lat?: number; lng?: number; paymentMethod?: string },
   ) => Promise<QuoteResult>;
   result: QuoteResult | undefined;
   pending: boolean;
@@ -484,7 +487,9 @@ export function useDeliveryQuote(): {
   const [error, setError] = useState<QueryError>();
   const seq = useRef(0);
   const quote = useCallback(
-    async (where: string | { neighborhood?: string; lat?: number; lng?: number }) => {
+    async (
+      where: string | { neighborhood?: string; lat?: number; lng?: number; paymentMethod?: string },
+    ) => {
       const n = ++seq.current;
       setPending(true);
       setError(undefined);
