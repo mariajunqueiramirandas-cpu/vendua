@@ -79,27 +79,31 @@ Venduá".
 ## 3. Platforms
 
 Checked 2026-10-01, one or two public stores each, with a plain HTTP client and a headless browser.
-Phase 3 re-checks every chain before writing an adapter for it
-([plan, step 1](menu-import-phase3.md#2-step-1--verify-the-payloads-gate)) and records the
-verdicts here.
+Phase 3 re-checked every chain the same day, before writing any adapter
+([plan, step 1](menu-import-phase3.md#2-step-1--verify-the-payloads-gate)): the last column is that
+verdict, and [Appendix A](#appendix-a--platform-notes) has the drift under each platform.
 
-| Platform        | Link the merchant pastes                        | How the menu is read                             | Verdict                                                   |
-| --------------- | ----------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
-| Instadelivery   | `instadelivery.com.br/<slug>`                   | 1 GET returns the whole store                    | Easy                                                      |
-| Cardápio Web    | `app.cardapioweb.com/<slug>`, custom domain     | 2 GETs (profile; full menu with options inline)  | Easy                                                      |
-| OlaClick        | `<sub>.ola.click`, custom domain                | host lookup, then 3–4 GETs                       | Easy                                                      |
-| Delivery Direto | `deliverydireto.com.br/<brand>/<store>`         | 1 GET per category, plus fees and payment forms  | Easy                                                      |
-| Takeat          | `pedido.takeat.app/<slug>`                      | 2–3 GETs                                         | Easy — filter dine-in-only data                           |
-| Saipos          | `<slug>.saipos.com`, custom domain              | store lookup, then 1 GET (~500 KB)               | Easy — heavy filtering                                    |
-| Goomer          | `<slug>.goomer.app`, custom domain              | info + menu, then 1 GET per product with options | Doable                                                    |
-| anota.ai        | `pedido.anota.ai/loja/<slug>`                   | —                                                | Blocked from our test network ([§10](#10-open-questions)) |
-| iFood           | `ifood.com.br/delivery/<city-uf>/<slug>/<uuid>` | —                                                | Blocked; later via the official API                       |
+| Platform        | Link the merchant pastes                               | How the menu is read                                            | Effort                          | Step 1 (2026-10-01)                 |
+| --------------- | ------------------------------------------------------ | --------------------------------------------------------------- | ------------------------------- | ----------------------------------- |
+| Instadelivery   | `instadelivery.com.br/<slug>`                          | 1 GET returns the whole store                                   | Easy                            | Works as documented                 |
+| Cardápio Web    | `app.cardapioweb.com/<slug>`, custom domain            | 2 GETs (profile; full menu with options inline)                 | Easy                            | Works with drift                    |
+| OlaClick        | `<sub>.ola.click`, custom domain                       | host lookup, then 4 GETs                                        | Easy                            | Works as documented                 |
+| Delivery Direto | `deliverydireto.com.br/<brand>/<store>`, custom domain | brand info, categories, 1 GET per category, fees, payment forms | Easy                            | Works with drift                    |
+| Takeat          | `pedido.takeat.app/<slug>`                             | 3–4 GETs                                                        | Easy — filter dine-in-only data | Works with drift                    |
+| Saipos          | `<slug>.saipos.com`, custom domain                     | store lookup, then 1 GET (0.04–1.2 MB)                          | Easy — heavy filtering          | Works as documented                 |
+| Goomer          | `<slug>.goomer.app`, custom domain                     | info + menu, then 1 GET per product (options)                   | Doable                          | Works with drift                    |
+| anota.ai        | `pedido.anota.ai/loja/<slug>`                          | —                                                               | —                               | Blocked ([§10](#10-open-questions)) |
+| iFood           | `ifood.com.br/delivery/<city-uf>/<slug>/<uuid>`        | —                                                               | Later, via the official API     | Blocked                             |
 
 - Every readable platform served JSON to a plain HTTP client with no login, cookie or token —
   only ids the page itself sends (a store id header on Cardápio Web).
 - anota.ai answered a hard Cloudflare block (403, "Sorry, you have been blocked") to both `curl`
   and a headless browser on the first request. iFood answered a Cloudflare managed challenge.
-  Neither is worked around: no browser emulation, no challenge solving.
+  Neither is worked around: no browser emulation, no challenge solving. On the step 1 re-check,
+  iFood answered the same challenge (403, "Just a moment"); anota.ai answered a store page with
+  200 (its app shell, behind Cloudflare's bot detection) to this session's network. That doesn't
+  settle [§10.2](#10-open-questions), which is decided on the production VPS, so anota.ai stays
+  blocked.
 - These are the platforms' internal APIs: undocumented, unversioned, free to change any day.
   Adapters are expected to break, so a break must be cheap to notice and to fix
   ([§8](#8-testing)). [Appendix A](#appendix-a--platform-notes) records what each one returns.
@@ -486,7 +490,8 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
      couldn't do; phase 3 step 2 does it.
    - The CRM import on a lead's store, planned for phase 3, was built here.
 3. **More adapters**, planned step by step in [menu-import-phase3.md](menu-import-phase3.md):
-   1. Re-verify every platform's request chain (the gate).
+   1. Re-verify every platform's request chain (the gate). Done 2026-10-01: every readable chain
+      answers ([§3](#3-platforms)); the drift is in [Appendix A](#appendix-a--platform-notes).
    2. Settle the Instadelivery fields above.
    3. One adapter per PR, with its fixtures: Cardápio Web, OlaClick, Takeat, Delivery Direto,
       Saipos, Goomer.
@@ -516,7 +521,9 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
 
 What a public store returned on 2026-10-01. Internal APIs; expect drift. Phase 3 adds a "Checked
 <date>" line under each platform as it re-verifies the chain, and replaces the entry with the
-fields as built once its adapter lands.
+fields as built once its adapter lands. The checks are plain GETs with the importer's User-Agent,
+`Accept: application/json`, no cookies, at least 1 s apart per host; request counts are for the
+largest store read.
 
 - **Instadelivery** — `GET app.instadelivery.com.br/api/stores/by-slug/<slug>`. `groups[]` (order,
   `is_pizza`, weekday flags, hours) → `itens[]` (`price1` in reais, `from_price`, `strike_price`,
@@ -527,31 +534,110 @@ fields as built once its adapter lands.
   (per shift), `payment_methods[]` by name, `fees` (neighbourhood), `feesKm`, `minimum_order`,
   `wait_time`, `take_out`, `pix`/`pix_type`/`pix_infos`, `design` (logo, background, colours).
   Hidden items are absent.
+  - _Checked 2026-10-01_ (the user's store and two pizzerias through `import:probe --codes`, raw
+    payloads of ten more for step 2): works as documented. 1 request, 36–450 KB. Images on
+    `instadelivery-public.nyc3.cdn.digitaloceanspaces.com` (`image/jpeg`). New, from the
+    storefront's own checkout code: `fee_type` picks the fee model (−1 `fees[]` neighbourhoods,
+    −2 `feesKm[]` tiers, −3 free, any other value a flat fee in reais) and stores keep the unused
+    list, so the adapter has to follow it; the payment adjustment fields are percents of the
+    subtotal. Both are settled in step 2.
 - **Cardápio Web** — `GET integracao.cardapioweb.com/api/menu/company/profile?company=<slug>`,
   then `…/company/categories?only_available_for=delivery` with headers `company-id` and `company`.
   Promo price and its weekday schedule, badges, stock, `allowed_times`, `combo_steps`; add-ons
   SINGLE / MULTIPLE / SUMMABLE (quantity per option); `price_calculation_type` MAX or SUM for
   flavours. Store: colour, logo, cover, hours with several ranges, minimum order, prep time,
   payment methods with fees. Delivery fees are computed per address.
+  - _Checked 2026-10-01_ (a pizzeria and a sweet shop): works with drift. 2 requests whatever the
+    size (profile ~10 KB; categories 239 KB for 26 items, 44 add-on lists, 385 options), reais as
+    numbers. Drift: `price_calculation_type` is `SUM`, `MEAN` or `MAX` (`MEAN` is the usual
+    half-and-half rule; the storefront also knows `MIN`); the promo is `promotional_price` with
+    `promotional_price_active` and `promotional_price_schedules` (`[{day, start?, end?}]`, which
+    wins over `promotional_price_availability`); `delivery_only_for_neighborhoods[]` names
+    neighbourhoods without fees, and fees come only from a per-address POST the importer never
+    makes; the Pix key is a JSON string in `payment_methods[].observation`; `percentual_fee` is a
+    percent; a past `temporary_state_end_at` must be ignored. No combo seen live (its shape is
+    from the storefront code). Images: `storage.googleapis.com` (items, options, logo, cover) and
+    `cdn.cardapioweb.com.br` (banners). Custom domain: no public lookup by host; the server writes
+    the slug into the page it serves for the host.
 - **OlaClick** — `GET api.olaclick.app/ms-companies/public/hosts/<host>` → company id; then
   `ms-products/public/companies/<id>/categories` (menu with modifiers), the company,
   `ecommerce-settings` and `ms-orders/…/payment-methods`. Variants with `price` and
   `original_price`, per-variant stock, modifiers with min/max and a per-option `max_limit`.
   Delivery types: fixed, per km, districts, ranges, area.
+  - _Checked 2026-10-01_ (a pizzeria and a snack bar): works as documented. 5 requests (host
+    lookup; categories 353 KB for 97 products; company; `ecommerce-settings`, served as
+    `text/html` with a JSON body; payment methods by order type). An unknown host is a 404. New:
+    the host answer carries `custom_url`; only `delivery.prices.type` is live (stores keep other
+    modes configured under `FIXED`); a single-choice group with `min_modifiers: 1` is required only
+    when `required` is true; pizza flavours cost 0 and the product carries the price. Variant
+    `cost` is the merchant's cost and company `token` is credential-like: never copied. Images:
+    `assets.olaclick.app`. Custom domain: the same host lookup.
 - **Delivery Direto** — `GET <base>/categories`, then `<base>/categories/<id>?include=items,properties`
   per category, plus `<base>/delivery/fees` and `<base>/payment-forms`. `price_calculation_type`
   AVERAGE or HIGHER; options with `max_choices`; per-weekday availability; fees by circle or
   polygon.
+  - _Checked 2026-10-01_ (a five-unit pizzeria, an ice-cream shop and a pizzeria, plus seven to
+    settle fields): works with drift. `<base>` is the store link itself,
+    `deliverydireto.com.br/<brand>/<store>`, with no header. Hours, minimum order, prep times, the
+    pickup and delivery switches and the address come from a brand-level `<brand>/basic_info`
+    (one entry per unit). Largest store: 4 + 22 category requests, plus 1 + 2 per size when the
+    store uses the pizza module (`<base>/pizza_module/get_pizza_sizes`, then flavours and extras
+    per size, flavour prices per size) = 33 requests; about 35 s one after another, so category
+    reads should overlap within the per-host pacing. Drift: `price_calculation_type` is `SUM`,
+    `AVERAGE` or `HIGHER` (the storefront also knows `SMALLER`); groups are `RADIO`, `CHECKBOX` or
+    `MULTIPLE` with `combo_min_choices`/`combo_max_choices`, and an option's `max_choices` is its
+    quantity only in `MULTIPLE`; item `status` is `ACTIVE`, `SHORT_SUPPLY` (paused), `HIDDEN` or
+    `UNAVAILABLE` (outside its hours right now, not paused); weekday 1 is Sunday and equal start
+    and end mean all day; polygons are a `"lng,lat|…"` string, closed and padded with repeats;
+    circles have a radius in metres; the only adjustment is a per-form `discount_percentage`
+    (cash); the Pix key, when there is one, is inside a payment form's name. A brand link with one
+    unit redirects to it; with several, the merchant has to pick. A wrong store slug in a one-unit
+    brand redirects to the store page, so redirects that change the path must be refused. Images:
+    `duisktnou8b89.cloudfront.net` (items, options, logo, cover). Custom domain: no lookup API; the
+    domain's `/` redirects to `/<brand>`, and the same paths answer identically on
+    `deliverydireto.com.br`.
 - **Takeat** — `GET backend-delivery.takeat.app/public/restaurant/<slug>` → restaurant and brand
   ids; then `…/public/restaurants/menu/<id>?brand_id=<brand>` and `…/delivery-schedules/<id>`.
   `price` (dine-in) vs `delivery_price`, promo prices, tags, `complement_categories` with
   `use_average`/`more_expensive_only` and per-option limits. Includes dine-in-only categories and
   items that must be filtered. The store payload contains credential-like fields: map by
   allowlist only.
+  - _Checked 2026-10-01_ (seven stores, to settle the dine-in and price fields): works with drift.
+    3 requests plus 1 for neighbourhood fees; the menu is one array of 0.13–1.34 MB. Drift: hours
+    are at `…/public/restaurants/delivery-schedules/<id>` (the path above answers 400); the
+    browser asks for the menu with `?gd=true&brand_id=<brand>`, and without `gd` items that are off
+    every channel come too; there is no dine-in-only key: a category, product, group or option
+    not sold for delivery has `available_in_delivery: false`, and `is_exclusive` categories (staff
+    meals, till helpers) are never shown; `delivery_price` is null when it equals `price`; promo
+    fields are prices; schedule and window times are UTC instants of a Brasília clock on dummy
+    dates, `active_days` a seven-letter `t`/`f` string from Sunday. Fees: a neighbourhood table at
+    `…/public/restaurants/delivery-addresses/<id>`; distance and area fees aren't public.
+    Credential-like keys: `meta_access_token`, `pixel_id`, `token_clube`, `brand.nfce_token`;
+    options carry the merchant's cost (`current_cmv`). Images: `takeat-imgs.takeat.app`. Custom
+    domain: none; the API looks stores up by slug only.
 - **Saipos** — `GET delivery-api.saipos.com/v1/stores?filter={"domain_name":"<host>"}`, then
   `…/stores/<id>/sales/view-data` (~500 KB). Sizes as `variations[]`, `calc_method` 1 sum,
   2 average, 3 most expensive. Many items sit in disabled categories and many option references
   point at groups missing from `choices[]`: filter both.
+  - _Checked 2026-10-01_ (a pizzeria, a café and a large pizzeria): works as documented. 2
+    requests whatever the size (store 5–9 KB; `view-data` 39 KB–1.2 MB). An unknown host answers
+    `[]`. Disabled categories (a quarter of one store's items) and choice references to missing
+    groups (about half of them in every store) confirmed. `calc_method` 1 and 2 seen. Flavour and
+    crust prices per size are `choice_items[].variations[]`, keyed by the item's
+    `id_store_variation`. A category is per item (`category_item`). No WhatsApp and no fee table
+    (fees per address); a payment type's `rate` is the merchant's card fee, not a surcharge.
+    Images: `static.saipos.com` + the relative `img_path`. Custom domain: the same lookup by host.
 - **Goomer** — `GET api-go.goomer.app/v2/establishments/<slug>/info`, then the menu URL it names,
   then one option-group request per product. Sizes as `prices[]`; option groups with min, max and
   `repeat`; settings as ~180 `mm_*` keys, many holding JSON strings. Many stores are dormant.
+  - _Checked 2026-10-01_ (two pizzerias and an açaí shop): works with drift. The menu URL is
+    `www.goomer.app/webmenu/<slug>/menu/<version>` (a flat `products[]` with `group_id`,
+    `group_name`); option groups moved to
+    `mobile.goomer.app/webmenu/<slug>/product/<id>/optiongroups/<product version>`, and no product
+    flag says which have any. Largest store: 2 + 68 = 70 requests, about 1.2 s each, so about 85 s
+    one after another: over the 60 s deadline unless reads overlap within the per-host pacing. An
+    unknown slug is a 404. Images: products on `www.goomer.app`, logo on `static.goomer.app`, both
+    served with a non-image content type (the bytes are JPEG). Credential-like:
+    `mm_facebook_business_access_token`, `mm_payment_mpago_store_public_key`. Custom domain: a
+    CNAME to `<slug>.goomer.app`, kept as `mm_store_domain`; no lookup by host in the API. Store
+    links also come as `www.goomer.app/<slug>`.

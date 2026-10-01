@@ -1,6 +1,6 @@
 # Menu import — phase 3 plan
 
-> Status: plan, not started · Written 2026-10-01 at the end of phase 2 ([PR #269](https://github.com/mariajunqueiramirandas-cpu/vendua/pull/269)) · Design: [menu-import.md](menu-import.md)
+> Status: step 1 done 2026-10-01 (every readable chain answers: three as documented, four with drift, recorded in the design's §3 and Appendix A); step 2 next · Written 2026-10-01 at the end of phase 2 ([PR #269](https://github.com/mariajunqueiramirandas-cpu/vendua/pull/269)) · Design: [menu-import.md](menu-import.md)
 > For a session allowed to read public stores on the platforms below. Phase 2 stopped where this
 > plan starts because its session could read only the user's own store.
 
