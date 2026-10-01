@@ -365,7 +365,10 @@ export default function Menu() {
           <Plus weight="bold" className="size-5" /> produto
         </button>
       ) : (
-        <div className="glass fixed inset-x-0 bottom-[var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))] z-30 border-t border-line px-4 py-3 md:bottom-4 md:left-auto md:right-6 md:rounded-lg md:border-0 md:depth-3">
+        <div
+          data-action-bar
+          className="glass fixed inset-x-0 bottom-[var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))] z-30 border-t border-line px-4 py-3 md:bottom-4 md:left-auto md:right-6 md:rounded-lg md:border-0 md:depth-3"
+        >
           <p className="t-caption mb-2 text-muted">{picked.size} selecionados</p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -757,8 +760,8 @@ function ListRow({
         onPointerUp={(e) => end(true, e.timeStamp)}
         onPointerCancel={(e) => end(false, e.timeStamp)}
         onClickCapture={(e) => {
-          // a finished swipe must not also open the product
-          if (moved.current) {
+          // a finished swipe must not also open the product; Enter or an AT click (detail 0) still does
+          if (moved.current && e.detail > 0) {
             e.preventDefault();
             e.stopPropagation();
             moved.current = false;

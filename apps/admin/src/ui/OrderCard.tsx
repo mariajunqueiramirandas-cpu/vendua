@@ -25,6 +25,32 @@ interface Gesture {
   trail: { t: number; x: number }[];
 }
 
+/**
+ * A long press opens a sheet under the finger, outside the card: the lift must not tap it.
+ * Swallows the one click that follows the next pointerup, anywhere in the document.
+ */
+function swallowLiftClick() {
+  let t = window.setTimeout(off, 10_000);
+  function kill(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    off();
+  }
+  function arm() {
+    clearTimeout(t);
+    t = window.setTimeout(off, 400);
+  }
+  function off() {
+    clearTimeout(t);
+    removeEventListener('click', kill, true);
+    removeEventListener('pointerup', arm, true);
+    removeEventListener('pointercancel', arm, true);
+  }
+  addEventListener('click', kill, true);
+  addEventListener('pointerup', arm, true);
+  addEventListener('pointercancel', arm, true);
+}
+
 /** release velocity over the last ~80 ms of the trail */
 function velocity(trail: Gesture['trail'], now: number) {
   const last = trail[trail.length - 1]!;
@@ -104,6 +130,7 @@ export function OrderCard({
     cancelHold();
     g.current = null;
     swallowUntil.current = Infinity;
+    swallowLiftClick();
     haptic.tick();
     onMore(order);
   };
@@ -185,9 +212,11 @@ export function OrderCard({
     // caught mid-settle: pick the card up where it is
     let base = 0;
     if (anim.current) {
-      base = new DOMMatrixReadOnly(getComputedStyle(el).transform).m41;
+      const at = new DOMMatrixReadOnly(getComputedStyle(el).transform).m41;
       anim.current.cancel();
       anim.current = null;
+      // nearly home (the spring's tail): a plain tap, not a catch
+      base = Math.abs(at) < 6 ? 0 : at;
       setX(base);
     }
     g.current = {
@@ -405,7 +434,7 @@ export function OrderCard({
                     setPrep(m);
                   }}
                   className={cn(
-                    'press t-label tnum min-h-11 min-w-0 rounded-full ring-1 transition-colors',
+                    'press t-label tnum min-h-11 min-w-0 rounded-full ring-1 transition-[color,background-color,box-shadow,scale]',
                     prep === m
                       ? 'bg-spark text-on-spark ring-spark'
                       : 'ring-line-strong hover:bg-hover',

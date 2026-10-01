@@ -249,7 +249,8 @@
   font-variant-numeric: tabular-nums;
 }
 /* touch feedback that needs no hover: a tappable gives under the finger (main.tsx arms
-   :active on iOS). `scale` composes with any transform a swipe sets inline. */
+   :active on iOS). `scale` composes with any transform a swipe sets inline. A transition-[…]
+   on the same element replaces this one, so its list must name `scale` (not `transform`). */
 @utility press {
   transition: scale var(--duration-instant) ease-out;
   &:active:not(:disabled, [aria-disabled='true']) {

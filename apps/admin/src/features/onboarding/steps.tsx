@@ -359,7 +359,7 @@ function Choice({
       aria-checked={on}
       onClick={onClick}
       className={cn(
-        'flex min-h-24 w-full items-center gap-4 rounded-lg p-4 text-left ring-2 transition-[background-color,box-shadow,transform] duration-(--duration-quick) active:scale-[0.99]',
+        'flex min-h-24 w-full items-center gap-4 rounded-lg p-4 text-left ring-2 transition-[background-color,box-shadow,scale] duration-(--duration-quick) active:scale-[0.99]',
         on ? 'bg-spark-soft ring-primary' : 'bg-surface ring-line-strong hover:bg-hover',
       )}
     >

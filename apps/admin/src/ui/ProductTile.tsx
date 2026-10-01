@@ -37,7 +37,7 @@ export function ProductTile({
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-md bg-surface depth-1 transition-[transform,box-shadow] duration-(--duration-smooth) ease-(--ease-soft)',
+        'relative overflow-hidden rounded-md bg-surface depth-1 transition-[scale,rotate,box-shadow] duration-(--duration-smooth) ease-(--ease-soft)',
         lifted && 'z-10 scale-[1.03] -rotate-1 depth-2',
         selected && 'ring-3 ring-primary',
       )}

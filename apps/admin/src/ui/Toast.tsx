@@ -171,12 +171,19 @@ function One({ t }: { t: ToastItem }) {
         d.axis === 'x'
           ? `translate(${Math.sign(d.x) * (w + 32)}px, 0)`
           : `translate(0, ${d.y + 120}px)`;
-      const a = el.animate([at, { transform: to, opacity: 0 }], {
-        duration: 200,
-        easing: 'cubic-bezier(.2,.8,.2,1)',
-        fill: 'forwards',
-      });
+      const a = reducedMotion()
+        ? el.animate([at, { transform: at.transform, opacity: 0 }], {
+            duration: 120,
+            fill: 'forwards',
+          })
+        : el.animate([at, { transform: to, opacity: 0 }], {
+            duration: 200,
+            easing: 'cubic-bezier(.2,.8,.2,1)',
+            fill: 'forwards',
+          });
       a.onfinish = () => remove(t.id);
+      // so a new toast's "max 2" doesn't count this one
+      dismiss(t.id);
       return;
     }
     if (reducedMotion()) return;
@@ -244,10 +251,17 @@ function One({ t }: { t: ToastItem }) {
 
 export function Toaster() {
   const list = useToasts();
+  // an action bar can wrap to two rows (Cardápio's selection bar): sit above its real height
+  const [bar, setBar] = useState<number>();
+  useLayoutEffect(() => {
+    if (list.length) setBar(document.querySelector('[data-action-bar]')?.clientHeight || undefined);
+  }, [list.length]);
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))+16px)] z-[70] flex flex-col items-center gap-2 px-4 max-md:[html:has([data-action-bar])_&]:bottom-[calc(var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))+96px)] md:bottom-6 md:left-auto md:right-6 md:w-[420px] md:items-end"
+      data-no-pull
+      style={bar ? ({ '--bar-h': `${bar}px` } as React.CSSProperties) : undefined}
+      className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))+16px)] z-[70] flex flex-col items-center gap-2 px-4 max-md:[html:has([data-action-bar])_&]:bottom-[calc(var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))+var(--bar-h,80px)+16px)] md:bottom-6 md:left-auto md:right-6 md:w-[420px] md:items-end"
     >
       {list.map((t) => (
         <One key={t.id} t={t} />

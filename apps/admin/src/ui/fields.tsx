@@ -337,7 +337,7 @@ export function Toggle({
         <span
           aria-hidden
           className={cn(
-            'inline-flex h-8 w-13 items-center rounded-full p-1 transition-[background-color,transform] duration-(--duration-quick) peer-active:scale-[0.96]',
+            'inline-flex h-8 w-13 items-center rounded-full p-1 transition-[background-color,scale] duration-(--duration-quick) peer-active:scale-[0.96]',
             'peer-focus-visible:shadow-[0_0_0_4px_var(--primary)] peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-spark noite:peer-focus-visible:shadow-[0_0_0_4px_var(--bg)]',
             checked ? 'bg-primary' : 'bg-line-strong',
             disabled && 'opacity-45',
@@ -387,7 +387,7 @@ export function Segmented<T extends string>({
               onChange(o.value);
             }}
             className={cn(
-              'press t-label flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-[12px] px-1.5 transition-[color,background-color,box-shadow,transform] duration-(--duration-quick)',
+              'press t-label flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-[12px] px-1.5 transition-[color,background-color,box-shadow,scale] duration-(--duration-quick)',
               // with counts, phones stack label over count so four lanes fit 375px
               o.count !== undefined && 'max-sm:min-h-14 max-sm:flex-col max-sm:gap-0.5',
               on ? 'bg-surface text-ink depth-1' : 'text-muted hover:text-ink',
@@ -444,7 +444,7 @@ export function Chips<T extends string>({
             onChange(o.value);
           }}
           className={cn(
-            'press t-label min-h-12 rounded-full px-4 ring-1 transition-[color,background-color,transform] duration-(--duration-quick)',
+            'press t-label min-h-12 rounded-full px-4 ring-1 transition-[color,background-color,scale] duration-(--duration-quick)',
             sel(o.value)
               ? 'bg-primary text-on-primary ring-primary'
               : 'bg-surface text-ink ring-line-strong hover:bg-hover',

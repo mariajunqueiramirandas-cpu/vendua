@@ -11,7 +11,7 @@ import { placeOf, rootLabel } from './nav.ts';
 
 export type VtType = 'push' | 'pop' | 'tab' | 'fade';
 type Update = { action: Action; location: Location; delta: number | null };
-type VT = { finished: Promise<void>; ready: Promise<void> };
+type VT = { finished: Promise<void>; ready: Promise<void>; skipTransition(): void };
 type StartVT = (arg: unknown) => VT;
 
 let uaPop = false;
@@ -33,8 +33,25 @@ if (typeof window !== 'undefined') {
   );
 }
 
-/** pathname of each history entry this tab has seen, by React Router's `idx` */
-const trail = new Map<number, string>();
+/** pathname of each history entry this tab has seen, by React Router's `idx` (kept over reloads) */
+const TRAIL = 'vendua.admin.trail';
+const trail = new Map<number, string>(
+  (() => {
+    try {
+      return JSON.parse(sessionStorage.getItem(TRAIL) ?? '[]') as [number, string][];
+    } catch {
+      return [];
+    }
+  })(),
+);
+function remember(idx: number, path: string) {
+  trail.set(idx, path);
+  try {
+    sessionStorage.setItem(TRAIL, JSON.stringify([...trail]));
+  } catch {
+    /* private mode: the label falls back to "Voltar" */
+  }
+}
 let base = '';
 const strip = (p: string) => (p.startsWith(base) ? p.slice(base.length) || '/' : p);
 const idxNow = () => (history.state as { idx?: number } | null)?.idx ?? 0;
@@ -86,12 +103,14 @@ export function Router({ basename, children }: { basename: string; children: Rea
   historyRef.current ??= createBrowserHistory({ v5Compat: true });
   const h = historyRef.current;
   const [state, setState] = useState({ action: h.action, location: h.location });
-  const current = useRef(state.location);
-  current.current = state.location;
+  // the latest location the listener saw: React state lags behind it while a transition is queued
+  const last = useRef(h.location);
+  const seq = useRef(0);
+  const pending = useRef<VT | null>(null);
   const forced = useRef(false);
 
   useLayoutEffect(() => {
-    trail.set(idxNow(), strip(state.location.pathname));
+    remember(idxNow(), strip(state.location.pathname));
   }, [state.location]);
 
   useLayoutEffect(
@@ -99,11 +118,18 @@ export function Router({ basename, children }: { basename: string; children: Rea
       h.listen((u: Update) => {
         const forcedPush = forced.current;
         forced.current = false;
-        let type = typeOf(current.current, u, forcedPush);
+        let type = typeOf(last.current, u, forcedPush);
+        last.current = u.location;
+        const mine = ++seq.current;
         uaPop = false;
         const next = { action: forcedPush ? Action.Push : u.action, location: u.location };
         const start = (document as { startViewTransition?: StartVT }).startViewTransition;
-        if (!type || !start || document.hidden) return setState(next);
+        if (!type || !start || document.hidden) {
+          setState(next);
+          // a queued update from an earlier navigation must not land on top of this one
+          pending.current?.skipTransition();
+          return;
+        }
         const morph = reducedMotion() || type === 'tab' || type === 'fade' ? null : morphFrom(type);
         if (reducedMotion() || (matchMedia('(min-width: 768px)').matches && type !== 'tab'))
           type = 'fade';
@@ -117,6 +143,10 @@ export function Router({ basename, children }: { basename: string; children: Rea
         }
         let dst: HTMLElement | null = null;
         const update = () => {
+          if (mine !== seq.current) {
+            if (morph) morph.el.style.viewTransitionName = '';
+            return;
+          }
           flushSync(() => setState(next));
           if (!morph) return;
           morph.el.style.viewTransitionName = '';
@@ -134,11 +164,13 @@ export function Router({ basename, children }: { basename: string; children: Rea
           delete root.dataset.vtMorph;
           return update();
         }
+        pending.current = vt;
         // a skipped transition (a second tap, a hidden tab) still navigates
         vt.ready.catch(() => undefined);
         void vt.finished
           .catch(() => undefined)
           .then(() => {
+            if (pending.current === vt) pending.current = null;
             if (dst) dst.style.viewTransitionName = '';
             if (token === running) {
               delete root.dataset.vt;
@@ -190,7 +222,12 @@ export function useBack(pathname: string) {
   const idx = idxNow();
   const prev = idx > 0 ? trail.get(idx - 1) : undefined;
   const parent = place?.depth ? place.root : null;
-  const label = prev ? (placeOf(prev)?.title ?? 'Voltar') : parent ? rootLabel(parent) : 'Voltar';
+  // idx > 0 with no trail (another tab's entries): back goes there, so don't name the parent
+  const label = prev
+    ? (placeOf(prev)?.title ?? 'Voltar')
+    : parent && idx === 0
+      ? rootLabel(parent)
+      : 'Voltar';
   return {
     label,
     back: () =>

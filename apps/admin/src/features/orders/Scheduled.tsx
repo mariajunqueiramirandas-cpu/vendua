@@ -77,7 +77,7 @@ export default function Scheduled() {
                   aria-pressed={day === c}
                   aria-label={`${dateShort(c)}: ${byDay.get(c)?.length ?? 0} encomendas`}
                   className={cn(
-                    'press relative flex aspect-square min-h-11 flex-col items-center justify-center rounded-md tnum transition-colors',
+                    'press relative flex aspect-square min-h-11 flex-col items-center justify-center rounded-md tnum transition-[color,background-color,scale]',
                     day === c ? 'bg-primary text-on-primary' : 'hover:bg-hover',
                     c === today && day !== c && 'ring-2 ring-spark',
                     c < today && day !== c && 'text-muted',
