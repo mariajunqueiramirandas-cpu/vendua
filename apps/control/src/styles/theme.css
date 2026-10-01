@@ -1,6 +1,9 @@
 @import 'tailwindcss';
 
 @custom-variant dark (&:where(.dark, .dark *));
+/* on-screen keyboard up (html[data-kb] from main.tsx): the screen belongs to the field —
+   fixed bars hide, sticky bars unpin */
+@custom-variant kb (&:where(html[data-kb] *));
 
 /*
  * Neutral, warm-gray surfaces with the brand as accents: forest = primary

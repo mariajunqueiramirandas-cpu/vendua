@@ -92,7 +92,7 @@ export function Page({
           </div>
         </div>
         {tabs && (
-          <nav className="no-scrollbar -mb-px flex gap-0.5 overflow-x-auto px-1.5 md:px-3">
+          <nav className="no-scrollbar -mb-px flex gap-0.5 overflow-x-auto px-1.5 md:px-3 kb:hidden">
             {tabs.map((t) => (
               <NavLink
                 key={t.to}
@@ -112,7 +112,10 @@ export function Page({
             ))}
           </nav>
         )}
-        {toolbar && <div className="border-t px-3 py-2 md:px-5">{toolbar}</div>}
+        {/* a search field in the toolbar keeps it while typing */}
+        {toolbar && (
+          <div className="border-t px-3 py-2 md:px-5 kb:not-focus-within:hidden">{toolbar}</div>
+        )}
       </header>
       {bleed ? (
         <div ref={scroller} className={cn('flex min-h-0 flex-1 flex-col', className)}>

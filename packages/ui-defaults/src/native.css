@@ -343,6 +343,34 @@
       right: min(440px, 100%);
     }
   }
+  /* on-screen keyboard (see styles.css): the bag sheet stays, its pinned head scrolls away; with
+     the bag bar hidden and the buy row unpinned, toasts sit on the keyboard */
+  @media (pointer: coarse) {
+    html:has(
+      :is(
+        input:not(
+          [type='checkbox'],
+          [type='radio'],
+          [type='range'],
+          [type='color'],
+          [type='file'],
+          [type='button'],
+          [type='submit'],
+          [type='reset'],
+          [type='hidden']
+        ),
+        textarea,
+        [contenteditable]:not([contenteditable='false'])
+      ):focus
+    ) {
+      & .v-cart[data-presentation='drawer'] .v-cart-head:not(:focus-within) {
+        position: relative;
+      }
+      &:not(:has(.v-sheet[open])) .v-toast-region {
+        bottom: max(16px, env(safe-area-inset-bottom, 0px));
+      }
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
     .v-toast {
       animation: v-fade-in 120ms ease both;

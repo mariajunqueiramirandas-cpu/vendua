@@ -83,7 +83,7 @@ export default function StudioPage() {
     <Page title="Agente" tabs={AGENT_TABS}>
       <nav
         aria-label="áreas do estúdio"
-        className="no-scrollbar sticky top-0 z-20 -mx-3 -mt-3 mb-3 flex items-center gap-1 overflow-x-auto border-b bg-background px-1.5 md:-mx-4 md:-mt-4 md:px-2.5"
+        className="no-scrollbar sticky top-0 z-20 -mx-3 -mt-3 mb-3 flex items-center gap-1 overflow-x-auto border-b bg-background px-1.5 md:-mx-4 md:-mt-4 md:px-2.5 kb:static"
       >
         {SECTIONS.map((s) => (
           <button

@@ -8,6 +8,8 @@
  */
 
 @custom-variant noite (&:where([data-theme='noite'], [data-theme='noite'] *));
+/* the on-screen keyboard is up (ui/keyboard.ts) */
+@custom-variant kb (&:where(html[data-kb] *));
 
 :root {
   --bg: #f7f4ea;
@@ -431,6 +433,10 @@
 html[data-kb] .vt-tabs {
   transform: translateY(100%);
   pointer-events: none;
+}
+/* thumb-zone bars come back with the tab bar; while typing the field gets the screen */
+html[data-kb] [data-action-bar] {
+  display: none;
 }
 .vt-tabs {
   transition: transform var(--duration-quick) var(--ease-soft);

@@ -29,7 +29,8 @@ import { onHelp } from '../ui/help.ts';
 import { toast, Toaster } from '../ui/Toast.tsx';
 import { NAV } from './nav.ts';
 import { chunks, intent, screen, warmUp } from './routes.ts';
-import { useKeyboardInset, useScrollMemory, useTabNav } from './nativeFeel.ts';
+import { useScrollMemory, useTabNav } from './nativeFeel.ts';
+import { useKeyboard } from '../ui/keyboard.ts';
 import { placeOf } from './nav.ts';
 import { useBack } from './Router.tsx';
 import { PullToRefresh } from './PullToRefresh.tsx';
@@ -83,7 +84,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
   useLiveStream(true);
   useScrollMemory();
-  useKeyboardInset();
+  useKeyboard();
   const qc = useQueryClient();
   const allowed = items.map((n) => n.to).join(' ');
   useEffect(() => warmUp(allowed.split(' ')), [allowed]);
@@ -216,7 +217,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
       <div className="min-w-0 flex-1">
         {/* phone top: status pill always visible (§3.2) + search */}
-        <header className="vt-top chrome sticky top-0 z-30 flex items-center gap-2 bg-bg/95 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm md:hidden">
+        <header className="vt-top chrome sticky top-0 z-30 flex items-center gap-2 bg-bg/95 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm md:hidden kb:static">
           {placeOf(loc.pathname)?.depth ? (
             <BackButton pathname={loc.pathname} />
           ) : (
@@ -240,7 +241,7 @@ export function Shell({ children }: { children: ReactNode }) {
         {!live.online ? (
           <div
             role="status"
-            className="t-body sticky top-0 z-40 flex items-center justify-center gap-2 bg-warning-soft px-4 py-2 text-warning md:top-0"
+            className="t-body sticky top-0 z-40 flex items-center justify-center gap-2 bg-warning-soft px-4 py-2 text-warning md:top-0 kb:static"
           >
             <WifiSlash className="size-5" aria-hidden /> Sem conexão, tentando de novo. O que você
             fizer agora é enviado quando voltar.

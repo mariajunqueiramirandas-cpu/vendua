@@ -6,7 +6,7 @@ import { api, type StoreView } from '../../lib/api.ts';
 import { qk } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
-import { useKeyboardInset } from '../../ui/StepFrame.tsx';
+import { useKeyboard } from '../../ui/keyboard.ts';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
@@ -127,7 +127,7 @@ function Flow({
   firstCategory: string | null;
   hasPix: boolean;
 }) {
-  useKeyboardInset();
+  useKeyboard();
   const session = useSession();
   const owner = can(session.user.role, 'owner');
   const storeId = session.store.id;
@@ -190,7 +190,7 @@ function Flow({
 
   return (
     <div className="min-h-dvh overflow-x-clip">
-      <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-bg/95 px-4 py-3 backdrop-blur-sm md:px-8">
+      <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-bg/95 px-4 py-3 backdrop-blur-sm md:px-8 kb:static">
         <p className="font-display text-lg font-semibold">venduá</p>
         <div
           className="flex flex-1 items-center justify-center gap-3"

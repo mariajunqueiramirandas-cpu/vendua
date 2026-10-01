@@ -73,8 +73,8 @@ export function SaveBar({
         'flex flex-wrap items-center gap-2',
         inCard ? 'mt-3' : 'mt-1',
         pinned &&
-          'sticky bottom-0 z-10 -mx-3 border-t px-3 py-2 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:p-0 md:backdrop-blur-none',
-        pinned && (inCard ? '-mb-3 rounded-b-lg bg-card/95 md:mb-0' : 'bg-background/95'),
+          'sticky bottom-0 z-10 -mx-3 border-t px-3 py-2 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:p-0 md:backdrop-blur-none kb:static kb:mx-0 kb:border-0 kb:bg-transparent kb:p-0 kb:backdrop-blur-none',
+        pinned && (inCard ? '-mb-3 rounded-b-lg bg-card/95 md:mb-0 kb:mb-0' : 'bg-background/95'),
         className,
       )}
     >

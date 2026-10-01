@@ -3265,6 +3265,45 @@
     }
   }
 
+  /* ── on-screen keyboard: while a text field has focus on a touch screen, the screen belongs to
+     the field. Pinned chrome scrolls away (relative, not static: it stays the containing block
+     of its absolute parts) or steps aside, and comes back when the keyboard closes. */
+  @media (pointer: coarse) {
+    html:has(
+      :is(
+        input:not(
+          [type='checkbox'],
+          [type='radio'],
+          [type='range'],
+          [type='color'],
+          [type='file'],
+          [type='button'],
+          [type='submit'],
+          [type='reset'],
+          [type='hidden']
+        ),
+        textarea,
+        [contenteditable]:not([contenteditable='false'])
+      ):focus
+    ) {
+      /* a search field in the header keeps it */
+      & .v-header:not(:focus-within) {
+        position: relative;
+      }
+      & .v-pp-buy {
+        position: relative;
+        background: none;
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        border-top: 0;
+      }
+      & .v-bag-bar,
+      & .v-consent {
+        display: none;
+      }
+    }
+  }
+
   @media print {
     .v-banner-stack,
     .v-toast-region,
