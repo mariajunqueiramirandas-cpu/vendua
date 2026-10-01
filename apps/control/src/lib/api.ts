@@ -813,8 +813,8 @@ export interface BillingStore {
   slug: string;
   name: string;
   createdAt: string;
-  /** the store's public origin, when Core sends it (preferred over building one) */
-  url?: string | null | undefined;
+  /** the store's public origin (primary domain first), Core's */
+  url: string;
   plan: { id: string; name: string };
   subscription: {
     status: SubscriptionStatus;

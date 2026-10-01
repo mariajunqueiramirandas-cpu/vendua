@@ -111,7 +111,9 @@ export default function Menu() {
           ...prev,
           categories: prev.categories.map((c) => ({
             ...c,
-            products: c.products.map((p) => (p.id === v.p.id ? { ...p, status } : p)),
+            products: c.products.map((p) =>
+              p.id === v.p.id ? { ...p, status, liveStatus: status } : p,
+            ),
           })),
         });
       return { prev };
@@ -159,7 +161,9 @@ export default function Menu() {
         ...d,
         categories: d.categories.map((c) => ({
           ...c,
-          products: c.products.map((p) => (ids.has(p.id) ? { ...p, status } : p)),
+          products: c.products.map((p) =>
+            ids.has(p.id) ? { ...p, status, liveStatus: status } : p,
+          ),
         })),
       }));
     },

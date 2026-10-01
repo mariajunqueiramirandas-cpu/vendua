@@ -4,6 +4,7 @@ import { chimeNewOrder, chimePaid } from './sound.ts';
 import { haptic } from './haptics.ts';
 import { checkForUpdate, ordersSeen } from './pwa.ts';
 import type { Board, Order } from './api.ts';
+import { money } from './format.ts';
 
 // One EventSource per signed-in tab (Core: GET /admin/v1/events). Each change
 // invalidates what shows it; a new order also rings: chime + double vibration +
@@ -131,11 +132,7 @@ async function onPlaced(orderId: string) {
   try {
     const { api } = await import('./api.ts');
     const { order } = await api.order(orderId);
-    const total = (order.totalCents / 100).toLocaleString('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-    });
-    announce(`Pedido ${order.number} chegou, ${total}`);
+    announce(`Pedido ${order.number} chegou, ${money(order.totalCents)}`);
     window.dispatchEvent(new CustomEvent('vendua:new-order', { detail: order }));
   } catch {
     announce('Pedido novo chegou');

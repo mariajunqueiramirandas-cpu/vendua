@@ -1,7 +1,9 @@
+import { localNow, todayHours } from '@vendua/kernel/rules';
+import type { SpecialDay } from '../../lib/api.ts';
 import { hhmm, money, WEEKDAYS } from '../../lib/format.ts';
 import { cn } from '../../ui/cn.ts';
 import { NoPhoto } from '../../ui/illustrations.tsx';
-import type { WeekModel } from '../../ui/TimeRangeField.tsx';
+import { fromWeek, type WeekModel } from '../../ui/TimeRangeField.tsx';
 
 export interface Draft {
   name: string;
@@ -19,13 +21,22 @@ export function MiniStore({
   draft,
   products,
   whatsapp,
+  timeZone,
+  specialDays,
 }: {
   draft: Draft;
   products: Item[];
   whatsapp: boolean;
+  /** the store's: "today" is its day, not the phone's */
+  timeZone: string;
+  specialDays: SpecialDay[];
 }) {
-  const today = new Date().getDay();
-  const hours = draft.week[today] ?? [];
+  const hours = todayHours({
+    timezone: timeZone,
+    windows: fromWeek(draft.week),
+    specialDays,
+  }).windows;
+  const weekday = localNow(timeZone).weekday;
   const anyHours = draft.week.some((d) => d.length);
   const how = [draft.pickup && 'retirada', draft.delivery && 'entrega'].filter(Boolean).join(' · ');
   return (
@@ -69,7 +80,7 @@ export function MiniStore({
               />
               {hours.length
                 ? `Hoje: ${hours.map((h) => `${hhmm(h.open)}–${hhmm(h.close)}`).join(', ')}`
-                : `${WEEKDAYS[today]}: fechado`}
+                : `${WEEKDAYS[weekday]}: fechado`}
             </p>
           ) : (
             <div className="mt-2 h-5 w-28 rounded-full bg-black/5" />

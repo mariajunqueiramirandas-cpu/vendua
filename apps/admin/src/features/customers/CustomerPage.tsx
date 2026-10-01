@@ -2,8 +2,9 @@ import { DownloadSimple, Gift, ShieldCheck, WhatsappLogo } from '@phosphor-icons
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { whatsappUrl } from '@vendua/kernel/rules';
 import { api } from '../../lib/api.ts';
-import { dateShort, money, phone, plural, whatsappLink } from '../../lib/format.ts';
+import { dateShort, money, phone, plural } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -65,10 +66,13 @@ export default function CustomerPage() {
       </div>
       <div className="mb-5 flex flex-wrap gap-2">
         <a
-          href={whatsappLink(c.phone, `Oi, ${c.name.split(' ')[0]}! Aqui é da ${s.store.name}.`)}
+          href={
+            whatsappUrl(c.phone, `Oi, ${c.name.split(' ')[0]}! Aqui é da ${s.store.name}.`) ??
+            undefined
+          }
           target="_blank"
           rel="noreferrer"
-          className="press t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-[#1f7a4d] px-4 text-white"
+          className="press t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-whatsapp px-4 text-on-whatsapp"
         >
           <WhatsappLogo weight="fill" className="size-5" /> conversar no WhatsApp
         </a>

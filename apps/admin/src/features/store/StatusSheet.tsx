@@ -1,8 +1,9 @@
 import { Clock, Pause, Play, Storefront } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { formatWhen, localNow, todayHours } from '@vendua/kernel/rules';
 import { api, type SpecialDay, type StoreView } from '../../lib/api.ts';
-import { clock, hhmm, isoDate, WEEKDAYS_LONG } from '../../lib/format.ts';
+import { hhmm, WEEKDAYS_LONG } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button } from '../../ui/Button.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
@@ -80,7 +81,7 @@ export function StatusSheet({
           ? 'Tudo pronto do seu lado. Falta só o plano.'
           : paused
             ? store.status.resumesAt
-              ? `Volta sozinha às ${clock(store.status.resumesAt, tz)}.`
+              ? `Volta sozinha ${formatWhen(store.status.resumesAt, tz)}.`
               : 'Fica pausada até você voltar.'
             : 'Ninguém consegue fazer pedido enquanto estiver pausada. Os pedidos em andamento continuam.'
       }
@@ -181,18 +182,15 @@ function HoursButton({ store, onClick }: { store: StoreView; onClick: () => void
   );
 }
 
+/** Today in the store's zone, a special day first (the Kernel's todayHours). */
+const today = (store: StoreView) => todayHours({ ...store.hours, specialDays: store.specialDays });
+
 function todayLabel(store: StoreView) {
-  const tz = store.hours.timezone;
-  const today = isoDate(new Date(), tz);
-  const special = store.specialDays.find((d) => d.date === today);
-  if (special)
-    return special.closed
-      ? 'Hoje: fechado (dia especial)'
-      : `Hoje: ${hhmm(special.open!)} às ${hhmm(special.close!)}`;
-  const dow = new Date(new Date().toLocaleString('en-US', { timeZone: tz })).getDay();
-  const w = store.hours.windows.filter((x) => x.days.includes(dow));
-  if (!w.length) return `Hoje (${WEEKDAYS_LONG[dow]}): fechado`;
-  return `Hoje (${WEEKDAYS_LONG[dow]}): ${w.map((x) => `${hhmm(x.open)} às ${hhmm(x.close)}`).join(', ')}`;
+  const t = today(store);
+  const ranges = t.windows.map((x) => `${hhmm(x.open)} às ${hhmm(x.close)}`).join(', ');
+  if (t.special) return t.closed ? 'Hoje: fechado (dia especial)' : `Hoje: ${ranges}`;
+  const day = WEEKDAYS_LONG[localNow(store.hours.timezone).weekday];
+  return `Hoje (${day}): ${t.closed ? 'fechado' : ranges}`;
 }
 
 function TodayHours({
@@ -204,14 +202,14 @@ function TodayHours({
   onDone: () => void;
   onSaved: (s: StoreView) => void;
 }) {
-  const tz = store.hours.timezone;
-  const today = isoDate(new Date(), tz);
-  const cur = store.specialDays.find((d) => d.date === today);
-  const dow = new Date(new Date().toLocaleString('en-US', { timeZone: tz })).getDay();
-  const weekly = store.hours.windows.find((x) => x.days.includes(dow));
+  const t = today(store);
+  const date = t.date;
+  const cur = t.special ? store.specialDays.find((d) => d.date === date) : undefined;
+  // a day closed as special still starts from the usual hours
+  const usual = todayHours(store.hours).windows[0];
   const [closed, setClosed] = useState(cur?.closed ?? false);
-  const [open, setOpen] = useState(cur?.open ?? weekly?.open ?? '09:00');
-  const [close, setClose] = useState(cur?.close ?? weekly?.close ?? '18:00');
+  const [open, setOpen] = useState(t.windows[0]?.open ?? usual?.open ?? '09:00');
+  const [close, setClose] = useState(t.windows[0]?.close ?? usual?.close ?? '18:00');
   const save = useMutation({
     mutationFn: (days: SpecialDay[]) => api.updateStore({ specialDays: days }),
     onSuccess: (s) => {
@@ -221,7 +219,7 @@ function TodayHours({
     },
     onError: (e) => toast.error(messageOf(e)),
   });
-  const others = store.specialDays.filter((d) => d.date !== today);
+  const others = store.specialDays.filter((d) => d.date !== date);
   return (
     <div className="space-y-5 pt-2">
       <p className="t-body text-muted">Só vale para hoje. Amanhã volta o horário de sempre.</p>
@@ -253,8 +251,8 @@ function TodayHours({
             save.mutate([
               ...others,
               closed
-                ? { date: today, closed: true, label: 'Hoje' }
-                : { date: today, closed: false, open, close, label: 'Hoje' },
+                ? { date, closed: true, label: 'Hoje' }
+                : { date, closed: false, open, close, label: 'Hoje' },
             ])
           }
         >

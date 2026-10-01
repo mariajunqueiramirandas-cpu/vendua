@@ -1,16 +1,18 @@
+import { formatCents, phoneDisplay } from '@vendua/kernel/rules';
+
 // pt-BR formatting (design spec §9): R$ 1.234,56 · "há 3 min" · "hoje às 14h30" · (31) 99876-5432
 
-const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const brlShort = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
   currency: 'BRL',
   maximumFractionDigits: 0,
 });
 
-export const money = (cents: number) => brl.format(cents / 100).replace(/ /g, ' ');
+/** "R$ 1.234,56" — the storefront's own formatter (its no-break space keeps "R$" on the
+ *  number's line, as `phone` does with the DDD). */
+export const money = (cents: number) => formatCents(cents, 'BRL');
 /** R$ 1.234 — for axis ticks and compact tiles */
-export const moneyShort = (cents: number) =>
-  brlShort.format(Math.round(cents / 100)).replace(/ /g, ' ');
+export const moneyShort = (cents: number) => brlShort.format(Math.round(cents / 100));
 export const moneyCompact = (cents: number) => {
   const v = cents / 100;
   if (v >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1).replace('.', ',')} mi`;
@@ -19,27 +21,8 @@ export const moneyCompact = (cents: number) => {
 };
 export const num = (n: number) => n.toLocaleString('pt-BR');
 
-export function phone(p: string | null | undefined): string {
-  if (!p) return '';
-  const d = p.replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
-  // a no-break space: "(22)" never ends a line apart from its number
-  if (d.length === 11) return `(${d.slice(0, 2)})\u00a0${d.slice(2, 7)}-${d.slice(7)}`;
-  if (d.length === 10) return `(${d.slice(0, 2)})\u00a0${d.slice(2, 6)}-${d.slice(6)}`;
-  return p;
-}
-
-/** What gets stored: digits with the country code, so wa.me links work. */
-export function waDigits(v: string): string | null {
-  const d = v.replace(/\D/g, '');
-  if (!d) return null;
-  return d.length === 10 || d.length === 11 ? `55${d}` : d;
-}
-
-export function whatsappLink(p: string, text?: string) {
-  const d = p.replace(/\D/g, '');
-  const full = d.length <= 11 ? `55${d}` : d;
-  return `https://wa.me/${full}${text ? `?text=${encodeURIComponent(text)}` : ''}`;
-}
+/** "(22) 98179-5040" — the Kernel's phoneDisplay; '' for none. */
+export const phone = (p: string | null | undefined) => (p ? phoneDisplay(p) : '');
 
 const time = (d: Date, tz?: string) =>
   new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz })

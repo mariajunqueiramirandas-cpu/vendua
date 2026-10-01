@@ -17,6 +17,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { priceDisplay } from '@vendua/kernel/rules';
 import {
   api,
   ApiError,
@@ -55,7 +56,7 @@ import { PhotoField } from '../../ui/PhotoField.tsx';
 import { availability } from '../../ui/ProductTile.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { PromoEditor } from './PromoEditor.tsx';
-import { outsideNow, scheduleShort } from './schedule.ts';
+import { outsideNow } from './schedule.ts';
 import { ScheduleEditor } from './ScheduleEditor.tsx';
 
 export default function ProductPage() {
@@ -158,10 +159,13 @@ function Editor({
   const a = availability(p);
   const tracked = p.stockQuantity !== null;
   const promo = p.promoSchedule ?? null;
-  // inside a promotion's hours the store sells at its price, the regular one struck through
-  const promoOn = !!promo && !!p.promoNow;
-  const shownCents = promoOn ? promo.priceCents : p.priceCents;
-  const struckCents = promoOn ? (p.compareAtPriceCents ?? p.priceCents) : p.compareAtPriceCents;
+  // the storefront's own summary (Core's): which price form, the badge, the schedule's words
+  const sf = p.storefront;
+  const price = priceDisplay(sf);
+  const soldOut = sf.status === 'sold_out';
+  // outside a 'hidden' schedule the store doesn't list it at all
+  const unlisted =
+    sf.status === 'archived' || (outsideNow(p) && p.availabilitySchedule?.outside === 'hidden');
   const groupsSummary = p.groups.length
     ? `${plural(p.groups.length, 'grupo', 'grupos')}, ${plural(
         p.groups.reduce((n, g) => n + g.options.length, 0),
@@ -308,26 +312,45 @@ function Editor({
                 {p.description ? (
                   <p className="t-caption line-clamp-2 text-muted">{p.description}</p>
                 ) : null}
-                <p className="tnum mt-1 font-semibold">
-                  {struckCents !== null ? (
-                    <s className="mr-1.5 font-normal text-muted">{money(struckCents)}</s>
-                  ) : null}
-                  {money(shownCents)}
-                </p>
-                {promoOn ? (
-                  <p className="t-caption mt-1 inline-flex items-center gap-1 text-muted">
+                {soldOut ? (
+                  <p className="t-caption mt-1 inline-flex items-center gap-1 font-semibold text-danger">
+                    {sf.availabilityLabel ? (
+                      <Clock className="size-3.5 shrink-0" aria-hidden />
+                    ) : null}
+                    {sf.availabilityLabel ?? 'Esgotado'}
+                  </p>
+                ) : (
+                  <p className="tnum mt-1 font-semibold">
+                    {price.struckCents !== null ? (
+                      <>
+                        <s className="mr-1.5 font-normal text-muted">
+                          <span className="sr-only">de </span>
+                          {money(price.struckCents)}
+                        </s>
+                        <span className="sr-only">por </span>
+                      </>
+                    ) : null}
+                    {price.form === 'from' ? (
+                      <span className="font-normal text-muted">a partir de </span>
+                    ) : null}
+                    {money(price.cents)}
+                  </p>
+                )}
+                {price.promoLabel ? (
+                  <p className="t-caption mt-1 flex items-center gap-1 text-muted">
                     <SealPercent className="size-3.5 shrink-0" aria-hidden />
-                    em promoção agora
+                    Promoção: {price.promoLabel}
                   </p>
                 ) : null}
-                {p.availabilitySchedule ? (
-                  <p className="t-caption mt-1 inline-flex items-center gap-1 text-muted">
-                    <Clock className="size-3.5 shrink-0" aria-hidden />
-                    {outsideNow(p)
-                      ? p.availabilitySchedule.outside === 'hidden'
-                        ? 'fora do cardápio agora'
-                        : 'indisponível agora'
-                      : scheduleShort(p.availabilitySchedule)}
+                {!soldOut && sf.lowStock && p.stockQuantity ? (
+                  <p className="t-caption mt-1 font-semibold text-warning">
+                    {p.stockQuantity === 1 ? 'Última unidade' : `Últimas ${p.stockQuantity}`}
+                  </p>
+                ) : null}
+                {unlisted ? (
+                  <p className="t-caption mt-1 flex items-center gap-1 text-muted">
+                    <EyeSlash className="size-3.5 shrink-0" aria-hidden />
+                    {sf.status === 'archived' ? 'escondido da loja' : 'fora do cardápio agora'}
                   </p>
                 ) : null}
               </div>
@@ -386,8 +409,8 @@ function Editor({
             title="Dias e horários"
             icon={<Clock />}
             summary={
-              p.availabilitySchedule
-                ? `${scheduleShort(p.availabilitySchedule)}${outsideNow(p) ? ' · fora do horário agora' : ''}`
+              p.availabilitySchedule && sf.availabilityScheduleLabel
+                ? `${sf.availabilityScheduleLabel}${outsideNow(p) ? ' · fora do horário agora' : ''}`
                 : 'Todos os dias em que a loja abre'
             }
           >
@@ -399,7 +422,9 @@ function Editor({
             icon={<SealPercent />}
             summary={
               promo
-                ? `${money(promo.priceCents)}${p.promoNow ? ' agora' : ''} · ${scheduleShort(promo)}`
+                ? [`${money(promo.priceCents)}${p.promoNow ? ' agora' : ''}`, sf.promoScheduleLabel]
+                    .filter(Boolean)
+                    .join(' · ')
                 : 'Sem promoção (ex.: happy hour, terça do pastel)'
             }
           >

@@ -13,17 +13,6 @@ import { useCreateProvisioning, useSlugStatus } from './queries.ts';
 type FieldKey = 'storeName' | 'slug' | 'planId' | 'ownerName' | 'ownerPhone' | 'ownerEmail';
 type Form = Record<FieldKey, string>;
 
-/** mirrors normalizeSlug (core) so the prefill matches what Core will store */
-export const slugify = (v: string) =>
-  v
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40)
-    .replace(/-+$/, '');
-
 const FIELD_ERROR: Record<FieldKey, string> = {
   storeName: 'o nome precisa de 2 a 60 letras',
   slug: 'use 3 a 40 letras, números ou -',
@@ -37,7 +26,8 @@ function initial(lead: Lead): Form {
   const storeName = (lead.businessName || lead.name).slice(0, 60);
   return {
     storeName,
-    slug: slugify(storeName),
+    // filled from Core's fold of the name (the slug check) until someone edits it
+    slug: '',
     planId: '',
     ownerName: lead.name.slice(0, 80),
     ownerPhone: lead.whatsapp ?? lead.phone ?? '',
@@ -99,6 +89,14 @@ export function CreateStoreSheet({
   const [formError, setFormError] = useState<string | null>(null);
   const plans = useControlPlans().data;
   const create = useCreateProvisioning();
+  // the address follows the name until edited: Core folds it (normalizeSlug, what it stores)
+  const nameDeb = useDebounced(f.storeName.trim(), 300);
+  const fromName = useSlugStatus(slugTouched ? '' : nameDeb).data?.slug;
+  useEffect(() => {
+    if (slugTouched) return;
+    if (nameDeb.length < 3) setF((v) => ({ ...v, slug: '' }));
+    else if (fromName !== undefined) setF((v) => ({ ...v, slug: fromName }));
+  }, [fromName, nameDeb, slugTouched]);
 
   useEffect(() => {
     if (!open) return;
@@ -118,9 +116,7 @@ export function CreateStoreSheet({
   const set = (k: FieldKey, v: string) => {
     setErrors((e) => ({ ...e, [k]: undefined }));
     setF((cur) => {
-      const next = { ...cur, [k]: v };
-      if (k === 'storeName' && !slugTouched) next.slug = slugify(v);
-      return next;
+      return { ...cur, [k]: v };
     });
   };
 

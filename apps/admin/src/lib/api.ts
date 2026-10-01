@@ -1,3 +1,5 @@
+import type { PageTemplate, SectionInstance, StorefrontTokens } from '@vendua/templates';
+
 // Typed client for /admin/v1 — cookie session, x-vendua-admin CSRF marker, and an
 // Idempotency-Key minted per call (a retried mutation reuses its own key).
 
@@ -275,7 +277,7 @@ export interface OrderPayment {
   amountCents: number;
   refundedCents: number;
   /** Core's figure: amount − refunded − refunds still pending (the refund sheet's cap) */
-  refundableCents?: number;
+  refundableCents: number;
   /** set when a person has to look at this payment */
   review?: PaymentReview | null;
   providerFeeCents: number | null;
@@ -323,9 +325,13 @@ export interface Product {
   /** "de" price, display-only strike-through; always above priceCents */
   compareAtPriceCents: number | null;
   status: 'active' | 'sold_out' | 'archived';
+  /** Core's live status: stock 0 reads sold out; archived stays archived */
+  liveStatus: 'active' | 'sold_out' | 'archived';
   kind: 'simple' | 'combo';
   stockQuantity: number | null;
   lowStockThreshold: number | null;
+  /** Core's low-stock call, the storefront's own */
+  lowStock: boolean;
   requiresPreorder: boolean;
   preorderLeadDays: number;
   sort: number;
@@ -391,11 +397,27 @@ export interface KitSlot {
   items: { productId: string; name?: string; priceDeltaCents: number; imageUrl?: string | null }[];
 }
 
+/** What the shopper sees now: Core's storefront summary of the product, schedules in words. */
+export interface StorefrontPreview {
+  status: 'active' | 'sold_out' | 'archived';
+  basePriceCents: number;
+  compareAtPriceCents: number | null;
+  fromPriceCents: number | null;
+  promoLabel: string | null;
+  availabilityLabel: string | null;
+  lowStock: boolean;
+  /** the availability schedule in words, whether or not it holds now */
+  availabilityScheduleLabel: string | null;
+  /** the promotion's days and hours in words, whether or not it applies now */
+  promoScheduleLabel: string | null;
+}
+
 export interface ProductDetail extends Product {
   groups: OptionGroup[];
   gallery: { url: string; alt: string | null; width: number | null; height: number | null }[];
   comboSlots: KitSlot[];
   sales30: { qty: number; revenueCents: number };
+  storefront: StorefrontPreview;
 }
 
 export interface Category {
@@ -442,7 +464,9 @@ export interface StoreView {
     name: string;
     tagline: string | null;
     description: string | null;
+    /** 55 + DDD + number */
     whatsapp: string | null;
+    /** the bare handle, no @ */
     instagram: string | null;
     email: string | null;
     city: string | null;
@@ -555,7 +579,10 @@ export interface Coupon {
   code: string;
   kind: 'percent' | 'fixed' | 'free_delivery';
   value: number;
+  /** the merchant's own words; null = none */
   label: string | null;
+  /** what the shopper reads (Core's label rule) */
+  displayLabel: string;
   minSubtotalCents: number;
   maxDiscountCents: number | null;
   startsAt: string | null;
@@ -574,13 +601,22 @@ export interface Coupon {
 export interface LoyaltyProgram {
   stampsRequired: number;
   minOrderCents: number;
-  reward: { kind: 'percent' | 'fixed' | 'free_delivery'; value: number; label: string };
+  reward: {
+    kind: 'percent' | 'fixed' | 'free_delivery';
+    value: number;
+    /** only words the merchant typed; Core names the reward otherwise */
+    label?: string | null;
+  };
   rewardValidDays: number;
+}
+/** as Core serves it: `displayLabel` is what the shopper reads */
+export interface LoyaltyProgramView extends LoyaltyProgram {
+  reward: LoyaltyProgram['reward'] & { label: string | null; displayLabel: string };
 }
 
 export interface Marketing {
   coupons: Coupon[];
-  loyalty: { program: LoyaltyProgram | null; issued: number; redeemed: number };
+  loyalty: { program: LoyaltyProgramView | null; issued: number; redeemed: number };
   waitlist: {
     productId: string;
     name: string;
@@ -683,7 +719,13 @@ export interface Payments {
     expiresAt: string | null;
     lastError: string | null;
   };
+  /** what PATCH accepts, either sign */
+  adjustmentBounds: { maxPercentBps: number; maxFixedCents: number };
   last30: { method: PayMethod; status: string; orders: number; cents: number }[];
+  last30TotalCents: number;
+  last30Orders: number;
+  /** per method, most money first */
+  last30ByMethod: { method: PayMethod; cents: number; orders: number }[];
   awaitingPix: { id: string; number: number; name: string; totalCents: number; placedAt: string }[];
   month: StatementTotals & { month: string };
   /** money Core couldn't verify or settle by itself — a person looks at each (newest 50) */
@@ -845,29 +887,9 @@ export type PayNext =
   /** signed up with an access code: the team confirms this invoice by hand */
   | { kind: 'manual'; invoiceId: string };
 
-export interface TemplateSection {
-  id: string;
-  type: string;
-  settings?: Record<string, unknown>;
-  blocks?: Record<string, { id: string; type: string; settings?: Record<string, unknown> }[]>;
-  disabled?: boolean;
-}
-export interface PageTemplate {
-  version: 1;
-  page: string;
-  sections: TemplateSection[];
-  removed?: string[];
-}
-export interface StoreTokens {
-  color: Record<
-    'bg' | 'surface' | 'text' | 'muted' | 'accent' | 'onAccent' | 'danger' | 'success',
-    string
-  >;
-  font: { display: string; body: string; mono?: string; srcs?: unknown[] };
-  radius: { sm: string; md: string; lg: string };
-  space: { scale: number | string[] };
-  motion: { duration: string; easing: string };
-}
+export type { PageTemplate };
+export type TemplateSection = SectionInstance;
+export type StoreTokens = StorefrontTokens;
 export interface Appearance {
   url: string;
   previewUrl: string;
@@ -1092,7 +1114,9 @@ export const api = {
     return get<{ orders: OrderRow[]; next: string | null }>(`/orders?${s}`);
   },
   scheduled: (from: string, to: string) =>
-    get<{ orders: OrderRow[] }>(`/orders/scheduled?from=${from}&to=${to}`),
+    get<{ orders: OrderRow[]; days: { date: string; count: number; totalCents: number }[] }>(
+      `/orders/scheduled?from=${from}&to=${to}`,
+    ),
   order: (id: string) =>
     get<{
       order: Order;
@@ -1225,7 +1249,7 @@ export const api = {
   updateCoupon: (id: string, c: Record<string, unknown>) =>
     send<{ coupons: Coupon[] }>('PATCH', `/coupons/${id}`, c),
   setLoyalty: (program: LoyaltyProgram | null) =>
-    send<{ program: LoyaltyProgram | null }>('PUT', '/loyalty', { program }),
+    send<{ program: LoyaltyProgramView | null }>('PUT', '/loyalty', { program }),
   waitlistNotified: (productId: string) =>
     send<{ notified: number }>('POST', `/waitlist/${productId}/notified`),
   setAnnouncement: (a: { title: string; body?: string } | null) =>

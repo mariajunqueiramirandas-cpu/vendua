@@ -8,6 +8,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { orderPath } from '@vendua/kernel/rules';
 import { api, type Board, type Order, type OrderState } from '../../lib/api.ts';
 import { markOrdersSeen, usePollWhenOffline } from '../../lib/live.ts';
 import { useWakeLock, wakeLockSupported } from '../../lib/wakeLock.ts';
@@ -23,7 +24,7 @@ import { HelpButton } from '../../ui/Page.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { nextStep } from '../../ui/StateChip.tsx';
 import { useStoreQuery } from '../store/StatusPill.tsx';
-import { printTicket, useTransition, whatsappUrl } from './actions.ts';
+import { orderWhatsappUrl, printTicket, useTransition } from './actions.ts';
 import { CancelSheet, OrderDetail } from './OrderDetail.tsx';
 import { usePreload } from '../../app/routes.ts';
 
@@ -52,9 +53,6 @@ const LANES: {
     drop: 'delivered',
   },
 ];
-
-// the path an order walks to reach a lane it was dropped on
-const PATH: OrderState[] = ['placed', 'confirmed', 'preparing', 'ready'];
 
 function useNow(ms = 15_000) {
   const [now, setNow] = useState(Date.now());
@@ -135,23 +133,13 @@ export default function Orders() {
   const dropOn = async (l: (typeof LANES)[number], id: string) => {
     const o = orders.find((x) => x.id === id);
     if (!o || !l.drop || l.states.includes(o.state)) return;
-    // walk the states in order (a transition skips none): novo → aceito → preparando → pronto → entregue
-    const target = l.drop;
+    // walk the order's own path to the lane (a transition skips none; pickup never "sai")
+    const path = orderPath(o.delivery.mode) as OrderState[];
+    const i = path.indexOf(o.state);
+    const j = path.indexOf(l.drop);
+    if (i < 0 || j <= i) return;
     let cur: Order = o;
-    const steps: OrderState[] = [];
-    if (target === 'delivered') {
-      const i = PATH.indexOf(cur.state);
-      steps.push(...(i >= 0 ? PATH.slice(i + 1) : []));
-      if (cur.state !== 'out_for_delivery' && o.delivery.mode === 'delivery')
-        steps.push('out_for_delivery');
-      steps.push('delivered');
-    } else {
-      const i = PATH.indexOf(cur.state);
-      const j = PATH.indexOf(target);
-      if (i < 0 || j <= i) return;
-      steps.push(...PATH.slice(i + 1, j + 1));
-    }
-    for (const to of steps) {
+    for (const to of path.slice(i + 1, j + 1)) {
       const r = await move.mutateAsync({
         order: cur,
         to,
@@ -369,10 +357,10 @@ export default function Orders() {
               ver detalhes
             </Button>
             <a
-              href={whatsappUrl(more, s.store.name)}
+              href={orderWhatsappUrl(more, s.store.name)}
               target="_blank"
               rel="noreferrer"
-              className="press t-label flex min-h-14 items-center justify-center rounded-lg bg-[#1f7a4d] text-white"
+              className="press t-label flex min-h-14 items-center justify-center rounded-lg bg-whatsapp text-on-whatsapp"
             >
               chamar no WhatsApp
             </a>

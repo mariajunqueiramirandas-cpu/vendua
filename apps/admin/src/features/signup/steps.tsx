@@ -25,7 +25,7 @@ import { perMonth, PlanOption } from '../../ui/PlanCard.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { StepFrame } from '../../ui/StepFrame.tsx';
 import { EMAIL_RE, expiry, savePending } from '../auth/pending.ts';
-import { saveToken, slugify, type Draft, type StepId, type Verified } from './progress.ts';
+import { saveToken, type Draft, type StepId, type Verified } from './progress.ts';
 
 export type PlansData = Awaited<ReturnType<typeof api.signup.plans>>;
 
@@ -123,19 +123,26 @@ const SLUG_WHY: Record<string, string> = {
 };
 
 export function StoreStep({ d, patch, go, plans, notice }: FlowProps) {
-  const debounced = useDebounced(d.slug, 350);
-  const ok = debounced.length >= 3;
+  // until it's edited, the address follows the name, folded by Core (the slug it will store)
+  const source = d.slugTouched ? d.slug : d.storeName.trim();
+  const debounced = useDebounced(source, 350);
   const check = useQuery({
     queryKey: ['signup', 'slug', debounced],
     queryFn: () => api.signup.slug(debounced),
-    enabled: ok,
+    enabled: d.slugTouched ? debounced.length >= 3 : debounced.length > 0,
     staleTime: 30_000,
     retry: 1,
   });
-  const settled = debounced === d.slug && !check.isFetching;
-  const res = settled && check.data?.slug === d.slug ? check.data : null;
+  const settled = debounced === source && !check.isFetching;
+  const res = settled && check.data ? check.data : null;
+  useEffect(() => {
+    if (!d.slugTouched && !source && d.slug) patch({ slug: '' });
+    else if (!d.slugTouched && res && res.slug !== d.slug) patch({ slug: res.slug });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.slugTouched, source, res?.slug]);
+  const slug = res?.slug ?? d.slug;
   const state: 'idle' | 'checking' | 'free' | 'busy' | 'unknown' =
-    d.slug.length < 3
+    slug.length < 3
       ? 'idle'
       : !settled
         ? 'checking'
@@ -147,7 +154,7 @@ export function StoreStep({ d, patch, go, plans, notice }: FlowProps) {
             ? 'unknown'
             : 'checking';
   const name = d.storeName.trim();
-  const address = addressOf(d.slug, plans.storeDomain);
+  const address = addressOf(slug, plans.storeDomain);
   return (
     <StepFrame
       title="Como se chama a sua loja?"
@@ -165,8 +172,7 @@ export function StoreStep({ d, patch, go, plans, notice }: FlowProps) {
           placeholder="Ex.: Doces da Maria"
           value={d.storeName}
           onChange={(e) => {
-            const storeName = e.target.value;
-            patch(d.slugTouched ? { storeName } : { storeName, slug: slugify(storeName) });
+            patch({ storeName: e.target.value });
           }}
         />
       </Field>
@@ -189,6 +195,8 @@ export function StoreStep({ d, patch, go, plans, notice }: FlowProps) {
           placeholder="doces-da-maria"
           value={d.slug}
           aria-invalid={state === 'busy' || undefined}
+          // what was typed becomes the address Core will store ("doces-" → "doces")
+          onBlur={() => res && res.slug !== d.slug && patch({ slug: res.slug })}
           onChange={(e) =>
             patch({
               slug: e.target.value

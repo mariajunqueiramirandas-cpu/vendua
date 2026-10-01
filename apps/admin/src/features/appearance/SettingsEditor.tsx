@@ -1,8 +1,10 @@
 import { Plus, Trash } from '@phosphor-icons/react';
+import { DEFAULT_PATHS } from '@vendua/kernel/rules';
+import { useState } from 'react';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Chips, Field, TextArea, TextInput, Toggle, Stepper } from '../../ui/fields.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
-import { optionName, type FieldSpec } from './fields.ts';
+import { keepsUrl, optionName, type FieldSpec } from './fields.ts';
 
 type Values = Record<string, unknown>;
 
@@ -65,20 +67,13 @@ export function SettingsEditor({
             );
           case 'url':
             return (
-              <Field
+              <UrlField
                 key={f.key}
+                id={id}
                 label={f.label}
-                htmlFor={id}
-                helper="Uma página da loja (ex.: /catalog) ou um link completo."
-              >
-                <TextInput
-                  id={id}
-                  maxLength={300}
-                  inputMode="url"
-                  value={(v as string) ?? ''}
-                  onChange={(e) => set(f.key, e.target.value)}
-                />
-              </Field>
+                value={(v as string) ?? ''}
+                onChange={(u) => set(f.key, u)}
+              />
             );
           case 'number':
             return (
@@ -180,5 +175,41 @@ export function SettingsEditor({
         }
       })}
     </div>
+  );
+}
+
+/** A link the storefront would drop (the Kernel keeps only its pages and https, mailto, tel)
+ *  is flagged once the merchant leaves the field, not while typing. */
+function UrlField({
+  id,
+  label,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [left, setLeft] = useState(false);
+  const dropped = left && !!value && !keepsUrl(value);
+  return (
+    <Field
+      label={label}
+      htmlFor={id}
+      helper={`Uma página da loja (ex.: ${DEFAULT_PATHS.catalog}) ou um link completo, com https://.`}
+      error={dropped ? 'A loja não usa esse link. Comece com / ou https://.' : null}
+    >
+      <TextInput
+        id={id}
+        maxLength={300}
+        inputMode="url"
+        value={value}
+        aria-invalid={dropped || undefined}
+        onFocus={() => setLeft(false)}
+        onBlur={() => setLeft(true)}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </Field>
   );
 }

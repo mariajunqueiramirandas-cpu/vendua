@@ -37,6 +37,8 @@ export default function Scheduled() {
     }
     return out;
   }, [data]);
+  // counts and totals are Core's, over the whole range (the list stops at 500 rows)
+  const days = useMemo(() => new Map(data?.days.map((d) => [d.date, d])), [data]);
   const cells = [
     ...Array.from({ length: first.getDay() }, () => null),
     ...Array.from({ length: last.getDate() }, (_, i) => isoDate(new Date(y, m - 1, i + 1))),
@@ -75,7 +77,7 @@ export default function Scheduled() {
                   type="button"
                   onClick={() => setDay(c)}
                   aria-pressed={day === c}
-                  aria-label={`${dateShort(c)}: ${byDay.get(c)?.length ?? 0} encomendas`}
+                  aria-label={`${dateShort(c)}: ${days.get(c)?.count ?? 0} encomendas`}
                   className={cn(
                     'press relative flex aspect-square min-h-11 flex-col items-center justify-center rounded-md tnum transition-[color,background-color,scale]',
                     day === c ? 'bg-primary text-on-primary' : 'hover:bg-hover',
@@ -84,14 +86,14 @@ export default function Scheduled() {
                   )}
                 >
                   {Number(c.slice(8))}
-                  {byDay.get(c)?.length ? (
+                  {days.get(c)?.count ? (
                     <span
                       className={cn(
                         'tnum mt-0.5 rounded-full px-1.5 text-[0.6875rem] font-bold leading-4',
                         day === c ? 'bg-spark text-on-spark' : 'bg-info-soft text-info',
                       )}
                     >
-                      {byDay.get(c)!.length}
+                      {days.get(c)!.count}
                     </span>
                   ) : null}
                 </button>
@@ -104,10 +106,8 @@ export default function Scheduled() {
         <section aria-live="polite">
           <h2 className="t-title-2 mb-3 px-1">
             {dateShort(day)}
-            {list.length ? (
-              <span className="t-body ml-2 text-muted">
-                {money(list.reduce((a, o) => a + o.totalCents, 0))}
-              </span>
+            {days.get(day) ? (
+              <span className="t-body ml-2 text-muted">{money(days.get(day)!.totalCents)}</span>
             ) : null}
           </h2>
           {error ? (

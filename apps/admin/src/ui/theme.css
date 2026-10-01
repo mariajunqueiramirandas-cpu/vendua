@@ -66,6 +66,13 @@
   /* the sign-in counter's edge, cast back on Duá */
   --counter-shade: rgb(18 60 50 / 0.34);
 
+  /* the same in both themes: a WhatsApp action keeps its green, and a QR stays dark on light
+     so a camera reads it either way */
+  --whatsapp: #1f7a4d;
+  --on-whatsapp: #ffffff;
+  --qr-dark: #123c32;
+  --qr-light: #fffdf8;
+
   /* the store's own accent — set at runtime from its tokens (hero glow, avatar ring) */
   --store-accent: #d9f875;
   /* the leading edge of a screen sliding over another (push / pop) */
@@ -157,6 +164,10 @@
   --color-info-soft: var(--info-soft);
   --color-hover: var(--hover);
   --color-press: var(--press);
+  --color-whatsapp: var(--whatsapp);
+  --color-on-whatsapp: var(--on-whatsapp);
+  --color-qr: var(--qr-dark);
+  --color-qr-paper: var(--qr-light);
 
   --font-display: 'Space Grotesk Variable', system-ui, sans-serif;
   --font-moment: 'Instrument Serif', Georgia, serif;
