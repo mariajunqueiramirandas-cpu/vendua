@@ -94,6 +94,18 @@ themselves when Core's live stream says they changed (no API change).
 Every primitive accepts `asChild`. A primitive with no `onError` hands typed errors to
 the default error surface.
 
+`ProductPrice` (Kernel 1.13) is presentational, with no `asChild`:
+`<ProductPrice product={p} from? className? renderAmount? />` renders
+`<span data-part="price">` with the price in the store currency (`useStore().store.currency`)
+and, only when `compareAtPriceCents` is above `basePriceCents`, the "de" price first as
+`<s data-part="compare-at">` with visually hidden "de"/"por". `product` is structural
+(`{ basePriceCents, compareAtPriceCents? }`: a `CatalogProduct`, a `ProductDetail` or a summary
+fit); `from` prefixes "a partir de"; `renderAmount(formatted)` wraps each formatted amount for
+the store's own typesetting. `productPriceLabel` (`(product, currency = 'BRL')`) returns the same
+words for an `aria-label` ("de R$ 24,00 por R$ 18,00", or "R$ 18,00"). Render product prices
+through these instead of formatting `basePriceCents` yourself: they pick up promo prices (and
+whatever price display comes next) without a store edit. Display-only — never add them up.
+
 ## Page composition
 
 `defineSection`, `defineBlock` and the settings builders `text`, `richText`, `number`,
@@ -289,6 +301,9 @@ Parts added in Kernel 1.12: `compare-at` (the struck "de" price, in the product 
 `option-qty` (a `modifier` with units is `data-kind="qty"`); in the checkout
 `[data-part="adjustment"]` (a payment option's rule, `data-kind` discount | surcharge | mixed)
 and `payment-adjustment` (the summary line; also in `[data-vendua="order-items"]`), and `pricing-note` (the "calculando o total" line under the confirm button while Core prices a method with a rule; confirm stays disabled until it answers).
+
+Kernel 1.13: `ProductPrice` emits the same `price` and `compare-at` parts in store markup, so
+`[data-part='price']` and `[data-part='compare-at']` (or the `className` you pass) style it.
 
 `vendua check` (`no-v-namespace`) allows exactly those; any other `.v-*` or
 `[data-vendua]` selector in store CSS fails. Slot overrides stay available but are

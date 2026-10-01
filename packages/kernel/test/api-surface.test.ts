@@ -61,6 +61,14 @@ const FROZEN_V1 = [
   'useWaitlist',
 ];
 
+// Runtime exports added after the freeze, each in the minor named here (API.md + CHANGELOG).
+const ADDED_V1 = [
+  // 1.13
+  'ProductPrice',
+  'productPriceLabel',
+];
+const SURFACE = [...FROZEN_V1, ...ADDED_V1];
+
 describe('public surface', () => {
   test('runtime exports match the frozen v1 list', async () => {
     const mod = await import('../src/index.ts');
@@ -68,7 +76,7 @@ describe('public surface', () => {
     const removed = FROZEN_V1.filter((k) => !now.includes(k));
     expect(removed, 'removing an export is a Contract major').toEqual([]);
     expect(
-      now.filter((k) => !FROZEN_V1.includes(k)),
+      now.filter((k) => !SURFACE.includes(k)),
       'new exports need API.md + this list',
     ).toEqual([]);
   });
@@ -86,7 +94,7 @@ describe('public surface', () => {
 
   test('API.md documents every export', async () => {
     const doc = await Bun.file(new URL('../API.md', import.meta.url)).text();
-    const missing = FROZEN_V1.filter((k) => !doc.includes(`\`${k}\``));
+    const missing = SURFACE.filter((k) => !doc.includes(`\`${k}\``));
     expect(missing).toEqual([]);
   });
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { matchPath, Outlet, useLocation } from 'react-router-dom';
-import { dayLabel, mediaSrcSet, money } from '@vendua/ui-defaults';
+import { dayLabel, mediaSrcSet, money, PriceParts, priceLabel } from '@vendua/ui-defaults';
 import {
   cartDemand,
   productDraw,
@@ -298,10 +298,6 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const pricedByOptions = groups.some((g) =>
     g.modifiers.some((m) => m.priceDeltaCents !== 0 && pickedIds.includes(m.id)),
   );
-  const compareAt =
-    product?.compareAtPriceCents != null && product.compareAtPriceCents > product.basePriceCents
-      ? product.compareAtPriceCents
-      : null;
   const errors = Object.fromEntries(
     missing.map((g) => [g.id, cartError ? 'Escolha uma opção' : '']).filter(([, v]) => v),
   );
@@ -416,17 +412,11 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
             {product.name}
           </Title>
           <p className="v-pp-price v-num" data-part="price">
-            {compareAt !== null ? (
-              <>
-                <s className="v-compare-at" data-part="compare-at">
-                  <span className="v-sr">de </span>
-                  {money(compareAt, currency)}
-                </s>{' '}
-                <span className="v-sr">por </span>
-              </>
-            ) : null}
-            {slots.some((sl) => sl.items.some((i) => i.priceDeltaCents > 0)) ? 'a partir de ' : ''}
-            {money(product.basePriceCents, currency)}
+            <PriceParts
+              product={product}
+              currency={currency}
+              from={slots.some((sl) => sl.items.some((i) => i.priceDeltaCents > 0))}
+            />
           </p>
           {product.requiresPreorder ? (
             <p className="v-note" data-part="preorder" role="note">
@@ -648,9 +638,7 @@ function ProductGrid({
                   aria-label={
                     p.status !== 'active'
                       ? `${p.name}, esgotado`
-                      : p.compareAtPriceCents != null && p.compareAtPriceCents > p.basePriceCents
-                        ? `${p.name}, de ${money(p.compareAtPriceCents, currency)} por ${money(p.basePriceCents, currency)}`
-                        : `${p.name}, ${money(p.basePriceCents, currency)}`
+                      : `${p.name}, ${priceLabel(p, currency)}`
                   }
                 >
                   {children}

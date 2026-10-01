@@ -1,6 +1,6 @@
 /**
  * A price set the way menus print them: the currency sign small and light, the figure in
- * tabular digits. Takes Core's already-formatted string (formatCents) — it only splits it.
+ * tabular digits. Takes Core's already-formatted string (ProductPrice's `renderAmount`) — it only splits it.
  */
 export function Price({ text, className }: { text: string; className?: string }) {
   const m = /^([^\d-]*?)\s*(-?\d.*)$/u.exec(text);

@@ -2,6 +2,26 @@ export function money(cents: number, currency = 'BRL'): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(cents / 100);
 }
 
+/** Just the price fields: a CatalogProduct, ProductDetail or a summary all fit. */
+export interface PricedProduct {
+  basePriceCents: number;
+  compareAtPriceCents?: number | null | undefined;
+}
+
+/** The struck "de" price, only when it is above what the shopper pays (display-only). */
+export function compareAtOf(p: PricedProduct): number | null {
+  return p.compareAtPriceCents != null && p.compareAtPriceCents > p.basePriceCents
+    ? p.compareAtPriceCents
+    : null;
+}
+
+/** The price read aloud: "de R$ 24,00 por R$ 18,00", or just "R$ 18,00". */
+export function priceLabel(p: PricedProduct, currency = 'BRL'): string {
+  const was = compareAtOf(p);
+  const now = money(p.basePriceCents, currency);
+  return was === null ? now : `de ${money(was, currency)} por ${now}`;
+}
+
 export function dateTime(iso: string, timeZone?: string): string {
   return new Intl.DateTimeFormat('pt-BR', {
     ...(timeZone ? { timeZone } : {}),

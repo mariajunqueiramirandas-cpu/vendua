@@ -1016,6 +1016,16 @@ img {
   font-variant-numeric: tabular-nums;
   color: var(--caramel-800);
 }
+/* the promo "de" price (Kernel ProductPrice), quiet next to what the shopper pays */
+:is(.pcard-price, .qr-price) [data-part='compare-at'] {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--zinc-500);
+  text-decoration-color: var(--zinc-400);
+}
+.qr-price [data-part='compare-at'] {
+  font-size: 0.55em;
+}
 .pcard-cta {
   font-size: 0.8125rem;
   font-weight: 600;

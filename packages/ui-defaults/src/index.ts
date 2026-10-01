@@ -83,7 +83,7 @@ export const SLOT_DEFAULTS: SlotDefaults = {
 };
 
 export { noticeSeverity, noticeLinks, NoticeCard } from './system.tsx';
-export { QtyControl } from './commerce.tsx';
+export { PriceParts, QtyControl } from './commerce.tsx';
 export {
   money,
   dateTime,
@@ -95,6 +95,9 @@ export {
   MEDIA_WIDTHS,
   mediaSrcSet,
   countdown,
+  compareAtOf,
+  priceLabel,
+  type PricedProduct,
 } from './format.ts';
 export { PixQr } from './growth.tsx';
 export { Calendar, type CalendarProps } from './calendar.tsx';

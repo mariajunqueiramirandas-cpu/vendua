@@ -5,13 +5,13 @@ import QRCode from 'qrcode';
 import {
   defineSection,
   image,
+  ProductPrice,
   text,
   url,
   useCatalog,
   useStore,
   type SectionProps,
 } from '@vendua/kernel';
-import { formatBRL } from './_shared/format.ts';
 
 /** Cardápio QR — printable A4 sheet; QR generated client-side via the `qrcode` package, Core only supplies products + contacts. */
 export const schema = defineSection({
@@ -161,7 +161,7 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
                     className="display display-md"
                     style={{ color: 'var(--caramel-800)', marginTop: 4 }}
                   >
-                    {formatBRL(selected.basePriceCents)}
+                    <ProductPrice product={selected} className="qr-price" />
                   </p>
                 </div>
               ) : (

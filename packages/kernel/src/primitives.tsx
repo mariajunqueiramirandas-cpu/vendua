@@ -9,7 +9,7 @@ import {
   type ImgHTMLAttributes,
 } from 'react';
 import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from 'react-router-dom';
-import { mediaSrcSet } from '@vendua/ui-defaults';
+import { mediaSrcSet, PriceParts, priceLabel } from '@vendua/ui-defaults';
 import { lineDraw, productDraw, unitsLeft, useCart, useStore } from './hooks.ts';
 import { useKernel, prefetchQuery } from './provider.tsx';
 import { productHref, KERNEL_PATHS } from './config.ts';
@@ -465,4 +465,30 @@ export function Img({
       }}
     />
   );
+}
+
+/** The price fields ProductPrice reads: a CatalogProduct, a ProductDetail or a summary all fit. */
+export interface ProductPriceProps {
+  product: { basePriceCents: number; compareAtPriceCents?: number | null | undefined };
+  /** "a partir de" before the price (options or kit picks can raise it) */
+  from?: boolean;
+  className?: string;
+  /** wrap each formatted amount (the store's own typesetting); the text is still Core's price */
+  renderAmount?: (formatted: string) => ReactNode;
+}
+
+/** Kernel 1.13 — a product's price in the store currency, the "de" price struck through only when
+ *  it is above what the shopper pays. Display-only: never use it to compute a total. */
+export function ProductPrice({ product, from, className, renderAmount }: ProductPriceProps) {
+  const currency = useStore().store?.currency ?? 'BRL';
+  return (
+    <span className={['v-price v-num', className].filter(Boolean).join(' ')} data-part="price">
+      <PriceParts product={product} currency={currency} from={from} renderAmount={renderAmount} />
+    </span>
+  );
+}
+
+/** ProductPrice's words for an aria-label: "de R$ 24,00 por R$ 18,00", or just "R$ 18,00". */
+export function productPriceLabel(product: ProductPriceProps['product'], currency = 'BRL'): string {
+  return priceLabel(product, currency);
 }

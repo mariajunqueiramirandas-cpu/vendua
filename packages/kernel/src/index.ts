@@ -62,6 +62,8 @@ export {
   Img,
   NotifyMeButton,
   ProductLink,
+  ProductPrice,
+  productPriceLabel,
   QuantityStepper,
   StoreStatusBadge,
 } from './primitives.tsx';
@@ -72,6 +74,7 @@ export type {
   ImgProps,
   NotifyMeButtonProps,
   ProductLinkProps,
+  ProductPriceProps,
   QuantityStepperProps,
 } from './primitives.tsx';
 

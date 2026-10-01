@@ -3,6 +3,17 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.13.0
+
+One new primitive — additive; no storefront edit needed.
+
+- `ProductPrice` and `productPriceLabel`: a product's price in the store currency with the
+  promo "de" price struck through (only when `compareAtPriceCents` is above the price, with
+  "de"/"por" for screen readers), and the same words for an `aria-label`. Emits
+  `[data-part="price"]` / `[data-part="compare-at"]`. The default product card and
+  `sdk:purchase-panel` now render through the same markup (unchanged output). Stores should use
+  it instead of formatting `basePriceCents` themselves.
+
 ## 1.12.0
 
 The catalog model gaps — additive; no storefront edit, no new runtime export. Every price

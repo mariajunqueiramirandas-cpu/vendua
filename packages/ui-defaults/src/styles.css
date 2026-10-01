@@ -882,8 +882,9 @@
     color: var(--v-color-accent, #3f5e4e);
     transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
-  /* Kernel 1.12 — the "de" price, struck through before what the shopper pays */
-  .v-card-amount {
+  /* Kernel 1.12 — the "de" price, struck through before what the shopper pays; 1.13 ProductPrice */
+  .v-card-amount,
+  .v-price {
     display: inline-flex;
     flex-wrap: wrap;
     align-items: baseline;

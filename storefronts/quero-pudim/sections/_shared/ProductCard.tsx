@@ -1,9 +1,16 @@
 import { Check, Plus } from 'lucide-react';
 import { useEffect, useState, type CSSProperties } from 'react';
-import { AddToCart, ProductLink, useStockLeft, type CatalogProduct } from '@vendua/kernel';
+import {
+  AddToCart,
+  ProductLink,
+  ProductPrice,
+  productPriceLabel,
+  useStockLeft,
+  useStore,
+  type CatalogProduct,
+} from '@vendua/kernel';
 import { ProductFigure } from './ProductFigure.tsx';
 import { flavorOf, KIT_FLAVOR } from './flavor.ts';
-import { formatBRL } from './format.ts';
 
 export interface ProductCardProps {
   product: CatalogProduct;
@@ -33,6 +40,7 @@ export function ProductCard({
 }: ProductCardProps) {
   const soldOut = p.status === 'sold_out';
   const stock = useStockLeft(p);
+  const currency = useStore().store?.currency;
   const low = !soldOut && typeof stock === 'number' && stock > 0 && stock <= lowStockThreshold;
   const flavor = p.kind === 'combo' ? KIT_FLAVOR : flavorOf(p.name);
   const [imgFailed, setImgFailed] = useState(false);
@@ -60,7 +68,7 @@ export function ProductCard({
       <ProductLink product={p} asChild>
         <a
           className="pcard-link"
-          aria-label={`${p.name}, ${formatBRL(p.basePriceCents)}${soldOut ? `, ${soldOutLabel}` : ''}`}
+          aria-label={`${p.name}, ${productPriceLabel(p, currency)}${soldOut ? `, ${soldOutLabel}` : ''}`}
         >
           <div className="pcard-media">
             {p.imageUrl && !imgFailed ? (
@@ -92,7 +100,7 @@ export function ProductCard({
             <h3 className="pcard-name">{p.name}</h3>
             {p.description ? <p className="pcard-desc">{p.description}</p> : null}
             <p className="pcard-foot">
-              <span className="pcard-price">{formatBRL(p.basePriceCents)}</span>
+              <ProductPrice product={p} className="pcard-price" />
               {!quick && !soldOut && cta ? <span className="pcard-cta">{cta}</span> : null}
             </p>
           </div>

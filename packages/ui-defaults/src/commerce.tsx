@@ -1,13 +1,15 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { SlotProps } from '@vendua/kernel';
 import {
   dateTime,
   dayLabel,
   mediaSrcSet,
+  compareAtOf,
   money,
   ORDER_STATE_LABEL,
   PAYMENT_LABEL,
   time,
+  type PricedProduct,
 } from './format.ts';
 
 const TERMINAL = new Set(['delivered', 'cancelled', 'refunded']);
@@ -407,6 +409,41 @@ export function HoursTable({ hours }: SlotProps['store.HoursTable']) {
   );
 }
 
+/** The one price markup (Kernel 1.13 `ProductPrice`, the default card, the purchase panel): the
+ *  "de" price struck through only when it is above the price, with "de"/"por" for screen readers. */
+export function PriceParts({
+  product,
+  currency,
+  from,
+  renderAmount,
+}: {
+  product: PricedProduct;
+  currency: string;
+  from?: boolean | undefined;
+  renderAmount?: ((formatted: string) => ReactNode) | undefined;
+}) {
+  const was = compareAtOf(product);
+  const show = (cents: number) => {
+    const text = money(cents, currency);
+    return renderAmount ? renderAmount(text) : text;
+  };
+  return (
+    <>
+      {was !== null ? (
+        <>
+          <s className="v-compare-at" data-part="compare-at">
+            <span className="v-sr">de </span>
+            {show(was)}
+          </s>{' '}
+          <span className="v-sr">por </span>
+        </>
+      ) : null}
+      {from ? 'a partir de ' : ''}
+      {show(product.basePriceCents)}
+    </>
+  );
+}
+
 const CARD_WIDTHS = [320, 480, 640];
 
 export function ProductCard({
@@ -419,10 +456,6 @@ export function ProductCard({
   const soldOut = product.status !== 'active';
   const [imgFailed, setImgFailed] = useState(false);
   const left = stockLeft ?? product.stockQuantity;
-  const compareAt =
-    product.compareAtPriceCents != null && product.compareAtPriceCents > product.basePriceCents
-      ? product.compareAtPriceCents
-      : null;
   const badge = soldOut
     ? null
     : product.requiresPreorder
@@ -485,16 +518,7 @@ export function ProductCard({
             ) : (
               <>
                 <span className="v-card-amount">
-                  {compareAt !== null ? (
-                    <>
-                      <s className="v-compare-at" data-part="compare-at">
-                        <span className="v-sr">de </span>
-                        {money(compareAt, currency)}
-                      </s>{' '}
-                      <span className="v-sr">por </span>
-                    </>
-                  ) : null}
-                  {money(product.basePriceCents, currency)}
+                  <PriceParts product={product} currency={currency} />
                 </span>
                 {quickAdd ? null : (
                   <span className="v-card-go" aria-hidden="true">
