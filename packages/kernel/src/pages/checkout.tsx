@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   useCart,
   useCep,
@@ -19,7 +21,8 @@ import { money } from '@vendua/ui-defaults';
 
 // /checkout — the Kernel-owned checkout (ADR 0004): a three-step machine
 // (dados → entrega → pagamento). Validation here is shape-only; every business
-// rule (zone, minimum, pause) is Core's answer, surfaced as-is.
+// rule (zone, minimum, pause) is Core's answer, surfaced as-is. Each step is a history entry
+// (state.vStep), so the back button/gesture returns to the previous step, not out of checkout.
 
 type StepId = CheckoutStep['id'];
 const ORDER: StepId[] = ['dados', 'entrega', 'pagamento'];
@@ -85,8 +88,17 @@ export function CheckoutPage() {
   const paths = resolvePaths(config);
   const currency = store?.currency ?? 'BRL';
 
-  const [step, setStep] = useState<StepId>('dados');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const nav = location.state as { vStep?: unknown; vFrom?: unknown } | null;
+  const asked = ORDER.find((s) => s === nav?.vStep) ?? 'dados';
   const [done, setDone] = useState<Set<StepId>>(new Set());
+  // a reload keeps the entry but not the answers: start over from the first step
+  const reachable = ORDER.slice(0, ORDER.indexOf(asked)).every((s) => done.has(s));
+  const step: StepId = reachable ? asked : 'dados';
+  const stepHeading = useRef<HTMLHeadingElement>(null);
+  const pushedStep = useRef(false);
+  const firstStep = useRef(true);
   const [draft, setDraft] = useState<CustomerDraft>(() => ({
     name: customer?.name ?? '',
     phone: customer?.phone ?? '',
@@ -124,6 +136,33 @@ export function CheckoutPage() {
     emit('checkout_step', { step, duration_ms: Date.now() - stepStarted.current });
     stepStarted.current = Date.now();
   }, [step]);
+
+  useEffect(() => {
+    if (!reachable)
+      navigate({ pathname: location.pathname, search: location.search }, { replace: true });
+  }, [reachable, navigate, location.pathname, location.search]);
+
+  // a new step starts at its top with focus on its heading; back/forward lets the scroll
+  // manager put the page where it was
+  useLayoutEffect(() => {
+    if (firstStep.current) {
+      firstStep.current = false;
+      return;
+    }
+    if (pushedStep.current) window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    pushedStep.current = false;
+    stepHeading.current?.focus({ preventScroll: true });
+  }, [step]);
+
+  const setStep = (next: StepId) => {
+    if (next === step) return;
+    if (nav?.vFrom === next) return navigate(-1);
+    pushedStep.current = true;
+    navigate(
+      { pathname: location.pathname, search: location.search },
+      { state: { vStep: next, vStepN: ORDER.indexOf(next), vFrom: step } },
+    );
+  };
 
   const neighborhoods = useMemo(() => zones.flatMap((z) => z.neighborhoods), [zones]);
   const canLocate =
@@ -321,7 +360,8 @@ export function CheckoutPage() {
         setSyncing(false);
       }
     }
-    setDone((d) => new Set(d).add(step));
+    // committed before the push, so the next step is already reachable when it renders
+    flushSync(() => setDone((d) => new Set(d).add(step)));
     setStep(ORDER[ORDER.indexOf(step) + 1] ?? step);
   };
 
@@ -401,6 +441,9 @@ export function CheckoutPage() {
               else void advance();
             }}
           >
+            <h2 className="v-sr" ref={stepHeading} tabIndex={-1}>
+              Etapa {ORDER.indexOf(step) + 1} de {ORDER.length}: {LABEL[step]}
+            </h2>
             {step === 'dados' ? (
               <Slot
                 name="checkout.AddressForm"

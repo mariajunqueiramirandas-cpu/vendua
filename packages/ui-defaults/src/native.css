@@ -1,0 +1,327 @@
+/* @vendua/ui-defaults/native.css — the Kernel's native-app layer: page view transitions,
+   the bag sheet, toasts. Token-driven, inside @layer vendua like every default. Motion
+   animates transform/opacity only; reduced motion gets 120 ms opacity fades. */
+
+@layer vendua {
+  :root {
+    --_v-vt-ease: cubic-bezier(0.32, 0.72, 0, 1);
+    --_v-scrim: color-mix(in srgb, var(--v-color-text, #1c1b1a) 42%, transparent);
+  }
+
+  /* ── page transitions (html[data-vt] = push | pop | tab | fade) ─────────── */
+  /* pinned chrome: header and bag bar stay put while the page under them moves */
+  .v-header {
+    view-transition-name: v-header;
+  }
+  .v-bag-bar {
+    view-transition-name: v-bag-bar;
+  }
+  ::view-transition-group(*) {
+    animation-duration: 220ms;
+  }
+  ::view-transition-group(vt-morph) {
+    animation-duration: 340ms;
+    animation-timing-function: var(--_v-vt-ease);
+  }
+  ::view-transition-old(vt-morph),
+  ::view-transition-new(vt-morph) {
+    height: 100%;
+    object-fit: cover;
+  }
+  /* the header is the same on both pages: no crossfade (a translucent header would read
+     through itself mid-fade) */
+  ::view-transition-old(v-header) {
+    display: none;
+  }
+  ::view-transition-new(v-header) {
+    animation: none;
+  }
+  ::view-transition-old(v-bag-bar):only-child {
+    animation: v-vt-drop 200ms ease-in both;
+  }
+  ::view-transition-new(v-bag-bar):only-child {
+    animation: v-vt-drop 260ms var(--_v-vt-ease) reverse both;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html[data-vt='push']::view-transition-old(root),
+    html[data-vt='push']::view-transition-new(root),
+    html[data-vt='pop']::view-transition-old(root),
+    html[data-vt='pop']::view-transition-new(root) {
+      mix-blend-mode: normal;
+      animation-timing-function: var(--_v-vt-ease);
+      animation-fill-mode: both;
+    }
+    html[data-vt='push']::view-transition-old(root) {
+      animation-name: v-vt-back;
+      animation-duration: 300ms;
+    }
+    html[data-vt='push']::view-transition-new(root) {
+      animation-name: v-vt-in;
+      animation-duration: 300ms;
+      box-shadow: -10px 0 28px rgb(0 0 0 / 0.14);
+    }
+    html[data-vt='pop']::view-transition-old(root) {
+      z-index: 1;
+      animation-name: v-vt-out;
+      animation-duration: 260ms;
+      box-shadow: -10px 0 28px rgb(0 0 0 / 0.14);
+    }
+    html[data-vt='pop']::view-transition-new(root) {
+      animation-name: v-vt-back;
+      animation-direction: reverse;
+      animation-duration: 260ms;
+    }
+    /* a photo with no counterpart on the other page travels with its page */
+    html[data-vt='push']::view-transition-old(vt-morph):only-child {
+      animation: v-vt-back 300ms var(--_v-vt-ease) both;
+    }
+    html[data-vt='pop']::view-transition-old(vt-morph):only-child {
+      animation: v-vt-out 260ms var(--_v-vt-ease) both;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-group(*) {
+      animation: none;
+    }
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
+      animation-duration: 120ms;
+    }
+  }
+  @keyframes v-vt-in {
+    from {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes v-vt-out {
+    to {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes v-vt-back {
+    to {
+      transform: translateX(-30%);
+    }
+  }
+  @keyframes v-vt-drop {
+    to {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+  }
+
+  /* ── the bag sheet (/sacola over the page it was opened from) ───────────── */
+  .v-sheet[open] {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    background: transparent;
+    color: var(--v-color-text, #1c1b1a);
+    overscroll-behavior: contain;
+  }
+  .v-sheet::backdrop {
+    background: transparent;
+  }
+  .v-sheet-scrim {
+    position: absolute;
+    inset: 0;
+    background: var(--_v-scrim);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .v-sheet-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    max-height: 92vh;
+    max-height: 92dvh;
+    border-radius: min(var(--v-radius-lg, 14px), 20px) min(var(--v-radius-lg, 14px), 20px) 0 0;
+    background: var(--v-color-bg, #f7f6f4);
+    box-shadow: 0 -12px 40px -12px rgb(0 0 0 / 0.28);
+    will-change: transform;
+  }
+  .v-sheet-grip {
+    flex: none;
+    display: grid;
+    place-items: center;
+    height: 22px;
+    touch-action: none;
+    cursor: grab;
+  }
+  .v-sheet-grip::before {
+    content: '';
+    width: 36px;
+    height: 5px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 22%, transparent);
+  }
+  .v-sheet-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 var(--_v-gutter, 16px) max(16px, env(safe-area-inset-bottom, 0px));
+  }
+  .v-sheet-body > .v-panel[aria-busy='true'] {
+    min-height: 200px;
+  }
+  /* the drawer presentation of the cart: one column, a pinned header to grab */
+  .v-cart[data-presentation='drawer'] .v-cart-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    align-items: center;
+    flex-wrap: nowrap;
+    margin: 0 calc(-1 * var(--_v-gutter, 16px)) 12px;
+    padding: 2px var(--_v-gutter, 16px) 10px;
+    background: var(--v-color-bg, #f7f6f4);
+    touch-action: none;
+  }
+  .v-cart[data-presentation='drawer'] .v-page-title {
+    margin: 0;
+    font-size: 22px;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+  .v-cart[data-presentation='drawer'] .v-cart-head .v-muted {
+    margin: 0;
+    font-size: 14px;
+  }
+  .v-cart-close {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    margin: -6px -10px -6px auto;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--v-color-text, #1c1b1a);
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 120ms ease;
+  }
+  .v-cart-close:active {
+    transform: scale(0.92);
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 8%, transparent);
+  }
+  .v-cart-close:focus-visible {
+    outline: var(--v-focus);
+    outline-offset: 2px;
+  }
+  .v-cart[data-presentation='drawer'] .v-cart-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .v-cart[data-presentation='drawer'] .v-cart-aside {
+    position: static;
+  }
+  html:has(.v-sheet[open]) {
+    overflow: hidden;
+    scrollbar-gutter: stable;
+  }
+  @media (min-width: 768px) {
+    .v-sheet[open] {
+      flex-direction: row;
+      justify-content: flex-end;
+    }
+    .v-sheet-panel {
+      width: min(440px, 100%);
+      height: 100%;
+      max-height: none;
+      border-radius: min(var(--v-radius-lg, 14px), 20px) 0 0 min(var(--v-radius-lg, 14px), 20px);
+      box-shadow: -12px 0 40px -12px rgb(0 0 0 / 0.28);
+    }
+    .v-sheet-grip {
+      display: none;
+    }
+    .v-sheet-body {
+      padding-top: 16px;
+    }
+    .v-cart[data-presentation='drawer'] .v-cart-head {
+      top: -16px;
+      padding-top: 16px;
+      touch-action: auto;
+    }
+  }
+
+  /* ── toasts: top layer (popover), above the bag bar, safe-area aware ───── */
+  .v-toast-region[popover] {
+    width: auto;
+    height: auto;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    overflow: visible;
+    background: transparent;
+    color: inherit;
+  }
+  .v-toast-region {
+    inset: auto 0 max(16px, env(safe-area-inset-bottom, 0px)) 0;
+  }
+  .v-toast {
+    width: 100%;
+    max-width: 640px;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    animation: v-toast-in 280ms var(--_v-vt-ease) both;
+  }
+  .v-toast > * {
+    margin: 0;
+  }
+  .v-toast .v-notice {
+    box-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.22);
+  }
+  @keyframes v-toast-in {
+    from {
+      transform: translateY(16px) scale(0.96);
+      opacity: 0;
+    }
+  }
+  @media (max-width: 767px) {
+    body:has(.v-bag-bar) .v-toast-region {
+      bottom: calc(76px + max(12px, env(safe-area-inset-bottom, 0px)));
+    }
+  }
+  @media (max-width: 859px) {
+    body:has(.v-pp-buy) .v-toast-region {
+      bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+    }
+  }
+  /* over an open bottom sheet the free space is above it, not over its buttons */
+  @media (max-width: 767px) {
+    html:has(.v-sheet[open]) .v-toast-region {
+      top: max(12px, env(safe-area-inset-top, 0px));
+      bottom: auto;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .v-toast {
+      animation: v-fade-in 120ms ease both;
+    }
+    .v-cart-close {
+      transition: none;
+    }
+  }
+  @keyframes v-fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+}

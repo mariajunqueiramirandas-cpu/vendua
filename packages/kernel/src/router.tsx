@@ -1,5 +1,15 @@
-import { useEffect, useMemo } from 'react';
-import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { useContext, useEffect, useMemo, type ReactNode } from 'react';
+import {
+  matchPath,
+  Navigate,
+  Route,
+  Routes,
+  UNSAFE_LocationContext,
+  useLocation,
+  useNavigationType,
+  useParams,
+  type NavigationType,
+} from 'react-router-dom';
 import { contentHandle, PAGE_CONTENT, type PageId } from '@vendua/templates';
 import { useKernel } from './provider.tsx';
 import { KERNEL_PATHS, resolvePaths } from './config.ts';
@@ -18,6 +28,8 @@ import { SDK_COMPONENTS } from './sdk/index.ts';
 import { CartPage } from './pages/cart.tsx';
 import { CheckoutPage } from './pages/checkout.tsx';
 import { OrderHistoryPage, OrderPage } from './pages/order.tsx';
+import { backgroundOf, NativeNavigation } from './transitions.tsx';
+import { CartSheet } from './sheet.tsx';
 
 // The storefront's route table is data (Contract v2): brand pages come from
 // templates, Kernel pages live in the reserved (vendua) group, all inside the
@@ -43,13 +55,25 @@ function PageViews() {
   return null;
 }
 
-function Layout() {
+// <Routes location> reports every navigation as POP to the pages under it; they keep seeing
+// the real one, as they did before the sheet needed a fixed location
+function RealNavigationType({ type, children }: { type: NavigationType; children: ReactNode }) {
+  const ctx = useContext(UNSAFE_LocationContext);
+  const value = useMemo(() => ({ ...ctx, navigationType: type }), [ctx, type]);
+  return (
+    <UNSAFE_LocationContext.Provider value={value}>{children}</UNSAFE_LocationContext.Provider>
+  );
+}
+
+function Layout({ type }: { type: NavigationType }) {
   const layout = useTemplate('layout');
   if (!layout) return null;
   return (
-    <PageContextProvider value={{ page: 'layout', params: {} }}>
-      <TemplateView template={layout} />
-    </PageContextProvider>
+    <RealNavigationType type={type}>
+      <PageContextProvider value={{ page: 'layout', params: {} }}>
+        <TemplateView template={layout} />
+      </PageContextProvider>
+    </RealNavigationType>
   );
 }
 
@@ -90,6 +114,35 @@ export function NotFoundPage() {
 export function StorefrontRoutes() {
   const { config } = useKernel();
   const paths = resolvePaths(config);
+  // transition direction: browsing (0) → product, sacola, pedidos (1) → checkout, pedido (2)
+  const depth = useMemo(() => {
+    const levels: [string, number][] = [
+      [paths.product, 1],
+      [KERNEL_PATHS.cart, 1],
+      [KERNEL_PATHS.orders, 1],
+      [KERNEL_PATHS.checkout, 2],
+      [KERNEL_PATHS.order, 2],
+    ];
+    return (pathname: string) =>
+      levels.find(([p]) => matchPath({ path: p, end: true }, pathname))?.[1] ?? 0;
+  }, [paths.product]);
+  return (
+    <RegistryProvider sdk={SDK_COMPONENTS}>
+      <NativeNavigation depth={depth}>
+        <PageViews />
+        <ScrollManager />
+        <PageRoutes />
+      </NativeNavigation>
+    </RegistryProvider>
+  );
+}
+
+/** The page table; a modal route (the bag sheet) keeps its background page rendered. */
+function PageRoutes() {
+  const { config } = useKernel();
+  const paths = resolvePaths(config);
+  const location = useLocation();
+  const type = useNavigationType();
   const templates = useTemplateSet();
   const handles = useMemo(
     () =>
@@ -98,16 +151,19 @@ export function StorefrontRoutes() {
         .filter((h): h is string => Boolean(h)),
     [templates],
   );
+  const bg = backgroundOf(location);
+  const sheet = bg && location.pathname === KERNEL_PATHS.cart ? bg : null;
   const taken = new Set<string>([paths.home, paths.catalog, ...Object.values(KERNEL_PATHS)]);
   return (
-    <RegistryProvider sdk={SDK_COMPONENTS}>
-      <PageViews />
-      <ScrollManager />
-      <Routes>
+    <>
+      {/* first in document order: the open sheet's controls come before the inert page's */}
+      {sheet ? <CartSheet key={location.key} background={sheet} /> : null}
+      {/* always given a location, so opening the sheet never remounts the page under it */}
+      <Routes location={sheet ?? location}>
         {Object.entries(config.redirects ?? {}).map(([from, to]) => (
           <Route key={`r:${from}`} path={from} element={<Navigate to={to} replace />} />
         ))}
-        <Route element={<Layout />}>
+        <Route element={<Layout type={type} />}>
           <Route index element={<TemplatePage page="home" />} />
           <Route path={paths.catalog} element={<TemplatePage page="catalog" />} />
           <Route path={paths.product} element={<TemplatePage page="product" />} />
@@ -123,6 +179,6 @@ export function StorefrontRoutes() {
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>
-    </RegistryProvider>
+    </>
   );
 }

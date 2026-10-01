@@ -8,7 +8,7 @@ import {
   type MouseEvent,
   type ImgHTMLAttributes,
 } from 'react';
-import { UNSAFE_NavigationContext } from 'react-router-dom';
+import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from 'react-router-dom';
 import { mediaSrcSet } from '@vendua/ui-defaults';
 import { lineDraw, productDraw, unitsLeft, useCart, useStore } from './hooks.ts';
 import { useKernel, prefetchQuery } from './provider.tsx';
@@ -16,6 +16,8 @@ import { productHref, KERNEL_PATHS } from './config.ts';
 import { showError } from './errors.ts';
 import { emit } from './telemetry.ts';
 import type { CatalogProduct, ComboSelection, ProductDetail } from './api.ts';
+import { haptic } from './haptics.ts';
+import { backgroundOf } from './transitions.tsx';
 
 /** Headless primitives (02-kernel.md): Kernel owns behavior, the storefront owns visuals via asChild — each stamps its data-vendua hook + ARIA regardless of the delegated child. */
 
@@ -55,13 +57,25 @@ function withChild(
 }
 
 /** Router-agnostic navigation: SPA push inside a router, full load outside one. */
-export function useNavigateTo(): (to: string) => void {
+export function useNavigateTo(): (to: string, state?: unknown) => void {
   const nav = useContext(UNSAFE_NavigationContext) as {
-    navigator?: { push: (to: string) => void };
+    navigator?: { push: (to: string, state?: unknown) => void };
   } | null;
-  return (to: string) => {
-    if (nav?.navigator) nav.navigator.push(to);
+  return (to: string, state?: unknown) => {
+    if (nav?.navigator) nav.navigator.push(to, state);
     else globalThis.location?.assign(to);
+  };
+}
+
+/** Opens the sacola as a sheet over the current page (a page of its own from checkout). */
+export function useOpenBag(): () => void {
+  const go = useNavigateTo();
+  const here = useContext(UNSAFE_LocationContext)?.location;
+  return () => {
+    if (here && backgroundOf(here)) return;
+    const over =
+      here && here.pathname !== KERNEL_PATHS.cart && here.pathname !== KERNEL_PATHS.checkout;
+    go(KERNEL_PATHS.cart, over ? { vBackground: here } : undefined);
   };
 }
 
@@ -148,6 +162,7 @@ export function AddToCart({
     setPending(true);
     try {
       await mutations.add(product.id, qty, modifierIds, comboSelections);
+      haptic.tick();
       emit('add_to_cart', {
         product_id: product.id,
         qty,
@@ -194,6 +209,7 @@ export function QuantityStepper({ itemId, qty, min = 0, max: maxProp = 99 }: Qua
     : maxProp;
   const step = async (next: number) => {
     if (next < min || next > max || pending) return;
+    haptic.tick();
     setPending(true);
     try {
       if (next === 0) await mutations.remove(itemId);
@@ -236,7 +252,7 @@ export interface CartTriggerProps {
 
 export function CartTrigger({ asChild, children, onOpen }: CartTriggerProps) {
   const { cart } = useCart();
-  const go = useNavigateTo();
+  const openBag = useOpenBag();
   // a completed cart is history, not a bag — count only open carts
   const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
   return withChild(
@@ -249,7 +265,7 @@ export function CartTrigger({ asChild, children, onOpen }: CartTriggerProps) {
         emit('cart_open', { item_count: count, cart_value: cart?.totals.totalCents ?? 0 });
         if (onOpen) return onOpen();
         if (e && 'preventDefault' in e) e.preventDefault();
-        go(KERNEL_PATHS.cart);
+        openBag();
       },
     },
     children ?? <>Sacola ({count})</>,

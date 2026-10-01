@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useLocation, useNavigationType } from 'react-router-dom';
+import { backgroundOf } from './transitions.tsx';
 
 // Route changes reset scroll like page loads do: new page → top, #hash → that element (waiting
 // for async content), back/forward → where the visitor was. Same-path changes (filters, ?query)
-// never move the page.
+// never move the page. A modal route (the bag sheet) is not a page change: everything here
+// follows the page under it.
 
 const STORE = 'vendua:scroll';
 const WAIT_MS = 2000;
@@ -48,9 +50,16 @@ function until(attempt: () => boolean): () => void {
 }
 
 export function ScrollManager() {
-  const { pathname, hash, key } = useLocation();
+  const location = useLocation();
+  const page = backgroundOf(location) ?? location;
+  const { pathname, hash } = page;
+  // a typed URL / fresh tab has no entry key: don't let every such load share one position
+  const key = page.key === 'default' ? `default:${pathname}` : page.key;
   const type = useNavigationType();
   const prev = useRef<string | null>(null);
+  // read, not a dependency: the sheet opening or closing changes the type, not the page
+  const typeRef = useRef(type);
+  typeRef.current = type;
   const keyRef = useRef(key);
   keyRef.current = key;
 
@@ -93,7 +102,7 @@ export function ScrollManager() {
         return true;
       });
     }
-    if (type === 'POP') {
+    if (typeRef.current === 'POP') {
       const y = read()[key];
       if (y === undefined) {
         if (!first) jump(0);
@@ -107,7 +116,7 @@ export function ScrollManager() {
     }
     if (samePath || first) return;
     jump(0);
-  }, [pathname, hash, key, type]);
+  }, [pathname, hash, key]);
 
   return null;
 }
