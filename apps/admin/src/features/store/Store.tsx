@@ -366,7 +366,12 @@ function Delivery({
         toast.error('Não achamos esse endereço no mapa. Toque em “marcar loja” e marque à mão.');
         return;
       }
-      patch({ location: { latitude: point.lat, longitude: point.lng } });
+      // saved before it's announced; a failed save already shows its own error
+      const saved = await run({ location: { latitude: point.lat, longitude: point.lng } }).then(
+        () => true,
+        () => false,
+      );
+      if (!saved) return;
       toast(
         point.precision === 'address'
           ? 'Loja marcada pelo endereço. Confira o pino no mapa.'
