@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { SlotProps } from '@vendua/kernel';
 import {
   dateTime,
@@ -409,6 +409,11 @@ export function HoursTable({ hours }: SlotProps['store.HoursTable']) {
 
 const CARD_WIDTHS = [320, 480, 640];
 
+/** Kernel 1.13 — Core's "a partir de" (the cheapest configured unit), only when above the price */
+function fromPrice(p: { basePriceCents: number; fromPriceCents?: number | null }): number | null {
+  return p.fromPriceCents != null && p.fromPriceCents > p.basePriceCents ? p.fromPriceCents : null;
+}
+
 export function ProductCard({
   product,
   currency,
@@ -419,8 +424,11 @@ export function ProductCard({
   const soldOut = product.status !== 'active';
   const [imgFailed, setImgFailed] = useState(false);
   const left = stockLeft ?? product.stockQuantity;
+  const from = fromPrice(product);
+  const shown = from ?? product.basePriceCents;
+  // a "de" price is the base's; beside a from-price that includes options it would mislead
   const compareAt =
-    product.compareAtPriceCents != null && product.compareAtPriceCents > product.basePriceCents
+    from === null && product.compareAtPriceCents != null && product.compareAtPriceCents > shown
       ? product.compareAtPriceCents
       : null;
   const badge = soldOut
@@ -494,7 +502,12 @@ export function ProductCard({
                       <span className="v-sr">por </span>
                     </>
                   ) : null}
-                  {money(product.basePriceCents, currency)}
+                  {from !== null ? (
+                    <span className="v-price-from" data-part="from">
+                      a partir de{' '}
+                    </span>
+                  ) : null}
+                  {money(shown, currency)}
                 </span>
                 {quickAdd ? null : (
                   <span className="v-card-go" aria-hidden="true">
@@ -517,6 +530,14 @@ export function ProductCard({
   );
 }
 
+// Kernel 1.13 — a group with more options than this gets a filter above them
+const FILTER_FROM = 12;
+const fold = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('pt-BR');
+
 const PRICING_RULE_HINT: Record<string, string> = {
   most_expensive: 'Vale o preço da opção mais cara.',
   average: 'Vale a média dos preços escolhidos.',
@@ -531,6 +552,10 @@ export function ModifierPicker({
   quantities = {},
   onQtyChange,
 }: SlotProps['catalog.ModifierPicker']) {
+  const uid = useId();
+  // per group; a filtered-out pick stays in `value`
+  const [queries, setQueries] = useState<Record<string, string>>({});
+  const setQuery = (gid: string, q: string) => setQueries((x) => ({ ...x, [gid]: q }));
   const delta = (cents: number) =>
     cents !== 0 ? (
       <span className="v-muted v-num">
@@ -557,6 +582,22 @@ export function ModifierPicker({
           g.pricingRule && !single && g.modifiers.some((m) => m.priceDeltaCents !== 0)
             ? PRICING_RULE_HINT[g.pricingRule]
             : undefined;
+        const filterable = g.modifiers.length > FILTER_FROM;
+        const raw = filterable ? (queries[g.id] ?? '') : '';
+        const terms = fold(raw).split(/\s+/).filter(Boolean);
+        const mods = terms.length
+          ? g.modifiers.filter((m) => {
+              const hay = fold(`${m.name} ${m.description ?? ''}`);
+              return terms.every((t) => hay.includes(t));
+            })
+          : g.modifiers;
+        const flavours = /sabor/.test(fold(g.name));
+        const [one, many] = flavours ? ['sabor', 'sabores'] : ['opção', 'opções'];
+        const listId = `${uid}-${g.id}-list`;
+        const hitsId = `${uid}-${g.id}-hits`;
+        const away = terms.length
+          ? g.modifiers.filter((m) => sel.includes(m.id) && !mods.includes(m)).map((m) => m.name)
+          : [];
         return (
           <fieldset
             key={g.id}
@@ -572,8 +613,76 @@ export function ModifierPicker({
                 {rule}
               </p>
             ) : null}
-            <ul className="v-mod-list" role={single ? 'radiogroup' : 'group'} aria-label={g.name}>
-              {g.modifiers.map((m) => {
+            {filterable ? (
+              <div className="v-mod-search" data-part="option-search">
+                <div className="v-search-field">
+                  <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                    <circle
+                      cx="8.5"
+                      cy="8.5"
+                      r="5.5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    />
+                    <path
+                      d="m13 13 4 4"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <input
+                    type="search"
+                    className="v-input"
+                    value={raw}
+                    maxLength={60}
+                    placeholder={flavours ? 'Buscar sabor' : 'Buscar opção'}
+                    aria-label={`Buscar em ${g.name}`}
+                    aria-controls={listId}
+                    aria-describedby={hitsId}
+                    autoComplete="off"
+                    enterKeyHint="search"
+                    onChange={(e) => setQuery(g.id, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.preventDefault();
+                      // the first Escape clears; the next one may close the sheet
+                      if (e.key === 'Escape' && raw) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setQuery(g.id, '');
+                      }
+                    }}
+                  />
+                  {raw ? (
+                    <button
+                      type="button"
+                      className="v-search-clear"
+                      aria-label="Limpar busca"
+                      onClick={() => setQuery(g.id, '')}
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </div>
+                <p id={hitsId} className="v-mod-hits v-muted" role="status">
+                  {terms.length
+                    ? `${
+                        mods.length === 0
+                          ? `Nenhum resultado para “${raw.trim()}”`
+                          : `${mods.length} ${mods.length === 1 ? one : many}`
+                      }${away.length ? ` · na sua escolha: ${away.join(', ')}` : ''}`
+                    : ''}
+                </p>
+              </div>
+            ) : null}
+            <ul
+              id={listId}
+              className="v-mod-list"
+              role={single ? 'radiogroup' : 'group'}
+              aria-label={g.name}
+            >
+              {mods.map((m) => {
                 const on = sel.includes(m.id);
                 const soldOut = m.status !== 'active';
                 const text = (

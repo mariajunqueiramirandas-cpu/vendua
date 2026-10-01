@@ -1,5 +1,5 @@
-import type { AvailabilitySchedule, Product } from '../../lib/api.ts';
-import { hhmm, WEEKDAYS } from '../../lib/format.ts';
+import type { AvailabilitySchedule, Product, PromoSchedule } from '../../lib/api.ts';
+import { hhmm, money, WEEKDAYS } from '../../lib/format.ts';
 
 export type ScheduleWindow = AvailabilitySchedule['windows'][number];
 
@@ -33,7 +33,7 @@ export const windowText = (w: ScheduleWindow) =>
   `${daysText(w.days)}, ${w.from && w.to ? `das ${hhmm(w.from)} às ${hhmm(w.to)}` : 'o dia todo'}`;
 
 /** "Seg a sex, das 11h às 15h; sáb, o dia todo" */
-export function scheduleShort(s: AvailabilitySchedule): string {
+export function scheduleShort(s: Pick<AvailabilitySchedule, 'windows'>): string {
   const t = s.windows
     .filter((w) => w.days.length)
     .map(windowText)
@@ -49,6 +49,14 @@ export function scheduleSentence(s: AvailabilitySchedule): string {
     .join('; ')}. Fora disso, ${
     s.outside === 'hidden' ? 'some do cardápio' : 'aparece como indisponível'
   }.`;
+}
+
+/** "Por R$ 19,90 seg a sex, das 18h às 20h. No resto do tempo, R$ 24,90." */
+export function promoSentence(s: PromoSchedule, regularCents: number): string {
+  return `Por ${money(s.priceCents)} ${s.windows
+    .filter((w) => w.days.length)
+    .map(windowText)
+    .join('; ')}. No resto do tempo, ${money(regularCents)}.`;
 }
 
 export const outsideNow = (p: Pick<Product, 'availableNow' | 'availabilitySchedule'>) =>

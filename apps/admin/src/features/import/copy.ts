@@ -56,7 +56,7 @@ export const hidesProduct = (l: ImportLost) => l.scope === 'product' && HIDES.ha
 const q = (s: string | undefined) => (s ? `“${s}”` : 'um produto');
 
 /** One sentence per thing that didn't come over (or came over changed). */
-export function lostLine(l: ImportLost, platform: string): string {
+export function lostLine(l: ImportLost, platform: string | null): string {
   const from = platformName(platform);
   const s = q(l.subject);
   const d = l.detail;
@@ -103,7 +103,7 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'pizza_flavours':
       return `Em ${s}, cada sabor veio como um produto. Pizza meio a meio você monta em Opções.`;
     case 'promo_schedule':
-      return `${s} tinha preço promocional${d ? ` de ${d}` : ''} só em alguns dias ou horários. Não deu para trazer os dias e horários dela: veio pelo preço normal. Cadastre a promoção por horário no produto.`;
+      return `${s} tinha preço promocional${d ? ` de ${d}` : ''} só em alguns dias ou horários. Não deu para trazer os dias e horários dela: veio pelo preço normal. Cadastre de novo no produto, em Promoção por horário.`;
     case 'pickup_only':
       return `${s} era só para retirar na loja. Aqui ele vale para entrega também: confira se é isso.`;
     case 'adults_only':

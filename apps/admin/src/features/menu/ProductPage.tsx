@@ -7,6 +7,7 @@ import {
   ListChecks,
   Package,
   Plus,
+  SealPercent,
   SlidersHorizontal,
   Stack,
   Trash,
@@ -53,6 +54,7 @@ import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
 import { availability } from '../../ui/ProductTile.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { PromoEditor } from './PromoEditor.tsx';
 import { outsideNow, scheduleShort } from './schedule.ts';
 import { ScheduleEditor } from './ScheduleEditor.tsx';
 
@@ -133,7 +135,9 @@ function Editor({
         toast.error(
           e instanceof ApiError && e.field === 'compareAtPriceCents'
             ? 'O preço “de” precisa ser maior que o preço. Mude ou apague o preço “de”.'
-            : messageOf(e),
+            : e instanceof ApiError && e.field === 'promoSchedule.priceCents'
+              ? 'O preço precisa ficar acima do preço da promoção. Mude ou desligue a promoção.'
+              : messageOf(e),
         ),
       );
   };
@@ -153,6 +157,11 @@ function Editor({
   });
   const a = availability(p);
   const tracked = p.stockQuantity !== null;
+  const promo = p.promoSchedule ?? null;
+  // inside a promotion's hours the store sells at its price, the regular one struck through
+  const promoOn = !!promo && !!p.promoNow;
+  const shownCents = promoOn ? promo.priceCents : p.priceCents;
+  const struckCents = promoOn ? (p.compareAtPriceCents ?? p.priceCents) : p.compareAtPriceCents;
   const groupsSummary = p.groups.length
     ? `${plural(p.groups.length, 'grupo', 'grupos')}, ${plural(
         p.groups.reduce((n, g) => n + g.options.length, 0),
@@ -220,14 +229,22 @@ function Editor({
               />
             </Field>
             <div className="grid gap-5 sm:grid-cols-2 sm:gap-3">
-              <Field label="Preço" htmlFor="pprice">
+              <Field
+                label="Preço"
+                htmlFor="pprice"
+                {...(promo
+                  ? { helper: `Na promoção por horário: ${money(promo.priceCents)}.` }
+                  : {})}
+              >
                 <MoneyField
                   id="pprice"
                   cents={p.priceCents}
                   validate={(v) =>
                     p.compareAtPriceCents !== null && v >= p.compareAtPriceCents
                       ? `Precisa ficar abaixo do preço “de” (${money(p.compareAtPriceCents)}).`
-                      : null
+                      : promo && v <= promo.priceCents
+                        ? `Precisa ficar acima do preço da promoção (${money(promo.priceCents)}).`
+                        : null
                   }
                   onCommit={(v) => void patch({ priceCents: v ?? 0 })}
                 />
@@ -292,11 +309,17 @@ function Editor({
                   <p className="t-caption line-clamp-2 text-muted">{p.description}</p>
                 ) : null}
                 <p className="tnum mt-1 font-semibold">
-                  {p.compareAtPriceCents !== null ? (
-                    <s className="mr-1.5 font-normal text-muted">{money(p.compareAtPriceCents)}</s>
+                  {struckCents !== null ? (
+                    <s className="mr-1.5 font-normal text-muted">{money(struckCents)}</s>
                   ) : null}
-                  {money(p.priceCents)}
+                  {money(shownCents)}
                 </p>
+                {promoOn ? (
+                  <p className="t-caption mt-1 inline-flex items-center gap-1 text-muted">
+                    <SealPercent className="size-3.5 shrink-0" aria-hidden />
+                    em promoção agora
+                  </p>
+                ) : null}
                 {p.availabilitySchedule ? (
                   <p className="t-caption mt-1 inline-flex items-center gap-1 text-muted">
                     <Clock className="size-3.5 shrink-0" aria-hidden />
@@ -369,6 +392,18 @@ function Editor({
             }
           >
             <ScheduleEditor p={p} onSaved={put} />
+          </Disclosure>
+
+          <Disclosure
+            title="Promoção por horário"
+            icon={<SealPercent />}
+            summary={
+              promo
+                ? `${money(promo.priceCents)}${p.promoNow ? ' agora' : ''} · ${scheduleShort(promo)}`
+                : 'Sem promoção (ex.: happy hour, terça do pastel)'
+            }
+          >
+            <PromoEditor p={p} onSaved={put} />
           </Disclosure>
 
           <Disclosure
@@ -483,6 +518,9 @@ const RULES: { value: PricingRule; label: string; help: string }[] = [
   },
 ];
 
+/** Core's cap on one group's options (a pizzeria's flavours) */
+const MAX_OPTIONS = 100;
+
 /** a group can ask for as many units as its options offer together (Core's cap is 40) */
 const unitsOf = (g: OptionGroup) =>
   Math.max(
@@ -519,6 +557,7 @@ function OptionsEditor({ p, onSaved }: { p: ProductDetail; onSaved: (p: ProductD
   );
   // which option has its details open: "group:option"
   const [open, setOpen] = useState<string | null>(null);
+  const uid = useId();
   const upd = (i: number, g: Partial<OptionGroup>) =>
     setDraft((d) => d.map((x, k) => (k === i ? fit({ ...x, ...g }) : x)));
   const updOpt = (i: number, j: number, o: Partial<OptionItem>) =>
@@ -541,6 +580,8 @@ function OptionsEditor({ p, onSaved }: { p: ProductDetail; onSaved: (p: ProductD
       {draft.map((g, i) => {
         const rule = RULES.find((r) => r.value === (g.pricingRule ?? 'sum')) ?? RULES[0]!;
         const counted = g.options.some((o) => (o.maxQty ?? 1) > 1);
+        const full = g.options.length >= MAX_OPTIONS;
+        const fullHint = `${uid}-full-${i}`;
         return (
           <div key={g.id ?? `n${i}`} className="@container rounded-md bg-sunken p-3">
             <div className="flex gap-2">
@@ -686,15 +727,23 @@ function OptionsEditor({ p, onSaved }: { p: ProductDetail; onSaved: (p: ProductD
                 );
               })}
             </ul>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-2"
-              icon={<Plus />}
-              onClick={() => upd(i, { options: [...g.options, blankOption()] })}
-            >
-              opção
-            </Button>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Plus />}
+                disabled={full}
+                aria-describedby={full ? fullHint : undefined}
+                onClick={() => upd(i, { options: [...g.options, blankOption()] })}
+              >
+                opção
+              </Button>
+              {full ? (
+                <p id={fullHint} className="t-caption text-muted">
+                  Até {MAX_OPTIONS} opções por grupo.
+                </p>
+              ) : null}
+            </div>
           </div>
         );
       })}

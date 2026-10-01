@@ -3,6 +3,28 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.13.0
+
+Timed promotions and "a partir de" — additive; no storefront edit, no new runtime export. Every
+price shown is still Core's.
+
+- `CatalogProduct.fromPriceCents`: the cheapest configured unit, set only when above
+  `basePriceCents` (a product priced by a required list). The default `catalog.ProductCard` and
+  the grid's link label read "a partir de R$ X" in its place (`data-part="from"`), with no "de"
+  price beside it (that one is the base's, without the options). `sdk:purchase-panel` reads "a partir de" it
+  too (combos keep theirs), and its add button leaves out base × qty while a required list
+  sets the price.
+- `CatalogProduct.promoLabel`: the product has a timed promotion (Core's copy of its days and
+  hours). Inside a window Core already serves the promotion as `basePriceCents` and the regular
+  price as `compareAtPriceCents`, so the "de/por" strike-through shows it; `sdk:purchase-panel`
+  prints "Promoção: …" under the price (`data-part="promo"`).
+- The catalog response may carry `nextChangeAt`: `useCatalog` reads the catalog (and evicts open
+  product pages) again at that moment, armed again on every read, so a page left open sees a
+  promotion or a product's hours start and end.
+- `catalog.ModifierPicker`'s default gives a group with more than 12 options a filter ("Buscar
+  sabor"/"Buscar opção", `data-part="option-search"`) — accents and case ignored, names and
+  descriptions matched, picks kept while filtered out. A group now holds up to 100 options.
+
 ## 1.12.0
 
 The catalog model gaps — additive; no storefront edit, no new runtime export. Every price

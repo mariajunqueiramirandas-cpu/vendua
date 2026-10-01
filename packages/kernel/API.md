@@ -218,6 +218,19 @@ Additive — no storefront edit, no new runtime export. Stores stay a plain web 
 - **Checkout steps** are history entries (`state.vStep`); back returns to the previous step.
 - `<meta name="theme-color">` follows the `bg` token; toasts live in the top layer.
 
+### Timed promotions and "a partir de" (Kernel 1.13)
+
+Additive — no storefront edit, no new runtime export. Money stays Core's.
+
+- `CatalogProduct.fromPriceCents` (display-only): the cheapest configured unit, set only when
+  above `basePriceCents`. Show "a partir de" it instead of the base price; never compute it.
+- `CatalogProduct.promoLabel`: the product has a timed promotion, e.g. "Seg a sex, 18h–20h".
+  Inside a window `basePriceCents` is already the promotion's price and `compareAtPriceCents`
+  the regular one; outside, the regular price and no "de" price.
+- The catalog response's optional `nextChangeAt` (ISO instant): when a promotion or a
+  product's hours next start or end. `useCatalog` re-reads the catalog and open product pages
+  then; a custom catalog reader should do the same.
+
 ### Catalog model gaps (Kernel 1.12)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's: the Kernel shows

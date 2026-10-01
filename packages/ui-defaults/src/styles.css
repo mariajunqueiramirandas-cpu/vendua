@@ -1814,6 +1814,30 @@
     width: 32px;
     height: 32px;
   }
+  /* Kernel 1.13 — a long list (a pizzeria's flavours) gets a filter; "a partir de" prices */
+  .v-mod-search {
+    margin: 0 0 10px;
+  }
+  .v-mod-hits {
+    margin: 8px 0 0 4px;
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+  .v-mod-hits:empty {
+    margin: 0;
+  }
+  .v-price-from {
+    font-size: 0.8125em;
+    font-weight: 400;
+    color: var(--v-color-muted, #6e6a64);
+    white-space: nowrap;
+  }
+  .v-pp-promo {
+    margin: -10px 0 16px;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    color: var(--v-color-muted, #6e6a64);
+  }
 
   /* ── SDK sections ───────────────────────────────────────────────────────── */
   .v-announcement {
