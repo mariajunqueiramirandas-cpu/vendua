@@ -49,7 +49,7 @@ export function routeOf(path: string): string {
 const ERROR_WINDOW_MS = 10 * 60_000;
 const ERROR_KEYS_MAX = 200;
 
-/** errorJson's hook (`onUnhandledError`): one `system.error` per method + route + message per
+/** errorJson's hook (`onUnhandledError`): one `system.error` per method + route + error class per
  *  10 min; the next one carries how many happened since the last. Never throws; the returned
  *  promise (a report going out) is only for tests. */
 export function unhandledErrorReporter(
@@ -65,7 +65,11 @@ export function unhandledErrorReporter(
     try {
       const path = routeOf(info.path);
       const message = (err instanceof Error ? err.message : String(err)).slice(0, 120);
-      const key = `${info.method} ${path} ${message}`;
+      // the message can echo request input: keyed by route and error class, one input can't
+      // mint a new alert (the first message of a window is what the event shows)
+      const code = (err as { code?: unknown } | null)?.code;
+      const kind = `${err instanceof Error ? err.name : typeof err}${typeof code === 'string' ? `:${code.slice(0, 20)}` : ''}`;
+      const key = `${info.method} ${path} ${kind}`;
       const t = now();
       const hit = seen.get(key);
       if (hit && t - hit.at < windowMs) {

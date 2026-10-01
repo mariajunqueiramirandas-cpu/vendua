@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { Sql } from '../../platform/db.ts';
+import { UUID_RE } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
-import { controlTx } from '../control.ts';
+import { claimControl, controlTx } from '../control.ts';
 import { getSettingTx } from '../integrations.ts';
 import { CATEGORY_META, STAFF_CATEGORIES, type StaffCategory } from '../staff-events.ts';
 import {
@@ -9,6 +10,7 @@ import {
   crmLink,
   mutedUntil,
   updateDiscordState,
+  updateDiscordStateTx,
   type DiscordContext,
 } from './config.ts';
 import { computeDigest } from './digest.ts';
@@ -214,6 +216,8 @@ export interface CommandCtx {
   ctx: DiscordContext;
   staffName: string;
   userId: string;
+  /** Discord's id for this interaction — the idempotency key of anything it changes */
+  interactionId: string;
 }
 
 interface Opt {
@@ -482,7 +486,7 @@ export async function pendingView(c: CommandCtx): Promise<MessagePayload> {
 
 async function lead(c: CommandCtx, opts: Opt[] | undefined): Promise<InteractionResponse> {
   const q = String(optValue(opts, 'busca') ?? '').trim();
-  const id = /^[0-9a-f-]{36}$/i.test(q) ? q : (await searchLeads(c.sql, q, 1))[0]?.id;
+  const id = UUID_RE.test(q) ? q : (await searchLeads(c.sql, q, 1))[0]?.id;
   const l = id ? await leadSnapshot(c.sql, id) : null;
   if (!l) return say(`nenhum lead encontrado para “${esc(clip(q, 60))}”`);
   const thread = l.threads[0];
@@ -547,7 +551,7 @@ async function lead(c: CommandCtx, opts: Opt[] | undefined): Promise<Interaction
 
 async function loja(c: CommandCtx, opts: Opt[] | undefined): Promise<InteractionResponse> {
   const q = String(optValue(opts, 'busca') ?? '').trim();
-  const id = /^[0-9a-f-]{36}$/i.test(q) ? q : (await searchStores(c.sql, q, 1))[0]?.id;
+  const id = UUID_RE.test(q) ? q : (await searchStores(c.sql, q, 1))[0]?.id;
   const s = id ? await storeSnapshot(c.sql, id) : null;
   if (!s) return say(`nenhuma loja encontrada para “${esc(clip(q, 60))}”`);
   const steps = onboardingSteps(s);
@@ -754,15 +758,20 @@ async function silenciar(c: CommandCtx, opts: Opt[] | undefined): Promise<Intera
         : [];
   if (!cats.length || !Number.isInteger(minutes) || minutes < 0 || minutes > 1440)
     return say('categoria ou tempo inválido');
-  const until = minutes ? new Date(Date.now() + minutes * 60_000).toISOString() : null;
-  await updateDiscordState(c.sql, (s) => {
-    const mutes = { ...s.mutes };
-    for (const k of cats) {
-      if (until) mutes[k] = until;
-      else delete mutes[k];
-    }
-    return { mutes };
+  // a replayed interaction answers with the stored mute instead of extending it
+  const { body } = await claimControl(c.sql, `discord:${c.interactionId}`, async (tx) => {
+    const at = minutes ? new Date(Date.now() + minutes * 60_000).toISOString() : null;
+    await updateDiscordStateTx(tx, (s) => {
+      const mutes = { ...s.mutes };
+      for (const k of cats) {
+        if (at) mutes[k] = at;
+        else delete mutes[k];
+      }
+      return { mutes };
+    });
+    return { status: 200, body: { until: at } };
   });
+  const until = body.until;
   const what =
     cat === 'todas' ? 'todas as categorias' : `${CATEGORY_META[cats[0]!].emoji} ${cats[0]}`;
   // everyone should know the channel went quiet: a visible message, not an ephemeral one

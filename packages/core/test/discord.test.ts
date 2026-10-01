@@ -832,6 +832,47 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
     );
   });
 
+  test('commands: a malformed id is "not found"; a replayed /silenciar keeps its mute', async () => {
+    const dash = '-'.repeat(36);
+    for (const [name, word] of [
+      ['lead', 'nenhum lead'],
+      ['loja', 'nenhuma loja'],
+    ] as const) {
+      const r = await interact(
+        asStaff({ type: 2, data: { name, options: [{ name: 'busca', type: 3, value: dash }] } }),
+      );
+      expect(((await r.json()) as { data: { content: string } }).data.content).toContain(word);
+    }
+    const mute = asStaff({
+      type: 2,
+      data: {
+        name: 'silenciar',
+        options: [
+          { name: 'categoria', type: 3, value: 'frota' },
+          { name: 'tempo', type: 4, value: 30 },
+        ],
+      },
+    });
+    const until = async () =>
+      (
+        await sql<{ u: string | null }[]>`
+          select value->'mutes'->>'frota' as u from control_settings where key = 'discord_state'
+        `
+      )[0]?.u;
+    const first = (await (await interact(mute)).json()) as {
+      type: number;
+      data: { content: string };
+    };
+    expect(first.type).toBe(4);
+    const at = await until();
+    expect(at).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 1100));
+    const again = (await (await interact(mute)).json()) as { data: { content: string } };
+    expect(await until()).toBe(at);
+    expect(again.data.content).toBe(first.data.content);
+    await sql`update control_settings set value = '{}' where key = 'discord_state'`;
+  });
+
   test('CRM: overview, setup channels, test, mutes and the digest', async () => {
     const ov = await ctl('GET', '/control/v1/discord');
     expect(ov.status).toBe(200);

@@ -687,22 +687,24 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       const report = unhandledErrorReporter(appSql, { now: () => now, maxKeys: 2 });
       const msg = `throttled ${nonce}`;
       const at = () => ({ method: 'POST', path: `/control/v1/leads/${crypto.randomUUID()}/facts` });
+      const coded = (code: string) => Object.assign(new Error(`${msg} ${code}`), { code });
       await report(new Error(msg), at());
       expect(report(new Error(msg), at())).toBeUndefined();
-      expect(report(new Error(msg), at())).toBeUndefined();
+      // a message that echoes request input is still the same error on the same route
+      expect(report(new Error(`${msg} input-1234`), at())).toBeUndefined();
       now += 10 * 60_000;
       await report(new Error(msg), at());
-      await report(new Error(`${msg} b`), at());
+      await report(coded('23505'), at());
       // a third fingerprint evicts the oldest (bounded memory): it reports anew
-      await report(new Error(`${msg} c`), at());
+      await report(coded('22P02'), at());
       await report(new Error(msg), at());
-      await report(new Error(`${msg} ${'x'.repeat(300)}`), at());
+      await report(new TypeError(`${msg} ${'x'.repeat(300)}`), at());
       const rows = await evs('system.error', sql`and data->>'message' like ${`${msg}%`}`);
       expect(rows.map((r) => [r.data.message, r.data.count])).toEqual([
         [msg, 1],
         [msg, 3],
-        [`${msg} b`, 1],
-        [`${msg} c`, 1],
+        [`${msg} 23505`, 1],
+        [`${msg} 22P02`, 1],
         [msg, 1],
         [`${msg} ${'x'.repeat(300)}`.slice(0, 120), 1],
       ]);

@@ -112,7 +112,7 @@ export async function handleInteraction(
       ].join('\n'),
     });
   }
-  const c: CommandCtx = { sql, ctx, staffName, userId: user.id };
+  const c: CommandCtx = { sql, ctx, staffName, userId: user.id, interactionId: i.id };
   try {
     if (i.type === 2) return await runCommand(c, i.data?.name ?? '', i.data?.options);
     if (i.type === 4) return await autocomplete(sql, i.data?.name ?? '', i.data?.options);
