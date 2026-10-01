@@ -3,6 +3,7 @@ import { cardapioweb } from './cardapioweb.ts';
 import { deliverydireto } from './deliverydireto.ts';
 import { instadelivery } from './instadelivery.ts';
 import { olaclick } from './olaclick.ts';
+import { saipos } from './saipos.ts';
 import { takeat } from './takeat.ts';
 import type { Adapter } from './types.ts';
 
@@ -14,6 +15,7 @@ export const ADAPTERS: readonly Adapter[] = [
   olaclick,
   takeat,
   deliverydireto,
+  saipos,
 ];
 
 // platforms we recognise but can't read: blocked ones answer a challenge to any server
@@ -22,10 +24,7 @@ const BLOCKED: [Platform, RegExp][] = [
   ['anotaai', /(^|\.)anota\.ai$/],
   ['ifood', /(^|\.)ifood\.com\.br$/],
 ];
-const NOT_YET: [Platform, RegExp][] = [
-  ['saipos', /(^|\.)saipos\.com$/],
-  ['goomer', /(^|\.)goomer\.app$/],
-];
+const NOT_YET: [Platform, RegExp][] = [['goomer', /(^|\.)goomer\.app$/]];
 
 export type Recognised =
   | { kind: 'ok'; adapter: Adapter; ref: string; url: URL }

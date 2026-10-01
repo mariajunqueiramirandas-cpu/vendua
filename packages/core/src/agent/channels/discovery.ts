@@ -100,6 +100,7 @@ const LISTING_HOSTS = new Set([
   'cardapioweb.com',
   'ola.click',
   'deliverydireto.com.br',
+  'saipos.com',
   'goomer.app',
   'takeat.app',
   'ueniweb.com',

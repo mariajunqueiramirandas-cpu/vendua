@@ -1,0 +1,1450 @@
+{
+  "store": {
+    "id_store": 4242,
+    "trade_name": "Pizzaria Exemplo",
+    "store_name": "PIZZARIA EXEMPLO LTDA should-not-appear",
+    "address": "Rua das Pizzas",
+    "address_number": "42",
+    "address_complement": "Loja 2",
+    "district": {
+      "id_district": 1,
+      "desc_district": "Centro",
+      "id_city": 1,
+      "city": {
+        "id_city": 1,
+        "desc_city": "Cidade Exemplo",
+        "id_state": 1,
+        "state": {
+          "id_state": 1,
+          "desc_state": "Estado",
+          "short_desc_state": "EX"
+        }
+      }
+    },
+    "show_store_address": true,
+    "photo_site_logo": "saipos-estatico/site-data/1/logo/logo.png",
+    "photo_site_cover": "saipos-estatico/site-data/1/cover/cover.png",
+    "photo_cover": null,
+    "primary_color": "#c0392b",
+    "timezone": "America/Sao_Paulo",
+    "schedules_service": [
+      {
+        "id_store_schedule_service": 1,
+        "day_week": 1,
+        "start_time": "18:00",
+        "end_time": "23:30",
+        "enable_schedule": false,
+        "id_store": 4242
+      },
+      {
+        "id_store_schedule_service": 2,
+        "day_week": 2,
+        "start_time": "18:00",
+        "end_time": "23:30",
+        "enable_schedule": false,
+        "id_store": 4242
+      },
+      {
+        "id_store_schedule_service": 3,
+        "day_week": 3,
+        "start_time": "18:00",
+        "end_time": "23:30",
+        "enable_schedule": false,
+        "id_store": 4242
+      },
+      {
+        "id_store_schedule_service": 4,
+        "day_week": 4,
+        "start_time": "18:00",
+        "end_time": "23:30",
+        "enable_schedule": false,
+        "id_store": 4242
+      },
+      {
+        "id_store_schedule_service": 5,
+        "day_week": 5,
+        "start_time": "18:00",
+        "end_time": "23:30",
+        "enable_schedule": false,
+        "id_store": 4242
+      },
+      {
+        "id_store_schedule_service": 6,
+        "day_week": 6,
+        "start_time": "18:00",
+        "end_time": "23:30",
+        "enable_schedule": false,
+        "id_store": 4242
+      },
+      {
+        "id_store_schedule_service": 7,
+        "day_week": 7,
+        "start_time": "18:00",
+        "end_time": "23:30",
+        "enable_schedule": false,
+        "id_store": 4242
+      }
+    ],
+    "minimum_value": 20,
+    "free_shipping": 80,
+    "delivery_time": 45,
+    "pickup_time": 25,
+    "pickup_counter": "Y",
+    "pickup_delivery": "Y",
+    "delivery_open": "Y",
+    "enable_order_schedule": true,
+    "accept_schedule_max_days": 3,
+    "fee_enabled": false,
+    "pix_enabled": true,
+    "enabled_payment_online": "N",
+    "credit_card_enabled": false,
+    "id_store_payment_pix_online": 99,
+    "id_store_payment_type_to_online": null,
+    "pixel_code": "should-not-appear",
+    "last_digits_meta_token": "should-not-appear",
+    "analytics_code": "should-not-appear",
+    "require_tax_id": "no",
+    "categories": "",
+    "domain": {
+      "url_site": "exemplo.saipos.com"
+    },
+    "id_store_site_data": 1,
+    "site_payment_types": [
+      {
+        "id_store_site_payment_type": 1,
+        "id_store_payment_type": 1,
+        "id_store": 4242,
+        "id_payment_type": 1,
+        "store_payment_type": {
+          "id_store_payment_type": 1,
+          "desc_store_payment_type": "Dinheiro",
+          "payment_template": 0,
+          "rate": null,
+          "days_to_receive": null,
+          "enabled": "Y",
+          "on_the_arm": "N",
+          "id_store": 4242,
+          "desc_payment_template": ""
+        },
+        "site_delivery_payment_type": {
+          "id_payment_type": 1,
+          "desc_payment_type": "DINHEIRO",
+          "url_image": null
+        }
+      },
+      {
+        "id_store_site_payment_type": 2,
+        "id_store_payment_type": 2,
+        "id_store": 4242,
+        "id_payment_type": 2,
+        "store_payment_type": {
+          "id_store_payment_type": 2,
+          "desc_store_payment_type": "Crédito Amex",
+          "payment_template": 0,
+          "rate": null,
+          "days_to_receive": null,
+          "enabled": "Y",
+          "on_the_arm": "N",
+          "id_store": 4242,
+          "desc_payment_template": ""
+        },
+        "site_delivery_payment_type": {
+          "id_payment_type": 2,
+          "desc_payment_type": "AMEX",
+          "url_image": null
+        }
+      },
+      {
+        "id_store_site_payment_type": 3,
+        "id_store_payment_type": 3,
+        "id_store": 4242,
+        "id_payment_type": 3,
+        "store_payment_type": {
+          "id_store_payment_type": 3,
+          "desc_store_payment_type": "Pix",
+          "payment_template": 0,
+          "rate": null,
+          "days_to_receive": null,
+          "enabled": "Y",
+          "on_the_arm": "N",
+          "id_store": 4242,
+          "desc_payment_template": ""
+        },
+        "site_delivery_payment_type": {
+          "id_payment_type": 3,
+          "desc_payment_type": "PIX",
+          "url_image": null
+        }
+      },
+      {
+        "id_store_site_payment_type": 4,
+        "id_store_payment_type": 4,
+        "id_store": 4242,
+        "id_payment_type": 4,
+        "store_payment_type": {
+          "id_store_payment_type": 4,
+          "desc_store_payment_type": "Fiado CNPJ 00.000.000/0001-00",
+          "payment_template": 0,
+          "rate": null,
+          "days_to_receive": null,
+          "enabled": "Y",
+          "on_the_arm": "N",
+          "id_store": 4242,
+          "desc_payment_template": ""
+        },
+        "site_delivery_payment_type": {
+          "id_payment_type": 4,
+          "desc_payment_type": "OUTROS",
+          "url_image": null
+        }
+      },
+      {
+        "id_store_site_payment_type": 5,
+        "id_store_payment_type": 5,
+        "id_store": 4242,
+        "id_payment_type": 5,
+        "store_payment_type": {
+          "id_store_payment_type": 5,
+          "desc_store_payment_type": "Cheque",
+          "payment_template": 0,
+          "rate": null,
+          "days_to_receive": null,
+          "enabled": "N",
+          "on_the_arm": "N",
+          "id_store": 4242,
+          "desc_payment_template": ""
+        },
+        "site_delivery_payment_type": {
+          "id_payment_type": 5,
+          "desc_payment_type": "CHEQUE",
+          "url_image": null
+        }
+      }
+    ]
+  },
+  "items": [
+    {
+      "id_store_item": 1000,
+      "desc_store_item": "Pizza",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": "Molho da casa",
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": "saipos-estatico/img-items/1/pizza.png",
+      "order": 0,
+      "id_store_category_item": 10,
+      "variations": [
+        {
+          "id_store_item_variation": 101,
+          "id_store_variation": 101,
+          "price": 40,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 101,
+          "variation": {
+            "id_store_variation": 101,
+            "desc_store_variation": "Média",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        },
+        {
+          "id_store_item_variation": 102,
+          "id_store_variation": 102,
+          "price": 50,
+          "order": 1,
+          "enabled": "Y",
+          "integration_code": 102,
+          "variation": {
+            "id_store_variation": 102,
+            "desc_store_variation": "Grande",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 10,
+        "desc_store_category_item": "Pizzas",
+        "order": 1,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [
+        {
+          "id_store_item_choice": 10000,
+          "id_store_item": 1000,
+          "id_store_choice": 30,
+          "order": 0
+        }
+      ],
+      "categories": [],
+      "availability": []
+    },
+    {
+      "id_store_item": 1001,
+      "desc_store_item": "Pizza do mais caro",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 1,
+      "id_store_category_item": 10,
+      "variations": [
+        {
+          "id_store_item_variation": 1001,
+          "id_store_variation": 1001,
+          "price": 45,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 1001,
+          "variation": {
+            "id_store_variation": 1001,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 10,
+        "desc_store_category_item": "Pizzas",
+        "order": 1,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [
+        {
+          "id_store_item_choice": 10010,
+          "id_store_item": 1001,
+          "id_store_choice": 34,
+          "order": 0
+        }
+      ],
+      "categories": [],
+      "availability": []
+    },
+    {
+      "id_store_item": 1002,
+      "desc_store_item": "Pizza de três",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 2,
+      "id_store_category_item": 10,
+      "variations": [
+        {
+          "id_store_item_variation": 1101,
+          "id_store_variation": 1101,
+          "price": 45,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 1101,
+          "variation": {
+            "id_store_variation": 1101,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 10,
+        "desc_store_category_item": "Pizzas",
+        "order": 1,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [
+        {
+          "id_store_item_choice": 10020,
+          "id_store_item": 1002,
+          "id_store_choice": 35,
+          "order": 0
+        }
+      ],
+      "categories": [],
+      "availability": []
+    },
+    {
+      "id_store_item": 2000,
+      "desc_store_item": "Hambúrguer",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 0,
+      "id_store_category_item": 20,
+      "variations": [
+        {
+          "id_store_item_variation": 201,
+          "id_store_variation": 201,
+          "price": 25,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 201,
+          "variation": {
+            "id_store_variation": 201,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 20,
+        "desc_store_category_item": "Lanches",
+        "order": 2,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [
+        {
+          "id_store_item_choice": 20000,
+          "id_store_item": 2000,
+          "id_store_choice": 31,
+          "order": 0
+        },
+        {
+          "id_store_item_choice": 20001,
+          "id_store_item": 2000,
+          "id_store_choice": 999,
+          "order": 1
+        },
+        {
+          "id_store_item_choice": 20002,
+          "id_store_item": 2000,
+          "id_store_choice": 36,
+          "order": 2
+        }
+      ],
+      "categories": [],
+      "availability": []
+    },
+    {
+      "id_store_item": 2001,
+      "desc_store_item": "Almoço",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 1,
+      "id_store_category_item": 20,
+      "variations": [
+        {
+          "id_store_item_variation": 2101,
+          "id_store_variation": 2101,
+          "price": 30,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 2101,
+          "variation": {
+            "id_store_variation": 2101,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 20,
+        "desc_store_category_item": "Lanches",
+        "order": 2,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [],
+      "categories": [],
+      "availability": [
+        {
+          "day_week": 2,
+          "start_time": "11:00",
+          "end_time": "15:00",
+          "id_partner_sale": null
+        },
+        {
+          "day_week": 3,
+          "start_time": "11:00",
+          "end_time": "15:00",
+          "id_partner_sale": null
+        },
+        {
+          "day_week": 4,
+          "start_time": "11:00",
+          "end_time": "15:00",
+          "id_partner_sale": null
+        },
+        {
+          "day_week": 5,
+          "start_time": "11:00",
+          "end_time": "15:00",
+          "id_partner_sale": null
+        },
+        {
+          "day_week": 6,
+          "start_time": "11:00",
+          "end_time": "15:00",
+          "id_partner_sale": null
+        },
+        {
+          "day_week": 7,
+          "start_time": "11:00",
+          "end_time": "15:00",
+          "id_partner_sale": 32
+        }
+      ]
+    },
+    {
+      "id_store_item": 2002,
+      "desc_store_item": "Lanche da madrugada",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 2,
+      "id_store_category_item": 20,
+      "variations": [
+        {
+          "id_store_item_variation": 2201,
+          "id_store_variation": 2201,
+          "price": 20,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 2201,
+          "variation": {
+            "id_store_variation": 2201,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 20,
+        "desc_store_category_item": "Lanches",
+        "order": 2,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [],
+      "categories": [],
+      "availability": [
+        {
+          "day_week": 6,
+          "start_time": "22:00",
+          "end_time": "02:00",
+          "id_partner_sale": null
+        }
+      ]
+    },
+    {
+      "id_store_item": 2003,
+      "desc_store_item": "Nunca",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 3,
+      "id_store_category_item": 20,
+      "variations": [
+        {
+          "id_store_item_variation": 2301,
+          "id_store_variation": 2301,
+          "price": 20,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 2301,
+          "variation": {
+            "id_store_variation": 2301,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 20,
+        "desc_store_category_item": "Lanches",
+        "order": 2,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [],
+      "categories": [],
+      "availability": [
+        {
+          "day_week": 2,
+          "start_time": "11:00",
+          "end_time": "15:00",
+          "id_partner_sale": 32
+        }
+      ]
+    },
+    {
+      "id_store_item": 3000,
+      "desc_store_item": "Suco",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 0,
+      "id_store_category_item": 30,
+      "variations": [
+        {
+          "id_store_item_variation": 301,
+          "id_store_variation": 301,
+          "price": 8,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 301,
+          "variation": {
+            "id_store_variation": 301,
+            "desc_store_variation": "300 ml",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        },
+        {
+          "id_store_item_variation": 302,
+          "id_store_variation": 302,
+          "price": 12,
+          "order": 1,
+          "enabled": "Y",
+          "integration_code": 302,
+          "variation": {
+            "id_store_variation": 302,
+            "desc_store_variation": "500 ml",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        },
+        {
+          "id_store_item_variation": 303,
+          "id_store_variation": 303,
+          "price": 9,
+          "order": 2,
+          "enabled": "Y",
+          "integration_code": 303,
+          "variation": {
+            "id_store_variation": 303,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        },
+        {
+          "id_store_item_variation": 304,
+          "id_store_variation": 304,
+          "price": 20,
+          "order": 3,
+          "enabled": "N",
+          "integration_code": 304,
+          "variation": {
+            "id_store_variation": 304,
+            "desc_store_variation": "1 litro",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 30,
+        "desc_store_category_item": "Bebidas",
+        "order": 3,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [
+        {
+          "id_store_item_choice": 30000,
+          "id_store_item": 3000,
+          "id_store_choice": 32,
+          "order": 0
+        }
+      ],
+      "categories": [],
+      "availability": []
+    },
+    {
+      "id_store_item": 3001,
+      "desc_store_item": "Açaí",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 1,
+      "id_store_category_item": 30,
+      "variations": [
+        {
+          "id_store_item_variation": 401,
+          "id_store_variation": 401,
+          "price": 0,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 401,
+          "variation": {
+            "id_store_variation": 401,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 30,
+        "desc_store_category_item": "Bebidas",
+        "order": 3,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [
+        {
+          "id_store_item_choice": 30010,
+          "id_store_item": 3001,
+          "id_store_choice": 33,
+          "order": 0
+        }
+      ],
+      "categories": [],
+      "availability": []
+    },
+    {
+      "id_store_item": 3002,
+      "desc_store_item": "Promo X",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 2,
+      "id_store_category_item": 30,
+      "variations": [
+        {
+          "id_store_item_variation": 501,
+          "id_store_variation": 501,
+          "price": 30,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 501,
+          "variation": {
+            "id_store_variation": 501,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": [
+            {
+              "id_partner_sale": 1,
+              "enabled": true,
+              "price": 1,
+              "availabilities": []
+            },
+            {
+              "id_partner_sale": 7,
+              "enabled": true,
+              "price": 25,
+              "availabilities": []
+            }
+          ]
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 30,
+        "desc_store_category_item": "Bebidas",
+        "order": 3,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [],
+      "categories": [
+        {
+          "store_category_item": {
+            "id_store_category_item": 60,
+            "desc_store_category_item": "Destaques",
+            "order": 0,
+            "enabled": "Y",
+            "print_type": 1,
+            "updated_at": "2026-01-01T00:00:00.000Z",
+            "id_store_item_required": null,
+            "availability": []
+          }
+        }
+      ],
+      "availability": []
+    },
+    {
+      "id_store_item": 3003,
+      "desc_store_item": "Promo noite",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 3,
+      "id_store_category_item": 30,
+      "variations": [
+        {
+          "id_store_item_variation": 601,
+          "id_store_variation": 601,
+          "price": 30,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 601,
+          "variation": {
+            "id_store_variation": 601,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": [
+            {
+              "id_partner_sale": 1,
+              "enabled": true,
+              "price": 1,
+              "availabilities": []
+            },
+            {
+              "id_partner_sale": 7,
+              "enabled": true,
+              "price": 20,
+              "availabilities": [
+                {
+                  "day_week": 6,
+                  "start_time": "18:00",
+                  "end_time": "23:00",
+                  "id_partner_sale": null
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 30,
+        "desc_store_category_item": "Bebidas",
+        "order": 3,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [],
+      "categories": [],
+      "availability": []
+    },
+    {
+      "id_store_item": 3004,
+      "desc_store_item": "Promo estranha",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 4,
+      "id_store_category_item": 30,
+      "variations": [
+        {
+          "id_store_item_variation": 701,
+          "id_store_variation": 701,
+          "price": 30,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 701,
+          "variation": {
+            "id_store_variation": 701,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": [
+            {
+              "id_partner_sale": 1,
+              "enabled": true,
+              "price": 1,
+              "availabilities": []
+            },
+            {
+              "id_partner_sale": 7,
+              "enabled": "Y",
+              "price": 20,
+              "availabilities": []
+            }
+          ]
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 30,
+        "desc_store_category_item": "Bebidas",
+        "order": 3,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [],
+      "categories": [],
+      "availability": []
+    },
+    {
+      "id_store_item": 3005,
+      "desc_store_item": "Sem tamanho",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 5,
+      "id_store_category_item": 30,
+      "variations": [
+        {
+          "id_store_item_variation": 801,
+          "id_store_variation": 801,
+          "price": 9,
+          "order": 0,
+          "enabled": "N",
+          "integration_code": 801,
+          "variation": {
+            "id_store_variation": 801,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 30,
+        "desc_store_category_item": "Bebidas",
+        "order": 3,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [],
+      "categories": [],
+      "availability": []
+    },
+    {
+      "id_store_item": 4000,
+      "desc_store_item": "Fora do site",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 0,
+      "id_store_category_item": 40,
+      "variations": [
+        {
+          "id_store_item_variation": 901,
+          "id_store_variation": 901,
+          "price": 10,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 901,
+          "variation": {
+            "id_store_variation": 901,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 40,
+        "desc_store_category_item": "Escondida",
+        "order": 5,
+        "enabled": "N",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": null,
+        "availability": []
+      },
+      "choices": [],
+      "categories": [],
+      "availability": []
+    },
+    {
+      "id_store_item": 5000,
+      "desc_store_item": "Combo casal",
+      "desc_store_item_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "detail": null,
+      "identifier_number": null,
+      "print_type": 1,
+      "img_path": null,
+      "order": 0,
+      "id_store_category_item": 50,
+      "variations": [
+        {
+          "id_store_item_variation": 1201,
+          "id_store_variation": 1201,
+          "price": 60,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 1201,
+          "variation": {
+            "id_store_variation": 1201,
+            "desc_store_variation": "Único",
+            "desc_store_variation_delivery": null,
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          },
+          "promotions": []
+        }
+      ],
+      "category_item": {
+        "id_store_category_item": 50,
+        "desc_store_category_item": "Combos",
+        "order": 4,
+        "enabled": "Y",
+        "print_type": 1,
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "id_store_item_required": 2000,
+        "availability": []
+      },
+      "choices": [],
+      "categories": [],
+      "availability": []
+    }
+  ],
+  "choices": [
+    {
+      "id_store_choice": 30,
+      "desc_store_choice": "Sabores",
+      "desc_store_choice_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "choice_type": 1,
+      "min_choices": 1,
+      "max_choices": 2,
+      "calc_method": 2,
+      "choice_items": [
+        {
+          "id_store_choice_item": 3001,
+          "desc_store_choice_item": "Calabresa",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 3001,
+          "img_path": null,
+          "id_store_choice": 30,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 30010,
+              "aditional_price": 0,
+              "id_store_choice_item": 3001,
+              "id_store_variation": 101
+            },
+            {
+              "id_store_choice_item_variation": 30011,
+              "aditional_price": 0,
+              "id_store_choice_item": 3001,
+              "id_store_variation": 102
+            }
+          ]
+        },
+        {
+          "id_store_choice_item": 3002,
+          "desc_store_choice_item": "Camarão",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 1,
+          "enabled": "Y",
+          "integration_code": 3002,
+          "img_path": null,
+          "id_store_choice": 30,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 30020,
+              "aditional_price": 10,
+              "id_store_choice_item": 3002,
+              "id_store_variation": 101
+            },
+            {
+              "id_store_choice_item_variation": 30021,
+              "aditional_price": 14,
+              "id_store_choice_item": 3002,
+              "id_store_variation": 102
+            }
+          ]
+        },
+        {
+          "id_store_choice_item": 3003,
+          "desc_store_choice_item": "Antiga",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 2,
+          "enabled": "N",
+          "integration_code": 3003,
+          "img_path": null,
+          "id_store_choice": 30,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 30030,
+              "aditional_price": 2,
+              "id_store_choice_item": 3003,
+              "id_store_variation": 101
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id_store_choice": 31,
+      "desc_store_choice": "Adicionais",
+      "desc_store_choice_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "choice_type": 1,
+      "min_choices": 0,
+      "max_choices": 3,
+      "calc_method": 1,
+      "choice_items": [
+        {
+          "id_store_choice_item": 3101,
+          "desc_store_choice_item": "Bacon",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 3101,
+          "img_path": null,
+          "id_store_choice": 31,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 31010,
+              "aditional_price": 4,
+              "id_store_choice_item": 3101,
+              "id_store_variation": 201
+            }
+          ]
+        },
+        {
+          "id_store_choice_item": 3102,
+          "desc_store_choice_item": "Ovo",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": "Ovo frito",
+          "order": 1,
+          "enabled": "Y",
+          "integration_code": 3102,
+          "img_path": null,
+          "id_store_choice": 31,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 31020,
+              "aditional_price": 2.5,
+              "id_store_choice_item": 3102,
+              "id_store_variation": 201
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id_store_choice": 32,
+      "desc_store_choice": "Sabor",
+      "desc_store_choice_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "choice_type": 1,
+      "min_choices": 1,
+      "max_choices": 1,
+      "calc_method": 1,
+      "choice_items": [
+        {
+          "id_store_choice_item": 3201,
+          "desc_store_choice_item": "Laranja",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 3201,
+          "img_path": null,
+          "id_store_choice": 32,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 32010,
+              "aditional_price": 0,
+              "id_store_choice_item": 3201,
+              "id_store_variation": 301
+            },
+            {
+              "id_store_choice_item_variation": 32011,
+              "aditional_price": 0,
+              "id_store_choice_item": 3201,
+              "id_store_variation": 302
+            }
+          ]
+        },
+        {
+          "id_store_choice_item": 3202,
+          "desc_store_choice_item": "Uva",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 1,
+          "enabled": "Y",
+          "integration_code": 3202,
+          "img_path": null,
+          "id_store_choice": 32,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 32020,
+              "aditional_price": 0,
+              "id_store_choice_item": 3202,
+              "id_store_variation": 301
+            },
+            {
+              "id_store_choice_item_variation": 32021,
+              "aditional_price": 0,
+              "id_store_choice_item": 3202,
+              "id_store_variation": 302
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id_store_choice": 33,
+      "desc_store_choice": "Copo",
+      "desc_store_choice_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "choice_type": 1,
+      "min_choices": 1,
+      "max_choices": 1,
+      "calc_method": 1,
+      "choice_items": [
+        {
+          "id_store_choice_item": 3301,
+          "desc_store_choice_item": "300 ml",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 3301,
+          "img_path": null,
+          "id_store_choice": 33,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 33010,
+              "aditional_price": 12,
+              "id_store_choice_item": 3301,
+              "id_store_variation": 401
+            }
+          ]
+        },
+        {
+          "id_store_choice_item": 3302,
+          "desc_store_choice_item": "500 ml",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 1,
+          "enabled": "Y",
+          "integration_code": 3302,
+          "img_path": null,
+          "id_store_choice": 33,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 33020,
+              "aditional_price": 18,
+              "id_store_choice_item": 3302,
+              "id_store_variation": 401
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id_store_choice": 34,
+      "desc_store_choice": "Sabores",
+      "desc_store_choice_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "choice_type": 1,
+      "min_choices": 1,
+      "max_choices": 2,
+      "calc_method": 3,
+      "choice_items": [
+        {
+          "id_store_choice_item": 3401,
+          "desc_store_choice_item": "Mussarela",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 3401,
+          "img_path": null,
+          "id_store_choice": 34,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 34010,
+              "aditional_price": 0,
+              "id_store_choice_item": 3401,
+              "id_store_variation": 1001
+            }
+          ]
+        },
+        {
+          "id_store_choice_item": 3402,
+          "desc_store_choice_item": "Portuguesa",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 1,
+          "enabled": "Y",
+          "integration_code": 3402,
+          "img_path": null,
+          "id_store_choice": 34,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 34020,
+              "aditional_price": 6,
+              "id_store_choice_item": 3402,
+              "id_store_variation": 1001
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id_store_choice": 35,
+      "desc_store_choice": "Sabores",
+      "desc_store_choice_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "choice_type": 1,
+      "min_choices": 1,
+      "max_choices": 3,
+      "calc_method": 2,
+      "choice_items": [
+        {
+          "id_store_choice_item": 3501,
+          "desc_store_choice_item": "Mussarela",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 0,
+          "enabled": "Y",
+          "integration_code": 3501,
+          "img_path": null,
+          "id_store_choice": 35,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 35010,
+              "aditional_price": 0,
+              "id_store_choice_item": 3501,
+              "id_store_variation": 1101
+            }
+          ]
+        },
+        {
+          "id_store_choice_item": 3502,
+          "desc_store_choice_item": "Portuguesa",
+          "desc_store_choice_item_deli": null,
+          "updated_at": "2026-01-01T00:00:00.000Z",
+          "detail": null,
+          "order": 1,
+          "enabled": "Y",
+          "integration_code": 3502,
+          "img_path": null,
+          "id_store_choice": 35,
+          "variations": [
+            {
+              "id_store_choice_item_variation": 35020,
+              "aditional_price": 6,
+              "id_store_choice_item": 3502,
+              "id_store_variation": 1101
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id_store_choice": 36,
+      "desc_store_choice": "Escolhas",
+      "desc_store_choice_delivery": null,
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "choice_type": 1,
+      "min_choices": 0,
+      "max_choices": 2,
+      "calc_method": 1,
+      "choice_items": []
+    }
+  ]
+}

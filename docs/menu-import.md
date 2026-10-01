@@ -519,8 +519,9 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
       answers ([§3](#3-platforms)); the drift is in [Appendix A](#appendix-a--platform-notes).
    2. Settle the Instadelivery fields above. Done 2026-10-01.
    3. One adapter per PR, with its fixtures: Cardápio Web, OlaClick, Takeat, Delivery Direto,
-      Saipos, Goomer. Built: Cardápio Web, OlaClick, Takeat and Delivery Direto (helpers two
-      adapters share live in `adapters/shared.ts`). An average maps only where it can't fall on a
+      Saipos, Goomer. Built: Cardápio Web, OlaClick, Takeat, Delivery Direto and Saipos (helpers
+      two adapters share live in `adapters/shared.ts`). A note never quotes a CNPJ, phone or
+      e-mail a merchant typed into a label: `validateDoc` blanks them. An average maps only where it can't fall on a
       half cent: each platform rounds a float its own way. A minimum that applies to delivery only there goes on the delivery
       zones: a store minimum here binds pickup too. Items priced only by a required list where the customer picks a
       quantity (a can of soda "×N") keep a base of R$ 0,00, exactly as there; the storefront
@@ -665,14 +666,16 @@ largest store read.
   logo (not the placeholder), cover, `settings.primary_color`, hours from `business_hours`
   (the digits of a placeholder ISO time), `switch_delivery`, `takeout_status`; minimums: pickup's
   as the store's, delivery's on the zones when higher. Zones: `POLYGON` (`"lng,lat|…"`, closed,
-  padded) as polygons; `CIRCLE` (any centre, radius in metres) as a 48-sided polygon just
-  outside it; overlapping circles are a `delivery_overlap` note; free above
-  `settings.free_delivery_minimum_order` (≥ there too); no area at all is `delivery_flat_fee`
-  (free). Payments: `money`, Pix by name or `pix`, VOUCHER or voucher brands, CREDIT/DEBIT or a
-  card brand, else the label; a `discount_percentage` (cash, on an amount the code doesn't make
-  clear) is a note; the Pix key isn't read out of a form's name. Images:
-  `duisktnou8b89.cloudfront.net`, `img.deliverydireto.com.br`.
-  - _Checked 2026-10-01_ (a five-unit pizzeria, an ice-cream shop and a pizzeria, plus seven to
+  padded) as polygons; `CIRCLE` (any centre, radius in metres) as a 48-sided polygon drawn 1 %
+  - 10 m outside it (checked against Core's haversine); areas that share ground, of any shape, are
+    a `delivery_overlap` note; a `price_percent` fee is unreadable and an area's own free-delivery
+    minimum (never seen set) a note; free above `settings.free_delivery_minimum_order` (≥ there
+    too); no area at all is `delivery_flat_fee` (free); a category that won't read is
+    `category_unreadable`. Payments: `money`, Pix by name or `pix`, VOUCHER or voucher brands, CREDIT/DEBIT or a
+    card brand, else the label; a `discount_percentage` (cash, on an amount the code doesn't make
+    clear) is a note; the Pix key isn't read out of a form's name. Images:
+    `duisktnou8b89.cloudfront.net`, `img.deliverydireto.com.br`.
+  * _Checked 2026-10-01_ (a five-unit pizzeria, an ice-cream shop and a pizzeria, plus seven to
     settle fields): works with drift. `<base>` is the store link itself,
     `deliverydireto.com.br/<brand>/<store>`, with no header. Hours, minimum order, prep times, the
     pickup and delivery switches and the address come from a brand-level `<brand>/basic_info`
@@ -730,10 +733,35 @@ backend-delivery.takeat.app/public/restaurant/<slug>` → `id`, `brand.id` (404 
     Credential-like keys: `meta_access_token`, `pixel_id`, `token_clube`, `brand.nfce_token`;
     options carry the merchant's cost (`current_cmv`). Images: `takeat-imgs.takeat.app`. Custom
     domain: none; the API looks stores up by slug only.
-- **Saipos** — `GET delivery-api.saipos.com/v1/stores?filter={"domain_name":"<host>"}`, then
-  `…/stores/<id>/sales/view-data` (~500 KB). Sizes as `variations[]`, `calc_method` 1 sum,
-  2 average, 3 most expensive. Many items sit in disabled categories and many option references
-  point at groups missing from `choices[]`: filter both.
+- **Saipos** — as built (phase 3): the link is `<store>.saipos.com` (the platform's own
+  subdomains aside); the ref is the host. `GET
+delivery-api.saipos.com/v1/stores?filter={"domain_name":"<host>"}` (`[]` → `NOT_FOUND`), then
+  `…/stores/<id>/sales/view-data`: 2 requests. What shows follows the storefront bundle (read
+  2026-10-01). Categories: each item's `category_item` plus any `categories[].store_category_item`,
+  enabled ones only, in `order`; the store's `categories` (`"id##NAME**…"`), when set, keeps only
+  those ids, and a list naming none of them is stale (that storefront shows no items), so every
+  enabled category comes with a `site_categories_stale` note; an item in two categories is listed
+  in both; `id_store_item_required` (a category whose orders must also carry an item) is a note
+  when the category has anything else. Sizes: enabled `variations[]`, an internal `Único` skipped
+  when there are others; one → the product; several → a `Tamanho` list, or one product per size
+  ("Pizza — G") when any option costs differently per size. A promotion for the site channel
+  (`id_partner_sale` 7), the first enabled one and cheaper: with no `availabilities` it is the
+  price, struck through over the regular one; with hours, the regular price and a
+  `promo_schedule` note; an `enabled` that isn't a boolean hides the product
+  (`promo_unreadable`). Sale windows: the item's and its category's `availability` rows for the
+  site channel (or none), weekday 1 = Sunday, a row ending before it starts covering that day's
+  early hours and its evening, intersected; items vanish outside them there (`outside: hidden`).
+  Choices: options priced by their `variations[]` entry for the size (none: 0), `max_choices` 1 a
+  single pick, else a quantity per option up to the maximum; `calc_method` 1 sum, 2 average (only
+  where it can't fall on a half cent), 3 most expensive; references to missing groups and empty
+  optional groups skipped. Store: `trade_name`, address (unless `show_store_address` is false),
+  district and city, logo and cover, `primary_color`, hours from `schedules_service`,
+  `minimum_value` as the store's minimum (it binds every order there), `pickup_counter`; delivery
+  is per address (`delivery_by_address`, plus `free_shipping` as `free_delivery_rule`);
+  `enable_order_schedule` → `time_slots`. Payments: the store's own label first ("Crédito Amex";
+  the platform's is sometimes just a brand), then the platform's; Pix online or
+  `enabled_payment_online` → `online_payment`; no Pix key is public. Images: `static.saipos.com` +
+  the relative path.
   - _Checked 2026-10-01_ (a pizzeria, a café and a large pizzeria): works as documented. 2
     requests whatever the size (store 5–9 KB; `view-data` 39 KB–1.2 MB). An unknown host answers
     `[]`. Disabled categories (a quarter of one store's items) and choice references to missing

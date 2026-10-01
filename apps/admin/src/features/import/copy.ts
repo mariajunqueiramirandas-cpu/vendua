@@ -18,7 +18,14 @@ export const PLATFORM: Record<string, string> = {
 export const platformName = (p: string | null | undefined) => (p && PLATFORM[p]) || 'outro app';
 
 /** The platforms Core reads today (its `ADAPTERS`), in the order merchants know them. */
-export const READABLE = ['instadelivery', 'cardapioweb', 'olaclick', 'takeat', 'deliverydireto'];
+export const READABLE = [
+  'instadelivery',
+  'cardapioweb',
+  'olaclick',
+  'takeat',
+  'deliverydireto',
+  'saipos',
+];
 
 /** "Instadelivery ou Cardápio Web" — the readable platforms in one phrase. */
 export const readableNames = () => {
@@ -126,6 +133,10 @@ export function lostLine(l: ImportLost, platform: string): string {
       return `Uma foto de ${s} não veio. Ele fica com o desenho até você colocar outra.`;
 
     // ── the store
+    case 'site_categories_stale':
+      return `No ${from}, a lista de categorias do site estava desatualizada e o site não mostrava nenhum produto. Trouxemos todas as categorias ativas: oculte em Cardápio as que não vende pela internet.`;
+    case 'required_item':
+      return `No ${from}, quem pedia da categoria ${s} tinha que levar também ${d ? q(d) : 'outro produto'}. Aqui não há essa regra.`;
     case 'loyalty':
       return `O programa de pontos${d ? ` (${d} prêmios)` : ''} e o saldo dos clientes não vêm. Aqui tem o cartão fidelidade, em Marketing.`;
     case 'cashback':
@@ -141,7 +152,9 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'upsell':
       return 'A sugestão de produto no fim do pedido não vem.';
     case 'time_slots':
-      return `O agendamento em horários de ${d ?? 'alguns'} em ${d ?? 'alguns'} minutos não vem.`;
+      return d
+        ? `O agendamento em horários de ${d} em ${d} minutos não vem.`
+        : 'O agendamento de pedidos não vem.';
     case 'coupons':
       return 'Os cupons não vêm. Crie de novo em Marketing.';
     case 'night_fee':

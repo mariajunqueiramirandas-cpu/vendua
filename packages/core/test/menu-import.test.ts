@@ -5,11 +5,13 @@ import cwFixture from './fixtures/menu-import/cardapioweb.json';
 import olaFixture from './fixtures/menu-import/olaclick.json';
 import tkFixture from './fixtures/menu-import/takeat.json';
 import ddFixture from './fixtures/menu-import/deliverydireto.json';
+import spFixture from './fixtures/menu-import/saipos.json';
 import { recognise, type Adapter } from '../src/modules/menu-import/adapters/index.ts';
 import { cardapioweb } from '../src/modules/menu-import/adapters/cardapioweb.ts';
 import { olaclick } from '../src/modules/menu-import/adapters/olaclick.ts';
 import { takeat } from '../src/modules/menu-import/adapters/takeat.ts';
 import { deliverydireto } from '../src/modules/menu-import/adapters/deliverydireto.ts';
+import { saipos } from '../src/modules/menu-import/adapters/saipos.ts';
 import { instadelivery } from '../src/modules/menu-import/adapters/instadelivery.ts';
 import { TEMPLATE_TOKENS } from '../src/modules/menu-import/apply.ts';
 import { unitPriceCents } from '../src/modules/cart.ts';
@@ -369,6 +371,7 @@ describe('recognise', () => {
       kind: 'blocked',
       platform: 'ifood',
     });
+    expect(recognise('https://www.saipos.com')).toEqual({ kind: 'unsupported', platform: null });
     expect(recognise('https://pizzaria.goomer.app')).toEqual({
       kind: 'unsupported',
       platform: 'goomer',
@@ -1702,6 +1705,226 @@ describe('deliverydireto', () => {
       hours: 2,
       zones: 2,
       paymentMethods: 4,
+      logo: true,
+      cover: true,
+    });
+  });
+});
+
+describe('saipos', () => {
+  const { doc, counts } = mapped(saipos, spFixture, 'exemplo.saipos.com');
+  const all = doc.categories.flatMap((c) => c.products);
+  const byName = new Map(all.map((p) => [p.name, p]));
+  const lostCodes = doc.lost.map((l) => `${l.subject ?? ''}:${l.code}`);
+
+  test('recognise: a store subdomain, not the platform own ones', () => {
+    const ref = (u: string) => {
+      const r = recognise(u);
+      return r.kind === 'ok' && r.adapter.platform === 'saipos' ? r.ref : null;
+    };
+    expect(ref('https://exemplo.saipos.com/')).toBe('exemplo.saipos.com');
+    expect(ref('Exemplo.saipos.com/cardapio?x=1')).toBe('exemplo.saipos.com');
+    for (const u of ['https://www.saipos.com/', 'https://conta.saipos.com/', 'https://saipos.com'])
+      expect(recognise(u).kind).toBe('unsupported');
+    expect(ref('https://exemplo.saipos.com.evil.example/')).toBeNull();
+  });
+
+  test('read: the store by its domain, then its view data; an unknown domain is not found', async () => {
+    const api = 'https://delivery-api.saipos.com/v1';
+    const filter = encodeURIComponent(JSON.stringify({ domain_name: 'exemplo.saipos.com' }));
+    const routes: Record<string, unknown> = {
+      [`${api}/stores?filter=${filter}`]: [spFixture.store],
+      [`${api}/stores/4242/sales/view-data`]: {
+        payment_types: [],
+        items: spFixture.items,
+        choices: spFixture.choices,
+        enabled_products: [],
+      },
+    };
+    const { raw, seen } = await fakeRead(saipos, 'exemplo.saipos.com', routes);
+    expect(seen.map((s) => s.url)).toEqual(Object.keys(routes));
+    expect(mapped(saipos, raw).doc.categories).toEqual(doc.categories);
+    await expect(
+      fakeRead(saipos, 'exemplo.saipos.com', { ...routes, [`${api}/stores?filter=${filter}`]: [] }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  test('allowlisted fields only — no tracking code, token or legal name survives', () => {
+    const json = JSON.stringify(doc);
+    expect(json).not.toContain('should-not-appear');
+    expect(json).not.toContain('00.000.000');
+    expect(json).not.toContain('4242');
+  });
+
+  test('categories: enabled ones in order, extra placements listed, a stale site list ignored', () => {
+    expect(doc.categories.map((c) => c.name)).toEqual([
+      'Destaques',
+      'Pizzas',
+      'Lanches',
+      'Bebidas',
+      'Combos',
+    ]);
+    expect(byName.has('Fora do site')).toBe(false);
+    expect(all.filter((p) => p.name === 'Promo X')).toHaveLength(2);
+    expect(lostCodes).toContain('Combos:required_item');
+    expect(doc.lost).toContainEqual({
+      scope: 'category',
+      subject: 'Combos',
+      code: 'required_item',
+      detail: 'Hambúrguer',
+    });
+    const raw = structuredClone(spFixture) as typeof spFixture & Record<string, any>;
+    // a category requiring the one item it has asks nothing
+    const combo = raw.items.find((i) => i.desc_store_item === 'Combo casal')!;
+    (combo.category_item as Record<string, unknown>).id_store_item_required = 5000;
+    expect(mapped(saipos, raw).doc.lost.some((l) => l.code === 'required_item')).toBe(false);
+    // the site lists the categories it shows by id
+    raw.store.categories = '10##PIZZAS**30##BEBIDAS';
+    expect(mapped(saipos, raw).doc.categories.map((c) => c.name)).toEqual(['Pizzas', 'Bebidas']);
+    // a list naming none of them shows nothing there: everything comes, with a note
+    raw.store.categories = '777##PIZZAS';
+    const stale = mapped(saipos, raw).doc;
+    expect(stale.categories).toHaveLength(5);
+    expect(stale.lost).toContainEqual({ scope: 'store', code: 'site_categories_stale' });
+  });
+
+  test('sizes: a size list when options cost the same, one product per size when not', () => {
+    // Camarão costs R$ 10 on the medium and R$ 14 on the large
+    expect(byName.get('Pizza — Média')).toMatchObject({ priceCents: 4000, status: 'active' });
+    expect(byName.get('Pizza — Grande')!.optionGroups[0]).toMatchObject({
+      name: 'Sabores',
+      pricingRule: 'average',
+      min: 1,
+      max: 2,
+      options: [
+        { name: 'Calabresa', priceDeltaCents: 0, maxQty: 2 },
+        { name: 'Camarão', priceDeltaCents: 1400, maxQty: 2 },
+      ],
+    });
+    // ½ Calabresa + ½ Camarão on the large: 50 + (0 + 14) / 2
+    expect(
+      unitPriceCents(5000, [
+        {
+          pricingRule: 'average',
+          picks: [0, 1400].map((d) => ({ priceDeltaCents: d, qty: 1 })),
+        },
+      ]),
+    ).toBe(5700);
+    // the internal "Único" size and a disabled one are skipped
+    expect(byName.get('Suco')).toMatchObject({
+      priceCents: 800,
+      optionGroups: [
+        {
+          name: 'Tamanho',
+          min: 1,
+          max: 1,
+          options: [{ priceDeltaCents: 0 }, { priceDeltaCents: 400 }],
+        },
+        { name: 'Sabor', min: 1, max: 1 },
+      ],
+    });
+    // R$ 0 with a required list: its cheapest pick is the starting price
+    expect(byName.get('Açaí')).toMatchObject({ priceCents: 1200 });
+    expect(byName.get('Açaí')!.optionGroups[0]!.options.map((o) => o.priceDeltaCents)).toEqual([
+      0, 600,
+    ]);
+    expect(byName.has('Sem tamanho')).toBe(false);
+  });
+
+  test('lists: quantities up to the maximum; dearest maps, an average past two units hides', () => {
+    const burger = byName.get('Hambúrguer')!;
+    // a reference to a list the payload doesn't have, and an empty list, are skipped
+    expect(burger.optionGroups).toEqual([
+      {
+        name: 'Adicionais',
+        min: 0,
+        max: 3,
+        options: [
+          { name: 'Bacon', priceDeltaCents: 400, maxQty: 3 },
+          { name: 'Ovo', priceDeltaCents: 250, maxQty: 3, description: 'Ovo frito' },
+        ],
+      },
+    ]);
+    expect(byName.get('Pizza do mais caro')!.optionGroups[0]!.pricingRule).toBe('most_expensive');
+    expect(byName.get('Pizza de três')!.status).toBe('archived');
+    expect(lostCodes).toContain('Pizza de três:pizza_pricing');
+  });
+
+  test('promotions: a standing one is the price; one with hours is a note; an odd flag hides', () => {
+    expect(byName.get('Promo X')).toMatchObject({ priceCents: 2500, compareAtPriceCents: 3000 });
+    expect(byName.get('Promo noite')).toMatchObject({ priceCents: 3000, status: 'active' });
+    expect(doc.lost).toContainEqual({
+      scope: 'product',
+      subject: 'Promo noite',
+      code: 'promo_schedule',
+      detail: 'R$ 20,00',
+    });
+    expect(byName.get('Promo estranha')!.status).toBe('archived');
+    expect(lostCodes).toContain('Promo estranha:promo_unreadable');
+  });
+
+  test('sale windows: the site channel only, a late one is that day early and late', () => {
+    expect(byName.get('Almoço')!.availability).toEqual({
+      windows: [{ days: [1, 2, 3, 4, 5], from: '11:00', to: '15:00' }],
+      outside: 'hidden',
+    });
+    // Friday 22:00 → 02:00 there covers Friday 00:00–02:00 and 22:00 on
+    expect(byName.get('Lanche da madrugada')!.availability).toEqual({
+      windows: [
+        { days: [5], from: '00:00', to: '02:00' },
+        { days: [5], from: '22:00', to: '23:59' },
+      ],
+      outside: 'hidden',
+    });
+    expect(byName.has('Nunca')).toBe(false);
+    expect(lostCodes).toContain('Nunca:never_available');
+    // one that ends at midnight is that evening only
+    const raw = structuredClone(spFixture) as typeof spFixture & Record<string, any>;
+    const late = raw.items.find((i) => i.desc_store_item === 'Lanche da madrugada')!;
+    late.availability[0]!.end_time = '00:00';
+    const p = mapped(saipos, raw).doc.categories.flatMap((c) => c.products);
+    expect(p.find((x) => x.name === 'Lanche da madrugada')!.availability).toEqual({
+      windows: [{ days: [5], from: '22:00', to: '23:59' }],
+      outside: 'hidden',
+    });
+  });
+
+  test('store: profile, hours, pickup only with a store-wide minimum, payments', () => {
+    expect(doc.store).toMatchObject({
+      name: 'Pizzaria Exemplo',
+      address: 'Rua das Pizzas, 42 - Loja 2 - Centro',
+      city: 'Cidade Exemplo',
+      logoUrl: 'https://static.saipos.com/saipos-estatico/site-data/1/logo/logo.png',
+      brandColor: '#C0392B',
+    });
+    expect(doc.hours).toEqual([{ days: [0, 1, 2, 3, 4, 5, 6], open: '18:00', close: '23:30' }]);
+    expect(doc.operations).toEqual({
+      minOrderCents: 2000,
+      prepTimeMinutes: 45,
+      pickup: true,
+      delivery: false,
+    });
+    expect(doc.payments).toEqual({ methods: ['cash', 'card_on_delivery', 'pix'] });
+    expect(
+      doc.lost.filter((l) => l.scope === 'store').map((l) => [l.code, l.detail ?? '']),
+    ).toEqual([
+      ['delivery_by_address', ''],
+      ['free_delivery_rule', 'R$ 80,00'],
+      ['time_slots', ''],
+      ['payment_method', 'Fiado CNPJ …'],
+      ['online_payment', ''],
+      ['pix_unreadable', ''],
+    ]);
+  });
+
+  test('counts', () => {
+    expect(counts).toMatchObject({
+      categories: 5,
+      products: 14,
+      hidden: 2,
+      hours: 1,
+      zones: 0,
+      paymentMethods: 3,
       logo: true,
       cover: true,
     });

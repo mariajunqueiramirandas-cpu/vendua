@@ -62,6 +62,11 @@ const NOTE: Record<string, string> = {
   second_price: 'dois preços (produto oculto)',
   delivery_gap: 'faixa de km sem entrega',
   free_delivery_rule: 'regra de entrega grátis',
+  delivery_minimum_lower: 'mínimo da entrega menor que o da retirada',
+  category_unreadable: 'categoria ilegível',
+  site_categories_stale: 'lista de categorias do site desatualizada (vieram todas)',
+  required_item: 'categoria exigia outro produto',
+  never_available: 'produto nunca à venda',
 };
 
 /** The store links Core reads today (its `ADAPTERS`); a lead's site on one of them prefills. */
@@ -71,6 +76,10 @@ const READABLE: [name: string, host: RegExp][] = [
   ['olaclick', /\.ola\.click$/i],
   ['takeat', /^pedido\.takeat\.app$/i],
   ['delivery direto', /(^|\.)deliverydireto\.com\.br$/i],
+  [
+    'saipos',
+    /^(?!(www|app|api|conta|meajuda|delivery-api|static|blog)\.)[a-z0-9-]+\.saipos\.com$/i,
+  ],
 ];
 const readable = (site: string | null | undefined) => {
   try {
