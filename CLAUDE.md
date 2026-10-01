@@ -64,30 +64,42 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
 
 ## Subagents
 
-Subagents run on Sonnet 5.5 at low effort (`.claude/settings.json`) unless their definition
-pins a model; only their final report enters your context. Agents: `test-runner`,
-`invariant-reviewer` and `frontend-designer` (Opus 5.5, medium effort) in this repo, `Explore`
-(read-only search), `Plan`, `general-purpose` (can edit).
+Agents: `test-runner` and `invariant-reviewer` in this repo, `Explore` (read-only search),
+`Plan`, `general-purpose` (can edit). Only a subagent's final report enters your context.
 
-UI and frontend design work is always done by Opus 5.5: screens, components, layout, styling,
-responsive or dark-mode work and visual polish in `apps/control`, `apps/admin`,
-`storefronts/*`, `packages/ui-defaults` or `site/`. If this session runs on Opus 5.5 you may do
-it yourself; on any other model, hand it to `frontend-designer`. Never give design or UI edits
-to `general-purpose` or `Explore` (Sonnet); they can still research or do non-visual work.
+No agent definition pins a model: **choose it yourself on every spawn** by passing `model` to
+the Agent tool; a spawn that leaves it out falls back to Sonnet 5.5. Subagents run at high
+effort: `test-runner` and `invariant-reviewer` set `effort: high`, and the built-in agents
+inherit the session's effort, which `.claude/settings.json` saves as high for Sonnet 5.5 and
+Opus 5.5.
+
+- `model: "sonnet"` (Sonnet 5.5) for most work: search and research, running tests and checks,
+  reading logs, routine edits, reviewing ordinary changes.
+- `model: "opus"` (Opus 5.5) for:
+  - UI and frontend work: screens, components, layout, styling, responsive or dark-mode work and
+    visual polish in `apps/control`, `apps/admin`, `storefronts/*`, `packages/ui-defaults` or
+    `site/`. Never give UI work to a Sonnet subagent; if this session runs on Opus 5.5 you may do
+    it yourself.
+  - Business-critical logic: money, checkout and orders, payments, tenancy and RLS,
+    idempotency, auth, agent dispatch, Kernel exports, migrations. `invariant-reviewer` always
+    runs on Opus.
+  - Innovative work: a new design or architecture, or an open-ended problem with no precedent
+    in the repo.
 
 Check these triggers mid-task too, not only at the start:
 
-- About to run a suite, a multi-workspace `bun run check`, e2e or read a long log → `test-runner`.
-- About to open a third file just to answer "where/how is X done" → `Explore`.
+- About to run a suite, a multi-workspace `bun run check`, e2e or read a long log → `test-runner`
+  (Sonnet).
+- About to open a third file just to answer "where/how is X done" → `Explore` (Sonnet).
 - A change touches money, tenancy, idempotency, kernel exports or agent runs → after editing,
-  `invariant-reviewer` on the diff.
+  `invariant-reviewer` (Opus) on the diff.
 - Stuck on a failure after two attempts → one agent to investigate it cold while you continue.
 
 Splitting a task that spans areas (e.g. Core route + admin screen + kernel export):
 
 - Research in parallel — one agent per area, all in one message — then decide the design yourself.
-- The UI part of a mixed task goes to `frontend-designer` (unless you're on Opus 5.5), with the
-  API shape it will consume settled first.
+- The UI part of a mixed task goes to a `general-purpose` agent on Opus (or to you, if you're on
+  Opus 5.5), with the API shape it will consume settled first.
 - Edits: do them yourself, or give parallel `general-purpose` agents disjoint file sets
   (never two on one file); run the checks once all are back.
 - Don't split when each step needs the previous step's details, or the whole thing is a few edits.

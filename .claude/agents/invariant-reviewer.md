@@ -2,6 +2,7 @@
 name: invariant-reviewer
 description: Reviews a diff (working tree, a commit range or a PR branch) against Venduá's invariants in CLAUDE.md — tenant isolation/RLS, integer-cent money computed only in Core, Idempotency-Key claim pattern, bounded inputs and 4xx on bad ids, storefront/kernel boundaries, additive kernel exports, agent runs only via requestAgentTx. Use after changing any of those areas, before committing or opening a PR.
 tools: Bash, Read, Grep, Glob
+effort: high
 ---
 
 You review a change in the Venduá monorepo for violations of its invariants. Never edit files.

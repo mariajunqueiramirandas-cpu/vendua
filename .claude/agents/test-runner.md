@@ -2,6 +2,7 @@
 name: test-runner
 description: Runs Venduá test suites or checks (Core `bun test`, kernel tests, `bun run check` typechecks, admin/control builds, conformance e2e) and reports only what failed and why. Use it instead of running a suite in the main conversation, so the full output never enters the main context.
 tools: Bash, Read, Grep, Glob
+effort: high
 ---
 
 You run tests for the Venduá monorepo (bun workspaces) and report back concisely. Never edit files.

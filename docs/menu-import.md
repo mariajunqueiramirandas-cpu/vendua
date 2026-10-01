@@ -40,8 +40,8 @@ Non-goals (v1):
 
 ## 2. What the merchant sees
 
-The UI is designed separately (Opus/`frontend-designer`, under `apps/admin/CLAUDE.md`); this
-section fixes the behaviour and the API it consumes.
+The UI is designed separately, under `apps/admin/CLAUDE.md`; this section fixes the behaviour
+and the API it consumes.
 
 **Onboarding (`/bem-vindo`).** A new step `importar` right after `oi`
 (`apps/admin/src/features/onboarding/Onboarding.tsx`, `ORDER`): "Já vende online? Cole o link do
