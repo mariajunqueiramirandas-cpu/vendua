@@ -6,7 +6,7 @@ export interface Adapter {
   platform: Platform;
   /** is this pasted URL one of my stores? */
   match(url: URL): { ref: string } | null;
-  /** every host http.ts may call for this adapter */
+  /** every host http.ts may call for this adapter; an image entry may add a path prefix */
   hosts: { api: string[]; images: string[] };
   /** reads the store through `http`, within its request budget */
   read(ref: string, http: ImportHttp): Promise<unknown>;

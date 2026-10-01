@@ -296,8 +296,10 @@ As built:
 ### 4.5 Outbound requests
 
 - `http.ts` only calls hosts the adapter declares, on URLs the adapter builds from the `ref` that
-  `match` extracted. Redirects are handled manually and re-checked against the allowlist. No
-  user-supplied host reaches a request in v1, so there is no SSRF surface. Custom domains
+  `match` extracted. An image host many tenants share is declared with its path prefix
+  (`storage.googleapis.com/prod-cardapio-web/`). Redirects are handled manually and re-checked
+  against the allowlist. No user-supplied host reaches a request in v1, so there is no SSRF
+  surface. Custom domains
   (phase 3) are resolved through the platforms' own host lookups where they exist. Only a
   platform with no lookup needs one fingerprinting GET to the merchant's own host, through a
   resolver that refuses private, loopback and link-local addresses after DNS
@@ -517,7 +519,10 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
       answers ([§3](#3-platforms)); the drift is in [Appendix A](#appendix-a--platform-notes).
    2. Settle the Instadelivery fields above. Done 2026-10-01.
    3. One adapter per PR, with its fixtures: Cardápio Web, OlaClick, Takeat, Delivery Direto,
-      Saipos, Goomer.
+      Saipos, Goomer. Built: Cardápio Web (helpers two adapters share live in
+      `adapters/shared.ts`). Items priced only by a required list where the customer picks a
+      quantity (a can of soda "×N") keep a base of R$ 0,00, exactly as there; the storefront
+      shows that base, not the "a partir de" the old store showed.
    4. Custom domains.
 4. **iFood** through the official Merchant API: Venduá registered as an iFood app, the merchant
    authorizes it in the Portal do Parceiro ("Conectar iFood"), the catalog comes from
@@ -567,12 +572,33 @@ largest store read.
     −2 `feesKm[]` tiers, −3 free, any other value a flat fee in reais) and stores keep the unused
     list, so the adapter has to follow it; the payment adjustment fields are percents of the
     subtotal. Both are settled in step 2.
-- **Cardápio Web** — `GET integracao.cardapioweb.com/api/menu/company/profile?company=<slug>`,
-  then `…/company/categories?only_available_for=delivery` with headers `company-id` and `company`.
-  Promo price and its weekday schedule, badges, stock, `allowed_times`, `combo_steps`; add-ons
-  SINGLE / MULTIPLE / SUMMABLE (quantity per option); `price_calculation_type` MAX or SUM for
-  flavours. Store: colour, logo, cover, hours with several ranges, minimum order, prep time,
-  payment methods with fees. Delivery fees are computed per address.
+- **Cardápio Web** — as built (phase 3): `GET integracao.cardapioweb.com/api/menu/company/profile?company=<slug>`,
+  then `…/company/categories?only_available_for=delivery` with headers `company-id` (the
+  profile's `id`) and `company` (its `url_name`); an unknown slug is a 404. Links:
+  `app.cardapioweb.com/<slug>` and the mode hosts (`menu.`, `mesa.`, `balcao.`, `entrega.`,
+  `local.`, `delivery.`). Reais as numbers. Categories and items with `status` `ACTIVE` (an
+  item `MISSING` is sold out); `available_for` without `delivery` or order types without
+  delivery and takeout → `dine_in_only`; `allowed_times` of the category and the item intersect
+  into the product's availability. Promo: `promotional_price` when `promotional_price_active`
+  and it runs every day all day (`promotional_price_schedules`, else
+  `promotional_price_availability`), else the full price and `promo_schedule`. Add-ons:
+  `SINGLE` (max 1), `MULTIPLE` (each once), `SUMMABLE` (a quantity per option, `max_quantity` or
+  the group's maximum); `price_calculation_type` `SUM` → sum, `MEAN` → average (the storefront
+  rounds half up with lodash `_.round(x, 2)`, as Venduá does; float noise in the source could
+  still flip an exact half cent), `MAX` → most expensive, `MIN` → hidden `pizza_pricing`.
+  Combos: each `combo_steps[]` a one-pick kit slot, the base the sum of step prices, each pick
+  its `additional_price`; a pick with a required add-on there doesn't resolve (`kit_unresolved`).
+  Badges `best_seller`/`new_item`/`recommended`/`limited_edition`/`offer`, `highlighted`,
+  stock, `available_order_timings` scheduled-only → preorder. Store: `name`, the first line of
+  `description`, `order_whatsapp`, `instagram`, address (unless `hide_company_address`),
+  coordinates, `logo`, `image` (cover), `color`, `business_hours` (several ranges a day;
+  `temporary_state` and `custom_dates` ignored), `minimum_order_value`, `preparation_time`,
+  pickup from `flags`. Payments by `kind` (money, pix, credit/debit card, meal/food voucher);
+  the Pix key from the JSON in `observation`; online kinds are `online_payment`; a method fee
+  (`percentual_fee`/`fixed_fee`, units unverified on in-person methods) is a note. Fees exist
+  only per address: delivery comes in off with `delivery_by_address` (the neighbourhood names)
+  and `free_delivery_rule`. Images: `storage.googleapis.com/prod-cardapio-web/` (the platform's
+  bucket only: the host is every Google Cloud bucket's), `cdn.cardapioweb.com.br`.
   - _Checked 2026-10-01_ (a pizzeria and a sweet shop): works with drift. 2 requests whatever the
     size (profile ~10 KB; categories 239 KB for 26 items, 44 add-on lists, 385 options), reais as
     numbers. Drift: `price_calculation_type` is `SUM`, `MEAN` or `MAX` (`MEAN` is the usual

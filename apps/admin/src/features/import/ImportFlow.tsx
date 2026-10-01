@@ -32,7 +32,14 @@ import { Mascote } from '../../ui/Mascote.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { METHOD_LABEL } from '../../ui/PaymentChip.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
-import { hidesProduct, lostLine, platformName, readError, startError } from './copy.ts';
+import {
+  hidesProduct,
+  lostLine,
+  platformName,
+  readError,
+  readableNames,
+  startError,
+} from './copy.ts';
 
 // "Cole o link do seu cardápio" (docs/menu-import.md §2): paste → Core reads the old store in
 // the background → the merchant sees what came and what didn't → one tap applies it, and the
@@ -275,7 +282,7 @@ function Paste({
           enterKeyHint="go"
           maxLength={500}
           lead={<LinkSimple className="size-5" />}
-          placeholder="instadelivery.com.br/sualoja"
+          placeholder="Link da sua loja"
           value={url}
           aria-invalid={error ? true : undefined}
           onChange={(e) => setUrl(e.target.value)}
@@ -298,8 +305,7 @@ function Paste({
         ))}
       </ul>
       <p className="t-caption text-muted">
-        Por enquanto lemos lojas do Instadelivery. Nada muda na sua loja até você tocar em
-        “Importar”.
+        Lemos lojas do {readableNames()}. Nada muda na sua loja até você tocar em “Importar”.
       </p>
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
         {onSkip ? (

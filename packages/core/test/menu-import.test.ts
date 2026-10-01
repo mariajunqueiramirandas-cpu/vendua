@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { paletteFrom, validateTokens } from '@vendua/templates';
 import fixture from './fixtures/menu-import/instadelivery.json';
-import { recognise } from '../src/modules/menu-import/adapters/index.ts';
+import cwFixture from './fixtures/menu-import/cardapioweb.json';
+import { recognise, type Adapter } from '../src/modules/menu-import/adapters/index.ts';
+import { cardapioweb } from '../src/modules/menu-import/adapters/cardapioweb.ts';
 import { instadelivery } from '../src/modules/menu-import/adapters/instadelivery.ts';
 import { TEMPLATE_TOKENS } from '../src/modules/menu-import/apply.ts';
 import { unitPriceCents } from '../src/modules/cart.ts';
@@ -360,10 +362,6 @@ describe('recognise', () => {
       kind: 'blocked',
       platform: 'ifood',
     });
-    expect(recognise('https://app.cardapioweb.com/loja')).toEqual({
-      kind: 'unsupported',
-      platform: 'cardapioweb',
-    });
     expect(recognise('https://pizzaria.goomer.app')).toEqual({
       kind: 'unsupported',
       platform: 'goomer',
@@ -703,6 +701,259 @@ describe('instadelivery.map', () => {
   });
 });
 
+/** Runs an adapter's read against canned answers; records each request and its headers. */
+async function fakeRead(
+  adapter: Adapter,
+  ref: string,
+  routes: Record<string, unknown>,
+): Promise<{ raw: unknown; seen: { url: string; headers: Record<string, string> }[] }> {
+  const seen: { url: string; headers: Record<string, string> }[] = [];
+  const http = createImportHttp({
+    hosts: adapter.hosts.api,
+    fetch: async (url, init) => {
+      seen.push({ url, headers: init.headers as Record<string, string> });
+      const body = routes[url];
+      return body === undefined
+        ? new Response('{"message":"not found"}', { status: 404 })
+        : new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+    },
+  });
+  return { raw: await adapter.read(ref, http), seen };
+}
+
+const mapped = (adapter: Adapter, raw: unknown, ref = 'loja') =>
+  validateDoc(
+    adapter.map(raw, {
+      platform: adapter.platform,
+      url: `https://example.test/${ref}`,
+      ref,
+      readAt: '2026-10-01T12:00:00.000Z',
+    }),
+  );
+
+describe('cardapioweb', () => {
+  const { doc, counts } = mapped(cardapioweb, cwFixture, 'pizzaria_exemplo');
+  const byName = new Map(doc.categories.flatMap((c) => c.products).map((p) => [p.name, p]));
+  const lostCodes = doc.lost.map((l) => `${l.subject ?? ''}:${l.code}`);
+
+  test('recognise: app.cardapioweb.com/<slug> and the mode hosts; not its own pages', () => {
+    for (const u of [
+      'https://app.cardapioweb.com/pizzaria_exemplo',
+      'app.cardapioweb.com/pizzaria_exemplo?utm=ig',
+      'https://menu.cardapioweb.com/Pizzaria_Exemplo/',
+      'https://entrega.cardapioweb.com/pizzaria_exemplo/item/12',
+    ]) {
+      const r = recognise(u);
+      expect(r.kind).toBe('ok');
+      if (r.kind === 'ok') {
+        expect(r.adapter.platform).toBe('cardapioweb');
+        expect(r.ref).toBe('pizzaria_exemplo');
+      }
+    }
+    for (const u of [
+      'https://app.cardapioweb.com/',
+      'https://app.cardapioweb.com/login',
+      'https://www.cardapioweb.com/planos',
+      'https://ajuda.cardapioweb.com/x',
+    ])
+      expect(recognise(u).kind).toBe('unsupported');
+  });
+
+  test('read: the profile, then the menu with the store id and slug headers', async () => {
+    const base = 'https://integracao.cardapioweb.com/api/menu/company';
+    const { raw, seen } = await fakeRead(cardapioweb, 'pizzaria_exemplo', {
+      [`${base}/profile?company=pizzaria_exemplo`]: cwFixture.profile,
+      [`${base}/categories?only_available_for=delivery`]: cwFixture.categories,
+    });
+    expect(seen.map((s) => s.url)).toEqual([
+      `${base}/profile?company=pizzaria_exemplo`,
+      `${base}/categories?only_available_for=delivery`,
+    ]);
+    expect(seen[1]!.headers).toMatchObject({ 'company-id': '4242', company: 'pizzaria_exemplo' });
+    expect(raw).toEqual(cwFixture);
+    await expect(fakeRead(cardapioweb, 'naoexiste', {})).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  test('allowlisted fields only — no credential-like field survives', () => {
+    const json = JSON.stringify(doc);
+    expect(json).not.toContain('should-not-appear');
+    expect(json).not.toContain('00000000000000');
+  });
+
+  test('flavours: MEAN averages, MAX charges the dearest, MIN has no rule here', () => {
+    // Média + ½ Calabresa + ½ Marguerita there: 39,90 + mean(40,00; 45,50) = 82,65
+    const pizza = byName.get('Pizza meio a meio')!;
+    const [size, flavours, crust] = pizza.optionGroups;
+    expect(pizza.priceCents).toBe(3990);
+    expect(size!.options.map((o) => o.priceDeltaCents)).toEqual([0, 1000]);
+    expect(flavours).toMatchObject({ pricingRule: 'average', min: 1, max: 2 });
+    const line = unitPriceCents(pizza.priceCents, [
+      { pricingRule: 'sum', picks: [{ priceDeltaCents: 0, qty: 1 }] },
+      {
+        pricingRule: 'average',
+        picks: [
+          { priceDeltaCents: flavours!.options[0]!.priceDeltaCents, qty: 1 },
+          { priceDeltaCents: flavours!.options[1]!.priceDeltaCents, qty: 1 },
+        ],
+      },
+    ]);
+    expect(line).toBe(8265);
+    // SUMMABLE: a quantity per option, up to the group's maximum
+    expect(flavours!.options.every((o) => o.maxQty === 2)).toBe(true);
+    expect(crust!.options[0]).toMatchObject({ name: 'Catupiry', soldOut: true });
+
+    const dear = byName.get('Pizza do mais caro')!;
+    expect(dear.optionGroups[0]).toMatchObject({ pricingRule: 'most_expensive' });
+    expect(
+      dear.priceCents + Math.max(...dear.optionGroups[0]!.options.map((o) => o.priceDeltaCents)),
+    ).toBe(5290);
+    expect(byName.get('Pizza do mais barato')!.status).toBe('archived');
+    expect(lostCodes).toContain('Pizza do mais barato:pizza_pricing');
+  });
+
+  test('promo price only when it runs every day; hours of sale; stock; preorder', () => {
+    expect(byName.get('X-Burguer')).toMatchObject({
+      priceCents: 2490,
+      compareAtPriceCents: 2990,
+      tags: ['Destaque'],
+    });
+    expect(byName.get('X-Burguer')!.optionGroups[0]!.options[0]).toMatchObject({ maxQty: 2 });
+    expect(byName.get('X-Salada')).toMatchObject({ priceCents: 2790 });
+    expect(byName.get('X-Salada')!.compareAtPriceCents).toBeUndefined();
+    expect(lostCodes).toContain('X-Salada:promo_schedule');
+    // the category sells from 18h; the item only on weekends: both apply
+    expect(byName.get('X-Fim de semana')!.availability).toEqual({
+      windows: [{ days: [0, 6], from: '18:00', to: '23:59' }],
+      outside: 'unavailable',
+    });
+    expect(byName.get('Torta inteira')).toMatchObject({ stockQuantity: 3, requiresPreorder: true });
+    expect(byName.get('Hambúrguer esgotado')!.status).toBe('sold_out');
+    expect(byName.get('Coca-Cola lata')!.tags).toEqual(['Mais vendido']);
+    expect(byName.has('Prato do salão')).toBe(false);
+    expect(lostCodes).toContain('Prato do salão:dine_in_only');
+    expect(byName.has('Sumiu')).toBe(false);
+  });
+
+  test('combos become kits when every pick is a plain product here', () => {
+    expect(byName.get('Combo lanche')).toMatchObject({ priceCents: 2900, status: 'active' });
+    const slots = byName.get('Combo lanche')!.kit!.slots;
+    expect(slots.map((s) => [s.name, s.min, s.max, s.items.map((i) => i.priceDeltaCents)])).toEqual(
+      [
+        ['Escolha o lanche', 1, 1, [0, 500]],
+        ['Escolha a bebida', 1, 1, [0]],
+      ],
+    );
+    // its pizza is chosen with a required flavour there, which a kit can't ask here
+    expect(byName.get('Combo pizza')!.status).toBe('archived');
+    expect(lostCodes).toContain('Combo pizza:kit_unresolved');
+  });
+
+  test('store: profile, hours, pickup, Pix from the payment note; fees by address are a note', () => {
+    expect(doc.store).toMatchObject({
+      name: 'Pizzaria Exemplo',
+      tagline: 'Pizzas de fermentação natural',
+      whatsapp: '21999990000',
+      instagram: '@pizzaria.exemplo',
+      address: 'Rua das Pizzas, 42 - Loja 2 - Centro',
+      city: 'Cidade Exemplo',
+      coords: { lat: -22.9, lng: -43.2 },
+      brandColor: '#B03A2E',
+    });
+    expect(doc.hours).toEqual([
+      { days: [0, 2, 3, 4], open: '18:00', close: '23:00' },
+      { days: [2, 3], open: '11:00', close: '14:00' },
+      { days: [5, 6], open: '18:00', close: '23:59' },
+    ]);
+    expect(doc.operations).toEqual({
+      minOrderCents: 3000,
+      prepTimeMinutes: 40,
+      pickup: true,
+      delivery: false,
+    });
+    expect(doc.zones).toBeUndefined();
+    expect(doc.payments).toEqual({
+      methods: ['cash', 'pix', 'card_on_delivery', 'meal_voucher'],
+      pix: {
+        key: 'pix@exemplo.test',
+        type: 'email',
+        beneficiary: 'Pizzaria E C Alimentos',
+        city: 'Cidade Exemplo',
+      },
+    });
+    expect(
+      doc.lost.filter((l) => l.scope === 'store').map((l) => [l.code, l.detail ?? '']),
+    ).toEqual(
+      expect.arrayContaining([
+        ['delivery_by_address', 'Centro, Jardim'],
+        ['free_delivery_rule', 'R$ 120,00'],
+        ['payment_adjustment', 'Cartão de débito'],
+        ['payment_method', 'Transferência'],
+        ['online_payment', ''],
+        ['loyalty', ''],
+        ['coupons', ''],
+        ['time_slots', '30'],
+      ]),
+    );
+  });
+
+  test('a hidden product stays hidden; a window past midnight intersects; unknown rules hide', () => {
+    const raw = structuredClone(cwFixture) as unknown as {
+      categories: { allowed_times: unknown[]; items: Record<string, any>[] }[];
+    };
+    const pizzas = raw.categories[0]!.items;
+    const cheap = pizzas.find((i) => i.name === 'Pizza do mais barato')!;
+    // MIN pricing (hidden) and every flavour out: hidden wins over sold out
+    for (const o of cheap.add_ons[0].subitems) o.status = 'MISSING';
+    cheap.add_ons[0].minimum_quantity = 1;
+    const dear = pizzas.find((i) => i.name === 'Pizza do mais caro')!;
+    dear.add_ons[0].price_calculation_type = 'MEDIAN';
+    const lanches = raw.categories[1]!;
+    lanches.allowed_times = [
+      'sunday',
+      'monday',
+      'tuesday',
+      'wednesday',
+      'thursday',
+      'friday',
+      'saturday',
+    ].map((d, i) => ({ id: i, weekday: d, start_at: '00:00', end_at: '23:59' }));
+    lanches.items.find((i) => i.name === 'X-Fim de semana')!.allowed_times = [
+      { id: 1, weekday: 'saturday', start_at: '18:00', end_at: '02:00' },
+    ];
+    const ps = new Map(
+      mapped(cardapioweb, raw)
+        .doc.categories.flatMap((c) => c.products)
+        .map((p) => [p.name, p]),
+    );
+    expect(ps.get('Pizza do mais barato')!.status).toBe('archived');
+    expect(ps.get('Pizza do mais caro')!.status).toBe('archived');
+    expect(ps.get('X-Fim de semana')!.availability).toEqual({
+      windows: [
+        { days: [0], from: '00:00', to: '02:00' },
+        { days: [6], from: '18:00', to: '23:59' },
+      ],
+      outside: 'unavailable',
+    });
+  });
+
+  test('counts', () => {
+    expect(counts).toMatchObject({
+      categories: 4,
+      products: 12,
+      hidden: 2,
+      optionGroups: 7,
+      hours: 3,
+      zones: 0,
+      paymentMethods: 4,
+      pix: true,
+      logo: true,
+      cover: true,
+    });
+  });
+});
+
 describe('tokens from one brand colour', () => {
   test('the import base is the template store baseline, and the palette passes AA', async () => {
     const config = (await import('../../../storefronts/_template/vendua.config.ts')).default as {
@@ -835,5 +1086,18 @@ describe('outbound http', () => {
         fetch: async () => new Response(jpeg),
       }),
     ).rejects.toMatchObject({ code: 'BLOCKED' });
+    // a shared host is narrowed to the platform's own path
+    const bucket = ['storage.example/platform-bucket/'];
+    const got = await fetchImage('https://storage.example/platform-bucket/x.jpg', bucket, {
+      fetch: async () => new Response(jpeg),
+    });
+    expect(got.type).toBe('image/jpeg');
+    for (const u of [
+      'https://storage.example/other-bucket/x.jpg',
+      'https://storage.example/platform-bucket-2/x.jpg',
+    ])
+      await expect(
+        fetchImage(u, bucket, { fetch: async () => new Response(jpeg) }),
+      ).rejects.toMatchObject({ code: 'BLOCKED' });
   });
 });

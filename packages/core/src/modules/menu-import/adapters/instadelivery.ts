@@ -11,11 +11,22 @@ import {
   type Lost,
   type MenuImportV1,
   type PaymentMethod,
-  type PixKeyType,
   type SourceInfo,
 } from '../doc.ts';
 import { ImportFailure, type ImportHttp } from '../http.ts';
 import { MAX_PERCENT_BPS } from '../../payment-adjustments.ts';
+import {
+  colour,
+  eta,
+  hhmm,
+  intOf,
+  liftFloor,
+  methodOf,
+  pixType,
+  positiveCents,
+  reais,
+  windowsOf,
+} from './shared.ts';
 import { flag, isRaw, list, str, type Adapter, type Raw } from './types.ts';
 
 const API = 'app.instadelivery.com.br';
@@ -46,13 +57,6 @@ const RESERVED = new Set([
 ]);
 
 const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d/;
-
-const hhmm = (v: unknown): string | null => {
-  const m = HHMM.exec(str(v));
-  return m ? m[0] : null;
-};
-
 function weekdays(o: Raw): number[] {
   return DAYS.map((d, i) => (o[d] === false || o[d] === 0 || o[d] === '0' ? -1 : i)).filter(
     (i) => i >= 0,
@@ -90,16 +94,6 @@ function availability(item: Raw, group: Raw): ImportSchedule | undefined | 'neve
     outside: 'unavailable',
   };
 }
-
-const first = (o: Raw, keys: string[]): unknown => {
-  for (const k of keys) if (o[k] !== undefined && o[k] !== null) return o[k];
-  return undefined;
-};
-
-const intOf = (v: unknown): number | null => {
-  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
-  return typeof n === 'number' && Number.isInteger(n) ? n : null;
-};
 
 /**
  * An add-on list (`complementos[]`): `min`, `max` (0 = no cap), `is_pizza` (the "Lista de
@@ -154,15 +148,6 @@ function optionGroup(c: Raw): { group: ImportOptionGroup; exact: boolean } | 'em
     },
     exact: !pizza || fixed,
   };
-}
-
-/** "40", "30-50", "30 a 50 min" → minutes; anything else none. */
-function eta(v: unknown): { etaMin?: number; etaMax?: number } {
-  const m = /^\s*(\d{1,4})(?:\s*(?:-|a|até)\s*(\d{1,4}))?\s*(?:min|minutos)?\s*$/i.exec(str(v));
-  if (!m) return {};
-  const lo = Number(m[1]);
-  const hi = m[2] ? Number(m[2]) : lo;
-  return lo <= hi && hi <= 1440 ? { etaMin: lo, etaMax: hi } : {};
 }
 
 // The storefront's checkout (its own code): one discount per order, the first that applies —
@@ -255,64 +240,18 @@ function adjustments(
   return Object.keys(out).length ? out : undefined;
 }
 
-function methodOf(name: string): PaymentMethod | null {
-  const n = name.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-  if (/\bpix\b/.test(n)) return 'pix';
-  if (/dinheiro|especie/.test(n)) return 'cash';
-  if (/vale|ticket|sodexo|alelo|pluxee|\bvr\b|refeicao|alimentacao|\bben\b|flash|caju/.test(n))
-    return 'meal_voucher';
-  if (/cartao|credito|debito|maquin|\belo\b|visa|master/.test(n)) return 'card_on_delivery';
-  return null;
-}
-
-function pixType(type: string, key: string): PixKeyType | null {
-  const t = type.toLowerCase();
-  const digits = key.replace(/\D/g, '');
-  if (/mail/.test(t) || key.includes('@')) return 'email';
-  if (/aleat|random|evp/.test(t) || /^[0-9a-f-]{36}$/i.test(key.trim())) return 'random';
-  if (/telefone|celular|phone/.test(t)) return 'phone';
-  if (/cpf|cnpj/.test(t) || /^[\d.\-/ ]+$/.test(key.trim())) {
-    if (digits.length === 11) return 'cpf';
-    if (digits.length === 14) return 'cnpj';
-  }
-  return null;
-}
-
-/** "#######" is the platform's "no colour"; anything else must be a 6-digit hex. */
-const colour = (v: unknown): string | null => {
-  const s = str(v).trim();
-  if (/^#[0-9a-f]{6}$/i.test(s)) return s;
-  if (/^#[0-9a-f]{3}$/i.test(s)) return `#${[...s.slice(1)].map((c) => c + c).join('')}`;
-  return null;
-};
-
 function hours(times: unknown, alwaysOpen: boolean): ImportWindow[] {
   if (alwaysOpen) return [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '23:59' }];
   const shifts = isRaw(times) ? Object.values(times) : Array.isArray(times) ? times : [];
-  const byRange = new Map<string, Set<number>>();
+  const ranges: { day: number; open: string; close: string }[] = [];
   for (const t of shifts.flatMap((s) => list(s))) {
     const day = intOf(t.day);
     const open = hhmm(t.time_open);
     const close = hhmm(t.time_close);
-    if (day === null || day < 0 || day > 6 || !open || !close || open === close) continue;
-    const k = `${open}-${close}`;
-    byRange.set(k, (byRange.get(k) ?? new Set()).add(day));
+    if (day !== null && open && close) ranges.push({ day, open, close });
   }
-  return [...byRange.entries()]
-    .map(([k, days]) => {
-      const [open, close] = k.split('-') as [string, string];
-      return { days: [...days].sort((a, b) => a - b), open, close };
-    })
-    .sort((a, b) => a.days[0]! - b.days[0]! || a.open.localeCompare(b.open));
+  return windowsOf(ranges);
 }
-
-const reais = (cents: number) => `R$ ${(cents / 100).toFixed(2).replace('.', ',')}`;
-
-/** A positive threshold in cents, or null (0, missing and junk all mean "no rule"). */
-const threshold = (v: unknown): number | null => {
-  const c = toCents(v ?? 0);
-  return c !== null && c > 0 ? c : null;
-};
 
 const least = (...v: (number | null)[]) => {
   const xs = v.filter((x): x is number => x !== null);
@@ -330,7 +269,7 @@ const least = (...v: (number | null)[]) => {
 function zones(raw: Raw, lost: Lost[]): ImportZone[] | undefined {
   const fees = list(raw.fees).filter((f) => !f.deleted_at);
   const km = list(raw.feesKm).filter((k) => !k.deleted_at);
-  const storeFree = threshold(raw.free_delivery);
+  const storeFree = positiveCents(raw.free_delivery);
   const type =
     raw.fee_type === null || raw.fee_type === undefined || raw.fee_type === ''
       ? null
@@ -369,7 +308,7 @@ function zones(raw: Raw, lost: Lost[]): ImportZone[] | undefined {
         lost.push({ scope: 'store', code: 'delivery_fees_unreadable' });
         return undefined;
       }
-      const free = least(threshold(f.free_delivery), storeFree);
+      const free = least(positiveCents(f.free_delivery), storeFree);
       const t = eta(f.estimate);
       const k = `${fee}|${free ?? ''}|${t.etaMin ?? ''}|${t.etaMax ?? ''}`;
       const e = byFee.get(k) ?? { fee, free, t, names: [] };
@@ -404,7 +343,7 @@ function zones(raw: Raw, lost: Lost[]): ImportZone[] | undefined {
         continue;
       }
       // strictly above the tier's price_free: one cent past it in whole cents
-      const tierFree = threshold(k.price_free);
+      const tierFree = positiveCents(k.price_free);
       const free = least(tierFree === null ? null : tierFree + 1, storeFree);
       tiers.push({
         name: `Até ${String(dist).replace('.', ',')} km`,
@@ -499,20 +438,7 @@ function product(item: Raw, group: Raw, lost: Lost[]): ImportProduct | null {
     p.optionGroups.push(g.group);
   }
 
-  // "a partir de": the price lives in one required single-choice list — move its floor up
-  if (p.priceCents === 0) {
-    const req = p.optionGroups.find(
-      (g) =>
-        g.min >= 1 &&
-        (g.max === 1 || g.pricingRule === 'most_expensive') &&
-        g.options.every((o) => o.priceDeltaCents > 0),
-    );
-    if (req) {
-      const floor = Math.min(...req.options.map((o) => o.priceDeltaCents));
-      p.priceCents = floor;
-      for (const o of req.options) o.priceDeltaCents -= floor;
-    }
-  }
+  liftFloor(p);
 
   // price2 and a pizza category's size1/size2 are never read by the storefront: it charges price1
   return p;

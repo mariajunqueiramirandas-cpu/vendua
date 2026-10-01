@@ -54,6 +54,14 @@ async function paced(host: string): Promise<void> {
   if (at > now) await new Promise((r) => setTimeout(r, at - now));
 }
 
+/** An entry is a host, or a host and a path prefix ("storage.googleapis.com/bucket/") for a
+ *  host many tenants share. */
+const covers = (entry: string, u: URL) => {
+  const slash = entry.indexOf('/');
+  if (slash < 0) return entry === u.hostname;
+  return entry.slice(0, slash) === u.hostname && u.pathname.startsWith(entry.slice(slash));
+};
+
 function allowed(raw: string, hosts: string[]): URL {
   let u: URL;
   try {
@@ -61,7 +69,13 @@ function allowed(raw: string, hosts: string[]): URL {
   } catch {
     throw new ImportFailure('UNREADABLE', 'adapter built an invalid url');
   }
-  if (u.protocol !== 'https:' || u.username || u.password || u.port || !hosts.includes(u.hostname))
+  if (
+    u.protocol !== 'https:' ||
+    u.username ||
+    u.password ||
+    u.port ||
+    !hosts.some((h) => covers(h, u))
+  )
     throw new ImportFailure('BLOCKED', `host not allowlisted: ${u.hostname}`);
   return u;
 }

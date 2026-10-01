@@ -97,6 +97,7 @@ const LISTING_HOSTS = new Set([
   // store URL is still lead evidence, just a weak contact source
   'anota.ai',
   'instadelivery.com.br',
+  'cardapioweb.com',
   'goomer.app',
   'takeat.app',
   'ueniweb.com',
