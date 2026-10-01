@@ -37,14 +37,16 @@ export function ProductTile({
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-md bg-surface depth-1 transition-[transform,box-shadow] duration-(--duration-smooth) ease-(--ease-soft)',
+        'relative overflow-hidden rounded-md bg-surface depth-1 transition-[scale,rotate,box-shadow] duration-(--duration-smooth) ease-(--ease-soft)',
         lifted && 'z-10 scale-[1.03] -rotate-1 depth-2',
         selected && 'ring-3 ring-primary',
       )}
     >
       <div
+        data-vt-src={`product:${p.id}`}
         className={cn(
-          'relative aspect-[4/3] bg-sunken',
+          // the iOS save-image callout would fight the 350 ms reorder long-press
+          'relative aspect-[4/3] select-none bg-sunken [-webkit-touch-callout:none]',
           // the photo goes monochrome; the stamp keeps its red
           a === 'sold_out' && '[&>img]:grayscale',
           a === 'hidden' && '[&>img]:opacity-50',

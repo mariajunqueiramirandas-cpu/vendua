@@ -60,13 +60,15 @@ export default function CustomerPage() {
   };
   return (
     <PageBody>
-      <PageHeader title={c.name} subtitle={phone(c.phone)} back="/clientes" />
+      <div data-vt-dst={`customer:${c.phone}`}>
+        <PageHeader title={c.name} subtitle={phone(c.phone)} back="/clientes" />
+      </div>
       <div className="mb-5 flex flex-wrap gap-2">
         <a
           href={whatsappLink(c.phone, `Oi, ${c.name.split(' ')[0]}! Aqui é da ${s.store.name}.`)}
           target="_blank"
           rel="noreferrer"
-          className="t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-[#1f7a4d] px-4 text-white"
+          className="press t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-[#1f7a4d] px-4 text-white"
         >
           <WhatsappLogo weight="fill" className="size-5" /> conversar no WhatsApp
         </a>

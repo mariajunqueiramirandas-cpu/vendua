@@ -84,7 +84,8 @@ function Media({
   labels: DishLabels;
 }) {
   return (
-    <span className="dish-media">
+    // the photo morphs into the product page's picture (data-vt-dst on store:dish-media)
+    <span className="dish-media" data-vt-src={`product:${p.slug}`}>
       {p.imageUrl && !d.imgFailed ? (
         <img
           src={p.imageUrl}

@@ -467,7 +467,10 @@ function Editor({ data }: { data: AppearanceData }) {
       </div>
 
       {/* phones: publish in the thumb zone */}
-      <div className="glass fixed inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom))] z-30 border-t border-line px-4 py-3 md:hidden">
+      <div
+        data-action-bar
+        className="glass fixed inset-x-0 bottom-[var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))] z-30 border-t border-line px-4 py-3 md:hidden"
+      >
         <Button
           size="lg"
           block
@@ -573,7 +576,7 @@ function Outline({
                   type="button"
                   disabled={fixed}
                   onClick={() => onSelect(x.id)}
-                  className="min-h-12 min-w-0 flex-1 text-left"
+                  className="press-row -ml-2 min-h-12 min-w-0 flex-1 rounded-sm pl-2 text-left"
                 >
                   <span className="block truncate font-semibold">
                     {fixed ? 'Conteúdo de cada página' : sectionName(x.type)}

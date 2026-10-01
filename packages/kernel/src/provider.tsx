@@ -19,6 +19,7 @@ import {
 import { setStatusRefresher, showError, showInfo } from './errors.ts';
 import { beacon } from './telemetry.ts';
 import type { StorefrontBundle } from './composition/registry.ts';
+import { setThemeColor } from './theme-color.ts';
 
 // tenant context, api client, token emission — mounted once per storefront root
 // (03-storefront-contract.md#required-mounts); Phase 0 uses a minimal in-flight
@@ -265,6 +266,11 @@ export function VenduaProvider({
       for (const k of Object.keys(vars)) root.style.removeProperty(k);
     };
   }, [shown]);
+
+  // the browser chrome wears the page's own background (Android status bar, Safari tint)
+  const bg = shown.color.bg;
+  const text = shown.color.text;
+  useEffect(() => setThemeColor(bg, text), [bg, text]);
 
   // font-display: swap — contract default; brand fonts must never block first paint
   useEffect(() => {

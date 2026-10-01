@@ -1,4 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { noticeSeverity } from '@vendua/ui-defaults';
 import { useKernel, useQuery } from './provider.tsx';
 import { Slot } from './slot.tsx';
@@ -7,6 +16,9 @@ import { useConsent } from './hooks.ts';
 import { emit } from './telemetry.ts';
 import type { Notice, NoticeAction, SurfacesEnvelope } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
+import { attachToastRegion, subscribeToastHost, toastHost } from './toast-layer.ts';
+import { blockSheet } from './transitions.tsx';
+import { reducedMotion, SPRING, springEasing } from './spring.ts';
 
 // Server-driven surfaces at fixed mount points (05-system-surfaces.md): banner
 // stack, blocking overlay, consent; the emergency mount belongs to v.js. Unknown
@@ -135,6 +147,9 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
   );
   const blocking = visible.filter((n) => noticeSeverity(n) === 'blocking');
   const banners = visible.filter((n) => noticeSeverity(n) !== 'blocking');
+  // a blocking notice is above everything: an open bag sheet (top layer) gets out of its way
+  const blocked = blocking.length > 0;
+  useEffect(() => blockSheet(blocked), [blocked]);
 
   return (
     <>
@@ -143,13 +158,7 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
         {banners.map((n) => (
           <NoticeView key={n.id} notice={n} />
         ))}
-        {transient.length > 0 ? (
-          <div className="v-toast-region" data-vendua="toast-region">
-            {transient.map((n) => (
-              <NoticeSlot key={n.id} notice={n} onDismiss={() => dismissError(n.id)} />
-            ))}
-          </div>
-        ) : null}
+        <Toasts notices={transient} />
       </div>
       {/* mount point 2 */}
       {blocking.length > 0 ? <BlockingOverlay notices={blocking} /> : null}
@@ -157,6 +166,161 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
       <ConsentMount />
     </>
   );
+}
+
+/** where a swiped toast leaves to (by id); the others drop and fade */
+const exitTo = new Map<string, string>();
+
+/** One transient notice: enters from below, swipes away sideways or down, animates out. */
+function Toast({
+  notice,
+  leaving,
+  onGone,
+}: {
+  notice: Notice;
+  leaving: boolean;
+  onGone: (id: string) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; t: number; on: boolean } | null>(null);
+  const exit = useRef<Animation | null>(null);
+
+  useLayoutEffect(() => {
+    if (!leaving) {
+      // raised again while on its way out
+      exit.current?.cancel();
+      exit.current = null;
+      return;
+    }
+    const el = ref.current;
+    const gone = () => onGone(notice.id);
+    if (!el || typeof el.animate !== 'function') return gone();
+    const to = exitTo.get(notice.id) ?? 'translateY(12px) scale(0.96)';
+    exitTo.delete(notice.id);
+    const a = el.animate(
+      [
+        { transform: el.style.transform || 'none', opacity: el.style.opacity || 1 },
+        { transform: reducedMotion() ? 'none' : to, opacity: 0 },
+      ],
+      { duration: reducedMotion() ? 120 : 200, easing: 'ease-in', fill: 'forwards' },
+    );
+    exit.current = a;
+    a.finished.then(gone, () => {});
+  }, [leaving, notice.id, onGone]);
+
+  const move = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    const el = ref.current;
+    if (!d || !el || leaving) return;
+    const dx = e.clientX - d.x;
+    const dy = Math.max(0, e.clientY - d.y);
+    if (!d.on) {
+      if (Math.hypot(dx, dy) < 8) return;
+      d.on = true;
+      el.setPointerCapture?.(e.pointerId);
+    }
+    el.style.transform = `translate(${dx}px, ${dy}px)`;
+    el.style.opacity = String(Math.max(0.2, 1 - Math.max(Math.abs(dx) / 240, dy / 120)));
+  };
+  const release = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    const el = ref.current;
+    drag.current = null;
+    if (!d?.on || !el) return;
+    const dx = e.clientX - d.x;
+    const dy = Math.max(0, e.clientY - d.y);
+    const ms = Math.max(1, performance.now() - d.t);
+    const fast = Math.hypot(dx, dy) / ms > 0.6;
+    if (Math.abs(dx) > 80 || dy > 40 || fast) {
+      exitTo.set(
+        notice.id,
+        Math.abs(dx) >= dy
+          ? `translateX(${Math.sign(dx) * 120}%)`
+          : `translate(${dx}px, ${dy + 80}px)`,
+      );
+      dismissError(notice.id);
+      return;
+    }
+    const from = el.style.transform;
+    el.style.transform = '';
+    el.style.opacity = '';
+    if (typeof el.animate === 'function')
+      el.animate([{ transform: from }, { transform: 'none' }], springEasing(SPRING));
+  };
+
+  return (
+    <div
+      ref={ref}
+      className="v-toast"
+      data-part="toast"
+      data-leaving={leaving || undefined}
+      aria-hidden={leaving || undefined}
+      onPointerDown={(e) => {
+        if (e.button === 0)
+          drag.current = { x: e.clientX, y: e.clientY, t: performance.now(), on: false };
+      }}
+      onPointerMove={move}
+      onPointerUp={release}
+      onPointerCancel={release}
+    >
+      <NoticeSlot notice={notice} onDismiss={() => dismissError(notice.id)} />
+    </div>
+  );
+}
+
+interface ToastItem {
+  notice: Notice;
+  leaving: boolean;
+}
+
+/** a notice keeps its place (and DOM node) while it leaves */
+function mergeToasts(items: ToastItem[], notices: Notice[]): ToastItem[] {
+  const next = items.map((it) => {
+    const live = notices.find((n) => n.id === it.notice.id);
+    if (live) return it.leaving || it.notice !== live ? { notice: live, leaving: false } : it;
+    return it.leaving ? it : { notice: it.notice, leaving: true };
+  });
+  for (const n of notices)
+    if (!items.some((it) => it.notice.id === n.id)) next.push({ notice: n, leaving: false });
+  return next.length === items.length && next.every((x, i) => x === items[i]) ? items : next;
+}
+
+/**
+ * Transient errors/confirmations, in the top layer above the page and the bag bar — inside
+ * the bag sheet while it is open (the only part of the page that isn't inert then).
+ */
+function Toasts({ notices }: { notices: Notice[] }) {
+  const [items, setItems] = useState<ToastItem[]>(() => mergeToasts([], notices));
+  const [from, setFrom] = useState(notices);
+  let list = items;
+  if (from !== notices) {
+    list = mergeToasts(items, notices);
+    setFrom(notices);
+    if (list !== items) setItems(list);
+  }
+  const [onGone] = useState(
+    () => (id: string) =>
+      setItems((l) => {
+        const next = l.filter((x) => !(x.leaving && x.notice.id === id));
+        return next.length === l.length ? l : next;
+      }),
+  );
+  const host = useSyncExternalStore(subscribeToastHost, toastHost, () => null);
+  // in the sheet the region stays mounted, so a toast raised there is an announced addition
+  if (list.length === 0 && !host) return null;
+  const region = (
+    <div
+      className="v-toast-region"
+      data-vendua="toast-region"
+      ref={host ? undefined : attachToastRegion}
+      aria-live={host ? 'polite' : undefined}
+    >
+      {list.map(({ notice, leaving }) => (
+        <Toast key={notice.id} notice={notice} leaving={leaving} onGone={onGone} />
+      ))}
+    </div>
+  );
+  return host ? createPortal(region, host) : region;
 }
 
 /** Inline surface region a brand section may place (05 — SurfaceRegion). */

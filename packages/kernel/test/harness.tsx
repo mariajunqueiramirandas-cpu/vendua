@@ -1,6 +1,6 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, type MemoryRouterProps } from 'react-router-dom';
 import type { TemplateSet } from '@vendua/templates';
 import {
   StorefrontRoutes,
@@ -169,6 +169,9 @@ export async function mount(opts: {
   children?: ReactNode;
   /** a checkout session token already in this tab (an open cart) */
   session?: string;
+  /** a history to start from (instead of `path`), at `index` (default: the last entry) */
+  entries?: MemoryRouterProps['initialEntries'];
+  index?: number;
 }): Promise<Mounted> {
   sessionStorage.clear();
   localStorage.clear();
@@ -187,7 +190,10 @@ export async function mount(opts: {
         }}
       >
         <SystemSurfaces />
-        <MemoryRouter initialEntries={[opts.path ?? '/']}>
+        <MemoryRouter
+          initialEntries={opts.entries ?? [opts.path ?? '/']}
+          {...(opts.index !== undefined ? { initialIndex: opts.index } : {})}
+        >
           <StorefrontRoutes />
           {opts.children}
         </MemoryRouter>

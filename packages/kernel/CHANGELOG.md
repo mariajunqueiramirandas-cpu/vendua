@@ -3,6 +3,43 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.11.0
+
+Native-app feel on phones — the store stays a plain web app (no manifest, no service worker).
+Additive; no storefront edit, no new runtime export.
+
+- Page changes are View Transitions where the browser has them: deeper pages slide in
+  (`push`), shallower ones slide back (`pop`), siblings crossfade; ≥ 768 px and anything else
+  crossfade; reduced motion is a 120 ms fade. Kernel navigation, store `<Link>`s and
+  `useNavigate()` all go through it, and back/forward too — except when the browser animated
+  the swipe itself (`hasUAVisualTransition`). `html[data-vt]` names the running type.
+- Shared photo: a tapped element with `data-vt-src="product:<slug>"` morphs into the
+  `data-vt-dst` with the same key on the next page (and back). The default product card and
+  `sdk:purchase-panel` media carry them; stores may put them on their own markup.
+- The sacola opens as a sheet over the page it was opened from (`CartTrigger`, the bag bar):
+  `/sacola` is pushed with `state.vBackground` and the cart renders in a `<dialog>`
+  (`cart.Drawer`, `presentation="drawer"`). Phones: a bottom sheet you drag down to close;
+  ≥ 768 px: a side panel. Drag, ×, Esc, a tap outside and the back button all animate it away
+  before the route pops. A direct visit to `/sacola`, a trigger on checkout and
+  `afterAdd: 'cart'` still go to the full page. A blocking notice closes the sheet; the empty
+  bag's "Ver cardápio" goes to the menu.
+- `catalog.Gallery` (default): a swipe gallery with page dots on phones; `data-part="main"` is
+  now the swiping strip (a list of `data-part="slide"`), thumbnails stay from 860 px.
+- Checkout steps are history entries (`state.vStep`): back returns to the previous step; a
+  new step slides in from its side, starts at the top with focus on its heading. Step entries
+  that can't be shown (after a reload, or once the order is placed) are skipped back over,
+  and a hash-only entry (the skip link) keeps its step. Changes inside one page (steps,
+  filters) are never page transitions, which would swallow the next tap while they run.
+- `<meta name="theme-color">` follows the live `bg` token (created when the page has none)
+  and takes the scrim's tint while the sheet is open.
+- Toasts sit in the top layer (above the header and the bag bar; inside the sheet while it is
+  open, so they stay tappable and announced), enter and leave with motion, and swipe away
+  sideways or down.
+- Android haptics (`navigator.vibrate`): a tick on add-to-bag and steppers, a firmer one when a
+  drag dismisses the sheet.
+- `@vendua/kernel/styles.css` also pulls `@vendua/ui-defaults/native.css` (transitions, sheet,
+  toasts — `@layer vendua`).
+
 ## 1.10.0
 
 The store's live design at first paint (Phase 4 edge) — additive; no storefront edit, no new

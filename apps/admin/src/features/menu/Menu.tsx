@@ -18,6 +18,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type Category, type Product } from '../../lib/api.ts';
 import { money } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
+import { reducedMotion, SPRING, springEasing } from '../../lib/spring.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
@@ -260,7 +261,7 @@ export default function Menu() {
                       .getElementById(`cat-${c.id}`)
                       ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                   }}
-                  className="t-label inline-flex min-h-11 items-center gap-2 rounded-full bg-surface px-4 ring-1 ring-line-strong hover:bg-hover"
+                  className="press t-label inline-flex min-h-11 items-center gap-2 rounded-full bg-surface px-4 ring-1 ring-line-strong hover:bg-hover"
                 >
                   {c.name}
                   <span className="tnum text-muted">
@@ -359,12 +360,15 @@ export default function Menu() {
         <button
           type="button"
           onClick={() => setSheet('new')}
-          className="t-label fixed bottom-[calc(88px+env(safe-area-inset-bottom))] right-4 z-30 inline-flex h-14 items-center gap-2 rounded-full bg-primary px-5 text-on-primary depth-3 md:hidden"
+          className="press t-label fixed bottom-[calc(var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))+16px)] right-4 z-30 inline-flex h-14 items-center gap-2 rounded-full bg-primary px-5 text-on-primary depth-3 md:hidden"
         >
           <Plus weight="bold" className="size-5" /> produto
         </button>
       ) : (
-        <div className="glass fixed inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom))] z-30 border-t border-line px-4 py-3 md:bottom-4 md:left-auto md:right-6 md:rounded-lg md:border-0 md:depth-3">
+        <div
+          data-action-bar
+          className="glass fixed inset-x-0 bottom-[var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))] z-30 border-t border-line px-4 py-3 md:bottom-4 md:left-auto md:right-6 md:rounded-lg md:border-0 md:depth-3"
+        >
           <p className="t-caption mb-2 text-muted">{picked.size} selecionados</p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -602,7 +606,7 @@ function ReorderGrid({
           >
             <button
               type="button"
-              className="block w-full text-left"
+              className={cn('block w-full text-left', lifted !== id && 'press')}
               aria-label={selecting ? `selecionar ${p.name}` : `editar ${p.name}`}
               aria-pressed={selecting ? picked.has(id) : undefined}
               {...(selecting ? {} : preload(`/cardapio/produto/${id}`))}
@@ -629,6 +633,7 @@ function ReorderGrid({
   );
 }
 
+/** Swipe left marks it "esgotado hoje": the row follows the finger, then springs home. */
 function ListRow({
   p,
   selecting,
@@ -646,44 +651,121 @@ function ListRow({
 }) {
   const a = availability(p);
   const preload = usePreload();
-  const [dx, setDx] = useState(0);
-  const start = useRef<{ x: number; y: number; lock: 'x' | 'y' | null } | null>(null);
+  const row = useRef<HTMLDivElement>(null);
+  const [revealed, setRevealed] = useState(false);
+  const drag = useRef<{
+    x: number;
+    y: number;
+    lock: 'x' | 'y' | null;
+    dx: number;
+    armed: boolean;
+    t: number;
+    v: number;
+  } | null>(null);
+  const moved = useRef(false);
+  const swipeable = !selecting && a !== 'sold_out';
+
+  const put = (dx: number) => {
+    if (row.current) row.current.style.transform = dx ? `translateX(${dx}px)` : '';
+  };
+  const settle = (from: number, velocity: number) => {
+    const el = row.current;
+    put(0);
+    if (!el || !from || reducedMotion()) return setRevealed(false);
+    // velocity toward home, in row-offsets per second
+    const { easing, duration } = springEasing(SPRING, (velocity * 1000) / Math.abs(from));
+    const anim = el.animate(
+      [{ transform: `translateX(${from}px)` }, { transform: 'translateX(0)' }],
+      { duration, easing },
+    );
+    anim.onfinish = anim.oncancel = () => setRevealed(false);
+  };
+  const end = (commit: boolean, at: number) => {
+    const d = drag.current;
+    drag.current = null;
+    if (!d || d.lock !== 'x') return;
+    if (commit && d.armed) {
+      haptic.commit();
+      onSoldOutToday();
+    }
+    // a finger that stopped before lifting has no fling left
+    settle(d.dx, at - d.t > 80 ? 0 : d.v);
+  };
+
   return (
     <div className="relative isolate">
-      {dx < 0 ? (
+      {revealed ? (
         <div
           aria-hidden
           className="absolute inset-0 -z-10 flex items-center justify-end bg-danger-soft px-5 t-label text-danger"
         >
-          esgotado hoje
+          <span
+            data-swipe-label
+            className="origin-right transition-transform duration-(--duration-quick) ease-out"
+          >
+            esgotado hoje
+          </span>
         </div>
       ) : null}
       <div
-        className="flex min-h-18 items-center gap-3 bg-surface px-3 py-2"
-        style={{ transform: dx ? `translateX(${dx}px)` : undefined, touchAction: 'pan-y' }}
-        onPointerDown={(e) => (start.current = { x: e.clientX, y: e.clientY, lock: null })}
+        ref={row}
+        className="press-row flex min-h-18 items-center gap-3 bg-surface px-3 py-2"
+        style={{
+          touchAction: 'pan-y',
+          // opaque while the swipe layer is underneath (press-row's tint is translucent)
+          background: revealed ? 'var(--surface)' : undefined,
+        }}
+        onPointerDown={(e) => {
+          moved.current = false;
+          // the left edge belongs to the swipe-back gesture
+          if (!swipeable || e.clientX < 24 || (e.pointerType === 'mouse' && e.button !== 0)) return;
+          row.current?.getAnimations().forEach((x) => x.cancel());
+          drag.current = {
+            x: e.clientX,
+            y: e.clientY,
+            lock: null,
+            dx: 0,
+            armed: false,
+            t: e.timeStamp,
+            v: 0,
+          };
+        }}
         onPointerMove={(e) => {
-          const s = start.current;
-          if (!s) return;
-          const mx = e.clientX - s.x;
-          if (!s.lock) {
-            if (Math.abs(mx) < 8 && Math.abs(e.clientY - s.y) < 8) return;
-            s.lock = Math.abs(mx) > Math.abs(e.clientY - s.y) ? 'x' : 'y';
+          const d = drag.current;
+          if (!d) return;
+          const mx = e.clientX - d.x;
+          if (!d.lock) {
+            if (Math.abs(mx) < 8 && Math.abs(e.clientY - d.y) < 8) return;
+            d.lock = Math.abs(mx) > Math.abs(e.clientY - d.y) ? 'x' : 'y';
+            if (d.lock === 'y') return void (drag.current = null);
+            moved.current = true;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setRevealed(true);
           }
-          if (s.lock === 'x') setDx(Math.min(0, mx));
-        }}
-        onPointerUp={(e) => {
-          const w = (e.currentTarget as HTMLElement).offsetWidth;
-          if (dx < -w * 0.35 && a !== 'sold_out') {
-            haptic.commit();
-            onSoldOutToday();
+          const dx = Math.min(0, mx);
+          const dt = e.timeStamp - d.t;
+          if (dt > 0) d.v = 0.8 * ((dx - d.dx) / dt) + 0.2 * d.v;
+          d.t = e.timeStamp;
+          d.dx = dx;
+          put(dx);
+          const armed = dx < -e.currentTarget.offsetWidth * 0.35;
+          if (armed !== d.armed) {
+            d.armed = armed;
+            haptic.tick();
+            const label =
+              e.currentTarget.parentElement?.querySelector<HTMLElement>('[data-swipe-label]');
+            if (label) label.style.transform = armed ? 'scale(1.12)' : '';
           }
-          setDx(0);
-          start.current = null;
         }}
-        onPointerCancel={() => {
-          setDx(0);
-          start.current = null;
+        onPointerUp={(e) => end(true, e.timeStamp)}
+        onPointerCancel={(e) => end(false, e.timeStamp)}
+        onClickCapture={(e) => {
+          // a finished swipe must not also open the product; Enter or an AT click (detail 0) still does
+          if (moved.current && e.detail > 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            moved.current = false;
+          }
         }}
       >
         {selecting ? (
@@ -695,34 +777,43 @@ function ListRow({
             className="size-6 accent-(--primary)"
           />
         ) : null}
-        <span
-          className={cn(
-            'size-14 shrink-0 overflow-hidden rounded-sm bg-sunken',
-            a === 'sold_out' && 'grayscale',
-          )}
-          style={p.dominant ? { background: p.dominant } : undefined}
-        >
-          {p.imageUrl ? (
-            <img src={p.imageUrl} alt="" className="size-full object-cover" loading="lazy" />
-          ) : null}
-        </span>
         <Link
           to={`/cardapio/produto/${p.id}`}
           {...preload(`/cardapio/produto/${p.id}`)}
-          className="min-w-0 flex-1"
+          className="flex min-w-0 flex-1 items-center gap-3 self-stretch"
         >
-          <span className="block truncate font-semibold">{p.name}</span>
-          <span className="tnum t-body text-muted">
-            {money(p.priceCents)}
-            {p.stockQuantity != null ? ` · ${p.stockQuantity} un.` : ''}
+          <span
+            data-vt-src={`product:${p.id}`}
+            className={cn(
+              'size-14 shrink-0 select-none overflow-hidden rounded-sm bg-sunken [-webkit-touch-callout:none]',
+              a === 'sold_out' && 'grayscale',
+            )}
+            style={p.dominant ? { background: p.dominant } : undefined}
+          >
+            {p.imageUrl ? (
+              <img
+                src={p.imageUrl}
+                alt=""
+                draggable={false}
+                className="size-full object-cover"
+                loading="lazy"
+              />
+            ) : null}
           </span>
-          {outsideNow(p) ? <OffHoursBadge className="ml-2 align-middle" /> : null}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-semibold">{p.name}</span>
+            <span className="tnum t-body text-muted">
+              {money(p.priceCents)}
+              {p.stockQuantity != null ? ` · ${p.stockQuantity} un.` : ''}
+            </span>
+            {outsideNow(p) ? <OffHoursBadge className="ml-2 align-middle" /> : null}
+          </span>
         </Link>
         <button
           type="button"
           onClick={onAvail}
           className={cn(
-            't-caption min-h-11 shrink-0 rounded-full px-3 font-semibold ring-1',
+            'press t-caption min-h-11 shrink-0 rounded-full px-3 font-semibold ring-1',
             a === 'available' && 'bg-success-soft text-success ring-success/30',
             a === 'sold_out' && 'bg-danger-soft text-danger ring-danger/30',
             a === 'hidden' && 'bg-sunken text-muted ring-line',

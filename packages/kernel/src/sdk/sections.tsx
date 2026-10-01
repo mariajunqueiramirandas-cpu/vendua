@@ -17,6 +17,7 @@ import {
   StoreStatusBadge,
   useNavigateTo,
 } from '../primitives.tsx';
+import { haptic } from '../haptics.ts';
 import { BlockArea, useAreaHas, usePageContext } from '../composition/runtime.tsx';
 import type { SectionProps } from '../composition/registry.ts';
 import { Slot } from '../slot.tsx';
@@ -365,7 +366,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
         </KLink>
       ) : null}
       <article className="v-pp" data-variant={settings.variant} data-status={product.status}>
-        <div className="v-pp-media" data-part="media">
+        <div className="v-pp-media" data-part="media" data-vt-dst={`product:${product.slug}`}>
           <BlockArea name="media" only={['media']} className="v-pp-media-custom" />
           <BlockArea name="media" only={['badge']} className="v-pp-media-badges" />
           {customMedia ? null : (product.gallery?.length ?? 0) > 1 ? (
@@ -459,7 +460,10 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                   type="button"
                   aria-label="Diminuir quantidade"
                   disabled={qty <= 1}
-                  onClick={() => setQty((q) => Math.max(1, q - 1))}
+                  onClick={() => {
+                    haptic.tick();
+                    setQty((q) => Math.max(1, q - 1));
+                  }}
                 >
                   −
                 </button>
@@ -468,7 +472,10 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                   type="button"
                   aria-label="Aumentar quantidade"
                   disabled={qty >= maxQty}
-                  onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
+                  onClick={() => {
+                    haptic.tick();
+                    setQty((q) => Math.min(maxQty, q + 1));
+                  }}
                 >
                   +
                 </button>
@@ -481,6 +488,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                 asChild
                 onAdded={() => {
                   setAdded(true);
+                  // the full sacola, as before 1.11: a sheet would sit over the page's own triggers
                   if (settings.afterAdd === 'cart') go(resolvePaths(config).cart);
                 }}
                 onError={(err) =>

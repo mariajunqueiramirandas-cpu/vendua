@@ -235,8 +235,9 @@ describe('purchase panel + primitives', () => {
       qty: 1,
       modifierIds: ['m1'],
     });
-    // afterAdd: 'cart' → the Kernel cart page
+    // afterAdd: 'cart' → the Kernel cart page (the full page, not the sheet)
     expect($('[data-vendua-page="cart"]')).not.toBeNull();
+    expect($('dialog[data-vendua="cart-sheet"]')).toBeNull();
     const events =
       (globalThis as { __VENDUA_EVENTS__?: { name: string }[] }).__VENDUA_EVENTS__ ?? [];
     expect(events.map((e) => e.name)).toEqual(

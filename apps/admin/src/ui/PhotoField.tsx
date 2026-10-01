@@ -31,6 +31,7 @@ export function PhotoField({
   autoOpen,
   initialFile,
   aspect = '4:3',
+  vtKey,
 }: {
   photos: Photo[];
   onChange: (next: Photo[]) => Promise<unknown> | void;
@@ -40,6 +41,8 @@ export function PhotoField({
   /** a photo that arrived another way (shared from the gallery): straight to the crop */
   initialFile?: File | null;
   aspect?: AspectKey;
+  /** the cover is this shared-element destination (`data-vt-dst`, app/Router.tsx) */
+  vtKey?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -99,6 +102,7 @@ export function PhotoField({
         <div
           className="relative overflow-hidden rounded-lg bg-sunken"
           style={{ aspectRatio: ASPECTS[aspect] }}
+          data-vt-dst={vtKey}
         >
           <img src={cover.url} alt={cover.alt ?? ''} className="size-full object-cover" />
           {max === 1 ? (
@@ -128,6 +132,7 @@ export function PhotoField({
           onClick={() => input.current?.click()}
           className="flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-line-strong bg-sunken text-muted hover:bg-press"
           style={{ aspectRatio: ASPECTS[aspect] }}
+          data-vt-dst={vtKey}
         >
           <Camera weight="duotone" className={cn(max === 1 ? 'size-8' : 'size-12')} />
           <span className="t-label text-ink">adicionar foto</span>

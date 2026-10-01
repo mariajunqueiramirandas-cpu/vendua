@@ -166,7 +166,7 @@ export function Colors({
                 type="button"
                 onClick={() => onChange(paletteFrom(c, value))}
                 aria-pressed={value.color.accent === readableAccent(c)}
-                className="flex h-12 items-center gap-2 rounded-full bg-surface pl-1.5 pr-3 ring-1 ring-line-strong hover:bg-hover aria-pressed:ring-2 aria-pressed:ring-primary"
+                className="press flex h-12 items-center gap-2 rounded-full bg-surface pl-1.5 pr-3 ring-1 ring-line-strong hover:bg-hover aria-pressed:ring-2 aria-pressed:ring-primary"
                 aria-label={`usar paleta ${name}`}
               >
                 <span
@@ -179,7 +179,7 @@ export function Colors({
           <button
             type="button"
             onClick={() => onChange(paletteFrom(value.color.accent, value, true))}
-            className="t-caption flex h-12 items-center rounded-full bg-[#14110F] px-4 font-semibold text-[#F5F1EA]"
+            className="press t-caption flex h-12 items-center rounded-full bg-[#14110F] px-4 font-semibold text-[#F5F1EA]"
           >
             versão escura
           </button>

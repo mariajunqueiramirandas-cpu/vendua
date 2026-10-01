@@ -1,3 +1,4 @@
 /* Kernel styles entry — storefronts import '@vendua/kernel/styles.css' once. All
    defaults live in @vendua/ui-defaults under @layer vendua, token-driven. */
 @import '@vendua/ui-defaults/styles.css';
+@import '@vendua/ui-defaults/native.css';

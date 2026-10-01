@@ -194,6 +194,30 @@ Additive — no storefront edit, no new runtime export.
   over `config.tokens`: a merchant's token edit is live at the next page load, with no rebuild.
   Templates: live `/state?templates=1` over the injected ones over the build's snapshot.
 
+### Native feel (Kernel 1.11)
+
+Additive — no storefront edit, no new runtime export. Stores stay a plain web app.
+
+- **Page transitions.** Navigations inside `<StorefrontRoutes />` (Kernel links, store
+  `<Link>`/`useNavigate()`, back/forward) run as View Transitions where supported:
+  `html[data-vt]` is `push` (deeper: product, sacola, checkout), `pop`, `tab` (same depth) or
+  `fade` (always on ≥ 768 px); reduced motion gets a 120 ms crossfade. A replace animates only
+  when its `state.vt` names a type. The `.v-header` and bag bar are pinned by their own
+  transition names. Never on top of the browser's own swipe animation.
+- **Shared photo.** Put `data-vt-src="product:<slug>"` on the tappable photo and
+  `data-vt-dst="product:<slug>"` on the next page's photo: the photo morphs across (and back on
+  pop). The source is the tapped element's `[data-vt-src]`, or the one inside the tapped
+  link/button; the destination is the innermost visible match. The default product card and
+  `sdk:purchase-panel` media already carry them.
+- **The sacola as a sheet.** `CartTrigger` (and the bag bar) pushes `/sacola` with
+  `state.vBackground` (the current location): the page stays rendered and the cart opens over
+  it in a `<dialog data-vendua="cart-sheet">` through `cart.Drawer` with
+  `presentation="drawer"`. A direct visit, a trigger on `/checkout` and `afterAdd: 'cart'` get
+  the full page, as before. Store CSS styles it only through `--v-*` tokens and `[data-part]`
+  hooks.
+- **Checkout steps** are history entries (`state.vStep`); back returns to the previous step.
+- `<meta name="theme-color">` follows the `bg` token; toasts live in the top layer.
+
 ### Editor preview (Kernel 1.4)
 
 Not an export: a storefront loaded inside a frame with `?vendua-preview=1` listens for

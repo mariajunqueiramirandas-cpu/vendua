@@ -6,6 +6,7 @@ import { errorCode, errorCopy, showError, showInfo } from '../errors.ts';
 import { useKernel } from '../provider.tsx';
 import { resolvePaths } from '../config.ts';
 import type { Cart, CartItem } from '../api.ts';
+import { haptic } from '../haptics.ts';
 
 // /sacola — Kernel page (17 — Kernel pages), rendered inside the store's layout.
 // Totals are Core's; the page only wires slots to the cart mutations.
@@ -35,6 +36,7 @@ function Line({ item, currency }: { item: CartItem; currency: string }) {
       onQty={(qty) => {
         const next = Math.min(qty, max);
         if (qty > 0 && next === item.qty) return;
+        haptic.tick();
         void run(() => (qty <= 0 ? mutations.remove(item.id) : mutations.updateQty(item.id, next)));
       }}
       onRemove={() => void run(() => mutations.remove(item.id))}
@@ -105,47 +107,67 @@ function Coupon({ cart, currency }: { cart: Cart; currency: string }) {
   );
 }
 
-export function CartPage() {
+/** The bag itself — the `/sacola` page, or the sheet drawn over the page it was opened from. */
+export function CartContents({
+  presentation,
+  onClose,
+  onBrowse,
+}: {
+  presentation: 'page' | 'drawer';
+  /** drawer: close the sheet; page: back to browsing */
+  onClose?: () => void;
+  /** the empty bag's way to the menu (default: go to the catalog) */
+  onBrowse?: () => void;
+}) {
   const { cart, loading } = useCart();
   const { store } = useStore();
   const { config } = useKernel();
   const go = useNavigateTo();
   const currency = store?.currency ?? 'BRL';
-  const browse = () => go(resolvePaths(config).catalog);
+  const browse = onClose ?? (() => go(resolvePaths(config).catalog));
   const open = cart?.status === 'open' && cart.items.length > 0;
 
+  if (loading && !cart)
+    return <div aria-busy="true" aria-label="Carregando sacola" className="v-panel" />;
+  if (!open)
+    return (
+      <Slot
+        name="checkout.EmptyCart"
+        onBrowse={onBrowse ?? (() => go(resolvePaths(config).catalog))}
+      />
+    );
+  return (
+    <Slot
+      name="cart.Drawer"
+      cart={cart}
+      currency={currency}
+      presentation={presentation}
+      onClose={browse}
+      lines={cart.items.map((i) => (
+        <Line key={i.id} item={i} currency={currency} />
+      ))}
+      summary={
+        <>
+          <Slot name="checkout.Summary" cart={cart} currency={currency} />
+          <Coupon cart={cart} currency={currency} />
+          <ShareCart />
+        </>
+      }
+      checkout={
+        <CheckoutButton asChild>
+          <button type="button" className="v-btn v-btn-accent v-btn-block">
+            Ir para o pagamento
+          </button>
+        </CheckoutButton>
+      }
+    />
+  );
+}
+
+export function CartPage() {
   return (
     <main id="main" className="v-page" data-vendua-page="cart">
-      {loading && !cart ? (
-        <div aria-busy="true" aria-label="Carregando sacola" className="v-panel" />
-      ) : !open ? (
-        <Slot name="checkout.EmptyCart" onBrowse={browse} />
-      ) : (
-        <Slot
-          name="cart.Drawer"
-          cart={cart}
-          currency={currency}
-          presentation="page"
-          onClose={browse}
-          lines={cart.items.map((i) => (
-            <Line key={i.id} item={i} currency={currency} />
-          ))}
-          summary={
-            <>
-              <Slot name="checkout.Summary" cart={cart} currency={currency} />
-              <Coupon cart={cart} currency={currency} />
-              <ShareCart />
-            </>
-          }
-          checkout={
-            <CheckoutButton asChild>
-              <button type="button" className="v-btn v-btn-accent v-btn-block">
-                Ir para o pagamento
-              </button>
-            </CheckoutButton>
-          }
-        />
-      )}
+      <CartContents presentation="page" />
     </main>
   );
 }

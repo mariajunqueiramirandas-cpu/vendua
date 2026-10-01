@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import MagicString from 'magic-string';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -48,9 +49,52 @@ function serviceWorker(): Plugin {
   };
 }
 
+// Every Phosphor icon ships six weights in one Map; the app draws regular, bold, fill and
+// duotone only, so thin and light are dropped from each icon's definitions (shell headroom).
+// A `weight="thin"` or `"light"` in src fails the build: add the weight back here first.
+function phosphorWeights(drop = ['thin', 'light']): Plugin {
+  type Node = { type: string; start: number; end: number; [k: string]: unknown };
+  return {
+    name: 'vendua-phosphor-weights',
+    apply: 'build',
+    transform(code, id) {
+      if (/[\\/]apps[\\/]admin[\\/]src[\\/].+\.tsx?$/.test(id)) {
+        const used = code.match(new RegExp(`weight[=:]\\s*\\{?\\s*['"](${drop.join('|')})['"]`));
+        if (used) this.error(`${id}: Phosphor weight "${used[1]}" is stripped from the build`);
+        return;
+      }
+      if (!/@phosphor-icons[\\/]react[\\/]dist[\\/]defs[\\/][^\\/]+\.es\.js$/.test(id)) return;
+      const s = new MagicString(code);
+      const visit = (n: unknown): void => {
+        if (!n || typeof n !== 'object') return;
+        if (Array.isArray(n)) return n.forEach(visit);
+        const node = n as Node;
+        const arg = (node.arguments as Node[] | undefined)?.[0];
+        if (
+          node.type === 'NewExpression' &&
+          (node.callee as Node & { name?: string }).name === 'Map' &&
+          arg?.type === 'ArrayExpression'
+        ) {
+          const els = arg.elements as Node[];
+          els.forEach((el, i) => {
+            const key = (el.elements as (Node & { value?: unknown })[] | undefined)?.[0]?.value;
+            if (typeof key !== 'string' || !drop.includes(key)) return;
+            const next = els[i + 1];
+            s.remove(el.start, next ? next.start : el.end);
+          });
+          return;
+        }
+        for (const k in node) if (k !== 'type') visit(node[k]);
+      };
+      visit(this.parse(code));
+      return s.hasChanged() ? { code: s.toString(), map: s.generateMap({ hires: true }) } : null;
+    },
+  };
+}
+
 // Object-form proxy keeps the Host header intact (string shorthand sets changeOrigin).
 export default defineConfig({
-  plugins: [react(), tailwindcss(), serviceWorker()],
+  plugins: [react(), tailwindcss(), phosphorWeights(), serviceWorker()],
   base: '/admin/',
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },

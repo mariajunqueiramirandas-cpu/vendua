@@ -19,7 +19,8 @@ export function OrderRowView({ o }: { o: OrderRow }) {
       <Link
         to={`/pedidos/${o.id}`}
         {...preload(`/pedidos/${o.id}`)}
-        className="flex min-h-18 items-center gap-3 px-4 py-3 hover:bg-hover"
+        data-vt-src={`order:${o.id}`}
+        className="press-row flex min-h-18 items-center gap-3 px-4 py-3 hover:bg-hover"
       >
         <span className="tnum w-12 shrink-0 font-display text-lg font-semibold">#{o.number}</span>
         <span className="min-w-0 flex-1">

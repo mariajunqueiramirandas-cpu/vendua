@@ -1,6 +1,7 @@
 import { X } from '@phosphor-icons/react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Drawer } from 'vaul';
+import { dimStatusBar } from '../lib/theme.ts';
 import { cn } from './cn.ts';
 import { IconButton } from './Button.tsx';
 
@@ -68,9 +69,11 @@ export function Sheet({
 }) {
   const desktop = useDesktop();
   useBackToClose(open, () => onOpenChange(false));
+  useEffect(() => (open && !desktop ? dimStatusBar() : undefined), [open, desktop]);
   return (
     <Drawer.Root open={open} onOpenChange={onOpenChange} direction={desktop ? 'right' : 'bottom'}>
       <Drawer.Portal>
+        {/* keep in step with SCRIM in lib/theme.ts (the dimmed status bar) */}
         <Drawer.Overlay className="fixed inset-0 z-[60] bg-[rgb(10_16_13/0.42)]" />
         <Drawer.Content
           aria-describedby={undefined}

@@ -1,8 +1,11 @@
-import { useCallback, useLayoutEffect, useRef, type MouseEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, type MouseEvent } from 'react';
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom';
+import { placeOf } from './nav.ts';
+import { prevIs } from './Router.tsx';
 
-// What makes the installed app feel like one: back returns to where you were,
-// tapping the current tab goes to the top, screens cross-fade instead of blinking.
+// What makes the installed app feel like one: back returns to where you were, tapping the
+// current tab goes to the top, the keyboard pushes the tab bar away. Screen transitions
+// themselves start in Router.tsx.
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -43,37 +46,65 @@ export function useScrollMemory() {
   }, [loc.key, type]);
 }
 
-type VT = (cb: () => Promise<void>) => unknown;
-
 /**
- * Tab/sidebar links: a same-document view transition into the next screen, and a
- * tap on the tab you're on scrolls it to the top.
+ * Tab/sidebar links: the Router animates the change (a `tab` transition). A tap on the tab
+ * you're on scrolls it to the top; a tap while deeper in that tab returns to its root.
  */
 export function useTabNav() {
   const nav = useNavigate();
   const loc = useLocation();
-  const pending = useRef<(() => void) | null>(null);
-  useLayoutEffect(() => {
-    pending.current?.();
-    pending.current = null;
-  }, [loc.key]);
   return useCallback(
     (to: string) => (e: MouseEvent) => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      if (loc.pathname === to) {
+        e.preventDefault();
+        return scrollTo({ top: 0, behavior: reduced() ? 'auto' : 'smooth' });
+      }
+      if (placeOf(loc.pathname)?.root !== to) return;
       e.preventDefault();
-      const here = to === '/' ? loc.pathname === '/' : loc.pathname === to;
-      if (here) return scrollTo({ top: 0, behavior: reduced() ? 'auto' : 'smooth' });
-      const start = (document as { startViewTransition?: VT }).startViewTransition;
-      if (!start || reduced()) return nav(to);
-      // resolves once the router committed the new screen (see the layout effect)
-      const vt = start.call(
-        document,
-        () => new Promise<void>((ok) => ((pending.current = ok), nav(to))),
-      ) as { ready?: Promise<void>; finished?: Promise<void> };
-      // a skipped transition (a slow screen, a second tap) is fine: the navigation still happens
-      vt.ready?.catch(() => undefined);
-      vt.finished?.catch(() => undefined);
+      if (prevIs(to)) nav(-1);
+      else nav(to, { state: { vt: 'pop' } });
     },
     [loc.pathname, nav],
   );
+}
+
+const TYPING =
+  'input:not([type=checkbox],[type=radio],[type=range],[type=color],[type=file],[type=button],[type=submit]),textarea,[contenteditable]:not([contenteditable=false])';
+
+/**
+ * `html[data-kb]` while the on-screen keyboard is up (phones): a text field has focus and the
+ * visual viewport lost more than 150 px. The tab bar steps aside and `--tabbar-h` drops to 0,
+ * so action bars sit on the keyboard's edge.
+ */
+export function useKeyboardInset() {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const phone = matchMedia('(max-width: 767px)');
+    const root = document.documentElement;
+    const typing = () => !!document.activeElement?.matches(TYPING);
+    let full = vv.height;
+    let t = 0;
+    const check = () => {
+      if (!typing()) full = Math.max(vv.height, innerHeight);
+      const on = phone.matches && typing() && full - vv.height > 150;
+      if (on !== root.hasAttribute('data-kb')) root.toggleAttribute('data-kb', on);
+    };
+    // focus moves through <body> between two fields: look once it has landed
+    const later = () => {
+      clearTimeout(t);
+      t = window.setTimeout(check, 60);
+    };
+    vv.addEventListener('resize', check);
+    addEventListener('focusin', later);
+    addEventListener('focusout', later);
+    return () => {
+      clearTimeout(t);
+      vv.removeEventListener('resize', check);
+      removeEventListener('focusin', later);
+      removeEventListener('focusout', later);
+      root.removeAttribute('data-kb');
+    };
+  }, []);
 }

@@ -94,7 +94,8 @@ export default function Customers() {
                 key={c.phone}
                 to={`/clientes/${c.phone}`}
                 {...preload(`/clientes/${c.phone}`)}
-                className="flex min-h-18 items-center gap-3 px-4 py-3 hover:bg-hover"
+                data-vt-src={`customer:${c.phone}`}
+                className="press-row flex min-h-18 items-center gap-3 px-4 py-3 hover:bg-hover"
               >
                 <span className="grid size-11 shrink-0 place-items-center rounded-full bg-sunken font-display font-semibold">
                   {c.name.slice(0, 1).toUpperCase()}
