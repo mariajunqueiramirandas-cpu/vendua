@@ -25,3 +25,7 @@ change log whenever you update it.
 | [Loja Integrada](loja-integrada.md)   | Secondary   | Medium      |
 | [Yampi](yampi.md)                     | Secondary   | Medium      |
 | [Shopify](shopify.md)                 | Secondary   | Medium      |
+| [Domínio Tech](dominio-tech.md)       | Benchmark   | Medium–high |
+
+Benchmark: not in the parity set, profiled for its merchant AI agent. Adding it to the set is the
+owner's call.
