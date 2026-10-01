@@ -1,8 +1,9 @@
 # Kernel helper gaps — what the Kernel should own and doesn't
 
-> Status: investigated, nothing decided · Opened 2026-10-01 during menu import phase 3
-> ([PR #271](https://github.com/mariajunqueiramirandas-cpu/vendua/pull/271)), full sweep the same
-> day · Owner: undecided
+> Status: **resolved in Kernel 1.14** (§8) · Opened 2026-10-01 during menu import phase 3
+> ([PR #271](https://github.com/mariajunqueiramirandas-cpu/vendua/pull/271)), swept and fixed the
+> same day in [PR #274](https://github.com/mariajunqueiramirandas-cpu/vendua/pull/274). §1–§7 are
+> the findings as they stood before the fix; line numbers there are from before it.
 
 A store that draws its own components gets Core's **data** from the Kernel but none of the
 **display rules** the Kernel's defaults apply to it. Each such store re-derives those rules by
@@ -331,7 +332,7 @@ These are wrong today, whatever we decide about helpers, and each is small:
 
 ## 6. Enforcement today and what a check could add
 
-K01–K16 live in `packages/conformance/src/static.ts` and `lint.ts`. The next free id is K17.
+K01–K16 live in `packages/conformance/src/static.ts` and `lint.ts`. (Before the fix — §8 lists the rules added.)
 
 | Family                                                         | Caught today?                                                       | A rule that would catch it                                                         |
 | -------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
@@ -351,15 +352,87 @@ K01–K16 live in `packages/conformance/src/static.ts` and `lint.ts`. The next f
 | Kernel's internal copies agree                                 | no                                                                  | collapse to one module, or a parity test                                           |
 | Display rules end to end                                       | no conformance check for "a partir de", strike, low stock, currency | C-suite fixtures with a from-price product, a timed promo and a radius zone        |
 
-## 7. Still open
+## 7. Decisions taken
 
-- Which helpers come first? The candidate is `priceDisplay` + `cardState` + `useDeliverySummary` +
-  `useStoreHours`. They cover most of the drift and three of the bugs.
-- Should Core serve the card decisions (`canQuickAdd`, a badge key) or should the Kernel derive them?
-  The admin's needs push toward Core.
-- Should the stores' copies (`_examples/quero-pudim`, `OBSERVATIONS.md`) be corrected now or retired
-  as rule guides? The investigation found both stale.
-- How do the new K-rules land: warnings first, then errors once the helpers exist?
+- **Order.** Everything at once, in one platform PR: Core first, then the Kernel's rules, then the
+  defaults, admin, edge and checks, then the stores.
+- **Core or Kernel.** Core decides whatever needs the clock, the zones, the stock ledger or money
+  (and whatever the admin also needs). The Kernel holds every presentation choice over Core's
+  numbers, as pure functions. Card decisions (`canQuickAdd`, the badge) are pure choices over Core
+  fields, so they live in the Kernel's `cardState`. The admin reads Core's storefront summary for the
+  product instead.
+- **`_examples`.** Retired. `_template` is the only reference store. Both `OBSERVATIONS.md` files
+  are deleted, and `docs/phase-0-findings.md` keeps their history.
+- **K-rules.** They land as failures, not warnings. Both in-repo stores were migrated in the same
+  PR, so nothing is left to warn about.
+
+## 8. Resolution (Kernel 1.14)
+
+**Where each rule lives now**
+
+- **Core** serves:
+  - on `/store`: `closesAt`, `publicUrl` and upcoming `hours.specialDays`;
+  - `closesAt` on `/surfaces` and `/state`, plus `meta` on `/surfaces?design=1`, which the edge uses;
+  - a line quote, `GET /storefront/v1/products/:slug/quote`, sharing one `priceLine()` with
+    add-to-cart, and add-to-cart now returns `added`;
+  - a from-price for combos, and `minFeeCents` per delivery zone;
+  - WhatsApp and Instagram normalised on every write, with migration `0072` backfilling them;
+  - on admin products: `liveStatus`, `lowStock` and the storefront summary;
+  - delivery-mode-aware order transitions;
+  - scheduled-day totals, 30-day payment totals, coupon and loyalty labels, and one slug fold.
+- **`@vendua/kernel/rules`**: one pure module, also exported from the main entry. It holds price,
+  card, menu, hours, delivery, links, phone, notices, orders, errors, QR, copy and modifiers. The
+  Kernel's sections, pages and primitives, `@vendua/ui-defaults`, both stores, the admin and the CRM
+  all call it. ui-defaults' old helper names re-export it.
+- **Kernel hooks and components**: `useCardState`, `useMenu`, `useStoreStatus`, `useStoreHours`,
+  `useDeliverySummary`, `useMoney`, `useLinks`, `useCopy`, `useCartCount`, `useCoupon`,
+  `useCouponCheck`, `useLineQuote`, `usePixTimer`, `useReducedMotion`, `useScrollSpy`,
+  `ProductPrice`, `ProductImage`, `QrCode`, `haptic` and `Slot`. The `./sdk-catalog` subpath gains
+  `DEFAULT_TEMPLATES`, `resolveSettings`, section titles and the preview protocol, and
+  `@vendua/templates` gains `DEFAULT_TOKENS`.
+- **Edge**: writes each page's title, description, Open Graph tags and canonical link server-side.
+  The build manifest carries the store's paths, so custom product routes match.
+- **`vendua check`**:
+  - New rules: K17 (money formatting), K18 (price and card fields), K19 (contact links), K20 (store
+    time), K21 (Core media through a raw `<img>`) and K22 (vibrate and reduced motion).
+  - K03 now also catches EventSource, sendBeacon and WebSocket.
+  - K09 catches any literal product path, and K11 any declared area that is never rendered.
+  - `qrcode` is no longer on the store allow-list.
+  - K07 allows `@vendua/kernel/rules`, and K08 fails a runtime `@vendua/kernel` import inside an
+    override. Overrides load with `vendua.config.ts` in Node, before the Kernel's React runtime
+    exists, so they take their helpers from the pure subpath.
+
+**The §4 bugs**: all ten are fixed. Delivery floors come from Core's `minFeeCents`. `useNotices`,
+`SystemSurfaces` and `SurfaceRegion` share `visibleNotices`. `StockCounter` follows Core's low stock.
+`add_to_cart` carries Core's `added.lineTotalCents`. The template's double haptic is gone. Each page
+sets its own title. Dates are in the store's time zone. The template's delivery line and hours hint
+use `useDeliverySummary` and `useStoreStatus`. `_examples` is gone.
+
+**Left as they are, on purpose**
+
+- Admin Home's week-over-week delta, Reports' ratios, and the CRM's compact chart axis. These format
+  two Core numbers; they don't compute money.
+- The CRM's WhatsApp pairing QR still uses `qrcode`. It is staff tooling, not a store.
+- The marketing site's screenshot script keeps its own money format. It is build tooling, fed by
+  live Core data.
+- The loader (`v.js`) keeps its one-line blocking check. It has to stay dependency-free, and it
+  matches Core, which never emits an unknown severity.
+- The editors' live sentences for unsaved schedules (`scheduleSentence`, `promoSentence`) stay in
+  the admin. Core can't word input that hasn't been saved yet; saved schedules use Core's labels.
+- `vite.config.ts` and `main.tsx` stay per store. K06 and K02 already require them to be identical,
+  so they can't drift.
+- Voice stays with each store: badge and status wording, layout, fonts, placeholder art, scroll
+  reveal and print styling.
+- `_template` keeps its own photo carousel, because restyling the Kernel's gallery would need `.v-*`
+  selectors (K10). It also keeps `useInBag`, since `cardState` gives the stock left, not how many of
+  the product are in the bag.
+- Loyalty programs saved before this change keep the label the admin wrote. Core derives the label
+  only for new or changed rewards.
+
+**Steps outside the repo** (production data lives in the Control Plane):
+
+- Retire the `example-quero-pudim` tenant and its `_examples/quero-pudim` bundle and releases.
+- Set `quero-pudim`'s ring to `canary` if production should match the dev and CI seed.
 
 ## References
 
@@ -367,6 +440,7 @@ K01–K16 live in `packages/conformance/src/static.ts` and `lint.ts`. The next f
   promotions were introduced.
 - `packages/kernel/API.md` — "Timed promotions and 'a partir de' (Kernel 1.13)".
 - `packages/kernel/CHANGELOG.md` 1.13.0.
-- `packages/conformance/src/lint.ts`, `static.ts` — K01–K16.
+- `packages/conformance/src/lint.ts`, `static.ts`, `ownership.ts` — K01–K22.
+- `packages/kernel/API.md` — "Rules and display helpers (Kernel 1.14)"; `packages/kernel/CHANGELOG.md` 1.14.0.
 - `tools/check-storefront-paths.mjs` — the storefront write-scope boundary and the `platform` label.
 - `packages/cli/src/scaffold.ts` — what `_template` copies into a new store.
