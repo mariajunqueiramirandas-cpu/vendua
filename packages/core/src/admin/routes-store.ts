@@ -23,9 +23,10 @@ import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { nextLocalMidnight } from './routes-catalog.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
+import { parsePolygon, type LatLng } from '../modules/geo.ts';
 
 /** encomendas: the offline methods a preorder may be limited to */
-const METHODS = ['pix', 'card_on_delivery', 'cash'] as const;
+const METHODS = ['pix', 'card_on_delivery', 'cash', 'meal_voucher'] as const;
 
 export async function loadSettings(tx: Sql, tenantId: string): Promise<StoreSettingsRow> {
   let row = (
@@ -67,8 +68,9 @@ async function zonesOf(tx: Sql, tenantId: string) {
     {
       id: string;
       name: string;
-      kind: 'neighborhood' | 'radius';
+      kind: 'neighborhood' | 'radius' | 'polygon';
       neighborhoods: string[];
+      polygon: LatLng[] | null;
       fee_cents: number;
       min_order_cents: number;
       eta_min_minutes: number;
@@ -92,6 +94,7 @@ async function zonesOf(tx: Sql, tenantId: string) {
     maxDistanceKm: z.max_distance_km == null ? null : Number(z.max_distance_km),
     feePerKmCents: z.fee_per_km_cents,
     freeDeliveryOverCents: z.free_delivery_over_cents,
+    polygon: z.polygon,
   }));
 }
 
@@ -217,7 +220,8 @@ function parseSpecialDays(v: unknown): SpecialDay[] {
 function zoneFields(b: Record<string, unknown>, partial: boolean) {
   const out: Record<string, unknown> = {};
   if (!partial || b.name !== undefined) out.name = text(b.name, 'name', 80, 1);
-  if (b.kind !== undefined) out.kind = oneOf(b.kind, 'kind', ['neighborhood', 'radius'] as const);
+  if (b.kind !== undefined)
+    out.kind = oneOf(b.kind, 'kind', ['neighborhood', 'radius', 'polygon'] as const);
   if (b.neighborhoods !== undefined) {
     if (!Array.isArray(b.neighborhoods) || b.neighborhoods.length > 200)
       throw new HttpError(422, 'BAD_REQUEST', 'at most 200 neighborhoods', {
@@ -227,6 +231,17 @@ function zoneFields(b: Record<string, unknown>, partial: boolean) {
       ...new Set(b.neighborhoods.map((n, i) => text(n, `neighborhoods[${i}]`, 120, 1))),
     ];
   }
+  // a new zone without a kind is a neighborhood zone (the column default)
+  const kind = out.kind ?? (partial ? undefined : 'neighborhood');
+  if (b.polygon !== undefined && b.polygon !== null) {
+    const r = parsePolygon(b.polygon);
+    if ('error' in r) throw new HttpError(422, 'BAD_REQUEST', r.error, { field: 'polygon' });
+    if (kind !== undefined && kind !== 'polygon')
+      throw new HttpError(422, 'BAD_REQUEST', 'only a polygon zone takes a polygon', {
+        field: 'polygon',
+      });
+    out.polygon = r.polygon;
+  } else if (kind !== undefined && kind !== 'polygon') out.polygon = null;
   if (b.maxDistanceKm !== undefined) {
     const km = b.maxDistanceKm === null ? null : Number(b.maxDistanceKm);
     if (km !== null && !(km > 0 && km <= 500))
@@ -263,11 +278,37 @@ function zoneFields(b: Record<string, unknown>, partial: boolean) {
     throw new HttpError(422, 'BAD_REQUEST', 'a radius zone needs a distance', {
       field: 'maxDistanceKm',
     });
-  if (!partial && out.kind !== 'radius' && !(out.neighborhoods as string[] | undefined)?.length)
+  if (!partial && out.kind === 'polygon' && !out.polygon)
+    throw new HttpError(422, 'BAD_REQUEST', 'draw the area with at least 3 points', {
+      field: 'polygon',
+    });
+  if (
+    !partial &&
+    out.kind !== 'radius' &&
+    out.kind !== 'polygon' &&
+    !(out.neighborhoods as string[] | undefined)?.length
+  )
     throw new HttpError(422, 'BAD_REQUEST', 'list at least one neighborhood', {
       field: 'neighborhoods',
     });
   return out;
+}
+
+function zoneColumns(tx: Sql, f: Record<string, unknown>) {
+  return {
+    ...f,
+    ...(f.neighborhoods ? { neighborhoods: tx.json(f.neighborhoods as string[]) } : {}),
+    ...(f.polygon ? { polygon: tx.json(f.polygon as LatLng[]) } : {}),
+  };
+}
+
+/** PATCH can set kind and polygon apart; the row's check is what sees both. */
+function polygonMismatch(err: unknown): never {
+  if ((err as { constraint_name?: string }).constraint_name === 'delivery_zones_polygon_check')
+    throw new HttpError(422, 'BAD_REQUEST', 'a polygon zone needs its polygon, and only it', {
+      field: 'polygon',
+    });
+  throw err;
 }
 
 export function mountStore(d: AdminDeps) {
@@ -489,7 +530,7 @@ export function mountStore(d: AdminDeps) {
       const f = zoneFields(await bodyJson(c), false);
       const row = (
         await tx<{ id: string }[]>`
-          insert into delivery_zones ${tx({ tenant_id: t.id, ...f, ...(f.neighborhoods ? { neighborhoods: tx.json(f.neighborhoods as string[]) } : {}) } as never)}
+          insert into delivery_zones ${tx(zoneColumns(tx, { tenant_id: t.id, ...f }) as never)}
           returning id
         `
       )[0]!;
@@ -511,12 +552,10 @@ export function mountStore(d: AdminDeps) {
       const id = uuidParam(c, 'id');
       const f = zoneFields(await bodyJson(c), true);
       if (!Object.keys(f).length) throw new HttpError(422, 'BAD_REQUEST', 'nothing to change');
-      const set = {
-        ...f,
-        ...(f.neighborhoods ? { neighborhoods: tx.json(f.neighborhoods as string[]) } : {}),
-      };
       const row = (
-        await tx`update delivery_zones set ${tx(set as never)} where tenant_id = ${t.id} and id = ${id} returning name`
+        await tx`update delivery_zones set ${tx(zoneColumns(tx, f) as never)} where tenant_id = ${t.id} and id = ${id} returning name`.catch(
+          polygonMismatch,
+        )
       )[0];
       if (!row) throw new HttpError(404, 'ZONE_NOT_FOUND', 'zone not found');
       await audit(tx, t.id, m, {

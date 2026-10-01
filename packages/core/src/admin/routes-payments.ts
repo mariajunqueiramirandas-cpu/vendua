@@ -13,6 +13,16 @@ import {
 } from '../modules/payments/connections.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import { paymentReviews } from '../modules/payments/store-payments.ts';
+import {
+  DEFAULT_PAYMENT_METHODS,
+  MAX_FIXED_CENTS,
+  MAX_PERCENT_BPS,
+  PAYMENT_METHODS,
+  isPaymentMethod,
+  readPaymentAdjustments,
+  type PaymentAdjustment,
+  type PaymentAdjustments,
+} from '../modules/payment-adjustments.ts';
 import { audit } from './audit.ts';
 import { isObj, oneOf, optText, text, type AdminCtx, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
@@ -32,8 +42,7 @@ import { loadSettings } from './routes-store.ts';
 //   token_unreadable   the sealed token no longer opens (VENDUA_SECRETS_KEY changed): reconnect
 //   no_refresh_token   the connection can't renew itself: reconnect before it expires
 // (`disconnected_by_owner` is internal — that store reads `status: 'not_connected'`.)
-const METHODS = ['pix', 'card_online', 'card_on_delivery', 'cash'] as const;
-const OFFLINE_DEFAULT = ['pix', 'card_on_delivery', 'cash'];
+const METHODS = PAYMENT_METHODS;
 const STATE_TTL_MS = 10 * 60_000;
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -107,6 +116,32 @@ function currentMonth(tz: string, now = new Date()) {
     .slice(0, 7);
 }
 
+/** `adjustments` replaces the whole map; a method mapped to null or {} has none. */
+function parseAdjustments(raw: unknown): PaymentAdjustments {
+  if (raw === null) return {};
+  const bad = (message: string, field = 'adjustments') =>
+    new HttpError(422, 'INVALID_ADJUSTMENT', message, { field });
+  if (!isObj(raw)) throw bad('adjustments must be an object');
+  const out: PaymentAdjustments = {};
+  for (const [method, v] of Object.entries(raw)) {
+    if (!isPaymentMethod(method)) throw bad(`unknown payment method ${method.slice(0, 40)}`);
+    if (v === null) continue;
+    if (!isObj(v)) throw bad('an adjustment must be an object', `adjustments.${method}`);
+    const adj: PaymentAdjustment = {};
+    for (const [k, n] of Object.entries(v)) {
+      const field = `adjustments.${method}.${k.slice(0, 40)}`;
+      const max = k === 'percentBps' ? MAX_PERCENT_BPS : k === 'fixedCents' ? MAX_FIXED_CENTS : 0;
+      if (!max) throw bad('an adjustment takes percentBps and fixedCents only', field);
+      if (n === null) continue;
+      if (!Number.isSafeInteger(n) || Math.abs(n as number) > max)
+        throw bad(`${k} must be an integer between -${max} and ${max}`, field);
+      if (n !== 0) adj[k as keyof PaymentAdjustment] = n as number;
+    }
+    if (Object.keys(adj).length) out[method] = adj;
+  }
+  return out;
+}
+
 export async function paymentsView(tx: Sql, tenantId: string, provider: PaymentProvider) {
   const s = await loadSettings(tx, tenantId);
   const by = await tx<{ method: string; status: string; orders: number; cents: number }[]>`
@@ -144,7 +179,9 @@ export async function paymentsView(tx: Sql, tenantId: string, provider: PaymentP
   const tz = await storeTz(tx, tenantId);
   const month = currentMonth(tz);
   return {
-    methods: s.payment_methods ?? [...OFFLINE_DEFAULT],
+    methods: s.payment_methods ?? [...DEFAULT_PAYMENT_METHODS],
+    // { method: { percentBps?, fixedCents? } }, signed: negative = discount
+    adjustments: readPaymentAdjustments(s.payment_adjustments),
     pix,
     mercadoPago: connectionView(await loadConnection(tx, tenantId), provider),
     last30: by,
@@ -194,6 +231,11 @@ export function mountPayments(d: AdminDeps) {
           );
         await tx`update store_settings set payment_methods = ${tx.json([...new Set(pm as string[])])} where tenant_id = ${t.id}`;
         changed.push('formas de pagamento');
+      }
+      if (body.adjustments !== undefined) {
+        const adjustments = parseAdjustments(body.adjustments);
+        await tx`update store_settings set payment_adjustments = ${tx.json(adjustments as never)} where tenant_id = ${t.id}`;
+        changed.push('descontos e acréscimos por forma de pagamento');
       }
       if (body.pix !== undefined) {
         if (body.pix === null) {

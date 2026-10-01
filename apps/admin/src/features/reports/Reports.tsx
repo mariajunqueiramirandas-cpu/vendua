@@ -19,6 +19,7 @@ const METHOD: Record<string, string> = {
   pix: 'Pix',
   card_on_delivery: 'Cartão na entrega',
   cash: 'Dinheiro',
+  meal_voucher: 'Vale-refeição',
 };
 
 export default function Reports() {

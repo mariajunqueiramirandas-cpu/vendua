@@ -4,13 +4,16 @@ import {
   liveStatus,
   scheduleOpen,
   type AvailabilitySchedule,
+  type Modifier,
   type ModifierGroup,
+  type PricingRule,
   type ScheduledComboSlotItem,
   type ProductDetail,
 } from './catalog.ts';
 import { comboDelta, parseSelections, validateCombo, type ComboSelection } from './combos.ts';
 import { couponLabel, couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
 import { effectiveFee, foldName, resolveZone, validCoords, type ZoneLike } from './geo.ts';
+import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
 import { scheduleView, type ScheduleView } from './preorder.ts';
 import { assertStock, stockDemand } from './stock.ts';
 import type { StoreSettingsRow } from './store.ts';
@@ -24,7 +27,20 @@ export interface CartItemIn {
   productId: string;
   qty: number;
   modifierIds?: string[];
+  /** options with a quantity; an id here without qty, or in modifierIds, is one unit */
+  modifiers?: { id: string; qty?: number }[];
   comboSelections?: ComboSelection[];
+}
+
+/** `{ modifierId: qty }`, only for options taken more than once (absent = 1) */
+export type ModifierQty = Record<string, number>;
+
+/** frozen at add time; `qty` missing on rows written before option quantities = 1 */
+export interface ModifierSnapshot {
+  id: string;
+  name: string;
+  priceDeltaCents: number;
+  qty?: number;
 }
 
 interface ItemRow {
@@ -32,10 +48,11 @@ interface ItemRow {
   product_id: string;
   qty: number;
   modifier_ids: string[];
+  modifier_qty: ModifierQty;
   /** Price accepted at add time — checkout refreshes it to the live price (repriceLines). */
   unit_price_cents: number;
-  /** [{id, name, priceDeltaCents}] frozen at add time; status stays live. */
-  modifier_snapshot: { id: string; name: string; priceDeltaCents: number }[];
+  /** frozen at add time; status stays live. */
+  modifier_snapshot: ModifierSnapshot[];
   combo_selections: ComboSelection[];
   combo_snapshot: {
     slotId: string;
@@ -77,9 +94,12 @@ export interface PricedItem {
   unitPriceCents: number;
   /** live product status — badge lines that went unavailable since carting */
   productStatus: string;
-  modifiers: { id: string; name: string; priceDeltaCents: number; status: string }[];
+  /** priceDeltaCents is per unit; qty units of it were chosen */
+  modifiers: { id: string; name: string; priceDeltaCents: number; qty: number; status: string }[];
   /** modifier ids as submitted; checkout revalidates against the live product */
   modifierIds: string[];
+  /** quantities above 1, keyed by modifier id */
+  modifierQty: ModifierQty;
   /** kit picks (kind 'combo'); [] otherwise */
   combo: ComboLine[];
   comboSelections: ComboSelection[];
@@ -104,6 +124,8 @@ export interface CartTotals {
   subtotalCents: number;
   deliveryFeeCents: number;
   discountCents: number;
+  /** the chosen payment method's discount (<0) or surcharge (>0); 0 without one */
+  paymentAdjustmentCents: number;
   totalCents: number;
   itemCount: number;
   minOrderCents: number;
@@ -148,8 +170,78 @@ export interface CartView {
   schedule: ScheduleView;
 }
 
-export function unitPriceCents(basePriceCents: number, deltas: number[]): number {
-  return basePriceCents + deltas.reduce((sum, d) => sum + d, 0);
+export interface GroupPicks {
+  pricingRule: PricingRule;
+  picks: { priceDeltaCents: number; qty: number }[];
+}
+
+/**
+ * One group's share of the unit price. sum: Σ delta×qty. most_expensive: the
+ * dearest pick, once. average: Σ delta×qty ÷ Σ qty, half rounded up (integer math).
+ */
+export function groupDeltaCents({ pricingRule, picks }: GroupPicks): number {
+  if (picks.length === 0) return 0;
+  if (pricingRule === 'most_expensive') return Math.max(...picks.map((p) => p.priceDeltaCents));
+  const total = picks.reduce((s, p) => s + p.priceDeltaCents * p.qty, 0);
+  if (pricingRule !== 'average') return total;
+  const units = picks.reduce((s, p) => s + p.qty, 0);
+  return Math.floor((2 * total + units) / (2 * units));
+}
+
+export function unitPriceCents(basePriceCents: number, groups: GroupPicks[]): number {
+  return basePriceCents + groups.reduce((sum, g) => sum + groupDeltaCents(g), 0);
+}
+
+/** The options a line picks, grouped with each group's rule — the input to unitPriceCents. */
+export function pickedOptions(
+  product: Pick<ProductDetail, 'modifierGroups'>,
+  modifierIds: readonly string[],
+  modifierQty: ModifierQty = {},
+): { groups: GroupPicks[]; snapshot: ModifierSnapshot[] } {
+  const ids = new Set(modifierIds);
+  const groups: GroupPicks[] = [];
+  const byId = new Map<string, ModifierSnapshot>();
+  for (const g of product.modifierGroups) {
+    const picks = g.modifiers.filter((m) => ids.has(m.id));
+    groups.push({
+      pricingRule: g.pricingRule ?? 'sum',
+      picks: picks.map((m) => ({
+        priceDeltaCents: m.priceDeltaCents,
+        qty: modifierQty[m.id] ?? 1,
+      })),
+    });
+    for (const m of picks)
+      byId.set(m.id, {
+        id: m.id,
+        name: m.name,
+        priceDeltaCents: m.priceDeltaCents,
+        qty: modifierQty[m.id] ?? 1,
+      });
+  }
+  // the snapshot keeps the line's (sorted) id order
+  return { groups, snapshot: modifierIds.flatMap((id) => byId.get(id) ?? []) };
+}
+
+/**
+ * modifierIds + modifiers[{id, qty}] → the distinct sorted id list and the
+ * quantities above 1. A repeated id never double-charges: its largest qty wins.
+ */
+export function normalizeModifiers(input: Pick<CartItemIn, 'modifierIds' | 'modifiers'>): {
+  modifierIds: string[];
+  modifierQty: ModifierQty;
+} {
+  const qty = new Map<string, number>();
+  for (const id of input.modifierIds ?? []) qty.set(id, Math.max(qty.get(id) ?? 0, 1));
+  for (const m of input.modifiers ?? []) {
+    const n = m.qty ?? 1;
+    if (!Number.isInteger(n) || n < 1 || n > 20)
+      throw new HttpError(422, 'INVALID_MODIFIER', 'option qty must be an integer from 1 to 20');
+    qty.set(m.id, Math.max(qty.get(m.id) ?? 0, n));
+  }
+  const modifierIds = [...qty.keys()].sort();
+  const modifierQty: ModifierQty = {};
+  for (const id of modifierIds) if (qty.get(id)! > 1) modifierQty[id] = qty.get(id)!;
+  return { modifierIds, modifierQty };
 }
 
 export function computeTotals(
@@ -158,15 +250,18 @@ export function computeTotals(
   minOrderCents: number,
   discountCents = 0,
   freeDeliveryThresholdCents: number | null = null,
+  paymentAdjustmentCents = 0,
 ): CartTotals {
   const subtotal = items.reduce((s, i) => s + i.lineTotalCents, 0);
   const itemCount = items.reduce((s, i) => s + i.qty, 0);
   const discount = Math.max(0, Math.min(discountCents, subtotal + deliveryFeeCents));
+  const adjustment = Math.max(paymentAdjustmentCents, -(subtotal + deliveryFeeCents - discount));
   return {
     subtotalCents: subtotal,
     deliveryFeeCents,
     discountCents: discount,
-    totalCents: subtotal + deliveryFeeCents - discount,
+    paymentAdjustmentCents: adjustment,
+    totalCents: subtotal + deliveryFeeCents - discount + adjustment,
     itemCount,
     minOrderCents,
     remainingMinOrderCents: Math.max(0, minOrderCents - subtotal),
@@ -182,6 +277,7 @@ export function computeTotals(
 export function validateItemModifiers(
   product: Pick<ProductDetail, 'status' | 'modifierGroups' | 'availabilityLabel'>,
   modifierIds: string[],
+  modifierQty: ModifierQty = {},
 ): HttpError | null {
   if (product.status !== 'active')
     return product.availabilityLabel
@@ -197,16 +293,29 @@ export function validateItemModifiers(
     ),
   );
   for (const id of modifierIds) {
-    const modifier = byId.get(id);
+    const modifier: Modifier | undefined = byId.get(id);
     if (!modifier) {
       return new HttpError(422, 'INVALID_MODIFIER', `unknown modifier ${id}`);
     }
     if (modifier.status === 'sold_out') {
       return new HttpError(409, 'MODIFIER_SOLD_OUT', `"${modifier.name}" is sold out`);
     }
+    const maxQty = modifier.maxQty ?? 1;
+    if ((modifierQty[id] ?? 1) > maxQty) {
+      return new HttpError(422, 'MODIFIER_LIMIT', `"${modifier.name}" accepts at most ${maxQty}`, {
+        modifierId: id,
+        maxQty,
+      });
+    }
+  }
+  for (const id of Object.keys(modifierQty)) {
+    if (!modifierIds.includes(id))
+      return new HttpError(422, 'INVALID_MODIFIER', `unknown modifier ${id}`);
   }
   for (const group of product.modifierGroups) {
-    const selected = modifierIds.filter((id) => group.modifiers.some((m) => m.id === id)).length;
+    const selected = modifierIds
+      .filter((id) => group.modifiers.some((m) => m.id === id))
+      .reduce((n, id) => n + (modifierQty[id] ?? 1), 0);
     if (group.required && selected < Math.max(1, group.minSelect)) {
       return new HttpError(
         422,
@@ -233,8 +342,9 @@ export function validateLine(
   >,
   modifierIds: string[],
   selections: ComboSelection[],
+  modifierQty: ModifierQty = {},
 ): HttpError | null {
-  const invalid = validateItemModifiers(product, modifierIds);
+  const invalid = validateItemModifiers(product, modifierIds, modifierQty);
   if (invalid) return invalid;
   if (product.kind !== 'combo') {
     return selections.length > 0
@@ -258,7 +368,7 @@ export function validateLine(
 
 function loadItemRows(tx: Sql, tenantId: string, cartId: string) {
   return tx<ItemRow[]>`
-    select ci.id, ci.product_id, ci.qty, ci.modifier_ids, ci.unit_price_cents,
+    select ci.id, ci.product_id, ci.qty, ci.modifier_ids, ci.modifier_qty, ci.unit_price_cents,
            ci.modifier_snapshot, ci.combo_selections, ci.combo_snapshot,
            p.name, p.slug, p.status as product_status, p.stock_quantity,
            p.requires_preorder, p.preorder_lead_days, p.availability_schedule,
@@ -326,10 +436,12 @@ async function priceItems(
     unitPriceCents: item.unit_price_cents,
     productStatus: status(item),
     modifierIds: item.modifier_ids,
+    modifierQty: item.modifier_qty ?? {},
     modifiers: item.modifier_snapshot.map((m) => ({
       id: m.id,
       name: m.name,
       priceDeltaCents: m.priceDeltaCents,
+      qty: m.qty ?? 1,
       status: liveMod.get(m.id) ?? 'archived',
     })),
     combo: item.combo_snapshot.map((c) => ({
@@ -361,7 +473,7 @@ export async function assertCartOpen(tx: Sql, tenantId: string, cartId: string):
 }
 
 export interface ZoneRow extends ZoneLike {
-  kind: 'neighborhood' | 'radius';
+  kind: 'neighborhood' | 'radius' | 'polygon';
   max_distance_km: string | null;
   fee_per_km_cents: number;
   free_delivery_over_cents: number | null;
@@ -375,7 +487,7 @@ export async function loadZoneRows(
   const lock = opts.forUpdate ? tx`for update` : tx``;
   return tx<ZoneRow[]>`
     select id, name, kind, neighborhoods, fee_cents, min_order_cents, eta_min_minutes, eta_max_minutes,
-           max_distance_km, fee_per_km_cents, free_delivery_over_cents
+           max_distance_km, fee_per_km_cents, free_delivery_over_cents, polygon
     from delivery_zones where tenant_id = ${tenantId} and active order by name ${lock}
   `;
 }
@@ -402,6 +514,8 @@ export async function loadCartView(
   tenantId: string,
   cartId: string,
   now = new Date(),
+  /** previews: totals for this payment method / this delivery address (the quote) */
+  opts: { paymentMethod?: string | null; delivery?: CartDelivery } = {},
 ): Promise<CartView> {
   // independent reads go out together — postgres.js pipelines them on the tx's connection
   const [carts, rows, settingsRows, zones] = await Promise.all([
@@ -422,6 +536,7 @@ export async function loadCartView(
   const cart = carts[0];
   if (!cart) throw new HttpError(404, 'CART_NOT_FOUND', 'cart not found');
   const settings = settingsRows[0];
+  if (opts.delivery) cart.delivery = opts.delivery;
   const [items, couponRow] = await Promise.all([
     priceItems(tx, tenantId, rows, settings?.hours?.timezone || 'America/Sao_Paulo'),
     cart.coupon_code ? loadCoupon(tx, tenantId, cart.coupon_code) : null,
@@ -448,6 +563,7 @@ export async function loadCartView(
 
   let coupon: AppliedCoupon | null = null;
   let discount = 0;
+  let itemDiscount = 0;
   if (cart.coupon_code) {
     const row = couponRow;
     if (!row) {
@@ -466,6 +582,7 @@ export async function loadCartView(
         now,
       });
       discount = out.discountCents;
+      if (row.kind !== 'free_delivery') itemDiscount = discount;
       coupon = {
         code: row.code,
         label: couponLabel(row),
@@ -487,6 +604,7 @@ export async function loadCartView(
       effectiveMinOrder,
       discount,
       match?.zone.free_delivery_over_cents ?? null,
+      paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, opts.paymentMethod)),
     ),
     // a zero fee can mean a free zone — branch on zoneId, not the amount
     delivery: cart.delivery
@@ -538,9 +656,9 @@ export async function insertLine(
   if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
   // dedupe + sort: a repeated id would double-charge; order-independence
   // merges reordered selections into one line
-  const modifierIds = [...new Set(input.modifierIds ?? [])].sort();
+  const { modifierIds, modifierQty } = normalizeModifiers(input);
   const selections = parseSelections(input.comboSelections ?? []);
-  const invalid = validateLine(product, modifierIds, selections);
+  const invalid = validateLine(product, modifierIds, selections, modifierQty);
   if (invalid) throw invalid;
   const picks = product.kind === 'combo' ? validateCombo(product.comboSlots, selections).picks : [];
 
@@ -559,27 +677,20 @@ export async function insertLine(
 
   // freeze the accepted price for the cart view; checkout re-checks it
   // against the live catalog (repriceLines)
-  const allModifiers = product.modifierGroups.flatMap((g) => g.modifiers);
-  const chosen = modifierIds.map((id) => allModifiers.find((m) => m.id === id)!);
-  const snapshot = chosen.map((m) => ({
-    id: m.id,
-    name: m.name,
-    priceDeltaCents: m.priceDeltaCents,
-  }));
-  const unit =
-    unitPriceCents(
-      product.basePriceCents,
-      chosen.map((m) => m.priceDeltaCents),
-    ) + comboDelta(picks);
+  const chosen = pickedOptions(product, modifierIds, modifierQty);
+  const unit = unitPriceCents(product.basePriceCents, chosen.groups) + comboDelta(picks);
+  if (unit < 0)
+    throw new HttpError(422, 'INVALID_MODIFIER', 'the selected options price this item below zero');
 
   // same product + modifier set + kit composition merges into one line; merged
   // qty capped by CHECK (qty <= 99) → INVALID_QTY like PATCH
   try {
     await tx`
-      insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids, unit_price_cents, modifier_snapshot, combo_selections, combo_snapshot)
-      values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)}, ${unit}, ${tx.json(snapshot)},
-              ${tx.json(selections as never)}, ${tx.json(picks as never)})
-      on conflict (cart_id, product_id, modifier_ids, combo_selections)
+      insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids, modifier_qty, unit_price_cents,
+                              modifier_snapshot, combo_selections, combo_snapshot)
+      values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)}, ${tx.json(modifierQty)},
+              ${unit}, ${tx.json(chosen.snapshot as never)}, ${tx.json(selections as never)}, ${tx.json(picks as never)})
+      on conflict (cart_id, product_id, modifier_ids, modifier_qty, combo_selections)
       do update set qty = cart_items.qty + excluded.qty
     `;
   } catch (err) {
@@ -607,20 +718,21 @@ export async function repriceLines(
   for (const item of items) {
     const product = products.get(item.productId);
     if (!product) continue;
-    const all = product.modifierGroups.flatMap((g) => g.modifiers);
-    const chosen = item.modifierIds.flatMap((id) => all.filter((m) => m.id === id));
+    const chosen = pickedOptions(product, item.modifierIds, item.modifierQty);
     const picks =
       product.kind === 'combo' ? validateCombo(product.comboSlots, item.comboSelections).picks : [];
-    const unit =
-      unitPriceCents(
-        product.basePriceCents,
-        chosen.map((m) => m.priceDeltaCents),
-      ) + comboDelta(picks);
+    const unit = unitPriceCents(product.basePriceCents, chosen.groups) + comboDelta(picks);
+    if (unit < 0)
+      throw new HttpError(
+        422,
+        'INVALID_MODIFIER',
+        'the selected options price this item below zero',
+      );
     if (unit === item.unitPriceCents) continue;
     changed++;
     await tx`
       update cart_items set unit_price_cents = ${unit},
-        modifier_snapshot = ${tx.json(chosen.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })))},
+        modifier_snapshot = ${tx.json(chosen.snapshot as never)},
         combo_snapshot = ${tx.json(picks as never)}
       where tenant_id = ${tenantId} and id = ${item.id}
     `;

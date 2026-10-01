@@ -17,6 +17,7 @@ import { emit } from '../telemetry.ts';
 import { useKernel } from '../provider.tsx';
 import { resolvePaths } from '../config.ts';
 import type { CheckoutStep, CustomerDraft, DeliveryOption, PaymentMethod } from '../slot-props.ts';
+import type { CartTotals, PaymentAdjustment } from '../api.ts';
 import { money } from '@vendua/ui-defaults';
 
 // /checkout — the Kernel-owned checkout (ADR 0004): a three-step machine
@@ -36,6 +37,7 @@ const METHODS: PaymentMethod[] = [
   { id: 'pix', label: 'Pix' },
   { id: 'card_online', label: 'Cartão de crédito', detail: 'Pago pelo Mercado Pago' },
   { id: 'card_on_delivery', label: 'Cartão na entrega' },
+  { id: 'meal_voucher', label: 'Vale-refeição' },
   { id: 'cash', label: 'Dinheiro' },
 ];
 // what a Core without `paymentMethods` (pre-1.4) accepts — never the online card
@@ -53,6 +55,22 @@ const COUPON_CODES = new Set([
   'COUPON_ALREADY_USED',
   'COUPON_FIRST_ORDER_ONLY',
 ]);
+
+/** The store's rule as a label ("−5%", "+R$ 1,50") — the cents are Core's, in the totals. */
+function adjustmentLabel(a: PaymentAdjustment, currency: string): PaymentMethod['adjustment'] {
+  const pct = a.percentBps ?? 0;
+  const fixed = a.fixedCents ?? 0;
+  if (!pct && !fixed) return undefined;
+  const sign = (n: number) => (n < 0 ? '−' : '+');
+  const parts = [
+    pct
+      ? `${sign(pct)}${(Math.abs(pct) / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`
+      : '',
+    fixed ? `${sign(fixed)}${money(Math.abs(fixed), currency)}` : '',
+  ].filter(Boolean);
+  const kind = pct <= 0 && fixed <= 0 ? 'discount' : pct >= 0 && fixed >= 0 ? 'surcharge' : 'mixed';
+  return { label: parts.join(' '), kind };
+}
 
 /** Full-page hand-off to the provider's hosted checkout (card data never touches us). */
 function leaveTo(url: string) {
@@ -200,10 +218,11 @@ export function CheckoutPage() {
   };
 
   const neighborhoods = useMemo(() => zones.flatMap((z) => z.neighborhoods), [zones]);
+  // distance-priced and drawn (polygon) zones both resolve from the shopper's location
   const canLocate =
     typeof navigator !== 'undefined' &&
     'geolocation' in navigator &&
-    zones.some((z) => z.kind === 'radius');
+    zones.some((z) => z.kind === 'radius' || z.kind === 'polygon');
   const schedule = cart?.schedule;
   const encomenda = schedule?.required === true;
   const allowed = encomenda ? schedule!.paymentMethods.join(',') : '';
@@ -212,6 +231,7 @@ export function CheckoutPage() {
   const online = store?.onlinePayments;
   const pixOnline = online?.pix === true;
   const cardOnline = online?.card !== false;
+  const adjustments = store?.paymentAdjustments;
   const byStore = useMemo(
     () =>
       METHODS.filter((m) => (accepted ? accepted.split(',') : LEGACY_METHODS).includes(m.id))
@@ -220,8 +240,12 @@ export function CheckoutPage() {
           m.id === 'pix' && pixOnline
             ? { ...m, detail: 'QR Code na próxima tela · confirma na hora' }
             : m,
-        ),
-    [accepted, cardOnline, pixOnline],
+        )
+        .map((m) => {
+          const adjustment = adjustments?.[m.id] && adjustmentLabel(adjustments[m.id]!, currency);
+          return adjustment ? { ...m, adjustment } : m;
+        }),
+    [accepted, cardOnline, pixOnline, adjustments, currency],
   );
   const methods = useMemo(
     () => (allowed ? byStore.filter((m) => allowed.split(',').includes(m.id)) : byStore),
@@ -231,6 +255,37 @@ export function CheckoutPage() {
   useEffect(() => {
     if (methods.length && !methods.some((m) => m.id === pay)) setPay(methods[0]!.id);
   }, [methods, pay]);
+  // Kernel 1.12: on the payment step Core prices the chosen method's discount/surcharge into
+  // the cart's totals (`GET /cart?paymentMethod=`); the page never adds it up itself. The key
+  // ties an answer to the cart it priced, so a coupon or a delivery change asks again.
+  const [priced, setPriced] = useState<{ key: string; totals: CartTotals } | null>(null);
+  const [priceFailed, setPriceFailed] = useState('');
+  const [priceTry, setPriceTry] = useState(0);
+  const t = cart?.status === 'open' ? cart.totals : null;
+  const priceKey = t
+    ? [pay, t.subtotalCents, t.deliveryFeeCents, t.discountCents ?? 0, t.totalCents].join('|')
+    : '';
+  const pricesByMethod = adjustments !== undefined && step === 'pagamento' && priceKey !== '';
+  useEffect(() => {
+    if (!pricesByMethod) return;
+    let live = true;
+    api.cart(pay).then(
+      (r) => {
+        if (live && r.cart.status === 'open') setPriced({ key: priceKey, totals: r.cart.totals });
+      },
+      () => {
+        if (live) setPriceFailed(priceKey);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [pricesByMethod, priceKey, pay, api, priceTry]);
+  const pricedTotals = pricesByMethod && priced?.key === priceKey ? priced.totals : null;
+  // a method with a rule shows no total until Core priced it
+  const pricing = pricesByMethod && !pricedTotals && !!adjustments?.[pay];
+  const priceError = pricing && priceFailed === priceKey;
+  const payLabel = methods.find((m) => m.id === pay)?.label;
   const minFee = zones.length ? Math.min(...zones.map((z) => z.feeCents)) : null;
   const options: DeliveryOption[] = [
     {
@@ -327,7 +382,7 @@ export function CheckoutPage() {
           setCoords(c);
           setLocateStatus('located');
           setZoneHint(
-            `Entrega ${r.distanceKm != null ? `a ${r.distanceKm.toLocaleString('pt-BR')} km` : ''}: ${
+            `Entrega${r.distanceKm != null ? ` a ${r.distanceKm.toLocaleString('pt-BR')} km` : ''}: ${
               (r.feeCents ?? 0) > 0 ? money(r.feeCents!, currency) : 'grátis'
             }`,
           );
@@ -599,12 +654,16 @@ export function CheckoutPage() {
                 <button
                   type="submit"
                   className="v-btn v-btn-accent"
-                  disabled={pending}
+                  disabled={pending || pricing}
                   aria-busy={pending || undefined}
                 >
                   {pending
                     ? 'Enviando…'
-                    : `${pay === 'card_online' ? 'Ir para o pagamento' : 'Confirmar pedido'} · ${money(cart.totals.totalCents, currency)}`}
+                    : `${pay === 'card_online' ? 'Ir para o pagamento' : 'Confirmar pedido'}${
+                        pricing
+                          ? ''
+                          : ` · ${money((pricedTotals ?? cart.totals).totalCents, currency)}`
+                      }`}
                 </button>
               ) : (
                 <button type="submit" className="v-btn v-btn-accent" disabled={syncing}>
@@ -612,9 +671,35 @@ export function CheckoutPage() {
                 </button>
               )}
             </div>
+            {step === 'pagamento' && pricing ? (
+              <p className="v-note" role="status" data-part="pricing-note">
+                {priceError ? (
+                  <>
+                    Não deu para calcular o total com {payLabel ?? 'esta forma de pagamento'}.{' '}
+                    <button
+                      type="button"
+                      className="v-btn v-btn-ghost"
+                      onClick={() => {
+                        setPriceFailed('');
+                        setPriceTry((n) => n + 1);
+                      }}
+                    >
+                      Tentar de novo
+                    </button>
+                  </>
+                ) : (
+                  `Calculando o total com ${payLabel ?? 'esta forma de pagamento'}…`
+                )}
+              </p>
+            ) : null}
           </form>
         </Slot>
-        <Slot name="checkout.Summary" cart={cart} currency={currency} />
+        <Slot
+          name="checkout.Summary"
+          cart={pricedTotals ? { ...cart, totals: pricedTotals } : cart}
+          currency={currency}
+          {...(pricedTotals && payLabel ? { paymentLabel: payLabel } : {})}
+        />
       </div>
     </main>
   );

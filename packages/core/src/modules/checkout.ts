@@ -2,6 +2,7 @@ import { HttpError } from '../platform/http.ts';
 import { validateLine, type CartView } from './cart.ts';
 import type { ProductDetail } from './catalog.ts';
 import { normalizeCep, resolveZone, validCoords, type Coords, type ZoneLike } from './geo.ts';
+import { isPaymentMethod, offeredMethods, type PaymentMethod } from './payment-adjustments.ts';
 import type { DerivedStatus, StoreSettingsRow } from './store.ts';
 
 export interface CheckoutInput {
@@ -20,7 +21,7 @@ export interface CheckoutInput {
     lng?: number;
   };
   /** card_online: Mercado Pago's hosted checkout — offered only while the store is connected */
-  payment: { method: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' };
+  payment: { method: PaymentMethod };
   /** "Alguma observação?" */
   notes?: string;
   /** encomenda date, YYYY-MM-DD in the store's timezone */
@@ -82,11 +83,11 @@ export function validateCheckout<Z extends ZoneLike>(
     throw new HttpError(422, 'PICKUP_UNAVAILABLE', 'pickup is not available');
   }
   // the merchant turns methods off in the admin; absent setting = the three offline ones (pre-0052 rows)
-  const methods = settings?.payment_methods;
+  const methods = offeredMethods(settings);
   const offered =
     input.payment.method === 'card_online'
-      ? online.card && !!methods?.includes('card_online')
-      : !methods || methods.includes(input.payment.method);
+      ? online.card && methods.includes('card_online')
+      : methods.includes(input.payment.method);
   if (!offered) {
     throw new HttpError(422, 'PAYMENT_METHOD_UNAVAILABLE', 'this payment method is not accepted', {
       field: 'payment.method',
@@ -97,7 +98,12 @@ export function validateCheckout<Z extends ZoneLike>(
   for (const item of cart.items) {
     const product = products?.get(item.productId);
     if (product) {
-      const invalid = validateLine(product, item.modifierIds, item.comboSelections ?? []);
+      const invalid = validateLine(
+        product,
+        item.modifierIds,
+        item.comboSelections ?? [],
+        item.modifierQty ?? {},
+      );
       if (invalid) {
         invalid.details = { ...invalid.details, productId: item.productId };
         throw invalid;
@@ -208,11 +214,11 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
       });
     }
   }
-  if (!['pix', 'card_online', 'card_on_delivery', 'cash'].includes(i.payment?.method)) {
+  if (!isPaymentMethod(i.payment?.method)) {
     throw new HttpError(
       422,
       'INVALID_PAYMENT',
-      'payment.method must be pix, card_online, card_on_delivery or cash',
+      'payment.method must be pix, card_online, card_on_delivery, cash or meal_voucher',
       {
         field: 'payment.method',
       },

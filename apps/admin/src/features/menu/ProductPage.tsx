@@ -7,15 +7,24 @@ import {
   ListChecks,
   Package,
   Plus,
+  SlidersHorizontal,
   Stack,
   Trash,
   TrendUp,
   UsersThree,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, type KitSlot, type OptionGroup, type ProductDetail } from '../../lib/api.ts';
+import {
+  api,
+  ApiError,
+  type KitSlot,
+  type OptionGroup,
+  type OptionItem,
+  type PricingRule,
+  type ProductDetail,
+} from '../../lib/api.ts';
 import { useAutosave } from '../../lib/autosave.ts';
 import { money, plural } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
@@ -31,6 +40,7 @@ import {
   Field,
   MoneyField,
   SaveMark,
+  Segmented,
   Select,
   SavedStepper,
   Stepper,
@@ -119,7 +129,13 @@ function Editor({
           );
         return r;
       })
-      .catch((e) => toast.error(messageOf(e)));
+      .catch((e) =>
+        toast.error(
+          e instanceof ApiError && e.field === 'compareAtPriceCents'
+            ? 'O preço “de” precisa ser maior que o preço. Mude ou apague o preço “de”.'
+            : messageOf(e),
+        ),
+      );
   };
   const media = useMutation({
     mutationFn: (m: ProductDetail['gallery']) => api.setMedia(p.id, m),
@@ -203,13 +219,39 @@ function Editor({
                 }
               />
             </Field>
-            <Field label="Preço" htmlFor="pprice">
-              <MoneyField
-                id="pprice"
-                cents={p.priceCents}
-                onCommit={(v) => void patch({ priceCents: v ?? 0 })}
-              />
-            </Field>
+            <div className="grid gap-5 sm:grid-cols-2 sm:gap-3">
+              <Field label="Preço" htmlFor="pprice">
+                <MoneyField
+                  id="pprice"
+                  cents={p.priceCents}
+                  validate={(v) =>
+                    p.compareAtPriceCents !== null && v >= p.compareAtPriceCents
+                      ? `Precisa ficar abaixo do preço “de” (${money(p.compareAtPriceCents)}).`
+                      : null
+                  }
+                  onCommit={(v) => void patch({ priceCents: v ?? 0 })}
+                />
+              </Field>
+              <Field
+                label="Preço “de”"
+                optional
+                htmlFor="pcompare"
+                helper="Aparece riscado ao lado do preço, para mostrar a promoção."
+              >
+                <MoneyField
+                  id="pcompare"
+                  cents={p.compareAtPriceCents}
+                  allowEmpty
+                  placeholder=""
+                  validate={(v) =>
+                    v <= p.priceCents
+                      ? `Precisa ser maior que ${money(p.priceCents)}. Vazio tira a promoção.`
+                      : null
+                  }
+                  onCommit={(v) => void patch({ compareAtPriceCents: v })}
+                />
+              </Field>
+            </div>
             <Field
               label="Descrição"
               optional
@@ -249,7 +291,12 @@ function Editor({
                 {p.description ? (
                   <p className="t-caption line-clamp-2 text-muted">{p.description}</p>
                 ) : null}
-                <p className="tnum mt-1 font-semibold">{money(p.priceCents)}</p>
+                <p className="tnum mt-1 font-semibold">
+                  {p.compareAtPriceCents !== null ? (
+                    <s className="mr-1.5 font-normal text-muted">{money(p.compareAtPriceCents)}</s>
+                  ) : null}
+                  {money(p.priceCents)}
+                </p>
                 {p.availabilitySchedule ? (
                   <p className="t-caption mt-1 inline-flex items-center gap-1 text-muted">
                     <Clock className="size-3.5 shrink-0" aria-hidden />
@@ -418,6 +465,46 @@ function Editor({
   );
 }
 
+const RULES: { value: PricingRule; label: string; help: string }[] = [
+  {
+    value: 'sum',
+    label: 'Soma',
+    help: 'Cobra cada escolha. Ex.: 2 adicionais de R$ 3,00 somam R$ 6,00.',
+  },
+  {
+    value: 'average',
+    label: 'Média',
+    help: 'Cobra a média das escolhas. Bom para pizza meio a meio.',
+  },
+  {
+    value: 'most_expensive',
+    label: 'Mais caro',
+    help: 'Cobra só a escolha mais cara. Ex.: meio a meio sai pelo sabor mais caro.',
+  },
+];
+
+/** a group can ask for as many units as its options offer together (Core's cap is 40) */
+const unitsOf = (g: OptionGroup) =>
+  Math.max(
+    1,
+    Math.min(
+      40,
+      g.options.reduce((n, o) => n + (o.maxQty ?? 1), 0),
+    ),
+  );
+const fit = (g: OptionGroup): OptionGroup => {
+  const maxSelect = Math.max(1, Math.min(g.maxSelect, unitsOf(g)));
+  return { ...g, maxSelect, minSelect: Math.min(g.minSelect, maxSelect) };
+};
+const blankOption = (): OptionItem => ({
+  name: '',
+  priceDeltaCents: 0,
+  status: 'active',
+  maxQty: 1,
+  description: null,
+  imageUrl: null,
+});
+
 function OptionsEditor({ p, onSaved }: { p: ProductDetail; onSaved: (p: ProductDetail) => void }) {
   const valid = (gs: OptionGroup[]) =>
     gs.every((g) => g.name.trim() && g.options.length && g.options.every((o) => o.name.trim()));
@@ -430,127 +517,187 @@ function OptionsEditor({ p, onSaved }: { p: ProductDetail; onSaved: (p: ProductD
     },
     { valid },
   );
+  // which option has its details open: "group:option"
+  const [open, setOpen] = useState<string | null>(null);
   const upd = (i: number, g: Partial<OptionGroup>) =>
-    setDraft((d) => d.map((x, k) => (k === i ? { ...x, ...g } : x)));
+    setDraft((d) => d.map((x, k) => (k === i ? fit({ ...x, ...g }) : x)));
+  const updOpt = (i: number, j: number, o: Partial<OptionItem>) =>
+    setDraft((d) =>
+      d.map((x, k) =>
+        k === i
+          ? fit({
+              ...x,
+              options: x.options.map((y, m) => (m === j ? { ...y, ...o } : y)),
+            })
+          : x,
+      ),
+    );
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="t-body text-muted">Ex.: “Escolha a calda”, “Tamanho”.</p>
         <SaveMark state={state} />
       </div>
-      {draft.map((g, i) => (
-        <div key={g.id ?? `n${i}`} className="rounded-md bg-sunken p-3">
-          <div className="flex gap-2">
-            <TextInput
-              aria-label="nome do grupo"
-              placeholder="Nome do grupo"
-              value={g.name}
-              maxLength={60}
-              onChange={(e) => upd(i, { name: e.target.value })}
-              className="bg-surface"
-            />
-            <IconButton
-              label={`apagar grupo ${g.name}`}
-              onClick={() => setDraft((d) => d.filter((_, k) => k !== i))}
-            >
-              <Trash />
-            </IconButton>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
-            <Toggle
-              checked={g.minSelect > 0}
-              onChange={(v) =>
-                upd(i, { minSelect: v ? 1 : 0, maxSelect: Math.max(g.maxSelect, 1) })
-              }
-              label="Obrigatório"
-            />
-            <div className="flex items-center gap-2">
-              <span className="t-body">Escolhe até</span>
-              <Stepper
-                label="máximo de escolhas"
-                value={g.maxSelect}
-                min={Math.max(1, g.minSelect)}
-                max={Math.max(1, g.options.length)}
-                onChange={(v) => upd(i, { maxSelect: v })}
+      {draft.map((g, i) => {
+        const rule = RULES.find((r) => r.value === (g.pricingRule ?? 'sum')) ?? RULES[0]!;
+        const counted = g.options.some((o) => (o.maxQty ?? 1) > 1);
+        return (
+          <div key={g.id ?? `n${i}`} className="@container rounded-md bg-sunken p-3">
+            <div className="flex gap-2">
+              <TextInput
+                aria-label="nome do grupo"
+                placeholder="Nome do grupo"
+                value={g.name}
+                maxLength={60}
+                onChange={(e) => upd(i, { name: e.target.value })}
+                className="bg-surface"
               />
+              <IconButton
+                label={`apagar grupo ${g.name}`}
+                onClick={() => setDraft((d) => d.filter((_, k) => k !== i))}
+              >
+                <Trash />
+              </IconButton>
             </div>
-          </div>
-          <ul className="mt-3 space-y-2">
-            {g.options.map((o, j) => (
-              <li key={o.id ?? `o${j}`} className="flex items-center gap-2">
-                <TextInput
-                  aria-label="nome da opção"
-                  placeholder="Opção"
-                  value={o.name}
-                  maxLength={60}
-                  className="bg-surface"
-                  onChange={(e) =>
-                    upd(i, {
-                      options: g.options.map((x, k) =>
-                        k === j ? { ...x, name: e.target.value } : x,
-                      ),
-                    })
-                  }
+            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+              <Toggle
+                checked={g.minSelect > 0}
+                onChange={(v) =>
+                  upd(i, {
+                    minSelect: v ? 1 : 0,
+                    maxSelect: Math.max(g.maxSelect, 1),
+                  })
+                }
+                label="Obrigatório"
+              />
+              <div className="flex items-center gap-2">
+                <span className="t-body">Escolhe até</span>
+                <Stepper
+                  label="máximo de escolhas"
+                  value={g.maxSelect}
+                  min={Math.max(1, g.minSelect)}
+                  max={unitsOf(g)}
+                  onChange={(v) => upd(i, { maxSelect: v })}
                 />
-                <div className="w-32 shrink-0">
-                  <MoneyField
-                    cents={o.priceDeltaCents}
-                    placeholder="+0,00"
-                    onCommit={(v) =>
-                      upd(i, {
-                        options: g.options.map((x, k) =>
-                          k === j ? { ...x, priceDeltaCents: v ?? 0 } : x,
-                        ),
-                      })
-                    }
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    upd(i, {
-                      options: g.options.map((x, k) =>
-                        k === j
-                          ? { ...x, status: x.status === 'sold_out' ? 'active' : 'sold_out' }
-                          : x,
-                      ),
-                    })
-                  }
-                  className={cn(
-                    'press t-caption min-h-11 shrink-0 rounded-full px-2.5 font-semibold ring-1',
-                    o.status === 'sold_out'
-                      ? 'bg-danger-soft text-danger ring-danger/30'
-                      : 'text-muted ring-line',
-                  )}
-                  aria-pressed={o.status === 'sold_out'}
-                >
-                  {o.status === 'sold_out' ? 'esgotado' : 'tem'}
-                </button>
-                <IconButton
-                  label="apagar opção"
-                  size="sm"
-                  onClick={() => upd(i, { options: g.options.filter((_, k) => k !== j) })}
-                >
-                  <Trash />
-                </IconButton>
-              </li>
-            ))}
-          </ul>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-2"
-            icon={<Plus />}
-            onClick={() =>
-              upd(i, {
-                options: [...g.options, { name: '', priceDeltaCents: 0, status: 'active' }],
-              })
-            }
-          >
-            opção
-          </Button>
-        </div>
-      ))}
+              </div>
+            </div>
+            {counted ? (
+              <p className="t-caption mt-1 text-muted">
+                Conta cada unidade: 2× a mesma opção valem 2 escolhas.
+              </p>
+            ) : null}
+            {g.maxSelect > 1 ? (
+              <div className="mt-3 space-y-1.5">
+                <p className="t-label">Como cobrar as escolhas</p>
+                <Segmented
+                  label="como cobrar as escolhas"
+                  value={rule.value}
+                  onChange={(v) => upd(i, { pricingRule: v })}
+                  options={RULES.map((r) => ({
+                    value: r.value,
+                    label: r.label,
+                  }))}
+                  className="bg-surface"
+                />
+                <p className="t-caption text-muted">{rule.help}</p>
+              </div>
+            ) : null}
+            <ul className="mt-3 space-y-2">
+              {g.options.map((o, j) => {
+                const key = `${i}:${j}`;
+                const more = open === key;
+                const qty = o.maxQty ?? 1;
+                const extras = [
+                  qty > 1 ? `até ${qty}` : null,
+                  o.description ? 'com descrição' : null,
+                  o.imageUrl ? 'com foto' : null,
+                ].filter(Boolean);
+                return (
+                  <li key={o.id ?? `o${j}`}>
+                    <div className="flex flex-wrap items-center gap-2 @md:flex-nowrap">
+                      <div className="min-w-0 basis-full @md:basis-auto @md:flex-1">
+                        <TextInput
+                          aria-label="nome da opção"
+                          placeholder="Opção"
+                          value={o.name}
+                          maxLength={60}
+                          className="bg-surface"
+                          onChange={(e) => updOpt(i, j, { name: e.target.value })}
+                        />
+                      </div>
+                      <div className="w-32 shrink-0">
+                        <MoneyField
+                          cents={o.priceDeltaCents}
+                          placeholder="+0,00"
+                          className="bg-surface"
+                          onCommit={(v) => updOpt(i, j, { priceDeltaCents: v ?? 0 })}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updOpt(i, j, {
+                            status: o.status === 'sold_out' ? 'active' : 'sold_out',
+                          })
+                        }
+                        className={cn(
+                          'press t-caption min-h-11 shrink-0 rounded-full px-2.5 font-semibold ring-1',
+                          o.status === 'sold_out'
+                            ? 'bg-danger-soft text-danger ring-danger/30'
+                            : 'text-muted ring-line',
+                        )}
+                        aria-pressed={o.status === 'sold_out'}
+                      >
+                        {o.status === 'sold_out' ? 'esgotado' : 'tem'}
+                      </button>
+                      <IconButton
+                        label={`detalhes de ${o.name || 'opção'}`}
+                        size="sm"
+                        aria-expanded={more}
+                        className={cn('ml-auto @md:ml-0', more && 'bg-press')}
+                        onClick={() => setOpen(more ? null : key)}
+                      >
+                        <SlidersHorizontal />
+                      </IconButton>
+                      <IconButton
+                        label="apagar opção"
+                        size="sm"
+                        onClick={() => {
+                          setOpen(null);
+                          upd(i, {
+                            options: g.options.filter((_, k) => k !== j),
+                          });
+                        }}
+                      >
+                        <Trash />
+                      </IconButton>
+                    </div>
+                    {!more && extras.length ? (
+                      <p className="t-caption mt-1 px-1 text-muted">{extras.join(' · ')}</p>
+                    ) : null}
+                    {more ? (
+                      <OptionDetails
+                        o={o}
+                        onChange={(next) => updOpt(i, j, next)}
+                        onClose={() => setOpen(null)}
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-2"
+              icon={<Plus />}
+              onClick={() => upd(i, { options: [...g.options, blankOption()] })}
+            >
+              opção
+            </Button>
+          </div>
+        );
+      })}
       <Button
         variant="secondary"
         block
@@ -562,12 +709,80 @@ function OptionsEditor({ p, onSaved }: { p: ProductDetail; onSaved: (p: ProductD
               name: '',
               minSelect: 1,
               maxSelect: 1,
-              options: [{ name: '', priceDeltaCents: 0, status: 'active' }],
+              pricingRule: 'sum',
+              options: [blankOption()],
             },
           ])
         }
       >
         novo grupo de opções
+      </Button>
+    </div>
+  );
+}
+
+function OptionDetails({
+  o,
+  onChange,
+  onClose,
+}: {
+  o: OptionItem;
+  onChange: (o: Partial<OptionItem>) => void;
+  onClose: () => void;
+}) {
+  const id = useId();
+  return (
+    <div className="mt-2 space-y-4 rounded-sm bg-surface p-3">
+      <div className="flex flex-col gap-4 @md:flex-row @md:items-start">
+        <div className="w-24 shrink-0">
+          <PhotoField
+            label={`foto de ${o.name || 'opção'}`}
+            aspect="1:1"
+            max={1}
+            photos={o.imageUrl ? [{ url: o.imageUrl }] : []}
+            onChange={(next) => onChange({ imageUrl: next[0]?.url ?? null })}
+          />
+          {o.imageUrl ? (
+            <button
+              type="button"
+              className="t-caption mt-1 min-h-10 w-full rounded-full font-semibold text-muted hover:bg-press"
+              onClick={() => onChange({ imageUrl: null })}
+            >
+              tirar foto
+            </button>
+          ) : null}
+        </div>
+        <div className="min-w-0 flex-1 space-y-4">
+          <Field
+            label="Quantidade máxima"
+            helper={
+              (o.maxQty ?? 1) > 1
+                ? `O cliente pode pedir até ${o.maxQty} desta opção (ex.: 2× bacon).`
+                : 'Com 1, o cliente só marca ou desmarca.'
+            }
+          >
+            <Stepper
+              label="quantidade máxima"
+              value={o.maxQty ?? 1}
+              min={1}
+              max={20}
+              onChange={(v) => onChange({ maxQty: v })}
+            />
+          </Field>
+          <Field label="Descrição" optional htmlFor={`${id}-desc`}>
+            <TextInput
+              id={`${id}-desc`}
+              maxLength={200}
+              placeholder="Ex.: fatias finas, bem crocantes"
+              value={o.description ?? ''}
+              className="bg-sunken"
+              onChange={(e) => onChange({ description: e.target.value || null })}
+            />
+          </Field>
+        </div>
+      </div>
+      <Button variant="ghost" size="sm" onClick={onClose}>
+        pronto
       </Button>
     </div>
   );

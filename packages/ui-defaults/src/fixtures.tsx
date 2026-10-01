@@ -157,8 +157,9 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
   },
   'checkout.PaymentMethods': {
     methods: [
-      { id: 'pix', label: 'Pix' },
+      { id: 'pix', label: 'Pix', adjustment: { label: '−5%', kind: 'discount' } },
       { id: 'card_on_delivery', label: 'Cartão na entrega' },
+      { id: 'meal_voucher', label: 'Vale-refeição' },
       { id: 'cash', label: 'Dinheiro' },
     ],
     selected: 'pix',
@@ -198,6 +199,7 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
       name: 'Pudim tradicional',
       description: 'Receita de família.',
       basePriceCents: 1800,
+      compareAtPriceCents: 2400,
       status: 'active',
       figureVariant: 'default',
       tags: [],
@@ -219,11 +221,32 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
           { id: 'fx-g', name: 'Grande', priceDeltaCents: 800, status: 'active' },
         ],
       },
+      {
+        id: 'fx-extras',
+        name: 'Caldas',
+        required: false,
+        minSelect: 0,
+        maxSelect: 3,
+        pricingRule: 'sum',
+        modifiers: [
+          {
+            id: 'fx-calda',
+            name: 'Calda de caramelo',
+            priceDeltaCents: 300,
+            status: 'active',
+            maxQty: 3,
+            description: 'Feita na hora.',
+            imageUrl: null,
+          },
+        ],
+      },
     ],
-    value: { 'fx-group': ['fx-p'] },
+    value: { 'fx-group': ['fx-p'], 'fx-extras': ['fx-calda'] },
     onChange: noop,
     currency: 'BRL',
     errors: {},
+    quantities: { 'fx-calda': 2 },
+    onQtyChange: noop,
   },
   'catalog.ComboPicker': {
     slots: [
@@ -319,6 +342,8 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
     scheduledFor: '2026-09-30',
     discountCents: 420,
     couponCode: 'BEMVINDO',
+    paymentAdjustmentCents: -189,
+    paymentLabel: 'Pix',
     onReorder: noop,
   },
   'customer.LoyaltyCard': {

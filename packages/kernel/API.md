@@ -218,6 +218,43 @@ Additive — no storefront edit, no new runtime export. Stores stay a plain web 
 - **Checkout steps** are history entries (`state.vStep`); back returns to the previous step.
 - `<meta name="theme-color">` follows the `bg` token; toasts live in the top layer.
 
+### Catalog model gaps (Kernel 1.12)
+
+Additive — no storefront edit, no new runtime export. Money stays Core's: the Kernel shows
+Core's numbers and labels Core's rules, it never prices options or payment methods itself.
+
+- Promo price: `CatalogProduct.compareAtPriceCents` (display-only; `basePriceCents` is what the
+  shopper pays). The default `catalog.ProductCard` and `sdk:purchase-panel` strike it through
+  (`<s>` with visually hidden "de"/"por") only when it is above the price; the card link's
+  label reads "de … por …".
+- Option quantity: modifiers carry `maxQty` (1 = a toggle), `description` and `imageUrl`;
+  groups carry `pricingRule` (`ModifierPricingRule`: `sum`, `average`, `most_expensive`).
+  `catalog.ModifierPicker` gains optional `quantities` (units per picked option) and
+  `onQtyChange(groupId, modifierId, qty)`; old overrides keep `value`/`onChange` and still
+  work. A group's min/max count units. `sdk:purchase-panel` clamps each option to its `maxQty`
+  and to what the group's `maxSelect` leaves, and sends the units with the add:
+  `api.addItem(…, comboSelections?, modifierQty?)`, `useCart().mutations.add(…,
+comboSelections?, modifierQty?)` and `AddToCart`'s `modifierQty` prop (only units above 1 go to
+  Core, as `modifiers: [{ id, qty }]`). The add button shows its `base × qty` price only while no
+  picked option changes the price — Core prices the line (rule × units) and the sacola shows it.
+  `CartItem.modifiers[].qty`, `CartItem.modifierQty`, `OrderItem.modifiers[].qty` and
+  `ImportLine.modifiers` carry the units; cart and order lines read "2× Calda".
+- `CatalogCategory.description`: `sdk:catalog-grid` shows it under the category heading.
+- Payment methods: `'meal_voucher'` ("Vale-refeição", paid on delivery) joins
+  `PaymentMethod.id` / `CheckoutInput.payment.method`. `StoreProfile.paymentAdjustments`
+  (`PaymentAdjustment`: signed `percentBps` / `fixedCents`) labels each method in
+  `checkout.PaymentMethods` through the new optional `PaymentMethod.adjustment` (`label` like
+  "−5%" or "+R$ 1,50", `kind` discount | surcharge | mixed). On the payment step the checkout
+  asks Core for the cart priced with the chosen method (`api.cart(paymentMethod?)` →
+  `GET /checkout/v1/cart?paymentMethod=`); `CartTotals.paymentAdjustmentCents` is its own
+  summary line (hidden at 0) and the confirm button carries Core's total (none while a method
+  with a rule is being priced). `checkout.Summary` gains optional `paymentLabel`;
+  `order.Items` gains optional `paymentAdjustmentCents` and `paymentLabel`
+  (`Order.paymentAdjustmentCents`). `api.quote` / `useDeliveryQuote().quote` accept
+  `paymentMethod` (then `QuoteResult.totals`) and answer `zoneKind`.
+- Delivery zones: `DeliveryZone.kind` may be `'polygon'` with `polygon: [lat, lng][]`; the
+  checkout offers "Usar minha localização" when any radius or polygon zone exists.
+
 ### Editor preview (Kernel 1.4)
 
 Not an export: a storefront loaded inside a frame with `?vendua-preview=1` listens for
@@ -246,6 +283,13 @@ Three layers, in order of preference (17 — styling API):
    `--v-purchase-panel-media-ratio`, `--v-announcement-bg`, `--v-announcement-fg`,
    `--v-header-height`, `--v-focus`.
 
+Parts added in Kernel 1.12: `compare-at` (the struck "de" price, in the product card's and
+`sdk:purchase-panel`'s `price`), `category-description` (`sdk:catalog-grid`), and inside
+`[data-vendua="modifier-picker"]` `pricing-rule`, `option-image`, `option-description` and
+`option-qty` (a `modifier` with units is `data-kind="qty"`); in the checkout
+`[data-part="adjustment"]` (a payment option's rule, `data-kind` discount | surcharge | mixed)
+and `payment-adjustment` (the summary line; also in `[data-vendua="order-items"]`), and `pricing-note` (the "calculando o total" line under the confirm button while Core prices a method with a rule; confirm stays disabled until it answers).
+
 `vendua check` (`no-v-namespace`) allows exactly those; any other `.v-*` or
 `[data-vendua]` selector in store CSS fails. Slot overrides stay available but are
 the last resort — each one is counted in the artifact manifest.
@@ -256,7 +300,8 @@ the last resort — each one is counted in the artifact manifest.
 `formatCents`, and the Core DTO types (`StoreProfile`, `CatalogProduct`, `Cart`,
 `Order`, `Notice`, `StateEnvelope`, …). Kernel 1.2 types: `ComboSlot`, `ComboSelection`,
 `CartCoupon`, `CartSchedule`, `CouponCheck`, `DeliveryAddress`, `CepResult`, `ImportLine`,
-`ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo` (Kernel 1.7: `PaymentNext`); every new DTO field
+`ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo` (Kernel 1.7: `PaymentNext`;
+Kernel 1.12: `PaymentAdjustment`, `ModifierPricingRule`); every new DTO field
 is optional so a Kernel 1.2 storefront still runs against an older Core. Slot prop types: `SlotProps`, `CheckoutStep`,
 `CustomerDraft`, `DeliveryOption`, `PaymentMethod`, `ModifierGroup`, `PaymentStatusKind` (1.7).
 

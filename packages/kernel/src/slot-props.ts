@@ -48,10 +48,14 @@ export interface DeliveryOption {
 }
 
 export interface PaymentMethod {
-  /** Kernel 1.7 adds 'card_online' — card through Mercado Pago's hosted checkout */
-  id: 'pix' | 'card_online' | 'card_on_delivery' | 'cash';
+  /** Kernel 1.7 adds 'card_online' — card through Mercado Pago's hosted checkout;
+   *  Kernel 1.12 adds 'meal_voucher' ("Vale-refeição", paid on delivery) */
+  id: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher';
   label: string;
   detail?: string;
+  /** Kernel 1.12 — the store's discount/surcharge for this method, as a label ("−5%",
+   *  "+R$ 1,50"); Core prices it into the totals */
+  adjustment?: { label: string; kind: 'discount' | 'surcharge' | 'mixed' };
 }
 
 /** Kernel 1.7 — what `checkout.PaymentStatus` shows for an online payment:
@@ -102,7 +106,13 @@ export interface SlotProps {
     onStep: (id: CheckoutStep['id']) => void;
     children: ReactNode;
   };
-  'checkout.Summary': { cart: Cart; currency: string };
+  'checkout.Summary': {
+    cart: Cart;
+    currency: string;
+    /** Kernel 1.12 — the chosen payment method's name, for the
+     *  `totals.paymentAdjustmentCents` line ("Desconto · Pix") */
+    paymentLabel?: string;
+  };
   'checkout.AddressForm': {
     value: CustomerDraft;
     onChange: (patch: Partial<CustomerDraft>) => void;
@@ -238,6 +248,9 @@ export interface SlotProps {
     scheduledFor?: string | null;
     discountCents?: number;
     couponCode?: string | null;
+    /** Kernel 1.12 — the payment method's discount (<0) or surcharge (>0) and its name */
+    paymentAdjustmentCents?: number;
+    paymentLabel?: string;
     /** "pedir de novo" — present when the Kernel can replay the order */
     onReorder?: () => void;
     reorderPending?: boolean;
@@ -255,5 +268,11 @@ export interface SlotProps {
     onChange: (groupId: string, ids: string[]) => void;
     currency: string;
     errors: Record<string, string>;
+    /** Kernel 1.12 — units chosen per picked option id (absent = 1). Options with `maxQty` > 1
+     *  take a stepper; a group's min/max count units */
+    quantities?: Record<string, number>;
+    /** Kernel 1.12 — set an option's units (0 unpicks it); the Kernel clamps to the option's
+     *  `maxQty` and to what the group's `maxSelect` leaves */
+    onQtyChange?: (groupId: string, modifierId: string, qty: number) => void;
   };
 }

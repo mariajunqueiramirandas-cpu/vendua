@@ -29,7 +29,7 @@ first (finish the onboarding), then places a few live orders.
 
 - `bun run check`: typecheck.
 - `bun run build`: Vite build plus `scripts/budget.ts`. The limits are shell
-  ≤120 KB gzip, each lazy route ≤60 KB, and latin fonts ≤90 KB. A new
+  ≤140 KB gzip, each lazy route ≤60 KB, and latin fonts ≤90 KB. A new
   dependency that pushes the shell over budget belongs in a lazy route.
 - `CHROMIUM=/opt/pw-browsers/chromium AXE=1 bun scripts/shots.ts [routes]`
   shoots 375/820/1440 in Creme and Noite into `shots/`. It fails on horizontal

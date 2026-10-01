@@ -66,6 +66,7 @@ function cart(subtotalCents: number): CartView {
         unitPriceCents: subtotalCents,
         productStatus: 'active',
         modifierIds: [],
+        modifierQty: {},
         modifiers: [],
         combo: [],
         comboSelections: [],
@@ -85,6 +86,7 @@ function cart(subtotalCents: number): CartView {
       remainingMinOrderCents: Math.max(0, 1000 - subtotalCents),
       belowMinOrder: subtotalCents < 1000,
       discountCents: 0,
+      paymentAdjustmentCents: 0,
       freeDeliveryThresholdCents: null,
       freeDeliveryRemainingCents: null,
     },
@@ -139,6 +141,37 @@ describe('validateCheckout', () => {
     expect(code(() => validateCheckout(open, settings, cart(5000), out, zones))).toBe(
       'OUT_OF_ZONE',
     );
+  });
+  test('polygon zones: inside resolves, outside every zone → OUT_OF_ZONE', () => {
+    const polyZones = [
+      ...zones,
+      {
+        id: 'p1',
+        name: 'Mapa',
+        kind: 'polygon' as const,
+        neighborhoods: [],
+        polygon: [
+          [-22.94, -42.52],
+          [-22.94, -42.5],
+          [-22.92, -42.5],
+          [-22.92, -42.52],
+        ] as [number, number][],
+        fee_cents: 400,
+        min_order_cents: 0,
+        eta_min_minutes: 20,
+        eta_max_minutes: 40,
+      },
+    ];
+    const at = (lat: number, lng: number) => ({
+      ...delivery,
+      delivery: { mode: 'delivery' as const, neighborhood: 'Ipanema', address: 'x', lat, lng },
+    });
+    const hit = validateCheckout(open, settings, cart(5000), at(-22.93, -42.51), polyZones);
+    expect(hit.zone?.id).toBe('p1');
+    expect(hit.feeCents).toBe(400);
+    expect(
+      code(() => validateCheckout(open, settings, cart(5000), at(-22.9, -42.51), polyZones)),
+    ).toBe('OUT_OF_ZONE');
   });
   test('delivery when disabled → DELIVERY_UNAVAILABLE', () => {
     const s = { ...settings, delivery_enabled: false };

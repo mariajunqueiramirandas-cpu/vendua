@@ -182,6 +182,8 @@ export function MoneyField({
   min = 0,
   placeholder = '0,00',
   allowEmpty,
+  validate,
+  className,
   ...rest
 }: {
   cents: number | null;
@@ -190,6 +192,9 @@ export function MoneyField({
   min?: number;
   placeholder?: string;
   allowEmpty?: boolean;
+  /** a rule beyond "is money": the message, or null when the value is fine */
+  validate?: (cents: number) => string | null;
+  className?: string;
   'aria-describedby'?: string;
   autoFocus?: boolean;
 }) {
@@ -205,6 +210,8 @@ export function MoneyField({
     const v = parseMoney(draft);
     if (v === null) return setErr('Digite um valor, como 12,50.');
     if (v < min) return setErr(`O valor precisa ser pelo menos ${money(min)}.`);
+    const bad = validate?.(v) ?? null;
+    if (bad) return setErr(bad);
     setErr(null);
     setDraft(moneyInput(v));
     if (v !== cents) onCommit(v);
@@ -222,7 +229,7 @@ export function MoneyField({
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-        className="tnum"
+        className={cn('tnum', className)}
         {...rest}
       />
       {err ? <p className="t-caption text-danger">{err}</p> : null}

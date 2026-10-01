@@ -947,12 +947,14 @@ function NewCategorySheet({
 }) {
   const qc = useQueryClient();
   const [name, setName] = useState('');
+  const [desc, setDesc] = useState('');
   const create = useMutation({
-    mutationFn: () => api.createCategory(name.trim()),
+    mutationFn: () => api.createCategory(name.trim(), desc.trim() || null),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.catalog });
       toast(`Categoria “${name.trim()}” criada`);
       setName('');
+      setDesc('');
       onOpenChange(false);
     },
     onError: (e) => toast.error(messageOf(e)),
@@ -989,6 +991,7 @@ function NewCategorySheet({
           onKeyDown={(e) => e.key === 'Enter' && name.trim() && create.mutate()}
         />
       </Field>
+      <CategoryDescription id="nc-desc" value={desc} onChange={setDesc} className="mt-5" />
     </Sheet>
   );
 }
@@ -1117,6 +1120,7 @@ function OrganizeSheet({
   const qc = useQueryClient();
   const [editing, setEditing] = useState<string | null>(null);
   const [name, setName] = useState('');
+  const [desc, setDesc] = useState('');
   const refresh = () => void qc.invalidateQueries({ queryKey: qk.catalog });
   const reorder = useMutation({
     mutationFn: api.orderCategories,
@@ -1132,12 +1136,13 @@ function OrganizeSheet({
     },
   });
   const rename = useMutation({
-    mutationFn: (v: { id: string; name: string }) => api.renameCategory(v.id, v.name),
-    onMutate: (v) => {
+    mutationFn: ({ id, ...v }: { id: string; name?: string; description?: string | null }) =>
+      api.updateCategory(id, v),
+    onMutate: ({ id, ...v }) => {
       setEditing(null);
       return optimistic<{ categories: Category[] }>(qc, qk.catalog, (d) => ({
         ...d,
-        categories: d.categories.map((c) => (c.id === v.id ? { ...c, name: v.name } : c)),
+        categories: d.categories.map((c) => (c.id === id ? { ...c, ...v } : c)),
       }));
     },
     onSettled: refresh,
@@ -1174,57 +1179,125 @@ function OrganizeSheet({
       }
     >
       <ul className="space-y-2 pt-2">
-        {cats.map((c, i) => (
-          <li key={c.id} className="flex items-center gap-1 rounded-md bg-sunken p-1.5 pl-3">
-            {editing === c.id ? (
-              <TextInput
-                autoFocus
-                aria-label="nome da categoria"
-                value={name}
-                maxLength={60}
-                onChange={(e) => setName(e.target.value)}
-                onBlur={() =>
-                  name.trim() && name.trim() !== c.name
-                    ? rename.mutate({ id: c.id, name: name.trim() })
-                    : setEditing(null)
-                }
-                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-                className="h-11"
+        {cats.map((c, i) =>
+          editing === c.id ? (
+            <li key={c.id} className="space-y-4 rounded-md bg-sunken p-3">
+              <Field label="Nome" htmlFor="ec-name">
+                <TextInput
+                  id="ec-name"
+                  autoFocus
+                  value={name}
+                  maxLength={60}
+                  onChange={(e) => setName(e.target.value)}
+                  className="bg-surface"
+                />
+              </Field>
+              <CategoryDescription
+                id="ec-desc"
+                value={desc}
+                onChange={setDesc}
+                inputClassName="bg-surface"
               />
-            ) : (
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setEditing(null)}>
+                  cancelar
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={!name.trim()}
+                  onClick={() => {
+                    const next = {
+                      ...(name.trim() !== c.name ? { name: name.trim() } : {}),
+                      ...((desc.trim() || null) !== c.description
+                        ? { description: desc.trim() || null }
+                        : {}),
+                    };
+                    if (Object.keys(next).length) rename.mutate({ id: c.id, ...next });
+                    else setEditing(null);
+                  }}
+                >
+                  salvar
+                </Button>
+              </div>
+            </li>
+          ) : (
+            <li key={c.id} className="flex items-center gap-1 rounded-md bg-sunken p-1.5 pl-3">
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold">{c.name}</span>
+                {c.description ? (
+                  <span className="t-caption block truncate text-muted">{c.description}</span>
+                ) : null}
                 <span className="t-caption text-muted">{c.products.length} produtos</span>
               </span>
-            )}
-            <IconButton label="subir" size="sm" disabled={i === 0} onClick={() => move(i, -1)}>
-              <ArrowUp />
-            </IconButton>
-            <IconButton
-              label="descer"
-              size="sm"
-              disabled={i === cats.length - 1}
-              onClick={() => move(i, 1)}
-            >
-              <ArrowDown />
-            </IconButton>
-            <IconButton
-              label={`renomear ${c.name}`}
-              size="sm"
-              onClick={() => {
-                setEditing(c.id);
-                setName(c.name);
-              }}
-            >
-              <PencilSimple />
-            </IconButton>
-            <IconButton label={`apagar ${c.name}`} size="sm" onClick={() => del.mutate(c.id)}>
-              <Trash />
-            </IconButton>
-          </li>
-        ))}
+              <IconButton label="subir" size="sm" disabled={i === 0} onClick={() => move(i, -1)}>
+                <ArrowUp />
+              </IconButton>
+              <IconButton
+                label="descer"
+                size="sm"
+                disabled={i === cats.length - 1}
+                onClick={() => move(i, 1)}
+              >
+                <ArrowDown />
+              </IconButton>
+              <IconButton
+                label={`editar ${c.name}`}
+                size="sm"
+                onClick={() => {
+                  setEditing(c.id);
+                  setName(c.name);
+                  setDesc(c.description ?? '');
+                }}
+              >
+                <PencilSimple />
+              </IconButton>
+              <IconButton label={`apagar ${c.name}`} size="sm" onClick={() => del.mutate(c.id)}>
+                <Trash />
+              </IconButton>
+            </li>
+          ),
+        )}
       </ul>
     </Sheet>
+  );
+}
+
+function CategoryDescription({
+  id,
+  value,
+  onChange,
+  className,
+  inputClassName,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  className?: string;
+  inputClassName?: string;
+}) {
+  return (
+    <Field
+      label="Descrição"
+      optional
+      htmlFor={id}
+      className={className ?? ''}
+      helper={
+        <span className="flex justify-between gap-3">
+          <span>Aparece no topo da categoria na loja.</span>
+          <span className="tnum shrink-0">{value.length}/500</span>
+        </span>
+      }
+    >
+      <TextArea
+        id={id}
+        rows={3}
+        maxLength={500}
+        value={value}
+        placeholder="Ex.: Feitos no dia, com leite da fazenda."
+        onChange={(e) => onChange(e.target.value)}
+        className={cn('min-h-24', inputClassName)}
+      />
+    </Field>
   );
 }
 
@@ -1250,7 +1323,7 @@ function BulkPriceSheet({
       open={open}
       onOpenChange={onOpenChange}
       title={`Ajustar o preço de ${count} produtos`}
-      description="Os preços são arredondados para os 10 centavos mais próximos."
+      description="Os preços são arredondados para os 10 centavos mais próximos. O preço “de” das promoções acompanha."
       footer={
         <Button
           size="lg"

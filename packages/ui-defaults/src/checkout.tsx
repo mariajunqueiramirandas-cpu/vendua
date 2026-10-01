@@ -36,8 +36,9 @@ export function CheckoutLayout({ steps, current, onStep, children }: SlotProps['
   );
 }
 
-export function CheckoutSummary({ cart, currency }: SlotProps['checkout.Summary']) {
+export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['checkout.Summary']) {
   const t = cart.totals;
+  const adjustment = t.paymentAdjustmentCents ?? 0;
   return (
     <section
       className="v-summary"
@@ -81,6 +82,18 @@ export function CheckoutSummary({ cart, currency }: SlotProps['checkout.Summary'
             <dt>Desconto{cart.coupon ? ` · ${cart.coupon.code}` : ''}</dt>
             <dd className="v-num" data-vendua="discount">
               −{money(t.discountCents, currency)}
+            </dd>
+          </div>
+        ) : null}
+        {adjustment ? (
+          <div data-part="payment-adjustment">
+            <dt>
+              {adjustment < 0 ? 'Desconto' : 'Acréscimo'}
+              {paymentLabel ? ` · ${paymentLabel}` : ' do pagamento'}
+            </dt>
+            <dd className="v-num" data-vendua="payment-adjustment">
+              {adjustment < 0 ? '−' : '+'}
+              {money(Math.abs(adjustment), currency)}
             </dd>
           </div>
         ) : null}
@@ -403,7 +416,25 @@ export function PaymentMethods({
               checked={m.id === selected}
               onChange={() => onSelect(m.id)}
             />
-            <span className="v-option-label">{m.label}</span>
+            <span className="v-option-label">
+              {m.label}
+              {m.adjustment ? (
+                <span
+                  className="v-option-adjust v-num"
+                  data-part="adjustment"
+                  data-kind={m.adjustment.kind}
+                >
+                  <span className="v-sr">
+                    {m.adjustment.kind === 'discount'
+                      ? ' desconto de '
+                      : m.adjustment.kind === 'surcharge'
+                        ? ' acréscimo de '
+                        : ' ajuste de '}
+                  </span>
+                  {m.adjustment.label}
+                </span>
+              ) : null}
+            </span>
             {m.detail ? <span className="v-option-detail v-muted">{m.detail}</span> : null}
           </label>
         ))}

@@ -179,6 +179,11 @@ import { fleetDeps, type FleetDeps } from './modules/fleet/deps.ts';
 import { mountFleet } from './modules/fleet/routes.ts';
 import { createPaymentProvider, type PaymentProvider } from './modules/payments/index.ts';
 import { storePaymentsPublic } from './modules/payments/store-payments.ts';
+import {
+  DEFAULT_PAYMENT_METHODS,
+  isPaymentMethod,
+  readPaymentAdjustments,
+} from './modules/payment-adjustments.ts';
 import { mountControlBilling } from './modules/control-billing.ts';
 import { mountIncidentsControl } from './modules/incidents.ts';
 
@@ -227,6 +232,16 @@ async function loadSettings(
 const loadZones = loadZoneRows;
 
 /** The store's Pix for the storefront page — key, beneficiary and an amount-less copia e cola. */
+/** optional `paymentMethod` of the cart/quote previews */
+function paymentMethodParam(v: unknown): string | null {
+  if (v === undefined || v === null || v === '') return null;
+  if (!isPaymentMethod(v))
+    throw new HttpError(422, 'INVALID_PAYMENT', 'paymentMethod is not a payment method', {
+      field: 'paymentMethod',
+    });
+  return v;
+}
+
 function pixProfile(settings: StoreSettingsRow | null) {
   if (!settings?.pix_key || !settings.pix_key_type) return null;
   const profile = {
@@ -447,7 +462,8 @@ export function createApp({
         tx,
         tenant.id,
         provider,
-        settings?.payment_methods ?? ['pix', 'card_on_delivery', 'cash'],
+        settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
+        readPaymentAdjustments(settings?.payment_adjustments),
       );
       return { settings, online };
     });
@@ -563,6 +579,7 @@ export function createApp({
         maxDistanceKm: z.max_distance_km == null ? null : Number(z.max_distance_km),
         feePerKmCents: z.fee_per_km_cents,
         freeDeliveryOverCents: z.free_delivery_over_cents,
+        polygon: z.polygon ?? null,
       })),
     });
   });
@@ -646,7 +663,10 @@ export function createApp({
   checkout.get('/cart', async (c) => {
     const tenant = c.get('tenant');
     const cartId = await sessionCartId(c, sessionSecret);
-    const cart = await withTenant(sql, tenant.id, (tx) => loadCartView(tx, tenant.id, cartId));
+    const paymentMethod = paymentMethodParam(c.req.query('paymentMethod'));
+    const cart = await withTenant(sql, tenant.id, (tx) =>
+      loadCartView(tx, tenant.id, cartId, new Date(), { paymentMethod }),
+    );
     return c.json({ cart });
   });
 
@@ -668,12 +688,24 @@ export function createApp({
       const modifierIds = Array.isArray(body.modifierIds)
         ? body.modifierIds.map((m) => str(m, 'modifierId', 64))
         : [];
+      if (Array.isArray(body.modifiers) && body.modifiers.length > 32) {
+        throw new HttpError(422, 'BAD_REQUEST', 'modifiers accepts at most 32 entries');
+      }
+      const modifiers = Array.isArray(body.modifiers)
+        ? body.modifiers.map((m) => {
+            const o = (m ?? {}) as Record<string, unknown>;
+            return {
+              id: str(o.id, 'modifiers.id', 64),
+              qty: o.qty === undefined ? 1 : Number(o.qty),
+            };
+          })
+        : [];
       const comboSelections = parseSelections(body.comboSelections);
       const cart = await addItem(
         tx,
         tenant.id,
         cartId,
-        { productId, qty, modifierIds, comboSelections },
+        { productId, qty, modifierIds, modifiers, comboSelections },
         getProductById,
       );
       return { status: 200, body: { cart } };
@@ -766,6 +798,7 @@ export function createApp({
       const coords = hasCoords ? validCoords(body.lat, body.lng) : null;
       if (hasCoords && !coords)
         throw new HttpError(422, 'INVALID_DELIVERY', 'lat/lng must be coordinates');
+      const paymentMethod = paymentMethodParam(body.paymentMethod);
       const zones = await loadZones(tx, tenant.id);
       const settings = await loadSettings(tx, tenant.id);
       const match = resolveZone(zones, { neighborhood, coords }, storeCoords(settings));
@@ -784,18 +817,38 @@ export function createApp({
       if (!match) {
         return { status: 200, body: { eligible: false, reason: 'OUT_OF_ZONE' } };
       }
+      // with a cart: its totals delivered here and paid this way (Core's numbers, never the client's)
+      const totals = cartId
+        ? await loadCartView(tx, tenant.id, cartId, new Date(), {
+            paymentMethod,
+            delivery: {
+              mode: 'delivery',
+              neighborhood,
+              lat: coords?.lat ?? null,
+              lng: coords?.lng ?? null,
+            },
+          }).then(
+            (v) => v.totals,
+            (err) => {
+              if (err instanceof HttpError && err.code === 'CART_NOT_FOUND') return null;
+              throw err;
+            },
+          )
+        : null;
       return {
         status: 200,
         body: {
           eligible: true,
           zoneId: match.zone.id,
           zoneName: match.zone.name,
+          zoneKind: match.zone.kind,
           feeCents: match.feeCents,
           etaMin: match.zone.eta_min_minutes,
           etaMax: match.zone.eta_max_minutes,
           distanceKm: match.distanceKm,
           minOrderCents: Math.max(settings?.min_order_cents ?? 0, match.zone.min_order_cents),
           freeDeliveryOverCents: match.zone.free_delivery_over_cents,
+          ...(totals ? { totals } : {}),
         },
       };
     })(c);

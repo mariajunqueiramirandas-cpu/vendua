@@ -117,6 +117,7 @@ const product = (over: Partial<Product>): Product => ({
   name: 'Pudim de leite condensado tradicional',
   description: null,
   priceCents: 2500,
+  compareAtPriceCents: null,
   status: 'active',
   kind: 'simple',
   stockQuantity: null,

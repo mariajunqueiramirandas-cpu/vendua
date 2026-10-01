@@ -290,6 +290,98 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect((await owner('PATCH', '/zones/not-a-uuid', { feeCents: 1 })).status).toBe(400);
   });
 
+  test('Loja: polygon zones validate, reach the storefront and resolve quotes', async () => {
+    const square = [
+      [-22.94, -42.52],
+      [-22.94, -42.5],
+      [-22.92, -42.5],
+      [-22.92, -42.52],
+    ];
+    const base = { name: 'Mapa', kind: 'polygon', feeCents: 650, etaMin: 20, etaMax: 45 };
+    const rejects = async (body: Record<string, unknown>) => {
+      const r = await owner('POST', '/zones', body);
+      expect(r.status).toBe(422);
+      expect(r.body.error.details?.field).toBe('polygon');
+    };
+    await rejects(base);
+    await rejects({ ...base, polygon: square.slice(0, 2) });
+    await rejects({ ...base, polygon: [...square.slice(0, 2), square[0]] });
+    await rejects({
+      ...base,
+      polygon: [
+        [0, 0],
+        [0, 1],
+        ['1', 1],
+      ],
+    });
+    await rejects({
+      ...base,
+      polygon: [
+        [0, 0],
+        [0, 1],
+        [95, 1],
+      ],
+    });
+    await rejects({
+      ...base,
+      polygon: [
+        [0, 0],
+        [0, 1],
+        [1, 1, 1],
+      ],
+    });
+    await rejects({ ...base, polygon: 'abc' });
+    await rejects({
+      ...base,
+      polygon: Array.from({ length: 201 }, (_, i) => [
+        Math.sin((2 * Math.PI * i) / 201),
+        Math.cos((2 * Math.PI * i) / 201),
+      ]),
+    });
+    await rejects({ ...base, kind: 'radius', maxDistanceKm: 3, polygon: square });
+    await rejects({ ...base, kind: undefined, neighborhoods: ['Centro'], polygon: square });
+
+    const z = await owner('POST', '/zones', { ...base, polygon: [...square, square[0]] });
+    expect(z.status).toBe(201);
+    const zone = z.body.zones.find((x: any) => x.name === 'Mapa');
+    expect(zone).toMatchObject({ kind: 'polygon', polygon: square, neighborhoods: [] });
+
+    const pub = await call('GET', '/storefront/v1/zones', undefined, { host });
+    const sz = pub.body.zones.find((x: any) => x.id === zone.id);
+    expect(sz).toMatchObject({ kind: 'polygon', polygon: square, feeCents: 650 });
+    expect(pub.body.zones.find((x: any) => x.kind !== 'polygon').polygon).toBeNull();
+
+    const inside = await call('POST', '/checkout/v1/quote', { lat: -22.93, lng: -42.51 }, { host });
+    expect(inside.body).toMatchObject({
+      eligible: true,
+      zoneId: zone.id,
+      zoneKind: 'polygon',
+      feeCents: 650,
+      distanceKm: null,
+    });
+    const outside = await call('POST', '/checkout/v1/quote', { lat: -22.9, lng: -42.51 }, { host });
+    expect(outside.body).toEqual({ eligible: false, reason: 'OUT_OF_ZONE' });
+
+    const moved = square.map(([lat, lng]) => [lat! + 0.03, lng!]);
+    const p = await owner('PATCH', `/zones/${zone.id}`, { polygon: moved });
+    expect(p.body.zones.find((x: any) => x.id === zone.id).polygon).toEqual(moved);
+    expect((await owner('PATCH', `/zones/${zone.id}`, { polygon: [[1, 1]] })).status).toBe(422);
+    const other = pub.body.zones.find((x: any) => x.kind !== 'polygon');
+    const mismatch = await owner('PATCH', `/zones/${other.id}`, { kind: 'polygon' });
+    expect(mismatch.status).toBe(422);
+    expect(mismatch.body.error.details.field).toBe('polygon');
+    // leaving the polygon kind drops the ring
+    const back = await owner('PATCH', `/zones/${zone.id}`, {
+      kind: 'neighborhood',
+      neighborhoods: ['Centro'],
+    });
+    expect(back.body.zones.find((x: any) => x.id === zone.id)).toMatchObject({
+      kind: 'neighborhood',
+      polygon: null,
+    });
+    expect((await owner('DELETE', `/zones/${zone.id}`)).status).toBe(200);
+  });
+
   let productId = '';
   test('Cardápio: create, edit, options, sold out today, bulk, paste import', async () => {
     const p = await owner('POST', '/products', {

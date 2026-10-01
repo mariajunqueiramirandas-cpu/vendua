@@ -15,6 +15,8 @@ export interface ImportLine {
   slug?: string;
   qty: number;
   modifierIds?: string[];
+  /** options taken more than once; ids listed only in modifierIds are one unit */
+  modifiers?: { id: string; qty: number }[];
   comboSelections?: ComboSelection[];
 }
 
@@ -47,11 +49,22 @@ export function parseImportLines(v: unknown): ImportLine[] {
           .slice(0, 32)
           .filter((m): m is string => typeof m === 'string' && UUID_RE.test(m))
       : [];
+    const modifiers = Array.isArray(r.modifiers)
+      ? r.modifiers.slice(0, 32).flatMap((m) => {
+          const o = m as Record<string, unknown> | null;
+          if (typeof o?.id !== 'string' || !UUID_RE.test(o.id)) return [];
+          const n = o.qty === undefined ? 1 : Number(o.qty);
+          if (!Number.isInteger(n) || n < 1 || n > 20)
+            throw new HttpError(422, 'INVALID_IMPORT', 'option qty must be 1–20');
+          return [{ id: o.id, qty: n }];
+        })
+      : [];
     return {
       ...(productId ? { productId } : {}),
       ...(slug ? { slug } : {}),
       qty,
       modifierIds,
+      ...(modifiers.length ? { modifiers } : {}),
       comboSelections: parseSelections(r.comboSelections),
     };
   });
@@ -96,6 +109,7 @@ export async function importLines(
             productId: productId!,
             qty: line.qty,
             modifierIds: line.modifierIds ?? [],
+            modifiers: line.modifiers ?? [],
             comboSelections: line.comboSelections ?? [],
           },
           getProductById,
@@ -133,10 +147,11 @@ export async function createShare(
       slug: string;
       qty: number;
       modifier_ids: string[];
+      modifier_qty: Record<string, number>;
       combo_selections: ComboSelection[];
     }[]
   >`
-    select ci.product_id, p.slug, ci.qty, ci.modifier_ids, ci.combo_selections
+    select ci.product_id, p.slug, ci.qty, ci.modifier_ids, ci.modifier_qty, ci.combo_selections
     from cart_items ci join products p on p.id = ci.product_id
     where ci.tenant_id = ${tenantId} and ci.cart_id = ${cartId} order by ci.created_at
   `;
@@ -146,6 +161,7 @@ export async function createShare(
     slug: i.slug,
     qty: i.qty,
     modifierIds: i.modifier_ids,
+    ...qtyLines(Object.entries(i.modifier_qty ?? {}).map(([id, qty]) => ({ id, qty }))),
     comboSelections: i.combo_selections,
   }));
   const code = shareCode();
@@ -180,7 +196,7 @@ export async function orderLines(
       product_id: string | null;
       slug: string;
       qty: number;
-      modifiers: { id?: string }[];
+      modifiers: { id?: string; qty?: number }[];
       combo: { slotId?: string; productId?: string; qty: number }[];
     }[]
   >`
@@ -192,8 +208,14 @@ export async function orderLines(
     slug: r.slug,
     qty: r.qty,
     modifierIds: r.modifiers.flatMap((m) => (m.id ? [m.id] : [])),
+    ...qtyLines(r.modifiers.flatMap((m) => (m.id && m.qty ? [{ id: m.id, qty: m.qty }] : []))),
     comboSelections: r.combo.flatMap((c) =>
       c.slotId && c.productId ? [{ slotId: c.slotId, productId: c.productId, qty: c.qty }] : [],
     ),
   }));
+}
+
+function qtyLines(mods: { id: string; qty: number }[]): Pick<ImportLine, 'modifiers'> {
+  const modifiers = mods.filter((m) => m.qty > 1);
+  return modifiers.length ? { modifiers } : {};
 }

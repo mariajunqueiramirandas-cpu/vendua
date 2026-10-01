@@ -21,7 +21,7 @@ import { Chips, Field, TextArea } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { nextStep, STATE_META, StateChip } from '../../ui/StateChip.tsx';
-import { PaymentChip } from '../../ui/PaymentChip.tsx';
+import { METHOD_LABEL, PaymentChip } from '../../ui/PaymentChip.tsx';
 import { CANCEL_REASONS, printTicket, useTransition, whatsappUrl } from './actions.ts';
 import { PaymentSection, primaryPayment, refundable } from './PaymentSection.tsx';
 import { RefundSheet } from './RefundSheet.tsx';
@@ -108,7 +108,11 @@ export function OrderDetail({
               <div className="min-w-0 flex-1">
                 <p className="t-body-lg font-semibold">{i.name}</p>
                 {i.modifiers.length ? (
-                  <p className="t-body text-muted">{i.modifiers.map((m) => m.name).join(' · ')}</p>
+                  <p className="t-body text-muted">
+                    {i.modifiers
+                      .map((m) => ((m.qty ?? 1) > 1 ? `${m.qty}× ${m.name}` : m.name))
+                      .join(' · ')}
+                  </p>
                 ) : null}
                 {i.combo.length ? (
                   <ul className="t-body text-muted">
@@ -139,6 +143,23 @@ export function OrderDetail({
             <div className="flex justify-between text-success">
               <dt>Desconto{order.coupon ? ` (${order.coupon.code})` : ''}</dt>
               <dd className="tnum">−{money(order.discountCents)}</dd>
+            </div>
+          ) : null}
+          {order.paymentAdjustmentCents ? (
+            <div
+              className={cn(
+                'flex justify-between',
+                order.paymentAdjustmentCents < 0 ? 'text-success' : 'text-muted',
+              )}
+            >
+              <dt>
+                {order.paymentAdjustmentCents < 0 ? 'Desconto' : 'Acréscimo'} (
+                {METHOD_LABEL[order.payment.method] ?? 'pagamento'})
+              </dt>
+              <dd className="tnum">
+                {order.paymentAdjustmentCents < 0 ? '−' : '+'}
+                {money(Math.abs(order.paymentAdjustmentCents))}
+              </dd>
             </div>
           ) : null}
           <div className="t-title-2 flex justify-between pt-1">

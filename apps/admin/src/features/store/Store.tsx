@@ -1,4 +1,5 @@
 import {
+  ArrowCounterClockwise,
   CalendarPlus,
   Clock,
   Crosshair,
@@ -7,17 +8,19 @@ import {
   Moped,
   PencilSimple,
   Plus,
+  Polygon,
   Storefront,
   Trash,
 } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { api, type SpecialDay, type StoreView, type Zone } from '../../lib/api.ts';
+import { api, ApiError, type SpecialDay, type StoreView, type Zone } from '../../lib/api.ts';
 import { useAutosave } from '../../lib/autosave.ts';
 import { dateShort, hhmm, isoDate, money, phone, waDigits } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
+import { cn } from '../../ui/cn.ts';
 import { ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
 import {
   Chips,
@@ -460,7 +463,7 @@ function Delivery({
                 <p className="font-semibold">Área de entrega</p>
                 <p className="t-caption text-muted">
                   {s.location
-                    ? 'Os círculos mostram até onde vai cada taxa.'
+                    ? 'Os círculos e as áreas desenhadas mostram até onde vai cada taxa.'
                     : 'Marque onde fica a loja para entregar por distância.'}
                 </p>
               </div>
@@ -500,6 +503,8 @@ function Delivery({
               >
                 {z.kind === 'radius' ? (
                   <MapPin className="size-6 shrink-0 text-muted" />
+                ) : z.kind === 'polygon' ? (
+                  <Polygon className="size-6 shrink-0 text-muted" />
                 ) : (
                   <Moped className="size-6 shrink-0 text-muted" />
                 )}
@@ -511,7 +516,11 @@ function Delivery({
                     ) : null}
                   </span>
                   <span className="t-caption block truncate text-muted">
-                    {z.kind === 'radius' ? `até ${z.maxDistanceKm} km` : z.neighborhoods.join(', ')}{' '}
+                    {z.kind === 'radius'
+                      ? `até ${z.maxDistanceKm} km`
+                      : z.kind === 'polygon'
+                        ? 'desenhada no mapa'
+                        : z.neighborhoods.join(', ')}{' '}
                     · {z.etaMin}–{z.etaMax} min
                   </span>
                 </span>
@@ -543,6 +552,8 @@ function Delivery({
       ) : null}
       <ZoneSheet
         zone={edit}
+        center={s.location}
+        zones={s.zones}
         hasLocation={!!s.location}
         onClose={() => setEdit(null)}
         onSaved={() => void qc.invalidateQueries({ queryKey: qk.store })}
@@ -551,20 +562,34 @@ function Delivery({
   );
 }
 
+const POLYGON_MAX = 200;
+type Ring = [number, number][];
+
 function ZoneSheet({
   zone,
+  center,
+  zones,
   hasLocation,
   onClose,
   onSaved,
 }: {
   zone: Zone | 'new' | null;
+  center: StoreView['location'];
+  zones: Zone[];
   hasLocation: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const isNew = zone === 'new';
   const z = zone && zone !== 'new' ? zone : null;
-  const [kind, setKind] = useState<'neighborhood' | 'radius'>('neighborhood');
+  const [kind, setKind] = useState<Zone['kind']>('neighborhood');
+  const [poly, setPoly] = useState<Ring>([]);
+  // each change keeps the shape before it, so "desfazer" also undoes a drag
+  const [history, setHistory] = useState<Ring[]>([]);
+  const changePoly = (next: Ring) => {
+    setHistory((h) => [...h.slice(-49), poly]);
+    setPoly(next);
+  };
   const [name, setName] = useState('');
   const [hoods, setHoods] = useState('');
   const [km, setKm] = useState(3);
@@ -578,6 +603,8 @@ function ZoneSheet({
     setKind(z?.kind ?? (hasLocation ? 'radius' : 'neighborhood'));
     setName(z?.name ?? '');
     setHoods(z?.neighborhoods.join(', ') ?? '');
+    setPoly(z?.polygon ?? []);
+    setHistory([]);
     setKm(z?.maxDistanceKm ?? 3);
     setFee(z?.feeCents ?? 500);
     setFree(z?.freeDeliveryOverCents ?? null);
@@ -588,7 +615,11 @@ function ZoneSheet({
   const body = () => ({
     name:
       name.trim() ||
-      (kind === 'radius' ? `Até ${km} km` : hoods.split(',')[0]?.trim() || 'Entrega'),
+      (kind === 'radius'
+        ? `Até ${km} km`
+        : kind === 'polygon'
+          ? 'Área desenhada'
+          : hoods.split(',')[0]?.trim() || 'Entrega'),
     kind,
     ...(kind === 'neighborhood'
       ? {
@@ -597,7 +628,9 @@ function ZoneSheet({
             .map((h) => h.trim())
             .filter(Boolean),
         }
-      : { maxDistanceKm: km, neighborhoods: [] }),
+      : kind === 'polygon'
+        ? { polygon: poly, neighborhoods: [] }
+        : { maxDistanceKm: km, neighborhoods: [] }),
     feeCents: fee ?? 0,
     freeDeliveryOverCents: free,
     minOrderCents: min ?? 0,
@@ -612,7 +645,12 @@ function ZoneSheet({
       onClose();
       toast('Área de entrega salva');
     },
-    onError: (e) => toast.error(messageOf(e)),
+    onError: (e) =>
+      toast.error(
+        e instanceof ApiError && e.field === 'polygon'
+          ? 'Desenhe a área com pelo menos 3 pontos (até 200) que não fiquem em linha reta.'
+          : messageOf(e),
+      ),
   });
   const del = useMutation({
     mutationFn: () => api.deleteZone(z!.id),
@@ -641,7 +679,13 @@ function ZoneSheet({
               apagar
             </Button>
           ) : null}
-          <Button size="lg" block loading={save.isPending} onClick={() => save.mutate()}>
+          <Button
+            size="lg"
+            block
+            loading={save.isPending}
+            disabled={kind === 'polygon' && (poly.length < 3 || poly.length > POLYGON_MAX)}
+            onClick={() => save.mutate()}
+          >
             salvar área
           </Button>
         </div>
@@ -655,6 +699,7 @@ function ZoneSheet({
           options={[
             { value: 'neighborhood', label: 'por bairro' },
             { value: 'radius', label: 'por distância' },
+            { value: 'polygon', label: 'desenhar no mapa' },
           ]}
         />
         {kind === 'radius' && !hasLocation ? (
@@ -671,7 +716,19 @@ function ZoneSheet({
             onChange={(e) => setName(e.target.value)}
           />
         </Field>
-        {kind === 'neighborhood' ? (
+        {kind === 'polygon' ? (
+          <PolygonField
+            ring={poly}
+            onChange={changePoly}
+            canUndo={history.length > 0}
+            onUndo={() => {
+              setPoly(history.at(-1) ?? []);
+              setHistory((h) => h.slice(0, -1));
+            }}
+            center={center}
+            others={zones.filter((x) => x.id !== z?.id)}
+          />
+        ) : kind === 'neighborhood' ? (
           <Field label="Bairros" htmlFor="z-hoods" helper="Separe por vírgula.">
             <TextArea
               id="z-hoods"
@@ -735,6 +792,73 @@ function ZoneSheet({
         />
       </div>
     </Sheet>
+  );
+}
+
+function PolygonField({
+  ring,
+  onChange,
+  canUndo,
+  onUndo,
+  center,
+  others,
+}: {
+  ring: Ring;
+  onChange: (r: Ring) => void;
+  canUndo: boolean;
+  onUndo: () => void;
+  center: StoreView['location'];
+  others: Zone[];
+}) {
+  const need = 3 - ring.length;
+  return (
+    <div className="space-y-2">
+      <p className="t-label">Área no mapa</p>
+      <p className="t-caption text-muted">
+        Toque no mapa para marcar os cantos da área, em volta. Arraste um ponto para ajustar.
+      </p>
+      <Suspense fallback={<div className="skeleton h-72 rounded-lg" />}>
+        <ZoneMap
+          center={center}
+          zones={others}
+          polygon={ring}
+          onPolygonChange={onChange}
+          className="h-72 w-full overflow-hidden rounded-lg ring-1 ring-line"
+        />
+      </Suspense>
+      <div className="flex flex-wrap items-center gap-2">
+        <p
+          className={cn('t-caption mr-auto', need > 0 ? 'text-warning' : 'text-muted')}
+          aria-live="polite"
+        >
+          {need > 0
+            ? `${ring.length} de 3 pontos: falta${need > 1 ? 'm' : ''} ${need}`
+            : `${ring.length} pontos${ring.length >= POLYGON_MAX ? ' (o máximo)' : ''}`}
+        </p>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<ArrowCounterClockwise />}
+          disabled={!canUndo}
+          onClick={onUndo}
+        >
+          desfazer
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Trash />}
+          disabled={!ring.length}
+          onClick={() => onChange([])}
+        >
+          limpar
+        </Button>
+      </div>
+      <p className="t-caption text-muted">
+        Vale pela localização do endereço do cliente. Se o bairro dele estiver numa área por bairro,
+        essa vale primeiro.
+      </p>
+    </div>
   );
 }
 

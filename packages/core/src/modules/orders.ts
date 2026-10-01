@@ -77,6 +77,7 @@ export interface OrderRow {
   subtotal_cents: number;
   delivery_fee_cents: number;
   discount_cents: number;
+  payment_adjustment_cents: number;
   total_cents: number;
   coupon_code: string | null;
   notes: string | null;
@@ -93,7 +94,7 @@ export interface OrderItemView {
   name: string;
   qty: number;
   unitPriceCents: number;
-  modifiers: { name: string; priceDeltaCents: number }[];
+  modifiers: { name: string; priceDeltaCents: number; qty: number }[];
   combo: { slotName: string; name: string; qty: number }[];
   lineTotalCents: number;
 }
@@ -111,6 +112,8 @@ export interface OrderView {
   subtotalCents: number;
   deliveryFeeCents: number;
   discountCents: number;
+  /** the payment method's discount (<0) or surcharge (>0), migration 0067 */
+  paymentAdjustmentCents: number;
   coupon: { code: string } | null;
   totalCents: number;
   placedAt: string;
@@ -147,7 +150,8 @@ export async function loadOrderView(
 ): Promise<OrderView> {
   const rows = await tx<OrderRow[]>`
     select id, number, state, customer, delivery, payment, subtotal_cents, delivery_fee_cents,
-           discount_cents, total_cents, coupon_code, notes, scheduled_for::text as scheduled_for,
+           discount_cents, payment_adjustment_cents, total_cents, coupon_code, notes,
+           scheduled_for::text as scheduled_for,
            placed_at, updated_at, rev
     from orders where tenant_id = ${tenantId} and id = ${orderId}
     ${cartId ? tx`and cart_id = ${cartId}` : tx``}
@@ -173,7 +177,7 @@ export async function loadOrderView(
       name: string;
       qty: number;
       unit_price_cents: number;
-      modifiers: { name: string; priceDeltaCents: number }[];
+      modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
       combo: { slotName: string; name: string; qty: number }[];
       line_total_cents: number;
     }[]
@@ -194,7 +198,11 @@ export async function loadOrderView(
       name: i.name,
       qty: i.qty,
       unitPriceCents: i.unit_price_cents,
-      modifiers: i.modifiers.map((m) => ({ name: m.name, priceDeltaCents: m.priceDeltaCents })),
+      modifiers: i.modifiers.map((m) => ({
+        name: m.name,
+        priceDeltaCents: m.priceDeltaCents,
+        qty: m.qty ?? 1,
+      })),
       combo: i.combo.map((c) => ({ slotName: c.slotName, name: c.name, qty: c.qty })),
       lineTotalCents: i.line_total_cents,
     })),
@@ -203,6 +211,7 @@ export async function loadOrderView(
     subtotalCents: order.subtotal_cents,
     deliveryFeeCents: order.delivery_fee_cents,
     discountCents: order.discount_cents,
+    paymentAdjustmentCents: order.payment_adjustment_cents,
     coupon: order.coupon_code ? { code: order.coupon_code } : null,
     totalCents: order.total_cents,
     placedAt: order.placed_at,
