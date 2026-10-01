@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { lazy, Suspense, useEffect, useState } from 'react';
+import { formatTime, formatWhen, statusHint } from '@vendua/kernel/rules';
 import { api, type StoreView } from '../../lib/api.ts';
-import { clock, dateShort, isoDate } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
 import { untilChange, usePollWhenOffline } from '../../lib/live.ts';
 import { cn } from '../../ui/cn.ts';
@@ -11,28 +11,31 @@ const LazyStatusSheet = lazy(() =>
   import('./StatusSheet.tsx').then((m) => ({ default: m.StatusSheet })),
 );
 
+/** The Kernel's status decision (a time only when Core served one), in the merchant's words. */
 export function statusWords(
   s: StoreView['status'],
-  tz?: string,
+  tz: string,
 ): { label: string; tone: 'open' | 'paused' | 'closed' } {
   // waits for the first plan payment: no clock or pause can open it until then
   if (s.billingHold) return { label: 'Falta pagar o plano', tone: 'paused' };
-  if (s.status === 'open') return { label: 'Aberta', tone: 'open' };
-  if (s.status === 'paused')
-    return {
-      label: s.resumesAt ? `Pausada até ${clock(s.resumesAt, tz)}` : 'Pausada',
-      tone: 'paused',
-    };
-  if (s.resumesAt) {
-    const sameDay = isoDate(new Date(s.resumesAt), tz) === isoDate(new Date(), tz);
-    return {
-      label: sameDay
-        ? `Abre às ${clock(s.resumesAt, tz)}`
-        : `Abre ${dateShort(s.resumesAt, tz)}, ${clock(s.resumesAt, tz)}`,
-      tone: 'closed',
-    };
+  const hint = statusHint(s);
+  switch (hint.kind) {
+    case 'paused-until': {
+      const when = formatWhen(hint.at!, tz);
+      return {
+        label: `Pausada até ${when.startsWith('hoje às ') ? formatTime(hint.at!, tz) : when}`,
+        tone: 'paused',
+      };
+    }
+    case 'paused':
+      return { label: 'Pausada', tone: 'paused' };
+    case 'opens':
+      return { label: `Abre ${formatWhen(hint.at!, tz)}`, tone: 'closed' };
+    case 'closed':
+      return { label: 'Fechada', tone: 'closed' };
+    default:
+      return { label: 'Aberta', tone: 'open' };
   }
-  return { label: 'Fechada', tone: 'closed' };
 }
 
 export function useStoreQuery() {

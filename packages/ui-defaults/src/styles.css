@@ -2393,7 +2393,7 @@
   }
   /* the gallery brings its own frame: the media box grows to hold the thumbs instead of
      clipping them to the square */
-  .v-pp-media:has(> .v-gallery) {
+  .v-pp-media:has(.v-gallery) {
     aspect-ratio: auto;
     overflow: visible;
     background: none;

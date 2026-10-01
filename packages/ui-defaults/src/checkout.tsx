@@ -1,5 +1,16 @@
 import type { SlotProps } from '@vendua/kernel';
-import { money, ORDER_STATE_LABEL, PAYMENT_LABEL } from './format.ts';
+import {
+  adjustmentKind,
+  DEFAULT_VOCABULARY,
+  digitsOf,
+  formatCents,
+  isValidCep,
+  lineSummary,
+  maskCep,
+  maskPhone,
+  ORDER_STATE_LABEL,
+  PAYMENT_METHOD_LABEL,
+} from '@vendua/kernel/rules';
 
 // checkout.* defaults. Validation and the step machine live in the Kernel's
 // checkout page; these only render. Field names/labels follow the conformance
@@ -39,6 +50,7 @@ export function CheckoutLayout({ steps, current, onStep, children }: SlotProps['
 export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['checkout.Summary']) {
   const t = cart.totals;
   const adjustment = t.paymentAdjustmentCents ?? 0;
+  const adjustKind = adjustmentKind({ fixedCents: adjustment });
   return (
     <section
       className="v-summary"
@@ -51,14 +63,11 @@ export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['che
           <li key={i.id} className="v-summary-line">
             <span>
               {i.qty}× {i.name}
-              {i.combo?.length ? (
-                <span className="v-muted v-line-mods">
-                  {' '}
-                  — {i.combo.map((c) => `${c.qty}× ${c.name}`).join(', ')}
-                </span>
+              {i.modifiers.length || i.combo?.length ? (
+                <span className="v-muted v-line-mods"> — {lineSummary(i, currency)}</span>
               ) : null}
             </span>
-            <span className="v-num">{money(i.lineTotalCents, currency)}</span>
+            <span className="v-num">{formatCents(i.lineTotalCents, currency)}</span>
           </li>
         ))}
       </ul>
@@ -66,14 +75,14 @@ export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['che
         <div>
           <dt>Subtotal</dt>
           <dd className="v-num" data-vendua="subtotal">
-            {money(t.subtotalCents, currency)}
+            {formatCents(t.subtotalCents, currency)}
           </dd>
         </div>
         {cart.delivery?.mode === 'delivery' ? (
           <div>
             <dt>Entrega{cart.delivery.neighborhood ? ` · ${cart.delivery.neighborhood}` : ''}</dt>
             <dd className="v-num" data-vendua="delivery-fee">
-              {t.deliveryFeeCents > 0 ? money(t.deliveryFeeCents, currency) : 'grátis'}
+              {t.deliveryFeeCents > 0 ? formatCents(t.deliveryFeeCents, currency) : 'grátis'}
             </dd>
           </div>
         ) : null}
@@ -81,26 +90,26 @@ export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['che
           <div data-part="discount">
             <dt>Desconto{cart.coupon ? ` · ${cart.coupon.code}` : ''}</dt>
             <dd className="v-num" data-vendua="discount">
-              −{money(t.discountCents, currency)}
+              −{formatCents(t.discountCents, currency)}
             </dd>
           </div>
         ) : null}
-        {adjustment ? (
-          <div data-part="payment-adjustment">
+        {adjustKind ? (
+          <div data-part="payment-adjustment" data-kind={adjustKind}>
             <dt>
-              {adjustment < 0 ? 'Desconto' : 'Acréscimo'}
+              {adjustKind === 'discount' ? 'Desconto' : 'Acréscimo'}
               {paymentLabel ? ` · ${paymentLabel}` : ' do pagamento'}
             </dt>
             <dd className="v-num" data-vendua="payment-adjustment">
-              {adjustment < 0 ? '−' : '+'}
-              {money(Math.abs(adjustment), currency)}
+              {adjustKind === 'discount' ? '−' : '+'}
+              {formatCents(Math.abs(adjustment), currency)}
             </dd>
           </div>
         ) : null}
         <div className="v-summary-total">
           <dt>Total</dt>
           <dd className="v-num" data-vendua="total">
-            {money(t.totalCents, currency)}
+            {formatCents(t.totalCents, currency)}
           </dd>
         </div>
       </dl>
@@ -110,7 +119,7 @@ export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['che
         t.freeDeliveryRemainingCents > 0 ? (
           <div className="v-progress" data-part="free-delivery" role="status">
             <p>
-              Faltam {money(t.freeDeliveryRemainingCents, currency)} para{' '}
+              Faltam {formatCents(t.freeDeliveryRemainingCents, currency)} para{' '}
               <strong>entrega grátis</strong>.
             </p>
             <progress
@@ -126,8 +135,8 @@ export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['che
       ) : null}
       {t.belowMinOrder ? (
         <p className="v-alert" role="status" data-part="min-order">
-          Faltam {money(t.remainingMinOrderCents, currency)} para o pedido mínimo de{' '}
-          {money(t.minOrderCents, currency)}.
+          Faltam {formatCents(t.remainingMinOrderCents, currency)} para o pedido mínimo de{' '}
+          {formatCents(t.minOrderCents, currency)}.
         </p>
       ) : null}
     </section>
@@ -201,8 +210,8 @@ export function AddressForm({
             autoComplete="tel"
             maxLength={20}
             placeholder="(00) 00000-0000"
-            value={value.phone}
-            onChange={(e) => onChange({ phone: e.target.value })}
+            value={maskPhone(value.phone)}
+            onChange={(e) => onChange({ phone: maskPhone(e.target.value) })}
             {...aria('phone')}
           />
         </Field>
@@ -257,11 +266,9 @@ export function AddressForm({
             placeholder="00000-000"
             value={value.cep ?? ''}
             onChange={(e) => {
-              const digits = e.target.value.replace(/\D/g, '').slice(0, 8);
-              onChange({
-                cep: digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits,
-              });
-              if (digits.length === 8) onCep(digits);
+              const cep = maskCep(e.target.value);
+              onChange({ cep });
+              if (isValidCep(cep)) onCep(digitsOf(cep));
             }}
             aria-describedby="checkout-cep-status"
           />
@@ -482,8 +489,8 @@ export function SuccessPage({ order, currency }: SlotProps['checkout.SuccessPage
         {/* the title already says "recebido" — the state only earns a mention once it moves on */}
         {[
           order.state === 'placed' ? null : (ORDER_STATE_LABEL[order.state] ?? order.state),
-          money(order.totalCents, currency),
-          PAYMENT_LABEL[order.payment.method] ?? order.payment.method,
+          formatCents(order.totalCents, currency),
+          PAYMENT_METHOD_LABEL[order.payment.method] ?? order.payment.method,
         ]
           .filter(Boolean)
           .join(' · ')}
@@ -507,15 +514,18 @@ export function SuccessPage({ order, currency }: SlotProps['checkout.SuccessPage
   );
 }
 
-export function EmptyCart({ onBrowse }: SlotProps['checkout.EmptyCart']) {
+export function EmptyCart({
+  onBrowse,
+  vocabulary = DEFAULT_VOCABULARY,
+}: SlotProps['checkout.EmptyCart']) {
   return (
     <div className="v-panel v-empty" data-vendua="empty-cart" data-part="root">
       <BagIcon />
       <p className="v-panel-title" data-part="title">
-        Sua sacola está vazia.
+        Nada {vocabulary.inBag} ainda.
       </p>
       <p className="v-muted" data-part="body">
-        Escolha algo no cardápio — a sacola fica guardada neste aparelho.
+        Escolha algo no cardápio — fica tudo guardado neste aparelho.
       </p>
       <button type="button" className="v-btn v-btn-accent" data-part="browse" onClick={onBrowse}>
         Ver cardápio

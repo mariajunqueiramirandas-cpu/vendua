@@ -274,6 +274,10 @@ interface ProductRow {
 export const liveStatus = (status: string, stock: number | null) =>
   status === 'active' && stock === 0 ? 'sold_out' : status;
 
+/** Core's low-stock call: tracked, above zero and at/below the threshold. */
+export const isLowStock = (stock: number | null, threshold: number | null) =>
+  stock != null && stock > 0 && threshold != null && stock <= threshold;
+
 /** Outside its schedule a product reads sold out (with the label) — or, 'hidden', unlisted. */
 function scheduled(row: ProductRow, now: Date, tz: string) {
   const s = row.availability_schedule;
@@ -336,13 +340,15 @@ function toSummary(
   now: Date,
   tz: string,
   groups: readonly ModifierGroup[] = [],
+  /** a kit's slots — its from-price takes the cheapest valid picks */
+  slots: readonly ComboSlot[] = [],
 ): ProductSummary {
   const stock = row.stock_quantity;
   const off = scheduled(row, now, tz);
   const status = liveStatus(row.status, stock) as ProductSummary['status'];
   const price = priceNow(row, now, tz);
   const promo = promoOf(row);
-  const from = row.kind === 'combo' ? null : fromPriceCents(price.base, groups);
+  const from = fromPriceCents(price.base, groups, row.kind === 'combo' ? slots : []);
   return {
     id: row.id,
     slug: row.slug,
@@ -361,11 +367,7 @@ function toSummary(
     imageUrl: row.image_url,
     stockQuantity: stock,
     lowStockThreshold: row.low_stock_threshold,
-    lowStock:
-      stock != null &&
-      stock > 0 &&
-      row.low_stock_threshold != null &&
-      stock <= row.low_stock_threshold,
+    lowStock: isLowStock(stock, row.low_stock_threshold),
     requiresPreorder: row.requires_preorder,
     preorderLeadDays: row.preorder_lead_days,
     needsChoices: row.needs_choices,
@@ -445,12 +447,20 @@ export async function getCatalogView(
     storeTimezone(tx, tenantId),
   ]);
   const listed = products.filter((p) => !scheduled(p, now, tz)?.hidden);
-  // "a partir de" needs each listed product's lists
-  const groups = await loadGroups(
-    tx,
-    tenantId,
-    listed.filter((p) => p.needs_choices && p.kind !== 'combo').map((p) => p.id),
-  );
+  // "a partir de" needs each listed product's lists and each kit's slots
+  const [groups, slots] = await Promise.all([
+    loadGroups(
+      tx,
+      tenantId,
+      listed.filter((p) => p.needs_choices).map((p) => p.id),
+    ),
+    loadComboSlotsFor(
+      tx,
+      tenantId,
+      listed.filter((p) => p.kind === 'combo').map((p) => p.id),
+      { now },
+    ),
+  ]);
   return {
     categories: categories.map((cat) => ({
       id: cat.id,
@@ -460,7 +470,7 @@ export async function getCatalogView(
       sort: cat.sort,
       products: listed
         .filter((p) => p.category_id === cat.id)
-        .map((p) => toSummary(p, now, tz, groups.get(p.id))),
+        .map((p) => toSummary(p, now, tz, groups.get(p.id), slots.get(p.id))),
     })),
     nextChangeAt: nextChangeAt(
       products.flatMap((p) => [p.availability_schedule?.windows, promoOf(p)?.windows]),
@@ -551,13 +561,15 @@ export async function getProduct(
   tx: Sql,
   tenantId: string,
   slug: string,
+  /** the shopper's page hides 'hidden' kit picks; a line quote keeps them, like add-to-cart */
+  opts: { hideScheduled?: boolean } = { hideScheduled: true },
 ): Promise<ProductDetail | null> {
   const rows = await tx<ProductRow[]>`
     select ${productColumns(tx)}
     from products p where p.tenant_id = ${tenantId} and p.slug = ${slug} and p.status != 'archived'
     limit 1
   `;
-  return attachDetail(tx, tenantId, rows, { hideScheduled: true });
+  return attachDetail(tx, tenantId, rows, opts);
 }
 
 export async function getProductById(
@@ -615,7 +627,7 @@ async function attachDetails(
   const out = new Map<string, ProductDetail>();
   if (rows.length === 0) return out;
   const ids = rows.map((r) => r.id);
-  const [groups, gallery, tz] = await Promise.all([
+  const [groups, gallery, tz, comboSlots] = await Promise.all([
     loadGroups(tx, tenantId, ids, opts),
     tx<(MediaItem & { product_id: string })[]>`
       select product_id, url, alt, width, height from product_media
@@ -623,33 +635,28 @@ async function attachDetails(
       order by product_id, sort, id
     `,
     storeTimezone(tx, tenantId),
+    loadComboSlotsFor(
+      tx,
+      tenantId,
+      rows.filter((r) => r.kind === 'combo').map((r) => r.id),
+      opts.hideScheduled ? { hideScheduled: true } : {},
+    ),
   ]);
   // a 'hidden' product still opens from a shared link: it reads sold out with its label
   const now = new Date();
-  const summaries = new Map(rows.map((r) => [r.id, toSummary(r, now, tz, groups.get(r.id))]));
+  const summaries = new Map(
+    rows.map((r) => [r.id, toSummary(r, now, tz, groups.get(r.id), comboSlots.get(r.id))]),
+  );
   const soldOut = rows.filter((r) => summaries.get(r.id)!.status === 'sold_out').map((r) => r.id);
-  const [waiting, combos] = await Promise.all([
-    soldOut.length
-      ? tx<{ product_id: string; n: number }[]>`
-          select product_id, count(*)::int as n from notify_requests
-          where tenant_id = ${tenantId} and subject = 'product' and product_id = any(${soldOut}::uuid[])
-            and notified_at is null
-          group by product_id
-        `
-      : [],
-    Promise.all(
-      rows
-        .filter((r) => r.kind === 'combo')
-        .map(async (r) => {
-          const slots = await loadComboSlots(tx, tenantId, r.id, {
-            ...(opts.hideScheduled ? { hideScheduled: true } : {}),
-          });
-          return [r.id, slots] as const;
-        }),
-    ),
-  ]);
+  const waiting = soldOut.length
+    ? await tx<{ product_id: string; n: number }[]>`
+        select product_id, count(*)::int as n from notify_requests
+        where tenant_id = ${tenantId} and subject = 'product' and product_id = any(${soldOut}::uuid[])
+          and notified_at is null
+        group by product_id
+      `
+    : [];
   const waitlist = new Map(waiting.map((w) => [w.product_id, w.n]));
-  const comboSlots = new Map(combos);
   for (const product of rows) {
     out.set(product.id, {
       ...summaries.get(product.id)!,
@@ -672,13 +679,33 @@ export async function loadComboSlots(
    *  them (sold out + label) so a stale pick gets SOLD_OUT/schedule, not "unknown item" */
   opts: { hideScheduled?: boolean } = {},
 ): Promise<ComboSlot[]> {
+  return (await loadComboSlotsFor(tx, tenantId, [productId], opts)).get(productId) ?? [];
+}
+
+/** Several kits' slots in two queries — the catalog's from-prices need every listed kit's. */
+export async function loadComboSlotsFor(
+  tx: Sql,
+  tenantId: string,
+  productIds: readonly string[],
+  opts: { hideScheduled?: boolean; now?: Date } = {},
+): Promise<Map<string, ComboSlot[]>> {
+  const out = new Map<string, ComboSlot[]>();
+  if (productIds.length === 0) return out;
   const slots = await tx<
-    { id: string; name: string; min_select: number; max_select: number; qty_per_item: number }[]
+    {
+      id: string;
+      product_id: string;
+      name: string;
+      min_select: number;
+      max_select: number;
+      qty_per_item: number;
+    }[]
   >`
-    select id, name, min_select, max_select, qty_per_item from combo_slots
-    where tenant_id = ${tenantId} and product_id = ${productId} order by sort, name
+    select id, product_id, name, min_select, max_select, qty_per_item from combo_slots
+    where tenant_id = ${tenantId} and product_id = any(${productIds as string[]}::uuid[])
+    order by sort, name
   `;
-  if (slots.length === 0) return [];
+  if (slots.length === 0) return out;
   const items = await tx<
     {
       slot_id: string;
@@ -696,10 +723,11 @@ export async function loadComboSlots(
       p.availability_schedule,
       (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as image_url
     from combo_slot_items i join combo_slots s on s.id = i.slot_id join products p on p.id = i.product_id
-    where i.tenant_id = ${tenantId} and s.product_id = ${productId} and p.status != 'archived'
+    where i.tenant_id = ${tenantId} and s.product_id = any(${productIds as string[]}::uuid[])
+      and p.status != 'archived'
     order by i.sort, p.name
   `;
-  const now = new Date();
+  const now = opts.now ?? new Date();
   const tz = items.some((i) => i.availability_schedule)
     ? await storeTimezone(tx, tenantId)
     : 'America/Sao_Paulo';
@@ -707,28 +735,88 @@ export async function loadComboSlots(
     i.availability_schedule && !scheduleOpen(i.availability_schedule, now, tz)
       ? i.availability_schedule
       : null;
-  return slots.map((s) => ({
-    id: s.id,
-    name: s.name,
-    minSelect: s.min_select,
-    maxSelect: s.max_select,
-    qtyPerItem: s.qty_per_item,
-    items: items
-      .filter((i) => i.slot_id === s.id)
-      .filter((i) => !(opts.hideScheduled && off(i)?.outside === 'hidden'))
-      .map((i): ScheduledComboSlotItem => {
-        const status = liveStatus(i.status, i.stock_quantity);
-        const sched = status === 'active' ? off(i) : null;
-        return {
-          productId: i.product_id,
-          slug: i.slug,
-          name: i.name,
-          priceDeltaCents: i.price_delta_cents,
-          status: sched ? 'sold_out' : status,
-          stockQuantity: i.stock_quantity,
-          imageUrl: i.image_url,
-          ...(sched ? { availabilityLabel: availabilityLabel(sched) } : {}),
-        };
-      }),
-  }));
+  for (const s of slots) {
+    const list = out.get(s.product_id) ?? [];
+    list.push({
+      id: s.id,
+      name: s.name,
+      minSelect: s.min_select,
+      maxSelect: s.max_select,
+      qtyPerItem: s.qty_per_item,
+      items: items
+        .filter((i) => i.slot_id === s.id)
+        .filter((i) => !(opts.hideScheduled && off(i)?.outside === 'hidden'))
+        .map((i): ScheduledComboSlotItem => {
+          const status = liveStatus(i.status, i.stock_quantity);
+          const sched = status === 'active' ? off(i) : null;
+          return {
+            productId: i.product_id,
+            slug: i.slug,
+            name: i.name,
+            priceDeltaCents: i.price_delta_cents,
+            status: sched ? 'sold_out' : status,
+            stockQuantity: i.stock_quantity,
+            imageUrl: i.image_url,
+            ...(sched ? { availabilityLabel: availabilityLabel(sched) } : {}),
+          };
+        }),
+    });
+    out.set(s.product_id, list);
+  }
+  return out;
+}
+
+/** The admin's view of a product's storefront face at `now`. */
+export interface StorefrontPreview {
+  status: ProductSummary['status'];
+  basePriceCents: number;
+  compareAtPriceCents: number | null;
+  fromPriceCents: number | null;
+  promoLabel: string | null;
+  availabilityLabel: string | null;
+  lowStock: boolean;
+  /** the availability schedule in words, whether or not it holds now */
+  availabilityScheduleLabel: string | null;
+  /** the promotion's days and hours in words, whether or not it applies now */
+  promoScheduleLabel: string | null;
+}
+
+const scheduleWords = (windows: unknown): string | null => {
+  const good = Array.isArray(windows) ? windows.filter(goodWindow) : [];
+  return good.length ? availabilityLabel({ windows: good, outside: 'unavailable' }) : null;
+};
+
+/**
+ * What the storefront shows for one product (archived included) — the same toSummary the
+ * catalog reads, so the admin never re-derives a price form, a badge or a schedule's words.
+ */
+export async function storefrontPreview(
+  tx: Sql,
+  tenantId: string,
+  id: string,
+  now = new Date(),
+): Promise<StorefrontPreview | null> {
+  const row = (
+    await tx<ProductRow[]>`
+      select ${productColumns(tx)} from products p where p.tenant_id = ${tenantId} and p.id = ${id}
+    `
+  )[0];
+  if (!row) return null;
+  const [groups, slots, tz] = await Promise.all([
+    loadGroups(tx, tenantId, [id]),
+    loadComboSlotsFor(tx, tenantId, row.kind === 'combo' ? [id] : [], { now }),
+    storeTimezone(tx, tenantId),
+  ]);
+  const s = toSummary(row, now, tz, groups.get(id), slots.get(id));
+  return {
+    status: s.status,
+    basePriceCents: s.basePriceCents,
+    compareAtPriceCents: s.compareAtPriceCents,
+    fromPriceCents: s.fromPriceCents,
+    promoLabel: s.promoLabel ?? null,
+    availabilityLabel: s.availabilityLabel ?? null,
+    lowStock: s.lowStock,
+    availabilityScheduleLabel: scheduleWords(row.availability_schedule?.windows),
+    promoScheduleLabel: scheduleWords(row.promo_schedule?.windows),
+  };
 }

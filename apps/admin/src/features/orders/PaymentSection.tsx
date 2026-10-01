@@ -24,11 +24,9 @@ export function primaryPayment(payments: OrderPayment[] | undefined): OrderPayme
   return byNew.find((p) => SETTLED.includes(p.status)) ?? byNew[0]!;
 }
 
-/** What can still go back on this attempt: Core's number; the fallback only covers an older Core. */
+/** What can still go back on this attempt (Core's figure). */
 export const refundable = (p: OrderPayment | null) =>
-  !p || !(p.status === 'approved' || p.status === 'partially_refunded')
-    ? 0
-    : (p.refundableCents ?? Math.max(0, p.amountCents - p.refundedCents));
+  !p || !(p.status === 'approved' || p.status === 'partially_refunded') ? 0 : p.refundableCents;
 
 function methodLabel(o: Order) {
   if (o.payment.method === 'pix')

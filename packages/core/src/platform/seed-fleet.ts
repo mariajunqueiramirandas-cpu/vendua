@@ -69,7 +69,6 @@ async function publish(bundle: string, tenant: string, kernelVersion: string) {
 
 const t1 = await publish('_template', 'loja-modelo', '1.8.0');
 await publish('quero-pudim', 'quero-pudim', '1.9.0');
-await publish('_examples/quero-pudim', 'example-quero-pudim', '1.9.0');
 
 const leads = (
   await call<{

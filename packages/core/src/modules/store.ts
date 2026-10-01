@@ -159,6 +159,53 @@ function nextOpen(hours: StoreHours, now: Date, special: SpecialDay[] = []): Dat
   return new Date(best.t + drift * 60_000);
 }
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The special days a storefront can still show: today (store time) on, sorted, at most `max`. */
+export function upcomingSpecialDays(
+  days: readonly SpecialDay[] | null | undefined,
+  timezone: string,
+  now: Date,
+  max = 60,
+): SpecialDay[] {
+  if (!Array.isArray(days)) return [];
+  const today = localParts(now, timezone || 'America/Sao_Paulo').date;
+  return days
+    .filter((d) => typeof d?.date === 'string' && DATE_RE.test(d.date) && d.date >= today)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    .slice(0, max)
+    .map((d) => ({
+      date: d.date,
+      closed: d.closed === true,
+      ...(typeof d.open === 'string' ? { open: d.open } : {}),
+      ...(typeof d.close === 'string' ? { close: d.close } : {}),
+      ...(typeof d.label === 'string' && d.label ? { label: d.label } : {}),
+    }));
+}
+
+/**
+ * WhatsApp as Core stores and serves it: digits with the country code (55 + DDD + number), so
+ * every client builds the same wa.me link. null = not a Brazilian number. Migration 0072 ran
+ * the same rule over older rows; the Kernel's `whatsappDigits` mirrors it.
+ */
+export function whatsappDigits(raw: unknown): string | null {
+  if (typeof raw !== 'string' && typeof raw !== 'number') return null;
+  const d = String(raw).replace(/\D/g, '').replace(/^0+/, '');
+  if (d.length === 10 || d.length === 11) return `55${d}`;
+  return (d.length === 12 || d.length === 13) && d.startsWith('55') ? d : null;
+}
+
+/** Instagram as Core stores and serves it: the bare handle — no `@`, no link (migration 0072). */
+export function instagramHandle(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const h = raw
+    .trim()
+    .replace(/^(?:https?:\/\/)?(?:www\.)?instagram\.com\//i, '')
+    .replace(/\/?(?:[?#].*)?$/, '')
+    .replace(/^@+/, '');
+  return /^[A-Za-z0-9._]{1,30}$/.test(h) ? h : null;
+}
+
 export function deriveStatus(
   hours: StoreHours,
   override: 'paused' | 'closed' | null,

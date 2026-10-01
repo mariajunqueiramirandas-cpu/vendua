@@ -5,11 +5,14 @@ import {
   groupDeltaCents,
   normalizeModifiers,
   pickedOptions,
+  priceLine,
+  quoteInput,
   unitPriceCents,
   validateItemModifiers,
   matchZone,
 } from '../src/modules/cart.ts';
 import { nextChangeAt, type Modifier, type ProductDetail } from '../src/modules/catalog.ts';
+import { comboFloorCents, type ComboSlot } from '../src/modules/combos.ts';
 
 const picks = (...p: [number, number][]) =>
   p.map(([priceDeltaCents, qty]) => ({ priceDeltaCents, qty }));
@@ -354,5 +357,100 @@ describe('when the catalog next changes', () => {
   test('a malformed stored window is skipped, never thrown on', () => {
     const bad = [{}, { days: 'x' }, { days: [9] }, { days: [4], from: '20:00', to: '18:00' }];
     expect(nextChangeAt([bad as never], now, tz)).toBeNull();
+  });
+});
+
+describe('kits: "a partir de" takes the cheapest valid picks', () => {
+  const item = (priceDeltaCents: number, status = 'active') =>
+    ({ priceDeltaCents, status }) as ComboSlot['items'][number];
+  const slot = (
+    minSelect: number,
+    maxSelect: number,
+    qtyPerItem: number,
+    items: ComboSlot['items'],
+  ): ComboSlot => ({ id: 's', name: 'S', minSelect, maxSelect, qtyPerItem, items });
+
+  test("each slot's minimum in its cheapest available items, at most qtyPerItem of one", () => {
+    // escolha 4 sabores, até 2 de cada: 2×0 + 2×300
+    expect(comboFloorCents([slot(4, 4, 2, [item(500), item(0), item(300)])])).toBe(600);
+    // a sold-out (or off-schedule) item never counts
+    expect(comboFloorCents([slot(1, 1, 1, [item(0, 'sold_out'), item(400)])])).toBe(400);
+    expect(fromPriceCents(2000, [], [slot(4, 4, 2, [item(500), item(0), item(300)])])).toBe(2600);
+  });
+  test('an optional slot adds nothing unless a pick takes money off; an unfillable kit has none', () => {
+    expect(comboFloorCents([slot(0, 2, 1, [item(500)])])).toBe(0);
+    expect(comboFloorCents([slot(1, 3, 1, [item(200), item(-300), item(-100)])])).toBe(-400);
+    expect(comboFloorCents([slot(3, 3, 1, [item(0), item(0, 'sold_out')])])).toBeNull();
+    expect(fromPriceCents(2000, [], [slot(3, 3, 1, [item(0)])])).toBeNull();
+    expect(comboFloorCents([])).toBe(0);
+  });
+  test('slots and required option groups add up', () => {
+    const size = {
+      required: true,
+      minSelect: 1,
+      maxSelect: 1,
+      pricingRule: 'sum' as const,
+      modifiers: [mod('a', 'P', 300), mod('b', 'G', 700)],
+    };
+    expect(fromPriceCents(1000, [size], [slot(2, 2, 1, [item(100), item(250)])])).toBe(1650);
+  });
+});
+
+describe('line quote: the pricing add-to-cart freezes', () => {
+  const bad = (q: Parameters<typeof quoteInput>[0]) => {
+    try {
+      quoteInput(q);
+      return null;
+    } catch (e) {
+      return (e as { code: string }).code;
+    }
+  };
+  const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const id2 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+  test('reads qty, options and kit picks; a missing count is one', () => {
+    expect(quoteInput({})).toEqual({ qty: 1, modifiers: [], comboSelections: [] });
+    expect(quoteInput({ qty: '3', modifiers: `${id}:2,${id2}`, combo: `${id}:${id2}:2` })).toEqual({
+      qty: 3,
+      modifiers: [
+        { id, qty: 2 },
+        { id: id2, qty: 1 },
+      ],
+      comboSelections: [{ slotId: id, productId: id2, qty: 2 }],
+    });
+  });
+  test('malformed input is BAD_REQUEST', () => {
+    for (const q of [
+      { qty: '0' },
+      { qty: '100' },
+      { qty: '1.5' },
+      { qty: '' },
+      { modifiers: 'nope:1' },
+      { modifiers: `${id}:x` },
+      { modifiers: `${id}:1:1` },
+      { modifiers: Array(33).fill(id).join(',') },
+      { combo: `${id}:1` },
+      { combo: `${id}:${id2}:2:2` },
+      { combo: Array(33).fill(`${id}:${id2}`).join(',') },
+      { modifiers: 'x'.repeat(5000) },
+    ])
+      expect(bad(q)).toBe('BAD_REQUEST');
+  });
+  test('priceLine: options priced by their group, the same rules as add', () => {
+    expect(priceLine(product, { modifierIds: ['m2'] }).unitPriceCents).toBe(1400);
+    const twice = priceLine(product, { modifiers: [{ id: 'm1' }, { id: 'm4', qty: 2 }] });
+    expect(twice.unitPriceCents).toBe(1000 + 2 * 300);
+    expect(twice.modifierQty).toEqual({ m4: 2 });
+    const code = (input: Parameters<typeof priceLine>[1]) => {
+      try {
+        priceLine(product, input);
+        return null;
+      } catch (e) {
+        return (e as { code: string }).code;
+      }
+    };
+    expect(code({})).toBe('MODIFIER_REQUIRED');
+    expect(code({ modifiers: [{ id: 'm1' }, { id: 'm3', qty: 2 }] })).toBe('MODIFIER_LIMIT');
+    expect(code({ modifierIds: ['m1'], comboSelections: [{}] as never })).toBe('INVALID_COMBO');
   });
 });

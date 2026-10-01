@@ -10,6 +10,7 @@ import { emitAdminTx } from '../../admin/live.ts';
 import { loadSettings } from '../../admin/routes-store.ts';
 import { readPaymentAdjustments } from '../payment-adjustments.ts';
 import { normalizePixKey } from '../pix.ts';
+import { instagramHandle, whatsappDigits } from '../store.ts';
 import { currentTemplateTx, currentTokensTx, saveTokensTx } from '../storefront-platform.ts';
 import type { ImportProduct, MenuImportV1, Section } from './doc.ts';
 
@@ -330,8 +331,11 @@ export async function applyImport(
   if (sections.includes('profile')) {
     if (s.name) await tx`update tenants set name = ${s.name} where id = ${tenantId}`;
     if (s.tagline) set.tagline = s.tagline;
-    if (s.whatsapp) set.whatsapp = s.whatsapp;
-    if (s.instagram) set.instagram = s.instagram;
+    // a document saved before 0072 carries the national number and an @handle
+    const whatsapp = whatsappDigits(s.whatsapp);
+    if (whatsapp) set.whatsapp = whatsapp;
+    const instagram = instagramHandle(s.instagram);
+    if (instagram) set.instagram = instagram;
     if (s.address) set.address = s.address;
     if (s.city) set.city = s.city;
     if (s.coords) {

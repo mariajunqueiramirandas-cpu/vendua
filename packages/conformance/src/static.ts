@@ -17,7 +17,6 @@ const DEP_ALLOW = new Set([
   'react-router-dom',
   '@vendua/kernel',
   'lucide-react',
-  'qrcode',
   'gsap',
   'three',
   'lenis',
@@ -25,6 +24,12 @@ const DEP_ALLOW = new Set([
   'motion',
 ]);
 const DEP_ALLOW_PREFIX = ['@react-three/', '@fontsource-variable/'];
+// dependencies the Kernel replaced: the failure names what to use instead
+const DEP_KERNEL_OWNS: Record<string, string> = {
+  qrcode: '<QrCode value={…} /> from @vendua/kernel (qrSvg for a string)',
+  'qrcode.react': '<QrCode value={…} /> from @vendua/kernel',
+  'react-qr-code': '<QrCode value={…} /> from @vendua/kernel',
+};
 const DEVDEP_ALLOW = new Set(['typescript', 'vite', '@vitejs/plugin-react']);
 const DEVDEP_ALLOW_PREFIX = ['@types/'];
 
@@ -32,6 +37,7 @@ const DEVDEP_ALLOW_PREFIX = ['@types/'];
 export const KERNEL_IMPORT_ALLOW = new Set([
   '@vendua/kernel',
   '@vendua/kernel/config',
+  '@vendua/kernel/rules',
   '@vendua/kernel/styles.css',
   '@vendua/kernel/vite',
 ]);
@@ -239,7 +245,8 @@ function k02(dir: string): CheckResult {
 
 function k03(dir: string): CheckResult {
   const id = 'K03';
-  const title = 'no-direct-fetch: no fetch/axios/XHR in storefront code; deps ⊆ allow-list';
+  const title =
+    'no-direct-fetch: no fetch/axios/XHR/EventSource/sendBeacon/WebSocket in storefront code; deps ⊆ allow-list';
   const problems: string[] = [];
 
   for (const file of sourceFiles(dir)) {
@@ -254,6 +261,18 @@ function k03(dir: string): CheckResult {
       if (/\baxios\b/.test(line)) problems.push(`${loc}: axios — use @vendua/kernel api`);
       if (/\bXMLHttpRequest\b/.test(line))
         problems.push(`${loc}: XMLHttpRequest — use @vendua/kernel api`);
+      if (/\bnew\s+EventSource\b/.test(line))
+        problems.push(
+          `${loc}: new EventSource — raw transport; use useOrder(id) (live by default, SSE with a poll fallback)`,
+        );
+      if (/\bnavigator\s*\??\.\s*sendBeacon\b/.test(line))
+        problems.push(
+          `${loc}: navigator.sendBeacon — raw transport; use useAnalytics().track('custom.<name>') (consent-gated)`,
+        );
+      if (/\bnew\s+WebSocket\b/.test(line))
+        problems.push(
+          `${loc}: new WebSocket — raw transport; use the @vendua/kernel api client and its hooks`,
+        );
     });
   }
 
@@ -265,12 +284,16 @@ function k03(dir: string): CheckResult {
     };
     for (const dep of Object.keys(pkg.dependencies ?? {})) {
       if (!DEP_ALLOW.has(dep) && !DEP_ALLOW_PREFIX.some((p) => dep.startsWith(p)))
-        problems.push(`package.json dependency ${dep} not in contract allow-list`);
+        problems.push(
+          `package.json dependency ${dep} not in contract allow-list` +
+            (DEP_KERNEL_OWNS[dep] ? ` — use ${DEP_KERNEL_OWNS[dep]}` : ''),
+        );
     }
     for (const dep of Object.keys(pkg.devDependencies ?? {})) {
       if (!DEVDEP_ALLOW.has(dep) && !DEVDEP_ALLOW_PREFIX.some((p) => dep.startsWith(p)))
         problems.push(
-          `package.json devDependency ${dep} not in allow-list (typescript/vite/@types/*)`,
+          `package.json devDependency ${dep} not in allow-list (typescript/vite/@types/*)` +
+            (DEP_KERNEL_OWNS[dep] ? ` — use ${DEP_KERNEL_OWNS[dep]}` : ''),
         );
     }
   } else {

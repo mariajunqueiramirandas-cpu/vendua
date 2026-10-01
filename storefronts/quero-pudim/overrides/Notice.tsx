@@ -1,36 +1,24 @@
 import { X } from 'lucide-react';
-import type { Notice, NoticeAction } from '@vendua/kernel';
+import type { SlotProps } from '@vendua/kernel';
+import { isBlocking, noticeLinks, noticeSeverity } from '@vendua/kernel/rules';
 
-/** system.Notice override — Kernel falls back to it per notice kind, so this must handle every kind gracefully. */
-
-function actionHref(a: NoticeAction): { label: string; href: string } | null {
-  if (a.type === 'link' && typeof a.href === 'string') return { label: a.label, href: a.href };
-  const rec = a as Record<string, unknown>;
-  if (typeof rec.href === 'string') return { label: a.label, href: rec.href };
-  return null;
-}
-
+/** system.Notice override — the brand's look over the Kernel's notice rules (severity, links,
+ *  blocking). The Kernel falls back to it per notice kind, so it handles every kind. */
+// typed loosely: an override module's default must take any slot's props (SlotComponent)
 export default function BrandNotice(props: Record<string, unknown>) {
-  const notice = props.notice as Notice;
-  const onDismiss = props.onDismiss as (() => void) | undefined;
+  const { notice, onDismiss, onAction } = props as SlotProps['system.Notice'];
   if (!notice) return null;
-
-  const severity =
-    notice.kind === 'emergency'
-      ? 'blocking'
-      : ['info', 'warning', 'blocking'].includes(String(notice.severity))
-        ? String(notice.severity)
-        : 'info';
-  const links = (notice.actions ?? [])
-    .map(actionHref)
-    .filter((x): x is NonNullable<typeof x> => x != null);
+  const severity = noticeSeverity(notice);
+  const blocking = isBlocking(notice);
+  const links = noticeLinks(notice);
 
   return (
     <div
       className="qp-notice"
-      data-tone={severity}
-      role={severity === 'blocking' ? 'alertdialog' : 'status'}
-      aria-modal={severity === 'blocking' || undefined}
+      data-kind={notice.kind}
+      data-severity={severity}
+      role={blocking ? 'alertdialog' : 'status'}
+      aria-modal={blocking || undefined}
     >
       <div className="qp-notice-body">
         <strong className="qp-notice-title">{notice.title}</strong>
@@ -38,14 +26,20 @@ export default function BrandNotice(props: Record<string, unknown>) {
         {links.length > 0 ? (
           <p className="qp-notice-links">
             {links.map((l, i) => (
-              <a key={i} href={l.href} className="qp-notice-link">
+              <a
+                key={i}
+                href={l.href}
+                className="qp-notice-link"
+                onClick={() => onAction?.(l.action)}
+              >
                 {l.label}
               </a>
             ))}
           </p>
         ) : null}
       </div>
-      {notice.dismissible && onDismiss ? (
+      {/* a blocking notice is the store's state, not the shopper's to hide */}
+      {notice.dismissible && onDismiss && !blocking ? (
         <button
           type="button"
           className="qp-notice-dismiss"

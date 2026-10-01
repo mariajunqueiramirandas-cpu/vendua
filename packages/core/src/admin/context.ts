@@ -112,16 +112,21 @@ export function oneOf<T extends string>(v: unknown, name: string, allowed: reado
 export const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 export const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
+/** The one slug fold (store addresses and catalog handles): accents off, `&` read as "e",
+ *  every other run of non-alphanumerics one dash, trimmed and capped at `max`. */
+export function foldSlug(s: string, max: number): string {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' e ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, max)
+    .replace(/-+$/g, '');
+}
+
 /** "slug-like" handle from a display name; accents folded, ≤ 60 chars. */
 export function slugify(name: string): string {
-  return (
-    name
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 60)
-      .replace(/-+$/g, '') || 'item'
-  );
+  return foldSlug(name, 60) || 'item';
 }

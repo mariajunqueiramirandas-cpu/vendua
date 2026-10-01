@@ -1,5 +1,7 @@
 import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import {
+  CONTRAST_PAIRS,
+  contrastProblems,
   contrastRatio,
   onColor,
   paletteFrom,
@@ -24,18 +26,28 @@ const EDITABLE: { key: ColorKey; label: string }[] = [
   { key: 'muted', label: 'Texto secundário' },
 ];
 
-const CHECKS: { fg: ColorKey; bg: ColorKey; label: string }[] = [
-  { fg: 'text', bg: 'bg', label: 'Texto no fundo' },
-  { fg: 'muted', bg: 'bg', label: 'Texto secundário' },
-  { fg: 'text', bg: 'surface', label: 'Texto nos cartões' },
-  { fg: 'onAccent', bg: 'accent', label: 'Texto dos botões' },
-];
+// the merchant's words for the pairs the storefront renders text with (CONTRAST_PAIRS)
+const PAIR_LABEL: Record<string, string> = {
+  'text/bg': 'Texto no fundo',
+  'text/surface': 'Texto nos cartões',
+  'muted/bg': 'Texto secundário',
+  'muted/surface': 'Texto secundário',
+  'onAccent/accent': 'Texto dos botões',
+  'danger/bg': 'Avisos (esgotado, erros)',
+  'danger/surface': 'Avisos (esgotado, erros)',
+};
 
-export const readable = (t: StoreTokens) =>
-  CHECKS.every((c) => (contrastRatio(t.color[c.fg], t.color[c.bg]) ?? 0) >= 4.5) &&
-  (contrastRatio(t.color.muted, t.color.surface) ?? 0) >= 4.5 &&
-  (contrastRatio(t.color.danger, t.color.bg) ?? 0) >= 4.5 &&
-  (contrastRatio(t.color.danger, t.color.surface) ?? 0) >= 4.5;
+/** One row per label: every pair it covers must read (AA, the Kernel build's own check). */
+const CHECKS: { label: string; pairs: (typeof CONTRAST_PAIRS)[number][] }[] = [];
+for (const pair of CONTRAST_PAIRS) {
+  const label = PAIR_LABEL[`${pair[0]}/${pair[1]}`] ?? 'Outras cores';
+  const row = CHECKS.find((c) => c.label === label);
+  if (row) row.pairs.push(pair);
+  else CHECKS.push({ label, pairs: [pair] });
+}
+
+/** The same check that blocks a release (`contrastProblems`), so publish never ships one. */
+export const readable = (t: StoreTokens) => contrastProblems(t).length === 0;
 
 /** A handful of saturated colours from the logo, most frequent first. */
 async function logoColors(url: string): Promise<string[]> {
@@ -158,8 +170,9 @@ export function Colors({
 
       <ul className="space-y-1.5" aria-label="leitura">
         {CHECKS.map((c) => {
-          const r = contrastRatio(value.color[c.fg], value.color[c.bg]) ?? 0;
-          const ok = r >= 4.5;
+          const ok = c.pairs.every(
+            ([fg, bg]) => (contrastRatio(value.color[fg], value.color[bg]) ?? 0) >= 4.5,
+          );
           return (
             <li
               key={c.label}

@@ -1,7 +1,8 @@
+import { formatCents } from '@vendua/kernel/rules';
+
+/** BRL cents, the storefront's own formatter (the Kernel's). */
 export const fmtMoney = (cents: number | null | undefined) =>
-  cents == null
-    ? '—'
-    : (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  cents == null ? '—' : formatCents(cents);
 
 /** Agent spend is metered in USD (model/tool pricing), unlike BRL deal values — don't use fmtMoney. */
 export const fmtUsd = (usd: number) => `US$ ${usd.toFixed(2)}`;

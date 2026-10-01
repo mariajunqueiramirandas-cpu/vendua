@@ -58,15 +58,27 @@ export function paletteFrom<T extends Pick<StorefrontTokens, 'color'>>(
         danger: '#FF8A7F',
         success: '#6FD39C',
       }
-    : {
-        bg: '#FCFBF8',
-        surface: '#FFFFFF',
-        text: '#1A1714',
-        muted: '#6B6456',
-        accent,
-        onAccent: onColor(accent),
-        danger: '#B3372F',
-        success: '#3D7A4F',
-      };
+    : { ...LIGHT, accent, onAccent: onColor(accent) };
   return { ...base, color };
 }
+
+const LIGHT = {
+  bg: '#FCFBF8',
+  surface: '#FFFFFF',
+  text: '#1A1714',
+  muted: '#6B6456',
+  accent: '#123C32',
+  onAccent: '#FFFFFF',
+  danger: '#B3372F',
+  success: '#3D7A4F',
+};
+
+/** The token set a store starts from before any edit (the light palette): the merchant
+ *  admin's base and the Kernel's fallback agree on it. */
+export const DEFAULT_TOKENS: StorefrontTokens = {
+  color: { ...LIGHT },
+  font: { display: 'Georgia, serif', body: 'system-ui, sans-serif' },
+  radius: { sm: '6px', md: '10px', lg: '16px' },
+  space: { scale: 1 },
+  motion: { duration: '200ms', easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+};

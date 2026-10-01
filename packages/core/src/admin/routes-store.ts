@@ -2,6 +2,8 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import {
   deriveStatus,
+  instagramHandle,
+  whatsappDigits,
   type SpecialDay,
   type StoreSettingsRow,
   type WeeklyWindow,
@@ -340,7 +342,6 @@ export function mountStore(d: AdminDeps) {
         const texts: [string, string, number][] = [
           ['tagline', 'tagline', 120],
           ['description', 'description', 1000],
-          ['instagram', 'instagram', 60],
           ['email', 'email', 200],
           ['city', 'city', 80],
           ['address', 'address', 300],
@@ -350,15 +351,26 @@ export function mountStore(d: AdminDeps) {
             set[col] = optText(p[k], k, max) ?? null;
             changed.push(k);
           }
+        // stored as the storefront serves them: 55 + DDD + number, and the bare handle
         if (p.whatsapp !== undefined) {
-          const w =
-            p.whatsapp === null || p.whatsapp === '' ? null : String(p.whatsapp).replace(/\D/g, '');
-          if (w !== null && !/^\d{10,13}$/.test(w))
+          const raw = p.whatsapp === null ? '' : String(p.whatsapp).trim();
+          const w = raw === '' ? null : raw.length <= 40 ? whatsappDigits(raw) : null;
+          if (raw !== '' && w === null)
             throw new HttpError(422, 'BAD_REQUEST', 'WhatsApp needs DDD + number', {
               field: 'whatsapp',
             });
           set.whatsapp = w;
           changed.push('whatsapp');
+        }
+        if (p.instagram !== undefined) {
+          const raw = optText(p.instagram, 'instagram', 200) ?? '';
+          const handle = raw === '' ? null : instagramHandle(raw);
+          if (raw !== '' && handle === null)
+            throw new HttpError(422, 'BAD_REQUEST', 'Instagram needs the @ or the profile link', {
+              field: 'instagram',
+            });
+          set.instagram = handle;
+          changed.push('instagram');
         }
         if (p.logoUrl !== undefined) {
           const u = optText(p.logoUrl, 'logoUrl', 1000) ?? null;

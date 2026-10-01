@@ -84,20 +84,11 @@ export function Tag<K extends string>({
   );
 }
 
-// Fallback only: Core's `url` is the store's real address (primary domain first).
-const STORE_DOMAIN = 'vendua.com.br';
-
-export function storeUrl(s: BillingStore): string {
-  if (s.url) return s.url;
-  if (s.customDomain?.status === 'active') return `https://${s.customDomain.host}`;
-  return `https://${s.slug}.${STORE_DOMAIN}`;
-}
-
 /** Slug that opens the live store in a new tab — never swallows the row click on its own. */
 export function StoreLink({ store, className }: { store: BillingStore; className?: string }) {
   return (
     <a
-      href={storeUrl(store)}
+      href={store.url}
       target="_blank"
       rel="noreferrer"
       onClick={(e) => e.stopPropagation()}

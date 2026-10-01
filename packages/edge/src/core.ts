@@ -1,5 +1,6 @@
 import { BUNDLE_RE, RELEASE_RE } from './artifacts.ts';
 import { log } from './log.ts';
+import type { ProductHead } from './meta.ts';
 
 export type FetchImpl = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -101,6 +102,27 @@ export function coreClient(o: CoreClientOptions) {
       } catch {
         throw new CoreError(`surfaces ${host}: body is not JSON`);
       }
+    },
+
+    /** A product page's head (`GET /storefront/v1/products/:slug`); null when there is no such
+     *  product. Only what the head needs is kept, bounded. */
+    async product(host: string, slug: string): Promise<ProductHead | null> {
+      const res = await call(`/storefront/v1/products/${encodeURIComponent(slug)}`, {
+        host,
+        'x-forwarded-host': host,
+        accept: 'application/json',
+      });
+      if (res.status === 404 || res.status === 422) return null;
+      if (res.status !== 200) throw new CoreError(`product ${host} → ${res.status}`);
+      const p = ((await res.json().catch(() => null)) as { product?: Record<string, unknown> })
+        ?.product;
+      if (!p || typeof p.name !== 'string') throw new CoreError(`product ${host}: malformed`);
+      const text = (v: unknown) => (typeof v === 'string' ? v.slice(0, 2_000) : null);
+      return {
+        name: p.name.slice(0, 500),
+        description: text(p.description),
+        imageUrl: text(p.imageUrl),
+      };
     },
   };
 }

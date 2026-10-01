@@ -10,8 +10,9 @@ import {
 } from '@phosphor-icons/react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { whatsappUrl } from '@vendua/kernel/rules';
 import { api, type InviteResult, type Member, type Role } from '../../lib/api.ts';
-import { ago, phone, when, whatsappLink } from '../../lib/format.ts';
+import { ago, phone, when } from '../../lib/format.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL, useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -362,7 +363,7 @@ function inviteView(r: InviteOutcome, store: string, onClose: () => void) {
     footer: (
       <div className="space-y-2">
         <a
-          href={whatsappLink(member.phone, text)}
+          href={whatsappUrl(member.phone, text) ?? undefined}
           target="_blank"
           rel="noreferrer"
           className={cn(

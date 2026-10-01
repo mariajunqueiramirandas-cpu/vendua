@@ -6,6 +6,7 @@ import { readTemplatesDir } from '@vendua/templates/node';
 import { createSql } from './db.ts';
 import { log } from './log.ts';
 import { isPublicHost } from './store-origin.ts';
+import { instagramHandle, whatsappDigits } from '../modules/store.ts';
 
 const slog = log.child({ mod: 'seed' });
 
@@ -124,13 +125,13 @@ const TENANTS: SeedTenant[] = [
     hosts: ['quero-pudim.localhost', 'localhost:5174', '127.0.0.1:5174'],
     storefront: 'storefronts/quero-pudim',
     owner: { name: 'Dono Dev', phone: '22999990001', email: 'dono@example.com' },
-    ring: 'stable',
+    ring: 'canary',
     settings: {
       tagline: 'Pudins sem furinhos e sacolés cremosos',
       description:
         'Pudins sem furinhos e sacolés bem cremosos, feitos à mão em Saquarema, RJ. Encomende para retirada ou entrega.',
       whatsapp: '5522999999999',
-      instagram: '@queropudim_gourmet',
+      instagram: 'queropudim_gourmet',
       city: 'Saquarema · RJ',
       address: 'Rua das Amendoeiras, 120 — Centro, Saquarema',
       windows: [{ days: ALL, open: '09:00', close: '22:00' }],
@@ -350,34 +351,24 @@ const TENANTS: SeedTenant[] = [
 ];
 
 // Every in-repo storefront has a dev tenant, so fleet operations (template
-// migrations by ring, trains) run over all of them. The golden example and the
-// scaffold baseline are Venduá-owned canaries.
+// migrations by ring, trains) run over all of them. quero-pudim and the scaffold
+// baseline are the canary ring.
 const quero = TENANTS[0]!;
-TENANTS.push(
-  {
-    ...quero,
-    slug: 'example-quero-pudim',
-    name: 'Quero Pudim (exemplo)',
-    hosts: ['example-quero-pudim.localhost', 'localhost:5176', '127.0.0.1:5176'],
-    storefront: 'storefronts/_examples/quero-pudim',
-    ring: 'canary',
-  },
-  {
-    ...quero,
-    slug: 'loja-modelo',
-    name: 'Loja Modelo',
-    hosts: ['loja-modelo.localhost', 'localhost:5175', '127.0.0.1:5175'],
-    storefront: 'storefronts/_template',
-    ring: 'canary',
-    settings: (({ promo: _promo, ...rest }) => ({
-      ...rest,
-      tagline: 'A base de todo vendua scaffold',
-    }))(quero.settings),
-  },
-);
+TENANTS.push({
+  ...quero,
+  slug: 'loja-modelo',
+  name: 'Loja Modelo',
+  hosts: ['loja-modelo.localhost', 'localhost:5175', '127.0.0.1:5175'],
+  storefront: 'storefronts/_template',
+  ring: 'canary',
+  settings: (({ promo: _promo, ...rest }) => ({
+    ...rest,
+    tagline: 'A base de todo vendua scaffold',
+  }))(quero.settings),
+});
 
 // demo storefronts removed from the repo; drop their tenants from already-seeded DBs (FKs cascade)
-await sql`delete from tenants where slug in ('brasa', 'forn')`;
+await sql`delete from tenants where slug in ('brasa', 'forn', 'example-quero-pudim')`;
 
 for (const t of TENANTS) {
   await sql.begin(async (tx) => {
@@ -407,7 +398,7 @@ for (const t of TENANTS) {
     await tx`
       insert into store_settings (tenant_id, tagline, description, whatsapp, instagram, city, address,
         hours, prep_time_minutes, min_order_cents, pickup_enabled, delivery_enabled, promo, currency, vocabulary)
-      values (${tid}, ${s.tagline ?? null}, ${s.description ?? null}, ${s.whatsapp ?? null}, ${s.instagram ?? null},
+      values (${tid}, ${s.tagline ?? null}, ${s.description ?? null}, ${whatsappDigits(s.whatsapp)}, ${instagramHandle(s.instagram)},
         ${s.city ?? null}, ${s.address ?? null}, ${tx.json({ timezone: 'America/Sao_Paulo', windows: s.windows })},
         ${s.prepTimeMinutes ?? 30}, ${s.minOrderCents ?? 0}, ${s.pickup ?? true}, ${s.delivery ?? true},
         ${s.promo ? tx.json(s.promo) : null}, ${s.currency ?? 'BRL'}, ${tx.json(s.vocabulary ?? {})})

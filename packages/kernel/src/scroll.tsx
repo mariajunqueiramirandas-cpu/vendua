@@ -1,14 +1,17 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useLocation, useNavigationType } from 'react-router-dom';
+import { useReducedMotion } from './hooks.ts';
 import { backgroundOf } from './transitions.tsx';
 
 // Route changes reset scroll like page loads do: new page → top, #hash → that element (waiting
-// for async content), back/forward → where the visitor was. Same-path changes (filters, ?query)
-// never move the page. A modal route (the bag sheet) is not a page change: everything here
-// follows the page under it.
+// for async content; smoothly, and marked `data-target` for a moment so a store can highlight
+// it — `#produto-<slug>` lands on the catalog's card), back/forward → where the visitor was.
+// Same-path changes (filters, ?query) never move the page. A modal route (the bag sheet) is not
+// a page change: everything here follows the page under it.
 
 const STORE = 'vendua:scroll';
 const WAIT_MS = 2000;
+const TARGET_MS = 2000;
 
 function read(): Record<string, number> {
   try {
@@ -62,6 +65,8 @@ export function ScrollManager() {
   typeRef.current = type;
   const keyRef = useRef(key);
   keyRef.current = key;
+  const reduced = useRef(false);
+  reduced.current = useReducedMotion();
 
   useEffect(() => {
     if (!('scrollRestoration' in history)) return;
@@ -94,13 +99,28 @@ export function ScrollManager() {
     prev.current = pathname;
 
     if (hash) {
-      const id = decodeURIComponent(hash.slice(1));
-      return until(() => {
+      let id = hash.slice(1);
+      try {
+        id = decodeURIComponent(id);
+      } catch {
+        /* a malformed escape: look the id up as written */
+      }
+      let marked: HTMLElement | null = null;
+      let unmark = 0;
+      const stop = until(() => {
         const el = document.getElementById(id);
         if (!el) return false;
-        el.scrollIntoView({ block: 'start', behavior: 'instant' });
+        el.scrollIntoView({ block: 'start', behavior: reduced.current ? 'instant' : 'smooth' });
+        el.setAttribute('data-target', '');
+        marked = el;
+        unmark = window.setTimeout(() => el.removeAttribute('data-target'), TARGET_MS);
         return true;
       });
+      return () => {
+        stop();
+        clearTimeout(unmark);
+        (marked as HTMLElement | null)?.removeAttribute('data-target');
+      };
     }
     if (typeRef.current === 'POP') {
       const y = read()[key];

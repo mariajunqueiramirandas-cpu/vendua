@@ -189,18 +189,20 @@ describe('validateCheckout', () => {
 
 describe('order state machine', () => {
   test('happy path placed → delivered', () => {
-    expect(canTransition('placed', 'confirmed')).toBe(true);
-    expect(canTransition('confirmed', 'preparing')).toBe(true);
-    expect(canTransition('ready', 'out_for_delivery')).toBe(true);
-    expect(canTransition('out_for_delivery', 'delivered')).toBe(true);
+    expect(canTransition('placed', 'confirmed', 'delivery')).toBe(true);
+    expect(canTransition('confirmed', 'preparing', 'delivery')).toBe(true);
+    expect(canTransition('ready', 'out_for_delivery', 'delivery')).toBe(true);
+    expect(canTransition('out_for_delivery', 'delivered', 'delivery')).toBe(true);
+    expect(canTransition('ready', 'delivered', 'pickup')).toBe(true);
   });
   test('illegal transitions rejected', () => {
-    expect(canTransition('placed', 'delivered')).toBe(false);
-    expect(canTransition('delivered', 'preparing')).toBe(false);
-    expect(canTransition('cancelled', 'confirmed')).toBe(false);
+    expect(canTransition('placed', 'delivered', 'delivery')).toBe(false);
+    expect(canTransition('delivered', 'preparing', 'delivery')).toBe(false);
+    expect(canTransition('cancelled', 'confirmed', 'pickup')).toBe(false);
+    expect(canTransition('ready', 'out_for_delivery', 'pickup')).toBe(false);
   });
   test('refund only after delivery', () => {
-    expect(canTransition('delivered', 'refunded')).toBe(true);
-    expect(canTransition('placed', 'refunded')).toBe(false);
+    expect(canTransition('delivered', 'refunded', 'pickup')).toBe(true);
+    expect(canTransition('placed', 'refunded', 'delivery')).toBe(false);
   });
 });

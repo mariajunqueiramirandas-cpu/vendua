@@ -3,18 +3,18 @@ import { Link } from 'react-router-dom';
 import {
   BlockArea,
   boolean,
+  cardState,
   category,
   defineSection,
   number,
   text,
   url,
-  useCatalog,
+  useMenu,
   type SectionProps,
 } from '@vendua/kernel';
 import { ProductCard } from './_shared/ProductCard.tsx';
 import { Reveal } from './_shared/Reveal.tsx';
 import { Skeleton } from './_shared/Skeleton.tsx';
-import { twoDigits } from './_shared/format.ts';
 
 // Product showcase: a heading row, then cards — numbered "ficha" cards or captioned feature cards.
 export const schema = defineSection({
@@ -37,11 +37,12 @@ export const schema = defineSection({
 });
 
 export default function Showcase({ settings: s }: SectionProps<typeof schema>) {
-  const { categories, loading } = useCatalog();
+  const { categories, loading } = useMenu();
   const pool = s.category
     ? (categories.find((c) => c.slug === s.category)?.products ?? [])
     : categories.flatMap((c) => c.products);
-  const products = pool.filter((p) => p.status === 'active').slice(0, s.limit);
+  // a showcase sells: only what can be bought today
+  const products = pool.filter((p) => !cardState(p, null).soldOut).slice(0, s.limit);
   if (!loading && products.length === 0) return null;
 
   return (
@@ -78,7 +79,7 @@ export default function Showcase({ settings: s }: SectionProps<typeof schema>) {
               key={p.id}
               product={p}
               feature={s.feature}
-              number={s.numbered ? twoDigits(i + 1) : undefined}
+              number={s.numbered ? String(i + 1).padStart(2, '0') : undefined}
               eyebrow={s.cardCaption}
               cta={s.cardCta}
             />

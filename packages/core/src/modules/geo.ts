@@ -84,15 +84,40 @@ export function resolveZone<Z extends ZoneLike>(
       .filter(({ max }) => km <= max)
       .sort((a, b) => a.max - b.max)[0];
     if (radius) {
-      const perKm = radius.z.fee_per_km_cents ?? 0;
       return {
         zone: radius.z,
         distanceKm: Math.round(km * 10) / 10,
-        feeCents: radius.z.fee_cents + Math.ceil(km) * perKm,
+        feeCents: radiusFeeCents(radius.z, km),
       };
     }
   }
   return null;
+}
+
+/** A radius zone's fee for an address `km` from the store, before any free-delivery threshold. */
+export function radiusFeeCents(
+  z: Pick<ZoneLike, 'fee_cents' | 'fee_per_km_cents'>,
+  km: number,
+): number {
+  return z.fee_cents + Math.ceil(km) * (z.fee_per_km_cents ?? 0);
+}
+
+/** The least any address in the zone pays before free-delivery thresholds (the storefront's
+ *  "a partir de"). A radius zone's nearest address lies just past the largest smaller ring
+ *  (`resolveZone` gives anything inside it to that ring), or just past the store itself, and the
+ *  per-km fee ceils its distance. */
+export function zoneMinFeeCents(
+  z: Pick<ZoneLike, 'kind' | 'fee_cents' | 'fee_per_km_cents' | 'max_distance_km'>,
+  zones: readonly Pick<ZoneLike, 'kind' | 'max_distance_km'>[] = [],
+): number {
+  if (z.kind !== 'radius') return z.fee_cents;
+  const max = Number(z.max_distance_km);
+  const inner = zones
+    .filter((o) => o.kind === 'radius' && o.max_distance_km != null)
+    .map((o) => Number(o.max_distance_km))
+    .filter((m) => m < max)
+    .reduce((a, m) => Math.max(a, m), 0);
+  return radiusFeeCents(z, Math.floor(inner) + 1);
 }
 
 // ── polygons ─────────────────────────────────────────────────────────────────

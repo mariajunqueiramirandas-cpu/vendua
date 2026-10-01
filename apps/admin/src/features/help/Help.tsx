@@ -1,5 +1,6 @@
 import { PaperPlaneTilt, WhatsappLogo } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
+import { whatsappUrl } from '@vendua/kernel/rules';
 import { qk, useMutation } from '../../lib/query.ts';
 import { useState } from 'react';
 import { api } from '../../lib/api.ts';
@@ -61,7 +62,9 @@ export default function Help() {
             </p>
             {support ? (
               <a
-                href={`https://wa.me/${support}?text=${encodeURIComponent('Oi, Venduá! Preciso de ajuda com minha loja.')}`}
+                href={
+                  whatsappUrl(support, 'Oi, Venduá! Preciso de ajuda com minha loja.') ?? undefined
+                }
                 target="_blank"
                 rel="noreferrer"
                 className="t-label mt-3 inline-flex min-h-12 items-center gap-2 rounded-md bg-primary px-4 text-on-primary depth-1 transition-transform hover:bg-primary-hover active:scale-[0.97]"

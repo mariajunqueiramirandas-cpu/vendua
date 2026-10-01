@@ -8,6 +8,7 @@ import {
   pointInPolygon,
   polygonArea,
   resolveZone,
+  zoneMinFeeCents,
   type LatLng,
   type ZoneLike,
 } from '../src/modules/geo.ts';
@@ -114,6 +115,38 @@ describe('geo zones', () => {
     expect(effectiveFee(far, 10000)).toBe(0);
     expect(resolveZone(zones, { coords: { lat: -22, lng: -42 } }, store)).toBeNull();
     expect(resolveZone(zones, { coords: { lat: -22.93, lng: -42.48 } }, null)).toBeNull();
+  });
+  test("a zone's least fee is what its nearest address is quoted", () => {
+    const [n, r5, r10] = zones as [ZoneLike, ZoneLike, ZoneLike];
+    expect(zoneMinFeeCents(n)).toBe(500);
+    expect(zoneMinFeeCents(r10)).toBe(800);
+    expect(zoneMinFeeCents(r5)).toBe(300 + 50);
+    const near = resolveZone(zones, { coords: { lat: -22.93, lng: -42.5099 } }, store)!;
+    expect(near.zone.id).toBe('r5');
+    expect(near.feeCents).toBe(zoneMinFeeCents(r5));
+  });
+  test('an outer ring starts where the inner ring ends', () => {
+    const inner = {
+      ...zones[1]!,
+      id: 'in',
+      max_distance_km: 5,
+      fee_cents: 500,
+      fee_per_km_cents: 0,
+    };
+    const outer = {
+      ...zones[1]!,
+      id: 'out',
+      max_distance_km: 10,
+      fee_cents: 0,
+      fee_per_km_cents: 100,
+    };
+    const both = [inner, outer];
+    // nothing at or under 5 km is the outer ring's, so its cheapest address is in the 6th km
+    expect(zoneMinFeeCents(outer, both)).toBe(600);
+    expect(zoneMinFeeCents(outer)).toBe(100);
+    const half = { ...inner, max_distance_km: 4.5 };
+    expect(zoneMinFeeCents(outer, [half, outer])).toBe(500);
+    expect(zoneMinFeeCents(inner, both)).toBe(500);
   });
 });
 

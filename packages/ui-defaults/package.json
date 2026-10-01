@@ -13,7 +13,8 @@
     "test": "bun test test/"
   },
   "peerDependencies": {
-    "react": "^18.3.1 || ^19.0.0"
+    "react": "^18.3.1 || ^19.0.0",
+    "@vendua/kernel": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",

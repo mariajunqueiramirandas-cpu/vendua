@@ -8,59 +8,46 @@ import {
   XCircle,
   ArrowCounterClockwise,
 } from '@phosphor-icons/react';
+import { orderPath } from '@vendua/kernel/rules';
 import type { OrderState } from '../lib/api.ts';
 import { cn } from './cn.ts';
 
 // Color is never the only signal: each state has a fill, an icon and a word (§4.2).
 export const STATE_META: Record<
   OrderState,
-  { label: string; var: string; Icon: typeof CheckCircle; next?: OrderState; nextLabel?: string }
+  { label: string; var: string; Icon: typeof CheckCircle }
 > = {
-  placed: {
-    label: 'Novo',
-    var: 'novo',
-    Icon: BellRinging,
-    next: 'confirmed',
-    nextLabel: 'aceitar',
-  },
-  confirmed: {
-    label: 'Aceito',
-    var: 'aceito',
-    Icon: CheckCircle,
-    next: 'preparing',
-    nextLabel: 'começar preparo',
-  },
-  preparing: {
-    label: 'Preparando',
-    var: 'preparando',
-    Icon: CookingPot,
-    next: 'ready',
-    nextLabel: 'marcar pronto',
-  },
+  placed: { label: 'Novo', var: 'novo', Icon: BellRinging },
+  confirmed: { label: 'Aceito', var: 'aceito', Icon: CheckCircle },
+  preparing: { label: 'Preparando', var: 'preparando', Icon: CookingPot },
   ready: { label: 'Pronto', var: 'pronto', Icon: Bag },
-  out_for_delivery: {
-    label: 'Saiu',
-    var: 'pronto',
-    Icon: Moped,
-    next: 'delivered',
-    nextLabel: 'entregue',
-  },
+  out_for_delivery: { label: 'Saiu', var: 'pronto', Icon: Moped },
   delivered: { label: 'Entregue', var: 'entregue', Icon: SealCheck },
   cancelled: { label: 'Cancelado', var: 'cancelado', Icon: XCircle },
   refunded: { label: 'Estornado', var: 'cancelado', Icon: ArrowCounterClockwise },
 };
 
-/** "ready" advances differently for delivery (sai) and pickup (entregue/retirado). */
+// the button that moves an order to this state
+const ACTION: Partial<Record<OrderState, string>> = {
+  confirmed: 'aceitar',
+  preparing: 'começar preparo',
+  ready: 'marcar pronto',
+  out_for_delivery: 'saiu para entrega',
+};
+
+/** The next state on the order's path (the Kernel's: a pickup never goes out for delivery). */
 export function nextStep(
   state: OrderState,
   mode: 'pickup' | 'delivery',
 ): { to: OrderState; label: string } | null {
-  if (state === 'ready')
-    return mode === 'delivery'
-      ? { to: 'out_for_delivery', label: 'saiu para entrega' }
-      : { to: 'delivered', label: 'retirado' };
-  const m = STATE_META[state];
-  return m.next ? { to: m.next, label: m.nextLabel! } : null;
+  const path = orderPath(mode) as OrderState[];
+  const i = path.indexOf(state);
+  const to = i >= 0 ? path[i + 1] : undefined;
+  if (!to) return null;
+  return {
+    to,
+    label: to === 'delivered' ? (mode === 'delivery' ? 'entregue' : 'retirado') : ACTION[to]!,
+  };
 }
 
 export function StateChip({

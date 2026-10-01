@@ -11,6 +11,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import type { Sql } from './platform/db.ts';
 import { withTenant } from './platform/db.ts';
+import { storeOrigin } from './platform/store-origin.ts';
 import {
   HttpError,
   errorJson,
@@ -39,16 +40,24 @@ import {
   touchControlSession,
 } from './modules/control-sessions.ts';
 import { getCatalogView, getProduct, getProductById } from './modules/catalog.ts';
-import { deriveStatus, type StoreSettingsRow } from './modules/store.ts';
+import {
+  deriveStatus,
+  instagramHandle,
+  upcomingSpecialDays,
+  whatsappDigits,
+  type StoreSettingsRow,
+} from './modules/store.ts';
 import { notifyStaff } from './modules/staff.ts';
 import { normalizeStaff } from './modules/staff-config.ts';
-import { composeNotices, type SurfacesEnvelope } from './modules/notices.ts';
+import { composeNotices, type PageMeta, type SurfacesEnvelope } from './modules/notices.ts';
 import {
   addItem,
   assertCartOpen,
   assertLineQty,
   loadCartView,
   loadZoneRows,
+  priceLine,
+  quoteInput,
   storeCoords,
 } from './modules/cart.ts';
 import { validateCheckoutShape } from './modules/checkout.ts';
@@ -62,7 +71,14 @@ import {
   resolveCustomer,
   verifyCustomerToken,
 } from './modules/customer.ts';
-import { normalizeCep, resolveZone, validCoords, viaCep, type CepLookup } from './modules/geo.ts';
+import {
+  normalizeCep,
+  resolveZone,
+  validCoords,
+  viaCep,
+  zoneMinFeeCents,
+  type CepLookup,
+} from './modules/geo.ts';
 import { OrderHub } from './modules/order-live.ts';
 import { pixPayload, type PixKeyType } from './modules/pix.ts';
 import { bookableDates } from './modules/preorder.ts';
@@ -264,12 +280,26 @@ function pixProfile(settings: StoreSettingsRow | null) {
   };
 }
 
-function currentStatus(settings: StoreSettingsRow | null) {
+/** The store's head for the edge (`/surfaces?design=1`): title, description, image, canonical. */
+function pageMeta(name: string, settings: StoreSettingsRow | null, publicUrl: string): PageMeta {
+  const tagline = settings?.tagline || null;
+  const logo = settings?.logo_url || null;
+  return {
+    title: tagline ? `${name} — ${tagline}` : name,
+    description: settings?.description || tagline,
+    // an upload is root-relative (/v1/media/…), served from the store's own host
+    image: logo && logo.startsWith('/') && !logo.startsWith('//') ? `${publicUrl}${logo}` : logo,
+    url: publicUrl,
+    siteName: name,
+  };
+}
+
+function currentStatus(settings: StoreSettingsRow | null, now = new Date()) {
   return deriveStatus(
     settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
     settings?.status_override ?? null,
     settings?.resumes_at ?? null,
-    new Date(),
+    now,
     settings?.special_days ?? [],
   );
 }
@@ -481,7 +511,7 @@ export function createApp({
 
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
-    const { settings, online } = await withTenant(sql, tenant.id, async (tx) => {
+    const { settings, online, publicUrl } = await withTenant(sql, tenant.id, async (tx) => {
       const settings = await loadSettings(tx, tenant.id);
       const online = await storePaymentsPublic(
         tx,
@@ -490,21 +520,30 @@ export function createApp({
         settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
         readPaymentAdjustments(settings?.payment_adjustments),
       );
-      return { settings, online };
+      const publicUrl = await storeOrigin(tx, tenant, publicStoreDomain);
+      return { settings, online, publicUrl };
     });
-    const status = currentStatus(settings);
+    const now = new Date();
+    const status = currentStatus(settings, now);
+    const hours = settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] };
     return c.json({
       slug: tenant.slug,
       name: tenant.name,
       tagline: settings?.tagline ?? null,
       description: settings?.description ?? null,
-      whatsapp: settings?.whatsapp ?? null,
-      instagram: settings?.instagram ?? null,
+      // stored normalised (migration 0072); read through the same rule so a stray row can't leak
+      whatsapp: whatsappDigits(settings?.whatsapp) ?? null,
+      instagram: instagramHandle(settings?.instagram) ?? null,
       city: settings?.city ?? null,
       address: settings?.address ?? null,
       status: status.status,
       ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
-      hours: settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
+      ...(status.closesAt ? { closesAt: status.closesAt } : {}),
+      publicUrl,
+      hours: {
+        ...hours,
+        specialDays: upcomingSpecialDays(settings?.special_days, hours.timezone, now),
+      },
       prepTimeMinutes: settings?.prep_time_minutes ?? 30,
       minOrderCents: settings?.min_order_cents ?? 0,
       pickupEnabled: settings?.pickup_enabled ?? true,
@@ -565,6 +604,40 @@ export function createApp({
     return c.json({ product: { ...product, preorderEarliestDate: earliest } });
   });
 
+  // what a configured line costs before it's added — add-to-cart's own pricing path (priceLine),
+  // so the product page never sums options itself; stock is checked at add
+  storefront.use(
+    '/products/:slug/quote',
+    rateLimit(
+      { windowMs: 60_000, max: 240 },
+      {
+        trustForwardedFor: trustProxy,
+        proxyHops: Number(process.env.VENDUA_PROXY_HOPS ?? '0') || 0,
+      },
+    ),
+  );
+  storefront.get('/products/:slug/quote', async (c) => {
+    const tenant = c.get('tenant');
+    const slug = str(c.req.param('slug'), 'slug', 200);
+    const q = quoteInput({
+      qty: c.req.query('qty'),
+      modifiers: c.req.query('modifiers'),
+      combo: c.req.query('combo'),
+    });
+    // kit picks a schedule hides stay known, so a stale pick gets add's SOLD_OUT, not "unknown"
+    const product = await withTenant(sql, tenant.id, (tx) => getProduct(tx, tenant.id, slug, {}));
+    if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
+    const line = priceLine(product, {
+      modifiers: q.modifiers,
+      comboSelections: q.comboSelections,
+    });
+    return c.json({
+      qty: q.qty,
+      unitPriceCents: line.unitPriceCents,
+      lineTotalCents: line.unitPriceCents * q.qty,
+    });
+  });
+
   storefront.get('/surfaces', async (c) => {
     const tenant = c.get('tenant');
     const zoneMatched =
@@ -572,11 +645,16 @@ export function createApp({
     // ?design=1 is the edge's read (Kernel 1.10): the page's live templates and tokens ride
     // along in the injected state, so first paint is the store's current look
     const design = c.req.query('design') === '1';
-    const { settings, templates, tokens } = await withTenant(sql, tenant.id, async (tx) => ({
-      settings: await loadSettings(tx, tenant.id),
-      templates: design ? await currentTemplatesTx(tx, tenant.id) : undefined,
-      tokens: design ? ((await currentTokensTx(tx, tenant.id))?.tokens ?? null) : undefined,
-    }));
+    const { settings, templates, tokens, publicUrl } = await withTenant(
+      sql,
+      tenant.id,
+      async (tx) => ({
+        settings: await loadSettings(tx, tenant.id),
+        templates: design ? await currentTemplatesTx(tx, tenant.id) : undefined,
+        tokens: design ? ((await currentTokensTx(tx, tenant.id))?.tokens ?? null) : undefined,
+        publicUrl: design ? await storeOrigin(tx, tenant, publicStoreDomain) : undefined,
+      }),
+    );
     const status = currentStatus(settings);
     const notices = composeNotices(tenant.slug, settings, status, {
       ...(zoneMatched !== undefined ? { zoneMatched } : {}),
@@ -586,9 +664,16 @@ export function createApp({
       store: {
         status: status.status,
         ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
+        ...(status.closesAt ? { closesAt: status.closesAt } : {}),
       },
       notices,
-      ...(design ? { templates: templates ?? {}, tokens: tokens ?? null } : {}),
+      ...(design
+        ? {
+            templates: templates ?? {},
+            tokens: tokens ?? null,
+            meta: pageMeta(tenant.name, settings, publicUrl!),
+          }
+        : {}),
     };
     return c.json(envelope);
   });
@@ -603,6 +688,7 @@ export function createApp({
         name: z.name,
         neighborhoods: z.neighborhoods,
         feeCents: z.fee_cents,
+        minFeeCents: zoneMinFeeCents(z, zones),
         minOrderCents: z.min_order_cents,
         etaMin: z.eta_min_minutes,
         etaMax: z.eta_max_minutes,
@@ -637,6 +723,7 @@ export function createApp({
       store: {
         status: status.status,
         ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
+        ...(status.closesAt ? { closesAt: status.closesAt } : {}),
       },
       notices: notices.filter((n) => n.severity === 'blocking' || n.kind === 'emergency'),
       loader: ops.loader,
@@ -732,14 +819,14 @@ export function createApp({
           })
         : [];
       const comboSelections = parseSelections(body.comboSelections);
-      const cart = await addItem(
+      const { cart, added } = await addItem(
         tx,
         tenant.id,
         cartId,
         { productId, qty, modifierIds, modifiers, comboSelections },
         getProductById,
       );
-      return { status: 200, body: { cart } };
+      return { status: 200, body: { cart, added } };
     })(c);
   });
 

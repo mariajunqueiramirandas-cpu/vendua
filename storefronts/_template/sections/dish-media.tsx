@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { defineBlock, usePageContext, useProduct, type BlockProps } from '@vendua/kernel';
+import {
+  Img,
+  defineBlock,
+  usePageContext,
+  useProduct,
+  useReducedMotion,
+  type BlockProps,
+} from '@vendua/kernel';
 import { DishArt, dishOf } from './_shared/DishArt.tsx';
 
 // The product page's picture, in the SDK purchase panel's `media` area: the photos when there
 // are any (swipeable when there are several), the same drawn dish as the menu when there are none.
+// Its own strip rather than the Kernel's catalog.Gallery: the menu's dots sit on the photo, with
+// no thumbnail row.
 export const schema = defineBlock({
   type: 'store:dish-media',
   category: 'media',
@@ -13,15 +22,19 @@ export const schema = defineBlock({
 export default function DishMedia(_: BlockProps<typeof schema>) {
   const { params } = usePageContext();
   const { product } = useProduct(params.slug ?? '');
+  const still = useReducedMotion();
   const strip = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState(0);
-  const photos = product
-    ? product.gallery?.length
-      ? product.gallery
-      : product.imageUrl
-        ? [{ url: product.imageUrl, alt: null }]
-        : []
-    : [];
+  const [failed, setFailed] = useState<string[]>([]);
+  const photos = (
+    product
+      ? product.gallery?.length
+        ? product.gallery
+        : product.imageUrl
+          ? [{ url: product.imageUrl, alt: null }]
+          : []
+      : []
+  ).filter((g) => !failed.includes(g.url));
   const n = photos.length;
   // the dots follow the swipe; the strip is the only source of truth
   useEffect(() => {
@@ -42,6 +55,7 @@ export default function DishMedia(_: BlockProps<typeof schema>) {
   }, [n]);
   if (!product) return null;
   const vt = `product:${product.slug}`;
+  // no photo, or none that loads: the drawn dish
   if (n === 0)
     return (
       <div className="pd-media" data-vt-dst={vt}>
@@ -51,7 +65,6 @@ export default function DishMedia(_: BlockProps<typeof schema>) {
   const go = (k: number) => {
     const el = strip.current;
     if (!el) return;
-    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
     el.scrollTo({ left: k * el.clientWidth, behavior: still ? 'auto' : 'smooth' });
   };
   return (
@@ -64,13 +77,16 @@ export default function DishMedia(_: BlockProps<typeof schema>) {
         role={n > 1 ? 'group' : undefined}
       >
         {photos.map((g, i) => (
-          <img
+          <Img
             key={g.url}
             src={g.url}
             alt={g.alt ?? (i === 0 ? product.name : '')}
-            loading={i === 0 ? 'eager' : 'lazy'}
+            width={960}
+            height={960}
+            sizes="(min-width: 720px) 560px, 100vw"
+            priority={i === 0}
             draggable={false}
-            {...(i === 0 ? { fetchpriority: 'high' } : {})}
+            onError={() => setFailed((f) => (f.includes(g.url) ? f : [...f, g.url]))}
           />
         ))}
       </div>

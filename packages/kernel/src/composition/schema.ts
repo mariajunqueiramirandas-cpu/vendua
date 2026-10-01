@@ -110,6 +110,10 @@ export interface SectionSchema<S extends Record<string, Field> = Record<string, 
   type: `sdk:${string}` | `store:${string}`;
   settings: S;
   areas?: Record<string, AreaSpec>;
+  /** Kernel 1.14 — the section's name for a merchant (the page editor), e.g. "Vitrine" */
+  title?: string;
+  /** Kernel 1.14 — a merchant may add it to a page from the editor (absent = no) */
+  addable?: boolean;
 }
 
 export interface BlockSchema<S extends Record<string, Field> = Record<string, Field>> {

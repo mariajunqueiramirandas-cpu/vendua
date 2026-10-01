@@ -119,9 +119,12 @@ const product = (over: Partial<Product>): Product => ({
   priceCents: 2500,
   compareAtPriceCents: null,
   status: 'active',
+  // Core serves these; the fixture follows its status
+  liveStatus: over.status ?? 'active',
   kind: 'simple',
   stockQuantity: null,
   lowStockThreshold: null,
+  lowStock: false,
   requiresPreorder: false,
   preorderLeadDays: 0,
   sort: 0,
@@ -400,7 +403,12 @@ export default function UiReference() {
           />
           <ProductTile p={product({ name: 'Kit festa com 4 pudins', kind: 'combo' })} />
           <ProductTile
-            p={product({ name: 'Bolo de pote', stockQuantity: 2, lowStockThreshold: 3 })}
+            p={product({
+              name: 'Bolo de pote',
+              stockQuantity: 2,
+              lowStockThreshold: 3,
+              lowStock: true,
+            })}
           />
           <ProductTile
             p={product({ name: 'Sacolé de uva', status: 'archived' })}

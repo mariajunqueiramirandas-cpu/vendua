@@ -7,7 +7,7 @@ const DB = 'vendua-admin';
 const KEY = 'queries';
 const MAX_AGE = 24 * 60 * 60_000;
 // bump when a cached response shape changes incompatibly
-const SCHEMA = 1;
+const SCHEMA = 2;
 
 let db: Promise<IDBDatabase> | null = null;
 function open() {

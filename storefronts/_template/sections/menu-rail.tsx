@@ -6,7 +6,6 @@ import {
   text,
   useCatalog,
   usePageContext,
-  useStore,
   type SectionProps,
 } from '@vendua/kernel';
 import { DishCard, type DishLabels } from './_shared/Dish.tsx';
@@ -29,7 +28,6 @@ export const schema = defineSection({
 
 export default function MenuRail({ settings: s }: SectionProps<typeof schema>) {
   const { categories } = useCatalog();
-  const { store } = useStore();
   const { params } = usePageContext();
   const titleId = useId();
 
@@ -68,13 +66,7 @@ export default function MenuRail({ settings: s }: SectionProps<typeof schema>) {
       </h2>
       <ol className="rail-list">
         {picks.map(({ product, category: c }) => (
-          <DishCard
-            key={product.id}
-            product={product}
-            category={c}
-            currency={store?.currency ?? 'BRL'}
-            labels={labels}
-          />
+          <DishCard key={product.id} product={product} category={c} labels={labels} />
         ))}
       </ol>
     </section>

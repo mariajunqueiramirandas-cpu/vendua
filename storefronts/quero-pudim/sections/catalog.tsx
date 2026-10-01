@@ -1,11 +1,12 @@
 import { RefreshCw, Search, SearchX, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   BlockArea,
   defineSection,
-  number,
+  plural,
   text,
-  useCatalog,
+  useCopy,
+  useMenu,
   type SectionProps,
 } from '@vendua/kernel';
 import { ProductCard } from './_shared/ProductCard.tsx';
@@ -21,11 +22,11 @@ export const schema = defineSection({
     searchLabel: text({ max: 60, default: 'Buscar no cardápio' }),
     searchPlaceholder: text({ max: 60, default: '' }),
     allLabel: text({ max: 40, default: 'Todos' }),
-    itemSingular: text({ max: 20, default: 'item' }),
-    itemPlural: text({ max: 20, default: 'itens' }),
+    /** empty = the store's vocabulary */
+    itemSingular: text({ max: 20, default: '' }),
+    itemPlural: text({ max: 20, default: '' }),
     cardCta: text({ max: 30, default: 'Ver produto' }),
     soldOutLabel: text({ max: 30, default: 'Esgotado hoje' }),
-    lowStockThreshold: number({ min: 1, max: 20, default: 5 }),
     emptyTitle: text({ max: 80, default: 'Nada por aqui ainda' }),
     emptyText: text({ max: 200, default: '' }),
     noMatchTitle: text({ max: 80, default: 'Nada encontrado' }),
@@ -34,51 +35,23 @@ export const schema = defineSection({
   areas: { 'before-grid': { accepts: ['promo', 'info'], max: 2 } },
 });
 
-const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
-
 export default function CatalogBrowser({ settings: s }: SectionProps<typeof schema>) {
-  const { categories, loading, error, refetch } = useCatalog();
   const [category, setCategory] = useState('all');
   const [query, setQuery] = useState('');
-  const [highlighted, setHighlighted] = useState<string | null>(null);
-  const hashDone = useRef(false);
-
-  const all = useMemo(
+  // tabs: every category with something in it; the grid: the Kernel's search over the same menu
+  const { categories, loading, error, refetch } = useMenu();
+  const { categories: found } = useMenu({ query });
+  const { vocabulary } = useCopy();
+  const active = categories.some((c) => c.id === category) ? category : 'all';
+  const shown = useMemo(
     () =>
-      categories.flatMap((c) =>
-        c.products.filter((p) => p.status !== 'archived').map((p) => ({ product: p, category: c })),
-      ),
-    [categories],
+      found
+        .filter((c) => active === 'all' || c.id === active)
+        .flatMap((c) => c.products.map((product) => ({ product, category: c }))),
+    [found, active],
   );
-  const filtered = useMemo(() => {
-    const q = normalize(query.trim());
-    return all.filter(
-      ({ product, category: c }) =>
-        (category === 'all' || c.id === category) &&
-        (!q ||
-          normalize(product.name).includes(q) ||
-          normalize(product.description ?? '').includes(q)),
-    );
-  }, [all, category, query]);
 
-  // one-shot #produto-<slug> deep link — scrolls to and highlights the card
-  useEffect(() => {
-    if (hashDone.current || all.length === 0) return;
-    const hash = window.location.hash;
-    if (!hash.startsWith('#produto-')) return;
-    hashDone.current = true;
-    const id = hash.slice(1);
-    requestAnimationFrame(() => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      el.scrollIntoView({ behavior: reduced ? 'instant' : 'smooth', block: 'center' });
-      setHighlighted(id);
-      window.setTimeout(() => setHighlighted((cur) => (cur === id ? null : cur)), 2000);
-    });
-  }, [all]);
-
-  const hasFilters = query.trim() !== '' || category !== 'all';
+  const hasFilters = query.trim() !== '' || active !== 'all';
 
   return (
     <>
@@ -126,8 +99,8 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
                 key={c.id}
                 type="button"
                 className="cat-tab"
-                aria-pressed={category === c.id}
-                data-active={category === c.id || undefined}
+                aria-pressed={active === c.id}
+                data-active={active === c.id || undefined}
                 onClick={() => setCategory(c.id)}
               >
                 {c.name}
@@ -136,7 +109,7 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
           </nav>
           <p role="status" className="catalog-count tnum">
             {categories.length > 0
-              ? `${filtered.length} ${filtered.length === 1 ? s.itemSingular : s.itemPlural}`
+              ? `${shown.length} ${plural(shown.length, s.itemSingular || vocabulary.itemSingular, s.itemPlural || vocabulary.itemPlural)}`
               : ''}
           </p>
         </div>
@@ -163,7 +136,7 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
                 Tentar novamente
               </button>
             </div>
-          ) : filtered.length === 0 ? (
+          ) : shown.length === 0 ? (
             <div className="empty-state">
               <SearchX size={20} aria-hidden="true" />
               <h3>{hasFilters ? s.noMatchTitle : s.emptyTitle}</h3>
@@ -183,15 +156,13 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
             </div>
           ) : (
             <ol className="card-grid">
-              {filtered.map(({ product, category: c }) => (
+              {shown.map(({ product, category: c }) => (
                 <ProductCard
                   key={product.id}
                   product={product}
                   eyebrow={c.name}
                   cta={s.cardCta}
                   soldOutLabel={s.soldOutLabel}
-                  lowStockThreshold={s.lowStockThreshold}
-                  highlighted={highlighted === `produto-${product.slug}`}
                 />
               ))}
             </ol>

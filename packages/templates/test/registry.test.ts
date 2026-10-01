@@ -9,11 +9,7 @@ const m = findMigration('2026-09-delivery-eta-on-product')!;
 const sections = catalogOf(SDK_SCHEMAS) as never;
 
 describe('2026-09-delivery-eta-on-product', () => {
-  for (const store of [
-    'storefronts/_template',
-    'storefronts/quero-pudim',
-    'storefronts/_examples/quero-pudim',
-  ]) {
+  for (const store of ['storefronts/_template', 'storefronts/quero-pudim']) {
     test(`lands in the purchase panel's after-price area on ${store}`, () => {
       const product = readTemplatesDir(join(REPO, store, 'templates')).product!;
       const r = runMigration(m, product, { kernelVersion: '1.1.0', sections });
@@ -41,11 +37,7 @@ describe('2026-09-delivery-eta-on-product', () => {
 
 describe('2026-09-loyalty-teaser-on-product', () => {
   const lt = findMigration('2026-09-loyalty-teaser-on-product')!;
-  for (const store of [
-    'storefronts/_template',
-    'storefronts/quero-pudim',
-    'storefronts/_examples/quero-pudim',
-  ]) {
+  for (const store of ['storefronts/_template', 'storefronts/quero-pudim']) {
     test(`lands in a promo-accepting area on ${store}, idempotently`, () => {
       const product = readTemplatesDir(join(REPO, store, 'templates')).product!;
       const r = runMigration(lt, product, { kernelVersion: '1.2.0', sections });

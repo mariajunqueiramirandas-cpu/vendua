@@ -1,7 +1,6 @@
-import { defineSection, list, select, text, useStore, type SectionProps } from '@vendua/kernel';
+import { defineSection, list, select, text, useCopy, type SectionProps } from '@vendua/kernel';
 import { ICON_NAMES, ICONS } from './_shared/icons.ts';
 import { Reveal } from './_shared/Reveal.tsx';
-import { twoDigits } from './_shared/format.ts';
 
 export const schema = defineSection({
   type: 'store:steps',
@@ -22,7 +21,7 @@ export const schema = defineSection({
 });
 
 export default function Steps({ settings: s }: SectionProps<typeof schema>) {
-  const { store } = useStore();
+  const { interpolate } = useCopy();
   return (
     <section className="container steps-section">
       <Reveal className="section-head section-head--center">
@@ -35,7 +34,7 @@ export default function Steps({ settings: s }: SectionProps<typeof schema>) {
           const Icon = ICONS[step.icon];
           return (
             <li key={step.title}>
-              <span className="step-num">{twoDigits(i + 1)}</span>
+              <span className="step-num">{String(i + 1).padStart(2, '0')}</span>
               <span className="step-badge">
                 <Icon size={24} strokeWidth={1.6} aria-hidden="true" />
               </span>
@@ -45,9 +44,7 @@ export default function Steps({ settings: s }: SectionProps<typeof schema>) {
           );
         })}
       </Reveal>
-      {s.footnote ? (
-        <p className="steps-note">{s.footnote.replaceAll('{city}', store?.city ?? '')}</p>
-      ) : null}
+      {s.footnote ? <p className="steps-note">{interpolate(s.footnote)}</p> : null}
     </section>
   );
 }

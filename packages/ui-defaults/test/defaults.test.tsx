@@ -1,11 +1,16 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactElement } from 'react';
 import { SLOT_KEYS } from '@vendua/kernel/config';
+import { vocabularyOf } from '@vendua/kernel/rules';
 import { SLOT_DEFAULTS, SLOT_FIXTURES } from '../src/index.ts';
 
 // Every registered slot has a default, and every default renders its canonical
 // fixture (04 — "every slot ships with a conformance fixture").
+afterEach(() => setSystemTime());
+
+const tags = (html: string) => html.replace(/<[^>]+>/g, '');
+
 describe('slot defaults', () => {
   test('cover every registered slot key', () => {
     expect(Object.keys(SLOT_DEFAULTS).sort()).toEqual([...SLOT_KEYS].sort());
@@ -79,14 +84,159 @@ describe('slot defaults', () => {
     expect(every).toContain('data-today="true"');
   });
 
+  test('hours: closed days are rows, today is the store’s, a special day takes it', () => {
+    const C = SLOT_DEFAULTS['store.HoursTable'];
+    const hours = {
+      timezone: 'America/Sao_Paulo',
+      windows: [
+        { days: [1, 2, 3, 4, 5], open: '09:00', close: '18:00' },
+        { days: [6], open: '10:00', close: '14:00' },
+      ],
+    };
+    // Sunday 01:30 UTC is still Saturday in São Paulo
+    setSystemTime(new Date('2026-10-04T01:30:00Z'));
+    const week = renderToStaticMarkup(<C hours={hours} status="open" />);
+    const rows = week.match(/<tr[^]*?<\/tr>/g)!.map(tags);
+    expect(rows).toEqual(['Seg – Sex09:00–18:00', 'Sábado · hoje10:00–14:00', 'DomingoFechado']);
+    expect(week.match(/<tr[^>]*data-closed/g)).toHaveLength(1);
+    const holiday = renderToStaticMarkup(
+      <C
+        hours={{ ...hours, specialDays: [{ date: '2026-10-03', closed: true, label: 'Feriado' }] }}
+        status="closed"
+      />,
+    );
+    const hrows = holiday.match(/<tr[^]*?<\/tr>/g)!.map(tags);
+    expect(hrows[0]).toBe('Hoje · FeriadoFechado');
+    expect(hrows[2]).toBe('Sábado10:00–14:00');
+    expect(holiday.match(/data-today/g)).toHaveLength(1);
+  });
+
+  test('order progress walks the mode’s path: pickup has no "a caminho", delivery has "pronto"', () => {
+    const C = SLOT_DEFAULTS['order.StatusPage'];
+    const fx = SLOT_FIXTURES['order.StatusPage'];
+    const steps = (state: string, mode: 'delivery' | 'pickup') => {
+      const html = renderToStaticMarkup(
+        <C {...fx} order={{ ...fx.order, state, delivery: { ...fx.order.delivery, mode } }} />,
+      );
+      const track = html.match(/<ol class="v-order-progress"[^]*?<\/ol>/)?.[0];
+      if (!track) return null;
+      return [...track.matchAll(/data-state="(\w+)"><span>([^<]+)/g)].map((m) => `${m[2]}:${m[1]}`);
+    };
+    expect(steps('ready', 'delivery')).toEqual([
+      'Recebido:done',
+      'Confirmado:done',
+      'Preparo:done',
+      'Pronto:current',
+      'A caminho:todo',
+      'Entregue:todo',
+    ]);
+    expect(steps('ready', 'pickup')).toEqual([
+      'Recebido:done',
+      'Confirmado:done',
+      'Preparo:done',
+      'Pronto:current',
+      'Retirado:todo',
+    ]);
+    expect(steps('cancelled', 'delivery')).toBeNull();
+  });
+
+  test('a blocking notice is never dismissible; kind and severity are stamped', () => {
+    const C = SLOT_DEFAULTS['system.Notice'];
+    const fx = SLOT_FIXTURES['system.Notice'];
+    const promo = renderToStaticMarkup(<C {...fx} />);
+    expect(promo).toContain('data-part="dismiss"');
+    expect(promo).toContain('data-kind="promo"');
+    expect(promo).toContain('data-severity="info"');
+    const blocking = renderToStaticMarkup(
+      <C {...fx} notice={{ ...fx.notice, severity: 'blocking', dismissible: true }} />,
+    );
+    expect(blocking).not.toContain('data-part="dismiss"');
+    expect(blocking).toContain('data-severity="blocking"');
+    expect(blocking).toContain('role="alertdialog"');
+    const emergency = renderToStaticMarkup(
+      <C {...fx} notice={{ ...fx.notice, kind: 'emergency', severity: 'info' }} />,
+    );
+    expect(emergency).not.toContain('data-part="dismiss"');
+  });
+
+  test('instants read in the store’s zone, not the process’s', () => {
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).not.toBe('Asia/Tokyo');
+    const T = SLOT_DEFAULTS['order.Timeline'];
+    const events = [{ at: '2026-09-26T15:00:00Z', from: null, to: 'placed', actor: 'x', meta: {} }];
+    const tokyo = tags(renderToStaticMarkup(<T events={events} timeZone="Asia/Tokyo" />));
+    expect(tokyo).toContain('27 de set., 00:00');
+    expect(tags(renderToStaticMarkup(<T events={events} />))).not.toBe(tokyo);
+    // the pause notice says the next instant in the store's words and zone
+    setSystemTime(new Date('2026-09-26T12:00:00Z'));
+    const P = SLOT_DEFAULTS['system.PauseNotice'];
+    const fx = SLOT_FIXTURES['system.PauseNotice'];
+    const at = (timeZone: string) =>
+      tags(
+        renderToStaticMarkup(<P {...fx} resumesAt="2026-09-26T21:00:00Z" timeZone={timeZone} />),
+      );
+    expect(at('America/Sao_Paulo')).toContain('Volta hoje às 18:00');
+    expect(at('Asia/Tokyo')).toContain('Volta amanhã às 06:00');
+  });
+
   test('product cards flag low stock and encomendas, not plain items', () => {
     const C = SLOT_DEFAULTS['catalog.ProductCard'];
     const fx = SLOT_FIXTURES['catalog.ProductCard'];
     const card = (extra: object) =>
       renderToStaticMarkup(<C {...fx} product={{ ...fx.product, ...extra }} />);
     expect(card({})).not.toContain('data-part="badge"');
-    expect(card({ lowStock: true, stockQuantity: 2 })).toContain('Últimas 2');
+    expect(
+      renderToStaticMarkup(
+        <C {...fx} product={{ ...fx.product, lowStock: true, stockQuantity: 2 }} stockLeft={2} />,
+      ),
+    ).toContain('Últimas 2');
     expect(card({ requiresPreorder: true })).toContain('Encomenda');
+  });
+
+  test('one badge per card, by the Kernel’s priority; low stock is what the bag leaves', () => {
+    const C = SLOT_DEFAULTS['catalog.ProductCard'];
+    const fx = SLOT_FIXTURES['catalog.ProductCard'];
+    const card = (extra: object, stockLeft?: number) =>
+      renderToStaticMarkup(
+        <C
+          {...fx}
+          product={{ ...fx.product, stockQuantity: 5, lowStockThreshold: 3, ...extra }}
+          {...(stockLeft === undefined ? {} : { stockLeft })}
+        />,
+      );
+    const badge = (html: string) => html.match(/data-badge="([^"]+)"/)?.[1] ?? null;
+    // 5 in stock, 3 of them in the bag: Core's threshold reads the 2 left
+    expect(badge(card({}, 5))).toBeNull();
+    expect(tags(card({}, 2))).toContain('Últimas 2');
+    expect(tags(card({}, 1))).toContain('Última unidade');
+    // an encomenda running low or all in the bag says the stock first
+    expect(badge(card({ requiresPreorder: true }, 5))).toBe('preorder');
+    expect(badge(card({ requiresPreorder: true }, 2))).toBe('low-stock');
+    expect(badge(card({ requiresPreorder: true }, 0))).toBe('all-in-bag');
+    expect(tags(card({ requiresPreorder: true }, 0))).toContain('Tudo na sacola');
+    // sold out wins, and says so in the price row (with Core's schedule when it has one)
+    const sold = card({ status: 'sold_out', availabilityLabel: 'Só sábados' }, 0);
+    expect(badge(sold)).toBeNull();
+    expect(sold).toContain('data-part="availability"');
+    expect(tags(sold)).toContain('Só sábados');
+    // the store's word for the bag
+    const words = renderToStaticMarkup(
+      <C
+        {...fx}
+        product={{ ...fx.product, stockQuantity: 1 }}
+        stockLeft={0}
+        vocabulary={vocabularyOf({ vocabulary: { itemSingular: 'doce', bag: 'cesta' } })}
+      />,
+    );
+    expect(tags(words)).toContain('Tudo na cesta');
+    const masculine = renderToStaticMarkup(
+      <C
+        {...fx}
+        product={{ ...fx.product, stockQuantity: 1 }}
+        stockLeft={0}
+        vocabulary={vocabularyOf({ vocabulary: { bag: 'carrinho' } })}
+      />,
+    );
+    expect(tags(masculine)).toContain('Tudo no carrinho');
   });
 
   test('a card priced by a required list shows Core’s "a partir de"', () => {
@@ -100,6 +250,70 @@ describe('slot defaults', () => {
     expect(from).not.toContain('0,00');
     // not above the price: the price itself
     expect(card({ fromPriceCents: 1800 })).not.toContain('a partir de');
+  });
+
+  test('the encomenda calendar’s today is the store’s; earlier days are not offered', () => {
+    const C = SLOT_DEFAULTS['checkout.SchedulePicker'];
+    const fx = SLOT_FIXTURES['checkout.SchedulePicker'];
+    // 02:00 UTC on the 30th: still the 29th in São Paulo, already midday in Tokyo
+    setSystemTime(new Date('2026-09-30T02:00:00Z'));
+    const day = (html: string, d: string) =>
+      html.match(new RegExp(`<button[^>]*data-date="${d}"[^>]*>`))![0];
+    const sp = renderToStaticMarkup(<C {...fx} timezone="America/Sao_Paulo" />);
+    expect(day(sp, '2026-09-29')).toContain('data-today="true"');
+    expect(day(sp, '2026-09-29')).not.toContain('aria-disabled');
+    const tokyo = renderToStaticMarkup(<C {...fx} timezone="Asia/Tokyo" />);
+    expect(day(tokyo, '2026-09-30')).toContain('data-today="true"');
+    expect(day(tokyo, '2026-09-29')).toContain('aria-disabled="true"');
+    expect(tags(tokyo)).toContain('Encomendas pedem 2 dias de antecedência.');
+  });
+
+  test('phone and CEP fields show the mask they promise', () => {
+    const C = SLOT_DEFAULTS['checkout.AddressForm'];
+    const fx = SLOT_FIXTURES['checkout.AddressForm'];
+    expect(renderToStaticMarkup(<C {...fx} part="customer" />)).toContain(
+      'value="(22) 99999-0000"',
+    );
+    // AddressForm has no hooks: call it and drive the CEP input's handler
+    const changes: object[] = [];
+    const looked: string[] = [];
+    const tree = (C as (p: typeof fx) => ReactElement)({
+      ...fx,
+      onChange: (p) => changes.push(p),
+      onCep: (d) => looked.push(d),
+    });
+    const find = (n: unknown): ReactElement | null => {
+      if (!n || typeof n !== 'object') return null;
+      if (Array.isArray(n)) return n.map(find).find(Boolean) ?? null;
+      const el = n as ReactElement<{ name?: string; children?: unknown }>;
+      if (el.props?.name === 'cep') return el;
+      return find(el.props?.children);
+    };
+    const input = find(tree) as ReactElement<{ onChange: (e: unknown) => void }>;
+    input.props.onChange({ target: { value: '28990' } });
+    input.props.onChange({ target: { value: '28990-12' } });
+    input.props.onChange({ target: { value: '28990123' } });
+    expect(changes).toEqual([{ cep: '28990' }, { cep: '28990-12' }, { cep: '28990-123' }]);
+    expect(looked).toEqual(['28990123']);
+  });
+
+  test('a coupon that doesn’t apply says why, with what is missing', () => {
+    const C = SLOT_DEFAULTS['checkout.CouponField'];
+    const fx = SLOT_FIXTURES['checkout.CouponField'];
+    const why = (reason: string, details?: Record<string, unknown>) =>
+      tags(
+        renderToStaticMarkup(
+          <C
+            {...fx}
+            coupon={{ ...fx.coupon!, applies: false, reason, ...(details ? { details } : {}) }}
+          />,
+        ),
+      );
+    expect(why('COUPON_MIN_SUBTOTAL', { remainingCents: 1250 })).toMatch(
+      /Faltam R\$\s12,50 para usar este cupom\./,
+    );
+    expect(why('COUPON_EXPIRED')).toContain('Esse cupom expirou');
+    expect(why('SOMETHING_NEW')).toContain('Este cupom não vale agora.');
   });
 
   test('an option list longer than 12 gets a filter, a short one does not', () => {

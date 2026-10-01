@@ -111,8 +111,8 @@ migrate → generate → scale**. Two consequences versus a naive build order:
 
 - The Control Plane and artifact pipeline land before the first real merchant
   — they are prerequisites for tenant #1, not a later phase.
-- Monorepo machinery (scaffold, changed-path CI, affected builds, `_template`
-  /`_examples`) is factory work, not agent-era tooling — it is what makes N
+- Monorepo machinery (scaffold, changed-path CI, affected builds, `_template`)
+  is factory work, not agent-era tooling — it is what makes N
   storefronts one repo instead of N projects.
 - **Commerce completeness is its own phase** (Phase 2) — the Quero Pudim port
   proved the reference storefront ships features Core can't express; a real
@@ -126,7 +126,7 @@ until its row is true.
 | Stage        | N     | Must be true before growing past it                                                                                                                                                                                                                                                                                                                                                         |
 | ------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | First store  | 1     | Phase 1b exit met (Kernel v1 complete; Contract v2 page composition live; a template migration, a Kernel minor and a Contract-major rehearsal reached every in-repo storefront untouched); real paid order taken; the merchant runs the day (orders, menu, hours, payments) from the admin with no staff help; provision/promote/rollback ran through the Control Plane — zero manual steps |
-| Pilot cohort | ~5    | Conformance + changed-path CI green on every storefront PR; probes live on all hostnames; `_examples/` seeded                                                                                                                                                                                                                                                                               |
+| Pilot cohort | ~5    | Conformance + changed-path CI green on every storefront PR; probes live on all hostnames                                                                                                                                                                                                                                                                                                    |
 | Early fleet  | ~25   | One boring train shipped; one codemod rehearsal done; runbook covers the top 5 incidents                                                                                                                                                                                                                                                                                                    |
 | Growth       | ~100  | Agent pipeline is the default intake; Core HA + LKG proven by a real failover drill; train cost measured                                                                                                                                                                                                                                                                                    |
 | Fleet        | ~1000 | `fleet-*` shard rehearsed; Kernel publishing path proven; train economics budgeted                                                                                                                                                                                                                                                                                                          |
@@ -145,8 +145,8 @@ layout, not a scratch project.
 - [x] Rough Kernel: provider, hooks, primitives, `<SystemSurfaces />` with a
       generic notice renderer.
 - [x] Built **3 spike storefronts** semi-manually, including a full port of
-      Quero Pudim Gourmet — now `storefronts/_examples/quero-pudim`, the
-      curated read set for future agents.
+      Quero Pudim Gourmet. Its golden copy (`storefronts/_examples/quero-pudim`)
+      has since been retired; `_template` is the only reference storefront.
 - [x] Every store-touch point written down → [`phase-0-findings.md`](phase-0-findings.md) + [`contract-v1-draft.md`](contract-v1-draft.md). The port surfaced 15
       feature gaps — tracked in the [feature-gap ledger](#feature-gap-ledger)
       below and assigned to phases.
@@ -188,7 +188,7 @@ touch platform code.
 
 Goal: the SDK a storefront is written against is finished, and every kind of
 change in [09](architecture/09-migrations-and-fleet-trains.md#change-classes--process-map)
-has been shipped to the in-repo storefronts (`_template`, `_examples/*`,
+has been shipped to the in-repo storefronts (`_template`,
 `quero-pudim`) without hand edits. **No customer is onboarded
 before this exit.** Items that used to sit in Phases 3, 5 and 6 moved here
 because they are what "updatable" means; the ones that need real merchants
@@ -577,7 +577,7 @@ evidence-backed.
 
 Every feature the Quero Pudim reference ships that the platform couldn't
 express during the port (source:
-[`storefronts/quero-pudim/OBSERVATIONS.md`](../storefronts/quero-pudim/OBSERVATIONS.md)).
+[`phase-0-findings.md`](phase-0-findings.md)).
 Two landed during Phase-0 review; the rest landed in Phase 2.
 
 | Gap                                  | Status                                                |

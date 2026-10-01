@@ -1,33 +1,16 @@
 import { ArrowClockwise, Copy, QrCode } from '@phosphor-icons/react';
-import QRCode from 'qrcode';
 import { useEffect, useRef, useState } from 'react';
 import { haptic } from '../lib/haptics.ts';
 import { clock, money } from '../lib/format.ts';
 import { Button } from './Button.tsx';
 import { cn } from './cn.ts';
 import { copyText } from './CopyValue.tsx';
-import { Skeleton } from './feedback.tsx';
+import { Qr } from './Qr.tsx';
 import { toast } from './Toast.tsx';
 
-/** A Pix copia-e-cola as a QR (always dark on light, so a camera reads it in either theme). */
+/** A Pix copia-e-cola as a QR. */
 export function PixQr({ code, className, alt }: { code: string; className?: string; alt: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    void QRCode.toDataURL(code, {
-      margin: 1,
-      width: 400,
-      color: { dark: '#123c32', light: '#fffdf8' },
-    }).then((u) => live && setSrc(u));
-    return () => {
-      live = false;
-    };
-  }, [code]);
-  return src ? (
-    <img src={src} alt={alt} className={cn('rounded-md bg-[#fffdf8] p-2', className)} />
-  ) : (
-    <Skeleton className={cn('rounded-md', className)} delay={0} />
-  );
+  return <Qr value={code} alt={alt} className={cn('rounded-md p-2', className)} />;
 }
 
 function useMinutesLeft(expiresAt: string | null | undefined) {

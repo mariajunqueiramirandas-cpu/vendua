@@ -84,6 +84,8 @@ export interface MockCore {
   surfaces: { version: 1; store: { status: string }; notices: unknown[] };
   templates: TemplateSet;
   failAdd?: { status: number; code: string };
+  /** Kernel 1.14 — answers `GET /products/:slug/quote` (default: base + option deltas × qty) */
+  quote?: (slug: string, query: URLSearchParams) => { status: number; body: unknown };
 }
 
 export function mockCore(over: Partial<MockCore> = {}): MockCore {
@@ -106,6 +108,25 @@ export function mockCore(over: Partial<MockCore> = {}): MockCore {
       return json(200, {
         categories: [{ id: 'c1', slug: 'doces', name: 'Doces', sort: 1, products: [PRODUCT] }],
       });
+    const quoted = /^\/storefront\/v1\/products\/([^/]+)\/quote$/.exec(p);
+    if (quoted) {
+      if (core.quote) {
+        const r = core.quote(decodeURIComponent(quoted[1]!), url.searchParams);
+        return json(r.status, r.body);
+      }
+      if (quoted[1] !== 'pudim')
+        return json(404, { error: { code: 'PRODUCT_NOT_FOUND', message: 'nope' } });
+      const qty = Number(url.searchParams.get('qty'));
+      const deltas = new Map(
+        DETAIL.modifierGroups.flatMap((g) => g.modifiers.map((m) => [m.id, m.priceDeltaCents])),
+      );
+      const picks = (url.searchParams.get('modifiers') ?? '').split(',').filter(Boolean);
+      const unit = picks.reduce((sum, pick) => {
+        const [id, n] = pick.split(':');
+        return sum + (deltas.get(id!) ?? 0) * Number(n ?? 1);
+      }, DETAIL.basePriceCents);
+      return json(200, { qty, unitPriceCents: unit, lineTotalCents: unit * qty });
+    }
     if (p.startsWith('/storefront/v1/products/'))
       return p.endsWith('/pudim')
         ? json(200, { product: DETAIL })

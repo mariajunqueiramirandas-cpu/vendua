@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { foldText } from '@vendua/kernel';
 
 // Stand-in art for a product without a photo: a forest line drawing on a warm tint with one
 // lime highlight, picked from the product's own words — never a grey box.
@@ -15,10 +16,8 @@ const RULES: [Dish, RegExp][] = [
   ['bowl', /(salada|poke|prato|marmita|sopa|caldo|massa|macarr|risoto|bowl|executivo|feijoada)/],
 ];
 
-const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
-
 export function dishOf(...words: (string | null | undefined)[]): Dish {
-  const text = normalize(words.filter(Boolean).join(' '));
+  const text = foldText(words.filter(Boolean).join(' '));
   return RULES.find(([, re]) => re.test(text))?.[0] ?? 'cloche';
 }
 

@@ -13,6 +13,13 @@ import {
   Trash,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { catalogHref, productHref } from '@vendua/kernel/rules';
+import {
+  DEFAULT_TEMPLATES,
+  PREVIEW_MESSAGE,
+  PREVIEW_QUERY_PARAM,
+} from '@vendua/kernel/sdk-catalog';
+import { DEFAULT_TOKENS, type ComponentType } from '@vendua/templates';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
@@ -40,59 +47,13 @@ import { ADDABLE, fieldsFor, sectionName } from './fields.ts';
 import { SettingsEditor } from './SettingsEditor.tsx';
 
 type PageId = 'home' | 'catalog' | 'product' | 'layout';
+type StorefrontPaths = Parameters<typeof catalogHref>[0]['paths'];
 const PAGES: { id: PageId; label: string }[] = [
   { id: 'home', label: 'Início' },
   { id: 'catalog', label: 'Cardápio' },
   { id: 'product', label: 'Produto' },
   { id: 'layout', label: 'Topo e rodapé' },
 ];
-
-// the Kernel's own fallbacks (sdk/defaults.ts) for a page the store never customized
-const FALLBACK: Record<PageId, PageTemplate> = {
-  layout: {
-    version: 1,
-    page: 'layout',
-    sections: [
-      { id: 'header', type: 'sdk:header' },
-      { id: 'content', type: 'sdk:page-content' },
-      { id: 'footer', type: 'sdk:footer' },
-    ],
-  },
-  home: { version: 1, page: 'home', sections: [{ id: 'catalog', type: 'sdk:catalog-grid' }] },
-  catalog: {
-    version: 1,
-    page: 'catalog',
-    sections: [
-      {
-        id: 'catalog',
-        type: 'sdk:catalog-grid',
-        settings: { title: 'Cardápio', showSearch: true },
-      },
-    ],
-  },
-  product: {
-    version: 1,
-    page: 'product',
-    sections: [{ id: 'purchase', type: 'sdk:purchase-panel' }],
-  },
-};
-
-const BASE_TOKENS: StoreTokens = {
-  color: {
-    bg: '#FCFBF8',
-    surface: '#FFFFFF',
-    text: '#1A1714',
-    muted: '#6B6456',
-    accent: '#123C32',
-    onAccent: '#FFFFFF',
-    danger: '#B3372F',
-    success: '#3D7A4F',
-  },
-  font: { display: 'Georgia, serif', body: 'system-ui, sans-serif' },
-  radius: { sm: '6px', md: '10px', lg: '16px' },
-  space: { scale: 1 },
-  motion: { duration: '200ms', easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
-};
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -129,7 +90,8 @@ function Editor({ data }: { data: AppearanceData }) {
       const row = data.pages.find((x) => x.page === p.id);
       out[p.id] = row
         ? { version: row.version, template: row.template }
-        : { version: 0, template: FALLBACK[p.id] };
+        : // the Kernel's own fallback for a page the store never customized
+          { version: 0, template: DEFAULT_TEMPLATES[p.id]! };
     }
     return out;
   }, [data.pages]);
@@ -144,7 +106,7 @@ function Editor({ data }: { data: AppearanceData }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [device, setDevice] = useState<'phone' | 'desktop'>('phone');
   const [frameTokens, setFrameTokens] = useState<StoreTokens | null>(null);
-  const [paths, setPaths] = useState<Record<string, string> | null>(null);
+  const [paths, setPaths] = useState<StorefrontPaths | null>(null);
   const [tokens, setTokens] = useState<StoreTokens | null>(data.tokens?.tokens ?? null);
   const [sheet, setSheet] = useState<null | 'section' | 'colors' | 'history' | 'add' | 'outline'>(
     null,
@@ -183,7 +145,7 @@ function Editor({ data }: { data: AppearanceData }) {
     (extra: Record<string, unknown> = {}) =>
       frame.current?.contentWindow?.postMessage(
         {
-          type: 'vendua:preview',
+          type: PREVIEW_MESSAGE.draft,
           templates: drafts,
           selected,
           ...(tokens ? { tokens } : {}),
@@ -204,15 +166,15 @@ function Editor({ data }: { data: AppearanceData }) {
         type?: string;
         id?: string;
         tokens?: StoreTokens | null;
-        paths?: Record<string, string>;
+        paths?: StorefrontPaths;
       };
-      if (d?.type === 'vendua:preview-ready') {
+      if (d?.type === PREVIEW_MESSAGE.ready) {
         setFrameReady(true);
         if (d.tokens) setFrameTokens(d.tokens);
         if (d.paths) setPaths(d.paths);
         post();
       }
-      if (d?.type === 'vendua:preview-select' && d.id) {
+      if (d?.type === PREVIEW_MESSAGE.select && d.id) {
         const inPage = drafts[page].sections.some((x) => x.id === d.id);
         const inLayout = drafts.layout.sections.some((x) => x.id === d.id);
         if (!inPage && inLayout) setPage('layout');
@@ -223,15 +185,15 @@ function Editor({ data }: { data: AppearanceData }) {
     window.addEventListener('message', on);
     return () => window.removeEventListener('message', on);
   }, [data.previewUrl, drafts, page, post]);
-  const pathFor = (p: PageId) => {
-    if (p === 'catalog') return paths?.catalog ?? '/cardapio';
-    if (p === 'product')
-      return slug
-        ? (paths?.product ?? '/produto/:slug').replace(':slug', encodeURIComponent(slug))
+  // the store's own paths (the frame reports them), else the Kernel's defaults
+  const config = { paths: paths ?? {} };
+  const pathFor = (p: PageId) =>
+    p === 'catalog'
+      ? catalogHref(config)
+      : p === 'product' && slug
+        ? productHref(config, slug)
         : '/';
-    return '/';
-  };
-  const src = `${data.previewUrl}${pathFor(page)}?vendua-preview=1`;
+  const src = `${data.previewUrl}${pathFor(page)}?${PREVIEW_QUERY_PARAM}=1`;
 
   // ── section operations ───────────────────────────────────────────────────
   const tpl = drafts[page];
@@ -256,7 +218,7 @@ function Editor({ data }: { data: AppearanceData }) {
     setSheet(null);
     toast('Parte tirada da página', { undo: () => setDrafts((d) => ({ ...d, [page]: before })) });
   };
-  const add = (type: string) => {
+  const add = (type: ComponentType) => {
     const id = `${type.replace(/^sdk:/, '')}-${Math.random().toString(36).slice(2, 6)}`;
     setSections((ss) => {
       const at = page === 'layout' ? ss.findIndex((x) => x.type === 'sdk:page-content') : ss.length;
@@ -313,7 +275,7 @@ function Editor({ data }: { data: AppearanceData }) {
     ) : (
       <div className="space-y-3 pt-2">
         <p className="t-body text-muted">Carregando as cores atuais da sua loja pela prévia…</p>
-        <Button variant="secondary" onClick={() => setTokens(BASE_TOKENS)}>
+        <Button variant="secondary" onClick={() => setTokens(DEFAULT_TOKENS)}>
           começar de uma paleta nova
         </Button>
       </div>

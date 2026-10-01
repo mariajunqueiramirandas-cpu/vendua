@@ -19,7 +19,6 @@ COPY apps/admin/package.json apps/admin/package.json
 COPY site/package.json site/package.json
 # New storefronts go here — one COPY per workspace package.json.
 COPY storefronts/quero-pudim/package.json storefronts/quero-pudim/package.json
-COPY storefronts/_examples/quero-pudim/package.json storefronts/_examples/quero-pudim/package.json
 COPY storefronts/_template/package.json storefronts/_template/package.json
 RUN --mount=type=cache,id=vendua-bun,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
@@ -38,7 +37,7 @@ COPY storefronts storefronts
 # the site's sign-up links point at the merchant admin (site/README.md); unset = its default
 ARG PUBLIC_ADMIN_URL
 RUN bun --filter @vendua/site build \
-    && bun --filter './storefronts/*' --filter './storefronts/_examples/*' build
+    && bun --filter './storefronts/*' build
 
 FROM nginx:1.28-alpine AS site
 ENV NGINX_ENTRYPOINT_QUIET_LOGS=1

@@ -369,6 +369,14 @@ img {
 .status-pill[data-state='closed'] {
   color: var(--zinc-600);
 }
+.status-when {
+  font-weight: 500;
+}
+.status-when::before {
+  content: '·';
+  content: '·' / '';
+  margin-right: 8px;
+}
 @keyframes pulse {
   70% {
     box-shadow: 0 0 0 7px rgb(61 122 79 / 0);
@@ -439,7 +447,8 @@ img {
   align-items: center;
   gap: 8px;
 }
-.header-status {
+.header-status,
+.header-area {
   display: none;
 }
 .sacola-btn,
@@ -554,13 +563,18 @@ img {
     border-radius: 10px;
     font-size: 0.9375rem;
   }
-  .header-status {
+  .header-status,
+  .header-area {
     display: inline-flex;
+  }
+  .header-area {
+    align-items: center;
   }
   .header-actions {
     gap: 16px;
   }
   .sacola-btn {
+    grid-auto-flow: column;
     width: auto;
     gap: 8px;
     padding: 0 16px;
@@ -890,6 +904,8 @@ img {
   position: relative;
   border-radius: var(--r-lg);
   transition: transform 0.25s var(--ease);
+  /* clears the sticky category bar when a #produto- link lands here */
+  scroll-margin-top: 96px;
 }
 .pcard-link {
   display: flex;
@@ -1016,6 +1032,22 @@ img {
   font-variant-numeric: tabular-nums;
   color: var(--caramel-800);
 }
+.pcard-from {
+  font-size: 0.8em;
+  font-weight: 500;
+}
+.pcard-was {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--zinc-500);
+}
+.pcard-promo {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--brand-600);
+}
 .pcard-cta {
   font-size: 0.8125rem;
   font-weight: 600;
@@ -1060,7 +1092,8 @@ img {
 .pcard[data-soldout] .pcard-name {
   color: var(--zinc-500);
 }
-.pcard[data-hit] .pcard-media {
+/* the Kernel scrolls to #produto-<slug> and marks the card for a moment */
+.pcard[data-target] .pcard-media {
   outline: 3px solid var(--brand-500);
   outline-offset: 3px;
 }
@@ -1413,6 +1446,13 @@ img {
   flex: none;
   margin-top: 3px;
 }
+.footer-hours {
+  display: grid;
+  gap: 4px;
+}
+.footer-hours > [data-today]:not(:only-child) {
+  color: #fff;
+}
 .footer-title {
   margin: 0 0 4px;
   font-size: 0.8125rem;
@@ -1475,6 +1515,10 @@ img {
   transition:
     border-color 0.2s,
     box-shadow 0.2s;
+}
+/* the store draws its own clear button */
+.search-input::-webkit-search-cancel-button {
+  appearance: none;
 }
 .search-input:focus {
   outline: none;
@@ -1673,7 +1717,7 @@ img {
   color: var(--zinc-950);
   line-height: 1.45;
 }
-.qp-notice[data-tone='blocking'] {
+.qp-notice[data-severity='blocking'] {
   border-left-color: var(--danger);
   text-align: center;
   padding: 28px;

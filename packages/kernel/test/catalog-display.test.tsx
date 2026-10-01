@@ -20,11 +20,19 @@ const button = (label: string) =>
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-function core(over: { catalog?: unknown[]; detail?: unknown }) {
+function core(over: { catalog?: unknown[]; detail?: unknown; unitCents?: number }) {
   const c = mockCore();
   const base = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://shop.test');
+    if (over.unitCents !== undefined && url.pathname === '/storefront/v1/products/pudim/quote') {
+      const qty = Number(url.searchParams.get('qty'));
+      return json(200, {
+        qty,
+        unitPriceCents: over.unitCents,
+        lineTotalCents: over.unitCents * qty,
+      });
+    }
     if (over.catalog && url.pathname === '/storefront/v1/catalog')
       return json(200, {
         categories: [{ id: 'c1', slug: 'doces', name: 'Doces', sort: 1, products: over.catalog }],
@@ -77,6 +85,7 @@ describe('a partir de', () => {
 
   test('the product page says "a partir de" and leaves R$ 0,00 off the add button', async () => {
     core({
+      unitCents: 2590,
       detail: {
         ...DETAIL,
         basePriceCents: 0,
@@ -99,34 +108,51 @@ describe('a partir de', () => {
     m = await mount({ path: '/produto/pudim' });
     await flush();
     expect(text('.v-pp-price')).toMatch(/^a partir de R\$\s22,90$/);
-    expect($('[data-part="add"] .v-pp-add-price')).toBeNull();
+    // Kernel 1.14: until a flavour is picked the button shows no amount, never the R$ 0,00
+    // base; then Core's price for the line
+    expect($('[data-part="add-price"]')?.getAttribute('data-state')).toBe('none');
+    expect(text('[data-part="add"]')).not.toContain('R$');
     expect($('[data-part="promo"]')).toBeNull();
+    await click(button('Queijo'));
+    await act(async () => new Promise((r) => setTimeout(r, 200)));
+    await flush();
+    expect($('[data-part="add-price"]')?.getAttribute('data-state')).toBe('quote');
+    expect(text('[data-part="add-price"]')).toMatch(/R\$\s25,90/);
   });
 
-  test('a combo keeps its own "a partir de" when a slot item costs more', async () => {
+  // Kernel 1.14: Core serves a combo's from-price; a paid slot item alone no longer makes the
+  // page say "a partir de" (it said so even when every valid kit cost the base)
+  test('a combo says "a partir de" only with Core’s from-price', async () => {
+    const slots = [
+      {
+        id: 's1',
+        name: 'Escolha 2',
+        minSelect: 2,
+        maxSelect: 2,
+        qtyPerItem: 1,
+        items: [
+          { productId: 'a', name: 'Brigadeiro', priceDeltaCents: 0, status: 'active' },
+          { productId: 'b', name: 'Bem-casado', priceDeltaCents: 300, status: 'active' },
+        ],
+      },
+    ];
+    core({ detail: { ...DETAIL, kind: 'combo', modifierGroups: [], comboSlots: slots } });
+    m = await mount({ path: '/produto/pudim' });
+    await flush();
+    expect(text('.v-pp-price')).toMatch(/^R\$\s18,00$/);
+    m.unmount();
     core({
       detail: {
         ...DETAIL,
         kind: 'combo',
         modifierGroups: [],
-        comboSlots: [
-          {
-            id: 's1',
-            name: 'Escolha 2',
-            minSelect: 2,
-            maxSelect: 2,
-            qtyPerItem: 1,
-            items: [
-              { productId: 'a', name: 'Brigadeiro', priceDeltaCents: 0, status: 'active' },
-              { productId: 'b', name: 'Bem-casado', priceDeltaCents: 300, status: 'active' },
-            ],
-          },
-        ],
+        comboSlots: slots,
+        fromPriceCents: 2100,
       },
     });
     m = await mount({ path: '/produto/pudim' });
     await flush();
-    expect(text('.v-pp-price')).toMatch(/^a partir de R\$\s18,00$/);
+    expect(text('.v-pp-price')).toMatch(/^a partir de R\$\s21,00$/);
   });
 });
 

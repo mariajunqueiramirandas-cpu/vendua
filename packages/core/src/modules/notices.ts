@@ -25,13 +25,25 @@ export interface Notice {
   endsAt?: string;
 }
 
+/** The store's head tags, served to the edge with `?design=1`. */
+export interface PageMeta {
+  title: string;
+  description: string | null;
+  /** absolute */
+  image: string | null;
+  /** the store's public origin (storeOrigin) */
+  url: string;
+  siteName: string;
+}
+
 export interface SurfacesEnvelope {
   version: 1;
-  store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string };
+  store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string; closesAt?: string };
   notices: Notice[];
   /** `?design=1` (the edge's injection, Kernel 1.10): the live templates and tokens */
   templates?: TemplateSet;
   tokens?: StorefrontTokens | null;
+  meta?: PageMeta;
 }
 
 function formatResume(iso: string | undefined, timeZone: string): string {

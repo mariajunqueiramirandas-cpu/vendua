@@ -3,7 +3,7 @@
 // packages/kernel/API.md). Everything a storefront may touch is exported here;
 // the package `exports` map hides the rest. Additive-only within Contract 2.
 
-export { defineStorefront, SLOT_KEYS, SLOT_ALIASES, KERNEL_PATHS } from './config.ts';
+export { defineStorefront, SLOT_KEYS, SLOT_ALIASES } from './config.ts';
 export type {
   ConsentPurpose,
   ContractMajor,
@@ -22,6 +22,9 @@ export type {
   PaymentMethod,
   PaymentStatusKind,
   SlotProps,
+  StoreMoney,
+  StoreTime,
+  StoreWords,
 } from './slot-props.ts';
 
 // runtime + required mounts
@@ -50,9 +53,32 @@ export {
   useCep,
   useWaitlist,
   useStockLeft,
+  // Kernel 1.14 — the rules bound to the store's live data
+  useCardState,
+  useMenu,
+  useStoreStatus,
+  useStoreHours,
+  useDeliverySummary,
+  useMoney,
+  useLinks,
+  useCopy,
+  useCartCount,
+  useCoupon,
+  useCouponCheck,
+  useLineQuote,
+  usePixTimer,
+  useReducedMotion,
+  useScrollSpy,
 } from './hooks.ts';
 export type { CartMutations, CustomerProfile, QueryError } from './hooks.ts';
 export { useErrorSurface } from './errors.ts';
+
+// Kernel 1.14 — presentation rules (pure; also `@vendua/kernel/rules`) and display components
+export * from './rules/index.ts';
+export { ProductPrice, ProductImage, QrCode } from './display.tsx';
+export type { ProductPriceProps, ProductImageProps, QrCodeProps } from './display.tsx';
+export { haptic } from './haptics.ts';
+export { Slot } from './slot.tsx';
 
 // primitives (ADR 0007)
 export {
@@ -73,6 +99,7 @@ export type {
   NotifyMeButtonProps,
   ProductLinkProps,
   QuantityStepperProps,
+  StoreStatusBadgeProps,
 } from './primitives.tsx';
 
 // page composition (Contract 2, ADR 0018)
@@ -117,7 +144,7 @@ export type {
 } from './composition/registry.ts';
 
 // Core API types + helpers
-export { ApiError, ERROR_CODES, formatCents } from './api.ts';
+export { ApiError, ERROR_CODES } from './api.ts';
 export type {
   ApiErrorBody,
   StoreProfile,
@@ -156,4 +183,10 @@ export type {
   // Kernel 1.12
   ModifierPricingRule,
   PaymentAdjustment,
+  // Kernel 1.14
+  AddedLine,
+  LinePicks,
+  LineQuote,
+  SpecialDay,
+  StoreMeta,
 } from './api.ts';

@@ -14,9 +14,10 @@ import {
 } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useEffect, useState } from 'react';
+import { instagramHandle, whatsappDigits } from '@vendua/kernel/rules';
 import { api, ApiError, type SpecialDay, type StoreView, type Zone } from '../../lib/api.ts';
 import { useAutosave } from '../../lib/autosave.ts';
-import { dateShort, hhmm, isoDate, money, phone, waDigits } from '../../lib/format.ts';
+import { dateShort, hhmm, isoDate, money, phone } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
@@ -862,6 +863,11 @@ function PolygonField({
   );
 }
 
+const CONTACT_ERROR = {
+  whatsapp: 'Use o DDD e o número, como (22) 98179-5040.',
+  instagram: 'Use o @ da loja ou o link do perfil.',
+};
+
 function Profile({
   s,
   patch,
@@ -873,7 +879,18 @@ function Profile({
 }) {
   const p = s.profile;
   const [waDraft, setWaDraft] = useState(phone(p.whatsapp));
+  const [waErr, setWaErr] = useState<string | null>(null);
+  const [igErr, setIgErr] = useState<string | null>(null);
   useEffect(() => setWaDraft(phone(p.whatsapp)), [p.whatsapp]);
+  // Core normalises both and refuses what it can't read; the Kernel's same rule answers first
+  const contact = (field: 'whatsapp' | 'instagram', v: string | null) =>
+    void run({ profile: { [field]: v } }).then(
+      () => (field === 'whatsapp' ? setWaErr : setIgErr)(null),
+      (e) => {
+        if (e instanceof ApiError && e.field === field)
+          (field === 'whatsapp' ? setWaErr : setIgErr)(CONTACT_ERROR[field]);
+      },
+    );
   return (
     <Section id="perfil" title="Perfil" hint="Como a loja se apresenta.">
       <Card className="space-y-5 p-5">
@@ -920,26 +937,31 @@ function Profile({
           />
         </Field>
         <div className="grid gap-5 sm:grid-cols-2">
-          <Field label="WhatsApp da loja" htmlFor="pf-wa">
+          <Field label="WhatsApp da loja" htmlFor="pf-wa" error={waErr}>
             <TextInput
               id="pf-wa"
               type="tel"
               inputMode="tel"
               value={waDraft}
+              aria-invalid={!!waErr || undefined}
               onChange={(e) => setWaDraft(e.target.value)}
               onBlur={() => {
-                const d = waDigits(waDraft);
-                if (d !== (p.whatsapp ?? null)) patch({ profile: { whatsapp: d } });
+                const raw = waDraft.trim();
+                const d = raw ? whatsappDigits(raw) : null;
+                if (raw && !d) return setWaErr(CONTACT_ERROR.whatsapp);
+                setWaErr(null);
+                if (d !== (p.whatsapp ?? null)) contact('whatsapp', d);
               }}
             />
           </Field>
-          <Field label="Instagram" optional htmlFor="pf-ig">
+          <Field label="Instagram" optional htmlFor="pf-ig" error={igErr}>
             <CommitInput
               id="pf-ig"
               maxLength={60}
-              value={p.instagram ?? ''}
+              value={p.instagram ? `@${p.instagram}` : ''}
               placeholder="@sualoja"
-              onCommit={(v) => patch({ profile: { instagram: v || null } })}
+              validate={(v) => (v && !instagramHandle(v) ? CONTACT_ERROR.instagram : null)}
+              onCommit={(v) => contact('instagram', v || null)}
             />
           </Field>
           <Field label="E-mail" optional htmlFor="pf-mail">

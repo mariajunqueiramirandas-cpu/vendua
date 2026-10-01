@@ -5,7 +5,9 @@ import { contrastProblems, validateTokens, type TemplateSet } from '@vendua/temp
 import { readTemplatesDir } from '@vendua/templates/node';
 import { SDK_SCHEMAS, catalogOf } from '@vendua/kernel/sdk-catalog';
 import { extractSchemas } from '@vendua/kernel/vite';
+import { runOwnership } from './ownership.ts';
 import type { CheckResult } from './report.ts';
+import { lines, literals, stripComments } from './source.ts';
 import { KERNEL_IMPORT_ALLOW, run, sourceFiles } from './static.ts';
 
 // `vendua check` lint rules (04 — lint rules; 17 — Contract 2). Each rule is a
@@ -30,19 +32,6 @@ const pass = (id: string, title: string, detail?: string): CheckResult => ({
   status: 'pass',
   ...(detail ? { detail } : {}),
 });
-
-/** Strips comments but keeps line structure so locations stay right. */
-function stripComments(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');
-}
-
-function lines(file: string): { n: number; text: string }[] {
-  return stripComments(readFileSync(file, 'utf8'))
-    .split('\n')
-    .map((text, i) => ({ n: i + 1, text }));
-}
 
 function walk(dir: string, ext: RegExp): string[] {
   const out: string[] = [];
@@ -108,6 +97,10 @@ function closure(entry: string): string[] {
 const IMPURE =
   /\b(useCart|useCheckout|useCustomer|useDeliveryQuote|useConsent|useOrderHistory|AddToCart|CheckoutButton|QuantityStepper|NotifyMeButton|fetch)\b/;
 
+// overrides load with vendua.config.ts, in Node, before the Kernel's React runtime exists
+const KERNEL_MAIN_IMPORT =
+  /\b(import|export)\s+(type\s+)?(\{[^}]*\}|\*\s+as\s+\w+|\*|\w+(?:\s*,\s*\{[^}]*\})?)\s*from\s*['"]@vendua\/kernel['"]/g;
+
 function k08(dir: string): CheckResult {
   const id = 'K08';
   const title =
@@ -122,10 +115,30 @@ function k08(dir: string): CheckResult {
             `${relative(dir, f)}:${n} (${key}): '${hit[1]}' — overrides receive data via props and act through callbacks`,
           );
       }
+      const src = stripComments(readFileSync(f, 'utf8'));
+      for (const m of src.matchAll(KERNEL_MAIN_IMPORT)) {
+        if (m[2]) continue;
+        const clause = m[3]!;
+        // `{ a, type B }` names its values; a namespace, default or `*` re-export is all values
+        const values = clause.startsWith('{')
+          ? clause
+              .slice(1, -1)
+              .split(',')
+              .map((s) => s.trim())
+              .filter((s) => s && !s.startsWith('type '))
+          : [clause.replace(/\s+/g, ' ')];
+        if (values.length)
+          problems.push(
+            `${relative(dir, f)}:${src.slice(0, m.index).split('\n').length} (${key}): runtime import of ${values.join(', ')} from '@vendua/kernel' — an override loads with the store config, so import helpers from '@vendua/kernel/rules' (types: \`import type\`)`,
+          );
+      }
     }
   }
   return problems.length ? fail(id, title, problems.join('\n')) : pass(id, title);
 }
+
+const PRODUCT_URL =
+  'hand-built product URL — use ProductLink (route resolution + prefetch) or useLinks().product(slug); an absolute link (QR, share) is useLinks().absolute(…)';
 
 function k09(dir: string): CheckResult {
   const id = 'K09';
@@ -133,25 +146,26 @@ function k09(dir: string): CheckResult {
   const problems: string[] = [];
   for (const f of sourceFiles(dir)) {
     const rel = relative(dir, f);
+    const found: { n: number; msg: string }[] = [];
     for (const { n, text } of lines(f)) {
       if (/\buseCheckout\s*\(/.test(text))
-        problems.push(
-          `${rel}:${n}: useCheckout() — checkout is a Kernel page; link with CheckoutButton`,
-        );
+        found.push({
+          n,
+          msg: 'useCheckout() — checkout is a Kernel page; link with CheckoutButton',
+        });
       if (
-        /\bmutations\s*\.\s*(add|updateQty|remove|setDelivery)\b/.test(text) ||
+        /\bmutations\s*\.\s*(add|addLine|updateQty|remove|setDelivery)\b/.test(text) ||
         /\.\s*mutations\b/.test(text)
       )
-        problems.push(
-          `${rel}:${n}: cart mutation called directly — use AddToCart / QuantityStepper`,
-        );
-      if (/(?:to|href)=\{?\s*[`'"]\/produto\//.test(text))
-        problems.push(
-          `${rel}:${n}: hand-built product URL — use ProductLink (route resolution + prefetch)`,
-        );
+        found.push({ n, msg: 'cart mutation called directly — use AddToCart / QuantityStepper' });
+      if (/\bnavigate\s*\(\s*[`'"]\/produto/.test(text)) found.push({ n, msg: PRODUCT_URL });
     }
+    for (const l of literals(stripComments(readFileSync(f, 'utf8'))))
+      if (l.raw.includes('/produto/')) found.push({ n: l.line, msg: PRODUCT_URL });
+    for (const { n, msg } of found.sort((a, b) => a.n - b.n)) problems.push(`${rel}:${n}: ${msg}`);
   }
-  return problems.length ? fail(id, title, problems.join('\n')) : pass(id, title);
+  const unique = [...new Set(problems)];
+  return unique.length ? fail(id, title, unique.join('\n')) : pass(id, title);
 }
 
 /** Selector text of every rule in a stylesheet (declarations and at-rule preludes excluded). */
@@ -209,6 +223,23 @@ type Catalog = Record<
   { areas?: Record<string, { accepts: string[]; max?: number }>; category?: string }
 >;
 
+/** Declared area keys the section (and the modules it imports) never renders as a literal <BlockArea name>. */
+function unrenderedAreas(entry: string, declared: string[]): string[] {
+  if (declared.length === 0) return [];
+  const rendered = new Set<string>();
+  for (const f of closure(entry)) {
+    const src = stripComments(readFileSync(f, 'utf8'));
+    for (const m of src.matchAll(/<BlockArea\b/g)) {
+      const tag = src.slice(m.index, m.index + 400).split('/>')[0]!;
+      const named = /\bname\s*=\s*\{?\s*(['"`])([^'"`$]+)\1/.exec(tag);
+      // a computed name could be any key — can't tell, so don't guess
+      if (!named) return [];
+      rendered.add(named[2]!);
+    }
+  }
+  return declared.filter((k) => !rendered.has(k));
+}
+
 function k11(dir: string): CheckResult {
   const id = 'K11';
   const title =
@@ -248,6 +279,10 @@ function k11(dir: string): CheckResult {
           `sections/${f}: areas must be a literal object (the build publishes them for template migrations)`,
         );
       store[type] = found[type]!;
+      for (const key of unrenderedAreas(join(secDir, f), Object.keys(found[type]!.areas ?? {})))
+        problems.push(
+          `sections/${f}: declares area '${key}' but never renders <BlockArea name="${key}" /> — blocks a merchant places there would not show`,
+        );
     }
   }
 
@@ -386,5 +421,6 @@ export async function runLint(dir: string): Promise<CheckResult[]> {
     k12(dir),
     ...(await k13_14(dir)),
     await k15(dir),
+    ...runOwnership(dir),
   ];
 }

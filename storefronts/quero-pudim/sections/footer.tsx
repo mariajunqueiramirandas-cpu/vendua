@@ -7,7 +7,9 @@ import {
   list,
   text,
   url,
+  useLinks,
   useStore,
+  useStoreHours,
   type SectionProps,
 } from '@vendua/kernel';
 
@@ -25,32 +27,11 @@ export const schema = defineSection({
   areas: { extra: { accepts: ['info', 'social-proof', 'promo'], max: 2 } },
 });
 
-const DAY_LABEL = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-
-function hoursSummary(
-  hours: { windows: { days: number[]; open: string; close: string }[] } | undefined,
-) {
-  const w = hours?.windows ?? [];
-  if (w.length === 0) return null;
-  return w
-    .map((x) => {
-      const days =
-        x.days.length === 7
-          ? 'todos os dias'
-          : [...x.days]
-              .sort()
-              .map((d) => DAY_LABEL[d])
-              .join(' · ');
-      return `${days}, ${x.open}–${x.close}`;
-    })
-    .join('  ·  ');
-}
-
 export default function Footer({ settings }: SectionProps<typeof schema>) {
   const { store } = useStore();
-  const instagram = store?.instagram?.replace(/^@/, '');
-  const whatsapp = store?.whatsapp?.replace(/\D/g, '');
-  const hours = hoursSummary(store?.hours);
+  const { contacts } = useLinks();
+  const { rows, today } = useStoreHours();
+  const anyOpen = rows.some((r) => !r.closed);
   const address = [store?.address, store?.city].filter(Boolean).join(', ');
   return (
     <footer className="site-footer">
@@ -64,19 +45,19 @@ export default function Footer({ settings }: SectionProps<typeof schema>) {
             />
             {settings.blurb ? <p className="footer-blurb">{settings.blurb}</p> : null}
             <div className="footer-social">
-              {instagram ? (
+              {contacts.instagram ? (
                 <a
-                  href={`https://www.instagram.com/${instagram}/`}
+                  href={contacts.instagram.href}
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label={`Instagram @${instagram}`}
+                  aria-label={`Instagram @${contacts.instagram.handle}`}
                 >
                   <Instagram size={18} aria-hidden="true" />
                 </a>
               ) : null}
-              {whatsapp ? (
+              {contacts.whatsapp ? (
                 <a
-                  href={`https://wa.me/${whatsapp}`}
+                  href={contacts.whatsapp.href}
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label="WhatsApp"
@@ -107,24 +88,33 @@ export default function Footer({ settings }: SectionProps<typeof schema>) {
                 <MapPin size={16} aria-hidden="true" /> {address}
               </p>
             ) : null}
-            {hours ? (
+            {anyOpen ? (
               <p className="footer-line tnum">
-                <Clock size={16} aria-hidden="true" /> {hours}
+                <Clock size={16} aria-hidden="true" />
+                <span className="footer-hours">
+                  {today?.special ? (
+                    <span data-today>
+                      Hoje{today.special.label ? ` (${today.special.label})` : ''},{' '}
+                      {today.closed ? 'fechado' : windowsText(today.windows)}
+                    </span>
+                  ) : null}
+                  {rows.map((r) => (
+                    <span key={r.label} data-today={(r.today && !today?.special) || undefined}>
+                      {r.label}, {r.closed ? 'fechado' : windowsText(r.windows)}
+                    </span>
+                  ))}
+                </span>
               </p>
             ) : null}
-            {whatsapp ? (
-              <a href={`https://wa.me/${whatsapp}`} target="_blank" rel="noopener noreferrer">
+            {contacts.whatsapp ? (
+              <a href={contacts.whatsapp.href} target="_blank" rel="noopener noreferrer">
                 <MessageCircle size={16} aria-hidden="true" /> Falar no WhatsApp{' '}
                 <ArrowUpRight size={14} aria-hidden="true" />
               </a>
             ) : null}
-            {instagram ? (
-              <a
-                href={`https://www.instagram.com/${instagram}/`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Instagram size={16} aria-hidden="true" /> @{instagram}{' '}
+            {contacts.instagram ? (
+              <a href={contacts.instagram.href} target="_blank" rel="noopener noreferrer">
+                <Instagram size={16} aria-hidden="true" /> @{contacts.instagram.handle}{' '}
                 <ArrowUpRight size={14} aria-hidden="true" />
               </a>
             ) : null}
@@ -140,3 +130,6 @@ export default function Footer({ settings }: SectionProps<typeof schema>) {
     </footer>
   );
 }
+
+const windowsText = (ws: { open: string; close: string }[]) =>
+  ws.map((w) => `${w.open}–${w.close}`).join(', ');

@@ -11,7 +11,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Payments as PaymentsData, type PayMethod } from '../../lib/api.ts';
-import { ago, money } from '../../lib/format.ts';
+import { ago, money, plural } from '../../lib/format.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { useCan } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -110,15 +110,10 @@ export default function Payments() {
                   title="Vendas por forma de pagamento"
                   summary={summary30(data)}
                   format={money}
-                  rows={Object.entries(
-                    data.last30.reduce<Record<string, number>>(
-                      (a, r) => ({ ...a, [r.method]: (a[r.method] ?? 0) + r.cents }),
-                      {},
-                    ),
-                  ).map(([m, cents]) => ({
-                    key: m,
-                    label: METHOD[m as PayMethod]?.label ?? m,
-                    value: cents,
+                  rows={data.last30ByMethod.map((r) => ({
+                    key: r.method,
+                    label: METHOD[r.method]?.label ?? r.method,
+                    value: r.cents,
                   }))}
                 />
               </Card>
@@ -131,9 +126,8 @@ export default function Payments() {
 }
 
 function summary30(d: PaymentsData) {
-  const total = d.last30.reduce((a, r) => a + r.cents, 0);
-  return total
-    ? `${money(total)} em ${d.last30.reduce((a, r) => a + r.orders, 0)} pedidos`
+  return d.last30TotalCents
+    ? `${money(d.last30TotalCents)} em ${plural(d.last30Orders, 'pedido', 'pedidos')}`
     : 'Sem vendas nos últimos 30 dias.';
 }
 

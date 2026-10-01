@@ -336,8 +336,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
     const s = (await sql`select * from store_settings where tenant_id = ${tenantId}`)[0]!;
     expect(s).toMatchObject({
       tagline: 'Doces e bolos',
-      whatsapp: '21999990000',
-      instagram: '@doceria.exemplo',
+      whatsapp: '5521999990000',
+      instagram: 'doceria.exemplo',
       min_order_cents: 2000,
       prep_time_minutes: 25,
       pickup_enabled: true,

@@ -267,7 +267,8 @@ describe('links + cross-device history', () => {
     });
     expect(window.location.search).toBe('');
     expect(window.location.pathname).toBe('/sacola');
-    expect($('[data-vendua="banner-stack"]')?.textContent).toContain('Sacola recuperada');
+    // Kernel 1.14: worded through the store's vocabulary (gender-safe: "Seu carrinho…")
+    expect($('[data-vendua="banner-stack"]')?.textContent).toContain('Sua sacola está de volta');
   });
 
   test('/pedidos verifies a phone with an order number, then lists that phone’s orders', async () => {
@@ -601,7 +602,9 @@ describe('stock already in the cart — kits, modifier lines, catalog', () => {
     expect($('.v-card [data-part="badge"]')?.textContent).toBe('Últimas 2');
   });
 
-  test('with every unit in the cart the card says so and the quick add is locked', async () => {
+  // Kernel 1.14: `cardState.canQuickAdd` — a card whose every unit is in the bag offers no
+  // quick add (it used to offer a locked one)
+  test('with every unit in the cart the card says so and offers no quick add', async () => {
     const product = { ...PRODUCT, stockQuantity: 3, lowStock: true, needsChoices: false };
     const c = core((url) => {
       if (url.pathname === '/storefront/v1/catalog')
@@ -615,10 +618,7 @@ describe('stock already in the cart — kits, modifier lines, catalog', () => {
     m = await mount({ path: '/', session: 'tok' });
     await flush();
     expect($('.v-card [data-part="badge"]')?.textContent).toBe('Tudo na sacola');
-    const add = $('[data-vendua="add-to-cart"]') as HTMLButtonElement;
-    expect(add.getAttribute('data-state')).toBe('limit');
-    await act(async () => add.click());
-    await flush();
+    expect($('.v-card [data-vendua="add-to-cart"]')).toBeNull();
     expect(c.calls.some((x) => x.path === '/checkout/v1/cart/items')).toBe(false);
   });
 });

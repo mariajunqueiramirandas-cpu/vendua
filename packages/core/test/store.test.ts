@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { deriveStatus, type StoreHours } from '../src/modules/store.ts';
+import {
+  deriveStatus,
+  instagramHandle,
+  upcomingSpecialDays,
+  whatsappDigits,
+  type StoreHours,
+} from '../src/modules/store.ts';
 
 const TZ = 'America/Sao_Paulo';
 const at = (iso: string) => new Date(iso);
@@ -114,5 +120,71 @@ describe('deriveStatus — merchant admin additions', () => {
     expect(deriveStatus(daily9to22, null, null, at('2026-09-18T18:00:00Z'), special).status).toBe(
       'open',
     );
+  });
+});
+
+describe('upcomingSpecialDays', () => {
+  const day = (date: string, extra: object = {}) => ({ date, closed: true, ...extra });
+
+  test('today in store time and later, sorted, capped', () => {
+    // 2026-09-19 02:30 UTC is still the 18th in São Paulo
+    const now = at('2026-09-19T02:30:00Z');
+    const days = [
+      day('2026-12-25', { label: 'Natal' }),
+      day('2026-09-17'),
+      day('2026-09-18', { closed: false, open: '10:00', close: '14:00' }),
+      day('2026-10-12'),
+    ];
+    expect(upcomingSpecialDays(days, TZ, now)).toEqual([
+      { date: '2026-09-18', closed: false, open: '10:00', close: '14:00' },
+      { date: '2026-10-12', closed: true },
+      { date: '2026-12-25', closed: true, label: 'Natal' },
+    ]);
+    expect(upcomingSpecialDays(days, TZ, now, 1)).toHaveLength(1);
+    // in UTC the 18th is already past
+    expect(upcomingSpecialDays(days, 'UTC', now)[0]!.date).toBe('2026-10-12');
+  });
+
+  test('a malformed stored row is dropped, never thrown on', () => {
+    const now = at('2026-09-18T15:00:00Z');
+    expect(upcomingSpecialDays(null, TZ, now)).toEqual([]);
+    expect(
+      upcomingSpecialDays([null, { date: 'amanhã' }, day('2026-09-30')] as never, TZ, now),
+    ).toEqual([{ date: '2026-09-30', closed: true }]);
+  });
+});
+
+describe('store contacts: one form, the one /store serves', () => {
+  test('WhatsApp: digits with 55, whatever was typed', () => {
+    expect(whatsappDigits('(22) 98144-8322')).toBe('5522981448322');
+    expect(whatsappDigits('+55 (22) 98144-8322')).toBe('5522981448322');
+    expect(whatsappDigits('022 98144-8322')).toBe('5522981448322');
+    expect(whatsappDigits('22 3344-5566')).toBe('552233445566');
+    expect(whatsappDigits('5522981448322')).toBe('5522981448322');
+    expect(whatsappDigits(21999990000)).toBe('5521999990000');
+    // DDD 55 (Santa Maria, RS) keeps its own 55
+    expect(whatsappDigits('(55) 99123-4567')).toBe('5555991234567');
+    expect(whatsappDigits(whatsappDigits('(55) 99123-4567'))).toBe('5555991234567');
+    for (const bad of ['2299', '+1 202 555 01234 99', '', null, undefined, {}])
+      expect(whatsappDigits(bad)).toBeNull();
+  });
+
+  test('Instagram: the bare handle, from an @ or a profile link', () => {
+    expect(instagramHandle('@queropudim_gourmet')).toBe('queropudim_gourmet');
+    expect(instagramHandle('queropudim_gourmet')).toBe('queropudim_gourmet');
+    expect(instagramHandle(' https://www.instagram.com/doce.ria/?igshid=abc ')).toBe('doce.ria');
+    expect(instagramHandle('instagram.com/doce.ria/')).toBe('doce.ria');
+    expect(instagramHandle('HTTP://Instagram.com/Doce')).toBe('Doce');
+    for (const bad of [
+      '',
+      '@',
+      'doce ria',
+      'https://facebook.com/x',
+      'facebook.com/doce',
+      'https://linktr.ee/doce',
+      null,
+      42,
+    ])
+      expect(instagramHandle(bad)).toBeNull();
   });
 });

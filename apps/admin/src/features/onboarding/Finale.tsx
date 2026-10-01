@@ -1,10 +1,10 @@
 import { ArrowRight, Copy, WhatsappLogo } from '@phosphor-icons/react';
-import QRCode from 'qrcode';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Confetti } from '../../ui/Celebration.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
+import { Qr } from '../../ui/Qr.tsx';
 import { haptic } from '../../lib/haptics.ts';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -16,15 +16,9 @@ export interface Pending {
 
 /** The last screen: the store is real, here is its address, tell everyone. */
 export function Finale({ url, name, pending }: { url: string; name: string; pending: Pending[] }) {
-  const [qr, setQr] = useState<string | null>(null);
   const text = useMemo(() => `A ${name} agora tem loja online! Peça por aqui: ${url}`, [name, url]);
   useEffect(() => {
     haptic.commit();
-    void QRCode.toDataURL(url, {
-      margin: 1,
-      width: 400,
-      color: { dark: '#123c32', light: '#fffdf8' },
-    }).then(setQr);
   }, [url]);
   return (
     <div className="animate-fade-up space-y-6">
@@ -35,7 +29,7 @@ export function Finale({ url, name, pending }: { url: string; name: string; pend
           Parabéns, {name}. Agora é só contar para todo mundo.
         </p>
         <div className="mt-6 flex flex-col gap-6 sm:flex-row sm:items-center">
-          {qr ? <img src={qr} alt={`QR code para ${url}`} className="size-40 rounded-md" /> : null}
+          <Qr value={url} alt={`QR code para ${url}`} className="size-40 shrink-0 rounded-md" />
           <div className="hidden w-40 shrink-0 rounded-xl bg-[#f7f4ea] p-2 md:block">
             <Mascote pose="publicar" size={144} />
           </div>

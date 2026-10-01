@@ -1,7 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { money, ORDER_STATE_LABEL, PAYMENT_LABEL } from '@vendua/ui-defaults';
-import { useCart, useLoyalty, useOrder, useOrderHistory, useOrders, useStore } from '../hooks.ts';
+import {
+  useCart,
+  useCopy,
+  useLoyalty,
+  useOrder,
+  useOrderHistory,
+  useOrders,
+  usePixTimer,
+  useStore,
+} from '../hooks.ts';
+import { formatCents, LOCALE } from '../rules/format.ts';
+import { whatsappUrl } from '../rules/links.ts';
+import {
+  ORDER_STATE_LABEL,
+  PAYMENT_METHOD_LABEL,
+  PIX_KEY_LABEL,
+  REFUNDED_PAYMENT_STATUSES,
+} from '../rules/orders.ts';
+import type { Vocabulary } from '../rules/copy.ts';
+import { usePageTitle } from '../head.ts';
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 import { Slot } from '../slot.tsx';
 import { KLink } from '../sdk/sections.tsx';
 import { KERNEL_PATHS } from '../config.ts';
@@ -17,23 +37,16 @@ import { useKernel, invalidateQuery } from '../provider.tsx';
 // the purchased items, Pix copia e cola, "pedir de novo", orders from other
 // devices (phone + order number) and the loyalty card.
 
-const KEY_LABEL: Record<string, string> = {
-  cpf: 'CPF',
-  cnpj: 'CNPJ',
-  email: 'e-mail',
-  phone: 'celular',
-  random: 'chave aleatória',
-};
-
 function useReorder() {
   const { mutations } = useCart();
+  const { vocabulary } = useCopy();
   const go = useNavigateTo();
   const [pending, setPending] = useState<string | null>(null);
   const reorder = async (orderId: string) => {
     setPending(orderId);
     try {
       const { report } = await mutations.reorder(orderId);
-      announce(report);
+      announce(report, vocabulary);
       go(KERNEL_PATHS.cart);
     } catch (err) {
       showError(err);
@@ -44,23 +57,21 @@ function useReorder() {
   return { reorder, pending };
 }
 
-function announce(report: ImportReport) {
-  if (report.skipped.length === 0) showInfo('reorder', 'Itens de volta na sacola');
+function announce(report: ImportReport, v: Vocabulary) {
+  if (report.skipped.length === 0)
+    showInfo('reorder', `${capitalize(v.itemPlural)} de volta ${v.inBag}`);
   else
     showInfo(
       'reorder',
-      report.added ? 'Parte do pedido voltou para a sacola' : 'Nenhum item está disponível agora',
+      report.added
+        ? `Parte do pedido voltou ${v.toBag}`
+        : `Nenhum ${v.itemSingular} está disponível agora`,
       report.skipped.map((s) => errorCopy(s.code).title).join(' · '),
     );
 }
 
-const REFUNDED = new Set(['refunded', 'partially_refunded']);
-
-function whatsappHref(store: StoreProfile | undefined, order: Order): string | undefined {
-  const wa = store?.whatsapp?.replace(/\D/g, '');
-  if (!wa) return undefined;
-  const text = `Oi! Quero combinar o pagamento do pedido #${order.number}.`;
-  return `https://wa.me/${wa}?text=${encodeURIComponent(text)}`;
+function whatsappHref(store: StoreProfile | undefined, order: Order): string | null {
+  return whatsappUrl(store?.whatsapp, `Oi! Quero combinar o pagamento do pedido #${order.number}.`);
 }
 
 /** Kernel 1.7 — the order's online payment (Mercado Pago card checkout, online Pix):
@@ -77,7 +88,6 @@ function useOnlinePayment(
   const [next, setNext] = useState<PaymentNext | null>(null);
   const [returned, setReturned] = useState(false);
   const [justPaid, setJustPaid] = useState(false);
-  const [, tick] = useState(0);
   const started = useRef<string | null>(null);
   const lastStatus = useRef<string | undefined>(undefined);
 
@@ -89,8 +99,8 @@ function useOnlinePayment(
   const nextPix = next?.kind === 'pix' ? next : null;
   const pixCode = pay?.pix?.copyPaste || nextPix?.copyPaste;
   const pixExpiresAt = pay?.pix?.expiresAt ?? nextPix?.expiresAt ?? null;
-  const deadline = pixExpiresAt ? Date.parse(pixExpiresAt) : NaN;
-  const pixTimedOut = Number.isFinite(deadline) && Date.now() >= deadline;
+  // the Pix expires on the shopper's clock too, not only when Core says so
+  const pixTimedOut = usePixTimer(status === 'pending' ? pixExpiresAt : null).expired;
   const retorno = params.get('pagamento') === 'retorno';
   // MP appends its own outcome to the back_url — a hint for the copy only; Core's sync is the truth
   const mpHint = params.get('collection_status') ?? params.get('status');
@@ -129,15 +139,6 @@ function useOnlinePayment(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, autoPix, autoReturn]);
 
-  // the Pix expires on the shopper's clock too, not only when Core says so
-  useEffect(() => {
-    if (!Number.isFinite(deadline) || status !== 'pending') return;
-    const ms = deadline - Date.now();
-    if (ms <= 0) return;
-    const t = setTimeout(() => tick((n) => n + 1), Math.min(ms + 250, 2 ** 31 - 1));
-    return () => clearTimeout(t);
-  }, [deadline, status]);
-
   // paid while this page was open (live stream, sync) — the default celebrates it
   useEffect(() => {
     // …or the shopper just came back from Mercado Pago to a confirmed payment
@@ -157,7 +158,7 @@ function useOnlinePayment(
   if (!order || !isOnline) kind = null;
   else if (work === 'redirect') kind = 'redirecting';
   else if (status === 'paid') kind = 'paid';
-  else if (status && REFUNDED.has(status)) kind = 'refunded';
+  else if (status && REFUNDED_PAYMENT_STATUSES.has(status)) kind = 'refunded';
   else if (order.state === 'cancelled') kind = null;
   else if (work === 'sync') kind = 'confirming';
   else if (failure) {
@@ -231,8 +232,12 @@ export function OrderPage() {
   // live: the Kernel holds a long poll open while the tab is visible (Kernel 1.2)
   const { order, loading, error, refetch } = useOrder(id);
   const { store } = useStore();
+  const { vocabulary } = useCopy();
   const { reorder, pending } = useReorder();
   const currency = store?.currency ?? 'BRL';
+  const timeZone = store?.hours.timezone || undefined;
+  const time = timeZone ? { timeZone } : {};
+  usePageTitle(order ? `Pedido #${order.number}` : null);
   const params = new URLSearchParams(search);
   const isNew = params.has('novo');
   const online = useOnlinePayment(order, store, params);
@@ -263,16 +268,19 @@ export function OrderPage() {
         />
       ) : (
         <>
-          {isNew ? <Slot name="checkout.SuccessPage" order={order} currency={currency} /> : null}
+          {isNew ? (
+            <Slot name="checkout.SuccessPage" order={order} currency={currency} {...time} />
+          ) : null}
           {online.panel ? <Slot name="checkout.PaymentStatus" {...online.panel} /> : null}
           {payPix ? (
             <Slot
               name="checkout.PixPayment"
               copyPaste={pix.copyPaste}
               beneficiary={pix.beneficiary ?? ''}
-              {...(pix.keyType ? { keyLabel: KEY_LABEL[pix.keyType] ?? pix.keyType } : {})}
+              {...(pix.keyType ? { keyLabel: PIX_KEY_LABEL[pix.keyType] ?? pix.keyType } : {})}
               amountCents={order.totalCents}
               currency={currency}
+              {...time}
               {...(order.payment.online
                 ? { online: true, expiresAt: online.pixExpiresAt ?? null }
                 : {})}
@@ -282,7 +290,8 @@ export function OrderPage() {
             name="order.StatusPage"
             order={order}
             currency={currency}
-            timeline={<Slot name="order.Timeline" events={order.timeline} />}
+            {...time}
+            timeline={<Slot name="order.Timeline" events={order.timeline} {...time} />}
             {...(order.delivery.mode === 'pickup' && store?.pickup ? { pickup: store.pickup } : {})}
           />
           {order.items?.length ? (
@@ -290,6 +299,7 @@ export function OrderPage() {
               name="order.Items"
               items={order.items}
               currency={currency}
+              vocabulary={vocabulary}
               notes={order.notes ?? null}
               scheduledFor={order.scheduledFor ?? null}
               discountCents={order.discountCents ?? 0}
@@ -297,7 +307,8 @@ export function OrderPage() {
               {...(order.paymentAdjustmentCents
                 ? {
                     paymentAdjustmentCents: order.paymentAdjustmentCents,
-                    paymentLabel: PAYMENT_LABEL[order.payment.method] ?? order.payment.method,
+                    paymentLabel:
+                      PAYMENT_METHOD_LABEL[order.payment.method] ?? order.payment.method,
                   }
                 : {})}
               onReorder={() => void reorder(order.id)}
@@ -320,10 +331,13 @@ export function OrderHistoryPage() {
   const phone = useOrders();
   const loyalty = useLoyalty(phone.phone);
   const { store } = useStore();
+  const { vocabulary } = useCopy();
   const { reorder, pending } = useReorder();
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string>();
   const currency = store?.currency ?? 'BRL';
+  const timeZone = store?.hours.timezone || undefined;
+  usePageTitle('Meus pedidos');
 
   // one list: this device's full orders, plus the phone's orders placed elsewhere
   const localIds = new Set(local.orders.map((o) => o.id));
@@ -363,7 +377,12 @@ export function OrderHistoryPage() {
           : 'Pedidos deste aparelho e do seu WhatsApp.'}
       </p>
       {loyalty.card?.enabled ? (
-        <Slot name="customer.LoyaltyCard" card={loyalty.card} currency={currency} />
+        <Slot
+          name="customer.LoyaltyCard"
+          card={loyalty.card}
+          currency={currency}
+          {...(timeZone ? { timeZone } : {})}
+        />
       ) : null}
       {loading ? (
         <div className="v-panel" aria-busy="true" aria-label="Carregando pedidos" />
@@ -382,9 +401,10 @@ export function OrderHistoryPage() {
                 <span className="v-order-row-main">
                   <strong className="v-order-row-title">Pedido #{o.number}</strong>
                   <span className="v-muted v-order-row-meta">
-                    {new Date(o.placedAt).toLocaleDateString('pt-BR', {
+                    {new Date(o.placedAt).toLocaleDateString(LOCALE, {
                       day: '2-digit',
                       month: 'short',
+                      ...(timeZone ? { timeZone } : {}),
                     })}
                     {o.items.length
                       ? ` · ${o.items.map((i) => `${i.qty}× ${i.name}`).join(', ')}`
@@ -392,7 +412,9 @@ export function OrderHistoryPage() {
                   </span>
                 </span>
                 <span className="v-order-row-side">
-                  <span className="v-num v-order-row-total">{money(o.totalCents, currency)}</span>
+                  <span className="v-num v-order-row-total">
+                    {formatCents(o.totalCents, currency)}
+                  </span>
                   <span className="v-order-row-state" data-state={o.state}>
                     {ORDER_STATE_LABEL[o.state] ?? o.state}
                   </span>
@@ -418,7 +440,7 @@ export function OrderHistoryPage() {
                     disabled={pending === o.id}
                     onClick={() => void reorder(o.id)}
                   >
-                    {pending === o.id ? 'Colocando na sacola…' : 'Pedir de novo'}
+                    {pending === o.id ? `Colocando ${vocabulary.inBag}…` : 'Pedir de novo'}
                   </button>
                 ) : null}
               </li>

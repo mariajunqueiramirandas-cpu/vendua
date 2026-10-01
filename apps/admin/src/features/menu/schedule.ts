@@ -1,6 +1,9 @@
 import type { AvailabilitySchedule, Product, PromoSchedule } from '../../lib/api.ts';
 import { hhmm, money, WEEKDAYS } from '../../lib/format.ts';
 
+// The editors' live sentences for input not saved yet; a saved schedule is worded by Core
+// (`product.storefront.*ScheduleLabel`).
+
 export type ScheduleWindow = AvailabilitySchedule['windows'][number];
 
 /** The week as a merchant reads it: segunda first. */
@@ -31,15 +34,6 @@ export function daysText(days: number[]): string {
 
 export const windowText = (w: ScheduleWindow) =>
   `${daysText(w.days)}, ${w.from && w.to ? `das ${hhmm(w.from)} às ${hhmm(w.to)}` : 'o dia todo'}`;
-
-/** "Seg a sex, das 11h às 15h; sáb, o dia todo" */
-export function scheduleShort(s: Pick<AvailabilitySchedule, 'windows'>): string {
-  const t = s.windows
-    .filter((w) => w.days.length)
-    .map(windowText)
-    .join('; ');
-  return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Nenhum dia escolhido';
-}
 
 /** The full sentence under the editor, including what shoppers see outside the windows. */
 export function scheduleSentence(s: AvailabilitySchedule): string {

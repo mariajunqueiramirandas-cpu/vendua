@@ -29,9 +29,8 @@ vendua/
                         # shares only the API client (not a Kernel consumer);
                         # see ../merchant-admin.md
   storefronts/
-    _template/          # `vendua scaffold` source — always green
-    _examples/          # curated golden storefronts — the only sibling
-                        # read set for agents
+    _template/          # `vendua scaffold` source — always green; the only
+                        # reference storefront
     quero-pudim/
     <slug>…
   tools/                # repo-level CI utilities, affected-graph scripts
@@ -46,8 +45,7 @@ vendua/
   contributors — a storefront PR that modifies Kernel or another store cannot
   merge.
 - **CODEOWNERS**: `packages/**` → platform team; `storefronts/**` → fleet
-  automation + on-call owner; `storefronts/_template` and
-  `storefronts/_examples` → platform team.
+  automation + on-call owner; `storefronts/_template` → platform team.
 - Package `exports` maps hide Kernel internals; `vendua check` lints
   cross-boundary imports (no `storefronts/A` importing `storefronts/B`, no
   storefront importing `packages/*` internals).
@@ -85,14 +83,13 @@ never sees the whole repo**. Agent checkouts are sparse and read-scoped:
 git clone --depth=1 --filter=blob:none --sparse vendua
 git sparse-checkout set \
   packages/kernel packages/conformance docs \
-  storefronts/_template storefronts/_examples storefronts/<slug>
+  storefronts/_template storefronts/<slug>
 ```
 
-- **Read set**: Kernel source, the scaffold template, `docs/`, and
-  `storefronts/_examples/` — a small set of golden storefronts maintained by
-  the platform team as canonical references. The rest of the fleet is never
-  materialized: clone size stays flat at N=1000, the agent can't drown in
-  1000 storefronts, and one store's bad pattern can't become the fleet's
+- **Read set**: Kernel source, the scaffold template (`_template`, the platform's
+  only reference storefront), `docs/`, and the agent's own store. The rest of the
+  fleet is never materialized: clone size stays flat at N=1000, the agent can't
+  drown in 1000 storefronts, and one store's bad pattern can't become the fleet's
   reference implementation.
 - **Write scope**: `storefronts/<slug>/**` only, enforced by the changed-path
   CI check — the agent can't stray even within its sparse view.

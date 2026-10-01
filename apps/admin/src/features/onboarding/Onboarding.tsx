@@ -325,7 +325,13 @@ function Flow({
               </Button>
               {peek ? (
                 <div className="animate-fade-up mt-4">
-                  <MiniStore draft={draft} products={products} whatsapp={!!s.profile.whatsapp} />
+                  <MiniStore
+                    draft={draft}
+                    products={products}
+                    whatsapp={!!s.profile.whatsapp}
+                    timeZone={s.hours.timezone}
+                    specialDays={s.specialDays}
+                  />
                 </div>
               ) : null}
             </div>
@@ -338,7 +344,13 @@ function Flow({
             aria-label="prévia da sua loja"
           >
             <p className="t-label mb-3 text-center text-muted">Sua loja, ao vivo</p>
-            <MiniStore draft={draft} products={products} whatsapp={!!s.profile.whatsapp} />
+            <MiniStore
+              draft={draft}
+              products={products}
+              whatsapp={!!s.profile.whatsapp}
+              timeZone={s.hours.timezone}
+              specialDays={s.specialDays}
+            />
           </aside>
         ) : null}
       </div>

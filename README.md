@@ -26,7 +26,7 @@ vendua/
                  # plan board, discovery, digest settings)
   packages/      # platform packages: core (+ the Control Plane), kernel, cli,
                  # conformance, ui-defaults, codemods, loader, templates, edge
-  storefronts/   # one package per storefront: _template, _examples, <slug>…
+  storefronts/   # one package per storefront: _template, <slug>…
   tools/         # repo-level CI utilities, affected-graph scripts
   docs/          # normative architecture docs, ADRs, roadmap, summaries
 ```

@@ -2,14 +2,16 @@ import { Menu, ShoppingBag, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import {
+  BlockArea,
   CartTrigger,
+  DEFAULT_PATHS,
   boolean,
   defineSection,
   image,
   list,
   text,
   url,
-  useCart,
+  useCartCount,
   useStore,
   type SectionProps,
 } from '@vendua/kernel';
@@ -30,8 +32,7 @@ export const schema = defineSection({
 
 export default function Header({ settings }: SectionProps<typeof schema>) {
   const { store } = useStore();
-  const { cart } = useCart();
-  const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
+  const count = useCartCount();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const { pathname } = useLocation();
@@ -55,7 +56,11 @@ export default function Header({ settings }: SectionProps<typeof schema>) {
         Pular para o conteúdo
       </a>
       <div className="container site-header-inner">
-        <Link to="/" className="brand-link" aria-label={`${store?.name ?? 'Loja'} — início`}>
+        <Link
+          to={DEFAULT_PATHS.home}
+          className="brand-link"
+          aria-label={`${store?.name ?? 'Loja'} — início`}
+        >
           <img src={settings.logo} alt="" aria-hidden="true" className="brand-img" />
           <span className="brand-lockup">
             <span className="brand-name">{store?.name ?? ''}</span>
@@ -86,6 +91,7 @@ export default function Header({ settings }: SectionProps<typeof schema>) {
         </nav>
 
         <div className="header-actions">
+          <BlockArea name="actions" className="header-area" />
           {settings.showStatus ? (
             <span className="header-status">
               <StatusPill openLabel="Aberto" />

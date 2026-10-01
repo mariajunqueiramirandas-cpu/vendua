@@ -1,4 +1,5 @@
-import { SDK_SCHEMAS } from '@vendua/kernel/sdk-catalog';
+import { resolveSettings, SDK_SCHEMAS } from '@vendua/kernel/sdk-catalog';
+import type { ComponentType } from '@vendua/templates';
 
 // What the page editor knows about a section's settings. SDK sections carry their
 // real schemas (the Kernel's catalog — pure data). A store's own sections publish
@@ -15,18 +16,14 @@ export type FieldSpec =
   | { kind: 'list'; key: string; label: string; max: number; of: FieldSpec[] }
   | { kind: 'skip'; key: string };
 
-/** pt-BR names for sections, so the merchant never sees "sdk:catalog-grid". */
-export const SECTION_NAMES: Record<string, string> = {
-  'sdk:header': 'Topo da loja',
-  'sdk:footer': 'Rodapé',
-  'sdk:page-content': 'Conteúdo da página',
-  'sdk:announcement-bar': 'Faixa de aviso',
-  'sdk:header-cart': 'Botão da sacola',
-  'sdk:purchase-panel': 'Produto e botão de comprar',
-  'sdk:catalog-grid': 'Cardápio com fotos',
-  'sdk:product-list': 'Vitrine de produtos',
-  'sdk:store-status': 'Horários e endereço',
-  'sdk:rich-text': 'Texto',
+const SDK_SECTIONS = SDK_SCHEMAS.flatMap((s) => (s.kind === 'section' ? [s] : []));
+const SDK_TITLES = new Map<string, string>(
+  SDK_SECTIONS.flatMap((s) => (s.title ? [[s.type, s.title] as const] : [])),
+);
+
+/** pt-BR names for a store's own sections; SDK sections name themselves (their schema's
+ *  `title`), so the merchant never sees "sdk:catalog-grid". */
+const STORE_SECTION_NAMES: Record<string, string> = {
   'store:hero': 'Abertura',
   'store:values': 'Destaques',
   'store:showcase': 'Vitrine',
@@ -40,16 +37,16 @@ export const SECTION_NAMES: Record<string, string> = {
 };
 
 export const sectionName = (type: string) =>
-  SECTION_NAMES[type] ?? `Seção ${type.replace(/^(sdk|store):/, '').replace(/-/g, ' ')}`;
+  SDK_TITLES.get(type) ??
+  STORE_SECTION_NAMES[type] ??
+  `Seção ${type.replace(/^(sdk|store):/, '').replace(/-/g, ' ')}`;
 
-/** SDK sections a merchant can add to a page. */
-export const ADDABLE = [
-  'sdk:rich-text',
-  'sdk:product-list',
-  'sdk:store-status',
-  'sdk:catalog-grid',
-  'sdk:announcement-bar',
-] as const;
+/** SDK sections a merchant can add to a page (the schemas' `addable`). */
+export const ADDABLE: ComponentType[] = SDK_SECTIONS.filter((s) => s.addable).map((s) => s.type);
+
+/** Whether the storefront keeps a link: the Kernel drops an unsafe one silently when it renders
+ *  (`resolveSettings`), so the editor says so first. */
+export const keepsUrl = (v: string) => resolveSettings({ v: { kind: 'url' } }, { v }).v === v;
 
 const KEY_NAMES: Record<string, string> = {
   title: 'Título',

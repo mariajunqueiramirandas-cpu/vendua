@@ -1,7 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
-import { COUPON_CODE_RE, normalizeCode } from '../modules/coupons.ts';
-import { parseLoyalty } from '../modules/customer.ts';
+import { COUPON_CODE_RE, couponLabel, normalizeCode, type CouponRow } from '../modules/coupons.ts';
+import { readLoyalty, type StoredLoyalty } from '../modules/customer.ts';
 import { audit } from './audit.ts';
 import { bool, int, isObj, oneOf, optInt, optText, text, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
@@ -10,7 +10,9 @@ import { loadSettings } from './routes-store.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 
 async function couponsView(tx: Sql, tenantId: string) {
-  return tx`
+  const rows = await tx<
+    ({ kind: CouponRow['kind']; value: number; label: string | null } & Record<string, unknown>)[]
+  >`
     select c.id, c.code, c.kind, c.value, c.label, c.min_subtotal_cents as "minSubtotalCents",
            c.max_discount_cents as "maxDiscountCents", c.starts_at as "startsAt", c.ends_at as "endsAt",
            c.max_redemptions as "maxRedemptions", c.per_phone_limit as "perPhoneLimit",
@@ -28,6 +30,13 @@ async function couponsView(tx: Sql, tenantId: string) {
     order by c.active desc, c.created_at desc
     limit 200
   `;
+  // `label` is the merchant's own words (null = none); displayLabel is what the shopper reads
+  return rows.map((r) => ({ ...r, displayLabel: couponLabel(r) }));
+}
+
+/** like coupons: reward.label is the merchant's (or null), reward.displayLabel what shoppers read */
+function loyaltyView(p: StoredLoyalty | null) {
+  return p && { ...p, reward: { ...p.reward, displayLabel: couponLabel(p.reward) } };
 }
 
 function date(v: unknown, name: string): Date | null {
@@ -46,7 +55,7 @@ export function mountMarketing(d: AdminDeps) {
     '/marketing',
     read('manager', async (tx, t) => {
       const s = await loadSettings(tx, t.id);
-      const loyalty = parseLoyalty(s.loyalty);
+      const loyalty = loyaltyView(readLoyalty(s.loyalty));
       const loyaltyStats = (
         await tx<{ issued: number; redeemed: number }[]>`
           select count(*)::int as issued,
@@ -165,7 +174,7 @@ export function mountMarketing(d: AdminDeps) {
     write('manager', async (tx, t, m, c) => {
       const body = await bodyJson(c);
       await loadSettings(tx, t.id);
-      const program = body.program === null ? null : parseLoyalty(body.program);
+      const program = body.program === null ? null : readLoyalty(body.program);
       if (body.program !== null && !program)
         throw new HttpError(422, 'BAD_REQUEST', 'the card needs 2–50 stamps and a reward', {
           field: 'program',
@@ -180,7 +189,7 @@ export function mountMarketing(d: AdminDeps) {
         after: program,
       });
       await emitAdminTx(tx, t.id, 'marketing');
-      return { status: 200, body: { program } };
+      return { status: 200, body: { program: loyaltyView(program) } };
     }),
   );
 

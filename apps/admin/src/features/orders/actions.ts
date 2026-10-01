@@ -1,10 +1,11 @@
 import { useQueryClient } from '@tanstack/react-query';
+import { whatsappUrl } from '@vendua/kernel/rules';
 import { api, type Board, type Order, type OrderPayment, type OrderState } from '../../lib/api.ts';
-import { clock, money, phone, whatsappLink } from '../../lib/format.ts';
+import { clock, money, phone } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { markOrdersSeen } from '../../lib/live.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
-import { payError } from '../../ui/PaymentChip.tsx';
+import { METHOD_LABEL, payError } from '../../ui/PaymentChip.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
 const DONE_TOAST: Partial<Record<OrderState, (o: Order) => string>> = {
@@ -210,8 +211,8 @@ export function whatsappFor(o: Order, storeName: string): string {
   }
 }
 
-export function whatsappUrl(o: Order, storeName: string) {
-  return whatsappLink(o.customer.phone, whatsappFor(o, storeName));
+export function orderWhatsappUrl(o: Order, storeName: string) {
+  return whatsappUrl(o.customer.phone, whatsappFor(o, storeName)) ?? undefined;
 }
 
 const esc = (s: string) =>
@@ -241,7 +242,7 @@ ${o.scheduledFor ? `<div class="m">ENCOMENDA PARA ${esc(o.scheduledFor)}</div>` 
 <div class="m">${new Date(o.placedAt).toLocaleString('pt-BR')}</div>
 <div style="margin-top:8px">${items}</div>
 ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
-<div class="t">${esc(money(o.totalCents))} · ${o.payment.method === 'pix' ? 'Pix' : o.payment.method === 'cash' ? 'Dinheiro' : o.payment.method === 'meal_voucher' ? 'Vale-refeição' : 'Cartão'}${
+<div class="t">${esc(money(o.totalCents))} · ${esc(METHOD_LABEL[o.payment.method] ?? o.payment.method)}${
     o.payment.status === 'paid' ? ' (pago)' : ''
   }</div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),300)}</script></body></html>`;

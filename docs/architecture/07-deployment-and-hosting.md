@@ -9,9 +9,8 @@ Deployment means pointing a hostname at an immutable artifact.
 
 ## The artifact
 
-A **bundle** is a storefront folder under `storefronts/` (`_template`, `quero-pudim`,
-`_examples/quero-pudim`); `_template` serves every store that has no bundle of its own (every
-self-serve signup). A **release** is one immutable build of one bundle.
+A **bundle** is a storefront folder under `storefronts/` (`_template`, `quero-pudim`);
+`_template` serves every store that has no bundle of its own (every self-serve signup). A **release** is one immutable build of one bundle.
 `vendua release publish` (packages/cli) writes it to the artifact store:
 
 ```
@@ -28,7 +27,7 @@ self-serve signup). A **release** is one immutable build of one bundle.
 interface StorefrontManifest {
   manifestVersion: 1;
   release: string; // 20 hex: sha256 of bundle + every file's sha256 + the Kernel manifest sans builtAt
-  bundle: string; // '_template' | '<slug>' | '_examples/<slug>'
+  bundle: string; // '_template' | '<slug>'
   tenant: string; // the tenant the bundle is built for (package.json vendua.tenant)
   contract: number; // contract major
   kernelVersion: string; // semver actually built against

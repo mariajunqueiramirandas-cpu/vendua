@@ -84,22 +84,5 @@ export function defineStorefront(config: StorefrontConfig): StorefrontConfig {
   return config;
 }
 
-export const KERNEL_PATHS = {
-  cart: '/sacola',
-  checkout: '/checkout',
-  order: '/pedido/:id',
-  orders: '/pedidos',
-} as const;
-
-export function resolvePaths(config: StorefrontConfig) {
-  return {
-    home: '/',
-    catalog: config.paths?.catalog ?? '/cardapio',
-    product: config.paths?.product ?? '/produto/:slug',
-    ...KERNEL_PATHS,
-  };
-}
-
-export function productHref(config: StorefrontConfig, slug: string): string {
-  return resolvePaths(config).product.replace(':slug', encodeURIComponent(slug));
-}
+// the paths moved to the pure rules (`@vendua/kernel/rules`); same names here
+export { KERNEL_PATHS, resolvePaths, productHref } from './rules/links.ts';

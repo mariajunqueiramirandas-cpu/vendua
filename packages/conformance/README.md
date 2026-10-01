@@ -3,7 +3,7 @@
 Contract conformance checks for storefronts — `docs/architecture/10-qa-pipeline.md` C/S/Q/K IDs, modeled on `site/tests/site.spec.ts`.
 
 ```sh
-vendua-conformance static <storefrontDir>    # K01–K04, K06–K15 (no browser)
+vendua-conformance static <storefrontDir>    # K01–K04, K06–K15, K17–K22 (no browser)
 vendua-conformance k05 <slug> [baseRef]      # git diff ⊆ storefronts/<slug>/**
 vendua-conformance e2e <storefrontDir> [--prebuilt] [--grep <re>]
                                              # build + preview + Playwright C/S/Q/K16
@@ -23,6 +23,32 @@ Sessions without a system resolver for `*.localhost` (some containers) need
 Chromium of another build is used with `CHROMIUM=/path/to/chromium`.
 
 Every command prints one line per check ID and exits non-zero on any failure.
+
+## Kernel ownership rules (K17–K22)
+
+`@vendua/kernel` owns every presentation rule over Core's fields, so `static` fails a store that
+re-derives one. Each failure row is `file:line: what — use <Kernel replacement>`. They are source
+scans over `*.ts(x)` (comments stripped, string and template literals tokenized), not type analysis:
+a direct read is caught, a value passed through a variable is not.
+
+| ID  | Fails on                                                                                                                                                | Use                                                                                     |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| K17 | `Intl.NumberFormat`, `toLocaleString` with a currency, `toFixed(2)`, `cents / 100`, `R$` / `'BRL'` / `'pt-BR'` in a literal                             | `formatCents`, `useMoney`, `ProductPrice` (`foldText` for `toLocaleLowerCase('pt-BR')`) |
+| K18 | reading `basePriceCents`, `fromPriceCents`, `compareAtPriceCents`, `stockQuantity`, `lowStockThreshold`, `lowStock`, `needsChoices`, `requiresPreorder` | `priceDisplay`, `ProductPrice`, `cardState`, `useCardState`                             |
+| K19 | a literal holding `wa.me`, `whatsapp.com`, `instagram.com`, or `tel:` built with `${…}` / `+`                                                           | `contactLinks`, `useLinks().contacts`                                                   |
+| K20 | `Intl.DateTimeFormat`, `toLocaleDateString`, `toLocaleTimeString`, `.getDay()`, `.hours.windows`, `.timezone`                                           | `useStoreHours`, `useStoreStatus`, `formatDateTime`                                     |
+| K21 | `<img>` whose `src`/`srcSet` references `imageUrl`, `logoUrl`, `coverUrl`, `gallery` (or a `gallery` item's `.url`)                                     | `ProductImage`, `Img`                                                                   |
+| K22 | `navigator.vibrate`, `matchMedia('(prefers-reduced-motion…)')`                                                                                          | `haptic`, `useReducedMotion`                                                            |
+
+Extensions of older rules: K03 also rejects `new EventSource`, `navigator.sendBeacon` and
+`new WebSocket`, and `qrcode` is no longer an allowed dependency (`QrCode` is the Kernel's); K09
+rejects any literal holding `/produto/` and `navigate('/produto…')` (`ProductLink`,
+`useLinks().product`); K11 rejects a section that declares an `areas` key and never renders a
+`<BlockArea name="…">` for it (a computed `name={…}`, or a `<BlockArea>` in an imported helper,
+counts as rendered). `new Date().getFullYear()` is allowed. A store's own label object may use a
+`lowStock` key (`labels.lowStock`).
+
+`src/ownership.ts` holds K17–K22, `src/source.ts` the comment stripper and literal tokenizer.
 
 ## e2e mechanics
 

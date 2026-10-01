@@ -39,12 +39,6 @@ describe('mapFiles', () => {
     expect(r.packages).toEqual([]);
   });
 
-  test('_examples maps to its own dir', () => {
-    expect(mapFiles(['storefronts/_examples/queryshop/Dockerfile']).packages).toEqual([
-      'storefronts/_examples/queryshop',
-    ]);
-  });
-
   test('docs/ci churn rebuilds nothing', () => {
     const r = mapFiles(['docs/roadmap.md', '.github/workflows/ci.yml']);
     expect(r.allStorefronts).toBe(false);

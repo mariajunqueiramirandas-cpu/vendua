@@ -75,7 +75,10 @@ export interface FakeCore {
   server: Server<unknown>;
   routes: Map<string, Route['release'] | 'unknown'>;
   states: Map<string, unknown>;
-  calls: { resolve: string[]; surfaces: string[]; secrets: string[] };
+  /** `<host> <slug>` → the product Core serves, or a status code to answer with */
+  products: Map<string, unknown>;
+  productDelayMs: number;
+  calls: { resolve: string[]; surfaces: string[]; secrets: string[]; products: string[] };
   seen: Request[];
   echo: Record<string, unknown>[];
   /** fetchImpl for the edge: fails like a refused connection while `down` */
@@ -94,7 +97,9 @@ export function fakeCore(): FakeCore {
     server: null as unknown as Server<unknown>,
     routes: new Map(),
     states: new Map(),
-    calls: { resolve: [], surfaces: [], secrets: [] },
+    products: new Map(),
+    productDelayMs: 0,
+    calls: { resolve: [], surfaces: [], secrets: [], products: [] },
     seen: [],
     echo: [],
     down: false,
@@ -137,6 +142,16 @@ export function fakeCore(): FakeCore {
       if (url.pathname === '/storefront/v1/surfaces') {
         core.calls.surfaces.push(url.search === '?design=1' ? host : `${host}${url.search}`);
         return Response.json(core.states.get(host) ?? { status: 'open', host });
+      }
+      if (url.pathname.startsWith('/storefront/v1/products/')) {
+        const key = `${host} ${decodeURIComponent(url.pathname.slice(24))}`;
+        core.calls.products.push(key);
+        if (core.productDelayMs) await Bun.sleep(core.productDelayMs);
+        const p = core.products.get(key);
+        if (typeof p === 'number') return new Response('nope', { status: p });
+        if (p === undefined)
+          return Response.json({ error: { code: 'PRODUCT_NOT_FOUND' } }, { status: 404 });
+        return Response.json({ product: p });
       }
       if (url.pathname === '/storefront/v1/state')
         return Response.json({ state: 'open', host, q: url.search });

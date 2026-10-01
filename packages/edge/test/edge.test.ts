@@ -3,7 +3,16 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { artifactPath } from '../src/storefront.ts';
 import { peerAddress } from '../src/proxy.ts';
-import { harness, injected, publish, releaseRoute, SECRET, type Harness } from './helpers.ts';
+import {
+  INDEX_HTML,
+  harness,
+  injected,
+  makeDist,
+  publish,
+  releaseRoute,
+  SECRET,
+  type Harness,
+} from './helpers.ts';
 
 let h: Harness;
 afterEach(async () => {
@@ -270,6 +279,112 @@ describe('Core outages', () => {
     const v = await h.get('/v1/v.js');
     expect(v.headers.get('x-vendua-edge-stale')).toBe('1');
     expect(await v.text()).toBe(vjs);
+  });
+});
+
+describe('page head', () => {
+  const META = {
+    title: 'Quero Pudim — pudins artesanais',
+    description: 'Pudins de pote.',
+    image: 'https://quero.example/v1/media/logo.png',
+    url: 'https://quero.example',
+    siteName: 'Quero Pudim',
+  };
+  const PUDIM = {
+    id: 'p1',
+    slug: 'pudim',
+    name: 'Pudim de leite',
+    description: 'Cremoso.',
+    imageUrl: '/v1/media/pudim.jpg',
+    basePriceCents: 1800,
+  };
+  const og = (html: string, key: string) =>
+    new RegExp(`<meta (?:name|property)="${key}" content="([^"]*)">`).exec(html)?.[1];
+  const title = (html: string) => /<title>(.*?)<\/title>/.exec(html)?.[1];
+
+  async function withMeta(opts = {}) {
+    await live(opts);
+    h.core.states.set('loja.test', { version: 1, store: { status: 'open' }, meta: META });
+  }
+
+  test("a store page gets the store's head from the envelope, before the state", async () => {
+    await withMeta();
+    const res = await h.get('/cardapio?utm_source=x');
+    expect(res.headers.get('cache-control')).toBe('no-cache');
+    const html = await res.text();
+    expect(title(html)).toBe('Quero Pudim — pudins artesanais');
+    expect(og(html, 'og:type')).toBe('website');
+    expect(og(html, 'og:url')).toBe('https://quero.example/cardapio');
+    expect(og(html, 'og:image')).toBe(META.image);
+    expect(og(html, 'twitter:card')).toBe('summary_large_image');
+    expect(html).toContain('<link rel="canonical" href="https://quero.example/cardapio">');
+    expect(html.indexOf('og:title')).toBeLessThan(html.indexOf('id="vendua-state"'));
+    expect(injected(html)).toMatchObject({ meta: META });
+    expect(h.core.calls.products).toEqual([]);
+  });
+
+  test('a product page gets product · store, its description and its image', async () => {
+    await withMeta();
+    h.core.products.set('loja.test pudim', PUDIM);
+    const html = await (await h.get('/produto/pudim')).text();
+    expect(title(html)).toBe('Pudim de leite · Quero Pudim');
+    expect(og(html, 'og:type')).toBe('product');
+    expect(og(html, 'description')).toBe('Cremoso.');
+    expect(og(html, 'og:image')).toBe('https://quero.example/v1/media/pudim.jpg');
+    expect(og(html, 'og:url')).toBe('https://quero.example/produto/pudim');
+    // cached: a second view does not ask Core again
+    await h.get('/produto/pudim');
+    expect(h.core.calls.products).toEqual(['loja.test pudim']);
+  });
+
+  test("an unknown product or a failing Core falls back to the store's head", async () => {
+    await withMeta();
+    h.core.products.set('loja.test quebrado', 500);
+    for (const p of ['/produto/nada', '/produto/quebrado']) {
+      const res = await h.get(p);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(title(html)).toBe(META.title);
+      expect(og(html, 'og:type')).toBe('website');
+      expect(injected(html)).toMatchObject({ meta: META });
+    }
+  });
+
+  test('a slow product never slows the page; its head is there once Core answers', async () => {
+    await withMeta({ stateWaitMs: 100 });
+    h.core.products.set('loja.test pudim', PUDIM);
+    h.core.productDelayMs = 500;
+    await h.get('/assets/logo.png'); // route and manifest cached: the timing is the head's
+    const t0 = performance.now();
+    const html = await (await h.get('/produto/pudim')).text();
+    expect(performance.now() - t0).toBeLessThan(350);
+    expect(title(html)).toBe(META.title);
+    expect(injected(html)).toMatchObject({ meta: META });
+    await Bun.sleep(550);
+    expect(title(await (await h.get('/produto/pudim')).text())).toBe(
+      'Pudim de leite · Quero Pudim',
+    );
+  });
+
+  test('an envelope without meta (an older Core) leaves the head as built', async () => {
+    await live();
+    h.core.states.set('loja.test', { version: 1, store: { status: 'open' } });
+    const html = await (await h.get('/produto/pudim')).text();
+    expect(title(html)).toBe('Loja');
+    expect(html).not.toContain('og:');
+    expect(html).not.toContain('canonical');
+    expect(html.replace(/<script id="vendua-state">.*?<\/script>/, '')).toBe(INDEX_HTML);
+  });
+
+  test('another HTML file the store ships keeps its own head', async () => {
+    h = await harness();
+    const page = '<html><head><title>Privacidade</title></head><body></body></html>';
+    const m = await publish(h.store, '_template', makeDist({ 'privacidade.html': page }));
+    h.core.routes.set('loja.test', releaseRoute(m, h.store));
+    h.core.states.set('loja.test', { version: 1, store: { status: 'open' }, meta: META });
+    const html = await (await h.get('/privacidade.html')).text();
+    expect(title(html)).toBe('Privacidade');
+    expect(injected(html)).toMatchObject({ meta: META });
   });
 });
 

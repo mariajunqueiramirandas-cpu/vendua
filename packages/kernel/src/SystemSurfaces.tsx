@@ -8,11 +8,11 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { noticeSeverity } from '@vendua/ui-defaults';
 import { useKernel, useQuery } from './provider.tsx';
 import { Slot } from './slot.tsx';
 import { dismissError, useTransientNotices } from './errors.ts';
-import { useConsent } from './hooks.ts';
+import { useConsent, useNotices, useStore } from './hooks.ts';
+import { isBlocking, noticeSeverity, visibleNotices } from './rules/notices.ts';
 import { emit } from './telemetry.ts';
 import type { Notice, NoticeAction, SurfacesEnvelope } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
@@ -38,6 +38,9 @@ function NoticeSlot({ notice, onDismiss }: { notice: Notice; onDismiss?: () => v
   const dismiss = onDismiss ? { onDismiss } : {};
   const resumesAt =
     typeof notice.payload?.resumesAt === 'string' ? notice.payload.resumesAt : undefined;
+  // the moment is in the store's zone, not the shopper's
+  const { store } = useStore();
+  const time = store?.hours.timezone ? { timeZone: store.hours.timezone } : {};
   switch (notice.kind) {
     case 'store_paused':
       return (
@@ -46,6 +49,7 @@ function NoticeSlot({ notice, onDismiss }: { notice: Notice; onDismiss?: () => v
           notice={notice}
           actions={notice.actions ?? []}
           {...(resumesAt ? { resumesAt } : {})}
+          {...time}
           {...dismiss}
         />
       );
@@ -55,6 +59,7 @@ function NoticeSlot({ notice, onDismiss }: { notice: Notice; onDismiss?: () => v
           name="system.StoreClosedNotice"
           notice={notice}
           {...(resumesAt ? { opensAt: resumesAt } : {})}
+          {...time}
           {...dismiss}
         />
       );
@@ -140,13 +145,9 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
     return () => clearTimeout(id);
   }, [envelope]);
 
-  const now = Date.now();
-  const visible = (envelope?.notices ?? []).filter(
-    (n) =>
-      (!n.startsAt || Date.parse(n.startsAt) <= now) && (!n.endsAt || Date.parse(n.endsAt) > now),
-  );
-  const blocking = visible.filter((n) => noticeSeverity(n) === 'blocking');
-  const banners = visible.filter((n) => noticeSeverity(n) !== 'blocking');
+  const visible = visibleNotices(envelope?.notices ?? []);
+  const blocking = visible.filter(isBlocking);
+  const banners = visible.filter((n) => !isBlocking(n));
   // a blocking notice is above everything: an open bag sheet (top layer) gets out of its way
   const blocked = blocking.length > 0;
   useEffect(() => blockSheet(blocked), [blocked]);
@@ -325,10 +326,9 @@ function Toasts({ notices }: { notices: Notice[] }) {
 
 /** Inline surface region a brand section may place (05 — SurfaceRegion). */
 export function SurfaceRegion({ name }: { name: string }): ReactNode {
-  const { api } = useKernel();
-  const q = useQuery('surfaces:any', () => api.surfaces());
-  const notices = (q.data?.notices ?? []).filter(
-    (n) => noticeSeverity(n) !== 'blocking' && (n.payload?.region === name || n.kind === name),
+  // inside their window only (useNotices re-renders when one opens or closes)
+  const notices = useNotices().notices.filter(
+    (n) => !isBlocking(n) && (n.payload?.region === name || n.kind === name),
   );
   if (notices.length === 0) return null;
   return (

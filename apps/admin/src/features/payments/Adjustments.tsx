@@ -1,6 +1,7 @@
 import { PencilSimple, Plus } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { adjustmentKind, adjustmentText } from '@vendua/kernel/rules';
 import {
   api,
   ApiError,
@@ -18,25 +19,6 @@ import { Field, Segmented, TextInput } from '../../ui/fields.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
-// Core's bounds: |percentBps| ≤ 5000, |fixedCents| ≤ 1 000 000
-const MAX_PCT = 50;
-const MAX_FIXED = 1_000_000;
-
-const pctText = (bps: number) =>
-  `${(Math.abs(bps) / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;
-
-/** "5% de desconto", "R$ 2,00 de acréscimo", "5% + R$ 1,00 de desconto" */
-export function adjustmentText(a: PaymentAdjustment | undefined): string | null {
-  const pct = a?.percentBps ?? 0;
-  const fixed = a?.fixedCents ?? 0;
-  if (!pct && !fixed) return null;
-  const word = (n: number) => (n < 0 ? 'desconto' : 'acréscimo');
-  if (pct && fixed && Math.sign(pct) !== Math.sign(fixed))
-    return `${pctText(pct)} de ${word(pct)} e ${money(Math.abs(fixed))} de ${word(fixed)}`;
-  const parts = [pct ? pctText(pct) : null, fixed ? money(Math.abs(fixed)) : null].filter(Boolean);
-  return `${parts.join(' + ')} de ${word(pct || fixed)}`;
-}
-
 /** Under a payment method's toggle: what the shopper gets, and the way to change it. */
 export function AdjustmentLine({
   method,
@@ -52,7 +34,7 @@ export function AdjustmentLine({
   const [open, setOpen] = useState(false);
   const adj = data.adjustments?.[method];
   const text = adjustmentText(adj);
-  const discount = ((adj?.percentBps ?? 0) || (adj?.fixedCents ?? 0)) < 0;
+  const discount = adjustmentKind(adj) === 'discount';
   if (!text && !canEdit) return null;
   return (
     <div className="-mt-1 pb-2">
@@ -110,6 +92,9 @@ function AdjustmentSheet({
 }) {
   const qc = useQueryClient();
   const saved = data.adjustments?.[method];
+  // Core's bounds, either sign
+  const maxPct = data.adjustmentBounds.maxPercentBps / 100;
+  const maxFixed = data.adjustmentBounds.maxFixedCents;
   const [kind, setKind] = useState<Kind>('discount');
   const [pct, setPct] = useState('');
   const [fixedText, setFixedText] = useState('');
@@ -128,9 +113,9 @@ function AdjustmentSheet({
   }, [open, saved?.percentBps, saved?.fixedCents]);
 
   const pctNum = pct.trim() ? Number(pct.replace(',', '.').replace('%', '').trim()) : 0;
-  const pctBad = !Number.isFinite(pctNum) || pctNum < 0 || pctNum > MAX_PCT;
+  const pctBad = !Number.isFinite(pctNum) || pctNum < 0 || pctNum > maxPct;
   const fixed = fixedText.trim() ? parseMoney(fixedText) : 0;
-  const fixedBad = fixed === null || fixed > MAX_FIXED;
+  const fixedBad = fixed === null || fixed > maxFixed;
   const sign = kind === 'discount' ? -1 : 1;
   const next: PaymentAdjustment = {
     ...(pctNum && !pctBad ? { percentBps: sign * Math.round(pctNum * 100) } : {}),
@@ -152,7 +137,7 @@ function AdjustmentSheet({
     onError: (e) =>
       setErr(
         e instanceof ApiError && e.code === 'INVALID_ADJUSTMENT'
-          ? `Confira os valores: até ${MAX_PCT}% e até ${money(MAX_FIXED)}.`
+          ? `Confira os valores: até ${maxPct}% e até ${money(maxFixed)}.`
           : messageOf(e),
       ),
   });
@@ -197,11 +182,7 @@ function AdjustmentSheet({
           ]}
         />
         <div className="grid grid-cols-2 gap-3">
-          <Field
-            label="Porcentagem"
-            htmlFor="adj-pct"
-            error={pctBad ? `De 0 a ${MAX_PCT}%.` : null}
-          >
+          <Field label="Porcentagem" htmlFor="adj-pct" error={pctBad ? `De 0 a ${maxPct}%.` : null}>
             <TextInput
               id="adj-pct"
               inputMode="decimal"
@@ -222,7 +203,7 @@ function AdjustmentSheet({
               fixed === null
                 ? 'Digite um valor, como 2,50.'
                 : fixedBad
-                  ? `Até ${money(MAX_FIXED)}.`
+                  ? `Até ${money(maxFixed)}.`
                   : null
             }
           >

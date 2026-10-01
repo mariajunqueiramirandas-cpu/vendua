@@ -28,7 +28,7 @@ import {
   type QaHost,
 } from './helpers.ts';
 import postgres from 'postgres';
-import { checkCompat } from '@vendua/templates';
+import { CONTRAST_PAIRS, checkCompat } from '@vendua/templates';
 
 const REPORT_DIR = process.env.VENDUA_QA_REPORT_DIR ?? 'qa-report';
 const SHOTS = join(REPORT_DIR, 'screenshots');
@@ -555,20 +555,23 @@ test('[S05] override crash → error boundary renders Kernel default, failure re
     page.getByText('Cardápio do fixture'),
     'a crashing section took its siblings down',
   ).toBeVisible();
-  const reports = await page.evaluate(
-    () => ((window as any).__VENDUA_REPORTS__ ?? []) as { kind: string; target: string }[],
-  );
-  const got = new Set(reports.map((r) => `${r.kind}:${r.target}`));
+  // an override is lazy: its slot shows the Kernel default while the module loads, so the default
+  // can be on screen before the override has loaded, thrown and been reported — wait for the report
+  const reported = () =>
+    page.evaluate(() =>
+      (((window as any).__VENDUA_REPORTS__ ?? []) as { kind: string; target: string }[]).map(
+        (r) => `${r.kind}:${r.target}`,
+      ),
+    );
   for (const want of [
     'slot_error:system.PromoNotice',
     'slot_error:catalog.ProductCard',
     'section_error:store:boom#boom',
     'section_unknown:sdk:not-shipped-yet',
   ])
-    expect(
-      got.has(want),
-      `failure not reported: ${want} (got ${[...got].join(', ')})`,
-    ).toBeTruthy();
+    await expect
+      .poll(reported, { message: `failure not reported: ${want}`, timeout: 10_000 })
+      .toContain(want);
 
   // blocking path: the paused override (registered under its old alias) throws too
   await page.goto(fixtureBase(PAUSED));
@@ -579,10 +582,9 @@ test('[S05] override crash → error boundary renders Kernel default, failure re
   ).toBeVisible({
     timeout: 15_000,
   });
-  const pausedReports = await page.evaluate(
-    () => ((window as any).__VENDUA_REPORTS__ ?? []) as { target: string }[],
-  );
-  expect(pausedReports.some((r) => r.target === 'system.PauseNotice')).toBeTruthy();
+  await expect
+    .poll(reported, { message: 'paused override failure not reported', timeout: 10_000 })
+    .toContain('slot_error:system.PauseNotice');
   expect(errs, `uncaught page errors: ${errs.join('; ')}`).toHaveLength(0);
 });
 
@@ -902,23 +904,22 @@ test('[Q06] internal links resolve; unknown route renders a not-found surface', 
 test('[Q07] contrast AA on token pairs used by default surfaces', async ({ page }) => {
   await page.goto(O);
   await page.waitForLoadState('networkidle').catch(() => {});
-  const vars = await page.evaluate(() => {
-    const cs = getComputedStyle(document.documentElement);
-    const out: Record<string, string> = {};
-    for (const n of [
-      '--v-color-bg',
-      '--v-color-surface',
-      '--v-color-text',
-      '--v-color-muted',
-      '--v-color-accent',
-      '--v-color-on-accent',
-      '--v-color-danger',
-    ]) {
-      const v = cs.getPropertyValue(n).trim();
-      if (v) out[n] = v;
-    }
-    return out;
-  });
+  // the pairs the Kernel's defaults render text with: one list, owned by @vendua/templates
+  const cssVar = (key: string) =>
+    `--v-color-${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
+  const pairs = CONTRAST_PAIRS.map(([fg, bg]) => [cssVar(fg), cssVar(bg)] as const);
+  const vars = await page.evaluate(
+    (names) => {
+      const cs = getComputedStyle(document.documentElement);
+      const out: Record<string, string> = {};
+      for (const n of names) {
+        const v = cs.getPropertyValue(n).trim();
+        if (v) out[n] = v;
+      }
+      return out;
+    },
+    [...new Set(pairs.flat())],
+  );
 
   // a probe's computed color normalizes any renderable value to rgb()
   const resolved: Record<string, string | null> = await page.evaluate((vars) => {
@@ -947,14 +948,6 @@ test('[Q07] contrast AA on token pairs used by default surfaces', async ({ page 
   };
   const ratio = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 
-  const pairs: [string, string][] = [
-    ['--v-color-text', '--v-color-bg'],
-    ['--v-color-muted', '--v-color-bg'],
-    ['--v-color-text', '--v-color-surface'],
-    ['--v-color-muted', '--v-color-surface'],
-    ['--v-color-on-accent', '--v-color-accent'],
-    ['--v-color-danger', '--v-color-bg'],
-  ];
   const bad: string[] = [];
   for (const [fg, bg] of pairs) {
     if (!vars[fg] || !vars[bg]) {

@@ -1,5 +1,5 @@
 import type { Sql } from '../platform/db.ts';
-import { HttpError } from '../platform/http.ts';
+import { HttpError, UUID_RE } from '../platform/http.ts';
 import {
   liveStatus,
   scheduleOpen,
@@ -10,7 +10,15 @@ import {
   type ScheduledComboSlotItem,
   type ProductDetail,
 } from './catalog.ts';
-import { comboDelta, parseSelections, validateCombo, type ComboSelection } from './combos.ts';
+import {
+  comboDelta,
+  comboFloorCents,
+  parseSelections,
+  validateCombo,
+  type ComboPick,
+  type ComboSelection,
+  type ComboSlot,
+} from './combos.ts';
 import { couponLabel, couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
 import { effectiveFee, foldName, resolveZone, validCoords, type ZoneLike } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
@@ -195,8 +203,8 @@ export function unitPriceCents(basePriceCents: number, groups: GroupPicks[]): nu
 /**
  * The least one configured unit can cost — "a partir de", display only. For a fixed number of
  * units the cheapest units are the cheapest pick under every rule, so each group takes the
- * best over every count it allows (a required group at least one); null when one can't be
- * filled.
+ * best over every count it allows (a required group at least one); a kit adds its cheapest
+ * valid picks (comboFloorCents). null when a group or slot can't be filled.
  */
 export function fromPriceCents(
   basePriceCents: number,
@@ -204,8 +212,11 @@ export function fromPriceCents(
     ModifierGroup,
     'required' | 'minSelect' | 'maxSelect' | 'pricingRule' | 'modifiers'
   >[],
+  comboSlots: readonly ComboSlot[] = [],
 ): number | null {
-  let total = basePriceCents;
+  const kit = comboFloorCents(comboSlots);
+  if (kit === null) return null;
+  let total = basePriceCents + kit;
   for (const g of groups) {
     const need = g.required ? Math.max(1, g.minSelect) : g.minSelect;
     const units: number[] = [];
@@ -407,6 +418,90 @@ export function validateLine(
       });
   }
   return validateCombo(product.comboSlots, selections).error;
+}
+
+/** A validated line's unit price: base + option groups + kit picks, never below zero. */
+function pricedUnit(
+  product: Pick<ProductDetail, 'basePriceCents' | 'modifierGroups'>,
+  modifierIds: readonly string[],
+  modifierQty: ModifierQty,
+  picks: Pick<ComboPick, 'priceDeltaCents' | 'qty'>[],
+): { unitPriceCents: number; snapshot: ModifierSnapshot[] } {
+  const chosen = pickedOptions(product, modifierIds, modifierQty);
+  const unit = unitPriceCents(product.basePriceCents, chosen.groups) + comboDelta(picks);
+  if (unit < 0)
+    throw new HttpError(422, 'INVALID_MODIFIER', 'the selected options price this item below zero');
+  return { unitPriceCents: unit, snapshot: chosen.snapshot };
+}
+
+export interface LinePrice {
+  modifierIds: string[];
+  modifierQty: ModifierQty;
+  selections: ComboSelection[];
+  picks: ComboPick[];
+  snapshot: ModifierSnapshot[];
+  unitPriceCents: number;
+}
+
+/**
+ * The one pricing path for a new line: add-to-cart freezes it, the quote route serves it.
+ * Validates options and kit picks against the live product and throws the client's typed error;
+ * stock is not checked here (add does that against the whole cart).
+ */
+export function priceLine(
+  product: ProductDetail,
+  input: Pick<CartItemIn, 'modifierIds' | 'modifiers' | 'comboSelections'>,
+): LinePrice {
+  // dedupe + sort: a repeated id would double-charge; order-independence
+  // merges reordered selections into one line
+  const { modifierIds, modifierQty } = normalizeModifiers(input);
+  const selections = parseSelections(input.comboSelections ?? []);
+  const invalid = validateLine(product, modifierIds, selections, modifierQty);
+  if (invalid) throw invalid;
+  const picks = product.kind === 'combo' ? validateCombo(product.comboSlots, selections).picks : [];
+  const { unitPriceCents, snapshot } = pricedUnit(product, modifierIds, modifierQty, picks);
+  return { modifierIds, modifierQty, selections, picks, snapshot, unitPriceCents };
+}
+
+const QUOTE_MAX_PICKS = 32;
+
+/**
+ * The quote route's query — `qty=N&modifiers=<id>:<qty>,…&combo=<slotId>:<productId>:<qty>,…`
+ * (a missing `:<qty>` is 1). Malformed input is 422 BAD_REQUEST; the option and kit rules
+ * themselves are priceLine's, with add-to-cart's codes.
+ */
+export function quoteInput(q: {
+  qty?: string | undefined;
+  modifiers?: string | undefined;
+  combo?: string | undefined;
+}): { qty: number; modifiers: { id: string; qty: number }[]; comboSelections: ComboSelection[] } {
+  const bad = (message: string, field: string): never => {
+    throw new HttpError(422, 'BAD_REQUEST', message, { field });
+  };
+  const qty = q.qty === undefined ? 1 : /^\d{1,2}$/.test(q.qty) ? Number(q.qty) : 0;
+  if (qty < 1) bad('qty must be an integer from 1 to 99', 'qty');
+  const list = (v: string | undefined, field: string) => {
+    if (!v) return [];
+    if (v.length > QUOTE_MAX_PICKS * 80) bad(`${field} is too long`, field);
+    const parts = v.split(',');
+    if (parts.length > QUOTE_MAX_PICKS) bad(`${field} accepts at most ${QUOTE_MAX_PICKS}`, field);
+    return parts.map((p) => p.split(':'));
+  };
+  const count = (n: string | undefined, field: string) => {
+    if (n === undefined) return 1;
+    if (!/^\d{1,2}$/.test(n)) bad(`${field} quantities are whole numbers`, field);
+    return Number(n);
+  };
+  const modifiers = list(q.modifiers, 'modifiers').map(([id, n, ...rest]) => {
+    if (!id || !UUID_RE.test(id) || rest.length) bad('modifiers are <uuid>:<qty>', 'modifiers');
+    return { id: id!, qty: count(n, 'modifiers') };
+  });
+  const comboSelections = list(q.combo, 'combo').map(([slotId, productId, n, ...rest]) => {
+    if (!slotId || !productId || !UUID_RE.test(slotId) || !UUID_RE.test(productId) || rest.length)
+      bad('combo picks are <slotId>:<productId>:<qty>', 'combo');
+    return { slotId: slotId!, productId: productId!, qty: count(n, 'combo') };
+  });
+  return { qty, modifiers, comboSelections };
 }
 
 function loadItemRows(tx: Sql, tenantId: string, cartId: string) {
@@ -679,9 +774,17 @@ export async function addItem(
   cartId: string,
   input: CartItemIn,
   getProductById: (tx: Sql, tenantId: string, id: string) => Promise<ProductDetail | null>,
-): Promise<CartView> {
-  await insertLine(tx, tenantId, cartId, input, getProductById);
-  return loadCartView(tx, tenantId, cartId);
+): Promise<{ cart: CartView; added: AddedLine }> {
+  const added = await insertLine(tx, tenantId, cartId, input, getProductById);
+  return { cart: await loadCartView(tx, tenantId, cartId), added };
+}
+
+/** What one add put in the cart: `qty` is this call's, priced in Core. */
+export interface AddedLine {
+  itemId: string;
+  qty: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
 }
 
 /** Validates, freezes the price and merges into the cart; throws the client's typed error. */
@@ -691,19 +794,16 @@ export async function insertLine(
   cartId: string,
   input: CartItemIn,
   getProductById: (tx: Sql, tenantId: string, id: string) => Promise<ProductDetail | null>,
-): Promise<void> {
+): Promise<AddedLine> {
   if (!Number.isInteger(input.qty) || input.qty <= 0 || input.qty > 99) {
     throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 1 and 99');
   }
   const product = await getProductById(tx, tenantId, input.productId);
   if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
-  // dedupe + sort: a repeated id would double-charge; order-independence
-  // merges reordered selections into one line
-  const { modifierIds, modifierQty } = normalizeModifiers(input);
-  const selections = parseSelections(input.comboSelections ?? []);
-  const invalid = validateLine(product, modifierIds, selections, modifierQty);
-  if (invalid) throw invalid;
-  const picks = product.kind === 'combo' ? validateCombo(product.comboSlots, selections).picks : [];
+  // freeze the accepted price for the cart view; checkout re-checks it
+  // against the live catalog (repriceLines)
+  const line = priceLine(product, input);
+  const { modifierIds, modifierQty, selections, picks } = line;
 
   // stock: what's already carted plus this addition must fit
   const existing = await tx<
@@ -718,24 +818,21 @@ export async function insertLine(
     ]),
   );
 
-  // freeze the accepted price for the cart view; checkout re-checks it
-  // against the live catalog (repriceLines)
-  const chosen = pickedOptions(product, modifierIds, modifierQty);
-  const unit = unitPriceCents(product.basePriceCents, chosen.groups) + comboDelta(picks);
-  if (unit < 0)
-    throw new HttpError(422, 'INVALID_MODIFIER', 'the selected options price this item below zero');
-
   // same product + modifier set + kit composition merges into one line; merged
   // qty capped by CHECK (qty <= 99) → INVALID_QTY like PATCH
+  // `added` reads the row written: a merge keeps the line's frozen price (checkout reprices)
+  let written: { id: string; unit_price_cents: number };
   try {
-    await tx`
+    const rows = await tx<{ id: string; unit_price_cents: number }[]>`
       insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids, modifier_qty, unit_price_cents,
                               modifier_snapshot, combo_selections, combo_snapshot)
       values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)}, ${tx.json(modifierQty)},
-              ${unit}, ${tx.json(chosen.snapshot as never)}, ${tx.json(selections as never)}, ${tx.json(picks as never)})
+              ${line.unitPriceCents}, ${tx.json(line.snapshot as never)}, ${tx.json(selections as never)}, ${tx.json(picks as never)})
       on conflict (cart_id, product_id, modifier_ids, modifier_qty, combo_selections)
       do update set qty = cart_items.qty + excluded.qty
+      returning id, unit_price_cents
     `;
+    written = rows[0]!;
   } catch (err) {
     if ((err as { code?: string }).code === '23514') {
       throw new HttpError(422, 'INVALID_QTY', 'line quantity cannot exceed 99');
@@ -743,6 +840,12 @@ export async function insertLine(
     throw err;
   }
   await tx`update carts set updated_at = now() where id = ${cartId}`;
+  return {
+    itemId: written.id,
+    qty: input.qty,
+    unitPriceCents: written.unit_price_cents,
+    lineTotalCents: written.unit_price_cents * input.qty,
+  };
 }
 
 /**
@@ -761,21 +864,19 @@ export async function repriceLines(
   for (const item of items) {
     const product = products.get(item.productId);
     if (!product) continue;
-    const chosen = pickedOptions(product, item.modifierIds, item.modifierQty);
     const picks =
       product.kind === 'combo' ? validateCombo(product.comboSlots, item.comboSelections).picks : [];
-    const unit = unitPriceCents(product.basePriceCents, chosen.groups) + comboDelta(picks);
-    if (unit < 0)
-      throw new HttpError(
-        422,
-        'INVALID_MODIFIER',
-        'the selected options price this item below zero',
-      );
+    const { unitPriceCents: unit, snapshot } = pricedUnit(
+      product,
+      item.modifierIds,
+      item.modifierQty,
+      picks,
+    );
     if (unit === item.unitPriceCents) continue;
     changed++;
     await tx`
       update cart_items set unit_price_cents = ${unit},
-        modifier_snapshot = ${tx.json(chosen.snapshot as never)},
+        modifier_snapshot = ${tx.json(snapshot as never)},
         combo_snapshot = ${tx.json(picks as never)}
       where tenant_id = ${tenantId} and id = ${item.id}
     `;

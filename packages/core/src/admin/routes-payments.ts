@@ -177,15 +177,29 @@ export async function paymentsView(tx: Sql, tenantId: string, provider: PaymentP
           }),
         }
       : null;
+  const byMethod = new Map<string, { method: string; cents: number; orders: number }>();
+  for (const r of by) {
+    const m = byMethod.get(r.method) ?? { method: r.method, cents: 0, orders: 0 };
+    m.cents += r.cents;
+    m.orders += r.orders;
+    byMethod.set(r.method, m);
+  }
   const tz = await storeTz(tx, tenantId);
   const month = currentMonth(tz);
   return {
     methods: s.payment_methods ?? [...DEFAULT_PAYMENT_METHODS],
     // { method: { percentBps?, fixedCents? } }, signed: negative = discount
     adjustments: readPaymentAdjustments(s.payment_adjustments),
+    // what PATCH accepts, either sign
+    adjustmentBounds: { maxPercentBps: MAX_PERCENT_BPS, maxFixedCents: MAX_FIXED_CENTS },
     pix,
     mercadoPago: connectionView(await loadConnection(tx, tenantId), provider),
     last30: by,
+    last30TotalCents: by.reduce((a, r) => a + r.cents, 0),
+    last30Orders: by.reduce((a, r) => a + r.orders, 0),
+    last30ByMethod: [...byMethod.values()].sort(
+      (a, b) => b.cents - a.cents || a.method.localeCompare(b.method),
+    ),
     awaitingPix: awaiting,
     // money we couldn't verify or settle by ourselves (no token, wrong amount, refund refused)
     review: await paymentReviews(tx, tenantId),

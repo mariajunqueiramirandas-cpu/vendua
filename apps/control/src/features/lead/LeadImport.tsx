@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Check, Loader2 } from 'lucide-react';
 import { api, ApiError, type ImportSection, type Lead, type MenuImport } from '@/lib/api.ts';
+import { fmtMoney } from '@/lib/format.ts';
 import { errorMessage, qk } from '@/lib/query.ts';
 import { Button } from '@/components/ui/button.tsx';
 import { Checkbox, Segmented } from '@/components/ui/controls.tsx';
@@ -94,9 +95,6 @@ const readable = (site: string | null | undefined) => {
   }
 };
 const READABLE_NAMES = READABLE.map(([n]) => n).join(', ');
-
-const brl = (cents: number) =>
-  (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 export function LeadImport({
   lead,
@@ -324,7 +322,7 @@ function Ready({
               <span className="truncate">{cat.name}</span>
               <span className="shrink-0 text-muted-foreground tnum">
                 {cat.products.length} · a partir de{' '}
-                {brl(Math.min(...cat.products.map((p) => p.priceCents)))}
+                {fmtMoney(Math.min(...cat.products.map((p) => p.priceCents)))}
               </span>
             </li>
           ))}

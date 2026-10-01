@@ -127,16 +127,3 @@ export function awaitingCardReturn(): boolean {
   const d = loadDraft();
   return !!d.created && d.created.next.kind === 'card' && d.step !== 'pronto';
 }
-
-/** "Doces da Maria" → "doces-da-maria" */
-export function slugify(s: string) {
-  return s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/&/g, ' e ')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40)
-    .replace(/-+$/g, '');
-}

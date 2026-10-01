@@ -9,8 +9,9 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { whatsappDigits } from '@vendua/kernel/rules';
 import { api, type StoreView } from '../../lib/api.ts';
-import { money, phone as fmtPhone, waDigits } from '../../lib/format.ts';
+import { money, phone as fmtPhone } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
@@ -165,8 +166,9 @@ export function LogoStep({ draft, patch, save, next, back }: StepProps) {
 export function WhatsappStep({ s, save, next, back }: StepProps) {
   const [shown, setShown] = useState(fmtPhone(s.profile.whatsapp));
   const [busy, run] = useBusy();
-  const digits = waDigits(shown);
-  const ok = !!digits && /^\d{12,13}$/.test(digits);
+  // Core's rule: DDD + number, stored with the country code
+  const digits = whatsappDigits(shown);
+  const ok = !!digits;
   return (
     <Frame
       title="Qual é o seu WhatsApp?"

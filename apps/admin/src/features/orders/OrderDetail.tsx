@@ -22,7 +22,7 @@ import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { nextStep, STATE_META, StateChip } from '../../ui/StateChip.tsx';
 import { METHOD_LABEL, PaymentChip } from '../../ui/PaymentChip.tsx';
-import { CANCEL_REASONS, printTicket, useTransition, whatsappUrl } from './actions.ts';
+import { CANCEL_REASONS, orderWhatsappUrl, printTicket, useTransition } from './actions.ts';
 import { PaymentSection, primaryPayment, refundable } from './PaymentSection.tsx';
 import { RefundSheet } from './RefundSheet.tsx';
 
@@ -194,10 +194,10 @@ export function OrderDetail({
           </div>
           {order.customer.phone ? (
             <a
-              href={whatsappUrl(order, s.store.name)}
+              href={orderWhatsappUrl(order, s.store.name)}
               target="_blank"
               rel="noreferrer"
-              className="press t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-[#1f7a4d] px-4 text-white hover:opacity-90"
+              className="press t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-whatsapp px-4 text-on-whatsapp hover:opacity-90"
             >
               <WhatsappLogo weight="fill" className="size-5" /> WhatsApp
             </a>

@@ -1,9 +1,19 @@
 import { Check, Plus } from 'lucide-react';
 import { useEffect, useState, type CSSProperties } from 'react';
-import { AddToCart, ProductLink, useStockLeft, type CatalogProduct } from '@vendua/kernel';
+import {
+  AddToCart,
+  ProductImage,
+  ProductLink,
+  priceDisplay,
+  priceWords,
+  productAnchor,
+  useCardState,
+  useMoney,
+  useStore,
+  type CatalogProduct,
+} from '@vendua/kernel';
 import { ProductFigure } from './ProductFigure.tsx';
 import { flavorOf, KIT_FLAVOR } from './flavor.ts';
-import { formatBRL } from './format.ts';
 
 export interface ProductCardProps {
   product: CatalogProduct;
@@ -14,80 +24,79 @@ export interface ProductCardProps {
   /** label on the go-to-product affordance for items that need choices */
   cta?: string | undefined;
   soldOutLabel?: string | undefined;
-  lowStockThreshold?: number | undefined;
-  highlighted?: boolean | undefined;
   /** larger, horizontal on wide screens */
   feature?: boolean | undefined;
 }
 
-/** Product card: tinted media (photo or flavour art), one-tap add where nothing needs choosing. */
+/** Product card: tinted media (photo or flavour art), one-tap add where nothing needs choosing.
+ *  What it shows is the Kernel's call (`useCardState`, `priceDisplay`); the words are ours. */
 export function ProductCard({
   product: p,
   eyebrow,
   number,
   cta,
   soldOutLabel = 'Esgotado hoje',
-  lowStockThreshold = 5,
-  highlighted,
   feature,
 }: ProductCardProps) {
-  const soldOut = p.status === 'sold_out';
-  const stock = useStockLeft(p);
-  const low = !soldOut && typeof stock === 'number' && stock > 0 && stock <= lowStockThreshold;
+  const card = useCardState(p);
+  const price = priceDisplay(p);
+  const money = useMoney();
+  const { store } = useStore();
   const flavor = p.kind === 'combo' ? KIT_FLAVOR : flavorOf(p.name);
-  const [imgFailed, setImgFailed] = useState(false);
   const [added, setAdded] = useState(false);
   useEffect(() => {
     if (!added) return;
     const t = setTimeout(() => setAdded(false), 1600);
     return () => clearTimeout(t);
   }, [added]);
-  // every unit left is already in the sacola: no quick add
-  const allInBag = !soldOut && stock === 0;
-  const quick =
-    !soldOut && !allInBag && p.needsChoices === false && p.kind !== 'combo' && !p.requiresPreorder;
-  const tag = allInBag ? 'Tudo na sacola' : p.requiresPreorder ? 'Sob encomenda' : null;
-  // Core's "a partir de": priced by a required list, the cheapest choice
-  const from =
-    p.fromPriceCents != null && p.fromPriceCents > p.basePriceCents ? p.fromPriceCents : null;
-  const price = formatBRL(from ?? p.basePriceCents);
+  // a product off its schedule says when it's back (Core's words) instead of "esgotado hoje"
+  const soldOutText = card.scheduleLabel ?? soldOutLabel;
+  const flag =
+    card.badge === 'sold-out'
+      ? { text: soldOutText, tone: undefined }
+      : card.badge === 'low-stock'
+        ? { text: `Restam ${card.stockLeft}`, tone: 'low' }
+        : card.badge === 'all-in-bag'
+          ? { text: 'Tudo na sacola', tone: 'soft' }
+          : card.badge === 'preorder'
+            ? { text: 'Sob encomenda', tone: 'soft' }
+            : null;
 
   return (
     <li
-      id={`produto-${p.slug}`}
+      id={productAnchor(p.slug)}
       className="pcard"
-      data-soldout={soldOut || undefined}
+      data-soldout={card.soldOut || undefined}
       data-feature={feature || undefined}
-      data-hit={highlighted || undefined}
       style={{ '--tint': flavor.tint } as CSSProperties}
     >
       <ProductLink product={p} asChild>
         <a
           className="pcard-link"
-          aria-label={`${p.name}, ${from !== null ? 'a partir de ' : ''}${price}${soldOut ? `, ${soldOutLabel}` : ''}`}
+          aria-label={`${p.name}, ${priceWords(price, store?.currency)}${card.soldOut ? `, ${soldOutText}` : ''}`}
         >
           <div className="pcard-media">
-            {p.imageUrl && !imgFailed ? (
-              <img
-                src={p.imageUrl}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                onError={() => setImgFailed(true)}
-              />
-            ) : (
-              <ProductFigure
-                variant={p.figureVariant}
-                kind={p.kind}
-                title={p.name}
-                flavor={flavor}
-                className="pcard-art"
-              />
-            )}
-            {soldOut ? <span className="pcard-flag">{soldOutLabel}</span> : null}
-            {low ? <span className="pcard-flag pcard-flag--low">Restam {stock}</span> : null}
-            {!soldOut && !low && tag ? (
-              <span className="pcard-flag pcard-flag--soft">{tag}</span>
+            <ProductImage
+              product={p}
+              alt=""
+              sizes="(max-width: 639px) 50vw, (max-width: 1023px) 33vw, 300px"
+              fallback={
+                <ProductFigure
+                  variant={p.figureVariant}
+                  kind={p.kind}
+                  title={p.name}
+                  flavor={flavor}
+                  className="pcard-art"
+                />
+              }
+            />
+            {flag ? (
+              <span
+                className={`pcard-flag${flag.tone ? ` pcard-flag--${flag.tone}` : ''}`}
+                data-badge={card.badge}
+              >
+                {flag.text}
+              </span>
             ) : null}
             {number ? <span className="pcard-num">{number}</span> : null}
           </div>
@@ -95,19 +104,23 @@ export function ProductCard({
             {eyebrow ? <p className="pcard-eyebrow">{eyebrow}</p> : null}
             <h3 className="pcard-name">{p.name}</h3>
             {p.description ? <p className="pcard-desc">{p.description}</p> : null}
+            {price.promoLabel ? <p className="pcard-promo">Promoção · {price.promoLabel}</p> : null}
             <p className="pcard-foot">
-              <span className="pcard-price">
-                {from !== null ? (
-                  <small style={{ fontSize: '0.8em', fontWeight: 500 }}>a partir de </small>
+              <span className="pcard-price" data-form={price.form}>
+                {price.struckCents !== null ? (
+                  <s className="pcard-was">{money(price.struckCents)}</s>
                 ) : null}
-                {price}
+                {price.form === 'from' ? <small className="pcard-from">a partir de </small> : null}
+                {money(price.cents)}
               </span>
-              {!quick && !soldOut && cta ? <span className="pcard-cta">{cta}</span> : null}
+              {!card.canQuickAdd && !card.soldOut && cta ? (
+                <span className="pcard-cta">{cta}</span>
+              ) : null}
             </p>
           </div>
         </a>
       </ProductLink>
-      {quick ? (
+      {card.canQuickAdd ? (
         <AddToCart product={p} asChild onAdded={() => setAdded(true)}>
           <button
             type="button"

@@ -10,10 +10,10 @@ import {
   WhatsappLogo,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
+import { whatsappUrl } from '@vendua/kernel/rules';
 import { api, type Coupon, type LoyaltyProgram, type Marketing as M } from '../../lib/api.ts';
-import { dateShort, money, phone, whatsappLink } from '../../lib/format.ts';
+import { dateShort, money, phone } from '../../lib/format.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -34,6 +34,8 @@ import {
 import { Mascote } from '../../ui/Mascote.tsx';
 import { NoPhoto } from '../../ui/illustrations.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { availability } from '../../ui/ProductTile.tsx';
+import { Qr, qrPng } from '../../ui/Qr.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
@@ -72,16 +74,20 @@ export default function Marketing() {
 function Share() {
   const s = useSession();
   const { data } = useQuery({ queryKey: qk.share, queryFn: api.share });
-  const [qr, setQr] = useState<string | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
+  const [png, setPng] = useState<string | null>(null);
   const url = data?.store.url ?? s.store.url;
   useEffect(() => {
-    void QRCode.toDataURL(url, {
-      margin: 1,
-      width: 560,
-      color: { dark: '#123c32', light: '#fffdf8' },
-    }).then(setQr);
-  }, [url]);
+    if (!qrOpen) return;
+    let live = true;
+    qrPng(url).then(
+      (u) => live && setPng(u),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [qrOpen, url]);
   const text = `Peça na ${s.store.name} pelo site: ${url}`;
   return (
     <Section
@@ -110,7 +116,7 @@ function Share() {
             href={`https://wa.me/?text=${encodeURIComponent(text)}`}
             target="_blank"
             rel="noreferrer"
-            className="t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-[#1f7a4d] px-4 text-white"
+            className="t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-whatsapp px-4 text-on-whatsapp"
           >
             <WhatsappLogo weight="fill" className="size-5" /> mandar no WhatsApp
           </a>
@@ -170,11 +176,12 @@ function Share() {
         description="Imprima e deixe no balcão, na embalagem ou no cardápio."
       >
         <div className="flex flex-col items-center gap-4 pt-2">
-          {qr ? <img src={qr} alt={`QR code para ${url}`} className="w-64 rounded-md" /> : null}
+          <Qr value={url} alt={`QR code para ${url}`} className="size-64 rounded-md" />
           <a
-            href={qr ?? '#'}
+            href={png ?? undefined}
             download={`qr-${s.store.slug}.png`}
-            className="t-label inline-flex min-h-12 items-center rounded-md bg-primary px-5 text-on-primary"
+            aria-disabled={!png || undefined}
+            className="t-label inline-flex min-h-12 items-center rounded-md bg-primary px-5 text-on-primary aria-disabled:opacity-60"
           >
             baixar imagem
           </a>
@@ -182,16 +189,6 @@ function Share() {
       </Sheet>
     </Section>
   );
-}
-
-function couponText(c: Coupon) {
-  const off =
-    c.kind === 'percent'
-      ? `${c.value}% off`
-      : c.kind === 'fixed'
-        ? `${money(c.value)} off`
-        : 'entrega grátis';
-  return c.label ?? off;
 }
 
 function Coupons({ coupons }: { coupons: Coupon[] }) {
@@ -240,7 +237,7 @@ function Coupons({ coupons }: { coupons: Coupon[] }) {
                 <div className="min-w-0 flex-1">
                   <p className="tnum font-display font-semibold tracking-wide">{c.code}</p>
                   <p className="t-caption text-muted">
-                    {couponText(c)}
+                    {c.displayLabel}
                     {c.minSubtotalCents ? ` · mínimo ${money(c.minSubtotalCents)}` : ''}
                     {c.firstOrderOnly ? ' · só no 1º pedido' : ''}
                     {c.endsAt ? ` · ${expired ? 'venceu' : 'até'} ${dateShort(c.endsAt)}` : ''}
@@ -401,33 +398,28 @@ function Loyalty({ data }: { data: M }) {
   const [stamps, setStamps] = useState(cur?.stampsRequired ?? 10);
   const [kind, setKind] = useState<LoyaltyProgram['reward']['kind']>(cur?.reward.kind ?? 'fixed');
   const [value, setValue] = useState(cur?.reward.value ?? 1500);
-  const label =
-    kind === 'percent'
-      ? `${value}% off`
-      : kind === 'fixed'
-        ? `${money(value)} de desconto`
-        : 'entrega grátis';
+  // Core names the reward; words someone gave it stay only while they still describe it
+  const rewardOf = (k: typeof kind, v: number): LoyaltyProgram['reward'] =>
+    cur?.reward.label && cur.reward.kind === k && cur.reward.value === v
+      ? { kind: k, value: v, label: cur.reward.label }
+      : { kind: k, value: v };
   const save = (next: { on: boolean; stamps: number; kind: typeof kind; value: number }) => {
     const program: LoyaltyProgram | null = next.on
       ? {
           stampsRequired: next.stamps,
           minOrderCents: 0,
-          reward: {
-            kind: next.kind,
-            value: next.kind === 'free_delivery' ? 0 : next.value,
-            label:
-              next.kind === 'percent'
-                ? `${next.value}% off`
-                : next.kind === 'fixed'
-                  ? `${money(next.value)} de desconto`
-                  : 'entrega grátis',
-          },
+          reward: rewardOf(next.kind, next.kind === 'free_delivery' ? 0 : next.value),
           rewardValidDays: 60,
         }
       : null;
     return saveState
       .track(api.setLoyalty(program))
-      .then(() => qc.invalidateQueries({ queryKey: qk.marketing }))
+      .then((r) => {
+        qc.setQueryData<M>(qk.marketing, (m) =>
+          m ? { ...m, loyalty: { ...m.loyalty, program: r.program } } : m,
+        );
+        return qc.invalidateQueries({ queryKey: qk.marketing });
+      })
       .catch((e) => {
         // back to what the store actually has, not a card that looks saved
         setOn(!!cur);
@@ -455,7 +447,13 @@ function Loyalty({ data }: { data: M }) {
               <Gift weight="duotone" className="size-6" /> Cartão fidelidade
             </span>
           }
-          description={on ? `Junte ${stamps} selos, ganhe ${label}.` : 'Desligado.'}
+          description={
+            !on
+              ? 'Desligado.'
+              : cur
+                ? `Junte ${stamps} selos, ganhe ${cur.reward.displayLabel}.`
+                : `Junte ${stamps} selos.`
+          }
         />
         {on ? (
           <>
@@ -538,7 +536,7 @@ function Waitlist({ data }: { data: M }) {
       {data.waitlist.length ? (
         <div className="space-y-3">
           {data.waitlist.map((w) => {
-            const back = w.status === 'active' && w.stockQuantity !== 0;
+            const back = availability(w) === 'available';
             return (
               <Card key={w.productId} className="p-4">
                 <div className="flex items-center gap-3">
@@ -562,13 +560,15 @@ function Waitlist({ data }: { data: M }) {
                     <li key={c.contact} className="flex items-center justify-between gap-2">
                       <span className="tnum t-body">{phone(c.contact)}</span>
                       <a
-                        href={whatsappLink(
-                          c.contact,
-                          `Oi! Aqui é da ${s.store.name}. ${w.name} voltou! Corre que é por pouco tempo: ${s.store.url}`,
-                        )}
+                        href={
+                          whatsappUrl(
+                            c.contact,
+                            `Oi! Aqui é da ${s.store.name}. ${w.name} voltou! Corre que é por pouco tempo: ${s.store.url}`,
+                          ) ?? undefined
+                        }
                         target="_blank"
                         rel="noreferrer"
-                        className="t-label inline-flex min-h-11 items-center gap-1.5 rounded-md px-3 text-[#1f7a4d] hover:bg-hover noite:text-success"
+                        className="t-label inline-flex min-h-11 items-center gap-1.5 rounded-md px-3 text-success hover:bg-hover"
                       >
                         <WhatsappLogo weight="fill" className="size-5" /> avisar
                       </a>

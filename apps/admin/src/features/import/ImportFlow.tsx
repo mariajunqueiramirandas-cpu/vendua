@@ -30,6 +30,7 @@ import { Field, Segmented, TextInput, Toggle } from '../../ui/fields.tsx';
 import { NoPhoto } from '../../ui/illustrations.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { Notice } from '../../ui/Notice.tsx';
+import { availability } from '../../ui/ProductTile.tsx';
 import { METHOD_LABEL } from '../../ui/PaymentChip.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import {
@@ -686,12 +687,8 @@ function CategoryProducts({ products }: { products: ImportPreviewProduct[] }) {
 
 function ProductLine({ p }: { p: ImportPreviewProduct }) {
   const [broken, setBroken] = useState(false);
-  const badge =
-    p.status === 'archived'
-      ? 'oculto'
-      : p.status === 'sold_out' || p.stockQuantity === 0
-        ? 'esgotado'
-        : null;
+  const a = availability(p);
+  const badge = a === 'hidden' ? 'oculto' : a === 'sold_out' ? 'esgotado' : null;
   return (
     <li className="flex min-h-16 items-center gap-3 px-4 py-2.5">
       <span className="size-12 shrink-0 overflow-hidden rounded-sm bg-sunken">

@@ -9,8 +9,19 @@ import {
   type ImgHTMLAttributes,
 } from 'react';
 import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from 'react-router-dom';
-import { mediaSrcSet } from '@vendua/ui-defaults';
-import { lineDraw, productDraw, unitsLeft, useCart, useStore } from './hooks.ts';
+import {
+  lineDraw,
+  productDraw,
+  unitsLeft,
+  useCart,
+  useCartCount,
+  useCopy,
+  useStore,
+  useStoreStatus,
+} from './hooks.ts';
+import { MAX_LINE_QTY } from './rules/card.ts';
+import { mediaSrcSet, plural } from './rules/format.ts';
+import { digitsOf, isValidPhone } from './rules/phone.ts';
 import { useKernel, prefetchQuery } from './provider.tsx';
 import { productHref, KERNEL_PATHS } from './config.ts';
 import { showError } from './errors.ts';
@@ -164,13 +175,21 @@ export function AddToCart({
     if (disabled) return;
     setPending(true);
     try {
-      await mutations.add(product.id, qty, modifierIds, comboSelections, modifierQty);
+      const { added } = await mutations.addLine(
+        product.id,
+        qty,
+        modifierIds,
+        comboSelections,
+        modifierQty,
+      );
       haptic.tick();
+      // the value is what Core charged for these units (options, kit, promo); an older Core
+      // doesn't say, and then there is no value rather than a guessed one
       emit('add_to_cart', {
         product_id: product.id,
         qty,
         modifiers: modifierIds.length,
-        ...(product.basePriceCents !== undefined ? { value: product.basePriceCents * qty } : {}),
+        ...(added ? { value: added.lineTotalCents } : {}),
       });
       onAdded?.();
     } catch (err) {
@@ -202,7 +221,12 @@ export interface QuantityStepperProps {
   max?: number;
 }
 
-export function QuantityStepper({ itemId, qty, min = 0, max: maxProp = 99 }: QuantityStepperProps) {
+export function QuantityStepper({
+  itemId,
+  qty,
+  min = 0,
+  max: maxProp = MAX_LINE_QTY,
+}: QuantityStepperProps) {
   const { cart, mutations } = useCart();
   const [pending, setPending] = useState(false);
   const line = cart?.items.find((i) => i.id === itemId);
@@ -256,14 +280,15 @@ export interface CartTriggerProps {
 export function CartTrigger({ asChild, children, onOpen }: CartTriggerProps) {
   const { cart } = useCart();
   const openBag = useOpenBag();
+  const { vocabulary: v } = useCopy();
   // a completed cart is history, not a bag — count only open carts
-  const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
+  const count = useCartCount();
   return withChild(
     asChild,
     {
       'data-vendua': 'cart-trigger',
       'data-count': count,
-      'aria-label': `sacola, ${count} ${count === 1 ? 'item' : 'itens'}`,
+      'aria-label': `${v.bag}, ${count} ${plural(count, v.itemSingular, v.itemPlural)}`,
       onClick: (e: MouseEvent) => {
         emit('cart_open', { item_count: count, cart_value: cart?.totals.totalCents ?? 0 });
         if (onOpen) return onOpen();
@@ -271,7 +296,11 @@ export function CartTrigger({ asChild, children, onOpen }: CartTriggerProps) {
         openBag();
       },
     },
-    children ?? <>Sacola ({count})</>,
+    children ?? (
+      <>
+        {capitalize(v.bag)} ({count})
+      </>
+    ),
   );
 }
 
@@ -343,9 +372,8 @@ export function NotifyMeButton({
 }: NotifyMeButtonProps) {
   const { api } = useKernel();
   const [state, setState] = useState<'idle' | 'pending' | 'done'>('idle');
-  const digits = phone.replace(/\D/g, '');
-  const valid =
-    digits.length >= 10 && digits.length <= 13 && (subject === 'store' || Boolean(productId));
+  const digits = digitsOf(phone);
+  const valid = isValidPhone(digits) && (subject === 'store' || Boolean(productId));
   const disabled = state !== 'idle' || !valid;
   return withChild(
     asChild,
@@ -373,29 +401,32 @@ export function NotifyMeButton({
   );
 }
 
-export function StoreStatusBadge() {
-  const { status, resumesAt, store } = useStore();
-  const label = status === 'open' ? 'Aberto' : status === 'paused' ? 'Pausado' : 'Fechado';
-  const resumeLabel = resumesAt
-    ? new Intl.DateTimeFormat('pt-BR', {
-        timeZone: store?.hours.timezone,
-        weekday: 'short',
-        hour: '2-digit',
-        minute: '2-digit',
-      }).format(new Date(resumesAt))
-    : undefined;
+const STATUS_WORD = { open: 'Aberto', closed: 'Fechado', paused: 'Pausado' } as const;
+
+export interface StoreStatusBadgeProps {
+  /** Kernel 1.14 — the store's own word per status (default: Aberto, Fechado, Pausado) */
+  labels?: Partial<Record<'open' | 'closed' | 'paused', string>>;
+}
+
+/** Core's open/closed/paused. The title carries Core's moment ("Aberto até 18:00", "Abre amanhã
+ *  às 09:00"); parts: `label`. `data-hint` = `statusHint`'s kind. */
+export function StoreStatusBadge({ labels }: StoreStatusBadgeProps = {}) {
+  const { status, hint, label } = useStoreStatus();
   return (
     <span
       data-vendua="store-status"
       data-status={status ?? 'loading'}
+      {...(hint ? { 'data-hint': hint.kind } : {})}
       role="status"
       aria-live="polite"
-      title={resumeLabel ? `retorna ${resumeLabel}` : store?.name}
+      {...(label ? { title: label } : {})}
     >
-      {status ? label : '…'}
+      <span data-part="label">{status ? (labels?.[status] ?? STATUS_WORD[status]) : '…'}</span>
     </span>
   );
 }
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export interface ImgProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, 'src' | 'srcSet'> {
   src: string;

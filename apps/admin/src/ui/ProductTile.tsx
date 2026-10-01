@@ -4,10 +4,16 @@ import { money } from '../lib/format.ts';
 import { cn } from './cn.ts';
 import { ArtPudim } from './illustrations.tsx';
 
-export function availability(p: Product): 'available' | 'sold_out' | 'hidden' {
-  if (p.status === 'archived') return 'hidden';
-  if (p.status === 'sold_out' || p.stockQuantity === 0) return 'sold_out';
-  return 'available';
+/** Core's live status in the merchant's words. Rows Core serves none on (an import preview, a
+ *  waitlist entry) read it from status and stock, Core's own rule: stock 0 is sold out. */
+export function availability(p: {
+  status: string;
+  stockQuantity: number | null;
+  liveStatus?: Product['liveStatus'];
+}): 'available' | 'sold_out' | 'hidden' {
+  const s =
+    p.liveStatus ?? (p.status === 'active' && p.stockQuantity === 0 ? 'sold_out' : p.status);
+  return s === 'archived' ? 'hidden' : s === 'sold_out' ? 'sold_out' : 'available';
 }
 
 /**
@@ -29,11 +35,7 @@ export function ProductTile({
   const a = availability(p);
   // it has a schedule and this isn't one of its windows (Core decides; the tile only shows it)
   const offHours = !!p.availabilitySchedule && p.availableNow === false && a === 'available';
-  const low =
-    p.stockQuantity != null &&
-    p.stockQuantity > 0 &&
-    p.lowStockThreshold != null &&
-    p.stockQuantity <= p.lowStockThreshold;
+  const low = p.lowStock && a !== 'sold_out';
   return (
     <div
       className={cn(

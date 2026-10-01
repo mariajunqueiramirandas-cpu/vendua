@@ -1,6 +1,11 @@
 import { useState } from 'react';
-import { useDeliveryZones, useProduct, useStockLeft, useStore, useWaitlist } from '../hooks.ts';
-import { money, PixQr } from '@vendua/ui-defaults';
+import { useDeliverySummary, useProduct, useStockLeft, useStore, useWaitlist } from '../hooks.ts';
+import { PixQr } from '@vendua/ui-defaults';
+import { cardState } from '../rules/card.ts';
+import { deliveryWords } from '../rules/delivery.ts';
+import { plural } from '../rules/format.ts';
+import { PIX_KEY_LABEL } from '../rules/orders.ts';
+import { isValidPhone } from '../rules/phone.ts';
 import { errorCopy } from '../errors.ts';
 import { NotifyMeButton } from '../primitives.tsx';
 import { usePageContext } from '../composition/runtime.tsx';
@@ -15,26 +20,30 @@ function usePageProduct() {
   return useProduct(params.slug ?? '').product;
 }
 
+/** Low stock is Core's call (`lowStock` / `lowStockThreshold` on what the bag leaves); the
+ *  block's own `threshold` setting is kept for old templates and ignored since 1.14. */
 export function StockCounter({ settings }: BlockProps<typeof S.stockCounter>) {
   const product = usePageProduct();
   const left = useStockLeft(product);
   if (!product) return null;
+  const card = cardState(product, left);
   // a scheduled product isn't out of stock — the purchase panel says when it's back
-  if (product.status === 'sold_out' && product.availabilityLabel) return null;
-  if (product.status === 'sold_out')
+  if (card.soldOut && card.scheduleLabel) return null;
+  if (card.soldOut)
     return (
       <p className="v-stock" data-part="root" data-tone="low" role="status">
         Esgotado hoje
       </p>
     );
   // what's left after the cart; at 0 the purchase panel says it's all in the sacola
-  const n = left;
-  if (n === null || n === 0) return null;
-  const low = n > 0 && n <= settings.threshold;
-  if (!low && !settings.showWhenPlenty) return null;
+  const n = card.stockLeft;
+  if (n === null || card.allInBag) return null;
+  if (!card.lowStock && !settings.showWhenPlenty) return null;
   return (
-    <p className="v-stock" data-part="root" data-tone={low ? 'low' : 'ok'} role="status">
-      {low ? `Restam ${n} ${n === 1 ? 'unidade' : 'unidades'}` : `${n} unidades disponíveis`}
+    <p className="v-stock" data-part="root" data-tone={card.lowStock ? 'low' : 'ok'} role="status">
+      {card.lowStock
+        ? `Restam ${n} ${plural(n, 'unidade', 'unidades')}`
+        : `${n} ${plural(n, 'unidade disponível', 'unidades disponíveis')}`}
     </p>
   );
 }
@@ -56,7 +65,7 @@ export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
       <p className="v-note" role="status" data-part="done">
         {settings.successText}
         {waitlist.waiting && waitlist.waiting > 1
-          ? ` Você e mais ${waitlist.waiting - 1} ${waitlist.waiting === 2 ? 'pessoa esperam' : 'pessoas esperam'}.`
+          ? ` Você e mais ${waitlist.waiting - 1} ${plural(waitlist.waiting - 1, 'pessoa', 'pessoas')} esperam.`
           : ''}
       </p>
     );
@@ -68,7 +77,7 @@ export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
         data-part="root"
         onSubmit={(e) => {
           e.preventDefault();
-          if (phone.replace(/\D/g, '').length >= 10) void waitlist.join(phone).catch(() => {});
+          if (isValidPhone(phone)) void waitlist.join(phone).catch(() => {});
         }}
       >
         <label className="v-label" htmlFor="v-notify-phone">
@@ -76,7 +85,7 @@ export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
         </label>
         {others > 0 ? (
           <p className="v-muted" data-part="waiting">
-            {others} {others === 1 ? 'pessoa já espera' : 'pessoas já esperam'} a volta.
+            {others} {plural(others, 'pessoa já espera', 'pessoas já esperam')} a volta.
           </p>
         ) : null}
         <div className="v-notify-row">
@@ -95,7 +104,7 @@ export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
             type="submit"
             className="v-btn v-btn-accent"
             data-vendua="notify-me"
-            disabled={waitlist.pending || phone.replace(/\D/g, '').length < 10}
+            disabled={waitlist.pending || !isValidPhone(phone)}
           >
             Avise-me
           </button>
@@ -150,22 +159,22 @@ export function PromoBadge({ settings }: BlockProps<typeof S.promoBadge>) {
   );
 }
 
-/** Kernel 1.1: "Entrega em 30–80 min · a partir de R$ 5,00 · Retirada em ~40 min" — Core's zones and prep time. */
+/** Kernel 1.1: "Entrega a partir de R$ 5,00 · 30–80 min · Retirada em ~40 min" — Core's zones
+ *  and prep time, summed up by `deliverySummary` (a per-km zone is never "grátis"). */
 export function DeliveryEta({ settings }: BlockProps<typeof S.deliveryEta>) {
   const { store } = useStore();
-  const { zones } = useDeliveryZones();
+  const summary = useDeliverySummary();
   if (!store) return null;
+  const words = deliveryWords(summary, store.currency);
   const parts: string[] = [];
-  if (store.deliveryEnabled && zones.length > 0) {
-    const min = Math.min(...zones.map((z) => z.etaMin));
-    const max = Math.max(...zones.map((z) => z.etaMax));
-    const fee = Math.min(...zones.map((z) => z.feeCents));
-    parts.push(`Entrega em ${min}–${max} min`);
-    if (settings.showFee)
-      parts.push(fee > 0 ? `a partir de ${money(fee, store.currency)}` : 'entrega grátis');
-  }
-  if (settings.showPickup && store.pickupEnabled)
-    parts.push(`Retirada em ~${store.prepTimeMinutes} min`);
+  if (words)
+    parts.push(
+      settings.showFee
+        ? `${words.fee.charAt(0).toUpperCase()}${words.fee.slice(1)} · ${words.eta}`
+        : `Entrega em ${words.eta}`,
+    );
+  if (settings.showPickup && summary.pickup)
+    parts.push(`Retirada em ~${summary.pickup.prepMinutes} min`);
   if (parts.length === 0) return null;
   return (
     <p className="v-info v-eta" data-part="root">
@@ -196,7 +205,7 @@ export function PixInfo({ settings }: BlockProps<typeof S.pixInfo>) {
         <PixQr payload={pix.copyPaste} label={`QR code Pix de ${pix.beneficiary}`} />
       ) : null}
       <p>
-        <span className="v-muted">Chave ({KEY_LABEL[pix.keyType] ?? pix.keyType}):</span>{' '}
+        <span className="v-muted">{keyLabel(pix.keyType)}:</span>{' '}
         <code data-part="key">{pix.key}</code>{' '}
         <button type="button" className="v-link-btn" onClick={copy}>
           {copied ? 'Copiada!' : 'Copiar'}
@@ -209,13 +218,11 @@ export function PixInfo({ settings }: BlockProps<typeof S.pixInfo>) {
   );
 }
 
-const KEY_LABEL: Record<string, string> = {
-  cpf: 'CPF',
-  cnpj: 'CNPJ',
-  email: 'e-mail',
-  phone: 'celular',
-  random: 'aleatória',
-};
+// "Chave aleatória: …", "CPF: …"
+function keyLabel(type: string): string {
+  const label = PIX_KEY_LABEL[type] ?? type;
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+}
 
 /** Kernel 1.2 — the stamp card pitch; nothing when the store runs no program. */
 export function LoyaltyTeaser({ settings }: BlockProps<typeof S.loyaltyTeaser>) {

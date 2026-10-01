@@ -673,6 +673,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     expect((await call('GET', '/storefront/v1/cep/123')).status).toBe(400);
     const q = await call('POST', '/checkout/v1/quote', { lat: -22.93, lng: -42.48 });
     expect(q.body).toMatchObject({ eligible: true, zoneName: 'Raio 8km' });
+    // the zones list's "a partir de" is exactly what the nearest address is quoted
+    const zones = (await call('GET', '/storefront/v1/zones')).body.zones;
+    const raio = zones.find((z: any) => z.name === 'Raio 8km');
+    const near = await call('POST', '/checkout/v1/quote', { lat: -22.93, lng: -42.5099 });
+    expect(near.body).toMatchObject({ eligible: true, zoneId: raio.id, feeCents: 400 });
+    expect(raio.minFeeCents).toBe(near.body.feeCents);
+    expect(zones.find((z: any) => z.name === 'Centro').minFeeCents).toBe(500);
     const far = await call('POST', '/checkout/v1/quote', { lat: -22.0, lng: -42.0 });
     expect(far.body.eligible).toBe(false);
   });
