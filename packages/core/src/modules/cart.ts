@@ -11,6 +11,7 @@ import {
 import { comboDelta, parseSelections, validateCombo, type ComboSelection } from './combos.ts';
 import { couponLabel, couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
 import { effectiveFee, foldName, resolveZone, validCoords, type ZoneLike } from './geo.ts';
+import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
 import { scheduleView, type ScheduleView } from './preorder.ts';
 import { assertStock, stockDemand } from './stock.ts';
 import type { StoreSettingsRow } from './store.ts';
@@ -104,6 +105,8 @@ export interface CartTotals {
   subtotalCents: number;
   deliveryFeeCents: number;
   discountCents: number;
+  /** the chosen payment method's discount (<0) or surcharge (>0); 0 without one */
+  paymentAdjustmentCents: number;
   totalCents: number;
   itemCount: number;
   minOrderCents: number;
@@ -158,15 +161,18 @@ export function computeTotals(
   minOrderCents: number,
   discountCents = 0,
   freeDeliveryThresholdCents: number | null = null,
+  paymentAdjustmentCents = 0,
 ): CartTotals {
   const subtotal = items.reduce((s, i) => s + i.lineTotalCents, 0);
   const itemCount = items.reduce((s, i) => s + i.qty, 0);
   const discount = Math.max(0, Math.min(discountCents, subtotal + deliveryFeeCents));
+  const adjustment = Math.max(paymentAdjustmentCents, -(subtotal + deliveryFeeCents - discount));
   return {
     subtotalCents: subtotal,
     deliveryFeeCents,
     discountCents: discount,
-    totalCents: subtotal + deliveryFeeCents - discount,
+    paymentAdjustmentCents: adjustment,
+    totalCents: subtotal + deliveryFeeCents - discount + adjustment,
     itemCount,
     minOrderCents,
     remainingMinOrderCents: Math.max(0, minOrderCents - subtotal),
@@ -402,6 +408,8 @@ export async function loadCartView(
   tenantId: string,
   cartId: string,
   now = new Date(),
+  /** previews: totals for this payment method / this delivery address (the quote) */
+  opts: { paymentMethod?: string | null; delivery?: CartDelivery } = {},
 ): Promise<CartView> {
   // independent reads go out together — postgres.js pipelines them on the tx's connection
   const [carts, rows, settingsRows, zones] = await Promise.all([
@@ -422,6 +430,7 @@ export async function loadCartView(
   const cart = carts[0];
   if (!cart) throw new HttpError(404, 'CART_NOT_FOUND', 'cart not found');
   const settings = settingsRows[0];
+  if (opts.delivery) cart.delivery = opts.delivery;
   const [items, couponRow] = await Promise.all([
     priceItems(tx, tenantId, rows, settings?.hours?.timezone || 'America/Sao_Paulo'),
     cart.coupon_code ? loadCoupon(tx, tenantId, cart.coupon_code) : null,
@@ -448,6 +457,7 @@ export async function loadCartView(
 
   let coupon: AppliedCoupon | null = null;
   let discount = 0;
+  let itemDiscount = 0;
   if (cart.coupon_code) {
     const row = couponRow;
     if (!row) {
@@ -466,6 +476,7 @@ export async function loadCartView(
         now,
       });
       discount = out.discountCents;
+      if (row.kind !== 'free_delivery') itemDiscount = discount;
       coupon = {
         code: row.code,
         label: couponLabel(row),
@@ -487,6 +498,7 @@ export async function loadCartView(
       effectiveMinOrder,
       discount,
       match?.zone.free_delivery_over_cents ?? null,
+      paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, opts.paymentMethod)),
     ),
     // a zero fee can mean a free zone — branch on zoneId, not the amount
     delivery: cart.delivery

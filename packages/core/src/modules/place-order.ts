@@ -7,6 +7,7 @@ import { addressParts, composeAddress, validateCheckout, type CheckoutInput } fr
 import { couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
 import { normalizePhone } from './customer.ts';
 import { effectiveFee } from './geo.ts';
+import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
 import { offlinePayment, onlineOffer, onlinePayment } from './payments/store-payments.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 import { validateSchedule } from './preorder.ts';
@@ -103,6 +104,7 @@ export async function placeOrderTx(
 
   // coupon: re-evaluated with the phone (per-phone limits, first order, personal rewards)
   let discount = 0;
+  let itemDiscount = 0;
   let coupon: { id: string; code: string } | null = null;
   if (cart.coupon) {
     const row = await loadCoupon(tx, tenantId, cart.coupon.code);
@@ -122,6 +124,7 @@ export async function placeOrderTx(
         ...out.details,
       });
     discount = out.discountCents;
+    if (row.kind !== 'free_delivery') itemDiscount = discount;
     coupon = { id: row.id, code: row.code };
   }
 
@@ -140,7 +143,12 @@ export async function placeOrderTx(
     >`select coalesce(max(number), 0) + 1 as n from orders where tenant_id = ${tenantId}`
   )[0]!.n;
   const orderId = crypto.randomUUID();
-  const total = subtotal + deliveryFee - discount;
+  // from the locked settings row, before the payment is built: Pix/MP charge the adjusted total
+  const paymentAdjustment = Math.max(
+    paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, body.payment.method)),
+    -(subtotal + deliveryFee - discount),
+  );
+  const total = subtotal + deliveryFee - discount + paymentAdjustment;
 
   // online: Mercado Pago charges it when the shopper's page asks (POST /orders/:id/pay);
   // a store that isn't connected keeps today's static Pix from its own key
@@ -184,11 +192,11 @@ export async function placeOrderTx(
   const customer = { name: body.customer.name.trim(), phone: body.customer.phone.trim() };
   await tx`
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
-                        subtotal_cents, delivery_fee_cents, discount_cents, total_cents, coupon_code,
-                        notes, scheduled_for)
+                        subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
+                        total_cents, coupon_code, notes, scheduled_for)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
-            ${subtotal}, ${deliveryFee}, ${discount}, ${total}, ${coupon?.code ?? null},
+            ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
             ${body.notes?.trim() || null}, ${scheduledFor})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
@@ -229,7 +237,7 @@ export async function placeOrderTx(
     tx`
       insert into analytics_events (tenant_id, name, at, session_id, props)
       values (${tenantId}, 'order_placed', now(), ${cartId},
-        ${tx.json({ order_id: orderId, value: total, method: body.payment.method, ...(coupon ? { coupon: coupon.code } : {}) })})
+        ${tx.json({ order_id: orderId, value: total, method: body.payment.method, ...(coupon ? { coupon: coupon.code } : {}), ...(paymentAdjustment ? { payment_adjustment: paymentAdjustment } : {}) })})
     `,
     // the merchant admin's live board rings on commit
     emitAdminTx(tx, tenantId, 'order.placed', orderId),

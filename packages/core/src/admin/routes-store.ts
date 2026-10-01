@@ -25,7 +25,7 @@ import { nextLocalMidnight } from './routes-catalog.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 
 /** encomendas: the offline methods a preorder may be limited to */
-const METHODS = ['pix', 'card_on_delivery', 'cash'] as const;
+const METHODS = ['pix', 'card_on_delivery', 'cash', 'meal_voucher'] as const;
 
 export async function loadSettings(tx: Sql, tenantId: string): Promise<StoreSettingsRow> {
   let row = (

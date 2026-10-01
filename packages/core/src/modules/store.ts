@@ -71,6 +71,8 @@ export interface StoreSettingsRow {
   accept_target_minutes?: number;
   email?: string | null;
   payment_methods?: string[];
+  /** migration 0067: { method: { percentBps?, fixedCents? } } — read via payment-adjustments.ts */
+  payment_adjustments?: unknown;
   // Phase 3 (migration 0054)
   billing_hold?: boolean;
   pickup_address?: string | null;

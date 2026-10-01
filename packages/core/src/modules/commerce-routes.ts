@@ -62,6 +62,7 @@ import { normalizePixKey, type PixKeyType } from './pix.ts';
 import { setStock } from './stock.ts';
 import { subscribeNotifyTx } from './storefront-platform.ts';
 import type { StoreSettingsRow } from './store.ts';
+import { isPaymentMethod } from './payment-adjustments.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 import { refundLeftovers, refundOrderPayments } from '../admin/routes-orders.ts';
 import { cancelOpenAttempts, preparePayment } from './payments/store-payments.ts';
@@ -833,9 +834,7 @@ export function mountCommerce(d: Deps) {
         if (
           !Array.isArray(methods) ||
           methods.length === 0 ||
-          !methods.every((m) =>
-            ['pix', 'card_online', 'card_on_delivery', 'cash'].includes(m as string),
-          )
+          !methods.every((m) => isPaymentMethod(m))
         )
           throw new HttpError(
             400,
