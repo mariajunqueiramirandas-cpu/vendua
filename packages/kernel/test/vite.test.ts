@@ -46,8 +46,12 @@ function fakeStorefront(): string {
   return dir;
 }
 
-async function runPlugin(tokens: typeof TOKENS, root: string) {
-  const plugin = vendua({ config: { contract: 2, tokens } });
+async function runPlugin(
+  tokens: typeof TOKENS,
+  root: string,
+  paths?: { catalog?: string; product?: `${string}:slug${string}` },
+) {
+  const plugin = vendua({ config: { contract: 2, tokens, ...(paths ? { paths } : {}) } });
   const errors: string[] = [];
   const emitted: { fileName: string; source: string }[] = [];
   const ctx = {
@@ -95,6 +99,29 @@ describe('vendua() plugin', () => {
     expect(manifest.sections['sdk:purchase-panel'].areas['after-price'].accepts).toContain(
       'purchase-extras',
     );
+    // the edge matches product pages by the store's route (Kernel 1.14)
+    expect(manifest.paths).toEqual({
+      home: '/',
+      catalog: '/cardapio',
+      product: '/produto/:slug',
+      cart: '/sacola',
+      checkout: '/checkout',
+      order: '/pedido/:id',
+      orders: '/pedidos',
+    });
+  });
+
+  test('the manifest carries a store’s custom routes', async () => {
+    const { emitted } = await runPlugin(TOKENS, fakeStorefront(), {
+      catalog: '/menu',
+      product: '/p/:slug',
+    });
+    const manifest = JSON.parse(emitted.find((e) => e.fileName === 'vendua-manifest.json')!.source);
+    expect(manifest.paths).toMatchObject({
+      catalog: '/menu',
+      product: '/p/:slug',
+      cart: '/sacola',
+    });
   });
 
   test('refuses tokens that fail WCAG AA', async () => {

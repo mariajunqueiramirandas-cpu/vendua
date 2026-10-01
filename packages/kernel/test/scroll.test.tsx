@@ -63,3 +63,46 @@ test('back to an unvisited position goes to the top', () => {
   act(() => void nav(-1));
   expect(calls.at(-1)).toBe(0);
 });
+
+test('a #hash lands smoothly and marks its element for a moment (Kernel 1.14)', async () => {
+  const el = document.getElementById('produto-1')!;
+  let opts: ScrollIntoViewOptions | undefined;
+  el.scrollIntoView = ((o?: ScrollIntoViewOptions) => void (opts = o)) as typeof el.scrollIntoView;
+  act(() => void nav('/catalog#produto-1'));
+  expect(opts?.behavior).toBe('smooth');
+  expect(el.hasAttribute('data-target')).toBe(true);
+  await act(async () => new Promise((r) => setTimeout(r, 2100)));
+  expect(el.hasAttribute('data-target')).toBe(false);
+});
+
+test('with reduced motion the #hash jump is instant', () => {
+  const orig = globalThis.matchMedia;
+  globalThis.matchMedia = ((q: string) => ({
+    matches: q.includes('reduce'),
+    media: q,
+    addEventListener() {},
+    removeEventListener() {},
+  })) as unknown as typeof globalThis.matchMedia;
+  try {
+    // remount so the hook reads the new setting
+    act(() => root.unmount());
+    root = createRoot(host);
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={['/catalog']}>
+          <ScrollManager />
+          <Grab />
+          <div id="produto-2" />
+        </MemoryRouter>,
+      );
+    });
+    const el = document.getElementById('produto-2')!;
+    let opts: ScrollIntoViewOptions | undefined;
+    el.scrollIntoView = ((o?: ScrollIntoViewOptions) =>
+      void (opts = o)) as typeof el.scrollIntoView;
+    act(() => void nav('/catalog#produto-2'));
+    expect(opts?.behavior).toBe('instant');
+  } finally {
+    globalThis.matchMedia = orig;
+  }
+});

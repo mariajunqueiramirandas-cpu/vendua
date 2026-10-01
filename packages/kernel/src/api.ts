@@ -1,6 +1,6 @@
 import type { StorefrontTokens, TemplateSet } from '@vendua/templates';
 import { formatCents } from './rules/format.ts';
-import { phoneKey } from './rules/phone.ts';
+import { digitsOf, phoneKey } from './rules/phone.ts';
 
 export { formatCents, phoneKey };
 
@@ -825,7 +825,7 @@ export function createApi(baseUrl = '') {
       }),
     /** Kernel 1.2 — address + zone for a CEP (Core calls the CEP service) */
     cep: (cep: string) =>
-      apiFetch<CepResult>(sf(`/cep/${encodeURIComponent(cep.replace(/\D/g, '').slice(0, 8))}`)),
+      apiFetch<CepResult>(sf(`/cep/${encodeURIComponent(digitsOf(cep).slice(0, 8))}`)),
     /** Kernel 1.2 — restock waitlist; answers how many are waiting */
     waitlist: (productId: string, phone: string) =>
       apiFetch<{ subscribed: true; waiting: number }>(sf('/waitlist'), {

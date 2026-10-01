@@ -57,6 +57,15 @@ import {
   whatsappDigits,
   whatsappUrl,
   zoneFeeFloor,
+  groupFull,
+  groupHint,
+  groupMissing,
+  modifierMax,
+  modifierUnits,
+  slotFull,
+  slotHint,
+  slotMissing,
+  slotUnits,
 } from '../src/rules/index.ts';
 
 // Kernel 1.14 — the pure rules: one decision per Core field, the words apart.
@@ -750,6 +759,94 @@ describe('copy', () => {
       vocabularyOf({
         vocabulary: { itemSingular: 'doce', itemPlural: 'doces', bag: ' ', cta: 'Quero' },
       }),
-    ).toEqual({ itemSingular: 'doce', itemPlural: 'doces', bag: 'sacola', cta: 'Quero' });
+    ).toEqual({
+      itemSingular: 'doce',
+      itemPlural: 'doces',
+      bag: 'sacola',
+      cta: 'Quero',
+      inBag: 'na sacola',
+      toBag: 'à sacola',
+      ofBag: 'da sacola',
+      yourBag: 'Sua sacola',
+    });
+  });
+
+  test('the bag’s article follows its gender; the store may set the phrases itself', () => {
+    expect(vocabularyOf({ vocabulary: { bag: 'cesta' } })).toMatchObject({
+      inBag: 'na cesta',
+      toBag: 'à cesta',
+      ofBag: 'da cesta',
+      yourBag: 'Sua cesta',
+      cta: 'Adicionar à cesta',
+    });
+    expect(vocabularyOf({ vocabulary: { bag: 'carrinho' } })).toMatchObject({
+      inBag: 'no carrinho',
+      toBag: 'ao carrinho',
+      ofBag: 'do carrinho',
+      yourBag: 'Seu carrinho',
+      cta: 'Adicionar ao carrinho',
+    });
+    expect(
+      vocabularyOf({ vocabulary: { bag: 'bag', inBag: 'na bag', yourBag: 'Sua bag' } }),
+    ).toMatchObject({ inBag: 'na bag', yourBag: 'Sua bag', toBag: 'ao bag' });
+  });
+});
+
+describe('options and kits', () => {
+  const group = (
+    over: Partial<
+      Parameters<typeof modifierMax>[0] & { required: boolean; minSelect: number }
+    > = {},
+  ) => ({
+    required: true,
+    minSelect: 2,
+    maxSelect: 4,
+    modifiers: [{ id: 'a', maxQty: 3 }, { id: 'b' }, { id: 'c', maxQty: 2 }],
+    ...over,
+  });
+
+  test('a group counts units, not options', () => {
+    expect(modifierUnits(group(), { a: 2, b: 1, x: 5 })).toBe(3);
+    expect(modifierUnits(group(), {})).toBe(0);
+  });
+
+  test('missing: a required group under max(1, minSelect)', () => {
+    expect(groupMissing(group(), 1)).toBe(true);
+    expect(groupMissing(group(), 2)).toBe(false);
+    expect(groupMissing(group({ minSelect: 0 }), 0)).toBe(true);
+    expect(groupMissing(group({ required: false }), 0)).toBe(false);
+  });
+
+  test('full at maxSelect; an option is capped by its maxQty and what the group leaves', () => {
+    expect(groupFull(group(), 3)).toBe(false);
+    expect(groupFull(group(), 4)).toBe(true);
+    expect(groupFull(group({ maxSelect: 0 }), 9)).toBe(false);
+    expect(modifierMax(group(), 'a', {})).toBe(3);
+    expect(modifierMax(group(), 'a', { a: 1, c: 2 })).toBe(2);
+    expect(modifierMax(group(), 'b', { a: 3, c: 1 })).toBe(0);
+    expect(modifierMax(group(), 'nope', {})).toBe(0);
+  });
+
+  test('group hint wording', () => {
+    expect(groupHint({ required: true, minSelect: 1, maxSelect: 1 })).toBe('obrigatório');
+    expect(groupHint({ required: true, minSelect: 0, maxSelect: 3 })).toBe('escolha 1–3');
+    expect(groupHint({ required: false, minSelect: 0, maxSelect: 1 })).toBe('opcional');
+    expect(groupHint({ required: false, minSelect: 0, maxSelect: 3 })).toBe('até 3');
+  });
+
+  test('kit slots', () => {
+    const slot = { id: 's1', minSelect: 2, maxSelect: 3 };
+    const picks = [
+      { slotId: 's1', productId: 'p1', qty: 1 },
+      { slotId: 's2', productId: 'p1', qty: 4 },
+      { slotId: 's1', productId: 'p2', qty: 1 },
+    ];
+    expect(slotUnits(slot, picks)).toBe(2);
+    expect(slotMissing(slot, 1)).toBe(1);
+    expect(slotMissing(slot, 5)).toBe(0);
+    expect(slotFull(slot, 2)).toBe(false);
+    expect(slotFull(slot, 3)).toBe(true);
+    expect(slotHint(slot)).toBe('escolha de 2 a 3');
+    expect(slotHint({ minSelect: 2, maxSelect: 2 })).toBe('escolha 2');
   });
 });

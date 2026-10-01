@@ -99,6 +99,7 @@ export type {
   NotifyMeButtonProps,
   ProductLinkProps,
   QuantityStepperProps,
+  StoreStatusBadgeProps,
 } from './primitives.tsx';
 
 // page composition (Contract 2, ADR 0018)

@@ -36,6 +36,8 @@ export interface ArtifactManifest {
     }
   >;
   overrides: string[];
+  /** The store's resolved routes (Kernel ≥ 1.14), so the edge can match its product pages */
+  paths?: Record<string, string>;
 }
 
 export function checkCompat(

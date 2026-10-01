@@ -625,7 +625,7 @@ export function OrderItems({
           disabled={reorderPending}
           onClick={onReorder}
         >
-          {reorderPending ? `Colocando na ${vocabulary.bag}…` : 'Pedir de novo'}
+          {reorderPending ? `Colocando ${vocabulary.inBag}…` : 'Pedir de novo'}
         </button>
       ) : null}
     </section>

@@ -11,12 +11,13 @@ import {
   type NavigationType,
 } from 'react-router-dom';
 import { contentHandle, PAGE_CONTENT, type PageId } from '@vendua/templates';
-import { useKernel } from './provider.tsx';
+import { useKernel, useQuery } from './provider.tsx';
 import { KERNEL_PATHS, resolvePaths } from './config.ts';
 import { Slot } from './slot.tsx';
 import { ScrollManager } from './scroll.tsx';
 import { emit } from './telemetry.ts';
 import { useStore } from './hooks.ts';
+import { storeDescription, storeTitle, useDocumentMeta } from './head.ts';
 import {
   PageContextProvider,
   RegistryProvider,
@@ -88,13 +89,37 @@ function Layout({ type }: { type: NavigationType }) {
   );
 }
 
+/** A template page's title and description: the store's, or the product's on its page. */
+function StoreMeta() {
+  const { store } = useStore();
+  useDocumentMeta(store ? { title: storeTitle(store), description: storeDescription(store) } : {});
+  return null;
+}
+
+function ProductMeta({ slug }: { slug: string }) {
+  const { api } = useKernel();
+  const { store } = useStore();
+  // useProduct's read (same key, no second fetch) without a second product_view
+  const q = useQuery(`product:${slug}`, () => api.product(slug));
+  const product = q.data?.product;
+  useDocumentMeta(
+    !store
+      ? {}
+      : product
+        ? {
+            title: `${product.name} · ${store.name}`,
+            description: product.description || storeDescription(store),
+          }
+        : q.error
+          ? { title: storeTitle(store), description: storeDescription(store) }
+          : {},
+  );
+  return null;
+}
+
 function TemplatePage({ page }: { page: PageId }) {
   const template = useTemplate(page);
   const params = useParams();
-  const { store } = useStore();
-  useEffect(() => {
-    if (store && page !== 'product') document.title = store.name;
-  }, [store, page]);
   if (!template) return <NotFoundPage />;
   const content = (
     <PageContextProvider value={{ page, params }}>
@@ -104,6 +129,7 @@ function TemplatePage({ page }: { page: PageId }) {
   // brand pages own their own <main>; the skip-link target must exist either way
   return (
     <main id="main" data-page={page}>
+      {page === 'product' ? <ProductMeta slug={params.slug ?? ''} /> : <StoreMeta />}
       {content}
     </main>
   );

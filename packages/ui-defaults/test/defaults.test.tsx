@@ -2,6 +2,7 @@ import { afterEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ComponentType, ReactElement } from 'react';
 import { SLOT_KEYS } from '@vendua/kernel/config';
+import { vocabularyOf } from '@vendua/kernel/rules';
 import { SLOT_DEFAULTS, SLOT_FIXTURES } from '../src/index.ts';
 
 // Every registered slot has a default, and every default renders its canonical
@@ -223,10 +224,19 @@ describe('slot defaults', () => {
         {...fx}
         product={{ ...fx.product, stockQuantity: 1 }}
         stockLeft={0}
-        vocabulary={{ itemSingular: 'doce', itemPlural: 'doces', bag: 'cesta', cta: 'Pedir' }}
+        vocabulary={vocabularyOf({ vocabulary: { itemSingular: 'doce', bag: 'cesta' } })}
       />,
     );
     expect(tags(words)).toContain('Tudo na cesta');
+    const masculine = renderToStaticMarkup(
+      <C
+        {...fx}
+        product={{ ...fx.product, stockQuantity: 1 }}
+        stockLeft={0}
+        vocabulary={vocabularyOf({ vocabulary: { bag: 'carrinho' } })}
+      />,
+    );
+    expect(tags(masculine)).toContain('Tudo no carrinho');
   });
 
   test('a card priced by a required list shows Core’s "a partir de"', () => {

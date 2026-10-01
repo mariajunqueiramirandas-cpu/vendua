@@ -9,7 +9,9 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { createApi, type VenduaApi } from './api.ts';
+import { createApi, type StoreProfile, type VenduaApi } from './api.ts';
+import { vocabularyOf } from './rules/copy.ts';
+import { plural } from './rules/format.ts';
 import {
   KERNEL_PATHS,
   resolvePaths,
@@ -214,6 +216,8 @@ export function VenduaProvider({
     params.delete('cart');
     params.delete('cupom');
     const rest = params.toString();
+    // the store's words when its profile is already read (else the defaults)
+    const words = () => vocabularyOf(cacheFor(api).get('store')?.data as StoreProfile | undefined);
     globalThis.history?.replaceState(
       null,
       '',
@@ -224,11 +228,13 @@ export function VenduaProvider({
         if (share && /^[A-Za-z0-9]{6,16}$/.test(share)) {
           const { cart, report } = await api.importShare(share);
           invalidateQuery('cart', cart);
+          const n = report.skipped.length;
+          const v = words();
           showInfo(
             'cart-import',
-            report.skipped.length ? 'Sacola recuperada em parte' : 'Sacola recuperada',
-            report.skipped.length
-              ? `${report.skipped.length} item(ns) não estão disponíveis agora.`
+            n ? `${v.yourBag} voltou em parte` : `${v.yourBag} está de volta`,
+            n
+              ? `${n} ${plural(n, v.itemSingular, v.itemPlural)} ${plural(n, 'não está disponível', 'não estão disponíveis')} agora.`
               : undefined,
           );
         }
@@ -237,7 +243,7 @@ export function VenduaProvider({
           invalidateQuery('cart', cart);
           showInfo(
             'coupon',
-            `Cupom ${cart.coupon?.code ?? coupon.toUpperCase()} na sacola`,
+            `Cupom ${cart.coupon?.code ?? coupon.toUpperCase()} ${words().inBag}`,
             cart.coupon?.label,
           );
         }

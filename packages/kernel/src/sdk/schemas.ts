@@ -166,7 +166,14 @@ export const stockCounter = defineBlock({
   type: 'sdk:stock-counter',
   category: 'purchase-extras',
   settings: {
-    threshold: number({ min: 1, max: 50, default: 5 }),
+    // Kernel 1.14: ignored — low stock is Core's (the product's own threshold); kept so saved
+    // templates stay valid
+    threshold: number({
+      min: 1,
+      max: 50,
+      default: 5,
+      label: 'Limite (sem efeito: vale o estoque baixo do produto)',
+    }),
     showWhenPlenty: boolean({ default: false }),
   },
 });

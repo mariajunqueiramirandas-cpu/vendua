@@ -121,7 +121,11 @@ describe('product page — options with quantities', () => {
   test('a stepper clamps to maxQty and to what the group leaves; units ride the add', async () => {
     const detail = { ...DETAIL, compareAtPriceCents: 2200, modifierGroups: [FLAVOURS] };
     const c = core((url) =>
-      url.pathname === '/storefront/v1/products/pudim' ? json(200, { product: detail }) : null,
+      url.pathname === '/storefront/v1/products/pudim'
+        ? json(200, { product: detail })
+        : url.pathname === '/storefront/v1/products/pudim/quote'
+          ? json(200, { qty: 1, unitPriceCents: 2400, lineTotalCents: 2400 })
+          : null,
     );
     m = await mount({ path: '/produto/pudim' });
     await flush();
@@ -152,9 +156,16 @@ describe('product page — options with quantities', () => {
     expect((button('Nozes') as HTMLButtonElement).disabled).toBe(true);
     await click(minus(calda!));
     expect(calda!.querySelector('output')?.textContent).toBe('2');
-    // a priced option is on: the add button leaves the total to Core's cart line
+    // a priced option is on: the add button shows Core's price for the line (Kernel 1.14),
+    // asked with the picked units — never computed here
+    await act(async () => new Promise((r) => setTimeout(r, 200)));
+    await flush();
+    const quoted = c.calls.filter((x) => x.path.startsWith('/storefront/v1/products/pudim/quote'));
+    const sent = new URLSearchParams(quoted.at(-1)!.path.split('?')[1]);
+    expect(sent.get('modifiers')?.split(',').sort()).toEqual(['calda:2', 'coco:1']);
     const add = $('[data-part="add"]') as HTMLButtonElement;
-    expect(add.querySelector('.v-pp-add-price')).toBeNull();
+    expect(add.querySelector('[data-part="add-price"]')?.getAttribute('data-state')).toBe('quote');
+    expect(add.querySelector('.v-pp-add-price')?.textContent).toMatch(/R\$\s24,00/);
     await click(add);
     await flush();
     const body = c.calls.find((x) => x.path === '/checkout/v1/cart/items')?.body as {

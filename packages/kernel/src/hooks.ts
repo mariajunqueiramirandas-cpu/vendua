@@ -51,6 +51,7 @@ import { arrangeMenu } from './rules/menu.ts';
 import { TERMINAL_ORDER_STATES } from './rules/orders.ts';
 import { isBlocking, visibleNotices } from './rules/notices.ts';
 import { vocabularyOf, type Vocabulary } from './rules/copy.ts';
+import { digitsOf, isValidCep, phoneKey } from './rules/phone.ts';
 import {
   currentConsent,
   emit,
@@ -349,15 +350,24 @@ export function unitsLeft(cart: Cart | null, draw: StockDraw, excludeItemId?: st
   return max;
 }
 
+/** A product's tracked stock minus what the cart holds (kit picks included); null = not
+ *  tracked. `useStockLeft` without the hook, for lists. */
+export function stockLeftOf(
+  cart: Cart | null,
+  product: { id: string; stockQuantity?: number | null } | null | undefined,
+): number | null {
+  const stock = product?.stockQuantity;
+  if (!product || typeof stock !== 'number') return null;
+  return Math.max(0, stock - cartDemand(cart, product.id));
+}
+
 /** Kernel 1.9 — units of a product the shopper can still add (its stock minus what the
  *  cart holds, kit picks included); null = stock not tracked. */
 export function useStockLeft(
   product: { id: string; stockQuantity?: number | null } | null | undefined,
 ): number | null {
   const { cart } = useCart();
-  const stock = product?.stockQuantity;
-  if (!product || typeof stock !== 'number') return null;
-  return Math.max(0, stock - cartDemand(cart, product.id));
+  return stockLeftOf(cart, product);
 }
 
 const TERMINAL_ORDER = TERMINAL_ORDER_STATES;
@@ -637,13 +647,13 @@ export function useCustomer(): {
   const remember = useCallback((p: CustomerProfile) => {
     const clean: CustomerProfile = {
       name: p.name.slice(0, 120),
-      phone: p.phone.replace(/\D/g, '').slice(0, 13),
+      phone: digitsOf(p.phone).slice(0, 13),
       address: {
         street: p.address.street.slice(0, 120),
         number: p.address.number.slice(0, 10),
         neighborhood: p.address.neighborhood.slice(0, 80),
         complement: p.address.complement.slice(0, 80),
-        ...(p.address.cep ? { cep: p.address.cep.replace(/\D/g, '').slice(0, 8) } : {}),
+        ...(p.address.cep ? { cep: digitsOf(p.address.cep).slice(0, 8) } : {}),
       },
     };
     customerMem = clean;
@@ -723,9 +733,7 @@ export function useOrders(phone?: string): {
   const target = phone ?? known[0];
   const key = `customer-orders:${target ?? ''}`;
   const q = useQuery(key, () =>
-    target && known.some((p) => target.replace(/\D/g, '').endsWith(p))
-      ? api.customerOrders(target)
-      : Promise.resolve(null),
+    target && known.includes(phoneKey(target)) ? api.customerOrders(target) : Promise.resolve(null),
   );
   const needsVerification =
     !q.loading && (q.data === null || q.error?.code === 'CUSTOMER_REQUIRED');
@@ -792,8 +800,8 @@ export function useCep(): {
   const seq = useRef(0);
   const lookup = useCallback(
     async (cep: string) => {
-      const digits = cep.replace(/\D/g, '');
-      if (digits.length !== 8) return null;
+      if (!isValidCep(cep)) return null;
+      const digits = digitsOf(cep);
       const n = ++seq.current;
       setPending(true);
       setError(undefined);

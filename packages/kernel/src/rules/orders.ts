@@ -119,6 +119,12 @@ export const PAYMENT_STATUS_LABEL: Record<string, string> = {
   charged_back: 'contestado',
 };
 
+/** Payment statuses where money went back to the shopper (all of it or part). */
+export const REFUNDED_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
+  'refunded',
+  'partially_refunded',
+]);
+
 /** A Pix key's type, as the shopper reads it beside the key. */
 export const PIX_KEY_LABEL: Record<string, string> = {
   cpf: 'CPF',

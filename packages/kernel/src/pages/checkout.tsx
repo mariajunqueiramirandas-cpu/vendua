@@ -5,8 +5,11 @@ import {
   useCart,
   useCep,
   useCheckout,
+  useCopy,
+  useCoupon,
   useCustomer,
   useDeliveryQuote,
+  useDeliverySummary,
   useDeliveryZones,
   useStore,
 } from '../hooks.ts';
@@ -18,7 +21,18 @@ import { useKernel } from '../provider.tsx';
 import { resolvePaths } from '../config.ts';
 import type { CheckoutStep, CustomerDraft, DeliveryOption, PaymentMethod } from '../slot-props.ts';
 import type { CartTotals, PaymentAdjustment } from '../api.ts';
-import { money } from '@vendua/ui-defaults';
+import { deliveryWords } from '../rules/delivery.ts';
+import { couponMessage, isCouponError } from '../rules/errors.ts';
+import { formatCents, LOCALE } from '../rules/format.ts';
+import {
+  adjustmentKind,
+  adjustmentShort,
+  PAYMENT_METHOD_DETAIL,
+  PAYMENT_METHOD_LABEL,
+  PAYMENT_METHOD_ORDER,
+} from '../rules/orders.ts';
+import { digitsOf, isValidCep, isValidPhone } from '../rules/phone.ts';
+import { usePageTitle } from '../head.ts';
 
 // /checkout — the Kernel-owned checkout (ADR 0004): a three-step machine
 // (dados → entrega → pagamento). Validation here is shape-only; every business
@@ -33,43 +47,21 @@ const LABEL: Record<StepId, string> = {
   pagamento: 'Pagamento',
 };
 
-const METHODS: PaymentMethod[] = [
-  { id: 'pix', label: 'Pix' },
-  { id: 'card_online', label: 'Cartão de crédito', detail: 'Pago pelo Mercado Pago' },
-  { id: 'card_on_delivery', label: 'Cartão na entrega' },
-  { id: 'meal_voucher', label: 'Vale-refeição' },
-  { id: 'cash', label: 'Dinheiro' },
-];
+const METHODS: PaymentMethod[] = PAYMENT_METHOD_ORDER.map((id) => ({
+  id,
+  label: PAYMENT_METHOD_LABEL[id] ?? id,
+  ...(PAYMENT_METHOD_DETAIL[id] ? { detail: PAYMENT_METHOD_DETAIL[id] } : {}),
+}));
 // what a Core without `paymentMethods` (pre-1.4) accepts — never the online card
 const LEGACY_METHODS = ['pix', 'card_on_delivery', 'cash'];
 
 const NOTES_MAX = 500;
-const COUPON_CODES = new Set([
-  'COUPON_NOT_FOUND',
-  'INVALID_COUPON',
-  'COUPON_EXPIRED',
-  'COUPON_NOT_STARTED',
-  'COUPON_EXHAUSTED',
-  'COUPON_MIN_SUBTOTAL',
-  'COUPON_NOT_YOURS',
-  'COUPON_ALREADY_USED',
-  'COUPON_FIRST_ORDER_ONLY',
-]);
 
 /** The store's rule as a label ("−5%", "+R$ 1,50") — the cents are Core's, in the totals. */
 function adjustmentLabel(a: PaymentAdjustment, currency: string): PaymentMethod['adjustment'] {
-  const pct = a.percentBps ?? 0;
-  const fixed = a.fixedCents ?? 0;
-  if (!pct && !fixed) return undefined;
-  const sign = (n: number) => (n < 0 ? '−' : '+');
-  const parts = [
-    pct
-      ? `${sign(pct)}${(Math.abs(pct) / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`
-      : '',
-    fixed ? `${sign(fixed)}${money(Math.abs(fixed), currency)}` : '',
-  ].filter(Boolean);
-  const kind = pct <= 0 && fixed <= 0 ? 'discount' : pct >= 0 && fixed >= 0 ? 'surcharge' : 'mixed';
-  return { label: parts.join(' '), kind };
+  const kind = adjustmentKind(a);
+  const label = adjustmentShort(a, currency);
+  return kind && label ? { label, kind } : undefined;
 }
 
 /** Full-page hand-off to the provider's hosted checkout (card data never touches us). */
@@ -81,8 +73,7 @@ function validate(step: StepId, d: CustomerDraft, mode: 'pickup' | 'delivery', l
   const e: Partial<Record<keyof CustomerDraft, string>> = {};
   if (step === 'dados') {
     if (d.name.trim().length < 2) e.name = 'Informe seu nome.';
-    const digits = d.phone.replace(/\D/g, '');
-    if (digits.length < 10 || digits.length > 13) e.phone = 'Informe um WhatsApp com DDD.';
+    if (!isValidPhone(d.phone)) e.phone = 'Informe um WhatsApp com DDD.';
   }
   if (step === 'entrega' && mode === 'delivery') {
     // a device location resolves the zone by distance — the bairro is then optional
@@ -105,6 +96,11 @@ export function CheckoutPage() {
   const go = useNavigateTo();
   const paths = resolvePaths(config);
   const currency = store?.currency ?? 'BRL';
+  const money = (cents: number) => formatCents(cents, currency);
+  const { vocabulary } = useCopy();
+  const summary = useDeliverySummary();
+  const coupon = useCoupon();
+  usePageTitle('Finalizar pedido');
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -149,7 +145,7 @@ export function CheckoutPage() {
   const [notes, setNotes] = useState('');
   const [scheduledFor, setScheduledFor] = useState<string | undefined>();
   const [scheduleError, setScheduleError] = useState<string | undefined>();
-  const [couponPending, setCouponPending] = useState(false);
+  // a coupon Core refused at submit (the field shows it like an apply failure)
   const [couponError, setCouponError] = useState<string | undefined>();
   const deliveryOk = store?.deliveryEnabled !== false;
   const pickupOk = store?.pickupEnabled !== false;
@@ -286,14 +282,13 @@ export function CheckoutPage() {
   const pricing = pricesByMethod && !pricedTotals && !!adjustments?.[pay];
   const priceError = pricing && priceFailed === priceKey;
   const payLabel = methods.find((m) => m.id === pay)?.label;
-  const minFee = zones.length ? Math.min(...zones.map((z) => z.feeCents)) : null;
+  // "a partir de R$ 5,00", "grátis" — the least a zone charges (a per-km zone is never free)
+  const feeWords = deliveryWords(summary, currency)?.fee.replace(/^entrega /, '');
   const options: DeliveryOption[] = [
     {
       mode: 'delivery',
       label: 'Entrega',
-      ...(minFee !== null
-        ? { detail: minFee > 0 ? `a partir de ${money(minFee, currency)}` : 'grátis' }
-        : {}),
+      ...(feeWords ? { detail: feeWords } : {}),
       disabled: !deliveryOk,
     },
     {
@@ -333,7 +328,11 @@ export function CheckoutPage() {
   if (!cart || cart.status !== 'open' || cart.items.length === 0)
     return (
       <main id="main" className="v-page" data-vendua-page="checkout">
-        <Slot name="checkout.EmptyCart" onBrowse={() => go(paths.catalog)} />
+        <Slot
+          name="checkout.EmptyCart"
+          vocabulary={vocabulary}
+          onBrowse={() => go(paths.catalog)}
+        />
       </main>
     );
 
@@ -358,7 +357,7 @@ export function CheckoutPage() {
     setZoneHint(
       r.zone.eligible
         ? `Entrega para ${a.neighborhood ?? 'esse CEP'}: ${
-            (r.zone.feeCents ?? 0) > 0 ? money(r.zone.feeCents!, currency) : 'grátis'
+            (r.zone.feeCents ?? 0) > 0 ? money(r.zone.feeCents!) : 'grátis'
           }${r.zone.etaMin != null ? ` · ${r.zone.etaMin}–${r.zone.etaMax} min` : ''}`
         : `${a.neighborhood ?? 'Esse CEP'} fica fora da área de entrega${pickupOk ? ' — retirada continua disponível' : ''}.`,
     );
@@ -382,8 +381,8 @@ export function CheckoutPage() {
           setCoords(c);
           setLocateStatus('located');
           setZoneHint(
-            `Entrega${r.distanceKm != null ? ` a ${r.distanceKm.toLocaleString('pt-BR')} km` : ''}: ${
-              (r.feeCents ?? 0) > 0 ? money(r.feeCents!, currency) : 'grátis'
+            `Entrega${r.distanceKm != null ? ` a ${r.distanceKm.toLocaleString(LOCALE)} km` : ''}: ${
+              (r.feeCents ?? 0) > 0 ? money(r.feeCents!) : 'grátis'
             }`,
           );
         } catch {
@@ -405,32 +404,17 @@ export function CheckoutPage() {
           number: draft.number.trim(),
           ...(draft.complement.trim() ? { complement: draft.complement.trim() } : {}),
           ...(draft.reference?.trim() ? { reference: draft.reference.trim() } : {}),
-          ...(draft.cep && draft.cep.replace(/\D/g, '').length === 8
-            ? { cep: draft.cep.replace(/\D/g, '') }
-            : {}),
+          ...(isValidCep(draft.cep) ? { cep: digitsOf(draft.cep) } : {}),
           ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
         };
 
-  const applyCoupon = async (code: string) => {
-    setCouponPending(true);
+  const applyCoupon = (code: string) => {
     setCouponError(undefined);
-    try {
-      await mutations.applyCoupon(code);
-    } catch (err) {
-      setCouponError(errorCopy(errorCode(err)).title);
-    } finally {
-      setCouponPending(false);
-    }
+    void coupon.apply(code);
   };
-  const removeCoupon = async () => {
-    setCouponPending(true);
-    try {
-      await mutations.removeCoupon();
-    } catch (err) {
-      setCouponError(errorCopy(errorCode(err)).title);
-    } finally {
-      setCouponPending(false);
-    }
+  const removeCoupon = () => {
+    setCouponError(undefined);
+    void coupon.remove();
   };
 
   const advance = async () => {
@@ -469,7 +453,7 @@ export function CheckoutPage() {
     setScheduleError(undefined);
     try {
       const order = await submit({
-        customer: { name: draft.name.trim(), phone: draft.phone.replace(/\D/g, '') },
+        customer: { name: draft.name.trim(), phone: digitsOf(draft.phone) },
         delivery: deliveryPayload(),
         payment: { method: pay },
         ...(notes.trim() ? { notes: notes.trim().slice(0, NOTES_MAX) } : {}),
@@ -511,7 +495,10 @@ export function CheckoutPage() {
       const code = errorCode(err);
       if (code === 'SCHEDULE_REQUIRED' || code === 'INVALID_SCHEDULE')
         setScheduleError(errorCopy(code).title);
-      if (COUPON_CODES.has(code)) setCouponError(errorCopy(code).title);
+      if (isCouponError(code))
+        setCouponError(
+          couponMessage(code, (err as { details?: Record<string, unknown> }).details, currency),
+        );
       // only a failure reopens the button: after an order the page is on its way out
       submitting.current = false;
     }
@@ -556,6 +543,7 @@ export function CheckoutPage() {
                   options={options}
                   selected={mode}
                   onSelect={setMode}
+                  currency={currency}
                 />
                 {mode === 'delivery' ? (
                   <Slot
@@ -605,6 +593,7 @@ export function CheckoutPage() {
                   methods={methods}
                   selected={pay}
                   onSelect={setPay}
+                  currency={currency}
                 />
                 {encomenda && methods.length < byStore.length ? (
                   <p className="v-muted" data-part="payment-note">
@@ -613,13 +602,15 @@ export function CheckoutPage() {
                 ) : null}
                 <Slot
                   name="checkout.CouponField"
-                  coupon={cart.coupon ?? null}
-                  discountCents={cart.totals.discountCents ?? 0}
+                  coupon={coupon.coupon}
+                  discountCents={coupon.discountCents}
                   currency={currency}
-                  pending={couponPending}
-                  {...(couponError ? { error: couponError } : {})}
-                  onApply={(code) => void applyCoupon(code)}
-                  onRemove={() => void removeCoupon()}
+                  pending={coupon.pending}
+                  {...(coupon.message || couponError
+                    ? { error: (coupon.message ?? couponError)! }
+                    : {})}
+                  onApply={applyCoupon}
+                  onRemove={removeCoupon}
                 />
                 <Slot name="checkout.Notes" value={notes} onChange={setNotes} max={NOTES_MAX} />
                 {deliveryIssue ? (
@@ -660,9 +651,7 @@ export function CheckoutPage() {
                   {pending
                     ? 'Enviando…'
                     : `${pay === 'card_online' ? 'Ir para o pagamento' : 'Confirmar pedido'}${
-                        pricing
-                          ? ''
-                          : ` · ${money((pricedTotals ?? cart.totals).totalCents, currency)}`
+                        pricing ? '' : ` · ${money((pricedTotals ?? cart.totals).totalCents)}`
                       }`}
                 </button>
               ) : (
@@ -698,6 +687,7 @@ export function CheckoutPage() {
           name="checkout.Summary"
           cart={pricedTotals ? { ...cart, totals: pricedTotals } : cart}
           currency={currency}
+          vocabulary={vocabulary}
           {...(pricedTotals && payLabel ? { paymentLabel: payLabel } : {})}
         />
       </div>

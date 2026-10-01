@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, type MouseEvent } from
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useKernel } from './provider.tsx';
 import { resolvePaths } from './config.ts';
+import { useCopy } from './hooks.ts';
 import { CartContents } from './pages/cart.tsx';
 import {
   registerSheet,
@@ -305,6 +306,7 @@ export function CartSheet({ background }: { background: Loc }) {
 
   // the empty bag's "Ver cardápio": the sheet leaves, and its entry becomes the menu
   const { config } = useKernel();
+  const { vocabulary } = useCopy();
   const catalog = resolvePaths(config).catalog;
   const browse = () =>
     background.pathname === catalog
@@ -322,7 +324,7 @@ export function CartSheet({ background }: { background: Loc }) {
       ref={dialogRef}
       className="v-sheet"
       data-vendua="cart-sheet"
-      aria-label="Sacola"
+      aria-label={vocabulary.bag.charAt(0).toUpperCase() + vocabulary.bag.slice(1)}
       onCancel={(e) => {
         e.preventDefault();
         close();

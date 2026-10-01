@@ -16,6 +16,7 @@ import {
 import { readTemplatesDir } from '@vendua/templates/node';
 import kernelPkg from '../package.json' with { type: 'json' };
 import type { StorefrontConfig } from './config.ts';
+import { resolvePaths } from './rules/links.ts';
 import { SDK_SCHEMAS, catalogOf } from './sdk/schemas.ts';
 
 // `vendua()` — the only sanctioned build path for a storefront (03 — build):
@@ -24,7 +25,8 @@ import { SDK_SCHEMAS, catalogOf } from './sdk/schemas.ts';
 //    VENDUA_CORE_ORIGIN is set (tokens are store data; an edit triggers a rebuild),
 //    else the repo's templates/ + vendua.config tokens
 //  • refuses to build tokens that fail WCAG AA on default surfaces
-//  • emits dist/vendua-manifest.json (Kernel × Contract × Core API + section catalog)
+//  • emits dist/vendua-manifest.json (Kernel × Contract × Core API + section catalog + the
+//    store's routes, which the edge matches product pages by)
 
 export const KERNEL_VERSION: string = kernelPkg.version;
 export const CORE_API = { storefront: 1, checkout: 1 } as const;
@@ -248,6 +250,7 @@ export function vendua(opts: VenduaPluginOptions): Plugin {
         tokens: { source: s.tokens ? 'core' : 'repo', hash: hash(s.tokens ?? opts.config.tokens) },
         sections,
         overrides: Object.keys(opts.config.overrides ?? {}).sort(),
+        paths: resolvePaths(opts.config),
       };
       this.emitFile({
         type: 'asset',

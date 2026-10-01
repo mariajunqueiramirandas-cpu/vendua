@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { matchPath, Outlet, useLocation } from 'react-router-dom';
-import { dayLabel, mediaSrcSet, money } from '@vendua/ui-defaults';
 import {
-  cartDemand,
   productDraw,
+  stockLeftOf,
   unitsLeft,
+  useCardState,
   useCart,
+  useCartCount,
   useCatalog,
+  useCopy,
+  useLineQuote,
   useProduct,
   useStore,
 } from '../hooks.ts';
@@ -25,6 +28,18 @@ import { useKernel } from '../provider.tsx';
 import { productHref, resolvePaths } from '../config.ts';
 import type { CatalogProduct, ComboSelection } from '../api.ts';
 import { errorCopy, showInfo } from '../errors.ts';
+import { MAX_LINE_QTY } from '../rules/card.ts';
+import { formatCents, formatDay, mediaSrcSet, plural } from '../rules/format.ts';
+import { contactLinks } from '../rules/links.ts';
+import { arrangeMenu } from '../rules/menu.ts';
+import {
+  groupMissing,
+  modifierMax,
+  modifierUnits,
+  slotMissing,
+  slotUnits,
+} from '../rules/modifiers.ts';
+import { priceDisplay, priceWords } from '../rules/price.ts';
 import * as S from './schemas.ts';
 
 // SDK sections (17): Kernel-owned behaviour + markup, styled by tokens,
@@ -83,8 +98,7 @@ export function PageContent() {
 
 export function Header({ settings }: SectionProps<typeof S.header>) {
   const { store } = useStore();
-  const { cart } = useCart();
-  const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
+  const count = useCartCount();
   const name = settings.brand || store?.name || 'Loja';
   const { pathname } = useLocation();
   return (
@@ -134,8 +148,7 @@ export function Header({ settings }: SectionProps<typeof S.header>) {
 
 export function Footer({ settings }: SectionProps<typeof S.footer>) {
   const { store } = useStore();
-  const wa = store?.whatsapp?.replace(/\D/g, '');
-  const ig = store?.instagram?.replace(/^@/, '');
+  const { whatsapp, instagram } = contactLinks(store);
   return (
     <footer className="v-footer" data-part="root">
       <div className="v-footer-inner">
@@ -150,18 +163,14 @@ export function Footer({ settings }: SectionProps<typeof S.footer>) {
           ) : null}
           {settings.showContacts ? (
             <p className="v-footer-contacts" data-part="contacts">
-              {wa ? (
-                <a href={`https://wa.me/${wa}`} rel="noopener noreferrer" target="_blank">
+              {whatsapp ? (
+                <a href={whatsapp.href} rel="noopener noreferrer" target="_blank">
                   WhatsApp
                 </a>
               ) : null}
-              {ig ? (
-                <a
-                  href={`https://www.instagram.com/${ig}/`}
-                  rel="noopener noreferrer"
-                  target="_blank"
-                >
-                  Instagram @{ig}
+              {instagram ? (
+                <a href={instagram.href} rel="noopener noreferrer" target="_blank">
+                  Instagram @{instagram.handle}
                 </a>
               ) : null}
             </p>
@@ -206,8 +215,7 @@ export function AnnouncementBar({ settings }: SectionProps<typeof S.announcement
 }
 
 export function HeaderCart({ settings }: SectionProps<typeof S.headerCart>) {
-  const { cart } = useCart();
-  const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
+  const count = useCartCount();
   return (
     <div className="v-section v-header-cart" data-part="root">
       <CartTrigger asChild>
@@ -236,7 +244,7 @@ export function BagBar({ settings }: SectionProps<typeof S.bagBar>) {
   const quiet = [paths.product, paths.cart, paths.checkout, paths.order].some((p) =>
     matchPath({ path: p, end: true }, pathname),
   );
-  const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
+  const count = useCartCount();
   if (quiet || count === 0 || !cart) return null;
   return (
     <div className="v-bag-bar" data-vendua="bag-bar" data-part="root">
@@ -247,7 +255,7 @@ export function BagBar({ settings }: SectionProps<typeof S.bagBar>) {
           </span>
           <span className="v-bag-bar-label">{settings.label}</span>
           <span className="v-bag-bar-total v-num">
-            {money(cart.totals.subtotalCents, store?.currency ?? 'BRL')}
+            {formatCents(cart.totals.subtotalCents, store?.currency ?? 'BRL')}
           </span>
         </button>
       </CartTrigger>
@@ -270,41 +278,26 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const [cartError, setCartError] = useState<string | null>(null);
   const [added, setAdded] = useState(false);
   const currency = store?.currency ?? 'BRL';
+  const money = (cents: number) => formatCents(cents, currency);
+  const { vocabulary } = useCopy();
   const catalogHref = resolvePaths(config).catalog;
   const customMedia = useAreaHas('media', 'media');
   const { cart } = useCart();
   // units (kits) that still fit next to the cart, counting the kit's picks
   const left = product ? unitsLeft(cart, productDraw(product, combo)) : Number.POSITIVE_INFINITY;
-  const maxQty = Math.max(1, Math.min(99, left));
+  const maxQty = Math.max(1, Math.min(MAX_LINE_QTY, left));
 
   // the cart took stock since the stepper was set: never offer more than is left
   useEffect(() => setQty((q) => Math.min(q, maxQty)), [maxQty]);
 
-  useEffect(() => {
-    if (product && store && !settings.product) document.title = `${product.name} · ${store.name}`;
-  }, [product, store, settings.product]);
-
   const groups = useMemo(() => product?.modifierGroups ?? [], [product]);
-  // Core counts a group's min/max in units, not distinct options
-  const units = (gid: string, except?: string) =>
-    (selected[gid] ?? []).filter((id) => id !== except).reduce((n, id) => n + (modQty[id] ?? 1), 0);
-  const missing = groups.filter((g) => g.required && units(g.id) < Math.max(1, g.minSelect));
   const pickedIds = Object.values(selected).flat();
-  const pickedQty = Object.fromEntries(
-    pickedIds.filter((id) => (modQty[id] ?? 1) > 1).map((id) => [id, modQty[id]!]),
+  // units per picked option (a toggle is 1): Core counts a group's min/max in units
+  const picks: Record<string, number> = Object.fromEntries(
+    pickedIds.map((id) => [id, modQty[id] ?? 1]),
   );
-  // the button shows base × qty only while nothing picked changes the price: options are
-  // priced by Core (pricing rule × units) and the cart line carries that number
-  const pricedByOptions = groups.some((g) =>
-    g.modifiers.some((m) => m.priceDeltaCents !== 0 && pickedIds.includes(m.id)),
-  );
-  const from = product ? fromPrice(product) : null;
-  const shown = from ?? product?.basePriceCents ?? 0;
-  // a "de" price is the base's; beside a from-price that includes options it would mislead
-  const compareAt =
-    from === null && product?.compareAtPriceCents != null && product.compareAtPriceCents > shown
-      ? product.compareAtPriceCents
-      : null;
+  const missing = groups.filter((g) => groupMissing(g, modifierUnits(g, picks)));
+  const pickedQty = Object.fromEntries(Object.entries(picks).filter(([, n]) => n > 1));
   const errors = Object.fromEntries(
     missing.map((g) => [g.id, cartError ? 'Escolha uma opção' : '']).filter(([, v]) => v),
   );
@@ -316,22 +309,30 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
       slots.map((sl) => ({
         ...sl,
         items: sl.items.map((i) => {
-          if (typeof i.stockQuantity !== 'number') return i;
+          const free = stockLeftOf(cart, { id: i.productId, stockQuantity: i.stockQuantity });
+          if (free === null) return i;
           const elsewhere = combo
             .filter((c) => c.slotId !== sl.id && c.productId === i.productId)
             .reduce((n, c) => n + c.qty, 0);
-          const free = Math.max(0, i.stockQuantity - cartDemand(cart, i.productId));
           return { ...i, stockLeft: Math.max(0, Math.floor(free / qty) - elsewhere) };
         }),
       })),
     [slots, combo, cart, qty],
   );
   const comboMissing = slots
-    .map((sl) => ({
-      slot: sl,
-      left: sl.minSelect - combo.filter((c) => c.slotId === sl.id).reduce((n, c) => n + c.qty, 0),
-    }))
+    .map((sl) => ({ slot: sl, left: slotMissing(sl, slotUnits(sl, combo)) }))
     .filter((m) => m.left > 0);
+  const complete = missing.length === 0 && comboMissing.length === 0;
+  // Core's price for this exact line (options, kit picks, qty) — asked only once it can be added
+  const line = useLineQuote(
+    product && complete && product.status === 'active' ? product : null,
+    {
+      modifiers: Object.entries(picks).map(([id, n]) => ({ id, qty: n })),
+      comboSelections: combo,
+    },
+    qty,
+  );
+  const lineTotal = line.quote && !line.pending && !line.error ? line.quote.lineTotalCents : null;
   const comboErrors = Object.fromEntries(
     comboMissing.map((m) => [m.slot.id, cartError ? `Faltam ${m.left}` : '']).filter(([, v]) => v),
   );
@@ -376,6 +377,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   }
 
   const soldOut = product.status !== 'active';
+  const shown = priceDisplay(product);
   const Title = settings.product ? 'h2' : 'h1';
   return (
     <section className="v-section" data-part="root">
@@ -418,35 +420,35 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
           <Title className="v-page-title" data-part="name">
             {product.name}
           </Title>
-          <p className="v-pp-price v-num" data-part="price">
-            {compareAt !== null ? (
+          <p className="v-pp-price v-num" data-part="price" data-form={shown.form}>
+            {shown.struckCents !== null ? (
               <>
                 <s className="v-compare-at" data-part="compare-at">
                   <span className="v-sr">de </span>
-                  {money(compareAt, currency)}
+                  {money(shown.struckCents)}
                 </s>{' '}
                 <span className="v-sr">por </span>
               </>
             ) : null}
-            {from !== null || slots.some((sl) => sl.items.some((i) => i.priceDeltaCents > 0)) ? (
+            {shown.form === 'from' ? (
               <span className="v-price-from" data-part="from">
                 a partir de{' '}
               </span>
             ) : null}
-            {money(shown, currency)}
+            {money(shown.cents)}
           </p>
-          {product.promoLabel ? (
+          {shown.promoLabel ? (
             <p className="v-pp-promo" data-part="promo">
-              Promoção: {product.promoLabel}
+              Promoção: {shown.promoLabel}
             </p>
           ) : null}
           {product.requiresPreorder ? (
             <p className="v-note" data-part="preorder" role="note">
               Sob encomenda
               {product.preorderEarliestDate
-                ? ` · a partir de ${dayLabel(product.preorderEarliestDate)}`
+                ? ` · a partir de ${formatDay(product.preorderEarliestDate)}`
                 : product.preorderLeadDays
-                  ? ` · ${product.preorderLeadDays} ${product.preorderLeadDays === 1 ? 'dia' : 'dias'} de antecedência`
+                  ? ` · ${product.preorderLeadDays} ${plural(product.preorderLeadDays, 'dia', 'dias')} de antecedência`
                   : ''}
             </p>
           ) : null}
@@ -478,10 +480,8 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
               }}
               onQtyChange={(gid, mid, n) => {
                 const g = groups.find((x) => x.id === gid);
-                const m = g?.modifiers.find((x) => x.id === mid);
-                if (!g || !m) return;
-                const cap = Math.min(m.maxQty ?? 1, Math.max(0, g.maxSelect - units(gid, mid)));
-                const next = Math.max(0, Math.min(cap, Math.floor(n)));
+                if (!g || !g.modifiers.some((x) => x.id === mid)) return;
+                const next = Math.max(0, Math.min(modifierMax(g, mid, picks), Math.floor(n)));
                 setCartError(null);
                 setSelected((prev) => {
                   const ids = (prev[gid] ?? []).filter((id) => id !== mid);
@@ -568,25 +568,26 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                 <button
                   type="button"
                   className="v-btn v-btn-accent"
-                  disabled={missing.length > 0 || comboMissing.length > 0 || status === 'paused'}
+                  disabled={!complete || status === 'paused'}
                   data-part="add"
                 >
-                  {slots.length || pricedByOptions || from !== null ? (
-                    settings.addLabel
-                  ) : (
-                    <>
-                      <span>{settings.addLabel}</span>
-                      <span className="v-pp-add-price v-num">
-                        <span className="v-pp-add-sep">· </span>
-                        {money(product.basePriceCents * qty, currency)}
-                      </span>
-                    </>
-                  )}
+                  <span>{settings.addLabel}</span>
+                  {/* Core's total for this line; until it answers, the product's own price */}
+                  <span
+                    className="v-pp-add-price v-num"
+                    data-part="add-price"
+                    data-state={lineTotal !== null ? 'quote' : 'display'}
+                  >
+                    <span className="v-pp-add-sep">· </span>
+                    {lineTotal !== null
+                      ? money(lineTotal)
+                      : `${shown.form === 'from' ? 'a partir de ' : ''}${money(shown.cents)}`}
+                  </span>
                 </button>
               </AddToCart>
             </div>
           )}
-          {(missing.length > 0 || comboMissing.length > 0) && !soldOut ? (
+          {!complete && !soldOut ? (
             <p className="v-muted" role="note" data-part="missing">
               Falta escolher:{' '}
               {[
@@ -598,12 +599,12 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
           ) : null}
           {left === 0 && !soldOut ? (
             <p className="v-note" role="status" data-part="stock-limit">
-              Você já tem na sacola todas as unidades disponíveis.
+              Você já tem {vocabulary.inBag} todas as unidades disponíveis.
             </p>
           ) : null}
           {added && settings.afterAdd === 'stay' ? (
             <p className="v-note" role="status">
-              Adicionado à sacola.
+              Adicionado {vocabulary.toBag}.
             </p>
           ) : null}
           {cartError ? (
@@ -629,22 +630,6 @@ const COPY_CODES: Record<string, true> = {
   MODIFIER_SOLD_OUT: true,
 };
 
-/** Kernel 1.13 — Core's "a partir de" (the cheapest configured unit), only when above the price */
-const fromPrice = (p: CatalogProduct): number | null =>
-  p.fromPriceCents != null && p.fromPriceCents > p.basePriceCents ? p.fromPriceCents : null;
-
-/** a card's price read aloud: "de R$ 24,00 por R$ 18,00", "a partir de R$ 22,90" */
-function priceWords(p: CatalogProduct, currency: string): string {
-  const from = fromPrice(p);
-  const shown = from ?? p.basePriceCents;
-  const price = `${from !== null ? 'a partir de ' : ''}${money(shown, currency)}`;
-  return from === null && p.compareAtPriceCents != null && p.compareAtPriceCents > shown
-    ? `de ${money(p.compareAtPriceCents, currency)} por ${price}`
-    : price;
-}
-
-const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
-
 function ProductGrid({
   products,
   variant,
@@ -654,87 +639,79 @@ function ProductGrid({
   variant: string;
   currency: string;
 }) {
-  const { config } = useKernel();
-  const { cart } = useCart();
   return (
     <ol className="v-grid" data-variant={variant} data-part="grid">
       {products.map((p) => (
         <li key={p.id} data-part="item">
-          <Slot
-            name="catalog.ProductCard"
-            product={p}
-            {...(typeof p.stockQuantity === 'number'
-              ? { stockLeft: Math.max(0, p.stockQuantity - cartDemand(cart, p.id)) }
-              : {})}
-            currency={currency}
-            href={productHref(config, p.slug)}
-            link={(children) => (
-              <ProductLink product={p} asChild>
-                <a
-                  aria-label={
-                    p.status !== 'active'
-                      ? `${p.name}, esgotado`
-                      : `${p.name}, ${priceWords(p, currency)}`
-                  }
-                >
-                  {children}
-                </a>
-              </ProductLink>
-            )}
-            {...(p.status === 'active' &&
-            p.needsChoices === false &&
-            p.kind !== 'combo' &&
-            !p.requiresPreorder
-              ? {
-                  quickAdd: (children: ReactNode) => (
-                    <AddToCart
-                      product={p}
-                      asChild
-                      onAdded={() => showInfo(`added:${p.id}`, `${p.name} na sacola`)}
-                    >
-                      <button type="button" aria-label={`Adicionar ${p.name} à sacola`}>
-                        {children}
-                      </button>
-                    </AddToCart>
-                  ),
-                }
-              : {})}
-          />
+          <GridCard product={p} currency={currency} />
         </li>
       ))}
     </ol>
   );
 }
 
+function GridCard({ product: p, currency }: { product: CatalogProduct; currency: string }) {
+  const { config } = useKernel();
+  const { vocabulary } = useCopy();
+  const card = useCardState(p);
+  return (
+    <Slot
+      name="catalog.ProductCard"
+      product={p}
+      {...(card.stockLeft !== null ? { stockLeft: card.stockLeft } : {})}
+      currency={currency}
+      vocabulary={vocabulary}
+      href={productHref(config, p.slug)}
+      link={(children) => (
+        <ProductLink product={p} asChild>
+          <a
+            aria-label={
+              card.soldOut
+                ? `${p.name}, esgotado`
+                : `${p.name}, ${priceWords(priceDisplay(p), currency)}`
+            }
+          >
+            {children}
+          </a>
+        </ProductLink>
+      )}
+      {...(card.canQuickAdd
+        ? {
+            quickAdd: (children: ReactNode) => (
+              <AddToCart
+                product={p}
+                asChild
+                onAdded={() => showInfo(`added:${p.id}`, `${p.name} ${vocabulary.inBag}`)}
+              >
+                <button type="button" aria-label={`Adicionar ${p.name} ${vocabulary.toBag}`}>
+                  {children}
+                </button>
+              </AddToCart>
+            ),
+          }
+        : {})}
+    />
+  );
+}
+
 export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
-  const { categories, loading, error, refetch } = useCatalog();
   const { store } = useStore();
   const { page } = usePageContext();
   const [active, setActive] = useState<string>('all');
   const [query, setQuery] = useState('');
   const currency = store?.currency ?? 'BRL';
-  const visible = categories.filter((c) => c.products.some((p) => p.status !== 'archived'));
-  const q = normalize(query.trim());
-  // a search spans every category; sold-out items sink to the end of theirs
-  const filtered = visible
-    .filter((c) => q || active === 'all' || c.id === active)
-    .map((c) => {
-      const catHit = q && normalize(c.name).includes(q);
-      return {
-        ...c,
-        products: c.products
-          .filter(
-            (p) =>
-              p.status !== 'archived' &&
-              (!q ||
-                catHit ||
-                normalize(p.name).includes(q) ||
-                normalize(p.description ?? '').includes(q)),
-          )
-          .sort((a, b) => Number(a.status !== 'active') - Number(b.status !== 'active')),
-      };
-    })
-    .filter((c) => c.products.length > 0);
+  const q = query.trim();
+  const { categories, loading, error, refetch } = useCatalog();
+  // empty categories drop out and sold-out items sink to the end of theirs; a search spans
+  // every category
+  const visible = useMemo(() => arrangeMenu(categories), [categories]);
+  const filtered = useMemo(
+    () =>
+      q
+        ? arrangeMenu(categories, { query: q })
+        : visible.filter((c) => active === 'all' || c.id === active),
+    [categories, visible, q, active],
+  );
   const hits = filtered.reduce((n, c) => n + c.products.length, 0);
 
   return (
@@ -790,7 +767,7 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
             <p id="v-catalog-hits" className="v-muted v-search-hits" role="status">
               {hits === 0
                 ? 'Nenhum resultado'
-                : `${hits} ${hits === 1 ? 'resultado' : 'resultados'}`}
+                : `${hits} ${plural(hits, 'resultado', 'resultados')}`}
             </p>
           ) : null}
         </form>

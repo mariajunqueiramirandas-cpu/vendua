@@ -522,10 +522,10 @@ export function EmptyCart({
     <div className="v-panel v-empty" data-vendua="empty-cart" data-part="root">
       <BagIcon />
       <p className="v-panel-title" data-part="title">
-        Sua {vocabulary.bag} está vazia.
+        Nada {vocabulary.inBag} ainda.
       </p>
       <p className="v-muted" data-part="body">
-        Escolha algo no cardápio — a {vocabulary.bag} fica guardada neste aparelho.
+        Escolha algo no cardápio — fica tudo guardado neste aparelho.
       </p>
       <button type="button" className="v-btn v-btn-accent" data-part="browse" onClick={onBrowse}>
         Ver cardápio

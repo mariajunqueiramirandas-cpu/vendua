@@ -393,7 +393,7 @@ export function ProductCard({
   // sold out says so in the price row instead
   const badge =
     state.badge === 'all-in-bag'
-      ? { tone: 'surface', text: `Tudo na ${vocabulary.bag}` }
+      ? { tone: 'surface', text: `Tudo ${vocabulary.inBag}` }
       : state.badge === 'low-stock'
         ? {
             tone: 'danger',

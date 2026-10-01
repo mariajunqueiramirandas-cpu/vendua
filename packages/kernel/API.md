@@ -95,7 +95,7 @@ themselves when Core's live stream says they changed (no API change).
 | `QuantityStepper`  | `data-vendua="qty-stepper"`     | min/max (capped at the stock the cart leaves, 1.9), mutation                                                                                                                                                      |
 | `CartTrigger`      | `data-vendua="cart-trigger"`    | badge count, opens `/sacola`, `cart_open` event                                                                                                                                                                   |
 | `CheckoutButton`   | `data-vendua="checkout-button"` | starts the session, disabled states, `checkout_start`                                                                                                                                                             |
-| `StoreStatusBadge` | `data-vendua="store-status"`    | live open/closed/paused                                                                                                                                                                                           |
+| `StoreStatusBadge` | `data-vendua="store-status"`    | live open/closed/paused; 1.14: optional `labels` (the store's word per status), part `label`, `data-hint` (`statusHint`'s kind), `title` = Core's moment ("Aberto até 18:00")                                     |
 | `NotifyMeButton`   | `data-vendua="notify-me"`       | "avise-me" subscription, `notify_me` event                                                                                                                                                                        |
 | `Img`              | —                               | CDN srcset (`images.cdn`; Core media `?w=` since 1.7), lazy/priority, blur-up                                                                                                                                     |
 
@@ -138,7 +138,7 @@ may only use `store:` types.
 | `sdk:product-list`     | section | category, limit, variant, cta                                         | —                                                                                                                              |
 | `sdk:store-status`     | section | status + hours, variant `card\|inline`                                | —                                                                                                                              |
 | `sdk:rich-text`        | section | eyebrow, title, body (plain paragraphs)                               | —                                                                                                                              |
-| `sdk:stock-counter`    | block   | category `purchase-extras`; threshold, showWhenPlenty                 | —                                                                                                                              |
+| `sdk:stock-counter`    | block   | category `purchase-extras`; showWhenPlenty (threshold: ignored, 1.14) | —                                                                                                                              |
 | `sdk:notify-me`        | block   | category `purchase-extras`; title, successText                        | —                                                                                                                              |
 | `sdk:promo-badge`      | block   | category `badge`; text, tone                                          | —                                                                                                                              |
 | `sdk:delivery-eta`     | block   | category `info`; showFee, showPickup — **Kernel 1.1**                 | —                                                                                                                              |
@@ -367,6 +367,7 @@ separate function a store may skip for its own voice. Additive — no storefront
 - `orderStepLabel` `(state, mode)` — a step's short name (`Preparo`, `A caminho`, `Retirado`).
 - `PAYMENT_METHOD_LABEL` (alias `PAYMENT_LABEL`), `PAYMENT_METHOD_ORDER`, `PAYMENT_METHOD_DETAIL` — methods in the shopper's words, in checkout order.
 - `PAYMENT_STATUS_LABEL` — an online payment's status in words.
+- `REFUNDED_PAYMENT_STATUSES` — the payment statuses where money went back (`refunded`, `partially_refunded`).
 - `PIX_KEY_LABEL` — a Pix key's type in words (`chave aleatória`).
 - `adjustmentKind` `(a)` / `adjustmentShort` `(a, currency?)` / `adjustmentText` `(a, currency?)` — a method's discount/surcharge: `discount`, `−5%`, `5% de desconto`.
 - `lineSummary` `(item, currency?)` — a line's options and kit picks: `2× Calda (+R$ 2,00), Granulado`.
@@ -376,6 +377,17 @@ separate function a store may skip for its own voice. Additive — no storefront
 - `ERROR_COPY` / `errorCopy` `(code)` — default pt-BR `{ title, body? }` per Core error code.
 - `couponMessage` `(code, details?, currency?)` — a coupon's refusal in words (`Faltam R$ 12,00 para usar este cupom.`).
 - `COUPON_REASON` — coupon code → message (ui-defaults' name); `isCouponError` `(code)` — the code is about the coupon.
+
+**Options and kits** (`rules/modifiers.ts`) — Core counts a group's min/max in units and
+refuses an add that breaks them; these say the same before the add.
+
+- `modifierUnits` `(group, picks)` — units picked in an option group (`picks`: units per picked option id; a toggle is 1).
+- `groupMissing` `(group, units)` — a required group short of `max(1, minSelect)`.
+- `groupFull` `(group, units)` — the group takes no more (`maxSelect` reached).
+- `modifierMax` `(group, modifierId, picks)` — the most units of one option now: its `maxQty` and what `maxSelect` leaves.
+- `groupHint` `(group)` — `obrigatório`, `escolha 1–3`, `opcional`, `até 3`.
+- `slotUnits` `(slot, selections)` / `slotMissing` `(slot, units)` / `slotFull` `(slot, units)` — a kit slot's picked units, units still needed (0 = complete), and whether it takes more.
+- `slotHint` `(slot)` — `escolha 2`, `escolha de 1 a 3`.
 
 **QR and copy** (`rules/qr.ts`, `rules/copy.ts`)
 
@@ -418,7 +430,45 @@ analytics should count; `api.quoteLine(slug, { qty, modifiers?, comboSelections?
 `customer.LoyaltyCard`; `StoreMoney` (`currency?`) on `checkout.DeliveryOptions`,
 `checkout.PaymentMethods`; `StoreWords` (`vocabulary?`) on `cart.Drawer`, `cart.LineItem`,
 `checkout.Summary`, `checkout.EmptyCart`, `catalog.ProductCard`, `order.Items`. Optional: a
-default formats with them when given.
+default formats with them when given. The Kernel passes them: the store's zone, its currency and
+`vocabularyOf(store)`.
+
+**Vocabulary phrases** — `Vocabulary` (from `vocabularyOf` / `useCopy`) also carries the bag
+word with its article, since pt-BR nouns have a gender: `inBag` (`na sacola` / `no carrinho`),
+`toBag` (`à sacola` / `ao carrinho`), `ofBag` (`da sacola` / `do carrinho`), `yourBag`
+(`Sua sacola` / `Seu carrinho`). They follow the store's `bag` (feminine when it ends in "a")
+unless `store.vocabulary` sets them; the default `cta` follows too (`Adicionar ao carrinho`).
+
+**The Kernel's own defaults decide through these rules** (behaviour changes, no API change):
+
+- `sdk:purchase-panel`'s add button shows Core's price for the configured line
+  (`useLineQuote` → `lineTotalCents`, `[data-part="add-price"][data-state="quote"]`) — for
+  options, kits and quantities alike; while choices are missing or the quote is on its way it
+  shows the product's own price (`priceDisplay`, `data-state="display"`). It never multiplies
+  `basePriceCents`. A combo says "a partir de" only from Core's `fromPriceCents`.
+- `AddToCart`'s `add_to_cart` event carries `value` = Core's `added.lineTotalCents` (absent when
+  Core doesn't send `added`) — no longer `basePriceCents × qty`.
+- `sdk:stock-counter` reads low stock as Core does (`cardState`: `lowStock`, or
+  `lowStockThreshold` on what the bag leaves); its `threshold` setting is kept for saved
+  templates and ignored. `sdk:delivery-eta` words `deliverySummary` ("Entrega a partir de
+  R$ 1,50 · 30–50 min"): a per-km zone is never "grátis". The checkout's delivery option uses
+  the same summary.
+- Catalog cards: `quickAdd` follows `cardState.canQuickAdd` — absent when every unit is already
+  in the bag (it was a locked button); search, empty categories and sold-out ordering are
+  `arrangeMenu`.
+- Document title and meta per page: template pages `name — tagline` (or the name), the product
+  page `<product> · <store>` with the product's description, the Kernel's pages `Sacola · <store>`
+  (the store's bag word), `Finalizar pedido · <store>`, `Pedido #<n> · <store>`,
+  `Meus pedidos · <store>`. `<meta name="description">`, `og:title` and `og:description` are
+  updated when the page has them (never added). A page whose title isn't known yet keeps the
+  current one.
+- Notices: `SystemSurfaces` and `SurfaceRegion` show only notices inside their
+  `startsAt`/`endsAt` window (`SurfaceRegion` showed expired ones), blocking by `isBlocking`.
+- A `#hash` (e.g. `#produto-<slug>`) scrolls smoothly unless the shopper asked for reduced
+  motion, and its element carries `data-target` for ~2 s (style the highlight with
+  `[data-target]`).
+- Copy that named the bag or items (`CartTrigger`'s label, toasts, the share sheet, reorder
+  notes) uses the store's vocabulary.
 
 **`@vendua/kernel/sdk-catalog`** also exports `DEFAULT_TEMPLATES` (what a page renders with no
 template), `resolveSettings` `(schema, raw)` (the settings coercion the Kernel renders with),
@@ -480,4 +530,5 @@ is optional so a Kernel 1.2 storefront still runs against an older Core. Slot pr
 `vendua({ config })` pulls the store's templates + tokens from Core when
 `VENDUA_CORE_ORIGIN` is set (repo `templates/` otherwise), blocks tokens that fail WCAG
 AA on default surfaces, and writes `dist/vendua-manifest.json` (Kernel × Contract ×
-Core API majors, template/token source + hash, section catalog, override list).
+Core API majors, template/token source + hash, section catalog, override list, and since 1.14
+`paths` — the store's resolved routes, which the edge matches product pages by).

@@ -51,6 +51,37 @@ ledger or money (API.md, "Rules and display helpers").
   (filled for the SDK sections).
 - API.md: commerce funnel events come only from the primitives — a store UI must add, open the
   bag and start checkout through them.
+- Rules for options and kits (`rules/modifiers.ts`): `modifierUnits`, `groupMissing`,
+  `groupFull`, `modifierMax`, `groupHint`, `slotUnits`, `slotMissing`, `slotFull`, `slotHint`;
+  and `REFUNDED_PAYMENT_STATUSES`. `Vocabulary` gains `inBag`, `toBag`, `ofBag`, `yourBag` (the
+  bag word with its gendered article, `no carrinho` / `na sacola`; the default `cta` follows the
+  bag word). `StoreStatusBadge` takes optional `labels` (`StoreStatusBadgeProps`).
+- The Kernel's own defaults stop re-deriving: sections, blocks, pages and primitives decide
+  through the rules or Core. Behaviour changes (API.md, "The Kernel's own defaults…"):
+  - Fix: the purchase panel's add button shows Core's quote for the line (`useLineQuote`), for
+    options and kits too, and the product's own price while choices are missing — never
+    `basePriceCents × qty`. A combo says "a partir de" only from Core's `fromPriceCents` (the
+    invented "a paid slot item" rule is gone).
+  - Fix: `add_to_cart` analytics `value` is Core's `added.lineTotalCents` (none from an older
+    Core), no longer `basePriceCents × qty`.
+  - Fix: `sdk:stock-counter` follows Core's low stock; its `threshold` setting is ignored.
+  - Fix: `sdk:delivery-eta` and the checkout's delivery option never say "grátis" for a per-km
+    zone (`deliverySummary`); the block reads "Entrega a partir de R$ 1,50 · 30–50 min".
+  - Fix: the Kernel no longer overwrites a page's title with the bare store name: template
+    pages `name — tagline`, product `<product> · <store>`, and `Sacola`, `Finalizar pedido`,
+    `Pedido #<n>`, `Meus pedidos` `· <store>`; description and `og:*` follow when present.
+  - Fix: `SurfaceRegion` keeps notices to their window; `SystemSurfaces` uses `visibleNotices`/
+    `isBlocking`.
+  - `StoreStatusBadge`: part `label`, `data-hint`, title = Core's moment ("Aberto até 18:00",
+    "Abre amanhã às 09:00") instead of "retorna sáb., 09:00".
+  - A catalog card whose every unit is in the bag offers no quick add (`cardState.canQuickAdd`).
+  - A `#hash` scrolls smoothly (instantly with reduced motion) and marks its element with
+    `data-target` for ~2 s.
+  - The Kernel passes `timeZone`, `currency` and `vocabulary` to the slots that declare them;
+    bag/item copy follows the store's vocabulary. Pix key types read from `PIX_KEY_LABEL`
+    ("Chave aleatória:"), WhatsApp/Instagram links from `contactLinks` (country code 55 added),
+    phones validate with `isValidPhone`.
+- `dist/vendua-manifest.json` carries `paths` (the store's resolved routes) for the edge.
 
 ## 1.13.0
 

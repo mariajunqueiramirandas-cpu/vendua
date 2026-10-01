@@ -1,21 +1,32 @@
 import { useState } from 'react';
-import { lineDraw, unitsLeft, useCart, useStore } from '../hooks.ts';
+import { lineDraw, unitsLeft, useCart, useCopy, useCoupon, useStore } from '../hooks.ts';
 import { CheckoutButton, useNavigateTo } from '../primitives.tsx';
 import { Slot } from '../slot.tsx';
-import { errorCode, errorCopy, showError, showInfo } from '../errors.ts';
+import { showError, showInfo } from '../errors.ts';
 import { useKernel } from '../provider.tsx';
 import { resolvePaths } from '../config.ts';
-import type { Cart, CartItem } from '../api.ts';
+import type { CartItem } from '../api.ts';
 import { haptic } from '../haptics.ts';
+import { MAX_LINE_QTY } from '../rules/card.ts';
+import type { Vocabulary } from '../rules/copy.ts';
+import { usePageTitle } from '../head.ts';
 
 // /sacola — Kernel page (17 — Kernel pages), rendered inside the store's layout.
 // Totals are Core's; the page only wires slots to the cart mutations.
 
-function Line({ item, currency }: { item: CartItem; currency: string }) {
+function Line({
+  item,
+  currency,
+  vocabulary,
+}: {
+  item: CartItem;
+  currency: string;
+  vocabulary: Vocabulary;
+}) {
   const { cart, mutations } = useCart();
   const [pending, setPending] = useState(false);
   // other lines (another modifier set, a kit with the same pick) draw on the same stock
-  const max = Math.min(99, Math.max(item.qty, unitsLeft(cart, lineDraw(item), item.id)));
+  const max = Math.min(MAX_LINE_QTY, Math.max(item.qty, unitsLeft(cart, lineDraw(item), item.id)));
   const run = async (fn: () => Promise<unknown>) => {
     setPending(true);
     try {
@@ -31,6 +42,7 @@ function Line({ item, currency }: { item: CartItem; currency: string }) {
       name="cart.LineItem"
       item={item}
       currency={currency}
+      vocabulary={vocabulary}
       pending={pending}
       max={max}
       onQty={(qty) => {
@@ -47,6 +59,7 @@ function Line({ item, currency }: { item: CartItem; currency: string }) {
 /** "Mandar sacola": a Core share code as a link — native share sheet, else clipboard. */
 function ShareCart() {
   const { mutations } = useCart();
+  const { vocabulary } = useCopy();
   const [pending, setPending] = useState(false);
   const share = async () => {
     setPending(true);
@@ -54,10 +67,14 @@ function ShareCart() {
       const { url } = await mutations.share();
       const nav = globalThis.navigator as Navigator | undefined;
       if (nav?.share) {
-        await nav.share({ title: 'Minha sacola', url }).catch(() => {});
+        await nav.share({ title: vocabulary.yourBag, url }).catch(() => {});
       } else {
         await nav?.clipboard?.writeText(url);
-        showInfo('share', 'Link da sacola copiado', 'Abra em outro aparelho ou mande para alguém.');
+        showInfo(
+          'share',
+          `Link ${vocabulary.ofBag} copiado`,
+          'Abra em outro aparelho ou mande para alguém.',
+        );
       }
     } catch (err) {
       showError(err);
@@ -73,36 +90,23 @@ function ShareCart() {
       disabled={pending}
       onClick={() => void share()}
     >
-      {pending ? 'Gerando link…' : 'Mandar sacola por link'}
+      {pending ? 'Gerando link…' : `Mandar ${vocabulary.bag} por link`}
     </button>
   );
 }
 
-function Coupon({ cart, currency }: { cart: Cart; currency: string }) {
-  const { mutations } = useCart();
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
-  const run = async (fn: () => Promise<unknown>) => {
-    setPending(true);
-    setError(undefined);
-    try {
-      await fn();
-    } catch (err) {
-      setError(errorCopy(errorCode(err)).title);
-    } finally {
-      setPending(false);
-    }
-  };
+function Coupon({ currency }: { currency: string }) {
+  const coupon = useCoupon();
   return (
     <Slot
       name="checkout.CouponField"
-      coupon={cart.coupon ?? null}
-      discountCents={cart.totals.discountCents ?? 0}
+      coupon={coupon.coupon}
+      discountCents={coupon.discountCents}
       currency={currency}
-      pending={pending}
-      {...(error ? { error } : {})}
-      onApply={(code) => void run(() => mutations.applyCoupon(code))}
-      onRemove={() => void run(() => mutations.removeCoupon())}
+      pending={coupon.pending}
+      {...(coupon.message ? { error: coupon.message } : {})}
+      onApply={(code) => void coupon.apply(code)}
+      onRemove={() => void coupon.remove()}
     />
   );
 }
@@ -121,6 +125,7 @@ export function CartContents({
 }) {
   const { cart, loading } = useCart();
   const { store } = useStore();
+  const { vocabulary } = useCopy();
   const { config } = useKernel();
   const go = useNavigateTo();
   const currency = store?.currency ?? 'BRL';
@@ -128,11 +133,12 @@ export function CartContents({
   const open = cart?.status === 'open' && cart.items.length > 0;
 
   if (loading && !cart)
-    return <div aria-busy="true" aria-label="Carregando sacola" className="v-panel" />;
+    return <div aria-busy="true" aria-label={`Carregando ${vocabulary.bag}`} className="v-panel" />;
   if (!open)
     return (
       <Slot
         name="checkout.EmptyCart"
+        vocabulary={vocabulary}
         onBrowse={onBrowse ?? (() => go(resolvePaths(config).catalog))}
       />
     );
@@ -141,15 +147,16 @@ export function CartContents({
       name="cart.Drawer"
       cart={cart}
       currency={currency}
+      vocabulary={vocabulary}
       presentation={presentation}
       onClose={browse}
       lines={cart.items.map((i) => (
-        <Line key={i.id} item={i} currency={currency} />
+        <Line key={i.id} item={i} currency={currency} vocabulary={vocabulary} />
       ))}
       summary={
         <>
-          <Slot name="checkout.Summary" cart={cart} currency={currency} />
-          <Coupon cart={cart} currency={currency} />
+          <Slot name="checkout.Summary" cart={cart} currency={currency} vocabulary={vocabulary} />
+          <Coupon currency={currency} />
           <ShareCart />
         </>
       }
@@ -165,9 +172,13 @@ export function CartContents({
 }
 
 export function CartPage() {
+  const { vocabulary } = useCopy();
+  usePageTitle(capitalize(vocabulary.bag));
   return (
     <main id="main" className="v-page" data-vendua-page="cart">
       <CartContents presentation="page" />
     </main>
   );
 }
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
