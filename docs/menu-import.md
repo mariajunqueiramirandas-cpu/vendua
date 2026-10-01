@@ -436,7 +436,7 @@ The quero-pudim seed fixtures are a hand-made approximation of the store and dif
 - **`apply`** on the `vendua_test` database: fresh tenant, `add` and `replace`, a double apply
   writing once, another tenant's id answering 404, each truncation in [§4.6](#46-limits-truncate-dont-fail).
 - **Images** against a local HTTP fixture server: off-allowlist host, oversized, wrong type.
-- **No live calls in CI.** A staff script, `bun run import:probe <url> [--keys]` in
+- **No live calls in CI.** A staff script, `bun run import:probe <url> [--keys|--codes]` in
   `packages/core`, runs `read` + `map` + `validateDoc` against the live platform and prints
   counts and `lost` — before a release, and when a merchant reports a failed import. `--keys`
   lists the payload's field names (never values), to fix an adapter after the platform drifts.
@@ -463,14 +463,19 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
    Catálogo entry. Exit: Quero Pudim imported in production.
    - Built: everything but the seed, which still writes its own rows (its fixtures carry fields
      the document doesn't: slugs CI depends on, figure variants, coupons, loyalty).
-   - Not yet confirmed on a live store: Instadelivery's option lists (`complementos`) and
-     delivery fees (`fees`, `feesKm`) — the Quero Pudim store has neither, and other merchants'
-     stores weren't read. Their field names are read defensively (`adapters/instadelivery.ts`);
-     a list the adapter can't read hides the product (`options_unreadable`) and unreadable fees
-     add `delivery_fees_unreadable`, so a wrong guess never sells at a different price. The
-     same holds for `item_discount` (product hidden) and the per-method discount/surcharge
-     fields (reported, not applied: their unit isn't confirmed). Run `import:probe --keys` on a
-     store with options before the first such merchant imports.
+   - Confirmed on live stores (2026-10-01, field names via `import:probe --keys`, outcomes via
+     `--codes`, which prints counts and a tally of note codes and nothing of the store): option
+     lists are `complementos[]` with `min`, `max` (0 = no cap), `is_pizza` (most expensive
+     flavour), `only_one` (no repeats) and options in `complements[]` (`price`, `max_quantity`,
+     `is_invisible`, stock); neighbourhood fees are `fees[]` (`name`, `price`, `estimate`); km
+     tiers are `feesKm[]` (`km`, `price`, `estimate`, `no_delivery`). A pizzeria with 78 option
+     lists imports with one product hidden (a required list with nothing visible), and km tiers
+     past the last delivering one are read as the edge of the area, not a gap.
+   - Still not applied, only noted (their exact meaning isn't confirmed): `item_discount`
+     (product hidden), a second price (`price2`, product hidden), sized pizza categories
+     (`size1`/`size2`, products hidden), per-method discount/surcharge fields, free-delivery
+     rules on fees (`free_delivery`, `price_free`), and a "no delivery" km band inside the area.
+     Reading those values needs a broader permission in the session than this one had.
 3. **More adapters**, one PR each with its fixtures: Cardápio Web, OlaClick, Delivery Direto,
    Takeat, Saipos, Goomer. Custom domains. The CRM import on a lead's store.
 4. **iFood** through the official Merchant API: Venduá registered as an iFood app, the merchant
@@ -501,8 +506,9 @@ What a public store returned on 2026-10-01. Internal APIs; expect drift.
 - **Instadelivery** — `GET app.instadelivery.com.br/api/stores/by-slug/<slug>`. `groups[]` (order,
   `is_pizza`, weekday flags, hours) → `itens[]` (`price1` in reais, `from_price`, `strike_price`,
   `image` + `image_2…5` on a DigitalOcean Spaces CDN, `stock_control`/`stock`, `is_best_seller`,
-  `is_newest`, `custom_tag*`, `points`, weekday flags) → `complementos[]` (min, max, options with
-  price; options can repeat; pizza groups charge the most expensive flavour). Store: `times`
+  `is_newest`, `custom_tag*`, `points`, weekday flags) → `complementos[]` (`min`, `max`,
+  `is_pizza`, `only_one`, options in `complements[]` with `price`, `max_quantity`, `is_invisible`,
+  stock; pizza lists charge the most expensive flavour). Store: `times`
   (per shift), `payment_methods[]` by name, `fees` (neighbourhood), `feesKm`, `minimum_order`,
   `wait_time`, `take_out`, `pix`/`pix_type`/`pix_infos`, `design` (logo, background, colours).
   Hidden items are absent.

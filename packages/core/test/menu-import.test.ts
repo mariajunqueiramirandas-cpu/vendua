@@ -431,13 +431,25 @@ describe('instadelivery.map', () => {
     const [size, extras] = acai.optionGroups;
     expect(size).toMatchObject({ name: 'Tamanho', min: 1, max: 1 });
     expect(size!.options.map((o) => o.priceDeltaCents)).toEqual([0, 500, 1000]);
-    expect(extras).toMatchObject({ name: 'Adicionais', min: 0, max: 4 });
+    // 2 + 1 + 1 + 1 units can be picked; the hidden "Brindes" list isn't there at all
+    expect(extras).toMatchObject({ name: 'Adicionais', min: 0, max: 5 });
+    expect(acai.optionGroups).toHaveLength(2);
     expect(extras!.options[0]).toMatchObject({
       name: 'Leite em pó',
       priceDeltaCents: 250,
       maxQty: 2,
     });
     expect(extras!.options[2]).toMatchObject({ priceDeltaCents: 0, description: 'Moída na hora' });
+    expect(extras!.options[3]).toMatchObject({ name: 'Morango (acabou)', soldOut: true });
+  });
+
+  test('a flavour list without the pizza flag sums, exactly as the old store; only_one = no repeats', () => {
+    const pote = byName.get('Bolo de pote duplo')!;
+    expect(pote.status).toBe('active');
+    const g = pote.optionGroups[0]!;
+    expect(g.pricingRule).toBeUndefined();
+    expect(g.options.every((o) => o.maxQty === undefined)).toBe(true);
+    expect(g).toMatchObject({ min: 1, max: 2 });
   });
 
   test('pizza flavour list charges the dearest flavour — exactly', () => {
@@ -451,12 +463,12 @@ describe('instadelivery.map', () => {
   });
 
   test('prices we cannot reproduce exactly are imported hidden, with the reason', () => {
-    expect(byName.get('Bolo de pote duplo')!.status).toBe('archived');
+    expect(byName.get('Bolo dois preços')!.status).toBe('archived');
     expect(byName.get('Item estranho')!.status).toBe('archived');
     expect(byName.get('Promo misteriosa')!.status).toBe('archived');
     expect(codes('product')).toEqual(
       expect.arrayContaining([
-        'Bolo de pote duplo:pizza_pricing',
+        'Bolo dois preços:second_price',
         'Item estranho:options_unreadable',
         'Promo misteriosa:promo_unreadable',
       ]),
@@ -497,6 +509,8 @@ describe('instadelivery.map', () => {
         kind: 'neighborhood',
         feeCents: 500,
         neighborhoods: ['Centro', 'Jardim'],
+        etaMin: 30,
+        etaMax: 40,
       },
       { name: 'Taxa R$ 8,50', kind: 'neighborhood', feeCents: 850, neighborhoods: ['Vila Nova'] },
     ]);
@@ -531,12 +545,34 @@ describe('instadelivery.map', () => {
     expect(doc.lost.find((l) => l.code === 'loyalty')!.detail).toBe('2');
   });
 
+  test('km tiers: radius zones; "no delivery" past the last tier is just the edge', () => {
+    const raw = {
+      ...fixture,
+      fees: [],
+      feesKm: [
+        { km: 3, price: 5, price_free: 0, no_delivery: 0, estimate: '20-30' },
+        { km: 5, price: 0, price_free: 0, no_delivery: 1, estimate: null },
+        { km: 8, price: 9.5, price_free: 0, no_delivery: 0, estimate: null },
+        { km: 12, price: 0, price_free: 0, no_delivery: 1, estimate: null },
+        { km: 20, price: 0, price_free: 0, no_delivery: 1, estimate: null },
+      ],
+    };
+    const m = validateDoc(instadelivery.map(raw, source)).doc;
+    expect(m.zones).toEqual([
+      { name: 'Até 3 km', kind: 'radius', feeCents: 500, maxDistanceKm: 3, etaMin: 20, etaMax: 30 },
+      { name: 'Até 8 km', kind: 'radius', feeCents: 950, maxDistanceKm: 8 },
+    ]);
+    const gaps = m.lost.filter((l) => l.code === 'delivery_gap');
+    expect(gaps).toEqual([{ scope: 'store', code: 'delivery_gap', detail: '5' }]);
+    expect(m.lost.map((l) => l.code)).toContain('delivery_distance_straight_line');
+  });
+
   test('counts', () => {
     expect(counts).toMatchObject({
       categories: 2,
-      products: 10,
+      products: 11,
       hidden: 3,
-      photos: 10,
+      photos: 11,
       optionGroups: 4,
       hours: 4,
       zones: 2,

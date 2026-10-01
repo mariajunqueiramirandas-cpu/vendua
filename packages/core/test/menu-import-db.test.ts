@@ -181,12 +181,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
     const g = await manager('GET', `/imports/${importId}`);
     expect(g.status).toBe(200);
     expect(g.body.status).toBe('ready');
-    expect(g.body.counts).toMatchObject({ categories: 2, products: 10, hidden: 3, pix: true });
+    expect(g.body.counts).toMatchObject({ categories: 2, products: 11, hidden: 3, pix: true });
     expect(g.body.preview.categories.map((c: any) => c.name)).toEqual(['BOLOS', 'AÇAÍ']);
     const acai = g.body.preview.categories[1].products[0];
     expect(acai).toMatchObject({ name: 'Açaí no copo', priceCents: 1490, status: 'active' });
     expect(g.body.lost.map((l: any) => l.code)).toEqual(
-      expect.arrayContaining(['hidden_items', 'loyalty', 'pizza_pricing']),
+      expect.arrayContaining(['hidden_items', 'loyalty', 'second_price']),
     );
     // the raw payload is never stored
     const raw = await sql`select doc::text as doc from menu_imports where id = ${importId}`;
@@ -235,10 +235,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
     expect(r.body.status).toBe('applied');
     expect(r.body.result).toMatchObject({
       categories: { created: 1, reused: 1 },
-      products: 10,
+      products: 11,
       hidden: 3,
       archived: 0,
-      images: 12,
+      images: 13,
     });
 
     const cats = await sql<{ name: string; description: string | null }[]>`
@@ -262,7 +262,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
       }[]
     >`select * from products where tenant_id = ${tenantId} order by name`;
     const p = new Map(prods.map((x) => [x.name + (x.slug.endsWith('-2') ? ' (2)' : ''), x]));
-    expect(prods).toHaveLength(11);
+    expect(prods).toHaveLength(12);
     // the old "Bolo de cenoura" stays; the imported one gets the next slug
     expect(p.get('Bolo de cenoura (2)')).toMatchObject({
       base_price_cents: 3500,
@@ -279,7 +279,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
       windows: [{ days: [6], from: '10:00', to: '14:00' }],
       outside: 'unavailable',
     });
-    for (const hidden of ['Bolo de pote duplo', 'Item estranho', 'Promo misteriosa'])
+    for (const hidden of ['Bolo dois preços', 'Item estranho', 'Promo misteriosa'])
       expect(p.get(hidden)!.status).toBe('archived');
 
     const groups = await sql<
@@ -315,6 +315,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
       ['Leite em pó', 250, 2],
       ['Granola', 200, 1],
       ['Paçoca', 0, 1],
+      ['Morango (acabou)', 300, 1],
     ]);
 
     const s = (await sql`select * from store_settings where tenant_id = ${tenantId}`)[0]!;
@@ -365,7 +366,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
     expect(again.status).toBe(409);
     expect(again.body.error.code).toBe('IMPORT_NOT_READY');
     const n = await sql`select count(*)::int as n from products where tenant_id = ${tenantId}`;
-    expect(n[0]!.n).toBe(11);
+    expect(n[0]!.n).toBe(12);
   });
 
   test('photos, logo and cover are re-hosted; a failed photo is reported, never linked', async () => {
@@ -374,7 +375,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
       select m.url, m.sort, p.name from product_media m join products p on p.id = m.product_id
       where m.tenant_id = ${tenantId} order by p.name, m.sort
     `;
-    expect(media.length).toBe(9);
+    expect(media.length).toBe(10);
     expect(media.every((m) => m.url.startsWith(`/v1/media/${tenantId}/`))).toBe(true);
     expect(media.filter((m) => m.name === 'Bolo de cenoura').map((m) => m.sort)).toEqual([0, 1]);
     const s = (await sql`select logo_url from store_settings where tenant_id = ${tenantId}`)[0]!;
@@ -389,7 +390,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
     `;
     expect(anySource).toHaveLength(0);
     const g = await owner('GET', `/imports/${importId}`);
-    expect(g.body.images).toMatchObject({ total: 12, done: 12, failed: 1, finished: true });
+    expect(g.body.images).toMatchObject({ total: 13, done: 13, failed: 1, finished: true });
     expect(g.body.lost).toEqual(
       expect.arrayContaining([
         { scope: 'product', subject: 'Item estranho', code: 'photo_failed' },
@@ -414,9 +415,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
     const live = await sql<{ n: number }[]>`
       select count(*)::int as n from products where tenant_id = ${tenantId} and status <> 'archived'
     `;
-    expect(live[0]!.n).toBe(7);
+    expect(live[0]!.n).toBe(8);
     const all = await sql`select count(*)::int as n from products where tenant_id = ${tenantId}`;
-    expect(all[0]!.n).toBe(21);
+    expect(all[0]!.n).toBe(23);
   });
 
   test('a store that is not there fails NOT_FOUND; a stale preview expires', async () => {
@@ -492,7 +493,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
     expect(r.status).toBe(202);
     await runReads(deps);
     const g = await ctl('GET', `/imports/${r.body.id}`);
-    expect(g.body).toMatchObject({ status: 'ready', counts: { products: 10 } });
+    expect(g.body).toMatchObject({ status: 'ready', counts: { products: 11 } });
     expect(g.body.preview.payments.pix.key).not.toBe('exemplo@vendua.test');
     expect((await ctl('GET', `/stores/${slug}/imports`)).body.imports[0].id).toBe(r.body.id);
     expect(
@@ -507,7 +508,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
       { 'idempotency-key': key },
     );
     expect(ok.status).toBe(200);
-    expect(ok.body.result.products).toBe(10);
+    expect(ok.body.result.products).toBe(11);
     const replay = await app.request(
       `http://core.localhost/control/v1/imports/${r.body.id}/apply`,
       {

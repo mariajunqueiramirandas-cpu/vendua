@@ -110,45 +110,56 @@ const intOf = (v: unknown): number | null => {
 };
 
 /**
- * An add-on list ("complementos"): name, min, max and priced options. Option field names are
- * read defensively; a list we can't read with confidence is reported, never guessed at.
+ * An add-on list (`complementos[]`): `min`, `max` (0 = no cap), `is_pizza` (the "Lista de
+ * Sabores de Pizza": several flavours charge the dearest), `only_one` (each option once), and
+ * its options in `complements[]` (`price` in reais, `max_quantity`, `is_invisible`, stock).
+ * Field names confirmed on live stores (2026-10-01); a list that doesn't read hides the product.
  */
-function optionGroup(c: Raw): ImportOptionGroup | null {
-  const name = str(first(c, ['name', 'title', 'nome']));
-  const rawOptions = first(c, ['itens', 'items', 'options', 'opcoes', 'complementos']);
-  if (!name || !Array.isArray(rawOptions)) return null;
+function optionGroup(c: Raw): ImportOptionGroup | 'empty' | null {
+  const name = str(c.name).trim();
+  if (!name || !Array.isArray(c.complements)) return null;
+  const once = flag(c.only_one);
   const options: ImportOptionGroup['options'] = [];
-  for (const o of list(rawOptions)) {
-    if (o.deleted_at || flag(o.is_invisible) || flag(o.hidden)) continue;
-    const oname = str(first(o, ['name', 'title', 'nome']));
-    const cents = toCents(first(o, ['price', 'price1', 'value', 'valor']) ?? 0);
+  for (const o of [...list(c.complements)].sort(
+    (a, b) => (intOf(a.order) ?? 0) - (intOf(b.order) ?? 0),
+  )) {
+    if (o.deleted_at || flag(o.is_invisible)) continue;
+    const oname = str(o.name).trim();
+    const cents = toCents(o.price ?? 0);
     if (!oname || cents === null) return null;
     const opt: ImportOptionGroup['options'][number] = { name: oname, priceDeltaCents: cents };
-    const qty = intOf(first(o, ['max', 'max_qty', 'maximum', 'limit']));
-    if (qty !== null && qty > 1) opt.maxQty = qty;
-    const d = str(o.description);
+    // 0 or missing: we don't know it allows repeats, so it doesn't (never a price change)
+    const qty = intOf(o.max_quantity);
+    if (!once && qty !== null && qty > 1) opt.maxQty = qty;
+    const d = str(o.description).trim();
     if (d) opt.description = d;
     const img = str(o.image);
     if (img) opt.imageUrl = img;
-    if (o.stock_control !== undefined && flag(o.stock_control) && intOf(o.stock) === 0)
-      opt.soldOut = true;
+    if (flag(o.stock_control) && (intOf(o.stock) ?? 0) <= 0) opt.soldOut = true;
     options.push(opt);
   }
-  if (!options.length) return null;
-  const min = intOf(first(c, ['min', 'minimum', 'minimo', 'min_qty'])) ?? 0;
-  const max = intOf(first(c, ['max', 'maximum', 'maximo', 'max_qty'])) ?? options.length;
+  const min = intOf(c.min) ?? 0;
+  // every option hidden on the old store: an optional list just isn't there
+  if (!options.length) return min > 0 ? null : 'empty';
+  const max = intOf(c.max) ?? 0;
   if (min < 0 || max < 0) return null;
-  // "Lista de Sabores de Pizza": several flavours charge the most expensive one
-  const flavours = Object.entries(c).some(
-    ([k, v]) => k !== 'name' && /pizza|sabor|flavou?r/i.test(k) && truthy(v),
-  );
   return {
     name,
     min,
-    max: max === 0 ? options.length : max,
-    ...(flavours && max > 1 ? { pricingRule: 'most_expensive' as const } : {}),
+    // validateDoc caps it at what the options add up to
+    max: max === 0 ? 1000 : max,
+    ...(flag(c.is_pizza) && max !== 1 ? { pricingRule: 'most_expensive' as const } : {}),
     options,
   };
+}
+
+/** "40", "30-50", "30 a 50 min" → minutes; anything else none. */
+function eta(v: unknown): { etaMin?: number; etaMax?: number } {
+  const m = /^\s*(\d{1,4})(?:\s*(?:-|a|até)\s*(\d{1,4}))?\s*(?:min|minutos)?\s*$/i.exec(str(v));
+  if (!m) return {};
+  const lo = Number(m[1]);
+  const hi = m[2] ? Number(m[2]) : lo;
+  return lo <= hi && hi <= 1440 ? { etaMin: lo, etaMax: hi } : {};
 }
 
 const ADJUSTMENTS: [string, string][] = [
@@ -213,41 +224,71 @@ function hours(times: unknown, alwaysOpen: boolean): ImportWindow[] {
     .sort((a, b) => a.days[0]! - b.days[0]! || a.open.localeCompare(b.open));
 }
 
-/** Neighbourhood and km fees; any row we can't read drops them all (the merchant sets zones). */
+/**
+ * Neighbourhood fees (`fees[]`: `name`, `price`, `estimate`) become one zone per fee and time;
+ * km tiers (`feesKm[]`: `km`, `price`, `estimate`) become radius zones. Free-delivery rules and
+ * "no delivery" tiers aren't copied (their exact meaning isn't confirmed): they're noted.
+ */
 function zones(raw: Raw, lost: Lost[]): ImportZone[] | undefined {
-  const fees = list(raw.fees);
-  const km = list(raw.feesKm);
+  const fees = list(raw.fees).filter((f) => !f.deleted_at);
+  const km = list(raw.feesKm).filter((k) => !k.deleted_at);
   if (!fees.length && !km.length) return undefined;
-  const byFee = new Map<number, string[]>();
+  let rules = false;
+  const byFee = new Map<string, { fee: number; t: ReturnType<typeof eta>; names: string[] }>();
   for (const f of fees) {
-    const name = str(first(f, ['neighborhood', 'neighborhood_name', 'district', 'bairro', 'name']));
-    const fee = toCents(first(f, ['value', 'price', 'fee', 'tax', 'valor']));
+    const name = str(f.name).trim();
+    const fee = toCents(f.price ?? 0);
     if (!name || fee === null) {
       lost.push({ scope: 'store', code: 'delivery_fees_unreadable' });
       return undefined;
     }
-    byFee.set(fee, [...(byFee.get(fee) ?? []), name]);
+    if (truthy(f.free_delivery)) rules = true;
+    const t = eta(f.estimate);
+    const k = `${fee}|${t.etaMin ?? ''}|${t.etaMax ?? ''}`;
+    const e = byFee.get(k) ?? { fee, t, names: [] };
+    e.names.push(name);
+    byFee.set(k, e);
   }
-  const out: ImportZone[] = [...byFee.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([fee, names]) => ({
+  const out: ImportZone[] = [...byFee.values()]
+    .sort((a, b) => a.fee - b.fee)
+    .map(({ fee, t, names }) => ({
       name: fee === 0 ? 'Entrega grátis' : `Taxa R$ ${(fee / 100).toFixed(2).replace('.', ',')}`,
       kind: 'neighborhood',
       neighborhoods: names,
       feeCents: fee,
+      ...t,
     }));
   const tiers: ImportZone[] = [];
+  const gaps: number[] = [];
   for (const k of km) {
-    const dist = Number(first(k, ['km', 'distance', 'max_km', 'until', 'to', 'max']));
-    const fee = toCents(first(k, ['value', 'price', 'fee', 'tax', 'valor']));
+    const dist = Number(k.km);
+    const fee = toCents(k.price ?? 0);
     if (!(dist > 0) || fee === null) {
       lost.push({ scope: 'store', code: 'delivery_fees_unreadable' });
       return out.length ? out : undefined;
     }
-    tiers.push({ name: `Até ${dist} km`, kind: 'radius', maxDistanceKm: dist, feeCents: fee });
+    if (flag(k.no_delivery)) {
+      gaps.push(dist);
+      continue;
+    }
+    if (truthy(k.price_free)) rules = true;
+    tiers.push({
+      name: `Até ${String(dist).replace('.', ',')} km`,
+      kind: 'radius',
+      maxDistanceKm: dist,
+      feeCents: fee,
+      ...eta(k.estimate),
+    });
   }
+  // "no delivery" past the farthest tier is just where delivery ends; inside it, a hole a
+  // straight-line radius can't express
+  const far = Math.max(0, ...tiers.map((t) => t.maxDistanceKm!));
+  for (const g of gaps.filter((d) => d < far).sort((a, b) => a - b))
+    lost.push({ scope: 'store', code: 'delivery_gap', detail: String(g).replace('.', ',') });
+  if (rules) lost.push({ scope: 'store', code: 'free_delivery_rule' });
   if (tiers.length) lost.push({ scope: 'store', code: 'delivery_distance_straight_line' });
-  return [...out, ...tiers.sort((a, b) => a.maxDistanceKm! - b.maxDistanceKm!)];
+  const all = [...out, ...tiers.sort((a, b) => a.maxDistanceKm! - b.maxDistanceKm!)];
+  return all.length ? all : undefined;
 }
 
 function product(item: Raw, group: Raw, lost: Lost[]): ImportProduct | null {
@@ -302,14 +343,13 @@ function product(item: Raw, group: Raw, lost: Lost[]): ImportProduct | null {
     lost.push({ scope: 'product', subject: name, code: 'free_delivery' });
 
   for (const c of list(item.complementos)) {
+    if (c.deleted_at) continue;
     const g = optionGroup(c);
+    if (g === 'empty') continue;
     if (!g) {
       hide('options_unreadable', str(c.name) || undefined);
       continue;
     }
-    // several flavours with no rule we can read: the old store may charge the dearest one
-    if (g.max > 1 && !g.pricingRule && /sabor|flavou?r|metade|meia/i.test(g.name))
-      hide('pizza_pricing', g.name);
     p.optionGroups.push(g);
   }
 
@@ -328,10 +368,12 @@ function product(item: Raw, group: Raw, lost: Lost[]): ImportProduct | null {
     }
   }
 
-  if (flag(group.is_pizza)) {
-    const sized = toCents(item.price2) || group.size1 || group.size2 || group.size;
-    if (sized) hide('pizza_sizes');
-  }
+  // a pizza category priced by size (size1/size2 with price1/price2), or a second price we
+  // can't place: which one the old store charges depends on choices we don't carry over
+  if (flag(group.is_pizza) && (group.size1 || group.size2 || intOf(group.size)))
+    hide('pizza_sizes');
+  else if ((toCents(item.price2) ?? 0) > 0 && toCents(item.price2) !== p.priceCents)
+    hide('second_price');
   return p;
 }
 

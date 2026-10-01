@@ -45,6 +45,9 @@ const NOTE: Record<string, string> = {
   promo_unreadable: 'desconto ilegível (produto oculto)',
   delivery_fees_unreadable: 'taxas de entrega ilegíveis',
   photo_failed: 'foto não veio',
+  second_price: 'dois preços (produto oculto)',
+  delivery_gap: 'faixa de km sem entrega',
+  free_delivery_rule: 'regra de entrega grátis',
 };
 
 const brl = (cents: number) =>

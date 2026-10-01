@@ -28,6 +28,7 @@ const HIDES = new Set([
   'promo_unreadable',
   'pizza_pricing',
   'pizza_sizes',
+  'second_price',
 ]);
 
 export const hidesProduct = (l: ImportLost) => l.scope === 'product' && HIDES.has(l.code);
@@ -59,6 +60,8 @@ export function lostLine(l: ImportLost, platform: string): string {
       return `${s} tem um desconto que não conseguimos ler. Confira o preço.`;
     case 'pizza_pricing':
       return `${s}: não deu para saber se vários sabores cobram o mais caro ou a soma. Confira em Opções.`;
+    case 'second_price':
+      return `${s} tem dois preços no ${from}. Confira qual vale e mostre.`;
     case 'pizza_sizes':
       return `${s} tem preço por tamanho. Confira os tamanhos em Opções.`;
 
@@ -129,6 +132,10 @@ export function lostLine(l: ImportLost, platform: string): string {
       return 'A cidade do Pix vai até 15 letras e foi encurtada.';
     case 'delivery_fees_unreadable':
       return 'Não conseguimos ler as taxas de entrega. Cadastre as regiões em Loja › Entrega.';
+    case 'delivery_gap':
+      return `No ${from}, a faixa até ${d ?? '?'} km não tinha entrega. Aqui as faixas por km são círculos: confira as regiões em Loja › Entrega.`;
+    case 'free_delivery_rule':
+      return `A entrega grátis do ${from} não vem. Configure por região em Loja › Entrega.`;
     case 'delivery_distance_straight_line':
       return 'As taxas por km aqui contam a distância em linha reta, não pelo caminho.';
     case 'announcement_shortened':
