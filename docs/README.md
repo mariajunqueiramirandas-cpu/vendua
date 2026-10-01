@@ -41,26 +41,29 @@ If you are new, read in this order:
 
 Then per topic as needed:
 
-| Topic                              | Doc                                                                              |
-| ---------------------------------- | -------------------------------------------------------------------------------- |
-| Backend modules, data model, APIs  | [01-core](architecture/01-core.md)                                               |
-| Kernel packages, hooks, primitives | [02-kernel](architecture/02-kernel.md)                                           |
-| Storefront requirements            | [03-storefront-contract](architecture/03-storefront-contract.md)                 |
-| Slot registry, overrides, tokens   | [04-extensions-and-overrides](architecture/04-extensions-and-overrides.md)       |
-| Server-driven UI, loader (`v.js`)  | [05-system-surfaces](architecture/05-system-surfaces.md)                         |
-| Monorepo layout, isolation         | [06-monorepo](architecture/06-monorepo.md)                                       |
-| Artifacts, edge, hosting           | [07-deployment-and-hosting](architecture/07-deployment-and-hosting.md)           |
-| Fleet state, reconciler, ops API   | [08-control-plane](architecture/08-control-plane.md)                             |
-| Majors, codemods, fleet trains     | [09-migrations-and-fleet-trains](architecture/09-migrations-and-fleet-trains.md) |
-| Conformance + generation QA        | [10-qa-pipeline](architecture/10-qa-pipeline.md)                                 |
-| Versioning and compat policy       | [11-backward-compatibility](architecture/11-backward-compatibility.md)           |
-| Domains, DNS, TLS                  | [12-domains-and-tls](architecture/12-domains-and-tls.md)                         |
-| Mercado Pago marketplace           | [13-payments](architecture/13-payments.md)                                       |
-| DesignSpec → agent → deploy        | [14-agent-pipeline](architecture/14-agent-pipeline.md)                           |
-| Event taxonomy, funnels            | [15-analytics](architecture/15-analytics.md)                                     |
-| SLOs, incidents, kill switch       | [16-operations-and-incidents](architecture/16-operations-and-incidents.md)       |
-| Templates, sections, blocks        | [17-page-composition](architecture/17-page-composition.md)                       |
-| Menu import ("cole o link")        | [menu-import](menu-import.md)                                                    |
+| Topic                                    | Doc                                                                              |
+| ---------------------------------------- | -------------------------------------------------------------------------------- |
+| Backend modules, data model, APIs        | [01-core](architecture/01-core.md)                                               |
+| Kernel packages, hooks, primitives       | [02-kernel](architecture/02-kernel.md)                                           |
+| Storefront requirements                  | [03-storefront-contract](architecture/03-storefront-contract.md)                 |
+| Slot registry, overrides, tokens         | [04-extensions-and-overrides](architecture/04-extensions-and-overrides.md)       |
+| Server-driven UI, loader (`v.js`)        | [05-system-surfaces](architecture/05-system-surfaces.md)                         |
+| Monorepo layout, isolation               | [06-monorepo](architecture/06-monorepo.md)                                       |
+| Artifacts, edge, hosting                 | [07-deployment-and-hosting](architecture/07-deployment-and-hosting.md)           |
+| Fleet state, reconciler, ops API         | [08-control-plane](architecture/08-control-plane.md)                             |
+| Majors, codemods, fleet trains           | [09-migrations-and-fleet-trains](architecture/09-migrations-and-fleet-trains.md) |
+| Conformance + generation QA              | [10-qa-pipeline](architecture/10-qa-pipeline.md)                                 |
+| Versioning and compat policy             | [11-backward-compatibility](architecture/11-backward-compatibility.md)           |
+| Domains, DNS, TLS                        | [12-domains-and-tls](architecture/12-domains-and-tls.md)                         |
+| Mercado Pago marketplace                 | [13-payments](architecture/13-payments.md)                                       |
+| DesignSpec → agent → deploy              | [14-agent-pipeline](architecture/14-agent-pipeline.md)                           |
+| Event taxonomy, funnels                  | [15-analytics](architecture/15-analytics.md)                                     |
+| SLOs, incidents, kill switch             | [16-operations-and-incidents](architecture/16-operations-and-incidents.md)       |
+| Templates, sections, blocks              | [17-page-composition](architecture/17-page-composition.md)                       |
+| Menu import ("cole o link")              | [menu-import](menu-import.md)                                                    |
+| Competitor feature gaps (tracker)        | [competitor-parity](competitor-parity.md)                                        |
+| Per-competitor profiles                  | [competitors/](competitors/README.md)                                            |
+| Feature deep dives (iFood, WhatsApp bot) | [features/](features/README.md)                                                  |
 
 ## ADRs
 
