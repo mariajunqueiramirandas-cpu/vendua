@@ -1,6 +1,6 @@
 import type { SlotProps } from '@vendua/kernel';
-import { noticeLinks, noticeSeverity } from '@vendua/kernel/rules';
-import { dateTime } from './format.ts';
+import { formatWhen, isBlocking, noticeLinks, noticeSeverity } from '@vendua/kernel/rules';
+import { zoneOr } from './format.ts';
 
 // system.* defaults — the generic notice is THE fallback for every future kind
 // (05 — forward-compatibility rules), so it must read well for anything.
@@ -29,6 +29,7 @@ export function NoticeCard({
   extra,
 }: SlotProps['system.Notice'] & { extra?: React.ReactNode }) {
   const severity = noticeSeverity(notice);
+  const blocking = isBlocking(notice);
   const links = noticeLinks(notice);
   return (
     <div
@@ -37,8 +38,8 @@ export function NoticeCard({
       data-part="root"
       data-kind={notice.kind}
       data-severity={severity}
-      role={severity === 'blocking' ? 'alertdialog' : 'status'}
-      aria-modal={severity === 'blocking' || undefined}
+      role={blocking ? 'alertdialog' : 'status'}
+      aria-modal={blocking || undefined}
       aria-labelledby={`vn-${notice.id}`}
     >
       <strong className="v-notice-title" data-part="title" id={`vn-${notice.id}`}>
@@ -64,9 +65,8 @@ export function NoticeCard({
           ))}
         </p>
       ) : null}
-      {notice.dismissible && onDismiss && severity !== 'blocking' ? (
-        <Dismiss onDismiss={onDismiss} />
-      ) : null}
+      {/* a blocking notice is the store's state (paused, emergency): never the shopper's to hide */}
+      {notice.dismissible && onDismiss && !blocking ? <Dismiss onDismiss={onDismiss} /> : null}
     </div>
   );
 }
@@ -76,6 +76,7 @@ export function PauseNotice({
   resumesAt,
   onNotifyMe,
   onDismiss,
+  timeZone,
 }: SlotProps['system.PauseNotice']) {
   return (
     <NoticeCard
@@ -85,7 +86,7 @@ export function PauseNotice({
         <>
           {resumesAt ? (
             <p className="v-notice-meta" data-part="resumes">
-              Volta {dateTime(resumesAt)}
+              Volta {formatWhen(resumesAt, zoneOr(timeZone))}
             </p>
           ) : null}
           {onNotifyMe ? (
@@ -108,6 +109,7 @@ export function StoreClosedNotice({
   notice,
   opensAt,
   onDismiss,
+  timeZone,
 }: SlotProps['system.StoreClosedNotice']) {
   return (
     <NoticeCard
@@ -116,7 +118,7 @@ export function StoreClosedNotice({
       extra={
         opensAt && !notice.body ? (
           <p className="v-notice-meta" data-part="opens">
-            Abrimos {dateTime(opensAt)}
+            Abrimos {formatWhen(opensAt, zoneOr(timeZone))}
           </p>
         ) : null
       }

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { PaymentStatusKind, SlotProps } from '@vendua/kernel';
-import { money } from './format.ts';
+import { formatCents, PAYMENT_METHOD_LABEL } from '@vendua/kernel/rules';
 
 // checkout.PaymentStatus — one card for every state of an online payment (Mercado
 // Pago card checkout, online Pix). The Kernel decides the state and the next step;
@@ -22,7 +22,7 @@ const TONE: Record<PaymentStatusKind, Tone> = {
 
 function copy(p: SlotProps['checkout.PaymentStatus']): { title: string; body?: ReactNode } {
   const pix = p.method === 'pix';
-  const amount = money(p.amountCents, p.currency);
+  const amount = formatCents(p.amountCents, p.currency);
   switch (p.status) {
     case 'redirecting':
       return {
@@ -66,7 +66,7 @@ function copy(p: SlotProps['checkout.PaymentStatus']): { title: string; body?: R
         body: 'O código vale por pouco tempo. Gere um novo para pagar.',
       };
     case 'refunded': {
-      const back = money(p.refundedCents ?? p.amountCents, p.currency);
+      const back = formatCents(p.refundedCents ?? p.amountCents, p.currency);
       const partial = p.refundedCents != null && p.refundedCents < p.amountCents;
       return {
         title: partial ? 'Parte do pagamento foi devolvida' : 'Pagamento devolvido',
@@ -101,8 +101,8 @@ export function PaymentStatus(props: SlotProps['checkout.PaymentStatus']) {
       </span>
       <div className="v-paystat-text" data-part="text" role="status" aria-busy={busy || undefined}>
         <p className="v-eyebrow v-num" data-part="method">
-          {method === 'pix' ? 'Pix' : 'Cartão de crédito'}{' '}
-          <span className="v-paystat-amount">· {money(amountCents, currency)}</span>
+          {PAYMENT_METHOD_LABEL[method] ?? method}{' '}
+          <span className="v-paystat-amount">· {formatCents(amountCents, currency)}</span>
         </p>
         <h2 className="v-panel-title" data-part="title">
           {c.title}

@@ -1,23 +1,39 @@
 import { useId, useState } from 'react';
 import type { SlotProps } from '@vendua/kernel';
 import {
-  dateTime,
-  dayLabel,
+  cardState,
+  DEFAULT_VOCABULARY,
+  foldText,
+  formatCents,
+  formatDateTime,
+  formatDay,
+  formatTime,
+  groupFull,
+  groupHint,
+  hoursRows,
+  lineSummary,
+  MAX_LINE_QTY,
   mediaSrcSet,
-  money,
+  modifierMax,
+  modifierUnits,
   ORDER_STATE_LABEL,
-  PAYMENT_LABEL,
-  time,
-} from './format.ts';
-
-const TERMINAL = new Set(['delivered', 'cancelled', 'refunded']);
+  orderProgress,
+  orderStepLabel,
+  PAYMENT_METHOD_LABEL,
+  PAYMENT_STATUS_LABEL,
+  plural,
+  priceDisplay,
+  TERMINAL_ORDER_STATES,
+  todayHours,
+} from '@vendua/kernel/rules';
+import { capitalize } from './format.ts';
 
 // cart.*, order.*, store.*, catalog.* defaults.
 
 export function QtyControl({
   qty,
   min = 0,
-  max = 99,
+  max = MAX_LINE_QTY,
   pending,
   onChange,
   label = 'quantidade',
@@ -66,20 +82,22 @@ export function CartDrawer({
   lines,
   summary,
   onClose,
+  vocabulary = DEFAULT_VOCABULARY,
 }: SlotProps['cart.Drawer']) {
   const drawer = presentation === 'drawer';
   const Title = drawer ? 'h2' : 'h1';
+  const n = cart.totals.itemCount;
   return (
     <section
       className="v-cart"
       data-part="root"
       data-presentation={presentation}
-      aria-label="Sacola"
+      aria-label={capitalize(vocabulary.bag)}
     >
       <header className="v-cart-head" data-part="head">
-        <Title className="v-page-title">Sacola</Title>
+        <Title className="v-page-title">{capitalize(vocabulary.bag)}</Title>
         <p className="v-muted">
-          {cart.totals.itemCount} {cart.totals.itemCount === 1 ? 'item' : 'itens'}
+          {n} {plural(n, vocabulary.itemSingular, vocabulary.itemPlural)}
         </p>
         {drawer ? (
           <button
@@ -87,7 +105,7 @@ export function CartDrawer({
             className="v-cart-close"
             data-part="close"
             onClick={onClose}
-            aria-label="Fechar sacola"
+            aria-label={`Fechar ${vocabulary.bag}`}
           >
             <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
               <path
@@ -151,19 +169,12 @@ export function CartLineItem({
         </p>
         {item.modifiers.length > 0 ? (
           <p className="v-muted v-line-mods" data-part="modifiers">
-            {item.modifiers
-              .map((m) => {
-                const name = (m.qty ?? 1) > 1 ? `${m.qty}× ${m.name}` : m.name;
-                return m.priceDeltaCents > 0
-                  ? `${name} (+${money(m.priceDeltaCents, currency)})`
-                  : name;
-              })
-              .join(', ')}
+            {lineSummary({ modifiers: item.modifiers }, currency)}
           </p>
         ) : null}
         {item.combo?.length ? (
           <p className="v-muted v-line-mods" data-part="combo">
-            {item.combo.map((c) => `${c.qty}× ${c.name}`).join(', ')}
+            {lineSummary({ modifiers: [], combo: item.combo }, currency)}
           </p>
         ) : null}
         {item.requiresPreorder ? (
@@ -179,7 +190,9 @@ export function CartLineItem({
         <div className="v-line-actions" data-part="actions">
           <QtyControl
             qty={item.qty}
-            max={max ?? Math.max(item.qty, Math.min(99, item.stockQuantity ?? 99))}
+            max={
+              max ?? Math.max(item.qty, Math.min(MAX_LINE_QTY, item.stockQuantity ?? MAX_LINE_QTY))
+            }
             pending={pending}
             onChange={onQty}
             label={`quantidade de ${item.name}`}
@@ -197,13 +210,13 @@ export function CartLineItem({
         </div>
       </div>
       <p className="v-line-total v-num" data-part="total">
-        {money(item.lineTotalCents, currency)}
+        {formatCents(item.lineTotalCents, currency)}
       </p>
     </li>
   );
 }
 
-export function OrderTimeline({ events }: SlotProps['order.Timeline']) {
+export function OrderTimeline({ events, timeZone }: SlotProps['order.Timeline']) {
   return (
     <ol className="v-timeline" data-vendua="order-timeline" data-part="root">
       {events.map((e, i) => (
@@ -216,7 +229,7 @@ export function OrderTimeline({ events }: SlotProps['order.Timeline']) {
         >
           <span className="v-timeline-label">{ORDER_STATE_LABEL[e.to] ?? e.to}</span>
           <time className="v-muted" dateTime={e.at}>
-            {dateTime(e.at)}
+            {formatDateTime(e.at, timeZone)}
           </time>
         </li>
       ))}
@@ -224,22 +237,12 @@ export function OrderTimeline({ events }: SlotProps['order.Timeline']) {
   );
 }
 
-const PAYMENT_STATUS: Record<string, string> = {
-  paid: 'pago',
-  pending: 'aguardando pagamento',
-  failed: 'não aprovado',
-  expired: 'expirado',
-  refunded: 'devolvido',
-  partially_refunded: 'devolvido em parte',
-  in_mediation: 'em análise',
-  charged_back: 'contestado',
-};
-
 export function OrderStatusPage({
   order,
   currency,
   timeline,
   pickup,
+  timeZone,
 }: SlotProps['order.StatusPage']) {
   const d = order.delivery;
   const pay = order.payment;
@@ -257,14 +260,14 @@ export function OrderStatusPage({
         </h1>
         {order.scheduledFor ? (
           <p className="v-muted" data-part="scheduled">
-            Encomenda para {dayLabel(order.scheduledFor)}
+            Encomenda para {formatDay(order.scheduledFor)}
           </p>
-        ) : d.promisedTo && !TERMINAL.has(order.state) ? (
+        ) : d.promisedTo && !TERMINAL_ORDER_STATES.has(order.state) ? (
           <p className="v-muted" data-part="promise">
             {d.mode === 'delivery' ? 'Chega' : 'Pronto para retirar'}{' '}
             {d.promisedFrom && d.promisedFrom !== d.promisedTo
-              ? `entre ${time(d.promisedFrom)} e ${time(d.promisedTo)}`
-              : `por volta de ${time(d.promisedTo)}`}
+              ? `entre ${formatTime(d.promisedFrom, timeZone)} e ${formatTime(d.promisedTo, timeZone)}`
+              : `por volta de ${formatTime(d.promisedTo, timeZone)}`}
           </p>
         ) : d.etaMin != null && d.etaMax != null && d.mode === 'delivery' ? (
           <p className="v-muted">
@@ -294,19 +297,19 @@ export function OrderStatusPage({
           <div>
             <dt>Pagamento</dt>
             <dd>
-              {PAYMENT_LABEL[pay.method] ?? pay.method}
+              {PAYMENT_METHOD_LABEL[pay.method] ?? pay.method}
               {/* online payments move on their own — say where it stands */}
-              {pay.online && PAYMENT_STATUS[pay.status] ? (
+              {pay.online && PAYMENT_STATUS_LABEL[pay.status] ? (
                 <span className="v-muted" data-part="payment-status">
                   {' '}
-                  · {PAYMENT_STATUS[pay.status]}
+                  · {PAYMENT_STATUS_LABEL[pay.status]}
                 </span>
               ) : null}
             </dd>
           </div>
           <div>
             <dt>Total</dt>
-            <dd className="v-num">{money(order.totalCents, currency)}</dd>
+            <dd className="v-num">{formatCents(order.totalCents, currency)}</dd>
           </div>
         </dl>
       </div>
@@ -315,90 +318,57 @@ export function OrderStatusPage({
 }
 
 /** The happy path as a glanceable track; cancelled/refunded orders skip it. */
-function OrderProgress({ state, mode }: { state: string; mode: string }) {
-  const path =
-    mode === 'delivery'
-      ? ['placed', 'confirmed', 'preparing', 'out_for_delivery', 'delivered']
-      : ['placed', 'confirmed', 'preparing', 'ready', 'delivered'];
-  const at = path.indexOf(state === 'ready' && mode === 'delivery' ? 'preparing' : state);
-  if (at < 0) return null;
-  const short: Record<string, string> = {
-    placed: 'Recebido',
-    confirmed: 'Confirmado',
-    preparing: 'Preparo',
-    ready: 'Pronto',
-    out_for_delivery: 'A caminho',
-    delivered: mode === 'delivery' ? 'Entregue' : 'Retirado',
-  };
+function OrderProgress({ state, mode }: { state: string; mode: 'delivery' | 'pickup' }) {
+  const progress = orderProgress({ state, mode });
+  if (progress.outcome || progress.current < 0) return null;
   return (
     <ol className="v-order-progress" data-part="progress" aria-hidden="true">
-      {path.map((s, i) => (
-        <li key={s} data-state={i < at ? 'done' : i === at ? 'current' : 'todo'}>
-          <span>{short[s]}</span>
+      {progress.steps.map((s) => (
+        <li key={s.state} data-state={s.status}>
+          <span>{orderStepLabel(s.state, mode)}</span>
         </li>
       ))}
     </ol>
   );
 }
 
-const DAY = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-const DAY_SHORT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-// Monday first — how a Brazilian storefront reads its week
-const WEEK = [1, 2, 3, 4, 5, 6, 0];
+const hoursText = (windows: { open: string; close: string }[]) =>
+  windows.map((w) => `${w.open}–${w.close}`).join(', ') || 'Fechado';
 
-function todayIn(timeZone: string | undefined): number {
-  try {
-    const wd = new Intl.DateTimeFormat('en-US', {
-      weekday: 'short',
-      ...(timeZone ? { timeZone } : {}),
-    }).format(new Date());
-    return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(wd);
-  } catch {
-    return new Date().getDay();
-  }
-}
-
-/** Consecutive days with the same windows fold into one row ("Seg – Sex"). */
+/** Consecutive days with the same windows fold into one row ("Seg – Sex"); a special day
+ *  today (a holiday, a short day) gets its own row and takes "hoje" from the week. */
 export function HoursTable({ hours }: SlotProps['store.HoursTable']) {
-  const today = todayIn(hours.timezone);
-  const text = (day: number) =>
-    hours.windows
-      .filter((w) => w.days.includes(day))
-      .map((w) => `${w.open}–${w.close}`)
-      .join(', ') || 'Fechado';
-  const rows: { days: number[]; text: string }[] = [];
-  for (const day of WEEK) {
-    const t = text(day);
-    const last = rows[rows.length - 1];
-    if (last && last.text === t) last.days.push(day);
-    else rows.push({ days: [day], text: t });
-  }
-  const label = (days: number[]) =>
-    days.length === 7
-      ? 'Todos os dias'
-      : days.length === 1
-        ? DAY[days[0]!]
-        : `${DAY_SHORT[days[0]!]} – ${DAY_SHORT[days[days.length - 1]!]}`;
+  const today = todayHours(hours);
+  const special = today.special;
   return (
     <table className="v-hours" data-vendua="hours-table" data-part="root">
       <caption className="v-sr">Horário de funcionamento</caption>
       <tbody>
-        {rows.map((r) => {
-          const isToday = r.days.includes(today);
+        {special ? (
+          <tr data-part="special" data-today data-closed={today.closed || undefined}>
+            <th scope="row">
+              Hoje
+              {special.label ? <span className="v-hours-today"> · {special.label}</span> : null}
+            </th>
+            <td className="v-num">{hoursText(today.windows)}</td>
+          </tr>
+        ) : null}
+        {hoursRows(hours).map((r) => {
+          const isToday = r.today && !special;
           return (
             <tr
               key={r.days.join()}
               data-part="row"
               data-today={isToday || undefined}
-              data-closed={r.text === 'Fechado' || undefined}
+              data-closed={r.closed || undefined}
             >
               <th scope="row">
-                {label(r.days)}
+                {r.label}
                 {isToday && r.days.length < 7 ? (
                   <span className="v-hours-today"> · hoje</span>
                 ) : null}
               </th>
-              <td className="v-num">{r.text}</td>
+              <td className="v-num">{hoursText(r.windows)}</td>
             </tr>
           );
         })}
@@ -409,36 +379,28 @@ export function HoursTable({ hours }: SlotProps['store.HoursTable']) {
 
 const CARD_WIDTHS = [320, 480, 640];
 
-/** Kernel 1.13 — Core's "a partir de" (the cheapest configured unit), only when above the price */
-function fromPrice(p: { basePriceCents: number; fromPriceCents?: number | null }): number | null {
-  return p.fromPriceCents != null && p.fromPriceCents > p.basePriceCents ? p.fromPriceCents : null;
-}
-
 export function ProductCard({
   product,
   currency,
   link,
   quickAdd,
   stockLeft,
+  vocabulary = DEFAULT_VOCABULARY,
 }: SlotProps['catalog.ProductCard']) {
-  const soldOut = product.status !== 'active';
   const [imgFailed, setImgFailed] = useState(false);
-  const left = stockLeft ?? product.stockQuantity;
-  const from = fromPrice(product);
-  const shown = from ?? product.basePriceCents;
-  // a "de" price is the base's; beside a from-price that includes options it would mislead
-  const compareAt =
-    from === null && product.compareAtPriceCents != null && product.compareAtPriceCents > shown
-      ? product.compareAtPriceCents
-      : null;
-  const badge = soldOut
-    ? null
-    : product.requiresPreorder
-      ? { tone: 'surface', text: 'Encomenda' }
-      : left === 0
-        ? { tone: 'surface', text: 'Tudo na sacola' }
-        : product.lowStock && typeof left === 'number' && left > 0
-          ? { tone: 'danger', text: left === 1 ? 'Última unidade' : `Últimas ${left}` }
+  const state = cardState(product, stockLeft ?? null);
+  const price = priceDisplay(product);
+  // sold out says so in the price row instead
+  const badge =
+    state.badge === 'all-in-bag'
+      ? { tone: 'surface', text: `Tudo na ${vocabulary.bag}` }
+      : state.badge === 'low-stock'
+        ? {
+            tone: 'danger',
+            text: state.stockLeft === 1 ? 'Última unidade' : `Últimas ${state.stockLeft}`,
+          }
+        : state.badge === 'preorder'
+          ? { tone: 'surface', text: 'Encomenda' }
           : null;
   return (
     <article className="v-card" data-part="root" data-status={product.status}>
@@ -451,7 +413,12 @@ export function ProductCard({
             aria-hidden="true"
           >
             {badge ? (
-              <span className="v-card-badge" data-part="badge" data-tone={badge.tone}>
+              <span
+                className="v-card-badge"
+                data-part="badge"
+                data-badge={state.badge}
+                data-tone={badge.tone}
+              >
                 {badge.text}
               </span>
             ) : null}
@@ -483,31 +450,35 @@ export function ProductCard({
               {product.description}
             </p>
           ) : null}
-          <p className="v-card-price v-num" data-part="price">
-            {soldOut && product.availabilityLabel ? (
+          <p
+            className="v-card-price v-num"
+            data-part="price"
+            data-form={state.soldOut ? undefined : price.form}
+          >
+            {state.scheduleLabel ? (
               <span className="v-flag" data-part="availability">
-                {product.availabilityLabel}
+                {state.scheduleLabel}
               </span>
-            ) : soldOut ? (
+            ) : state.soldOut ? (
               <span className="v-flag">Esgotado</span>
             ) : (
               <>
                 <span className="v-card-amount">
-                  {compareAt !== null ? (
+                  {price.struckCents !== null ? (
                     <>
                       <s className="v-compare-at" data-part="compare-at">
                         <span className="v-sr">de </span>
-                        {money(compareAt, currency)}
+                        {formatCents(price.struckCents, currency)}
                       </s>{' '}
                       <span className="v-sr">por </span>
                     </>
                   ) : null}
-                  {from !== null ? (
+                  {price.form === 'from' ? (
                     <span className="v-price-from" data-part="from">
                       a partir de{' '}
                     </span>
                   ) : null}
-                  {money(shown, currency)}
+                  {formatCents(price.cents, currency)}
                 </span>
                 {quickAdd ? null : (
                   <span className="v-card-go" aria-hidden="true">
@@ -532,11 +503,6 @@ export function ProductCard({
 
 // Kernel 1.13 — a group with more options than this gets a filter above them
 const FILTER_FROM = 12;
-const fold = (s: string) =>
-  s
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLocaleLowerCase('pt-BR');
 
 const PRICING_RULE_HINT: Record<string, string> = {
   most_expensive: 'Vale o preço da opção mais cara.',
@@ -561,7 +527,7 @@ export function ModifierPicker({
       <span className="v-muted v-num">
         {' '}
         {cents > 0 ? '+' : '−'}
-        {money(Math.abs(cents), currency)}
+        {formatCents(Math.abs(cents), currency)}
       </span>
     ) : null;
   return (
@@ -570,28 +536,22 @@ export function ModifierPicker({
         const single = g.maxSelect === 1;
         const sel = value[g.id] ?? [];
         // a group's min/max count units: an option picked twice takes two
-        const units = sel.reduce((n, id) => n + (quantities[id] ?? 1), 0);
-        const hint = g.required
-          ? single
-            ? 'obrigatório'
-            : `escolha ${Math.max(1, g.minSelect)}–${g.maxSelect}`
-          : single
-            ? 'opcional'
-            : `até ${g.maxSelect}`;
+        const picks = Object.fromEntries(sel.map((id) => [id, quantities[id] ?? 1]));
+        const full = groupFull(g, modifierUnits(g, picks));
         const rule =
           g.pricingRule && !single && g.modifiers.some((m) => m.priceDeltaCents !== 0)
             ? PRICING_RULE_HINT[g.pricingRule]
             : undefined;
         const filterable = g.modifiers.length > FILTER_FROM;
         const raw = filterable ? (queries[g.id] ?? '') : '';
-        const terms = fold(raw).split(/\s+/).filter(Boolean);
+        const terms = foldText(raw).split(/\s+/).filter(Boolean);
         const mods = terms.length
           ? g.modifiers.filter((m) => {
-              const hay = fold(`${m.name} ${m.description ?? ''}`);
+              const hay = foldText(`${m.name} ${m.description ?? ''}`);
               return terms.every((t) => hay.includes(t));
             })
           : g.modifiers;
-        const flavours = /sabor/.test(fold(g.name));
+        const flavours = /sabor/.test(foldText(g.name));
         const [one, many] = flavours ? ['sabor', 'sabores'] : ['opção', 'opções'];
         const listId = `${uid}-${g.id}-list`;
         const hitsId = `${uid}-${g.id}-hits`;
@@ -606,7 +566,7 @@ export function ModifierPicker({
             data-invalid={errors[g.id] ? true : undefined}
           >
             <legend className="v-legend">
-              {g.name} <span className="v-muted">— {hint}</span>
+              {g.name} <span className="v-muted">— {groupHint(g)}</span>
             </legend>
             {rule ? (
               <p className="v-mod-rule v-muted" data-part="pricing-rule">
@@ -670,7 +630,7 @@ export function ModifierPicker({
                     ? `${
                         mods.length === 0
                           ? `Nenhum resultado para “${raw.trim()}”`
-                          : `${mods.length} ${mods.length === 1 ? one : many}`
+                          : `${mods.length} ${plural(mods.length, one, many)}`
                       }${away.length ? ` · na sua escolha: ${away.join(', ')}` : ''}`
                     : ''}
                 </p>
@@ -744,7 +704,7 @@ export function ModifierPicker({
                             <button
                               type="button"
                               aria-label={`Mais um ${m.name}`}
-                              disabled={soldOut || q >= (m.maxQty ?? 1) || units >= g.maxSelect}
+                              disabled={soldOut || q >= modifierMax(g, m.id, picks)}
                               onClick={() => onQtyChange(g.id, m.id, q + 1)}
                             >
                               +
@@ -755,7 +715,7 @@ export function ModifierPicker({
                     </li>
                   );
                 }
-                const capped = !on && !single && units >= g.maxSelect;
+                const capped = !on && !single && full;
                 return (
                   <li key={m.id}>
                     <button

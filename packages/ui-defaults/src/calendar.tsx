@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { LOCALE, localNow } from '@vendua/kernel/rules';
 
-// Month calendar over store-local dates (YYYY-MM-DD strings — no timezone math:
-// Core already answered which days are bookable). One tab stop; arrows move by
-// day/week, Home/End to the week's ends, PageUp/PageDown by month, Enter/Space
+// Month calendar over store-local dates (YYYY-MM-DD strings — Core already answered which
+// days are bookable; the store's zone only says which day is today). One tab stop; arrows
+// move by day/week, Home/End to the week's ends, PageUp/PageDown by month, Enter/Space
 // picks. Only `available` days are selectable; everything else is shown dimmed.
 
 const WEEKDAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
@@ -32,7 +33,7 @@ const sameDayInMonth = (d: string, n: number) => {
   return `${key}-${String(Math.min(Number(d.slice(8)), len)).padStart(2, '0')}`;
 };
 const monthLabel = (key: string) => {
-  const label = new Intl.DateTimeFormat('pt-BR', {
+  const label = new Intl.DateTimeFormat(LOCALE, {
     timeZone: 'UTC',
     month: 'long',
     year: 'numeric',
@@ -41,7 +42,7 @@ const monthLabel = (key: string) => {
   return label.charAt(0).toUpperCase() + label.slice(1);
 };
 const longLabel = (d: string) =>
-  new Intl.DateTimeFormat('pt-BR', {
+  new Intl.DateTimeFormat(LOCALE, {
     timeZone: 'UTC',
     weekday: 'long',
     day: 'numeric',
@@ -57,6 +58,9 @@ export interface CalendarProps {
   label?: string;
   /** e.g. "2026-09-27" — marked as today; defaults to the first available day's month */
   today?: string;
+  /** the store's IANA zone: today (when `today` isn't given) is its local date, and days
+   *  before it are not selectable even if listed (a page left open overnight) */
+  timeZone?: string;
 }
 
 export function Calendar({
@@ -64,10 +68,15 @@ export function Calendar({
   value,
   onChange,
   label = 'Calendário',
-  today,
+  today: todayProp,
+  timeZone,
 }: CalendarProps) {
-  const set = useMemo(() => new Set(available), [available]);
-  const sorted = useMemo(() => [...available].sort(), [available]);
+  const today = todayProp ?? (timeZone ? localNow(timeZone).date : undefined);
+  const set = useMemo(
+    () => new Set(timeZone && today ? available.filter((d) => d >= today) : available),
+    [available, timeZone, today],
+  );
+  const sorted = useMemo(() => [...set].sort(), [set]);
   const first = sorted[0];
   const last = sorted.at(-1);
   const [month, setMonth] = useState(() => monthKey(value ?? first ?? today ?? iso(new Date())));

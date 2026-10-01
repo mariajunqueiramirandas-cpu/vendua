@@ -1,8 +1,26 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { SlotProps } from '@vendua/kernel';
-import { COUPON_REASON, countdown, dayLabel, mediaSrcSet, money } from './format.ts';
-import { qrMatrix, qrSvgPath } from './qr.ts';
+import {
+  adjustmentKind,
+  countdown,
+  couponMessage,
+  DEFAULT_VOCABULARY,
+  formatCents,
+  formatDay,
+  lineSummary,
+  localNow,
+  maskPhone,
+  mediaSrcSet,
+  plural,
+  qrMatrix,
+  qrSvgPath,
+  slotFull,
+  slotHint,
+  slotMissing,
+  slotUnits,
+} from '@vendua/kernel/rules';
 import { Calendar } from './calendar.tsx';
+import { zoneOr } from './format.ts';
 
 // Kernel 1.2 slot defaults — kits, gallery, coupons, encomendas, notes, Pix,
 // order items, loyalty card, phone verification. Presentational only.
@@ -23,22 +41,18 @@ export function ComboPicker({
   return (
     <div className="v-combo" data-vendua="combo-picker" data-part="root">
       {slots.map((slot) => {
-        const chosen = value.filter((v) => v.slotId === slot.id).reduce((n, v) => n + v.qty, 0);
-        const full = chosen >= slot.maxSelect;
-        const hint =
-          slot.minSelect === slot.maxSelect
-            ? `escolha ${slot.maxSelect}`
-            : `escolha de ${slot.minSelect} a ${slot.maxSelect}`;
+        const chosen = slotUnits(slot, value);
+        const full = slotFull(slot, chosen);
         return (
           <fieldset
             key={slot.id}
             className="v-mod-group"
             data-part="slot"
-            data-complete={chosen >= slot.minSelect || undefined}
+            data-complete={slotMissing(slot, chosen) === 0 || undefined}
             data-invalid={errors[slot.id] ? true : undefined}
           >
             <legend className="v-legend">
-              {slot.name} <span className="v-muted">— {hint}</span>{' '}
+              {slot.name} <span className="v-muted">— {slotHint(slot)}</span>{' '}
               <span className="v-combo-count v-num" data-part="count" aria-live="polite">
                 {chosen}/{slot.maxSelect}
               </span>
@@ -65,7 +79,7 @@ export function ComboPicker({
                         <span className="v-muted v-num">
                           {' '}
                           {item.priceDeltaCents > 0 ? '+' : '−'}
-                          {money(Math.abs(item.priceDeltaCents), currency)}
+                          {formatCents(Math.abs(item.priceDeltaCents), currency)}
                         </span>
                       ) : null}
                       {soldOut ? (
@@ -254,15 +268,12 @@ export function CouponField({
         <p>
           <strong className="v-coupon-code">{coupon.code}</strong> · {coupon.label}
           {coupon.applies && discountCents > 0 ? (
-            <span className="v-num"> (−{money(discountCents, currency)})</span>
+            <span className="v-num"> (−{formatCents(discountCents, currency)})</span>
           ) : null}
         </p>
         {!coupon.applies && coupon.reason ? (
           <p className="v-muted" role="status" data-part="reason">
-            {coupon.reason === 'COUPON_MIN_SUBTOTAL' &&
-            typeof coupon.details?.remainingCents === 'number'
-              ? `Faltam ${money(coupon.details.remainingCents, currency)} para usar este cupom.`
-              : (COUPON_REASON[coupon.reason] ?? 'Este cupom não vale agora.')}
+            {couponMessage(coupon.reason, coupon.details, currency)}
           </p>
         ) : null}
         {error ? (
@@ -333,6 +344,7 @@ export function SchedulePicker({
   onChange,
   required,
   leadDays,
+  timezone,
   error,
 }: SlotProps['checkout.SchedulePicker']) {
   return (
@@ -342,7 +354,7 @@ export function SchedulePicker({
       </legend>
       {required && leadDays > 0 ? (
         <p className="v-muted">
-          Encomendas pedem {leadDays} {leadDays === 1 ? 'dia' : 'dias'} de antecedência.
+          Encomendas pedem {leadDays} {plural(leadDays, 'dia', 'dias')} de antecedência.
         </p>
       ) : null}
       {dates.length === 0 ? (
@@ -355,10 +367,11 @@ export function SchedulePicker({
           value={value}
           onChange={onChange}
           label={required ? 'Data da encomenda' : 'Data do pedido'}
+          {...(timezone ? { timeZone: timezone } : {})}
         />
       )}
       <p className="v-note" data-part="selected" role="status" aria-live="polite">
-        {value ? `Encomenda para ${dayLabel(value)}` : 'Escolha um dia disponível no calendário.'}
+        {value ? `Encomenda para ${formatDay(value)}` : 'Escolha um dia disponível no calendário.'}
       </p>
       {error ? (
         <p className="v-field-error" role="alert">
@@ -464,13 +477,14 @@ export function PixPayment({
         </h2>
         {amountCents ? (
           <p className="v-pix-amount v-num" data-part="amount">
-            {money(amountCents, currency)}
+            {formatCents(amountCents, currency)}
           </p>
         ) : null}
         {beneficiary ? (
           <p className="v-muted v-pix-to" data-part="beneficiary">
             Para <strong>{beneficiary}</strong>
-            {keyLabel ? ` · chave ${keyLabel}` : ''}
+            {/* PIX_KEY_LABEL's random key already reads "chave aleatória" */}
+            {keyLabel ? ` · chave ${keyLabel.replace(/^chave /, '')}` : ''}
           </p>
         ) : null}
         {left !== null ? (
@@ -556,7 +570,9 @@ export function OrderItems({
   paymentLabel,
   onReorder,
   reorderPending,
+  vocabulary = DEFAULT_VOCABULARY,
 }: SlotProps['order.Items']) {
+  const adjustKind = adjustmentKind({ fixedCents: paymentAdjustmentCents ?? 0 });
   return (
     <section className="v-panel v-order-items" data-vendua="order-items" data-part="root">
       <h2 className="v-panel-title">Itens</h2>
@@ -565,47 +581,35 @@ export function OrderItems({
           <li key={`${i.slug}-${k}`} className="v-summary-line">
             <span>
               {i.qty}× {i.name}
-              {i.modifiers.length ? (
-                <span className="v-muted v-line-mods">
-                  {' '}
-                  —{' '}
-                  {i.modifiers
-                    .map((m) => ((m.qty ?? 1) > 1 ? `${m.qty}× ${m.name}` : m.name))
-                    .join(', ')}
-                </span>
-              ) : null}
-              {i.combo.length ? (
-                <span className="v-muted v-line-mods">
-                  {' '}
-                  — {i.combo.map((c) => `${c.qty}× ${c.name}`).join(', ')}
-                </span>
+              {i.modifiers.length || i.combo.length ? (
+                <span className="v-muted v-line-mods"> — {lineSummary(i, currency)}</span>
               ) : null}
             </span>
-            <span className="v-num">{money(i.lineTotalCents, currency)}</span>
+            <span className="v-num">{formatCents(i.lineTotalCents, currency)}</span>
           </li>
         ))}
         {discountCents ? (
           <li className="v-summary-line" data-part="discount">
             <span>Desconto{couponCode ? ` (${couponCode})` : ''}</span>
-            <span className="v-num">−{money(discountCents, currency)}</span>
+            <span className="v-num">−{formatCents(discountCents, currency)}</span>
           </li>
         ) : null}
-        {paymentAdjustmentCents ? (
-          <li className="v-summary-line" data-part="payment-adjustment">
+        {adjustKind && paymentAdjustmentCents ? (
+          <li className="v-summary-line" data-part="payment-adjustment" data-kind={adjustKind}>
             <span>
-              {paymentAdjustmentCents < 0 ? 'Desconto' : 'Acréscimo'}
+              {adjustKind === 'discount' ? 'Desconto' : 'Acréscimo'}
               {paymentLabel ? ` (${paymentLabel})` : ' do pagamento'}
             </span>
             <span className="v-num">
-              {paymentAdjustmentCents < 0 ? '−' : '+'}
-              {money(Math.abs(paymentAdjustmentCents), currency)}
+              {adjustKind === 'discount' ? '−' : '+'}
+              {formatCents(Math.abs(paymentAdjustmentCents), currency)}
             </span>
           </li>
         ) : null}
       </ul>
       {scheduledFor ? (
         <p className="v-note" data-part="scheduled">
-          Encomenda para {dayLabel(scheduledFor)}
+          Encomenda para {formatDay(scheduledFor)}
         </p>
       ) : null}
       {notes ? (
@@ -621,14 +625,14 @@ export function OrderItems({
           disabled={reorderPending}
           onClick={onReorder}
         >
-          {reorderPending ? 'Colocando na sacola…' : 'Pedir de novo'}
+          {reorderPending ? `Colocando na ${vocabulary.bag}…` : 'Pedir de novo'}
         </button>
       ) : null}
     </section>
   );
 }
 
-export function LoyaltyCard({ card, currency }: SlotProps['customer.LoyaltyCard']) {
+export function LoyaltyCard({ card, currency, timeZone }: SlotProps['customer.LoyaltyCard']) {
   if (!card.enabled) return null;
   return (
     <section className="v-panel v-loyalty" data-vendua="loyalty-card" data-part="root">
@@ -636,8 +640,9 @@ export function LoyaltyCard({ card, currency }: SlotProps['customer.LoyaltyCard'
       <p className="v-muted">
         A cada {card.stampsRequired} pedidos entregues
         {card.minOrderCents > 0
-          ? ` (a partir de ${money(card.minOrderCents, currency)})`
-          : ''}: {card.rewardLabel}.
+          ? ` (a partir de ${formatCents(card.minOrderCents, currency)})`
+          : ''}
+        : {card.rewardLabel}.
       </p>
       <ol
         className="v-stamps"
@@ -656,7 +661,7 @@ export function LoyaltyCard({ card, currency }: SlotProps['customer.LoyaltyCard'
               {r.expiresAt ? (
                 <span className="v-muted">
                   {' '}
-                  · até {new Date(r.expiresAt).toLocaleDateString('pt-BR')}
+                  · até {formatDay(localNow(zoneOr(timeZone), new Date(r.expiresAt)).date)}
                 </span>
               ) : null}
             </li>
@@ -673,7 +678,7 @@ export function PhoneVerify({
   error,
   onSubmit,
 }: SlotProps['customer.PhoneVerify']) {
-  const [p, setP] = useState(phone);
+  const [p, setP] = useState(() => maskPhone(phone));
   const [n, setN] = useState('');
   return (
     <form
@@ -701,7 +706,7 @@ export function PhoneVerify({
             className="v-input"
             maxLength={20}
             value={p}
-            onChange={(e) => setP(e.target.value)}
+            onChange={(e) => setP(maskPhone(e.target.value))}
           />
         </div>
         <div className="v-field">

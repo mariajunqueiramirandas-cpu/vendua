@@ -5,6 +5,8 @@ import type { Cart, Notice, Order, SlotKey, SlotProps } from '@vendua/kernel';
 // these, so a codemod can prove overrides still typecheck and render.
 
 const noop = () => {};
+// the store's zone, as the Kernel hands it to slots that show instants (Kernel 1.14)
+const timeZone = 'America/Sao_Paulo';
 
 const notice: Notice = {
   id: 'fx-notice',
@@ -88,6 +90,7 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
     resumesAt: '2026-09-26T21:00:00Z',
     actions: [],
     onNotifyMe: noop,
+    timeZone,
   },
   'system.StoreClosedNotice': {
     notice: {
@@ -99,6 +102,7 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
     },
     opensAt: '2026-09-27T12:00:00Z',
     onDismiss: noop,
+    timeZone,
   },
   'system.PromoNotice': { notice, onDismiss: noop },
   'system.ConsentBanner': {
@@ -165,7 +169,7 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
     selected: 'pix',
     onSelect: noop,
   },
-  'checkout.SuccessPage': { order, currency: 'BRL' },
+  'checkout.SuccessPage': { order, currency: 'BRL', timeZone },
   'checkout.EmptyCart': { onBrowse: noop },
   'cart.Drawer': {
     cart,
@@ -183,8 +187,8 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
     onQty: noop,
     onRemove: noop,
   },
-  'order.StatusPage': { order, currency: 'BRL', timeline: <ol /> },
-  'order.Timeline': { events: order.timeline },
+  'order.StatusPage': { order, currency: 'BRL', timeline: <ol />, timeZone },
+  'order.Timeline': { events: order.timeline, timeZone },
   'store.HoursTable': {
     hours: {
       timezone: 'America/Sao_Paulo',
@@ -323,6 +327,7 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
     keyLabel: 'e-mail',
     amountCents: 4700,
     currency: 'BRL',
+    timeZone,
   },
   'order.Items': {
     items: [
@@ -362,6 +367,7 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
       ],
     },
     currency: 'BRL',
+    timeZone,
   },
   'customer.PhoneVerify': { phone: '', pending: false, onSubmit: noop },
   'checkout.PaymentStatus': {
