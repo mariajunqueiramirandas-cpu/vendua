@@ -384,10 +384,13 @@ export function PixPay({
 export function Welcome({
   storeName,
   address,
+  paid,
   onGo,
 }: {
   storeName: string;
   address: string;
+  /** false after an access-code signup: no payment was made */
+  paid: boolean;
   onGo: () => void;
 }) {
   useEffect(() => haptic.commit(), []);
@@ -402,7 +405,7 @@ export function Welcome({
           <div className="min-w-0">
             <h1 className="t-moment text-[2.5rem] leading-[2.75rem]">Loja criada!</h1>
             <p className="t-body-lg mt-2 opacity-85">
-              Pagamento confirmado. A {storeName} já tem endereço:
+              {paid ? 'Pagamento confirmado. ' : ''}A {storeName} já tem endereço:
             </p>
             <p className="tnum mt-2 break-words font-display text-xl font-semibold">
               {address.split('.').map((part, i) => (

@@ -358,4 +358,75 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       fake.platformConfigured = true;
     }
   });
+
+  test('access code: billing off, the store opens with no subscription; wrong or short codes fail', async () => {
+    const other = createApp(deps);
+    const token = (await verified(mkPhone(7), other)).signupToken;
+    const slug = `signup-${nonce}-code`;
+    const before = process.env.VENDUA_SIGNUP_ACCESS_CODE;
+    fake.platformConfigured = false;
+    try {
+      process.env.VENDUA_SIGNUP_ACCESS_CODE = 'short-code';
+      expect((await call('GET', '/admin/v1/signup/plans')).body.billing).toEqual({
+        available: false,
+        accessCode: false,
+      });
+      const short = await signup(token, slug, { accessCode: 'short-code' }, other);
+      expect(short.body.error.code).toBe('INVALID_ACCESS_CODE');
+
+      process.env.VENDUA_SIGNUP_ACCESS_CODE = ' abre-sem-mp-1234 ';
+      expect((await call('GET', '/admin/v1/signup/plans')).body.billing.accessCode).toBe(true);
+      const wrong = await signup(token, slug, { accessCode: 'abre-sem-mp-0000' }, other);
+      expect(wrong.status).toBe(422);
+      expect(wrong.body.error).toMatchObject({
+        code: 'INVALID_ACCESS_CODE',
+        details: { field: 'accessCode' },
+      });
+      // no code still needs billing
+      expect((await signup(token, slug, {}, other)).status).toBe(503);
+
+      const r = await signup(
+        token,
+        slug,
+        { accessCode: 'abre-sem-mp-1234', method: undefined },
+        other,
+      );
+      expect(r.status).toBe(201);
+      expect(r.body.next).toEqual({ kind: 'open' });
+      const id = r.body.store.id;
+      const st = (
+        await sql`select billing_hold, status_override from store_settings where tenant_id = ${id}`
+      )[0]!;
+      expect(st).toEqual({ billing_hold: false, status_override: null });
+      expect((await sql`select 1 from subscriptions where tenant_id = ${id}`).length).toBe(0);
+      expect((await sql`select 1 from invoices where tenant_id = ${id}`).length).toBe(0);
+      const acct = await session(r.cookie)('GET', '/account');
+      expect(acct.body.plan.id).toBe('basic');
+      expect(acct.body.subscription).toBeNull();
+
+      // a replay finds the same store and audits once
+      const again = await signup(token, slug, { accessCode: 'abre-sem-mp-1234' }, other);
+      expect(again.status).toBe(201);
+      expect(again.body.store.id).toBe(id);
+      const audit =
+        await sql`select action from audit_log where tenant_id = ${id} and action = 'store.signup'`;
+      expect(audit).toHaveLength(1);
+
+      // a store already on the paid path never opens by code
+      fake.platformConfigured = true;
+      const paidSlug = `signup-${nonce}-code-paid`;
+      const paid = await signup(token, paidSlug, {}, other);
+      expect(paid.status).toBe(201);
+      const sneak = await signup(token, paidSlug, { accessCode: 'abre-sem-mp-1234' }, other);
+      expect(sneak.status).toBe(409);
+      const held = (
+        await sql`select billing_hold from store_settings where tenant_id = ${paid.body.store.id}`
+      )[0]!;
+      expect(held.billing_hold).toBe(true);
+    } finally {
+      fake.platformConfigured = true;
+      if (before === undefined) delete process.env.VENDUA_SIGNUP_ACCESS_CODE;
+      else process.env.VENDUA_SIGNUP_ACCESS_CODE = before;
+    }
+  });
 });

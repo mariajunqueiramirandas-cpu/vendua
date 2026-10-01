@@ -20,6 +20,7 @@ import { platformNotify } from './admin/notify.ts';
 import { createPaymentProvider } from './modules/payments/index.ts';
 import { startPaymentJobs } from './modules/payments/jobs.ts';
 import { startBillingJobs } from './modules/billing/jobs.ts';
+import { signupAccessCode } from './modules/billing/signup.ts';
 import { fleetDeps } from './modules/fleet/deps.ts';
 import { startFleetJobs } from './modules/fleet/jobs.ts';
 
@@ -42,6 +43,16 @@ if (!process.env.SESSION_SECRET) {
 if (process.env.NODE_ENV === 'production' && !process.env.VENDUA_ADMIN_HOST) {
   log.warn(
     "VENDUA_ADMIN_HOST unset — payment callbacks and the storefront editor preview fall back to the store's own origin; set it to the admin's domain.",
+  );
+}
+
+if (process.env.VENDUA_SIGNUP_ACCESS_CODE?.trim() && !signupAccessCode()) {
+  log.warn(
+    'VENDUA_SIGNUP_ACCESS_CODE is under 12 characters — ignored; signup without payment stays off.',
+  );
+} else if (signupAccessCode()) {
+  log.warn(
+    'VENDUA_SIGNUP_ACCESS_CODE set — signup with this code opens stores without a plan payment.',
   );
 }
 

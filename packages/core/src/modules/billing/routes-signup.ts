@@ -15,9 +15,11 @@ import { mountBillingDev } from './dev-routes.ts';
 import { validEmail } from './input.ts';
 import { publicPlanOr422, publicPlans, type PlanRow } from './plans.ts';
 import {
+  accessCodeMatches,
   normalizeSlug,
   readSignupToken,
   RESERVED_SLUGS,
+  signupAccessCode,
   signupToken,
   slugStatus,
   startSignupOtp,
@@ -26,6 +28,7 @@ import {
 import {
   beginPayment,
   lockSub,
+  releaseHold,
   startSubscription,
   withEffects,
   type PayNext,
@@ -71,7 +74,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     c.header('cache-control', 'no-store');
     return c.json({
       plans: await publicPlans(sql),
-      billing: { available: d.provider.platformConfigured },
+      billing: { available: d.provider.platformConfigured, accessCode: !!signupAccessCode() },
       storeDomain: d.storeDomain,
     });
   });
@@ -112,12 +115,16 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     const body = await bodyJson(c);
     const phone = readSignupToken(d.sessionSecret, body.signupToken);
     if (!phone) throw new HttpError(401, 'SIGNUP_EXPIRED', 'confirm your phone again');
-    if (!d.provider.platformConfigured)
+    // an access code skips the plan charge: the store opens now, with no subscription
+    const free = body.accessCode !== undefined && body.accessCode !== '';
+    if (free && !accessCodeMatches(body.accessCode))
+      throw new HttpError(422, 'INVALID_ACCESS_CODE', 'wrong access code', { field: 'accessCode' });
+    if (!free && !d.provider.platformConfigured)
       throw new HttpError(503, 'BILLING_UNAVAILABLE', 'plan billing is not set up on this install');
     const plan = await publicPlanOr422(sql, body.planId);
-    if (body.method !== 'card' && body.method !== 'pix')
+    if (!free && body.method !== 'card' && body.method !== 'pix')
       throw new HttpError(422, 'BAD_REQUEST', 'method must be card or pix', { field: 'method' });
-    const method: 'card' | 'pix' = body.method;
+    const method: 'card' | 'pix' = body.method === 'card' ? 'card' : 'pix';
     const storeName = text(body.storeName, 'storeName', 60, 2);
     const ownerName = text(body.ownerName, 'ownerName', 80, 2);
     const email = validEmail(body.email, 'email');
@@ -165,7 +172,9 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
         throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
     }
 
-    const next = await ensureFirstCharge(d, c, owned, { plan, method, email, ownerName });
+    const next = free
+      ? await openWithoutCharge(sql, owned, { plan, ownerName })
+      : await ensureFirstCharge(d, c, owned, { plan, method, email, ownerName });
     setAdminCookie(
       c,
       await createSession(sql, owned, c.req.header('user-agent'), {
@@ -187,6 +196,49 @@ async function ownedStore(sql: Sql, phone: string, slug: string) {
   );
 }
 
+const signupActor = (owner: Membership, ownerName: string): Merchant => ({
+  userId: owner.user_id,
+  sessionId: '',
+  name: ownerName,
+  phone: '',
+  role: 'owner',
+});
+
+/** Access-code signup: lift the billing hold so the store opens without a plan payment — only
+ *  for a store this signup just created, never one that has (or had) a plan to pay. */
+async function openWithoutCharge(
+  sql: Sql,
+  owner: Membership,
+  o: { plan: PlanRow; ownerName: string },
+): Promise<{ kind: 'open' }> {
+  await withTenant(sql, owner.tenant_id, async (tx) => {
+    const held = (
+      await tx<{ billing_hold: boolean }[]>`
+        select billing_hold from store_settings where tenant_id = ${owner.tenant_id} for update
+      `
+    )[0]?.billing_hold;
+    if (!held) return;
+    const fresh = (
+      await tx<{ ok: boolean }[]>`
+        select t.created_at > now() - interval '30 minutes'
+               and not exists (select 1 from subscriptions s where s.tenant_id = t.id) as ok
+        from tenants t where t.id = ${owner.tenant_id}
+      `
+    )[0]?.ok;
+    if (!fresh)
+      throw new HttpError(409, 'SUBSCRIPTION_EXISTS', 'this store already has a plan to pay');
+    await releaseHold(tx, owner.tenant_id);
+    await audit(tx, owner.tenant_id, signupActor(owner, o.ownerName), {
+      action: 'store.signup',
+      entity: 'account',
+      entityId: owner.tenant_id,
+      summary: `criou a loja no plano ${o.plan.name} com código de acesso, sem cobrança`,
+      after: { planId: o.plan.id, method: 'access_code' },
+    });
+  });
+  return { kind: 'open' };
+}
+
 /** The new store's subscription and its first charge — created once, found on a replay. */
 async function ensureFirstCharge(
   d: Omit<AdminDeps, 'admin'>,
@@ -196,13 +248,7 @@ async function ensureFirstCharge(
 ): Promise<PayNext> {
   const origin = d.publicOrigin(c);
   const now = new Date();
-  const actor: Merchant = {
-    userId: owner.user_id,
-    sessionId: '',
-    name: o.ownerName,
-    phone: '',
-    role: 'owner',
-  };
+  const actor = signupActor(owner, o.ownerName);
   return withEffects({ sql: d.sql, provider: d.provider, notify: d.notify, origin }, (ctx) =>
     withTenant(d.sql, owner.tenant_id, async (tx) => {
       const sub = await lockSub(tx, owner.tenant_id);

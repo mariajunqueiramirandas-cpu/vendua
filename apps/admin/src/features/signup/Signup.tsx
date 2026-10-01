@@ -13,6 +13,7 @@ import { Toaster } from '../../ui/Toast.tsx';
 import { Guide } from '../onboarding/Guide.tsx';
 import { CardConfirm, CardHandoff, PixPay, Welcome } from './after.tsx';
 import {
+  afterCreate,
   clearDraft,
   EMPTY,
   loadDraft,
@@ -94,7 +95,7 @@ function resume(d: Draft): { d: Draft; notice: string | null } {
     if (back && d.created.next.kind === 'card')
       return { d: { ...d, step: 'confirmando' }, notice: null };
     return {
-      d: PRE.has(d.step) ? { ...d, step: d.created.next.kind === 'card' ? 'cartao' : 'pix' } : d,
+      d: PRE.has(d.step) ? { ...d, step: afterCreate(d.created.next) } : d,
       notice: null,
     };
   }
@@ -184,6 +185,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
           d.created?.store.slug ?? d.slug,
           plans.data?.storeDomain ?? 'vendua.com.br',
         )}
+        paid={d.created?.next.kind !== 'open'}
         onGo={finish}
       />
     );
@@ -247,7 +249,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
         verified={verified}
         onCreated={async (r) => {
           const created = { store: r.store, next: r.next };
-          patch({ created, step: r.next.kind === 'card' ? 'cartao' : 'pix' });
+          patch({ created, step: afterCreate(r.next) });
           setNotice(null);
           setPraise(null);
           setVerified(null);

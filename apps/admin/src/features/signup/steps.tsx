@@ -2,6 +2,7 @@ import {
   CheckCircle,
   CreditCard,
   Globe,
+  Key,
   PixLogo,
   Storefront,
   WarningCircle,
@@ -42,7 +43,7 @@ export const addressOf = (slug: string, domain: string) => `${slug || 'sualoja'}
 // ── 1 · plano ────────────────────────────────────────────────────────────
 
 export function PlanStep({ d, patch, go, plans, notice }: FlowProps) {
-  const open = plans.billing.available;
+  const open = plans.billing.available || plans.billing.accessCode;
   return (
     <StepFrame
       title="Escolha o seu plano"
@@ -66,6 +67,10 @@ export function PlanStep({ d, patch, go, plans, notice }: FlowProps) {
           }
         >
           Ainda não dá para criar uma loja por aqui. Enquanto isso, veja o que cada plano tem.
+        </DuaNote>
+      ) : !plans.billing.available ? (
+        <DuaNote pose="seguranca" title="Por enquanto, só com código de acesso">
+          Recebeu um código da Venduá? Pode seguir: ele vai na última pergunta.
         </DuaNote>
       ) : null}
       <div role="radiogroup" aria-label="planos" className="grid gap-3 xl:grid-cols-2">
@@ -565,6 +570,7 @@ function stepFor(e: unknown): { step: StepId; notice: string } | null {
 const CREATE_ERR: Record<string, string> = {
   SIGNUP_LIMIT: 'Esse WhatsApp já abriu lojas demais hoje. Tente de novo amanhã.',
   BILLING_UNAVAILABLE: 'O cadastro pela internet ainda não abriu. Tente de novo em breve.',
+  INVALID_ACCESS_CODE: 'Esse código não confere. Confira e tente de novo.',
 };
 
 export function PayStep({
@@ -580,6 +586,8 @@ export function PayStep({
 }) {
   const plan: Plan | undefined = plans.plans.find((p) => p.id === d.planId);
   const [err, setErr] = useState<string | null>(null);
+  const byCode = plans.billing.accessCode && (!plans.billing.available || d.byCode);
+  const [code, setCode] = useState('');
   const create = useMutation({
     mutationFn: () =>
       api.signup.create({
@@ -590,6 +598,7 @@ export function PayStep({
         slug: d.slug,
         ownerName: d.ownerName.trim(),
         email: d.email.trim(),
+        ...(byCode ? { accessCode: code.trim() } : {}),
       }),
     onSuccess: onCreated,
     onError: (e) => {
@@ -600,60 +609,104 @@ export function PayStep({
   });
   return (
     <StepFrame
-      title="Como prefere pagar o plano?"
-      hint="Dá para trocar depois, em Conta e plano."
+      title={byCode ? 'Qual é o seu código de acesso?' : 'Como prefere pagar o plano?'}
+      hint={
+        byCode
+          ? 'Com o código, a loja abre na hora, sem pagar o plano agora.'
+          : 'Dá para trocar depois, em Conta e plano.'
+      }
       back={() => go(verified.existingStores.length ? 'existente' : 'whatsapp')}
       busy={create.isPending}
-      disabled={!plan || !plans.billing.available}
+      disabled={!plan || (byCode ? code.trim().length < 12 : !plans.billing.available)}
       label="criar minha loja"
       onSubmit={() => {
         setErr(null);
         create.mutate();
       }}
     >
-      <div role="radiogroup" aria-label="forma de pagamento" className="grid gap-3 sm:grid-cols-2">
-        {METHODS.map((m) => {
-          const on = d.method === m.id;
-          return (
-            <button
-              key={m.id}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              onClick={() => {
-                haptic.tick();
-                patch({ method: m.id });
-              }}
-              className={cn(
-                'flex items-start gap-3 rounded-lg bg-surface p-4 text-left depth-1 transition-[box-shadow,background-color] hover:bg-hover',
-                on ? 'ring-2 ring-primary' : 'ring-1 ring-line',
-              )}
-            >
-              <span
+      {byCode ? (
+        <Field label="Código de acesso" htmlFor="su-access" error={err}>
+          <TextInput
+            id="su-access"
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            maxLength={200}
+            lead={<Key className="size-5" aria-hidden />}
+            value={code}
+            onChange={(e) => {
+              setErr(null);
+              setCode(e.target.value);
+            }}
+          />
+        </Field>
+      ) : (
+        <div
+          role="radiogroup"
+          aria-label="forma de pagamento"
+          className="grid gap-3 sm:grid-cols-2"
+        >
+          {METHODS.map((m) => {
+            const on = d.method === m.id;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                onClick={() => {
+                  haptic.tick();
+                  patch({ method: m.id });
+                }}
                 className={cn(
-                  'grid size-11 shrink-0 place-items-center rounded-full',
-                  on ? 'bg-spark text-on-spark' : 'bg-sunken',
+                  'flex items-start gap-3 rounded-lg bg-surface p-4 text-left depth-1 transition-[box-shadow,background-color] hover:bg-hover',
+                  on ? 'ring-2 ring-primary' : 'ring-1 ring-line',
                 )}
               >
-                <m.Icon weight="duotone" className="size-6" aria-hidden />
-              </span>
-              <span className="min-w-0">
-                <span className="block font-semibold">{m.title}</span>
-                <span className="t-body mt-0.5 block text-muted">{m.body}</span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
+                <span
+                  className={cn(
+                    'grid size-11 shrink-0 place-items-center rounded-full',
+                    on ? 'bg-spark text-on-spark' : 'bg-sunken',
+                  )}
+                >
+                  <m.Icon weight="duotone" className="size-6" aria-hidden />
+                </span>
+                <span className="min-w-0">
+                  <span className="block font-semibold">{m.title}</span>
+                  <span className="t-body mt-0.5 block text-muted">{m.body}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {plans.billing.available && plans.billing.accessCode ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="-mx-3.5"
+          onClick={() => {
+            setErr(null);
+            patch({ byCode: !d.byCode });
+          }}
+        >
+          {byCode ? 'prefiro pagar o plano' : 'tenho um código de acesso'}
+        </Button>
+      ) : null}
       {plan ? (
         <div className="rounded-lg bg-sunken p-4">
           <div className="flex items-baseline justify-between gap-3">
             <p className="font-semibold">{plan.name}</p>
-            <p className="tnum font-display text-lg font-semibold">{perMonth(plan)}</p>
+            {byCode ? null : (
+              <p className="tnum font-display text-lg font-semibold">{perMonth(plan)}</p>
+            )}
           </div>
           <p className="t-body mt-2 text-muted">
-            A loja abre para pedidos assim que o primeiro pagamento entrar. Enquanto isso, você já
-            monta o cardápio.
+            {byCode
+              ? 'A loja abre assim que for criada. Depois, é só montar o cardápio.'
+              : 'A loja abre para pedidos assim que o primeiro pagamento entrar. Enquanto isso, você já monta o cardápio.'}
           </p>
           {plan.feeBps === 0 ? (
             <p className="t-caption mt-2 text-muted">
@@ -663,7 +716,7 @@ export function PayStep({
           ) : null}
         </div>
       ) : null}
-      {err ? (
+      {err && !byCode ? (
         <p className="t-body text-danger" role="alert">
           {err}
         </p>
@@ -688,9 +741,12 @@ export function Summary({ d, plans }: { d: Draft; plans: PlansData | undefined }
       label: 'Pagamento',
       value:
         d.step === 'pagamento' || d.created
-          ? d.method === 'pix'
-            ? 'Pix todo mês'
-            : 'Cartão'
+          ? d.created?.next.kind === 'open' ||
+            (!d.created && plans?.billing.accessCode && (!plans.billing.available || d.byCode))
+            ? 'Código de acesso'
+            : d.method === 'pix'
+              ? 'Pix todo mês'
+              : 'Cartão'
           : null,
     },
   ];

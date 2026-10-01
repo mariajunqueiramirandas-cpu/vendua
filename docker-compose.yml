@@ -58,6 +58,8 @@ services:
       MP_CLIENT_SECRET: ${MP_CLIENT_SECRET:-}
       MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET:-}
       MP_PLATFORM_ACCESS_TOKEN: ${MP_PLATFORM_ACCESS_TOKEN:-}
+      # signup with this code opens the store with no plan payment (min 12 chars); unset = off
+      VENDUA_SIGNUP_ACCESS_CODE: ${VENDUA_SIGNUP_ACCESS_CODE:-}
       # the payer email MP requires on Pix (shoppers don't give one); unset = pagador@<store domain>
       MP_PAYER_EMAIL: ${MP_PAYER_EMAIL:-}
       # Seals stores' MP tokens at rest (optional); unset = derived from SESSION_SECRET (warns at

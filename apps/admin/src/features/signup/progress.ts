@@ -30,6 +30,8 @@ export interface Draft {
   codeSentAt: number | null;
   codeExpiresAt: number | null;
   method: 'pix' | 'card';
+  /** signing up with an access code instead of paying (the code itself is never saved) */
+  byCode: boolean;
   /** after POST /signup: the store exists and this device is signed in to it */
   created: {
     store: StoreRef;
@@ -51,6 +53,7 @@ export const EMPTY: Draft = {
   codeSentAt: null,
   codeExpiresAt: null,
   method: 'pix',
+  byCode: false,
   created: null,
 };
 
@@ -111,6 +114,11 @@ export function saveToken(v: Verified | null) {
   } catch {
     /* ignore */
   }
+}
+
+/** The step right after the store is created: pay by card or Pix, or (access code) done. */
+export function afterCreate(next: PayNext): StepId {
+  return next.kind === 'card' ? 'cartao' : next.kind === 'pix' ? 'pix' : 'pronto';
 }
 
 /** The card hand-off is out at Mercado Pago: its return (`?assinatura=retorno`) belongs here. */
