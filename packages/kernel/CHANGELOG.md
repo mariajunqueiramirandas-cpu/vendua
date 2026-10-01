@@ -40,9 +40,15 @@ ledger or money (API.md, "Rules and display helpers").
   the next boundary), and `blocking` uses `isBlocking` (unknown severities read as info).
 - Core fields (all optional for an older Core): `StoreProfile.closesAt`, `publicUrl`,
   `hours.specialDays` (`SpecialDay`); `closesAt` on the surfaces/state `store`;
-  `SurfacesEnvelope.meta` (`StoreMeta`, the edge's head meta). Client: `api.quoteLine` (`GET
+  `SurfacesEnvelope.meta` (`StoreMeta`, the edge's head meta); `DeliveryZone.minFeeCents` (the
+  least any address in the zone pays — Core's fee formula, so `zoneFeeFloor` reads it instead of
+  recomputing `fee + perKm`; the flat fee without it). Client: `api.quoteLine` (`GET
 /storefront/v1/products/:slug/quote`, `LinePicks` → `LineQuote`); `api.addLine` and
-  `useCart().mutations.addLine` answer Core's `added` (`AddedLine`).
+  `useCart().mutations.addLine` answer Core's `added` (`AddedLine`). `CartMutations.addLine` is
+  optional in the exported type (a store's own `CartMutations` needn't add it); `useCart()`
+  always has it.
+- `@vendua/kernel/sdk-catalog`'s runtime exports are frozen and documented like the main
+  entry's (`test/api-surface.test.ts`).
 - Slot props (types now; the Kernel passes them next): optional `timeZone` (`StoreTime`),
   `currency` (`StoreMoney`) and `vocabulary` (`StoreWords`) on the slots whose defaults format
   times, money or the store's words.
@@ -58,9 +64,10 @@ ledger or money (API.md, "Rules and display helpers").
   bag word). `StoreStatusBadge` takes optional `labels` (`StoreStatusBadgeProps`).
 - The Kernel's own defaults stop re-deriving: sections, blocks, pages and primitives decide
   through the rules or Core. Behaviour changes (API.md, "The Kernel's own defaults…"):
-  - Fix: the purchase panel's add button shows Core's quote for the line (`useLineQuote`), for
-    options and kits too, and the product's own price while choices are missing — never
-    `basePriceCents × qty`. A combo says "a partir de" only from Core's `fromPriceCents` (the
+  - Fix: the purchase panel's add button shows only Core's quote for the line as picked
+    (`useLineQuote`), for options and kits too, and no amount while choices are missing, the
+    quote is on its way or Core refused it — never one unit's price or `basePriceCents × qty`.
+    A combo says "a partir de" only from Core's `fromPriceCents` (the
     invented "a paid slot item" rule is gone).
   - Fix: `add_to_cart` analytics `value` is Core's `added.lineTotalCents` (none from an older
     Core), no longer `basePriceCents × qty`.

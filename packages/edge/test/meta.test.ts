@@ -133,6 +133,20 @@ describe('injectMeta', () => {
     expect(count(out, /rel="canonical" href/g)).toBe(1);
   });
 
+  test('a "</head>" inside a script, a comment or the title does not end the head', () => {
+    const script = `<script>document.write('</head>')</script>`;
+    const html = `<html><head>${script}<!-- </head> --><title>Old </head> title</title><meta name="description" content="old"></head><body></body></html>`;
+    const out = injectMeta(html, HEAD);
+    expect(out).toContain(`<head>${script}<!-- </head> --><title>Quero Pudim`);
+    expect(count(out, /<title>/g)).toBe(1);
+    expect(out).not.toContain('Old </head> title');
+    // the page's own description, past the strings, is the one replaced
+    expect(out).not.toContain('content="old"');
+    expect(count(out, /<meta name="description"/g)).toBe(1);
+    expect(out).toEndWith('</head><body></body></html>');
+    expect(out.indexOf('rel="canonical"')).toBeLessThan(out.lastIndexOf('</head>'));
+  });
+
   test('a title is added before </head>; no </head> leaves the page as is', () => {
     const out = injectMeta('<html><head><meta charset="utf-8"></head><body></body></html>', HEAD);
     expect(out).toStartWith('<html><head><meta charset="utf-8"><title>Quero Pudim');

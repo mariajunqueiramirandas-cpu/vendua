@@ -4,13 +4,10 @@ import { formatCents } from './format.ts';
 // What delivery costs and takes, summed up from Core's zones before an address is known.
 // The fee for an address is always Core's quote; this is only the "a partir de" line.
 
-/** The least a zone charges: Core charges `fee + ceil(km) × perKm`, and a real address is
- *  never 0 km away, so a per-km zone costs at least one km. */
-export function zoneFeeFloor(
-  z: Pick<DeliveryZone, 'feeCents'> & Partial<Pick<DeliveryZone, 'kind' | 'feePerKmCents'>>,
-): number {
-  const perKm = z.kind === 'radius' && (z.feePerKmCents ?? 0) > 0 ? z.feePerKmCents! : 0;
-  return z.feeCents + perKm;
+/** The least a zone charges: Core's `minFeeCents` (a per-km zone costs at least one km); the
+ *  zone's flat fee from a Core that doesn't send it. */
+export function zoneFeeFloor(z: Pick<DeliveryZone, 'feeCents' | 'minFeeCents'>): number {
+  return z.minFeeCents ?? z.feeCents;
 }
 
 export interface DeliverySummary {

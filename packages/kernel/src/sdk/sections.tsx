@@ -572,16 +572,19 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                   data-part="add"
                 >
                   <span>{settings.addLabel}</span>
-                  {/* Core's total for this line; until it answers, the product's own price */}
+                  {/* only Core's total for exactly this line: any other amount (one unit, no
+                      options) would be a price the shopper isn't charged */}
                   <span
                     className="v-pp-add-price v-num"
                     data-part="add-price"
-                    data-state={lineTotal !== null ? 'quote' : 'display'}
+                    data-state={lineTotal !== null ? 'quote' : line.pending ? 'pending' : 'none'}
                   >
-                    <span className="v-pp-add-sep">· </span>
-                    {lineTotal !== null
-                      ? money(lineTotal)
-                      : `${shown.form === 'from' ? 'a partir de ' : ''}${money(shown.cents)}`}
+                    {lineTotal !== null ? (
+                      <>
+                        <span className="v-pp-add-sep">· </span>
+                        {money(lineTotal)}
+                      </>
+                    ) : null}
                   </span>
                 </button>
               </AddToCart>

@@ -71,7 +71,14 @@ import {
   resolveCustomer,
   verifyCustomerToken,
 } from './modules/customer.ts';
-import { normalizeCep, resolveZone, validCoords, viaCep, type CepLookup } from './modules/geo.ts';
+import {
+  normalizeCep,
+  resolveZone,
+  validCoords,
+  viaCep,
+  zoneMinFeeCents,
+  type CepLookup,
+} from './modules/geo.ts';
 import { OrderHub } from './modules/order-live.ts';
 import { pixPayload, type PixKeyType } from './modules/pix.ts';
 import { bookableDates } from './modules/preorder.ts';
@@ -681,6 +688,7 @@ export function createApp({
         name: z.name,
         neighborhoods: z.neighborhoods,
         feeCents: z.fee_cents,
+        minFeeCents: zoneMinFeeCents(z),
         minOrderCents: z.min_order_cents,
         etaMin: z.eta_min_minutes,
         etaMax: z.eta_max_minutes,

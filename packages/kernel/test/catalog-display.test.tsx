@@ -108,10 +108,10 @@ describe('a partir de', () => {
     m = await mount({ path: '/produto/pudim' });
     await flush();
     expect(text('.v-pp-price')).toMatch(/^a partir de R\$\s22,90$/);
-    // Kernel 1.14: until a flavour is picked the button shows the product's own price, never
-    // the R$ 0,00 base; then Core's price for the line
-    expect(text('[data-part="add"] .v-pp-add-price')).toMatch(/a partir de R\$\s22,90/);
-    expect(text('[data-part="add"]')).not.toContain('0,00');
+    // Kernel 1.14: until a flavour is picked the button shows no amount, never the R$ 0,00
+    // base; then Core's price for the line
+    expect($('[data-part="add-price"]')?.getAttribute('data-state')).toBe('none');
+    expect(text('[data-part="add"]')).not.toContain('R$');
     expect($('[data-part="promo"]')).toBeNull();
     await click(button('Queijo'));
     await act(async () => new Promise((r) => setTimeout(r, 200)));

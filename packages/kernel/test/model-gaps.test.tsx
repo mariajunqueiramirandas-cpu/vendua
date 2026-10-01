@@ -176,11 +176,13 @@ describe('product page — options with quantities', () => {
     expect(body.modifiers).toEqual([{ id: 'calda', qty: 2 }]);
   });
 
-  test('without a priced option the button keeps its price; no modifiers array is sent', async () => {
+  test('without a priced option the button shows Core’s price; no modifiers array is sent', async () => {
     const c = core(() => null);
     m = await mount({ path: '/produto/pudim' });
     await flush();
     await click(button('Pequeno'));
+    await act(async () => new Promise((r) => setTimeout(r, 200)));
+    await flush();
     expect(text('.v-pp-add-price')).toContain('18,00');
     await click($('[data-part="add"]'));
     await flush();

@@ -330,7 +330,7 @@ separate function a store may skip for its own voice. Additive — no storefront
 
 **Delivery** (`rules/delivery.ts`)
 
-- `zoneFeeFloor` `(zone)` — the least a zone charges (a per-km zone costs at least one km).
+- `zoneFeeFloor` `(zone)` — the least a zone charges: Core's `minFeeCents` (a per-km zone costs at least one km), else the zone's flat fee.
 - `deliverySummary` `(store, zones)` — `{ delivery: { etaMin, etaMax, fee: { form, cents }, freeOverCents, minOrderCents, minOrderVaries } | null, pickup: { prepMinutes } | null }`.
 - `deliveryWords` `(summary, currency?)` — `{ fee, eta, minOrder, freeOver }`: `entrega a partir de R$ 5,00`, `30–50 min`.
 
@@ -420,9 +420,13 @@ refuses an add that breaks them; these say the same before the add.
 
 **Core fields and client** — `StoreProfile` gains optional `closesAt`, `publicUrl` and
 `hours.specialDays` (`SpecialDay`); `SurfacesEnvelope`/`StateEnvelope` `store` gain `closesAt`
-and the edge's `SurfacesEnvelope` gains `meta` (`StoreMeta`). `useCart().mutations.addLine`
-(and `api.addLine`) answer Core's `added` (`AddedLine`: the units added and their price) — what
-analytics should count; `api.quoteLine(slug, { qty, modifiers?, comboSelections? })` (`LinePicks`
+and the edge's `SurfacesEnvelope` gains `meta` (`StoreMeta`). `DeliveryZone` gains optional
+`minFeeCents` — the least any address in the zone pays before free-delivery thresholds, from
+Core's fee formula (a per-km zone: its fee plus the first km); clients read it, never recompute
+it. `useCart().mutations.addLine` (and `api.addLine`) answer Core's `added` (`AddedLine`: the
+units added and their price) — what analytics should count; `CartMutations.addLine` is optional
+in the exported type, so a store's own `CartMutations` needn't implement it;
+`api.quoteLine(slug, { qty, modifiers?, comboSelections? })` (`LinePicks`
 → `LineQuote`) is `useLineQuote`'s read.
 
 **Slot props** — `StoreTime` (`timeZone?`) on `system.PauseNotice`, `system.StoreClosedNotice`,
@@ -443,9 +447,11 @@ unless `store.vocabulary` sets them; the default `cta` follows too (`Adicionar a
 
 - `sdk:purchase-panel`'s add button shows Core's price for the configured line
   (`useLineQuote` → `lineTotalCents`, `[data-part="add-price"][data-state="quote"]`) — for
-  options, kits and quantities alike; while choices are missing or the quote is on its way it
-  shows the product's own price (`priceDisplay`, `data-state="display"`). It never multiplies
-  `basePriceCents`. A combo says "a partir de" only from Core's `fromPriceCents`.
+  options, kits and quantities alike — and only once Core priced exactly the current picks and
+  quantity: while the quote is on its way the part is empty with `data-state="pending"`, and
+  with choices missing or the line refused it is empty with `data-state="none"`. It never shows
+  one unit's price for the line nor multiplies `basePriceCents`. A combo says "a partir de"
+  only from Core's `fromPriceCents`.
 - `AddToCart`'s `add_to_cart` event carries `value` = Core's `added.lineTotalCents` (absent when
   Core doesn't send `added`) — no longer `basePriceCents × qty`.
 - `sdk:stock-counter` reads low stock as Core does (`cardState`: `lowStock`, or
@@ -470,10 +476,16 @@ unless `store.vocabulary` sets them; the default `cta` follows too (`Adicionar a
 - Copy that named the bag or items (`CartTrigger`'s label, toasts, the share sheet, reorder
   notes) uses the store's vocabulary.
 
-**`@vendua/kernel/sdk-catalog`** also exports `DEFAULT_TEMPLATES` (what a page renders with no
-template), `resolveSettings` `(schema, raw)` (the settings coercion the Kernel renders with),
-`PREVIEW_QUERY_PARAM` and `PREVIEW_MESSAGE` (the editor-preview protocol below), and SDK
-section schemas carry `title` (the merchant's name for it) and `addable`.
+**`@vendua/kernel/sdk-catalog`** (pure data, no React) serves the SDK sections and blocks
+above as schemas: `SDK_SCHEMAS` (all of them, in the table's order) and each by name —
+`pageContent`, `header`, `footer`, `announcementBar`, `headerCart`, `bagBar`, `purchasePanel`,
+`catalogGrid`, `productList`, `storeStatus`, `richTextSection`, `stockCounter`, `notifyMe`,
+`promoBadge`, `deliveryEta`, `pixInfo`, `loyaltyTeaser` — and `catalogOf` `(schemas)` (the
+catalog the artifact manifest publishes). Since 1.14 it also exports `DEFAULT_TEMPLATES` (what a
+page renders with no template), `resolveSettings` `(schema, raw)` (the settings coercion the
+Kernel renders with), `PREVIEW_QUERY_PARAM` and `PREVIEW_MESSAGE` (the editor-preview protocol
+below), and SDK section schemas carry `title` (the merchant's name for it) and `addable`. Its
+runtime exports are frozen like the main entry's.
 
 ### Editor preview (Kernel 1.4)
 

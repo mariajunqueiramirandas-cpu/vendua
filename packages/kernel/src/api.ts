@@ -394,6 +394,9 @@ export interface DeliveryZone {
   maxDistanceKm?: number | null;
   feePerKmCents?: number;
   freeDeliveryOverCents?: number | null;
+  /** Kernel 1.14 — the least any address in the zone pays, before free-delivery thresholds
+   *  (Core's fee formula; a per-km zone charges at least its first km) */
+  minFeeCents?: number;
 }
 
 export interface QuoteResult {

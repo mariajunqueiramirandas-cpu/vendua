@@ -58,7 +58,7 @@ const events = () =>
   ).filter((e) => e.name === 'add_to_cart');
 
 describe('purchase panel — Core’s price for the line', () => {
-  test('until the line can be added: the product’s price; then Core’s total, never base × qty', async () => {
+  test('an amount only once Core priced these picks at this qty, never base × qty', async () => {
     const c = mockCore({
       quote: (_slug, q) => {
         const qty = Number(q.get('qty'));
@@ -67,12 +67,15 @@ describe('purchase panel — Core’s price for the line', () => {
     });
     m = await mount({ path: '/produto/pudim' });
     const price = () => $('[data-part="add-price"]') as HTMLElement;
-    // the required size isn't picked: no quote asked, the product's own price
-    expect(price().getAttribute('data-state')).toBe('display');
-    expect(price().textContent).toMatch(/R\$\s18,00/);
+    // the required size isn't picked: no quote asked, no amount (one unit's price isn't the line's)
+    expect(price().getAttribute('data-state')).toBe('none');
+    expect(price().textContent).toBe('');
     expect(c.calls.some((x) => x.path.includes('/quote'))).toBe(false);
     await click($('[role="radio"]'));
     await click($('[aria-label="Aumentar quantidade"]'));
+    // asked, not answered yet
+    expect(price().getAttribute('data-state')).toBe('pending');
+    expect(price().textContent).toBe('');
     await wait(250);
     await flush();
     expect(price().getAttribute('data-state')).toBe('quote');
@@ -81,9 +84,16 @@ describe('purchase panel — Core’s price for the line', () => {
     const asked = c.calls.filter((x) => x.path.includes('/quote')).at(-1)!.path;
     expect(asked).toContain('qty=2');
     expect(asked).toContain('modifiers=m1:1');
+    // another qty: the last total is stale, so no amount until Core prices the new one
+    await click($('[aria-label="Aumentar quantidade"]'));
+    expect(price().getAttribute('data-state')).toBe('pending');
+    expect(price().textContent).toBe('');
+    await wait(250);
+    await flush();
+    expect(price().textContent).toMatch(/R\$\s64,83/);
   });
 
-  test('a refused quote falls back to the product’s price', async () => {
+  test('a refused quote shows no amount', async () => {
     mockCore({
       quote: () => ({ status: 409, body: { error: { code: 'SOLD_OUT', message: 'x' } } }),
     });
@@ -91,8 +101,9 @@ describe('purchase panel — Core’s price for the line', () => {
     await click($('[role="radio"]'));
     await wait(250);
     await flush();
-    expect($('[data-part="add-price"]')?.getAttribute('data-state')).toBe('display');
-    expect(text('[data-part="add-price"]')).toMatch(/R\$\s18,00/);
+    expect($('[data-part="add-price"]')?.getAttribute('data-state')).toBe('none');
+    expect(text('[data-part="add-price"]')).toBe('');
+    expect(text('[data-part="add"]')).not.toContain('R$');
   });
 });
 
@@ -177,6 +188,8 @@ describe('SDK blocks over the rules', () => {
               kind: 'radius',
               maxDistanceKm: 8,
               feePerKmCents: 150,
+              // Core's floor: the first km
+              minFeeCents: 150,
             },
           ],
         },

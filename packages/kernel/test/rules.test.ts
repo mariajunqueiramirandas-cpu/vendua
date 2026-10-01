@@ -436,10 +436,21 @@ describe('delivery', () => {
   });
 
   test('a per-km zone is never free, nor flat', () => {
-    const radius = zone({ kind: 'radius', feeCents: 0, feePerKmCents: 200, maxDistanceKm: 5 });
+    // Core serves the floor (fee + one km); the Kernel never recomputes it
+    const radius = zone({
+      kind: 'radius',
+      feeCents: 0,
+      feePerKmCents: 200,
+      maxDistanceKm: 5,
+      minFeeCents: 200,
+    });
     expect(zoneFeeFloor(radius)).toBe(200);
+    expect(zoneFeeFloor(zone({ feeCents: 300, minFeeCents: 450 }))).toBe(450);
+    // a Core without `minFeeCents`: the flat fee, no arithmetic on Core's formula
+    expect(zoneFeeFloor(zone({ kind: 'radius', feeCents: 300, feePerKmCents: 200 }))).toBe(300);
     expect(zoneFeeFloor(zone({ kind: 'neighborhood', feePerKmCents: 200 }))).toBe(500);
     expect(fee([radius])).toEqual({ form: 'from', cents: 200 });
+    expect(fee([radius, zone({ feeCents: 150 })])).toEqual({ form: 'from', cents: 150 });
     expect(fee([zone({ kind: 'radius', feeCents: 300, feePerKmCents: 0 })])).toEqual({
       form: 'flat',
       cents: 300,

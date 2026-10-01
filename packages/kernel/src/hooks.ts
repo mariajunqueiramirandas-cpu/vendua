@@ -194,8 +194,10 @@ export interface CartMutations {
     /** Kernel 1.12 — units per option id, for options with `maxQty` > 1 (absent = 1 each) */
     modifierQty?: Record<string, number>,
   ) => Promise<Cart>;
-  /** Kernel 1.14 — `add`, also answering what Core added (`added`: units and Core's price) */
-  addLine: (
+  /** Kernel 1.14 — `add`, also answering what Core added (`added`: units and Core's price).
+   *  Optional here so a store's own `CartMutations` (a wrapper, a test double) still type-checks;
+   *  `useCart().mutations` always has it. */
+  addLine?: (
     productId: string,
     qty?: number,
     modifierIds?: string[],
@@ -216,12 +218,15 @@ export interface CartMutations {
   reorder: (orderId: string) => Promise<{ cart: Cart; report: ImportReport }>;
 }
 
+/** The Kernel's own cart mutations: every one, `addLine` included. */
+type KernelCartMutations = CartMutations & Required<Pick<CartMutations, 'addLine'>>;
+
 export function useCart(): {
   /** null = no session/cart yet (or a resolved empty read). */
   cart: Cart | null;
   loading: boolean;
   error: QueryError | undefined;
-  mutations: CartMutations;
+  mutations: KernelCartMutations;
   refetch: () => void;
 } {
   const { api, invalidate } = useKernel();
@@ -240,7 +245,7 @@ export function useCart(): {
     [invalidate],
   );
 
-  const mutations = useMemo<CartMutations>(
+  const mutations = useMemo<KernelCartMutations>(
     () => ({
       add: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty) =>
         api.addItem(productId, qty, modifierIds, comboSelections, modifierQty).then(bump),

@@ -90,6 +90,34 @@ const RULES_V1 = [
   'zoneFeeFloor',
 ];
 
+// `@vendua/kernel/sdk-catalog` — the SDK schemas as data, for the build plugin and the merchant
+// admin; frozen like the main entry.
+const SDK_CATALOG_V1 = [
+  'DEFAULT_TEMPLATES',
+  'PREVIEW_MESSAGE',
+  'PREVIEW_QUERY_PARAM',
+  'SDK_SCHEMAS',
+  'announcementBar',
+  'bagBar',
+  'catalogGrid',
+  'catalogOf',
+  'deliveryEta',
+  'footer',
+  'header',
+  'headerCart',
+  'loyaltyTeaser',
+  'notifyMe',
+  'pageContent',
+  'pixInfo',
+  'productList',
+  'promoBadge',
+  'purchasePanel',
+  'resolveSettings',
+  'richTextSection',
+  'stockCounter',
+  'storeStatus',
+];
+
 // The v1.0 freeze (roadmap 1b-i): every runtime export is intended and listed in
 // API.md. Adding one is a Kernel minor (update both); removing or renaming one is
 // a Contract major — this test fails loudly either way.
@@ -226,6 +254,21 @@ describe('public surface', () => {
         `${f} imports only sibling rules at runtime`,
       ).toEqual([]);
     }
+  });
+
+  test('the sdk-catalog entry matches the frozen list, documented', async () => {
+    const mod = await import('../src/sdk/schemas.ts');
+    const now = Object.keys(mod).sort();
+    expect(
+      SDK_CATALOG_V1.filter((k) => !now.includes(k)),
+      'removing an sdk-catalog export is a Contract major',
+    ).toEqual([]);
+    expect(
+      now.filter((k) => !SDK_CATALOG_V1.includes(k)),
+      'new sdk-catalog exports need API.md + SDK_CATALOG_V1',
+    ).toEqual([]);
+    const doc = await Bun.file(new URL('../API.md', import.meta.url)).text();
+    expect(SDK_CATALOG_V1.filter((k) => !doc.includes(`\`${k}\``))).toEqual([]);
   });
 
   test('kernel carries real semver', () => {

@@ -8,6 +8,7 @@ import {
   pointInPolygon,
   polygonArea,
   resolveZone,
+  zoneMinFeeCents,
   type LatLng,
   type ZoneLike,
 } from '../src/modules/geo.ts';
@@ -114,6 +115,15 @@ describe('geo zones', () => {
     expect(effectiveFee(far, 10000)).toBe(0);
     expect(resolveZone(zones, { coords: { lat: -22, lng: -42 } }, store)).toBeNull();
     expect(resolveZone(zones, { coords: { lat: -22.93, lng: -42.48 } }, null)).toBeNull();
+  });
+  test("a zone's least fee is what its nearest address is quoted", () => {
+    const [n, r5, r10] = zones as [ZoneLike, ZoneLike, ZoneLike];
+    expect(zoneMinFeeCents(n)).toBe(500);
+    expect(zoneMinFeeCents(r10)).toBe(800);
+    expect(zoneMinFeeCents(r5)).toBe(300 + 50);
+    const near = resolveZone(zones, { coords: { lat: -22.93, lng: -42.5099 } }, store)!;
+    expect(near.zone.id).toBe('r5');
+    expect(near.feeCents).toBe(zoneMinFeeCents(r5));
   });
 });
 

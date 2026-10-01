@@ -155,11 +155,13 @@ const blank = (s: string) => ' '.repeat(s.length);
 
 // Raw text (scripts, styles) and comments can hold tag-looking strings: they are blanked out
 // (same length, so indexes still point into the original) before any tag is looked for.
-function maskRaw(head: string): string {
-  return head
+function maskRaw(html: string): string {
+  return html
     .replace(/<!--[\s\S]*?(-->|$)/g, blank)
     .replace(/<(script|style|template|textarea)\b[\s\S]*?(<\/\1\s*>|$)/gi, blank);
 }
+
+const TITLE = /<title\b[^>]*>[\s\S]*?(<\/title\s*>|$)/gi;
 
 const ATTR = Object.fromEntries(
   ['name', 'property', 'rel'].map((n) => [
@@ -200,10 +202,12 @@ function tags(masked: string, re: RegExp): Tag[] {
  * page's own tag alone. Unchanged when there is no `</head>`.
  */
 export function injectMeta(html: string, head: PageHead): string {
-  const headEnd = html.search(/<\/head\s*>/i);
+  const raw = maskRaw(html);
+  // a `</head>` in a script, a comment or the title's text doesn't end the head
+  const headEnd = raw.replace(TITLE, blank).search(/<\/head\s*>/i);
   if (headEnd < 0) return html;
   const src = html.slice(0, headEnd);
-  let masked = maskRaw(src);
+  let masked = raw.slice(0, headEnd);
 
   const edits: Edit[] = [];
   const inserts: string[] = [];
@@ -213,7 +217,7 @@ export function injectMeta(html: string, head: PageHead): string {
     if (!found.length && insert) inserts.push(text);
   };
 
-  const titles = tags(masked, /<title\b[^>]*>[\s\S]*?(<\/title\s*>|$)/gi);
+  const titles = tags(masked, TITLE);
   for (const t of titles) masked = masked.slice(0, t.start) + blank(t.text) + masked.slice(t.end);
   put(titles, `<title>${escapeHtml(head.title)}</title>`);
 
