@@ -152,6 +152,7 @@ describe('runStatic', () => {
           'export default function Bad(_: SectionProps<typeof schema>) {',
           '  const { mutations } = useCart();',
           "  void mutations.add('x');",
+          "  void mutations.addLine('y');",
           '  void SLOT_DEFAULTS;',
           '  return <a className="v-btn" href="/produto/pudim">Este texto longo foi escrito direto no código</a>;',
           '}',
@@ -178,6 +179,7 @@ describe('runStatic', () => {
     expect(r.K07?.detail).toContain('@vendua/ui-defaults');
     expect(r.K09?.status).toBe('fail');
     expect(r.K09?.detail).toContain('AddToCart');
+    expect(r.K09?.detail).toContain('sections/bad.tsx:7: cart mutation called directly');
     expect(r.K09?.detail).toContain('ProductLink');
     expect(r.K10?.status).toBe('fail');
     expect(r.K10?.detail).toContain('.v-notice');
@@ -218,7 +220,9 @@ describe('runStatic', () => {
                   ? "import { noticeSeverity, type Notice } from '@vendua/kernel';\nexport default function O(p: { notice: Notice }) { return <p>{noticeSeverity(p.notice)}</p>; }\n"
                   : i === 3
                     ? "import type { Notice } from '@vendua/kernel';\nimport { isBlocking } from '@vendua/kernel/rules';\nexport default function O(p: { notice: Notice }) { return <p>{String(isBlocking(p.notice))}</p>; }\n"
-                    : 'export default function O() { return <p>ok</p>; }\n',
+                    : i === 4
+                      ? "import * as K from '@vendua/kernel';\nexport default function O() { return <p>{String(K.plural(1, 'a', 'b'))}</p>; }\n"
+                      : 'export default function O() { return <p>ok</p>; }\n',
           ]),
         ),
       }),
@@ -230,6 +234,9 @@ describe('runStatic', () => {
       "O2.tsx:1 (cart.LineItem): runtime import of noticeSeverity from '@vendua/kernel'",
     );
     expect(r.K08?.detail).not.toContain('O3.tsx');
+    expect(r.K08?.detail).toContain(
+      "O4.tsx:1 (store.HoursTable): runtime import of * as K from '@vendua/kernel'",
+    );
     expect(r.K07?.status).toBe('pass');
     expect(r.K14?.status).toBe('fail');
     expect(r.K14?.detail).toContain('6 overrides');

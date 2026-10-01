@@ -125,6 +125,29 @@ describe('geo zones', () => {
     expect(near.zone.id).toBe('r5');
     expect(near.feeCents).toBe(zoneMinFeeCents(r5));
   });
+  test('an outer ring starts where the inner ring ends', () => {
+    const inner = {
+      ...zones[1]!,
+      id: 'in',
+      max_distance_km: 5,
+      fee_cents: 500,
+      fee_per_km_cents: 0,
+    };
+    const outer = {
+      ...zones[1]!,
+      id: 'out',
+      max_distance_km: 10,
+      fee_cents: 0,
+      fee_per_km_cents: 100,
+    };
+    const both = [inner, outer];
+    // nothing at or under 5 km is the outer ring's, so its cheapest address is in the 6th km
+    expect(zoneMinFeeCents(outer, both)).toBe(600);
+    expect(zoneMinFeeCents(outer)).toBe(100);
+    const half = { ...inner, max_distance_km: 4.5 };
+    expect(zoneMinFeeCents(outer, [half, outer])).toBe(500);
+    expect(zoneMinFeeCents(inner, both)).toBe(500);
+  });
 });
 
 describe('geo polygons', () => {

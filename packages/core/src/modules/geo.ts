@@ -103,12 +103,21 @@ export function radiusFeeCents(
 }
 
 /** The least any address in the zone pays before free-delivery thresholds (the storefront's
- *  "a partir de"). A real address is never 0 km from the store, so a per-km zone charges at
- *  least its first km. */
+ *  "a partir de"). A radius zone's nearest address lies just past the largest smaller ring
+ *  (`resolveZone` gives anything inside it to that ring), or just past the store itself, and the
+ *  per-km fee ceils its distance. */
 export function zoneMinFeeCents(
-  z: Pick<ZoneLike, 'kind' | 'fee_cents' | 'fee_per_km_cents'>,
+  z: Pick<ZoneLike, 'kind' | 'fee_cents' | 'fee_per_km_cents' | 'max_distance_km'>,
+  zones: readonly Pick<ZoneLike, 'kind' | 'max_distance_km'>[] = [],
 ): number {
-  return z.kind === 'radius' ? radiusFeeCents(z, Number.MIN_VALUE) : z.fee_cents;
+  if (z.kind !== 'radius') return z.fee_cents;
+  const max = Number(z.max_distance_km);
+  const inner = zones
+    .filter((o) => o.kind === 'radius' && o.max_distance_km != null)
+    .map((o) => Number(o.max_distance_km))
+    .filter((m) => m < max)
+    .reduce((a, m) => Math.max(a, m), 0);
+  return radiusFeeCents(z, Math.floor(inner) + 1);
 }
 
 // ── polygons ─────────────────────────────────────────────────────────────────

@@ -688,7 +688,7 @@ export function createApp({
         name: z.name,
         neighborhoods: z.neighborhoods,
         feeCents: z.fee_cents,
-        minFeeCents: zoneMinFeeCents(z),
+        minFeeCents: zoneMinFeeCents(z, zones),
         minOrderCents: z.min_order_cents,
         etaMin: z.eta_min_minutes,
         etaMax: z.eta_max_minutes,

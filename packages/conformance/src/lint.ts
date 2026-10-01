@@ -98,7 +98,8 @@ const IMPURE =
   /\b(useCart|useCheckout|useCustomer|useDeliveryQuote|useConsent|useOrderHistory|AddToCart|CheckoutButton|QuantityStepper|NotifyMeButton|fetch)\b/;
 
 // overrides load with vendua.config.ts, in Node, before the Kernel's React runtime exists
-const KERNEL_MAIN_IMPORT = /\bimport\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]@vendua\/kernel['"]/g;
+const KERNEL_MAIN_IMPORT =
+  /\b(import|export)\s+(type\s+)?(\{[^}]*\}|\*\s+as\s+\w+|\*|\w+(?:\s*,\s*\{[^}]*\})?)\s*from\s*['"]@vendua\/kernel['"]/g;
 
 function k08(dir: string): CheckResult {
   const id = 'K08';
@@ -116,11 +117,16 @@ function k08(dir: string): CheckResult {
       }
       const src = stripComments(readFileSync(f, 'utf8'));
       for (const m of src.matchAll(KERNEL_MAIN_IMPORT)) {
-        if (m[1]) continue;
-        const values = m[2]!
-          .split(',')
-          .map((s) => s.trim())
-          .filter((s) => s && !s.startsWith('type '));
+        if (m[2]) continue;
+        const clause = m[3]!;
+        // `{ a, type B }` names its values; a namespace, default or `*` re-export is all values
+        const values = clause.startsWith('{')
+          ? clause
+              .slice(1, -1)
+              .split(',')
+              .map((s) => s.trim())
+              .filter((s) => s && !s.startsWith('type '))
+          : [clause.replace(/\s+/g, ' ')];
         if (values.length)
           problems.push(
             `${relative(dir, f)}:${src.slice(0, m.index).split('\n').length} (${key}): runtime import of ${values.join(', ')} from '@vendua/kernel' — an override loads with the store config, so import helpers from '@vendua/kernel/rules' (types: \`import type\`)`,
@@ -148,7 +154,7 @@ function k09(dir: string): CheckResult {
           msg: 'useCheckout() — checkout is a Kernel page; link with CheckoutButton',
         });
       if (
-        /\bmutations\s*\.\s*(add|updateQty|remove|setDelivery)\b/.test(text) ||
+        /\bmutations\s*\.\s*(add|addLine|updateQty|remove|setDelivery)\b/.test(text) ||
         /\.\s*mutations\b/.test(text)
       )
         found.push({ n, msg: 'cart mutation called directly — use AddToCart / QuantityStepper' });
