@@ -214,13 +214,23 @@ describe('runStatic', () => {
               ? "import { useCart } from '@vendua/kernel';\nexport default function O() { useCart(); return <p>x</p>; }\n"
               : i === 1
                 ? "export default function O(): never { throw new Error('broken override'); }\n"
-                : 'export default function O() { return <p>ok</p>; }\n',
+                : i === 2
+                  ? "import { noticeSeverity, type Notice } from '@vendua/kernel';\nexport default function O(p: { notice: Notice }) { return <p>{noticeSeverity(p.notice)}</p>; }\n"
+                  : i === 3
+                    ? "import type { Notice } from '@vendua/kernel';\nimport { isBlocking } from '@vendua/kernel/rules';\nexport default function O(p: { notice: Notice }) { return <p>{String(isBlocking(p.notice))}</p>; }\n"
+                    : 'export default function O() { return <p>ok</p>; }\n',
           ]),
         ),
       }),
     );
     expect(r.K08?.status).toBe('fail');
     expect(r.K08?.detail).toContain("'useCart'");
+    // a runtime Kernel import can't load with the config; the pure rules subpath can
+    expect(r.K08?.detail).toContain(
+      "O2.tsx:1 (cart.LineItem): runtime import of noticeSeverity from '@vendua/kernel'",
+    );
+    expect(r.K08?.detail).not.toContain('O3.tsx');
+    expect(r.K07?.status).toBe('pass');
     expect(r.K14?.status).toBe('fail');
     expect(r.K14?.detail).toContain('6 overrides');
     expect(r.K15?.status).toBe('fail');

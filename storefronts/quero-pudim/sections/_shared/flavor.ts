@@ -1,3 +1,5 @@
+import { foldText } from '@vendua/kernel';
+
 // The catalog has no photos yet, so a product's name picks its colours: cards stay
 // distinct at a glance and the fallback art reads as the flavour it sells.
 export interface Flavor {
@@ -9,8 +11,6 @@ export interface Flavor {
   /** syrup on a pudim, top layer on a sacolé */
   top: string;
 }
-
-const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 const FLAVORS: [RegExp, Flavor][] = [
   [
@@ -38,7 +38,7 @@ export const FALLBACK_FLAVOR: Flavor = {
 };
 
 export function flavorOf(name: string): Flavor {
-  const n = norm(name);
+  const n = foldText(name);
   return FLAVORS.find(([re]) => re.test(n))?.[1] ?? FALLBACK_FLAVOR;
 }
 

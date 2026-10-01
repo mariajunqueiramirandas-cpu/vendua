@@ -88,6 +88,25 @@
   max-width: 28rem;
   margin: 0 auto;
 }
+.qr-price {
+  margin-top: 4px;
+  color: var(--caramel-800);
+}
+.qr-from {
+  font-size: 0.5em;
+  font-weight: 500;
+}
+.qr-was {
+  margin-right: 0.3em;
+  font-size: 0.55em;
+  color: var(--zinc-500);
+}
+.qr-promo {
+  margin-top: 2px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--brand-600);
+}
 .qr-box {
   width: 240px;
   height: 240px;
@@ -98,7 +117,8 @@
   border: 1px solid var(--zinc-200);
   border-radius: 12px;
   background: #fff;
-  padding: 10px;
+  /* the code carries its own quiet zone */
+  padding: 0;
 }
 .qr-svg svg {
   width: 100%;
@@ -113,6 +133,9 @@
   font-family: var(--v-font-mono, 'Geist Mono', monospace);
   font-size: 0.875rem;
   color: var(--zinc-950);
+}
+.qr-url > span {
+  display: inline-block;
 }
 .qr-hint {
   font-size: 0.6875rem;

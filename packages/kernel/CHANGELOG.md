@@ -89,6 +89,8 @@ ledger or money (API.md, "Rules and display helpers").
     ("Chave aleatória:"), WhatsApp/Instagram links from `contactLinks` (country code 55 added),
     phones validate with `isValidPhone`.
 - `dist/vendua-manifest.json` carries `paths` (the store's resolved routes) for the edge.
+- Stores may import `@vendua/kernel/rules` (K07); an override must take its helpers from there and
+  only types from `@vendua/kernel` — it loads with the store config, before the Kernel runtime (K08).
 
 ## 1.13.0
 

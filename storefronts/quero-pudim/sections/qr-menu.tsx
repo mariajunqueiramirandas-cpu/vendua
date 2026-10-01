@@ -1,24 +1,27 @@
 import { ArrowLeft, Download, Instagram, MessageCircle, Printer } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import QRCode from 'qrcode';
 import {
+  QrCode,
+  cardState,
   defineSection,
   image,
+  priceDisplay,
+  qrSvg,
   text,
-  url,
-  useCatalog,
+  useLinks,
+  useMenu,
+  useMoney,
   useStore,
   type SectionProps,
 } from '@vendua/kernel';
-import { formatBRL } from './_shared/format.ts';
 
-/** Cardápio QR — printable A4 sheet; QR generated client-side via the `qrcode` package, Core only supplies products + contacts. */
+/** Cardápio QR — printable A4 sheet. The link is the store's public URL (Core's `publicUrl`), the
+ *  code the Kernel's encoder; Core supplies the products and contacts. */
 export const schema = defineSection({
   type: 'store:qr-menu',
   settings: {
     logo: image({ default: '/brand/logo-principal.png' }),
-    catalogPath: url({ default: '/catalog' }),
     title: text({ max: 60, default: '' }),
     subtitle: text({ max: 160 }),
     featuredLabel: text({ max: 40 }),
@@ -28,55 +31,54 @@ export const schema = defineSection({
   },
 });
 
-function buildTarget(baseUrl: string, slug: string, catalogPath: string): string {
-  const base = baseUrl.trim().replace(/\/+$/, '');
-  return slug ? `${base}/produto/${encodeURIComponent(slug)}` : `${base}${catalogPath}`;
+const PNG_SIZE = 800;
+
+/** The same code as a PNG, for the download link. */
+async function pngOf(value: string): Promise<string> {
+  const img = new Image();
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qrSvg(value, { size: PNG_SIZE }))}`;
+  await img.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = PNG_SIZE;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('no canvas');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, 0, 0, PNG_SIZE, PNG_SIZE);
+  return canvas.toDataURL('image/png');
 }
 
 export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { categories } = useCatalog();
+  const { categories, loading } = useMenu();
   const { store } = useStore();
-
-  const [baseUrl, setBaseUrl] = useState(() => window.location.origin);
-  const [svg, setSvg] = useState('');
-  const [dataUrl, setDataUrl] = useState('');
-  const [qrLoading, setQrLoading] = useState(true);
-  const [qrError, setQrError] = useState<string | null>(null);
+  const links = useLinks();
+  const money = useMoney();
+  const { whatsapp, instagram } = links.contacts;
 
   const products = useMemo(() => categories.flatMap((c) => c.products), [categories]);
   const selectedSlug = searchParams.get('produto') ?? '';
   const selected = products.find((p) => p.slug === selectedSlug) ?? null;
-  const target = buildTarget(baseUrl, selectedSlug, s.catalogPath);
+  // a product link waits for the menu; an unknown slug prints the menu, not a dead page
+  const waiting = loading && selectedSlug !== '' && !selected;
+  const target = links.absolute(selected ? links.product(selected.slug) : links.catalog);
   const shortUrl = target.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  const cut = shortUrl.indexOf('/');
+  const price = selected ? priceDisplay(selected) : null;
 
+  const [png, setPng] = useState<{ value: string; url: string } | null>(null);
   useEffect(() => {
+    if (waiting) return;
     let active = true;
-    setQrLoading(true);
-    setQrError(null);
-    Promise.all([
-      QRCode.toDataURL(target, { width: 800, margin: 1, errorCorrectionLevel: 'H' }),
-      QRCode.toString(target, { type: 'svg', margin: 1, errorCorrectionLevel: 'H' }),
-    ])
-      .then(([png, svgString]) => {
-        if (!active) return;
-        setDataUrl(png);
-        setSvg(svgString);
-        setQrLoading(false);
-      })
-      .catch(() => {
-        if (!active) return;
-        setQrError('Não foi possível gerar o código QR.');
-        setQrLoading(false);
-      });
+    pngOf(target).then(
+      (url) => active && setPng({ value: target, url }),
+      () => active && setPng(null),
+    );
     return () => {
       active = false;
     };
-  }, [target]);
+  }, [target, waiting]);
 
-  const instagram = store?.instagram?.replace(/^@/, '');
-  const whatsapp = store?.whatsapp?.replace(/\D/g, '');
   const where = [store?.address, store?.city].filter(Boolean).join(' · ');
 
   return (
@@ -85,7 +87,7 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
         <button
           type="button"
           className="btn btn-ghost"
-          onClick={() => (window.history.length > 1 ? navigate(-1) : navigate(s.catalogPath))}
+          onClick={() => (window.history.length > 1 ? navigate(-1) : navigate(links.catalog))}
         >
           <ArrowLeft size={16} aria-hidden="true" /> Voltar
         </button>
@@ -97,7 +99,7 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
             id="qr-produto"
             className="input"
             style={{ height: 44, maxWidth: 260 }}
-            value={selectedSlug}
+            value={selected?.slug ?? ''}
             onChange={(e) => {
               const next = new URLSearchParams(searchParams);
               if (e.target.value) next.set('produto', e.target.value);
@@ -106,25 +108,22 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
             }}
           >
             <option value="">Cardápio completo</option>
-            {products.map((p) => (
-              <option key={p.id} value={p.slug}>
-                {p.name}
-              </option>
+            {categories.map((c) => (
+              <optgroup key={c.id} label={c.name}>
+                {c.products.map((p) => (
+                  <option key={p.id} value={p.slug}>
+                    {cardState(p, null).soldOut ? `${p.name} (esgotado)` : p.name}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
-          <input
-            className="input"
-            style={{ height: 44, maxWidth: 220 }}
-            aria-label="Endereço base do link"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-          />
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {dataUrl ? (
+          {png && png.value === target ? (
             <a
-              href={dataUrl}
-              download={`${s.fileName}-${selectedSlug || 'cardapio'}.png`}
+              href={png.url}
+              download={`${s.fileName}-${selected?.slug || 'cardapio'}.png`}
               className="btn btn-ghost"
             >
               <Download size={16} aria-hidden="true" /> Baixar PNG
@@ -148,7 +147,7 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
             </div>
 
             <div style={{ textAlign: 'center' }}>
-              {selected ? (
+              {selected && price ? (
                 <div style={{ marginBottom: 8 }}>
                   {s.featuredLabel ? <span className="qr-chip">{s.featuredLabel}</span> : null}
                   <h2 className="display display-md" style={{ marginTop: 4 }}>
@@ -157,15 +156,16 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
                   {selected.description ? (
                     <p className="small muted qr-desc">{selected.description}</p>
                   ) : null}
-                  <p
-                    className="display display-md"
-                    style={{ color: 'var(--caramel-800)', marginTop: 4 }}
-                  >
-                    {selected.fromPriceCents != null ? (
-                      <small style={{ fontSize: '0.5em', fontWeight: 500 }}>a partir de </small>
+                  <p className="display display-md qr-price" data-form={price.form}>
+                    {price.struckCents !== null ? (
+                      <s className="qr-was">{money(price.struckCents)}</s>
                     ) : null}
-                    {formatBRL(selected.fromPriceCents ?? selected.basePriceCents)}
+                    {price.form === 'from' ? <small className="qr-from">a partir de </small> : null}
+                    {money(price.cents)}
                   </p>
+                  {price.promoLabel ? (
+                    <p className="qr-promo">Promoção · {price.promoLabel}</p>
+                  ) : null}
                 </div>
               ) : (
                 <div style={{ marginBottom: 8 }}>
@@ -175,18 +175,26 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
               )}
 
               <div className="qr-box">
-                {qrLoading ? (
+                {waiting ? (
                   <div className="qr-placeholder">Gerando QR Code…</div>
-                ) : qrError ? (
-                  <div className="qr-placeholder" style={{ color: 'var(--danger)' }}>
-                    {qrError}
+                ) : (
+                  <div className="qr-svg">
+                    <QrCode value={target} title={`QR Code: ${shortUrl}`} />
                   </div>
-                ) : svg ? (
-                  <div className="qr-svg" dangerouslySetInnerHTML={{ __html: svg }} />
-                ) : null}
+                )}
               </div>
 
-              <p className="qr-url">{shortUrl}</p>
+              {/* host and path wrap as units on a narrow sheet, never at a hyphen */}
+              <p className="qr-url">
+                {cut > 0 ? (
+                  <>
+                    <span>{shortUrl.slice(0, cut)}</span>
+                    <span>{shortUrl.slice(cut)}</span>
+                  </>
+                ) : (
+                  shortUrl
+                )}
+              </p>
               {s.hint ? <p className="qr-hint">{s.hint}</p> : null}
             </div>
 
@@ -195,12 +203,12 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
               <p className="qr-contacts">
                 {whatsapp ? (
                   <span>
-                    <MessageCircle size={12} aria-hidden="true" /> WhatsApp: {whatsapp}
+                    <MessageCircle size={12} aria-hidden="true" /> WhatsApp: {whatsapp.display}
                   </span>
                 ) : null}
                 {instagram ? (
                   <span>
-                    <Instagram size={12} aria-hidden="true" /> @{instagram}
+                    <Instagram size={12} aria-hidden="true" /> @{instagram.handle}
                   </span>
                 ) : null}
                 {where ? <span>{where}</span> : null}
@@ -210,7 +218,7 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
           </div>
         </article>
         <p className="qr-controls small muted" style={{ marginTop: 24, textAlign: 'center' }}>
-          <Link to={s.catalogPath} style={{ textDecoration: 'underline' }}>
+          <Link to={links.catalog} style={{ textDecoration: 'underline' }}>
             ← Voltar ao cardápio
           </Link>
         </p>

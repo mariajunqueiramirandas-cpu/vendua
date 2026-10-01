@@ -37,6 +37,7 @@ const DEVDEP_ALLOW_PREFIX = ['@types/'];
 export const KERNEL_IMPORT_ALLOW = new Set([
   '@vendua/kernel',
   '@vendua/kernel/config',
+  '@vendua/kernel/rules',
   '@vendua/kernel/styles.css',
   '@vendua/kernel/vite',
 ]);

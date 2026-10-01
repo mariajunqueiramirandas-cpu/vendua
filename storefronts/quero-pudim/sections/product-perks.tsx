@@ -1,5 +1,5 @@
 import { Snowflake, Truck } from 'lucide-react';
-import { defineBlock, list, select, text, useStore, type BlockProps } from '@vendua/kernel';
+import { defineBlock, list, select, text, useCopy, type BlockProps } from '@vendua/kernel';
 
 const ICONS = { truck: Truck, snowflake: Snowflake };
 
@@ -18,7 +18,7 @@ export const schema = defineBlock({
 });
 
 export default function ProductPerks({ settings }: BlockProps<typeof schema>) {
-  const { store } = useStore();
+  const { interpolate } = useCopy();
   const items = settings.items ?? [];
   if (items.length === 0) return null;
   return (
@@ -28,7 +28,7 @@ export default function ProductPerks({ settings }: BlockProps<typeof schema>) {
         return (
           <span key={it.text}>
             <Icon size={16} aria-hidden="true" />
-            {it.text.replaceAll('{city}', store?.city ?? '')}
+            {interpolate(it.text)}
           </span>
         );
       })}

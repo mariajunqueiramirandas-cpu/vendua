@@ -5,7 +5,7 @@ import {
   image,
   text,
   url,
-  useStore,
+  useCopy,
   type SectionProps,
 } from '@vendua/kernel';
 import { ProductFigure } from './_shared/ProductFigure.tsx';
@@ -35,9 +35,8 @@ export const schema = defineSection({
 });
 
 export default function Hero({ settings: s }: SectionProps<typeof schema>) {
-  const { store } = useStore();
   // "{city}" in copy is filled from the store profile, so one template reads right anywhere
-  const fill = (v: string | undefined) => v?.replaceAll('{city}', store?.city ?? '');
+  const { interpolate: fill } = useCopy();
   const proof = (s.proof ?? '')
     .split('|')
     .map((x) => x.trim())

@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { BlockArea, defineSection, image, text, type SectionProps } from '@vendua/kernel';
 import { Reveal } from './_shared/Reveal.tsx';
 
@@ -20,14 +19,8 @@ export const schema = defineSection({
   areas: { aside: { accepts: ['social-proof', 'badge', 'info'], max: 2 } },
 });
 
+// `/#<anchor>` links land here: the Kernel scrolls to the hash.
 export default function Story({ settings: s }: SectionProps<typeof schema>) {
-  // /#<anchor> deep link — BrowserRouter doesn't scroll to hashes on its own
-  useEffect(() => {
-    if (window.location.hash !== `#${s.anchor}`) return;
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    document.getElementById(s.anchor)?.scrollIntoView({ behavior: reduced ? 'instant' : 'smooth' });
-  }, [s.anchor]);
-
   return (
     <section id={s.anchor} className="story">
       <div className="container story-grid">

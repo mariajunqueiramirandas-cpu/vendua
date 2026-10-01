@@ -526,6 +526,11 @@ and `payment-adjustment` (the summary line; also in `[data-vendua="order-items"]
 `[data-vendua]` selector in store CSS fails. Slot overrides stay available but are
 the last resort — each one is counted in the artifact manifest.
 
+An override module loads with `vendua.config.ts` (in Node, at build time), before the Kernel's
+React runtime exists: import helpers from `@vendua/kernel/rules` and only types from
+`@vendua/kernel` (`import type`). `vendua check` (K08) fails a runtime `@vendua/kernel` import in
+an override, and K07 allows `@vendua/kernel/rules` in store code.
+
 ## Core types and helpers
 
 `ApiError`, `ERROR_CODES` (the exhaustive set storefronts may switch on),

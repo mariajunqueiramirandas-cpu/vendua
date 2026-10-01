@@ -1,6 +1,6 @@
 import { MessageCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { defineSection, text, url, useStore, type SectionProps } from '@vendua/kernel';
+import { defineSection, text, url, useLinks, type SectionProps } from '@vendua/kernel';
 import { Reveal } from './_shared/Reveal.tsx';
 
 export const schema = defineSection({
@@ -17,8 +17,7 @@ export const schema = defineSection({
 });
 
 export default function Closing({ settings: s }: SectionProps<typeof schema>) {
-  const { store } = useStore();
-  const whatsapp = store?.whatsapp?.replace(/\D/g, '');
+  const { whatsapp } = useLinks().contacts;
   return (
     <section className="container closing-wrap">
       <Reveal className="closing">
@@ -36,7 +35,7 @@ export default function Closing({ settings: s }: SectionProps<typeof schema>) {
           {whatsapp ? (
             <a
               className="btn-ghost btn-lg btn-ghost--light"
-              href={`https://wa.me/${whatsapp}`}
+              href={whatsapp.href}
               target="_blank"
               rel="noopener noreferrer"
             >

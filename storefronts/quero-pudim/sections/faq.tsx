@@ -1,5 +1,5 @@
 import { ChevronDown } from 'lucide-react';
-import { defineSection, list, text, useStore, type SectionProps } from '@vendua/kernel';
+import { defineSection, list, text, useCopy, type SectionProps } from '@vendua/kernel';
 import { Reveal } from './_shared/Reveal.tsx';
 
 export const schema = defineSection({
@@ -19,10 +19,9 @@ export const schema = defineSection({
 });
 
 export default function Faq({ settings: s }: SectionProps<typeof schema>) {
-  const { store } = useStore();
+  const { interpolate: fill } = useCopy();
   const items = (s.items ?? []).filter((i) => i.question && i.answer);
   if (items.length === 0) return null;
-  const fill = (v: string) => v.replaceAll('{city}', store?.city ?? '');
   return (
     <section className="container faq">
       <Reveal className="section-head section-head--center">

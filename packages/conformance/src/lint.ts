@@ -97,6 +97,9 @@ function closure(entry: string): string[] {
 const IMPURE =
   /\b(useCart|useCheckout|useCustomer|useDeliveryQuote|useConsent|useOrderHistory|AddToCart|CheckoutButton|QuantityStepper|NotifyMeButton|fetch)\b/;
 
+// overrides load with vendua.config.ts, in Node, before the Kernel's React runtime exists
+const KERNEL_MAIN_IMPORT = /\bimport\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]@vendua\/kernel['"]/g;
+
 function k08(dir: string): CheckResult {
   const id = 'K08';
   const title =
@@ -109,6 +112,18 @@ function k08(dir: string): CheckResult {
         if (hit)
           problems.push(
             `${relative(dir, f)}:${n} (${key}): '${hit[1]}' — overrides receive data via props and act through callbacks`,
+          );
+      }
+      const src = stripComments(readFileSync(f, 'utf8'));
+      for (const m of src.matchAll(KERNEL_MAIN_IMPORT)) {
+        if (m[1]) continue;
+        const values = m[2]!
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s && !s.startsWith('type '));
+        if (values.length)
+          problems.push(
+            `${relative(dir, f)}:${src.slice(0, m.index).split('\n').length} (${key}): runtime import of ${values.join(', ')} from '@vendua/kernel' — an override loads with the store config, so import helpers from '@vendua/kernel/rules' (types: \`import type\`)`,
           );
       }
     }
