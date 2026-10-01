@@ -4,6 +4,7 @@ import fixture from './fixtures/menu-import/instadelivery.json';
 import { recognise } from '../src/modules/menu-import/adapters/index.ts';
 import { instadelivery } from '../src/modules/menu-import/adapters/instadelivery.ts';
 import { TEMPLATE_TOKENS } from '../src/modules/menu-import/apply.ts';
+import { unitPriceCents } from '../src/modules/cart.ts';
 import {
   LIMITS,
   TooLarge,
@@ -384,7 +385,7 @@ describe('instadelivery.map', () => {
   });
 
   test('categories in source order; empty ones become lost notes with their description', () => {
-    expect(doc.categories.map((c) => c.name)).toEqual(['BOLOS', 'AÇAÍ']);
+    expect(doc.categories.map((c) => c.name)).toEqual(['BOLOS', 'AÇAÍ', 'PIZZAS']);
     expect(doc.categories[0]!.description).toBe('Feitos no dia');
     expect(doc.lost).toEqual(
       expect.arrayContaining([
@@ -452,25 +453,75 @@ describe('instadelivery.map', () => {
     expect(g).toMatchObject({ min: 1, max: 2 });
   });
 
-  test('pizza flavour list charges the dearest flavour — exactly', () => {
-    const pizza = byName.get('Pizza doce')!;
+  test('a pizza list charges every half at the dearest half: n × dearest, exactly', () => {
+    // the storefront: ½ R$ 20 + ½ R$ 25,50 = R$ 51,00 (each half at the dearest)
+    const pizza = byName.get('Pizza meio a meio')!;
     expect(pizza.status).toBe('active');
-    expect(pizza.priceCents).toBe(4990);
+    const g = pizza.optionGroups[0]!;
+    expect(g).toMatchObject({ pricingRule: 'most_expensive', min: 2, max: 2 });
+    // priced by Core's own cart math, as a shopper's line would be
+    const price = (picks: string[]) =>
+      unitPriceCents(pizza.priceCents, [
+        {
+          pricingRule: g.pricingRule!,
+          picks: g.options
+            .filter((o) => picks.includes(o.name))
+            .map((o) => ({ priceDeltaCents: o.priceDeltaCents, qty: 1 })),
+        },
+      ]);
+    expect(price(['1/2 Mussarela', '1/2 Cinco queijos'])).toBe(5100);
+    expect(price(['1/2 Mussarela', '1/2 Margherita'])).toBe(4550);
+    // "a partir de": two of the cheapest half
+    expect(pizza.priceCents).toBe(4000);
+  });
+
+  test('a pizza list with no cap (max 0) is not a fixed number of flavours: hidden', () => {
+    type Item = { name: string; complementos: Record<string, unknown>[] };
+    const raw = structuredClone(fixture) as unknown as { groups: { itens: Item[] }[] };
+    const item = raw.groups.flatMap((g) => g.itens).find((i) => i.name === 'Pizza meio a meio')!;
+    Object.assign(item.complementos[0]!, { min: 0, max: 0 });
+    const p = validateDoc(instadelivery.map(raw, source))
+      .doc.categories.flatMap((c) => c.products)
+      .find((x) => x.name === 'Pizza meio a meio')!;
+    expect(p.status).toBe('archived');
+    expect(p.optionGroups[0]!.options.map((o) => o.priceDeltaCents)).toEqual([2000, 2550, 2275]);
+  });
+
+  test('a pizza list where the number of flavours varies has no rule here: hidden', () => {
+    const pizza = byName.get('Pizza doce')!;
+    expect(pizza.status).toBe('archived');
     expect(pizza.optionGroups[0]).toMatchObject({ pricingRule: 'most_expensive', min: 1, max: 2 });
-    const deltas = pizza.optionGroups[0]!.options.map((o) => o.priceDeltaCents);
-    // two flavours: base + the dearest delta = the dearest flavour's price on the old store
-    expect(pizza.priceCents + Math.max(...deltas)).toBe(5990);
+    expect(doc.lost).toContainEqual({
+      scope: 'product',
+      subject: 'Pizza doce',
+      code: 'pizza_pricing',
+      detail: 'Escolha 2 sabores',
+    });
+  });
+
+  test('what the storefront never charges comes over at the menu price', () => {
+    // item_discount applies only through the item's own share link
+    expect(byName.get('Bolo do link')).toMatchObject({ status: 'active', priceCents: 1000 });
+    expect(doc.lost).toContainEqual({
+      scope: 'product',
+      subject: 'Bolo do link',
+      code: 'link_discount',
+      detail: '10',
+    });
+    // price2 and a pizza category's sizes are never read: price1 is the price
+    expect(byName.get('Bolo dois preços')).toMatchObject({ status: 'active', priceCents: 2000 });
+    expect(
+      codes('product').filter((c) => /second_price|pizza_sizes|promo_unreadable/.test(c)),
+    ).toEqual([]);
   });
 
   test('prices we cannot reproduce exactly are imported hidden, with the reason', () => {
-    expect(byName.get('Bolo dois preços')!.status).toBe('archived');
     expect(byName.get('Item estranho')!.status).toBe('archived');
-    expect(byName.get('Promo misteriosa')!.status).toBe('archived');
+    expect(byName.get('Muçarela por quilo')!.status).toBe('archived');
     expect(codes('product')).toEqual(
       expect.arrayContaining([
-        'Bolo dois preços:second_price',
         'Item estranho:options_unreadable',
-        'Promo misteriosa:promo_unreadable',
+        'Muçarela por quilo:sold_by_weight',
       ]),
     );
   });
@@ -503,6 +554,7 @@ describe('instadelivery.map', () => {
       pickup: true,
       delivery: true,
     });
+    // free above the store's R$ 100, or the neighbourhood's own R$ 60 (subtotal ≥ either)
     expect(doc.zones).toEqual([
       {
         name: 'Taxa R$ 5,00',
@@ -511,11 +563,24 @@ describe('instadelivery.map', () => {
         neighborhoods: ['Centro', 'Jardim'],
         etaMin: 30,
         etaMax: 40,
+        freeDeliveryOverCents: 10000,
       },
-      { name: 'Taxa R$ 8,50', kind: 'neighborhood', feeCents: 850, neighborhoods: ['Vila Nova'] },
+      {
+        name: 'Taxa R$ 8,50',
+        kind: 'neighborhood',
+        feeCents: 850,
+        neighborhoods: ['Vila Nova'],
+        freeDeliveryOverCents: 6000,
+      },
     ]);
     expect(doc.payments).toEqual({
       methods: ['cash', 'pix', 'card_on_delivery', 'meal_voucher'],
+      // percents of the subtotal: Pix −5 %, debit and credit +3 %, voucher +2 %
+      adjustments: {
+        pix: { percentBps: -500 },
+        card_on_delivery: { percentBps: 300 },
+        meal_voucher: { percentBps: 200 },
+      },
       pix: {
         key: 'exemplo@vendua.test',
         type: 'email',
@@ -536,7 +601,6 @@ describe('instadelivery.map', () => {
         ':upsell',
         ':time_slots',
         ':payment_method',
-        ':payment_adjustment',
         ':pix_beneficiary_shortened',
         ':pix_city_shortened',
       ]),
@@ -548,32 +612,87 @@ describe('instadelivery.map', () => {
   test('km tiers: radius zones; "no delivery" past the last tier is just the edge', () => {
     const raw = {
       ...fixture,
-      fees: [],
+      fee_type: -2,
+      free_delivery: null,
       feesKm: [
         { km: 3, price: 5, price_free: 0, no_delivery: 0, estimate: '20-30' },
         { km: 5, price: 0, price_free: 0, no_delivery: 1, estimate: null },
-        { km: 8, price: 9.5, price_free: 0, no_delivery: 0, estimate: null },
+        { km: 8, price: 9.5, price_free: 80, no_delivery: 0, estimate: null },
         { km: 12, price: 0, price_free: 0, no_delivery: 1, estimate: null },
         { km: 20, price: 0, price_free: 0, no_delivery: 1, estimate: null },
       ],
     };
     const m = validateDoc(instadelivery.map(raw, source)).doc;
+    // the neighbourhood list the store keeps but doesn't use stays out
     expect(m.zones).toEqual([
       { name: 'Até 3 km', kind: 'radius', feeCents: 500, maxDistanceKm: 3, etaMin: 20, etaMax: 30 },
-      { name: 'Até 8 km', kind: 'radius', feeCents: 950, maxDistanceKm: 8 },
+      // free strictly above R$ 80 there: from R$ 80,01 here
+      {
+        name: 'Até 8 km',
+        kind: 'radius',
+        feeCents: 950,
+        maxDistanceKm: 8,
+        freeDeliveryOverCents: 8001,
+      },
     ]);
     const gaps = m.lost.filter((l) => l.code === 'delivery_gap');
     expect(gaps).toEqual([{ scope: 'store', code: 'delivery_gap', detail: '5' }]);
     expect(m.lost.map((l) => l.code)).toContain('delivery_distance_straight_line');
   });
 
+  test('fee_type: a fee agreed later or a flat fee for any address has no zone here', () => {
+    const later = validateDoc(instadelivery.map({ ...fixture, fee_type: -3 }, source)).doc;
+    expect(later.zones).toBeUndefined();
+    expect(later.operations?.delivery).toBe(false);
+    expect(later.lost).toContainEqual({ scope: 'store', code: 'delivery_fee_later' });
+    const flat = validateDoc(instadelivery.map({ ...fixture, fee_type: 8 }, source)).doc;
+    expect(flat.zones).toBeUndefined();
+    expect(flat.lost).toContainEqual({
+      scope: 'store',
+      code: 'delivery_flat_fee',
+      detail: 'R$ 8,00',
+    });
+    const free = validateDoc(instadelivery.map({ ...fixture, fee_type: 0 }, source)).doc;
+    expect(free.lost).toContainEqual({
+      scope: 'store',
+      code: 'delivery_flat_fee',
+      detail: 'grátis',
+    });
+  });
+
+  test('payment percents map only when every order pays what it paid there', () => {
+    const adj = (over: Record<string, unknown>) => {
+      const d = validateDoc(instadelivery.map({ ...fixture, ...over }, source)).doc;
+      return {
+        adjustments: d.payments?.adjustments,
+        notes: d.lost.filter((l) => l.code === 'payment_adjustment').map((l) => l.detail),
+      };
+    };
+    // a store-wide discount replaces the payment's own, on every method
+    expect(adj({ discount: 10 })).toEqual({
+      adjustments: { cash: { percentBps: -1000 }, pix: { percentBps: -1000 } },
+      // cards and the voucher carry −10 % and an increment, each rounded on its own there
+      notes: ['cartão', 'vale-refeição'],
+    });
+    // a pickup discount wins on pickup orders: Pix's own discount isn't one rule any more
+    expect(adj({ takeaway_discount: 10 })).toEqual({
+      adjustments: { card_on_delivery: { percentBps: 300 }, meal_voucher: { percentBps: 200 } },
+      notes: ['retirada', 'Pix'],
+    });
+    // debit +2 % and credit +3 % are one method here
+    expect(adj({ debt_increment: 2 }).notes).toEqual(['cartão']);
+    // a percent past Venduá's cap, or finer than a basis point, is a note, never a cut
+    expect(adj({ pix_discount: 60 }).notes).toEqual(['Pix']);
+    expect(adj({ pix_discount: 4.999 }).notes).toEqual(['Pix']);
+  });
+
   test('counts', () => {
     expect(counts).toMatchObject({
-      categories: 2,
-      products: 11,
+      categories: 3,
+      products: 13,
       hidden: 3,
-      photos: 11,
-      optionGroups: 4,
+      photos: 13,
+      optionGroups: 5,
       hours: 4,
       zones: 2,
       paymentMethods: 4,

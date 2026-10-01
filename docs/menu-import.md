@@ -417,8 +417,8 @@ Read on 2026-10-01 from `instadelivery.com.br/queropudimgourmet` (one public req
 
 - **Comes over:** 4 categories and 23 products — prices, descriptions, one photo each, stock
   counts, "Novidade" and "Mais vendido" badges, two sold out; no option groups. Hours for all
-  seven days, including Friday's two shifts. Pickup only (customers book their own Uber
-  delivery, which the welcome message explains). Minimum order R$ 20, prep time 15 min. Pix,
+  seven days, including Friday's two shifts. Pickup (customers book their own Uber delivery,
+  which the welcome message explains). Minimum order R$ 20, prep time 15 min. Pix,
   cash and card at pickup; the Pix key. Logo, cover, colours, WhatsApp, Instagram, address and the
   welcome message.
 - **Doesn't:**
@@ -430,6 +430,9 @@ Read on 2026-10-01 from `instadelivery.com.br/queropudimgourmet` (one public req
     programme, points for following on Instagram, the birthday and "saudade" WhatsApp messages,
     the checkout upsell and the 20-minute scheduling slots.
   - The Pix beneficiary is 38 characters; it is shortened to 25 for the merchant to confirm.
+  - Delivery: the store has `fee_type` −3, "taxa de entrega a combinar", a fee told after the
+    order. Venduá charges a zone's fee, so delivery comes in off with a note to set up zones if
+    the merchant delivers (added in phase 3 step 2, when `fee_type` was read).
 - Photos are 500×500 JPEG at quality 50 and the cover is 475×230: fine for product cards, thin
   for a hero. The preview should suggest a better cover.
 - **Acceptance:** importing that URL into a fresh tenant yields a catalog that needs no edits, and
@@ -482,17 +485,37 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
      tiers are `feesKm[]` (`km`, `price`, `estimate`, `no_delivery`). A pizzeria with 78 option
      lists imports with one product hidden (a required list with nothing visible), and km tiers
      past the last delivering one are read as the edge of the area, not a gap.
-   - Still not applied, only noted (their exact meaning isn't confirmed): `item_discount`
-     (product hidden), a second price (`price2`, product hidden), sized pizza categories
-     (`size1`/`size2`, products hidden), per-method discount/surcharge fields, free-delivery
-     rules on fees (`free_delivery`, `price_free`), and a "no delivery" km band inside the area.
-     Settling them means reading values from other merchants' stores, which phase 2's session
-     couldn't do; phase 3 step 2 does it.
+   - Left as notes in phase 2 because their meaning wasn't confirmed, settled in phase 3 step 2
+     (2026-10-01) from the storefront's own checkout code and two pizzas priced in a browser:
+     - **Pizza lists** charge every flavour picked at the dearest one's price (½ R$ 20 + ½
+       R$ 25,50 = R$ 51,00), not the dearest once as phase 2 mapped it, which imported such pizzas
+       at half price. A list with a fixed number of flavours (all seen: 2 of 2) is
+       `most_expensive` with each price × that number; one where the number varies is hidden as
+       `pizza_pricing`.
+     - `fee_type` picks the fee model: −1 neighbourhoods, −2 km tiers, −3 "a combinar" (told
+       after the order), any other value a flat fee in reais. Phase 2 read both lists whatever
+       the type, and stores keep the unused one: only the live list is read now; −3 and a flat
+       fee have no area to place, so delivery comes in off with a note
+       (`delivery_fee_later`, `delivery_flat_fee`).
+     - Free delivery: subtotal ≥ a neighbourhood's `free_delivery`, > a tier's `price_free` (one
+       cent past it in whole cents), or ≥ the store's own `free_delivery` → `freeDeliveryOverCents`
+       on each zone, the lowest that applies.
+     - Payment percents (`pix_discount`, `cash_discount`, `debit_card_discount`, `debt_increment`,
+       `credit_increment`, `ticket_increment`, store-wide `discount`) are percents of the subtotal
+       keyed on the platform's payment ids → `payments.adjustments`, when every source method
+       mapped to one Venduá method carries the same percent and none carries both a discount and
+       an increment (each is rounded on its own there). A pickup discount (`takeaway_discount`)
+       wins over the payment's own on pickup orders, so with pickup on, those stay notes.
+     - `item_discount` applies only through the item's own share link: the product comes over at
+       its menu price with a `link_discount` note. `price2` and a pizza category's
+       `size1`/`size2` are never read by the storefront: the product comes over at `price1`.
+       Item `type` 2 is sold by weight (price per kg): hidden as `sold_by_weight`.
+     - A "no delivery" km band inside the area stays a note: radius zones are discs.
    - The CRM import on a lead's store, planned for phase 3, was built here.
 3. **More adapters**, planned step by step in [menu-import-phase3.md](menu-import-phase3.md):
    1. Re-verify every platform's request chain (the gate). Done 2026-10-01: every readable chain
       answers ([§3](#3-platforms)); the drift is in [Appendix A](#appendix-a--platform-notes).
-   2. Settle the Instadelivery fields above.
+   2. Settle the Instadelivery fields above. Done 2026-10-01.
    3. One adapter per PR, with its fixtures: Cardápio Web, OlaClick, Takeat, Delivery Direto,
       Saipos, Goomer.
    4. Custom domains.
@@ -525,15 +548,18 @@ fields as built once its adapter lands. The checks are plain GETs with the impor
 `Accept: application/json`, no cookies, at least 1 s apart per host; request counts are for the
 largest store read.
 
-- **Instadelivery** — `GET app.instadelivery.com.br/api/stores/by-slug/<slug>`. `groups[]` (order,
-  `is_pizza`, weekday flags, hours) → `itens[]` (`price1` in reais, `from_price`, `strike_price`,
-  `image` + `image_2…5` on a DigitalOcean Spaces CDN, `stock_control`/`stock`, `is_best_seller`,
-  `is_newest`, `custom_tag*`, `points`, weekday flags) → `complementos[]` (`min`, `max`,
-  `is_pizza`, `only_one`, options in `complements[]` with `price`, `max_quantity`, `is_invisible`,
-  stock; pizza lists charge the most expensive flavour). Store: `times`
-  (per shift), `payment_methods[]` by name, `fees` (neighbourhood), `feesKm`, `minimum_order`,
-  `wait_time`, `take_out`, `pix`/`pix_type`/`pix_infos`, `design` (logo, background, colours).
-  Hidden items are absent.
+- **Instadelivery** — `GET app.instadelivery.com.br/api/stores/by-slug/<slug>`. As built
+  (phase 2, step 2 of phase 3): `groups[]` (order, weekday flags, hours) → `itens[]` (`price1`
+  in reais, `strike_price`, `image` + `image_2…5` on a DigitalOcean Spaces CDN,
+  `stock_control`/`stock`, `is_best_seller`, `is_newest`, `custom_tag*`, weekday flags, `type`
+  2 = by weight, `item_discount` = a link-only percent) → `complementos[]` (`min`, `max`,
+  `is_pizza`: every flavour at the dearest one's price, `only_one`, options in `complements[]`
+  with `price`, `max_quantity`, `is_invisible`, stock). Store: `times` (per shift),
+  `payment_methods[]` (ids fixed by the platform: 2 cash, 1307/46 Pix, 7 debit, 8/42/49 credit,
+  45 voucher), the payment percents, `fee_type` with `fees` (neighbourhood) or `feesKm`,
+  `free_delivery`, `minimum_order`, `wait_time`, `take_out`, `pix`/`pix_type`/`pix_infos`,
+  `design` (logo, background, colours). Hidden items are absent; `price2`, `from_price` and a
+  category's `size1`/`size2` aren't read by the storefront.
   - _Checked 2026-10-01_ (the user's store and two pizzerias through `import:probe --codes`, raw
     payloads of ten more for step 2): works as documented. 1 request, 36–450 KB. Images on
     `instadelivery-public.nyc3.cdn.digitaloceanspaces.com` (`image/jpeg`). New, from the

@@ -29,6 +29,7 @@ const HIDES = new Set([
   'pizza_pricing',
   'pizza_sizes',
   'second_price',
+  'sold_by_weight',
 ]);
 
 export const hidesProduct = (l: ImportLost) => l.scope === 'product' && HIDES.has(l.code);
@@ -59,7 +60,9 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'promo_unreadable':
       return `${s} tem um desconto que não conseguimos ler. Confira o preço.`;
     case 'pizza_pricing':
-      return `${s}: não deu para saber se vários sabores cobram o mais caro ou a soma. Confira em Opções.`;
+      return `${s}: o jeito de cobrar os sabores${d ? ` de ${q(d)}` : ''} não tem igual aqui. Confira o preço em Opções antes de mostrar.`;
+    case 'sold_by_weight':
+      return `${s} é vendido por peso no ${from}. Aqui o preço é por unidade: confira antes de mostrar.`;
     case 'second_price':
       return `${s} tem dois preços no ${from}. Confira qual vale e mostre.`;
     case 'pizza_sizes':
@@ -80,6 +83,8 @@ export function lostLine(l: ImportLost, platform: string): string {
       return `${s} não está à venda em nenhum dia e ficou de fora.`;
     case 'minimum_quantity':
       return `${s} pedia no mínimo ${d ?? 'algumas'} unidades. Aqui não tem mínimo por produto.`;
+    case 'link_discount':
+      return `${s} tinha ${d ? `${d}% de ` : ''}desconto só para quem abria o link dele. Aqui veio pelo preço do cardápio; para um desconto, crie um cupom em Marketing.`;
     case 'free_delivery':
       return `${s} tinha entrega grátis. Aqui a entrega grátis é por região, em Loja › Entrega.`;
     case 'name_shortened':
@@ -123,7 +128,9 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'payment_method':
       return `A forma de pagamento ${q(d)} não tem igual aqui e ficou de fora.`;
     case 'payment_adjustment':
-      return `O desconto ou acréscimo para pagar com ${d ?? 'uma forma de pagamento'} não vem. Configure em Pagamentos.`;
+      if (d === 'retirada')
+        return 'O desconto para quem retira na loja não vem: aqui o desconto é por forma de pagamento, em Pagamentos.';
+      return `O desconto ou acréscimo para pagar com ${d ?? 'uma forma de pagamento'} não vem igual${d === 'cartão' ? ' (aqui débito e crédito são uma forma só)' : ''}. Configure em Pagamentos.`;
     case 'pix_unreadable':
       return 'Não conseguimos ler a chave Pix. Cadastre em Pagamentos.';
     case 'pix_beneficiary_shortened':
@@ -133,7 +140,11 @@ export function lostLine(l: ImportLost, platform: string): string {
     case 'delivery_fees_unreadable':
       return 'Não conseguimos ler as taxas de entrega. Cadastre as regiões em Loja › Entrega.';
     case 'delivery_gap':
-      return `No ${from}, a faixa até ${d ?? '?'} km não tinha entrega. Aqui as faixas por km são círculos: confira as regiões em Loja › Entrega.`;
+      return `No ${from}, não havia entrega na faixa até ${d ?? '?'} km, dentro da área. Aqui cada faixa por km é um círculo inteiro, então quem mora ali cai na faixa seguinte e pode pedir. Se não entrega lá, desenhe a área em Loja › Entrega.`;
+    case 'delivery_fee_later':
+      return `No ${from}, a taxa de entrega era combinada depois do pedido. Aqui a taxa vem da região: se você entrega, cadastre as regiões em Loja › Entrega.`;
+    case 'delivery_flat_fee':
+      return `No ${from}, a entrega ${d === 'grátis' ? 'era grátis' : `custava ${d ?? 'o mesmo'}`} para qualquer endereço. Aqui a entrega é por região: cadastre a sua área em Loja › Entrega.`;
     case 'free_delivery_rule':
       return `A entrega grátis do ${from} não vem. Configure por região em Loja › Entrega.`;
     case 'delivery_distance_straight_line':
