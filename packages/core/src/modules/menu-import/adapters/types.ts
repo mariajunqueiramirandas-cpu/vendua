@@ -1,4 +1,4 @@
-import type { ImportHttp } from '../http.ts';
+import type { ImportHttp, ImportLimits } from '../http.ts';
 import type { MenuImportV1, Platform, SourceInfo } from '../doc.ts';
 
 /** One platform (docs/menu-import.md §4.2). `match` and `map` are pure; `read` is the only I/O. */
@@ -8,6 +8,8 @@ export interface Adapter {
   match(url: URL): { ref: string } | null;
   /** every host http.ts may call for this adapter; an image entry may add a path prefix */
   hosts: { api: string[]; images: string[] };
+  /** a larger read budget than `LIMITS` (http.ts), for a platform read one request per product */
+  limits?: ImportLimits;
   /** reads the store through `http`, within its request budget */
   read(ref: string, http: ImportHttp): Promise<unknown>;
   /** platform JSON → Venduá document, including what was lost; allowlisted fields only */

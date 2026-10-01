@@ -136,6 +136,8 @@ interface Adapter {
   match(url: URL): { ref: string } | null;
   /** every host http.ts may call for this adapter */
   hosts: { api: string[]; images: string[] };
+  /** a larger read budget than the default, for a platform read one request per product */
+  limits?: { importMs?: number; requests?: number };
   /** the only network step: reads the store through `http`, within its request budget */
   read(ref: string, http: ImportHttp): Promise<unknown>;
   /** pure: platform JSON -> Venduá document, including what was lost */
@@ -265,6 +267,32 @@ writer for "a whole menu", tested once.
 6. **Expiry** — a `ready` import not applied within 24 h becomes `expired` and its document is
    cleared; its prices would be stale.
 
+**Custom domains (phase 3, step 4 — proposed, not built).** A store on the merchant's own
+domain matches no adapter by host. The design keeps the rule that no user-supplied host receives
+a request wherever a platform allows it:
+
+1. **Start.** A URL whose host matches no adapter and no blocked platform, and is a public
+   hostname (a dot, no IP literal, not `localhost`/`.local`/`.internal`, ≤ 253 characters), is
+   accepted as a pending read: `platform` null, `source_ref` the lowercased host, the same
+   rate limits. Migration: `menu_imports.platform` drops `not null`; the per-platform lease
+   count treats null as its own platform.
+2. **Placing the host.** An adapter may have `lookup(host, http)` → its ref or null, on its own
+   allowlisted hosts. The job asks them in a fixed order and the first claim sets the row's
+   `platform` and `source_ref` before the normal read, within the same budget:
+   - OlaClick: `api.olaclick.app/ms-companies/public/hosts/<host>` (its read already starts
+     there).
+   - Saipos: `delivery-api.saipos.com/v1/stores?filter={"domain_name":"<host>"}` (same).
+   - Goomer: a DNS CNAME query for the host; `<slug>.goomer.app` gives the slug. DNS only —
+     nothing is sent to the merchant's server.
+3. **Nothing claims it** → `NOT_FOUND`, and the admin asks for the platform's own link
+   ("cole o link da loja no Cardápio Web, Delivery Direto, …").
+4. **Not covered without a fingerprinting GET:** Cardápio Web (the server writes the slug into
+   the page it serves for the host) and Delivery Direto (the domain's `/` redirects to
+   `/<brand>`). Both would need §4.5's single GET to the merchant's host (DNS resolved once,
+   private/loopback/link-local refused, connect to the checked IP, no redirects followed,
+   ≤ 256 KB). Built only if the user approves it; until then those merchants paste the
+   platform link.
+
 `menu_imports` (migration 0069): `id`, `tenant_id` (RLS like every table), `created_by`,
 `platform`, `source_url`, `source_ref`, `status`, `error_code`, `doc jsonb` (≤ 2 MB), `counts
 jsonb`, `mode`, `sections jsonb`, `result jsonb`, `images_total`, `images_done`, the job's
@@ -305,8 +333,12 @@ As built:
   resolver that refuses private, loopback and link-local addresses after DNS
   ([plan, step 4](menu-import-phase3.md#5-step-4--custom-domains-one-pr-after-the-adapters-it-needs)).
 - Caps: 10 s per request, 60 s per import, 5 MB per JSON response, 8 MB per image, 300 requests
-  per import (Goomer reads options per product), at least 250 ms between requests to one host,
-  at most two concurrent imports per platform.
+  per import, at least 250 ms between requests to one host, at most two concurrent imports per
+  platform. An adapter can carry a larger budget (`limits`): Goomer, which asks for each
+  product's options, has 150 s and 600 requests. The read lease is derived from the largest
+  budget plus 30 s, so a second worker never reclaims a row mid-read. Reads run side by side (up
+  to eight per process), so a long one never holds another store's back; within a read, the first
+  failure (a block, the deadline) stops every request still to be made.
 - An honest `User-Agent` naming Venduá. No browser emulation, no cookies, no challenge solving.
   A 403, a 429 or a challenge page is `BLOCKED`, not a retry loop.
 - **Allowlisted fields only.** `map` copies named fields and nothing else survives. At least one
@@ -519,8 +551,8 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
       answers ([§3](#3-platforms)); the drift is in [Appendix A](#appendix-a--platform-notes).
    2. Settle the Instadelivery fields above. Done 2026-10-01.
    3. One adapter per PR, with its fixtures: Cardápio Web, OlaClick, Takeat, Delivery Direto,
-      Saipos, Goomer. Built: Cardápio Web, OlaClick, Takeat, Delivery Direto and Saipos (helpers
-      two adapters share live in `adapters/shared.ts`). A note never quotes a CNPJ, phone or
+      Saipos, Goomer. Done 2026-10-01: all six built (helpers two adapters share live in
+      `adapters/shared.ts`; Goomer reads with a budget of its own). A note never quotes a CNPJ, phone or
       e-mail a merchant typed into a label: `validateDoc` blanks them. An average maps only where it can't fall on a
       half cent: each platform rounds a float its own way. A minimum that applies to delivery only there goes on the delivery
       zones: a store minimum here binds pickup too. Items priced only by a required list where the customer picks a
@@ -770,9 +802,37 @@ delivery-api.saipos.com/v1/stores?filter={"domain_name":"<host>"}` (`[]` → `NO
     `id_store_variation`. A category is per item (`category_item`). No WhatsApp and no fee table
     (fees per address); a payment type's `rate` is the merchant's card fee, not a surcharge.
     Images: `static.saipos.com` + the relative `img_path`. Custom domain: the same lookup by host.
-- **Goomer** — `GET api-go.goomer.app/v2/establishments/<slug>/info`, then the menu URL it names,
-  then one option-group request per product. Sizes as `prices[]`; option groups with min, max and
-  `repeat`; settings as ~180 `mm_*` keys, many holding JSON strings. Many stores are dormant.
+- **Goomer** — as built (phase 3): the link is `<slug>.goomer.app` or `www.goomer.app/<slug>`.
+  `GET api-go.goomer.app/v2/establishments/<slug>/info` (404 → `NOT_FOUND`; `is_abrahao`, the
+  newer menu on another API, → `UNREADABLE`), then the menu URL it names, only when it is
+  `www.goomer.app/webmenu/<slug>/menu/<version>` (none, or an empty menu: `NOT_FOUND`, as dormant
+  stores are), then `mobile.goomer.app/webmenu/<slug>/product/<id>/optiongroups/<version>` for
+  every product, five at a time within the pacing; a server error there is asked once more
+  after a second, and a product whose lists still won't read hides (`options_unreadable`).
+  Budget: 150 s, 600 requests. What shows follows its webmenu bundle (read 2026-10-01).
+  Categories: `group_name` in the order they first appear. Prices: one → the price; several →
+  a required "Escolha 1 opção" list (the webmenu's own words), base the cheapest. Lists: every
+  pick adds its price (the old option groups are all `Individual`); min 1 and max 1 is one
+  pick, `repeat` a quantity per option up to the max, else distinct options; max 0 → 99 as
+  there; empty optional lists skipped; the "a partir de" floor lifted. `limit_age` →
+  `adults_only` (asked at checkout there); `suggestions` → `upsell`; product and category
+  `hours` aren't enforced by either webmenu bundle, so they aren't read. Settings are strings
+  ("true", JSON): parsed only where mapped. Hours from `info.hours` (the server's pick of fixed
+  or custom): a row covers a weekday range; a close before the open is that day's early hours
+  and its evening; 00:00–00:00 is all day; none at all is always open. Delivery by
+  `mm_delivery_zone_type`: `dynamic` → its active bands as store-centred discs (fee, ETA unless
+  `hide_time`; the distance there is a route Goomer's server measures, a
+  `delivery_distance_straight_line` note; every band off is `delivery_fees_unreadable`); `static` → `delivery_flat_fee` (with no fee set, the
+  old single fee when it's on, else "taxa a combinar", `delivery_fee_later`); `neighborhood` →
+  `delivery_by_address` (kept by an id of Goomer's address lookup). The delivery minimum goes on
+  the bands; free delivery is strictly above `mm_free_delivery_minimum_value` there, so one cent
+  past it here. Store: name, the welcome message as the announcement (not the platform's
+  default), WhatsApp, address and coordinates from `settings.address`, logo, `mm_main_color`,
+  `mm_takeaway_time`, pickup. Payments: cash, credit/debit → card on delivery, voucher, Pix with
+  the key from `mm_payment_pix_info` only when its shape can't be two things and Venduá's
+  `normalizePixKey` accepts it (eleven bare digits are a CPF or a mobile; anything else is
+  `pix_unreadable`); Mercado Pago, Tuna and VR links → `online_payment`; a
+  pickup discount, coupons, scheduling and in-store ordering are notes.
   - _Checked 2026-10-01_ (two pizzerias and an açaí shop): works with drift. The menu URL is
     `www.goomer.app/webmenu/<slug>/menu/<version>` (a flat `products[]` with `group_id`,
     `group_name`); option groups moved to

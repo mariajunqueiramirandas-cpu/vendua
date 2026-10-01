@@ -6,15 +6,16 @@ import { withTenant, type Sql } from '../../platform/db.ts';
 import { log } from '../../platform/log.ts';
 import { emitAdminTx } from '../../admin/live.ts';
 import { controlTx } from '../control.ts';
-import { adapterFor } from './adapters/index.ts';
+import { ADAPTERS, adapterFor } from './adapters/index.ts';
 import { TooLarge, validateDoc } from './doc.ts';
-import { createImportHttp, ImportFailure, type FailCode } from './http.ts';
+import { createImportHttp, ImportFailure, LIMITS, type FailCode } from './http.ts';
 import { IMAGE_ATTEMPTS, runImageJob, type ImageJob } from './images.ts';
 
 const importLog = log.child({ mod: 'menu-import' });
 
 const TICK_MS = 3_000;
-const READ_LEASE = '90 seconds';
+// a read must end before its lease does, or a second worker reclaims the row mid-read
+const READ_LEASE = `${Math.max(LIMITS.importMs, ...ADAPTERS.map((a) => a.limits?.importMs ?? 0)) / 1000 + 30} seconds`;
 const IMAGE_LEASE = '2 minutes';
 const READ_ATTEMPTS = 3;
 const PER_PLATFORM = 2;
@@ -77,6 +78,7 @@ export async function readImport(d: ImportJobDeps, row: Claimed): Promise<void> 
   try {
     const http = createImportHttp({
       hosts: adapter.hosts.api,
+      ...(adapter.limits ? { limits: adapter.limits } : {}),
       ...(d.fetch ? { fetch: d.fetch } : {}),
     });
     const raw = await adapter.read(row.source_ref, http);
@@ -173,12 +175,17 @@ export async function sweepImports(sql: Sql): Promise<void> {
 }
 
 /** Reads waiting imports, one at a time. */
+const MAX_READS = PER_PLATFORM * 4;
+
+/** Claims what it can and runs those reads side by side; resolves when they have all ended. */
 export async function runReads(d: ImportJobDeps): Promise<void> {
-  for (let i = 0; i < PER_PLATFORM * 4; i++) {
+  const reads: Promise<void>[] = [];
+  for (let i = 0; i < MAX_READS; i++) {
     const row = await claimRead(d.sql);
     if (!row) break;
-    await readImport(d, row);
+    reads.push(readImport(d, row));
   }
+  await Promise.all(reads);
 }
 
 /** Drains the image queue, IMAGES_AT_ONCE at a time (http.ts paces each host). */
@@ -234,13 +241,25 @@ function loop(name: string, work: () => Promise<void>) {
 
 export function startMenuImportJobs(d: ImportJobDeps): () => void {
   let lastSweep = 0;
-  // reads never wait behind a long photo queue
+  let reading = 0;
+  // reads never wait behind a long photo queue, nor behind each other: a Goomer read asks
+  // for every product and can take minutes
   const reads = loop('read', async () => {
     if (Date.now() - lastSweep > 60_000) {
       lastSweep = Date.now();
       await sweepImports(d.sql);
     }
-    await runReads(d);
+    while (reading < MAX_READS) {
+      const row = await claimRead(d.sql);
+      if (!row) break;
+      reading++;
+      void readImport(d, row)
+        .catch((err) => importLog.error({ err, import: row.id }, 'menu read failed to settle'))
+        .finally(() => {
+          reading--;
+          tick();
+        });
+    }
   });
   const images = loop('images', () => runImages(d));
   const tick = () => {

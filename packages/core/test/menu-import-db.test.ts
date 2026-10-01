@@ -151,9 +151,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('menu import (db)', () => {
     const unsupported = await manager('POST', '/imports', { url: 'https://minha-loja.com.br' });
     expect(unsupported.status).toBe(422);
     expect(unsupported.body.error.code).toBe('IMPORT_UNSUPPORTED');
-    const goomer = await manager('POST', '/imports', { url: 'https://pizzaria.goomer.app' });
-    expect(goomer.body.error).toMatchObject({ code: 'IMPORT_UNSUPPORTED' });
-    expect(goomer.body.error.details?.platform ?? goomer.body.error.platform).toBe('goomer');
+    // a platform's own page is not a store
+    const page = await manager('POST', '/imports', { url: 'https://www.goomer.app/' });
+    expect(page.status).toBe(422);
+    expect(page.body.error.code).toBe('IMPORT_UNSUPPORTED');
     const anota = await manager('POST', '/imports', { url: 'https://pedido.anota.ai/loja/x' });
     expect(anota.status).toBe(422);
     expect(anota.body.error.code).toBe('IMPORT_BLOCKED');

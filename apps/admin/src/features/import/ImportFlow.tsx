@@ -342,7 +342,10 @@ function Reading({
           Lendo o cardápio{platform ? ` no ${platformName(platform)}` : ''}…
         </p>
         <p className="t-body text-muted">
-          Leva alguns segundos. Pode deixar esta tela aberta: a prévia aparece aqui.
+          {platform === 'goomer'
+            ? 'O Goomer mostra um produto de cada vez: pode levar alguns minutos.'
+            : 'Leva alguns segundos.'}{' '}
+          Pode deixar esta tela aberta: a prévia aparece aqui.
         </p>
       </div>
       {onCancel ? (

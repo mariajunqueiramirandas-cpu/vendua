@@ -80,6 +80,10 @@ const READABLE: [name: string, host: RegExp][] = [
     'saipos',
     /^(?!(www|app|api|conta|meajuda|delivery-api|static|blog)\.)[a-z0-9-]+\.saipos\.com$/i,
   ],
+  [
+    'goomer',
+    /^(?!(api|api-go|mobile|static|ssr-api|blog|app|admin|painel|ajuda|help|status)\.)([a-z0-9-]+\.)?goomer\.app$/i,
+  ],
 ];
 const readable = (site: string | null | undefined) => {
   try {

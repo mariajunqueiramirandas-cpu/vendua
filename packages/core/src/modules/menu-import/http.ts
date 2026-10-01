@@ -35,10 +35,17 @@ export interface ImportHttp {
   readonly used: number;
 }
 
+export interface ImportLimits {
+  importMs?: number;
+  requests?: number;
+}
+
 export interface HttpOptions {
   hosts: string[];
   fetch?: Fetch;
-  /** overall deadline (epoch ms); defaults to now + LIMITS.importMs */
+  /** an adapter's own budget, in place of LIMITS.importMs / LIMITS.requests */
+  limits?: ImportLimits;
+  /** overall deadline (epoch ms); defaults to now + the budget's importMs */
   deadline?: number;
   maxRequests?: number;
 }
@@ -169,8 +176,8 @@ async function get(
 
 export function createImportHttp(opts: HttpOptions): ImportHttp {
   const doFetch: Fetch = opts.fetch ?? ((input, init) => fetch(input, init));
-  const deadline = opts.deadline ?? Date.now() + LIMITS.importMs;
-  const max = opts.maxRequests ?? LIMITS.requests;
+  const deadline = opts.deadline ?? Date.now() + (opts.limits?.importMs ?? LIMITS.importMs);
+  const max = opts.maxRequests ?? opts.limits?.requests ?? LIMITS.requests;
   let used = 0;
   const spend = () => {
     if (++used > max) throw new ImportFailure('TOO_LARGE', `over ${max} requests`);

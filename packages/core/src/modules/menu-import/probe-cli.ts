@@ -42,7 +42,10 @@ function keys(v: unknown, path = '', out = new Map<string, Set<string>>(), depth
 }
 
 const started = Date.now();
-const http = createImportHttp({ hosts: r.adapter.hosts.api });
+const http = createImportHttp({
+  hosts: r.adapter.hosts.api,
+  ...(r.adapter.limits ? { limits: r.adapter.limits } : {}),
+});
 try {
   const raw = await r.adapter.read(r.ref, http);
   if (args.includes('--keys')) {

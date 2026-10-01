@@ -6,12 +6,14 @@ import olaFixture from './fixtures/menu-import/olaclick.json';
 import tkFixture from './fixtures/menu-import/takeat.json';
 import ddFixture from './fixtures/menu-import/deliverydireto.json';
 import spFixture from './fixtures/menu-import/saipos.json';
+import gmFixture from './fixtures/menu-import/goomer.json';
 import { recognise, type Adapter } from '../src/modules/menu-import/adapters/index.ts';
 import { cardapioweb } from '../src/modules/menu-import/adapters/cardapioweb.ts';
 import { olaclick } from '../src/modules/menu-import/adapters/olaclick.ts';
 import { takeat } from '../src/modules/menu-import/adapters/takeat.ts';
 import { deliverydireto } from '../src/modules/menu-import/adapters/deliverydireto.ts';
 import { saipos } from '../src/modules/menu-import/adapters/saipos.ts';
+import { goomer } from '../src/modules/menu-import/adapters/goomer.ts';
 import { instadelivery } from '../src/modules/menu-import/adapters/instadelivery.ts';
 import { TEMPLATE_TOKENS } from '../src/modules/menu-import/apply.ts';
 import { unitPriceCents } from '../src/modules/cart.ts';
@@ -362,7 +364,7 @@ describe('recognise', () => {
     expect(recognise('x'.repeat(501)).kind).toBe('invalid');
   });
 
-  test('anota.ai and iFood are blocked; known platforms without an adapter are named', () => {
+  test('anota.ai and iFood are blocked; other hosts are no platform', () => {
     expect(recognise('https://pedido.anota.ai/loja/x')).toEqual({
       kind: 'blocked',
       platform: 'anotaai',
@@ -372,10 +374,6 @@ describe('recognise', () => {
       platform: 'ifood',
     });
     expect(recognise('https://www.saipos.com')).toEqual({ kind: 'unsupported', platform: null });
-    expect(recognise('https://pizzaria.goomer.app')).toEqual({
-      kind: 'unsupported',
-      platform: 'goomer',
-    });
     expect(recognise('https://minha-loja.com.br')).toEqual({ kind: 'unsupported', platform: null });
   });
 });
@@ -723,6 +721,7 @@ async function fakeRead(
     fetch: async (url, init) => {
       seen.push({ url, headers: init.headers as Record<string, string> });
       const body = routes[url];
+      if (typeof body === 'function') return (body as () => Response)();
       return body === undefined
         ? new Response('{"message":"not found"}', { status: 404 })
         : new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
@@ -1927,6 +1926,289 @@ describe('saipos', () => {
       paymentMethods: 3,
       logo: true,
       cover: true,
+    });
+  });
+});
+
+describe('goomer', () => {
+  const { doc, counts } = mapped(goomer, gmFixture, 'pizzariaexemplo');
+  const all = doc.categories.flatMap((c) => c.products);
+  const byName = new Map(all.map((p) => [p.name, p]));
+  const lostCodes = doc.lost.map((l) => `${l.subject ?? ''}:${l.code}`);
+
+  test('recognise: a store subdomain or a www path, not the platform pages', () => {
+    const ref = (u: string) => {
+      const r = recognise(u);
+      return r.kind === 'ok' && r.adapter.platform === 'goomer' ? r.ref : null;
+    };
+    expect(ref('https://pizzariaexemplo.goomer.app')).toBe('pizzariaexemplo');
+    expect(ref('https://www.goomer.app/PizzariaExemplo/produto/1')).toBe('pizzariaexemplo');
+    expect(ref('goomer.app/pizzariaexemplo')).toBe('pizzariaexemplo');
+    for (const u of [
+      'https://www.goomer.app/',
+      'https://www.goomer.app/webmenu/pizzariaexemplo/menu/1',
+      'https://static.goomer.app/x.png',
+      'https://pizzariaexemplo.goomer.app.evil.example/',
+    ])
+      expect(ref(u)).toBeNull();
+  });
+
+  test('read: info, the menu it names, each product lists (a server error asked once more)', async () => {
+    const menu = 'https://www.goomer.app/webmenu/pizzariaexemplo/menu/1790000000000';
+    const og = (id: number) =>
+      `https://mobile.goomer.app/webmenu/pizzariaexemplo/product/${id}/optiongroups/260101000000`;
+    let failures = 0;
+    const routes: Record<string, unknown> = {
+      'https://api-go.goomer.app/v2/establishments/pizzariaexemplo/info': {
+        version: '2.0',
+        info: gmFixture.info,
+        settings: gmFixture.settings,
+      },
+      [menu]: { products: gmFixture.products },
+    };
+    gmFixture.products.forEach((p, i) => {
+      const g = gmFixture.groups[i];
+      if (g) routes[og(p.id)] = { option_groups: g };
+    });
+    // the first ask for the pizza's lists meets a passing server error
+    const pizza = routes[og(100)];
+    routes[og(100)] = () =>
+      failures++ === 0
+        ? new Response('bad gateway', { status: 502 })
+        : new Response(JSON.stringify(pizza), { headers: { 'content-type': 'application/json' } });
+    const { raw, seen } = await fakeRead(goomer, 'pizzariaexemplo', routes);
+    expect(seen).toHaveLength(2 + gmFixture.products.length + 1);
+    expect(mapped(goomer, raw).doc.categories).toEqual(doc.categories);
+    // the newer menu isn't read; a dormant store is not found
+    const info = routes['https://api-go.goomer.app/v2/establishments/pizzariaexemplo/info'] as {
+      info: Record<string, unknown>;
+      settings: Record<string, unknown>;
+    };
+    const variant = (patch: (i: typeof info) => void) => {
+      const c = structuredClone(info);
+      patch(c);
+      return { ...routes, 'https://api-go.goomer.app/v2/establishments/pizzariaexemplo/info': c };
+    };
+    await expect(
+      fakeRead(
+        goomer,
+        'pizzariaexemplo',
+        variant((c) => (c.settings.is_abrahao = 'true')),
+      ),
+    ).rejects.toMatchObject({ code: 'UNREADABLE' });
+    await expect(
+      fakeRead(goomer, 'pizzariaexemplo', { ...routes, [menu]: { products: [] } }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // a menu address off the platform is never followed
+    await expect(
+      fakeRead(
+        goomer,
+        'pizzariaexemplo',
+        variant((c) => {
+          c.info.menu = 'https://evil.example/webmenu/x/menu/1';
+          c.settings.menu_url = '';
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(fakeRead(goomer, 'outra', routes)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // a block on one product ends the read: nobody asks for another
+    let asked = 0;
+    const blocked: Record<string, unknown> = { ...routes };
+    for (const p of gmFixture.products)
+      blocked[og(p.id)] = () => {
+        asked++;
+        return new Response('slow down', { status: 429 });
+      };
+    await expect(fakeRead(goomer, 'pizzariaexemplo', blocked)).rejects.toMatchObject({
+      code: 'BLOCKED',
+    });
+    expect(asked).toBeLessThanOrEqual(5);
+  });
+
+  test('a read budget of its own, and a lease that outlasts it', async () => {
+    expect(goomer.limits).toEqual({ importMs: 150_000, requests: 600 });
+    const http = createImportHttp({
+      hosts: ['api.example'],
+      limits: { requests: 2 },
+      fetch: async () => new Response('{}', { headers: { 'content-type': 'application/json' } }),
+    });
+    await http.json('https://api.example/a');
+    await http.json('https://api.example/b');
+    await expect(http.json('https://api.example/c')).rejects.toMatchObject({ code: 'TOO_LARGE' });
+  });
+
+  test('allowlisted fields only — no token, pixel, store code or hash survives', () => {
+    const json = JSON.stringify(doc);
+    expect(json).not.toContain('should-not-appear');
+    expect(json).not.toContain('4242');
+  });
+
+  test('prices: several are one required pick; lists add up; a quantity list repeats', () => {
+    expect(doc.categories.map((c) => c.name)).toEqual(['Pizzas', 'Bebidas', 'Lanches']);
+    const pizza = byName.get('Pizza')!;
+    expect(pizza.priceCents).toBe(4000);
+    expect(pizza.optionGroups.map((g) => [g.name, g.min, g.max])).toEqual([
+      ['Escolha 1 opção', 1, 1],
+      ['Sabores', 1, 2],
+      ['Borda', 0, 1],
+    ]);
+    // Grande, ½ Calabresa ½ Camarão, Catupiry there: 50 + 0 + 10 + 8
+    expect(
+      unitPriceCents(pizza.priceCents, [
+        { pricingRule: 'sum', picks: [{ priceDeltaCents: 1000, qty: 1 }] },
+        {
+          pricingRule: 'sum',
+          picks: [
+            { priceDeltaCents: 0, qty: 1 },
+            { priceDeltaCents: 1000, qty: 1 },
+          ],
+        },
+        { pricingRule: 'sum', picks: [{ priceDeltaCents: 800, qty: 1 }] },
+      ]),
+    ).toBe(6800);
+    expect(byName.get('Refrigerante')).toMatchObject({
+      priceCents: 700,
+      optionGroups: [
+        { options: [{ name: 'Coca-Cola', priceDeltaCents: 100 }, { priceDeltaCents: 0 }] },
+      ],
+    });
+    expect(byName.get('Hambúrguer')!.optionGroups[0]!.options).toEqual([
+      { name: 'Bacon', priceDeltaCents: 400, maxQty: 3 },
+      { name: 'Ovo', priceDeltaCents: 250, maxQty: 3 },
+    ]);
+    // R$ 0 with a required list: its cheapest pick is the starting price
+    expect(byName.get('Açaí')).toMatchObject({ priceCents: 1200 });
+  });
+
+  test("what hides: lists that wouldn't read, a price that isn't one; +18 is a note", () => {
+    expect(byName.get('Sem listas')!.status).toBe('archived');
+    expect(lostCodes).toContain('Sem listas:options_unreadable');
+    expect(byName.get('Calzone')!.status).toBe('archived');
+    expect(byName.get('Preço estranho')!.status).toBe('archived');
+    expect(byName.get('Cerveja')!.status).toBe('active');
+    expect(lostCodes).toContain('Cerveja:adults_only');
+  });
+
+  test('hours: a late close is that day early and late; 00:00–00:00 is all day', () => {
+    expect(doc.hours).toEqual([
+      { days: [0], open: '00:00', close: '23:59' },
+      { days: [2, 3, 4], open: '18:00', close: '23:00' },
+      { days: [5, 6], open: '00:00', close: '01:30' },
+      { days: [5, 6], open: '18:00', close: '23:59' },
+    ]);
+    // none at all: always open
+    const raw = structuredClone(gmFixture) as typeof gmFixture & Record<string, any>;
+    raw.info.hours = [];
+    expect(mapped(goomer, raw).doc.hours).toEqual([
+      { days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '23:59' },
+    ]);
+  });
+
+  test('delivery: distance bands as discs with the delivery minimum; free strictly above', () => {
+    expect(doc.zones).toEqual([
+      {
+        name: 'Até 3 km',
+        kind: 'radius',
+        maxDistanceKm: 3,
+        feeCents: 500,
+        etaMin: 30,
+        etaMax: 50,
+        minOrderCents: 2500,
+        freeDeliveryOverCents: 10001,
+      },
+      {
+        name: 'Até 6 km',
+        kind: 'radius',
+        maxDistanceKm: 6,
+        feeCents: 850,
+        minOrderCents: 2500,
+        freeDeliveryOverCents: 10001,
+      },
+    ]);
+    expect(doc.operations).toEqual({ prepTimeMinutes: 40, pickup: true, delivery: true });
+    // one fee for any address, or none set: notes, no zone
+    const raw = structuredClone(gmFixture) as typeof gmFixture & Record<string, any>;
+    raw.settings.mm_delivery_zone_type = 'static';
+    let d = mapped(goomer, raw).doc;
+    expect(d.zones).toBeUndefined();
+    expect(d.operations?.delivery).toBe(false);
+    expect(d.lost).toContainEqual({
+      scope: 'store',
+      code: 'delivery_flat_fee',
+      detail: 'R$ 10,00',
+    });
+    expect(d.lost).toContainEqual({ scope: 'store', code: 'delivery_minimum', detail: 'R$ 25,00' });
+    raw.settings.mm_delivery_zone_options_static = '';
+    d = mapped(goomer, raw).doc;
+    expect(d.lost).toContainEqual({ scope: 'store', code: 'delivery_fee_later' });
+    raw.settings.mm_delivery_zone_type = 'neighborhood';
+    expect(mapped(goomer, raw).doc.lost).toContainEqual({
+      scope: 'store',
+      code: 'delivery_by_address',
+    });
+  });
+
+  test('store: profile, payments with a CNPJ Pix key, and the notes', () => {
+    expect(doc.store).toEqual({
+      name: 'Pizzaria Exemplo',
+      announcement: { title: 'Pizza no forno a lenha' },
+      whatsapp: '21999990000',
+      address: 'Rua das Pizzas, 42 - Loja 2 - Centro',
+      city: 'Cidade Exemplo',
+      coords: { lat: -22.9, lng: -43.2 },
+      logoUrl: 'https://static.goomer.app/stores/1/logo.png',
+      brandColor: '#C0392B',
+    });
+    expect(doc.payments).toEqual({
+      methods: ['cash', 'card_on_delivery', 'pix'],
+      pix: {
+        key: '00.000.000/0001-00',
+        type: 'cnpj',
+        beneficiary: 'Pizzaria Exemplo',
+        city: 'Cidade Exemplo',
+      },
+    });
+    expect(
+      doc.lost.filter((l) => l.scope === 'store').map((l) => [l.code, l.detail ?? '']),
+    ).toEqual([
+      ['delivery_distance_straight_line', ''],
+      ['payment_adjustment', 'retirada'],
+      ['coupons', ''],
+      ['time_slots', ''],
+      ['upsell', ''],
+      ['online_payment', ''],
+    ]);
+    // a key only when its shape can't be two things, and Venduá could charge to it
+    const raw = structuredClone(gmFixture) as typeof gmFixture & Record<string, any>;
+    const pixFor = (key: string) => {
+      raw.settings.mm_payment_pix_info = JSON.stringify({ key, accountName: 'X' });
+      return mapped(goomer, raw).doc.payments?.pix?.type ?? null;
+    };
+    expect(pixFor('+55 21 99999-0000')).toBe('phone');
+    expect(pixFor('(21) 99999-0000')).toBe('phone');
+    expect(pixFor('loja@example.com')).toBe('email');
+    expect(pixFor('000.000.000-00')).toBe('cpf');
+    expect(pixFor('00000000000100')).toBe('cnpj');
+    for (const key of [
+      '21999990000', // a CPF or a mobile
+      'abcdef1234567890abcdefabcdefabcd', // a random key without its hyphens
+      '(011) 98765-4321',
+      '@pizzaria',
+      '',
+    ])
+      expect(pixFor(key)).toBeNull();
+    expect(mapped(goomer, raw).doc.lost).toContainEqual({ scope: 'store', code: 'pix_unreadable' });
+  });
+
+  test('counts', () => {
+    expect(counts).toMatchObject({
+      categories: 3,
+      products: 9,
+      hidden: 3,
+      zones: 2,
+      paymentMethods: 3,
+      pix: true,
+      logo: true,
     });
   });
 });

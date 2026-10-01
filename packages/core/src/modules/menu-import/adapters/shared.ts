@@ -228,10 +228,17 @@ export function averageExact(g: ImportOptionGroup): boolean {
 export async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
+  // one failure (a block, the deadline) ends the read: nobody takes another item
+  let stopped = false;
   const worker = async () => {
-    while (next < items.length) {
+    while (!stopped && next < items.length) {
       const i = next++;
-      out[i] = await fn(items[i]!);
+      try {
+        out[i] = await fn(items[i]!);
+      } catch (e) {
+        stopped = true;
+        throw e;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));

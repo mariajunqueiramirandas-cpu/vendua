@@ -25,6 +25,7 @@ export const READABLE = [
   'takeat',
   'deliverydireto',
   'saipos',
+  'goomer',
 ];
 
 /** "Instadelivery ou Cardápio Web" — the readable platforms in one phrase. */
