@@ -28,6 +28,7 @@ export const METHOD_LABEL: Record<PayMethod, string> = {
   card_online: 'Cartão pelo Mercado Pago',
   card_on_delivery: 'Cartão na entrega',
   cash: 'Dinheiro',
+  meal_voucher: 'Vale-refeição',
 };
 
 type Pay = { method: PayMethod | string; status: string; online?: boolean | undefined };

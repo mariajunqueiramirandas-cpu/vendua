@@ -1,4 +1,12 @@
-import { ArrowRight, Copy, CreditCard, Money, PixLogo, WarningCircle } from '@phosphor-icons/react';
+import {
+  ArrowRight,
+  Copy,
+  CreditCard,
+  ForkKnife,
+  Money,
+  PixLogo,
+  WarningCircle,
+} from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -18,6 +26,7 @@ import { PixQr } from '../../ui/PixCode.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { useMarkPaid } from '../orders/actions.ts';
+import { AdjustmentLine } from './Adjustments.tsx';
 import { MercadoPagoCard, mpLive, useMpArrival } from './MercadoPago.tsx';
 import { MonthCard, monthName } from './Statement.tsx';
 
@@ -37,6 +46,11 @@ const METHOD: Record<PayMethod, { label: string; Icon: typeof PixLogo; hint: str
     label: 'Cartão na entrega',
     Icon: CreditCard,
     hint: 'Na maquininha, na entrega ou retirada.',
+  },
+  meal_voucher: {
+    label: 'Vale-refeição',
+    Icon: ForkKnife,
+    hint: 'O cartão de vale-refeição na maquininha, na entrega ou retirada.',
   },
   cash: { label: 'Dinheiro', Icon: Money, hint: 'Na entrega ou retirada.' },
 };
@@ -243,8 +257,11 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
         const M = METHOD[m];
         const locked = m === 'card_online' && !live;
         return (
-          <div key={m} className="flex items-center gap-3 py-2">
-            <M.Icon weight="duotone" className={cn('size-7 shrink-0', locked && 'text-faint')} />
+          <div key={m} className="flex items-start gap-3 py-2">
+            <M.Icon
+              weight="duotone"
+              className={cn('mt-3.5 size-7 shrink-0', locked && 'text-faint')}
+            />
             <div className="min-w-0 flex-1">
               <Toggle
                 checked={on(m)}
@@ -255,6 +272,9 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
                 label={M.label}
                 description={hint(m)}
               />
+              {on(m) ? (
+                <AdjustmentLine method={m} label={M.label} data={data} canEdit={canEdit} />
+              ) : null}
             </div>
           </div>
         );

@@ -205,7 +205,8 @@ export function PhotoField({
         onClose={closeCrop}
         onDone={async (photo) => {
           setFile(null);
-          await commit([...photos, photo]);
+          // a single photo ("trocar") replaces it
+          await commit(max === 1 ? [photo] : [...photos, photo]);
         }}
       />
     </div>
