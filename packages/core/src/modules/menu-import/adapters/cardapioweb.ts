@@ -13,6 +13,7 @@ import {
 } from '../doc.ts';
 import { ImportFailure, type ImportHttp } from '../http.ts';
 import {
+  averageExact,
   colour,
   hhmm,
   intersectDays,
@@ -143,10 +144,19 @@ function optionGroup(g: Raw): { group: ImportOptionGroup; exact: boolean } | 'em
       : calc === 'MAX'
         ? ('most_expensive' as const)
         : undefined;
+  const group: ImportOptionGroup = {
+    name,
+    min,
+    max,
+    ...(rule && max > 1 ? { pricingRule: rule } : {}),
+    options,
+  };
   return {
-    group: { name, min, max, ...(rule && max > 1 ? { pricingRule: rule } : {}), options },
-    // MIN (the cheapest) or a rule we don't know: no equivalent here
-    exact: ['', 'SUM', 'MEAN', 'MAX'].includes(calc) || max === 1,
+    group,
+    // MIN (the cheapest) or a rule we don't know: no equivalent here; an average only where it
+    // can't land on a half cent (lodash rounds the float, which can tip a half either way)
+    exact:
+      max === 1 || ['', 'SUM', 'MAX'].includes(calc) || (calc === 'MEAN' && averageExact(group)),
   };
 }
 
@@ -364,6 +374,9 @@ function storeLost(profile: Raw, lost: Lost[]) {
     });
     const free = positiveCents(profile.free_delivery_from);
     if (free) lost.push({ scope: 'store', code: 'free_delivery_rule', detail: reais(free) });
+    // the storefront applies it to delivery only; here a store minimum would bind pickup too
+    const min = positiveCents(profile.minimum_order_value);
+    if (min) lost.push({ scope: 'store', code: 'delivery_minimum', detail: reais(min) });
   }
 }
 
@@ -466,9 +479,6 @@ export const cardapioweb: Adapter = {
       },
       hours: hours(profile),
       operations: {
-        ...((m) => (m !== null ? { minOrderCents: m } : {}))(
-          toCents(profile.minimum_order_value ?? 0),
-        ),
         ...(prep && prep > 0 ? { prepTimeMinutes: Math.round(prep) } : {}),
         pickup: flag(flags.work_with_pick_up_store),
         // fees exist only per address there: no zone to import, the merchant draws them

@@ -519,8 +519,9 @@ the onboarding UI into a blank local tenant: 23 products, 25 images re-hosted.
       answers ([§3](#3-platforms)); the drift is in [Appendix A](#appendix-a--platform-notes).
    2. Settle the Instadelivery fields above. Done 2026-10-01.
    3. One adapter per PR, with its fixtures: Cardápio Web, OlaClick, Takeat, Delivery Direto,
-      Saipos, Goomer. Built: Cardápio Web (helpers two adapters share live in
-      `adapters/shared.ts`). Items priced only by a required list where the customer picks a
+      Saipos, Goomer. Built: Cardápio Web, OlaClick and Takeat (helpers two adapters share live
+      in `adapters/shared.ts`). A minimum that applies to delivery only there goes on the delivery
+      zones: a store minimum here binds pickup too. Items priced only by a required list where the customer picks a
       quantity (a can of soda "×N") keep a base of R$ 0,00, exactly as there; the storefront
       shows that base, not the "a partir de" the old store showed.
    4. Custom domains.
@@ -583,21 +584,23 @@ largest store read.
   and it runs every day all day (`promotional_price_schedules`, else
   `promotional_price_availability`), else the full price and `promo_schedule`. Add-ons:
   `SINGLE` (max 1), `MULTIPLE` (each once), `SUMMABLE` (a quantity per option, `max_quantity` or
-  the group's maximum); `price_calculation_type` `SUM` → sum, `MEAN` → average (the storefront
-  rounds half up with lodash `_.round(x, 2)`, as Venduá does; float noise in the source could
-  still flip an exact half cent), `MAX` → most expensive, `MIN` → hidden `pizza_pricing`.
+  the group's maximum); `price_calculation_type` `SUM` → sum, `MEAN` → average where it can't
+  fall on a half cent (at most two units, every price of one parity: the storefront rounds a
+  float with lodash `_.round`, which can tip a half either way), else hidden `pizza_pricing`;
+  `MAX` → most expensive, `MIN` → hidden `pizza_pricing`.
   Combos: each `combo_steps[]` a one-pick kit slot, the base the sum of step prices, each pick
   its `additional_price`; a pick with a required add-on there doesn't resolve (`kit_unresolved`).
   Badges `best_seller`/`new_item`/`recommended`/`limited_edition`/`offer`, `highlighted`,
   stock, `available_order_timings` scheduled-only → preorder. Store: `name`, the first line of
   `description`, `order_whatsapp`, `instagram`, address (unless `hide_company_address`),
   coordinates, `logo`, `image` (cover), `color`, `business_hours` (several ranges a day;
-  `temporary_state` and `custom_dates` ignored), `minimum_order_value`, `preparation_time`,
+  `temporary_state` and `custom_dates` ignored), `preparation_time`,
   pickup from `flags`. Payments by `kind` (money, pix, credit/debit card, meal/food voucher);
   the Pix key from the JSON in `observation`; online kinds are `online_payment`; a method fee
   (`percentual_fee`/`fixed_fee`, units unverified on in-person methods) is a note. Fees exist
   only per address: delivery comes in off with `delivery_by_address` (the neighbourhood names)
-  and `free_delivery_rule`. Images: `storage.googleapis.com/prod-cardapio-web/` (the platform's
+  `free_delivery_rule` and `delivery_minimum` (`minimum_order_value`, applied to delivery
+  only there). Images: `storage.googleapis.com/prod-cardapio-web/` (the platform's
   bucket only: the host is every Google Cloud bucket's), `cdn.cardapioweb.com.br`.
   - _Checked 2026-10-01_ (a pizzeria and a sweet shop): works with drift. 2 requests whatever the
     size (profile ~10 KB; categories 239 KB for 26 items, 44 add-on lists, 385 options), reais as
@@ -611,11 +614,30 @@ largest store read.
     from the storefront code). Images: `storage.googleapis.com` (items, options, logo, cover) and
     `cdn.cardapioweb.com.br` (banners). Custom domain: no public lookup by host; the server writes
     the slug into the page it serves for the host.
-- **OlaClick** — `GET api.olaclick.app/ms-companies/public/hosts/<host>` → company id; then
-  `ms-products/public/companies/<id>/categories` (menu with modifiers), the company,
-  `ecommerce-settings` and `ms-orders/…/payment-methods`. Variants with `price` and
-  `original_price`, per-variant stock, modifiers with min/max and a per-option `max_limit`.
-  Delivery types: fixed, per km, districts, ranges, area.
+- **OlaClick** — as built (phase 3): the link is any `<store>.ola.click` page; the ref is the
+  host. `GET api.olaclick.app/ms-companies/public/hosts/<host>` → `company_id` (404 when
+  unknown), then `ms-products/public/companies/<id>/categories`, `ms-companies/public/companies/<id>`,
+  its `/ecommerce-settings` and `ms-orders/public/companies/<id>/payment-methods` (5 requests).
+  Reais as numbers. Categories and products by `visible`; the `FAVORITE` category ("Destaques")
+  repeats others' products and becomes a "Destaque" badge. Variants as the storefront offers them
+  (one, or those with a name or a list price): one is the price (`price` when a number, else
+  `original_price`, as the storefront does; a non-numeric `price` hides it; struck-through
+  `original_price` when above it); several are a "Tamanho" group, with the cheapest size's list
+  price struck through when every size is discounted; per-variant stock → a sold-out size.
+  `packaging_price` (an order charge per item) hides the product (`packaging_fee`). Modifiers:
+  `one`/`many`, the minimum only when `required`, `max_modifiers` the units, `max_limit` the
+  quantity per option, prices summed (the storefront's cart). Delivery: only
+  `delivery.prices.type` — `FIXED` (one fee for any address: `delivery_flat_fee`; the
+  distance limit belongs to the per-km mode), `BY_DISTRICT` (neighbourhoods), `BY_AREA` (polygons; `enable_out_of_area` is `delivery_out_of_area`),
+  `BY_RANGE` (discs from `max` in metres; a band starting past the previous end is a
+  `delivery_gap`) and `BY_DRIVE_DISTANCE` (a disc with `starting_price` + `price_per_km`, with the
+  straight-line note); `minimum_amount_for_free` → each zone's free threshold, `average_time` →
+  ETA, `minimum_amount_to_allow` → each zone's minimum (delivery only
+  there; a store minimum here binds pickup too), `takeaway.active` → pickup. Store: `name`,
+  `whatsapp`, `address`, coordinates, `logo_url`, the layout's banner and button colour,
+  `business_hours_settings`. Payments by `code` (cash, pix, credit/debit card, vouchers); online
+  ones are `online_payment`; the Pix key isn't public (`pix_unreadable`). Images:
+  `assets.olaclick.app`.
   - _Checked 2026-10-01_ (a pizzeria and a snack bar): works as documented. 5 requests (host
     lookup; categories 353 KB for 97 products; company; `ecommerce-settings`, served as
     `text/html` with a JSON body; payment methods by order type). An unknown host is a 404. New:
@@ -648,12 +670,31 @@ largest store read.
     `duisktnou8b89.cloudfront.net` (items, options, logo, cover). Custom domain: no lookup API; the
     domain's `/` redirects to `/<brand>`, and the same paths answer identically on
     `deliverydireto.com.br`.
-- **Takeat** — `GET backend-delivery.takeat.app/public/restaurant/<slug>` → restaurant and brand
-  ids; then `…/public/restaurants/menu/<id>?brand_id=<brand>` and `…/delivery-schedules/<id>`.
-  `price` (dine-in) vs `delivery_price`, promo prices, tags, `complement_categories` with
-  `use_average`/`more_expensive_only` and per-option limits. Includes dine-in-only categories and
-  items that must be filtered. The store payload contains credential-like fields: map by
-  allowlist only.
+- **Takeat** — as built (phase 3): `pedido.takeat.app/<slug>`. `GET
+backend-delivery.takeat.app/public/restaurant/<slug>` → `id`, `brand.id` (404 when unknown),
+  then `…/public/restaurants/menu/<id>?gd=true&brand_id=<brand>`,
+  `…/public/restaurants/delivery-schedules/<id>` and, when `delivery_info.allow_delivery_addresses`,
+  `…/public/restaurants/delivery-addresses/<id>` (3–4 requests). Prices are decimal strings. Only
+  what sells for delivery: `is_exclusive` categories are skipped silently, a category with
+  `available_in_delivery: false` takes its items with it (a `dine_in_only` note with the count),
+  and so does a product, group or option. The price is the storefront's first set of
+  `delivery_price_promotion`, `delivery_price`, `price_promotion`, `price`, struck through over
+  the regular one when it's a promo; a delivery price of 0 under a priced item hides it
+  (`price_unreadable`); `use_weight` hides it; `sold_off` is sold out; `delivery_tag_id` → the
+  tag's name. Complements: `question` (else `name`) as the title; `optional` → no minimum (an
+  optional list with a minimum above 1 is noted, `option_minimum`); `limit` the units and an
+  option's `limit` its quantity; prices only when `additional`: `more_expensive_only` → the dearest
+  once, otherwise a sum; `use_average` (never seen true; the storefront adds the average once
+  per line) hides the product (`pizza_pricing`). Times are UTC instants of a Brasília clock:
+  hours per shift (`delivery_active`/`withdrawal_active`), and `enable_times` windows with
+  `active_days` (Sunday first) intersect from category to product. Store: `fantasy_name`,
+  `greeting_message` (announcement), `phone`, `instagram`, `adress`, `avatar`/`brand.file`,
+  `delivery_info` (cover, colour, `time_to_delivery`/`time_to_withdrawal`, pickup and delivery
+  switches); minimums: pickup's as the store's, delivery's on the zones when higher (a lower one
+  is a note). Fees: the neighbourhood table → zones; by distance or area → `delivery_by_address`.
+  Payments: `restaurant_method[0].available` and `delivery_accepts`; `method` CASH, PIX, CREDIT,
+  DEBIT, VOUCHER, else the merchant's label; `pix_auto` is `online_payment`, `clube` is
+  `cashback`; no Pix key is public. Images: `takeat-imgs.takeat.app`.
   - _Checked 2026-10-01_ (seven stores, to settle the dine-in and price fields): works with drift.
     3 requests plus 1 for neighbourhood fees; the menu is one array of 0.13–1.34 MB. Drift: hours
     are at `…/public/restaurants/delivery-schedules/<id>` (the path above answers 400); the

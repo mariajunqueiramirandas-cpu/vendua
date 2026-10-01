@@ -18,7 +18,7 @@ export const PLATFORM: Record<string, string> = {
 export const platformName = (p: string | null | undefined) => (p && PLATFORM[p]) || 'outro app';
 
 /** The platforms Core reads today (its `ADAPTERS`), in the order merchants know them. */
-export const READABLE = ['instadelivery', 'cardapioweb'];
+export const READABLE = ['instadelivery', 'cardapioweb', 'olaclick', 'takeat'];
 
 /** "Instadelivery ou Cardápio Web" — the readable platforms in one phrase. */
 export const readableNames = () => {
@@ -98,6 +98,8 @@ export function lostLine(l: ImportLost, platform: string): string {
       return `${s} era só para retirar na loja. Aqui ele vale para entrega também: confira se é isso.`;
     case 'adults_only':
       return `${s} era só para maiores de 18 anos. Aqui o pedido não pede essa confirmação.`;
+    case 'option_minimum':
+      return `${s}: no ${from}, ${d ? q(d) : 'um grupo de opções'} era “nenhuma ou pelo menos algumas”. Aqui ele ficou opcional, sem mínimo: confira em Opções.`;
     case 'dine_in_only':
       return `${s} é só para consumo no local e ficou de fora.`;
     case 'never_available':
@@ -164,6 +166,10 @@ export function lostLine(l: ImportLost, platform: string): string {
       return `No ${from}, não havia entrega na faixa até ${d ?? '?'} km, dentro da área. Aqui cada faixa por km é um círculo inteiro, então quem mora ali cai na faixa seguinte e pode pedir. Se não entrega lá, desenhe a área em Loja › Entrega.`;
     case 'delivery_by_address':
       return `No ${from}, a taxa de entrega era calculada pelo endereço de cada pedido${d ? ` (entregava em ${d})` : ''}. Aqui a taxa vem da região: cadastre as regiões em Loja › Entrega.`;
+    case 'delivery_minimum':
+      return `No ${from}, o pedido mínimo${d ? ` de ${d}` : ''} valia só para entrega. Aqui ele fica na região de entrega: coloque-o ao cadastrar as regiões em Loja › Entrega.`;
+    case 'delivery_out_of_area':
+      return `No ${from}, a loja aceitava pedidos fora das áreas desenhadas. Aqui a entrega é só dentro das regiões: confira em Loja › Entrega.`;
     case 'delivery_fee_later':
       return `No ${from}, a taxa de entrega era combinada depois do pedido. Aqui a taxa vem da região: se você entrega, cadastre as regiões em Loja › Entrega.`;
     case 'delivery_flat_fee':

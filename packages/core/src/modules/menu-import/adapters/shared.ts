@@ -212,3 +212,28 @@ export const positiveCents = (v: unknown): number | null => {
   const c = toCents(v ?? 0);
   return c !== null && c > 0 ? c : null;
 };
+
+/**
+ * An average of the units picked lands on whole cents here and there alike only when it can't
+ * fall on a half cent: at most two units, every price of the same parity. Past that, the
+ * platforms round floats their own way.
+ */
+export function averageExact(g: ImportOptionGroup): boolean {
+  if (g.max > 2) return false;
+  const parity = new Set(g.options.map((o) => Math.abs(o.priceDeltaCents) % 2));
+  return parity.size <= 1;
+}
+
+/** Runs `fn` over `items`, at most `n` at a time, keeping the order. */
+export async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+  return out;
+}

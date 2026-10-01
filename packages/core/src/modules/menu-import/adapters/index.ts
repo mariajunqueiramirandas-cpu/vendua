@@ -1,11 +1,13 @@
 import type { Platform } from '../doc.ts';
 import { cardapioweb } from './cardapioweb.ts';
 import { instadelivery } from './instadelivery.ts';
+import { olaclick } from './olaclick.ts';
+import { takeat } from './takeat.ts';
 import type { Adapter } from './types.ts';
 
 export type { Adapter } from './types.ts';
 
-export const ADAPTERS: readonly Adapter[] = [instadelivery, cardapioweb];
+export const ADAPTERS: readonly Adapter[] = [instadelivery, cardapioweb, olaclick, takeat];
 
 // platforms we recognise but can't read: blocked ones answer a challenge to any server
 // (docs/menu-import.md §3), the rest have no adapter yet
@@ -14,9 +16,7 @@ const BLOCKED: [Platform, RegExp][] = [
   ['ifood', /(^|\.)ifood\.com\.br$/],
 ];
 const NOT_YET: [Platform, RegExp][] = [
-  ['olaclick', /(^|\.)ola\.click$/],
   ['deliverydireto', /(^|\.)deliverydireto\.com\.br$/],
-  ['takeat', /(^|\.)takeat\.app$/],
   ['saipos', /(^|\.)saipos\.com$/],
   ['goomer', /(^|\.)goomer\.app$/],
 ];

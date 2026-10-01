@@ -98,6 +98,7 @@ const LISTING_HOSTS = new Set([
   'anota.ai',
   'instadelivery.com.br',
   'cardapioweb.com',
+  'ola.click',
   'goomer.app',
   'takeat.app',
   'ueniweb.com',

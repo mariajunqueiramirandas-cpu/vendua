@@ -46,12 +46,15 @@ const NOTE: Record<string, string> = {
   delivery_by_address: 'taxa de entrega por endereço',
   pickup_only: 'produto só para retirada',
   adults_only: 'produto +18',
+  option_minimum: 'mínimo de opções afrouxado',
+  delivery_minimum: 'mínimo só para entrega',
+  delivery_out_of_area: 'entregava fora das áreas',
+  delivery_flat_fee: 'taxa fixa para qualquer endereço',
   sold_by_weight: 'vendido por peso (produto oculto)',
   price_unreadable: 'regra de preço ilegível (produto oculto)',
   packaging_fee: 'taxa de embalagem (produto oculto)',
   link_discount: 'desconto só pelo link do produto',
   delivery_fee_later: 'taxa de entrega combinada depois',
-  delivery_flat_fee: 'taxa fixa para qualquer endereço',
   promo_unreadable: 'desconto ilegível (produto oculto)',
   delivery_fees_unreadable: 'taxas de entrega ilegíveis',
   photo_failed: 'foto não veio',
@@ -64,6 +67,8 @@ const NOTE: Record<string, string> = {
 const READABLE: [name: string, host: RegExp][] = [
   ['instadelivery', /(^|\.)instadelivery\.com\.br$/i],
   ['cardápio web', /(^|\.)cardapioweb\.com$/i],
+  ['olaclick', /\.ola\.click$/i],
+  ['takeat', /^pedido\.takeat\.app$/i],
 ];
 const readable = (site: string | null | undefined) => {
   try {

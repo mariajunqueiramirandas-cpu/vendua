@@ -2,8 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { paletteFrom, validateTokens } from '@vendua/templates';
 import fixture from './fixtures/menu-import/instadelivery.json';
 import cwFixture from './fixtures/menu-import/cardapioweb.json';
+import olaFixture from './fixtures/menu-import/olaclick.json';
+import tkFixture from './fixtures/menu-import/takeat.json';
 import { recognise, type Adapter } from '../src/modules/menu-import/adapters/index.ts';
 import { cardapioweb } from '../src/modules/menu-import/adapters/cardapioweb.ts';
+import { olaclick } from '../src/modules/menu-import/adapters/olaclick.ts';
+import { takeat } from '../src/modules/menu-import/adapters/takeat.ts';
 import { instadelivery } from '../src/modules/menu-import/adapters/instadelivery.ts';
 import { TEMPLATE_TOKENS } from '../src/modules/menu-import/apply.ts';
 import { unitPriceCents } from '../src/modules/cart.ts';
@@ -813,6 +817,19 @@ describe('cardapioweb', () => {
     expect(lostCodes).toContain('Pizza do mais barato:pizza_pricing');
   });
 
+  test('an average maps only where it cannot fall on a half cent', () => {
+    const raw = structuredClone(cwFixture) as unknown as {
+      categories: { items: Record<string, any>[] }[];
+    };
+    const pizza = raw.categories[0]!.items.find((i) => i.name === 'Pizza meio a meio')!;
+    // R$ 40,00 and R$ 45,55: half of 85,55 is a half cent the two sides round differently
+    pizza.add_ons[1].subitems[1].price = 45.55;
+    const p = mapped(cardapioweb, raw)
+      .doc.categories.flatMap((c) => c.products)
+      .find((x) => x.name === 'Pizza meio a meio')!;
+    expect(p.status).toBe('archived');
+  });
+
   test('promo price only when it runs every day; hours of sale; stock; preorder', () => {
     expect(byName.get('X-Burguer')).toMatchObject({
       priceCents: 2490,
@@ -866,12 +883,8 @@ describe('cardapioweb', () => {
       { days: [2, 3], open: '11:00', close: '14:00' },
       { days: [5, 6], open: '18:00', close: '23:59' },
     ]);
-    expect(doc.operations).toEqual({
-      minOrderCents: 3000,
-      prepTimeMinutes: 40,
-      pickup: true,
-      delivery: false,
-    });
+    // the minimum is for delivery only there: here it waits for the zones the merchant draws
+    expect(doc.operations).toEqual({ prepTimeMinutes: 40, pickup: true, delivery: false });
     expect(doc.zones).toBeUndefined();
     expect(doc.payments).toEqual({
       methods: ['cash', 'pix', 'card_on_delivery', 'meal_voucher'],
@@ -888,6 +901,7 @@ describe('cardapioweb', () => {
       expect.arrayContaining([
         ['delivery_by_address', 'Centro, Jardim'],
         ['free_delivery_rule', 'R$ 120,00'],
+        ['delivery_minimum', 'R$ 30,00'],
         ['payment_adjustment', 'Cartão de débito'],
         ['payment_method', 'Transferência'],
         ['online_payment', ''],
@@ -948,6 +962,450 @@ describe('cardapioweb', () => {
       zones: 0,
       paymentMethods: 4,
       pix: true,
+      logo: true,
+      cover: true,
+    });
+  });
+});
+
+describe('olaclick', () => {
+  const { doc, counts } = mapped(olaclick, olaFixture, 'lanchonete-exemplo.ola.click');
+  const byName = new Map(doc.categories.flatMap((c) => c.products).map((p) => [p.name, p]));
+
+  test('recognise: any <store>.ola.click page; the platform subdomains are not stores', () => {
+    for (const u of [
+      'https://lanchonete-exemplo.ola.click/',
+      'lanchonete-exemplo.ola.click/products',
+      'https://LANCHONETE-EXEMPLO.ola.click/acai/acai-copo-700ml',
+    ]) {
+      const r = recognise(u);
+      expect(r.kind).toBe('ok');
+      if (r.kind === 'ok') {
+        expect(r.adapter.platform).toBe('olaclick');
+        expect(r.ref).toBe('lanchonete-exemplo.ola.click');
+      }
+    }
+    for (const u of ['https://ola.click/', 'https://www.ola.click/', 'https://api.ola.click/x'])
+      expect(recognise(u).kind).toBe('unsupported');
+  });
+
+  test('read: the host lookup, then the menu, company, settings and payment methods', async () => {
+    const api = 'https://api.olaclick.app';
+    const id = '00000000-0000-4000-8000-0000000000aa';
+    const c = `${api}/ms-companies/public/companies/${id}`;
+    const { raw, seen } = await fakeRead(olaclick, 'lanchonete-exemplo.ola.click', {
+      [`${api}/ms-companies/public/hosts/lanchonete-exemplo.ola.click`]: {
+        data: {
+          company_id: id,
+          custom_url: null,
+          olaclick_url: 'https://lanchonete-exemplo.ola.click',
+        },
+      },
+      [`${api}/ms-products/public/companies/${id}/categories`]: { data: olaFixture.categories },
+      [c]: { data: olaFixture.company },
+      [`${c}/ecommerce-settings`]: { data: olaFixture.settings },
+      [`${api}/ms-orders/public/companies/${id}/payment-methods`]: { data: olaFixture.payments },
+    });
+    expect(seen).toHaveLength(5);
+    expect(seen.every((s) => s.url.startsWith(`${api}/`))).toBe(true);
+    expect(raw).toEqual(olaFixture);
+    await expect(fakeRead(olaclick, 'sumiu.ola.click', {})).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  test('allowlisted fields only — no token, tracking id or cost survives', () => {
+    const json = JSON.stringify(doc);
+    expect(json).not.toContain('should-not-appear');
+    expect(json).not.toContain('3.21');
+  });
+
+  test('variants: one is the price, several a size group; strike-through and stock', () => {
+    expect(byName.get('X-Burguer')).toMatchObject({
+      priceCents: 2500,
+      compareAtPriceCents: 2990,
+      tags: ['Destaque'],
+    });
+    const pizza = byName.get('Pizza')!;
+    expect(pizza.priceCents).toBe(3990);
+    expect(pizza.optionGroups[0]).toMatchObject({ name: 'Tamanho', min: 1, max: 1 });
+    expect(
+      pizza.optionGroups[0]!.options.map((o) => [o.name, o.priceDeltaCents, !!o.soldOut]),
+    ).toEqual([
+      ['Média', 0, false],
+      ['Grande', 1000, true],
+      ['Gigante', 2000, false],
+    ]);
+    // every size discounted: the cheapest one's list price, struck through
+    expect(byName.get('Açaí')).toMatchObject({ priceCents: 1500, compareAtPriceCents: 1800 });
+    expect(byName.get('Brownie')).toMatchObject({ priceCents: 990, stockQuantity: 3 });
+    expect(byName.get('Marmita')!.status).toBe('archived');
+    expect(doc.lost).toContainEqual({
+      scope: 'product',
+      subject: 'Marmita',
+      code: 'packaging_fee',
+    });
+    expect(byName.has('Fora do ar')).toBe(false);
+    expect(byName.has('Sumiu')).toBe(false);
+  });
+
+  test('a price that is not a number, sold-out sizes under a hidden product, the list price', () => {
+    const raw = structuredClone(olaFixture) as unknown as {
+      categories: { products: Record<string, any>[] }[];
+    };
+    const lanches = raw.categories[1]!.products;
+    // the storefront charges price, else original_price
+    lanches[1]!.product_variants[0]!.price = null;
+    lanches[1]!.product_variants[0]!.original_price = 11.5;
+    lanches[0]!.product_variants[0]!.price = '25.00';
+    const pizzas = raw.categories[2]!.products;
+    for (const v of pizzas[0]!.product_variants) v.stock = 0;
+    pizzas[0]!.product_variants[0]!.packaging_price = 1;
+    const ps = new Map(
+      mapped(olaclick, raw)
+        .doc.categories.flatMap((c) => c.products)
+        .map((p) => [p.name, p]),
+    );
+    expect(ps.get('Brownie')).toMatchObject({ priceCents: 1150, status: 'active' });
+    expect(ps.get('X-Burguer')!.status).toBe('archived');
+    expect(ps.get('Pizza')!.status).toBe('archived');
+  });
+
+  test('modifiers: a sum; the minimum only when required; max_limit is a quantity', () => {
+    const [extras, drink] = byName.get('X-Burguer')!.optionGroups;
+    expect(extras!.options[0]).toMatchObject({ name: 'Bacon', priceDeltaCents: 400, maxQty: 3 });
+    expect(drink).toMatchObject({ name: 'Quer bebida?', min: 0, max: 1 });
+    const flavours = byName.get('Pizza')!.optionGroups[1]!;
+    expect(flavours).toMatchObject({ name: 'Sabores', min: 1, max: 2 });
+    expect(flavours.pricingRule).toBeUndefined();
+    // a list with every option hidden isn't there
+    expect(byName.get('Pizza')!.optionGroups).toHaveLength(2);
+  });
+
+  test('delivery: only the live mode; free above the threshold; the other modes', () => {
+    expect(doc.zones).toEqual([
+      {
+        name: 'Taxa R$ 5,00',
+        kind: 'neighborhood',
+        neighborhoods: ['Centro', 'Jardim'],
+        feeCents: 500,
+        etaMin: 30,
+        etaMax: 45,
+        minOrderCents: 2500,
+        freeDeliveryOverCents: 8000,
+      },
+      {
+        name: 'Taxa R$ 8,00',
+        kind: 'neighborhood',
+        neighborhoods: ['Vila Nova'],
+        feeCents: 800,
+        etaMin: 30,
+        etaMax: 45,
+        minOrderCents: 2500,
+        freeDeliveryOverCents: 8000,
+      },
+    ]);
+    const as = (type: string, distance?: Record<string, number>) => {
+      const raw = structuredClone(olaFixture) as unknown as {
+        settings: { delivery: { prices: Record<string, any> } };
+      };
+      raw.settings.delivery.prices.type = type;
+      if (distance) raw.settings.delivery.prices.distance = distance;
+      return mapped(olaclick, raw).doc;
+    };
+    expect(as('BY_AREA').zones!.map((z) => [z.kind, z.feeCents, z.polygon?.length])).toEqual([
+      ['polygon', 600, 3],
+    ]);
+    expect(as('BY_RANGE').zones!.map((z) => [z.maxDistanceKm, z.feeCents])).toEqual([
+      [3, 500],
+      [6, 900],
+    ]);
+    expect(as('BY_DRIVE_DISTANCE').zones).toEqual([
+      {
+        name: 'Até 8 km',
+        kind: 'radius',
+        maxDistanceKm: 8,
+        feeCents: 300,
+        feePerKmCents: 150,
+        etaMin: 30,
+        etaMax: 45,
+        minOrderCents: 2500,
+        freeDeliveryOverCents: 8000,
+      },
+    ]);
+    expect(as('BY_DRIVE_DISTANCE').lost.map((l) => l.code)).toContain(
+      'delivery_distance_straight_line',
+    );
+    // a fixed fee is for any address (the distance limit belongs to the per-km mode): a note,
+    // and the delivery minimum with it
+    const flat = as('FIXED');
+    expect(flat.zones).toBeUndefined();
+    expect(flat.operations?.delivery).toBe(false);
+    expect(flat.lost).toEqual(
+      expect.arrayContaining([
+        { scope: 'store', code: 'delivery_flat_fee', detail: 'R$ 7,00' },
+        { scope: 'store', code: 'delivery_minimum', detail: 'R$ 25,00' },
+      ]),
+    );
+    // a band that starts past the previous end leaves a ring with no delivery there
+    const gap = structuredClone(olaFixture) as unknown as {
+      settings: { delivery: { prices: Record<string, any> } };
+    };
+    gap.settings.delivery.prices.type = 'BY_RANGE';
+    gap.settings.delivery.prices.ranges[1].min = 4000;
+    expect(mapped(olaclick, gap).doc.lost.map((l) => [l.code, l.detail ?? ''])).toEqual(
+      expect.arrayContaining([
+        ['delivery_gap', '4'],
+        ['delivery_distance_straight_line', ''],
+      ]),
+    );
+    const out = structuredClone(gap);
+    out.settings.delivery.prices.type = 'BY_AREA';
+    out.settings.delivery.prices.area.enable_out_of_area = true;
+    expect(mapped(olaclick, out).doc.lost).toContainEqual({
+      scope: 'store',
+      code: 'delivery_out_of_area',
+    });
+  });
+
+  test('store: profile, colour, hours past midnight, minimum, payments', () => {
+    expect(doc.store).toMatchObject({
+      name: 'Lanchonete Exemplo',
+      whatsapp: '21999990000',
+      coords: { lat: -22.9, lng: -43.2 },
+      brandColor: '#E4572E',
+    });
+    expect(doc.store.coverUrl).toStartWith('https://assets.olaclick.app/');
+    expect(doc.hours).toEqual([
+      { days: [1, 2, 3, 4], open: '18:00', close: '23:00' },
+      { days: [3], open: '11:00', close: '14:00' },
+      { days: [5, 6], open: '18:00', close: '01:00' },
+    ]);
+    expect(doc.operations).toEqual({ pickup: true, delivery: true });
+    expect(doc.payments).toEqual({ methods: ['cash', 'card_on_delivery', 'pix'] });
+    expect(
+      doc.lost.filter((l) => l.scope === 'store').map((l) => [l.code, l.detail ?? '']),
+    ).toEqual([
+      ['payment_method', 'Transferência'],
+      ['online_payment', ''],
+      ['pix_unreadable', ''],
+    ]);
+  });
+
+  test('counts', () => {
+    expect(counts).toMatchObject({
+      categories: 2,
+      products: 5,
+      hidden: 1,
+      optionGroups: 5,
+      hours: 3,
+      zones: 2,
+      paymentMethods: 3,
+      pix: false,
+      logo: true,
+      cover: true,
+    });
+  });
+});
+
+describe('takeat', () => {
+  const { doc, counts } = mapped(takeat, tkFixture, 'pizzariaexemplo');
+  const byName = new Map(doc.categories.flatMap((c) => c.products).map((p) => [p.name, p]));
+  const lostCodes = doc.lost.map((l) => `${l.subject ?? ''}:${l.code}`);
+
+  test('recognise: pedido.takeat.app/<slug>', () => {
+    const r = recognise('pedido.takeat.app/PizzariaExemplo?utm=ig');
+    expect(r.kind).toBe('ok');
+    if (r.kind === 'ok') {
+      expect(r.adapter.platform).toBe('takeat');
+      expect(r.ref).toBe('pizzariaexemplo');
+    }
+    for (const u of [
+      'https://pedido.takeat.app/',
+      'https://takeat.app/planos',
+      'https://www.takeat.app/x',
+    ])
+      expect(recognise(u).kind).toBe('unsupported');
+  });
+
+  test('read: restaurant, menu (gd, brand), hours, and the fee table when it has one', async () => {
+    const base = 'https://backend-delivery.takeat.app/public';
+    const routes = {
+      [`${base}/restaurant/pizzariaexemplo`]: tkFixture.store,
+      [`${base}/restaurants/menu/777?gd=true&brand_id=88`]: tkFixture.menu,
+      [`${base}/restaurants/delivery-schedules/777`]: tkFixture.schedule,
+      [`${base}/restaurants/delivery-addresses/777`]: tkFixture.fees,
+    };
+    const { raw, seen } = await fakeRead(takeat, 'pizzariaexemplo', routes);
+    expect(seen.map((s) => s.url)).toEqual(Object.keys(routes));
+    expect(raw).toEqual(tkFixture);
+    // no neighbourhood table: one request fewer
+    const store = structuredClone(tkFixture.store);
+    store.delivery_info.allow_delivery_addresses = false;
+    const { seen: three } = await fakeRead(takeat, 'pizzariaexemplo', {
+      ...routes,
+      [`${base}/restaurant/pizzariaexemplo`]: store,
+    });
+    expect(three).toHaveLength(3);
+    await expect(fakeRead(takeat, 'sumiu', {})).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  test('allowlisted fields only — no token, pixel, fiscal id or cost survives', () => {
+    const json = JSON.stringify(doc);
+    expect(json).not.toContain('should-not-appear');
+    expect(json).not.toContain('00000000000000');
+    expect(json).not.toContain('1.23');
+  });
+
+  test('only what sells for delivery, at the delivery price, promo first', () => {
+    expect(byName.get('X-Burguer')).toMatchObject({ priceCents: 2200, compareAtPriceCents: 2700 });
+    // no delivery price: the dine-in promo is the price there too
+    expect(byName.get('X-Salada')).toMatchObject({ priceCents: 2000, compareAtPriceCents: 2400 });
+    expect(byName.get('X-Esgotado')!.status).toBe('sold_out');
+    expect(byName.has('X-Salão')).toBe(false);
+    expect(byName.has('Prato executivo')).toBe(false);
+    expect(byName.has('Refeição colaborador')).toBe(false);
+    expect(lostCodes).toEqual(
+      expect.arrayContaining(['X-Salão:dine_in_only', 'Salão:dine_in_only']),
+    );
+    expect(lostCodes.some((c) => c.includes('colaborador') || c.includes('FUNCIONÁRIOS'))).toBe(
+      false,
+    );
+    expect(byName.get('Queijo por quilo')!.status).toBe('archived');
+    // a delivery price of 0 under a priced item isn't sold for free
+    expect(byName.get('Brinde zerado')!.status).toBe('archived');
+    expect(byName.get('Pizza grande')!.tags).toEqual(['Mais pedido']);
+  });
+
+  test('complements: the dearest once, sums, included lists, optional minimums', () => {
+    const [flavours, crust, drink] = byName.get('Pizza grande')!.optionGroups;
+    expect(flavours).toMatchObject({
+      name: 'Escolha até 2 sabores (meio a meio)',
+      pricingRule: 'most_expensive',
+      max: 2,
+    });
+    // the crust: optional, its delivery price
+    expect(crust).toMatchObject({ min: 0, max: 1 });
+    expect(crust!.options.map((o) => o.priceDeltaCents)).toEqual([1200, 900]);
+    // prices of a list that isn't "additional" don't count
+    expect(drink!.options.map((o) => o.priceDeltaCents)).toEqual([0, 0]);
+    // the storefront's average isn't repeated: hidden
+    expect(byName.get('Pizza média')!.status).toBe('archived');
+    expect(lostCodes).toContain('Pizza média:pizza_pricing');
+    // "none or at least 2" has no rule here: no minimum, and a note
+    const extras = byName.get('Combo só à noite')!.optionGroups[0]!;
+    expect(extras).toMatchObject({ min: 0 });
+    expect(extras.options.map((o) => [o.name, o.maxQty ?? 1])).toEqual([
+      ['Bacon', 2],
+      ['Ovo', 1],
+    ]);
+    expect(lostCodes).toContain('Combo só à noite:option_minimum');
+    // "a partir de": the size list carries the price
+    expect(byName.get('Pizza a partir de')).toMatchObject({ priceCents: 2990 });
+  });
+
+  test('an average added once per line, a missing price, minimums by order type', () => {
+    type Raw = Record<string, any>;
+    const raw = structuredClone(tkFixture) as unknown as {
+      store: Raw;
+      menu: { products: Raw[] }[];
+      schedule: Raw[];
+    };
+    const lanches = raw.menu[1]!.products;
+    // a single-pick average still differs on a line of 2: hidden
+    lanches.find((p) => p.name === 'Combo só à noite')!.complement_categories[0].use_average = true;
+    lanches.find((p) => p.name === 'Combo só à noite')!.complement_categories[0].limit = 1;
+    lanches.find((p) => p.name === 'X-Esgotado')!.price = null;
+    // Saturday 18:00 → 02:00 there
+    raw.schedule[6]!.close_time = '2021-01-10T05:00:00.000Z';
+    raw.store.delivery_info.withdrawal_minimum_price = '40.00';
+    const d = mapped(takeat, raw).doc;
+    const ps = new Map(d.categories.flatMap((c) => c.products).map((p) => [p.name, p]));
+    expect(ps.get('Combo só à noite')!.status).toBe('archived');
+    expect(ps.get('X-Esgotado')!.status).toBe('archived');
+    expect(d.hours).toContainEqual({ days: [6], open: '18:00', close: '02:00' });
+    // pickup's R$ 40 binds every order here, so the lower delivery minimum is a note
+    expect(d.operations?.minOrderCents).toBe(4000);
+    expect(d.zones!.every((z) => z.minOrderCents === undefined)).toBe(true);
+    expect(d.lost).toContainEqual({ scope: 'store', code: 'delivery_minimum', detail: 'R$ 30,00' });
+    // no pickup: the delivery minimum is the store's
+    raw.store.delivery_info.is_withdrawal_allowed = false;
+    expect(mapped(takeat, raw).doc.operations).toMatchObject({
+      minOrderCents: 3000,
+      pickup: false,
+    });
+  });
+
+  test('times are a Brasília clock: hours, shifts, windows of sale', () => {
+    expect(doc.hours).toEqual([
+      { days: [0, 2, 3, 4, 5, 6], open: '18:00', close: '23:30' },
+      { days: [3], open: '11:00', close: '14:00' },
+    ]);
+    expect(byName.get('Combo só à noite')!.availability).toEqual({
+      windows: [{ days: [6], from: '18:00', to: '23:00' }],
+      outside: 'unavailable',
+    });
+  });
+
+  test('store: profile, neighbourhood fees, minimum, payments', () => {
+    expect(doc.store).toMatchObject({
+      name: 'Pizzaria Exemplo',
+      announcement: { title: 'Bem-vindo à Pizzaria Exemplo!', body: 'Peça pelo site.' },
+      whatsapp: '21999990000',
+      instagram: '@pizzaria.exemplo',
+      address: 'Rua das Pizzas, 42 - Loja 2 - Centro',
+      brandColor: '#8E44AD',
+    });
+    expect(doc.zones).toEqual([
+      {
+        name: 'Taxa R$ 7,00',
+        kind: 'neighborhood',
+        neighborhoods: ['Centro', 'Jardim'],
+        feeCents: 700,
+        etaMin: 50,
+        etaMax: 50,
+        minOrderCents: 3000,
+      },
+      {
+        name: 'Taxa R$ 10,50',
+        kind: 'neighborhood',
+        neighborhoods: ['Vila Nova'],
+        feeCents: 1050,
+        etaMin: 50,
+        etaMax: 50,
+        minOrderCents: 3000,
+      },
+    ]);
+    // the delivery minimum rides on the zones; pickup had none
+    expect(doc.operations).toEqual({ prepTimeMinutes: 50, pickup: true, delivery: true });
+    expect(doc.payments).toEqual({ methods: ['cash', 'pix', 'card_on_delivery', 'meal_voucher'] });
+    expect(
+      doc.lost.filter((l) => l.scope === 'store').map((l) => [l.code, l.detail ?? '']),
+    ).toEqual([
+      ['payment_method', 'Banricard'],
+      ['cashback', ''],
+      ['online_payment', ''],
+      ['pix_unreadable', ''],
+    ]);
+    // a store priced by distance or area: the fee is a note
+    const raw = structuredClone(tkFixture);
+    raw.store.delivery_info.allow_delivery_addresses = false;
+    raw.store.delivery_info.is_delivery_by_distance = true;
+    const d = mapped(takeat, raw).doc;
+    expect(d.zones).toBeUndefined();
+    expect(d.operations?.delivery).toBe(false);
+    expect(d.lost).toContainEqual({ scope: 'store', code: 'delivery_by_address' });
+  });
+
+  test('counts', () => {
+    expect(counts).toMatchObject({
+      categories: 2,
+      products: 9,
+      hidden: 3,
+      optionGroups: 6,
+      hours: 2,
+      zones: 2,
+      paymentMethods: 4,
       logo: true,
       cover: true,
     });

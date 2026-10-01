@@ -1,0 +1,934 @@
+{
+  "categories": [
+    {
+      "id": "00000000-0000-4000-8000-000000000034",
+      "name": "Destaques",
+      "type": "FAVORITE",
+      "position": -10,
+      "visible": true,
+      "slug": "destaques",
+      "products": [
+        {
+          "id": "00000000-0000-4000-8000-000000000008",
+          "name": "X-Burguer",
+          "description": "X-Burguer feito na hora.",
+          "visible": true,
+          "stock_enabled": false,
+          "position": 8,
+          "images": [
+            {
+              "id": "00000000-0000-4000-8000-000000000009",
+              "image": "x.jpeg",
+              "image_url": "https://assets.olaclick.app/companies/products/images/800/9.jpeg",
+              "position": 0
+            }
+          ],
+          "product_variants": [
+            {
+              "id": "00000000-0000-4000-8000-000000000001",
+              "name": null,
+              "price": 25,
+              "original_price": 29.9,
+              "cost": 3.21,
+              "packaging_price": 0,
+              "position": 0,
+              "stock": 100,
+              "stock_threshold": 0,
+              "sku": null,
+              "search_code": null,
+              "created_at": "2026-01-01",
+              "updated_at": "2026-01-01"
+            }
+          ],
+          "modifier_categories": [
+            {
+              "id": "00000000-0000-4000-8000-000000000004",
+              "name": "Adicionais",
+              "type": "many",
+              "min_modifiers": 0,
+              "max_modifiers": 5,
+              "required": false,
+              "is_active": true,
+              "position": 4,
+              "product_modifier_category_position": 4,
+              "company_id": "c",
+              "modifiers": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000002",
+                  "name": "Bacon",
+                  "price": 4,
+                  "original_price": 4,
+                  "max_limit": 3,
+                  "position": 2,
+                  "visible": true,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                },
+                {
+                  "id": "00000000-0000-4000-8000-000000000003",
+                  "name": "Ovo",
+                  "price": 2.5,
+                  "original_price": 2.5,
+                  "max_limit": 1,
+                  "position": 3,
+                  "visible": true,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                }
+              ]
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000007",
+              "name": "Quer bebida?",
+              "type": "one",
+              "min_modifiers": 1,
+              "max_modifiers": 1,
+              "required": false,
+              "is_active": true,
+              "position": 7,
+              "product_modifier_category_position": 7,
+              "company_id": "c",
+              "modifiers": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000005",
+                  "name": "Refri lata",
+                  "price": 6,
+                  "original_price": 6,
+                  "max_limit": 1,
+                  "position": 5,
+                  "visible": true,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                },
+                {
+                  "id": "00000000-0000-4000-8000-000000000006",
+                  "name": "Suco",
+                  "price": 8,
+                  "original_price": 8,
+                  "max_limit": 1,
+                  "position": 6,
+                  "visible": true,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                }
+              ]
+            }
+          ],
+          "is_template_product": false,
+          "kitchen_id": "k",
+          "messages_for_customers": null,
+          "product_category_id": "c",
+          "slug": "x-burguer"
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000035",
+      "name": "Lanches",
+      "type": "NORMAL",
+      "position": 1,
+      "visible": true,
+      "slug": "lanches",
+      "products": [
+        {
+          "id": "00000000-0000-4000-8000-000000000008",
+          "name": "X-Burguer",
+          "description": "X-Burguer feito na hora.",
+          "visible": true,
+          "stock_enabled": false,
+          "position": 8,
+          "images": [
+            {
+              "id": "00000000-0000-4000-8000-000000000009",
+              "image": "x.jpeg",
+              "image_url": "https://assets.olaclick.app/companies/products/images/800/9.jpeg",
+              "position": 0
+            }
+          ],
+          "product_variants": [
+            {
+              "id": "00000000-0000-4000-8000-000000000001",
+              "name": null,
+              "price": 25,
+              "original_price": 29.9,
+              "cost": 3.21,
+              "packaging_price": 0,
+              "position": 0,
+              "stock": 100,
+              "stock_threshold": 0,
+              "sku": null,
+              "search_code": null,
+              "created_at": "2026-01-01",
+              "updated_at": "2026-01-01"
+            }
+          ],
+          "modifier_categories": [
+            {
+              "id": "00000000-0000-4000-8000-000000000004",
+              "name": "Adicionais",
+              "type": "many",
+              "min_modifiers": 0,
+              "max_modifiers": 5,
+              "required": false,
+              "is_active": true,
+              "position": 4,
+              "product_modifier_category_position": 4,
+              "company_id": "c",
+              "modifiers": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000002",
+                  "name": "Bacon",
+                  "price": 4,
+                  "original_price": 4,
+                  "max_limit": 3,
+                  "position": 2,
+                  "visible": true,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                },
+                {
+                  "id": "00000000-0000-4000-8000-000000000003",
+                  "name": "Ovo",
+                  "price": 2.5,
+                  "original_price": 2.5,
+                  "max_limit": 1,
+                  "position": 3,
+                  "visible": true,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                }
+              ]
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000007",
+              "name": "Quer bebida?",
+              "type": "one",
+              "min_modifiers": 1,
+              "max_modifiers": 1,
+              "required": false,
+              "is_active": true,
+              "position": 7,
+              "product_modifier_category_position": 7,
+              "company_id": "c",
+              "modifiers": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000005",
+                  "name": "Refri lata",
+                  "price": 6,
+                  "original_price": 6,
+                  "max_limit": 1,
+                  "position": 5,
+                  "visible": true,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                },
+                {
+                  "id": "00000000-0000-4000-8000-000000000006",
+                  "name": "Suco",
+                  "price": 8,
+                  "original_price": 8,
+                  "max_limit": 1,
+                  "position": 6,
+                  "visible": true,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                }
+              ]
+            }
+          ],
+          "is_template_product": false,
+          "kitchen_id": "k",
+          "messages_for_customers": null,
+          "product_category_id": "c",
+          "slug": "x-burguer"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000026",
+          "name": "Brownie",
+          "description": "Brownie feito na hora.",
+          "visible": true,
+          "stock_enabled": true,
+          "position": 26,
+          "images": [
+            {
+              "id": "00000000-0000-4000-8000-000000000027",
+              "image": "x.jpeg",
+              "image_url": "https://assets.olaclick.app/companies/products/images/800/27.jpeg",
+              "position": 0
+            }
+          ],
+          "product_variants": [
+            {
+              "id": "00000000-0000-4000-8000-000000000025",
+              "name": null,
+              "price": 9.9,
+              "original_price": 9.9,
+              "cost": 3.21,
+              "packaging_price": 0,
+              "position": 0,
+              "stock": 3,
+              "stock_threshold": 0,
+              "sku": null,
+              "search_code": null,
+              "created_at": "2026-01-01",
+              "updated_at": "2026-01-01"
+            }
+          ],
+          "modifier_categories": [],
+          "is_template_product": false,
+          "kitchen_id": "k",
+          "messages_for_customers": null,
+          "product_category_id": "c",
+          "slug": "brownie"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000032",
+          "name": "Fora do ar",
+          "description": "Fora do ar feito na hora.",
+          "visible": false,
+          "stock_enabled": false,
+          "position": 32,
+          "images": [
+            {
+              "id": "00000000-0000-4000-8000-000000000033",
+              "image": "x.jpeg",
+              "image_url": "https://assets.olaclick.app/companies/products/images/800/33.jpeg",
+              "position": 0
+            }
+          ],
+          "product_variants": [
+            {
+              "id": "00000000-0000-4000-8000-000000000031",
+              "name": null,
+              "price": 10,
+              "original_price": 10,
+              "cost": 3.21,
+              "packaging_price": 0,
+              "position": 0,
+              "stock": 100,
+              "stock_threshold": 0,
+              "sku": null,
+              "search_code": null,
+              "created_at": "2026-01-01",
+              "updated_at": "2026-01-01"
+            }
+          ],
+          "modifier_categories": [],
+          "is_template_product": false,
+          "kitchen_id": "k",
+          "messages_for_customers": null,
+          "product_category_id": "c",
+          "slug": "fora-do-ar"
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000036",
+      "name": "Pizzas",
+      "type": "NORMAL",
+      "position": 2,
+      "visible": true,
+      "slug": "pizzas",
+      "products": [
+        {
+          "id": "00000000-0000-4000-8000-000000000019",
+          "name": "Pizza",
+          "description": "Pizza feito na hora.",
+          "visible": true,
+          "stock_enabled": true,
+          "position": 19,
+          "images": [
+            {
+              "id": "00000000-0000-4000-8000-000000000020",
+              "image": "x.jpeg",
+              "image_url": "https://assets.olaclick.app/companies/products/images/800/20.jpeg",
+              "position": 0
+            }
+          ],
+          "product_variants": [
+            {
+              "id": "00000000-0000-4000-8000-000000000010",
+              "name": "Média",
+              "price": 39.9,
+              "original_price": 39.9,
+              "cost": 3.21,
+              "packaging_price": 0,
+              "position": 0,
+              "stock": 100,
+              "stock_threshold": 0,
+              "sku": null,
+              "search_code": null,
+              "created_at": "2026-01-01",
+              "updated_at": "2026-01-01"
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000011",
+              "name": "Grande",
+              "price": 49.9,
+              "original_price": 49.9,
+              "cost": 3.21,
+              "packaging_price": 0,
+              "position": 0,
+              "stock": 0,
+              "stock_threshold": 0,
+              "sku": null,
+              "search_code": null,
+              "created_at": "2026-01-01",
+              "updated_at": "2026-01-01"
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000012",
+              "name": "Gigante",
+              "price": 59.9,
+              "original_price": 59.9,
+              "cost": 3.21,
+              "packaging_price": 0,
+              "position": 0,
+              "stock": 100,
+              "stock_threshold": 0,
+              "sku": null,
+              "search_code": null,
+              "created_at": "2026-01-01",
+              "updated_at": "2026-01-01"
+            }
+          ],
+          "modifier_categories": [
+            {
+              "id": "00000000-0000-4000-8000-000000000016",
+              "name": "Sabores",
+              "type": "many",
+              "min_modifiers": 1,
+              "max_modifiers": 2,
+              "required": true,
+              "is_active": true,
+              "position": 16,
+              "product_modifier_category_position": 16,
+              "company_id": "c",
+              "modifiers": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000013",
+                  "name": "Calabresa",
+                  "price": 0,
+                  "original_price": 0,
+                  "max_limit": 1,
+                  "position": 13,
+                  "visible": true,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                },
+                {
+                  "id": "00000000-0000-4000-8000-000000000014",
+                  "name": "Frango",
+                  "price": 0,
+                  "original_price": 0,
+                  "max_limit": 1,
+                  "position": 14,
+                  "visible": true,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                },
+                {
+                  "id": "00000000-0000-4000-8000-000000000015",
+                  "name": "Especial",
+                  "price": 5,
+                  "original_price": 5,
+                  "max_limit": 1,
+                  "position": 15,
+                  "visible": true,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                }
+              ]
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000018",
+              "name": "Escondido",
+              "type": "many",
+              "min_modifiers": 0,
+              "max_modifiers": 1,
+              "required": false,
+              "is_active": true,
+              "position": 18,
+              "product_modifier_category_position": 18,
+              "company_id": "c",
+              "modifiers": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000017",
+                  "name": "Nada",
+                  "price": 1,
+                  "original_price": 1,
+                  "max_limit": 1,
+                  "position": 17,
+                  "visible": false,
+                  "cost": 0,
+                  "sku": null,
+                  "modifier_category_id": "x"
+                }
+              ]
+            }
+          ],
+          "is_template_product": false,
+          "kitchen_id": "k",
+          "messages_for_customers": null,
+          "product_category_id": "c",
+          "slug": "pizza"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000023",
+          "name": "Açaí",
+          "description": "Açaí feito na hora.",
+          "visible": true,
+          "stock_enabled": false,
+          "position": 23,
+          "images": [
+            {
+              "id": "00000000-0000-4000-8000-000000000024",
+              "image": "x.jpeg",
+              "image_url": "https://assets.olaclick.app/companies/products/images/800/24.jpeg",
+              "position": 0
+            }
+          ],
+          "product_variants": [
+            {
+              "id": "00000000-0000-4000-8000-000000000021",
+              "name": "300 ml",
+              "price": 15,
+              "original_price": 18,
+              "cost": 3.21,
+              "packaging_price": 0,
+              "position": 0,
+              "stock": 100,
+              "stock_threshold": 0,
+              "sku": null,
+              "search_code": null,
+              "created_at": "2026-01-01",
+              "updated_at": "2026-01-01"
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000022",
+              "name": "500 ml",
+              "price": 20,
+              "original_price": 24,
+              "cost": 3.21,
+              "packaging_price": 0,
+              "position": 0,
+              "stock": 100,
+              "stock_threshold": 0,
+              "sku": null,
+              "search_code": null,
+              "created_at": "2026-01-01",
+              "updated_at": "2026-01-01"
+            }
+          ],
+          "modifier_categories": [],
+          "is_template_product": false,
+          "kitchen_id": "k",
+          "messages_for_customers": null,
+          "product_category_id": "c",
+          "slug": "a-a-"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000029",
+          "name": "Marmita",
+          "description": "Marmita feito na hora.",
+          "visible": true,
+          "stock_enabled": false,
+          "position": 29,
+          "images": [
+            {
+              "id": "00000000-0000-4000-8000-000000000030",
+              "image": "x.jpeg",
+              "image_url": "https://assets.olaclick.app/companies/products/images/800/30.jpeg",
+              "position": 0
+            }
+          ],
+          "product_variants": [
+            {
+              "id": "00000000-0000-4000-8000-000000000028",
+              "name": null,
+              "price": 22,
+              "original_price": 22,
+              "cost": 3.21,
+              "packaging_price": 2,
+              "position": 0,
+              "stock": 100,
+              "stock_threshold": 0,
+              "sku": null,
+              "search_code": null,
+              "created_at": "2026-01-01",
+              "updated_at": "2026-01-01"
+            }
+          ],
+          "modifier_categories": [],
+          "is_template_product": false,
+          "kitchen_id": "k",
+          "messages_for_customers": null,
+          "product_category_id": "c",
+          "slug": "marmita"
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000037",
+      "name": "Inativa",
+      "type": "NORMAL",
+      "position": 3,
+      "visible": false,
+      "slug": "inativa",
+      "products": [
+        {
+          "id": "00000000-0000-4000-8000-000000000039",
+          "name": "Sumiu",
+          "description": "Sumiu feito na hora.",
+          "visible": true,
+          "stock_enabled": false,
+          "position": 39,
+          "images": [
+            {
+              "id": "00000000-0000-4000-8000-000000000040",
+              "image": "x.jpeg",
+              "image_url": "https://assets.olaclick.app/companies/products/images/800/40.jpeg",
+              "position": 0
+            }
+          ],
+          "product_variants": [
+            {
+              "id": "00000000-0000-4000-8000-000000000038",
+              "name": null,
+              "price": 5,
+              "original_price": 5,
+              "cost": 3.21,
+              "packaging_price": 0,
+              "position": 0,
+              "stock": 100,
+              "stock_threshold": 0,
+              "sku": null,
+              "search_code": null,
+              "created_at": "2026-01-01",
+              "updated_at": "2026-01-01"
+            }
+          ],
+          "modifier_categories": [],
+          "is_template_product": false,
+          "kitchen_id": "k",
+          "messages_for_customers": null,
+          "product_category_id": "c",
+          "slug": "sumiu"
+        }
+      ]
+    }
+  ],
+  "company": {
+    "id": "00000000-0000-4000-8000-000000000041",
+    "name": "Lanchonete Exemplo",
+    "address": "Rua das Flores, 100 - Centro, Cidade Exemplo - RJ",
+    "address_enabled": true,
+    "latitude": -22.9,
+    "longitude": -43.2,
+    "city": null,
+    "logo_url": "https://assets.olaclick.app/companies/logos/x.png",
+    "logo_thumbnail_url": "https://assets.olaclick.app/companies/logos/thumbnails/x.webp",
+    "whatsapp": "+5521999990000",
+    "timezone": "America/Sao_Paulo",
+    "token": "tok_should-not-appear",
+    "public_url": "https://lanchonete-exemplo.ola.click",
+    "domain_settings": null,
+    "language": "pt-BR",
+    "industry": "restaurant",
+    "reseller_id": null,
+    "currency": {
+      "code": "BRL",
+      "symbol": "R$",
+      "decimals": 2
+    },
+    "country": {
+      "country_code": "BR",
+      "name": "Brasil"
+    },
+    "business_hours_settings": {
+      "sunday": {
+        "is_active": false,
+        "hours": []
+      },
+      "monday": {
+        "is_active": true,
+        "hours": [
+          {
+            "open": "18:00",
+            "close": "23:00"
+          }
+        ]
+      },
+      "tuesday": {
+        "is_active": true,
+        "hours": [
+          {
+            "open": "18:00",
+            "close": "23:00"
+          }
+        ]
+      },
+      "wednesday": {
+        "is_active": true,
+        "hours": [
+          {
+            "open": "11:00",
+            "close": "14:00"
+          },
+          {
+            "open": "18:00",
+            "close": "23:00"
+          }
+        ]
+      },
+      "thursday": {
+        "is_active": true,
+        "hours": [
+          {
+            "open": "18:00",
+            "close": "23:00"
+          }
+        ]
+      },
+      "friday": {
+        "is_active": true,
+        "hours": [
+          {
+            "open": "18:00",
+            "close": "01:00"
+          }
+        ]
+      },
+      "saturday": {
+        "is_active": true,
+        "hours": [
+          {
+            "open": "18:00",
+            "close": "01:00"
+          }
+        ]
+      }
+    }
+  },
+  "settings": {
+    "checkout_type": "whatsapp",
+    "delivery": {
+      "active": true,
+      "average_time": "30 - 45min.",
+      "minimum_amount_to_allow": 25,
+      "minimum_amount_for_free": 80,
+      "disabled_until": "2025-01-01T00:00:00.000Z",
+      "google_maps_validation": false,
+      "prices": {
+        "type": "BY_DISTRICT",
+        "fixed": {
+          "price": 7
+        },
+        "distance": {
+          "starting_price": 3,
+          "price_per_km": 1.5,
+          "max_distance_km": 8
+        },
+        "districts": [
+          {
+            "id": "00000000-0000-4000-8000-000000000042",
+            "name": "Centro",
+            "price": 5,
+            "enabled": true
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000043",
+            "name": "Jardim",
+            "price": 5,
+            "enabled": true
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000044",
+            "name": "Vila Nova",
+            "price": 8,
+            "enabled": true
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000045",
+            "name": "Longe",
+            "price": 15,
+            "enabled": false
+          }
+        ],
+        "ranges": [
+          {
+            "id": "00000000-0000-4000-8000-000000000046",
+            "min": 0,
+            "max": 3000,
+            "price": 5,
+            "enabled": true
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000047",
+            "min": 3000,
+            "max": 6000,
+            "price": 9,
+            "enabled": true
+          }
+        ],
+        "area": {
+          "enable_out_of_area": false,
+          "areas": [
+            {
+              "id": "00000000-0000-4000-8000-000000000048",
+              "name": "Centro",
+              "price": 6,
+              "enabled": true,
+              "paths": [
+                {
+                  "latitude": -22.9,
+                  "longitude": -43.2
+                },
+                {
+                  "latitude": -22.91,
+                  "longitude": -43.2
+                },
+                {
+                  "latitude": -22.91,
+                  "longitude": -43.21
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "takeaway": {
+      "active": true
+    },
+    "layout_settings": {
+      "company": {
+        "banner": {
+          "url": "https://assets.olaclick.app/companies/backgrounds/x.webp",
+          "path": "x"
+        }
+      },
+      "landing": {
+        "buttons_icons": {
+          "button_color": "#e4572e"
+        },
+        "header": {
+          "color": "#222222"
+        }
+      }
+    },
+    "analytics_settings": {
+      "facebook_pixel_id": "should-not-appear"
+    }
+  },
+  "payments": {
+    "delivery": [
+      {
+        "id": "00000000-0000-4000-8000-000000000049",
+        "code": "cash",
+        "name": "Dinheiro",
+        "description": null,
+        "logo_name": null,
+        "logo_url": null,
+        "payment_code": null,
+        "payment_method_fee": null,
+        "payment_method_id": "00000000-0000-4000-8000-000000000050",
+        "provider_code": null,
+        "provider_id": null
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000051",
+        "code": "credit_card",
+        "name": "Crédito",
+        "description": null,
+        "logo_name": null,
+        "logo_url": null,
+        "payment_code": null,
+        "payment_method_fee": null,
+        "payment_method_id": "00000000-0000-4000-8000-000000000052",
+        "provider_code": null,
+        "provider_id": null
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000053",
+        "code": "debit_card",
+        "name": "Débito",
+        "description": null,
+        "logo_name": null,
+        "logo_url": null,
+        "payment_code": null,
+        "payment_method_fee": null,
+        "payment_method_id": "00000000-0000-4000-8000-000000000054",
+        "provider_code": null,
+        "provider_id": null
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000055",
+        "code": "pix",
+        "name": "Pix",
+        "description": null,
+        "logo_name": null,
+        "logo_url": null,
+        "payment_code": null,
+        "payment_method_fee": null,
+        "payment_method_id": "00000000-0000-4000-8000-000000000056",
+        "provider_code": null,
+        "provider_id": null
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000057",
+        "code": "online_payment",
+        "name": "Pagamento online",
+        "description": null,
+        "logo_name": null,
+        "logo_url": null,
+        "payment_code": null,
+        "payment_method_fee": null,
+        "payment_method_id": "00000000-0000-4000-8000-000000000058",
+        "provider_code": "gateway",
+        "provider_id": null
+      }
+    ],
+    "takeaway": [
+      {
+        "id": "00000000-0000-4000-8000-000000000059",
+        "code": "cash",
+        "name": "Dinheiro",
+        "description": null,
+        "logo_name": null,
+        "logo_url": null,
+        "payment_code": null,
+        "payment_method_fee": null,
+        "payment_method_id": "00000000-0000-4000-8000-000000000060",
+        "provider_code": null,
+        "provider_id": null
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000061",
+        "code": "bank_transfer",
+        "name": "Transferência",
+        "description": null,
+        "logo_name": null,
+        "logo_url": null,
+        "payment_code": null,
+        "payment_method_fee": null,
+        "payment_method_id": "00000000-0000-4000-8000-000000000062",
+        "provider_code": null,
+        "provider_id": null
+      }
+    ],
+    "onsite": [],
+    "table": []
+  }
+}
