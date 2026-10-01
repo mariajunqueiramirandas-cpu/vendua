@@ -106,8 +106,15 @@ export default function Stock() {
     },
     onSettled: () => void qc.invalidateQueries({ queryKey: qk.catalog }),
   });
-  const send = useRef(adjust.mutate);
-  send.current = adjust.mutate;
+  // what's still on its way: an absolute count waits for it, or the taps would land after it
+  const inflight = useRef(new Set<Promise<unknown>>());
+  const run = (changes: { productId: string; add: number }[]) => {
+    const p = adjust.mutateAsync(changes).catch(() => undefined);
+    inflight.current.add(p);
+    void p.finally(() => inflight.current.delete(p));
+  };
+  const send = useRef(run);
+  send.current = run;
 
   const flush = () => {
     clearTimeout(timer.current);
@@ -303,7 +310,8 @@ export default function Stock() {
       <CountSheet
         p={editing}
         onClose={() => setEditing(null)}
-        onAdd={(p, add) => adjust.mutate([{ productId: p.id, add }])}
+        onAdd={(p, add) => run([{ productId: p.id, add }])}
+        settled={() => Promise.all([...inflight.current])}
       />
     </PageBody>
   );
@@ -439,10 +447,12 @@ function CountSheet({
   p: open,
   onClose,
   onAdd,
+  settled,
 }: {
   p: Product | null;
   onClose: () => void;
   onAdd: (p: Product, add: number) => void;
+  settled: () => Promise<unknown>;
 }) {
   const qc = useQueryClient();
   // the last product stays while the sheet slides away
@@ -498,6 +508,7 @@ function CountSheet({
       if (valid && mode === 'contei') patch.stockQuantity = n;
       if (thresholdChanged) patch.lowStockThreshold = threshold || null;
       let woken = 0;
+      if ('stockQuantity' in patch) await settled();
       if (Object.keys(patch).length)
         woken = (await save.mutateAsync({ id: p.id, patch })).waitlistWoken;
       // a delivery is relative: the sales of the last minutes still count
