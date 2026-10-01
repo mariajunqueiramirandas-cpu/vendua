@@ -185,7 +185,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
           d.created?.store.slug ?? d.slug,
           plans.data?.storeDomain ?? 'vendua.com.br',
         )}
-        paid={d.created?.next.kind !== 'open'}
+        paid={d.created?.next.kind !== 'manual'}
         onGo={finish}
       />
     );

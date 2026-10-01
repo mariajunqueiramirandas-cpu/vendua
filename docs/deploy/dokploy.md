@@ -47,7 +47,7 @@ Copy `.env.example` into the service's environment and fill it in:
 | `MP_CLIENT_ID` / `MP_CLIENT_SECRET`        | Venduá's Mercado Pago application — stores connect by OAuth       |
 | `MP_WEBHOOK_SECRET`                        | the application's webhook signing secret (x-signature)            |
 | `MP_PLATFORM_ACCESS_TOKEN`                 | Venduá's own MP account — plan billing (assinatura + Pix)         |
-| `VENDUA_SIGNUP_ACCESS_CODE`                | signup code that opens a store with no plan payment (≥ 12 chars)  |
+| `VENDUA_SIGNUP_ACCESS_CODE`                | signup without MP; staff mark the plan invoices paid (≥ 12 chars) |
 | `VENDUA_SECRETS_KEY`                       | seals stores' MP tokens at rest (falls back to SESSION_SECRET)    |
 | `MP_PAYER_EMAIL`                           | payer email MP requires on Pix (default `pagador@<store domain>`) |
 
@@ -60,9 +60,10 @@ and its webhook URL to `https://<VENDUA_ADMIN_HOST>/admin/v1/hooks/mercadopago?t
 `MP_CLIENT_ID`/`MP_CLIENT_SECRET` stores keep the offline methods (static Pix, cash, card on
 delivery) and the admin says online payments aren't available; without
 `MP_PLATFORM_ACCESS_TOKEN` self-serve signup stays closed, except to whoever has
-`VENDUA_SIGNUP_ACCESS_CODE` (`openssl rand -hex 16`): typed at the last signup step, it opens
-the store at once, with no plan payment and no subscription. Unset it once plan billing is live,
-or keep it to give stores away. Never set
+`VENDUA_SIGNUP_ACCESS_CODE` (`openssl rand -hex 16`): typed at the last signup step, it creates
+the store and its first plan invoice without Mercado Pago. The store stays closed until the team
+marks that invoice paid in the CRM (Lojas → the store → marcar como pago); each renewal invoice
+shows up there the same way. Unset it once plan billing is live. Never set
 `VENDUA_PAYMENTS_DRIVER=fake` outside dev/CI (Core ignores it in production).
 
 Rotating `VENDUA_SECRETS_KEY` makes every stored MP token unreadable: the stores show as

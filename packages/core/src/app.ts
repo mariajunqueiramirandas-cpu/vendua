@@ -2611,7 +2611,14 @@ export function createApp({
     storeDomain: publicStoreDomain,
   });
 
-  mountControlBilling({ app, sql, controlGate, provider, storeDomain: publicStoreDomain });
+  mountControlBilling({
+    app,
+    sql,
+    controlGate,
+    provider,
+    notify: merchantNotify,
+    storeDomain: publicStoreDomain,
+  });
   mountIncidentsControl({ app, sql, controlGate });
   mountFleet({
     app,

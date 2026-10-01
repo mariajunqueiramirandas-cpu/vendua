@@ -116,7 +116,8 @@ export function saveToken(v: Verified | null) {
   }
 }
 
-/** The step right after the store is created: pay by card or Pix, or (access code) done. */
+/** The step right after the store is created: pay by card or Pix, or (access code) the welcome —
+ *  the team confirms that payment. */
 export function afterCreate(next: PayNext): StepId {
   return next.kind === 'card' ? 'cartao' : next.kind === 'pix' ? 'pix' : 'pronto';
 }

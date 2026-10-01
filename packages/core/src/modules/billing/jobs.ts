@@ -378,9 +378,11 @@ const markPastDue: Step = async (sql, base, now) => {
 };
 
 /** the next month's Pix goes out RENEW_AHEAD_MS before the period ends — and again on a later
- *  tick if MP failed or its Pix was dropped (the invoice is committed before MP is asked) */
+ *  tick if MP failed or its Pix was dropped (the invoice is committed before MP is asked).
+ *  Without MP's platform token only the invoice is made, once: the team marks it paid in the CRM. */
 const issueRenewals: Step = async (sql, base, now) => {
   const horizon = new Date(now.getTime() + RENEW_AHEAD_MS);
+  const pix = base.provider.platformConfigured;
   const rows = await controlTx(
     sql,
     (tx) => tx<{ tenant_id: string }[]>`
@@ -389,7 +391,7 @@ const issueRenewals: Step = async (sql, base, now) => {
         and s.current_period_end <= ${horizon}
         and not exists (select 1 from invoices i where i.tenant_id = s.tenant_id
                           and i.period_start = s.current_period_end and i.status <> 'void'
-                          and (i.status <> 'open' or i.pix_copy_paste is not null))
+                          and (${!pix} or i.status <> 'open' or i.pix_copy_paste is not null))
       -- a renewal not yet issued goes before a retry of one MP refused, so retries can't crowd it out
       order by exists (select 1 from invoices i where i.tenant_id = s.tenant_id
                          and i.period_start = s.current_period_end and i.status <> 'void'),
@@ -405,7 +407,7 @@ const issueRenewals: Step = async (sql, base, now) => {
         const inv = await ensureRenewal(ctx, tx, sub, now, { issue: false });
         if (!inv) return null;
         await emitAdminTx(tx, tenant_id, 'billing', inv.id);
-        if (inv.status !== 'open' || pixIsLive(inv, now)) return null;
+        if (!pix || inv.status !== 'open' || pixIsLive(inv, now)) return null;
         const payerEmail = await payerEmailFor(tx, tenant_id, sub.payer_email);
         const plan = payerEmail ? await planRow(tx, inv.plan_id) : null;
         return payerEmail && plan ? reservePix(tx, tenant_id, inv, payerEmail, plan.name) : null;

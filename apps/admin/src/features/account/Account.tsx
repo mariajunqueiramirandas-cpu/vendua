@@ -283,7 +283,11 @@ function AccountView({ a }: { a: AccountData }) {
 
   return (
     <div className="space-y-8">
-      {a.billing.available && s ? (
+      {!a.billing.available && s?.status === 'pending' ? (
+        <Callout tone="warning" icon={Clock} title="Falta o primeiro pagamento">
+          A equipe da Venduá confirma o pagamento do plano e a loja abre para pedidos.
+        </Callout>
+      ) : a.billing.available && s ? (
         s.status === 'past_due' ? (
           <Callout
             tone="danger"

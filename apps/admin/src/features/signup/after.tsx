@@ -389,7 +389,7 @@ export function Welcome({
 }: {
   storeName: string;
   address: string;
-  /** false after an access-code signup: no payment was made */
+  /** false after an access-code signup: the team confirms the payment later */
   paid: boolean;
   onGo: () => void;
 }) {
@@ -416,6 +416,11 @@ export function Welcome({
                 </span>
               ))}
             </p>
+            {paid ? null : (
+              <p className="t-body mt-3 opacity-85">
+                Ela abre para pedidos quando a equipe da Venduá confirmar o pagamento do plano.
+              </p>
+            )}
           </div>
         </div>
       </section>

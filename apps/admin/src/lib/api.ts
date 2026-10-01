@@ -803,8 +803,8 @@ export type SignInResult =
 export type PayNext =
   | { kind: 'card'; url: string }
   | { kind: 'pix'; invoiceId: string }
-  /** signed up with an access code: the store is open, nothing to pay */
-  | { kind: 'open' };
+  /** signed up with an access code: the team confirms this invoice by hand */
+  | { kind: 'manual'; invoiceId: string };
 
 export interface TemplateSection {
   id: string;

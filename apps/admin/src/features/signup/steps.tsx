@@ -612,7 +612,7 @@ export function PayStep({
       title={byCode ? 'Qual é o seu código de acesso?' : 'Como prefere pagar o plano?'}
       hint={
         byCode
-          ? 'Com o código, a loja abre na hora, sem pagar o plano agora.'
+          ? 'Com o código, você cria a loja agora e acerta o pagamento do plano com a equipe da Venduá.'
           : 'Dá para trocar depois, em Conta e plano.'
       }
       back={() => go(verified.existingStores.length ? 'existente' : 'whatsapp')}
@@ -699,13 +699,11 @@ export function PayStep({
         <div className="rounded-lg bg-sunken p-4">
           <div className="flex items-baseline justify-between gap-3">
             <p className="font-semibold">{plan.name}</p>
-            {byCode ? null : (
-              <p className="tnum font-display text-lg font-semibold">{perMonth(plan)}</p>
-            )}
+            <p className="tnum font-display text-lg font-semibold">{perMonth(plan)}</p>
           </div>
           <p className="t-body mt-2 text-muted">
             {byCode
-              ? 'A loja abre assim que for criada. Depois, é só montar o cardápio.'
+              ? 'A loja abre para pedidos quando a equipe confirmar o pagamento. Enquanto isso, você já monta o cardápio.'
               : 'A loja abre para pedidos assim que o primeiro pagamento entrar. Enquanto isso, você já monta o cardápio.'}
           </p>
           {plan.feeBps === 0 ? (
@@ -741,7 +739,7 @@ export function Summary({ d, plans }: { d: Draft; plans: PlansData | undefined }
       label: 'Pagamento',
       value:
         d.step === 'pagamento' || d.created
-          ? d.created?.next.kind === 'open' ||
+          ? d.created?.next.kind === 'manual' ||
             (!d.created && plans?.billing.accessCode && (!plans.billing.available || d.byCode))
             ? 'Código de acesso'
             : d.method === 'pix'

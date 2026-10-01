@@ -48,11 +48,11 @@ if (process.env.NODE_ENV === 'production' && !process.env.VENDUA_ADMIN_HOST) {
 
 if (process.env.VENDUA_SIGNUP_ACCESS_CODE?.trim() && !signupAccessCode()) {
   log.warn(
-    'VENDUA_SIGNUP_ACCESS_CODE is under 12 characters — ignored; signup without payment stays off.',
+    'VENDUA_SIGNUP_ACCESS_CODE is under 12 characters — ignored; signup without Mercado Pago stays off.',
   );
 } else if (signupAccessCode()) {
   log.warn(
-    'VENDUA_SIGNUP_ACCESS_CODE set — signup with this code opens stores without a plan payment.',
+    'VENDUA_SIGNUP_ACCESS_CODE set — signup with this code skips Mercado Pago; the team marks its invoices paid in the CRM.',
   );
 }
 

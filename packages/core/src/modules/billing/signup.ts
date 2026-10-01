@@ -194,8 +194,8 @@ export async function verifySignupOtp(sql: Sql, phone: string, code: string): Pr
   });
 }
 
-/** VENDUA_SIGNUP_ACCESS_CODE: opens a store at signup with no plan charge (before Mercado Pago is
- *  set up, or a store we give away). Shorter than 12 characters counts as unset: guessable. */
+/** VENDUA_SIGNUP_ACCESS_CODE: signup without Mercado Pago — the store waits on its first invoice
+ *  and the team marks it paid in the CRM. Shorter than 12 characters counts as unset: guessable. */
 export function signupAccessCode(): string | null {
   const code = process.env.VENDUA_SIGNUP_ACCESS_CODE?.trim() ?? '';
   return code.length >= 12 ? code : null;

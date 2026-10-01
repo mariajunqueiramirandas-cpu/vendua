@@ -140,14 +140,25 @@ export const chargePlanId = (sub: SubRow) => sub.pending_plan_id ?? sub.plan_id;
 
 // ── starting ────────────────────────────────────────────────────────────────
 
-export type PayNext = { kind: 'card'; url: string } | { kind: 'pix'; invoiceId: string };
+export type PayNext =
+  | { kind: 'card'; url: string }
+  | { kind: 'pix'; invoiceId: string }
+  /** the team confirms this invoice by hand (CRM → Lojas); no charge was sent to the provider */
+  | { kind: 'manual'; invoiceId: string };
 
 /** A store without a subscription (or a cancelled one) starts one: pending until paid. */
 export async function startSubscription(
   ctx: BillingCtx,
   tx: Sql,
   tenantId: string,
-  o: { plan: PlanRow; method: BillingMethod; payerEmail: string | null; key: string; now: Date },
+  o: {
+    plan: PlanRow;
+    method: BillingMethod;
+    payerEmail: string | null;
+    key: string;
+    now: Date;
+    manual?: boolean;
+  },
 ): Promise<PayNext> {
   const existing = await lockSub(tx, tenantId);
   if (existing && existing.status !== 'cancelled')
@@ -169,7 +180,7 @@ export async function startSubscription(
   // a legacy store keeps its pilot plan until the first payment; a catalog store moves now
   if (await planRow(tx, (await currentTenantPlan(tx, tenantId)) ?? ''))
     await setTenantPlan(tx, tenantId, o.plan.id);
-  const next = await beginPayment(ctx, tx, sub, o.key, o.now);
+  const next = await beginPayment(ctx, tx, sub, o.key, o.now, { manual: o.manual });
   await emitAdminTx(tx, tenantId, 'billing');
   return next;
 }
@@ -178,13 +189,15 @@ async function currentTenantPlan(tx: Sql, tenantId: string) {
   return (await tx<{ plan: string }[]>`select plan from tenants where id = ${tenantId}`)[0]?.plan;
 }
 
-/** The first payment of a pending subscription: invoice #n + Pix, or the MP assinatura. */
+/** The first payment of a pending subscription: invoice #n + Pix, or the MP assinatura. Manual:
+ *  the invoice only, with no Pix — the team marks it paid in the CRM. */
 export async function beginPayment(
   ctx: BillingCtx,
   tx: Sql,
   sub: SubRow,
   key: string,
   now: Date,
+  o: { manual?: boolean | undefined } = {},
 ): Promise<PayNext> {
   const plan = await planOrThrow(tx, sub.plan_id);
   const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
@@ -192,7 +205,7 @@ export async function beginPayment(
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
-  if (sub.method === 'pix') {
+  if (sub.method === 'pix' || o.manual) {
     const reuse = (
       await tx<InvoiceRow[]>`
         select * from invoices where tenant_id = ${sub.tenant_id} and status in ('open', 'failed')
@@ -211,6 +224,7 @@ export async function beginPayment(
       dueAt: now,
       reuse: reuse ?? null,
     });
+    if (o.manual) return { kind: 'manual', invoiceId: inv.id };
     if (!pixIsLive(inv, now))
       inv = await viaProvider(() =>
         issuePix(tx, ctx.provider, inv, {
