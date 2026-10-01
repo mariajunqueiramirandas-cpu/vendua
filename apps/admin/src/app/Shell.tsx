@@ -1,4 +1,11 @@
-import { CaretUpDown, DotsNine, MagnifyingGlass, SignOut, WifiSlash } from '@phosphor-icons/react';
+import {
+  CaretLeft,
+  CaretUpDown,
+  DotsNine,
+  MagnifyingGlass,
+  SignOut,
+  WifiSlash,
+} from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
@@ -22,7 +29,9 @@ import { onHelp } from '../ui/help.ts';
 import { toast, Toaster } from '../ui/Toast.tsx';
 import { NAV } from './nav.ts';
 import { chunks, intent, screen, warmUp } from './routes.ts';
-import { useScrollMemory, useTabNav } from './nativeFeel.ts';
+import { useKeyboardInset, useScrollMemory, useTabNav } from './nativeFeel.ts';
+import { placeOf } from './nav.ts';
+import { useBack } from './Router.tsx';
 import { PullToRefresh } from './PullToRefresh.tsx';
 
 // screen-shaped skeletons: their own chunk, asked for as the shell loads (first paint stays light)
@@ -74,6 +83,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
   useLiveStream(true);
   useScrollMemory();
+  useKeyboardInset();
   const qc = useQueryClient();
   const allowed = items.map((n) => n.to).join(' ');
   useEffect(() => warmUp(allowed.split(' ')), [allowed]);
@@ -206,16 +216,22 @@ export function Shell({ children }: { children: ReactNode }) {
 
       <div className="min-w-0 flex-1">
         {/* phone top: status pill always visible (§3.2) + search */}
-        <header className="vt-top sticky top-0 z-30 flex items-center gap-2 bg-bg/95 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm md:hidden">
-          <StoreAvatar size={40} />
-          <StatusPill className="min-w-0" />
+        <header className="vt-top chrome sticky top-0 z-30 flex items-center gap-2 bg-bg/95 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm md:hidden">
+          {placeOf(loc.pathname)?.depth ? (
+            <BackButton pathname={loc.pathname} />
+          ) : (
+            <StoreAvatar size={40} />
+          )}
+          <span className="vt-pill flex min-w-0">
+            <StatusPill className="min-w-0" />
+          </span>
           <div className="flex-1" />
           <button
             type="button"
             aria-label="buscar"
             onClick={() => setSearchOpen(true)}
             onPointerDown={() => void chunks.search().catch(() => undefined)}
-            className="grid size-12 place-items-center rounded-full hover:bg-hover"
+            className="press grid size-12 shrink-0 place-items-center rounded-full"
           >
             <MagnifyingGlass className="size-6" />
           </button>
@@ -346,6 +362,22 @@ function IncidentBanner() {
     <Suspense fallback={null}>
       <Banner incidents={data!.incidents} />
     </Suspense>
+  );
+}
+
+/** Phones, one level down: where the store avatar sits, "‹ Pedidos" goes back (§3.3). */
+function BackButton({ pathname }: { pathname: string }) {
+  const { label, back } = useBack(pathname);
+  return (
+    <button
+      type="button"
+      onClick={back}
+      aria-label={`voltar para ${label}`}
+      className="press -ml-2 flex h-12 min-w-12 max-w-[9.5rem] shrink-0 items-center gap-0.5 rounded-full pl-1 pr-3 text-ink"
+    >
+      <CaretLeft weight="bold" className="size-6 shrink-0" aria-hidden />
+      <span className="t-label truncate">{label}</span>
+    </button>
   );
 }
 

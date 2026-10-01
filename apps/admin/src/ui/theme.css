@@ -66,6 +66,8 @@
 
   /* the store's own accent — set at runtime from its tokens (hero glow, avatar ring) */
   --store-accent: #d9f875;
+  /* the leading edge of a screen sliding over another (push / pop) */
+  --edge-shadow: -6px 0 24px rgb(18 60 50 / 0.12);
 
   color-scheme: light;
 }
@@ -122,6 +124,7 @@
   --shadow-e3: 0 0 0 1px rgb(247 244 234 / 0.06), 0 24px 64px rgb(0 0 0 / 0.5);
   --highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
   --counter-shade: rgb(0 0 0 / 0.55);
+  --edge-shadow: -6px 0 28px rgb(0 0 0 / 0.5);
 
   color-scheme: dark;
 }
@@ -245,11 +248,41 @@
 @utility tnum {
   font-variant-numeric: tabular-nums;
 }
+/* touch feedback that needs no hover: a tappable gives under the finger (main.tsx arms
+   :active on iOS). `scale` composes with any transform a swipe sets inline. */
+@utility press {
+  transition: scale var(--duration-instant) ease-out;
+  &:active:not(:disabled, [aria-disabled='true']) {
+    scale: 0.97;
+  }
+}
+/* rows and list items: a full-width row shouldn't shrink, it darkens */
+@utility press-row {
+  transition: background-color var(--duration-instant) ease-out;
+  &:active:not(:disabled, [aria-disabled='true']) {
+    background-color: var(--color-press);
+  }
+}
+
+/* what the phone tab bar takes from the bottom of the screen: action bars, toasts and
+   bottom padding sit on top of it; 0 from tablets up and while the keyboard is up */
+:root {
+  --tabbar-h: calc(72px + env(safe-area-inset-bottom));
+}
+@media (min-width: 768px) {
+  :root {
+    --tabbar-h: 0px;
+  }
+}
+:root[data-kb] {
+  --tabbar-h: 0px;
+}
 
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
   }
   body {
     background: var(--bg);
@@ -377,8 +410,10 @@
   -webkit-touch-callout: none;
 }
 
-/* ── screen changes (View Transitions, app/nativeFeel.ts) ─────────────────
- * the page cross-fades with a small lift; the chrome around it stays put. */
+/* ── screen changes (View Transitions, app/Router.tsx) ───────────────────
+ * html[data-vt] names the move: push (one level deeper) slides the new screen in from the
+ * right over the old, which drifts left and dims; pop is the mirror; tab and fade cross-fade.
+ * The chrome around the page (tab bar, phone header, rail) stays put. */
 .vt-tabs {
   view-transition-name: tabs;
 }
@@ -388,14 +423,81 @@
 .vt-rail {
   view-transition-name: rail;
 }
+/* the phone status pill slides aside for the back button instead of ghosting */
+.vt-pill {
+  view-transition-name: pill;
+}
+html[data-kb] .vt-tabs {
+  transform: translateY(100%);
+  pointer-events: none;
+}
+.vt-tabs {
+  transition: transform var(--duration-quick) var(--ease-soft);
+}
+::view-transition-group(*) {
+  animation-duration: var(--duration-smooth);
+  animation-timing-function: var(--ease-soft);
+}
 ::view-transition-old(root) {
   animation: 120ms var(--ease-soft) both vt-out;
 }
 ::view-transition-new(root) {
   animation: 220ms var(--ease-soft) 40ms both vt-in;
 }
+html[data-vt='fade']::view-transition-old(root) {
+  animation: 140ms linear both vt-out;
+}
+html[data-vt='fade']::view-transition-new(root) {
+  animation: 180ms linear 40ms both vt-fade;
+}
+/* screens that slide over each other aren't a cross-fade: no additive blending */
+html:is([data-vt='push'], [data-vt='pop'])::view-transition-old(root),
+html:is([data-vt='push'], [data-vt='pop'])::view-transition-new(root) {
+  mix-blend-mode: normal;
+}
+html[data-vt='push']::view-transition-old(root) {
+  animation: var(--duration-smooth) var(--ease-soft) both vt-back;
+}
+html[data-vt='push']::view-transition-new(root) {
+  animation: var(--duration-smooth) var(--ease-soft) both vt-from-right;
+  box-shadow: var(--edge-shadow);
+}
+/* pop: the leaving screen is the one on top, sliding off to the right */
+html[data-vt='pop']::view-transition-old(root) {
+  z-index: 1;
+  animation: 240ms var(--ease-soft) both vt-to-right;
+  box-shadow: var(--edge-shadow);
+}
+html[data-vt='pop']::view-transition-new(root) {
+  animation: 240ms var(--ease-soft) both vt-from-back;
+}
+/* the tapped card or photo grows into the next screen's header (and back on pop) */
+::view-transition-group(vt-morph) {
+  overflow: clip;
+  border-radius: var(--radius-md);
+}
+::view-transition-old(vt-morph),
+::view-transition-new(vt-morph) {
+  height: 100%;
+  object-fit: cover;
+}
+/* a card becoming a header is two different layouts: the old one is gone before the new one
+   shows, so the text never doubles up (photos keep the cross-fade) */
+html:is([data-vt-morph='order'], [data-vt-morph='customer'])::view-transition-old(vt-morph) {
+  mix-blend-mode: normal;
+  animation: 120ms linear both vt-out;
+}
+html:is([data-vt-morph='order'], [data-vt-morph='customer'])::view-transition-new(vt-morph) {
+  mix-blend-mode: normal;
+  animation: 150ms linear 110ms both vt-fade;
+}
 @keyframes vt-out {
   to {
+    opacity: 0;
+  }
+}
+@keyframes vt-fade {
+  from {
     opacity: 0;
   }
 }
@@ -405,11 +507,41 @@
     transform: translateY(6px);
   }
 }
+@keyframes vt-from-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes vt-to-right {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes vt-back {
+  to {
+    transform: translateX(-30%);
+    opacity: 0.6;
+  }
+}
+@keyframes vt-from-back {
+  from {
+    transform: translateX(-30%);
+    opacity: 0.6;
+  }
+}
+/* reduced motion: every screen change is a 120 ms cross-fade, nothing moves */
 @media (prefers-reduced-motion: reduce) {
-  ::view-transition-group(*),
-  ::view-transition-old(*),
-  ::view-transition-new(*) {
+  ::view-transition-group(*) {
     animation: none !important;
+  }
+  ::view-transition-old(*) {
+    animation: 120ms linear both vt-out !important;
+  }
+  ::view-transition-new(*) {
+    animation: 120ms linear both vt-fade !important;
+  }
+  .vt-tabs {
+    transition: none;
   }
 }
 
@@ -665,10 +797,4 @@
   .depth-3 {
     border: 1px solid CanvasText;
   }
-}
-
-/* view transitions: crossfade route changes where supported */
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation-duration: 180ms;
 }
