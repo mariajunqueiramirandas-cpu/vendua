@@ -575,7 +575,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
       update orders set customer = customer || ${sql.json({ name: ' \t=HYPERLINK("x")' })}
       where tenant_id = ${tenantId} and id = ${o2.body.order.id}
     `;
-    const today = new Date().toISOString().slice(0, 10);
+    // the report's days are the store's (São Paulo), not UTC's: 21h–24h local they differ
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(
+      new Date(),
+    );
     const csv = await owner('GET', `/reports/orders.csv?from=${today}&to=${today}`);
     expect(csv.status).toBe(200);
     const body = csv.body as string;
