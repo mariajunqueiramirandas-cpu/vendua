@@ -182,7 +182,9 @@ export function priceByDistance(
   prepMinutes: number,
 ): ZoneMatch<DistanceZone> | null {
   const leg = routeMatches(route, store, to) ? route! : null;
-  const km = leg ? leg.meters / 1000 : haversineKm(store, to) * DETOUR_FACTOR;
+  // the km shown is the km charged ("3,0 km" never pays for a 4th)
+  const km =
+    Math.round((leg ? leg.meters / 1000 : haversineKm(store, to) * DETOUR_FACTOR) * 10) / 10;
   if (km > pricing.maxKm) return null;
   const drive = Math.ceil(leg?.seconds != null ? leg.seconds / 60 : (km / ESTIMATE_KMH) * 60);
   const etaMin = prepMinutes + drive;
@@ -200,7 +202,7 @@ export function priceByDistance(
       fee_per_km_cents: pricing.feePerKmCents,
       free_delivery_over_cents: pricing.freeOverCents,
     },
-    distanceKm: Math.round(km * 10) / 10,
+    distanceKm: km,
     feeCents: distanceFeeCents(pricing, km),
     distanceSource: leg ? 'route' : 'estimate',
   };

@@ -46,7 +46,7 @@ describe('distance pricing (pure)', () => {
   });
 
   test('no route (or one for another pin): straight line × detour factor', () => {
-    const km = haversineKm(STORE, NEAR) * DETOUR_FACTOR;
+    const km = Math.round(haversineKm(STORE, NEAR) * DETOUR_FACTOR * 10) / 10;
     for (const route of [null, leg(FAR, 1000)]) {
       const m = priceByDistance(PRICING, STORE, NEAR, route, 25)!;
       expect(m.distanceSource).toBe('estimate');
@@ -54,13 +54,19 @@ describe('distance pricing (pure)', () => {
     }
   });
 
+  test('the km shown is the km charged', () => {
+    const m = priceByDistance(PRICING, STORE, NEAR, leg(NEAR, 3049), 25)!;
+    expect(m.distanceKm).toBe(3);
+    expect(m.feeCents).toBe(500 + 3 * 150);
+  });
+
   test('never below the minimum fee; free above the threshold; refused past the maximum', () => {
     const close = priceByDistance(PRICING, STORE, NEAR, leg(NEAR, 200), 25)!;
     expect(close.feeCents).toBe(700);
     expect(effectiveFee(close, 30000)).toBe(0);
     expect(effectiveFee(close, 29999)).toBe(700);
-    expect(priceByDistance(PRICING, STORE, NEAR, leg(NEAR, 8001), 25)).toBeNull();
-    expect(priceByDistance(PRICING, STORE, NEAR, leg(NEAR, 8000), 25)).not.toBeNull();
+    expect(priceByDistance(PRICING, STORE, NEAR, leg(NEAR, 8051), 25)).toBeNull();
+    expect(priceByDistance(PRICING, STORE, NEAR, leg(NEAR, 8049), 25)).not.toBeNull();
   });
 
   test('zones price an address without a pin, or a store without distance pricing', () => {
@@ -194,6 +200,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
   const codes = new Map<string, string>();
   const legs = new Map<string, RouteLeg>();
   let routerCalls = 0;
+  let routerDown = false;
   const app = createApp({
     sql,
     sessionSecret: 's',
@@ -204,6 +211,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
       q.city || q.text ? { lat: -22.931, lng: -42.48, precision: 'street' } : null,
     router: async (_from, to) => {
       routerCalls++;
+      if (routerDown) throw new Error('down');
       return legs.get(`${to.lat},${to.lng}`) ?? null;
     },
     mapTiles: { url: 'https://t.example/{z}/{x}/{y}.png', attribution: '© OSM', maxZoom: 19 },
@@ -425,7 +433,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
     const pin = { lat: -22.935, lng: -42.47 };
     const auth = await cartWithItem();
     const q = await call('POST', '/checkout/v1/quote', { ...pin }, auth);
-    const km = haversineKm(STORE, pin) * DETOUR_FACTOR;
+    const km = Math.round(haversineKm(STORE, pin) * DETOUR_FACTOR * 10) / 10;
     expect(q.body).toMatchObject({
       distanceSource: 'estimate',
       feeCents: Math.max(700, 500 + Math.ceil(km) * 150),
@@ -434,5 +442,48 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
     expect(zoned.status).toBe(201);
     expect(zoned.body.order.deliveryFeeCents).toBe(400);
     expect(zoned.body.order.delivery.zoneName).toBe('Centro');
+  });
+
+  test('the routing quota is spent only by a cart session with an idempotency key', async () => {
+    const before = routerCalls;
+    const pin = { lat: -22.941, lng: -42.46 };
+    const q = await call('POST', '/checkout/v1/quote', { ...pin });
+    expect(q.body).toMatchObject({ eligible: true, distanceSource: 'estimate' });
+    expect(routerCalls).toBe(before);
+  });
+
+  // last: the failure pauses this app's router for a minute
+  test('checkout keeps the estimate the cart showed when a route turns up later', async () => {
+    const pin = { lat: -22.94, lng: -42.48 };
+    legs.set(`${pin.lat},${pin.lng}`, { meters: 3000, seconds: 400 });
+    const auth = await cartWithItem();
+    routerDown = true;
+    const set = await call('POST', '/checkout/v1/cart/delivery', order(pin).delivery, auth);
+    routerDown = false;
+    expect(set.body.cart.delivery.distanceSource).toBe('estimate');
+    const shown = set.body.cart.totals.deliveryFeeCents;
+    // another instance whose router answers: the order still charges what the cart showed
+    const other = createApp({
+      sql,
+      sessionSecret: 's',
+      controlSecret: 'ctl',
+      autoDrain: false,
+      cepLookup: async () => null,
+      router: async () => ({ meters: 3000, seconds: 400 }),
+    });
+    const res = await other.request(`http://${host}/checkout/v1/checkout`, {
+      method: 'POST',
+      headers: {
+        host,
+        'content-type': 'application/json',
+        'idempotency-key': `${nonce}-other`,
+        ...auth,
+      },
+      body: JSON.stringify(order(pin)),
+    });
+    const placed = (await res.json()) as any;
+    expect(res.status).toBe(201);
+    expect(placed.order.deliveryFeeCents).toBe(shown);
+    expect(placed.order.delivery.distanceSource).toBe('estimate');
   });
 });

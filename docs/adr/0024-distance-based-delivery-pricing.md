@@ -47,9 +47,11 @@ Turning it on doesn't delete zones: they only price an address that arrives with
 **Quote once, charge that quote.** The external call is made before the request's transaction
 (an HTTP call never holds one open) on `POST /checkout/v1/quote`, `/cart/delivery` and
 `/checkout`. `POST /cart/delivery` stores the leg on the cart (`carts.delivery_route`: from,
-to, meters, seconds). Checkout prefers the stored leg when its store and pin still match to
-~1 m, so the order charges the distance the shopper saw, even if the provider is down or would
-now answer differently. `resolveDelivery` (`modules/geo.ts`) is the single pricing entry point
+to, meters, seconds). For the pin the cart holds, checkout uses the cart's own decision, the
+stored leg or, when none could be had, the estimate, so the order charges the distance the
+shopper saw even if the provider is down or would now answer differently. Only a request with
+a cart session and an `Idempotency-Key` reaches the router (the free quota is shared by every
+store), and the km shown is the km charged (rounded to 0.1 before the started-km count). `resolveDelivery` (`modules/geo.ts`) is the single pricing entry point
 for the cart view, the quote and checkout. Distance pricing is a virtual zone
 (`id: 'distance'`, `kind: 'distance'`), so the free-delivery threshold, minimum order, coupons
 and order snapshot work unchanged.

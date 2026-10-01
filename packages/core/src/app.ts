@@ -81,6 +81,7 @@ import {
   viaCep,
   zoneMinFeeCents,
   type CepLookup,
+  type RouteQuote,
 } from './modules/geo.ts';
 import {
   mapTilesFromEnv,
@@ -458,9 +459,13 @@ export function createApp({
   const routeQuote = routeQuoter(router === undefined ? orsRouter() : router);
   /** The road leg store → this pin, fetched before the request's tx (an HTTP call never holds
    *  one open); null when the store doesn't price by distance or no route could be had. */
-  const routeFor = async (tenantId: string, lat: unknown, lng: unknown) => {
+  const routeFor = async (c: Context, tenantId: string, lat: unknown, lng: unknown) => {
     const to = validCoords(lat, lng);
     if (!to) return null;
+    // the free quota is shared: only a shopper's own cart session spends it
+    const key = c.req.header('idempotency-key');
+    if (!key || key.length > 200) return null;
+    if (!(await sessionCartId(c, sessionSecret).catch(() => null))) return null;
     const settings = await withTenant(sql, tenantId, (tx) => loadSettings(tx, tenantId));
     const from = storeCoords(settings);
     return from && distancePricingOf(settings) ? routeQuote(from, to) : null;
@@ -916,7 +921,8 @@ export function createApp({
   checkout.post('/cart/delivery', async (c) => {
     const tenant = c.get('tenant');
     const peek = await peekBody(c);
-    const route = peek?.mode === 'delivery' ? await routeFor(tenant.id, peek.lat, peek.lng) : null;
+    const route =
+      peek?.mode === 'delivery' ? await routeFor(c, tenant.id, peek.lat, peek.lng) : null;
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
@@ -962,7 +968,7 @@ export function createApp({
   checkout.post('/quote', async (c) => {
     const tenant = c.get('tenant');
     const peek = await peekBody(c);
-    const route = peek ? await routeFor(tenant.id, peek.lat, peek.lng) : null;
+    const route = peek ? await routeFor(c, tenant.id, peek.lat, peek.lng) : null;
     return idempotency(sql, async (c, tx) => {
       const body = await bodyJson(c);
       const neighborhood =
@@ -976,15 +982,24 @@ export function createApp({
       const paymentMethod = paymentMethodParam(body.paymentMethod);
       const zones = await loadZones(tx, tenant.id);
       const settings = await loadSettings(tx, tenant.id);
+      const cartId = await sessionCartId(c, sessionSecret).catch(() => null);
+      // one leg prices the whole answer: the fresh one, else the one the cart holds for this pin
+      const stored = cartId
+        ? ((
+            await tx<{ delivery_route: RouteQuote | null }[]>`
+              select delivery_route from carts where tenant_id = ${tenant.id} and id = ${cartId}
+            `
+          )[0]?.delivery_route ?? null)
+        : null;
+      const leg = route ?? stored;
       const match = resolveDelivery(
         zones,
         { neighborhood, coords },
         storeCoords(settings),
-        deliveryPricing(settings, route),
+        deliveryPricing(settings, leg),
       );
       // Relatórios' zone conversion: who asked for delivery where (server-side, like order_placed);
       // a quote without a cart session still answers, it just isn't counted
-      const cartId = await sessionCartId(c, sessionSecret).catch(() => null);
       if (cartId)
         await tx`
           insert into analytics_events (tenant_id, name, at, session_id, props)
@@ -1007,7 +1022,7 @@ export function createApp({
               lat: coords?.lat ?? null,
               lng: coords?.lng ?? null,
             },
-            route,
+            route: leg,
           }).then(
             (v) => v.totals,
             (err) => {
@@ -1041,7 +1056,7 @@ export function createApp({
     const peek = await peekBody(c);
     const d = peek?.delivery as Record<string, unknown> | undefined;
     // usually a cache hit: the quote and the address step already fetched this leg
-    const route = d?.mode === 'delivery' ? await routeFor(tenant.id, d.lat, d.lng) : null;
+    const route = d?.mode === 'delivery' ? await routeFor(c, tenant.id, d.lat, d.lng) : null;
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);

@@ -76,12 +76,18 @@ export async function placeOrderTx(
     now,
     settings?.special_days ?? [],
   );
-  // the leg the shopper's quote was priced on wins, so checkout charges what they saw
+  // checkout charges what the cart showed: for the pin the cart holds, the leg stored with it
+  // (none = the estimate it was priced on); a fresh leg only for a pin the cart never saw
   const storeAt = storeCoords(settings);
   const pin = validCoords(body.delivery.lat, body.delivery.lng);
+  const held = validCoords(cart.delivery?.lat, cart.delivery?.lng);
   const stored = locked?.delivery_route ?? null;
   const route =
-    storeAt && pin && routeMatches(stored, storeAt, pin) ? stored : (opts.route ?? null);
+    pin && held && pin.lat === held.lat && pin.lng === held.lng
+      ? storeAt && routeMatches(stored, storeAt, pin)
+        ? stored
+        : null
+      : (opts.route ?? null);
   const match = validateCheckout(
     status,
     settings,
