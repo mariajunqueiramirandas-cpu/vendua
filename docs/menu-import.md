@@ -1,6 +1,6 @@
 # Menu import — "Cole o link do seu cardápio"
 
-> Status: Phase 2 built (Instadelivery end to end: Core 0068 + `modules/menu-import`, admin onboarding step and Cardápio › Importar, CRM import on a lead's store) · Last reviewed: 2026-10-01 · Model gaps (§6) are built (Core 0065–0067, Kernel 1.12.0, admin) · Next: phase 3, planned step by step in [menu-import-phase3.md](menu-import-phase3.md)
+> Status: Phase 2 built (Instadelivery end to end: Core 0069 + `modules/menu-import`, admin onboarding step and Cardápio › Importar, CRM import on a lead's store) · Last reviewed: 2026-10-01 · Model gaps (§6) are built (Core 0065–0067, Kernel 1.12.0, admin) · Next: phase 3, planned step by step in [menu-import-phase3.md](menu-import-phase3.md)
 > Roadmap: first tenant ([Phase 4](roadmap.md#phase-4--one-tenant-operated-for-real-weeks-1420-overlaps)) — Quero Pudim Gourmet moves from Instadelivery
 
 Almost every merchant Venduá sells to already has a cardápio digital (Instadelivery, anota.ai,
@@ -261,7 +261,7 @@ writer for "a whole menu", tested once.
 6. **Expiry** — a `ready` import not applied within 24 h becomes `expired` and its document is
    cleared; its prices would be stale.
 
-`menu_imports` (migration 0068): `id`, `tenant_id` (RLS like every table), `created_by`,
+`menu_imports` (migration 0069): `id`, `tenant_id` (RLS like every table), `created_by`,
 `platform`, `source_url`, `source_ref`, `status`, `error_code`, `doc jsonb` (≤ 2 MB), `counts
 jsonb`, `mode`, `sections jsonb`, `result jsonb`, `images_total`, `images_done`, the job's
 `attempts`/`lease_until`, `created_at`, `read_at`, `applied_at`, `finished_at`; index on
