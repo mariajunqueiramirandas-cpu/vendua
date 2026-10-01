@@ -48,6 +48,7 @@ import {
   verifyCustomerToken,
 } from './customer.ts';
 import { normalizeCep, parsePolygon, resolveZone, type CepLookup, type LatLng } from './geo.ts';
+import type { Geocoder } from './geocode.ts';
 import type { OrderHub } from './order-live.ts';
 import {
   ORDER_STATES,
@@ -88,6 +89,8 @@ interface Deps {
   /** trusted proxies after the client's own XFF entry (VENDUA_PROXY_HOPS) */
   proxyHops?: number;
   cepLookup: CepLookup;
+  /** address → approximate point for the checkout's pin map (ADR 0024) */
+  geocode: Geocoder;
   orderHub: OrderHub;
   provider: PaymentProvider;
   /** `https://<admin host>` — Mercado Pago's notification_url base */
@@ -145,6 +148,25 @@ export function mountCommerce(d: Deps) {
           }
         : { eligible: false, reason: 'OUT_OF_ZONE' },
     });
+  });
+
+  // where the checkout's pin map opens; the pin the shopper confirms is what gets priced
+  storefront.use('/geocode', limiter(20));
+  storefront.get('/geocode', async (c) => {
+    const q = (k: string, max: number) => {
+      const v = c.req.query(k)?.trim();
+      if (v && v.length > max) throw new HttpError(400, 'BAD_REQUEST', `${k} is too long`);
+      return v || null;
+    };
+    const point = await d.geocode({
+      cep: q('cep', 12),
+      street: q('street', 120),
+      number: q('number', 10),
+      city: q('city', 80),
+      state: q('state', 40),
+    });
+    if (point) c.header('cache-control', 'public, max-age=86400');
+    return c.json({ point });
   });
 
   // waitlist (roadmap 2c) — same subscriptions as notify-me; answers how many wait

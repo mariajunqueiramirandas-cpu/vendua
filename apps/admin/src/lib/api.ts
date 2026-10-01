@@ -497,6 +497,15 @@ export interface StoreView {
     demand: 'normal' | 'high';
   };
   location: { latitude: number; longitude: number } | null;
+  /** ADR 0024: an address with a pin is priced by road distance from `location` */
+  distancePricing: {
+    enabled: boolean;
+    baseFeeCents: number;
+    feePerKmCents: number;
+    minFeeCents: number;
+    maxKm: number;
+    freeOverCents: number | null;
+  };
   preorder: { paymentMethods: PayMethod[]; maxDays: number };
   zones: Zone[];
 }
@@ -1211,6 +1220,15 @@ export const api = {
 
   store: () => get<StoreView>('/store'),
   updateStore: (patch: Record<string, unknown>) => send<StoreView>('PATCH', '/store', patch),
+  /** roughly where a one-line address is (Core asks the geocoder); null = not found */
+  geocode: (q: string) =>
+    get<{
+      point: {
+        lat: number;
+        lng: number;
+        precision: 'address' | 'street' | 'postcode' | 'area';
+      } | null;
+    }>(`/geocode?q=${encodeURIComponent(q.slice(0, 300))}`),
   pause: (p: {
     for: '15m' | '1h' | 'today' | 'indefinite' | 'minutes';
     minutes?: number;

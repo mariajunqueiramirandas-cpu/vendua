@@ -19,8 +19,16 @@ import { errorCopy, errorCode } from '../errors.ts';
 import { emit } from '../telemetry.ts';
 import { useKernel } from '../provider.tsx';
 import { resolvePaths } from '../config.ts';
-import type { CheckoutStep, CustomerDraft, DeliveryOption, PaymentMethod } from '../slot-props.ts';
-import type { CartTotals, PaymentAdjustment } from '../api.ts';
+import type {
+  CheckoutStep,
+  CustomerDraft,
+  DeliveryOption,
+  PaymentMethod,
+  SlotProps,
+} from '../slot-props.ts';
+
+type SlotPropsOf<K extends keyof SlotProps> = SlotProps[K];
+import type { CartTotals, GeoPoint, LatLng, PaymentAdjustment, QuoteResult } from '../api.ts';
 import { deliveryWords } from '../rules/delivery.ts';
 import { couponMessage, isCouponError } from '../rules/errors.ts';
 import { formatCents, LOCALE } from '../rules/format.ts';
@@ -68,6 +76,11 @@ function adjustmentLabel(a: PaymentAdjustment, currency: string): PaymentMethod[
 function leaveTo(url: string) {
   globalThis.location.assign(url);
 }
+
+type PinStatus = SlotPropsOf<'checkout.LocationPicker'>['status'];
+
+const savedPin = (a: { lat?: number; lng?: number } | undefined): LatLng | null =>
+  typeof a?.lat === 'number' && typeof a.lng === 'number' ? { lat: a.lat, lng: a.lng } : null;
 
 function validate(step: StepId, d: CustomerDraft, mode: 'pickup' | 'delivery', located = false) {
   const e: Partial<Record<keyof CustomerDraft, string>> = {};
@@ -137,7 +150,8 @@ export function CheckoutPage() {
     reference: '',
     remember: true,
   }));
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  // a pin the shopper confirmed (on this device's remembered address, or on the map)
+  const [coords, setCoords] = useState<LatLng | null>(() => savedPin(customer?.address));
   const [locateStatus, setLocateStatus] = useState<
     'idle' | 'pending' | 'located' | 'denied' | 'out_of_zone'
   >('idle');
@@ -149,6 +163,22 @@ export function CheckoutPage() {
   const [couponError, setCouponError] = useState<string | undefined>();
   const deliveryOk = store?.deliveryEnabled !== false;
   const pickupOk = store?.pickupEnabled !== false;
+  // Kernel 1.15 (ADR 0024): Core prices the confirmed pin by road distance
+  const byDistance = deliveryOk ? (store?.distancePricing ?? null) : null;
+  // where the pin map is centred — the typed address once Core placed it
+  const [mapAt, setMapAt] = useState<{ center: LatLng; precision: GeoPoint['precision'] } | null>(
+    null,
+  );
+  const [pinStatus, setPinStatus] = useState<PinStatus>(() =>
+    savedPin(customer?.address) ? 'confirmed' : 'idle',
+  );
+  const [pinHint, setPinHint] = useState<string | undefined>();
+  const [pinError, setPinError] = useState<string | undefined>();
+  const [deviceLocate, setDeviceLocate] = useState<'idle' | 'pending' | 'denied'>('idle');
+  // the CEP's city/state, for placing the typed address
+  const [cepPlace, setCepPlace] = useState<{ city: string | null; state: string | null } | null>(
+    null,
+  );
   const [mode, setMode] = useState<'pickup' | 'delivery'>(deliveryOk ? 'delivery' : 'pickup');
   const [pay, setPay] = useState<PaymentMethod['id']>('pix');
   const [errors, setErrors] = useState<Partial<Record<keyof CustomerDraft, string>>>({});
@@ -284,11 +314,16 @@ export function CheckoutPage() {
   const payLabel = methods.find((m) => m.id === pay)?.label;
   // "a partir de R$ 5,00", "grátis" — the least a zone charges (a per-km zone is never free)
   const feeWords = deliveryWords(summary, currency)?.fee.replace(/^entrega /, '');
+  const deliveryDetail = byDistance
+    ? byDistance.fromFeeCents > 0
+      ? `a partir de ${money(byDistance.fromFeeCents)}`
+      : 'calculada pela distância'
+    : feeWords;
   const options: DeliveryOption[] = [
     {
       mode: 'delivery',
       label: 'Entrega',
-      ...(feeWords ? { detail: feeWords } : {}),
+      ...(deliveryDetail ? { detail: deliveryDetail } : {}),
       disabled: !deliveryOk,
     },
     {
@@ -299,6 +334,99 @@ export function CheckoutPage() {
       disabled: !pickupOk,
     },
   ];
+
+  // ── the delivery pin (Kernel 1.15, ADR 0024) ───────────────────────────────
+  const pinWanted = !!byDistance && step === 'entrega' && mode === 'delivery';
+  const canGeolocate = typeof navigator !== 'undefined' && 'geolocation' in navigator;
+  const pinWords = (r: QuoteResult) => {
+    // with the cart session Core's totals carry the fee after any free-delivery threshold
+    const fee = r.totals?.deliveryFeeCents ?? r.feeCents ?? 0;
+    return [
+      r.distanceKm != null
+        ? `${r.distanceSource === 'estimate' ? 'cerca de ' : ''}${r.distanceKm.toLocaleString(LOCALE)} km`
+        : null,
+      fee > 0 ? `entrega ${money(fee)}` : 'entrega grátis',
+      r.etaMin != null ? `${r.etaMin}–${r.etaMax} min` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  };
+  const confirmPin = async (c: LatLng) => {
+    const at = { lat: Math.round(c.lat * 1e5) / 1e5, lng: Math.round(c.lng * 1e5) / 1e5 };
+    setPinError(undefined);
+    setPinStatus('quoting');
+    try {
+      const r = await quote.quote({ ...at, paymentMethod: pay });
+      if (!r.eligible) {
+        setCoords(null);
+        setPinHint(undefined);
+        setPinStatus('out_of_zone');
+        return;
+      }
+      setCoords(at);
+      setMapAt({ center: at, precision: 'address' });
+      setPinHint(pinWords(r));
+      setPinStatus('confirmed');
+    } catch {
+      setPinStatus('error');
+    }
+  };
+  const locateDevice = () => {
+    setDeviceLocate('pending');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setDeviceLocate('idle');
+        setMapAt({
+          center: { lat: pos.coords.latitude, lng: pos.coords.longitude },
+          precision: 'address',
+        });
+      },
+      () => setDeviceLocate('denied'),
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
+    );
+  };
+  // place the typed address on the map (Core asks the geocoder); the shopper confirms the door
+  const street = draft.street.trim();
+  const number = draft.number.trim();
+  const cepDigits = isValidCep(draft.cep) ? digitsOf(draft.cep) : '';
+  const city = cepPlace?.city ?? store?.city ?? '';
+  const uf = cepPlace?.state ?? '';
+  const pinned = coords !== null;
+  useEffect(() => {
+    if (!pinWanted || pinned || (!(street && number) && !cepDigits)) return;
+    let live = true;
+    const t = setTimeout(() => {
+      setPinStatus('finding');
+      const settle = () => {
+        if (live) setPinStatus((s) => (s === 'finding' ? 'idle' : s));
+      };
+      api
+        .geocode({
+          ...(street ? { street } : {}),
+          ...(number ? { number } : {}),
+          ...(cepDigits ? { cep: cepDigits } : {}),
+          ...(city ? { city } : {}),
+          ...(uf ? { state: uf } : {}),
+        })
+        .then((r) => {
+          if (live && r.point)
+            setMapAt({
+              center: { lat: r.point.lat, lng: r.point.lng },
+              precision: r.point.precision,
+            });
+          settle();
+        }, settle);
+    }, 700);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [pinWanted, pinned, street, number, cepDigits, city, uf, api]);
+  // a remembered pin: Core prices it again (the store's prices may have changed)
+  useEffect(() => {
+    if (pinWanted && coords && !pinHint && pinStatus === 'confirmed') void confirmPin(coords);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinWanted, coords, pinHint, pinStatus]);
 
   if (leaving)
     return (
@@ -337,6 +465,12 @@ export function CheckoutPage() {
     );
 
   const patch = (p: Partial<CustomerDraft>) => {
+    // a new street, number or CEP is a new door: the confirmed pin no longer stands
+    if (coords && byDistance && ('street' in p || 'number' in p || 'cep' in p)) {
+      setCoords(null);
+      setPinHint(undefined);
+      setPinStatus('idle');
+    }
     setDraft((d) => ({ ...d, ...p }));
     setErrors((e) => {
       const next = { ...e };
@@ -349,6 +483,16 @@ export function CheckoutPage() {
     const r = await cepLookup.lookup(cep);
     if (!r) return;
     const a = r.address;
+    setCepPlace({ city: a.city, state: a.state });
+    // under distance pricing the pin, not the bairro, decides the fee
+    if (byDistance) {
+      setDraft((d) => ({
+        ...d,
+        street: d.street.trim() ? d.street : (a.street ?? ''),
+        neighborhood: d.neighborhood.trim() ? d.neighborhood : (a.neighborhood ?? ''),
+      }));
+      return;
+    }
     setDraft((d) => ({
       ...d,
       street: d.street.trim() ? d.street : (a.street ?? ''),
@@ -420,7 +564,14 @@ export function CheckoutPage() {
   const advance = async () => {
     const e = validate(step, draft, mode, coords !== null);
     setErrors(e);
-    if (Object.keys(e).length) return;
+    const needPin = step === 'entrega' && mode === 'delivery' && !!byDistance && !coords;
+    if (needPin)
+      setPinError(
+        pinStatus === 'out_of_zone'
+          ? 'Esse local fica fora da área de entrega.'
+          : 'Confirme no mapa onde entregar.',
+      );
+    if (Object.keys(e).length || needPin) return;
     if (step === 'entrega') {
       // sync the server cart so fee/min-order land in Core's totals; a zone problem
       // is shown but doesn't trap the customer — submit gets Core's final answer
@@ -469,6 +620,7 @@ export function CheckoutPage() {
             neighborhood: draft.neighborhood,
             complement: draft.complement,
             ...(draft.cep ? { cep: draft.cep } : {}),
+            ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
           },
         });
       else forget();
@@ -565,8 +717,26 @@ export function CheckoutPage() {
                               ? 'found'
                               : 'idle'
                     }
-                    {...(canLocate ? { onLocate, locateStatus } : {})}
-                    {...(zoneHint ? { zoneHint } : {})}
+                    {...(canLocate && !byDistance ? { onLocate, locateStatus } : {})}
+                    {...(zoneHint && !byDistance ? { zoneHint } : {})}
+                  />
+                ) : null}
+                {mode === 'delivery' && byDistance ? (
+                  <Slot
+                    name="checkout.LocationPicker"
+                    {...(mapAt ??
+                      (coords
+                        ? { center: coords, precision: 'address' as const }
+                        : { center: byDistance.center, precision: 'area' as const }))}
+                    value={coords}
+                    tiles={byDistance.tiles}
+                    status={pinStatus}
+                    {...(pinHint ? { hint: pinHint } : {})}
+                    {...(pinError ? { error: pinError } : {})}
+                    onConfirm={(c) => void confirmPin(c)}
+                    {...(canGeolocate
+                      ? { onLocate: locateDevice, locateStatus: deviceLocate }
+                      : {})}
                   />
                 ) : null}
               </>

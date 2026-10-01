@@ -1,12 +1,13 @@
-// Delivery-zone resolution: bairro names (accent/case-insensitive) first, then the
-// polygon containing the address, then distance from the store for radius zones. Coordinates come from the customer's
-// device ("usar minha localização") or a CEP lookup Core performs — storefronts
-// can't call external APIs (contract), so Core is the only place this can live.
+// Delivery pricing. With distance pricing on (ADR 0024) an address with a confirmed pin is
+// priced by its road distance from the store (`resolveDelivery`); otherwise — and for any
+// address without a pin — zone resolution: bairro names (accent/case-insensitive) first, then
+// the polygon containing the address, then distance from the store for radius zones.
+// Storefronts can't call external APIs (contract), so Core is the only place this can live.
 
 export interface ZoneLike {
   id: string;
   name: string;
-  kind?: 'neighborhood' | 'radius' | 'polygon';
+  kind?: 'neighborhood' | 'radius' | 'polygon' | 'distance';
   neighborhoods: string[];
   /** kind='polygon': [[lat, lng], ...], ring not closed */
   polygon?: LatLng[] | null;
@@ -51,6 +52,8 @@ export interface ZoneMatch<Z extends ZoneLike> {
   distanceKm: number | null;
   /** fee before any free-delivery threshold */
   feeCents: number;
+  /** distance pricing: a road route, or the straight line × DETOUR_FACTOR when none was had */
+  distanceSource?: 'route' | 'estimate';
 }
 
 export function resolveZone<Z extends ZoneLike>(
@@ -118,6 +121,113 @@ export function zoneMinFeeCents(
     .filter((m) => m < max)
     .reduce((a, m) => Math.max(a, m), 0);
   return radiusFeeCents(z, Math.floor(inner) + 1);
+}
+
+// ── distance pricing (ADR 0024) ──────────────────────────────────────────────
+
+export interface DistancePricing {
+  baseFeeCents: number;
+  feePerKmCents: number;
+  minFeeCents: number;
+  maxKm: number;
+  freeOverCents: number | null;
+}
+
+/** A road leg Core fetched for store → pin. It lives on the cart, so checkout charges the
+ *  distance the quote showed instead of asking the provider again. */
+export interface RouteQuote {
+  from: LatLng;
+  to: LatLng;
+  meters: number;
+  seconds: number | null;
+}
+
+/** Roads are longer than the straight line; used only while no route could be had. */
+export const DETOUR_FACTOR = 1.3;
+/** Urban courier speed for an estimated leg's travel time. */
+const ESTIMATE_KMH = 25;
+export const DISTANCE_ZONE_ID = 'distance';
+
+export interface DistanceZone extends ZoneLike {
+  kind: 'distance';
+  max_distance_km: number;
+  fee_per_km_cents: number;
+  free_delivery_over_cents: number | null;
+}
+
+const key5 = (lat: number, lng: number) => `${lat.toFixed(5)},${lng.toFixed(5)}`;
+
+/** Same store and same pin, to the 5th decimal (~1 m) — what the route was fetched for. */
+export function routeMatches(route: RouteQuote | null | undefined, from: Coords, to: Coords) {
+  return (
+    !!route &&
+    Array.isArray(route.from) &&
+    Array.isArray(route.to) &&
+    key5(route.from[0], route.from[1]) === key5(from.lat, from.lng) &&
+    key5(route.to[0], route.to[1]) === key5(to.lat, to.lng) &&
+    Number.isFinite(route.meters)
+  );
+}
+
+/** base + R$/started km, never below the minimum fee — before any free-delivery threshold. */
+export function distanceFeeCents(p: DistancePricing, km: number): number {
+  return Math.max(p.minFeeCents, p.baseFeeCents + Math.ceil(km) * p.feePerKmCents);
+}
+
+export function priceByDistance(
+  pricing: DistancePricing,
+  store: Coords,
+  to: Coords,
+  route: RouteQuote | null | undefined,
+  prepMinutes: number,
+): ZoneMatch<DistanceZone> | null {
+  const leg = routeMatches(route, store, to) ? route! : null;
+  // the km shown is the km charged ("3,0 km" never pays for a 4th)
+  const km =
+    Math.round((leg ? leg.meters / 1000 : haversineKm(store, to) * DETOUR_FACTOR) * 10) / 10;
+  if (km > pricing.maxKm) return null;
+  const drive = Math.ceil(leg?.seconds != null ? leg.seconds / 60 : (km / ESTIMATE_KMH) * 60);
+  const etaMin = prepMinutes + drive;
+  return {
+    zone: {
+      id: DISTANCE_ZONE_ID,
+      name: 'Entrega por distância',
+      kind: 'distance',
+      neighborhoods: [],
+      fee_cents: pricing.baseFeeCents,
+      min_order_cents: 0,
+      eta_min_minutes: etaMin,
+      eta_max_minutes: etaMin + Math.max(10, Math.ceil(drive / 2)),
+      max_distance_km: pricing.maxKm,
+      fee_per_km_cents: pricing.feePerKmCents,
+      free_delivery_over_cents: pricing.freeOverCents,
+    },
+    distanceKm: km,
+    feeCents: distanceFeeCents(pricing, km),
+    distanceSource: leg ? 'route' : 'estimate',
+  };
+}
+
+/** The one pricing entry point: a pinned address under distance pricing is priced by distance
+ *  (refused past the maximum); zones price everything else. */
+export function resolveDelivery<Z extends ZoneLike>(
+  zones: Z[],
+  where: { neighborhood?: string | null | undefined; coords?: Coords | null | undefined },
+  store: Coords | null,
+  distance: { pricing: DistancePricing | null; route?: RouteQuote | null; prepMinutes: number } = {
+    pricing: null,
+    prepMinutes: 0,
+  },
+): ZoneMatch<Z | DistanceZone> | null {
+  if (distance.pricing && where.coords && store)
+    return priceByDistance(
+      distance.pricing,
+      store,
+      where.coords,
+      distance.route,
+      distance.prepMinutes,
+    );
+  return resolveZone(zones, where, store);
 }
 
 // ── polygons ─────────────────────────────────────────────────────────────────

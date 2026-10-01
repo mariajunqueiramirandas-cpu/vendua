@@ -69,6 +69,41 @@ export interface StoreProfile {
   /** Kernel 1.14 — the store's canonical origin (`https://host`, no trailing slash), for
    *  share links, QR codes and JSON-LD */
   publicUrl?: string;
+  /** Kernel 1.15 — set when the store prices delivery by road distance from a pin the
+   *  shopper confirms on a map (ADR 0024); null/absent = zones price every address */
+  distancePricing?: DistancePricing | null;
+}
+
+/** Kernel 1.15 — a point on the map. */
+export interface LatLng {
+  lat: number;
+  lng: number;
+}
+
+/** Kernel 1.15 — raster XYZ tiles for the pin map (`{z}/{x}/{y}` template). */
+export interface MapTiles {
+  url: string;
+  attribution: string;
+  maxZoom: number;
+}
+
+/** Kernel 1.15 — the store's distance pricing, for labels; Core computes every fee. */
+export interface DistancePricing {
+  baseFeeCents: number;
+  feePerKmCents: number;
+  minFeeCents: number;
+  maxKm: number;
+  freeOverCents: number | null;
+  /** the least an address pays (Core's formula at 0 km), for "a partir de" */
+  fromFeeCents: number;
+  /** where the pin map opens when the address can't be placed (the store, ~100 m off) */
+  center: LatLng;
+  tiles: MapTiles;
+}
+
+/** Kernel 1.15 — where an address roughly is, to open the pin map there. */
+export interface GeoPoint extends LatLng {
+  precision: 'address' | 'street' | 'postcode' | 'area';
 }
 
 /** Kernel 1.14 — a date with its own hours (`closed`, or one `open`–`close` window). */
@@ -359,6 +394,8 @@ export interface Cart {
         zoneId?: string | null;
         zoneName?: string | null;
         distanceKm?: number | null;
+        /** Kernel 1.15 — distance pricing: a road route, or 'estimate' (straight line × 1.3) */
+        distanceSource?: 'route' | 'estimate' | null;
         etaMin?: number | null;
         etaMax?: number | null;
       } & Omit<DeliveryAddress, 'neighborhood'>)
@@ -387,8 +424,9 @@ export interface DeliveryZone {
   minOrderCents: number;
   etaMin: number;
   etaMax: number;
-  /** Kernel 1.12 adds 'polygon' (an area drawn on the map; needs the shopper's location) */
-  kind?: 'neighborhood' | 'radius' | 'polygon';
+  /** Kernel 1.12 adds 'polygon' (an area drawn on the map; needs the shopper's location).
+   *  Kernel 1.15: a quote priced by distance answers `zoneKind: 'distance'` (never listed) */
+  kind?: 'neighborhood' | 'radius' | 'polygon' | 'distance';
   /** Kernel 1.12 — the drawn area, `[lat, lng]` vertices (kind 'polygon') */
   polygon?: [number, number][] | null;
   maxDistanceKm?: number | null;
@@ -412,6 +450,8 @@ export interface QuoteResult {
   freeDeliveryOverCents?: number | null;
   /** Kernel 1.12 — the matched zone's kind (a polygon match has `distanceKm: null`) */
   zoneKind?: DeliveryZone['kind'];
+  /** Kernel 1.15 — distance pricing: a road route, or 'estimate' (straight line × 1.3) */
+  distanceSource?: 'route' | 'estimate' | null;
   /** Kernel 1.12 — with a cart session: its totals delivered here (and paid with
    *  `paymentMethod`, when sent) */
   totals?: CartTotals;
@@ -829,6 +869,19 @@ export function createApi(baseUrl = '') {
     /** Kernel 1.2 — address + zone for a CEP (Core calls the CEP service) */
     cep: (cep: string) =>
       apiFetch<CepResult>(sf(`/cep/${encodeURIComponent(digitsOf(cep).slice(0, 8))}`)),
+    /** Kernel 1.15 — roughly where an address is, to open the pin map there (`point: null` =
+     *  not found; the map then opens on the store) */
+    geocode: (q: {
+      cep?: string;
+      street?: string;
+      number?: string;
+      city?: string;
+      state?: string;
+    }) => {
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(q)) if (v?.trim()) params.set(k, v.trim().slice(0, 120));
+      return apiFetch<{ point: GeoPoint | null }>(sf(`/geocode?${params}`));
+    },
     /** Kernel 1.2 — restock waitlist; answers how many are waiting */
     waitlist: (productId: string, phone: string) =>
       apiFetch<{ subscribed: true; waiting: number }>(sf('/waitlist'), {

@@ -13,6 +13,9 @@ import type {
   ProductDetail,
   StoreProfile,
   CatalogProduct,
+  GeoPoint,
+  LatLng,
+  MapTiles,
 } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
 import type { Vocabulary } from './rules/copy.ts';
@@ -147,6 +150,27 @@ export interface SlotProps {
     locateStatus?: 'idle' | 'pending' | 'located' | 'denied' | 'out_of_zone';
     /** what Core answered for the address: zone + fee, when known */
     zoneHint?: string;
+  };
+  /** Kernel 1.15 — distance pricing (ADR 0024): the shopper confirms where the order goes on a
+   *  map; the confirmed point is what Core prices. Rendered under the address form. */
+  'checkout.LocationPicker': {
+    /** where the map opens: the typed address (geocoded), the device's location or the store */
+    center: LatLng;
+    /** how close `center` is: 'address' opens zoomed in to the door, 'area' further out */
+    precision: GeoPoint['precision'];
+    /** the confirmed point; null until the shopper confirms one */
+    value: LatLng | null;
+    tiles: MapTiles;
+    /** 'finding' = placing the typed address; 'quoting' = Core is pricing the point */
+    status: 'idle' | 'finding' | 'quoting' | 'confirmed' | 'out_of_zone' | 'error';
+    /** the confirmed point's price ("3,2 km · R$ 9,50 · 40–50 min") */
+    hint?: string;
+    /** a validation message ("Confirme o local no mapa.") */
+    error?: string;
+    onConfirm: (point: LatLng) => void;
+    /** re-centres on the device's location; absent = no geolocation */
+    onLocate?: () => void;
+    locateStatus?: 'idle' | 'pending' | 'denied';
   };
   'checkout.DeliveryOptions': {
     options: DeliveryOption[];

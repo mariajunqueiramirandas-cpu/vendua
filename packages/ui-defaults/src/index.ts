@@ -40,6 +40,7 @@ import {
   PromoNotice,
   StoreClosedNotice,
 } from './system.tsx';
+import { LocationPicker } from './location.tsx';
 
 // @vendua/ui-defaults — the token-driven default for EVERY registered slot
 // (02-kernel.md#packages). Presentational only: the Kernel owns data + behavior
@@ -79,6 +80,7 @@ export const SLOT_DEFAULTS: SlotDefaults = {
   'order.Items': OrderItems,
   'customer.LoyaltyCard': LoyaltyCard,
   'customer.PhoneVerify': PhoneVerify,
+  'checkout.LocationPicker': LocationPicker,
   'checkout.PaymentStatus': PaymentStatus,
 };
 

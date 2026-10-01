@@ -189,4 +189,9 @@ export type {
   LineQuote,
   SpecialDay,
   StoreMeta,
+  // Kernel 1.15
+  DistancePricing,
+  GeoPoint,
+  LatLng,
+  MapTiles,
 } from './api.ts';

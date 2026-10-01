@@ -43,6 +43,8 @@ export const SLOT_KEYS = [
   'customer.PhoneVerify',
   // Kernel 1.7 — online payments
   'checkout.PaymentStatus',
+  // Kernel 1.15 — distance pricing: the shopper confirms the delivery pin on a map
+  'checkout.LocationPicker',
 ] as const;
 export type SlotKey = (typeof SLOT_KEYS)[number];
 

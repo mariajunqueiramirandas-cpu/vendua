@@ -1,4 +1,5 @@
 import type { Context, Hono } from 'hono';
+import type { Geocoder } from '../modules/geocode.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
@@ -35,6 +36,8 @@ export interface AdminDeps {
   notify: MerchantNotify;
   /** `https://<admin host>` — OAuth redirects, webhook URLs and links in messages */
   publicOrigin: (c: Context) => string;
+  /** address → approximate point, to place the store's pin (ADR 0024) */
+  geocode: Geocoder;
 }
 
 /** Messages to store people (not shoppers) from the platform's own number and address. */

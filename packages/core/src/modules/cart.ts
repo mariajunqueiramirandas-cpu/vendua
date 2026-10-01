@@ -20,7 +20,17 @@ import {
   type ComboSlot,
 } from './combos.ts';
 import { couponLabel, couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
-import { effectiveFee, foldName, resolveZone, validCoords, type ZoneLike } from './geo.ts';
+import {
+  effectiveFee,
+  foldName,
+  resolveDelivery,
+  validCoords,
+  type DistancePricing,
+  type DistanceZone,
+  type RouteQuote,
+  type ZoneLike,
+  type ZoneMatch,
+} from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
 import { scheduleView, type ScheduleView } from './preorder.ts';
 import { assertStock, stockDemand } from './stock.ts';
@@ -169,6 +179,8 @@ export interface CartView {
         zoneId?: string | null;
         zoneName?: string | null;
         distanceKm?: number | null;
+        /** distance pricing: 'estimate' = straight line × detour factor, no road route was had */
+        distanceSource?: 'route' | 'estimate' | null;
         etaMin?: number | null;
         etaMax?: number | null;
       })
@@ -647,13 +659,40 @@ export function storeCoords(settings: StoreSettingsRow | null | undefined) {
   return settings ? validCoords(settings.latitude ?? null, settings.longitude ?? null) : null;
 }
 
+/** The store's distance pricing when it is on (ADR 0024); null = zones price every address. */
+export function distancePricingOf(
+  settings: StoreSettingsRow | null | undefined,
+): DistancePricing | null {
+  if (!settings?.distance_pricing) return null;
+  return {
+    baseFeeCents: settings.delivery_base_fee_cents ?? 0,
+    feePerKmCents: settings.delivery_fee_per_km_cents ?? 0,
+    minFeeCents: settings.delivery_min_fee_cents ?? 0,
+    maxKm: Number(settings.delivery_max_km ?? 8),
+    freeOverCents: settings.delivery_free_over_cents ?? null,
+  };
+}
+
+/** Everything `resolveDelivery` needs from the settings row, plus the cart's road leg. */
+export function deliveryPricing(
+  settings: StoreSettingsRow | null | undefined,
+  route: RouteQuote | null | undefined = null,
+) {
+  return {
+    pricing: distancePricingOf(settings),
+    route,
+    prepMinutes: settings?.prep_time_minutes ?? 30,
+  };
+}
+
 export async function loadCartView(
   tx: Sql,
   tenantId: string,
   cartId: string,
   now = new Date(),
-  /** previews: totals for this payment method / this delivery address (the quote) */
-  opts: { paymentMethod?: string | null; delivery?: CartDelivery } = {},
+  /** previews: totals for this payment method / this delivery address (the quote), priced on
+   *  this road leg (the quote's own; else the one stored with the cart's address) */
+  opts: { paymentMethod?: string | null; delivery?: CartDelivery; route?: RouteQuote | null } = {},
 ): Promise<CartView> {
   // independent reads go out together — postgres.js pipelines them on the tx's connection
   const [carts, rows, settingsRows, zones] = await Promise.all([
@@ -662,10 +701,12 @@ export async function loadCartView(
         id: string;
         status: CartView['status'];
         delivery: CartDelivery | null;
+        delivery_route: RouteQuote | null;
         coupon_code: string | null;
       }[]
     >`
-      select id, status, delivery, coupon_code from carts where tenant_id = ${tenantId} and id = ${cartId}
+      select id, status, delivery, delivery_route, coupon_code from carts
+      where tenant_id = ${tenantId} and id = ${cartId}
     `,
     loadItemRows(tx, tenantId, cartId),
     tx<StoreSettingsRow[]>`select * from store_settings where tenant_id = ${tenantId}`,
@@ -683,15 +724,16 @@ export async function loadCartView(
 
   let deliveryFee = 0;
   let effectiveMinOrder = settings?.min_order_cents ?? 0;
-  let match: ReturnType<typeof resolveZone<ZoneRow>> = null;
+  let match: ZoneMatch<ZoneRow | DistanceZone> | null = null;
   if (cart.delivery?.mode === 'delivery') {
-    match = resolveZone(
+    match = resolveDelivery(
       zones,
       {
         neighborhood: cart.delivery.neighborhood,
         coords: validCoords(cart.delivery.lat, cart.delivery.lng),
       },
       storeCoords(settings),
+      deliveryPricing(settings, opts.route ?? cart.delivery_route),
     );
     if (match) {
       deliveryFee = effectiveFee(match, subtotal);
@@ -751,6 +793,7 @@ export async function loadCartView(
           zoneId: match?.zone.id ?? null,
           zoneName: match?.zone.name ?? null,
           distanceKm: match?.distanceKm ?? null,
+          distanceSource: match?.distanceSource ?? null,
           etaMin: match?.zone.eta_min_minutes ?? null,
           etaMax: match?.zone.eta_max_minutes ?? null,
         }

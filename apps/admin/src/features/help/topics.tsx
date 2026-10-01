@@ -176,6 +176,10 @@ export const TOPICS: Record<TopicId, Topic> = {
         a: 'Em Entrega e retirada, ligue a entrega e crie áreas por bairro ou por distância, cada uma com a sua taxa e tempo. O pedido mínimo vale para a loja toda.',
       },
       {
+        q: 'Como cobro a entrega pela distância?',
+        a: 'Marque a loja no mapa (ou use “pelo endereço”) e ligue “Cobrar pela distância”. O cliente confirma no mapa onde entregar e a taxa sai pelo caminho de carro: a taxa de saída mais o valor por km, nunca abaixo da mínima, até a distância máxima. As áreas ficam de reserva para quando o endereço chega sem o local no mapa.',
+      },
+      {
         q: 'Onde o cliente retira?',
         a: 'Com a retirada ligada, preencha “Onde retirar” e, se quiser, “Como retirar”. O cliente vê os dois ao escolher retirar.',
       },

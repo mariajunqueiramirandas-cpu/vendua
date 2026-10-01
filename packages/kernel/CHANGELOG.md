@@ -3,6 +3,17 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.15.0
+
+Delivery priced by road distance (ADR 0024) — additive; no storefront edit.
+
+- New slot `checkout.LocationPicker` (default: a dependency-free tile map under a fixed pin). A
+  store with `StoreProfile.distancePricing` asks the shopper to confirm the delivery pin; the
+  checkout places the typed address first (`api.geocode` → `GET /storefront/v1/geocode`), quotes
+  the confirmed point and sends it with the address. The pin is remembered with the address.
+- Types: `DistancePricing`, `GeoPoint`, `LatLng`, `MapTiles`; `QuoteResult.distanceSource`,
+  `Cart.delivery.distanceSource`; `DeliveryZone.kind` may be `'distance'` in a quote.
+
 ## 1.14.0
 
 The Kernel owns its presentation rules — additive; no storefront edit. One implementation of
