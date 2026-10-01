@@ -118,6 +118,8 @@ export interface AddToCartProps {
   modifierIds?: string[];
   /** Kernel 1.2 — kit picks for a `kind: 'combo'` product */
   comboSelections?: ComboSelection[];
+  /** Kernel 1.11 — units per option id in `modifierIds` (options with `maxQty` > 1) */
+  modifierQty?: Record<string, number>;
   asChild?: boolean;
   children?: ReactNode;
   onAdded?: () => void;
@@ -130,6 +132,7 @@ export function AddToCart({
   qty = 1,
   modifierIds = [],
   comboSelections,
+  modifierQty,
   asChild,
   children,
   onAdded,
@@ -147,7 +150,7 @@ export function AddToCart({
     if (disabled) return;
     setPending(true);
     try {
-      await mutations.add(product.id, qty, modifierIds, comboSelections);
+      await mutations.add(product.id, qty, modifierIds, comboSelections, modifierQty);
       emit('add_to_cart', {
         product_id: product.id,
         qty,

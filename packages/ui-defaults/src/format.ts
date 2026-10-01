@@ -37,6 +37,7 @@ export const PAYMENT_LABEL: Record<string, string> = {
   card_online: 'Cartão de crédito',
   card_on_delivery: 'Cartão na entrega',
   cash: 'Dinheiro',
+  meal_voucher: 'Vale-refeição',
 };
 
 /** "sáb., 26 set." for a store-local YYYY-MM-DD (no timezone shift). */

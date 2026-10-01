@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { money, ORDER_STATE_LABEL } from '@vendua/ui-defaults';
+import { money, ORDER_STATE_LABEL, PAYMENT_LABEL } from '@vendua/ui-defaults';
 import { useCart, useLoyalty, useOrder, useOrderHistory, useOrders, useStore } from '../hooks.ts';
 import { Slot } from '../slot.tsx';
 import { KLink } from '../sdk/sections.tsx';
@@ -294,6 +294,12 @@ export function OrderPage() {
               scheduledFor={order.scheduledFor ?? null}
               discountCents={order.discountCents ?? 0}
               couponCode={order.coupon?.code ?? null}
+              {...(order.paymentAdjustmentCents
+                ? {
+                    paymentAdjustmentCents: order.paymentAdjustmentCents,
+                    paymentLabel: PAYMENT_LABEL[order.payment.method] ?? order.payment.method,
+                  }
+                : {})}
               onReorder={() => void reorder(order.id)}
               reorderPending={pending === order.id}
             />

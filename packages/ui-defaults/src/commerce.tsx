@@ -141,11 +141,12 @@ export function CartLineItem({
         {item.modifiers.length > 0 ? (
           <p className="v-muted v-line-mods" data-part="modifiers">
             {item.modifiers
-              .map((m) =>
-                m.priceDeltaCents > 0
-                  ? `${m.name} (+${money(m.priceDeltaCents, currency)})`
-                  : m.name,
-              )
+              .map((m) => {
+                const name = (m.qty ?? 1) > 1 ? `${m.qty}× ${m.name}` : m.name;
+                return m.priceDeltaCents > 0
+                  ? `${name} (+${money(m.priceDeltaCents, currency)})`
+                  : name;
+              })
               .join(', ')}
           </p>
         ) : null}
@@ -407,6 +408,10 @@ export function ProductCard({
   const soldOut = product.status !== 'active';
   const [imgFailed, setImgFailed] = useState(false);
   const left = stockLeft ?? product.stockQuantity;
+  const compareAt =
+    product.compareAtPriceCents != null && product.compareAtPriceCents > product.basePriceCents
+      ? product.compareAtPriceCents
+      : null;
   const badge = soldOut
     ? null
     : product.requiresPreorder
@@ -463,7 +468,18 @@ export function ProductCard({
               <span className="v-flag">Esgotado</span>
             ) : (
               <>
-                <span>{money(product.basePriceCents, currency)}</span>
+                <span className="v-card-amount">
+                  {compareAt !== null ? (
+                    <>
+                      <s className="v-compare-at" data-part="compare-at">
+                        <span className="v-sr">de </span>
+                        {money(compareAt, currency)}
+                      </s>{' '}
+                      <span className="v-sr">por </span>
+                    </>
+                  ) : null}
+                  {money(product.basePriceCents, currency)}
+                </span>
                 {quickAdd ? null : (
                   <span className="v-card-go" aria-hidden="true">
                     +
@@ -485,18 +501,35 @@ export function ProductCard({
   );
 }
 
+const PRICING_RULE_HINT: Record<string, string> = {
+  most_expensive: 'Vale o preço da opção mais cara.',
+  average: 'Vale a média dos preços escolhidos.',
+};
+
 export function ModifierPicker({
   groups,
   value,
   onChange,
   currency,
   errors,
+  quantities = {},
+  onQtyChange,
 }: SlotProps['catalog.ModifierPicker']) {
+  const delta = (cents: number) =>
+    cents !== 0 ? (
+      <span className="v-muted v-num">
+        {' '}
+        {cents > 0 ? '+' : '−'}
+        {money(Math.abs(cents), currency)}
+      </span>
+    ) : null;
   return (
     <div className="v-mods" data-vendua="modifier-picker" data-part="root">
       {groups.map((g) => {
         const single = g.maxSelect === 1;
         const sel = value[g.id] ?? [];
+        // a group's min/max count units: an option picked twice takes two
+        const units = sel.reduce((n, id) => n + (quantities[id] ?? 1), 0);
         const hint = g.required
           ? single
             ? 'obrigatório'
@@ -504,6 +537,10 @@ export function ModifierPicker({
           : single
             ? 'opcional'
             : `até ${g.maxSelect}`;
+        const rule =
+          g.pricingRule && !single && g.modifiers.some((m) => m.priceDeltaCents !== 0)
+            ? PRICING_RULE_HINT[g.pricingRule]
+            : undefined;
         return (
           <fieldset
             key={g.id}
@@ -514,11 +551,86 @@ export function ModifierPicker({
             <legend className="v-legend">
               {g.name} <span className="v-muted">— {hint}</span>
             </legend>
+            {rule ? (
+              <p className="v-mod-rule v-muted" data-part="pricing-rule">
+                {rule}
+              </p>
+            ) : null}
             <ul className="v-mod-list" role={single ? 'radiogroup' : 'group'} aria-label={g.name}>
               {g.modifiers.map((m) => {
                 const on = sel.includes(m.id);
                 const soldOut = m.status !== 'active';
-                const capped = !on && !single && sel.length >= g.maxSelect;
+                const text = (
+                  <>
+                    {m.imageUrl ? (
+                      <img
+                        className="v-mod-thumb"
+                        data-part="option-image"
+                        src={m.imageUrl}
+                        alt=""
+                        width={40}
+                        height={40}
+                        loading="lazy"
+                        decoding="async"
+                      />
+                    ) : null}
+                    <span className="v-mod-text">
+                      <span>
+                        {m.name}
+                        {soldOut ? <span className="v-muted"> · esgotado</span> : null}
+                      </span>
+                      {m.description ? (
+                        <span className="v-mod-desc v-muted" data-part="option-description">
+                          {m.description}
+                        </span>
+                      ) : null}
+                    </span>
+                  </>
+                );
+                if (onQtyChange && (m.maxQty ?? 1) > 1 && !single) {
+                  const q = on ? (quantities[m.id] ?? 1) : 0;
+                  return (
+                    <li key={m.id}>
+                      <div
+                        className="v-mod"
+                        data-part="modifier"
+                        data-kind="qty"
+                        data-selected={q > 0 || undefined}
+                        data-disabled={soldOut || undefined}
+                      >
+                        {text}
+                        <span className="v-mod-end">
+                          {delta(m.priceDeltaCents)}
+                          <span
+                            className="v-qty v-mod-qty"
+                            role="group"
+                            aria-label={`Quantidade de ${m.name}`}
+                            data-part="option-qty"
+                          >
+                            <button
+                              type="button"
+                              aria-label={`Tirar um ${m.name}`}
+                              disabled={q <= 0}
+                              onClick={() => onQtyChange(g.id, m.id, q - 1)}
+                            >
+                              −
+                            </button>
+                            <output aria-live="polite">{q}</output>
+                            <button
+                              type="button"
+                              aria-label={`Mais um ${m.name}`}
+                              disabled={soldOut || q >= (m.maxQty ?? 1) || units >= g.maxSelect}
+                              onClick={() => onQtyChange(g.id, m.id, q + 1)}
+                            >
+                              +
+                            </button>
+                          </span>
+                        </span>
+                      </div>
+                    </li>
+                  );
+                }
+                const capped = !on && !single && units >= g.maxSelect;
                 return (
                   <li key={m.id}>
                     <button
@@ -536,15 +648,8 @@ export function ModifierPicker({
                         )
                       }
                     >
-                      <span>{m.name}</span>
-                      {soldOut ? <span className="v-muted"> · esgotado</span> : null}
-                      {m.priceDeltaCents !== 0 ? (
-                        <span className="v-muted v-num">
-                          {' '}
-                          {m.priceDeltaCents > 0 ? '+' : '−'}
-                          {money(Math.abs(m.priceDeltaCents), currency)}
-                        </span>
-                      ) : null}
+                      {text}
+                      {delta(m.priceDeltaCents)}
                     </button>
                   </li>
                 );

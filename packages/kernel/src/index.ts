@@ -153,4 +153,7 @@ export type {
   PixInfo,
   // Kernel 1.7
   PaymentNext,
+  // Kernel 1.11
+  ModifierPricingRule,
+  PaymentAdjustment,
 } from './api.ts';

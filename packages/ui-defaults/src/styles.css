@@ -833,6 +833,21 @@
     color: var(--v-color-accent, #3f5e4e);
     transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
+  /* Kernel 1.11 — the "de" price, struck through before what the shopper pays */
+  .v-card-amount {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 6px;
+    min-width: 0;
+  }
+  .v-compare-at {
+    font-size: 0.8125em;
+    font-weight: 400;
+    color: var(--v-color-muted, #6e6a64);
+    text-decoration-thickness: 1px;
+    white-space: nowrap;
+  }
   .v-card a:hover .v-card-go {
     background: var(--v-color-accent, #3f5e4e);
     color: var(--v-color-on-accent, #fff);
@@ -975,6 +990,15 @@
   [data-part='category']:first-of-type .v-cat-title {
     margin-top: 8px;
   }
+  .v-cat-desc {
+    max-width: 60ch;
+    margin: 0 0 16px;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+  .v-cat-title + .v-cat-desc {
+    margin-top: -8px;
+  }
 
   /* ── forms ──────────────────────────────────────────────────────────────── */
   .v-fieldset {
@@ -1095,6 +1119,23 @@
     grid-column: 2;
     font-size: 0.875rem;
     line-height: 1.4;
+  }
+  /* Kernel 1.11 — a payment method's discount/surcharge */
+  .v-option-adjust {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.5;
+    vertical-align: 1px;
+    white-space: nowrap;
+    color: var(--v-color-text, #1c1b1a);
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 8%, transparent);
+  }
+  .v-option-adjust[data-kind='discount'] {
+    background: color-mix(in srgb, var(--v-color-success, #3d7a4f) 16%, transparent);
   }
 
   /* ── checkout ───────────────────────────────────────────────────────────── */
@@ -1652,6 +1693,61 @@
   .v-mod:disabled {
     opacity: 0.55;
     cursor: not-allowed;
+  }
+  /* Kernel 1.11 — option photo + description, units per option, the group's pricing rule */
+  .v-mod-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 8em;
+    min-width: 0;
+  }
+  .v-mod-desc {
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+  .v-mod-thumb {
+    flex: none;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--v-radius-sm, 4px);
+    object-fit: cover;
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 6%, transparent);
+  }
+  .v-mod-rule {
+    margin: -6px 0 12px;
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+  /* phones: price + stepper drop to a second row, right-aligned */
+  .v-mod[data-kind='qty'] {
+    column-gap: 10px;
+    row-gap: 4px;
+    padding-block: 6px;
+    padding-inline-end: 6px;
+    cursor: default;
+  }
+  .v-mod[data-kind='qty']::before {
+    display: none;
+  }
+  .v-mod[data-kind='qty'][data-disabled] {
+    opacity: 0.55;
+  }
+  .v-mod[data-kind='qty'] .v-mod-text {
+    flex-basis: 12em;
+  }
+  .v-mod-end {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    flex: none;
+    margin-left: auto;
+  }
+  .v-mod-qty {
+    flex: none;
+  }
+  .v-mod-qty button {
+    width: 32px;
+    height: 32px;
   }
 
   /* ── SDK sections ───────────────────────────────────────────────────────── */

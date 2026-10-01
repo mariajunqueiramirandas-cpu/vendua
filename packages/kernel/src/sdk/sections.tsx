@@ -262,6 +262,8 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const { config } = useKernel();
   const go = useNavigateTo();
   const [selected, setSelected] = useState<Record<string, string[]>>({});
+  // units of picked options with maxQty > 1 (absent = 1)
+  const [modQty, setModQty] = useState<Record<string, number>>({});
   const [combo, setCombo] = useState<ComboSelection[]>([]);
   const [qty, setQty] = useState(1);
   const [cartError, setCartError] = useState<string | null>(null);
@@ -282,9 +284,23 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   }, [product, store, settings.product]);
 
   const groups = useMemo(() => product?.modifierGroups ?? [], [product]);
-  const missing = groups.filter(
-    (g) => g.required && (selected[g.id]?.length ?? 0) < Math.max(1, g.minSelect),
+  // Core counts a group's min/max in units, not distinct options
+  const units = (gid: string, except?: string) =>
+    (selected[gid] ?? []).filter((id) => id !== except).reduce((n, id) => n + (modQty[id] ?? 1), 0);
+  const missing = groups.filter((g) => g.required && units(g.id) < Math.max(1, g.minSelect));
+  const pickedIds = Object.values(selected).flat();
+  const pickedQty = Object.fromEntries(
+    pickedIds.filter((id) => (modQty[id] ?? 1) > 1).map((id) => [id, modQty[id]!]),
   );
+  // the button shows base × qty only while nothing picked changes the price: options are
+  // priced by Core (pricing rule × units) and the cart line carries that number
+  const pricedByOptions = groups.some((g) =>
+    g.modifiers.some((m) => m.priceDeltaCents !== 0 && pickedIds.includes(m.id)),
+  );
+  const compareAt =
+    product?.compareAtPriceCents != null && product.compareAtPriceCents > product.basePriceCents
+      ? product.compareAtPriceCents
+      : null;
   const errors = Object.fromEntries(
     missing.map((g) => [g.id, cartError ? 'Escolha uma opção' : '']).filter(([, v]) => v),
   );
@@ -400,6 +416,15 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
           </Title>
           <p className="v-pp-price v-num" data-part="price">
             {slots.some((sl) => sl.items.some((i) => i.priceDeltaCents > 0)) ? 'a partir de ' : ''}
+            {compareAt !== null ? (
+              <>
+                <s className="v-compare-at" data-part="compare-at">
+                  <span className="v-sr">de </span>
+                  {money(compareAt, currency)}
+                </s>{' '}
+                <span className="v-sr">por </span>
+              </>
+            ) : null}
             {money(product.basePriceCents, currency)}
           </p>
           {product.requiresPreorder ? (
@@ -425,9 +450,35 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
               value={selected}
               currency={currency}
               errors={errors}
+              quantities={pickedQty}
               onChange={(gid, ids) => {
                 setCartError(null);
+                // an option the picker dropped forgets its units
+                const gone = (selected[gid] ?? []).filter((id) => !ids.includes(id));
+                if (gone.length)
+                  setModQty((q) => {
+                    const rest = { ...q };
+                    for (const id of gone) delete rest[id];
+                    return rest;
+                  });
                 setSelected((prev) => ({ ...prev, [gid]: ids }));
+              }}
+              onQtyChange={(gid, mid, n) => {
+                const g = groups.find((x) => x.id === gid);
+                const m = g?.modifiers.find((x) => x.id === mid);
+                if (!g || !m) return;
+                const cap = Math.min(m.maxQty ?? 1, Math.max(0, g.maxSelect - units(gid, mid)));
+                const next = Math.max(0, Math.min(cap, Math.floor(n)));
+                setCartError(null);
+                setSelected((prev) => {
+                  const ids = (prev[gid] ?? []).filter((id) => id !== mid);
+                  return { ...prev, [gid]: next > 0 ? [...ids, mid] : ids };
+                });
+                setModQty((prev) => {
+                  const rest = { ...prev };
+                  delete rest[mid];
+                  return next > 1 ? { ...rest, [mid]: next } : rest;
+                });
               }}
             />
           ) : null}
@@ -476,7 +527,8 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
               <AddToCart
                 product={product}
                 qty={qty}
-                modifierIds={Object.values(selected).flat()}
+                modifierIds={pickedIds}
+                {...(Object.keys(pickedQty).length ? { modifierQty: pickedQty } : {})}
                 {...(slots.length ? { comboSelections: combo } : {})}
                 asChild
                 onAdded={() => {
@@ -499,7 +551,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                   disabled={missing.length > 0 || comboMissing.length > 0 || status === 'paused'}
                   data-part="add"
                 >
-                  {slots.length ? (
+                  {slots.length || pricedByOptions ? (
                     settings.addLabel
                   ) : (
                     <>
@@ -586,9 +638,11 @@ function ProductGrid({
               <ProductLink product={p} asChild>
                 <a
                   aria-label={
-                    p.status === 'active'
-                      ? `${p.name}, ${money(p.basePriceCents, currency)}`
-                      : `${p.name}, esgotado`
+                    p.status !== 'active'
+                      ? `${p.name}, esgotado`
+                      : p.compareAtPriceCents != null && p.compareAtPriceCents > p.basePriceCents
+                        ? `${p.name}, de ${money(p.compareAtPriceCents, currency)} por ${money(p.basePriceCents, currency)}`
+                        : `${p.name}, ${money(p.basePriceCents, currency)}`
                   }
                 >
                   {children}
@@ -764,6 +818,11 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
               <h3 className="v-cat-title">
                 {c.name} <span className="v-cat-count v-num">{c.products.length}</span>
               </h3>
+            ) : null}
+            {c.description && !q ? (
+              <p className="v-cat-desc v-muted" data-part="category-description">
+                {c.description}
+              </p>
             ) : null}
             <ProductGrid products={c.products} variant={settings.variant} currency={currency} />
           </div>
