@@ -61,6 +61,7 @@ Then per topic as needed:
 | SLOs, incidents, kill switch       | [16-operations-and-incidents](architecture/16-operations-and-incidents.md)       |
 | Templates, sections, blocks        | [17-page-composition](architecture/17-page-composition.md)                       |
 | Menu import ("cole o link")        | [menu-import](menu-import.md)                                                    |
+| Competitor feature gaps (tracker)  | [competitor-parity](competitor-parity.md)                                        |
 
 ## ADRs
 
