@@ -44,6 +44,7 @@ Copy `.env.example` into the service's environment and fill it in:
 | `DAILY_API_KEY`                            | daily.co per-meeting video rooms (unset → static roomUrl)         |
 | `IG_SIDECAR_SECRET`                        | Instagram DMs — Core↔ig-sidecar shared secret (see below)         |
 | `IG_PROXY`                                 | static residential proxy for the ig-sidecar (recommended)         |
+| `DISCORD_BOT_TOKEN`                        | the team's Discord bot — see [discord.md](discord.md)             |
 | `MP_CLIENT_ID` / `MP_CLIENT_SECRET`        | Venduá's Mercado Pago application — stores connect by OAuth       |
 | `MP_WEBHOOK_SECRET`                        | the application's webhook signing secret (x-signature)            |
 | `MP_PLATFORM_ACCESS_TOKEN`                 | Venduá's own MP account — plan billing (assinatura + Pix)         |

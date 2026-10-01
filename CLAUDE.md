@@ -24,6 +24,10 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
   `test/api-surface.test.ts`, a version bump and a `CHANGELOG.md` line.
 - Agent work is requested only through `requestAgentTx` (`agent/dispatch.ts`) with a `source`;
   nothing else inserts runs. Future touches on a lead are `agent_wakeups` rows (ADR 0016).
+- What the team should hear about is a `recordStaffEventTx` call (`modules/staff-events.ts`,
+  ADR 0023) inside the transaction that commits the change — never a direct Discord call, never
+  inside a `Promise.all` with other statements of that tx (it runs in a savepoint). A store's own
+  tx passes that store's `tenantId`; shoppers' names and phones never go in event data.
 
 ## Toolchain
 

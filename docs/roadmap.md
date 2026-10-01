@@ -48,6 +48,13 @@ the same `agent_runs` machinery the Phase-6 generation pipeline will reuse:
   segment, stale-draft regen, run provenance labels.
 - **Backlog** — [`agent-improvements.md`](agent-improvements.md) is the
   maintained list; every numbered item has shipped, two follow-ups remain.
+- **Staff bot on Discord** ([ADR 0023](adr/0023-staff-events-on-discord.md)) — every change
+  the team should hear about is a typed event in `staff_events`, recorded in the change's own
+  transaction (orders, payments, billing, signups, CRM, agent, fleet, Core itself) and
+  delivered by the scheduler to the team's private Discord: living cards (an order, a draft,
+  a handoff, an incident, a store's onboarding toward the First-store gate), buttons that
+  approve drafts and acknowledge incidents, slash commands and a daily summary. Setup:
+  [deploy/discord.md](deploy/discord.md).
 
 **Since the 1b/2 exits (2026-09-28 → 30):**
 
