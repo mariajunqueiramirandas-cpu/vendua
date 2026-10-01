@@ -65,10 +65,16 @@ over hidden for review and everything else) → "Essa loja é minha" (§10.1) �
 progress. The pt-BR line for every `lost` code lives in `features/import/copy.ts`. An unfinished
 import (reading, or a preview not applied within a day) is picked up again when the screen opens.
 
-**CRM (phase 2).** Lead discovery already classifies anota.ai, Instadelivery, Goomer and Takeat
+**CRM.** Lead discovery already classifies anota.ai, Instadelivery, Goomer and Takeat
 URLs as listing evidence (`agent/channels/discovery.ts`, `LISTING_HOSTS`). On a lead with such a
 URL, staff can import it into the store "criar loja" provisions, so the owner's invite lands on a
 store that already has their menu. Same module, exposed on the control API with staff auth.
+Built: "importar cardápio" in the lead's _loja_ panel (`apps/control/src/features/lead/LeadImport.tsx`,
+prefilled from the lead's site when it is an Instadelivery link) over
+`/control/v1/stores/:slug/imports` and `/control/v1/imports/:id[/apply|/discard]`. Staff tick
+_Perfil e visual_, _Horários_ and _Entrega e retirada_, never _Pagamentos_ (the owner's, and the
+Pix key is masked for them), confirm the merchant asked for it, and the audit entry reads "equipe
+Venduá".
 
 ## 3. Platforms
 

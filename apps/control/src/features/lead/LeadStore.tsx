@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Server } from 'lucide-react';
+import { Download, Plus, Server } from 'lucide-react';
 import type { Lead } from '@/lib/api.ts';
 import { Button } from '@/components/ui/button.tsx';
 import { ago, HostLink, ProvisionProgress, STORE_SUFFIX } from '@/features/fleet/bits.tsx';
 import { CreateStoreSheet } from '@/features/fleet/CreateStoreSheet.tsx';
 import { RetryButton } from '@/features/fleet/FleetAlerts.tsx';
 import { useProvisionings } from '@/features/fleet/queries.ts';
+import { LeadImport } from './LeadImport.tsx';
 import { Hint, Section } from './Section.tsx';
 
 /** The lead's store: its provisioning progress, or the way to create one. */
 export function LeadStore({ lead }: { lead: Lead }) {
   const [open, setOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
   const q = useProvisionings(lead.id);
   const p = q.data?.[0];
 
@@ -50,10 +52,23 @@ export function LeadStore({ lead }: { lead: Lead }) {
               </Link>
             </Button>
           )}
+          {p.tenant && (
+            <Button size="sm" variant="ghost" className="-ml-2" onClick={() => setImporting(true)}>
+              <Download /> importar cardápio
+            </Button>
+          )}
           <span className="ml-auto">
             <RetryButton p={p} />
           </span>
         </div>
+        {p.tenant && (
+          <LeadImport
+            lead={lead}
+            slug={p.tenant}
+            open={importing}
+            onClose={() => setImporting(false)}
+          />
+        )}
       </div>
     </Section>
   );

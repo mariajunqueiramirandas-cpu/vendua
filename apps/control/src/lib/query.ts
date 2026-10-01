@@ -44,6 +44,8 @@ export const qk = {
   fleetStorefronts: () => ['fleet-storefronts'] as const,
   fleetStorefront: (slug: string) => ['fleet-storefront', slug] as const,
   fleetProvisionings: (leadId?: string) => ['fleet-provisionings', leadId ?? ''] as const,
+  storeImports: (slug: string) => ['menu-imports', slug] as const,
+  menuImport: (id: string) => ['menu-import', id] as const,
   fleetIncidents: () => ['fleet-incidents'] as const,
   fleetSlug: (slug: string) => ['fleet-slug', slug] as const,
 };
