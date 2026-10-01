@@ -161,6 +161,22 @@ img {
   [data-section='sdk:header'] [data-part='nav'] a {
     padding-block: 8px;
   }
+  /* brand, nav and bag share the row: the name truncates instead of pushing the bag onto a
+   * second line, */
+  [data-section='sdk:header'] [data-part='root'] > div {
+    flex-wrap: nowrap;
+    gap: 8px 12px;
+    padding-bottom: 8px;
+  }
+  [data-section='sdk:header'] [data-part='brand'] {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: 1.0625rem;
+  }
+  [data-section='sdk:header'] [data-part='actions'] {
+    flex: none;
+    gap: 6px;
+  }
 }
 
 [data-section='sdk:bag-bar'] [data-part='trigger'] {
