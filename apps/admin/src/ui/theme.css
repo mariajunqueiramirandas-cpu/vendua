@@ -291,6 +291,10 @@
 :root[data-kb] {
   --tabbar-h: 0px;
 }
+/* the kitchen screens hide the tab bar (app/Shell.tsx) */
+:root[data-bare] {
+  --tabbar-h: 0px;
+}
 
 @layer base {
   html {
@@ -757,6 +761,66 @@ html:is([data-vt-morph='order'], [data-vt-morph='customer'])::view-transition-ne
 .animate-panel-in {
   animation: panel-in var(--duration-smooth) var(--ease-soft) both;
 }
+/* ── the kitchen (features/kitchen) ── */
+/* a bumped ticket's undo window drains left to right */
+@keyframes drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+.animate-drain {
+  transform-origin: left;
+  animation: drain linear both;
+}
+/* a late ticket's fuse: hazard stripes crawling along it */
+@keyframes crawl {
+  to {
+    background-position: 28px 0;
+  }
+}
+.fuse-late {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--danger) 0 7px,
+    color-mix(in oklab, var(--danger), var(--surface) 35%) 7px 14px
+  );
+  background-size: 28px 100%;
+  animation: crawl 900ms linear infinite;
+}
+/* everything done: the "pronto" button glows until it's tapped */
+@keyframes beckon {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--spark), transparent 30%);
+  }
+  50% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+.animate-beckon {
+  animation: beckon 1.6s ease-out infinite;
+}
+/* the pickup display's newest number takes the stage */
+@keyframes call-in {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  55% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  100% {
+    transform: none;
+  }
+}
+.animate-call-in {
+  animation: call-in 700ms var(--ease-soft) both;
+}
+
 /* Duá on a dark ground sits on a cream disc (brand/mascote rules): the dusk hero, and Noite */
 .dua-disc {
   border-radius: 9999px;
@@ -804,8 +868,13 @@ html:is([data-vt-morph='order'], [data-vt-morph='customer'])::view-transition-ne
   .animate-rise,
   .animate-pulse-dot,
   .animate-ring,
+  .animate-beckon,
+  .fuse-late,
   .skeleton {
     animation: none !important;
+  }
+  .animate-call-in {
+    animation: fade-up 120ms linear both !important;
   }
 }
 

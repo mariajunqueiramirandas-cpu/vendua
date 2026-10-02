@@ -57,6 +57,7 @@ import { mountAppearance } from './routes-appearance.ts';
 import { mountCatalog } from './routes-catalog.ts';
 import { mountCustomers } from './routes-customers.ts';
 import { mountHome } from './routes-home.ts';
+import { mountKitchen } from './routes-kitchen.ts';
 import { mountMarketing } from './routes-marketing.ts';
 import { mountOnboarding } from './routes-onboarding.ts';
 import { mountOrders } from './routes-orders.ts';
@@ -762,6 +763,7 @@ export function mountAdmin(o: MountAdminOpts) {
   mountTeam(deps);
   mountWhatsapp(deps);
   mountPrinting(deps);
+  mountKitchen(deps);
   mountAccount(deps);
   mountAppearance(deps);
   mountImports(deps);

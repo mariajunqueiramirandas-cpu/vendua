@@ -38,6 +38,8 @@ import { HoldButton } from '../../ui/HoldButton.tsx';
 import * as Art from '../../ui/illustrations.tsx';
 import { Odometer } from '../../ui/Odometer.tsx';
 import { OrderCard } from '../../ui/OrderCard.tsx';
+import { Ticket } from '../kitchen/Ticket.tsx';
+import type { KitchenTicket } from '../../lib/api.ts';
 import { ProductTile } from '../../ui/ProductTile.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { STATE_META, StateChip } from '../../ui/StateChip.tsx';
@@ -52,6 +54,58 @@ import { StepFrame } from '../../ui/StepFrame.tsx';
 import { OutcomeList, OutcomeRow } from '../../ui/Outcome.tsx';
 import { HelpButton } from '../../ui/Page.tsx';
 import { PlatformStatus } from '../help/status.tsx';
+
+const kitchenTicket = (
+  n: number,
+  minsAgo: number,
+  over: Partial<KitchenTicket> = {},
+): KitchenTicket => ({
+  id: `k${n}`,
+  number: n,
+  state: 'preparing',
+  mode: 'pickup',
+  name: 'Ana',
+  notes: null,
+  scheduledFor: null,
+  placedAt: new Date(now - (minsAgo + 1) * 60_000).toISOString(),
+  acceptedAt: new Date(now - minsAgo * 60_000).toISOString(),
+  startedAt: new Date(now - minsAgo * 60_000).toISOString(),
+  readyAt: null,
+  prepMinutes: 25,
+  rush: false,
+  paid: true,
+  payMethod: 'pix',
+  version: 3,
+  items: [
+    {
+      id: `k${n}a`,
+      name: 'Pudim tradicional',
+      qty: 2,
+      modifiers: [
+        { name: 'Calda extra', qty: 1 },
+        { name: 'Sem granulado', qty: 1 },
+      ],
+      combo: [],
+      categoryId: null,
+      stationId: null,
+      doneAt: null,
+    },
+    {
+      id: `k${n}b`,
+      name: 'Kit festa',
+      qty: 1,
+      modifiers: [],
+      combo: [
+        { slotName: 'Pudim', name: 'Pudim de coco', qty: 1 },
+        { slotName: 'Sacolés', name: 'Sacolé de morango', qty: 4 },
+      ],
+      categoryId: null,
+      stationId: null,
+      doneAt: new Date(now - 2 * 60_000).toISOString(),
+    },
+  ],
+  ...over,
+});
 
 // The living style reference (/admin/_ui, design spec §7): every component in its
 // states over realistic data. It needs no session, so CI screenshots it.
@@ -387,6 +441,48 @@ export default function UiReference() {
             onAdvance={() => undefined}
             onMore={() => undefined}
             onOpen={() => undefined}
+          />
+        </div>
+      </Block>
+
+      <Block title="Cozinha">
+        <div className="grid items-start gap-4 md:grid-cols-3">
+          <Ticket
+            ticket={kitchenTicket(131, 6, { state: 'confirmed', startedAt: null })}
+            station="all"
+            stationName={() => 'Bar'}
+            now={now}
+            arriving
+            onToggle={() => undefined}
+            onAction={() => toast('Começou')}
+            onMore={() => undefined}
+            onUndo={() => undefined}
+          />
+          <Ticket
+            ticket={kitchenTicket(129, 31, {
+              rush: true,
+              mode: 'delivery',
+              name: 'Carlos',
+              notes: 'Alergia a amendoim, por favor.',
+            })}
+            station="all"
+            stationName={() => 'Bar'}
+            now={now}
+            onToggle={() => undefined}
+            onAction={() => undefined}
+            onMore={() => undefined}
+            onUndo={() => undefined}
+          />
+          <Ticket
+            ticket={kitchenTicket(127, 18)}
+            station="all"
+            stationName={() => 'Bar'}
+            now={now}
+            bumpAt={now + 3_000}
+            onToggle={() => undefined}
+            onAction={() => undefined}
+            onMore={() => undefined}
+            onUndo={() => toast('Voltou para a fila')}
           />
         </div>
       </Block>

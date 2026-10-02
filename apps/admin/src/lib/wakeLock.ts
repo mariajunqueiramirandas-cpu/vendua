@@ -13,18 +13,20 @@ const wl = () => (navigator as Navigator & { wakeLock?: WakeLock }).wakeLock;
 
 export const wakeLockSupported = () => typeof navigator !== 'undefined' && !!wl();
 
-export function useWakeLock() {
+/** `key`/`initial`: a screen with its own preference (the kitchen's starts on). */
+export function useWakeLock(key = KEY, initial = false) {
   const [on, setOn] = useState(() => {
     try {
-      return localStorage.getItem(KEY) === '1';
+      const v = localStorage.getItem(key);
+      return v === null ? initial : v === '1';
     } catch {
-      return false;
+      return initial;
     }
   });
   const [held, setHeld] = useState(false);
   useEffect(() => {
     try {
-      localStorage.setItem(KEY, on ? '1' : '0');
+      localStorage.setItem(key, on ? '1' : '0');
     } catch {
       /* private mode */
     }
@@ -55,6 +57,6 @@ export function useWakeLock() {
       void s?.release().catch(() => undefined);
       setHeld(false);
     };
-  }, [on]);
+  }, [on, key]);
   return { on, held, toggle: () => setOn((v) => !v) };
 }

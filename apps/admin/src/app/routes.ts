@@ -29,6 +29,8 @@ export const chunks = {
   history: once(() => import('../features/orders/History.tsx')),
   scheduled: once(() => import('../features/orders/Scheduled.tsx')),
   order: once(() => import('../features/orders/OrderPage.tsx')),
+  kitchen: once(() => import('../features/kitchen/Kitchen.tsx')),
+  pickup: once(() => import('../features/kitchen/Pickup.tsx')),
   menu: once(() => import('../features/menu/Menu.tsx')),
   product: once(() => import('../features/menu/ProductPage.tsx')),
   importMenu: once(() => import('../features/import/ImportPage.tsx')),
@@ -74,6 +76,8 @@ export type RouteId =
   | 'scheduled'
   | 'order'
   | 'orders'
+  | 'kitchen'
+  | 'pickup'
   | 'product'
   | 'importMenu'
   | 'stock'
@@ -141,6 +145,18 @@ const ROUTES: RouteDef[] = [
     match: /^\/pedidos$/,
     chunk: chunks.orders,
     data: (qc) => q(qc, qk.board, api.board),
+  },
+  {
+    id: 'pickup',
+    match: /^\/cozinha\/painel$/,
+    chunk: chunks.pickup,
+    data: (qc) => q(qc, qk.kitchen, api.kitchen),
+  },
+  {
+    id: 'kitchen',
+    match: /^\/cozinha$/,
+    chunk: chunks.kitchen,
+    data: (qc) => q(qc, qk.kitchen, api.kitchen),
   },
   {
     id: 'product',

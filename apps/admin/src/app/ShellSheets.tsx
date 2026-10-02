@@ -69,6 +69,7 @@ function MoreSheet({
 }
 
 const HINTS: Record<string, string> = {
+  '/cozinha': 'tela da cozinha',
   '/clientes': 'quem compra de você',
   '/whatsapp': 'avisos aos clientes',
   '/impressoras': 'comanda na cozinha',

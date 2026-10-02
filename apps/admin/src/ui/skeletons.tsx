@@ -238,6 +238,40 @@ export function BoardSkeleton() {
   );
 }
 
+/** Cozinha: the top bar, then tickets (or the pickup display's two columns). */
+export function KitchenSkeleton({ pickup }: { pickup?: boolean }) {
+  return (
+    <SkeletonGroup className="flex min-h-dvh flex-col gap-4 p-3 md:p-4">
+      <div className="flex items-center gap-3">
+        <Skeleton className="size-11 rounded-full" delay={0} />
+        <Bone className="h-6 w-32" delay={0} />
+        <Bone className="ml-auto h-8 w-24" delay={0} />
+      </div>
+      {pickup ? (
+        <div className="grid flex-1 gap-4 md:grid-cols-2">
+          <Skeleton className="rounded-xl" />
+          <Skeleton className="rounded-xl" />
+        </div>
+      ) : (
+        <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))]">
+          {[5, 3, 4, 2].map((n, i) => (
+            <Card key={i} className="space-y-3 p-4">
+              <div className="flex items-center gap-3">
+                <Bone className="h-8 w-16" />
+                <Bone className="ml-auto h-6 w-14" />
+              </div>
+              {Array.from({ length: n }, (_, k) => (
+                <Bone key={k} className="h-5 w-4/5" />
+              ))}
+              <Skeleton className="h-14 rounded-md" />
+            </Card>
+          ))}
+        </div>
+      )}
+    </SkeletonGroup>
+  );
+}
+
 /** Início: the hero, then the "precisa de você" and feed cards. */
 export function DashboardSkeleton() {
   return (

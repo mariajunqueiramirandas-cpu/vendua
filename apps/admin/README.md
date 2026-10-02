@@ -99,6 +99,18 @@ The admin is meant to live on the merchant's home screen. What that takes, and w
 Test the worker against the production build (`BASE=http://localhost:8787/admin/`): in
 dev it isn't registered.
 
+## The kitchen (Cozinha)
+
+`/cozinha` is the kitchen display and `/cozinha/painel` the screen that faces the customers
+([ADR 0029](../../docs/adr/0029-kitchen-display.md), `features/kitchen`). The Shell drops its
+rail, bars and pull-to-refresh there (`bare` in `app/Shell.tsx`) but keeps the live stream,
+sound and toasts. The screens own their keys (bump bars send keystrokes; the list is under
+`?`). Per-device choices (station, sound, voice, "tudo junto", the panel's options) live in
+localStorage under `vendua-kds-*` / `vendua-painel-*`. Item marks, rush and stations are Core's
+(`/admin/v1/kitchen`). Every move of the order itself is the same transition Pedidos uses.
+"Pronto" is held for `UNDO_MS` with "desfazer" before it's sent. To see a busy service, give the
+store a menu (`seed:fixtures`) and place orders (`bun scripts/demo-orders.ts`).
+
 ## Rules
 
 - **Tokens only.** Colours, radii, type and motion live in `src/ui/theme.css`

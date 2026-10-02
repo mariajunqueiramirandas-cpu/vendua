@@ -6,6 +6,7 @@ import {
   CalendarSkeleton,
   FieldSkeleton,
   BoardSkeleton,
+  KitchenSkeleton,
   ChipsSkeleton,
   DashboardSkeleton,
   DetailSkeleton,
@@ -78,6 +79,8 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
       <BoardSkeleton />
     </div>
   ),
+  kitchen: () => <KitchenSkeleton />,
+  pickup: () => <KitchenSkeleton pickup />,
   product: () => page('Produto', <ProductSkeleton />, { subtitle: false }),
   menu: () => page('Cardápio', <MenuSkeleton />, { wide: true, subtitle: false }),
   importMenu: () => page('Importar cardápio', <FieldSkeleton />),

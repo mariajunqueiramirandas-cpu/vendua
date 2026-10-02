@@ -19,6 +19,8 @@ const routes = process.argv.slice(2).length
   : [
       '/',
       '/pedidos',
+      '/cozinha',
+      '/cozinha/painel',
       '/pedidos/historico',
       '/pedidos/agendados',
       '/cardapio',

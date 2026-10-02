@@ -28,7 +28,9 @@ export type AdminTopic =
   // the store's own WhatsApp: connection state, pairing code, opt-outs (id = state)
   | 'whatsapp'
   // print agents and their printers: paired, online, a job printed or failed
-  | 'printers';
+  | 'printers'
+  // the kitchen display: lines marked done, a rush flag, the stations (id = order id | 'stations')
+  | 'kitchen';
 
 const liveLog = log.child({ mod: 'admin-live' });
 
