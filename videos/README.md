@@ -93,8 +93,13 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
   true-peak limiter (`volume=+N dB, aresample=192000, alimiter=limit=0.83, aresample=48000`) to
   land on −14 LUFS / −1.5 dBTP.
 - Story continuity: the checkout shown must be the order that arrives (same cart, same total).
-- Shell: a trailing `&` runs the command in a subshell that loses `cd`/`export`; use `ffmpeg
--nostdin` in loops; never return GSAP objects from Playwright's `page.evaluate`.
+- Shell: a trailing `&` runs the command in a subshell that loses `cd` and `export`; loops need
+  `ffmpeg -nostdin`; never return GSAP objects from Playwright's `page.evaluate`.
+- Frame agents' own headless-Chromium checks can hang (two did, for 10+ minutes, and a message to
+  an agent waits until its current tool call returns). Tell them to wrap checks in `timeout 120`;
+  if one hangs, kill only that process by pid, or stop the agent and finish the frame yourself.
+- Generated JSON (`cues.json`, `audio_meta.json`, word timings) goes through prettier before the
+  commit (`build-audio.py mix` does it), or CI's prettier auto-fix pushes a conflicting commit.
 
 ## Findings from vendua-audio-47s
 
@@ -109,6 +114,8 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
 - Swapping the narrator after the frames were built cost a cue table per frame and four frame
   lengths, not a rebuild, because the frames read their times from `cues.json` values and the
   cuts sit on a fixed grid.
-- Six parallel Opus frame agents with one shared brief built the frames in ~15 minutes; the
-  slowest parts were audio generation, review round-trips and seams (frame 1 → 2 drifted once, by
-  one played bar).
+- Six parallel Opus frame agents with one shared brief built most frames in 3–15 minutes; the
+  slowest parts were audio generation, review round-trips, one hung agent and seams (frame 1 → 2
+  drifted once, by one played bar: write the end state of every seam as numbers in the brief).
+- Final frenético cut: 27.19 s, six frames (7.03 / 5.86 / 3.05 / 2.58 / 2.11 / 6.56 s), 24 SFX,
+  captions in 27 groups, −14 LUFS.

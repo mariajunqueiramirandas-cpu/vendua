@@ -41,7 +41,8 @@ The playbook is `videos/README.md`: read it first. This skill is the checklist.
 
 Brief → voice + pronunciation test → all lines → Whisper words mapped onto the script →
 `build-audio.py voices`/`mix` (bed on its first beat, frames in whole eighths, SFX on words) →
-storyboard with numeric seams → one Opus agent per frame from a shared brief file → assemble,
-local GSAP, transitions, `hyperframes check`, snapshots → draft render to the author → final
-render, −14 LUFS with gain + limiter, commit `renders/<name>.mp4`. The gotchas list in
-`videos/README.md` covers the failures each step hit last time.
+storyboard with numeric seams → one Opus agent per frame from a shared brief file (tell them to
+wrap their browser checks in `timeout 120`; a hung agent can be stopped and its frame finished by
+hand) → assemble, local GSAP, transitions, `hyperframes check`, snapshots → draft render to the
+author → final render, −14 LUFS with gain + limiter, commit `renders/<name>.mp4`. The gotchas list
+in `videos/README.md` covers the failures each step hit last time.
