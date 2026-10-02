@@ -68,8 +68,9 @@ create table if not exists print_jobs (
   -- a ticket nobody printed for two hours is noise in the kitchen, not a backlog
   expires_at timestamptz not null default now() + interval '2 hours'
 );
--- one automatic ticket per printer, order and step: a replayed transition never prints twice
-create unique index if not exists print_jobs_once on print_jobs (printer_id, order_id, trigger)
+-- one automatic ticket per printer and order, whichever step queued it: a replayed transition,
+-- or a store switching when it prints mid-order, never prints twice
+create unique index if not exists print_jobs_once on print_jobs (printer_id, order_id)
   where trigger in ('placed', 'confirmed');
 create index if not exists print_jobs_open on print_jobs (device_id, created_at)
   where status in ('pending', 'sent');

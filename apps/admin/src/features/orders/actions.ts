@@ -256,11 +256,12 @@ ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
   w.document.close();
 }
 
-/** "imprimir comanda": the store's printers when one is connected (ADR 0027), else this
- *  device's print dialog. Decided before the tap: a dialog opened after a request is blocked. */
+/** "imprimir comanda": the store's printers when a device holding one is online (ADR 0027),
+ *  else this device's print dialog. Decided before the tap: a dialog opened after a request is
+ *  blocked. */
 export function usePrintOrder(storeName: string) {
   const { data } = useQuery({ queryKey: qk.printers, queryFn: api.printers, staleTime: 60_000 });
-  const viaPrinter = !!data?.devices.some((d) => d.printers.some((p) => p.present));
+  const viaPrinter = !!data?.devices.some((d) => d.online && d.printers.some((p) => p.present));
   const send = useMutation({
     mutationFn: (o: Order) => api.printOrder(o.id),
     onSuccess: (r) => toast(`Comanda enviada para ${r.printers.join(', ')}`),

@@ -159,13 +159,15 @@ export async function queueJobsTx(
     select ${tenantId}, p.id, p.device_id, ${job.orderId ?? null}, ${job.kind}, ${job.trigger},
            ${job.requestedBy ?? null}
     from printers p where p.tenant_id = ${tenantId} and p.id = any(${printerIds}::uuid[])
-    on conflict (printer_id, order_id, trigger) where trigger in ('placed', 'confirmed') do nothing
+    on conflict (printer_id, order_id) where trigger in ('placed', 'confirmed') do nothing
     returning id`;
   return rows.map((r) => r.id);
 }
 
 /**
- * Queue this order's ticket on every automatic printer when the store prints at this step.
+ * Queue this order's ticket on every automatic printer: on arrival when the store prints then,
+ * and on accept always — an order that arrived before the store switched to "assim que chega"
+ * still prints once, and one already printed on arrival is skipped by the unique index.
  * Call inside the tenant transaction that commits the step, after any Promise.all batch: it runs
  * in a savepoint and never throws, so a printing bug can't block an order.
  */
@@ -181,8 +183,9 @@ export async function enqueueOrderPrintTx(
     ).savepoint(async (sp) => {
       const printers = await sp<{ id: string }[]>`
         select p.id from printers p
-        join store_settings s on s.tenant_id = p.tenant_id and s.print_on = ${trigger}
-        where p.tenant_id = ${tenantId} and p.auto and p.present`;
+        left join store_settings s on s.tenant_id = p.tenant_id
+        where p.tenant_id = ${tenantId} and p.auto and p.present
+          and (${trigger} = 'confirmed' or coalesce(s.print_on, 'confirmed') = 'placed')`;
       if (printers.length === 0) return 0;
       const ids = await queueJobsTx(
         sp,

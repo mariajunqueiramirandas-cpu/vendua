@@ -530,6 +530,39 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
       const placedJob = await s.next('job');
       expect(has(Buffer.from(placedJob.data, 'base64'), bytes(`#${fresh.number}`))).toBe(true);
 
+      // switching when the store prints, mid-order, keeps exactly one automatic ticket per order:
+      // printed on arrival → not again on accept; arrived before the switch → printed on accept
+      const autoJobs = async (orderId: string) =>
+        (
+          await sql<{ n: number }[]>`
+            select count(*)::int as n from print_jobs
+            where order_id = ${orderId} and trigger in ('placed', 'confirmed')`
+        )[0]!.n;
+      await owner('PATCH', '/printers/settings', { printOn: 'confirmed' });
+      expect(
+        (
+          await owner('POST', `/orders/${fresh.id}/transition`, {
+            to: 'confirmed',
+            prepMinutes: 15,
+          })
+        ).status,
+      ).toBe(200);
+      expect(await autoJobs(fresh.id)).toBe(1);
+      const before = await placeOrder();
+      await owner('PATCH', '/printers/settings', { printOn: 'placed' });
+      expect(await autoJobs(before.id)).toBe(0);
+      expect(
+        (
+          await owner('POST', `/orders/${before.id}/transition`, {
+            to: 'confirmed',
+            prepMinutes: 15,
+          })
+        ).status,
+      ).toBe(200);
+      const late = await s.next('job');
+      expect(has(Buffer.from(late.data, 'base64'), bytes(`#${before.number}`))).toBe(true);
+      expect(await autoJobs(before.id)).toBe(1);
+
       // an unanswered job is handed over again after a minute; config edits reach the agent
       await sql`update print_jobs set sent_at = now() - interval '2 minutes' where id = ${placedJob.id}`;
       const resent = await withTenant(appSql, tenantId, (tx) =>
