@@ -729,6 +729,58 @@ export type WaEvent =
   | 'delivered'
   | 'cancelled';
 
+export type PrinterKind = 'spooler' | 'tcp' | 'serial' | 'usb' | 'bluetooth';
+export type CodePage = 'cp850' | 'cp860' | 'ascii';
+export interface Printer {
+  id: string;
+  deviceId: string;
+  kind: PrinterKind;
+  /** the merchant's label, else what the app calls it */
+  name: string;
+  reportedName: string;
+  label: string | null;
+  address: string;
+  source: 'agent' | 'manual';
+  /** the app saw it in its last search */
+  present: boolean;
+  auto: boolean;
+  paper: 58 | 80;
+  codepage: CodePage;
+  copies: number;
+  cut: boolean;
+  lastOkAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+}
+export interface PrintDevice {
+  id: string;
+  name: string;
+  platform: 'windows' | 'android' | 'linux';
+  version: string | null;
+  online: boolean;
+  /** the app picked up its connection after you approved it */
+  ready: boolean;
+  lastSeenAt: string | null;
+  createdAt: string;
+  printers: Printer[];
+}
+export interface Printers {
+  printOn: 'placed' | 'confirmed';
+  devices: PrintDevice[];
+  downloads: { windows: string; android: string };
+}
+export interface Pairing {
+  code: string;
+  platform: PrintDevice['platform'];
+  name: string;
+  status: 'pending' | 'approved' | 'expired' | 'taken';
+  expiresAt: string;
+  deviceId: string | null;
+}
+export type PrinterPatch = Partial<
+  Pick<Printer, 'label' | 'auto' | 'paper' | 'codepage' | 'copies' | 'cut'>
+>;
+
 export type WaState = 'off' | 'connecting' | 'pairing' | 'open' | 'logged_out' | 'banned' | 'error';
 
 export interface WaMessage {
@@ -1350,6 +1402,26 @@ export const api = {
   whatsappSettings: (events: Partial<Record<WaEvent, boolean>>) =>
     send<Whatsapp>('PATCH', '/whatsapp/settings', { events }),
   whatsappTest: () => send<Whatsapp>('POST', '/whatsapp/test'),
+
+  printers: () => get<Printers>('/printers'),
+  printersSettings: (printOn: Printers['printOn']) =>
+    send<Printers>('PATCH', '/printers/settings', { printOn }),
+  pairing: (code: string) => get<Pairing>(`/printers/pairing/${encodeURIComponent(code)}`),
+  pairDevice: (code: string) =>
+    send<Printers & { deviceId: string }>('POST', '/printers/pairing', { code }),
+  unpairDevice: (id: string) => send<Printers>('DELETE', `/printers/devices/${id}`),
+  addNetworkPrinter: (deviceId: string, address: string) =>
+    send<Printer>('POST', `/printers/devices/${deviceId}/printers`, { address }),
+  updatePrinter: (id: string, patch: PrinterPatch) =>
+    send<Printer>('PATCH', `/printers/${id}`, patch),
+  removePrinter: (id: string) => send<Printers>('DELETE', `/printers/${id}`),
+  testPrinter: (id: string) => send<{ jobId: string }>('POST', `/printers/${id}/test`),
+  printOrder: (orderId: string, printerId?: string) =>
+    send<{ jobs: number; printers: string[] }>(
+      'POST',
+      `/orders/${orderId}/print`,
+      printerId ? { printerId } : {},
+    ),
   statement: (month: string) => get<Statement>(`/payments/statement?month=${month}`),
 
   alerts: () => get<Alerts>('/alerts'),

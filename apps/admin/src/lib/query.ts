@@ -21,6 +21,8 @@ export const qk = {
   onboarding: ['onboarding'] as const,
   payments: ['payments'] as const,
   whatsapp: ['whatsapp'] as const,
+  printers: ['printers'] as const,
+  pairing: (code: string) => ['printers', 'pairing', code] as const,
   customers: (p: object) => ['customers', p] as const,
   customer: (phone: string) => ['customers', 'one', phone] as const,
   marketing: ['marketing'] as const,

@@ -24,7 +24,7 @@ import { HelpButton } from '../../ui/Page.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { nextStep } from '../../ui/StateChip.tsx';
 import { useStoreQuery } from '../store/StatusPill.tsx';
-import { orderWhatsappUrl, printTicket, useTransition } from './actions.ts';
+import { orderWhatsappUrl, usePrintOrder, useTransition } from './actions.ts';
 import { CancelSheet, OrderDetail } from './OrderDetail.tsx';
 import { usePreload } from '../../app/routes.ts';
 
@@ -72,6 +72,7 @@ export default function Orders() {
   });
   const store = useStoreQuery().data;
   const s = useSession();
+  const printing = usePrintOrder(s.store.name);
   const nav = useNavigate();
   const now = useNow();
   const preload = usePreload();
@@ -368,7 +369,8 @@ export default function Orders() {
               variant="secondary"
               size="lg"
               block
-              onClick={() => printTicket(more, s.store.name)}
+              loading={printing.pending}
+              onClick={() => printing.print(more)}
             >
               imprimir comanda
             </Button>

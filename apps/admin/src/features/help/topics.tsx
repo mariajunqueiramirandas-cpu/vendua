@@ -24,6 +24,7 @@ export type TopicId =
   | 'loja'
   | 'pagamentos'
   | 'whatsapp'
+  | 'impressoras'
   | 'clientes'
   | 'marketing'
   | 'aparencia'
@@ -252,6 +253,32 @@ export const TOPICS: Record<TopicId, Topic> = {
       },
     ],
   },
+  impressoras: {
+    title: 'Impressoras',
+    intro: 'A comanda impressa sozinha, numa impressora térmica da loja.',
+    items: [
+      {
+        q: 'Como conecto?',
+        a: 'Instale o app Venduá Impressora no computador com Windows ou no tablet Android ligado à impressora. Abra o app: ele mostra um código. Toque em conectar aparelho e digite o código.',
+      },
+      {
+        q: 'Que impressora serve?',
+        a: 'Térmica de 58 ou 80 mm (Epson, Elgin, Bematech, Daruma e as genéricas), ligada por USB, rede ou Bluetooth. No Windows, a impressora precisa estar instalada como impressora do Windows.',
+      },
+      {
+        q: 'Quando a comanda sai?',
+        a: 'Nas impressoras com “imprimir pedidos sozinha” ligado: ao aceitar o pedido ou assim que ele chega, como você escolher em Quando imprimir. Em Pedidos, imprimir comanda manda de novo quando quiser.',
+      },
+      {
+        q: 'E se o aparelho estiver desligado?',
+        a: 'Os pedidos esperam. Quando ele liga, imprime o que ficou para trás, com o aviso de impressão atrasada. Depois de 2 horas, a comanda não sai mais.',
+      },
+      {
+        q: 'Saiu um símbolo no lugar do ç ou do ã',
+        a: 'Abra a impressora, troque Acentos e toque em imprimir teste até sair certinho.',
+      },
+    ],
+  },
   clientes: {
     title: 'Clientes',
     intro: 'Todo mundo que já pediu, pelo telefone.',
@@ -413,6 +440,7 @@ const BY_ROUTE: Partial<Record<RouteId, TopicId>> = {
   store: 'loja',
   payments: 'pagamentos',
   whatsapp: 'whatsapp',
+  printers: 'impressoras',
   customers: 'clientes',
   customer: 'clientes',
   marketing: 'marketing',

@@ -6,6 +6,7 @@ import { getProductsById, type ProductDetail } from './catalog.ts';
 import { addressParts, composeAddress, validateCheckout, type CheckoutInput } from './checkout.ts';
 import { couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
 import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
+import { enqueueOrderPrintTx } from './printing/jobs.ts';
 import { normalizePhone } from './customer.ts';
 import { effectiveFee, routeMatches, validCoords, type RouteQuote } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
@@ -305,5 +306,6 @@ export async function placeOrderTx(
     );
   }
   await enqueueOrderMessageTx(tx, tenantId, orderId, 'placed');
+  await enqueueOrderPrintTx(tx, tenantId, orderId, 'placed');
   return orderId;
 }
