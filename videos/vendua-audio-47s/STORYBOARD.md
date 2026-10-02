@@ -15,7 +15,24 @@ merchant: one link. The same Luiz then orders by himself (order #29 on the real 
 chocolate molhadinho among his items), so the story closes on the customer who asked.
 
 Reels safe area: everything load-bearing between 12.5% and 80% of the height, clear of the right
-action column (frame.md). Captions: word-timed, Figtree 750, above the bottom 20%.
+action column (frame.md). Captions: word-timed, Figtree 750 at 66px, in the band y 1300–1520; frame
+content ends at y 1280. No captions on Frame 6 (the card is the caption).
+
+**Spine.** The voice note is the hero prop: it plays (1), multiplies (2) and condenses into the link
+(3); the link grows into the customer's phone (4); the merchant's phone takes over (5); Luiz, who
+asked in 1, is the order that arrives in 5.
+
+**Bans.** No WhatsApp look (green, ticks, tails, icons). No fake storefront or admin UI: real
+captures only. No glow, sparkles, all-caps or eyebrow labels. No slideshow (every beat continues
+the last one) and no screensaver motion (things move when the voice names them).
+
+**Held frame.** The last ~2 s of Frame 6: nothing moves while "Link na bio · @vendua.digital" holds.
+
+**Truthfulness.** The screens are real captures of Venduá's admin and storefront running the
+fictional dev store Bolos da Nena; the push is Core's real payload text. Luiz and his voice note are
+fictional; the numbers (R$ 48,00, R$ 219,00, #29) come from the captured screens.
+
+Sketches: `storyboard.html` (v1).
 
 ## Frame 1 — O áudio
 
@@ -23,7 +40,7 @@ action column (frame.md). Captions: word-timed, Figtree 750, above the bottom 20
 - voiceover: "Oi, boa tarde! Tudo bem? Então… vocês têm cardápio? Quanto tá o bolo de chocolate? Ah, e aceita Pix?"
 - duration: 6s
 - transition_in: cut
-- status: outline
+- status: built
 - src: compositions/frames/01-o-audio.html
 - type: hook
 - persuasion: Pain validation (the viewer's own inbox, heard)
@@ -43,7 +60,7 @@ the first ~6 s play, so the long unplayed waveform is the joke. Captions light "
 - voiceover: "Áudio de 47 segundos. Enquanto o bolo tá no forno. E ainda tem mais na fila."
 - duration: 4s
 - transition_in: cut
-- status: outline
+- status: built
 - src: compositions/frames/02-de-novo.html
 - type: pain_point
 - persuasion: Pain agitation
@@ -62,7 +79,7 @@ The narrator enters, warm and a little wry; the music bed starts under it.
 - voiceover: "Com o Venduá, você responde com um link só."
 - duration: 3s
 - transition_in: zoom-through
-- status: outline
+- status: built
 - src: compositions/frames/03-um-link.html
 - type: product_intro
 - persuasion: Friction reduction (many answers → one link)
@@ -82,7 +99,7 @@ yet (the logo closes the video).
 - voiceover: "Cardápio… preço… e Pix."
 - duration: 4.5s
 - transition_in: crossfade
-- status: outline
+- status: built
 - src: compositions/frames/04-cardapio-preco-pix.html
 - type: feature_showcase
 - persuasion: Show-don't-tell proof (each question answered by a real screen)
@@ -101,8 +118,8 @@ payment step with Pix selected) and use it here instead of the admin screens; se
 - scene: A push drops in, "Pedido #29 chegou · Luiz · R$ 219,00 · entrega", with the brand's two-note chime; the phone lands on order #29 with "aceitar"
 - voiceover: "E o pedido chega sozinho."
 - duration: 3.5s
-- transition_in: crossfade
-- status: outline
+- transition_in: push-slide LEFT
+- status: built
 - src: compositions/frames/05-pedido-chega.html
 - type: benefit_highlight
 - persuasion: Future pacing (the order without the conversation)
@@ -112,7 +129,8 @@ payment step with Pix selected) and use it here instead of the admin screens; se
 narrativeRole: pay off the hook — the same Luiz now ordered by himself.
 keyMessage: "No more back-and-forth."
 
-The admin's own "an order arrives" moment (spring drop, shadow bloom e2→e1, lime edge fading),
+The customer's phone slides out left and the merchant's phone slides in (push-slide LEFT), so the
+two sides of the same order read as two phones. Then the admin's own "an order arrives" moment (spring drop, shadow bloom e2→e1, lime edge fading),
 with its "Pedido novo" chime and a double vibration buzz.
 
 ## Frame 6 — 14 dias grátis
@@ -121,7 +139,7 @@ with its "Pedido novo" chime and a double vibration buzz.
 - voiceover: "Comece com 14 dias grátis. Venduá Basic, sem cartão. Link na bio."
 - duration: 6s
 - transition_in: blur-crossfade
-- status: outline
+- status: built
 - src: compositions/frames/06-14-dias.html
 - type: cta
 - persuasion: Risk reversal (free, no card)
@@ -132,5 +150,6 @@ with its "Pedido novo" chime and a double vibration buzz.
 narrativeRole: convert — the offer, the plan, where to go.
 keyMessage: "Try it free for 14 days, no card."
 
-The card text is exactly the brief's. "14 dias grátis" rides a lime chip; the handle holds to the
-last frame.
+The card text is exactly the brief's, left-aligned to stay clear of the Reels action column:
+"Comece com 14 dias grátis." as the title, "Venduá Basic, sem cartão." on a lime chip, then "Link
+na bio · @vendua.digital". No captions on this frame. The handle holds to the last frame.
