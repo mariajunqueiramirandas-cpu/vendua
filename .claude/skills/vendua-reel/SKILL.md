@@ -51,6 +51,7 @@ Brief → voice + pronunciation test → all lines → Whisper words mapped onto
 `build-audio.py voices`/`mix` (bed on its first beat, frame lengths from the voice lengths rounded up to whole eighths, SFX on words) →
 storyboard with numeric seams → one Opus agent per frame from a shared brief file (tell them to
 wrap their browser checks in `timeout 120`; a hung agent can be stopped and its frame finished by
-hand) → assemble, local GSAP, transitions, `hyperframes check`, snapshots → draft render to the
+hand) → `videos/tools/build-reel.sh <project> --bpm 128 --snapshots <dir>` (assembly, checks and
+the cut check in one command; it must pass) → look at the cut snapshots → draft render to the
 author → final render, −14 LUFS with gain + limiter, commit `renders/<name>.mp4`. The gotchas list
 in `videos/README.md` covers the failures each step hit last time.

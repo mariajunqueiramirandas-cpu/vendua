@@ -67,9 +67,14 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
 8. **Frames**: one Opus agent per frame, all in parallel, each editing only its own
    `compositions/frames/NN-*.html`, each starting with "read the shared brief file". When the audio
    changes later, message the same agents with the new cue table; they retime in a minute.
-9. **Assemble and check** (from the project dir): `assemble-index.mjs` → swap the CDN GSAP tag for
-   `assets/vendor/gsap.min.js` → `transitions.mjs inject` + `verify` → `npx hyperframes lint` and
-   `check` → `snapshot` at frame midpoints and around every cut → look at every frame.
+9. **Assemble and check**: `videos/tools/build-reel.sh videos/<project> --bpm 128 --snapshots
+
+<dir> [--draft out.mp4]` does it in one go (~40 s): assemble, vendored GSAP, transitions inject +
+   verify, captions, `hyperframes check`, then `videos/tools/cutcheck.py`, which fails on a word,
+   caption or SFX outside its frame, a caption on a caption-free frame, a frame mounted off the
+   schedule, a frame that is not whole eighths, or a CDN GSAP tag (a caption carried a few frames
+   into the next captioned frame is a warning). Then look at the snapshots it takes 0.1 s either
+   side of every cut, plus frame midpoints.
 10. **Draft for the author**: `npx hyperframes render --quality draft`, Whisper the draft to
     confirm every line sits in its frame, send it with a contact sheet. Only after "render it":
     `--quality high`, then loudness (below), then commit `renders/<name>.mp4`.
@@ -110,8 +115,8 @@ tap take came back at −62 dBFS, nearly silent).
 verify` matches exact lines) and regenerate the JSON and caption files. The Claude Code format
   hook passes `--ignore-path` so this holds from any working directory, and CI's auto-fix skips
   them too. Never run prettier on these files by hand.
-- `assemble-index.mjs` writes a jsDelivr GSAP tag; swap it for the vendored file after every
-  assembly (renders must not need the network).
+- `assemble-index.mjs` writes a jsDelivr GSAP tag; `build-reel.sh` swaps it for the vendored file
+  (renders must not need the network), and `cutcheck.py` fails if one is left.
 - `transitions.mjs inject` rewrites the frame files' tails: never run it while agents edit frames.
 - `stage-assets.mjs` only scans `capture/assets`, `capture/assets/svgs`, `…/videos` and
   `capture/screenshots`, and reads any `asset_candidates` text as a filename.
