@@ -565,6 +565,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
     const second = await order({ mode: 'pickup' });
     await move(second, 'confirmed');
     expect((await messages()).filter((m) => m.kind === 'order').length).toBe(1);
+    // SAIR and VOLTAR arriving together (offline delivery) apply in order: VOLTAR wins
+    await sql`delete from store_wa_optouts where tenant_id = ${tenantId}`;
+    world.last.emit('messages.upsert', {
+      type: 'append',
+      messages: [
+        { key: { remoteJid: shopperJid, id: 'in-b1' }, message: { conversation: 'sair' } },
+        { key: { remoteJid: shopperJid, id: 'in-b2' }, message: { conversation: 'voltar' } },
+      ],
+    });
+    await until(async () => (await messages()).some((m) => m.kind === 'opt_in'));
+    expect((await sql`select 1 from store_wa_optouts where tenant_id = ${tenantId}`).length).toBe(
+      0,
+    );
+    await sql`delete from store_wa_messages where tenant_id = ${tenantId} and kind in ('opt_out', 'opt_in')`;
+    await sql`insert into store_wa_optouts (tenant_id, phone) values (${tenantId}, ${shopperPhone})`;
     // 30-day retention took the history: VOLTAR must still work off the opt-out itself
     await sql`delete from store_wa_messages where tenant_id = ${tenantId} and kind = 'order'`;
 
@@ -595,6 +610,37 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
     const paid = await sql<{ event: string }[]>`
       select event from store_wa_messages where order_id = ${id}`;
     expect(paid.map((m) => m.event)).toEqual(['paid']);
+  });
+
+  test('accepting with a prep time tells the shopper the new time, not the checkout estimate', async () => {
+    const id = await order({ mode: 'pickup' });
+    const r = await owner('POST', `/orders/${id}/transition`, { to: 'confirmed', prepMinutes: 45 });
+    expect(r.status).toBe(200);
+    const msg = (
+      await sql<{ body: string }[]>`
+        select body from store_wa_messages where order_id = ${id} and event = 'confirmed'`
+    )[0]!;
+    const promised = new Date(r.body.order.delivery.promisedTo);
+    const hhmm = promised.toLocaleTimeString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    expect(msg.body).toContain(`por volta das ${hhmm}`);
+  });
+
+  test('two quick toggles both stick', async () => {
+    const [a, b] = await Promise.all([
+      manager('PATCH', '/whatsapp/settings', { events: { delivered: true } }),
+      manager('PATCH', '/whatsapp/settings', { events: { preparing: true } }),
+    ]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const ev = (await waRow()).events as string[];
+    expect(ev).toContain('delivered');
+    expect(ev).toContain('preparing');
+    await manager('PATCH', '/whatsapp/settings', {
+      events: { delivered: false, preparing: false },
+    });
   });
 
   test('settings choose the steps; the test message goes to the signed-in person', async () => {

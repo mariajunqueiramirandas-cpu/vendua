@@ -258,26 +258,34 @@ export function mountWhatsapp(d: AdminDeps) {
       const body = await bodyJson(c, 4 * 1024);
       if (!isObj(body.events))
         throw new HttpError(422, 'BAD_REQUEST', 'events must be an object', { field: 'events' });
-      const row = await loadRow(tx, t.id);
-      const next = new Set(row?.events ?? DEFAULT_EVENTS);
+      const adds: string[] = [];
+      const removes: string[] = [];
       for (const [k, v] of Object.entries(body.events)) {
         if (!(ORDER_EVENTS as readonly string[]).includes(k))
           throw new HttpError(422, 'BAD_REQUEST', `unknown event ${k.slice(0, 30)}`, {
             field: 'events',
           });
-        if (bool(v, `events.${k}`)) next.add(k);
-        else next.delete(k);
+        (bool(v, `events.${k}`) ? adds : removes).push(k);
       }
-      const events = ORDER_EVENTS.filter((e) => next.has(e));
-      await tx`
-        insert into store_whatsapp (tenant_id, events) values (${t.id}, ${events})
-        on conflict (tenant_id) do update set events = excluded.events, updated_at = now()`;
+      // two quick toggles each change only their own step: no read-modify-write of the array
+      await tx`insert into store_whatsapp (tenant_id) values (${t.id}) on conflict do nothing`;
+      const changed = (
+        await tx<{ before: string[]; events: string[] }[]>`
+          update store_whatsapp w set events = (
+              select coalesce(array_agg(e order by ord), '{}')
+              from unnest(${ORDER_EVENTS as unknown as string[]}::text[]) with ordinality as x(e, ord)
+              where (e = any(w.events) or e = any(${adds}::text[])) and not (e = any(${removes}::text[]))
+            ), updated_at = now()
+          from (select events as before from store_whatsapp where tenant_id = ${t.id} for update) old
+          where w.tenant_id = ${t.id}
+          returning old.before, w.events`
+      )[0]!;
       await audit(tx, t.id, m, {
         action: 'whatsapp.settings',
         entity: 'whatsapp',
         summary: 'mudou os avisos de pedido pelo WhatsApp',
-        before: { events: row?.events ?? DEFAULT_EVENTS },
-        after: { events },
+        before: { events: changed.before },
+        after: { events: changed.events },
       });
       await emitAdminTx(tx, t.id, 'whatsapp', 'settings');
       return { status: 200, body: await whatsappView(tx, t.id, t.name) };

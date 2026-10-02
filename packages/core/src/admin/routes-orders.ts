@@ -642,8 +642,9 @@ export function mountOrders(d: AdminDeps) {
       if (prep) meta.prepMinutes = prep;
       if (refunded) meta.refundedCents = refunded;
       const before = await loadOrderView(tx, t.id, id);
-      await transitionOrder(tx, t.id, id, to, 'merchant', meta);
-      if (to === 'confirmed' && prep) {
+      // the new promise lands before the step, so the shopper's "aceito" message carries it; an
+      // invalid step still throws below and rolls this back with it
+      if (to === 'confirmed' && prep && before.state === 'placed') {
         // accepting with a prep time re-promises the window the customer sees
         const dl = before.delivery;
         const now = Date.now();
@@ -656,6 +657,7 @@ export function mountOrders(d: AdminDeps) {
             where tenant_id = ${t.id} and id = ${id}
           `;
       }
+      await transitionOrder(tx, t.id, id, to, 'merchant', meta);
       await audit(tx, t.id, m, {
         action: `order.${to}`,
         entity: 'order',

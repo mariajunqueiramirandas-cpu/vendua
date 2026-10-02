@@ -273,6 +273,7 @@ export class Gateway {
     };
     // state writes keep their order: a late "connecting" must not land after "open"
     let stateTail = Promise.resolve();
+    let inboundTail = Promise.resolve();
     owned.session = new StoreSession(
       tenantId,
       this.o.runtime,
@@ -290,7 +291,9 @@ export class Gateway {
             });
         },
         onInbound: (m) => {
-          void handleInbound(this.o.sql, tenantId, m)
+          // SAIR then VOLTAR delivered together must apply in that order
+          inboundTail = inboundTail
+            .then(() => handleInbound(this.o.sql, tenantId, m))
             .then(() => this.pump(tenantId))
             .catch((e) => log.warn({ err: e }, 'inbound not handled'));
         },
@@ -449,7 +452,8 @@ export class Gateway {
     const row = await withTenant(sql, tenantId, async (tx) => {
       const held = await tx`
         select wanted from store_whatsapp
-        where tenant_id = ${tenantId} and owner = ${this.id} and lease_epoch = ${o.fence.epoch}`;
+        where tenant_id = ${tenantId} and owner = ${this.id} and lease_epoch = ${o.fence.epoch}
+          and lease_until > now()`;
       if (!held.length) throw new LeaseLost(tenantId);
       // a store the merchant just disconnected sends nothing more, whatever is queued
       if (!held[0]!.wanted) return null;
