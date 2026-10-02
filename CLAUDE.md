@@ -7,6 +7,7 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
 `packages/conformance`, `packages/cli`, `apps/control` (staff CRM console, React),
 `packages/core/src/wa-gateway.ts` (stores' own WhatsApp, its own process — ADR 0026),
 `apps/admin` (merchant admin PWA at `/admin/`, API `/admin/v1`),
+`apps/print-agents` (Windows Go + Android Kotlin printing agents, ADR 0027),
 `storefronts/*`, `site/`. `docs/README.md` has the architecture.
 
 ## Invariants (bugs if broken)

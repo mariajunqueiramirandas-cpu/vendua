@@ -27,6 +27,7 @@ const routes = process.argv.slice(2).length
       '/loja',
       '/pagamentos',
       '/whatsapp',
+      '/impressoras',
       '/clientes',
       '/marketing',
       '/aparencia',

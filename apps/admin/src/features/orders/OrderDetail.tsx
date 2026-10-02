@@ -22,7 +22,7 @@ import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { nextStep, STATE_META, StateChip } from '../../ui/StateChip.tsx';
 import { METHOD_LABEL, PaymentChip } from '../../ui/PaymentChip.tsx';
-import { CANCEL_REASONS, orderWhatsappUrl, printTicket, useTransition } from './actions.ts';
+import { CANCEL_REASONS, orderWhatsappUrl, usePrintOrder, useTransition } from './actions.ts';
 import { PaymentSection, primaryPayment, refundable } from './PaymentSection.tsx';
 import { RefundSheet } from './RefundSheet.tsx';
 
@@ -41,6 +41,7 @@ export function OrderDetail({
   inPanel?: boolean;
 }) {
   const s = useSession();
+  const printing = usePrintOrder(s.store.name);
   const move = useTransition();
   const [cancelOpen, setCancelOpen] = useState(false);
   const [refundOpen, setRefundOpen] = useState(false);
@@ -295,7 +296,8 @@ export function OrderDetail({
         <Button
           variant="secondary"
           icon={<Printer />}
-          onClick={() => printTicket(order, s.store.name)}
+          loading={printing.pending}
+          onClick={() => printing.print(order)}
         >
           imprimir comanda
         </Button>

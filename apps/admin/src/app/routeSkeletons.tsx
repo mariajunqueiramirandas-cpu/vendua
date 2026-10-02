@@ -92,6 +92,7 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
   store: () => page('Loja', <SectionsSkeleton columns={2} />, { wide: true }),
   payments: () => page('Pagamentos', <SectionsSkeleton columns={2} />, { wide: true }),
   whatsapp: () => page('WhatsApp', <SectionsSkeleton columns={2} />, { wide: true }),
+  printers: () => page('Impressoras', <SectionsSkeleton columns={2} />, { wide: true }),
   customer: () => page('Cliente', <DetailSkeleton />),
   customers: () =>
     page(

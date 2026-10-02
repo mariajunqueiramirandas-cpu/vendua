@@ -71,6 +71,7 @@ function MoreSheet({
 const HINTS: Record<string, string> = {
   '/clientes': 'quem compra de você',
   '/whatsapp': 'avisos aos clientes',
+  '/impressoras': 'comanda na cozinha',
   '/aparencia': 'página e cores',
   '/relatorios': 'vendas e horários',
   '/equipe': 'quem ajuda na loja',

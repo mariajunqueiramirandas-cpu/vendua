@@ -1,4 +1,4 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { whatsappUrl } from '@vendua/kernel/rules';
 import { api, type Board, type Order, type OrderPayment, type OrderState } from '../../lib/api.ts';
 import { clock, money, phone } from '../../lib/format.ts';
@@ -6,6 +6,7 @@ import { haptic } from '../../lib/haptics.ts';
 import { markOrdersSeen } from '../../lib/live.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { METHOD_LABEL, payError } from '../../ui/PaymentChip.tsx';
+import { messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
 const DONE_TOAST: Partial<Record<OrderState, (o: Order) => string>> = {
@@ -253,4 +254,28 @@ ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
   }
   w.document.write(html);
   w.document.close();
+}
+
+/** "imprimir comanda": the store's printers when a device holding one is online (ADR 0027),
+ *  else this device's print dialog. Decided before the tap: a dialog opened after a request is
+ *  blocked. */
+export function usePrintOrder(storeName: string) {
+  const { data } = useQuery({ queryKey: qk.printers, queryFn: api.printers, staleTime: 60_000 });
+  // the printers POST /orders/:id/print picks (automatic ones, else any present), and at least
+  // one of them on a device that's online now
+  const devices = data?.devices ?? [];
+  const online = new Set(devices.filter((d) => d.online).map((d) => d.id));
+  const present = devices.flatMap((d) => d.printers.filter((p) => p.present));
+  const auto = present.filter((p) => p.auto);
+  const viaPrinter = (auto.length > 0 ? auto : present).some((p) => online.has(p.deviceId));
+  const send = useMutation({
+    mutationFn: (o: Order) => api.printOrder(o.id),
+    onSuccess: (r) => toast(`Comanda enviada para ${r.printers.join(', ')}`),
+    onError: (e) => toast.error(messageOf(e)),
+  });
+  return {
+    print: (o: Order) => (viaPrinter ? send.mutate(o) : printTicket(o, storeName)),
+    pending: send.isPending,
+    viaPrinter,
+  };
 }

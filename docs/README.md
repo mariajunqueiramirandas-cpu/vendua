@@ -98,6 +98,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0024](adr/0024-distance-based-delivery-pricing.md)    | Delivery priced by road distance from a confirmed pin       |
 | [0025](adr/0025-free-trial-on-basic.md)                | A 14-day free trial on Venduá Basic, no card                |
 | [0026](adr/0026-store-whatsapp-gateway.md)             | Each store's own WhatsApp, on a Baileys gateway             |
+| [0027](adr/0027-print-agents.md)                       | Kitchen printing through a store-side print agent           |
 
 ## Conventions
 
