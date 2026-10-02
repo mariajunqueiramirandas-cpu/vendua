@@ -1,0 +1,272 @@
+<template
+  id="06-14-dias-template"
+  data-composition-id="06-14-dias"
+  data-width="1080"
+  data-height="1920"
+>
+  <script src="assets/vendor/gsap.min.js"></script>
+
+  <style>
+    @font-face {
+      font-family: 'Space Grotesk Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 700;
+      src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2')
+        format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Figtree Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 900;
+      src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: normal;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: italic;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-italic.woff2') format('woff2');
+    }
+
+    #root {
+      --night: #0a100d;
+      --night-ink: #f7f4ea;
+      --spark: #d9f875;
+      --on-spark: #123c32;
+      position: absolute;
+      inset: 0;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+    }
+
+    /* full-bleed Noite ground; frame-relative units resolve against it */
+    [id='06-14-dias-ground'] {
+      position: absolute;
+      inset: 0;
+      background: var(--night);
+      container-type: size;
+    }
+
+    [id='06-14-dias-card'] {
+      position: absolute;
+      inset: 0;
+    }
+    /* the end card itself — the one element the final fade takes to night */
+    [id='06-14-dias-stack'] {
+      position: absolute;
+      inset: 0;
+      container-type: size;
+    }
+    [id='06-14-dias-stack'] > * {
+      position: absolute;
+      left: 6.7cqw;
+      margin: 0;
+    }
+
+    /* logo: the check mark + "venduá." — mark and final dot in spark on night */
+    [id='06-14-dias-logo'] {
+      top: 36cqw;
+      display: flex;
+      align-items: center;
+      gap: 2.4cqw;
+      font:
+        700 9cqw/1 'Space Grotesk Variable',
+        sans-serif;
+      letter-spacing: -0.035em;
+      color: var(--night-ink);
+    }
+    [id='06-14-dias-mark'] {
+      display: block;
+      width: 9.5cqw;
+      height: 9.5cqw;
+      overflow: visible;
+    }
+    [id='06-14-dias-mark-path'] {
+      fill: none;
+      stroke: var(--spark);
+      stroke-width: 17;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    [id='06-14-dias-wordmark'] {
+      display: block;
+      white-space: nowrap;
+    }
+    [class~='06-14-dias-dot'] {
+      color: var(--spark);
+    }
+
+    /* title: "Comece com / 14 dias grátis." */
+    [id='06-14-dias-title'] {
+      top: 56cqw;
+      width: 80cqw;
+      font:
+        600 10.4cqw/1.02 'Space Grotesk Variable',
+        sans-serif;
+      letter-spacing: -0.035em;
+      color: var(--night-ink);
+    }
+    [class~='06-14-dias-line'] {
+      display: block;
+      white-space: nowrap;
+    }
+    [class~='06-14-dias-word'] {
+      display: inline-block;
+    }
+
+    /* the trial line: lime chip, forest text */
+    [id='06-14-dias-chip'] {
+      top: 84cqw;
+      white-space: nowrap;
+      font:
+        600 5.6cqw/1.2 'Space Grotesk Variable',
+        sans-serif;
+      letter-spacing: -0.02em;
+      background: var(--spark);
+      color: var(--on-spark);
+      padding: 1.8cqw 3.6cqw 2.1cqw;
+      border-radius: 999px;
+      transform-origin: 0% 50%;
+    }
+
+    [id='06-14-dias-link'] {
+      top: 101cqw;
+      white-space: nowrap;
+      font:
+        650 4.8cqw/1.2 'Figtree Variable',
+        sans-serif;
+      color: var(--night-ink);
+    }
+  </style>
+
+  <div id="root" data-composition-id="06-14-dias" data-width="1080" data-height="1920">
+    <div
+      id="06-14-dias-ground"
+      class="clip"
+      data-start="0"
+      data-duration="8.85"
+      data-track-index="0"
+    ></div>
+
+    <div id="06-14-dias-card" class="clip" data-start="0" data-duration="8.85" data-track-index="1">
+      <div id="06-14-dias-stack">
+        <div id="06-14-dias-logo">
+          <svg id="06-14-dias-mark" viewBox="0 0 128 128" aria-hidden="true">
+            <path id="06-14-dias-mark-path" d="M32 48 L61 88 L98 34" />
+          </svg>
+          <span id="06-14-dias-wordmark">venduá<span class="06-14-dias-dot">.</span></span>
+        </div>
+
+        <h1 id="06-14-dias-title">
+          <span class="06-14-dias-line"
+            ><span class="06-14-dias-word" data-cue="0.30">Comece</span>
+            <span class="06-14-dias-word" data-cue="0.90">com</span></span
+          >
+          <span class="06-14-dias-line"
+            ><span class="06-14-dias-word" data-cue="1.16">14</span>
+            <span class="06-14-dias-word" data-cue="1.92">dias</span>
+            <span class="06-14-dias-word" data-cue="2.42">grátis.</span></span
+          >
+        </h1>
+
+        <div id="06-14-dias-chip">Venduá Basic, sem cartão.</div>
+
+        <div id="06-14-dias-link">Link na bio · @vendua.digital</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const ID = '06-14-dias';
+      const DURATION = 8.85;
+      const el = (name) => document.getElementById(`${ID}-${name}`);
+
+      const card = el('card');
+      const stack = el('stack');
+      const path = el('mark-path');
+      const wordmark = el('wordmark');
+      const chip = el('chip');
+      const link = el('link');
+
+      // Spoken-word cues (audio/cues.json, frame 6), read once from the markup into a flat
+      // reveal schedule — the reveals follow the voice, not hand-placed offsets.
+      const WORD_DUR = 0.55;
+      const WORD_RISE = 34;
+      const REVEALS = Array.from(card.querySelectorAll('[data-cue]')).map((node) => ({
+        node,
+        start: parseFloat(node.dataset.cue),
+      }));
+
+      // Path length measured from the geometry; the analytic length of M32 48 L61 88 L98 34 is
+      // the fallback if the path is not measurable yet. The gap is twice the length so no
+      // zero-length dash (a round-cap dot) sits at either end before the draw.
+      const measured = typeof path.getTotalLength === 'function' ? path.getTotalLength() : 0;
+      const LEN = measured > 0 ? measured : Math.hypot(29, 40) + Math.hypot(37, 54);
+      path.style.strokeDasharray = `${LEN} ${LEN * 2}`;
+
+      const tl = gsap.timeline({ paused: true });
+
+      // Scene 1 — the mark draws itself, "venduá." fades up beside it.
+      tl.fromTo(
+        path,
+        { strokeDashoffset: LEN + 1 },
+        { strokeDashoffset: 0, duration: 0.5, ease: 'power2.out' },
+        0.04,
+      );
+      tl.fromTo(
+        wordmark,
+        { opacity: 0, y: 14 },
+        { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' },
+        0.22,
+      );
+
+      // Scene 2 — "Comece com / 14 dias grátis." word by word on the voice.
+      REVEALS.forEach(({ node, start }) => {
+        tl.fromTo(
+          node,
+          { opacity: 0, y: WORD_RISE },
+          { opacity: 1, y: 0, duration: WORD_DUR, ease: 'power3.out' },
+          start,
+        );
+      });
+
+      // Scene 3 — on "Venduá", the lime trial chip rises in from its left edge (smooth settle).
+      tl.fromTo(
+        chip,
+        { opacity: 0, scale: 0, y: 16 },
+        { opacity: 1, scale: 1, y: 0, duration: 0.6, ease: 'power3.out' },
+        3.72,
+      );
+
+      // Scene 4 — on "Link", the handle fades up and holds.
+      tl.fromTo(
+        link,
+        { opacity: 0, y: 20 },
+        { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' },
+        6.72,
+      );
+
+      // Scene 5 — still hold from 7.32 s; the film's only exit: the card fades to night.
+      tl.fromTo(
+        stack,
+        { opacity: 1 },
+        { opacity: 0, duration: 0.4, ease: 'power1.inOut' },
+        DURATION - 0.4,
+      );
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['06-14-dias'] = tl;
+    })();
+  </script>
+</template>

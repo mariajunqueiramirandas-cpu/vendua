@@ -235,7 +235,7 @@ Scene 3 (1.2–3.4s): VO "E o pedido chega sozinho"; everything holds still.
 - voiceover: "Comece com 14 dias grátis. Venduá Basic, sem cartão. Link na bio."
 - duration: 8.85s
 - transition_in: blur-crossfade
-- status: built
+- status: animated
 - src: compositions/frames/06-14-dias.html
 - type: cta
 - persuasion: Risk reversal (free, no card)
