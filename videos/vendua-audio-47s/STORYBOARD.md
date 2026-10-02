@@ -1,14 +1,14 @@
 ---
 format: 1080x1920
-duration: 36s
+duration: 29s
 message: 'Seu cardápio, preços e Pix num link só, e o cliente para de mandar áudio. Teste o Venduá Basic grátis por 14 dias, sem cartão.'
 arc: PAS — hook (the voice note) → pain → one link → cardápio, preço, Pix → the order arrives → CTA
 audience: Brazilian food sellers (doceiras, marmitarias, hamburguerias, padarias) who take orders by DM and voice note
 mode: collaborative
-music: warm, light acoustic bed (marimba, nylon guitar, soft shaker), ~100 BPM, unhurried; silent under the voice note, enters with the narrator, ducked under every line
+music: energetic Brazilian funk-pop bed, 128 BPM, full energy from the first frame, ducked under every line; every cut lands on its eighth-note grid
 ---
 
-# Venduá — "O áudio de 47 segundos" (Reel, ~30 s, 9:16)
+# Venduá — "O áudio de 47 segundos" (Reel, ~29 s, 9:16, frenético cut)
 
 One customer, Luiz, sends the voice note every merchant knows. The narrator answers for the
 merchant: one link. The same Luiz then orders by himself (order #29 on the real screens: 2× Bolo de
@@ -26,13 +26,14 @@ asked in 1, is the order that arrives in 5.
 captures only. No glow, sparkles, all-caps or eyebrow labels. No slideshow (every beat continues
 the last one) and no screensaver motion (things move when the voice names them).
 
-**Held frame.** The last ~2 s of Frame 6: nothing moves while "Link na bio · @vendua.digital" holds.
+**Held frame.** The last ~1.2 s of Frame 6: nothing moves while "Link na bio · @vendua.digital" holds.
 
 **Truthfulness.** The screens are real captures of Venduá's admin and storefront running the
 fictional dev store Bolos da Nena; the push is Core's real payload text. Luiz and his voice note are
 fictional; the product numbers (R$ 48,00, R$ 219,00, #29) come from the captured screens. The
-voice-note durations (0:47 in Frame 1; 0:32, 1:12, 0:58, 2:05 in Frame 2) are scenario props,
-approved with this plan on 2026-10-02; they claim nothing about Venduá.
+voice-note durations (0:47 in Frame 1; 0:32, 1:12, 0:58, 2:05, 0:41, 1:36, 0:19, 3:02, 0:54 in
+Frame 2) are scenario props, approved by the author on 2026-10-02 (the last five with the frenético
+burst); they claim nothing about Venduá.
 
 Sketches: `storyboard.html` (v1).
 
@@ -46,6 +47,10 @@ all six frames are locked. Build dresses those layouts; it never redraws them.
 - Narrator voice: Adriane (ElevenLabs), because Bruna da Costa needs a Creator plan; Luiz: Talis.
 - Real voice timing made the film 36.1 s (frames 8.35 / 7.4 / 3.7 / 4.4 / 3.4 / 8.85 s), not ~27 s.
 - Frame 4 shows the real storefront (captured), not the admin.
+- **Frenético cut (2026-10-02, the author: "muito lento"):** same script, ~29 s. New energetic
+  takes for every line (lines 3 and 6 spell "Vendu-á" so the stress lands on the á; the author
+  picked the takes), a 128 BPM funk-pop bed from the first frame, cuts on the bed's grid, fast
+  arrivals with punch-ins and shakes, Frame 2 grows into a burst of ten notes. Layouts unchanged.
 
 ## Video direction
 
@@ -60,13 +65,15 @@ all six frames are locked. Build dresses those layouts; it never redraws them.
   backgrounds may run behind it. No captions over Frame 6.
 - **Timing source**: `audio/cues.json` holds every word's frame-relative start (Whisper on the real
   voice files) and every SFX hit. Each Scene below already uses those times; reveals land on them.
-- **Motion grammar**: smooth long-tail settles (`power3`; `expo.out` for fast arrivals), the admin's
-  arrival = a short drop + shadow bloom e2→e1 (`spring-pop-entrance`, critically damped, never
-  bouncy). Only transform and opacity animate. Every entrance is a `fromTo`. No exits except Frame 6.
-- **Reveal model**: nothing appears before the voice names it; frames 1–5 keep something arriving
-  across their whole length; holds are still (at most a subtle jitter).
-- **Rhythm**: hook (1) and pile (2) are the busy part; 3 is a breather around the pill; 4 is three
-  quick beats; 5 is one arrival; 6 is the calm close whose last ~1.3 s is the held frame.
+- **Motion grammar (frenético)**: arrivals are 0.18–0.28 s slams (`expo.out` / `power4.out`, from
+  scale ~1.12 or a 60–120 px drop, shadow e2→e1 inside the same 0.2 s); **punch-ins** on stressed
+  words (the hero scales 1→1.05 in 0.1 s and eases back in 0.25 s); **shakes** on every hit (a
+  fixed, decaying offset sequence, ≤14 px and ≤0.8°, 0.25 s). Still never bouncy (no back/elastic/
+  bounce). Only transform and opacity animate. Every entrance is a `fromTo`. No exits except Frame 6.
+- **Reveal model**: nothing appears before the voice names it; something moves on every beat of
+  frames 1–5; no hold longer than ~0.5 s except the end card's last ~1.2 s.
+- **Rhythm**: 128 BPM (a beat is 0.469 s, an eighth 0.234 s). Frame 2's notes land on the beats.
+  Whooshes peak on the cuts 2→3, 3→4 and 4→5; a hit lands the cut 5→6.
 - **Recurring components** (frame.md `components`): the voice-note bubble (generic, never WhatsApp's
   look: no green, ticks, tails or icons), the CSS phone (site's Phone.svelte geometry, real screens
   at native aspect inside it, ~1030 px tall, centered, y 250–1280), the push card (Core's real text).
@@ -77,9 +84,9 @@ all six frames are locked. Build dresses those layouts; it never redraws them.
 
 ## Frame 1 — O áudio
 
-- scene: A voice-note bubble from "L" fills the frame, "0:47"; the play button is tapped and the waveform starts moving with the customer's voice
+- scene: A voice-note bubble from "L" fills the frame, "0:47"; the play button is tapped and the waveform races with the customer's voice
 - voiceover: "Oi, boa tarde! Tudo bem? Então… vocês têm cardápio? Quanto tá o bolo de chocolate? Ah, e aceita Pix?"
-- duration: 8.35s
+- duration: 7.031s
 - transition_in: cut
 - status: animated
 - src: compositions/frames/01-o-audio.html
@@ -91,26 +98,25 @@ all six frames are locked. Build dresses those layouts; it never redraws them.
 narrativeRole: stop the scroll with a sound and a shape every merchant knows — the long customer voice note.
 keyMessage: "This is the message you get all day."
 
-Spoken by the customer voice (Luiz), not the narrator. No music. The duration reads 0:47 while only
-the first ~6 s play, so the long unplayed waveform is the joke. Captions light "cardápio",
-"quanto" and "Pix" as the three questions (lime chips behind forest text).
+Spoken by the customer voice (Luiz), not the narrator, over the bed from the first frame. The
+duration reads 0:47 while only ~7 s play, so the long unplayed waveform is the joke.
 
 - blueprint: compose
 - focal: the voice-note bubble (drawn)
 - roles: bubble = hero, drawn in Venduá paper; sender row = supporting
-- sfx: tap (0.12 s, on the play button)
-- handoff_out: voice-note bubble (Luiz) — at 8.35 s: x 72 px, y 638 px (top-left), width 864 px, height 367 px, scale 1, opacity 1, still (no motion)
+- sfx: tap (0.04 s, on the play button)
+- handoff_out: voice-note bubble (Luiz) — at 7.031 s: x 72 px, y 638 px (top-left), width 864 px, height 367 px, scale 1, opacity 1, still (no motion)
 
-Compose: the waveform playing is the motion; nothing else enters.
-Scene 1 (0.0–0.3s): the sketch's landed state is on screen at frame 0 — "Luiz · agora" sender row and the big bubble (avatar "L", forest play button, 24-bar waveform at rest, "0:47") — paper canvas, bubble ~80% wide, upper-middle third. At 0.12 the play button takes a tap → **button press** compression then recovery (`press-release-spring`) and its triangle swaps to the pause bars.
-Scene 2 (0.3–7.9s): Luiz talks. The playhead crawls left→right from bar 0 to about bar 4 (8 s of 47 s ≈ 17%): bars behind it turn forest, the bar under it wears the lime ring, and bar heights near the playhead move with the voice from the embedded loudness envelope (`audio/f01-envelope.json`, 30 fps — paste its `values` array into the script; it is data, not a network fetch). An elapsed counter "0:00"→"0:08" ticks in `meta` under the waveform, left; "0:47" stays fixed on the right. Nothing else enters; captions carry the words.
-Scene 3 (7.9–8.35s): Luiz finishes ("Pix?" at 7.68); the playhead stops; still.
+Compose: the waveform playing is the motion, punched on the three questions.
+Scene 1 (0.0–0.25s): frame 0 is the sketch's landed state (sender row "Luiz · agora", the big bubble, avatar "L", forest play button, waveform at rest, "0:47"). At 0.04 the play button takes a quick press (0.08 s down, 0.12 s back) and swaps to the pause bars.
+Scene 2 (0.25–6.8s): Luiz talks, fast. The playhead steps bar by bar (≈15% of the waveform by the end), bars near it move with the voice envelope (`audio/f01-envelope.json`), the counter rolls "0:00"→"0:07". **Punch-ins** on the three questions — "cardápio?" 2.92, "chocolate?" 4.66, "Pix?" 6.22: the bubble scales to 1.05 in 0.1 s and back in 0.25 s with a small shake (≤6 px).
+Scene 3 (6.8–7.031s): settled on the handoff state, still.
 
 ## Frame 2 — De novo
 
-- scene: The bubble shrinks into a pile as more voice notes from other customers land around it (0:32, 1:12, 0:58, 2:05)
-- voiceover: "Áudio de 47 segundos. Enquanto o bolo tá no forno. E ainda tem mais na fila."
-- duration: 7.4s
+- scene: The bubble snaps into a pile as a burst of nine more voice notes slams in on the beat (0:32, 1:12, 0:58, 2:05, 0:41, 1:36, 0:19, 3:02, 0:54)
+- voiceover: "Áudio de 47 segundos! Enquanto o bolo tá no forno. E ainda tem mais na fila!"
+- duration: 6.328s
 - transition_in: cut
 - status: animated
 - src: compositions/frames/02-de-novo.html
@@ -122,28 +128,24 @@ Scene 3 (7.9–8.35s): Luiz finishes ("Pix?" at 7.68); the playhead stops; still
 narrativeRole: name the cost — time the merchant doesn't have, multiplied.
 keyMessage: "Answering one by one doesn't scale."
 
-The narrator enters, warm and a little wry; the music bed starts under it.
-
 - blueprint: overwhelm-surround (Adapt)
 - focal: the pile of voice notes (drawn)
-- roles: Luiz's bubble = recedes to the top; four new bubbles = the pile
-- sfx: pop-1 (0.66 s), pop-2 (2.14 s), pop-3 (4.18 s), pop-4 (6.74 s)
+- roles: Luiz's bubble = slot 0, dimmed; nine new bubbles = the burst
+- sfx: pops on the beats (0.469, 0.938, 1.406, 1.875, 2.344, 2.813, 3.281, 3.75, 4.219 s), hit (5.47 s, "fila"), whip (6.078 s, into the cut)
 - handoff_in: voice-note bubble (Luiz) — at 0.0 s: x 72 px, y 638 px (top-left), width 864 px, height 367 px, scale 1, opacity 1, still (no motion)
 
-Adapt: keep the signature of things piling in until they crowd the frame; the "tools" are voice notes, and they stack as a chat column (alternating left offsets) instead of surrounding a figure.
-Scene 1 (0.0–0.66s): Luiz's bubble shrinks to the pile size and lifts to the top slot (x 72, y 259, 648×173), settling at opacity 0.55 and scale 0.94 — smooth long-tail move, as the narrator says "Áudio de".
-Scene 2 (0.66s): on "47" the first new bubble (M, "0:32") drops into slot 2 with a lime new-dot → **spring-pop entrance** (`spring-pop-entrance`, smooth, no overshoot) and a shadow bloom.
-Scene 3 (2.14s): on "Enquanto", bubble A "1:12" drops into slot 3.
-Scene 4 (4.18s): on "forno", bubble R "0:58" drops into slot 4.
-Scene 5 (6.74s): on "fila", bubble J "2:05" drops into slot 5 — the column now fills y 259–1280, crowded.
-Scene 6 (6.9–7.4s): hold, still. The slots and offsets are the sketch's.
+Adapt: things pile in until they crowd the frame; the pile is a messy, overlapping stack of cards (slight rotations, alternating offsets, each new one on top), not a tidy column.
+Scene 1 (0.0–0.3s): Luiz's bubble snaps (0.25 s, `expo.out`) to slot 0 (648×173 at x 72, y 259, −2°), settling at opacity 0.55, scale 0.94.
+Scene 2 (0.469–4.219s): on every beat a new bubble slams into its slot (from 110 px above at scale 1.12, 0.2 s `expo.out`, shadow e2→e1), lime new-dot pops 0.05 s later, the pile jolts (≤5 px). Slots, top-left px and rotation: 1 M "0:32" (230, 345, 2.5°) · 2 A "1:12" (96, 437, −1.5°) · 3 R "0:58" (262, 529, 3°) · 4 J "2:05" (120, 621, −3°) · 5 C "0:41" (210, 713, 1.5°) · 6 P "1:36" (84, 805, −2.5°) · 7 D "0:19" (250, 897, 2°) · 8 T "3:02" (140, 989, −1°) · 9 S "0:54" (220, 1081, 2.5°).
+Scene 3 (5.47s): on "fila!" the hit: the whole pile shakes hard (≤14 px, ≤0.8°, decaying over 0.3 s) and punches to 1.04 and back.
+Scene 4 (5.8–6.328s): the pile settles; the zoom-through takes it from 6.328.
 
 ## Frame 3 — Um link só
 
-- scene: The pile condenses into one lime link pill, "bolosdanena.vendua.com.br", and a tap opens it
-- voiceover: "Com o Venduá, você responde com um link só."
-- duration: 3.7s
-- transition_in: zoom-through
+- scene: The pile collapses into one lime link pill, "bolosdanena.vendua.com.br", and a tap opens it
+- voiceover: "Com o Venduá, você responde com um link só!"
+- duration: 3.047s
+- transition_in: zoom-through 0.25s
 - status: animated
 - src: compositions/frames/03-um-link.html
 - type: product_intro
@@ -154,57 +156,51 @@ Scene 6 (6.9–7.4s): hold, still. The slots and offsets are the sketch's.
 narrativeRole: land the promise by beat 3 — one link replaces the replies.
 keyMessage: "Your store is a link."
 
-The link text is the real one from the Loja screen. The Venduá name is spoken, not shown as a logo
-yet (the logo closes the video).
-
 - blueprint: cta-morph-press (Adapt)
 - focal: the lime link pill "bolosdanena.vendua.com.br"
 - roles: loja-creme-750.webp = reference only (the source of the link text, not on screen)
-- sfx: whoosh (0.02 s, the pile condensing), tap (2.53 s, on "link")
+- sfx: hit (0.29 s, the pill lands on "Venduá"), tap (2.15 s, on "link"), whip (2.797 s, into the cut)
 
-Adapt: keep the signature — a pile of widgets condenses into the single thing you tap, and the tap lands — without a cursor (a finger-tap ring instead).
-Scene 1 (0.0–0.46s): ghost outlines of the five bubbles (dashed forest at 22%) collapse toward the center and fade → **scale-swap** (`scale-swap-transition`) as the lime pill arrives at the center on "Venduá" (0.46), 80% wide, centered at y ~810, with the Venduá mark at its left and "bolosdanena.vendua.com.br" in Space Grotesk 600.
-Scene 2 (0.46–2.5s): the pill holds still and reads.
-Scene 3 (2.53s): on "link" a finger-tap ring presses the pill's right end → **cursor click + ripple** without the cursor (`cursor-click-ripple`), and the pill does a tiny **button press** (`press-release-spring`).
-Scene 4 (2.9–3.7s): hold on "só." — still.
+Adapt: the pile condenses into the single thing you tap, and the tap lands — a finger-tap ring, no cursor.
+Scene 1 (0.0–0.29s): ten dashed ghost outlines on Frame 2's ten slots rush into the pill's center (504, 810) and vanish by 0.27.
+Scene 2 (0.29s): on "Venduá" the pill slams in (scale 1.15→1, 0.2 s `expo.out`, shadow e2→e1) with a shake (≤10 px); the mark and the link text pop in 0.05 s after.
+Scene 3 (0.5–2.15s): the pill takes a small punch on "responde" (1.15).
+Scene 4 (2.15s): on "link" the tap ring lands on the pill's right part, the pill presses to 0.965 and back (0.18 s), a ripple spreads and is gone by 2.55.
+Scene 5 (2.55–3.047s): settled; the push-slide takes it from 3.047.
 
 ## Frame 4 — Cardápio, preço e Pix
 
 - scene: The phone shows what the customer sees: the menu with prices, the chocolate cake's R$ 48,00, then Pix as the way to pay — one screen per spoken word
-- voiceover: "Cardápio… preço… e Pix."
-- duration: 4.4s
-- transition_in: crossfade
+- voiceover: "Cardápio! Preço! E Pix!"
+- duration: 2.813s
+- transition_in: push-slide UP 0.25s
 - status: animated
 - src: compositions/frames/04-cardapio-preco-pix.html
 - type: feature_showcase
 - persuasion: Show-don't-tell proof (each question answered by a real screen)
 - beat: clarity
-- asset_candidates: assets/vitrine-cardapio-750.webp — the real storefront's Cardápio with prices; assets/vitrine-produto-750.webp — Bolo de chocolate molhadinho, R$ 48,00; assets/vitrine-pagamento-750.webp — checkout's Pagamento step with Pix selected
+- asset_candidates: assets/vitrine-cardapio-750.webp — the real storefront's Cardápio with prices; assets/vitrine-produto-750.webp — Bolo de chocolate molhadinho, R$ 48,00; assets/vitrine-pagamento-750.webp — checkout's Pagamento step with Pix selected (order #29's cart, R$ 219,00)
 
 narrativeRole: answer the three questions from Frame 1, in the same order, with proof.
 keyMessage: "Everything they asked is already there."
 
-The screens are the real standard storefront (the Venduá Basic look) of Bolos da Nena, captured by
-`scripts/storefront-shots.mjs`: the menu, the product page, and checkout's payment step with Pix
-selected.
-
 - blueprint: device-surface-showcase (Adapt)
 - focal: the customer's phone (CSS frame) showing the real storefront
 - roles: vitrine-cardapio-750.webp = screen 1 (cardápio); vitrine-produto-750.webp = screen 2 (preço); vitrine-pagamento-750.webp = screen 3 (Pix)
-- sfx: swipe (1.70 s), swipe (3.52 s), pago (3.83 s)
+- sfx: swipe (1.01 s), swipe + pago (1.91 s), whip (2.563 s, into the cut)
 
-Adapt: keep the signature — one held device whose screen cycles — cycling exactly on the three spoken cues.
-Scene 1 (0.0–1.70s): the phone settles in centered (y 250–1280, ~1030 px tall) as the frame crossfades in, already showing the cardápio screen (the menu with prices) on "Cardápio" (0.12). Still.
-Scene 2 (1.70–3.52s): on "preço" the screen slides left inside the phone to the product page (Bolo de chocolate molhadinho, R$ 48,00); then a **zoom-to-target** punch-in (`coordinate-target-zoom`) on the price "R$ 48,00" row, modest, holding there.
-Scene 3 (3.52–3.9s): on "Pix" the screen slides to the payment step (Pix selected) and the zoom eases back to the full phone; at 3.83 the Pix option row gets a lime ring that blooms and settles → **keyword glow** (`asr-keyword-glow`), with the "Pago" note.
-Scene 4 (3.9–4.4s): hold, still.
+Adapt: one held device whose screen whips on the three spoken cues.
+Scene 1 (0.0–1.01s): the phone is in place as the push-slide brings it up, on the cardápio screen; a punch-in on "Cardápio!" (0.05: 1→1.04 and back).
+Scene 2 (1.01s): on "Preço!" the screen whips left to the product page (0.18 s `expo.out`) and the camera punches in to 1.5× on "R$ 48,00" (0.22 s `expo.out`) with a small shake.
+Scene 3 (1.91s): on "Pix!" the screen whips to the payment step and the camera pulls back to the full phone (0.22 s); at 1.95 the lime ring snaps onto the Pix row (0.15 s) with a shake (≤8 px).
+Scene 4 (2.3–2.813s): settled; the push-slide takes it from 2.813.
 
 ## Frame 5 — O pedido chega sozinho
 
-- scene: A push drops in, "Pedido #29 chegou · Luiz · R$ 219,00 · entrega", with the brand's two-note chime; the phone lands on order #29 with "aceitar"
-- voiceover: "E o pedido chega sozinho."
-- duration: 3.4s
-- transition_in: push-slide LEFT
+- scene: A push slams in, "Pedido #29 chegou · Luiz · R$ 219,00 · entrega", with the brand's chime; the phone shows order #29 with "aceitar"
+- voiceover: "E o pedido chega sozinho!"
+- duration: 2.578s
+- transition_in: push-slide LEFT 0.3s
 - status: animated
 - src: compositions/frames/05-pedido-chega.html
 - type: benefit_highlight
@@ -216,25 +212,25 @@ narrativeRole: pay off the hook — the same Luiz now ordered by himself.
 keyMessage: "No more back-and-forth."
 
 The customer's phone slides out left and the merchant's phone slides in (push-slide LEFT), so the
-two sides of the same order read as two phones. Then the admin's own "an order arrives" moment (spring drop, shadow bloom e2→e1, lime edge fading),
-with its "Pedido novo" chime and a double vibration buzz.
+two sides of the same order read as two phones.
 
 - blueprint: compose
 - focal: the push notification "Pedido #29 chegou"
 - roles: pedido-creme-750.webp = the merchant's phone screen (Pedido #29, Luiz Fernando, R$ 219,00)
-- sfx: swipe (0.0 s, phone in), pedido-novo (0.18 s), buzz (0.22 s)
+- sfx: pedido-novo + buzz (0.25 s, on "pedido")
 
-Compose: the admin's own "an order arrives" moment on the merchant's phone.
-Scene 1 (0.0–0.18s): the merchant's phone (same CSS frame and position as Frame 4) is on screen with the real Pedido #29 screen as the push-slide lands it.
-Scene 2 (0.18–1.2s): the push card drops in from above to y ~270 (80% wide, over the phone's top) → **spring-pop entrance** (`spring-pop-entrance`, smooth) with a shadow bloom e2→e1 and a lime edge that fades out over ~1 s; app "Minha loja · agora", title "Pedido #29 chegou", body "Luiz · R$ 219,00 · entrega", action "aceitar". The phone gives two tiny horizontal shakes at 0.22 and 0.42 (the double buzz) — finite, low amplitude.
-Scene 3 (1.2–3.4s): VO "E o pedido chega sozinho"; everything holds still.
+Compose: the admin's own "an order arrives" moment, at speed.
+Scene 1 (0.0–0.25s): the merchant's phone (same CSS frame and position as Frame 4) on the real Pedido #29 screen as the push-slide lands it.
+Scene 2 (0.25s): on "pedido" the push card slams out of the island to y 270 (0.2 s `expo.out`, shadow e2→e1 on its resting e3), the 5 px lime edge fades over 0.6 s; the phone buzzes twice (±5 px at 0.27 and 0.42).
+Scene 3 (1.09s): on "sozinho!" the push card punches to 1.05 and back.
+Scene 4 (1.4–2.578s): settled; the cut to Frame 6 lands on a hit.
 
 ## Frame 6 — 14 dias grátis
 
-- scene: On Noite, the Venduá mark draws on; three calm lines land in turn: "Comece com 14 dias grátis." / "Venduá Basic, sem cartão." / "Link na bio · @vendua.digital"
-- voiceover: "Comece com 14 dias grátis. Venduá Basic, sem cartão. Link na bio."
-- duration: 8.85s
-- transition_in: blur-crossfade
+- scene: On Noite, the Venduá mark slams in and draws; three lines land in turn: "Comece com 14 dias grátis." / "Venduá Basic, sem cartão." / "Link na bio · @vendua.digital"
+- voiceover: "Comece com 14 dias grátis! Venduá Basic, sem cartão. Link na bio!"
+- duration: 7.266s
+- transition_in: cut
 - status: animated
 - src: compositions/frames/06-14-dias.html
 - type: cta
@@ -252,11 +248,11 @@ na bio · @vendua.digital". No captions on this frame. The handle holds to the l
 - blueprint: titlecard-reveal (Adapt)
 - focal: "Comece com 14 dias grátis."
 - roles: mark-lime.svg = the Venduá mark in the logo
-- sfx: none (the music resolves)
+- sfx: hit (0.0 s, the cut), whip (2.84 s, the chip), tap (4.92 s, "Link")
 
-Adapt: keep the calm end-card stack terminating on a held handle; the three lines land one per spoken sentence instead of hard-cut cards, left-aligned (x 72) to clear the Reels action column.
-Scene 1 (0.0–0.3s): night ground; the lime check mark draws itself → **SVG self-draw** (`svg-path-draw`) and "venduá." fades up beside it (Space Grotesk 700, lime dot) at y ~390.
-Scene 2 (0.3–2.9s): "Comece com / 14 dias grátis." (`title`, `night-ink`, two lines, y ~605) reveals word by word on its spoken words (0.30, 0.90, 1.16, 1.92, 2.42) → **per-word staggered reveal** (`dynamic-content-sequencing`).
-Scene 3 (3.72s): on "Venduá", the lime chip "Venduá Basic, sem cartão." (`subtitle`, forest on lime) rises in at y ~907 (`spring-pop-entrance`, smooth).
-Scene 4 (6.72s): on "Link", "Link na bio · @vendua.digital" (`label` scale, `night-ink`) fades up at y ~1091.
-Scene 5 (7.5–8.85s): the held frame — nothing moves. This is the final frame: a gentle 0.4 s fade of the whole card to night at 8.45–8.85 is the only exit in the film.
+Adapt: the end-card stack lands fast, word by word, then holds still so the CTA reads.
+Scene 1 (0.0–0.25s): on the hit the lime check slams in (scale 1.3→1, 0.2 s) and draws itself (0.25 s); "venduá." pops beside it.
+Scene 2 (0.10–2.1s): "Comece com / 14 dias grátis." slams in word by word on 0.10, 0.64, 0.82, 1.44, 1.84 (each 0.2 s from 60 px below at scale 1.08, `expo.out`); the whole stack punches to 1.03 on "grátis!" (1.84).
+Scene 3 (2.84s): on "Venduá" the lime chip "Venduá Basic, sem cartão." shoots out from its left edge (0.22 s `expo.out`).
+Scene 4 (4.92s): on "Link" "Link na bio · @vendua.digital" slams up (0.2 s).
+Scene 5 (5.6–7.266s): the held frame — nothing moves; the last 0.3 s fade the card to night, the film's only exit.

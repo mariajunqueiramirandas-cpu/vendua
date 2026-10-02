@@ -1,517 +1,583 @@
 {
-  "total_s": 36.1,
   "frames": {
     "1": {
       "start_s": 0.0,
-      "duration_s": 8.35,
+      "duration_s": 7.03125,
+      "lead_s": 0.1,
       "words": [
         {
           "id": "w1-0",
           "text": "Oi,",
-          "start": 0.3,
-          "end": 0.52
+          "start": 0.1,
+          "end": 0.3
         },
         {
           "id": "w1-1",
           "text": "boa",
-          "start": 0.64,
-          "end": 0.74
+          "start": 0.42,
+          "end": 0.48
         },
         {
           "id": "w1-2",
           "text": "tarde!",
-          "start": 0.74,
-          "end": 1.18
+          "start": 0.48,
+          "end": 0.8
         },
         {
           "id": "w1-3",
           "text": "Tudo",
-          "start": 1.44,
-          "end": 1.58
+          "start": 1.08,
+          "end": 1.22
         },
         {
           "id": "w1-4",
           "text": "bem?",
-          "start": 1.58,
-          "end": 1.82
+          "start": 1.22,
+          "end": 1.44
         },
         {
           "id": "w1-5",
           "text": "Então…",
-          "start": 2.52,
-          "end": 2.82
+          "start": 1.94,
+          "end": 2.22
         },
         {
           "id": "w1-6",
           "text": "vocês",
-          "start": 3.18,
-          "end": 3.48
+          "start": 2.48,
+          "end": 2.72
         },
         {
           "id": "w1-7",
           "text": "têm",
-          "start": 3.48,
-          "end": 3.72
+          "start": 2.72,
+          "end": 2.92
         },
         {
           "id": "w1-8",
           "text": "cardápio?",
-          "start": 3.72,
-          "end": 4.44
+          "start": 2.92,
+          "end": 3.52
         },
         {
           "id": "w1-9",
           "text": "Quanto",
-          "start": 4.76,
-          "end": 5.12
+          "start": 3.72,
+          "end": 4.08
         },
         {
           "id": "w1-10",
           "text": "tá",
-          "start": 5.12,
-          "end": 5.32
+          "start": 4.08,
+          "end": 4.24
         },
         {
           "id": "w1-11",
           "text": "o",
-          "start": 5.32,
-          "end": 5.44
+          "start": 4.24,
+          "end": 4.32
         },
         {
           "id": "w1-12",
           "text": "bolo",
-          "start": 5.44,
-          "end": 5.68
+          "start": 4.32,
+          "end": 4.54
         },
         {
           "id": "w1-13",
           "text": "de",
-          "start": 5.68,
-          "end": 5.82
+          "start": 4.54,
+          "end": 4.66
         },
         {
           "id": "w1-14",
           "text": "chocolate?",
-          "start": 5.82,
-          "end": 6.12
+          "start": 4.66,
+          "end": 4.94
         },
         {
           "id": "w1-15",
           "text": "Ah,",
-          "start": 6.86,
-          "end": 7.0
+          "start": 5.6,
+          "end": 5.78
         },
         {
           "id": "w1-16",
           "text": "e",
-          "start": 7.2,
-          "end": 7.28
+          "start": 5.9,
+          "end": 5.94
         },
         {
           "id": "w1-17",
           "text": "aceita",
-          "start": 7.28,
-          "end": 7.68
+          "start": 5.94,
+          "end": 6.22
         },
         {
           "id": "w1-18",
           "text": "Pix?",
-          "start": 7.68,
-          "end": 8.08
+          "start": 6.22,
+          "end": 6.54
         }
-      ],
-      "lead_s": 0.3
+      ]
     },
     "2": {
-      "start_s": 8.35,
-      "duration_s": 7.4,
+      "start_s": 7.03125,
+      "duration_s": 6.328125,
+      "lead_s": 0.05,
       "words": [
         {
           "id": "w2-0",
           "text": "Áudio",
           "start": 0.05,
-          "end": 0.5
+          "end": 0.43
         },
         {
           "id": "w2-1",
           "text": "de",
-          "start": 0.5,
-          "end": 0.66
+          "start": 0.43,
+          "end": 0.55
         },
         {
           "id": "w2-2",
           "text": "47",
-          "start": 0.66,
-          "end": 1.46
+          "start": 0.55,
+          "end": 1.41
         },
         {
           "id": "w2-3",
-          "text": "segundos.",
-          "start": 1.46,
-          "end": 2.14
+          "text": "segundos!",
+          "start": 1.41,
+          "end": 2.13
         },
         {
           "id": "w2-4",
           "text": "Enquanto",
-          "start": 2.14,
-          "end": 3.28
+          "start": 2.49,
+          "end": 2.93
         },
         {
           "id": "w2-5",
           "text": "o",
-          "start": 3.28,
-          "end": 3.64
+          "start": 2.93,
+          "end": 3.13
         },
         {
           "id": "w2-6",
           "text": "bolo",
-          "start": 3.64,
-          "end": 3.86
+          "start": 3.13,
+          "end": 3.29
         },
         {
           "id": "w2-7",
           "text": "tá",
-          "start": 3.86,
-          "end": 4.04
+          "start": 3.29,
+          "end": 3.43
         },
         {
           "id": "w2-8",
           "text": "no",
-          "start": 4.04,
-          "end": 4.18
+          "start": 3.43,
+          "end": 3.55
         },
         {
           "id": "w2-9",
           "text": "forno.",
-          "start": 4.18,
-          "end": 5.5
+          "start": 3.55,
+          "end": 4.35
         },
         {
           "id": "w2-10",
           "text": "E",
-          "start": 5.5,
-          "end": 5.66
+          "start": 4.35,
+          "end": 4.49
         },
         {
           "id": "w2-11",
           "text": "ainda",
-          "start": 5.66,
-          "end": 5.86
+          "start": 4.49,
+          "end": 4.67
         },
         {
           "id": "w2-12",
           "text": "tem",
-          "start": 5.86,
-          "end": 6.16
+          "start": 4.67,
+          "end": 4.95
         },
         {
           "id": "w2-13",
           "text": "mais",
-          "start": 6.16,
-          "end": 6.56
+          "start": 4.95,
+          "end": 5.31
         },
         {
           "id": "w2-14",
           "text": "na",
-          "start": 6.56,
-          "end": 6.74
+          "start": 5.31,
+          "end": 5.47
         },
         {
           "id": "w2-15",
-          "text": "fila.",
-          "start": 6.74,
-          "end": 7.26
+          "text": "fila!",
+          "start": 5.47,
+          "end": 6.01
         }
-      ],
-      "lead_s": 0.05
+      ]
     },
     "3": {
-      "start_s": 15.75,
-      "duration_s": 3.7,
+      "start_s": 13.359375,
+      "duration_s": 3.046875,
+      "lead_s": 0.05,
       "words": [
         {
           "id": "w3-0",
           "text": "Com",
-          "start": 0.1,
-          "end": 0.34
+          "start": 0.05,
+          "end": 0.17
         },
         {
           "id": "w3-1",
           "text": "o",
-          "start": 0.34,
-          "end": 0.46
+          "start": 0.17,
+          "end": 0.29
         },
         {
           "id": "w3-2",
           "text": "Venduá,",
-          "start": 0.46,
-          "end": 0.94
+          "start": 0.29,
+          "end": 0.77
         },
         {
           "id": "w3-3",
           "text": "você",
-          "start": 1.2,
-          "end": 1.38
+          "start": 0.99,
+          "end": 1.15
         },
         {
           "id": "w3-4",
           "text": "responde",
-          "start": 1.38,
-          "end": 2.24
+          "start": 1.15,
+          "end": 1.71
         },
         {
           "id": "w3-5",
           "text": "com",
-          "start": 2.24,
-          "end": 2.5
+          "start": 1.71,
+          "end": 1.87
         },
         {
           "id": "w3-6",
           "text": "um",
-          "start": 2.5,
-          "end": 2.58
+          "start": 1.87,
+          "end": 2.15
         },
         {
           "id": "w3-7",
           "text": "link",
-          "start": 2.58,
-          "end": 2.9
+          "start": 2.15,
+          "end": 2.39
         },
         {
           "id": "w3-8",
-          "text": "só.",
-          "start": 2.9,
-          "end": 3.26
+          "text": "só!",
+          "start": 2.39,
+          "end": 2.69
         }
-      ],
-      "lead_s": 0.1
+      ]
     },
     "4": {
-      "start_s": 19.45,
-      "duration_s": 4.4,
+      "start_s": 16.40625,
+      "duration_s": 2.8125,
+      "lead_s": 0.05,
       "words": [
         {
           "id": "w4-0",
-          "text": "Cardápio…",
-          "start": 0.12,
-          "end": 1.24
+          "text": "Cardápio!",
+          "start": 0.05,
+          "end": 0.77
         },
         {
           "id": "w4-1",
-          "text": "preço…",
-          "start": 1.76,
-          "end": 2.74
+          "text": "Preço!",
+          "start": 1.01,
+          "end": 1.47
         },
         {
           "id": "w4-2",
-          "text": "e",
-          "start": 2.74,
-          "end": 3.58
+          "text": "E",
+          "start": 1.47,
+          "end": 1.91
         },
         {
           "id": "w4-3",
-          "text": "Pix.",
-          "start": 3.58,
-          "end": 3.92
+          "text": "Pix!",
+          "start": 1.91,
+          "end": 2.29
         }
-      ],
-      "lead_s": 0.12
+      ]
     },
     "5": {
-      "start_s": 23.85,
-      "duration_s": 3.4,
+      "start_s": 19.21875,
+      "duration_s": 2.578125,
+      "lead_s": 0.05,
       "words": [
         {
           "id": "w5-0",
           "text": "E",
-          "start": 0.5,
-          "end": 0.66
+          "start": 0.05,
+          "end": 0.17
         },
         {
           "id": "w5-1",
           "text": "o",
-          "start": 0.66,
-          "end": 0.78
+          "start": 0.17,
+          "end": 0.25
         },
         {
           "id": "w5-2",
           "text": "pedido",
-          "start": 0.78,
-          "end": 1.44
+          "start": 0.25,
+          "end": 0.75
         },
         {
           "id": "w5-3",
           "text": "chega",
-          "start": 1.44,
-          "end": 1.94
+          "start": 0.75,
+          "end": 1.09
         },
         {
           "id": "w5-4",
-          "text": "sozinho.",
-          "start": 1.94,
-          "end": 2.88
+          "text": "sozinho!",
+          "start": 1.09,
+          "end": 1.95
         }
-      ],
-      "lead_s": 0.5
+      ]
     },
     "6": {
-      "start_s": 27.25,
-      "duration_s": 8.85,
+      "start_s": 21.796875,
+      "duration_s": 7.265625,
+      "lead_s": 0.1,
       "words": [
         {
           "id": "w6-0",
           "text": "Comece",
-          "start": 0.3,
-          "end": 0.9
+          "start": 0.1,
+          "end": 0.64
         },
         {
           "id": "w6-1",
           "text": "com",
-          "start": 0.9,
-          "end": 1.16
+          "start": 0.64,
+          "end": 0.82
         },
         {
           "id": "w6-2",
           "text": "14",
-          "start": 1.16,
-          "end": 1.92
+          "start": 0.82,
+          "end": 1.44
         },
         {
           "id": "w6-3",
           "text": "dias",
-          "start": 1.92,
-          "end": 2.42
+          "start": 1.44,
+          "end": 1.84
         },
         {
           "id": "w6-4",
-          "text": "grátis.",
-          "start": 2.42,
-          "end": 3.54
+          "text": "grátis!",
+          "start": 1.84,
+          "end": 2.64
         },
         {
           "id": "w6-5",
           "text": "Venduá",
-          "start": 3.72,
-          "end": 4.44
+          "start": 2.84,
+          "end": 3.22
         },
         {
           "id": "w6-6",
           "text": "Basic,",
-          "start": 4.44,
-          "end": 5.0
+          "start": 3.22,
+          "end": 3.76
         },
         {
           "id": "w6-7",
           "text": "sem",
-          "start": 5.0,
-          "end": 5.72
+          "start": 3.76,
+          "end": 4.08
         },
         {
           "id": "w6-8",
           "text": "cartão.",
-          "start": 5.72,
-          "end": 6.32
+          "start": 4.08,
+          "end": 4.64
         },
         {
           "id": "w6-9",
           "text": "Link",
-          "start": 6.72,
-          "end": 7.12
+          "start": 4.92,
+          "end": 5.26
         },
         {
           "id": "w6-10",
           "text": "na",
-          "start": 7.12,
-          "end": 7.38
+          "start": 5.26,
+          "end": 5.52
         },
         {
           "id": "w6-11",
-          "text": "bio.",
-          "start": 7.38,
-          "end": 7.62
+          "text": "bio!",
+          "start": 5.52,
+          "end": 5.76
         }
-      ],
-      "lead_s": 0.3
+      ]
     }
   },
   "sfx": [
     {
       "frame": 1,
       "name": "tap",
-      "offset_s": 0.12,
-      "abs_s": 0.12
+      "offset_s": 0.04,
+      "abs_s": 0.04
     },
     {
       "frame": 2,
       "name": "pop-1",
-      "offset_s": 0.66,
-      "abs_s": 9.01
+      "offset_s": 0.469,
+      "abs_s": 7.5
     },
     {
       "frame": 2,
       "name": "pop-2",
-      "offset_s": 2.14,
-      "abs_s": 10.49
+      "offset_s": 0.938,
+      "abs_s": 7.969
     },
     {
       "frame": 2,
       "name": "pop-3",
-      "offset_s": 4.18,
-      "abs_s": 12.53
+      "offset_s": 1.407,
+      "abs_s": 8.438
     },
     {
       "frame": 2,
       "name": "pop-4",
-      "offset_s": 6.74,
-      "abs_s": 15.09
+      "offset_s": 1.875,
+      "abs_s": 8.906
+    },
+    {
+      "frame": 2,
+      "name": "pop-1",
+      "offset_s": 2.344,
+      "abs_s": 9.375
+    },
+    {
+      "frame": 2,
+      "name": "pop-2",
+      "offset_s": 2.813,
+      "abs_s": 9.844
+    },
+    {
+      "frame": 2,
+      "name": "pop-3",
+      "offset_s": 3.281,
+      "abs_s": 10.312
+    },
+    {
+      "frame": 2,
+      "name": "pop-4",
+      "offset_s": 3.75,
+      "abs_s": 10.781
+    },
+    {
+      "frame": 2,
+      "name": "pop-1",
+      "offset_s": 4.219,
+      "abs_s": 11.25
+    },
+    {
+      "frame": 2,
+      "name": "hit",
+      "offset_s": 5.47,
+      "abs_s": 12.501
+    },
+    {
+      "frame": 2,
+      "name": "whip",
+      "offset_s": 6.078,
+      "abs_s": 13.109
     },
     {
       "frame": 3,
-      "name": "whoosh",
-      "offset_s": 0.02,
-      "abs_s": 15.77
+      "name": "hit",
+      "offset_s": 0.29,
+      "abs_s": 13.649
     },
     {
       "frame": 3,
       "name": "tap",
-      "offset_s": 2.53,
-      "abs_s": 18.28
+      "offset_s": 2.15,
+      "abs_s": 15.509
+    },
+    {
+      "frame": 3,
+      "name": "whip",
+      "offset_s": 2.797,
+      "abs_s": 16.156
     },
     {
       "frame": 4,
       "name": "swipe",
-      "offset_s": 1.7,
-      "abs_s": 21.15
+      "offset_s": 1.01,
+      "abs_s": 17.416
     },
     {
       "frame": 4,
       "name": "swipe",
-      "offset_s": 3.52,
-      "abs_s": 22.97
+      "offset_s": 1.91,
+      "abs_s": 18.316
     },
     {
       "frame": 4,
       "name": "pago",
-      "offset_s": 3.83,
-      "abs_s": 23.28
+      "offset_s": 1.91,
+      "abs_s": 18.316
     },
     {
-      "frame": 5,
-      "name": "swipe",
-      "offset_s": 0.0,
-      "abs_s": 23.85
+      "frame": 4,
+      "name": "whip",
+      "offset_s": 2.563,
+      "abs_s": 18.969
     },
     {
       "frame": 5,
       "name": "pedido-novo",
-      "offset_s": 0.18,
-      "abs_s": 24.03
+      "offset_s": 0.25,
+      "abs_s": 19.469
     },
     {
       "frame": 5,
       "name": "buzz",
-      "offset_s": 0.22,
-      "abs_s": 24.07
+      "offset_s": 0.25,
+      "abs_s": 19.469
+    },
+    {
+      "frame": 6,
+      "name": "hit",
+      "offset_s": 0.0,
+      "abs_s": 21.797
+    },
+    {
+      "frame": 6,
+      "name": "whip",
+      "offset_s": 2.84,
+      "abs_s": 24.637
+    },
+    {
+      "frame": 6,
+      "name": "tap",
+      "offset_s": 4.92,
+      "abs_s": 26.717
     }
-  ]
+  ],
+  "total_s": 29.0625
 }
