@@ -65,7 +65,7 @@ export interface SubRow {
   pending_plan_at: Date | null;
   charge_cents: number | null;
   method: BillingMethod;
-  status: 'pending' | 'active' | 'past_due' | 'cancelled';
+  status: 'pending' | 'trialing' | 'active' | 'past_due' | 'cancelled';
   provider: string;
   provider_subscription_id: string | null;
   checkout_url: string | null;
@@ -76,6 +76,9 @@ export interface SubRow {
   /** an upgrade waiting for its pro-rata invoice (plan_id stays the paid plan until then) */
   upgrade_plan_id: string | null;
   upgrade_invoice_id: string | null;
+  /** set by a trial (ADR 0025) and kept after it: the owner's phone has had its trial */
+  trial_ends_at: Date | null;
+  trial_reminded: string[];
   created_at: Date;
   status_changed_at: Date;
 }
@@ -185,7 +188,9 @@ export type PayNext =
   | { kind: 'card'; url: string }
   | { kind: 'pix'; invoiceId: string }
   /** the team confirms this invoice by hand (CRM → Lojas); no charge was sent to the provider */
-  | { kind: 'manual'; invoiceId: string };
+  | { kind: 'manual'; invoiceId: string }
+  /** a free trial: the store is open and nothing is charged until `endsAt` (ADR 0025) */
+  | { kind: 'trial'; endsAt: string };
 
 /** A store without a subscription (or a cancelled one) starts one: pending until paid. */
 export async function startSubscription(
@@ -224,6 +229,29 @@ export async function startSubscription(
   const next = await beginPayment(ctx, tx, sub, o.key, o.now, { manual: o.manual });
   await emitAdminTx(tx, tenantId, 'billing');
   return next;
+}
+
+/**
+ * A new store on a plan with a trial (ADR 0025): open at once, nothing charged until the trial
+ * ends. The trial is the first period, so the first Pix invoice and a card's first charge fall
+ * on its end like any renewal; the payment method starts as the monthly Pix (no card asked).
+ */
+export async function startTrial(
+  tx: Sql,
+  tenantId: string,
+  o: { plan: PlanRow; payerEmail: string | null; provider: string; now: Date },
+): Promise<PayNext> {
+  const endsAt = new Date(o.now.getTime() + o.plan.trial_days * DAY_MS);
+  await tx`
+    insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email,
+                               current_period_start, current_period_end, trial_ends_at)
+    values (${tenantId}, ${o.plan.id}, 'pix', 'trialing', ${o.provider}, ${o.payerEmail},
+            ${o.now}, ${endsAt}, ${endsAt})
+  `;
+  await setTenantPlan(tx, tenantId, o.plan.id);
+  await releaseHold(tx, tenantId);
+  await emitAdminTx(tx, tenantId, 'billing');
+  return { kind: 'trial', endsAt: endsAt.toISOString() };
 }
 
 async function currentTenantPlan(tx: Sql, tenantId: string) {
@@ -297,9 +325,9 @@ async function createPreapproval(
 ): Promise<string> {
   if (!ctx.origin) throw new Error('card subscriptions need the admin origin');
   const now = Date.now();
-  // switching to card mid-period: the first charge waits for the paid period to end
+  // switching to card mid-period (or during the trial): the first charge waits for its end
   const paidUntil =
-    (sub.status === 'active' || sub.status === 'past_due') &&
+    (sub.status === 'active' || sub.status === 'past_due' || sub.status === 'trialing') &&
     sub.current_period_end &&
     sub.current_period_end.getTime() > now
       ? sub.current_period_end
@@ -378,7 +406,9 @@ export async function ensureRenewal(
   o: { issue?: boolean } = {},
 ): Promise<InvoiceRow | null> {
   if (sub.method !== 'pix' || sub.cancel_at_period_end || !sub.current_period_end) return null;
-  if (sub.status !== 'active' && sub.status !== 'past_due') return null;
+  // a trial is a free first period: its end is when the first paid month starts
+  if (sub.status !== 'active' && sub.status !== 'past_due' && sub.status !== 'trialing')
+    return null;
   if (sub.current_period_end.getTime() - now.getTime() > RENEW_AHEAD_MS) return null;
   const plan = await planOrThrow(tx, chargePlanId(sub));
   let inv = await upsertInvoice(tx, {
@@ -651,8 +681,9 @@ export async function changeSubscription(
     const target = o.plan;
     const current = await planOrThrow(tx, sub.plan_id);
     const card = sub.method === 'card' && sub.provider_subscription_id;
+    const unpaid = sub.status === 'pending' || sub.status === 'trialing';
     const upgradeCents =
-      sub.status !== 'pending' && sub.current_period_end && target.price_cents > current.price_cents
+      !unpaid && sub.current_period_end && target.price_cents > current.price_cents
         ? proratedCents(
             target.price_cents - current.price_cents,
             sub.current_period_start ?? new Date(sub.current_period_end.getTime() - 30 * DAY_MS),
@@ -665,8 +696,9 @@ export async function changeSubscription(
       await tx`update subscriptions set pending_plan_id = null, updated_at = now() where tenant_id = ${tenantId}`;
       if (card) await setChargeAmount(ctx, tx, sub, current.price_cents);
       await repriceAhead(ctx, tx, await reload(), current, o.now);
-    } else if (sub.status === 'pending' || !sub.current_period_end) {
-      // nothing paid yet: the plan applies now and the first charge is at its price
+    } else if (unpaid || !sub.current_period_end) {
+      // nothing paid yet (a trial keeps running): the plan applies now and the first charge
+      // is at its price
       await tx`
         update subscriptions set plan_id = ${target.id}, pending_plan_id = null, updated_at = now()
         where tenant_id = ${tenantId}

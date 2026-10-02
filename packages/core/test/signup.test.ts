@@ -171,6 +171,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       priceCents: 3990,
       feeBps: 0,
       features: { customDomain: false, customSite: false },
+      trialDays: 14,
     });
     expect(plans.body.plans.find((p: any) => p.id === 'pro_plus').priceCents).toBe(9900);
 

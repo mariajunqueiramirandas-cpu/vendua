@@ -233,16 +233,46 @@ async function platformAttention(
   const out: Attention[] = [];
   if (roleAtLeast(role, 'owner')) {
     const sub = (
-      await tx<{ status: string }[]>`select status from subscriptions where tenant_id = ${tenantId}`
+      await tx<{ status: string; trial_ends_at: Date | null; cancel_at_period_end: boolean }[]>`
+        select status, trial_ends_at, cancel_at_period_end from subscriptions
+        where tenant_id = ${tenantId}
+      `
     )[0];
     if (billingHold && sub?.status === 'pending')
-      out.push({
-        kind: 'billing_pending',
-        count: 1,
-        title: 'Sua loja abre quando o primeiro pagamento do plano for confirmado',
-        detail: 'Pague a primeira fatura em Conta',
-        href: '/conta',
-      });
+      out.push(
+        sub.trial_ends_at
+          ? {
+              kind: 'billing_pending',
+              count: 1,
+              title: 'O teste grátis acabou e a loja parou de receber pedidos',
+              detail: 'Pague o plano em Conta para ela voltar na hora',
+              href: '/conta',
+            }
+          : {
+              kind: 'billing_pending',
+              count: 1,
+              title: 'Sua loja abre quando o primeiro pagamento do plano for confirmado',
+              detail: 'Pague a primeira fatura em Conta',
+              href: '/conta',
+            },
+      );
+    // the last days of a free trial (ADR 0025): how it goes on is the owner's choice in Conta
+    if (sub?.status === 'trialing' && sub.trial_ends_at && !sub.cancel_at_period_end) {
+      const left = Math.ceil((sub.trial_ends_at.getTime() - Date.now()) / 86_400_000);
+      if (left <= 3)
+        out.push({
+          kind: 'trial_ending',
+          count: Math.max(left, 0),
+          title:
+            left <= 0
+              ? 'Seu teste grátis acaba hoje'
+              : left === 1
+                ? 'Seu teste grátis acaba amanhã'
+                : `Seu teste grátis acaba em ${left} dias`,
+          detail: 'Escolha Pix ou cartão em Conta para a loja seguir aberta',
+          href: '/conta',
+        });
+    }
     if (sub?.status === 'past_due')
       out.push({
         kind: 'billing_past_due',
@@ -260,7 +290,7 @@ async function platformAttention(
           and due_at < now() + interval '5 days'
       `
     )[0]!;
-    if (inv.n > 0 && !out.some((a) => a.kind === 'billing_pending')) {
+    if (inv.n > 0 && !out.some((a) => a.kind === 'billing_pending' || a.kind === 'trial_ending')) {
       const days = Math.ceil((new Date(inv.due!).getTime() - Date.now()) / 86_400_000);
       out.push({
         kind: 'invoice_open',

@@ -104,6 +104,8 @@ export async function accountView(
           checkoutUrl:
             sub.method === 'card' && sub.status !== 'cancelled' ? sub.checkout_url : null,
           payerEmail: sub.payer_email,
+          // the free trial's end (ADR 0025): the store's first charge, kept after it converts
+          trialEndsAt: sub.trial_ends_at,
         }
       : null,
     billing: { available: o.provider.platformConfigured },

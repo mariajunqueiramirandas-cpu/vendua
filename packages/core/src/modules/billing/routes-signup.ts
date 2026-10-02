@@ -22,6 +22,7 @@ import {
   RESERVED_SLUGS,
   segmentOr422,
   signupAccessCode,
+  phoneHadTrial,
   signupToken,
   slugStatus,
   startSignupOtp,
@@ -31,6 +32,7 @@ import {
   beginPayment,
   lockSub,
   startSubscription,
+  startTrial,
   withEffects,
   type PayNext,
 } from './subscriptions.ts';
@@ -104,6 +106,8 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     return c.json({
       signupToken: signupToken(d.sessionSecret, phone),
       existingStores: (await membershipsFor(sql, phone)).map(storeRef),
+      // a plan with a trial starts with it, once per owner phone (ADR 0025)
+      trialEligible: !(await phoneHadTrial(sql, phone)),
     });
   });
 
@@ -124,9 +128,17 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     if (!manual && !d.provider.platformConfigured)
       throw new HttpError(503, 'BILLING_UNAVAILABLE', 'plan billing is not set up on this install');
     const plan = await publicPlanOr422(sql, body.planId);
-    if (!manual && body.method !== 'card' && body.method !== 'pix')
+    // `trial: true` starts a plan's free trial (ADR 0025): no payment method asked
+    if (body.trial !== undefined && typeof body.trial !== 'boolean')
+      throw new HttpError(422, 'BAD_REQUEST', 'trial must be true or false', { field: 'trial' });
+    const trial = body.trial === true;
+    if (trial && (manual || plan.trial_days <= 0))
+      throw new HttpError(422, 'TRIAL_UNAVAILABLE', 'this plan has no free trial', {
+        field: 'trial',
+      });
+    if (!manual && !trial && body.method !== 'card' && body.method !== 'pix')
       throw new HttpError(422, 'BAD_REQUEST', 'method must be card or pix', { field: 'method' });
-    const method: 'card' | 'pix' = manual || body.method === 'pix' ? 'pix' : 'card';
+    const method: 'card' | 'pix' = manual || body.method !== 'card' ? 'pix' : 'card';
     const storeName = text(body.storeName, 'storeName', 60, 2);
     const ownerName = text(body.ownerName, 'ownerName', 80, 2);
     const email = validEmail(body.email, 'email');
@@ -144,6 +156,10 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       });
 
     let owned = await ownedStore(sql, phone, slug);
+    // one trial per owner phone; a replay of this very signup finds its store first
+    const trialUsed = () =>
+      new HttpError(409, 'TRIAL_USED', 'this phone already had its free trial', { field: 'trial' });
+    if (!owned && trial && (await phoneHadTrial(sql, phone))) throw trialUsed();
     if (!owned) {
       if ((await slugStatus(sql, slug, d.storeDomain)).reason === 'taken')
         throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
@@ -174,6 +190,35 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
             update store_settings set segment = ${segment}, onboarding = '{"from":"signup"}'::jsonb
             where tenant_id = ${tenantId}
           `;
+          // under the phone's lock, so two signups at once can't both start a trial
+          let trialEndsAt: string | null = null;
+          if (trial) {
+            if (await phoneHadTrial(tx, phone)) throw trialUsed();
+            const next = await startTrial(tx, tenantId, {
+              plan,
+              payerEmail: email,
+              provider: d.provider.name,
+              now: new Date(),
+            });
+            trialEndsAt = next.kind === 'trial' ? next.endsAt : null;
+            const owner = (
+              await tx<{ id: string }[]>`
+                select id from merchant_users where tenant_id = ${tenantId} and role = 'owner' limit 1
+              `
+            )[0];
+            await audit(
+              tx,
+              tenantId,
+              { userId: owner?.id ?? null, name: ownerName },
+              {
+                action: 'store.signup',
+                entity: 'account',
+                entityId: tenantId,
+                summary: `criou a loja no plano ${plan.name}, com ${plan.trial_days} dias de teste grátis`,
+                after: { planId: plan.id, trialEndsAt },
+              },
+            );
+          }
           await recordStaffEventTx(
             tx,
             'store.created',
@@ -185,6 +230,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
               leadId: null,
               plan: plan.name,
               segment,
+              trialEndsAt,
             },
             { tenantId, dedupeKey: `store.created:${tenantId}` },
           );
@@ -257,6 +303,8 @@ async function ensureFirstCharge(
         });
         return next;
       }
+      if (sub.status === 'trialing' && sub.trial_ends_at)
+        return { kind: 'trial', endsAt: sub.trial_ends_at.toISOString() };
       if (sub.status === 'pending')
         return beginPayment(ctx, tx, sub, `signup:${owner.tenant_id}`, now, {
           manual: o.manual && sub.method === 'pix',

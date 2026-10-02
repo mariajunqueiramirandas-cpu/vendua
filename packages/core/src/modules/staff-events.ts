@@ -235,6 +235,8 @@ export interface StaffEventMap {
     plan: Opt<string>;
     /** what the store sells (signup's answer) — null when nobody asked */
     segment: Opt<string>;
+    /** the store started on a free trial that ends then (ADR 0025) */
+    trialEndsAt?: Opt<string>;
   };
   'store.onboarding': { step: OnboardingStep };
   'billing.paid': {
@@ -247,7 +249,7 @@ export interface StaffEventMap {
   };
   'billing.problem': {
     storeName: Name;
-    problem: 'card_rejected' | 'past_due' | 'cancelled' | 'pix_mismatch' | 'other';
+    problem: 'card_rejected' | 'past_due' | 'cancelled' | 'trial_ended' | 'pix_mismatch' | 'other';
     detail: Opt<string>;
   };
   'domain.ready': { storeName: Name; host: string };
@@ -497,7 +499,7 @@ export const STAFF_EVENT_KINDS: Catalog = {
     category: 'assinaturas',
     level: 'normal',
     severity: 'warning',
-    label: 'cartão recusado, assinatura vencida ou cancelada',
+    label: 'cartão recusado, assinatura vencida ou cancelada, teste grátis sem pagamento',
   },
   'domain.ready': {
     category: 'assinaturas',

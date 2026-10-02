@@ -139,6 +139,11 @@ export function segmentOr422(v: unknown): Segment | null {
   return s;
 }
 
+/** One free trial per owner phone (ADR 0025): has a store this phone owns ever trialed? */
+export async function phoneHadTrial(sql: Sql, phone: string): Promise<boolean> {
+  return (await sql<{ used: boolean }[]>`select phone_had_trial(${phone}) as used`)[0]!.used;
+}
+
 /** signup codes per client IP per rolling day — each is a WhatsApp message we pay for */
 export const SIGNUP_CODES_PER_IP_DAY = Number(process.env.VENDUA_SIGNUP_OTP_PER_IP_DAY) || 30;
 

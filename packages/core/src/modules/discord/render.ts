@@ -478,6 +478,9 @@ function onboarding(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
         created.data.owner ? `dono: ${esc(created.data.owner)}` : null,
         created.data.plan ? `plano ${esc(created.data.plan)}` : null,
         created.data.segment ? `segmento ${esc(created.data.segment)}` : null,
+        created.data.trialEndsAt
+          ? `teste grátis até ${dayMonthOf(created.data.trialEndsAt)}`
+          : null,
       ]
         .filter(Boolean)
         .join(' · ')
@@ -529,6 +532,7 @@ const PROBLEM: Record<StaffEventMap['billing.problem']['problem'], string> = {
   card_rejected: 'cartão recusado',
   past_due: 'assinatura vencida',
   cancelled: 'assinatura cancelada',
+  trial_ended: 'teste grátis acabou sem pagamento',
   pix_mismatch: 'Pix com valor diferente da fatura',
   other: 'problema na assinatura',
 };
@@ -857,6 +861,18 @@ function test(ev: Ev<'discord.test'>, ctx: RenderCtx): Rendered {
       color: COLORS.success,
     }),
   };
+}
+
+/** an ISO instant → '16/10' in Brasília */
+function dayMonthOf(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        timeZone: 'America/Sao_Paulo',
+      });
 }
 
 /** '2026-10-01' → 'quinta-feira, 1 de outubro' (a local date, read at noon UTC so it can't shift) */

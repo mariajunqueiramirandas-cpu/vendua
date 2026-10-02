@@ -12,6 +12,8 @@ export interface Plan {
   priceCents: number | null;
   feeBps: number;
   features: PlanFeatures;
+  /** a new store on this plan trials this many days before its first charge (0 = none) */
+  trialDays: number;
 }
 
 export interface PlanRow {
@@ -22,6 +24,7 @@ export interface PlanRow {
   features: Partial<PlanFeatures> | null;
   public: boolean;
   sort: number;
+  trial_days: number;
 }
 
 /** stores from before the catalog (tenants.plan 'spike', 'starter', …) */
@@ -37,6 +40,7 @@ export function planView(row: PlanRow): Plan {
       customDomain: row.features?.customDomain === true,
       customSite: row.features?.customSite === true,
     },
+    trialDays: row.trial_days ?? 0,
   };
 }
 
@@ -47,6 +51,7 @@ export function legacyPlan(id: string): Plan {
     priceCents: null,
     feeBps: 0,
     features: { customDomain: false, customSite: false },
+    trialDays: 0,
   };
 }
 

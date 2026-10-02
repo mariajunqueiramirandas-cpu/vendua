@@ -86,6 +86,39 @@ export function reminderMessage(
   return { text: line + pix, subject: `Venduá: ${subject}` };
 }
 
+/** Before a free trial ends (ADR 0025): what happens next depends on how the plan will be paid. */
+export function trialEndingMessage(
+  stage: 'soon' | 'last',
+  o: {
+    planName: string;
+    cents: number;
+    endsAt: Date;
+    pay: 'pix' | 'card' | 'authorize';
+  },
+  origin: string | null,
+): OwnerMessage {
+  const when = `acaba em ${dayMonth(o.endsAt)}`;
+  const lead = stage === 'last' ? 'Venduá, último aviso: ' : 'Venduá: ';
+  const first = `a primeira mensalidade do ${o.planName} (${formatBRL(o.cents)})`;
+  const next =
+    o.pay === 'card'
+      ? ` ${first[0]!.toUpperCase()}${first.slice(1)} é cobrada no cartão nesse dia.`
+      : o.pay === 'authorize'
+        ? ` Para a loja continuar recebendo pedidos, autorize o cartão no Mercado Pago.${where(origin)}`
+        : ` Para a loja continuar recebendo pedidos, pague ${first} com o Pix.${where(origin)}`;
+  return {
+    text: `${lead}o teste grátis da sua loja ${when}.${next}`,
+    subject: `Venduá: seu teste grátis ${when}`,
+  };
+}
+
+export function trialEndedMessage(planName: string, origin: string | null): OwnerMessage {
+  return {
+    text: `Venduá: o teste grátis acabou e a loja parou de receber pedidos. Pague o plano ${planName} para ela voltar na hora — o painel e o cardápio continuam aí.${where(origin)}`,
+    subject: 'Venduá: o teste grátis acabou',
+  };
+}
+
 /** Deliver to every active owner; failures are logged, never retried into a second message. */
 export async function messageOwners(
   ctx: Pick<BillingCtx, 'sql' | 'notify'>,
