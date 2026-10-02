@@ -5,6 +5,7 @@ import {
   Check,
   CookingPot,
   DotsThree,
+  HourglassMedium,
   Fire,
   Moped,
   NotePencil,
@@ -282,7 +283,17 @@ export const Ticket = memo(function Ticket(p: TicketProps) {
             {own.done}/{own.total}
           </span>
         ) : null}
-        {action ? (
+        {action?.kind === 'wait' ? (
+          <p
+            role="status"
+            className="t-label flex min-h-14 min-w-0 flex-1 items-center gap-2 rounded-md bg-sunken px-3 text-muted"
+          >
+            <HourglassMedium weight="bold" className="size-6 shrink-0" aria-hidden />
+            <span className="min-w-0">
+              {action.label}. Falta: {waitingOn.map((s) => p.stationName(s)).join(', ')}
+            </span>
+          </p>
+        ) : action ? (
           <button
             type="button"
             onClick={() => p.onAction(t)}
@@ -314,11 +325,6 @@ export const Ticket = memo(function Ticket(p: TicketProps) {
           <DotsThree weight="bold" className="size-7" />
         </button>
       </footer>
-      {station !== 'all' && waitingOn.length && !mine.some((i) => !i.doneAt) ? (
-        <p className="t-caption -mt-1 px-4 pb-3 text-muted">
-          Sua parte está pronta. Falta: {waitingOn.map((s) => p.stationName(s)).join(', ')}.
-        </p>
-      ) : null}
 
       {p.bumpAt ? <BumpVeil ticket={t} until={p.bumpAt} now={now} onUndo={p.onUndo} /> : null}
     </article>

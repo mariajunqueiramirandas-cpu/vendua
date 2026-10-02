@@ -166,11 +166,12 @@ export function minutes(ms: number) {
   return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
 }
 
-export type ActionKind = 'start' | 'mine' | 'ready';
+export type ActionKind = 'start' | 'mine' | 'ready' | 'wait';
 
 /**
  * The ticket's one big button (and Enter on a bump bar). At a station, "minha parte pronta" marks
- * that station's share while other stations still owe items; otherwise it's "pronto".
+ * that station's share while other stations still owe items, and once it's marked the station
+ * waits: only the last station (or the pass, "Tudo") can call the whole order "pronto".
  */
 export function actionFor(
   t: KitchenTicket,
@@ -180,7 +181,9 @@ export function actionFor(
   if (t.state !== 'preparing') return null;
   const { mine, others } = itemsFor(t, s);
   const allDone = t.items.every((i) => i.doneAt);
-  if (mine.some((i) => !i.doneAt) && others.some((i) => !i.doneAt))
-    return { kind: 'mine', label: 'minha parte pronta', allDone };
+  const mineOpen = mine.some((i) => !i.doneAt);
+  const othersOpen = others.some((i) => !i.doneAt);
+  if (mineOpen && othersOpen) return { kind: 'mine', label: 'minha parte pronta', allDone };
+  if (othersOpen) return { kind: 'wait', label: 'sua parte está pronta', allDone };
   return { kind: 'ready', label: 'pronto', allDone };
 }

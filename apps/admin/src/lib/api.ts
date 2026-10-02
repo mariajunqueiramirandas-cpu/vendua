@@ -1331,11 +1331,14 @@ export const api = {
     to: OrderState,
     extra: { prepMinutes?: number; reason?: string } = {},
     idem?: string,
+    /** keepalive: the request outlives the page (the kitchen sends a held "pronto" on leaving) */
+    opts: { keepalive?: boolean } = {},
   ) =>
     req<{ order: Order }>(`/orders/${id}/transition`, {
       method: 'POST',
       body: JSON.stringify({ to, ...extra }),
       ...(idem ? { idem } : {}),
+      ...(opts.keepalive ? { keepalive: true } : {}),
     }),
   markPaid: (id: string, status: 'paid' | 'pending') =>
     send<{ order: Order }>('POST', `/orders/${id}/payment`, { status }),

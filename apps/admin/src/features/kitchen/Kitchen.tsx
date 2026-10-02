@@ -137,12 +137,9 @@ export default function Kitchen() {
   const marks = useMarkItems();
   const rush = useRush();
   const advance = useAdvance();
-  // ids this screen moved itself: their arrival or exit is no news here
-  const self = useRef(new Set<string>());
-  const bumps = useBumpQueue((t) => {
-    self.current.add(t.id);
-    void advance.run(t, 'ready').catch(() => undefined);
-  });
+  // orders this screen accepted: their arrival in the queue is no news here (once)
+  const quiet = useRef(new Set<string>());
+  const bumps = useBumpQueue((t) => void advance.run(t, 'ready').catch(() => undefined));
 
   // ── what's new, what's late, what was cancelled under the cook's hands ──
   const known = useRef<Set<string> | null>(null);
@@ -162,7 +159,7 @@ export default function Kitchen() {
     if (fresh.length)
       setArrived((a) => ({ ...a, ...Object.fromEntries(fresh.map((t) => [t.id, Date.now()])) }));
     const news = fresh.filter(
-      (t) => !self.current.has(t.id) && itemsFor(t, live.current.station).mine.length,
+      (t) => !quiet.current.delete(t.id) && itemsFor(t, live.current.station).mine.length,
     );
     if (news.length) {
       if (live.current.sound) chimeTicket();
@@ -170,8 +167,8 @@ export default function Kitchen() {
       if (live.current.voice) news.forEach((t) => speak(spoken(t, live.current.station)));
     }
     for (const id of prev) {
-      if (ids.has(id) || self.current.has(id)) continue;
-      // gone without this screen moving it: ready elsewhere, or cancelled — find out which
+      if (ids.has(id)) continue;
+      // gone: ready (here or elsewhere) or cancelled — only Core knows which
       void api
         .order(id)
         .then(({ order }) => {
@@ -242,7 +239,7 @@ export default function Kitchen() {
   const onAction = useCallback((t: KitchenTicket) => {
     const { station: s, advance: adv, bumps: b, marks: m } = act.current;
     const a = actionFor(t, s);
-    if (!a) return;
+    if (!a || a.kind === 'wait') return;
     settle(t.id);
     if (a.kind === 'start') void adv.run(t, 'preparing').catch(() => undefined);
     else if (a.kind === 'mine')
@@ -260,11 +257,10 @@ export default function Kitchen() {
   }, []);
   const onSelect = useCallback((t: KitchenTicket) => setSel(t.id), []);
   const onAccept = (t: KitchenTicket, prep: number) => {
-    self.current.add(t.id);
-    void advance.run(t, 'confirmed', prep).catch(() => undefined);
+    quiet.current.add(t.id);
+    void advance.run(t, 'confirmed', prep).catch(() => quiet.current.delete(t.id));
   };
   const onHandOff = (t: KitchenTicket) => {
-    self.current.add(t.id);
     void advance
       .run(t, t.mode === 'delivery' ? 'out_for_delivery' : 'delivered')
       .catch(() => undefined);

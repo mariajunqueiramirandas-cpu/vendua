@@ -134,6 +134,10 @@ export function useRush() {
 
 const KITCHEN_STATES: readonly OrderState[] = ['placed', 'confirmed', 'preparing', 'ready'];
 
+// one key per order and step, shared by the mutation and the send on the way out: Core replays
+// whichever lands second instead of applying the step twice
+const stepKey = (id: string, to: OrderState) => `kds-${id}-${to}`;
+
 /** One step on the order's path (the same transition Pedidos uses), shown at once. */
 export function useStep() {
   const { qc, put, restore, settle, hold } = useCache();
@@ -144,7 +148,7 @@ export function useStep() {
         v.ticket.id,
         v.to,
         v.prepMinutes ? { prepMinutes: v.prepMinutes } : {},
-        `kds-${v.ticket.id}-${v.to}`,
+        stepKey(v.ticket.id, v.to),
       ),
     onMutate: async (v) => {
       haptic.commit();
@@ -217,9 +221,11 @@ export const UNDO_MS = 4500;
 
 /**
  * "Pronto" can't be taken back once the customer is told, so a bump waits a few seconds on the
- * ticket with "desfazer" (undo beats confirm, §2.2.1). Leaving the page sends what's waiting.
+ * ticket with "desfazer" (undo beats confirm, §2.2.1). Leaving the page sends what's waiting:
+ * straight to Core with `keepalive`, since a mutation's async steps wouldn't outlive the page.
  */
 export function useBumpQueue(commit: (t: KitchenTicket) => void) {
+  const qc = useQueryClient();
   const [pending, setPending] = useState<Record<string, number>>({});
   const timers = useRef(new Map<string, { timer: number; ticket: KitchenTicket }>());
   const order = useRef<string[]>([]);
@@ -259,7 +265,16 @@ export function useBumpQueue(commit: (t: KitchenTicket) => void) {
   };
 
   useEffect(() => {
-    const flush = () => [...timers.current.keys()].forEach(fire);
+    const send = (t: KitchenTicket) =>
+      void api
+        .transition(t.id, 'ready', {}, stepKey(t.id, 'ready'), { keepalive: true })
+        .then(() => qc.invalidateQueries({ queryKey: ['orders'] }))
+        .catch(() => undefined);
+    const flush = () =>
+      [...timers.current.keys()].forEach((id) => {
+        const t = drop(id);
+        if (t) send(t);
+      });
     const hidden = () => document.visibilityState === 'hidden' && flush();
     window.addEventListener('pagehide', flush);
     document.addEventListener('visibilitychange', hidden);
@@ -268,7 +283,7 @@ export function useBumpQueue(commit: (t: KitchenTicket) => void) {
       document.removeEventListener('visibilitychange', hidden);
       flush();
     };
-    // fire/drop only touch refs and setState
+    // drop only touches refs and setState; qc is the app's one client
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -302,6 +317,8 @@ export function usePref<T>(key: string, initial: T) {
 export function useStations() {
   const { qc } = useCache();
   return useMutation({
+    // each save is the whole list: run them in order, so the last edit is the one that stays
+    scope: { id: 'kitchen-stations' },
     mutationFn: (stations: { id?: string; name: string; categoryIds: string[] }[]) =>
       api.kitchenStations(stations),
     onSuccess: ({ stations }) => {
