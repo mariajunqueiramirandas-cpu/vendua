@@ -104,6 +104,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/admin/v1': { target: 'http://localhost:8787' },
+      '/analytics/v1': { target: 'http://localhost:8787' },
       // uploaded photos are served by Core at /v1/media
       '/v1': { target: 'http://localhost:8787' },
     },

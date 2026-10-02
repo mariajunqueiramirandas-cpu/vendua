@@ -43,6 +43,7 @@ const HomePage = lazy(() => import('@/features/home/HomePage.tsx'));
 const PipelinePage = lazy(() => import('@/features/pipeline/PipelinePage.tsx'));
 const LeadPage = lazy(() => import('@/features/lead/LeadPage.tsx'));
 const ReportsPage = lazy(() => import('@/features/reports/ReportsPage.tsx'));
+const AnalyticsPage = lazy(() => import('@/features/analytics/AnalyticsPage.tsx'));
 const InboxPage = lazy(() => import('@/features/inbox/InboxPage.tsx'));
 const AgendaPage = lazy(() => import('@/features/agenda/AgendaPage.tsx'));
 const ActivityPage = lazy(() => import('@/features/agent/activity/ActivityPage.tsx'));
@@ -77,7 +78,8 @@ function Legacy({
 
 /** Header of the page being loaded, so only its content area shows a skeleton. */
 function chrome(path: string): { title: string; tabs?: PageTab[]; back?: string } {
-  if (path.startsWith('/pipeline/relatorios')) return { title: 'Pipeline', tabs: PIPELINE_TABS };
+  if (path.startsWith('/pipeline/relatorios') || path.startsWith('/pipeline/analytics'))
+    return { title: 'Pipeline', tabs: PIPELINE_TABS };
   if (path.startsWith('/pipeline/')) return { title: 'Lead', back: '/pipeline' };
   if (path.startsWith('/pipeline')) return { title: 'Pipeline', tabs: PIPELINE_TABS };
   if (path.startsWith('/inbox/')) return { title: 'conversa', back: '/inbox' };
@@ -124,6 +126,7 @@ export function AppRoutes() {
         <Route path="/" element={<HomePage />} />
         <Route path="/pipeline" element={<PipelinePage />} />
         <Route path="/pipeline/relatorios" element={<ReportsPage />} />
+        <Route path="/pipeline/analytics" element={<AnalyticsPage />} />
         <Route path="/pipeline/:id" element={<LeadPage />} />
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/inbox/:threadId" element={<InboxPage />} />
