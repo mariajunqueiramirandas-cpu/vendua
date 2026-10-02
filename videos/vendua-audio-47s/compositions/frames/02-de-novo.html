@@ -1,0 +1,759 @@
+<template>
+  <script src="assets/vendor/gsap.min.js"></script>
+  <style>
+    @font-face {
+      font-family: 'Space Grotesk Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 700;
+      src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2')
+        format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Figtree Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 900;
+      src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: normal;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: italic;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-italic.woff2') format('woff2');
+    }
+
+    #root {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+      font-family: 'Figtree Variable', sans-serif;
+      color: #123c32;
+    }
+
+    /* ground: cream canvas + the same static seeded grain as frame 1 */
+    .\30 2-de-novo-ground {
+      position: absolute;
+      inset: 0;
+      background: #f7f4ea;
+      container-type: size;
+    }
+    .\30 2-de-novo-grain {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+      opacity: 0.09;
+    }
+    .\30 2-de-novo-stage {
+      position: absolute;
+      inset: 0;
+    }
+
+    /* Luiz: frame 1's bubble, rebuilt 1:1 so the cut is invisible; its parts FLIP into slot 1 */
+    .\30 2-de-novo-luiz {
+      position: absolute;
+      inset: 0;
+    }
+    .\30 2-de-novo-sender {
+      position: absolute;
+      left: 72px;
+      top: 540px;
+      display: flex;
+      align-items: baseline;
+      gap: 21.6px;
+      white-space: nowrap;
+      transform-origin: 0 0;
+    }
+    .\30 2-de-novo-who {
+      font-weight: 650;
+      font-size: 54px;
+      line-height: 1.2;
+    }
+    .\30 2-de-novo-when {
+      font-weight: 500;
+      font-size: 36.7px;
+      line-height: 1.2;
+      color: #4f6a5e;
+    }
+    .\30 2-de-novo-shell-a,
+    .\30 2-de-novo-shell-m,
+    .\30 2-de-novo-shell-b,
+    .\30 2-de-novo-nshell,
+    .\30 2-de-novo-bloom {
+      position: absolute;
+      border-radius: 32px 32px 32px 10px;
+      transform-origin: 0 0;
+    }
+    .\30 2-de-novo-shell-a,
+    .\30 2-de-novo-shell-m {
+      left: 72px;
+      background: #fffdf8;
+      box-shadow:
+        0 2px 4px rgb(18 60 50 / 0.08),
+        0 12px 32px rgb(18 60 50 / 0.1);
+    }
+    .\30 2-de-novo-shell-a {
+      top: 638px;
+      width: 864px;
+      height: 367px;
+    }
+    .\30 2-de-novo-shell-m {
+      top: 395.061px;
+      width: 700.622px;
+      height: 235.992px;
+      border-radius: 30.769px 30.769px 30.769px 9.615px;
+    }
+    .\30 2-de-novo-shell-b,
+    .\30 2-de-novo-nshell {
+      background: #fffdf8;
+      box-shadow:
+        0 1px 2px rgb(18 60 50 / 0.06),
+        0 4px 16px rgb(18 60 50 / 0.05);
+    }
+    .\30 2-de-novo-shell-b {
+      left: 72px;
+      top: 259px;
+      width: 648px;
+      height: 173px;
+    }
+    .\30 2-de-novo-bubble {
+      position: absolute;
+      left: 72px;
+      top: 638px;
+      width: 864px;
+      height: 367px;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      gap: 19px;
+      padding: 0 36.7px 0 32.4px;
+    }
+    .\30 2-de-novo-avatar,
+    .\30 2-de-novo-navatar {
+      border-radius: 999px;
+      background: #efe9d8;
+      color: #123c32;
+      display: grid;
+      place-items: center;
+      font-weight: 650;
+      line-height: 1;
+      transform-origin: 0 0;
+    }
+    .\30 2-de-novo-avatar {
+      flex: none;
+      width: 117.5px;
+      height: 117.5px;
+      font-size: 55px;
+    }
+    .\30 2-de-novo-btn {
+      flex: none;
+      position: relative;
+      width: 168.9px;
+      height: 168.9px;
+      transform-origin: 0 0;
+    }
+    .\30 2-de-novo-btn-shadow,
+    .\30 2-de-novo-btn-fill {
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+    }
+    .\30 2-de-novo-btn-shadow {
+      box-shadow:
+        0 1px 2px rgb(18 60 50 / 0.06),
+        0 4px 16px rgb(18 60 50 / 0.05);
+    }
+    .\30 2-de-novo-btn-fill {
+      background: #123c32;
+    }
+    .\30 2-de-novo-tri {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 64px;
+      height: 72px;
+      margin: -36px 0 0 -26px;
+    }
+    .\30 2-de-novo-wave {
+      flex: 1;
+      min-width: 0;
+      position: relative;
+      height: 183.6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .\30 2-de-novo-bar {
+      position: relative;
+      display: block;
+      flex: none;
+      width: 11.9px;
+      border-radius: 6px;
+      background: rgb(79 106 94 / 0.38);
+      transform-origin: 0 0;
+    }
+    .\30 2-de-novo-played {
+      position: absolute;
+      inset: 0;
+      display: block;
+      border-radius: inherit;
+      background: #123c32;
+    }
+    .\30 2-de-novo-elapsed {
+      position: absolute;
+      left: 0;
+      top: calc(100% + 16px);
+      display: flex;
+      font-weight: 500;
+      font-size: 36px;
+      line-height: 44px;
+      color: #4f6a5e;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      transform-origin: 0 0;
+    }
+    .\30 2-de-novo-digit {
+      position: relative;
+      height: 44px;
+      overflow: hidden;
+    }
+    .\30 2-de-novo-dur,
+    .\30 2-de-novo-ndur {
+      font-family: 'Space Grotesk Variable', sans-serif;
+      font-weight: 600;
+      line-height: 1.28;
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+      color: #123c32;
+      transform-origin: 0 0;
+    }
+    .\30 2-de-novo-dur {
+      flex: none;
+      font-size: 58.75px;
+    }
+
+    /* the pile: four new voice notes on the slot layout (648x173) */
+    .\30 2-de-novo-nb {
+      position: absolute;
+      width: 648px;
+      height: 173px;
+      transform-origin: 50% 50%;
+    }
+    .\30 2-de-novo-nshell,
+    .\30 2-de-novo-bloom {
+      inset: 0;
+    }
+    .\30 2-de-novo-bloom {
+      box-shadow:
+        0 2px 4px rgb(18 60 50 / 0.08),
+        0 12px 32px rgb(18 60 50 / 0.1);
+    }
+    .\30 2-de-novo-navatar {
+      position: absolute;
+      left: 32.4px;
+      top: 58.806px;
+      width: 55.388px;
+      height: 55.388px;
+      font-size: 25.926px;
+    }
+    .\30 2-de-novo-nbtn {
+      position: absolute;
+      left: 101.688px;
+      top: 46.693px;
+      width: 79.613px;
+      height: 79.613px;
+      border-radius: 999px;
+      background: #123c32;
+      box-shadow:
+        0 0.5px 1px rgb(18 60 50 / 0.06),
+        0 2px 7.5px rgb(18 60 50 / 0.05);
+    }
+    .\30 2-de-novo-ntri {
+      position: absolute;
+      left: 27.551px;
+      top: 22.837px;
+      width: 30.169px;
+      height: 33.94px;
+    }
+    .\30 2-de-novo-nbar {
+      position: absolute;
+      width: 5.605px;
+      border-radius: 999px;
+      background: rgb(79 106 94 / 0.38);
+    }
+    .\30 2-de-novo-ndur {
+      position: absolute;
+      left: 532.753px;
+      top: 62.184px;
+      width: 78.547px;
+      font-size: 38px;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .\30 2-de-novo-dot {
+      position: absolute;
+      left: 600.48px;
+      top: 21.6px;
+      width: 25.92px;
+      height: 25.92px;
+      border-radius: 999px;
+      background: #d9f875;
+      box-shadow: 0 0 0 5.4px #fffdf8;
+      transform-origin: 50% 50%;
+    }
+  </style>
+
+  <div
+    id="root"
+    data-composition-id="02-de-novo"
+    data-start="0"
+    data-duration="7.4"
+    data-width="1080"
+    data-height="1920"
+  >
+    <div
+      id="02-de-novo-ground"
+      class="02-de-novo-ground clip"
+      data-start="0"
+      data-duration="7.4"
+      data-track-index="0"
+    >
+      <svg
+        class="02-de-novo-grain"
+        width="1080"
+        height="1920"
+        viewBox="0 0 1080 1920"
+        aria-hidden="true"
+      >
+        <filter
+          id="02-de-novo-grain-filter"
+          x="0"
+          y="0"
+          width="1080"
+          height="1920"
+          filterUnits="userSpaceOnUse"
+        >
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.85"
+            numOctaves="2"
+            seed="7"
+            stitchTiles="stitch"
+            result="noise"
+          />
+          <feColorMatrix
+            in="noise"
+            type="matrix"
+            values="0 0 0 0 0.071  0 0 0 0 0.235  0 0 0 0 0.196  1.6 0 0 0 -0.55"
+          />
+        </filter>
+        <rect width="1080" height="1920" filter="url(#02-de-novo-grain-filter)" />
+      </svg>
+    </div>
+
+    <div
+      id="02-de-novo-stage"
+      class="02-de-novo-stage clip"
+      data-start="0"
+      data-duration="7.4"
+      data-track-index="1"
+    >
+      <div class="02-de-novo-luiz">
+        <div class="02-de-novo-shell-a"></div>
+        <div class="02-de-novo-shell-m"></div>
+        <div class="02-de-novo-shell-b"></div>
+        <div class="02-de-novo-sender">
+          <span class="02-de-novo-who">Luiz</span><span class="02-de-novo-when">agora</span>
+        </div>
+        <div class="02-de-novo-bubble">
+          <span class="02-de-novo-avatar">L</span>
+          <span class="02-de-novo-btn">
+            <span class="02-de-novo-btn-shadow"></span>
+            <span class="02-de-novo-btn-fill"></span>
+            <svg class="02-de-novo-tri" viewBox="0 0 64 72" aria-hidden="true">
+              <path
+                d="M9 8 L57 36 L9 64 Z"
+                fill="#fffdf8"
+                stroke="#fffdf8"
+                stroke-width="10"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+          <span class="02-de-novo-wave">
+            <i class="02-de-novo-bar" style="height: 77.3px"><b class="02-de-novo-played"></b></i>
+            <i class="02-de-novo-bar" style="height: 87.9px"><b class="02-de-novo-played"></b></i>
+            <i class="02-de-novo-bar" style="height: 102.7px"><b class="02-de-novo-played"></b></i>
+            <i class="02-de-novo-bar" style="height: 88.9px"><b class="02-de-novo-played"></b></i>
+            <i class="02-de-novo-bar" style="height: 169.9px"><b class="02-de-novo-played"></b></i>
+            <i class="02-de-novo-bar" style="height: 169px"></i>
+            <i class="02-de-novo-bar" style="height: 83.6px"></i>
+            <i class="02-de-novo-bar" style="height: 116.1px"></i>
+            <i class="02-de-novo-bar" style="height: 105.4px"></i>
+            <i class="02-de-novo-bar" style="height: 65.4px"></i>
+            <i class="02-de-novo-bar" style="height: 76.6px"></i>
+            <i class="02-de-novo-bar" style="height: 140px"></i>
+            <i class="02-de-novo-bar" style="height: 158.7px"></i>
+            <i class="02-de-novo-bar" style="height: 84px"></i>
+            <i class="02-de-novo-bar" style="height: 140.7px"></i>
+            <i class="02-de-novo-bar" style="height: 157.9px"></i>
+            <i class="02-de-novo-bar" style="height: 98.9px"></i>
+            <i class="02-de-novo-bar" style="height: 69.9px"></i>
+            <i class="02-de-novo-bar" style="height: 86.9px"></i>
+            <i class="02-de-novo-bar" style="height: 120.6px"></i>
+            <i class="02-de-novo-bar" style="height: 78.7px"></i>
+            <i class="02-de-novo-bar" style="height: 143px"></i>
+            <i class="02-de-novo-bar" style="height: 182.4px"></i>
+            <i class="02-de-novo-bar" style="height: 123.1px"></i>
+            <span class="02-de-novo-elapsed"
+              ><span>0:0</span><span class="02-de-novo-digit"><span>8</span></span></span
+            >
+          </span>
+          <span class="02-de-novo-dur">0:47</span>
+        </div>
+      </div>
+
+      <div class="02-de-novo-nb" data-cue="0.66" style="left: 216px; top: 464px">
+        <div class="02-de-novo-bloom"></div>
+        <div class="02-de-novo-nshell"></div>
+        <span class="02-de-novo-navatar">M</span>
+        <span class="02-de-novo-nbtn"
+          ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+            <path
+              d="M9 8 L57 36 L9 64 Z"
+              fill="#fffdf8"
+              stroke="#fffdf8"
+              stroke-width="10"
+              stroke-linejoin="round"
+            /></svg
+        ></span>
+        <i class="02-de-novo-nbar" style="left: 195.202px; top: 50.326px; height: 72.348px"></i>
+        <i class="02-de-novo-nbar" style="left: 209.03px; top: 66.486px; height: 40.028px"></i>
+        <i class="02-de-novo-nbar" style="left: 222.858px; top: 68.785px; height: 35.43px"></i>
+        <i class="02-de-novo-nbar" style="left: 236.686px; top: 65.877px; height: 41.245px"></i>
+        <i class="02-de-novo-nbar" style="left: 250.514px; top: 60.671px; height: 51.658px"></i>
+        <i class="02-de-novo-nbar" style="left: 264.342px; top: 68.717px; height: 35.565px"></i>
+        <i class="02-de-novo-nbar" style="left: 278.17px; top: 48.23px; height: 76.54px"></i>
+        <i class="02-de-novo-nbar" style="left: 291.998px; top: 45.052px; height: 82.896px"></i>
+        <i class="02-de-novo-nbar" style="left: 305.826px; top: 63.376px; height: 46.249px"></i>
+        <i class="02-de-novo-nbar" style="left: 319.654px; top: 61.212px; height: 50.576px"></i>
+        <i class="02-de-novo-nbar" style="left: 333.483px; top: 61.618px; height: 49.765px"></i>
+        <i class="02-de-novo-nbar" style="left: 347.311px; top: 71.016px; height: 30.968px"></i>
+        <i class="02-de-novo-nbar" style="left: 361.139px; top: 69.934px; height: 33.131px"></i>
+        <i class="02-de-novo-nbar" style="left: 374.967px; top: 54.789px; height: 63.423px"></i>
+        <i class="02-de-novo-nbar" style="left: 388.795px; top: 47.621px; height: 77.757px"></i>
+        <i class="02-de-novo-nbar" style="left: 402.623px; top: 62.835px; height: 47.33px"></i>
+        <i class="02-de-novo-nbar" style="left: 416.451px; top: 56.344px; height: 60.313px"></i>
+        <i class="02-de-novo-nbar" style="left: 430.279px; top: 49.312px; height: 74.376px"></i>
+        <i class="02-de-novo-nbar" style="left: 444.107px; top: 61.55px; height: 49.9px"></i>
+        <i class="02-de-novo-nbar" style="left: 457.935px; top: 70.678px; height: 31.644px"></i>
+        <i class="02-de-novo-nbar" style="left: 471.763px; top: 66.418px; height: 40.163px"></i>
+        <i class="02-de-novo-nbar" style="left: 485.591px; top: 57.155px; height: 58.69px"></i>
+        <i class="02-de-novo-nbar" style="left: 499.419px; top: 64.796px; height: 43.409px"></i>
+        <i class="02-de-novo-nbar" style="left: 513.248px; top: 55.803px; height: 61.394px"></i>
+        <span class="02-de-novo-ndur">0:32</span>
+        <span class="02-de-novo-dot"></span>
+      </div>
+
+      <div class="02-de-novo-nb" data-cue="2.14" style="left: 86px; top: 670px">
+        <div class="02-de-novo-bloom"></div>
+        <div class="02-de-novo-nshell"></div>
+        <span class="02-de-novo-navatar">A</span>
+        <span class="02-de-novo-nbtn"
+          ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+            <path
+              d="M9 8 L57 36 L9 64 Z"
+              fill="#fffdf8"
+              stroke="#fffdf8"
+              stroke-width="10"
+              stroke-linejoin="round"
+            /></svg
+        ></span>
+        <i class="02-de-novo-nbar" style="left: 195.202px; top: 64.593px; height: 43.814px"></i>
+        <i class="02-de-novo-nbar" style="left: 209.03px; top: 63.917px; height: 45.167px"></i>
+        <i class="02-de-novo-nbar" style="left: 222.858px; top: 46.134px; height: 80.732px"></i>
+        <i class="02-de-novo-nbar" style="left: 236.686px; top: 47.959px; height: 77.081px"></i>
+        <i class="02-de-novo-nbar" style="left: 250.514px; top: 69.191px; height: 34.619px"></i>
+        <i class="02-de-novo-nbar" style="left: 264.342px; top: 56.614px; height: 59.772px"></i>
+        <i class="02-de-novo-nbar" style="left: 278.17px; top: 59.657px; height: 53.686px"></i>
+        <i class="02-de-novo-nbar" style="left: 291.998px; top: 70.475px; height: 32.049px"></i>
+        <i class="02-de-novo-nbar" style="left: 305.826px; top: 68.244px; height: 36.512px"></i>
+        <i class="02-de-novo-nbar" style="left: 319.654px; top: 54.518px; height: 63.964px"></i>
+        <i class="02-de-novo-nbar" style="left: 333.483px; top: 51.34px; height: 70.32px"></i>
+        <i class="02-de-novo-nbar" style="left: 347.311px; top: 69.529px; height: 33.943px"></i>
+        <i class="02-de-novo-nbar" style="left: 361.139px; top: 51.002px; height: 70.996px"></i>
+        <i class="02-de-novo-nbar" style="left: 374.967px; top: 48.23px; height: 76.54px"></i>
+        <i class="02-de-novo-nbar" style="left: 388.795px; top: 63.443px; height: 46.113px"></i>
+        <i class="02-de-novo-nbar" style="left: 402.623px; top: 68.717px; height: 35.565px"></i>
+        <i class="02-de-novo-nbar" style="left: 416.451px; top: 67.974px; height: 37.053px"></i>
+        <i class="02-de-novo-nbar" style="left: 430.279px; top: 60.468px; height: 52.064px"></i>
+        <i class="02-de-novo-nbar" style="left: 444.107px; top: 70.272px; height: 32.455px"></i>
+        <i class="02-de-novo-nbar" style="left: 457.935px; top: 51.408px; height: 70.184px"></i>
+        <i class="02-de-novo-nbar" style="left: 471.763px; top: 43.7px; height: 85.601px"></i>
+        <i class="02-de-novo-nbar" style="left: 485.591px; top: 59.184px; height: 54.633px"></i>
+        <i class="02-de-novo-nbar" style="left: 499.419px; top: 63.376px; height: 46.249px"></i>
+        <i class="02-de-novo-nbar" style="left: 513.248px; top: 60.13px; height: 52.74px"></i>
+        <span class="02-de-novo-ndur">1:12</span>
+        <span class="02-de-novo-dot"></span>
+      </div>
+
+      <div class="02-de-novo-nb" data-cue="4.18" style="left: 238px; top: 875px">
+        <div class="02-de-novo-bloom"></div>
+        <div class="02-de-novo-nshell"></div>
+        <span class="02-de-novo-navatar">R</span>
+        <span class="02-de-novo-nbtn"
+          ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+            <path
+              d="M9 8 L57 36 L9 64 Z"
+              fill="#fffdf8"
+              stroke="#fffdf8"
+              stroke-width="10"
+              stroke-linejoin="round"
+            /></svg
+        ></span>
+        <i class="02-de-novo-nbar" style="left: 195.202px; top: 67.162px; height: 38.676px"></i>
+        <i class="02-de-novo-nbar" style="left: 209.03px; top: 52.422px; height: 68.156px"></i>
+        <i class="02-de-novo-nbar" style="left: 222.858px; top: 58.575px; height: 55.85px"></i>
+        <i class="02-de-novo-nbar" style="left: 236.686px; top: 70.205px; height: 32.59px"></i>
+        <i class="02-de-novo-nbar" style="left: 250.514px; top: 67.703px; height: 37.594px"></i>
+        <i class="02-de-novo-nbar" style="left: 264.342px; top: 55.6px; height: 61.8px"></i>
+        <i class="02-de-novo-nbar" style="left: 278.17px; top: 56.006px; height: 60.989px"></i>
+        <i class="02-de-novo-nbar" style="left: 291.998px; top: 66.554px; height: 39.893px"></i>
+        <i class="02-de-novo-nbar" style="left: 305.826px; top: 46.81px; height: 79.38px"></i>
+        <i class="02-de-novo-nbar" style="left: 319.654px; top: 48.703px; height: 75.594px"></i>
+        <i class="02-de-novo-nbar" style="left: 333.483px; top: 66.621px; height: 39.758px"></i>
+        <i class="02-de-novo-nbar" style="left: 347.311px; top: 66.013px; height: 40.975px"></i>
+        <i class="02-de-novo-nbar" style="left: 361.139px; top: 70.137px; height: 32.726px"></i>
+        <i class="02-de-novo-nbar" style="left: 374.967px; top: 63.984px; height: 45.032px"></i>
+        <i class="02-de-novo-nbar" style="left: 388.795px; top: 67.568px; height: 37.864px"></i>
+        <i class="02-de-novo-nbar" style="left: 402.623px; top: 48.5px; height: 75.999px"></i>
+        <i class="02-de-novo-nbar" style="left: 416.451px; top: 45.728px; height: 81.544px"></i>
+        <i class="02-de-novo-nbar" style="left: 430.279px; top: 64.796px; height: 43.409px"></i>
+        <i class="02-de-novo-nbar" style="left: 444.107px; top: 58.237px; height: 56.526px"></i>
+        <i class="02-de-novo-nbar" style="left: 457.935px; top: 57.696px; height: 57.608px"></i>
+        <i class="02-de-novo-nbar" style="left: 471.763px; top: 68.92px; height: 35.16px"></i>
+        <i class="02-de-novo-nbar" style="left: 485.591px; top: 70.002px; height: 32.996px"></i>
+        <i class="02-de-novo-nbar" style="left: 499.419px; top: 57.087px; height: 58.825px"></i>
+        <i class="02-de-novo-nbar" style="left: 513.248px; top: 50.326px; height: 72.348px"></i>
+        <span class="02-de-novo-ndur">0:58</span>
+        <span class="02-de-novo-dot"></span>
+      </div>
+
+      <div class="02-de-novo-nb" data-cue="6.74" style="left: 97px; top: 1080px">
+        <div class="02-de-novo-bloom"></div>
+        <div class="02-de-novo-nshell"></div>
+        <span class="02-de-novo-navatar">J</span>
+        <span class="02-de-novo-nbtn"
+          ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+            <path
+              d="M9 8 L57 36 L9 64 Z"
+              fill="#fffdf8"
+              stroke="#fffdf8"
+              stroke-width="10"
+              stroke-linejoin="round"
+            /></svg
+        ></span>
+        <i class="02-de-novo-nbar" style="left: 195.202px; top: 63.579px; height: 45.843px"></i>
+        <i class="02-de-novo-nbar" style="left: 209.03px; top: 53.639px; height: 65.722px"></i>
+        <i class="02-de-novo-nbar" style="left: 222.858px; top: 62.023px; height: 48.953px"></i>
+        <i class="02-de-novo-nbar" style="left: 236.686px; top: 57.561px; height: 57.878px"></i>
+        <i class="02-de-novo-nbar" style="left: 250.514px; top: 44.443px; height: 84.113px"></i>
+        <i class="02-de-novo-nbar" style="left: 264.342px; top: 54.586px; height: 63.829px"></i>
+        <i class="02-de-novo-nbar" style="left: 278.17px; top: 70.205px; height: 32.59px"></i>
+        <i class="02-de-novo-nbar" style="left: 291.998px; top: 66.621px; height: 39.758px"></i>
+        <i class="02-de-novo-nbar" style="left: 305.826px; top: 66.959px; height: 39.081px"></i>
+        <i class="02-de-novo-nbar" style="left: 319.654px; top: 66.216px; height: 40.569px"></i>
+        <i class="02-de-novo-nbar" style="left: 333.483px; top: 60.13px; height: 52.74px"></i>
+        <i class="02-de-novo-nbar" style="left: 347.311px; top: 44.714px; height: 83.572px"></i>
+        <i class="02-de-novo-nbar" style="left: 361.139px; top: 51.07px; height: 70.86px"></i>
+        <i class="02-de-novo-nbar" style="left: 374.967px; top: 68.988px; height: 35.025px"></i>
+        <i class="02-de-novo-nbar" style="left: 388.795px; top: 55.194px; height: 62.611px"></i>
+        <i class="02-de-novo-nbar" style="left: 402.623px; top: 61.28px; height: 50.441px"></i>
+        <i class="02-de-novo-nbar" style="left: 416.451px; top: 71.219px; height: 30.562px"></i>
+        <i class="02-de-novo-nbar" style="left: 430.279px; top: 66.283px; height: 40.434px"></i>
+        <i class="02-de-novo-nbar" style="left: 444.107px; top: 52.895px; height: 67.209px"></i>
+        <i class="02-de-novo-nbar" style="left: 457.935px; top: 53.572px; height: 65.857px"></i>
+        <i class="02-de-novo-nbar" style="left: 471.763px; top: 68.312px; height: 36.377px"></i>
+        <i class="02-de-novo-nbar" style="left: 485.591px; top: 48.365px; height: 76.27px"></i>
+        <i class="02-de-novo-nbar" style="left: 499.419px; top: 49.92px; height: 73.159px"></i>
+        <i class="02-de-novo-nbar" style="left: 513.248px; top: 66.418px; height: 40.163px"></i>
+        <span class="02-de-novo-ndur">2:05</span>
+        <span class="02-de-novo-dot"></span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var P = '02-de-novo-';
+      var root = document.querySelector('[data-composition-id="02-de-novo"]') || document;
+      function all(name) {
+        return Array.prototype.slice.call(root.getElementsByClassName(P + name));
+      }
+      function one(name) {
+        return root.getElementsByClassName(P + name)[0];
+      }
+
+      var DURATION = 7.4;
+      var F = 0.94; // Luiz's settled scale in the pile
+      var K = 173 / 367; // slot height / frame-1 bubble height
+      var LIFT = 259 - 638; // slot 1 top - handoff top
+
+      // Frame-1 bubble parts, bubble-local [x, y, width] (measured from 01-o-audio.html at 8.35 s)
+      // and their places on the 648x173 slot layout the new bubbles use.
+      var BAR_X0 = 356.781;
+      var BAR_STRIDE = 13.828;
+      var SLOT_BAR_X0 = 195.202;
+      var SLOT_BAR_STRIDE = 13.828;
+      var PARTS = [
+        ['avatar', [32.391, 124.75, 117.5], [32.4, 58.806, 55.388]],
+        ['btn', [168.891, 99.047, 168.891], [101.688, 46.693, 79.613]],
+        ['dur', [705.875, 145.906, 121.438], [532.753, 62.184, 78.547]],
+        ['elapsed', [356.781, 291.297, 77.203], [SLOT_BAR_X0, 137.314, 36.393]],
+        ['sender', [0, -98, 214.391], [0, -46.196, 101.062]],
+      ];
+
+      // Scene 1 ease: a critically damped spring released from rest, so the bubble leaves
+      // frame 1's still pose with zero velocity and settles on a long tail (no overshoot).
+      var MOVE = 0.9;
+      var OMEGA = 8.5;
+      var SPRING_END = 1 - (1 + OMEGA * MOVE) * Math.exp(-OMEGA * MOVE);
+      function settle(p) {
+        if (p >= 1) return 1;
+        var t = p * MOVE;
+        return (1 - (1 + OMEGA * t) * Math.exp(-OMEGA * t)) / SPRING_END;
+      }
+
+      var tl = gsap.timeline({ paused: true });
+
+      function flip(el, big, slot) {
+        tl.fromTo(
+          el,
+          { x: 0, y: 0, scale: 1 },
+          {
+            x: F * slot[0] - big[0],
+            y: LIFT + F * slot[1] - big[1],
+            scale: (F * slot[2]) / big[2],
+            duration: MOVE,
+            ease: settle,
+          },
+          0,
+        );
+      }
+
+      // Scene 1 (0-0.66 s, "Audio de"): Luiz's bubble shrinks and lifts into slot 1
+      for (var i = 0; i < PARTS.length; i++) flip(one(PARTS[i][0]), PARTS[i][1], PARTS[i][2]);
+      var bars = all('bar');
+      for (var b = 0; b < bars.length; b++) {
+        var h = parseFloat(bars[b].style.height);
+        flip(
+          bars[b],
+          [BAR_X0 + BAR_STRIDE * b, 183.5 - h / 2, 11.891],
+          [SLOT_BAR_X0 + SLOT_BAR_STRIDE * b, 86.5 - (h * K) / 2, 11.891 * K],
+        );
+      }
+      // The shell reshapes 864x367 -> 648x173 with scaleX/scaleY only. Non-uniform scale
+      // stretches corners, so three real-radius shells (handoff, mid-move, slot) ride the same
+      // box and hand over where their stretch is equal (~12% at worst).
+      function shell(name, top, w, h) {
+        tl.fromTo(
+          one(name),
+          { x: 0, y: 638 - top, scaleX: 864 / w, scaleY: 367 / h },
+          {
+            x: 0,
+            y: 259 - top,
+            scaleX: (F * 648) / w,
+            scaleY: (F * 173) / h,
+            duration: MOVE,
+            ease: settle,
+          },
+          0,
+        );
+      }
+      shell('shell-a', 638, 864, 367);
+      shell('shell-m', 395.061, 700.622, 235.992);
+      shell('shell-b', 259, 648, 173);
+      function handover(from, to, at) {
+        tl.fromTo(
+          one(to),
+          { opacity: 0 },
+          { opacity: 1, duration: 0.1, ease: 'power1.inOut' },
+          at - 0.07,
+        );
+        tl.fromTo(
+          one(from),
+          { opacity: 1 },
+          { opacity: 0, duration: 0.1, ease: 'power1.inOut', immediateRender: false },
+          at - 0.03,
+        );
+      }
+      handover('shell-a', 'shell-m', 0.15);
+      handover('shell-m', 'shell-b', 0.39);
+      // compact form: the name row and the elapsed counter give way as the note joins the pile
+      tl.fromTo(
+        one('sender'),
+        { opacity: 1 },
+        { opacity: 0, duration: 0.3, ease: 'power1.out' },
+        0.02,
+      );
+      tl.fromTo(
+        one('elapsed'),
+        { opacity: 1 },
+        { opacity: 0, duration: 0.24, ease: 'power1.out' },
+        0.02,
+      );
+      tl.fromTo(
+        one('luiz'),
+        { opacity: 1 },
+        { opacity: 0.55, duration: 0.6, ease: 'power2.inOut' },
+        0.15,
+      );
+
+      // Scenes 2-5: each new voice note drops into its slot on its word ("47", "Enquanto",
+      // "forno", "fila") — smooth spring-pop (power3.out, no overshoot), lifted shadow e2
+      // blooming down to e1, then the lime new-dot.
+      var notes = all('nb');
+      for (var n = 0; n < notes.length; n++) {
+        var at = parseFloat(notes[n].getAttribute('data-cue')) - 0.03;
+        tl.fromTo(
+          notes[n],
+          { scale: 0, y: -32 },
+          { scale: 1, y: 0, duration: 0.45, ease: 'power3.out' },
+          at,
+        );
+        tl.fromTo(notes[n], { opacity: 0 }, { opacity: 1, duration: 0.2, ease: 'power2.out' }, at);
+        tl.fromTo(
+          notes[n].getElementsByClassName(P + 'bloom')[0],
+          { opacity: 1 },
+          { opacity: 0, duration: 0.45, ease: 'power2.inOut' },
+          at + 0.15,
+        );
+        tl.fromTo(
+          notes[n].getElementsByClassName(P + 'dot')[0],
+          { scale: 0 },
+          { scale: 1, duration: 0.36, ease: 'power3.out' },
+          at + 0.12,
+        );
+      }
+
+      // Scene 6 (6.9-7.4 s): hold, still
+      tl.set({}, {}, DURATION);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['02-de-novo'] = tl;
+    })();
+  </script>
+</template>

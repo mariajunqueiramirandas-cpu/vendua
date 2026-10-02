@@ -112,7 +112,7 @@ Scene 3 (7.9–8.35s): Luiz finishes ("Pix?" at 7.68); the playhead stops; still
 - voiceover: "Áudio de 47 segundos. Enquanto o bolo tá no forno. E ainda tem mais na fila."
 - duration: 7.4s
 - transition_in: cut
-- status: built
+- status: animated
 - src: compositions/frames/02-de-novo.html
 - type: pain_point
 - persuasion: Pain agitation
