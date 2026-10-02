@@ -6,6 +6,8 @@ packages/conformance/stale/
 # vendored minified libraries in video projects
 videos/*/assets/vendor/
 # HyperFrames files its scripts parse as text: frame.md's frontmatter is read line by line (one-line,
-# double-quoted flow maps) and .hyperframes/ holds generated working files (caption skin, packets)
+# double-quoted flow maps), .hyperframes/ holds generated working files (caption skin, packets), and
+# index.html is assembled by assemble-index.mjs, whose transitions verify matches its exact lines
 videos/*/frame.md
 videos/*/.hyperframes/
+videos/*/index.html

@@ -68,18 +68,19 @@
   /* paper pill: surface + Venduá's forest-tinted e2 shadow, radius lg, no outline */
   .caption-pill {
     max-width: 100%;
-    padding: 18px 34px 22px;
+    padding: 18px 30px 22px;
     background: var(--surface, #fffdf8);
     box-shadow:
       0 2px 4px rgb(18 60 50 / 0.08),
       0 12px 32px rgb(18 60 50 / 0.1);
     border-radius: 24px;
   }
+  /* spacing sized so the widest group ("você responde com um", 839px) stays on one line */
   .caption-line {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 0.1em 0.34em;
+    gap: 0.1em 0.28em;
     font-family: var(--font-body, "Figtree Variable"), system-ui, sans-serif;
     font-weight: 750;
     font-size: 66px;
@@ -90,7 +91,7 @@
   /* upcoming — muted forest, no chip */
   .caption-word {
     display: inline-block;
-    padding: 0 0.18em;
+    padding: 0 0.14em;
     border-radius: 0.32em;
     color: color-mix(in srgb, var(--cap-ink, #123c32) 52%, var(--cap-canvas, #f7f4ea));
   }
