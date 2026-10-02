@@ -477,15 +477,28 @@ export class Gateway {
           attempts: number;
           wa_id: string;
           expired: boolean;
+          superseded: boolean;
         }[]
       >`
         update store_wa_messages set status = 'sending', attempts = attempts + 1,
           lease_until = now() + ${SEND_LEASE}::interval, wa_id = ${next.wa_id ?? messageIdFor(next.id)}
         where id = ${next.id}
-        returning id, kind, phone, body, attempts, wa_id, expires_at < now() as expired`;
+        returning id, kind, phone, body, attempts, wa_id, expires_at < now() as expired,
+          exists (select 1 from store_wa_messages later
+                  where later.tenant_id = store_wa_messages.tenant_id
+                    and later.order_id = store_wa_messages.order_id
+                    and later.created_at > store_wa_messages.created_at
+                    and later.status = 'sent') as superseded`;
       const r = claimed[0]!;
       if (r.expired) {
         await tx`update store_wa_messages set status = 'expired', lease_until = null where id = ${r.id}`;
+        return { ...r, settled: true };
+      }
+      // a retry that a later step of the same order already overtook would arrive out of
+      // order ("saiu para entrega" after "entregue"): drop it
+      if (r.superseded) {
+        await tx`update store_wa_messages set status = 'skipped', error = 'superseded', lease_until = null
+                 where id = ${r.id}`;
         return { ...r, settled: true };
       }
       if (r.kind === 'order' && (await optedOutTx(tx, tenantId, r.phone))) {

@@ -13,6 +13,7 @@ import { optKeyword, phoneVariants } from './text.ts';
 /** a keyword only counts from someone this store texted about an order lately */
 const KEYWORD_WINDOW = '90 days';
 const RETENTION = '30 days';
+const ACK_WINDOW = '10 minutes';
 
 interface Row {
   state: string;
@@ -146,6 +147,17 @@ export async function finishWipe(
   });
 }
 
+/** A shopper flipping SAIR/VOLTAR gets one acknowledgement per window: the setting still
+ *  changes every time, but the store's number doesn't answer each flip. */
+async function ackedLatelyTx(tx: Sql, tenantId: string, variants: string[]): Promise<boolean> {
+  const rows = await tx`
+    select 1 from store_wa_messages
+    where tenant_id = ${tenantId} and phone = any(${variants}) and kind in ('opt_in', 'opt_out')
+      and created_at > now() - ${ACK_WINDOW}::interval
+    limit 1`;
+  return rows.length > 0;
+}
+
 /** SAIR / VOLTAR from a shopper the store texted. Anything else is the store's conversation. */
 export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Promise<void> {
   if (!m.phone) return;
@@ -163,7 +175,8 @@ export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Pro
         delete from store_wa_optouts where tenant_id = ${tenantId} and phone = any(${variants})
         returning phone`;
       if (!removed.length) return;
-      await enqueueTextTx(tx, tenantId, 'opt_in', removed[0]!.phone, optInAck(name));
+      if (!(await ackedLatelyTx(tx, tenantId, variants)))
+        await enqueueTextTx(tx, tenantId, 'opt_in', removed[0]!.phone, optInAck(name));
       await emitAdminTx(tx, tenantId, 'whatsapp', 'optout');
       return;
     }
@@ -182,7 +195,8 @@ export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Pro
     await tx`update store_wa_messages set status = 'skipped', error = 'opted_out', lease_until = null
              where tenant_id = ${tenantId} and phone = any(${variants}) and kind = 'order'
                and status = 'pending'`;
-    await enqueueTextTx(tx, tenantId, 'opt_out', known.phone, optOutAck(name));
+    if (!(await ackedLatelyTx(tx, tenantId, variants)))
+      await enqueueTextTx(tx, tenantId, 'opt_out', known.phone, optOutAck(name));
     await emitAdminTx(tx, tenantId, 'whatsapp', 'optout');
   });
 }

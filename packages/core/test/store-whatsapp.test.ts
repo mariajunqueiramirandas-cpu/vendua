@@ -146,6 +146,7 @@ class FakeSocket implements WaSocket {
   }
   async requestPairingCode(phone: string) {
     this.pairCalls.push(phone);
+    if (this.world.failPair) throw new Error('rate-overlimit');
     return 'ABCD1234';
   }
   async onWhatsApp(...jids: string[]) {
@@ -175,6 +176,7 @@ class FakeWorld {
   /** jids WhatsApp knows */
   registered = new Set<string>();
   outbox: { jid: string; text: string; id?: string | undefined }[] = [];
+  failPair = false;
   get last(): FakeSocket {
     return this.sockets[this.sockets.length - 1]!;
   }
@@ -521,6 +523,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
     expect(world.last.sent.at(-1)!.id).toBe(messageIdFor(row.id));
   });
 
+  test('a retry a later step already overtook is dropped, not sent out of order', async () => {
+    await sql`delete from store_wa_messages where tenant_id = ${tenantId}`;
+    const id = await order({ mode: 'delivery' });
+    // "saiu para entrega" is waiting on a retry while "entregue" already went out
+    await sql`insert into store_wa_messages (tenant_id, order_id, kind, event, phone, body, status, attempts, created_at)
+              values (${tenantId}, ${id}, 'order', 'out_for_delivery', ${shopperPhone}, 'saiu', 'pending', 1, now() - interval '5 minutes')`;
+    await sql`insert into store_wa_messages (tenant_id, order_id, kind, event, phone, body, status, sent_at)
+              values (${tenantId}, ${id}, 'order', 'delivered', ${shopperPhone}, 'entregue', 'sent', now())`;
+    const before = world.last.sent.length;
+    gw.pump(tenantId);
+    await until(async () =>
+      (await messages()).some((m) => m.event === 'out_for_delivery' && m.status === 'skipped'),
+    );
+    expect((await messages()).find((m) => m.event === 'out_for_delivery')!.error).toBe(
+      'superseded',
+    );
+    expect(world.last.sent.length).toBe(before);
+  });
+
   test('the SAIR footer goes on the first message that actually reaches the shopper', async () => {
     await sql`delete from store_wa_messages where tenant_id = ${tenantId}`;
     // an earlier attempt that never went out doesn't count as having told them
@@ -565,8 +586,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
     const second = await order({ mode: 'pickup' });
     await move(second, 'confirmed');
     expect((await messages()).filter((m) => m.kind === 'order').length).toBe(1);
-    // SAIR and VOLTAR arriving together (offline delivery) apply in order: VOLTAR wins
+    // SAIR and VOLTAR arriving together (offline delivery) apply in order: VOLTAR wins, and the
+    // store's number answers the flip once, not twice
     await sql`delete from store_wa_optouts where tenant_id = ${tenantId}`;
+    await sql`delete from store_wa_messages where tenant_id = ${tenantId} and kind in ('opt_out', 'opt_in')`;
     world.last.emit('messages.upsert', {
       type: 'append',
       messages: [
@@ -574,10 +597,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
         { key: { remoteJid: shopperJid, id: 'in-b2' }, message: { conversation: 'voltar' } },
       ],
     });
-    await until(async () => (await messages()).some((m) => m.kind === 'opt_in'));
-    expect((await sql`select 1 from store_wa_optouts where tenant_id = ${tenantId}`).length).toBe(
-      0,
+    await until(async () => (await messages()).some((m) => m.kind === 'opt_out'));
+    await until(
+      async () =>
+        (await sql`select 1 from store_wa_optouts where tenant_id = ${tenantId}`).length === 0,
     );
+    await new Promise((r) => setTimeout(r, 100));
+    expect(
+      (await messages()).filter((m) => m.kind === 'opt_out' || m.kind === 'opt_in').length,
+    ).toBe(1);
     await sql`delete from store_wa_messages where tenant_id = ${tenantId} and kind in ('opt_out', 'opt_in')`;
     await sql`insert into store_wa_optouts (tenant_id, phone) values (${tenantId}, ${shopperPhone})`;
     // 30-day retention took the history: VOLTAR must still work off the opt-out itself
@@ -746,6 +774,33 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
     await gw.tick();
     await until(() => gw.health().sessions === 0);
     expect((await waRow()).state).toBe('logged_out');
+  });
+
+  test('WhatsApp refusing to issue a code is "not connected", not an outage', async () => {
+    const lostBefore = (
+      await sql`select 1 from staff_events where tenant_id = ${tenantId} and kind = 'whatsapp.store'
+                and data ->> 'step' = 'lost'`
+    ).length;
+    world.failPair = true;
+    try {
+      expect((await owner('POST', '/whatsapp/pair', { phone: ownerPhone })).status).toBe(200);
+      const n = world.sockets.length;
+      await gw.tick();
+      await until(() => world.sockets.length > n);
+      world.last.connection({ qr: 'ref' });
+      await until(async () => (await waRow()).detail === 'pair_failed');
+      expect((await waRow()).state).toBe('off');
+      const v = await owner('GET', '/whatsapp');
+      expect(v.body.state).toBe('off');
+      expect(v.body.detail).toBe('pair_failed');
+      const lostAfter = (
+        await sql`select 1 from staff_events where tenant_id = ${tenantId} and kind = 'whatsapp.store'
+                  and data ->> 'step' = 'lost'`
+      ).length;
+      expect(lostAfter).toBe(lostBefore);
+    } finally {
+      world.failPair = false;
+    }
   });
 
   test('a code nobody typed expires; disconnect unlinks and forgets the login', async () => {

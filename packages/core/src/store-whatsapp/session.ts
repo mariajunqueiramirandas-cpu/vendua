@@ -161,6 +161,8 @@ export class StoreSession {
   private creds: Creds | null = null;
   private stateNow: SessionState = 'off';
   private stopped = true;
+  /** bumped by every stop(): work that awaited across one must not resurrect the session */
+  private gen = 0;
   private failures = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pairing: { phone: string; issued: boolean } | null = null;
@@ -187,28 +189,34 @@ export class StoreSession {
   /** Bring a paired store online (no-op if already running). False when there is no login. */
   async start(): Promise<boolean> {
     if (!this.stopped) return true;
+    const g = this.gen;
     const creds = (await this.store.read('creds', 'main')) as Creds | null;
+    // stopped (lease dropped) while reading: nothing to bring up, and nothing to report
+    if (g !== this.gen) return true;
     if (!creds || !pairingConfirmed(creds)) return false;
     this.stopped = false;
     this.failures = 0;
-    await this.open(creds);
+    await this.open(creds, g);
     return true;
   }
 
   /** Start a fresh registration and ask WhatsApp for a code for `phone` (national digits). */
   async pair(phone: string): Promise<void> {
     await this.stop();
+    const g = this.gen;
     await this.hooks.wipe();
+    if (g !== this.gen) return;
     this.jids.clear();
     this.pairing = { phone, issued: false };
     this.stopped = false;
     this.failures = 0;
-    await this.open(this.runtime.initCreds());
+    await this.open(this.runtime.initCreds(), g);
   }
 
   /** Close the socket, keep the login (lease moved, shutdown, idle). */
   async stop(): Promise<void> {
     this.stopped = true;
+    this.gen++;
     this.pairing = null;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
@@ -242,7 +250,7 @@ export class StoreSession {
     this.hooks.onState(u);
   }
 
-  private async open(creds: Creds): Promise<void> {
+  private async open(creds: Creds, g: number): Promise<void> {
     this.creds = creds;
     // a store already counted as down stays "error" while it retries: no flapping, one alert
     if (!this.pairing && this.stateNow !== 'error') this.set({ state: 'connecting' });
@@ -276,8 +284,8 @@ export class StoreSession {
       this.scheduleReconnect();
       return;
     }
-    // stopped while connecting — this socket was never published
-    if (this.stopped) {
+    // stopped (or stopped and restarted) while connecting — this socket was never published
+    if (this.stopped || g !== this.gen) {
       try {
         sock.end();
       } catch {
@@ -335,7 +343,7 @@ export class StoreSession {
       this.pairing.issued = true;
       const phone = jidForPhone(this.pairing.phone)?.split('@')[0];
       if (!phone) {
-        this.set({ state: 'error', detail: 'bad_phone' });
+        this.set({ state: 'off', detail: 'bad_phone' });
         await this.stop();
         return;
       }
@@ -350,7 +358,8 @@ export class StoreSession {
         });
       } catch (e) {
         this.log.warn({ err: e }, 'pairing code request failed');
-        this.set({ state: 'error', detail: 'pair_failed', pairCode: null });
+        // never connected: not an outage, the merchant just asks for another code
+        this.set({ state: 'off', detail: 'pair_failed', pairCode: null });
         await this.stop();
       }
       return;
@@ -417,18 +426,19 @@ export class StoreSession {
     this.scheduleReconnect();
   }
 
-  private async reopen(creds: Creds) {
-    if (this.stopped) return;
-    await this.open(creds);
+  private async reopen(creds: Creds, g = this.gen) {
+    if (this.stopped || g !== this.gen) return;
+    await this.open(creds, g);
   }
 
   private scheduleReconnect() {
     if (this.stopped || this.reconnectTimer) return;
     const ms = this.reconnectDelay(Math.max(1, this.failures));
+    const g = this.gen;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.stopped || !this.creds) return;
-      void this.reopen(this.creds).catch((e) => this.log.error({ err: e }, 'reconnect failed'));
+      void this.reopen(this.creds, g).catch((e) => this.log.error({ err: e }, 'reconnect failed'));
     }, ms);
     this.reconnectTimer.unref?.();
   }

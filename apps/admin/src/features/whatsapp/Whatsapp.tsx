@@ -318,6 +318,12 @@ function notConnectedNotice(data: WhatsappData) {
         Gere outro e digite no WhatsApp em até 3 minutos.
       </Notice>
     );
+  if (data.detail === 'pair_failed' || data.detail === 'bad_phone')
+    return (
+      <Notice tone="warning" role="status" title="O WhatsApp não gerou o código">
+        Confira se o número é o do WhatsApp da loja, com DDD, e tente de novo.
+      </Notice>
+    );
   if (data.detail === 'unlinked_offline')
     return (
       <Notice tone="info" title="WhatsApp desconectado">

@@ -193,7 +193,7 @@ export function mountWhatsapp(d: AdminDeps) {
         on conflict (tenant_id) do update set wanted = true, pair_phone = excluded.pair_phone,
           pair_requested_at = excluded.pair_requested_at, state = 'connecting',
           detail = 'pair_requested', pair_code = null, pair_code_expires_at = null,
-          state_changed_at = now(), updated_at = now()`;
+          connected_at = null, outage_since = null, state_changed_at = now(), updated_at = now()`;
       await audit(tx, t.id, m, {
         action: 'whatsapp.pair',
         entity: 'whatsapp',
