@@ -169,19 +169,19 @@
     data-composition-id="04-cardapio-preco-pix"
     data-width="1080"
     data-height="1920"
-    data-duration="4.9"
+    data-duration="2.578125"
   >
     <div
       class="04-cardapio-preco-pix-ground clip"
       data-start="0"
-      data-duration="4.9"
+      data-duration="2.578125"
       data-track-index="0"
     ></div>
 
     <div
       class="04-cardapio-preco-pix-stage clip"
       data-start="0"
-      data-duration="4.9"
+      data-duration="2.578125"
       data-track-index="1"
       data-layout-allow-overflow
     >
@@ -228,7 +228,7 @@
   <script>
     (function () {
       var NS = '04-cardapio-preco-pix';
-      var DURATION = 4.4;
+      var DURATION = 2.578125;
       var root = document.querySelector('[data-composition-id="' + NS + '"]');
       var part = function (name) {
         return root.getElementsByClassName(NS + '-' + name)[0];
@@ -260,52 +260,98 @@
 
       var tl = gsap.timeline({ paused: true });
 
-      // Scene 1 — the phone settles in on the cardápio: short drop, lifted shadow lands
+      // Fixed decaying camera shake on cam-outer (its x/y/rotation are screen-space; only the
+      // camera's scale lives on cam-outer, its framing on cam-inner, so nothing fights).
+      var shake = function (at, xs, ys, rs, dur) {
+        var step = dur / xs.length;
+        var px = 0;
+        var py = 0;
+        var pr = 0;
+        for (var i = 0; i < xs.length; i++) {
+          tl.fromTo(
+            camOuter,
+            { x: px, y: py, rotation: pr },
+            {
+              x: xs[i],
+              y: ys[i],
+              rotation: rs[i],
+              duration: step,
+              ease: 'sine.inOut',
+              immediateRender: false,
+            },
+            at + i * step,
+          );
+          px = xs[i];
+          py = ys[i];
+          pr = rs[i];
+        }
+      };
+
+      // Scene 1 — the push-slide brings the phone up already in place; punch-in on "Cardápio!"
+      tl.fromTo(settle, { scale: 1 }, { scale: 1.04, duration: 0.1, ease: 'power3.out' }, 0.05);
       tl.fromTo(
         settle,
-        { y: -24, scale: 0.97 },
-        { y: 0, scale: 1, duration: 0.9, ease: 'power3.out' },
-        0,
+        { scale: 1.04 },
+        { scale: 1, duration: 0.25, ease: 'power2.out', immediateRender: false },
+        0.15,
       );
-      tl.fromTo(bloom, { opacity: 1 }, { opacity: 0, duration: 0.9, ease: 'power2.out' }, 0);
-
-      // Scene 2 — "preço": swipe to the product page, then punch in on R$ 48,00 and hold
-      tl.fromTo(strip, { x: 0 }, { x: -SCREEN_W, duration: 0.6, ease: 'expo.out' }, 1.7);
-      tl.fromTo(camOuter, { scale: 1 }, { scale: ZOOM, duration: 1.0, ease: 'power3.inOut' }, 1.8);
+      tl.fromTo(bloom, { opacity: 0 }, { opacity: 1, duration: 0.1, ease: 'power3.out' }, 0.05);
       tl.fromTo(
-        camInner,
-        { x: 0, y: 0 },
-        { x: TX, y: TY, duration: 1.0, ease: 'power3.inOut' },
-        1.8,
+        bloom,
+        { opacity: 1 },
+        { opacity: 0, duration: 0.25, ease: 'power2.out', immediateRender: false },
+        0.15,
       );
 
-      // Scene 3 — "Pix": swipe to the payment step while the camera eases back to the full phone
+      // Scene 2 — "Preço!" 1.01: whip to the product page, camera slams in on R$ 48,00
+      tl.fromTo(strip, { x: 0 }, { x: -SCREEN_W, duration: 0.18, ease: 'expo.out' }, 1.01);
+      tl.fromTo(camOuter, { scale: 1 }, { scale: ZOOM, duration: 0.22, ease: 'expo.out' }, 1.01);
+      tl.fromTo(camInner, { x: 0, y: 0 }, { x: TX, y: TY, duration: 0.22, ease: 'expo.out' }, 1.01);
+      shake(
+        1.01,
+        [6, -5, 4, -3, 2, -1, 0],
+        [-2, 1.5, -1, 1, -0.5, 0, 0],
+        [0.3, -0.25, 0.2, -0.15, 0.1, -0.05, 0],
+        0.25,
+      );
+
+      // Scene 3 — "Pix!" 1.83: whip to the payment step, camera pulls back to the full phone
       tl.fromTo(
         strip,
         { x: -SCREEN_W },
-        { x: -2 * SCREEN_W, duration: 0.6, ease: 'expo.out', immediateRender: false },
-        3.52,
+        { x: -2 * SCREEN_W, duration: 0.18, ease: 'expo.out', immediateRender: false },
+        1.83,
       );
       tl.fromTo(
         camOuter,
         { scale: ZOOM },
-        { scale: 1, duration: 0.62, ease: 'power3.out', immediateRender: false },
-        3.52,
+        { scale: 1, duration: 0.22, ease: 'expo.out', immediateRender: false },
+        1.83,
       );
       tl.fromTo(
         camInner,
         { x: TX, y: TY },
-        { x: 0, y: 0, duration: 0.62, ease: 'power3.out', immediateRender: false },
-        3.52,
+        { x: 0, y: 0, duration: 0.22, ease: 'expo.out', immediateRender: false },
+        1.83,
       );
 
-      // 3.83 — the lime ring lands on the Pix row (contracts onto it and settles)
+      // 1.87 — the lime ring snaps onto the Pix row
       tl.fromTo(
         ring,
-        { opacity: 0, scale: 1.035 },
-        { opacity: 1, scale: 1, duration: 0.5, ease: 'power3.out' },
-        3.83,
+        { opacity: 0, scale: 1.06 },
+        { opacity: 1, scale: 1, duration: 0.15, ease: 'power4.out' },
+        1.87,
       );
+      shake(
+        1.87,
+        [8, -7, 5, -4, 3, -1.5, 0],
+        [-2.5, 2, -1.5, 1, -0.5, 0, 0],
+        [0.5, -0.4, 0.3, -0.2, 0.1, -0.05, 0],
+        0.25,
+      );
+
+      // Scene 4 — settled from 2.12 s; camera at rest so the push-slide shows two identical phones
+      tl.set({}, {}, DURATION);
 
       window.__timelines = window.__timelines || {};
       window.__timelines['04-cardapio-preco-pix'] = tl;

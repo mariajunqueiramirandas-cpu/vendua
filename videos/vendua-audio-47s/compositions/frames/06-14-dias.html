@@ -66,6 +66,8 @@
       position: absolute;
       inset: 0;
       container-type: size;
+      /* the "grátis!" punch grows from the text's left edge, mid-title, so it stays in x 72–940 */
+      transform-origin: 6.7% 37.5%;
     }
     [id='06-14-dias-stack'] > * {
       position: absolute;
@@ -101,6 +103,7 @@
     [id='06-14-dias-wordmark'] {
       display: block;
       white-space: nowrap;
+      transform-origin: 0% 50%;
     }
     [class~='06-14-dias-dot'] {
       color: var(--spark);
@@ -149,16 +152,29 @@
     }
   </style>
 
-  <div id="root" data-composition-id="06-14-dias" data-width="1080" data-height="1920">
+  <div
+    id="root"
+    data-composition-id="06-14-dias"
+    data-start="0"
+    data-duration="6.5625"
+    data-width="1080"
+    data-height="1920"
+  >
     <div
       id="06-14-dias-ground"
       class="clip"
       data-start="0"
-      data-duration="8.85"
+      data-duration="6.5625"
       data-track-index="0"
     ></div>
 
-    <div id="06-14-dias-card" class="clip" data-start="0" data-duration="8.85" data-track-index="1">
+    <div
+      id="06-14-dias-card"
+      class="clip"
+      data-start="0"
+      data-duration="6.5625"
+      data-track-index="1"
+    >
       <div id="06-14-dias-stack">
         <div id="06-14-dias-logo">
           <svg id="06-14-dias-mark" viewBox="0 0 128 128" aria-hidden="true">
@@ -169,13 +185,13 @@
 
         <h1 id="06-14-dias-title">
           <span class="06-14-dias-line"
-            ><span class="06-14-dias-word" data-layout-allow-overlap data-cue="0.30">Comece</span>
-            <span class="06-14-dias-word" data-layout-allow-overlap data-cue="0.90">com</span></span
+            ><span class="06-14-dias-word" data-layout-allow-overlap data-cue="0.10">Comece</span>
+            <span class="06-14-dias-word" data-layout-allow-overlap data-cue="0.62">com</span></span
           >
           <span class="06-14-dias-line"
-            ><span class="06-14-dias-word" data-layout-allow-overlap data-cue="1.16">14</span>
-            <span class="06-14-dias-word" data-layout-allow-overlap data-cue="1.92">dias</span>
-            <span class="06-14-dias-word" data-layout-allow-overlap data-cue="2.42"
+            ><span class="06-14-dias-word" data-layout-allow-overlap data-cue="0.82">14</span>
+            <span class="06-14-dias-word" data-layout-allow-overlap data-cue="1.38">dias</span>
+            <span class="06-14-dias-word" data-layout-allow-overlap data-cue="1.74"
               >grátis.</span
             ></span
           >
@@ -191,11 +207,13 @@
   <script>
     (function () {
       const ID = '06-14-dias';
-      const DURATION = 8.85;
+      const DURATION = 6.5625;
       const el = (name) => document.getElementById(`${ID}-${name}`);
 
       const card = el('card');
       const stack = el('stack');
+      const logo = el('logo');
+      const mark = el('mark');
       const path = el('mark-path');
       const wordmark = el('wordmark');
       const chip = el('chip');
@@ -203,12 +221,25 @@
 
       // Spoken-word cues (audio/cues.json, frame 6), read once from the markup into a flat
       // reveal schedule — the reveals follow the voice, not hand-placed offsets.
-      const WORD_DUR = 0.55;
-      const WORD_RISE = 34;
+      const WORD_DUR = 0.2;
+      const WORD_RISE = 60;
+      const WORD_SCALE = 1.08;
       const REVEALS = Array.from(card.querySelectorAll('[data-cue]')).map((node) => ({
         node,
         start: parseFloat(node.dataset.cue),
       }));
+
+      const HIT = 0;
+      const GRATIS = 1.74;
+      const CHIP_AT = 2.6; // "Venduá" + whoosh
+      const CARTAO = 4.0;
+      const LINK_AT = 4.7; // "Link" + tap
+      const FADE = 0.3;
+
+      // Fixed, decaying shake for the hit on the cut (deterministic, ≤14 px / ≤0.8°).
+      const SHAKE_X = [10, -8, 6, -4, 2, 0];
+      const SHAKE_R = [0.6, -0.5, 0.35, -0.2, 0.1, 0];
+      const SHAKE_DUR = 0.25;
 
       // Path length measured from the geometry; the analytic length of M32 48 L61 88 L98 34 is
       // the fallback if the path is not measurable yet. The gap is twice the length so no
@@ -219,52 +250,79 @@
 
       const tl = gsap.timeline({ paused: true });
 
-      // Scene 1 — the mark draws itself, "venduá." fades up beside it.
+      // Punches use plain tl.to (no immediateRender), so they never clobber an entrance's
+      // from-state at build time.
+      const punch = (target, peak, at) => {
+        tl.to(target, { scale: peak, duration: 0.1, ease: 'power3.out' }, at);
+        tl.to(target, { scale: 1, duration: 0.25, ease: 'power2.out' }, at + 0.1);
+      };
+
+      // Scene 1 — on the hit the check slams in and draws itself; "venduá." pops beside it.
+      tl.fromTo(mark, { scale: 1.3 }, { scale: 1, duration: 0.2, ease: 'expo.out' }, HIT);
       tl.fromTo(
         path,
         { strokeDashoffset: LEN + 1 },
-        { strokeDashoffset: 0, duration: 0.5, ease: 'power2.out' },
-        0.04,
+        { strokeDashoffset: 0, duration: 0.25, ease: 'power2.out' },
+        HIT,
       );
       tl.fromTo(
         wordmark,
-        { opacity: 0, y: 14 },
-        { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' },
-        0.22,
+        { opacity: 0, scale: 1.12 },
+        { opacity: 1, scale: 1, duration: 0.18, ease: 'expo.out' },
+        HIT,
       );
+      const step = SHAKE_DUR / SHAKE_X.length;
+      tl.fromTo(
+        logo,
+        { x: 0, rotation: 0 },
+        { x: SHAKE_X[0], rotation: SHAKE_R[0], duration: step, ease: 'power1.out' },
+        HIT,
+      );
+      for (let i = 1; i < SHAKE_X.length; i++) {
+        tl.to(
+          logo,
+          { x: SHAKE_X[i], rotation: SHAKE_R[i], duration: step, ease: 'sine.inOut' },
+          HIT + step * i,
+        );
+      }
 
-      // Scene 2 — "Comece com / 14 dias grátis." word by word on the voice.
+      // Scene 2 — "Comece com / 14 dias grátis." slams in word by word on the voice; the whole
+      // stack punches on "grátis!".
       REVEALS.forEach(({ node, start }) => {
         tl.fromTo(
           node,
-          { opacity: 0, y: WORD_RISE },
-          { opacity: 1, y: 0, duration: WORD_DUR, ease: 'power3.out' },
+          { opacity: 0, y: WORD_RISE, scale: WORD_SCALE },
+          { opacity: 1, y: 0, scale: 1, duration: WORD_DUR, ease: 'expo.out' },
           start,
         );
       });
+      gsap.set(stack, { scale: 1 }); // same identity transform before and after a backward seek
+      punch(stack, 1.03, GRATIS);
 
-      // Scene 3 — on "Venduá", the lime trial chip rises in from its left edge (smooth settle).
+      // Scene 3 — on "Venduá" the lime chip shoots out from its left edge; it punches on
+      // "cartão." so the stretch before "Link" never sits still.
       tl.fromTo(
         chip,
-        { opacity: 0, scale: 0, y: 16 },
-        { opacity: 1, scale: 1, y: 0, duration: 0.6, ease: 'power3.out' },
-        3.72,
+        { opacity: 0, scale: 0 },
+        { opacity: 1, scale: 1, duration: 0.22, ease: 'expo.out' },
+        CHIP_AT,
       );
+      punch(chip, 1.05, CARTAO);
 
-      // Scene 4 — on "Link", the handle fades up and holds.
+      // Scene 4 — on "Link" the handle slams up.
       tl.fromTo(
         link,
-        { opacity: 0, y: 20 },
-        { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' },
-        6.72,
+        { opacity: 0, y: WORD_RISE },
+        { opacity: 1, y: 0, duration: 0.2, ease: 'expo.out' },
+        LINK_AT,
       );
 
-      // Scene 5 — still hold from 7.32 s; the film's only exit: the card fades to night.
+      // Scene 5 — still from 4.9 s; the film's only exit: the card fades to night.
       tl.fromTo(
         stack,
         { opacity: 1 },
-        { opacity: 0, duration: 0.4, ease: 'power1.inOut' },
-        DURATION - 0.4,
+        { opacity: 0, duration: FADE, ease: 'power1.inOut' },
+        DURATION - FADE,
       );
 
       window.__timelines = window.__timelines || {};
