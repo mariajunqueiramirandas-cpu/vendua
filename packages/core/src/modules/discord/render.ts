@@ -449,6 +449,7 @@ const STEP_LABEL: Record<string, string> = {
   paid: 'plano pago',
   live: 'loja no ar',
   first_login: 'primeiro acesso ao painel',
+  setup: 'loja montada',
   payments: 'Mercado Pago conectado',
   first_order: 'primeiro pedido',
   domain: 'domínio próprio pronto',
@@ -476,6 +477,7 @@ function onboarding(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
         SOURCE[created.data.source] ?? created.data.source,
         created.data.owner ? `dono: ${esc(created.data.owner)}` : null,
         created.data.plan ? `plano ${esc(created.data.plan)}` : null,
+        created.data.segment ? `segmento ${esc(created.data.segment)}` : null,
       ]
         .filter(Boolean)
         .join(' · ')

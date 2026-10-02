@@ -68,7 +68,7 @@ export type OrderStep =
   | 'refunded';
 
 export type OnboardingStep =
-  'paid' | 'live' | 'first_login' | 'payments' | 'first_order' | 'domain';
+  'paid' | 'live' | 'first_login' | 'setup' | 'payments' | 'first_order' | 'domain';
 
 /** The day in numbers: CRM and agent from their tables, commerce, billing and system from the
  *  event log itself (staff reads never need a cross-tenant query on orders). */
@@ -233,6 +233,8 @@ export interface StaffEventMap {
     owner: Opt<Name>;
     leadId: Opt<Id>;
     plan: Opt<string>;
+    /** what the store sells (signup's answer) — null when nobody asked */
+    segment: Opt<string>;
   };
   'store.onboarding': { step: OnboardingStep };
   'billing.paid': {

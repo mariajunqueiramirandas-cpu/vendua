@@ -24,6 +24,8 @@ export interface StoreSnapshot {
   openIncidents: number;
   merchants: number;
   firstLogin: boolean;
+  /** the store finished the admin's setup wizard (Bem-vindo) */
+  setupAt: string | null;
   payments: string | null;
   customDomain: { host: string; status: string } | null;
   firstOrderAt: string | null;
@@ -47,7 +49,7 @@ export async function storeSnapshot(sql: Sql, tenantId: string): Promise<StoreSn
       Row[]
     >`select id, name, slug, created_at from tenants where id = ${tenantId}`;
     if (!t) return null;
-    const [domain, sub, inv, prov, ops, probe, incidents, users, conn, custom, orders] =
+    const [domain, sub, inv, prov, ops, probe, incidents, users, setup, conn, custom, orders] =
       await Promise.all([
         tx<Row[]>`
           select host from domains where tenant_id = ${tenantId}
@@ -78,6 +80,9 @@ export async function storeSnapshot(sql: Sql, tenantId: string): Promise<StoreSn
         tx<Row[]>`
           select count(*)::int as n, bool_or(last_seen_at is not null) as seen
           from merchant_users where tenant_id = ${tenantId} and status = 'active'
+        `,
+        tx<Row[]>`
+          select onboarding ->> 'finishedAt' as at from store_settings where tenant_id = ${tenantId}
         `,
         tx<Row[]>`select status from payment_connections where tenant_id = ${tenantId}`,
         tx<Row[]>`
@@ -129,6 +134,7 @@ export async function storeSnapshot(sql: Sql, tenantId: string): Promise<StoreSn
       openIncidents: num(incidents[0]?.n),
       merchants: num(users[0]?.n),
       firstLogin: users[0]?.seen === true,
+      setupAt: iso(setup[0]?.at),
       payments: (conn[0]?.status as string | undefined) ?? null,
       customDomain: custom[0]
         ? { host: String(custom[0].host), status: String(custom[0].status) }
@@ -146,7 +152,8 @@ export async function storeSnapshot(sql: Sql, tenantId: string): Promise<StoreSn
 }
 
 export interface OnboardingStepState {
-  key: 'created' | 'paid' | 'live' | 'first_login' | 'payments' | 'first_order' | 'domain';
+  key:
+    'created' | 'paid' | 'live' | 'first_login' | 'setup' | 'payments' | 'first_order' | 'domain';
   label: string;
   done: boolean;
 }
@@ -158,6 +165,7 @@ export function onboardingSteps(s: StoreSnapshot): OnboardingStepState[] {
     { key: 'paid', label: 'plano pago', done: !!s.paidAt || s.subscription === 'active' },
     { key: 'live', label: 'loja no ar', done: s.provisioning === 'live' || !!s.liveAt },
     { key: 'first_login', label: 'primeiro acesso ao painel', done: s.firstLogin },
+    { key: 'setup', label: 'loja montada', done: !!s.setupAt },
     { key: 'payments', label: 'Mercado Pago conectado', done: s.payments === 'connected' },
     { key: 'first_order', label: 'primeiro pedido', done: !!s.firstOrderAt },
   ];

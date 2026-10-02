@@ -20,6 +20,7 @@ import {
   normalizeSlug,
   readSignupToken,
   RESERVED_SLUGS,
+  segmentOr422,
   signupAccessCode,
   signupToken,
   slugStatus,
@@ -129,6 +130,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     const storeName = text(body.storeName, 'storeName', 60, 2);
     const ownerName = text(body.ownerName, 'ownerName', 80, 2);
     const email = validEmail(body.email, 'email');
+    const segment = segmentOr422(body.segment);
     const slug = normalizeSlug(body.slug);
     if (!/^[a-z0-9]([a-z0-9-]{1,38}[a-z0-9])$/.test(slug))
       throw new HttpError(422, 'INVALID_SLUG', 'the address needs 3–40 letters, numbers or -', {
@@ -167,6 +169,11 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
           )[0]!.id;
           // as the new store: its own transaction may record an event about itself
           await tx`select set_config('vendua.tenant_id', ${tenantId}, true)`;
+          // the onboarding wizard opens on what signup already asked
+          await tx`
+            update store_settings set segment = ${segment}, onboarding = '{"from":"signup"}'::jsonb
+            where tenant_id = ${tenantId}
+          `;
           await recordStaffEventTx(
             tx,
             'store.created',
@@ -177,6 +184,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
               owner: ownerName,
               leadId: null,
               plan: plan.name,
+              segment,
             },
             { tenantId, dedupeKey: `store.created:${tenantId}` },
           );

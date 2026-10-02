@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { withTenant, type Sql } from '../platform/db.ts';
-import { HttpError, bodyJson } from '../platform/http.ts';
+import { HttpError, bodyJson, boundedText, parseJsonObject } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import { normalizePixKey, pixPayload, type PixKeyType } from '../modules/pix.ts';
 import {
@@ -51,15 +51,31 @@ const payLog = log.child({ mod: 'admin-payments' });
 
 // OAuth `state`: which store and person started the connect, signed, 10 minutes. The callback
 // only accepts it back in that same person's session — a link from someone else connects nothing.
-function signState(secret: string, tenantId: string, userId: string, now = Date.now()) {
+// `b: 'onboarding'` sends the owner back to the Bem-vindo wizard instead of Pagamentos: it rides
+// signed, and only that literal picks the other page, so it is never an open redirect.
+function signState(
+  secret: string,
+  tenantId: string,
+  userId: string,
+  back: 'onboarding' | null = null,
+  now = Date.now(),
+) {
   const body = Buffer.from(
-    JSON.stringify({ t: tenantId, u: userId, exp: now + STATE_TTL_MS }),
+    JSON.stringify({
+      t: tenantId,
+      u: userId,
+      exp: now + STATE_TTL_MS,
+      ...(back ? { b: back } : {}),
+    }),
   ).toString('base64url');
   const mac = createHmac('sha256', `mp-oauth|${secret}`).update(body).digest('base64url');
   return `${body}.${mac}`;
 }
 
-function readState(secret: string, state: string): { t: string; u: string; exp: number } | null {
+function readState(
+  secret: string,
+  state: string,
+): { t: string; u: string; exp: number; b?: unknown } | null {
   if (state.length > 600) return null;
   const [body, mac] = state.split('.');
   if (!body || !mac) return null;
@@ -294,7 +310,15 @@ export function mountPayments(d: AdminDeps) {
     write('owner', async (_tx, t, m, c) => {
       if (!provider.configured)
         throw new HttpError(409, 'PAYMENTS_UNAVAILABLE', 'online payments are not set up here');
-      const state = signState(d.sessionSecret, t.id, m.userId);
+      // the admin's Pagamentos posts no body; the wizard posts { back: 'onboarding' }
+      const raw = await boundedText(c, 1024);
+      const body = raw.trim() ? parseJsonObject(raw) : {};
+      const state = signState(
+        d.sessionSecret,
+        t.id,
+        m.userId,
+        body.back === 'onboarding' ? 'onboarding' : null,
+      );
       return { status: 200, body: { url: provider.connectUrl(state, redirectUri(c as AdminCtx)) } };
     }),
   );
@@ -303,14 +327,15 @@ export function mountPayments(d: AdminDeps) {
   // session gate: the Lax cookie rides the top-level redirect. Idempotent by nature — a code is
   // exchanged once (MP refuses a second use) and the connection row is keyed by tenant.
   admin.get('/payments/mercadopago/callback', async (c) => {
-    const back = (q: string) => c.redirect(`/admin/pagamentos?${q}`, 302);
+    const st = readState(d.sessionSecret, c.req.query('state') ?? '');
+    const page = st?.b === 'onboarding' ? '/admin/bem-vindo' : '/admin/pagamentos';
+    const back = (q: string) => c.redirect(`${page}?${q}`, 302);
     const fail = (reason: string) => back(`mp=error&reason=${reason}`);
     const m = c.get('merchant');
     const t = c.get('tenant');
     if (m.role !== 'owner') return fail('invalid_state');
     if (c.req.query('error'))
       return fail(c.req.query('error') === 'access_denied' ? 'access_denied' : 'exchange_failed');
-    const st = readState(d.sessionSecret, c.req.query('state') ?? '');
     if (!st || st.t !== t.id || st.u !== m.userId || st.exp < Date.now())
       return fail('invalid_state');
     const code = c.req.query('code') ?? '';

@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { roleAtLeast, type AdminDeps, type Role } from './context.ts';
 import { handlers } from './handlers.ts';
+import { onboardingOf, setupChecklist } from './routes-onboarding.ts';
 import { storeTz } from './routes-orders.ts';
 import { loadSettings, statusOf } from './routes-store.ts';
 
@@ -140,50 +141,8 @@ export function mountHome(d: AdminDeps) {
           });
       }
 
-      const counts = (
-        await tx<{ products: number; withPhoto: number; zones: number; orders: number }[]>`
-          select
-            (select count(*) from products where tenant_id = ${t.id} and status <> 'archived')::int as products,
-            (select count(distinct p.id) from products p join product_media pm on pm.product_id = p.id
-              where p.tenant_id = ${t.id} and p.status <> 'archived')::int as "withPhoto",
-            (select count(*) from delivery_zones where tenant_id = ${t.id} and active)::int as zones,
-            (select count(*) from orders where tenant_id = ${t.id})::int as orders
-        `
-      )[0]!;
-      const checklist = [
-        {
-          id: 'profile',
-          label: 'Logo e WhatsApp da loja',
-          done: !!s.logo_url && !!s.whatsapp,
-          href: '/loja#perfil',
-        },
-        {
-          id: 'hours',
-          label: 'Horário de funcionamento',
-          done: (s.hours?.windows?.length ?? 0) > 0,
-          href: '/loja#horarios',
-        },
-        {
-          id: 'delivery',
-          label: 'Entrega ou retirada',
-          done:
-            (s.delivery_enabled && counts.zones > 0) || (s.pickup_enabled && !s.delivery_enabled),
-          href: '/loja#entrega',
-        },
-        { id: 'pix', label: 'Chave Pix para receber', done: !!s.pix_key, href: '/pagamentos' },
-        {
-          id: 'menu',
-          label: '3 produtos com foto',
-          done: counts.withPhoto >= 3,
-          href: '/cardapio',
-        },
-        {
-          id: 'first_order',
-          label: 'Primeiro pedido',
-          done: counts.orders > 0,
-          href: '/marketing#compartilhar',
-        },
-      ];
+      const { checklist, orders: totalOrders } = await setupChecklist(tx, t.id, s);
+      const ob = onboardingOf(s);
 
       const feed = await tx`
         select e.at, e.to_state as "to", e.from_state as "from", e.actor, o.id as "orderId", o.number,
@@ -237,7 +196,13 @@ export function mountHome(d: AdminDeps) {
         inProgress,
         attention: attention.slice(0, 6),
         checklist,
-        totalOrders: counts.orders,
+        onboarding: {
+          finished: !!ob.finishedAt,
+          dismissed: !!ob.dismissedAt,
+          from: ob.from,
+          step: ob.step,
+        },
+        totalOrders,
         feed,
         live,
         best,
