@@ -107,7 +107,7 @@ export async function printersTx(tx: Sql, tenantId: string, deviceId?: string) {
   const rows = await tx<PrinterRow[]>`
     select ${PRINTER_COLS(tx)} from printers
     where tenant_id = ${tenantId} ${deviceId ? tx`and device_id = ${deviceId}` : tx``}
-    order by created_at, id`;
+    order by created_at, key`;
   return rows.map(printerView);
 }
 
@@ -119,7 +119,7 @@ export async function agentPrintersTx(
   return tx<AgentPrinter[]>`
     select id, key, kind, coalesce(label, name) as name, address from printers
     where tenant_id = ${tenantId} and device_id = ${deviceId}
-    order by created_at, id`;
+    order by created_at, key`;
 }
 
 /** Wake this device's open streams (config changed, or it was removed). On commit. */
@@ -145,6 +145,15 @@ export async function queueJobsTx(
   },
 ): Promise<string[]> {
   if (printerIds.length === 0) return [];
+  // a sweep on ~1 in 50 queues bounds the table without a worker; a device that never comes
+  // back would otherwise keep its jobs pending forever
+  if (Math.random() < 0.02) {
+    await tx`
+      update print_jobs set status = 'expired', finished_at = now()
+      where tenant_id = ${tenantId} and status in ('pending', 'sent') and expires_at < now()`;
+    await tx`
+      delete from print_jobs where tenant_id = ${tenantId} and created_at < now() - interval '30 days'`;
+  }
   const rows = await tx<{ id: string }[]>`
     insert into print_jobs (tenant_id, printer_id, device_id, order_id, kind, trigger, requested_by)
     select ${tenantId}, p.id, p.device_id, ${job.orderId ?? null}, ${job.kind}, ${job.trigger},

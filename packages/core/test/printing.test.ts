@@ -198,7 +198,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
     });
 
   const openStream = async (token: string) => {
+    // a dropped connection reaches Core as the request's abort signal
+    const ctl = new AbortController();
     const res = await app.request('http://core.localhost/admin/v1/agent/stream', {
+      signal: ctl.signal,
       headers: {
         host: 'core.localhost',
         authorization: `Bearer ${token}`,
@@ -242,7 +245,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
         await new Promise((r) => setTimeout(r, 25));
       }
     };
-    return { next, events, close: () => reader.cancel().catch(() => undefined) };
+    return {
+      next,
+      events,
+      close: async () => {
+        ctl.abort();
+        await reader.cancel().catch(() => undefined);
+      },
+    };
   };
 
   const placeOrder = async () => {
@@ -373,7 +383,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
     });
     expect(rep.status).toBe(200);
     expect(rep.body.printers.length).toBe(2);
-    printerId = rep.body.printers[0].id;
+    printerId = rep.body.printers.find((p: any) => p.kind === 'spooler').id;
     expect((await a('PUT', '/printers', { printers: [{ kind: 'laser' }] })).status).toBe(422);
     expect((await a('PUT', '/printers', { printers: 'x' })).status).toBe(422);
 
@@ -390,8 +400,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
     });
     const list = (await owner('GET', '/printers')).body.devices[0].printers;
     expect(list.map((p: any) => [p.reportedName, p.present])).toEqual([
-      ['EPSON TM-T20', true],
       ['COM3', false],
+      ['EPSON TM-T20', true],
     ]);
 
     const patched = await owner('PATCH', `/printers/${printerId}`, {
@@ -488,7 +498,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
       expect((await a('POST', `/jobs/${crypto.randomUUID()}/result`, { ok: true })).status).toBe(
         404,
       );
-      const after = (await owner('GET', '/printers')).body.devices[0].printers[0];
+      const after = (await owner('GET', '/printers')).body.devices[0].printers.find(
+        (p: any) => p.id === printerId,
+      );
       expect(after.lastOkAt).not.toBeNull();
 
       // "imprimir comanda" on demand, then a failure the merchant can see
@@ -499,7 +511,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
       expect(
         (await a('POST', `/jobs/${again.id}/result`, { ok: false, error: 'Sem papel' })).status,
       ).toBe(200);
-      const failed = (await owner('GET', '/printers')).body.devices[0].printers[0];
+      const failed = (await owner('GET', '/printers')).body.devices[0].printers.find(
+        (p: any) => p.id === printerId,
+      );
       expect(failed.lastError).toBe('Sem papel');
 
       expect((await owner('POST', `/printers/${printerId}/test`)).status).toBe(202);
@@ -526,9 +540,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
       const cfg = await s.next('config');
       expect(cfg.printers.find((p: any) => p.id === printerId).name).toBe('Balcão');
 
+      // a closed stream is offline at once, not when its last beat goes stale
+      await s.close();
+      const online = async () => (await owner('GET', '/printers')).body.devices[0].online;
+      for (let i = 0; i < 40 && (await online()); i++) await new Promise((r) => setTimeout(r, 50));
+      expect(await online()).toBe(false);
+      const again2 = await openStream(token);
+      await again2.next('hello');
+      expect(await online()).toBe(true);
+
       // removing the device closes its stream and its token
       expect((await owner('DELETE', `/printers/devices/${deviceId}`)).status).toBe(200);
-      await s.next('revoked');
+      await again2.next('revoked');
+      await again2.close();
       expect((await a('PUT', '/printers', { printers: [] })).body.error.code).toBe(
         'DEVICE_REVOKED',
       );

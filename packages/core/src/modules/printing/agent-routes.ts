@@ -34,6 +34,7 @@ const agentLog = log.child({ mod: 'print-agent' });
 const BEAT_MS = 20_000;
 const STREAM_MAX_MS = 30 * 60_000;
 const MAX_PRINTERS = 50;
+const MAX_STREAMS = 3;
 
 export interface PrintAgentOpts {
   admin: AdminApp;
@@ -121,6 +122,9 @@ export function mountPrintAgent(o: PrintAgentOpts) {
 
   admin.get('/agent/stream', async (c) => {
     const d = await device(c);
+    // one agent holds one stream; a few cover reconnects racing the old one's close
+    if (hub.streams(d.id) >= MAX_STREAMS)
+      throw new HttpError(429, 'TOO_MANY_STREAMS', 'this device already has open streams');
     const tenantId = d.tenant.id;
     const version = agentVersion(c);
     const res = streamSSE(c, async (stream) => {
@@ -177,56 +181,70 @@ export function mountPrintAgent(o: PrintAgentOpts) {
           void deliver();
         }
       });
-
-      const opened = await withTenant(sql, tenantId, async (tx) => {
-        const [row] = await tx<{ connected_at: Date; name: string }[]>`
-          update print_devices
-          set connected_at = clock_timestamp(), last_seen_at = clock_timestamp(),
-              agent_version = coalesce(${version}, agent_version)
-          where tenant_id = ${tenantId} and id = ${d.id}
-          returning connected_at, name`;
-        if (row) await emitAdminTx(tx, tenantId, 'printers', d.id);
-        return row ? { ...row, printers: await agentPrintersTx(tx, tenantId, d.id) } : undefined;
-      });
-      if (!opened) {
-        unsubscribe();
-        await send('revoked', {});
-        return;
-      }
-      await send('hello', {
-        device: { id: d.id, name: opened.name },
-        store: { name: d.tenant.name },
-        printers: opened.printers,
-      });
-      void deliver();
-
-      // each beat proves the device is still there, rescans what's due and keeps proxies awake
-      const beat = setInterval(async () => {
-        try {
-          const alive = await withTenant(
-            sql,
-            tenantId,
-            (tx) => tx`
-              update print_devices set last_seen_at = now()
-              where tenant_id = ${tenantId} and id = ${d.id} returning id`,
-          );
-          if (alive.length === 0) return void revoke();
-        } catch {
-          /* the database blinked: keep the stream, the next beat asks again */
+      let beat: ReturnType<typeof setInterval> | undefined;
+      let lifetime: ReturnType<typeof setTimeout> | undefined;
+      // compared as text: the column keeps microseconds that a Date (or a parameter postgres.js
+      // types as timestamptz) drops, and the close below must match this connection exactly
+      let connectedAt: string | undefined;
+      try {
+        const opened = await withTenant(sql, tenantId, async (tx) => {
+          const [row] = await tx<{ connected_at: string; name: string }[]>`
+            update print_devices
+            set connected_at = clock_timestamp(), last_seen_at = clock_timestamp(),
+                agent_version = coalesce(${version}, agent_version)
+            where tenant_id = ${tenantId} and id = ${d.id}
+            returning connected_at::text, name`;
+          if (row) await emitAdminTx(tx, tenantId, 'printers', d.id);
+          return row ? { ...row, printers: await agentPrintersTx(tx, tenantId, d.id) } : undefined;
+        });
+        if (!opened) {
+          await send('revoked', {});
+          return;
         }
-        await send('ping', {});
+        connectedAt = opened.connected_at;
+        await send('hello', {
+          device: { id: d.id, name: opened.name },
+          store: { name: d.tenant.name },
+          printers: opened.printers,
+        });
         void deliver();
-      }, BEAT_MS);
-      const lifetime = setTimeout(finish, STREAM_MAX_MS);
-      await done;
-      unsubscribe();
-      clearInterval(beat);
-      clearTimeout(lifetime);
+
+        // each beat proves this credential still opens this device in an active store (a new
+        // pairing rotates it, a suspension closes the store), rescans what's due and keeps
+        // proxies awake
+        beat = setInterval(async () => {
+          try {
+            const alive = await withTenant(
+              sql,
+              tenantId,
+              (tx) => tx`
+                update print_devices d set last_seen_at = now()
+                from tenants t
+                where d.tenant_id = ${tenantId} and d.id = ${d.id}
+                  and d.token_hash = ${d.tokenHash}
+                  and t.id = d.tenant_id and t.status = 'active'
+                returning d.id`,
+            );
+            if (alive.length === 0) return void revoke();
+          } catch {
+            /* the database blinked: keep the stream, the next beat asks again */
+          }
+          await send('ping', {});
+          void deliver();
+        }, BEAT_MS);
+        lifetime = setTimeout(finish, STREAM_MAX_MS);
+        await done;
+      } finally {
+        unsubscribe();
+        clearInterval(beat);
+        clearTimeout(lifetime);
+      }
       // only this stream's own connection: a reconnect that already landed stays online
       await withTenant(sql, tenantId, async (tx) => {
         const rows = await tx`
           update print_devices set disconnected_at = clock_timestamp()
-          where tenant_id = ${tenantId} and id = ${d.id} and connected_at = ${opened.connected_at}
+          where tenant_id = ${tenantId} and id = ${d.id}
+            and connected_at::text = ${connectedAt}
           returning id`;
         if (rows.length > 0) await emitAdminTx(tx, tenantId, 'printers', d.id);
       }).catch((err) => agentLog.warn({ err, deviceId: d.id }, 'disconnect not recorded'));
@@ -314,6 +332,7 @@ export function mountPrintAgent(o: PrintAgentOpts) {
     const d = await device(c);
     return o.idempotency(sql, async (_c2, tx) => {
       await tx`delete from print_devices where tenant_id = ${d.tenant.id} and id = ${d.id}`;
+      await notifyDeviceTx(tx, d.tenant.id, d.id, 'revoked');
       await emitAdminTx(tx, d.tenant.id, 'printers', d.id);
       return { status: 200, body: {} };
     })(c);

@@ -36,6 +36,10 @@ export class PrintHub {
     return this.started;
   }
 
+  streams(deviceId: string): number {
+    return this.listeners.get(deviceId)?.size ?? 0;
+  }
+
   async subscribe(deviceId: string, fn: (s: DeviceSignal) => void): Promise<() => void> {
     await this.ensure();
     let set = this.listeners.get(deviceId);

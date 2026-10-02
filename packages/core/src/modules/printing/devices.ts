@@ -82,7 +82,8 @@ export async function pollPairing(sql: Sql, deviceCode: string): Promise<PollRes
     >`
       select tenant_id, device_id, expires_at < now() as expired,
              expires_at + make_interval(secs => ${COLLECT_GRACE_S}) > now() as collectable
-      from print_pairings where device_code_hash = ${sha256(deviceCode)}`;
+      from print_pairings where device_code_hash = ${sha256(deviceCode)}
+      for update`;
     if (!row) throw new HttpError(404, 'PAIRING_NOT_FOUND', 'pairing not found');
     if (!row.tenant_id || !row.device_id) {
       if (row.expired) throw new HttpError(410, 'PAIRING_EXPIRED', 'pairing code expired');
@@ -202,6 +203,8 @@ export async function approvePairingTx(
 export interface AuthedDevice {
   id: string;
   name: string;
+  /** the credential this request proved: an open stream ends when it stops matching */
+  tokenHash: string;
   tenant: Tenant;
 }
 
@@ -239,6 +242,7 @@ export async function authDevice(sql: Sql, header: string | undefined): Promise<
   return {
     id: deviceId,
     name: row.name,
+    tokenHash: row.token_hash,
     tenant: { id: tenantId, slug: row.slug, name: row.tenant_name, status: row.tenant_status },
   };
 }
