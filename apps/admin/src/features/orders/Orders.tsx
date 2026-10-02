@@ -1,6 +1,7 @@
 import {
   CalendarBlank,
   ClockCounterClockwise,
+  CookingPot,
   ShareNetwork,
   SunDim,
   X,
@@ -217,6 +218,14 @@ export default function Orders() {
             <span className="sr-only sm:hidden">manter a tela ligada</span>
           </button>
         ) : null}
+        <Link
+          to="/cozinha"
+          {...preload('/cozinha')}
+          aria-label="Cozinha"
+          className="press t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1 ring-line hover:bg-hover max-sm:hidden"
+        >
+          <CookingPot className="size-5" /> Cozinha
+        </Link>
         <Link
           to="/pedidos/agendados"
           {...preload('/pedidos/agendados')}

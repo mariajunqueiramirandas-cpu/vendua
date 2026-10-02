@@ -15,7 +15,7 @@ listed in §2 and §3 as `declined`, as facts about them, not as work for us.
 
 - **Every feature they publish** is listed in [§2](#2-every-feature-they-publish-with-our-status),
   module by module from AI to KDS to HR, each with our status. §2.24 has the totals.
-  - Most of the gap is back office: PDV, caixa, KDS, NFC-e, finance, stock, recipes, fleet. That
+  - Most of the gap is back office: PDV, caixa, NFC-e, finance, stock, recipes, fleet. That
     lands on the open scope decision in
     [`competitor-parity.md`](../competitor-parity.md#open-decisions).
   - The rest is the marketplace hub, WhatsApp marketing and the AI layer.
@@ -163,13 +163,13 @@ P-IDs point at [`competitor-parity.md`](../competitor-parity.md). Paths are unde
 
 ### 2.7 KDS (kitchen display)
 
-| Feature              | What they state                                                    | Venduá      |
-| -------------------- | ------------------------------------------------------------------ | ----------- |
-| Browser screen       | Own URL, any monitor, nothing to install                           | gap (P-016) |
-| Stations as stages   | E.g. Chapa, Montagem; oldest order first                           | gap         |
-| Timer per ticket     | Green up to 10 min, amber up to 20, then red (fixed)               | gap         |
-| Item-level progress  | Advance item by item or the whole order; last stage marks it ready | gap         |
-| Fed by every channel | Menu, PDV, counter, integrations                                   | gap         |
+| Feature              | What they state                                                    | Venduá                                                                |
+| -------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| Browser screen       | Own URL, any monitor, nothing to install                           | have: `/admin/cozinha`, plus a pickup screen for customers (ADR 0029) |
+| Stations as stages   | E.g. Chapa, Montagem; oldest order first                           | partial: stations by category, worked in parallel, not as stages      |
+| Timer per ticket     | Green up to 10 min, amber up to 20, then red (fixed)               | have: against each order's own prep time                              |
+| Item-level progress  | Advance item by item or the whole order; last stage marks it ready | have                                                                  |
+| Fed by every channel | Menu, PDV, counter, integrations                                   | partial: every order Core takes; no PDV or integrations yet           |
 
 ### 2.8 Printing
 
@@ -416,7 +416,7 @@ From what they publish; "not stated" doesn't mean they lack it.
 | Caixa (2.4)                    | 9       | 0      | 0       | 9       | 0        |
 | Kiosk and totem (2.5)          | 5       | 0      | 0       | 5       | 0        |
 | QR table (2.6)                 | 5       | 0      | 0       | 5       | 0        |
-| KDS (2.7)                      | 5       | 0      | 0       | 5       | 0        |
+| KDS (2.7)                      | 5       | 3      | 2       | 0       | 0        |
 | Printing (2.8)                 | 3       | 0      | 2       | 1       | 0        |
 | Delivery and fleet (2.9)       | 7       | 2      | 0       | 5       | 0        |
 | Dashboards and reports (2.10)  | 16      | 7      | 3       | 6       | 0        |
@@ -432,7 +432,7 @@ From what they publish; "not stated" doesn't mean they lack it.
 | Team and HR (2.20)             | 8       | 1      | 1       | 6       | 0        |
 | Apps (2.21)                    | 5       | 0      | 2       | 3       | 0        |
 | Account and growth (2.22)      | 10      | 3      | 5       | 2       | 0        |
-| **Total**                      | **209** | **35** | **22**  | **150** | **2**    |
+| **Total**                      | **209** | **38** | **24**  | **145** | **2**    |
 
 ## 3. Their merchant AI
 

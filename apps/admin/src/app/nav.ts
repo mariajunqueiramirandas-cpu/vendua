@@ -1,5 +1,6 @@
 import {
   ChartLineUp,
+  CookingPot,
   ForkKnife,
   House,
   IdentificationCard,
@@ -26,10 +27,12 @@ export interface NavItem {
   primary?: boolean;
 }
 
-// Plain pt-BR, no platform words (§2.2.8). Order = the phone bar, then "Mais".
+// Plain pt-BR, no platform words (§2.2.8). Order = the sidebar; `primary` ones make the phone
+// bar and the rest fill "Mais" in the same order.
 export const NAV: NavItem[] = [
   { to: '/', label: 'Início', Icon: House, min: 'attendant', primary: true },
   { to: '/pedidos', label: 'Pedidos', Icon: Receipt, min: 'attendant', primary: true },
+  { to: '/cozinha', label: 'Cozinha', Icon: CookingPot, min: 'attendant' },
   { to: '/cardapio', label: 'Cardápio', Icon: ForkKnife, min: 'manager', primary: true },
   { to: '/loja', label: 'Loja', Icon: Storefront, min: 'manager', primary: true },
   { to: '/pagamentos', label: 'Pagamentos', Icon: Wallet, min: 'manager' },

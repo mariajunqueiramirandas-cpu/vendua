@@ -20,6 +20,8 @@ const Orders = screen(chunks.orders, (m) => m.default);
 const OrderHistory = screen(chunks.history, (m) => m.default);
 const Scheduled = screen(chunks.scheduled, (m) => m.default);
 const OrderPage = screen(chunks.order, (m) => m.default);
+const Kitchen = screen(chunks.kitchen, (m) => m.default);
+const Pickup = screen(chunks.pickup, (m) => m.default);
 const Menu = screen(chunks.menu, (m) => m.default);
 const ProductPage = screen(chunks.product, (m) => m.default);
 const ImportPage = screen(chunks.importMenu, (m) => m.default);
@@ -161,6 +163,8 @@ export default function App() {
                   <Route path="pedidos/historico" element={<OrderHistory />} />
                   <Route path="pedidos/agendados" element={<Scheduled />} />
                   <Route path="pedidos/:id" element={<OrderPage />} />
+                  <Route path="cozinha" element={<Kitchen />} />
+                  <Route path="cozinha/painel" element={<Pickup />} />
                   <Route path="cardapio" element={<Menu />} />
                   <Route path="cardapio/produto/:id" element={<ProductPage />} />
                   <Route path="cardapio/importar" element={<ImportPage />} />

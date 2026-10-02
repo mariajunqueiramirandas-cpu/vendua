@@ -317,6 +317,63 @@ export interface Board {
   now: string;
 }
 
+/** the kitchen screen (Cozinha): what's being made now — no prices, first names only */
+export interface Kitchen {
+  tickets: KitchenTicket[];
+  stations: KitchenStation[];
+  categories: { id: string; name: string }[];
+  stats: KitchenStats;
+  prepDefaultMinutes: number;
+  acceptTargetMinutes: number;
+  now: string;
+}
+export type KitchenState = 'placed' | 'confirmed' | 'preparing' | 'ready';
+export interface KitchenTicket {
+  id: string;
+  number: number;
+  state: KitchenState;
+  mode: 'pickup' | 'delivery';
+  /** the customer's first name */
+  name: string;
+  notes: string | null;
+  scheduledFor: string | null;
+  placedAt: string;
+  acceptedAt: string | null;
+  startedAt: string | null;
+  readyAt: string | null;
+  /** chosen on "aceitar", else the store's usual */
+  prepMinutes: number;
+  rush: boolean;
+  paid: boolean;
+  payMethod: PayMethod;
+  version: number;
+  items: KitchenItem[];
+}
+export interface KitchenItem {
+  id: string;
+  name: string;
+  qty: number;
+  modifiers: { name: string; qty: number }[];
+  combo: { slotName: string; name: string; qty: number }[];
+  categoryId: string | null;
+  stationId: string | null;
+  doneAt: string | null;
+}
+export interface KitchenStation {
+  id: string;
+  name: string;
+  categoryIds: string[];
+}
+export interface KitchenStats {
+  readyToday: number;
+  avgMakeSeconds: number | null;
+  /** 0..1 */
+  onTimeRate: number | null;
+  readyLastHour: number;
+  /** readies per hour of today, index = hour (store time) */
+  hourly: number[];
+}
+
 export interface Product {
   id: string;
   categoryId: string;
@@ -1284,6 +1341,14 @@ export const api = {
     send<{ order: Order }>('POST', `/orders/${id}/payment`, { status }),
   refund: (id: string, p: { amountCents?: number | null; reason?: string }) =>
     send<{ order: Order; payments: OrderPayment[] }>('POST', `/orders/${id}/refund`, p),
+
+  kitchen: () => get<Kitchen>('/kitchen'),
+  kitchenItems: (orderId: string, items: string[], done: boolean) =>
+    send<{ ticket: KitchenTicket }>('POST', `/kitchen/orders/${orderId}/items`, { items, done }),
+  kitchenRush: (orderId: string, rush: boolean) =>
+    send<{ ticket: KitchenTicket }>('POST', `/kitchen/orders/${orderId}/rush`, { rush }),
+  kitchenStations: (stations: { id?: string; name: string; categoryIds: string[] }[]) =>
+    send<{ stations: KitchenStation[] }>('PUT', '/kitchen/stations', { stations }),
 
   catalog: () => get<{ categories: Category[] }>('/catalog'),
   product: (id: string) => get<{ product: ProductDetail }>(`/products/${id}`),

@@ -81,6 +81,15 @@ export function Shell({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const nav = useNavigate();
   const liveRegion = useRef<HTMLDivElement>(null);
+  // the kitchen screens own the whole display: no rail, bars or pull-to-refresh, their own keys
+  const bare = loc.pathname.startsWith('/cozinha');
+  const bareRef = useRef(bare);
+  bareRef.current = bare;
+  useEffect(() => {
+    if (!bare) return;
+    document.documentElement.dataset.bare = '';
+    return () => void delete document.documentElement.dataset.bare;
+  }, [bare]);
 
   useLiveStream(true);
   useScrollMemory();
@@ -107,7 +116,7 @@ export function Shell({ children }: { children: ReactNode }) {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t.closest('input, textarea, select, [contenteditable]')) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || bareRef.current) return;
       if (e.key === '/') {
         e.preventDefault();
         setSearchOpen(true);
@@ -152,7 +161,12 @@ export function Shell({ children }: { children: ReactNode }) {
       </a>
 
       {/* tablet rail + desktop sidebar */}
-      <aside className="vt-rail sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-line bg-bg md:flex md:w-[88px] lg:w-[264px]">
+      <aside
+        className={cn(
+          'vt-rail sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-line bg-bg md:flex md:w-[88px] lg:w-[264px]',
+          bare && 'hidden!',
+        )}
+      >
         <div className="flex flex-col items-center gap-3 px-3 pb-2 pt-5 lg:items-stretch lg:px-4">
           <StoreSwitcher />
           <button
@@ -217,7 +231,12 @@ export function Shell({ children }: { children: ReactNode }) {
 
       <div className="min-w-0 flex-1">
         {/* phone top: status pill always visible (§3.2) + search */}
-        <header className="vt-top chrome sticky top-0 z-30 flex items-center gap-2 bg-bg/95 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm md:hidden kb:static">
+        <header
+          className={cn(
+            'vt-top chrome sticky top-0 z-30 flex items-center gap-2 bg-bg/95 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm md:hidden kb:static',
+            bare && 'hidden!',
+          )}
+        >
           {placeOf(loc.pathname)?.depth ? (
             <BackButton pathname={loc.pathname} />
           ) : (
@@ -238,7 +257,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </button>
         </header>
 
-        {!live.online ? (
+        {!live.online && !bare ? (
           <div
             role="status"
             className="t-body sticky top-0 z-40 flex items-center justify-center gap-2 bg-warning-soft px-4 py-2 text-warning md:top-0 kb:static"
@@ -270,7 +289,10 @@ export function Shell({ children }: { children: ReactNode }) {
       {/* phone bottom bar: five items, always labelled (§3.1) */}
       <nav
         aria-label="principal"
-        className="vt-tabs chrome glass pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line md:hidden"
+        className={cn(
+          'vt-tabs chrome glass pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line md:hidden',
+          bare && 'hidden!',
+        )}
       >
         <ul className="mx-auto flex max-w-lg">
           {primary.map((n) => (
@@ -338,7 +360,7 @@ export function Shell({ children }: { children: ReactNode }) {
         ) : null}
         {helpOpen || helpSeen ? <HelpSheet open={helpOpen} onOpenChange={setHelpOpen} /> : null}
       </Suspense>
-      <PullToRefresh />
+      {bare ? null : <PullToRefresh />}
       <Toaster />
       <div ref={liveRegion} aria-live="assertive" className="sr-only" />
     </div>

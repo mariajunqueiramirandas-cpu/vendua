@@ -15,6 +15,8 @@ export const qk = {
   orders: (p: object) => ['orders', 'list', p] as const,
   scheduled: (from: string, to: string) => ['orders', 'scheduled', from, to] as const,
   order: (id: string) => ['orders', 'one', id] as const,
+  // under 'orders': every order topic refreshes the kitchen too
+  kitchen: ['orders', 'kitchen'] as const,
   catalog: ['catalog'] as const,
   product: (id: string) => ['catalog', 'product', id] as const,
   store: ['store'] as const,
