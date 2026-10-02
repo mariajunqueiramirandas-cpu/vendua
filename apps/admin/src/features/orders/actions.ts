@@ -261,7 +261,13 @@ ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
  *  blocked. */
 export function usePrintOrder(storeName: string) {
   const { data } = useQuery({ queryKey: qk.printers, queryFn: api.printers, staleTime: 60_000 });
-  const viaPrinter = !!data?.devices.some((d) => d.online && d.printers.some((p) => p.present));
+  // the printers POST /orders/:id/print picks (automatic ones, else any present), and at least
+  // one of them on a device that's online now
+  const devices = data?.devices ?? [];
+  const online = new Set(devices.filter((d) => d.online).map((d) => d.id));
+  const present = devices.flatMap((d) => d.printers.filter((p) => p.present));
+  const auto = present.filter((p) => p.auto);
+  const viaPrinter = (auto.length > 0 ? auto : present).some((p) => online.has(p.deviceId));
   const send = useMutation({
     mutationFn: (o: Order) => api.printOrder(o.id),
     onSuccess: (r) => toast(`Comanda enviada para ${r.printers.join(', ')}`),

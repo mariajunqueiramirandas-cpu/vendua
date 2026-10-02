@@ -161,3 +161,24 @@ func TestCollectMergesFiltersAndCaps(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectKeepsLastLocalListingWhenEnumerationFails(t *testing.T) {
+	fail := false
+	d := &Discoverer{
+		Log: slog.New(slog.DiscardHandler),
+		Local: func(context.Context) ([]api.Discovered, error) {
+			if fail {
+				return nil, errors.New("spooler unavailable")
+			}
+			return []api.Discovered{SpoolerPrinter("EPSON TM-T20X"), SerialPrinter("COM3")}, nil
+		},
+	}
+	if got := d.Collect(context.Background()); len(got) != 2 {
+		t.Fatalf("first listing = %+v", got)
+	}
+	fail = true
+	got := d.Collect(context.Background())
+	if len(got) != 2 || got[0].Key != "spooler:EPSON TM-T20X" {
+		t.Fatalf("a failed listing must not shrink the report: %+v", got)
+	}
+}

@@ -66,6 +66,9 @@ export function renderOrderTicket(
   const late = now.getTime() - queuedAt.getTime() > LATE_AFTER_MS;
   return copies(o, (r) => {
     r.align('center');
+    // only a reprint asked for by hand gets here: automatic ones are dropped on cancel
+    if (order.state === 'cancelled' || order.state === 'refunded')
+      r.size(2).bold(true).text('CANCELADO').bold(false).size(1).feed(1);
     if (late) {
       r.bold(true).text('*** IMPRESSÃO ATRASADA ***').bold(false);
       r.text(`na fila desde ${clock(queuedAt.toISOString(), tz)}`).feed(1);

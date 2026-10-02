@@ -30,6 +30,10 @@ type Discoverer struct {
 
 	mu      sync.Mutex
 	network []api.Discovered
+	// the last complete local listing: Core marks whatever a report omits as absent, so a
+	// spooler or registry hiccup must not report an empty set
+	local     []api.Discovered
+	haveLocal bool
 }
 
 func New(log *slog.Logger) *Discoverer {
@@ -56,10 +60,15 @@ func (d *Discoverer) ScanNetwork(ctx context.Context) error {
 // Collect is the set to PUT: local printers plus the last network scan.
 func (d *Discoverer) Collect(ctx context.Context) []api.Discovered {
 	local, err := d.Local(ctx)
-	if err != nil {
-		d.Log.Warn("local printer discovery failed", "err", err)
-	}
 	d.mu.Lock()
+	if err == nil {
+		d.local, d.haveLocal = local, true
+	} else {
+		d.Log.Warn("local printer discovery failed", "err", err, "keeping_last", d.haveLocal)
+		if d.haveLocal {
+			local = d.local
+		}
+	}
 	all := append(slices.Clip(local), d.network...)
 	d.mu.Unlock()
 	return Normalize(all)

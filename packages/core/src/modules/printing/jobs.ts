@@ -224,6 +224,14 @@ export async function claimDueJobsTx(
     update print_jobs set status = 'expired', finished_at = now()
     where tenant_id = ${tenantId} and device_id = ${deviceId}
       and status in ('pending', 'sent') and expires_at < now()`;
+  // an automatic ticket for an order cancelled while it waited would send the kitchen to cook it
+  await tx`
+    update print_jobs j set status = 'expired', finished_at = now(), error = 'Pedido cancelado'
+    from orders o
+    where j.tenant_id = ${tenantId} and j.device_id = ${deviceId}
+      and j.status in ('pending', 'sent') and j.trigger in ('placed', 'confirmed')
+      and o.tenant_id = j.tenant_id and o.id = j.order_id
+      and o.state in ('cancelled', 'refunded')`;
   await tx`
     update print_jobs set status = 'failed', finished_at = now(),
            error = 'O aparelho não confirmou a impressão'

@@ -574,6 +574,34 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
       expect(has(Buffer.from(late.data, 'base64'), bytes(`#${before.number}`))).toBe(true);
       expect(await autoJobs(before.id)).toBe(1);
 
+      // a ticket still waiting when its order is cancelled never reaches the kitchen
+      const doomed = await placeOrder();
+      const queued2 = await sql<{ id: string }[]>`
+        select id from print_jobs where order_id = ${doomed.id}`;
+      expect(queued2.length).toBe(1);
+      // the stream handed it over at once; pretend the device was off and never got it
+      expect((await s.next('job')).id).toBe(queued2[0]!.id);
+      await sql`update print_jobs set status = 'pending', sent_at = null where id = ${queued2[0]!.id}`;
+      expect(
+        (
+          await owner('POST', `/orders/${doomed.id}/transition`, {
+            to: 'cancelled',
+            reason: 'Acabou um item do pedido',
+          })
+        ).status,
+      ).toBe(200);
+      const claimed = await withTenant(appSql, tenantId, (tx) =>
+        claimDueJobsTx(tx, tenantId, deviceId),
+      );
+      expect(claimed.map((j) => j.id)).not.toContain(queued2[0]!.id);
+      const [gone] = await sql<{ status: string; error: string }[]>`
+        select status, error from print_jobs where id = ${queued2[0]!.id}`;
+      expect(gone).toEqual({ status: 'expired', error: 'Pedido cancelado' });
+      // asked for by hand, it prints, marked as cancelled
+      expect((await owner('POST', `/orders/${doomed.id}/print`, {})).status).toBe(202);
+      const reprint = await s.next('job');
+      expect(has(Buffer.from(reprint.data, 'base64'), bytes('CANCELADO'))).toBe(true);
+
       // an unanswered job is handed over again after a minute; config edits reach the agent
       await sql`update print_jobs set sent_at = now() - interval '2 minutes' where id = ${placedJob.id}`;
       const resent = await withTenant(appSql, tenantId, (tx) =>
