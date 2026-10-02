@@ -477,7 +477,7 @@ export function HowStep({ s, draft, patch, save, next, back, eyebrow }: StepProp
   );
 }
 
-export function PickupStep({ s, save, next, back, skip, eyebrow }: StepProps) {
+export function PickupStep({ s, save, next, back, eyebrow }: StepProps) {
   const [busy, run] = useBusy();
   const [where, setWhere] = useState(s.operations.pickupAddress ?? s.profile.address ?? '');
   const [how, setHow] = useState(s.operations.pickupInstructions ?? '');
@@ -486,11 +486,11 @@ export function PickupStep({ s, save, next, back, skip, eyebrow }: StepProps) {
     <Frame
       eyebrow={eyebrow}
       title="Onde o cliente busca?"
-      hint="Só quem pede para retirar vê esse endereço, junto com o pedido."
+      // pickup is already on: without this the customer is told only "na loja"
+      hint="Só quem pede para retirar vê esse endereço, junto com o pedido. Sem retirada? Volte e desmarque."
       back={back}
       busy={busy}
       disabled={!ok}
-      onSkip={skip}
       onSubmit={() =>
         void run(
           save({
@@ -569,16 +569,24 @@ export function ProductsStep({
         priceCents: price ?? 0,
         categoryId: await category(),
       });
+      // the product exists once created: a failed photo must not leave the form to create it twice
+      let photoFailed = false;
       if (photo)
-        await api.setMedia(r.product.id, [
-          { url: photo.url, width: photo.width ?? null, height: photo.height ?? null },
-        ]);
-      return r;
+        await api
+          .setMedia(r.product.id, [
+            { url: photo.url, width: photo.width ?? null, height: photo.height ?? null },
+          ])
+          .catch(() => (photoFailed = true));
+      return { ...r, photoFailed };
     },
     onSuccess: (r) => {
       refresh();
       haptic.commit();
-      toast(`${r.product.name} no cardápio. ${CHEERS[products.length % CHEERS.length]}`);
+      if (r.photoFailed)
+        toast.error(
+          `${r.product.name} entrou no cardápio, mas a foto não. Toque na linha para pôr de novo.`,
+        );
+      else toast(`${r.product.name} no cardápio. ${CHEERS[products.length % CHEERS.length]}`);
       setName('');
       setPrice(null);
       setPhoto(null);
