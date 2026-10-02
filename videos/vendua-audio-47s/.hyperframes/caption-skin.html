@@ -1,17 +1,18 @@
 <!--
-  Blue Professional — caption skin (preset-local source).
+  Venduá Reel caption skin — seeded from blue-professional's skin, restyled to frame.md:
+  a paper pill (surface, forest-tinted e2 shadow, no outline), Figtree 750 at 66px
+  (>= 6cqw), the current word as a lime chip behind forest text, and the band moved
+  above Instagram's Reels UI (the generic band, y 1600-1920, sits under it).
 
-  This is the preset's own lower-third karaoke caption look. product-launch-video's
-  Step 2 copies it into the project as caption-skin.html; captions.mjs then fills the
+  product-launch-video's Step 2 copies the preset's skin into the project as caption-skin.html; captions.mjs then fills the
   three reserved holes, wraps the fragment in a <template>, and writes
   compositions/captions.html:
     · the empty GROUPS array            → the engine's scene-aware word groups
     · the 0 duration + 0 width/height   → real total + canvas size
     · the empty data-brand-tokens style → :root tokens derived from the project's frame.md
 
-  Token contract — reference ONLY this fixed vocab (captions.mjs injects it from
-  frame.md, so the Step-2 brand overlay flows through; each var has a blue-professional
-  literal fallback for standalone preview):
+  Token contract — captions.mjs injects this vocab from frame.md (each var keeps a Venduá
+  literal fallback for standalone preview), plus every frame.md color key raw (--surface):
     --cap-ink · --cap-canvas · --cap-accent · --cap-accent-2 · --font-display ·
     --font-body · --cap-band-top · --cap-band-height
   Hooks (do not rename): .caption-group / .caption-word + states .is-active / .is-spoken,
@@ -19,12 +20,8 @@
   State changes use gsap.set({className}) (applied on the engine's frame-by-frame seek);
   never tl.call() callbacks (seek does not fire them → wrong state on render).
 
-  Visual: a soft cobalt-tinted card on warm cream — a 4% cobalt fill inside a 1.5px
-  20%-cobalt border, soft 14px rounded corners, NO shadow (the system's premium signal
-  is the absence of cast depth; the tinted card does the lift). Space Grotesk, sentence
-  case, near-black glyphs. Upcoming words sit in muted gray; the current word becomes a
-  solid cobalt chip — the brand's signature single-accent gesture, a pill-rounded fill
-  with cream reading on top; spoken words settle to near-black ink, chip cleared.
+  Visual: upcoming words in muted forest, the current word a lime chip with forest text,
+  spoken words solid forest.
 -->
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
 
@@ -43,13 +40,16 @@
     z-index: 20;
     pointer-events: none;
   }
-  /* the keep-out band, from captionBand(H) — frame content stays above it */
+  /* Reels caption band: y 1300-1520, above the bottom 20% (y >= 1536) and clear of the
+     right action column (140px). captionBand(H) would put it at y 1600-1920, under the
+     Reels UI, so the injected --cap-band-* vars are deliberately not used here. Frame
+     content stays above y 1280. */
   .caption-stage {
     position: absolute;
-    left: 0;
-    right: 0;
-    top: var(--cap-band-top, 900px);
-    height: var(--cap-band-height, 180px);
+    left: 72px;
+    right: 140px;
+    top: 1300px;
+    height: 220px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -65,75 +65,68 @@
     opacity: 0;
   }
 
-  /* THE tinted card — 4% cobalt fill, 1.5px 20%-cobalt border, soft 14px corners,
-     NO shadow (the tinted card does the lift; cast depth is forbidden) */
+  /* paper pill: surface + Venduá's forest-tinted e2 shadow, radius lg, no outline */
   .caption-pill {
-    max-width: 78%;
-    padding: 20px 44px 24px;
-    background: color-mix(in srgb, var(--cap-accent, #1e2bfa) 4%, var(--cap-canvas, #fdfae7));
-    border: 1.5px solid color-mix(in srgb, var(--cap-accent, #1e2bfa) 20%, transparent);
-    border-radius: 14px;
+    max-width: 100%;
+    padding: 18px 34px 22px;
+    background: var(--surface, #fffdf8);
+    box-shadow:
+      0 2px 4px rgb(18 60 50 / 0.08),
+      0 12px 32px rgb(18 60 50 / 0.1);
+    border-radius: 24px;
   }
   .caption-line {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
     gap: 0.1em 0.34em;
-    font-family: var(--font-display, "Space Grotesk"), system-ui, sans-serif;
-    font-weight: 600;
-    font-size: clamp(40px, 4.4vw, 58px);
-    line-height: 1.16;
-    letter-spacing: -0.02em;
+    font-family: var(--font-body, "Figtree Variable"), system-ui, sans-serif;
+    font-weight: 750;
+    font-size: 66px;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
   }
 
-  /* upcoming — muted gray, no chip */
+  /* upcoming — muted forest, no chip */
   .caption-word {
     display: inline-block;
     padding: 0 0.18em;
     border-radius: 0.32em;
-    color: color-mix(in srgb, var(--cap-ink, #111111) 52%, var(--cap-canvas, #fdfae7));
+    color: color-mix(in srgb, var(--cap-ink, #123c32) 52%, var(--cap-canvas, #f7f4ea));
   }
-  /* current word — THE solid cobalt chip (the single-accent gesture; pill-rounded
-     fill, NO shadow), cream reading on top */
+  /* current word — the lime chip behind forest text (frame.md: lime is always a fill
+     behind forest, never text on cream; 10.3:1) */
   .caption-word.is-active {
-    color: var(--cap-canvas, #fdfae7);
-    background: var(--cap-accent, #1e2bfa);
+    color: var(--cap-ink, #123c32);
+    background: var(--cap-accent, #d9f875);
     box-shadow: none;
   }
-  /* already spoken — solid near-black ink, chip cleared */
+  /* already spoken — solid forest, chip cleared */
   .caption-word.is-spoken {
-    color: var(--cap-ink, #111111);
+    color: var(--cap-ink, #123c32);
     background: transparent;
     box-shadow: none;
   }
 
   /* optional per-word accents (dormant until a word-classer tags them) */
-  /* brand / key term — cobalt, the system's one accent on a key word */
+  /* brand / key term — forest (lime never carries text) */
   .caption-word.cap-brand {
-    color: var(--cap-accent, #1e2bfa);
+    color: var(--cap-ink, #123c32);
   }
-  /* numerals / data — cobalt 700, the figure voice */
+  /* numerals / data — Space Grotesk 700, the figure voice */
   .caption-word.cap-num {
     font-family: var(--font-display, "Space Grotesk"), system-ui, sans-serif;
     font-weight: 700;
-    color: var(--cap-accent, #1e2bfa);
+    color: var(--cap-ink, #123c32);
   }
-  /* emphasis — a directional-red hairline underline (inline only, never a fill) */
+  /* emphasis — a hairline underline in the second accent (inline only, never a fill) */
   .caption-word.cap-cta {
     text-decoration: underline;
     text-decoration-thickness: 2px;
-    text-decoration-color: var(--cap-accent-2, #dc2626);
+    text-decoration-color: var(--cap-accent-2, #2f4a00);
     text-underline-offset: 0.1em;
   }
 
-  @media (max-aspect-ratio: 9/16) {
-    .caption-pill {
-      max-width: 92%;
-    }
-    .caption-line {
-      font-size: clamp(34px, 5.4vw, 48px);
-    }
-  }
 </style>
 
 <div

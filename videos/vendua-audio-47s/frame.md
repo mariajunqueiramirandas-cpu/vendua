@@ -71,7 +71,7 @@ components:
   device:
     frame: "CSS phone like site/src/lib/components/Phone.svelte — bezel linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%), padding 3.2% of width, outer radius 16% of width, screen radius 13%, island pill 30% wide, shadow {shadows.device}"
     screen: "a real admin screenshot (assets/screens/*-750.webp, 750×1624) at its native aspect, never cropped into a fake UI, never redrawn"
-    size: "about 70% of the frame height when it is the focal"
+    size: "as the focal, up to ~1030px tall between y 250 and y 1280 (about 54% of the height); the caption band sits below it"
   push:
     backgroundColor: "rgba(255, 253, 248, 0.86) + backdrop blur"
     rounded: "{radii.lg}"
@@ -120,7 +120,9 @@ primary color, cream is the ink, and depth comes from lighter surfaces, not shad
 - 1080×1920, `container-type: size` on every frame ground; frame-relative units are `cqw`/`cqh`.
 - **Reels safe area** (the platform's own UI sits on top): keep everything load-bearing between
   `safe-top` (12.5% height) and `safe-bottom` (bottom 20%), and clear of the right action column
-  (`safe-right`, 13% width). Captions sit above the bottom 20%, never under the action column.
+  (`safe-right`, 13% width).
+- **Caption band** y 1300–1520, x 72–940 (`.hyperframes/caption-skin.html`): frame content that
+  must stay readable ends at y 1280; only background may run behind the band.
 - Gutter 72 px. 4 px grid. Nested radius = outer − padding, so corners stay concentric.
 - Legibility floor: anything load-bearing ≥ 3.3cqw (36 px); captions ≥ 6cqw.
 

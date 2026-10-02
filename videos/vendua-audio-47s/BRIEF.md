@@ -60,7 +60,8 @@ The wording matches the site ("14 dias grátis, sem cartão") and the signup's l
 - Only Basic features: cardápio, preços, Pix, horários, pedidos. Nothing from PRO+ (own domain,
   AI-built site).
 - Reels UI covers the bottom ~20% and the right edge: captions, screens and the closing card stay
-  inside the safe area; phone screen at about 70% of the height in a CSS-drawn frame.
+  inside the safe area. Captions sit in the band y 1300–1520; the CSS-drawn phone ends above it
+  (y 250–1280, about 54% of the height).
 - Before posting: the live vendua.com.br must be deployed with the trial copy (on 2026-10-02 it
   still showed only R$ 39,90/mês). If staff change Basic's trial length in the CRM, this video goes
   stale with the site copy.
