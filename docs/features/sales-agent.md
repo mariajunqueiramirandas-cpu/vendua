@@ -296,8 +296,11 @@ on (`store_agent.mode <> 'off'`), and the setup says so in plain words:
   are keyed by the WhatsApp jid and replies addressed to it; the phone is filled in when it
   resolves, and international numbers are allowed.
 - **Outbound** reuses the queue: `store_wa_messages.kind` gains `chat` (the CHECK in migration
-  0076 allows `order | opt_out | opt_in | test` today), keyed by the `shopper_messages` id
-  instead of `(order_id, event)`, with the same epoch fence, retries and WhatsApp-side dedupe.
+  0076 allows `order | opt_out | opt_in | test` today), with the same epoch fence, retries and
+  WhatsApp-side dedupe. Chat rows are deduped by a unique `shopper_message_id` instead of
+  `(order_id, event)`, and carry a bounded `jid`: `phone` (`^\d{10,11}$` in 0076, like
+  `store_wa_optouts.phone`) becomes nullable for chat rows and its CHECK widens to
+  international numbers, so a reply to a LID-only or foreign sender is a valid row, not a 500.
   The gateway shows "digitando…" while a run is in flight, as the platform socket already does.
 - **Pacing.** ADR 0026 caps a store at 200 messages an hour with 1.5 s between sends. A busy
   Friday with 40 live conversations needs more. Replies inside a conversation the shopper
@@ -345,9 +348,10 @@ closes that.
 - The idempotency claim is bound to Hono headers (`idempotency()`, `src/platform/http.ts:181`).
   Its core becomes an in-process `claim` the HTTP wrapper and the tools share, so a tool call
   keeps the invariant without looping back over HTTP.
-- Cash change ("troco para R$ 100") exists nowhere. `CheckoutInput.payment` gains
-  `changeForCents`, the order shows it, and the storefront checkout can offer it too (an
-  additive Kernel change).
+- Cash change ("troco para R$ 100") exists nowhere. `CheckoutInput.payment` gains a bounded
+  `changeForCents` (at least the total), the order shows it, and the storefront checkout can
+  offer it too: an additive Kernel change with its `API.md` entry,
+  `test/api-surface.test.ts`, a version bump, a `CHANGELOG.md` line and `bun.lock`.
 - There is no catalog search. `searchCatalog` matches names, descriptions, categories and the
   store's own words (accents and plurals folded), ranked by availability and sales.
 - Coupons are created by inline admin SQL (`src/admin/routes-marketing.ts:86`). A
@@ -487,8 +491,12 @@ cart_edit / reorder ─▶ quote (Core) ─▶ send_card(summary) ─▶ shopper
   addresses ("entrega na Rua Ipê, 45?"), always asking before using one.
 - **The summary card** is rendered from Core's quote. The thread stores its id and a hash of
   the cart it shows.
+- **The card's hash** covers each line's unit price and options, the quoted fee, discount,
+  payment adjustment and total, the fulfillment and the payment method.
 - **The confirmation gate** in `place_order({ cardId, evidenceId })`:
-  1. `cardId` is the thread's latest summary card, and the cart hash still matches;
+  1. `cardId` is the thread's latest summary card, and the hash still matches, checked inside
+     the claim transaction after the cart row is locked `FOR UPDATE`, so an edit from another
+     path (the storefront link, V4's shared cart) can't land between the check and the order;
   2. `evidenceId` is a shopper message after the card;
   3. that message passes a deterministic affirmative check ("sim", "pode", "manda", "isso",
      "fechado", "confirmo", 👍 and the like). If it doesn't, the model must ask for a plain
@@ -500,9 +508,14 @@ cart_edit / reorder ─▶ quote (Core) ─▶ send_card(summary) ─▶ shopper
   (`src/modules/place-order.ts:25`), which locks the cart and completes it, so a second call
   gets `CART_NOT_OPEN`. A crashed run replays to the same order. Duplicate orders are a
   recurring complaint about a competitor ([§1](#1-the-bar)).
-- **Prices moved.** `placeOrderTx` reprices under lock and answers `PRICES_CHANGED`. The agent
-  commits the new lines, which changes the cart hash, so the shopper gets a new card and a new
-  yes. It never places an order at a total the shopper didn't see.
+- **Anything moved, a new card.** `placeOrderTx` answers `PRICES_CHANGED` only when a line's
+  unit price changed (`place-order.ts:111`); it recomputes the delivery fee, the coupon and the
+  payment adjustment from live rows without refusing. So after `placeOrderTx` returns, the gate
+  compares the order's total with the card's and throws on any difference, rolling the order
+  back. On `PRICES_CHANGED` the repriced lines are committed, as the checkout route does
+  (`src/app.ts:1080`). Either way the shopper gets a new card with a new hash, hence a new
+  idempotency key, and a new yes; the agent never places an order at a total the shopper didn't
+  see, and no refusal is replayed forever under an old key.
 - **Payment.** For a store connected to Mercado Pago, `preparePayment`
   (`src/modules/payments/store-payments.ts:312`) returns the Pix `copyPaste` and its `expiresAt`, sent as
   its own card with that validity; card online returns a Mercado Pago link, sent as a card.
@@ -686,23 +699,28 @@ proposals.
 ```ts
 type StoreAgent = {
   mode: 'off' | 'shadow' | 'attendant' | 'seller'; // shadow: drafts only, merchant answers
+  // Bounded like every admin write: unknown category or product ids → 422, out-of-range → 422.
   name: string; // ≤ 30, how it introduces itself
   voice: string; // ≤ 1000, tone in the merchant's words
   instructions: string; // ≤ 4000, house rules (in the prompt; code rules are below)
   whenClosed: 'answer' | 'answer_and_preorder' | 'silent';
   humanSilenceMin: number; // 5..240, after the merchant types
   unknownNumbers: 'shoppers_only' | 'all';
-  upsell: { enabled: boolean; pinned: { whenCategoryId: string; suggestProductId: string }[] };
+  upsell: { enabled: boolean; pinned: { whenCategoryId: string; suggestProductId: string }[] }; // ≤ 20
   recovery: { enabled: boolean; delayMin: number }; // 5..120
   incentives: null | {
     reasons: ('recovery' | 'first_order' | 'hesitation')[];
-    couponPercent?: number; // or a fixed amount, one of the two
-    couponCents?: number;
-    minOrderCents: number;
-    monthlyBudgetCents: number;
-    perCustomerDays: number; // one incentive per phone per N days
+    couponPercent?: number; // 1..50, or a fixed amount, exactly one of the two
+    couponCents?: number; // 100..monthlyBudgetCents
+    minOrderCents: number; // 0..100_000_00
+    monthlyBudgetCents: number; // 0..100_000_00
+    perCustomerDays: number; // 1..365, one incentive per phone per N days
   };
-  flags: { aboveCents: number | null; firstCashOrder: boolean; pixOnlyAfterCancels: number | null };
+  flags: {
+    aboveCents: number | null; // 1_00..100_000_00
+    firstCashOrder: boolean;
+    pixOnlyAfterCancels: number | null; // 1..10
+  };
   voiceReplies: boolean; // answer an audio with audio; amounts stay in text cards
   monthlyAiBudget: number | null; // ceiling on the store's AI spend, unit per §10
 };
@@ -748,7 +766,7 @@ the owner.
 | **V1 Attendant + shadow** | Grounded answers (menu, hours, zones, payment, knowledge), links to the storefront, handoff and takeover, unanswered → knowledge, shadow drafts, audio transcription.                                                                                                                                                                                 | No ungrounded figure in the suite; three pilot stores in shadow for a week with agreement reported.      |
 | **V2 Seller**             | Cart, quote, summary card, confirmation gate, `place_order`, Pix, cash and card on delivery, order status, encomenda when closed, pickup when out of zone, substitutes and waitlist, location pins, the full verifier.                                                                                                                                | Order accuracy ≥ 98% on the suite, 0 ungrounded figures, p50 reply ≤ 6 s; pilots switch to `seller`.     |
 | **V3 Sells more**         | Customer card and reorder, suggestions, recovery and incentives, Resultados, daily line and weekly review, photo understanding, voice replies.                                                                                                                                                                                                        | Pilots' agent ticket and conversion measured against their storefront; incentive spend within budgets.   |
-| **V4 Everywhere**         | Instagram DM; a storefront chat that edits the page's own cart (a server-driven system surface, an additive Kernel export); the official Cloud API as a per-store transport option with templates for opted-in recovery and re-engagement (P-018).                                                                                                    | Same gates per channel.                                                                                  |
+| **V4 Everywhere**         | Instagram DM; a storefront chat that edits the page's own cart (a server-driven system surface; its Kernel export follows the additive rules: `API.md`, the api-surface test, a version bump, `CHANGELOG.md`, `bun.lock`); the official Cloud API as a per-store transport option with templates for opted-in recovery and re-engagement (P-018).     | Same gates per channel.                                                                                  |
 
 ## 9. Scorecard
 
