@@ -171,6 +171,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       priceCents: 3990,
       feeBps: 0,
       features: { customDomain: false, customSite: false },
+      trialDays: 14,
     });
     expect(plans.body.plans.find((p: any) => p.id === 'pro_plus').priceCents).toBe(9900);
 
@@ -270,6 +271,42 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(again.body.next).toEqual({ kind: 'pix', invoiceId: expect.any(String) });
     expect((await sql`select 1 from tenants where slug = ${pixSlug}`).length).toBe(1);
     expect((await sql`select 1 from invoices where tenant_id = ${pixStore}`).length).toBe(1);
+  });
+
+  test('segment: kept with the store, onboarding marked from signup; a replay changes neither', async () => {
+    // its own app: the shared one's per-IP signup budget belongs to the tests below
+    const other = createApp(deps);
+    const token = (await verified(mkPhone(10), other)).signupToken;
+    const slug = `signup-${nonce}-seg`;
+    const bad = await signup(token, slug, { segment: 'sorvetes' }, other);
+    expect(bad.status).toBe(422);
+    expect(bad.body.error).toMatchObject({ code: 'BAD_REQUEST', details: { field: 'segment' } });
+    expect((await signup(token, slug, { segment: 7 }, other)).body.error.details.field).toBe(
+      'segment',
+    );
+
+    const r = await signup(token, slug, { segment: 'doces' }, other);
+    expect(r.status).toBe(201);
+    const id = r.body.store.id;
+    const row = async () =>
+      (await sql`select segment, onboarding from store_settings where tenant_id = ${id}`)[0]!;
+    expect(await row()).toEqual({ segment: 'doces', onboarding: { from: 'signup' } });
+    const born =
+      await sql`select data from staff_events where tenant_id = ${id} and kind = 'store.created'`;
+    expect(born[0]!.data.segment).toBe('doces');
+
+    const again = await signup(token, slug, { segment: 'pizzaria' }, other);
+    expect(again.status).toBe(201);
+    expect(again.body.store.id).toBe(id);
+    expect(await row()).toEqual({ segment: 'doces', onboarding: { from: 'signup' } });
+
+    // no segment: still from signup, segment null
+    const plain = await signup(token, `signup-${nonce}-noseg`, { segment: '' }, other);
+    expect(plain.status).toBe(201);
+    const p = (
+      await sql`select segment, onboarding from store_settings where tenant_id = ${plain.body.store.id}`
+    )[0]!;
+    expect(p).toEqual({ segment: null, onboarding: { from: 'signup' } });
   });
 
   test('taken and reserved slugs', async () => {

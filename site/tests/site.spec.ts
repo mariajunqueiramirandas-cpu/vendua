@@ -293,6 +293,9 @@ test.describe('conteúdo', () => {
     const text = (await preco.innerText()).replace(/\s+/g, ' ');
     expect(text).toContain('Venduá Basic R$ 39,90/mês');
     expect(text).toContain('Venduá PRO+ R$ 99/mês');
+    // Basic's trial sits by its price; PRO+ has none
+    expect(text).toContain('Venduá Basic R$ 39,90/mês 14 dias grátis, sem cartão');
+    expect(text.match(/grátis, sem cartão/g)).toHaveLength(1);
     expect(text).toContain('seunome.vendua.com.br');
     expect(text).toContain('Domínio próprio e um site feito pelo nosso agente de IA.');
     expect(text).toContain('Taxa da Venduá por pedido nenhuma');

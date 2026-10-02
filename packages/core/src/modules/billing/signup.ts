@@ -106,6 +106,44 @@ export async function slugStatus(
   return { slug, available: false, reason };
 }
 
+/** what a store sells — the admin owns the labels; Core only keeps the key */
+export const SEGMENTS = [
+  'doces',
+  'salgados',
+  'pizzaria',
+  'lanches',
+  'marmitas',
+  'acai',
+  'padaria',
+  'japonesa',
+  'bebidas',
+  'outro',
+] as const;
+export type Segment = (typeof SEGMENTS)[number];
+
+/** the segment when it's on the list, else null */
+export function validSegment(v: unknown): Segment | null {
+  return typeof v === 'string' && (SEGMENTS as readonly string[]).includes(v)
+    ? (v as Segment)
+    : null;
+}
+
+/** not given (undefined / null / '') = null; anything off the list is a 422 */
+export function segmentOr422(v: unknown): Segment | null {
+  if (v === undefined || v === null || v === '') return null;
+  const s = validSegment(v);
+  if (!s)
+    throw new HttpError(422, 'BAD_REQUEST', `segment must be one of ${SEGMENTS.join(', ')}`, {
+      field: 'segment',
+    });
+  return s;
+}
+
+/** One free trial per owner phone (ADR 0025): has a store this phone owns ever trialed? */
+export async function phoneHadTrial(sql: Sql, phone: string): Promise<boolean> {
+  return (await sql<{ used: boolean }[]>`select phone_had_trial(${phone}) as used`)[0]!.used;
+}
+
 /** signup codes per client IP per rolling day — each is a WhatsApp message we pay for */
 export const SIGNUP_CODES_PER_IP_DAY = Number(process.env.VENDUA_SIGNUP_OTP_PER_IP_DAY) || 30;
 

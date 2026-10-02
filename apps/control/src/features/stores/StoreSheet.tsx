@@ -34,11 +34,17 @@ function Billing({ s }: { s: BillingStore }) {
         <Fact label="forma de pagamento">
           {sub ? (METHOD_LABEL[sub.method] ?? sub.method) : '—'}
         </Fact>
-        <Fact label="próxima cobrança">
-          <span className="tnum">
-            {sub && sub.status !== 'cancelled' ? fmtDay(sub.currentPeriodEnd) : '—'}
-          </span>
-        </Fact>
+        {sub?.status === 'trialing' ? (
+          <Fact label="teste grátis até">
+            <span className="tnum">{fmtDay(sub.trialEndsAt ?? sub.currentPeriodEnd)}</span>
+          </Fact>
+        ) : (
+          <Fact label="próxima cobrança">
+            <span className="tnum">
+              {sub && sub.status !== 'cancelled' ? fmtDay(sub.currentPeriodEnd) : '—'}
+            </span>
+          </Fact>
+        )}
         <Fact label="mercado pago da loja">
           <Tag map={MP_STATUS} value={s.mercadoPago} empty="não conectado" />
         </Fact>
@@ -60,7 +66,9 @@ function OpenInvoice({
   const [received, setReceived] = useState(false);
   const mark = useMarkInvoicePaid();
   useEffect(() => setReceived(false), [inv.id]);
-  const first = s.subscription?.status === 'pending';
+  const sub = s.subscription;
+  const first = sub?.status === 'pending';
+  const trial = sub?.status === 'trialing';
   return (
     <div className="flex flex-col gap-3 rounded-lg border bg-card p-3 shadow-card">
       <div className="flex items-baseline justify-between gap-3">
@@ -73,7 +81,9 @@ function OpenInvoice({
       <p className="text-sm text-muted-foreground">
         {first
           ? 'A loja está fechada até o primeiro pagamento. Confirmar abre a loja e inicia o mês do plano.'
-          : `Em aberto desde ${fmtDay(inv.dueAt)}. Confirmar dá o mês seguinte como pago.`}
+          : trial
+            ? `O teste grátis vai até ${fmtDay(sub.trialEndsAt ?? sub.currentPeriodEnd)}. Confirmar dá como pago o primeiro mês, que começa quando o teste acaba.`
+            : `Em aberto desde ${fmtDay(inv.dueAt)}. Confirmar dá o mês seguinte como pago.`}
       </p>
       <label className="flex cursor-pointer items-start gap-2.5 text-sm">
         <Checkbox

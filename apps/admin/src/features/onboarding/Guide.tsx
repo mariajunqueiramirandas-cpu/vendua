@@ -8,29 +8,7 @@ import { Mascote, type Pose } from '../../ui/Mascote.tsx';
 const still = () =>
   navigator.webdriver || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const POSE: Record<string, Pose> = {
-  oi: 'avatar-ola',
-  importar: 'catalogo',
-  nome: 'loja',
-  logo: 'personalizar',
-  whatsapp: 'avatar-pensando',
-  frase: 'personalizar',
-  horarios: 'horarios',
-  como: 'entrega',
-  pix: 'pagamento',
-  produtos: 'catalogo',
-  pronto: 'avatar-feliz',
-};
-
-export function Guide({
-  turn,
-  pose,
-  children,
-}: {
-  turn: string;
-  pose?: Pose;
-  children: ReactNode;
-}) {
+export function Guide({ turn, pose, children }: { turn: string; pose: Pose; children: ReactNode }) {
   const [typing, setTyping] = useState(() => !still());
   useEffect(() => {
     if (still()) return setTyping(false);
@@ -44,7 +22,7 @@ export function Guide({
         aria-hidden
         className="animate-bob grid size-20 shrink-0 place-items-center rounded-lg bg-spark-soft"
       >
-        <Mascote pose={pose ?? POSE[turn] ?? 'avatar-ola'} size={76} className="size-[76px]" />
+        <Mascote pose={pose} size={76} className="size-[76px]" />
       </div>
       <div
         aria-live="polite"

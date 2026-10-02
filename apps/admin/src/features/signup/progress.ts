@@ -7,6 +7,7 @@ import type { PayNext, StoreRef } from '../../lib/api.ts';
 export type StepId =
   | 'plano'
   | 'loja'
+  | 'tipo'
   | 'voce'
   | 'whatsapp'
   | 'codigo'
@@ -24,6 +25,8 @@ export interface Draft {
   slug: string;
   /** the merchant edited the address by hand: stop deriving it from the name */
   slugTouched: boolean;
+  /** what the store sells (features/onboarding/segments.ts) — tunes the onboarding */
+  segment: string | null;
   ownerName: string;
   email: string;
   phone: string | null;
@@ -47,6 +50,7 @@ export const EMPTY: Draft = {
   storeName: '',
   slug: '',
   slugTouched: false,
+  segment: null,
   ownerName: '',
   email: '',
   phone: null,
@@ -96,6 +100,8 @@ export interface Verified {
   token: string;
   phone: string;
   existingStores: StoreRef[];
+  /** this phone never had a free trial (one per owner) */
+  trialEligible?: boolean;
 }
 
 export function loadToken(phone: string | null): Verified | null {
@@ -121,6 +127,9 @@ export function saveToken(v: Verified | null) {
 export function afterCreate(next: PayNext): StepId {
   return next.kind === 'card' ? 'cartao' : next.kind === 'pix' ? 'pix' : 'pronto';
 }
+
+/** the store opened on a free trial: open now, first charge at `endsAt` */
+export const trialOf = (next: PayNext | undefined) => (next?.kind === 'trial' ? next.endsAt : null);
 
 /** The card hand-off is out at Mercado Pago: its return (`?assinatura=retorno`) belongs here. */
 export function awaitingCardReturn(): boolean {

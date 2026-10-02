@@ -65,13 +65,18 @@ export default function Home() {
     if (data) setMilestone(unseenMilestone(s.store.id, data.totalOrders));
   }, [data, s.store.id]);
 
-  // a store nobody has touched yet opens the step-by-step, once (automated browsers skip it)
+  // a store nobody has touched yet opens the step-by-step, and so does one fresh from signup that
+  // never chose to leave it; "continuar depois" is kept by Core, so no device steers them back
+  // (automated browsers skip it)
+  const ob = data?.onboarding;
   if (
     data &&
     !navigator.webdriver &&
     can(s.user.role, 'manager') &&
     data.totalOrders === 0 &&
-    data.checklist.every((c) => !c.done) &&
+    !ob?.finished &&
+    !ob?.dismissed &&
+    (ob?.from === 'signup' || data.checklist.every((c) => !c.done)) &&
     !hasLeft(s.store.id)
   )
     return <Navigate to="/bem-vindo" replace />;
@@ -104,7 +109,7 @@ export default function Home() {
           <DeviceCard className="order-2 lg:order-none" />
           {data && data.checklist.some((c) => !c.done) ? (
             <div className="order-2 lg:order-none">
-              <Checklist items={data.checklist} />
+              <Checklist items={data.checklist} onboarding={data.onboarding} />
             </div>
           ) : null}
           <Section title="Mais vendidos hoje" className="order-4 lg:order-none">
@@ -338,6 +343,7 @@ const ATTENTION: Record<string, { Icon: typeof Bell; tone: Tone; cta: string }> 
   billing_pending: { Icon: Receipt, tone: 'warning', cta: 'pagar' },
   billing_past_due: { Icon: WarningCircle, tone: 'danger', cta: 'pagar' },
   invoice_open: { Icon: Receipt, tone: 'warning', cta: 'pagar' },
+  trial_ending: { Icon: ClockCountdown, tone: 'info', cta: 'escolher' },
   // our problem, not theirs: informative, never alarming
   incident: { Icon: CloudWarning, tone: 'info', cta: 'ver' },
 };
@@ -393,7 +399,13 @@ function Attention({ data }: { data: HomeData }) {
   );
 }
 
-function Checklist({ items }: { items: HomeData['checklist'] }) {
+function Checklist({
+  items,
+  onboarding,
+}: {
+  items: HomeData['checklist'];
+  onboarding: HomeData['onboarding'] | undefined;
+}) {
   const done = items.filter((i) => i.done).length;
   const pct = done / items.length;
   const r = 22;
@@ -435,7 +447,11 @@ function Checklist({ items }: { items: HomeData['checklist'] }) {
         </div>
       </div>
       <ButtonLink to="/bem-vindo" variant="spark" block className="mt-4">
-        fazer o passo a passo
+        {onboarding?.finished
+          ? 'terminar o que falta'
+          : onboarding?.step
+            ? 'continuar o passo a passo'
+            : 'fazer o passo a passo'}
       </ButtonLink>
       <ul className="mt-3 space-y-1">
         {items.map((i) => (

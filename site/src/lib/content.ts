@@ -17,10 +17,20 @@ const admin = new URL(import.meta.env.PUBLIC_ADMIN_URL || 'https://painel.vendua
 if (admin.protocol !== 'https:' && admin.hostname !== '127.0.0.1' && admin.hostname !== 'localhost')
   throw new Error('PUBLIC_ADMIN_URL must be https');
 
-/** the two plans exactly as decided; prices are display strings, the admin charges from Core */
+/**
+ * the two plans exactly as decided; prices are display strings, the admin charges from Core.
+ * `trial` is the only free offer (Basic, no card, decided 2026-10-02) and the only "grátis"
+ * postbuild.ts lets through.
+ */
 export const plans = {
-  basic: { id: 'basic', name: 'Venduá Basic', short: 'Basic', price: 'R$ 39,90' },
-  pro_plus: { id: 'pro_plus', name: 'Venduá PRO+', short: 'PRO+', price: 'R$ 99' },
+  basic: {
+    id: 'basic',
+    name: 'Venduá Basic',
+    short: 'Basic',
+    price: 'R$ 39,90',
+    trial: '14 dias grátis',
+  },
+  pro_plus: { id: 'pro_plus', name: 'Venduá PRO+', short: 'PRO+', price: 'R$ 99', trial: null },
 } as const;
 export type PlanId = keyof typeof plans;
 

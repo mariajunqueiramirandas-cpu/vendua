@@ -18,6 +18,7 @@ export const qk = {
   catalog: ['catalog'] as const,
   product: (id: string) => ['catalog', 'product', id] as const,
   store: ['store'] as const,
+  onboarding: ['onboarding'] as const,
   payments: ['payments'] as const,
   customers: (p: object) => ['customers', p] as const,
   customer: (phone: string) => ['customers', 'one', phone] as const,

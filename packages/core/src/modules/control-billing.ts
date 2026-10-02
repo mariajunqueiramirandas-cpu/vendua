@@ -60,6 +60,7 @@ export function mountControlBilling(o: {
           sub_status: string | null;
           sub_method: string | null;
           sub_period_end: Date | null;
+          sub_trial_end: Date | null;
           mp: string | null;
           cd_id: string | null;
           cd_host: string | null;
@@ -78,6 +79,7 @@ export function mountControlBilling(o: {
       >`
         select t.id, t.slug, t.name, t.created_at, t.plan, p.name as plan_name,
                s.status as sub_status, s.method as sub_method, s.current_period_end as sub_period_end,
+               s.trial_ends_at as sub_trial_end,
                pc.status as mp,
                cd.id as cd_id, cd.host as cd_host, cd.status as cd_status,
                sr.id as sr_id, sr.status as sr_status, sr.brief as sr_brief, sr.staff_note as sr_note,
@@ -114,7 +116,12 @@ export function mountControlBilling(o: {
           createdAt: r.created_at,
           plan: { id: r.plan, name: r.plan_name ?? 'Plano piloto' },
           subscription: r.sub_status
-            ? { status: r.sub_status, method: r.sub_method, currentPeriodEnd: r.sub_period_end }
+            ? {
+                status: r.sub_status,
+                method: r.sub_method,
+                currentPeriodEnd: r.sub_period_end,
+                trialEndsAt: r.sub_trial_end,
+              }
             : null,
           mercadoPago: r.mp,
           customDomain: r.cd_id ? { id: r.cd_id, host: r.cd_host, status: r.cd_status } : null,
@@ -171,6 +178,15 @@ export function mountControlBilling(o: {
       });
     if (body.public !== undefined && typeof body.public !== 'boolean')
       throw new HttpError(422, 'BAD_REQUEST', 'public must be true or false', { field: 'public' });
+    // a new store's free days before the first charge (ADR 0025); stores already on it keep theirs
+    const trial = body.trialDays;
+    if (
+      trial !== undefined &&
+      (typeof trial !== 'number' || !Number.isInteger(trial) || trial < 0 || trial > 60)
+    )
+      throw new HttpError(422, 'BAD_REQUEST', 'trialDays must be an integer 0–60', {
+        field: 'trialDays',
+      });
     const res = await claimControl(sql, idemKey(c), async (tx) => {
       const row = (
         await tx<PlanRow[]>`
@@ -178,6 +194,7 @@ export function mountControlBilling(o: {
             name = ${typeof name === 'string' ? name.trim() : tx`name`},
             price_cents = ${typeof price === 'number' ? price : tx`price_cents`},
             public = ${typeof body.public === 'boolean' ? body.public : tx`public`},
+            trial_days = ${typeof trial === 'number' ? trial : tx`trial_days`},
             updated_at = now()
           where id = ${id}
           returning *

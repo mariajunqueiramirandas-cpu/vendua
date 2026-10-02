@@ -32,6 +32,7 @@ export function PhotoField({
   initialFile,
   aspect = '4:3',
   vtKey,
+  compact,
 }: {
   photos: Photo[];
   onChange: (next: Photo[]) => Promise<unknown> | void;
@@ -43,6 +44,8 @@ export function PhotoField({
   aspect?: AspectKey;
   /** the cover is this shared-element destination (`data-vt-dst`, app/Router.tsx) */
   vtKey?: string;
+  /** a thumbnail-sized slot (a list row): the empty tile is just the camera */
+  compact?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -132,12 +135,19 @@ export function PhotoField({
         <button
           type="button"
           onClick={() => input.current?.click()}
-          className="flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-line-strong bg-sunken text-muted hover:bg-press"
+          className={cn(
+            'flex w-full flex-col items-center justify-center gap-2 border-2 border-dashed border-line-strong bg-sunken text-muted hover:bg-press',
+            compact ? 'rounded-md' : 'rounded-lg',
+          )}
           style={{ aspectRatio: ASPECTS[aspect] }}
           data-vt-dst={vtKey}
+          aria-label={compact ? label : undefined}
         >
-          <Camera weight="duotone" className={cn(max === 1 ? 'size-8' : 'size-12')} />
-          <span className="t-label text-ink">adicionar foto</span>
+          <Camera
+            weight="duotone"
+            className={cn(compact ? 'size-6' : max === 1 ? 'size-8' : 'size-12')}
+          />
+          {compact ? null : <span className="t-label text-ink">adicionar foto</span>}
           {max > 1 ? (
             <span className="t-caption px-3 text-center">
               Da câmera ou da galeria. A gente ajusta o tamanho.

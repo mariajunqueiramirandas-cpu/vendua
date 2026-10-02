@@ -95,6 +95,8 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0021](adr/0021-self-serve-signup-and-plan-billing.md) | Self-serve signup and plan billing                          |
 | [0022](adr/0022-control-plane-v0-and-edge.md)          | Control Plane v0 in Core, a Bun edge, pointer-flip releases |
 | [0023](adr/0023-staff-events-on-discord.md)            | Staff events, delivered to Discord by an HTTP-only bot      |
+| [0024](adr/0024-distance-based-delivery-pricing.md)    | Delivery priced by road distance from a confirmed pin       |
+| [0025](adr/0025-free-trial-on-basic.md)                | A 14-day free trial on Venduá Basic, no card                |
 
 ## Conventions
 

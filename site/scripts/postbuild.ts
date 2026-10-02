@@ -45,7 +45,7 @@ const BANNED: [RegExp, string][] = [
   [/sob medida/i, 'custom software is gone'],
   [/software house/i, 'custom software is gone'],
   [/sem taxas?/i, "Mercado Pago keeps its fee on each payment (Venduá's is none)"],
-  [/\bgr[aá]tis\b/i, 'both plans are paid; no trial'],
+  [/(?<!\b14\s+dias\s+)\bgr[aá]tis\b/i, "only Basic's 14-day trial is free"],
   [/\bem breve\b/i, 'sign-up is open'],
   [/quero pudim/i, 'the site shows only the fictional Bolos da Nena'],
 ];

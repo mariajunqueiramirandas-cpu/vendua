@@ -38,13 +38,17 @@ piloto" with no price.
 the paid period when the owner cancels). Upgrades apply at once; downgrades wait for the period
 end (`pending_plan_id`). An unpaid period moves the store to `past_due` and the admin says so,
 but **the store stays open** — suspension is a staff decision, not a job.
+(Amended by [ADR 0025](0025-free-trial-on-basic.md): Basic starts with a free `trialing` period,
+no card; a trial that ends unpaid pauses the store until the first payment.)
 
 **Signup lives in the merchant admin** (`/admin/comecar`, pre-auth routes under
 `/admin/v1/signup`), not on the marketing site: it needs the admin host's cookie and Core's
 same-origin rule, and the site stays static with no forms. The site links to it.
 
-1. Plan → store name and address (slug check; platform names like `painel`, `admin`, `api`
-   are reserved) → owner name and email → WhatsApp code (the login OTP table with
+1. Plan (the site's `?plano=` preselects it) → store name and address (slug check; platform
+   names like `painel`, `admin`, `api` are reserved) → what the store sells
+   (`store_settings.segment`, migration 0074: it tunes the onboarding's suggestions) → owner
+   name and email → WhatsApp code (the login OTP table with
    `purpose = 'signup'`, which sends to phones that aren't members yet) → payment method.
 2. `POST /signup` calls `provision_store()`, a security-definer function (the app role can't
    insert tenants or domains under RLS): tenant, primary `<slug>.<store domain>` host,

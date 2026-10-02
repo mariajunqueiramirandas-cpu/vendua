@@ -802,7 +802,7 @@ const agentV2 = {
 
 // ── self-serve fleet: billing, plans, custom domains, site requests, incidents ──
 
-export type SubscriptionStatus = 'pending' | 'active' | 'past_due' | 'cancelled';
+export type SubscriptionStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'cancelled';
 export type MpStatus = 'connected' | 'expiring' | 'disconnected' | 'restricted';
 export type CustomDomainStatus = 'pending_dns' | 'dns_ok' | 'active' | 'failed';
 export type SiteRequestStatus = 'requested' | 'in_progress' | 'delivered' | 'cancelled';
@@ -820,6 +820,8 @@ export interface BillingStore {
     status: SubscriptionStatus;
     method: 'card' | 'pix';
     currentPeriodEnd: string | null;
+    /** set while trialing, kept after it converts (marks the trial used) */
+    trialEndsAt: string | null;
   } | null;
   mercadoPago: MpStatus | null;
   customDomain: { id: string; host: string; status: CustomDomainStatus } | null;
@@ -847,6 +849,8 @@ export interface ControlPlan {
   features: { customDomain: boolean; customSite: boolean };
   public: boolean;
   sort: number;
+  /** free days before the first charge for new stores; 0 = no trial */
+  trialDays: number;
 }
 export interface Incident {
   id: string;
@@ -860,7 +864,10 @@ export interface Incident {
 const fleet = {
   billingStores: () => req<{ stores: BillingStore[] }>('/billing/stores'),
   controlPlans: () => req<{ plans: ControlPlan[] }>('/plans'),
-  patchPlan: (id: string, patch: { name?: string; priceCents?: number; public?: boolean }) =>
+  patchPlan: (
+    id: string,
+    patch: { name?: string; priceCents?: number; public?: boolean; trialDays?: number },
+  ) =>
     req<unknown>(`/plans/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),

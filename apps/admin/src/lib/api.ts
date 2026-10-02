@@ -155,6 +155,8 @@ export interface Plan {
   priceCents: number | null;
   feeBps: number;
   features: { customDomain: boolean; customSite: boolean };
+  /** a new store on this plan starts with these free days, no card (0 = none; ADR 0025) */
+  trialDays: number;
 }
 
 export interface StoreRef {
@@ -535,7 +537,7 @@ export interface Home {
   attention: {
     /** orders_waiting | closed_with_orders | pix_to_confirm | low_stock | waitlist |
      *  alerts_failing | mp_expiring | mp_disconnected | mp_restricted | billing_pending |
-     *  billing_past_due | invoice_open | incident */
+     *  billing_past_due | invoice_open | trial_ending | incident */
     kind: string;
     count: number;
     title: string;
@@ -543,7 +545,9 @@ export interface Home {
     href: string;
     productId?: string;
   }[];
-  checklist: { id: string; label: string; done: boolean; href: string }[];
+  checklist: ChecklistItem[];
+  /** where the store's setup stands (the onboarding at /bem-vindo) */
+  onboarding: { finished: boolean; dismissed: boolean; from: 'signup' | null; step: string | null };
   totalOrders: number;
   feed: {
     at: string;
@@ -821,9 +825,30 @@ export interface Incident {
   resolvedAt: string | null;
 }
 
-export type SubscriptionStatus = 'pending' | 'active' | 'past_due' | 'cancelled';
+export type SubscriptionStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'cancelled';
 export type InvoiceStatus = 'open' | 'paid' | 'failed' | 'void';
 export type DomainStatus = 'active' | 'pending_dns' | 'dns_ok' | 'failed';
+
+export interface ChecklistItem {
+  /** profile | hours | delivery | pix | menu | first_order */
+  id: string;
+  label: string;
+  done: boolean;
+  href: string;
+}
+
+/** The store's setup, kept by Core so it resumes on any device (GET/PATCH /onboarding). */
+export interface Onboarding {
+  /** what the store sells: one of Core's segment ids (features/onboarding/segments.ts) */
+  segment: string | null;
+  /** 'signup': born in /comecar — the onboarding doesn't ask again what signup knew */
+  from: 'signup' | null;
+  step: string | null;
+  skipped: string[];
+  finishedAt: string | null;
+  dismissedAt: string | null;
+  checklist: ChecklistItem[];
+}
 
 export interface Invoice {
   id: string;
@@ -862,6 +887,8 @@ export interface Account {
     /** card: where the owner authorizes the recurring charge (while pending) */
     checkoutUrl: string | null;
     payerEmail: string | null;
+    /** the free trial's end (the first charge); kept after it converts */
+    trialEndsAt: string | null;
   } | null;
   billing: { available: boolean };
   invoices: Invoice[];
@@ -894,7 +921,9 @@ export type PayNext =
   | { kind: 'card'; url: string }
   | { kind: 'pix'; invoiceId: string }
   /** signed up with an access code: the team confirms this invoice by hand */
-  | { kind: 'manual'; invoiceId: string };
+  | { kind: 'manual'; invoiceId: string }
+  /** a free trial: the store is open and nothing is charged until `endsAt` */
+  | { kind: 'trial'; endsAt: string };
 
 export type { PageTemplate };
 export type TemplateSection = SectionInstance;
@@ -1070,18 +1099,22 @@ export const api = {
         phone,
       }),
     otpVerify: (phone: string, code: string) =>
-      send<{ signupToken: string; existingStores: StoreRef[] }>('POST', '/signup/otp/verify', {
-        phone,
-        code,
-      }),
+      send<{ signupToken: string; existingStores: StoreRef[]; trialEligible: boolean }>(
+        'POST',
+        '/signup/otp/verify',
+        { phone, code },
+      ),
     create: (p: {
       signupToken: string;
       planId: string;
-      method: 'card' | 'pix';
+      /** the plan's free trial: no payment method asked */
+      trial?: boolean;
+      method?: 'card' | 'pix';
       storeName: string;
       slug: string;
       ownerName: string;
       email: string;
+      segment?: string;
       accessCode?: string;
     }) => send<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
   },
@@ -1218,6 +1251,15 @@ export const api = {
     });
   },
 
+  onboarding: () => get<Onboarding>('/onboarding'),
+  updateOnboarding: (p: {
+    step?: string | null;
+    skipped?: string[];
+    segment?: string | null;
+    finished?: true;
+    dismissed?: boolean;
+  }) => send<Onboarding>('PATCH', '/onboarding', p),
+
   store: () => get<StoreView>('/store'),
   updateStore: (patch: Record<string, unknown>) => send<StoreView>('PATCH', '/store', patch),
   /** roughly where a one-line address is (Core asks the geocoder); null = not found */
@@ -1246,7 +1288,9 @@ export const api = {
     /** replaces the whole map */
     adjustments?: PaymentAdjustments | null;
   }) => send<Payments>('PATCH', '/payments', p),
-  mpConnect: () => send<{ url: string }>('POST', '/payments/mercadopago/connect'),
+  /** back: 'onboarding' — Mercado Pago returns to /bem-vindo instead of Pagamentos */
+  mpConnect: (back?: 'onboarding') =>
+    send<{ url: string }>('POST', '/payments/mercadopago/connect', back ? { back } : undefined),
   mpDisconnect: () => send<Payments>('POST', '/payments/mercadopago/disconnect'),
   statement: (month: string) => get<Statement>(`/payments/statement?month=${month}`),
 

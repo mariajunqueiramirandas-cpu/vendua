@@ -53,7 +53,13 @@ export function usePatchSiteRequest() {
 export function usePatchPlan() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; name?: string; priceCents?: number; public?: boolean }) => {
+    mutationFn: (v: {
+      id: string;
+      name?: string;
+      priceCents?: number;
+      public?: boolean;
+      trialDays?: number;
+    }) => {
       const { id, ...patch } = v;
       return api.patchPlan(id, patch);
     },

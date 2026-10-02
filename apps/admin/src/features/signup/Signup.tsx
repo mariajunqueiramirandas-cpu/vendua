@@ -11,10 +11,12 @@ import type { Pose } from '../../ui/Mascote.tsx';
 import { useKeyboard } from '../../ui/keyboard.ts';
 import { Toaster } from '../../ui/Toast.tsx';
 import { Guide } from '../onboarding/Guide.tsx';
+import { JourneyBar } from '../onboarding/Journey.tsx';
 import { CardConfirm, CardHandoff, PixPay, Welcome } from './after.tsx';
 import {
   afterCreate,
   clearDraft,
+  trialOf,
   EMPTY,
   loadDraft,
   loadToken,
@@ -32,6 +34,7 @@ import {
   PlanStepSkeleton,
   StoreStep,
   Summary,
+  TipoStep,
   WhatsappStep,
   YouStep,
   type FlowProps,
@@ -41,19 +44,21 @@ import {
 // onboarding, ending in a paid plan. Plan → store → you → WhatsApp → payment → create; then a
 // card hand-off to Mercado Pago or a Pix to pay here, and the welcome into /bem-vindo.
 
-const QUESTIONS: StepId[] = ['plano', 'loja', 'voce', 'whatsapp', 'pagamento'];
+const QUESTIONS: StepId[] = ['plano', 'loja', 'tipo', 'voce', 'whatsapp', 'pagamento'];
 const AT: Partial<Record<StepId, number>> = {
   plano: 0,
   loja: 1,
-  voce: 2,
-  whatsapp: 3,
-  codigo: 3,
-  existente: 3,
-  pagamento: 4,
+  tipo: 2,
+  voce: 3,
+  whatsapp: 4,
+  codigo: 4,
+  existente: 4,
+  pagamento: 5,
 };
 const PRE = new Set<StepId>([
   'plano',
   'loja',
+  'tipo',
   'voce',
   'whatsapp',
   'codigo',
@@ -64,6 +69,7 @@ const PRE = new Set<StepId>([
 const LINE: Record<StepId, string> = {
   plano: 'Oi! Vou abrir a sua loja com você, rapidinho e sem palavra difícil.',
   loja: 'Agora o mais importante: o nome!',
+  tipo: 'Me conta mais da loja.',
   voce: 'Quero saber com quem estou falando.',
   whatsapp: 'É pelo WhatsApp que você entra no painel. Nada de senha.',
   codigo: 'Mandei o código. Pode abrir o WhatsApp, eu espero aqui.',
@@ -77,6 +83,7 @@ const LINE: Record<StepId, string> = {
 const POSE: Record<StepId, Pose> = {
   plano: 'avatar-ola',
   loja: 'loja',
+  tipo: 'avatar-pensando',
   voce: 'avatar-feliz',
   whatsapp: 'seguranca',
   codigo: 'avatar-pensando',
@@ -155,11 +162,18 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
       window.history.replaceState(null, '', '/admin/comecar');
   }, []);
 
-  // default the plan to the first one offered: one less tap for most people
+  // the plan chosen on the site (?plano=) wins; otherwise the first one offered, one less tap
+  const fromSite = useRef(new URLSearchParams(window.location.search).get('plano'));
   useEffect(() => {
     const list = plans.data?.plans;
-    if (list?.length && !list.some((p) => p.id === cur.current.planId))
-      patch({ planId: list[0]!.id });
+    if (!list?.length) return;
+    const site = fromSite.current;
+    fromSite.current = null;
+    if (site && !cur.current.created && list.some((p) => p.id === site)) {
+      patch({ planId: site });
+      if (window.location.search.includes('plano='))
+        window.history.replaceState(null, '', '/admin/comecar');
+    } else if (!list.some((p) => p.id === cur.current.planId)) patch({ planId: list[0]!.id });
   }, [plans.data, patch]);
 
   const finish = useCallback(() => {
@@ -175,6 +189,13 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
   const done = !PRE.has(step);
 
   const props: FlowProps | null = plans.data ? { d, patch, go, notice, plans: plans.data } : null;
+  // the free days this signup starts with, once the phone is known to be eligible
+  const planTrial = plans.data?.plans.find((p) => p.id === d.planId)?.trialDays ?? 0;
+  const trialDays =
+    trialOf(d.created?.next) ||
+    (verified?.trialEligible && plans.data?.billing.available && !d.byCode)
+      ? planTrial
+      : 0;
 
   let body: React.ReactNode;
   if (step === 'pronto')
@@ -185,7 +206,8 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
           d.created?.store.slug ?? d.slug,
           plans.data?.storeDomain ?? 'vendua.com.br',
         )}
-        paid={d.created?.next.kind !== 'manual'}
+        paid={d.created?.next.kind === 'pix' || d.created?.next.kind === 'card'}
+        trialEndsAt={trialOf(d.created?.next)}
         onGo={finish}
       />
     );
@@ -228,6 +250,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
     );
   else if (step === 'plano') body = <PlanStep {...props} />;
   else if (step === 'loja') body = <StoreStep {...props} />;
+  else if (step === 'tipo') body = <TipoStep {...props} />;
   else if (step === 'voce') body = <YouStep {...props} />;
   else if (step === 'whatsapp') body = <WhatsappStep {...props} onDevCode={setDevCode} />;
   else if (step === 'codigo')
@@ -284,28 +307,16 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
 
   return (
     <div className="min-h-dvh overflow-x-clip">
-      <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-bg/95 px-4 py-3 backdrop-blur-sm md:px-8 kb:static">
-        <p className="font-display text-lg font-semibold">venduá</p>
-        <div
-          className="flex flex-1 items-center justify-center gap-3"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={questions}
-          aria-valuenow={answered}
-          aria-label="andamento do cadastro"
-        >
-          <span className="h-2 w-full max-w-64 overflow-hidden rounded-full bg-line-strong">
-            <span
-              className="block h-full rounded-full bg-[var(--chart)] transition-[width] duration-(--duration-smooth) ease-(--ease-soft)"
-              style={{ width: `${(Math.max(answered, 0.35) / questions) * 100}%` }}
-            />
-          </span>
-          <span className="t-caption tnum hidden whitespace-nowrap text-muted sm:inline">
-            {done ? 'loja criada' : `${answered + 1} de ${questions}`}
-          </span>
-        </div>
-        {exit}
-      </header>
+      {step === 'pronto' ? (
+        <JourneyBar phase="loja" progress={0} status="começando" />
+      ) : (
+        <JourneyBar
+          phase="conta"
+          progress={done ? 1 : Math.max(answered, 0.35) / questions}
+          status={done ? 'loja criada' : `${answered + 1} de ${questions}`}
+          exit={exit}
+        />
+      )}
 
       <div
         className={cn(
@@ -328,7 +339,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
             aria-label="resumo da sua loja"
           >
             <p className="t-label mb-3 text-center text-muted">Sua loja, tomando forma</p>
-            <Summary d={d} plans={plans.data} />
+            <Summary d={d} plans={plans.data} trial={trialDays} />
           </aside>
         ) : null}
       </div>

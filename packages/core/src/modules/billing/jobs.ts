@@ -22,6 +22,8 @@ import {
   pastDueMessage,
   queueOwners,
   reminderMessage,
+  trialEndedMessage,
+  trialEndingMessage,
 } from './notices.ts';
 import { planRow } from './plans.ts';
 import {
@@ -106,11 +108,13 @@ export async function runBillingTick(sql: Sql, o: BillingJobOpts, now: Date) {
   const steps: [string, Step][] = [
     ['reconcile', reconcilePix],
     ['end', endCancelled],
+    ['trials', endTrials],
     ['upgrades', expireUpgrades],
     ['downgrades', applyDowngrades],
     ['past_due', markPastDue],
     ['renewals', issueRenewals],
     ['reminders', sendReminders],
+    ['trial_reminders', remindTrials],
     ['prices', (sql, base, now) => syncPlanPrices(sql, base, now)],
   ];
   for (const [name, step] of steps) {
@@ -259,7 +263,8 @@ const endCancelled: Step = async (sql, base, now) => {
     sql,
     (tx) => tx<{ tenant_id: string }[]>`
       select tenant_id from subscriptions
-      where status in ('active', 'past_due') and cancel_at_period_end and current_period_end <= ${now}
+      where status in ('active', 'past_due', 'trialing') and cancel_at_period_end
+        and current_period_end <= ${now}
       limit ${BATCH}
     `,
   );
@@ -288,6 +293,91 @@ const endCancelled: Step = async (sql, base, now) => {
         ended.provider_subscription_id,
         'cancelled',
       );
+  });
+};
+
+/**
+ * A trial that ended unpaid (ADR 0025): the store pauses for orders until the first payment,
+ * like a signup that hasn't paid yet. A card the owner authorized gets CARD_GRACE_MS for Mercado
+ * Pago's charge (made on the trial's last day) to arrive first.
+ */
+const endTrials: Step = async (sql, base, now, o) => {
+  const cardCutoff = new Date(now.getTime() - CARD_GRACE_MS);
+  const rows = await controlTx(
+    sql,
+    (tx) => tx<{ tenant_id: string }[]>`
+      select tenant_id from subscriptions
+      where status = 'trialing' and not cancel_at_period_end and (
+        trial_ends_at <= ${cardCutoff} or (trial_ends_at <= ${now} and not (
+          method = 'card' and provider_subscription_id is not null and checkout_url is null)))
+      limit ${BATCH}
+    `,
+  );
+  const pix = o.provider.platformConfigured;
+  await each(rows, 'trials', async ({ tenant_id }) => {
+    const stale = await withEffects(base, (ctx) =>
+      withTenant(sql, tenant_id, async (tx) => {
+        const sub = await lockSub(tx, tenant_id);
+        if (!sub || sub.status !== 'trialing' || sub.cancel_at_period_end || !sub.trial_ends_at)
+          return null;
+        const authorized =
+          sub.method === 'card' && !!sub.provider_subscription_id && !sub.checkout_url;
+        if (sub.trial_ends_at > (authorized ? cardCutoff : now)) return null;
+        // a card never authorized (its first charge date is now past) gives way to the Pix, so
+        // there's something to pay right away; the owner can still switch back to card
+        const unused = sub.method === 'card' && !authorized ? sub.provider_subscription_id : null;
+        const method = sub.method === 'card' && !authorized ? 'pix' : sub.method;
+        await tx`
+          update subscriptions set status = 'pending', method = ${method},
+            provider_subscription_id = ${method === sub.method ? sub.provider_subscription_id : null},
+            checkout_url = ${method === sub.method ? sub.checkout_url : null},
+            current_period_start = null, current_period_end = null,
+            updated_at = now(), status_changed_at = now()
+          where tenant_id = ${tenant_id}
+        `;
+        const plan = await planRow(tx, chargePlanId(sub));
+        // the first month's invoice is what reopens the store; a Pix one normally went out ahead
+        // of the end (Conta asks Mercado Pago for a fresh Pix when the owner opens it)
+        if (method === 'pix' && plan) {
+          const open = await tx`
+            select 1 from invoices where tenant_id = ${tenant_id} and kind = 'period'
+              and status in ('open', 'failed')
+          `;
+          if (!open.length) {
+            const inv = await upsertInvoice(tx, {
+              tenantId: tenant_id,
+              provider: ctx.provider.name,
+              drop: dropPix(ctx),
+              start: sub.trial_ends_at,
+              planId: plan.id,
+              amountCents: plan.price_cents,
+              method: 'pix',
+              dueAt: now,
+            });
+            if (!pix) await recordManualInvoice(tx, inv, plan.name);
+          }
+        }
+        await applyHold(tx, tenant_id);
+        await emitAdminTx(tx, tenant_id, 'billing');
+        const planName = plan?.name ?? sub.plan_id;
+        queueOwners(
+          ctx,
+          tenant_id,
+          trialEndedMessage(planName, ctx.origin),
+          `billing:trial_ended:${tenant_id}`,
+        );
+        await recordBillingProblem(
+          tx,
+          tenant_id,
+          'trial_ended',
+          `O teste grátis do plano ${planName} terminou em ${dayMonth(sub.trial_ends_at)} sem pagamento; a loja parou de receber pedidos até pagar.`,
+          sub.trial_ends_at.toISOString(),
+        );
+        return unused;
+      }),
+    );
+    // after the tx (Mercado Pago never runs under the store's lock): the unused assinatura stops
+    if (stale) await stopPreapproval({ ...base, later: () => {} }, stale, 'cancelled');
   });
 };
 
@@ -402,8 +492,8 @@ const issueRenewals: Step = async (sql, base, now) => {
     sql,
     (tx) => tx<{ tenant_id: string }[]>`
       select s.tenant_id from subscriptions s
-      where s.status in ('active', 'past_due') and s.method = 'pix' and not s.cancel_at_period_end
-        and s.current_period_end <= ${horizon}
+      where s.status in ('active', 'past_due', 'trialing') and s.method = 'pix'
+        and not s.cancel_at_period_end and s.current_period_end <= ${horizon}
         and not exists (select 1 from invoices i where i.tenant_id = s.tenant_id
                           and i.period_start = s.current_period_end and i.status <> 'void'
                           and (${!pix} or i.status <> 'open' or i.pix_copy_paste is not null))
@@ -520,6 +610,73 @@ const sendReminders: Step = async (sql, base, now) => {
   });
 };
 
+type TrialStage = 'soon' | 'last';
+
+/** "your trial ends on DD/MM" 3 days before and on its last day — each at most once */
+const remindTrials: Step = async (sql, base, now) => {
+  const rows = await controlTx(
+    sql,
+    (tx) => tx<{ tenant_id: string; trial_ends_at: Date; trial_reminded: string[] }[]>`
+      select tenant_id, trial_ends_at, trial_reminded from subscriptions
+      where status = 'trialing' and not cancel_at_period_end and trial_ends_at > ${now}
+        and trial_ends_at <= ${new Date(now.getTime() + 3 * DAY_MS)}
+        -- only rows whose current stage is still unsent, so sent ones never crowd the batch
+        and not (case when trial_ends_at <= ${new Date(now.getTime() + DAY_MS)} then 'last' else 'soon' end
+                 = any(trial_reminded))
+      order by trial_ends_at limit ${BATCH}
+    `,
+  );
+  await each(rows, 'trial_reminders', async (row) => {
+    const stage: TrialStage =
+      row.trial_ends_at.getTime() - now.getTime() <= DAY_MS ? 'last' : 'soon';
+    if (row.trial_reminded.includes(stage)) return;
+    const upto: TrialStage[] = stage === 'last' ? ['soon', 'last'] : ['soon'];
+    // claim first: a failed send is logged, never repeated into a second message
+    const claimed = await withTenant(sql, row.tenant_id, async (tx) => {
+      await lockSub(tx, row.tenant_id);
+      const sub = (
+        await tx<
+          {
+            method: string;
+            provider_subscription_id: string | null;
+            checkout_url: string | null;
+            trial_ends_at: Date;
+            plan_id: string;
+          }[]
+        >`
+          update subscriptions
+          set trial_reminded = array(select distinct unnest(trial_reminded || ${upto}::text[]))
+          where tenant_id = ${row.tenant_id} and status = 'trialing' and not cancel_at_period_end
+            and not (${stage} = any(trial_reminded))
+          returning method, provider_subscription_id, checkout_url, trial_ends_at,
+            coalesce(pending_plan_id, plan_id) as plan_id
+        `
+      )[0];
+      if (!sub) return null;
+      const plan = await planRow(tx, sub.plan_id);
+      return plan ? { sub, plan } : null;
+    });
+    if (!claimed) return;
+    const { sub, plan } = claimed;
+    const pay =
+      sub.method !== 'card'
+        ? 'pix'
+        : sub.provider_subscription_id && !sub.checkout_url
+          ? 'card'
+          : 'authorize';
+    await messageOwners(
+      base,
+      row.tenant_id,
+      trialEndingMessage(
+        stage,
+        { planName: plan.name, cents: plan.price_cents, endsAt: sub.trial_ends_at, pay },
+        base.origin,
+      ),
+      `trial-reminder:${row.tenant_id}:${stage}`,
+    );
+  });
+};
+
 /**
  * Prices follow the catalog (a CRM price change applies to future charges): the MP assinatura
  * amount, and unpaid Pix invoices for a period that hasn't begun (or a first one, nothing paid
@@ -532,7 +689,8 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       select s.tenant_id from subscriptions s
         join plans p on p.id = coalesce(s.pending_plan_id, s.plan_id)
       where s.method = 'card' and s.provider_subscription_id is not null
-        and s.status in ('pending', 'active', 'past_due') and s.provider = ${base.provider.name}
+        and s.status in ('pending', 'trialing', 'active', 'past_due')
+        and s.provider = ${base.provider.name}
         and s.charge_cents is distinct from p.price_cents
       limit ${BATCH}
     `,

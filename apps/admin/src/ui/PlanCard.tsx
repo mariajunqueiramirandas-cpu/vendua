@@ -1,4 +1,4 @@
-import { CheckCircle, Circle } from '@phosphor-icons/react';
+import { CheckCircle, Circle, Gift } from '@phosphor-icons/react';
 import type { Plan } from '../lib/api.ts';
 import { money } from '../lib/format.ts';
 import { haptic } from '../lib/haptics.ts';
@@ -66,6 +66,7 @@ export function PlanOption({
   address,
   badge,
   disabled,
+  trial,
 }: {
   plan: Plan;
   selected: boolean;
@@ -73,6 +74,8 @@ export function PlanOption({
   address: string;
   badge?: string | undefined;
   disabled?: boolean;
+  /** a new store: the plan's free days show (a running subscription never trials again) */
+  trial?: boolean;
 }) {
   const price = perMonth(plan);
   return (
@@ -107,6 +110,12 @@ export function PlanOption({
                 {money(plan.priceCents!)}
               </span>
               <span className="t-body text-muted">/mês</span>
+            </span>
+          ) : null}
+          {trial && plan.trialDays > 0 ? (
+            <span className="t-label mt-2 inline-flex items-center gap-1.5 rounded-full bg-success-soft px-2.5 py-1 text-success">
+              <Gift weight="fill" className="size-4" aria-hidden /> {plan.trialDays} dias grátis,
+              sem cartão
             </span>
           ) : null}
         </span>

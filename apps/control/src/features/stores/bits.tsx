@@ -11,11 +11,12 @@ import type {
 import { cn } from '@/lib/cn.ts';
 import { Badge } from '@/components/ui/badge.tsx';
 
-type Variant = 'default' | 'outline' | 'warn' | 'bad' | 'live' | 'agent-soft';
+type Variant = 'default' | 'outline' | 'warn' | 'bad' | 'live' | 'contacted' | 'agent-soft';
 type Tone = { label: string; variant: Variant };
 
 export const SUB_STATUS: Record<SubscriptionStatus, Tone> = {
   pending: { label: 'pendente', variant: 'warn' },
+  trialing: { label: 'em teste', variant: 'contacted' },
   active: { label: 'ativa', variant: 'live' },
   past_due: { label: 'em atraso', variant: 'bad' },
   cancelled: { label: 'cancelada', variant: 'default' },

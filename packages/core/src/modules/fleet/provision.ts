@@ -475,6 +475,7 @@ export async function createInviteTx(
       owner: i.ownerName,
       leadId: i.leadId,
       plan: null,
+      segment: null,
     },
     { tenantId, dedupeKey: `store.created:${tenantId}` },
   );

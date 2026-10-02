@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { roleAtLeast, type AdminDeps, type Role } from './context.ts';
 import { handlers } from './handlers.ts';
+import { onboardingOf, setupChecklist } from './routes-onboarding.ts';
 import { storeTz } from './routes-orders.ts';
 import { loadSettings, statusOf } from './routes-store.ts';
 
@@ -140,50 +141,8 @@ export function mountHome(d: AdminDeps) {
           });
       }
 
-      const counts = (
-        await tx<{ products: number; withPhoto: number; zones: number; orders: number }[]>`
-          select
-            (select count(*) from products where tenant_id = ${t.id} and status <> 'archived')::int as products,
-            (select count(distinct p.id) from products p join product_media pm on pm.product_id = p.id
-              where p.tenant_id = ${t.id} and p.status <> 'archived')::int as "withPhoto",
-            (select count(*) from delivery_zones where tenant_id = ${t.id} and active)::int as zones,
-            (select count(*) from orders where tenant_id = ${t.id})::int as orders
-        `
-      )[0]!;
-      const checklist = [
-        {
-          id: 'profile',
-          label: 'Logo e WhatsApp da loja',
-          done: !!s.logo_url && !!s.whatsapp,
-          href: '/loja#perfil',
-        },
-        {
-          id: 'hours',
-          label: 'Horário de funcionamento',
-          done: (s.hours?.windows?.length ?? 0) > 0,
-          href: '/loja#horarios',
-        },
-        {
-          id: 'delivery',
-          label: 'Entrega ou retirada',
-          done:
-            (s.delivery_enabled && counts.zones > 0) || (s.pickup_enabled && !s.delivery_enabled),
-          href: '/loja#entrega',
-        },
-        { id: 'pix', label: 'Chave Pix para receber', done: !!s.pix_key, href: '/pagamentos' },
-        {
-          id: 'menu',
-          label: '3 produtos com foto',
-          done: counts.withPhoto >= 3,
-          href: '/cardapio',
-        },
-        {
-          id: 'first_order',
-          label: 'Primeiro pedido',
-          done: counts.orders > 0,
-          href: '/marketing#compartilhar',
-        },
-      ];
+      const { checklist, orders: totalOrders } = await setupChecklist(tx, t.id, s);
+      const ob = onboardingOf(s);
 
       const feed = await tx`
         select e.at, e.to_state as "to", e.from_state as "from", e.actor, o.id as "orderId", o.number,
@@ -237,7 +196,13 @@ export function mountHome(d: AdminDeps) {
         inProgress,
         attention: attention.slice(0, 6),
         checklist,
-        totalOrders: counts.orders,
+        onboarding: {
+          finished: !!ob.finishedAt,
+          dismissed: !!ob.dismissedAt,
+          from: ob.from,
+          step: ob.step,
+        },
+        totalOrders,
         feed,
         live,
         best,
@@ -268,16 +233,55 @@ async function platformAttention(
   const out: Attention[] = [];
   if (roleAtLeast(role, 'owner')) {
     const sub = (
-      await tx<{ status: string }[]>`select status from subscriptions where tenant_id = ${tenantId}`
+      await tx<
+        {
+          status: string;
+          trial_ends_at: Date | null;
+          cancel_at_period_end: boolean;
+          ever_paid: boolean;
+        }[]
+      >`
+        select status, trial_ends_at, cancel_at_period_end,
+               exists (select 1 from invoices where tenant_id = ${tenantId} and status = 'paid') as ever_paid
+        from subscriptions where tenant_id = ${tenantId}
+      `
     )[0];
     if (billingHold && sub?.status === 'pending')
-      out.push({
-        kind: 'billing_pending',
-        count: 1,
-        title: 'Sua loja abre quando o primeiro pagamento do plano for confirmado',
-        detail: 'Pague a primeira fatura em Conta',
-        href: '/conta',
-      });
+      out.push(
+        // a trial that never converted, not a store that paid once and came back later
+        sub.trial_ends_at && !sub.ever_paid
+          ? {
+              kind: 'billing_pending',
+              count: 1,
+              title: 'O teste grátis acabou e a loja parou de receber pedidos',
+              detail: 'Pague o plano em Conta para ela voltar na hora',
+              href: '/conta',
+            }
+          : {
+              kind: 'billing_pending',
+              count: 1,
+              title: 'Sua loja abre quando o primeiro pagamento do plano for confirmado',
+              detail: 'Pague a primeira fatura em Conta',
+              href: '/conta',
+            },
+      );
+    // the last days of a free trial (ADR 0025): how it goes on is the owner's choice in Conta
+    if (sub?.status === 'trialing' && sub.trial_ends_at && !sub.cancel_at_period_end) {
+      const left = Math.ceil((sub.trial_ends_at.getTime() - Date.now()) / 86_400_000);
+      if (left <= 3)
+        out.push({
+          kind: 'trial_ending',
+          count: Math.max(left, 0),
+          title:
+            left <= 0
+              ? 'Seu teste grátis acaba hoje'
+              : left === 1
+                ? 'Seu teste grátis acaba amanhã'
+                : `Seu teste grátis acaba em ${left} dias`,
+          detail: 'Escolha Pix ou cartão em Conta para a loja seguir aberta',
+          href: '/conta',
+        });
+    }
     if (sub?.status === 'past_due')
       out.push({
         kind: 'billing_past_due',
@@ -295,7 +299,7 @@ async function platformAttention(
           and due_at < now() + interval '5 days'
       `
     )[0]!;
-    if (inv.n > 0 && !out.some((a) => a.kind === 'billing_pending')) {
+    if (inv.n > 0 && !out.some((a) => a.kind === 'billing_pending' || a.kind === 'trial_ending')) {
       const days = Math.ceil((new Date(inv.due!).getTime() - Date.now()) / 86_400_000);
       out.push({
         kind: 'invoice_open',

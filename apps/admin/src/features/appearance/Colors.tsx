@@ -50,7 +50,7 @@ for (const pair of CONTRAST_PAIRS) {
 export const readable = (t: StoreTokens) => contrastProblems(t).length === 0;
 
 /** A handful of saturated colours from the logo, most frequent first. */
-async function logoColors(url: string): Promise<string[]> {
+export async function logoColors(url: string): Promise<string[]> {
   const img = new Image();
   img.crossOrigin = 'anonymous';
   img.src = url;
@@ -80,7 +80,7 @@ async function logoColors(url: string): Promise<string[]> {
     .map((e) => hex(e.r / e.n, e.g / e.n, e.b / e.n));
 }
 
-const PRESETS: [string, string][] = [
+export const PRESETS: [string, string][] = [
   ['#AC5E10', 'caramelo'],
   ['#123C32', 'floresta'],
   ['#8E2C48', 'vinho'],

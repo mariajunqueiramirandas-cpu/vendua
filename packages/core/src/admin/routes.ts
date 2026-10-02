@@ -57,6 +57,7 @@ import { mountCatalog } from './routes-catalog.ts';
 import { mountCustomers } from './routes-customers.ts';
 import { mountHome } from './routes-home.ts';
 import { mountMarketing } from './routes-marketing.ts';
+import { mountOnboarding } from './routes-onboarding.ts';
 import { mountOrders } from './routes-orders.ts';
 import { mountPayments } from './routes-payments.ts';
 import { mountReports } from './routes-reports.ts';
@@ -735,6 +736,7 @@ export function mountAdmin(o: MountAdminOpts) {
   });
 
   mountHome(deps);
+  mountOnboarding(deps);
   mountOrders(deps);
   mountCatalog(deps);
   mountStore(deps);

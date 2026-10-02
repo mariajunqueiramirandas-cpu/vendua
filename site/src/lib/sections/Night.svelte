@@ -25,15 +25,15 @@
   const faq: { q: string; a: string }[] = [
     {
       q: 'Já posso criar a minha loja?',
-      a: 'Pode, o cadastro está aberto. Você escolhe o plano, dá o nome da loja, confirma o seu WhatsApp e paga o primeiro mês.',
+      a: `Pode, o cadastro está aberto. Você escolhe o plano, dá o nome da loja e confirma o seu WhatsApp. No ${plans.basic.short}, você começa com ${plans.basic.trial}, sem cartão; no ${plans.pro_plus.short}, paga o primeiro mês.`,
     },
     {
       q: 'Quanto custa?',
-      a: `Depende do plano. O ${plans.basic.name} custa ${plans.basic.price} por mês: a loja fica em seunome.vendua.com.br, com o visual padrão da Venduá. O ${plans.pro_plus.name} custa ${plans.pro_plus.price} por mês e traz domínio próprio e um site feito pelo nosso agente de IA. A Venduá não cobra nada por pedido; o Mercado Pago fica com a tarifa dele em cada pagamento.`,
+      a: `Depende do plano. O ${plans.basic.name} custa ${plans.basic.price} por mês e começa com ${plans.basic.trial}. A loja fica em seunome.vendua.com.br, com o visual padrão da Venduá. O ${plans.pro_plus.name} custa ${plans.pro_plus.price} por mês e traz domínio próprio e um site feito pelo nosso agente de IA. A Venduá não cobra nada por pedido; o Mercado Pago fica com a tarifa dele em cada pagamento.`,
     },
     {
       q: 'Como eu pago o plano?',
-      a: 'Por Pix, todo mês, ou no cartão, com a cobrança renovando sozinha a cada mês. Os dois pelo Mercado Pago.',
+      a: `Por Pix, todo mês, ou no cartão, com a cobrança renovando sozinha a cada mês. Os dois pelo Mercado Pago. No ${plans.basic.short}, a primeira cobrança vem depois dos ${plans.basic.trial}.`,
     },
     {
       q: 'Preciso entender de tecnologia?',
