@@ -6,7 +6,8 @@ platform constraints, what we already have to build on, a proposed checklist
 and the open decisions. Nothing here is planned until it has an ADR or a
 roadmap entry.
 
-| Feature                                   | Gap   | Status  |
-| ----------------------------------------- | ----- | ------- |
-| [iFood integration](ifood-integration.md) | P-013 | Tracked |
-| [WhatsApp ordering bot](whatsapp-bot.md)  | P-017 | Tracked |
+| Feature                                                   | Gap   | Status          |
+| --------------------------------------------------------- | ----- | --------------- |
+| [iFood integration](ifood-integration.md)                 | P-013 | Tracked         |
+| [WhatsApp ordering bot](whatsapp-bot.md)                  | P-017 | Tracked         |
+| [Vendedor, the merchant's AI sales agent](sales-agent.md) | P-017 | Design proposed |

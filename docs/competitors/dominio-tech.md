@@ -709,7 +709,8 @@ Open, for the owner:
    copilot skills.
 4. Add the watch routines, the weekly review and the daily summary (C1, C2, C6) on the existing
    scheduler, proposals only, with no autonomous writes yet.
-5. Turn the P-017 shopper agent into a design, with money grounding in code (D1, D2).
+5. Turn the P-017 shopper agent into a design, with money grounding in code (D1, D2). Done as a
+   proposal: [`features/sales-agent.md`](../features/sales-agent.md).
 6. Add merchant-copilot sim scenarios (E) before any autopilot.
 
 ## Sources and caveats
@@ -746,3 +747,4 @@ Caveats:
 - 2026-10-01: §2 rebuilt as a full inventory: every feature they publish, with our status and
   totals. The proposal now follows the owner's decision: no Claude, ChatGPT or MCP integration,
   and a copilot inside the admin.
+- 2026-10-02: step 5 of §5 written up as [`features/sales-agent.md`](../features/sales-agent.md).

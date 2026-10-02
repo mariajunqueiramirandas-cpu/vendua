@@ -65,6 +65,7 @@ Then per topic as needed:
 | Competitor feature gaps (tracker)        | [competitor-parity](competitor-parity.md)                                        |
 | Per-competitor profiles                  | [competitors/](competitors/README.md)                                            |
 | Feature deep dives (iFood, WhatsApp bot) | [features/](features/README.md)                                                  |
+| Merchant's AI sales agent (design)       | [features/sales-agent](features/sales-agent.md)                                  |
 
 ## ADRs
 
