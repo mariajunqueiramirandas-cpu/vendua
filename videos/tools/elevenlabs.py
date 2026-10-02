@@ -2,10 +2,10 @@
 # lower tier than the account key. Reads the key from ELEVENLABS_API_KEY; never pass it on the
 # command line or write it to a file in the repo.
 #
-#   python scripts/elevenlabs.py tts   <voice_id> "<text>" out.mp3 [--model eleven_v3]
-#   python scripts/elevenlabs.py sfx   "<prompt>" out.mp3 [--seconds 1.5]
-#   python scripts/elevenlabs.py music "<prompt>" out.mp3 [--seconds 30]
-#   python scripts/elevenlabs.py whoami
+#   python videos/tools/elevenlabs.py tts   <voice_id> "<text>" out.mp3 [--model eleven_v3]
+#   python videos/tools/elevenlabs.py sfx   "<prompt>" out.mp3 [--seconds 1.5]
+#   python videos/tools/elevenlabs.py music "<prompt>" out.mp3 [--seconds 30]
+#   python videos/tools/elevenlabs.py whoami
 import json
 import os
 import ssl

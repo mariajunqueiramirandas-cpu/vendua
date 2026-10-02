@@ -47,7 +47,7 @@ The wording matches the site ("14 dias grátis, sem cartão") and the signup's l
 
 - Audio through ElevenLabs, not HeyGen: Luiz = Talis, narrator = Bruna da Costa (the user's first
   pick; v1 used Adriane until the user supplied a Creator-plan API key, used through
-  `scripts/elevenlabs.py`), ElevenLabs Music v2.5 (a 128 BPM funk-pop bed, pre-mixed and ducked
+  `videos/tools/elevenlabs.py`), ElevenLabs Music v2.5 (a 128 BPM funk-pop bed, pre-mixed and ducked
   under the voices in `audio/music-bed.mp3`), ElevenLabs Sound Effects v2 for the SFX
   (`audio/sfx/`). The whole mix rebuilds with `scripts/build-audio.py`.
 - Sound effects must be very good: the voice note's play tap, waveform ticks, a chime when the
