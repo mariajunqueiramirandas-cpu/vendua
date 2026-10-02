@@ -22,7 +22,14 @@ const { chromium } = await import(
   join(REPO, 'node_modules/.bun/playwright-core@1.63.0/node_modules/playwright-core/index.mjs')
 );
 
-if (!/localhost|127\.0\.0\.1/.test(DB)) throw new Error('dev database only');
+// libpq's ?host= / ?hostaddr= override the URL's host, so they are refused too
+const dbUrl = new URL(DB);
+if (
+  !['localhost', '127.0.0.1', '[::1]'].includes(dbUrl.hostname) ||
+  dbUrl.searchParams.has('host') ||
+  dbUrl.searchParams.has('hostaddr')
+)
+  throw new Error('dev database only');
 const sql = (q) => execFileSync('psql', [DB, '-At', '-c', q], { encoding: 'utf8' }).trim();
 
 let cookie = '';
@@ -188,8 +195,10 @@ try {
     .first()
     .click();
   await page.waitForTimeout(800);
+  // Frame 4's "Pix" beat rests on this shot, so a missing or unselected Pix option is an error
   const pix = page.getByRole('radio', { name: /pix/i }).first();
-  if (await pix.count()) await pix.click({ force: true });
+  await pix.click({ force: true, timeout: 5000 });
+  if (!(await pix.isChecked())) throw new Error('the Pix option did not get selected');
   await page.waitForTimeout(400);
   await webp(page, 'vitrine-pagamento');
   await page
