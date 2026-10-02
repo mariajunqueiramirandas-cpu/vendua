@@ -436,17 +436,40 @@ ratio. "Publicar" shows "publicando…" and then "no ar ✓" with the live URL.
 
 ### 6.8 The store builds itself (onboarding)
 
-After signup, onboarding is a conversation: **one question per screen**, told
-by a friendly guide (a bobbing pudim in a speech bubble that praises each
-answer), with 56 px buttons, presets instead of blank fields (hours are "Segunda
-a sábado" plus one pair of times) and plain pt-BR. Each answer **visibly
-assembles their storefront** in a phone frame beside the questions (behind
-"Espiar minha loja" on phones): name → header, logo → avatar, hours → the
-status, first products → the grid. Everything saves on "Continuar", the step is
-remembered per store on the device, and "continuar depois" leaves without
-nagging. A store nobody has touched opens Início straight into it, once. The
-last step is "sua loja está no ar", with the URL, a QR code, "avisar no
-WhatsApp" and a list of what was left for later.
+Signup and onboarding are **one journey in three parts** — Cadastro, Sua loja, No ar — and
+both wear the same header (`JourneyBar`) and the same phone preview, which starts in signup
+with the store's name and address and keeps filling in. Signup asks what the store sells (ten
+big tiles, one tap); that answer tunes everything after it: the hours preset ("Terça a domingo,
+18h–23h30" for a pizzaria), example products, tagline ideas and the menu's first category.
+
+After signup, onboarding is a conversation: **one question per screen**, told by a friendly
+guide (Duá in a speech bubble that praises each answer), with 56 px buttons, presets instead of
+blank fields and plain pt-BR. The questions come in four parts, named above each title ("Atendimento · 2 de 5"):
+
+- **A cara da loja**: what it sells (only if nobody asked), import from another menu app, the
+  name (only if signup didn't ask), logo, the store's colour (swatches, the logo's first),
+  a phrase.
+- **Atendimento**: the store's WhatsApp (prefilled with the number signup verified), hours,
+  pickup and/or delivery, where to pick up, and how delivery is priced — by bairro, or by
+  distance from the store's pin (ADR 0024).
+- **Pagamentos** (owner): the methods it accepts, the Pix key (prefilled with the verified
+  phone and the owner's name), and Mercado Pago for card on the site, which comes back to the
+  wizard.
+- **Cardápio**: the first products with a photo each, or a WhatsApp list pasted in.
+
+Each answer **visibly assembles their storefront** in the phone beside the questions (behind
+"Espiar minha loja" on phones): name → header, logo → avatar, colour → buttons, hours → the
+status, products → the grid. Everything saves on "Continuar"; every optional question has a
+quiet "pular". Where the merchant stopped is kept by Core, so another device opens a
+welcome-back map with what's ready ticked and "Continuar: os horários". "Continuar depois"
+leaves without nagging (Core remembers it). A store nobody has touched, or one fresh from
+signup that never chose to leave, opens Início straight into it.
+
+While the plan's first payment is pending the wizard says so in a slim line under the header,
+with the Pix one tap away, and notices by itself when it lands. The last step is "sua loja está
+no ar" — or "sua loja está pronta", with the payment that opens it right there — with the URL,
+a QR code to print, "avisar no WhatsApp", the Instagram bio text and what was left for later,
+each item a short detour back into its question.
 
 ---
 

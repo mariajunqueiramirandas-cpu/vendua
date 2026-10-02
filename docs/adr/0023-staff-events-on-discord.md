@@ -56,7 +56,8 @@ first event posts a card; later ones edit it from the anchor's whole history (an
 recebido → pago → entregue on one message; an incident goes aberto → crítico → reconhecido →
 resolvido). Edits never notify. A follow-up that matters (an incident resolved, an order
 cancelled) also posts a short reply under the card. The onboarding card tracks the First-store
-gate per store: cadastro, plano pago, loja no ar, primeiro acesso, Mercado Pago, primeiro pedido.
+gate per store: cadastro, plano pago, loja no ar, primeiro acesso, loja montada (the Bem-vindo wizard
+finished), Mercado Pago, primeiro pedido.
 
 **Routing and noise are data.** The `discord` setting maps eight categories (atendimento, crm,
 vendas, assinaturas, frota, agente, sistema, resumo) to channels, with a default channel for

@@ -43,8 +43,10 @@ but **the store stays open** — suspension is a staff decision, not a job.
 `/admin/v1/signup`), not on the marketing site: it needs the admin host's cookie and Core's
 same-origin rule, and the site stays static with no forms. The site links to it.
 
-1. Plan → store name and address (slug check; platform names like `painel`, `admin`, `api`
-   are reserved) → owner name and email → WhatsApp code (the login OTP table with
+1. Plan (the site's `?plano=` preselects it) → store name and address (slug check; platform
+   names like `painel`, `admin`, `api` are reserved) → what the store sells
+   (`store_settings.segment`, migration 0074: it tunes the onboarding's suggestions) → owner
+   name and email → WhatsApp code (the login OTP table with
    `purpose = 'signup'`, which sends to phones that aren't members yet) → payment method.
 2. `POST /signup` calls `provision_store()`, a security-definer function (the app role can't
    insert tenants or domains under RLS): tenant, primary `<slug>.<store domain>` host,

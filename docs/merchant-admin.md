@@ -277,11 +277,16 @@ Lands with Phase 3's Mercado Pago work.
       (assinatura) or monthly Pix, invoices, cancel/resume, reminders; PRO+
       custom domain (DNS checked by Core, activated by staff after TLS) and
       the site request ([ADR 0021](adr/0021-self-serve-signup-and-plan-billing.md)).
-- [x] Self-serve signup at `/comecar`: plan → store → you → WhatsApp code →
-      payment; the store opens when the first payment lands.
-- [x] Onboarding: `/bem-vindo` takes a store to "ready to sell" (profile,
-      hours, delivery, Pix, first products) as a one-question-per-screen
-      conversation with a live preview (§6.8). A signup lands here.
+- [x] Self-serve signup at `/comecar`: plan (preselected from the site's
+      `?plano=`) → store → what it sells → you → WhatsApp code → payment; the
+      store opens when the first payment lands.
+- [x] Onboarding: `/bem-vindo` takes a store to "ready to sell" in four parts
+      (a cara da loja, atendimento, pagamentos, cardápio) as a
+      one-question-per-screen conversation with a live preview (§6.8). A
+      signup lands here and isn't asked again what signup knew; where the
+      merchant stopped lives in Core (`store_settings.onboarding`, migration
+      0074), so it resumes on any device, and finishing it tells the team
+      (`store.onboarding` `setup`).
 
 ## What closed the gaps
 
