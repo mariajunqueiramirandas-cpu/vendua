@@ -5,3 +5,7 @@ packages/conformance/stale/
 .agents/
 # vendored minified libraries in video projects
 videos/*/assets/vendor/
+# HyperFrames files its scripts parse as text: frame.md's frontmatter is read line by line (one-line,
+# double-quoted flow maps) and .hyperframes/ holds generated working files (caption skin, packets)
+videos/*/frame.md
+videos/*/.hyperframes/
