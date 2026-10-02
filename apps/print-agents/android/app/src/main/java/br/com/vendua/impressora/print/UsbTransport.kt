@@ -19,12 +19,15 @@ class UsbTransport(
         val manager = context.getSystemService(UsbManager::class.java)
             ?: throw PrintException("USB indisponível neste aparelho", retryable = false)
         val wanted = printer.address.ifBlank { printer.key.removePrefix("usb:") }.lowercase(Locale.ROOT)
-        val device = manager.deviceList.values.firstOrNull { UsbPrinters.address(it) == wanted }
+        val model = UsbPrinters.model(wanted)
+        val sameModel = manager.deviceList.values.filter { UsbPrinters.model(UsbPrinters.address(it, manager)) == model }
+        val device = sameModel.firstOrNull { UsbPrinters.address(it, manager) == wanted }
+            // a serial is only readable with permission: ask for the one we can't tell apart yet
+            ?: sameModel.firstOrNull { !manager.hasPermission(it) }?.let {
+                requestPermission(it)
+                throw PrintException("Permissão USB negada")
+            }
             ?: throw PrintException("Impressora USB não encontrada")
-        if (!manager.hasPermission(device)) {
-            requestPermission(device)
-            throw PrintException("Permissão USB negada")
-        }
         val (iface, endpoint) = UsbPrinters.bulkOut(device)
             ?: throw PrintException("Impressora USB sem saída de dados", retryable = false)
         val conn = manager.openDevice(device) ?: throw PrintException("Não foi possível abrir a impressora USB")
@@ -50,8 +53,27 @@ class UsbTransport(
 }
 
 object UsbPrinters {
-    fun address(device: UsbDevice): String =
-        String.format(Locale.ROOT, "%04x:%04x", device.vendorId, device.productId)
+    /**
+     * `vid:pid`, plus `:serial` when the printer reports one and we may read it: two identical
+     * printers on one tablet stay apart, and the key survives replugging (a bus path wouldn't).
+     */
+    fun address(device: UsbDevice, manager: UsbManager?): String {
+        val model = String.format(Locale.ROOT, "%04x:%04x", device.vendorId, device.productId)
+        val serial = if (manager?.hasPermission(device) == true) {
+            try {
+                device.serialNumber
+            } catch (_: SecurityException) {
+                null
+            }
+        } else {
+            null
+        }
+        val clean = serial?.lowercase(Locale.ROOT)?.filter { it.isLetterOrDigit() }?.take(64)
+        return if (clean.isNullOrEmpty()) model else "$model:$clean"
+    }
+
+    /** the `vid:pid` part of an address */
+    fun model(address: String): String = address.split(':').take(2).joinToString(":")
 
     /** Printer-class interface (7) first, else the first interface with a bulk OUT endpoint. */
     fun bulkOut(device: UsbDevice): Pair<UsbInterface, UsbEndpoint>? {
@@ -71,5 +93,5 @@ object UsbPrinters {
 
     fun displayName(device: UsbDevice): String =
         listOfNotNull(device.manufacturerName, device.productName).joinToString(" ").trim()
-            .ifEmpty { "Impressora USB ${address(device)}" }
+            .ifEmpty { "Impressora USB ${address(device, null)}" }
 }

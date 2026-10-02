@@ -26,7 +26,7 @@ class PrinterDiscovery(
         val manager = context.getSystemService(UsbManager::class.java) ?: return emptyList()
         return manager.deviceList.values
             .filter { UsbPrinters.bulkOut(it) != null }
-            .map { UsbCandidate(it, UsbPrinters.displayName(it), UsbPrinters.address(it), manager.hasPermission(it)) }
+            .map { UsbCandidate(it, UsbPrinters.displayName(it), UsbPrinters.address(it, manager), manager.hasPermission(it)) }
     }
 
     @SuppressLint("MissingPermission") // guarded by hasConnectPermission()

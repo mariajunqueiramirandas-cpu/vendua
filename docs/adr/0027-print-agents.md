@@ -55,8 +55,10 @@ pushes them. Delivery is at least once: an unanswered job is resent after a minu
 dedupe by job id, and a job not printed within two hours expires. A ticket printed more than ten
 minutes after it was queued says so at the top.
 
-**Releases come from GitHub.** CI builds both agents and publishes them on a GitHub Release when
-`apps/print-agents/VERSION` changes; the admin links to `releases/latest/download/…`. Agents
+**Releases come from GitHub.** CI builds both agents and publishes them together on a GitHub
+Release when `apps/print-agents/VERSION` changes, and only once the Android signing secrets exist
+(a release without the APK would send tablets to a 404); the admin links to
+`releases/latest/download/…`. Agents
 check `version.json` there and offer the update; the Android APK is signed with our own key
 (GitHub secrets), the Windows `.exe` is not signed.
 

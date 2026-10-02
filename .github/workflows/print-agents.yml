@@ -1,8 +1,9 @@
 name: print-agents
 
 # The store-side printing apps (ADR 0027): checked on every PR that touches them, and published on
-# main as a GitHub Release when apps/print-agents/VERSION names a version not released yet. The
-# admin links to releases/latest/download/…, so the newest release is what merchants download.
+# main as a GitHub Release when apps/print-agents/VERSION names a version not released yet, with
+# both agents in it. The admin links to releases/latest/download/…, so the newest release is what
+# merchants download.
 on:
   push:
     branches: [main]
@@ -105,16 +106,21 @@ jobs:
         run: |
           version="$(tr -d '[:space:]' < apps/print-agents/VERSION)"
           tag="print-agents-v$version"
+          # the admin links releases/latest/download/… and both agents read version.json there:
+          # a release without the APK would send tablets to a 404, so none goes out without it
+          if [ ! -f dist/android/vendua-impressora.apk ]; then
+            echo "::warning::no signed APK (set the ANDROID_KEYSTORE_* secrets, then run this workflow on main): nothing published"
+            exit 0
+          fi
           mkdir -p assets
-          cp dist/windows/vendua-impressora.exe assets/
-          [ -f dist/android/vendua-impressora.apk ] && cp dist/android/vendua-impressora.apk assets/
+          cp dist/windows/vendua-impressora.exe dist/android/vendua-impressora.apk assets/
           printf '{"version":"%s"}\n' "$version" > assets/version.json
           if ! gh release view "$tag" > /dev/null 2>&1; then
             gh release create "$tag" --title "Venduá Impressora $version" --latest \
               --notes "Windows e Android. Baixe pelo painel: Impressoras." assets/*
             exit 0
           fi
-          # a re-run (say, once the Android signing secrets exist) fills in only what's missing:
+          # a re-run of a version already out fills in only what's missing (an upload that died):
           # a published file never changes under the same version
           have="$(gh release view "$tag" --json assets --jq '.assets[].name')"
           for f in assets/*; do

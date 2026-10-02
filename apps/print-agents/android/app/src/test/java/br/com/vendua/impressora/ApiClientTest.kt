@@ -57,6 +57,18 @@ class ApiClientTest {
         assertNull(tokens.get())
     }
 
+    @Test fun approvalJustAfterNominalExpiryIsStillCollected() = runBlocking {
+        server.enqueue(json(200, """{"status":"pending"}"""))
+        server.enqueue(json(200, """{"status":"approved","token":"tok-late","store":{"name":"Loja"}}"""))
+        val tokens = InMemoryTokenStore()
+        // the approving poll runs at 700 s, past the code's 600 s but inside Core's grace window
+        var now = 0L
+        val clock = { now.also { now += 350_000L } }
+        val outcome = PairingPoller(server.api(tokens), tokens, clock = clock, minIntervalMs = 0).await(start)
+        assertEquals(PairOutcome.Approved("Loja"), outcome)
+        assertEquals("tok-late", tokens.get())
+    }
+
     @Test fun pairingRateLimitWaitsAndContinues() = runBlocking {
         server.enqueue(json(429, """{"error":{"code":"RATE_LIMITED","message":""}}"""))
         server.enqueue(json(200, """{"status":"approved","token":"tok-2","store":{"name":"Loja"}}"""))

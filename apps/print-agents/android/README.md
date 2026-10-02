@@ -43,7 +43,9 @@ scripts/make-keystore.sh [out.jks]
 
 The script prints the four secret values to set. Keep the `.jks` file and its password backed up
 offline. Every update must be signed with the same key, or installed apps can't update.
-CI publishes the APK as `vendua-impressora.apk` on GitHub Releases, next to `version.json`.
+CI publishes the APK as `vendua-impressora.apk` on GitHub Releases, next to the Windows exe and
+`version.json`. No release goes out until the four `ANDROID_KEYSTORE_*` secrets exist: once they
+do, run the `print-agents` workflow on `main` to publish the current `VERSION`.
 
 ## Installing (merchants)
 
