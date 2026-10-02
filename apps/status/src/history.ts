@@ -39,6 +39,8 @@ export interface History {
   incidents: Incident[];
   /** the last time Core's feed answered: the incidents shown are from then */
   incidentsAt: string | null;
+  /** store hosts the last feed asked us to probe; kept for when Core doesn't answer */
+  probes?: string[];
 }
 
 export const empty = (): History => ({
@@ -74,6 +76,7 @@ export function record(
   now: Date,
   results: Partial<Record<ComponentId, CheckResult>>,
   incidents: Incident[] | null,
+  probes?: string[] | null,
 ): History {
   const at = now.toISOString();
   const today = dayOf(now);
@@ -100,6 +103,7 @@ export function record(
     components,
     incidents: incidents ?? prev.incidents,
     incidentsAt: incidents ? at : prev.incidentsAt,
+    ...((probes ?? prev.probes) && { probes: (probes ?? prev.probes)! }),
   };
 }
 

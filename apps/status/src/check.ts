@@ -75,9 +75,20 @@ export function worst(results: CheckResult[]): CheckResult {
   return known.reduce((a, b) => (RANK[b.state] > RANK[a.state] ? b : a));
 }
 
+/** Probes on different stores: one answering is enough (a store can be deleted or mid-change). */
+export function best(results: CheckResult[]): CheckResult {
+  const up = results.filter((r) => r.state === 'ok' || r.state === 'slow');
+  if (up.length) return up.reduce((a, b) => (RANK[b.state] < RANK[a.state] ? b : a));
+  return worst(results);
+}
+
 export async function checkComponent(
   c: ComponentSpec,
   fetchFn: Fetch = fetch,
+  pauseMs = 3_000,
 ): Promise<CheckResult> {
-  return worst(await Promise.all(c.checks.map((s) => runCheck(s, fetchFn))));
+  const results = await Promise.all(c.checks.map((s) => runCheck(s, fetchFn, pauseMs)));
+  // no store to probe is not an outage of the stores: say we couldn't tell
+  if (!results.length) return { state: 'unknown', ms: null, detail: `${c.id}: no store to probe` };
+  return c.anyOf ? best(results) : worst(results);
 }

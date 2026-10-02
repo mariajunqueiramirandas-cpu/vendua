@@ -16,6 +16,8 @@ export interface ComponentSpec {
   name: string;
   hint: string;
   checks: CheckSpec[];
+  /** the checks are the same probe on different stores: one answering is enough */
+  anyOf?: boolean;
 }
 
 export interface Config {
@@ -28,8 +30,12 @@ export interface Config {
 
 const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 
-export function config(env: Record<string, string | undefined> = process.env): Config {
-  const store = env.STATUS_STORE_HOST || 'quero-pudim.vendua.com.br';
+/** `probes`: store hosts from Core's feed. STATUS_STORE_HOST pins a single one instead. */
+export function config(
+  env: Record<string, string | undefined> = process.env,
+  probes: string[] = [],
+): Config {
+  const hosts = env.STATUS_STORE_HOST ? [env.STATUS_STORE_HOST] : probes;
   const admin = (env.STATUS_ADMIN_ORIGIN || 'https://painel.vendua.com.br').replace(/\/$/, '');
   const site = (env.STATUS_SITE_ORIGIN || 'https://vendua.com.br').replace(/\/$/, '');
   return {
@@ -42,19 +48,19 @@ export function config(env: Record<string, string | undefined> = process.env): C
         name: 'Lojas',
         hint: 'As lojas abrem para os clientes.',
         // the edge injects the store's state into every page it serves
-        checks: [{ url: `https://${store}/`, text: 'id="vendua-state"' }],
+        anyOf: true,
+        checks: hosts.map((h) => ({ url: `https://${h}/`, text: 'id="vendua-state"' })),
       },
       {
         id: 'pedidos',
         name: 'Pedidos',
         hint: 'Carrinho e pedidos respondem nas lojas.',
         // Core through the edge; a stale answer (x-vendua-edge-stale) fails in check.ts
-        checks: [
-          {
-            url: `https://${store}/storefront/v1/state`,
-            json: (b) => obj(b) && obj(b.store) && typeof b.store.status === 'string',
-          },
-        ],
+        anyOf: true,
+        checks: hosts.map((h) => ({
+          url: `https://${h}/storefront/v1/state`,
+          json: (b: unknown) => obj(b) && obj(b.store) && typeof b.store.status === 'string',
+        })),
       },
       {
         id: 'painel',

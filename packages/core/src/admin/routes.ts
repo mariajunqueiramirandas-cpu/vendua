@@ -50,7 +50,7 @@ import { mountPaymentsPublic } from '../modules/payments/routes-public.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import { mountSignup } from '../modules/billing/routes-signup.ts';
 import { mountPrintAgent } from '../modules/printing/agent-routes.ts';
-import { publicIncidents } from '../modules/incidents.ts';
+import { publicIncidents, statusProbeHosts } from '../modules/incidents.ts';
 import { mountImports } from '../modules/menu-import/routes.ts';
 import { mountAccount } from './routes-account.ts';
 import { mountAppearance } from './routes-appearance.ts';
@@ -237,7 +237,10 @@ export function mountAdmin(o: MountAdminOpts) {
   });
   admin.get('/status', statusLimit, async (c) => {
     c.header('cache-control', 'no-store');
-    return c.json({ incidents: await publicIncidents(sql) });
+    return c.json({
+      incidents: await publicIncidents(sql),
+      stores: await statusProbeHosts(sql, o.storeDomain),
+    });
   });
 
   // ── everything below needs a session ─────────────────────────────────────

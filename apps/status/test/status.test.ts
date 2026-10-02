@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { runCheck, worst, type CheckResult } from '../src/check.ts';
+import { best, checkComponent, runCheck, worst, type CheckResult } from '../src/check.ts';
 import { config } from '../src/config.ts';
 import { DAYS, empty, parseHistory, record, type Incident } from '../src/history.ts';
 import { pct, render, summarize } from '../src/render.ts';
@@ -58,6 +58,34 @@ describe('checks', () => {
     expect(worst([r('slow'), r('down'), r('ok')]).state).toBe('down');
     expect(worst([r('unknown'), r('ok')]).state).toBe('ok');
     expect(worst([r('unknown'), r('unknown')]).state).toBe('unknown');
+  });
+
+  test('stores are probed on any of the fleet: one answering is enough', async () => {
+    const r = (state: CheckResult['state']): CheckResult => ({ state, ms: 1 });
+    expect(best([r('down'), r('slow'), r('ok')]).state).toBe('ok');
+    expect(best([r('down'), r('slow')]).state).toBe('slow');
+    expect(best([r('down'), r('down')]).state).toBe('down');
+    const lojas = config({}, ['gone.vendua.com.br', 'live.vendua.com.br']).components[0]!;
+    const fetchFn = async (url: string) =>
+      url.includes('live.')
+        ? new Response('<div id="vendua-state">')
+        : new Response('{}', { status: 404 });
+    expect((await checkComponent(lojas, fetchFn, 0)).state).toBe('ok');
+  });
+
+  test('no store to probe is unknown, not an outage', async () => {
+    const [lojas, pedidos] = config({}, []).components;
+    const never = async () => {
+      throw new Error('unreachable');
+    };
+    expect((await checkComponent(lojas!, never, 0)).state).toBe('unknown');
+    expect((await checkComponent(pedidos!, never, 0)).state).toBe('unknown');
+  });
+
+  test('STATUS_STORE_HOST pins the probe to one store', () => {
+    const lojas = config({ STATUS_STORE_HOST: 'a.vendua.com.br' }, ['b.vendua.com.br'])
+      .components[0]!;
+    expect(lojas.checks.map((c) => c.url)).toEqual(['https://a.vendua.com.br/']);
   });
 });
 

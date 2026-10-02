@@ -15,10 +15,15 @@ Each run:
 1. reads the published `history.json` (the page's memory: 90 days of results per part, and the
    last incidents);
 2. checks production from the runner, retrying a failure twice before believing it:
-   - **Lojas**: a store page (`STATUS_STORE_HOST`, default `quero-pudim.vendua.com.br`) answers
-     200 with the edge's `vendua-state`;
+   - **Lojas**: a store page answers 200 with the edge's `vendua-state`;
    - **Pedidos**: that store's `/storefront/v1/state` answers from Core (an edge
      `x-vendua-edge-stale` answer counts as down);
+
+     The stores come from Core's feed (`stores`: the 3 oldest active tenants), so the probe
+     follows the fleet and no tenant is hardcoded. One answering is enough; none to probe
+     (or Core silent with no stored list) is "sem verificação", never "fora do ar". The last
+     list is kept in `history.json`. `STATUS_STORE_HOST` pins a single store instead;
+
    - **Painel**: `painel.vendua.com.br/admin/` and the public `/admin/v1/signup/plans` (Core and
      the database behind the admin's proxy);
    - **Site da Venduá**: `vendua.com.br`;
@@ -52,7 +57,7 @@ production: `cd apps/status && STATUS_HISTORY_FILE=/tmp/none.json bun src/main.t
 5. **Settings → Pages → Custom domain:** `status.vendua.com.br` → Save. When the DNS check passes,
    tick **Enforce HTTPS**.
 
-Optional repository variables `STATUS_STORE_HOST`, `STATUS_ADMIN_ORIGIN` and
+Optional repository variables `STATUS_STORE_HOST` (pins the probe store; leave unset), `STATUS_ADMIN_ORIGIN` and
 `STATUS_SITE_ORIGIN` point the checks elsewhere (defaults in `apps/status/src/config.ts`).
 
 ## Operating it
