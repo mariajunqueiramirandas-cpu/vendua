@@ -205,7 +205,7 @@ Scene 4 (3.9–4.4s): hold, still.
 - voiceover: "E o pedido chega sozinho."
 - duration: 3.4s
 - transition_in: push-slide LEFT
-- status: built
+- status: animated
 - src: compositions/frames/05-pedido-chega.html
 - type: benefit_highlight
 - persuasion: Future pacing (the order without the conversation)
