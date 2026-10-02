@@ -5,7 +5,7 @@ import { controlTx } from '../modules/control.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log as rootLog } from '../platform/log.ts';
 import { authStore, LeaseLost, type Fence } from './auth-store.ts';
-import { optedOutTx } from './messages.ts';
+import { contactedTx, OPT_OUT_FOOTER, optedOutTx } from './messages.ts';
 import { NotOnWhatsApp, SessionClosed, StoreSession, type WaRuntime } from './session.ts';
 import {
   finishWipe,
@@ -482,6 +482,16 @@ export class Gateway {
         await tx`update store_wa_messages set status = 'skipped', error = 'opted_out', lease_until = null
                  where id = ${r.id}`;
         return { ...r, settled: true };
+      }
+      // sends are one at a time per store, so "first message that went out" is decided here;
+      // the stored body becomes what was sent, for WhatsApp's resend-on-retry
+      if (
+        r.kind === 'order' &&
+        !r.body.endsWith(OPT_OUT_FOOTER) &&
+        !(await contactedTx(tx, tenantId, r.phone))
+      ) {
+        r.body += OPT_OUT_FOOTER;
+        await tx`update store_wa_messages set body = ${r.body} where id = ${r.id}`;
       }
       return { ...r, settled: false };
     });

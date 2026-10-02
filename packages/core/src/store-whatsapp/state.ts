@@ -153,6 +153,20 @@ export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Pro
   if (!kw) return;
   const variants = phoneVariants(m.phone);
   await withTenant(sql, tenantId, async (tx) => {
+    const store = (
+      await tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`
+    )[0];
+    const name = store?.name ?? 'loja';
+    if (kw === 'in') {
+      // the opt-out itself is the proof: it outlives the message history it came from
+      const removed = await tx<{ phone: string }[]>`
+        delete from store_wa_optouts where tenant_id = ${tenantId} and phone = any(${variants})
+        returning phone`;
+      if (!removed.length) return;
+      await enqueueTextTx(tx, tenantId, 'opt_in', removed[0]!.phone, optInAck(name));
+      await emitAdminTx(tx, tenantId, 'whatsapp', 'optout');
+      return;
+    }
     const known = (
       await tx<{ phone: string }[]>`
         select phone from store_wa_messages
@@ -161,26 +175,14 @@ export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Pro
         order by created_at desc limit 1`
     )[0];
     if (!known) return;
-    const store = (
-      await tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`
-    )[0];
-    const name = store?.name ?? 'loja';
-    if (kw === 'out') {
-      const added = await tx`
-        insert into store_wa_optouts (tenant_id, phone) values (${tenantId}, ${known.phone})
-        on conflict do nothing returning phone`;
-      if (!added.length) return;
-      await tx`update store_wa_messages set status = 'skipped', error = 'opted_out', lease_until = null
-               where tenant_id = ${tenantId} and phone = any(${variants}) and kind = 'order'
-                 and status = 'pending'`;
-      await enqueueTextTx(tx, tenantId, 'opt_out', known.phone, optOutAck(name));
-    } else {
-      const removed = await tx`
-        delete from store_wa_optouts where tenant_id = ${tenantId} and phone = any(${variants})
-        returning phone`;
-      if (!removed.length) return;
-      await enqueueTextTx(tx, tenantId, 'opt_in', known.phone, optInAck(name));
-    }
+    const added = await tx`
+      insert into store_wa_optouts (tenant_id, phone) values (${tenantId}, ${known.phone})
+      on conflict do nothing returning phone`;
+    if (!added.length) return;
+    await tx`update store_wa_messages set status = 'skipped', error = 'opted_out', lease_until = null
+             where tenant_id = ${tenantId} and phone = any(${variants}) and kind = 'order'
+               and status = 'pending'`;
+    await enqueueTextTx(tx, tenantId, 'opt_out', known.phone, optOutAck(name));
     await emitAdminTx(tx, tenantId, 'whatsapp', 'optout');
   });
 }
@@ -194,6 +196,8 @@ export async function recordReceipts(sql: Sql, tenantId: string, rs: Receipt[]):
     if (read.length)
       await tx`update store_wa_messages set read_at = coalesce(read_at, now())
                where tenant_id = ${tenantId} and wa_id = any(${read})`;
+    // the open screen's ticks move on their own
+    await emitAdminTx(tx, tenantId, 'whatsapp', 'receipt');
   });
 }
 

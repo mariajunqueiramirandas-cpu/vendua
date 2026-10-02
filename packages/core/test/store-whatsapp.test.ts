@@ -521,6 +521,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
     expect(world.last.sent.at(-1)!.id).toBe(messageIdFor(row.id));
   });
 
+  test('the SAIR footer goes on the first message that actually reaches the shopper', async () => {
+    await sql`delete from store_wa_messages where tenant_id = ${tenantId}`;
+    // an earlier attempt that never went out doesn't count as having told them
+    await sql`insert into store_wa_messages (tenant_id, kind, event, phone, body, status, error)
+              values (${tenantId}, 'order', 'placed', ${shopperPhone}, 'x', 'failed', 'gave up')`;
+    const id = await order({ mode: 'pickup' });
+    await move(id, 'confirmed');
+    gw.pump(tenantId);
+    await until(async () => (await messages()).some((m) => m.status === 'sent'));
+    const sent = (await messages()).find((m) => m.status === 'sent')!;
+    expect(sent.body.endsWith(OPT_OUT_FOOTER)).toBe(true);
+    expect(world.last.sent.at(-1)!.text.endsWith(OPT_OUT_FOOTER)).toBe(true);
+  });
+
   test('SAIR stops this store texting that shopper; VOLTAR brings it back', async () => {
     await sql`delete from store_wa_messages where tenant_id = ${tenantId}`;
     const first = await order({ mode: 'pickup' });
@@ -551,6 +565,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
     const second = await order({ mode: 'pickup' });
     await move(second, 'confirmed');
     expect((await messages()).filter((m) => m.kind === 'order').length).toBe(1);
+    // 30-day retention took the history: VOLTAR must still work off the opt-out itself
+    await sql`delete from store_wa_messages where tenant_id = ${tenantId} and kind = 'order'`;
 
     world.last.emit('messages.upsert', {
       type: 'notify',

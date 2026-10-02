@@ -129,11 +129,13 @@ export async function optedOutTx(tx: Sql, tenantId: string, phone: string): Prom
   return rows.length > 0;
 }
 
-/** Has this store ever texted this number? The first message carries the SAIR footer. */
-async function knownPhoneTx(tx: Sql, tenantId: string, phone: string): Promise<boolean> {
+/** Has this store's WhatsApp already reached this number about an order? The first message
+ *  that actually goes out carries the SAIR footer; a failed or expired one doesn't count. */
+export async function contactedTx(tx: Sql, tenantId: string, phone: string): Promise<boolean> {
   const rows = await tx`
     select 1 from store_wa_messages
     where tenant_id = ${tenantId} and phone = any(${phoneVariants(phone)}) and kind = 'order'
+      and status = 'sent'
     limit 1`;
   return rows.length > 0;
 }
@@ -219,10 +221,9 @@ export async function enqueueOrderMessageTx(
       if (await optedOutTx(sp, tenantId, phone)) return false;
       const text = renderOrderMessage(event, facts);
       if (!text) return false;
-      const body = (await knownPhoneTx(sp, tenantId, phone)) ? text : text + OPT_OUT_FOOTER;
       const rows = await sp`
           insert into store_wa_messages (tenant_id, order_id, kind, event, phone, body)
-          values (${tenantId}, ${orderId}, 'order', ${event}, ${phone}, ${body})
+          values (${tenantId}, ${orderId}, 'order', ${event}, ${phone}, ${text})
           on conflict (order_id, event) where order_id is not null do nothing
           returning id`;
       return rows.length > 0;
