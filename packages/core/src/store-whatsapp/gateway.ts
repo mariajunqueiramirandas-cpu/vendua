@@ -209,9 +209,15 @@ export class Gateway {
   private async renewAndClaim(): Promise<LeaseRow[]> {
     const lease = `${Math.ceil(this.o.leaseMs / 1000)} seconds`;
     const { renewed, claimed } = await controlTx(this.o.sql, async (tx) => {
+      const mine = [...this.owned.keys()];
+      // a store this process let go (a safety drop, a failed start) still names it as owner: hand
+      // it back now rather than renew a lease nothing here is running
+      await tx`
+        update store_whatsapp set owner = null, lease_until = null
+        where owner = ${this.id} and not (tenant_id = any(${mine}::uuid[]))`;
       const renewed = await tx<LeaseRow[]>`
         update store_whatsapp set lease_until = now() + ${lease}::interval
-        where owner = ${this.id} and lease_until > now()
+        where owner = ${this.id} and lease_until > now() and tenant_id = any(${mine}::uuid[])
         returning tenant_id, lease_epoch, wanted, state, pair_requested_at, wipe_requested_at`;
       const free = this.o.maxSessions - renewed.length;
       const claimed =

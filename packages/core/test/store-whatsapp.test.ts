@@ -588,6 +588,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
     await until(async () => (await messages()).some((m) => m.event === 'ready'));
   });
 
+  test('a payment the store confirms by hand tells the shopper too', async () => {
+    const id = await order({ mode: 'pickup' });
+    const r = await owner('POST', `/orders/${id}/payment`, { status: 'paid' });
+    expect(r.status).toBe(200);
+    const paid = await sql<{ event: string }[]>`
+      select event from store_wa_messages where order_id = ${id}`;
+    expect(paid.map((m) => m.event)).toEqual(['paid']);
+  });
+
   test('settings choose the steps; the test message goes to the signed-in person', async () => {
     const bad = await manager('PATCH', '/whatsapp/settings', { events: { nope: true } });
     expect(bad.status).toBe(422);
@@ -651,6 +660,27 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
       (tx) => tx`select 1 from store_wa_auth where tenant_id = ${tenantId}`,
     );
     expect(seen.length).toBe(0);
+  });
+
+  test('a lease this process no longer runs is handed back, not renewed', async () => {
+    const other = newGateway(`gw-${nonce}-c`);
+    const before = await waRow();
+    // the database still names a gateway that dropped the store locally (a safety drop)
+    await sql`update store_whatsapp set owner = ${other.id}, lease_until = now() + interval '1 minute'
+              where tenant_id = ${tenantId}`;
+    await other.tick();
+    // handed back, and with this store needing a socket the same tick claims it afresh
+    const row = await waRow();
+    expect(Number(row.lease_epoch)).toBeGreaterThan(Number(before.lease_epoch));
+    await other.stop();
+    // give the store back to the main gateway for the rest of the run
+    await sql`update store_whatsapp set owner = null, lease_until = null where tenant_id = ${tenantId}`;
+    const n = world.sockets.length;
+    await gw.tick();
+    await until(() => world.sockets.length > n);
+    world.last.user = { id: `55${ownerPhone}:7@s.whatsapp.net`, name: 'Doce Lar' };
+    world.last.connection({ connection: 'open' });
+    await until(async () => (await waRow()).owner === gw.id && (await waRow()).state === 'open');
   });
 
   test('unlinked on the phone: logged out, login wiped, staff told; re-pairing works', async () => {

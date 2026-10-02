@@ -1,3 +1,4 @@
+import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
 import type { Context } from 'hono';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
@@ -694,8 +695,11 @@ export function mountOrders(d: AdminDeps) {
         update orders set payment = payment || ${tx.json(patch as never)}, updated_at = now()
         where tenant_id = ${t.id} and id = ${id}
       `;
-      if (status === 'paid')
+      if (status === 'paid') {
         await recordOrderStep(tx, t.id, { id, number: cur.number }, 'paid', 'merchant');
+        // the Pix the store confirmed by hand tells the shopper too (once per order: unique)
+        await enqueueOrderMessageTx(tx, t.id, id, 'paid');
+      }
       await audit(tx, t.id, m, {
         action: `order.payment.${status}`,
         entity: 'order',
