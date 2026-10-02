@@ -107,7 +107,7 @@ const stopMenuImportJobs = startMenuImportJobs({ sql });
 
 // privacy-first page views (ADR 0028): the daily salt and 13-month retention expire on a clock
 const stopWebAnalyticsJobs = startWebAnalyticsJobs(sql);
-// stores' own WhatsApp runs in the wa-gateway process (ADR 0028); Core only watches it beat
+// stores' own WhatsApp runs in the wa-gateway process (ADR 0026); Core only watches it beat
 const stopStoreWhatsappWatch = startStoreWhatsappWatch(sql);
 
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
