@@ -69,16 +69,17 @@ export const deviceOf = (w: unknown) =>
         ? 'tablet'
         : 'desktop';
 
-/** The day's salt, cached per local day; the DB picks the day, so every replica gets the same. */
-let salt: { key: string; day: string; value: string } | null = null;
+/** The day's salt; the DB picks the day, so every replica gets the same. Cached only once the
+ *  DB's day matches this clock's, so a replica that crosses midnight first keeps asking. */
+let salt: { day: string; value: string } | null = null;
 async function daySalt(sql: Sql): Promise<{ day: string; value: string }> {
-  const key = brDay();
-  if (salt?.key === key) return salt;
+  if (salt?.day === brDay()) return salt;
   const row = (
     await sql<{ day: string; salt: string }[]>`select day::text, salt from web_analytics_salt()`
   )[0]!;
-  salt = { key, day: row.day, value: row.salt };
-  return salt;
+  const fresh = { day: row.day, value: row.salt };
+  if (row.day === brDay()) salt = fresh;
+  return fresh;
 }
 
 /** A visitor for one day: unlinkable to another day's once that day's salt is deleted. */
@@ -187,8 +188,11 @@ export async function webReport(
         from ${ev} group by path order by pageviews desc, path limit 10
       `,
       tx<WebReport['referrers']>`
-        select coalesce(referrer, '') as referrer, count(distinct (day, visitor))::int as visitors
-        from ${ev} group by 1 order by visitors desc, 1 limit 10
+        -- one source per visitor-day: the first referrer they arrived with, direct only if none
+        select coalesce(src, '') as referrer, count(*)::int as visitors from (
+          select (array_agg(referrer order by at, id) filter (where referrer is not null))[1] as src
+          from ${ev} group by day, visitor
+        ) v group by 1 order by visitors desc, 1 limit 10
       `,
       tx<WebReport['campaigns']>`
         select utm_source as source, coalesce(utm_medium, '') as medium,

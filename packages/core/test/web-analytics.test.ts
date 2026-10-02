@@ -173,6 +173,28 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
     expect((await rows()).filter((r) => r.path === `/t-${run}/old`)).toHaveLength(0);
   });
 
+  test('a visitor from google who opens another page is google, not also direct', async () => {
+    const before = await app.request('/control/v1/analytics/web?property=admin&days=7', {
+      headers: { 'x-vendua-control': 'ctl' },
+    });
+    const direct = (r: { referrers: { referrer: string; visitors: number }[] }) =>
+      r.referrers.find((x) => x.referrer === '')?.visitors ?? 0;
+    const d0 = direct((await before.json()) as never);
+    const ip = { 'x-forwarded-for': '192.0.2.44', 'user-agent': `${UA} ${run}` };
+    await collect(
+      { p: 'admin', id: `b${run}ref1`, path: `/t-${run}/a`, ref: `ref-${run}.com` },
+      ip,
+    );
+    await collect({ p: 'admin', id: `b${run}ref2`, path: `/t-${run}/b` }, ip);
+    const after = (await (
+      await app.request('/control/v1/analytics/web?property=admin&days=7', {
+        headers: { 'x-vendua-control': 'ctl' },
+      })
+    ).json()) as { referrers: { referrer: string; visitors: number }[] };
+    expect(after.referrers.find((x) => x.referrer === `ref-${run}.com`)?.visitors).toBe(1);
+    expect(direct(after)).toBe(d0);
+  });
+
   test('utm values that look like a phone or an order number are dropped', async () => {
     await collect({
       p: 'site',
