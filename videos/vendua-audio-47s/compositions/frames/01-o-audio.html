@@ -71,6 +71,7 @@
       align-items: baseline;
       gap: 21.6px;
       white-space: nowrap;
+      transform-origin: 432px 281.5px; /* the bubble's centre: punches scale both as one */
     }
     .\30 1-o-audio-who {
       font-weight: 650;
@@ -99,6 +100,7 @@
       padding: 0 36.7px 0 32.4px;
       background: #fffdf8;
       border-radius: 32px 32px 32px 10px;
+      transform-origin: 50% 50%;
       box-shadow:
         0 2px 4px rgb(18 60 50 / 0.08),
         0 12px 32px rgb(18 60 50 / 0.1);
@@ -245,7 +247,7 @@
     id="root"
     data-composition-id="01-o-audio"
     data-start="0"
-    data-duration="8.35"
+    data-duration="7.031"
     data-width="1080"
     data-height="1920"
   >
@@ -253,7 +255,7 @@
       id="01-o-audio-ground"
       class="01-o-audio-ground clip"
       data-start="0"
-      data-duration="8.35"
+      data-duration="7.031"
       data-track-index="0"
     >
       <svg
@@ -293,7 +295,7 @@
       id="01-o-audio-stage"
       class="01-o-audio-stage clip"
       data-start="0"
-      data-duration="8.35"
+      data-duration="7.031"
       data-track-index="1"
     >
       <div class="01-o-audio-sender">
@@ -360,7 +362,7 @@
             ><span class="01-o-audio-digit-win"
               ><span class="01-o-audio-digit-col"
                 ><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span
-                ><span>6</span><span>7</span><span>8</span></span
+                ><span>6</span><span>7</span></span
               ></span
             ></span
           >
@@ -380,65 +382,62 @@
         return root.getElementsByClassName(name)[0];
       }
 
-      // audio/f01-envelope.json "values": Luiz's loudness, 30 fps, frame-relative (250 values)
+      // audio/f01-envelope.json "values": Luiz's loudness, 30 fps, frame-relative (211 values)
       var ENV = [
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.002, 0.254, 0.752, 1.0, 1.0, 1.0, 0.976, 0.89,
-        0.745, 0.616, 0.56, 0.573, 0.702, 0.889, 0.877, 0.616, 0.366, 0.451, 0.76, 0.857, 0.759,
-        0.64, 0.549, 0.531, 0.499, 0.373, 0.281, 0.32, 0.348, 0.261, 0.155, 0.096, 0.058, 0.041,
-        0.03, 0.053, 0.099, 0.311, 0.58, 0.552, 0.533, 0.609, 0.626, 0.748, 0.841, 0.761, 0.621,
-        0.507, 0.384, 0.269, 0.177, 0.104, 0.067, 0.045, 0.029, 0.021, 0.015, 0.034, 0.065, 0.056,
-        0.03, 0.022, 0.02, 0.016, 0.01, 0.007, 0.008, 0.008, 0.187, 0.561, 0.711, 0.544, 0.326,
-        0.211, 0.399, 0.799, 0.937, 0.83, 0.78, 0.724, 0.569, 0.41, 0.289, 0.182, 0.107, 0.064,
-        0.04, 0.045, 0.062, 0.087, 0.158, 0.336, 0.5, 0.437, 0.304, 0.313, 0.456, 0.526, 0.393,
-        0.226, 0.307, 0.6, 0.722, 0.652, 0.505, 0.438, 0.529, 0.489, 0.418, 0.456, 0.468, 0.614,
-        0.881, 1.0, 0.922, 0.77, 0.62, 0.444, 0.308, 0.261, 0.259, 0.333, 0.393, 0.315, 0.204,
-        0.137, 0.088, 0.055, 0.033, 0.02, 0.014, 0.011, 0.01, 0.009, 0.008, 0.007, 0.009, 0.017,
-        0.03, 0.093, 0.166, 0.366, 0.723, 0.8, 0.602, 0.398, 0.241, 0.157, 0.189, 0.437, 0.728,
-        0.856, 0.936, 0.942, 0.751, 0.513, 0.41, 0.551, 0.85, 0.961, 0.808, 0.68, 0.662, 0.536,
-        0.341, 0.286, 0.301, 0.389, 0.57, 0.549, 0.375, 0.414, 0.637, 0.829, 0.894, 0.806, 0.656,
-        0.518, 0.384, 0.258, 0.16, 0.145, 0.243, 0.348, 0.326, 0.221, 0.13, 0.07, 0.037, 0.021,
-        0.014, 0.01, 0.007, 0.006, 0.007, 0.007, 0.209, 0.614, 0.816, 0.792, 0.736, 0.66, 0.508,
-        0.319, 0.203, 0.232, 0.429, 0.631, 0.701, 0.669, 0.666, 0.728, 0.719, 0.613, 0.499, 0.402,
-        0.436, 0.625, 0.679, 0.533, 0.374, 0.416, 0.564, 0.47, 0.268, 0.17, 0.305, 0.617, 0.713,
-        0.579, 0.405, 0.27, 0.186, 0.137, 0.146, 0.165, 0.155, 0.138, 0.112, 0.071, 0.034, 0.009,
+        0.0, 0.0, 0.02, 0.289, 0.77, 0.999, 0.997, 0.969, 0.884, 0.707, 0.482, 0.526, 0.838, 0.98,
+        0.797, 0.531, 0.561, 0.819, 0.953, 0.909, 0.763, 0.617, 0.549, 0.442, 0.289, 0.315, 0.523,
+        0.581, 0.386, 0.206, 0.139, 0.104, 0.072, 0.081, 0.238, 0.415, 0.516, 0.601, 0.517, 0.531,
+        0.761, 0.788, 0.685, 0.644, 0.567, 0.379, 0.195, 0.11, 0.076, 0.066, 0.066, 0.048, 0.026,
+        0.019, 0.015, 0.011, 0.007, 0.019, 0.111, 0.36, 0.657, 0.691, 0.469, 0.354, 0.542, 0.798,
+        0.786, 0.619, 0.48, 0.359, 0.253, 0.156, 0.085, 0.046, 0.035, 0.101, 0.326, 0.549, 0.545,
+        0.409, 0.4, 0.536, 0.542, 0.368, 0.315, 0.502, 0.648, 0.602, 0.51, 0.543, 0.636, 0.54,
+        0.371, 0.288, 0.429, 0.72, 0.76, 0.652, 0.537, 0.344, 0.207, 0.209, 0.317, 0.391, 0.303,
+        0.17, 0.099, 0.055, 0.027, 0.016, 0.012, 0.009, 0.015, 0.021, 0.016, 0.012, 0.079, 0.314,
+        0.637, 0.754, 0.618, 0.484, 0.357, 0.202, 0.233, 0.545, 0.864, 0.941, 0.798, 0.558, 0.378,
+        0.489, 0.828, 0.882, 0.653, 0.587, 0.587, 0.449, 0.354, 0.383, 0.37, 0.352, 0.406, 0.383,
+        0.306, 0.426, 0.738, 0.88, 0.818, 0.73, 0.593, 0.43, 0.305, 0.213, 0.189, 0.273, 0.345, 0.3,
+        0.182, 0.078, 0.03, 0.015, 0.009, 0.007, 0.009, 0.012, 0.012, 0.11, 0.425, 0.774, 0.876,
+        0.816, 0.81, 0.831, 0.831, 0.857, 0.88, 0.816, 0.658, 0.484, 0.331, 0.432, 0.73, 0.695,
+        0.454, 0.437, 0.504, 0.413, 0.263, 0.222, 0.385, 0.595, 0.564, 0.382, 0.264, 0.219, 0.178,
+        0.14, 0.118, 0.085, 0.046, 0.02, 0.006, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
       ];
       var FPS = 30;
-      var DURATION = 8.35;
+      var DURATION = 7.031;
 
-      var TAP = 0.12; // sfx "tap"
-      var PRESS_DUR = 0.1;
-      var RELEASE = TAP + PRESS_DUR; // adjacency keeps the spring's start == the press end
-      var RELEASE_DUR = 0.5;
+      var BEAT = 60 / 128;
+      var TAP = 0.04; // sfx "tap"
+      var PRESS_DUR = 0.08;
+      var RELEASE = TAP + PRESS_DUR;
+      var RELEASE_DUR = 0.12;
       var NOTE_S = 47; // "0:47"
       var LAST_BAR = 23;
-      var PLAYED_S = 8; // the counter lands on "0:08"
-      var STOP = TAP + PLAYED_S;
+      var PLAYED_S = 7; // the counter lands on "0:07"
+      // the note plays fast: one of its seconds per two beats of the bed, so the counter rolls on
+      // the grid and the 7th second lands just after "Pix?"
+      var NOTE_SECOND = 2 * BEAT;
+      var STOP = PLAYED_S * NOTE_SECOND; // 6.5625
       var LIVE_IN = 0.2; // bars start following the voice after the tap
-      var LIVE_OUT_START = 8.08; // "Pix?" ends
-      var LIVE_OUT_END = 8.3;
+      var LIVE_OUT_START = STOP;
+      var LIVE_OUT_END = 6.75; // bars back at rest, everything still from 6.8
       var REACH = 3; // bars either side of the playhead that move with the voice
-      var QUICK = 0.18;
-      var SMOOTH = 0.28;
+      var QUICK = 0.15;
       var OUT = 'power3.out';
+      var SLAM = 'expo.out';
 
-      // Venduá's arrival spring (stiffness 380, damping 30): the release overshoot comes from
-      // the spring itself, under-damped by ~2%, not from a back ease.
-      var W0 = Math.sqrt(380);
-      var ZETA = 30 / (2 * W0);
-      var WD = W0 * Math.sqrt(1 - ZETA * ZETA);
-      function springAt(s) {
-        return (
-          1 - Math.exp(-ZETA * W0 * s) * (Math.cos(WD * s) + ((ZETA * W0) / WD) * Math.sin(WD * s))
-        );
-      }
-      var SPRING_END = springAt(RELEASE_DUR);
-      function brandSpring(p) {
-        return springAt(p * RELEASE_DUR) / SPRING_END;
-      }
+      // punch-ins on the three questions: "cardápio?", "chocolate?", "Pix?"
+      var PUNCHES = [2.92, 4.66, 6.22];
+      var PUNCH_SCALE = 1.05;
+      var PUNCH_UP = 0.1;
+      var PUNCH_BACK = 0.25;
+      var SHAKE_X = [6, -5, 4, -3, 2, -1, 0];
+      var SHAKE_R = [0.5, -0.4, 0.3, -0.2, 0.1, -0.05, 0];
+      var SHAKE_DUR = 0.25;
 
+      function noteAt(t) {
+        return Math.min(Math.max(t / NOTE_SECOND, 0), PLAYED_S);
+      }
       function playheadAt(t) {
-        var p = Math.min(Math.max(t - TAP, 0), PLAYED_S);
-        return (p / NOTE_S) * LAST_BAR;
+        return (noteAt(t) / NOTE_S) * LAST_BAR;
       }
       function smoothstep(x) {
         var c = Math.min(Math.max(x, 0), 1);
@@ -451,6 +450,8 @@
         );
       }
 
+      var sender = one('01-o-audio-sender');
+      var bubble = one('01-o-audio-bubble');
       var btn = one('01-o-audio-btn');
       var btnShadow = one('01-o-audio-btn-shadow');
       var tri = one('01-o-audio-tri');
@@ -463,12 +464,12 @@
 
       var tl = gsap.timeline({ paused: true });
 
-      // Scene 1 — the tap: linear press, spring release; triangle swaps to pause at the dip
+      // Scene 1 — the tap: quick press, quick release; the triangle swaps to pause at the dip
       tl.fromTo(btn, { scale: 1 }, { scale: 0.92, duration: PRESS_DUR, ease: 'power1.in' }, TAP);
       tl.fromTo(
         btn,
         { scale: 0.92 },
-        { scale: 1, duration: RELEASE_DUR, ease: brandSpring, immediateRender: false },
+        { scale: 1, duration: RELEASE_DUR, ease: OUT, immediateRender: false },
         RELEASE,
       );
       tl.fromTo(
@@ -480,19 +481,19 @@
       tl.fromTo(
         btnShadow,
         { opacity: 0.25 },
-        { opacity: 1, duration: RELEASE_DUR, ease: brandSpring, immediateRender: false },
+        { opacity: 1, duration: RELEASE_DUR, ease: OUT, immediateRender: false },
         RELEASE,
       );
       tl.fromTo(
         tri,
         { opacity: 1, scale: 1 },
-        { opacity: 0, scale: 0.6, duration: 0.12, ease: 'power1.in' },
-        0.16,
+        { opacity: 0, scale: 0.6, duration: PRESS_DUR, ease: 'power1.in' },
+        TAP,
       );
       tl.fromTo(
         pause,
         { opacity: 0, scale: 0.6 },
-        { opacity: 1, scale: 1, duration: SMOOTH, ease: OUT },
+        { opacity: 1, scale: 1, duration: 0.13, ease: SLAM },
         RELEASE,
       );
       tl.fromTo(played[0], { opacity: 0 }, { opacity: 1, duration: QUICK, ease: OUT }, RELEASE);
@@ -500,15 +501,15 @@
       tl.fromTo(
         elapsed,
         { opacity: 0, y: 6 },
-        { opacity: 1, y: 0, duration: SMOOTH, ease: OUT },
+        { opacity: 1, y: 0, duration: 0.2, ease: SLAM },
         RELEASE,
       );
 
-      // Scene 2 — the playhead crawls: it reaches each next bar's centre at 0.5 bar past the
-      // last (1.14, 3.19, 5.23, 7.27 s), ringing it in spark and leaving the bar behind in ink
+      // Scene 2 — the playhead steps: it reaches each next bar's centre at 0.5 bar past the
+      // last (0.96, 2.87, 4.79 s), ringing it in spark and leaving the bar behind in ink
       var headBars = Math.round(playheadAt(STOP));
       for (var k = 1; k <= headBars; k++) {
-        var at = TAP + ((k - 0.5) / LAST_BAR) * NOTE_S;
+        var at = ((k - 0.5) / LAST_BAR) * NOTE_S * NOTE_SECOND;
         tl.fromTo(
           rings[k - 1],
           { opacity: 1 },
@@ -519,20 +520,20 @@
         tl.fromTo(played[k], { opacity: 0 }, { opacity: 1, duration: QUICK, ease: OUT }, at);
       }
 
-      // elapsed counter "0:00" -> "0:08": the last digit rolls like an odometer each second
+      // elapsed counter "0:00" -> "0:07": the last digit rolls like an odometer every 2 beats
       var DIGIT_H = 44;
       for (var s = 1; s <= PLAYED_S; s++) {
         tl.fromTo(
           digits,
           { y: -DIGIT_H * (s - 1) },
           { y: -DIGIT_H * s, duration: QUICK, ease: OUT, immediateRender: s === 1 },
-          TAP + s,
+          s * NOTE_SECOND,
         );
       }
 
       // bars near the playhead follow Luiz's loudness, one keyframe per envelope frame
-      var KF_START = 3; // frame 3 (0.1 s), before the tap: everything still at rest
-      var KF_END = ENV.length - 1;
+      var KF_START = 1; // frame 1 (0.033 s), before the tap: everything still at rest
+      var KF_END = Math.min(ENV.length - 1, Math.ceil(LIVE_OUT_END * FPS));
       for (var i = 0; i < bars.length; i++) {
         var rest = parseFloat(bars[i].style.height);
         var maxScale = 190 / rest;
@@ -551,7 +552,41 @@
         tl.to(bars[i], { keyframes: frames, ease: 'none' }, KF_START / FPS);
       }
 
-      // Scene 3 — "Pix?" is done: the playhead stops on bar 4, the note goes back to paused
+      // the punches: bubble and sender row scale together about the bubble's centre (both
+      // transform-origins sit on it), with a fixed decaying shake
+      var hero = [sender, bubble];
+      var shakeStep = SHAKE_DUR / SHAKE_X.length;
+      for (var p = 0; p < PUNCHES.length; p++) {
+        var hit = PUNCHES[p];
+        tl.fromTo(
+          hero,
+          { scale: 1 },
+          { scale: PUNCH_SCALE, duration: PUNCH_UP, ease: 'power3.out', immediateRender: false },
+          hit,
+        );
+        tl.fromTo(
+          hero,
+          { scale: PUNCH_SCALE },
+          { scale: 1, duration: PUNCH_BACK, ease: 'power2.out', immediateRender: false },
+          hit + PUNCH_UP,
+        );
+        for (var j = 0; j < SHAKE_X.length; j++) {
+          tl.fromTo(
+            hero,
+            { x: j ? SHAKE_X[j - 1] : 0, rotation: j ? SHAKE_R[j - 1] : 0 },
+            {
+              x: SHAKE_X[j],
+              rotation: SHAKE_R[j],
+              duration: shakeStep,
+              ease: 'sine.inOut',
+              immediateRender: false,
+            },
+            hit + j * shakeStep,
+          );
+        }
+      }
+
+      // Scene 3 — "Pix?" is done: the playhead stops on bar 3, the note goes back to paused
       tl.fromTo(
         rings[headBars],
         { opacity: 1 },
@@ -561,13 +596,13 @@
       tl.fromTo(
         pause,
         { opacity: 1, scale: 1 },
-        { opacity: 0, scale: 0.6, duration: 0.12, ease: 'power1.in', immediateRender: false },
+        { opacity: 0, scale: 0.6, duration: 0.1, ease: 'power1.in', immediateRender: false },
         STOP,
       );
       tl.fromTo(
         tri,
         { opacity: 0, scale: 0.6 },
-        { opacity: 1, scale: 1, duration: QUICK, ease: OUT, immediateRender: false },
+        { opacity: 1, scale: 1, duration: QUICK, ease: SLAM, immediateRender: false },
         STOP + 0.02,
       );
 
