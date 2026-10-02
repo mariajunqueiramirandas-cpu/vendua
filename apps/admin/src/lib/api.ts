@@ -718,6 +718,57 @@ export interface ActivityEntry {
   at: string;
 }
 
+/** Order steps the store's WhatsApp can tell shoppers about (ADR 0026). */
+export type WaEvent =
+  | 'placed'
+  | 'paid'
+  | 'confirmed'
+  | 'preparing'
+  | 'ready'
+  | 'out_for_delivery'
+  | 'delivered'
+  | 'cancelled';
+
+export type WaState = 'off' | 'connecting' | 'pairing' | 'open' | 'logged_out' | 'banned' | 'error';
+
+export interface WaMessage {
+  id: string;
+  kind: 'order' | 'opt_out' | 'opt_in' | 'test';
+  event: WaEvent | null;
+  orderId: string | null;
+  orderNumber: number | null;
+  status: 'pending' | 'sending' | 'sent' | 'failed' | 'expired' | 'skipped';
+  /** a code, never copy: not_on_whatsapp, opted_out, disconnected, … */
+  error: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+}
+
+export interface Whatsapp {
+  /** the Venduá service that runs the stores' WhatsApp is up */
+  available: boolean;
+  state: WaState;
+  /** a code: pair_requested, pair_expired, reconnecting, gateway_offline, logged_out, … */
+  detail: string | null;
+  /** the linked account, digits with the country code */
+  phone: string | null;
+  name: string | null;
+  connectedAt: string | null;
+  pairCode: string | null;
+  pairCodeExpiresAt: string | null;
+  pairPhone: string | null;
+  disconnecting: boolean;
+  /** the store's contact WhatsApp, national digits — the number to suggest */
+  suggestedPhone: string | null;
+  events: Record<WaEvent, boolean>;
+  /** what the shopper reads at each step (a sample order); null = this step says nothing */
+  previews: Record<WaEvent, string | null>;
+  stats: { sent: number; failed: number; optouts: number };
+  recent: WaMessage[];
+}
+
 export interface Payments {
   methods: PayMethod[];
   adjustments: PaymentAdjustments;
@@ -1292,6 +1343,13 @@ export const api = {
   mpConnect: (back?: 'onboarding') =>
     send<{ url: string }>('POST', '/payments/mercadopago/connect', back ? { back } : undefined),
   mpDisconnect: () => send<Payments>('POST', '/payments/mercadopago/disconnect'),
+
+  whatsapp: () => get<Whatsapp>('/whatsapp'),
+  whatsappPair: (phone: string) => send<Whatsapp>('POST', '/whatsapp/pair', { phone }),
+  whatsappDisconnect: () => send<Whatsapp>('POST', '/whatsapp/disconnect'),
+  whatsappSettings: (events: Partial<Record<WaEvent, boolean>>) =>
+    send<Whatsapp>('PATCH', '/whatsapp/settings', { events }),
+  whatsappTest: () => send<Whatsapp>('POST', '/whatsapp/test'),
   statement: (month: string) => get<Statement>(`/payments/statement?month=${month}`),
 
   alerts: () => get<Alerts>('/alerts'),
