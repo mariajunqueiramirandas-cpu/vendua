@@ -65,6 +65,7 @@ describe('checks', () => {
     expect(best([r('down'), r('slow'), r('ok')]).state).toBe('ok');
     expect(best([r('down'), r('slow')]).state).toBe('slow');
     expect(best([r('down'), r('down')]).state).toBe('down');
+    expect(best([r('down'), r('unknown')]).state).toBe('unknown');
     const lojas = config({}, ['gone.vendua.com.br', 'live.vendua.com.br']).components[0]!;
     const fetchFn = async (url: string) =>
       url.includes('live.')

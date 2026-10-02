@@ -8,6 +8,7 @@ import { render } from './render.ts';
 // One run: read the published history, check everything, fetch staff incidents, write build/.
 // STATUS_HISTORY_URL (default <public url>/history.json) or STATUS_HISTORY_FILE is the history.
 
+const base = config();
 const out = process.env.STATUS_OUT || join(import.meta.dir, '..', 'build');
 const gha = process.env.GITHUB_ACTIONS === 'true';
 const warn = (m: string) => console.log(gha ? `::warning::${m}` : `warning: ${m}`);
@@ -21,7 +22,7 @@ async function previous(): Promise<History> {
     if (!h) throw new Error(`${file} is not a status history`);
     return h;
   }
-  const url = process.env.STATUS_HISTORY_URL || `${cfg.publicUrl}/history.json`;
+  const url = process.env.STATUS_HISTORY_URL || `${base.publicUrl}/history.json`;
   const res = await fetch(`${url}?t=${Date.now()}`, { signal: AbortSignal.timeout(15_000) });
   // first publish: nothing there yet
   if (res.status === 404) {
@@ -83,7 +84,6 @@ async function feed(url: string): Promise<{ incidents: Incident[]; probes: strin
 
 const prev = await previous();
 // the store probes come from Core's feed (the fleet changes); if Core is silent, the last ones
-const base = config();
 const fed = await feed(base.incidentsUrl);
 const probes = fed ? fed.probes : (prev.probes ?? []);
 const cfg = config(process.env, probes);

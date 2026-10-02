@@ -79,6 +79,9 @@ export function worst(results: CheckResult[]): CheckResult {
 export function best(results: CheckResult[]): CheckResult {
   const up = results.filter((r) => r.state === 'ok' || r.state === 'slow');
   if (up.length) return up.reduce((a, b) => (RANK[b.state] < RANK[a.state] ? b : a));
+  // a probe we couldn't read may be the healthy one: down only when every probe is
+  if (results.some((r) => r.state === 'unknown'))
+    return results.find((r) => r.state === 'unknown')!;
   return worst(results);
 }
 
