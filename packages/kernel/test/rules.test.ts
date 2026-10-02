@@ -411,8 +411,9 @@ describe('hours', () => {
   test('takesOrders: closed takes only a cart of encomendas, when the store allows it', () => {
     const pre = { requiresPreorder: true };
     const now = { requiresPreorder: false };
-    const allows = { preorder: { whileClosed: true } };
-    const refuses = { preorder: { whileClosed: false } };
+    const rules = { paymentMethods: ['pix'], maxDays: 30 };
+    const allows = { preorder: { ...rules, whileClosed: true } };
+    const refuses = { preorder: { ...rules, whileClosed: false } };
     expect(takesOrders('open', refuses, [now])).toBe(true);
     expect(takesOrders('paused', allows, [pre])).toBe(false);
     expect(takesOrders('closed', allows, [pre, pre])).toBe(true);
@@ -421,9 +422,7 @@ describe('hours', () => {
     expect(takesOrders('closed', allows, [])).toBe(false);
     expect(takesOrders('closed', refuses, [pre])).toBe(false);
     // a Core without the flag takes any cart while closed
-    expect(
-      takesOrders('closed', { preorder: { paymentMethods: ['pix'], maxDays: 30 } }, [now]),
-    ).toBe(true);
+    expect(takesOrders('closed', { preorder: rules }, [now])).toBe(true);
     expect(takesOrders('closed', undefined, [now])).toBe(true);
   });
 });

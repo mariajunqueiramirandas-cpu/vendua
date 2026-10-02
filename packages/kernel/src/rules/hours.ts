@@ -127,7 +127,7 @@ export function statusWords(hint: StatusHint, timeZone: string, now: Date = new 
  *  (`StoreProfile.preorder.whileClosed`). A Core that doesn't send the flag takes any cart. */
 export function takesOrders(
   status: StoreProfile['status'],
-  store: { preorder?: { whileClosed?: boolean } | undefined } | null | undefined,
+  store: Pick<StoreProfile, 'preorder'> | null | undefined,
   items: readonly { requiresPreorder?: boolean | undefined }[],
 ): boolean {
   if (status === 'open') return true;
