@@ -81,7 +81,7 @@ all six frames are locked. Build dresses those layouts; it never redraws them.
 - voiceover: "Oi, boa tarde! Tudo bem? Então… vocês têm cardápio? Quanto tá o bolo de chocolate? Ah, e aceita Pix?"
 - duration: 8.35s
 - transition_in: cut
-- status: built
+- status: animated
 - src: compositions/frames/01-o-audio.html
 - type: hook
 - persuasion: Pain validation (the viewer's own inbox, heard)
