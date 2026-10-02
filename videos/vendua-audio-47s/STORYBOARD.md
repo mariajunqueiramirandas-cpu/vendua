@@ -30,7 +30,9 @@ the last one) and no screensaver motion (things move when the voice names them).
 
 **Truthfulness.** The screens are real captures of Venduá's admin and storefront running the
 fictional dev store Bolos da Nena; the push is Core's real payload text. Luiz and his voice note are
-fictional; the numbers (R$ 48,00, R$ 219,00, #29) come from the captured screens.
+fictional; the product numbers (R$ 48,00, R$ 219,00, #29) come from the captured screens. The
+voice-note durations (0:47 in Frame 1; 0:32, 1:12, 0:58, 2:05 in Frame 2) are scenario props,
+approved with this plan on 2026-10-02; they claim nothing about Venduá.
 
 Sketches: `storyboard.html` (v1).
 
@@ -45,7 +47,7 @@ Sketches: `storyboard.html` (v1).
 - type: hook
 - persuasion: Pain validation (the viewer's own inbox, heard)
 - beat: recognition + mild dread
-- asset_candidates: none (drawn voice-note bubble, system-UI style)
+- asset_candidates:
 
 narrativeRole: stop the scroll with a sound and a shape every merchant knows — the long customer voice note.
 keyMessage: "This is the message you get all day."
@@ -66,7 +68,7 @@ the first ~6 s play, so the long unplayed waveform is the joke. Captions light "
 - persuasion: Pain agitation
 - beat: overwhelm
 - blueprint: overwhelm-surround — voice notes pile in until they bury the first one
-- asset_candidates: none (drawn voice-note bubbles)
+- asset_candidates:
 
 narrativeRole: name the cost — time the merchant doesn't have, multiplied.
 keyMessage: "Answering one by one doesn't scale."

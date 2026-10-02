@@ -171,8 +171,10 @@ soft, wooden, close-miked, no harsh UI clicks.
 
 Warm, direct, brief, like a helpful friend who runs a shop. "Você", present tense. Money as
 `R$ 1.234,56`. Never platform words (SaaS, tenant, slug, webhook), never "sem taxa", never "sob
-medida"; the only "grátis" is "14 dias grátis". Numbers on screen come from the real screens and
-`capture/extracted/asset-descriptions.md`; nothing invented.
+medida"; the only "grátis" is "14 dias grátis". Product figures on screen (prices, totals, order
+numbers, sales) come from the real screens and `capture/extracted/asset-descriptions.md`; nothing
+invented. The scenario's own props — the voice-note durations 0:47, 0:32, 1:12, 0:58 and 2:05 —
+come from the approved plan (`STORYBOARD.md` Frames 1–2) and claim nothing about the product.
 
 ## Imagery
 
@@ -189,7 +191,8 @@ stock, logos of other companies, or fake testimonials/numbers.
 - **Type**: Space Grotesk headlines/numerals, Figtree body/captions, serif italic at most once,
   sentence case, no all-caps.
 - **Depth**: forest-tinted shadows only; soft radii; no hard outlines.
-- **Fabrication**: every figure traces to a real screen or the brief.
+- **Fabrication**: every product figure traces to a real screen or the brief; every scenario prop
+  (voice-note durations) to the approved plan.
 
 ## Font loading (auto-generated, italic added)
 

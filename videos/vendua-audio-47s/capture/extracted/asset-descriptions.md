@@ -6,7 +6,7 @@ merchant admin of the fictional store **Bolos da Nena** (owner Nena), captured b
 px at 2× (750×1624 px), Creme theme unless the name says `noite`. The product appears only through
 these; no AI images, photos, people or drawn app UI.
 
-## Admin screens (`assets/screens/`)
+## Admin screens (`capture/assets/`)
 
 - `cardapio-creme-750.webp` — Cardápio: "14 produtos em 4 categorias", category pills (Bolos inteiros
   6, Fatias do dia 3, Encomendas), product cards with prices: "Bolo de cenoura com brigadeiro
@@ -37,7 +37,7 @@ these; no AI images, photos, people or drawn app UI.
   R$ 219,00 · entrega", one action "aceitar" (`packages/core/src/admin/workers.ts`, mirrored in
   `site/src/lib/content.ts`).
 
-## Brand (`assets/brand/`)
+## Brand (`capture/assets/svgs/`)
 
 - `mark-green.svg`, `mark-lime.svg` — the Venduá check mark (one stroked path, `M32 48 L61 88 L98 34`,
   round caps, stroke 17 on a 128 box), deep green / lime.
@@ -46,7 +46,7 @@ these; no AI images, photos, people or drawn app UI.
   on dark the mark and the final dot turn lime `#d9f875` (`site/src/lib/components/Logo.svelte`).
   The repo's `wordmark-*.svg` files depend on a font that isn't shipped, so they are not used.
 
-## Character (`assets/dua/`)
+## Character (`capture/assets/`)
 
 - `avatar-feliz.webp`, `avatar-ola.webp` — Duá, Venduá's anteater mascot (480×480, transparent),
   happy / waving. Never mirrored or recolored.
