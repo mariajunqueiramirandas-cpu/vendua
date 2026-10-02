@@ -58,9 +58,7 @@ export function WebView({ property, days }: { property: WebProperty; days: Analy
         hint="as visitas aparecem aqui assim que alguém abre uma página"
       />
     );
-  const deviceTotal = r.devices.reduce((s, d) => s + d.visitors, 0);
   const mobile = r.devices.find((d) => d.device === 'mobile')?.visitors ?? 0;
-  const refTotal = r.referrers.reduce((s, d) => s + d.visitors, 0);
 
   return (
     <div className="flex flex-col gap-3">
@@ -74,7 +72,7 @@ export function WebView({ property, days }: { property: WebProperty; days: Analy
           },
           {
             label: 'no celular',
-            value: deviceTotal ? `${Math.round((mobile / deviceTotal) * 100)}%` : '—',
+            value: t.visitors ? `${Math.round((mobile / t.visitors) * 100)}%` : '—',
           },
         ]}
       />
@@ -109,7 +107,7 @@ export function WebView({ property, days }: { property: WebProperty; days: Analy
           {r.referrers.length ? (
             <ShareBars
               unit="visitantes"
-              total={refTotal}
+              total={t.visitors}
               rows={r.referrers.map((x) => ({
                 key: x.referrer,
                 label: x.referrer || <span className="text-muted-foreground">direto</span>,
@@ -148,7 +146,7 @@ export function WebView({ property, days }: { property: WebProperty; days: Analy
           {r.devices.length ? (
             <ShareBars
               unit="visitantes"
-              total={deviceTotal}
+              total={t.visitors}
               rows={r.devices.map((d) => ({
                 key: d.device,
                 label: DEVICE_LABEL[d.device] ?? d.device,

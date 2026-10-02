@@ -201,8 +201,11 @@ export async function webReport(
         group by 1, 2, 3 order by visitors desc, 1 limit 10
       `,
       tx<WebReport['devices']>`
-        select device, count(distinct (day, visitor))::int as visitors
-        from ${ev} group by device order by visitors desc
+        -- one device per visitor-day (the first seen): a rotated phone isn't also a tablet
+        select device, count(*)::int as visitors from (
+          select (array_agg(device order by at, id))[1] as device
+          from ${ev} group by day, visitor
+        ) v group by device order by visitors desc
       `,
     ]);
     return {

@@ -195,6 +195,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
     expect(direct(after)).toBe(d0);
   });
 
+  test('a visitor who rotates the phone counts once, under the first device', async () => {
+    const ip = { 'user-agent': `${UA} rot-${run}` };
+    await collect({ p: 'site', id: `b${run}rot1`, path: `/t-${run}/r`, w: 390 }, ip);
+    await collect({ p: 'site', id: `b${run}rot2`, path: `/t-${run}/r`, w: 844 }, ip);
+    const r = (await (
+      await app.request('/control/v1/analytics/web?property=site&days=7', {
+        headers: { 'x-vendua-control': 'ctl' },
+      })
+    ).json()) as { totals: { visitors: number }; devices: { visitors: number }[] };
+    // every visitor-day sits under exactly one device
+    expect(r.devices.reduce((t, d) => t + d.visitors, 0)).toBe(r.totals.visitors);
+  });
+
   test('utm values that look like a phone or an order number are dropped', async () => {
     await collect({
       p: 'site',
