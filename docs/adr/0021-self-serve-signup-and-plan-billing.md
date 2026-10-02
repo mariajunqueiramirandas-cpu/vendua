@@ -38,6 +38,8 @@ piloto" with no price.
 the paid period when the owner cancels). Upgrades apply at once; downgrades wait for the period
 end (`pending_plan_id`). An unpaid period moves the store to `past_due` and the admin says so,
 but **the store stays open** — suspension is a staff decision, not a job.
+(Amended by [ADR 0025](0025-free-trial-on-basic.md): Basic starts with a free `trialing` period,
+no card; a trial that ends unpaid pauses the store until the first payment.)
 
 **Signup lives in the merchant admin** (`/admin/comecar`, pre-auth routes under
 `/admin/v1/signup`), not on the marketing site: it needs the admin host's cookie and Core's

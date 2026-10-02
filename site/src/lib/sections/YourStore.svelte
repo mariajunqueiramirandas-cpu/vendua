@@ -155,7 +155,10 @@
         Da primeira pergunta do Duá ao último pedido da noite, vem tudo junto. Você paga só o plano:
         a Venduá não cobra nada por pedido.
       </p>
-      <p class="pay">Pix todo mês ou cartão, pelo Mercado Pago.</p>
+      <p class="pay">
+        Pix todo mês ou cartão, pelo Mercado Pago. No {plans.basic.short}, você começa com {plans
+          .basic.trial} e só paga depois.
+      </p>
     </div>
 
     <div class="stand">
@@ -183,6 +186,9 @@
                   <i aria-hidden="true"></i>
                   <strong class="tnum">{t.plan.price}<small>/mês</small></strong>
                 </p>
+                {#if t.plan.trial}
+                  <p class="trial">{t.plan.trial}, sem cartão</p>
+                {/if}
                 <p class="what">{t.text}</p>
                 <a class="take" href={signup(t.plan.id)}
                   >Criar loja no {t.plan.short}<i class="go" aria-hidden="true"></i></a
@@ -563,6 +569,12 @@
   .total small {
     font-size: 0.8125rem;
     font-weight: 600;
+  }
+  .trial {
+    justify-self: end;
+    margin-top: -2px;
+    font: 600 0.8125rem/1.2 var(--font-display);
+    color: var(--success);
   }
   .what {
     max-width: 38ch;

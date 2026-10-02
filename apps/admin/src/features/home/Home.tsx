@@ -343,6 +343,7 @@ const ATTENTION: Record<string, { Icon: typeof Bell; tone: Tone; cta: string }> 
   billing_pending: { Icon: Receipt, tone: 'warning', cta: 'pagar' },
   billing_past_due: { Icon: WarningCircle, tone: 'danger', cta: 'pagar' },
   invoice_open: { Icon: Receipt, tone: 'warning', cta: 'pagar' },
+  trial_ending: { Icon: ClockCountdown, tone: 'info', cta: 'escolher' },
   // our problem, not theirs: informative, never alarming
   incident: { Icon: CloudWarning, tone: 'info', cta: 'ver' },
 };

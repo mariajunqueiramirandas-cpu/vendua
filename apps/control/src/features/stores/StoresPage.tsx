@@ -58,6 +58,12 @@ function NextCharge({ s, className }: { s: BillingStore; className?: string }) {
   const sub = s.subscription;
   if (!sub || sub.status === 'cancelled')
     return <span className={cn('text-muted-foreground/70', className)}>—</span>;
+  if (sub.status === 'trialing')
+    return (
+      <span className={cn('tnum', className)}>
+        teste até {fmtDay(sub.trialEndsAt ?? sub.currentPeriodEnd)}
+      </span>
+    );
   return (
     <span
       className={cn(

@@ -279,7 +279,8 @@ Lands with Phase 3's Mercado Pago work.
       the site request ([ADR 0021](adr/0021-self-serve-signup-and-plan-billing.md)).
 - [x] Self-serve signup at `/comecar`: plan (preselected from the site's
       `?plano=`) → store → what it sells → you → WhatsApp code → payment; the
-      store opens when the first payment lands.
+      store opens when the first payment lands — or at once on Basic's 14-day free trial,
+      no card ([ADR 0025](adr/0025-free-trial-on-basic.md)).
 - [x] Onboarding: `/bem-vindo` takes a store to "ready to sell" in four parts
       (a cara da loja, atendimento, pagamentos, cardápio) as a
       one-question-per-screen conversation with a live preview (§6.8). A

@@ -376,18 +376,18 @@ P-IDs point at [`competitor-parity.md`](../competitor-parity.md). Paths are unde
 
 ### 2.22 Account, billing, support and growth
 
-| Feature              | What they state                                                                                                          | Venduá                                                                                   |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| Self-serve signup    | Account in a minute                                                                                                      | have (ADR 0021)                                                                          |
-| No-card free trial   | Store pauses when it ends; data kept; no automatic charge                                                                | gap: trials are a staff decision (`src/modules/integrations.ts:283`)                     |
-| Subscription payment | Card, Pix, boleto or bank transfer; invoice emailed in advance                                                           | partial: card or Pix                                                                     |
-| Dunning              | Reminders, then read-only access, then suspension                                                                        | partial: past-due handling (`src/modules/billing/jobs.ts:111`), no read-only stage found |
-| Upgrade in the panel | "Planos" screen                                                                                                          | have (`/account/subscription`)                                                           |
-| Help center          | Categorised articles, searchable by Lis                                                                                  | partial: per-screen how-tos (`apps/admin/src/features/help/topics.tsx`)                  |
-| Support channels     | Email, business-hours chat, WhatsApp by tier                                                                             | partial: "falar com a Venduá" posts to staff (`src/admin/routes.ts:697`)                 |
-| Assisted migration   | Menu by link or from iFood, reviewed with their team                                                                     | partial: Instadelivery import and onboarding                                             |
-| Partner program      | Recurring commission tiered by active stores, first-month bonus, partner portal with link and QR, 60-day lead protection | gap                                                                                      |
-| Data deletion        | LGPD request page                                                                                                        | have: per-customer export and forget (`src/admin/routes-customers.ts:139`)               |
+| Feature              | What they state                                                                                                          | Venduá                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| Self-serve signup    | Account in a minute                                                                                                      | have (ADR 0021)                                                                                |
+| No-card free trial   | Store pauses when it ends; data kept; no automatic charge                                                                | done: Basic's 14 days, no card; pauses unpaid ([ADR 0025](../adr/0025-free-trial-on-basic.md)) |
+| Subscription payment | Card, Pix, boleto or bank transfer; invoice emailed in advance                                                           | partial: card or Pix                                                                           |
+| Dunning              | Reminders, then read-only access, then suspension                                                                        | partial: past-due handling (`src/modules/billing/jobs.ts:111`), no read-only stage found       |
+| Upgrade in the panel | "Planos" screen                                                                                                          | have (`/account/subscription`)                                                                 |
+| Help center          | Categorised articles, searchable by Lis                                                                                  | partial: per-screen how-tos (`apps/admin/src/features/help/topics.tsx`)                        |
+| Support channels     | Email, business-hours chat, WhatsApp by tier                                                                             | partial: "falar com a Venduá" posts to staff (`src/admin/routes.ts:697`)                       |
+| Assisted migration   | Menu by link or from iFood, reviewed with their team                                                                     | partial: Instadelivery import and onboarding                                                   |
+| Partner program      | Recurring commission tiered by active stores, first-month bonus, partner portal with link and QR, 60-day lead protection | gap                                                                                            |
+| Data deletion        | LGPD request page                                                                                                        | have: per-customer export and forget (`src/admin/routes-customers.ts:139`)                     |
 
 ### 2.23 Where we lead
 

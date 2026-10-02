@@ -16,6 +16,7 @@ import { CardConfirm, CardHandoff, PixPay, Welcome } from './after.tsx';
 import {
   afterCreate,
   clearDraft,
+  trialOf,
   EMPTY,
   loadDraft,
   loadToken,
@@ -188,6 +189,13 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
   const done = !PRE.has(step);
 
   const props: FlowProps | null = plans.data ? { d, patch, go, notice, plans: plans.data } : null;
+  // the free days this signup starts with, once the phone is known to be eligible
+  const planTrial = plans.data?.plans.find((p) => p.id === d.planId)?.trialDays ?? 0;
+  const trialDays =
+    trialOf(d.created?.next) ||
+    (verified?.trialEligible && plans.data?.billing.available && !d.byCode)
+      ? planTrial
+      : 0;
 
   let body: React.ReactNode;
   if (step === 'pronto')
@@ -198,7 +206,8 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
           d.created?.store.slug ?? d.slug,
           plans.data?.storeDomain ?? 'vendua.com.br',
         )}
-        paid={d.created?.next.kind !== 'manual'}
+        paid={d.created?.next.kind === 'pix' || d.created?.next.kind === 'card'}
+        trialEndsAt={trialOf(d.created?.next)}
         onGo={finish}
       />
     );
@@ -330,7 +339,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
             aria-label="resumo da sua loja"
           >
             <p className="t-label mb-3 text-center text-muted">Sua loja, tomando forma</p>
-            <Summary d={d} plans={plans.data} />
+            <Summary d={d} plans={plans.data} trial={trialDays} />
           </aside>
         ) : null}
       </div>

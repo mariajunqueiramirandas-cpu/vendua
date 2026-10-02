@@ -26,8 +26,11 @@ Other pages: `/privacidade/` and the 404.
   `seunome.vendua.com.br`, the standard Venduá look, no own domain, no custom site) and **Venduá
   PRO+, R$ 99/mês** (own domain + a site made by our AI agent). The plan is paid by Pix every month
   or by recurring card, through Mercado Pago. Venduá takes no per-order fee, but Mercado Pago keeps
-  its own on each payment, so never "sem taxas"; and never "grátis", a trial, a discount or a date
-  for the custom site. Plan names and prices live in `plans` in `src/lib/content.ts`.
+  its own on each payment, so never "sem taxas".
+- Venduá Basic starts with a **14-day free trial, no card** (the user's decision, 2026-10-02); PRO+
+  pays the first month. "14 dias grátis" is the only "grátis" the site says: no other free offer, no
+  discount, and no date for the custom site. Plan names, prices and the trial live in `plans` in
+  `src/lib/content.ts`.
 - Every planned feature (`docs/merchant-admin.md` scope) is presented as available at launch.
   Nothing beyond that list.
 - No custom software ("sob medida", software house, projects).
@@ -47,7 +50,7 @@ Other pages: `/privacidade/` and the 404.
   `vite.config.ts` makes every `@media (prefers-color-scheme: dark)` block obey it, so keep writing
   dark styles that way. Screens follow it through `Screen`. The admin is the source: `scripts/validate.ts`
   fails the build if a shared token drifts.
-- Banned words (platform jargon, "sob medida", "sem taxa", "grátis", "em breve", real store names) are checked
+- Banned words (platform jargon, "sob medida", "sem taxa", "grátis" other than "14 dias grátis", "em breve", real store names) are checked
   on the rendered text of every page by `scripts/postbuild.ts`.
 - Works without JavaScript; motion is CSS-only and respects `prefers-reduced-motion`.
 - No generic template chrome: no eyebrow labels above headings, no all-caps labels, no `A · B`

@@ -5,6 +5,7 @@ import {
   Clock,
   Copy,
   CreditCard,
+  Gift,
   Globe,
   type Icon,
   Info,
@@ -110,7 +111,13 @@ function Chip({ tone, icon: I, children }: { tone: Tone; icon: Icon; children: R
 }
 
 function SubChip({ s }: { s: Sub }) {
-  if (s.status === 'active' && s.cancelAtPeriodEnd)
+  if (s.status === 'trialing' && !s.cancelAtPeriodEnd)
+    return (
+      <Chip tone="info" icon={Gift}>
+        teste grátis{s.trialEndsAt ? ` até ${dateShort(s.trialEndsAt)}` : ''}
+      </Chip>
+    );
+  if ((s.status === 'active' || s.status === 'trialing') && s.cancelAtPeriodEnd)
     return (
       <Chip tone="warning" icon={Clock}>
         termina {s.currentPeriodEnd ? dateShort(s.currentPeriodEnd) : 'em breve'}
@@ -138,6 +145,51 @@ function SubChip({ s }: { s: Sub }) {
     <Chip tone="neutral" icon={XCircle}>
       cancelado
     </Chip>
+  );
+}
+
+/** A free trial (ADR 0025): until when, and what happens then with the method chosen. */
+function TrialCallout({
+  s,
+  plan,
+  onPay,
+}: {
+  s: Sub;
+  plan: AccountData['plan'];
+  onPay: (() => void) | undefined;
+}) {
+  const end = s.trialEndsAt ? dateShort(s.trialEndsAt) : 'o fim do teste';
+  const price = perMonth(plan);
+  const needsAuth = s.method === 'card' && !!s.checkoutUrl;
+  return (
+    <Callout
+      tone="info"
+      icon={Gift}
+      title={`Teste grátis até ${end}`}
+      action={
+        needsAuth ? (
+          <Button
+            size="sm"
+            icon={<ArrowSquareOut />}
+            onClick={() => window.location.assign(s.checkoutUrl!)}
+          >
+            autorizar no Mercado Pago
+          </Button>
+        ) : onPay ? (
+          <Button size="sm" variant="secondary" icon={<PixLogo />} onClick={onPay}>
+            pagar com Pix
+          </Button>
+        ) : null
+      }
+    >
+      {`Depois, o ${plan.name}${price ? ` custa ${price}` : ''}. `}
+      {s.method === 'pix'
+        ? 'A fatura com o Pix aparece aqui 5 dias antes, e a gente avisa no WhatsApp. Prefere cartão? Troque abaixo.'
+        : needsAuth
+          ? `Autorize o cartão para a cobrança começar em ${end} sem interromper a loja.`
+          : `A primeira cobrança no cartão é em ${end}.`}{' '}
+      Se não pagar, a loja pausa os pedidos até o pagamento.
+    </Callout>
   );
 }
 
@@ -328,6 +380,14 @@ function AccountView({ a }: { a: AccountData }) {
           >
             A loja abre para pedidos assim que ele entrar.
           </Callout>
+        ) : s.status === 'trialing' && !s.cancelAtPeriodEnd ? (
+          <TrialCallout
+            s={s}
+            plan={a.plan}
+            onPay={
+              openInvoice ? () => setSheet({ kind: 'invoice', id: openInvoice.id }) : undefined
+            }
+          />
         ) : s.cancelAtPeriodEnd ? (
           <Callout
             tone="info"
@@ -487,6 +547,15 @@ function PlanHero({
 
       {s && a.billing.available ? (
         <div className="relative mt-5 space-y-2">
+          {s.status === 'trialing' && !s.cancelAtPeriodEnd && s.trialEndsAt ? (
+            <p className="t-body flex items-center gap-2">
+              <Gift className="size-5 shrink-0 text-muted" aria-hidden />
+              <span>
+                Teste grátis até <strong>{dateShort(s.trialEndsAt)}</strong>. A primeira cobrança é
+                nesse dia, no {METHOD_LABEL[s.method]}.
+              </span>
+            </p>
+          ) : null}
           {s.status === 'active' && !s.cancelAtPeriodEnd && s.currentPeriodEnd ? (
             <p className="t-body flex items-center gap-2">
               <Receipt className="size-5 shrink-0 text-muted" aria-hidden />
@@ -561,7 +630,8 @@ function PlanHero({
             >
               autorizar no Mercado Pago
             </Button>
-          ) : (s?.status === 'pending' || s?.status === 'past_due') && onPay ? (
+          ) : (s?.status === 'pending' || s?.status === 'past_due' || s?.status === 'trialing') &&
+            onPay ? (
             <Button icon={<PixLogo />} onClick={onPay}>
               pagar a fatura
             </Button>
@@ -1558,9 +1628,11 @@ function Cancel({ s }: { s: Sub }) {
       {open ? (
         <div className="mt-3 max-w-md space-y-3">
           <p className="t-body text-muted">
-            {s.currentPeriodEnd
-              ? `A assinatura termina em ${dateShort(s.currentPeriodEnd)}, no fim do período já pago. Até lá, tudo continua, e dá para voltar atrás.`
-              : 'A assinatura é cancelada e nada mais é cobrado.'}
+            {s.status === 'trialing' && s.currentPeriodEnd
+              ? `O teste grátis termina em ${dateShort(s.currentPeriodEnd)} e nada é cobrado. Até lá, tudo continua, e dá para voltar atrás.`
+              : s.currentPeriodEnd
+                ? `A assinatura termina em ${dateShort(s.currentPeriodEnd)}, no fim do período já pago. Até lá, tudo continua, e dá para voltar atrás.`
+                : 'A assinatura é cancelada e nada mais é cobrado.'}
           </p>
           <HoldButton onConfirm={() => cancel.mutate(undefined)} disabled={cancel.isPending}>
             segure para cancelar

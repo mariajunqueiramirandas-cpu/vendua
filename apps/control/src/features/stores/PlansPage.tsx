@@ -1,12 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ArrowRight, Layers } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ControlPlan } from '@/lib/api.ts';
+import { cn } from '@/lib/cn.ts';
 import { fmtMoney } from '@/lib/format.ts';
 import { useIsMobile } from '@/lib/hooks.ts';
 import { DataList, type Column } from '@/components/DataList.tsx';
-import { EditableText } from '@/components/EditableText.tsx';
+import { EditableText, editableValueClass } from '@/components/EditableText.tsx';
 import { MoneyEdit } from '@/components/MoneyEdit.tsx';
 import { Page } from '@/components/Page.tsx';
 import { EmptyState, ErrorState, Fact } from '@/components/common.tsx';
@@ -14,17 +15,81 @@ import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card } from '@/components/ui/card.tsx';
 import { Switch } from '@/components/ui/controls.tsx';
+import { Input } from '@/components/ui/input.tsx';
 import { Dialog, ResponsiveSheet } from '@/components/ui/overlay.tsx';
 import { useControlPlans, usePatchPlan } from './queries.ts';
 import { STORES_TABS } from './tabs.ts';
 
-interface PriceChange {
-  plan: ControlPlan;
-  cents: number;
+type Change = { plan: ControlPlan } & (
+  { kind: 'price'; cents: number } | { kind: 'trial'; days: number }
+);
+
+const TRIAL_MAX = 60;
+const trialLabel = (days: number) =>
+  days > 0 ? `${days} ${days === 1 ? 'dia' : 'dias'} grátis` : 'sem teste';
+
+/** Click-to-edit trial length in whole days (0 = no trial); out-of-range input is refused. */
+function TrialEdit({
+  days,
+  label,
+  onSave,
+}: {
+  days: number;
+  label: string;
+  onSave: (days: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const settled = useRef(false);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className={cn(editableValueClass, 'whitespace-nowrap', !days && 'text-muted-foreground')}
+        title="clique para editar"
+        aria-label={`editar ${label}`}
+        onClick={() => {
+          settled.current = false;
+          setEditing(true);
+        }}
+      >
+        {trialLabel(days)}
+      </button>
+    );
+  }
+  const commit = (raw: string) => {
+    if (settled.current) return;
+    settled.current = true;
+    setEditing(false);
+    const v = raw === '' ? 0 : Number(raw);
+    if (!Number.isInteger(v) || v < 0 || v > TRIAL_MAX)
+      return void toast.error(`o teste vai de 0 a ${TRIAL_MAX} dias`);
+    if (v !== days) onSave(v);
+  };
+  return (
+    <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+      <Input
+        autoFocus
+        inputMode="numeric"
+        aria-label={label}
+        defaultValue={String(days)}
+        className="w-16 tnum"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            settled.current = true;
+            setEditing(false);
+          }
+          if (e.key === 'Enter') commit((e.target as HTMLInputElement).value.trim());
+        }}
+        onBlur={(e) => commit(e.target.value.trim())}
+      />
+      dias
+    </span>
+  );
 }
 
 /** Inline editors shared by the desktop table cells and the phone sheet. */
-function useEditors(askPrice: (c: PriceChange) => void) {
+function useEditors(ask: (c: Change) => void) {
   const patch = usePatchPlan();
   return {
     pending: patch.isPending,
@@ -48,8 +113,15 @@ function useEditors(askPrice: (c: PriceChange) => void) {
         onSave={(cents) => {
           if (cents == null || cents < 0) return void toast.error('o preço não pode ficar vazio');
           // next tick: the price input unmounts first, or its focus loss dismisses the dialog
-          setTimeout(() => askPrice({ plan: p, cents }), 0);
+          setTimeout(() => ask({ kind: 'price', plan: p, cents }), 0);
         }}
+      />
+    ),
+    trial: (p: ControlPlan) => (
+      <TrialEdit
+        days={p.trialDays ?? 0}
+        label={`dias de teste grátis do plano ${p.name}`}
+        onSave={(days) => setTimeout(() => ask({ kind: 'trial', plan: p, days }), 0)}
       />
     ),
     public: (p: ControlPlan) => (
@@ -60,7 +132,12 @@ function useEditors(askPrice: (c: PriceChange) => void) {
         onCheckedChange={(v) => patch.mutate({ id: p.id, public: v })}
       />
     ),
-    confirmPrice: (c: PriceChange) => patch.mutate({ id: c.plan.id, priceCents: c.cents }),
+    confirm: (c: Change) =>
+      patch.mutate(
+        c.kind === 'price'
+          ? { id: c.plan.id, priceCents: c.cents }
+          : { id: c.plan.id, trialDays: c.days },
+      ),
   };
 }
 
@@ -81,7 +158,7 @@ const pct = (bps: number) => `${(bps / 100).toLocaleString('pt-BR')}%`;
 export default function PlansPage() {
   const query = useControlPlans();
   const [sp, setSp] = useSearchParams();
-  const [change, setChange] = useState<PriceChange | null>(null);
+  const [change, setChange] = useState<Change | null>(null);
   const ed = useEditors(setChange);
   const mobile = useIsMobile();
   const plans = useMemo(
@@ -114,6 +191,7 @@ export default function PlansPage() {
       ),
     },
     { key: 'price', header: 'preço/mês', className: 'whitespace-nowrap', cell: ed.price },
+    { key: 'trial', header: 'teste grátis', className: 'whitespace-nowrap', cell: ed.trial },
     { key: 'features', header: 'inclui', cell: (p) => <Features p={p} /> },
     {
       key: 'fee',
@@ -143,6 +221,7 @@ export default function PlansPage() {
       <div className="flex min-w-0 items-center gap-2">
         <Features p={p} />
         <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+          {p.trialDays > 0 && `${trialLabel(p.trialDays)} · `}
           {p.public ? 'no cadastro' : 'oculto'}
         </span>
       </div>
@@ -167,8 +246,8 @@ export default function PlansPage() {
             />
           </Card>
           <p className="mt-2 px-0.5 text-xs text-muted-foreground max-md:hidden">
-            clique no nome ou no preço para editar · planos ocultos não aparecem no cadastro nem em
-            “trocar de plano”
+            clique no nome, no preço ou no teste para editar · planos ocultos não aparecem no
+            cadastro nem em “trocar de plano”
           </p>
         </>
       )}
@@ -183,6 +262,7 @@ export default function PlansPage() {
           <div className="flex flex-col gap-3">
             <Fact label="nome">{ed.name(open)}</Fact>
             <Fact label="preço por mês">{ed.price(open)}</Fact>
+            <Fact label="teste grátis">{ed.trial(open)}</Fact>
             <div className="flex items-center justify-between gap-3">
               <Fact label="no cadastro">{open.public ? 'visível' : 'oculto'}</Fact>
               {ed.public(open)}
@@ -198,8 +278,18 @@ export default function PlansPage() {
       <Dialog
         open={!!change}
         onOpenChange={(o) => !o && setChange(null)}
-        title={change ? `mudar o preço do ${change.plan.name}?` : ''}
-        description="A mudança vale só para as próximas cobranças."
+        title={
+          !change
+            ? ''
+            : change.kind === 'price'
+              ? `mudar o preço do ${change.plan.name}?`
+              : `mudar o teste grátis do ${change.plan.name}?`
+        }
+        description={
+          change?.kind === 'trial'
+            ? 'Vale para as lojas que se cadastrarem daqui em diante. Quem já está em teste mantém a data.'
+            : 'A mudança vale só para as próximas cobranças.'
+        }
         footer={
           <>
             <Button variant="outline" onClick={() => setChange(null)}>
@@ -208,11 +298,11 @@ export default function PlansPage() {
             <Button
               disabled={ed.pending}
               onClick={() => {
-                if (change) ed.confirmPrice(change);
+                if (change) ed.confirm(change);
                 setChange(null);
               }}
             >
-              mudar preço
+              {change?.kind === 'trial' ? 'mudar teste' : 'mudar preço'}
             </Button>
           </>
         }
@@ -220,10 +310,14 @@ export default function PlansPage() {
         {change && (
           <div className="flex items-center justify-center gap-3 rounded-lg border bg-secondary py-4 text-lg font-semibold tracking-[-0.02em] tnum">
             <span className="text-muted-foreground line-through decoration-1">
-              {fmtMoney(change.plan.priceCents)}
+              {change.kind === 'price'
+                ? fmtMoney(change.plan.priceCents)
+                : trialLabel(change.plan.trialDays ?? 0)}
             </span>
             <ArrowRight className="size-4 text-muted-foreground" />
-            <span>{fmtMoney(change.cents)}</span>
+            <span>
+              {change.kind === 'price' ? fmtMoney(change.cents) : trialLabel(change.days)}
+            </span>
           </div>
         )}
       </Dialog>

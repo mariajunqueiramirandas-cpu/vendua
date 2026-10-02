@@ -595,6 +595,7 @@ export default function UiReference() {
               onSelect={() => setPlan(p.id)}
               address="sualoja.vendua.com.br"
               badge={p.id === 'basic' ? 'para começar' : undefined}
+              trial
             />
           ))}
           <PlanCardSkeleton />
@@ -706,6 +707,7 @@ const SAMPLE_PLANS: Plan[] = [
     priceCents: 3990,
     feeBps: 0,
     features: { customDomain: false, customSite: false },
+    trialDays: 14,
   },
   {
     id: 'pro_plus',
@@ -713,6 +715,7 @@ const SAMPLE_PLANS: Plan[] = [
     priceCents: 9900,
     feeBps: 0,
     features: { customDomain: true, customSite: true },
+    trialDays: 0,
   },
 ];
 

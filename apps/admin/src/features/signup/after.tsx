@@ -386,12 +386,15 @@ export function Welcome({
   storeName,
   address,
   paid,
+  trialEndsAt = null,
   onGo,
 }: {
   storeName: string;
   address: string;
-  /** false after an access-code signup: the team confirms the payment later */
+  /** false after an access-code signup (the team confirms the payment later) or a trial */
   paid: boolean;
+  /** the store opened on a free trial that ends then */
+  trialEndsAt?: string | null;
   onGo: () => void;
 }) {
   useEffect(() => haptic.commit(), []);
@@ -417,7 +420,18 @@ export function Welcome({
                 </span>
               ))}
             </p>
-            {paid ? null : (
+            {trialEndsAt ? (
+              <p className="t-body mt-3 opacity-85">
+                Ela já pode receber pedidos. Seu teste grátis vai até{' '}
+                <strong className="whitespace-nowrap">
+                  {new Date(trialEndsAt).toLocaleDateString('pt-BR', {
+                    day: 'numeric',
+                    month: 'long',
+                  })}
+                </strong>
+                , sem cobrança.
+              </p>
+            ) : paid ? null : (
               <p className="t-body mt-3 opacity-85">
                 Ela abre para pedidos quando a equipe da Venduá confirmar o pagamento do plano.
               </p>

@@ -155,6 +155,8 @@ export interface Plan {
   priceCents: number | null;
   feeBps: number;
   features: { customDomain: boolean; customSite: boolean };
+  /** a new store on this plan starts with these free days, no card (0 = none; ADR 0025) */
+  trialDays: number;
 }
 
 export interface StoreRef {
@@ -535,7 +537,7 @@ export interface Home {
   attention: {
     /** orders_waiting | closed_with_orders | pix_to_confirm | low_stock | waitlist |
      *  alerts_failing | mp_expiring | mp_disconnected | mp_restricted | billing_pending |
-     *  billing_past_due | invoice_open | incident */
+     *  billing_past_due | invoice_open | trial_ending | incident */
     kind: string;
     count: number;
     title: string;
@@ -823,7 +825,7 @@ export interface Incident {
   resolvedAt: string | null;
 }
 
-export type SubscriptionStatus = 'pending' | 'active' | 'past_due' | 'cancelled';
+export type SubscriptionStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'cancelled';
 export type InvoiceStatus = 'open' | 'paid' | 'failed' | 'void';
 export type DomainStatus = 'active' | 'pending_dns' | 'dns_ok' | 'failed';
 
@@ -885,6 +887,8 @@ export interface Account {
     /** card: where the owner authorizes the recurring charge (while pending) */
     checkoutUrl: string | null;
     payerEmail: string | null;
+    /** the free trial's end (the first charge); kept after it converts */
+    trialEndsAt: string | null;
   } | null;
   billing: { available: boolean };
   invoices: Invoice[];
@@ -917,7 +921,9 @@ export type PayNext =
   | { kind: 'card'; url: string }
   | { kind: 'pix'; invoiceId: string }
   /** signed up with an access code: the team confirms this invoice by hand */
-  | { kind: 'manual'; invoiceId: string };
+  | { kind: 'manual'; invoiceId: string }
+  /** a free trial: the store is open and nothing is charged until `endsAt` */
+  | { kind: 'trial'; endsAt: string };
 
 export type { PageTemplate };
 export type TemplateSection = SectionInstance;
@@ -1093,14 +1099,17 @@ export const api = {
         phone,
       }),
     otpVerify: (phone: string, code: string) =>
-      send<{ signupToken: string; existingStores: StoreRef[] }>('POST', '/signup/otp/verify', {
-        phone,
-        code,
-      }),
+      send<{ signupToken: string; existingStores: StoreRef[]; trialEligible: boolean }>(
+        'POST',
+        '/signup/otp/verify',
+        { phone, code },
+      ),
     create: (p: {
       signupToken: string;
       planId: string;
-      method: 'card' | 'pix';
+      /** the plan's free trial: no payment method asked */
+      trial?: boolean;
+      method?: 'card' | 'pix';
       storeName: string;
       slug: string;
       ownerName: string;

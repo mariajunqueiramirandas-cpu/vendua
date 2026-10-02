@@ -100,6 +100,8 @@ export interface Verified {
   token: string;
   phone: string;
   existingStores: StoreRef[];
+  /** this phone never had a free trial (one per owner) */
+  trialEligible?: boolean;
 }
 
 export function loadToken(phone: string | null): Verified | null {
@@ -125,6 +127,9 @@ export function saveToken(v: Verified | null) {
 export function afterCreate(next: PayNext): StepId {
   return next.kind === 'card' ? 'cartao' : next.kind === 'pix' ? 'pix' : 'pronto';
 }
+
+/** the store opened on a free trial: open now, first charge at `endsAt` */
+export const trialOf = (next: PayNext | undefined) => (next?.kind === 'trial' ? next.endsAt : null);
 
 /** The card hand-off is out at Mercado Pago: its return (`?assinatura=retorno`) belongs here. */
 export function awaitingCardReturn(): boolean {

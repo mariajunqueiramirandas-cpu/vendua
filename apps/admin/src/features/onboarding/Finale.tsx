@@ -37,6 +37,7 @@ export function Finale({
   url,
   name,
   live,
+  trialEndsAt = null,
   waiting,
   pending,
 }: {
@@ -44,6 +45,8 @@ export function Finale({
   name: string;
   /** false while billing_hold keeps the store closed */
   live: boolean;
+  /** the store runs on a free trial until then */
+  trialEndsAt?: string | null;
   /** what opens it (the plan's Pix, or a line saying who confirms it) */
   waiting: ReactNode;
   pending: Pending[];
@@ -82,6 +85,22 @@ export function Finale({
                 ? `Parabéns, ${name}. Agora é só contar para todo mundo.`
                 : 'Ela abre para pedidos assim que o pagamento do plano for confirmado.'}
             </p>
+            {live && trialEndsAt ? (
+              <p className="t-body mt-3 opacity-85">
+                Teste grátis até{' '}
+                <strong className="whitespace-nowrap">
+                  {new Date(trialEndsAt).toLocaleDateString('pt-BR', {
+                    day: 'numeric',
+                    month: 'long',
+                  })}
+                </strong>
+                : nada é cobrado até lá. Depois, é só escolher Pix ou cartão em{' '}
+                <Link to="/conta" className="font-semibold underline underline-offset-2">
+                  Conta
+                </Link>
+                .
+              </p>
+            ) : null}
           </div>
         </div>
       </section>

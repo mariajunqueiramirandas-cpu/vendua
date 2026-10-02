@@ -84,6 +84,7 @@ export function PlanStep({ d, patch, go, plans, notice }: FlowProps) {
             selected={d.planId === p.id}
             onSelect={() => patch({ planId: p.id })}
             address={addressOf(d.slug, plans.storeDomain)}
+            trial={plans.billing.available}
           />
         ))}
       </div>
@@ -421,7 +422,12 @@ export function CodeStep({
     mutationFn: (c: string) => api.signup.otpVerify(phone, c),
     onSuccess: (r) => {
       haptic.commit();
-      const v = { token: r.signupToken, phone, existingStores: r.existingStores };
+      const v = {
+        token: r.signupToken,
+        phone,
+        existingStores: r.existingStores,
+        trialEligible: r.trialEligible,
+      };
       saveToken(v);
       onVerified(v);
       go(r.existingStores.length ? 'existente' : 'pagamento', { praise: 'WhatsApp confirmado!' });
@@ -573,6 +579,48 @@ const METHODS = [
   },
 ];
 
+/** The trial, told as what happens when: today, the reminder, the first month. */
+function TrialPlan({ plan, days }: { plan: Plan; days: number }) {
+  const end = new Date(Date.now() + days * 86_400_000);
+  const nudge = new Date(end.getTime() - 3 * 86_400_000);
+  const day = (x: Date) => x.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' });
+  const steps = [
+    { when: 'Hoje', what: 'A loja abre para pedidos. Nada é cobrado e nenhum cartão é pedido.' },
+    { when: day(nudge), what: 'A gente avisa no WhatsApp que o teste está acabando.' },
+    {
+      when: day(end),
+      what: `Começa o ${plan.name}${perMonth(plan) ? `, ${perMonth(plan)}` : ''}, com Pix ou cartão: você escolhe em Conta.`,
+    },
+  ];
+  return (
+    <div className="space-y-4">
+      <ol className="relative space-y-4 rounded-lg bg-surface p-5 depth-1">
+        {steps.map((st, i) => (
+          <li key={st.when} className="flex gap-3">
+            <span
+              className={cn(
+                'tnum grid size-8 shrink-0 place-items-center rounded-full font-display font-semibold',
+                i === 0 ? 'bg-success text-on-primary' : 'bg-sunken',
+              )}
+              aria-hidden
+            >
+              {i + 1}
+            </span>
+            <span className="min-w-0">
+              <span className="block font-semibold">{st.when}</span>
+              <span className="t-body block text-muted">{st.what}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+      <p className="t-caption text-muted">
+        Se não quiser continuar, é só não pagar: a loja pausa os pedidos e nada é cobrado. Nenhuma
+        taxa da Venduá por pedido, nem no teste.
+      </p>
+    </div>
+  );
+}
+
 /** Where a refused signup sends the merchant back to, from the field Core names. */
 function stepFor(e: unknown): { step: StepId; notice: string } | null {
   if (!(e instanceof ApiError)) return null;
@@ -620,12 +668,17 @@ export function PayStep({
   const [err, setErr] = useState<string | null>(null);
   const byCode = plans.billing.accessCode && (!plans.billing.available || d.byCode);
   const [code, setCode] = useState('');
+  // a parallel signup from this phone took its one trial meanwhile: pay like any other
+  const [trialLost, setTrialLost] = useState(false);
+  const trialDays = plan?.trialDays ?? 0;
+  const trial =
+    !byCode && plans.billing.available && trialDays > 0 && !!verified.trialEligible && !trialLost;
   const create = useMutation({
     mutationFn: () =>
       api.signup.create({
         signupToken: verified.token,
         planId: d.planId!,
-        method: d.method,
+        ...(trial ? { trial: true } : { method: d.method }),
         storeName: d.storeName.trim(),
         slug: d.slug,
         ownerName: d.ownerName.trim(),
@@ -635,6 +688,10 @@ export function PayStep({
       }),
     onSuccess: onCreated,
     onError: (e) => {
+      if (e instanceof ApiError && e.code === 'TRIAL_USED') {
+        setTrialLost(true);
+        return setErr('Esse WhatsApp já usou o teste grátis em outra loja. Escolha como pagar.');
+      }
       const back = stepFor(e);
       if (back) go(back.step, { notice: back.notice });
       else setErr((e instanceof ApiError && CREATE_ERR[e.code]) || messageOf(e));
@@ -642,16 +699,24 @@ export function PayStep({
   });
   return (
     <StepFrame
-      title={byCode ? 'Qual é o seu código de acesso?' : 'Como prefere pagar o plano?'}
+      title={
+        byCode
+          ? 'Qual é o seu código de acesso?'
+          : trial
+            ? `Comece com ${trialDays} dias grátis`
+            : 'Como prefere pagar o plano?'
+      }
       hint={
         byCode
           ? 'Com o código, você cria a loja agora e acerta o pagamento do plano com a equipe da Venduá.'
-          : 'Dá para trocar depois, em Conta e plano.'
+          : trial
+            ? 'Sem cartão e sem cobrança agora: a loja já abre para pedidos.'
+            : 'Dá para trocar depois, em Conta e plano.'
       }
       back={() => go(verified.existingStores.length ? 'existente' : 'whatsapp')}
       busy={create.isPending}
       disabled={!plan || (byCode ? code.trim().length < 12 : !plans.billing.available)}
-      label="criar minha loja"
+      label={trial ? 'começar meu teste grátis' : 'criar minha loja'}
       onSubmit={() => {
         setErr(null);
         create.mutate();
@@ -674,6 +739,8 @@ export function PayStep({
             }}
           />
         </Field>
+      ) : trial && plan ? (
+        <TrialPlan plan={plan} days={trialDays} />
       ) : (
         <div
           role="radiogroup"
@@ -728,7 +795,12 @@ export function PayStep({
           {byCode ? 'prefiro pagar o plano' : 'tenho um código de acesso'}
         </Button>
       ) : null}
-      {plan ? (
+      {!trial && trialDays > 0 && verified.trialEligible === false && !byCode ? (
+        <p className="t-body text-muted">
+          Esse WhatsApp já usou o teste grátis em outra loja, então esta começa pelo primeiro mês.
+        </p>
+      ) : null}
+      {plan && !trial ? (
         <div className="rounded-lg bg-sunken p-4">
           <div className="flex items-baseline justify-between gap-3">
             <p className="font-semibold">{plan.name}</p>
@@ -762,7 +834,16 @@ const NO_WEEK = Array.from({ length: 7 }, () => []);
  * Beside the questions on desktop: the same phone the onboarding builds the store in, already
  * with its name and address, and a short receipt of what was chosen.
  */
-export function Summary({ d, plans }: { d: Draft; plans: PlansData | undefined }) {
+export function Summary({
+  d,
+  plans,
+  trial = 0,
+}: {
+  d: Draft;
+  plans: PlansData | undefined;
+  /** the free days this signup starts with (0: it pays from the start) */
+  trial?: number;
+}) {
   const plan = plans?.plans.find((p) => p.id === d.planId);
   const seg = segmentOf(d.segment);
   const rows: { label: string; value: string | null }[] = [
@@ -779,12 +860,14 @@ export function Summary({ d, plans }: { d: Draft; plans: PlansData | undefined }
       label: 'Pagamento',
       value:
         d.step === 'pagamento' || d.created
-          ? d.created?.next.kind === 'manual' ||
-            (!d.created && plans?.billing.accessCode && (!plans.billing.available || d.byCode))
-            ? 'Código de acesso'
-            : d.method === 'pix'
-              ? 'Pix todo mês'
-              : 'Cartão'
+          ? trial > 0
+            ? `${trial} dias grátis`
+            : d.created?.next.kind === 'manual' ||
+                (!d.created && plans?.billing.accessCode && (!plans.billing.available || d.byCode))
+              ? 'Código de acesso'
+              : d.method === 'pix'
+                ? 'Pix todo mês'
+                : 'Cartão'
           : null,
     },
   ];

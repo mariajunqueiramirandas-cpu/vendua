@@ -335,6 +335,12 @@ function Flow({
 
   const hold = s.status.billingHold;
   const plan = usePlan(owner, hold);
+  // the finale says until when a free trial runs (Conta is the owner's)
+  const account = useQuery({
+    queryKey: qk.account,
+    queryFn: api.account,
+    enabled: owner && step === 'pronto',
+  });
   const ps = planState(plan.data);
   const pending: Pending[] = [
     ...ob.checklist
@@ -466,6 +472,11 @@ function Flow({
         url={session.store.url}
         name={draft.name.trim() || s.profile.name}
         live={!hold}
+        trialEndsAt={
+          account.data?.subscription?.status === 'trialing'
+            ? account.data.subscription.trialEndsAt
+            : null
+        }
         waiting={
           ps.kind === 'pix' && plan.data ? (
             <PlanPix a={plan.data} invoiceId={ps.invoiceId} />
