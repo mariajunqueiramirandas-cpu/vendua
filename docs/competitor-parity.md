@@ -101,6 +101,6 @@ Profiles: [`competitors/`](competitors/README.md).
 
 ## Shipped / declined log
 
-| ID  | Feature | Outcome | Date | Link |
-| --- | ------- | ------- | ---- | ---- |
-|     |         |         |      |      |
+| ID    | Feature                                                   | Outcome | Date       | Link                                           |
+| ----- | --------------------------------------------------------- | ------- | ---------- | ---------------------------------------------- |
+| P-024 | Order-status messages to shoppers from the store's number | shipped | 2026-10-02 | [ADR 0026](adr/0026-store-whatsapp-gateway.md) |
