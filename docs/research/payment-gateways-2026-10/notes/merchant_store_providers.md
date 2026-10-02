@@ -6,7 +6,7 @@ Scope note: about 25 tool calls. Search-engine summaries were used for some clai
 
 ### Takeaway
 
-Only Mercado Pago (already integrated) and PagBank (Connect OAuth plus Split) clearly offer a merchant-authorizes-the-platform flow. Pagar.me, Asaas, Efí and Stripe Connect are built around recipients or sub-accounts that the platform creates or manages, which pushes KYC and liability onto the platform. InfinitePay has no documented platform model: the merchant puts their own "handle" into the platform and the platform calls the checkout API. PagBank is the best second adapter for this model, with a major caveat: its split makes the platform (the "Primary") liable for fees and chargebacks.
+(Superseded in part by the follow-up in `connect_flows_gateways.md` and `connect_flows_acquirers_banks.md`, which also found merchant-consent OAuth at SumUp and Stripe (existing Standard accounts via OAuth or Account Links, direct charges), plus partner-gated flows at Pagar.me's Hub, Cora, Appmax and PayPal.) In this first pass, only Mercado Pago (already integrated) and PagBank (Connect OAuth plus Split) clearly offered a merchant-authorizes-the-platform flow. Pagar.me, Asaas and Efí are built around recipients or sub-accounts that the platform creates or manages, which pushes KYC and liability onto the platform. InfinitePay has no documented platform model: the merchant puts their own "handle" into the platform and the platform calls the checkout API. PagBank is the best second adapter for this model, with a major caveat: its split makes the platform (the "Primary") liable for fees and chargebacks.
 
 ### Cited Findings
 

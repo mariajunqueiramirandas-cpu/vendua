@@ -120,7 +120,7 @@ Not holding funds does not by itself put a platform outside BCB's perimeter: a s
 
 ### Inferences
 
-- Model fit: funds going straight from shopper to the merchant's own PSP account (OAuth) means Venduá is neither custodian nor sub-acquirer; this is the cleanest position relative to Res. 522 (subcredenciador settlement duties), the BaaS ban on pooled accounts, and the 2027 Pix intermediary regime.
+- Model fit: funds going straight from shopper to the merchant's own PSP account (OAuth) means Venduá is not a custodian. Whether it is a sub-acquirer is not settled by custody (the definition turns on enabling merchants to accept payments) and needs a legal opinion. Even so, this is the cleanest position relative to Res. 522 (subcredenciador settlement duties), the BaaS ban on pooled accounts, and the 2027 Pix intermediary regime.
 - If Venduá ever collects an application fee/split through the PSP marketplace feature (e.g., Mercado Pago `marketplace_fee`), legal review is needed on whether that makes it an arrangement participant; MP, as the authorized IP, carries the regulatory role.
 - A PSP's regulatory health (IP authorization, May 2026 window, capital) becomes a gateway selection criterion: prefer PSPs that are authorized IPs/banks with clear BCB status; avoid tiny BaaS/PSTI-dependent processors (Pix risk shown by C&M episode).
 - Chargeback liability window up to 180 days for participants is now a regulatory baseline; merchant contracts should be checked.
