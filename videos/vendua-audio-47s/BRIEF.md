@@ -7,7 +7,7 @@ destination: instagram-reels
 aspect: 1080x1920
 language: pt-BR
 audience: 'Brazilian food sellers (doceiras, marmitarias, hamburguerias, padarias) who take orders by DM and voice note'
-length: 30s
+length: 27s
 angle: 'O áudio de 47 segundos'
 intent: sell
 cta: 'Comece com 14 dias grátis. / Venduá Basic, sem cartão. / Link na bio · @vendua.digital'
@@ -45,10 +45,11 @@ The wording matches the site ("14 dias grátis, sem cartão") and the signup's l
 
 ## Customizations
 
-- Audio through the ElevenLabs MCP, not HeyGen: Luiz = Talis, narrator = Adriane (the user's pick
-  after Bruna da Costa turned out to need an ElevenLabs Creator plan), ElevenLabs Music v2.5
-  (instrumental, pre-mixed and ducked under the voices in `audio/music-bed.mp3`), ElevenLabs Sound
-  Effects v2 for the SFX (`audio/sfx/`).
+- Audio through ElevenLabs, not HeyGen: Luiz = Talis, narrator = Bruna da Costa (the user's first
+  pick; v1 used Adriane until the user supplied a Creator-plan API key, used through
+  `scripts/elevenlabs.py`), ElevenLabs Music v2.5 (a 128 BPM funk-pop bed, pre-mixed and ducked
+  under the voices in `audio/music-bed.mp3`), ElevenLabs Sound Effects v2 for the SFX
+  (`audio/sfx/`). The whole mix rebuilds with `scripts/build-audio.py`.
 - Sound effects must be very good: the voice note's play tap, waveform ticks, a chime when the
   store link opens. If ElevenLabs can't make one well, synthesize it, synced to the video.
 - Word-timed burned-in captions styled to the design system, inside the Reels safe zone.

@@ -1,5 +1,5 @@
 {
-  "total_duration_s": 29.063,
+  "total_duration_s": 27.187,
   "width": 1080,
   "height": 1920,
   "groups": [
@@ -211,365 +211,356 @@
       "id": "caption-group-10",
       "frame": 2,
       "start": 7.081,
-      "end": 8.441,
+      "end": 8.321,
       "text": "Áudio de 47",
       "words": [
         {
           "id": "caption-word-10-0",
           "text": "Áudio",
           "start": 7.081,
-          "end": 7.461
+          "end": 7.501
         },
         {
           "id": "caption-word-10-1",
           "text": "de",
-          "start": 7.461,
-          "end": 7.581
+          "start": 7.501,
+          "end": 7.621
         },
         {
           "id": "caption-word-10-2",
           "text": "47",
-          "start": 7.581,
-          "end": 8.441
+          "start": 7.621,
+          "end": 8.321
         }
       ]
     },
     {
       "id": "caption-group-11",
       "frame": 2,
-      "start": 8.441,
-      "end": 9.281,
+      "start": 8.321,
+      "end": 9.061,
       "text": "segundos!",
       "words": [
         {
           "id": "caption-word-11-0",
           "text": "segundos!",
-          "start": 8.441,
-          "end": 9.161
+          "start": 8.321,
+          "end": 8.941
         }
       ]
     },
     {
       "id": "caption-group-12",
       "frame": 2,
-      "start": 9.521,
-      "end": 10.161,
+      "start": 9.341,
+      "end": 9.841,
       "text": "Enquanto o",
       "words": [
         {
           "id": "caption-word-12-0",
           "text": "Enquanto",
-          "start": 9.521,
-          "end": 9.961
+          "start": 9.341,
+          "end": 9.621
         },
         {
           "id": "caption-word-12-1",
           "text": "o",
-          "start": 9.961,
-          "end": 10.161
+          "start": 9.621,
+          "end": 9.841
         }
       ]
     },
     {
       "id": "caption-group-13",
       "frame": 2,
-      "start": 10.161,
-      "end": 10.461,
+      "start": 9.841,
+      "end": 10.181,
       "text": "bolo tá",
       "words": [
         {
           "id": "caption-word-13-0",
           "text": "bolo",
-          "start": 10.161,
-          "end": 10.321
+          "start": 9.841,
+          "end": 10.021
         },
         {
           "id": "caption-word-13-1",
           "text": "tá",
-          "start": 10.321,
-          "end": 10.461
+          "start": 10.021,
+          "end": 10.181
         }
       ]
     },
     {
       "id": "caption-group-14",
       "frame": 2,
-      "start": 10.461,
-      "end": 11.381,
+      "start": 10.181,
+      "end": 10.801,
       "text": "no forno.",
       "words": [
         {
           "id": "caption-word-14-0",
           "text": "no",
-          "start": 10.461,
-          "end": 10.581
+          "start": 10.181,
+          "end": 10.281
         },
         {
           "id": "caption-word-14-1",
           "text": "forno.",
-          "start": 10.581,
-          "end": 11.381
+          "start": 10.281,
+          "end": 10.801
         }
       ]
     },
     {
       "id": "caption-group-15",
       "frame": 2,
-      "start": 11.381,
-      "end": 11.701,
+      "start": 10.801,
+      "end": 11.241,
       "text": "E ainda",
       "words": [
         {
           "id": "caption-word-15-0",
           "text": "E",
-          "start": 11.381,
-          "end": 11.521
+          "start": 10.801,
+          "end": 11.081
         },
         {
           "id": "caption-word-15-1",
           "text": "ainda",
-          "start": 11.521,
-          "end": 11.701
+          "start": 11.081,
+          "end": 11.241
         }
       ]
     },
     {
       "id": "caption-group-16",
       "frame": 2,
-      "start": 11.701,
-      "end": 12.341,
+      "start": 11.241,
+      "end": 11.801,
       "text": "tem mais",
       "words": [
         {
           "id": "caption-word-16-0",
           "text": "tem",
-          "start": 11.701,
-          "end": 11.981
+          "start": 11.241,
+          "end": 11.521
         },
         {
           "id": "caption-word-16-1",
           "text": "mais",
-          "start": 11.981,
-          "end": 12.341
+          "start": 11.521,
+          "end": 11.801
         }
       ]
     },
     {
       "id": "caption-group-17",
       "frame": 2,
-      "start": 12.341,
-      "end": 13.161,
+      "start": 11.801,
+      "end": 12.521,
       "text": "na fila!",
       "words": [
         {
           "id": "caption-word-17-0",
           "text": "na",
-          "start": 12.341,
-          "end": 12.501
+          "start": 11.801,
+          "end": 11.941
         },
         {
           "id": "caption-word-17-1",
           "text": "fila!",
-          "start": 12.501,
-          "end": 13.041
+          "start": 11.941,
+          "end": 12.401
         }
       ]
     },
     {
       "id": "caption-group-18",
       "frame": 3,
-      "start": 13.409,
-      "end": 13.649,
-      "text": "Com o",
+      "start": 12.94,
+      "end": 13.94,
+      "text": "Com o Venduá,",
       "words": [
         {
           "id": "caption-word-18-0",
           "text": "Com",
-          "start": 13.409,
-          "end": 13.529
+          "start": 12.94,
+          "end": 13.04
         },
         {
           "id": "caption-word-18-1",
           "text": "o",
-          "start": 13.529,
-          "end": 13.649
+          "start": 13.04,
+          "end": 13.14
+        },
+        {
+          "id": "caption-word-18-2",
+          "text": "Venduá,",
+          "start": 13.14,
+          "end": 13.82
         }
       ]
     },
     {
       "id": "caption-group-19",
       "frame": 3,
-      "start": 13.649,
-      "end": 14.249,
-      "text": "Venduá,",
+      "start": 14.04,
+      "end": 14.84,
+      "text": "você responde",
       "words": [
         {
           "id": "caption-word-19-0",
-          "text": "Venduá,",
-          "start": 13.649,
-          "end": 14.129
+          "text": "você",
+          "start": 14.04,
+          "end": 14.22
+        },
+        {
+          "id": "caption-word-19-1",
+          "text": "responde",
+          "start": 14.22,
+          "end": 14.84
         }
       ]
     },
     {
       "id": "caption-group-20",
       "frame": 3,
-      "start": 14.349,
-      "end": 15.069,
-      "text": "você responde",
+      "start": 14.84,
+      "end": 15.12,
+      "text": "com um",
       "words": [
         {
           "id": "caption-word-20-0",
-          "text": "você",
-          "start": 14.349,
-          "end": 14.509
+          "text": "com",
+          "start": 14.84,
+          "end": 14.98
         },
         {
           "id": "caption-word-20-1",
-          "text": "responde",
-          "start": 14.509,
-          "end": 15.069
+          "text": "um",
+          "start": 14.98,
+          "end": 15.12
         }
       ]
     },
     {
       "id": "caption-group-21",
       "frame": 3,
-      "start": 15.069,
-      "end": 15.509,
-      "text": "com um",
+      "start": 15.12,
+      "end": 15.84,
+      "text": "link só!",
       "words": [
         {
           "id": "caption-word-21-0",
-          "text": "com",
-          "start": 15.069,
-          "end": 15.229
+          "text": "link",
+          "start": 15.12,
+          "end": 15.38
         },
         {
           "id": "caption-word-21-1",
-          "text": "um",
-          "start": 15.229,
-          "end": 15.509
+          "text": "só!",
+          "start": 15.38,
+          "end": 15.72
         }
       ]
     },
     {
       "id": "caption-group-22",
-      "frame": 3,
-      "start": 15.509,
-      "end": 16.169,
-      "text": "link só!",
+      "frame": 4,
+      "start": 15.987,
+      "end": 16.907,
+      "text": "Cardápio!",
       "words": [
         {
           "id": "caption-word-22-0",
-          "text": "link",
-          "start": 15.509,
-          "end": 15.749
-        },
-        {
-          "id": "caption-word-22-1",
-          "text": "só!",
-          "start": 15.749,
-          "end": 16.049
+          "text": "Cardápio!",
+          "start": 15.987,
+          "end": 16.787
         }
       ]
     },
     {
       "id": "caption-group-23",
       "frame": 4,
-      "start": 16.456,
-      "end": 17.296,
-      "text": "Cardápio!",
+      "start": 16.947,
+      "end": 17.387,
+      "text": "Preço!",
       "words": [
         {
           "id": "caption-word-23-0",
-          "text": "Cardápio!",
-          "start": 16.456,
-          "end": 17.176
+          "text": "Preço!",
+          "start": 16.947,
+          "end": 17.387
         }
       ]
     },
     {
       "id": "caption-group-24",
       "frame": 4,
-      "start": 17.416,
-      "end": 17.876,
-      "text": "Preço!",
+      "start": 17.387,
+      "end": 18.147,
+      "text": "E Pix!",
       "words": [
         {
           "id": "caption-word-24-0",
-          "text": "Preço!",
-          "start": 17.416,
-          "end": 17.876
+          "text": "E",
+          "start": 17.387,
+          "end": 17.767
+        },
+        {
+          "id": "caption-word-24-1",
+          "text": "Pix!",
+          "start": 17.767,
+          "end": 18.027
         }
       ]
     },
     {
       "id": "caption-group-25",
-      "frame": 4,
-      "start": 17.876,
-      "end": 18.816,
-      "text": "E Pix!",
+      "frame": 5,
+      "start": 18.565,
+      "end": 18.745,
+      "text": "E o",
       "words": [
         {
           "id": "caption-word-25-0",
           "text": "E",
-          "start": 17.876,
-          "end": 18.316
+          "start": 18.565,
+          "end": 18.685
         },
         {
           "id": "caption-word-25-1",
-          "text": "Pix!",
-          "start": 18.316,
-          "end": 18.696
+          "text": "o",
+          "start": 18.685,
+          "end": 18.745
         }
       ]
     },
     {
       "id": "caption-group-26",
       "frame": 5,
-      "start": 19.269,
-      "end": 19.469,
-      "text": "E o",
-      "words": [
-        {
-          "id": "caption-word-26-0",
-          "text": "E",
-          "start": 19.269,
-          "end": 19.389
-        },
-        {
-          "id": "caption-word-26-1",
-          "text": "o",
-          "start": 19.389,
-          "end": 19.469
-        }
-      ]
-    },
-    {
-      "id": "caption-group-27",
-      "frame": 5,
-      "start": 19.469,
-      "end": 21.289,
+      "start": 18.745,
+      "end": 20.345,
       "text": "pedido chega sozinho!",
       "words": [
         {
-          "id": "caption-word-27-0",
+          "id": "caption-word-26-0",
           "text": "pedido",
-          "start": 19.469,
-          "end": 19.969
+          "start": 18.745,
+          "end": 19.205
         },
         {
-          "id": "caption-word-27-1",
+          "id": "caption-word-26-1",
           "text": "chega",
-          "start": 19.969,
-          "end": 20.309
+          "start": 19.205,
+          "end": 19.485
         },
         {
-          "id": "caption-word-27-2",
+          "id": "caption-word-26-2",
           "text": "sozinho!",
-          "start": 20.309,
-          "end": 21.169
+          "start": 19.485,
+          "end": 20.225
         }
       ]
     }

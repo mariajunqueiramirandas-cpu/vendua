@@ -22,11 +22,11 @@ BED_FIRST_BEAT = 0.432
 FRAMES = [
     # (frame, eighths, voice lead, voice file, captions)
     (1, 30, 0.10, "l1-luiz", True),
-    (2, 27, 0.05, "l2-narrator", True),
+    (2, 25, 0.05, "l2-narrator", True),
     (3, 13, 0.05, "l3-narrator", True),
-    (4, 12, 0.05, "l4-narrator", True),
-    (5, 11, 0.05, "l5-narrator", True),
-    (6, 31, 0.10, "l6-narrator", False),  # the end card carries its own words
+    (4, 11, 0.05, "l4-narrator", True),
+    (5, 9, 0.05, "l5-narrator", True),
+    (6, 28, 0.10, "l6-narrator", False),  # the end card carries its own words
 ]
 TRIM = (
     "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.03,areverse,"
@@ -35,14 +35,15 @@ TRIM = (
 PAUSE = "silenceremove=stop_periods=-1:stop_duration=0.2:stop_threshold=-40dB:stop_silence=0.14"
 RB = "pitchq=quality:transients=crisp:formant=preserved"
 PHONE = "highpass=f=220,lowpass=f=5200,acompressor=threshold=-20dB:ratio=2.5:attack=8:release=120"
-# energetic v2 takes; lines 3 and 6 say "Vendu-á" (stress on the á), the takes the author picked
+# energetic v2 takes: Luiz is Talis; the narrator is Bruna da Costa (the author's pick, via the
+# API on the Creator plan). Lines 3 and 6 spell "Vendu-á" so the stress lands on the á.
 VOICES = {
     "l1-luiz": ("takes/v2/l1-luiz-a.mp3", f"{PAUSE},{TRIM},rubberband=tempo=1.1:{RB},{PHONE}"),
-    "l2-narrator": ("takes/v2/l2-a.mp3", f"{PAUSE},{TRIM},rubberband=tempo=1.08:{RB}"),
-    "l3-narrator": ("takes/v2/l3-a.mp3", f"{TRIM},rubberband=tempo=1.08:{RB}"),
-    "l4-narrator": ("takes/v2/l4-a.mp3", f"{TRIM},rubberband=tempo=1.08:{RB}"),
-    "l5-narrator": ("takes/v2/l5-b.mp3", f"{TRIM},rubberband=tempo=1.08:{RB}"),
-    "l6-narrator": ("takes/v2/l6-a.mp3", f"{PAUSE},{TRIM},rubberband=tempo=1.05:{RB}"),
+    "l2-narrator": ("takes/v2/bruna-l2.mp3", f"{PAUSE},{TRIM}"),
+    "l3-narrator": ("takes/v2/bruna-l3-1.mp3", f"{TRIM},rubberband=tempo=1.08:{RB}"),
+    "l4-narrator": ("takes/v2/bruna-l4.mp3", TRIM),
+    "l5-narrator": ("takes/v2/bruna-l5.mp3", TRIM),
+    "l6-narrator": ("takes/v2/bruna-l6.mp3", f"{PAUSE},{TRIM}"),
 }
 # Frame 2's burst: nine notes on the beats (frame 2 starts on a beat)
 NOTE_TIMES = [k * 2 * EIGHTH for k in range(1, 10)]
