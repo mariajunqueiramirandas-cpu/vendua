@@ -1,4 +1,4 @@
--- 0079_kitchen.sql — the kitchen display ("Cozinha" in the admin). Orders move through the
+-- 0080_kitchen.sql — the kitchen display ("Cozinha" in the admin). Orders move through the
 -- usual transitions; the kitchen only adds what it alone knows:
 --   store_settings.kitchen — { "stations": [{ "id": uuid, "name": text, "categoryIds": uuid[] }] },
 --     which categories each station cooks; Core validates it (admin PUT /kitchen/stations)
