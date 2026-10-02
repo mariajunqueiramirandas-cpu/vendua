@@ -3,11 +3,6 @@ packages/conformance/stale/
 
 # third-party agent skills installed by `npx skills add` (kept byte-for-byte as upstream ships them)
 .agents/
-# vendored minified libraries in video projects
-videos/*/assets/vendor/
-# HyperFrames files its scripts parse as text: frame.md's frontmatter is read line by line (one-line,
-# double-quoted flow maps), .hyperframes/ holds generated working files (caption skin, packets), and
-# index.html is assembled by assemble-index.mjs, whose transitions verify matches its exact lines
-videos/*/frame.md
-videos/*/.hyperframes/
-videos/*/index.html
+# HyperFrames video projects stay byte-for-byte what their tools and authors write: the scripts parse
+# frame.md, STORYBOARD.md and index.html as text, and regenerate the JSON and caption files
+videos/*/

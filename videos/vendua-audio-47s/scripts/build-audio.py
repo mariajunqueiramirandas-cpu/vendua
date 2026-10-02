@@ -143,9 +143,6 @@ def mix():
     }
     (ROOT / "audio_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n")
     envelope(FRAMES[0][1] * EIGHTH)
-    # the repo's formatter, so CI's prettier auto-fix doesn't rewrite these after the push
-    outputs = [A / "cues.json", ROOT / "audio_meta.json", A / "f01-envelope.json", A / "frames/whisper-words.json"]
-    subprocess.run(["bunx", "prettier", "--write", *map(str, outputs)], cwd=ROOT, capture_output=True)
     print(f"total {total}s, frames at", {f: round(s, 3) for f, s in frame_start.items()})
 
 

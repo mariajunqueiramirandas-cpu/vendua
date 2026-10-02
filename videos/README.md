@@ -57,8 +57,7 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
    pile lands one note per beat.
 6. **Mix**: `scripts/build-audio.py mix` pads each frame's voice, ducks the bed under the voices
    (sidechain threshold 0.02, ratio 4: the bed sits 6–8 dB under speech, louder in the gaps), hangs
-   each SFX off the word that triggers it, writes `audio/cues.json` and `audio_meta.json`, and runs
-   prettier on its JSON.
+   each SFX off the word that triggers it, and writes `audio/cues.json` and `audio_meta.json`.
 7. **Storyboard**: per frame, the duration, `transition_in`, SFX and Scene lines with the cue times.
    Write seams as numbers (the handoff box, the pile's ten slots, the phone box), not prose.
 8. **Frames**: one Opus agent per frame, all in parallel, each editing only its own
@@ -75,9 +74,11 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
 
 - Invoke the HyperFrames scripts through `.agents/skills/...`, not the `.claude/skills` symlink:
   some main-guards compare realpaths and silently do nothing.
-- `.prettierignore` must cover `videos/*/frame.md` (parsed line by line), `videos/*/.hyperframes/`
-  and `videos/*/index.html` (`transitions.mjs verify` matches exact lines). Edit those with a
-  script, not with an editor that formats on save.
+- Prettier never touches a video project: `.prettierignore` lists `videos/*/`, because the
+  HyperFrames scripts parse `frame.md`, `STORYBOARD.md` and `index.html` as text (`transitions.mjs
+verify` matches exact lines) and regenerate the JSON and caption files. The Claude Code format
+  hook passes `--ignore-path` so this holds from any working directory, and CI's auto-fix skips
+  them too. Never run prettier on these files by hand.
 - `assemble-index.mjs` writes a jsDelivr GSAP tag; swap it for the vendored file after every
   assembly (renders must not need the network).
 - `transitions.mjs inject` rewrites the frame files' tails: never run it while agents edit frames.
@@ -98,8 +99,6 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
 - Frame agents' own headless-Chromium checks can hang (two did, for 10+ minutes, and a message to
   an agent waits until its current tool call returns). Tell them to wrap checks in `timeout 120`;
   if one hangs, kill only that process by pid, or stop the agent and finish the frame yourself.
-- Generated JSON (`cues.json`, `audio_meta.json`, word timings) goes through prettier before the
-  commit (`build-audio.py mix` does it), or CI's prettier auto-fix pushes a conflicting commit.
 
 ## Findings from vendua-audio-47s
 

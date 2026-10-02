@@ -56,7 +56,8 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
   (~100 KB each), `test/agent-reclaim.test.ts` (~200 KB). Grep for the symbol and Read a
   line range — never the whole file.
 - `.claude/settings.json` blocks reading build output (`dist/`, `qa-report/`) and runs
-  prettier on every file Claude writes. `bun.lock` is ~120 KB: inspect it with `git diff`
+  prettier on every file Claude writes, except what `.prettierignore` lists (video projects
+  under `videos/*/` included). `bun.lock` is ~120 KB: inspect it with `git diff`
   or a grep, never a whole-file Read.
 - Marketing videos live in `videos/` (HyperFrames): read `videos/README.md` and load the
   `vendua-reel` skill first. ElevenLabs goes through `videos/tools/elevenlabs.py` with the
