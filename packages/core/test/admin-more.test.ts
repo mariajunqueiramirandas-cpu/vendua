@@ -991,6 +991,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
     expect(patched2.body.incident.severity).toBe('degraded');
     await ctl('PATCH', `/incidents/${other.body.incident.id}`, { resolved: true });
 
+    // status.vendua.com.br probes the fleet, not one hardcoded tenant
+    const feed = await call('GET', '/admin/v1/status');
+    expect(feed.status).toBe(200);
+    expect(feed.body.stores.length).toBeGreaterThan(0);
+    expect(feed.body.stores.length).toBeLessThanOrEqual(3);
+    for (const h of feed.body.stores) expect(h).toMatch(/^[a-z0-9-]+\.[a-z0-9.-]+$/);
+
     const help = await owner('GET', '/help/status');
     expect(help.body.incidents.some((i: any) => i.id === inc.id)).toBe(true);
     const home = await owner('GET', '/home');

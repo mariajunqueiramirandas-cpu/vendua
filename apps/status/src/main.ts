@@ -8,7 +8,7 @@ import { render } from './render.ts';
 // One run: read the published history, check everything, fetch staff incidents, write build/.
 // STATUS_HISTORY_URL (default <public url>/history.json) or STATUS_HISTORY_FILE is the history.
 
-const cfg = config();
+const base = config();
 const out = process.env.STATUS_OUT || join(import.meta.dir, '..', 'build');
 const gha = process.env.GITHUB_ACTIONS === 'true';
 const warn = (m: string) => console.log(gha ? `::warning::${m}` : `warning: ${m}`);
@@ -22,7 +22,7 @@ async function previous(): Promise<History> {
     if (!h) throw new Error(`${file} is not a status history`);
     return h;
   }
-  const url = process.env.STATUS_HISTORY_URL || `${cfg.publicUrl}/history.json`;
+  const url = process.env.STATUS_HISTORY_URL || `${base.publicUrl}/history.json`;
   const res = await fetch(`${url}?t=${Date.now()}`, { signal: AbortSignal.timeout(15_000) });
   // first publish: nothing there yet
   if (res.status === 404) {
@@ -39,17 +39,22 @@ async function previous(): Promise<History> {
 const SEVERITIES = new Set(['info', 'degraded', 'outage']);
 const str = (v: unknown, max: number) => typeof v === 'string' && v.length <= max;
 
-/** Core's feed, validated; null when it didn't answer (the last known incidents stay). */
-async function incidents(): Promise<Incident[] | null> {
+const HOST = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/;
+
+/** Core's feed, validated; null when it didn't answer (the last known incidents and probes stay). */
+async function feed(url: string): Promise<{ incidents: Incident[]; probes: string[] } | null> {
   try {
-    const res = await fetch(cfg.incidentsUrl, {
+    const res = await fetch(url, {
       headers: { 'user-agent': 'VenduaStatus/1 (+https://status.vendua.com.br)' },
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = (await res.json()) as { incidents?: unknown };
+    const body = (await res.json()) as { incidents?: unknown; stores?: unknown };
     if (!Array.isArray(body.incidents)) throw new Error('no incidents array');
-    return body.incidents
+    const probes = Array.isArray(body.stores)
+      ? body.stores.filter((h): h is string => typeof h === 'string' && HOST.test(h)).slice(0, 5)
+      : [];
+    const incidents = body.incidents
       .filter(
         (i): i is Incident =>
           typeof i === 'object' &&
@@ -70,17 +75,21 @@ async function incidents(): Promise<Incident[] | null> {
         startedAt,
         resolvedAt,
       }));
+    return { incidents, probes };
   } catch (e) {
-    warn(`incidents ${cfg.incidentsUrl}: ${(e as Error).message}`);
+    warn(`incidents ${url}: ${(e as Error).message}`);
     return null;
   }
 }
 
 const prev = await previous();
-const [results, feed] = await Promise.all([
-  Promise.all(cfg.components.map(async (c) => [c.id, await checkComponent(c)] as const)),
-  incidents(),
-]);
+// the store probes come from Core's feed (the fleet changes); if Core is silent, the last ones
+const fed = await feed(base.incidentsUrl);
+const probes = fed ? fed.probes : (prev.probes ?? []);
+const cfg = config(process.env, probes);
+const results = await Promise.all(
+  cfg.components.map(async (c) => [c.id, await checkComponent(c)] as const),
+);
 for (const [id, r] of results) {
   console.log(`${id}: ${r.state}${r.ms === null ? '' : ` ${r.ms} ms`}`);
   if (r.detail) warn(`${id}: ${r.detail}`);
@@ -90,7 +99,8 @@ const h = record(
   prev,
   new Date(),
   Object.fromEntries(results) as Record<ComponentId, CheckResult>,
-  feed,
+  fed?.incidents ?? null,
+  fed ? fed.probes : null,
 );
 await mkdir(out, { recursive: true });
 await cp(join(import.meta.dir, '..', 'static'), out, { recursive: true });

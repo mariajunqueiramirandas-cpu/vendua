@@ -2,6 +2,7 @@ import type { Context, Hono } from 'hono';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
+import { platformHost } from '../platform/store-origin.ts';
 import { claimControl } from './control.ts';
 import { recordStaffEventTx } from './staff-events.ts';
 
@@ -47,6 +48,15 @@ export function publicIncidents(sql: Sql) {
     where resolved_at is null or resolved_at > now() - interval '30 days'
     order by resolved_at is not null, started_at desc limit 50
   `;
+}
+
+/** Hosts the status page probes for "Lojas" and "Pedidos": the oldest active stores, so the
+ *  probe follows the fleet instead of one tenant that can be renamed or deleted. */
+export async function statusProbeHosts(sql: Sql, storeDomain: string, limit = 3) {
+  const rows = await sql<{ slug: string }[]>`
+    select slug from tenants where status = 'active' order by created_at, slug limit ${limit}
+  `;
+  return rows.map((r) => platformHost(r.slug, storeDomain));
 }
 
 /** control keys share one table across endpoints: scope ours to method + target */
