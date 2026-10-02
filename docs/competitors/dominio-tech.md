@@ -173,11 +173,11 @@ P-IDs point at [`competitor-parity.md`](../competitor-parity.md). Paths are unde
 
 ### 2.8 Printing
 
-| Feature              | What they state                                        | Venduá                                                                                         |
-| -------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| Windows print agent  | Domínio Printer, paired with a token from the panel    | partial (P-016): manual browser print, 80 mm (`apps/admin/src/features/orders/actions.ts:221`) |
-| Printer per sector   | Caixa, kitchen, bar, plus the fiscal coupon            | gap                                                                                            |
-| Automatic and manual | USB or network printers; 58/80 mm; margins per station | partial: manual only                                                                           |
+| Feature              | What they state                                        | Venduá                                                                  |
+| -------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Windows print agent  | Domínio Printer, paired with a token from the panel    | have (P-016): Windows and Android agents, paired with a code (ADR 0027) |
+| Printer per sector   | Caixa, kitchen, bar, plus the fiscal coupon            | gap                                                                     |
+| Automatic and manual | USB or network printers; 58/80 mm; margins per station | have: automatic or on demand                                            |
 
 ### 2.9 Delivery and own fleet
 

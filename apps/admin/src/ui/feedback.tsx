@@ -172,6 +172,10 @@ const FRIENDLY: Record<string, string> = {
   PAYLOAD_TOO_LARGE: 'Essa foto é muito grande. Tente outra.',
   OTP_UNAVAILABLE: 'Não conseguimos enviar o código agora. Tente de novo em instantes.',
   RATE_LIMITED: 'Muitas tentativas seguidas. Espere um minuto e tente de novo.',
+  WHATSAPP_UNAVAILABLE:
+    'O WhatsApp da Venduá está fora do ar agora. Tente de novo em alguns minutos.',
+  WHATSAPP_CONNECTED: 'Já tem um número conectado. Desconecte ele antes de trocar.',
+  WHATSAPP_NOT_CONNECTED: 'Conecte o WhatsApp da loja antes de mandar um teste.',
 };
 
 export function ErrorState({ error, retry }: { error: unknown; retry?: () => void }) {

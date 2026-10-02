@@ -23,6 +23,8 @@ export type TopicId =
   | 'cardapio'
   | 'loja'
   | 'pagamentos'
+  | 'whatsapp'
+  | 'impressoras'
   | 'clientes'
   | 'marketing'
   | 'aparencia'
@@ -225,6 +227,58 @@ export const TOPICS: Record<TopicId, Topic> = {
       },
     ],
   },
+  whatsapp: {
+    title: 'WhatsApp',
+    intro: 'Os avisos do pedido que seus clientes recebem pelo número da loja.',
+    items: [
+      {
+        q: 'Como conecto?',
+        a: 'Digite o número do WhatsApp da loja e toque em gerar código. No celular da loja, abra o WhatsApp, vá em Aparelhos conectados, toque em Conectar aparelho e depois em Conectar com número de telefone. Digite o código que aparece aqui.',
+      },
+      {
+        q: 'Continuo usando o WhatsApp normalmente?',
+        a: 'Sim. A Venduá entra como um aparelho conectado, como o WhatsApp Web. As respostas dos clientes chegam no seu celular, como sempre.',
+      },
+      {
+        q: 'Quais avisos o cliente recebe?',
+        a: 'Os que estão ligados em Avisos aos clientes. Cada um mostra a mensagem como o cliente vai ler.',
+      },
+      {
+        q: 'E se o cliente não quiser receber?',
+        a: 'A primeira mensagem diz como parar: é só responder SAIR. Se ele responder VOLTAR, recebe de novo.',
+      },
+      {
+        q: 'Por que o WhatsApp desconectou?',
+        a: 'O WhatsApp desconecta os aparelhos quando alguém remove a Venduá em Aparelhos conectados ou quando o celular da loja fica muitos dias sem abrir o WhatsApp. Conecte de novo com um código novo.',
+      },
+    ],
+  },
+  impressoras: {
+    title: 'Impressoras',
+    intro: 'A comanda impressa sozinha, numa impressora térmica da loja.',
+    items: [
+      {
+        q: 'Como conecto?',
+        a: 'Instale o app Venduá Impressora no computador com Windows ou no tablet Android ligado à impressora. Abra o app: ele mostra um código. Toque em conectar aparelho e digite o código.',
+      },
+      {
+        q: 'Que impressora serve?',
+        a: 'Térmica de 58 ou 80 mm (Epson, Elgin, Bematech, Daruma e as genéricas), ligada por USB, rede ou Bluetooth. No Windows, a impressora precisa estar instalada como impressora do Windows.',
+      },
+      {
+        q: 'Quando a comanda sai?',
+        a: 'Nas impressoras com “imprimir pedidos sozinha” ligado: ao aceitar o pedido ou assim que ele chega, como você escolher em Quando imprimir. Em Pedidos, imprimir comanda manda de novo quando quiser.',
+      },
+      {
+        q: 'E se o aparelho estiver desligado?',
+        a: 'Os pedidos esperam. Quando ele liga, imprime o que ficou para trás, com o aviso de impressão atrasada. Depois de 2 horas, a comanda não sai mais.',
+      },
+      {
+        q: 'Saiu um símbolo no lugar do ç ou do ã',
+        a: 'Abra a impressora, troque Acentos e toque em imprimir teste até sair certinho.',
+      },
+    ],
+  },
   clientes: {
     title: 'Clientes',
     intro: 'Todo mundo que já pediu, pelo telefone.',
@@ -385,6 +439,8 @@ const BY_ROUTE: Partial<Record<RouteId, TopicId>> = {
   product: 'cardapio',
   store: 'loja',
   payments: 'pagamentos',
+  whatsapp: 'whatsapp',
+  printers: 'impressoras',
   customers: 'clientes',
   customer: 'clientes',
   marketing: 'marketing',

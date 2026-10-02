@@ -56,7 +56,7 @@ the critical path.
 ## Platform-facing analytics
 
 Read by staff in the CRM (Pipeline → Analytics,
-[ADR 0026](../adr/0026-privacy-first-platform-analytics.md)):
+[ADR 0028](../adr/0028-privacy-first-platform-analytics.md)):
 
 - **Venduá's own surfaces.** The marketing site and the merchant admin send one
   first-party page view per navigation to `POST /analytics/v1/collect`. That table is

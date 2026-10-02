@@ -1,0 +1,1139 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Storyboard · O áudio de 47 segundos</title>
+    <style>
+      @font-face {
+        font-family: 'Space Grotesk Variable';
+        font-weight: 300 700;
+        src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Figtree Variable';
+        font-weight: 300 900;
+        src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Instrument Serif';
+        font-style: italic;
+        src: url('assets/fonts/captured-instrument-serif-latin-400-italic.woff2') format('woff2');
+      }
+      :root {
+        --canvas: #f7f4ea;
+        --surface: #fffdf8;
+        --sunken: #efe9d8;
+        --ink: #123c32;
+        --muted: #4f6a5e;
+        --faint: #6b8177;
+        --spark: #d9f875;
+        --spark-soft: #f0fcc9;
+        --night: #0a100d;
+        --night-ink: #f7f4ea;
+        --night-muted: #9dafa4;
+        --e1: 0 1px 2px rgb(18 60 50 / 0.06), 0 4px 16px rgb(18 60 50 / 0.05);
+        --e2: 0 2px 4px rgb(18 60 50 / 0.08), 0 12px 32px rgb(18 60 50 / 0.1);
+        --e3: 0 8px 16px rgb(18 60 50 / 0.1), 0 24px 64px rgb(18 60 50 / 0.16);
+        --disp: 'Space Grotesk Variable', system-ui, sans-serif;
+        --body: 'Figtree Variable', system-ui, sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        background: var(--sunken);
+      }
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: var(--body);
+      }
+      .sheet {
+        max-width: 1320px;
+        margin: 0 auto;
+        padding: 40px 32px 64px;
+      }
+      header h1 {
+        font: 600 40px/1.05 var(--disp);
+        letter-spacing: -0.03em;
+        margin: 0;
+      }
+      header h1 small {
+        font: 500 15px var(--body);
+        letter-spacing: 0;
+        color: var(--muted);
+        margin-left: 10px;
+        vertical-align: middle;
+        background: var(--surface);
+        padding: 4px 10px;
+        border-radius: 999px;
+        box-shadow: var(--e1);
+      }
+      header p {
+        font-size: 17px;
+        color: var(--muted);
+        margin: 10px 0 6px;
+        max-width: 760px;
+        line-height: 1.45;
+      }
+      header .tag {
+        display: inline-block;
+        font: 600 13px var(--body);
+        background: var(--ink);
+        color: var(--surface);
+        padding: 6px 12px;
+        border-radius: 999px;
+        margin-top: 6px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 32px 28px;
+        margin-top: 32px;
+      }
+      .cell {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        font: 600 14px var(--body);
+      }
+      .meta .id {
+        color: var(--muted);
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+      }
+      .note {
+        margin: 0;
+        font-size: 14px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+      .note b {
+        color: var(--ink);
+        font-weight: 650;
+      }
+      .seam {
+        align-self: flex-start;
+        font: 600 12px var(--body);
+        background: var(--spark-soft);
+        color: #2f4a00;
+        padding: 4px 10px;
+        border-radius: 999px;
+      }
+
+      /* one frame = 1080x1920; 1cqw = 10.8px */
+      .frame {
+        position: relative;
+        aspect-ratio: 9 / 16;
+        container-type: inline-size;
+        overflow: hidden;
+        border-radius: 14px;
+        background: var(--canvas);
+        box-shadow: var(--e2);
+      }
+      .frame > * {
+        position: absolute;
+      }
+      .frame.night {
+        background: var(--night);
+      }
+      .g {
+        pointer-events: none;
+        background: repeating-linear-gradient(
+          -45deg,
+          rgb(18 60 50 / 0.07) 0 0.9cqw,
+          transparent 0.9cqw 2.2cqw
+        );
+      }
+      .night .g {
+        background: repeating-linear-gradient(
+          -45deg,
+          rgb(247 244 234 / 0.07) 0 0.9cqw,
+          transparent 0.9cqw 2.2cqw
+        );
+      }
+      .g-top {
+        left: 0;
+        right: 0;
+        top: 0;
+        height: 22.2cqw;
+      }
+      .g-bottom {
+        left: 0;
+        right: 0;
+        top: 142.2cqw;
+        bottom: 0;
+      }
+      .g-right {
+        left: 87cqw;
+        right: 0;
+        top: 22.2cqw;
+        height: 120cqw;
+      }
+      .g-bottom span {
+        position: absolute;
+        left: 6.7cqw;
+        top: 4cqw;
+        font: 600 3cqw var(--body);
+        color: var(--faint);
+      }
+      .night .g-bottom span {
+        color: var(--night-muted);
+      }
+
+      /* voice note: generic chat bubble in Venduá paper (never WhatsApp's look) */
+      .vn {
+        display: flex;
+        align-items: center;
+        gap: 2.4%;
+        padding: 0 3.4cqw 0 3cqw;
+        background: var(--surface);
+        box-shadow: var(--e2);
+        border-radius: 6cqw 6cqw 6cqw 1.8cqw;
+      }
+      .vn.old {
+        opacity: 0.55;
+        transform: scale(0.94);
+        transform-origin: left top;
+      }
+      .vn-av {
+        flex: none;
+        border-radius: 999px;
+        background: var(--sunken);
+        color: var(--ink);
+        display: grid;
+        place-items: center;
+        font: 650 1cqw var(--body);
+      }
+      .vn-btn {
+        flex: none;
+        border-radius: 999px;
+        background: var(--ink);
+        display: grid;
+        place-items: center;
+      }
+      .tri {
+        width: 0;
+        height: 0;
+        border-style: solid;
+        border-width: 1.4cqw 0 1.4cqw 2.3cqw;
+        border-color: transparent transparent transparent var(--surface);
+        margin-left: 0.5cqw;
+      }
+      .vn .vn-btn .tri {
+        border-width: 1cqw 0 1cqw 1.7cqw;
+      }
+      .pause {
+        display: flex;
+        gap: 1.2cqw;
+      }
+      .pause b {
+        width: 1.6cqw;
+        height: 6cqw;
+        background: var(--surface);
+        border-radius: 0.6cqw;
+      }
+      .vn-wave {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .bar {
+        display: block;
+        width: 1.1cqw;
+        border-radius: 1cqw;
+        background: rgb(79 106 94 / 0.38);
+      }
+      .bar.played {
+        background: var(--ink);
+      }
+      .bar.head {
+        background: var(--ink);
+        box-shadow: 0 0 0 0.55cqw var(--spark);
+      }
+      .vn-dur {
+        flex: none;
+        font-family: var(--disp);
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+        letter-spacing: -0.02em;
+      }
+      .new-dot {
+        position: absolute;
+        right: 2cqw;
+        top: 2cqw;
+        width: 2.4cqw;
+        height: 2.4cqw;
+        border-radius: 999px;
+        background: var(--spark);
+        box-shadow: 0 0 0 0.5cqw var(--surface);
+      }
+      .sender {
+        display: flex;
+        align-items: baseline;
+        gap: 2cqw;
+      }
+      .sender .who {
+        font: 650 5cqw var(--body);
+      }
+      .sender .when {
+        font: 500 3.4cqw var(--body);
+        color: var(--muted);
+      }
+      .elapsed {
+        font: 600 3.6cqw var(--disp);
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* captions: the band y 1300-1520, x 72-940 (caption-skin.html) */
+      .cap {
+        left: 6.7cqw;
+        width: 80.3cqw;
+        top: 120.4cqw;
+        height: 20.4cqw;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .cap-pill {
+        background: var(--surface);
+        box-shadow: var(--e2);
+        border-radius: 2.2cqw;
+        padding: 1.7cqw 3.1cqw 2cqw;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.1em 0.34em;
+        font: 750 6.1cqw/1.15 var(--body);
+        letter-spacing: -0.01em;
+      }
+      .cap-pill .w {
+        padding: 0 0.18em;
+        border-radius: 0.32em;
+        color: rgb(18 60 50 / 0.5);
+      }
+      .cap-pill .w.said {
+        color: var(--ink);
+      }
+      .cap-pill .w.on {
+        color: var(--ink);
+        background: var(--spark);
+      }
+
+      /* 03 */
+      .ghost {
+        border: 0.4cqw dashed rgb(18 60 50 / 0.22);
+        border-radius: 6cqw 6cqw 6cqw 1.8cqw;
+      }
+      .link-pill {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        padding-left: 5cqw;
+        gap: 2.4cqw;
+        background: var(--spark);
+        color: var(--ink);
+        border-radius: 999px;
+        font: 600 5.2cqw var(--disp);
+        letter-spacing: -0.02em;
+        box-shadow: var(--e2);
+      }
+      .link-pill .mk {
+        width: 6cqw;
+        height: 6cqw;
+        display: grid;
+      }
+      .link-pill svg {
+        width: 100%;
+        height: 100%;
+        color: var(--ink);
+      }
+      .tap {
+        width: 10cqw;
+        height: 10cqw;
+        border-radius: 999px;
+        border: 0.5cqw solid rgb(18 60 50 / 0.55);
+        background: rgb(18 60 50 / 0.08);
+      }
+
+      /* phone: site/src/lib/components/Phone.svelte */
+      .phone {
+        padding: 1.45cqw;
+        border-radius: 7.3cqw;
+        background: linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%);
+        box-shadow:
+          inset 0 0 0 1.5px rgb(255 255 255 / 0.08),
+          0 8px 16px rgb(18 60 50 / 0.12),
+          0 30px 70px rgb(18 60 50 / 0.22);
+      }
+      .phone-screen {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        border-radius: 5.9cqw;
+        overflow: hidden;
+        background: var(--canvas);
+      }
+      .phone-screen img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: top;
+        display: block;
+      }
+      .island {
+        position: absolute;
+        top: 1.2cqw;
+        left: 50%;
+        width: 30%;
+        height: 3.4cqw;
+        transform: translateX(-50%);
+        border-radius: 999px;
+        background: #050807;
+      }
+      .ph-block {
+        position: absolute;
+        inset: 0;
+        padding: 9cqw 3cqw 3cqw;
+        display: flex;
+        flex-direction: column;
+        gap: 2cqw;
+        background: repeating-linear-gradient(
+          135deg,
+          var(--sunken) 0 1.2cqw,
+          var(--canvas) 1.2cqw 2.4cqw
+        );
+      }
+      .ph-block b {
+        font: 650 3.2cqw/1.2 var(--body);
+      }
+      .ph-block > span {
+        font: 500 2.3cqw/1.3 var(--body);
+        color: var(--muted);
+      }
+      .ph-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 1.6cqw;
+        margin: 2cqw 0;
+      }
+      .ph-rows i {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        height: 9cqw;
+        border-radius: 1.6cqw;
+        background: var(--surface);
+        box-shadow: var(--e1);
+        padding: 0 2cqw;
+        font-style: normal;
+      }
+      .ph-rows i.hl {
+        box-shadow:
+          0 0 0 0.7cqw var(--spark),
+          var(--e2);
+      }
+      .ph-rows em {
+        font: 650 2.3cqw var(--body);
+        font-style: normal;
+      }
+      .ph-rows em + em {
+        font-family: var(--disp);
+        font-weight: 600;
+      }
+
+      /* 05 push: system UI, Core's real text */
+      .push {
+        display: flex;
+        align-items: center;
+        gap: 3cqw;
+        padding: 3cqw 3.4cqw;
+        border-radius: 3.4cqw;
+        background: rgb(255 253 248 / 0.92);
+        box-shadow:
+          0 0 0 0.5cqw var(--spark),
+          var(--e3);
+      }
+      .push-ic {
+        flex: none;
+        width: 9cqw;
+        height: 9cqw;
+        border-radius: 2.2cqw;
+        background: var(--ink);
+        display: grid;
+        place-items: center;
+      }
+      .push-ic svg {
+        width: 62%;
+        color: var(--spark);
+      }
+      .push-tx {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6cqw;
+        min-width: 0;
+      }
+      .push-app {
+        font: 500 2.9cqw var(--body);
+        color: var(--muted);
+      }
+      .push-tx b {
+        font: 750 4.3cqw/1.1 var(--body);
+      }
+      .push-tx > span:last-child {
+        font: 500 3.6cqw var(--body);
+        color: var(--ink);
+      }
+      .push-act {
+        flex: none;
+        align-self: flex-end;
+        font: 650 3.3cqw var(--body);
+        background: var(--ink);
+        color: var(--surface);
+        padding: 1.4cqw 2.6cqw;
+        border-radius: 1.6cqw;
+      }
+
+      /* 06 Noite */
+      .logo {
+        display: flex;
+        align-items: center;
+        gap: 2.4cqw;
+        font: 700 9cqw/1 var(--disp);
+        letter-spacing: -0.035em;
+        color: var(--night-ink);
+      }
+      .logo .mk {
+        width: 9.5cqw;
+        height: 9.5cqw;
+        display: grid;
+      }
+      .logo svg {
+        width: 100%;
+        height: 100%;
+        color: var(--spark);
+      }
+      .logo .dot {
+        color: var(--spark);
+      }
+      .cta-title {
+        font: 600 10.4cqw/1.02 var(--disp);
+        letter-spacing: -0.035em;
+        color: var(--night-ink);
+      }
+      .spark-chip {
+        font: 600 5.6cqw var(--disp);
+        letter-spacing: -0.02em;
+        background: var(--spark);
+        color: var(--ink);
+        padding: 1.8cqw 3.6cqw 2.1cqw;
+        border-radius: 999px;
+      }
+      .cta-link {
+        font: 650 4.8cqw var(--body);
+        color: var(--night-ink);
+      }
+
+      /* closing cells */
+      .aux {
+        background: var(--surface);
+        border-radius: 14px;
+        box-shadow: var(--e1);
+        padding: 22px;
+        font-size: 14px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+      .aux h2 {
+        font: 600 20px var(--disp);
+        letter-spacing: -0.02em;
+        color: var(--ink);
+        margin: 0 0 12px;
+      }
+      .sm {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .sm-f {
+        align-self: flex-start;
+        font: 600 13px var(--disp);
+        background: var(--ink);
+        color: var(--surface);
+        padding: 3px 9px;
+        border-radius: 8px;
+      }
+      .sm-s {
+        margin-left: 14px;
+        padding-left: 12px;
+        border-left: 2px solid var(--spark);
+        color: var(--ink);
+      }
+      .sws {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 12px;
+        margin-bottom: 14px;
+      }
+      .sw {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .sw i {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        box-shadow: inset 0 0 0 1px rgb(18 60 50 / 0.15);
+      }
+      .sw em {
+        font-style: normal;
+        font-weight: 500;
+        color: var(--muted);
+        margin-left: auto;
+        font-variant-numeric: tabular-nums;
+      }
+      .aux ul {
+        margin: 6px 0 0;
+        padding-left: 18px;
+      }
+      .aux .row {
+        margin: 0 0 8px;
+        color: var(--ink);
+      }
+      @media (max-width: 900px) {
+        .grid {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 560px) {
+        .sheet {
+          padding: 24px 16px 48px;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        header h1 {
+          font-size: 30px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="sheet">
+      <header>
+        <h1>O áudio de 47 segundos <small>storyboard v1</small></h1>
+        <p>
+          Luiz sends the voice note every merchant knows; the narrator answers with one link; the
+          same Luiz orders by himself. Then: Venduá Basic, 14 dias grátis, sem cartão.
+        </p>
+        <span class="tag">1080×1920 · ~27 s (voice decides) · 6 frames · pt-BR</span>
+      </header>
+      <section class="grid">
+        <article class="cell" id="frame-01">
+          <div class="frame">
+            <div class="sender" style="top: 50cqw; left: 6.7cqw">
+              <span class="who">Luiz</span><span class="when">agora</span>
+            </div>
+            <div class="vn" style="top: 59cqw; left: 6.7cqw; width: 80cqw; height: 34cqw; --s: 1">
+              <span class="vn-av" style="width: 10.88cqw; height: 10.88cqw; font-size: 5.1cqw"
+                >L</span
+              >
+              <span class="vn-btn" style="width: 15.64cqw; height: 15.64cqw"
+                ><span class="pause"><b></b><b></b></span
+              ></span>
+              <span class="vn-wave" style="height: 17cqw"
+                ><i class="bar played" style="height: 7.16cqw"></i
+                ><i class="bar played" style="height: 8.14cqw"></i
+                ><i class="bar head" style="height: 9.51cqw"></i
+                ><i class="bar" style="height: 8.23cqw"></i
+                ><i class="bar" style="height: 15.73cqw"></i
+                ><i class="bar" style="height: 15.65cqw"></i
+                ><i class="bar" style="height: 7.74cqw"></i
+                ><i class="bar" style="height: 10.75cqw"></i
+                ><i class="bar" style="height: 9.76cqw"></i
+                ><i class="bar" style="height: 6.06cqw"></i
+                ><i class="bar" style="height: 7.09cqw"></i
+                ><i class="bar" style="height: 12.96cqw"></i
+                ><i class="bar" style="height: 14.69cqw"></i
+                ><i class="bar" style="height: 7.78cqw"></i
+                ><i class="bar" style="height: 13.03cqw"></i
+                ><i class="bar" style="height: 14.62cqw"></i
+                ><i class="bar" style="height: 9.16cqw"></i
+                ><i class="bar" style="height: 6.47cqw"></i
+                ><i class="bar" style="height: 8.05cqw"></i
+                ><i class="bar" style="height: 11.17cqw"></i
+                ><i class="bar" style="height: 7.29cqw"></i
+                ><i class="bar" style="height: 13.24cqw"></i
+                ><i class="bar" style="height: 16.89cqw"></i
+                ><i class="bar" style="height: 11.4cqw"></i
+              ></span>
+              <span class="vn-dur" style="font-size: 5.44cqw">0:47</span>
+            </div>
+            <div class="cap">
+              <div class="cap-pill">
+                <span class="w said">Vocês</span><span class="w said">têm</span
+                ><span class="w on">cardápio?</span>
+              </div>
+            </div>
+            <div class="g g-top"></div>
+            <div class="g g-bottom"><span>Reels UI</span></div>
+            <div class="g g-right"></div>
+          </div>
+          <div class="meta">
+            <span class="nm">01 · O áudio</span><span class="id">frame-01 · 0.0–6.0s</span>
+          </div>
+          <p class="note">
+            <b>The play button is tapped at 0.2s and the waveform moves only while Luiz talks.</b>
+            The bubble starts fully on screen at frame 0 (no wait). The playhead crawls 3 bars of 34
+            while "0:47" stays put: the joke is the long unplayed tail. Seam: the same bubble
+            continues into 02.
+          </p>
+          <span class="seam">seam in: cut</span>
+        </article>
+        <article class="cell" id="frame-02">
+          <div class="frame">
+            <div
+              class="vn old"
+              style="top: 24cqw; left: 6.7cqw; width: 60cqw; height: 16cqw; --s: 1"
+            >
+              <span class="vn-av" style="width: 5.12cqw; height: 5.12cqw; font-size: 2.4cqw"
+                >L</span
+              >
+              <span class="vn-btn" style="width: 7.36cqw; height: 7.36cqw"
+                ><span class="tri"></span
+              ></span>
+              <span class="vn-wave" style="height: 6.4cqw"
+                ><i class="bar played" style="height: 2.7cqw"></i
+                ><i class="bar played" style="height: 3.06cqw"></i
+                ><i class="bar played" style="height: 3.58cqw"></i
+                ><i class="bar" style="height: 3.1cqw"></i
+                ><i class="bar" style="height: 5.92cqw"></i
+                ><i class="bar" style="height: 5.89cqw"></i
+                ><i class="bar" style="height: 2.91cqw"></i
+                ><i class="bar" style="height: 4.05cqw"></i
+                ><i class="bar" style="height: 3.67cqw"></i
+                ><i class="bar" style="height: 2.28cqw"></i
+                ><i class="bar" style="height: 2.67cqw"></i
+                ><i class="bar" style="height: 4.88cqw"></i
+                ><i class="bar" style="height: 5.53cqw"></i
+                ><i class="bar" style="height: 2.93cqw"></i
+                ><i class="bar" style="height: 4.9cqw"></i><i class="bar" style="height: 5.5cqw"></i
+                ><i class="bar" style="height: 3.45cqw"></i
+                ><i class="bar" style="height: 2.44cqw"></i
+                ><i class="bar" style="height: 3.03cqw"></i
+                ><i class="bar" style="height: 4.2cqw"></i
+                ><i class="bar" style="height: 2.74cqw"></i
+                ><i class="bar" style="height: 4.99cqw"></i
+                ><i class="bar" style="height: 6.36cqw"></i
+                ><i class="bar" style="height: 4.29cqw"></i
+                ><i class="bar" style="height: 3.07cqw"></i
+                ><i class="bar" style="height: 3.56cqw"></i
+              ></span>
+              <span class="vn-dur" style="font-size: 2.72cqw">0:47</span>
+            </div>
+            <div class="vn" style="top: 43cqw; left: 20cqw; width: 60cqw; height: 16cqw; --s: 1">
+              <span class="vn-av" style="width: 5.12cqw; height: 5.12cqw; font-size: 2.4cqw"
+                >M</span
+              >
+              <span class="vn-btn" style="width: 7.36cqw; height: 7.36cqw"
+                ><span class="tri"></span
+              ></span>
+              <span class="vn-wave" style="height: 6.4cqw"
+                ><i class="bar" style="height: 5.35cqw"></i
+                ><i class="bar" style="height: 2.96cqw"></i
+                ><i class="bar" style="height: 2.62cqw"></i
+                ><i class="bar" style="height: 3.05cqw"></i
+                ><i class="bar" style="height: 3.82cqw"></i
+                ><i class="bar" style="height: 2.63cqw"></i
+                ><i class="bar" style="height: 5.66cqw"></i
+                ><i class="bar" style="height: 6.13cqw"></i
+                ><i class="bar" style="height: 3.42cqw"></i
+                ><i class="bar" style="height: 3.74cqw"></i
+                ><i class="bar" style="height: 3.68cqw"></i
+                ><i class="bar" style="height: 2.29cqw"></i
+                ><i class="bar" style="height: 2.45cqw"></i
+                ><i class="bar" style="height: 4.69cqw"></i
+                ><i class="bar" style="height: 5.75cqw"></i
+                ><i class="bar" style="height: 3.5cqw"></i
+                ><i class="bar" style="height: 4.46cqw"></i
+                ><i class="bar" style="height: 5.5cqw"></i
+                ><i class="bar" style="height: 3.69cqw"></i
+                ><i class="bar" style="height: 2.34cqw"></i
+                ><i class="bar" style="height: 2.97cqw"></i
+                ><i class="bar" style="height: 4.34cqw"></i
+                ><i class="bar" style="height: 3.21cqw"></i
+                ><i class="bar" style="height: 4.54cqw"></i
+                ><i class="bar" style="height: 6.37cqw"></i
+                ><i class="bar" style="height: 4.7cqw"></i
+              ></span>
+              <span class="vn-dur" style="font-size: 2.72cqw">0:32</span
+              ><span class="new-dot"></span>
+            </div>
+            <div class="vn" style="top: 62cqw; left: 8cqw; width: 60cqw; height: 16cqw; --s: 1">
+              <span class="vn-av" style="width: 5.12cqw; height: 5.12cqw; font-size: 2.4cqw"
+                >A</span
+              >
+              <span class="vn-btn" style="width: 7.36cqw; height: 7.36cqw"
+                ><span class="tri"></span
+              ></span>
+              <span class="vn-wave" style="height: 6.4cqw"
+                ><i class="bar" style="height: 3.24cqw"></i
+                ><i class="bar" style="height: 3.34cqw"></i
+                ><i class="bar" style="height: 5.97cqw"></i
+                ><i class="bar" style="height: 5.7cqw"></i
+                ><i class="bar" style="height: 2.56cqw"></i
+                ><i class="bar" style="height: 4.42cqw"></i
+                ><i class="bar" style="height: 3.97cqw"></i
+                ><i class="bar" style="height: 2.37cqw"></i
+                ><i class="bar" style="height: 2.7cqw"></i
+                ><i class="bar" style="height: 4.73cqw"></i
+                ><i class="bar" style="height: 5.2cqw"></i
+                ><i class="bar" style="height: 2.51cqw"></i
+                ><i class="bar" style="height: 5.25cqw"></i
+                ><i class="bar" style="height: 5.66cqw"></i
+                ><i class="bar" style="height: 3.41cqw"></i
+                ><i class="bar" style="height: 2.63cqw"></i
+                ><i class="bar" style="height: 2.74cqw"></i
+                ><i class="bar" style="height: 3.85cqw"></i
+                ><i class="bar" style="height: 2.4cqw"></i
+                ><i class="bar" style="height: 5.19cqw"></i
+                ><i class="bar" style="height: 6.33cqw"></i
+                ><i class="bar" style="height: 4.04cqw"></i
+                ><i class="bar" style="height: 3.42cqw"></i
+                ><i class="bar" style="height: 3.9cqw"></i
+                ><i class="bar" style="height: 2.43cqw"></i
+                ><i class="bar" style="height: 2.28cqw"></i
+              ></span>
+              <span class="vn-dur" style="font-size: 2.72cqw">1:12</span
+              ><span class="new-dot"></span>
+            </div>
+            <div class="vn" style="top: 81cqw; left: 22cqw; width: 60cqw; height: 16cqw; --s: 1">
+              <span class="vn-av" style="width: 5.12cqw; height: 5.12cqw; font-size: 2.4cqw"
+                >R</span
+              >
+              <span class="vn-btn" style="width: 7.36cqw; height: 7.36cqw"
+                ><span class="tri"></span
+              ></span>
+              <span class="vn-wave" style="height: 6.4cqw"
+                ><i class="bar" style="height: 2.86cqw"></i
+                ><i class="bar" style="height: 5.04cqw"></i
+                ><i class="bar" style="height: 4.13cqw"></i
+                ><i class="bar" style="height: 2.41cqw"></i
+                ><i class="bar" style="height: 2.78cqw"></i
+                ><i class="bar" style="height: 4.57cqw"></i
+                ><i class="bar" style="height: 4.51cqw"></i
+                ><i class="bar" style="height: 2.95cqw"></i
+                ><i class="bar" style="height: 5.87cqw"></i
+                ><i class="bar" style="height: 5.59cqw"></i
+                ><i class="bar" style="height: 2.94cqw"></i
+                ><i class="bar" style="height: 3.03cqw"></i
+                ><i class="bar" style="height: 2.42cqw"></i
+                ><i class="bar" style="height: 3.33cqw"></i
+                ><i class="bar" style="height: 2.8cqw"></i
+                ><i class="bar" style="height: 5.62cqw"></i
+                ><i class="bar" style="height: 6.03cqw"></i
+                ><i class="bar" style="height: 3.21cqw"></i
+                ><i class="bar" style="height: 4.18cqw"></i
+                ><i class="bar" style="height: 4.26cqw"></i
+                ><i class="bar" style="height: 2.6cqw"></i
+                ><i class="bar" style="height: 2.44cqw"></i
+                ><i class="bar" style="height: 4.35cqw"></i
+                ><i class="bar" style="height: 5.35cqw"></i
+                ><i class="bar" style="height: 3.17cqw"></i
+                ><i class="bar" style="height: 4.79cqw"></i
+              ></span>
+              <span class="vn-dur" style="font-size: 2.72cqw">0:58</span
+              ><span class="new-dot"></span>
+            </div>
+            <div class="vn" style="top: 100cqw; left: 9cqw; width: 60cqw; height: 16cqw; --s: 1">
+              <span class="vn-av" style="width: 5.12cqw; height: 5.12cqw; font-size: 2.4cqw"
+                >J</span
+              >
+              <span class="vn-btn" style="width: 7.36cqw; height: 7.36cqw"
+                ><span class="tri"></span
+              ></span>
+              <span class="vn-wave" style="height: 6.4cqw"
+                ><i class="bar" style="height: 3.39cqw"></i
+                ><i class="bar" style="height: 4.86cqw"></i
+                ><i class="bar" style="height: 3.62cqw"></i
+                ><i class="bar" style="height: 4.28cqw"></i
+                ><i class="bar" style="height: 6.22cqw"></i
+                ><i class="bar" style="height: 4.72cqw"></i
+                ><i class="bar" style="height: 2.41cqw"></i
+                ><i class="bar" style="height: 2.94cqw"></i
+                ><i class="bar" style="height: 2.89cqw"></i><i class="bar" style="height: 3cqw"></i
+                ><i class="bar" style="height: 3.9cqw"></i
+                ><i class="bar" style="height: 6.18cqw"></i
+                ><i class="bar" style="height: 5.24cqw"></i
+                ><i class="bar" style="height: 2.59cqw"></i
+                ><i class="bar" style="height: 4.63cqw"></i
+                ><i class="bar" style="height: 3.73cqw"></i
+                ><i class="bar" style="height: 2.26cqw"></i
+                ><i class="bar" style="height: 2.99cqw"></i
+                ><i class="bar" style="height: 4.97cqw"></i
+                ><i class="bar" style="height: 4.87cqw"></i
+                ><i class="bar" style="height: 2.69cqw"></i
+                ><i class="bar" style="height: 5.64cqw"></i
+                ><i class="bar" style="height: 5.41cqw"></i
+                ><i class="bar" style="height: 2.97cqw"></i
+                ><i class="bar" style="height: 2.68cqw"></i
+                ><i class="bar" style="height: 2.95cqw"></i
+              ></span>
+              <span class="vn-dur" style="font-size: 2.72cqw">2:05</span
+              ><span class="new-dot"></span>
+            </div>
+            <div class="cap">
+              <div class="cap-pill">
+                <span class="w said">Enquanto</span><span class="w said">o</span
+                ><span class="w said">bolo</span><span class="w said">tá</span
+                ><span class="w said">no</span><span class="w on">forno.</span>
+              </div>
+            </div>
+            <div class="g g-top"></div>
+            <div class="g g-bottom"><span>Reels UI</span></div>
+            <div class="g g-right"></div>
+          </div>
+          <div class="meta">
+            <span class="nm">02 · De novo</span><span class="id">frame-02 · 6.0–10.0s</span>
+          </div>
+          <p class="note">
+            <b
+              >The first bubble shrinks and lifts; four more voice notes drop in one by one, each
+              with a lime "new" dot.</b
+            >
+            They land on "47 segundos", "forno", "fila" (spring, shadow bloom e2→e1). The column
+            ends crowded, top to y 1280. Music enters under the narrator.
+          </p>
+          <span class="seam">seam in: cut (bubble continues)</span>
+        </article>
+        <article class="cell" id="frame-03">
+          <div class="frame">
+            <div class="ghost" style="top: 46cqw; left: 16cqw; width: 60cqw; height: 12cqw"></div>
+            <div class="ghost" style="top: 92cqw; left: 20cqw; width: 56cqw; height: 12cqw"></div>
+            <div class="link-pill" style="top: 68cqw; left: 6.7cqw; width: 80cqw; height: 15cqw">
+              <span class="mk"
+                ><svg viewBox="0 0 128 128" aria-hidden="true">
+                  <path
+                    d="M32 48 L61 88 L98 34"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="17"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  /></svg></span
+              >bolosdanena.vendua.com.br
+            </div>
+            <span class="tap" style="top: 79cqw; left: 62cqw"></span>
+            <div class="cap">
+              <div class="cap-pill">
+                <span class="w said">você</span><span class="w said">responde</span
+                ><span class="w said">com</span><span class="w said">um</span
+                ><span class="w on">link</span><span class="w">só.</span>
+              </div>
+            </div>
+            <div class="g g-top"></div>
+            <div class="g g-bottom"><span>Reels UI</span></div>
+            <div class="g g-right"></div>
+          </div>
+          <div class="meta">
+            <span class="nm">03 · Um link só</span><span class="id">frame-03 · 10.0–13.0s</span>
+          </div>
+          <p class="note">
+            <b
+              >The pile condenses into one lime pill with the store's real link; a tap lands on
+              "link".</b
+            >
+            Ghost outlines show where the bubbles collapse from (they are gone at the key moment).
+            Held for ~0.6s after "só". Seam: the pill grows into the phone screen.
+          </p>
+          <span class="seam">seam in: zoom-through</span>
+        </article>
+        <article class="cell" id="frame-04">
+          <div class="frame">
+            <div class="phone" style="left: 27.3cqw; top: 23cqw; width: 45.4cqw; height: 95cqw">
+              <div class="phone-screen">
+                <div class="ph-block">
+                  <b>Vitrine real da Bolos da Nena</b>
+                  <span>captura do storefront (bolosdanena.localhost)</span>
+                  <div class="ph-rows">
+                    <i></i><i class="hl"><em>Bolo de chocolate molhadinho</em><em>R$ 48,00</em></i
+                    ><i></i><i></i>
+                  </div>
+                  <span>na palavra "Pix": o passo pagamento, Pix marcado</span>
+                </div>
+                <span class="island"></span>
+              </div>
+            </div>
+            <div class="cap">
+              <div class="cap-pill">
+                <span class="w said">Cardápio…</span><span class="w on">preço…</span
+                ><span class="w">e</span><span class="w">Pix.</span>
+              </div>
+            </div>
+            <div class="g g-top"></div>
+            <div class="g g-bottom"><span>Reels UI</span></div>
+            <div class="g g-right"></div>
+          </div>
+          <div class="meta">
+            <span class="nm">04 · Cardápio, preço e Pix</span
+            ><span class="id">frame-04 · 13.0–17.5s</span>
+          </div>
+          <p class="note">
+            <b>The customer's phone: one real storefront screen per spoken word.</b> "Cardápio" =
+            the menu; "preço" = a punch-in on Bolo de chocolate molhadinho R$ 48,00 (the cake Luiz
+            asked about); "Pix" = checkout's payment step with Pix selected. Placeholder here until
+            the storefront is captured.
+          </p>
+          <span class="seam">seam in: crossfade (pill → phone)</span>
+        </article>
+        <article class="cell" id="frame-05">
+          <div class="frame">
+            <div class="phone" style="left: 27.3cqw; top: 23cqw; width: 45.4cqw; height: 95cqw">
+              <div class="phone-screen">
+                <img
+                  src="capture/assets/pedido-creme-750.webp"
+                  alt="Pedido #29 (tela real do admin)"
+                /><span class="island"></span>
+              </div>
+            </div>
+            <div class="push" style="top: 25cqw; left: 6.7cqw; width: 80cqw">
+              <span class="push-ic"
+                ><svg viewBox="0 0 128 128" aria-hidden="true">
+                  <path
+                    d="M32 48 L61 88 L98 34"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="17"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  /></svg
+              ></span>
+              <span class="push-tx"
+                ><span class="push-app">Minha loja · agora</span><b>Pedido #29 chegou</b
+                ><span>Luiz · R$ 219,00 · entrega</span></span
+              >
+              <span class="push-act">aceitar</span>
+            </div>
+            <div class="cap">
+              <div class="cap-pill">
+                <span class="w said">E</span><span class="w said">o</span
+                ><span class="w said">pedido</span><span class="w said">chega</span
+                ><span class="w on">sozinho.</span>
+              </div>
+            </div>
+            <div class="g g-top"></div>
+            <div class="g g-bottom"><span>Reels UI</span></div>
+            <div class="g g-right"></div>
+          </div>
+          <div class="meta">
+            <span class="nm">05 · O pedido chega sozinho</span
+            ><span class="id">frame-05 · 17.5–21.0s</span>
+          </div>
+          <p class="note">
+            <b
+              >The customer's phone slides out left; the merchant's phone slides in on Pedido #29
+              and the push drops in.</b
+            >
+            Push = Core's real text, spring drop with a lime edge that fades over ~1s, the "Pedido
+            novo" two-note chime and a double buzz. Callback to 01: the same Luiz.
+          </p>
+          <span class="seam">seam in: push-slide LEFT</span>
+        </article>
+        <article class="cell" id="frame-06">
+          <div class="frame night">
+            <div class="logo" style="top: 36cqw; left: 6.7cqw">
+              <span class="mk"
+                ><svg viewBox="0 0 128 128" aria-hidden="true">
+                  <path
+                    d="M32 48 L61 88 L98 34"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="17"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  /></svg></span
+              ><span>venduá<span class="dot">.</span></span>
+            </div>
+            <div class="cta-title" style="top: 56cqw; left: 6.7cqw; width: 80cqw">
+              Comece com<br />14 dias grátis.
+            </div>
+            <div class="spark-chip" style="top: 84cqw; left: 6.7cqw">Venduá Basic, sem cartão.</div>
+            <div class="cta-link" style="top: 101cqw; left: 6.7cqw">
+              Link na bio · @vendua.digital
+            </div>
+            <div class="g g-top"></div>
+            <div class="g g-bottom"><span>Reels UI</span></div>
+            <div class="g g-right"></div>
+          </div>
+          <div class="meta">
+            <span class="nm">06 · 14 dias grátis</span><span class="id">frame-06 · 21.0–27.0s</span>
+          </div>
+          <p class="note">
+            <b>On night, the mark draws on, then the three lines land one per sentence.</b>
+            Left-aligned to stay clear of the Reels action column. No captions here: the card is the
+            caption. Held frame: the last ~2s nothing moves.
+          </p>
+          <span class="seam">seam in: blur-crossfade (to Noite)</span>
+        </article>
+        <article class="aux" id="seams">
+          <h2>Seam map</h2>
+          <div class="sm">
+            <span class="sm-f">01</span><span class="sm-s">cut · bubble continues</span
+            ><span class="sm-f">02</span><span class="sm-s">zoom-through · pile condenses</span
+            ><span class="sm-f">03</span
+            ><span class="sm-s">crossfade · pill becomes the screen</span
+            ><span class="sm-f">04</span
+            ><span class="sm-s">push-slide left · customer → merchant</span
+            ><span class="sm-f">05</span><span class="sm-s">blur-crossfade · to Noite</span
+            ><span class="sm-f">06</span>
+          </div>
+          <p style="margin: 14px 0 0">
+            The hero prop is the voice note: it plays (01), multiplies (02) and condenses into the
+            link (03), and the link becomes the screen (04). Luiz returns in 05.
+          </p>
+        </article>
+        <article class="aux" id="tokens">
+          <h2>Tokens and bans</h2>
+          <div class="sws">
+            <span class="sw"><i style="background: #f7f4ea"></i>canvas<em>#f7f4ea</em></span
+            ><span class="sw"><i style="background: #fffdf8"></i>surface<em>#fffdf8</em></span
+            ><span class="sw"><i style="background: #123c32"></i>ink<em>#123c32</em></span
+            ><span class="sw"><i style="background: #4f6a5e"></i>ink-muted<em>#4f6a5e</em></span
+            ><span class="sw"><i style="background: #d9f875"></i>spark<em>#d9f875</em></span
+            ><span class="sw"><i style="background: #f0fcc9"></i>spark-soft<em>#f0fcc9</em></span
+            ><span class="sw"><i style="background: #0a100d"></i>night<em>#0a100d</em></span>
+          </div>
+          <p class="row">
+            <b>Type</b>: Space Grotesk 600 for titles and numbers · Figtree for body and captions
+            (750, 66px) · no serif in this film.
+          </p>
+          <p class="row">
+            <b>Hatched</b>: Reels UI (top 240px, bottom 20%, right 140px). Content ends at y 1280;
+            captions y 1300–1520.
+          </p>
+          <ul>
+            <li>No WhatsApp look (green, ticks, tails, icons)</li>
+            <li>No fake storefront or admin UI: real captures only</li>
+            <li>No glow, sparkles, all-caps or eyebrow labels</li>
+            <li>No slideshow: every beat continues the last one</li>
+            <li>No screensaver motion: things move when the voice names them</li>
+          </ul>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+Venduá — uma loja online com a sua cara e um app no celular para tocar o dia: pedidos, cardápio,
+horários e Pix. Para doceiras, marmitarias, hamburguerias e padarias.
+
+Planos (site/src/lib/content.ts):
+- Venduá Basic: R$ 39,90/mês, 14 dias grátis, sem cartão. Loja em seunome.vendua.com.br, visual
+  padrão Venduá. Um teste por dono (número de WhatsApp). Se os 14 dias acabam sem pagamento, a loja
+  pausa os pedidos novos até pagar; nada é apagado (ADR 0025).
+- Venduá PRO+: R$ 99/mês (domínio próprio + site feito pelo nosso agente). Fora deste vídeo.
+
+Sign-up: "Comece com 14 dias grátis" (último passo), plano Basic "14 dias grátis, sem cartão".
+Instagram: @vendua.digital.
+
+Loja fictícia em todas as telas: Bolos da Nena ("Bolo de vó, feito hoje."), dona Nena,
+bolosdanena.vendua.com.br. Pedido #29: Luiz, R$ 219,00, entrega. Pedido #28: Mariana, R$ 85,00.
+Vendas de hoje R$ 718,00, 6 pedidos.
+
+Brief do vídeo: Reel de ~30 s, 9:16, pt-BR. Conceito "O áudio de 47 segundos": o cliente manda um
+áudio perguntando o cardápio, o preço e se aceita Pix; um narrador responde com um link só, e as
+telas reais aparecem quando ele diz "cardápio", "preço" e "Pix". Fecho:
+"Comece com 14 dias grátis. / Venduá Basic, sem cartão. / Link na bio · @vendua.digital".

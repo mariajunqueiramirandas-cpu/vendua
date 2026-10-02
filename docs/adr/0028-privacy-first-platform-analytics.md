@@ -1,6 +1,6 @@
-# ADR 0026: Privacy-first analytics on every surface, read in the CRM
+# ADR 0028: Privacy-first analytics on every surface, read in the CRM
 
-- Status: Accepted (implemented 2026-10-02, Core migration 0076)
+- Status: Accepted (implemented 2026-10-02, Core migration 0078)
 - Date: 2026-10-02
 
 ## Context

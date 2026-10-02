@@ -225,6 +225,12 @@ export interface StaffEventMap {
     amountCents: Opt<number>;
   };
   'payments.connection': { storeName: Name; connected: boolean; detail: Opt<string> };
+  /** a store's own WhatsApp (ADR 0026): linked, dropped, back, unlinked by the phone, refused */
+  'whatsapp.store': {
+    storeName: Name;
+    step: 'connected' | 'back' | 'lost' | 'logged_out' | 'banned' | 'disconnected';
+    detail: Opt<string>;
+  };
   // assinaturas
   'store.created': {
     storeName: Name;
@@ -299,8 +305,15 @@ export interface StaffEventMap {
     attempts: number;
   };
   'agent.cost_cap': { leadId: Id; leadName: Name; spentCents: number; capCents: number };
-  'channel.down': { channel: 'whatsapp' | 'instagram' | 'email'; detail: string };
-  'channel.up': { channel: 'whatsapp' | 'instagram' | 'email'; detail: Opt<string> };
+  /** whatsapp_lojas = the wa-gateway that runs every store's own WhatsApp (ADR 0026) */
+  'channel.down': {
+    channel: 'whatsapp' | 'instagram' | 'email' | 'whatsapp_lojas';
+    detail: string;
+  };
+  'channel.up': {
+    channel: 'whatsapp' | 'instagram' | 'email' | 'whatsapp_lojas';
+    detail: Opt<string>;
+  };
   // sistema
   'system.boot': { bootsLastHour: number; version: Opt<string> };
   'system.error': { method: string; path: string; message: string; count: number };
@@ -471,6 +484,20 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'normal',
     severity: (d) => (d.connected ? 'success' : 'warning'),
     label: 'Mercado Pago conectado ou desconectado',
+  },
+  'whatsapp.store': {
+    category: 'vendas',
+    level: 'normal',
+    severity: (d) =>
+      d.step === 'connected' || d.step === 'back'
+        ? 'success'
+        : d.step === 'disconnected'
+          ? 'info'
+          : d.step === 'banned'
+            ? 'critical'
+            : 'warning',
+    label: 'WhatsApp de uma loja conectou, caiu ou foi desvinculado',
+    hint: 'os avisos de pedido aos clientes saem pelo número da própria loja',
   },
   'store.created': {
     category: 'assinaturas',

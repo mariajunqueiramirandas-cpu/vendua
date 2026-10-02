@@ -1,0 +1,551 @@
+{
+  "bgm": {
+    "path": "audio/music-bed.mp3",
+    "volume": 1,
+    "query": "ElevenLabs Music v2.5, 128 BPM funk-pop from its first beat, ducked under the voices",
+    "duration_s": 27.421875
+  },
+  "bgm_pending": false,
+  "voices": [
+    {
+      "frame": 1,
+      "path": "audio/frames/f01-voice.mp3",
+      "duration_s": 7.03125,
+      "words": [
+        {
+          "id": "w1-0",
+          "text": "Oi,",
+          "start": 0.1,
+          "end": 0.3
+        },
+        {
+          "id": "w1-1",
+          "text": "boa",
+          "start": 0.42,
+          "end": 0.48
+        },
+        {
+          "id": "w1-2",
+          "text": "tarde!",
+          "start": 0.48,
+          "end": 0.8
+        },
+        {
+          "id": "w1-3",
+          "text": "Tudo",
+          "start": 1.08,
+          "end": 1.22
+        },
+        {
+          "id": "w1-4",
+          "text": "bem?",
+          "start": 1.22,
+          "end": 1.44
+        },
+        {
+          "id": "w1-5",
+          "text": "Então…",
+          "start": 1.94,
+          "end": 2.22
+        },
+        {
+          "id": "w1-6",
+          "text": "vocês",
+          "start": 2.48,
+          "end": 2.72
+        },
+        {
+          "id": "w1-7",
+          "text": "têm",
+          "start": 2.72,
+          "end": 2.92
+        },
+        {
+          "id": "w1-8",
+          "text": "cardápio?",
+          "start": 2.92,
+          "end": 3.52
+        },
+        {
+          "id": "w1-9",
+          "text": "Quanto",
+          "start": 3.72,
+          "end": 4.08
+        },
+        {
+          "id": "w1-10",
+          "text": "tá",
+          "start": 4.08,
+          "end": 4.24
+        },
+        {
+          "id": "w1-11",
+          "text": "o",
+          "start": 4.24,
+          "end": 4.32
+        },
+        {
+          "id": "w1-12",
+          "text": "bolo",
+          "start": 4.32,
+          "end": 4.54
+        },
+        {
+          "id": "w1-13",
+          "text": "de",
+          "start": 4.54,
+          "end": 4.66
+        },
+        {
+          "id": "w1-14",
+          "text": "chocolate?",
+          "start": 4.66,
+          "end": 4.94
+        },
+        {
+          "id": "w1-15",
+          "text": "Ah,",
+          "start": 5.6,
+          "end": 5.78
+        },
+        {
+          "id": "w1-16",
+          "text": "e",
+          "start": 5.9,
+          "end": 5.94
+        },
+        {
+          "id": "w1-17",
+          "text": "aceita",
+          "start": 5.94,
+          "end": 6.22
+        },
+        {
+          "id": "w1-18",
+          "text": "Pix?",
+          "start": 6.22,
+          "end": 6.54
+        }
+      ]
+    },
+    {
+      "frame": 2,
+      "path": "audio/frames/f02-voice.mp3",
+      "duration_s": 5.859375,
+      "words": [
+        {
+          "id": "w2-0",
+          "text": "Áudio",
+          "start": 0.05,
+          "end": 0.47
+        },
+        {
+          "id": "w2-1",
+          "text": "de",
+          "start": 0.47,
+          "end": 0.59
+        },
+        {
+          "id": "w2-2",
+          "text": "47",
+          "start": 0.59,
+          "end": 1.29
+        },
+        {
+          "id": "w2-3",
+          "text": "segundos!",
+          "start": 1.29,
+          "end": 1.91
+        },
+        {
+          "id": "w2-4",
+          "text": "Enquanto",
+          "start": 2.31,
+          "end": 2.59
+        },
+        {
+          "id": "w2-5",
+          "text": "o",
+          "start": 2.59,
+          "end": 2.81
+        },
+        {
+          "id": "w2-6",
+          "text": "bolo",
+          "start": 2.81,
+          "end": 2.99
+        },
+        {
+          "id": "w2-7",
+          "text": "tá",
+          "start": 2.99,
+          "end": 3.15
+        },
+        {
+          "id": "w2-8",
+          "text": "no",
+          "start": 3.15,
+          "end": 3.25
+        },
+        {
+          "id": "w2-9",
+          "text": "forno.",
+          "start": 3.25,
+          "end": 3.77
+        },
+        {
+          "id": "w2-10",
+          "text": "E",
+          "start": 3.77,
+          "end": 4.05
+        },
+        {
+          "id": "w2-11",
+          "text": "ainda",
+          "start": 4.05,
+          "end": 4.21
+        },
+        {
+          "id": "w2-12",
+          "text": "tem",
+          "start": 4.21,
+          "end": 4.49
+        },
+        {
+          "id": "w2-13",
+          "text": "mais",
+          "start": 4.49,
+          "end": 4.77
+        },
+        {
+          "id": "w2-14",
+          "text": "na",
+          "start": 4.77,
+          "end": 4.91
+        },
+        {
+          "id": "w2-15",
+          "text": "fila!",
+          "start": 4.91,
+          "end": 5.37
+        }
+      ]
+    },
+    {
+      "frame": 3,
+      "path": "audio/frames/f03-voice.mp3",
+      "duration_s": 3.046875,
+      "words": [
+        {
+          "id": "w3-0",
+          "text": "Com",
+          "start": 0.05,
+          "end": 0.15
+        },
+        {
+          "id": "w3-1",
+          "text": "o",
+          "start": 0.15,
+          "end": 0.25
+        },
+        {
+          "id": "w3-2",
+          "text": "Venduá,",
+          "start": 0.25,
+          "end": 0.93
+        },
+        {
+          "id": "w3-3",
+          "text": "você",
+          "start": 1.15,
+          "end": 1.33
+        },
+        {
+          "id": "w3-4",
+          "text": "responde",
+          "start": 1.33,
+          "end": 1.95
+        },
+        {
+          "id": "w3-5",
+          "text": "com",
+          "start": 1.95,
+          "end": 2.09
+        },
+        {
+          "id": "w3-6",
+          "text": "um",
+          "start": 2.09,
+          "end": 2.23
+        },
+        {
+          "id": "w3-7",
+          "text": "link",
+          "start": 2.23,
+          "end": 2.49
+        },
+        {
+          "id": "w3-8",
+          "text": "só!",
+          "start": 2.49,
+          "end": 2.83
+        }
+      ]
+    },
+    {
+      "frame": 4,
+      "path": "audio/frames/f04-voice.mp3",
+      "duration_s": 2.578125,
+      "words": [
+        {
+          "id": "w4-0",
+          "text": "Cardápio!",
+          "start": 0.05,
+          "end": 0.85
+        },
+        {
+          "id": "w4-1",
+          "text": "Preço!",
+          "start": 1.01,
+          "end": 1.45
+        },
+        {
+          "id": "w4-2",
+          "text": "E",
+          "start": 1.45,
+          "end": 1.83
+        },
+        {
+          "id": "w4-3",
+          "text": "Pix!",
+          "start": 1.83,
+          "end": 2.09
+        }
+      ]
+    },
+    {
+      "frame": 5,
+      "path": "audio/frames/f05-voice.mp3",
+      "duration_s": 2.34375,
+      "words": [
+        {
+          "id": "w5-0",
+          "text": "E",
+          "start": 0.05,
+          "end": 0.15
+        },
+        {
+          "id": "w5-1",
+          "text": "o",
+          "start": 0.15,
+          "end": 0.21
+        },
+        {
+          "id": "w5-2",
+          "text": "pedido",
+          "start": 0.21,
+          "end": 0.57
+        },
+        {
+          "id": "w5-3",
+          "text": "cai",
+          "start": 0.57,
+          "end": 0.73
+        },
+        {
+          "id": "w5-4",
+          "text": "prontinho",
+          "start": 0.73,
+          "end": 1.39
+        },
+        {
+          "id": "w5-5",
+          "text": "no",
+          "start": 1.39,
+          "end": 1.53
+        },
+        {
+          "id": "w5-6",
+          "text": "seu",
+          "start": 1.53,
+          "end": 1.69
+        },
+        {
+          "id": "w5-7",
+          "text": "celular!",
+          "start": 1.69,
+          "end": 2.05
+        }
+      ]
+    },
+    {
+      "frame": 6,
+      "path": "audio/frames/f06-voice.mp3",
+      "duration_s": 6.5625,
+      "words": []
+    }
+  ],
+  "sfx": [
+    {
+      "frame": 1,
+      "file": "audio/sfx/tap.mp3",
+      "offset_s": 0.04,
+      "duration_s": 0.24,
+      "volume": 0.45
+    },
+    {
+      "frame": 2,
+      "file": "audio/sfx/pop-1.mp3",
+      "offset_s": 0.469,
+      "duration_s": 0.34,
+      "volume": 0.3
+    },
+    {
+      "frame": 2,
+      "file": "audio/sfx/pop-2.mp3",
+      "offset_s": 0.938,
+      "duration_s": 0.34,
+      "volume": 0.3
+    },
+    {
+      "frame": 2,
+      "file": "audio/sfx/pop-3.mp3",
+      "offset_s": 1.406,
+      "duration_s": 0.34,
+      "volume": 0.3
+    },
+    {
+      "frame": 2,
+      "file": "audio/sfx/pop-4.mp3",
+      "offset_s": 1.875,
+      "duration_s": 0.34,
+      "volume": 0.3
+    },
+    {
+      "frame": 2,
+      "file": "audio/sfx/pop-1.mp3",
+      "offset_s": 2.344,
+      "duration_s": 0.34,
+      "volume": 0.3
+    },
+    {
+      "frame": 2,
+      "file": "audio/sfx/pop-2.mp3",
+      "offset_s": 2.812,
+      "duration_s": 0.34,
+      "volume": 0.3
+    },
+    {
+      "frame": 2,
+      "file": "audio/sfx/pop-3.mp3",
+      "offset_s": 3.281,
+      "duration_s": 0.34,
+      "volume": 0.3
+    },
+    {
+      "frame": 2,
+      "file": "audio/sfx/pop-4.mp3",
+      "offset_s": 3.75,
+      "duration_s": 0.34,
+      "volume": 0.3
+    },
+    {
+      "frame": 2,
+      "file": "audio/sfx/pop-1.mp3",
+      "offset_s": 4.219,
+      "duration_s": 0.34,
+      "volume": 0.3
+    },
+    {
+      "frame": 2,
+      "file": "audio/sfx/accent.mp3",
+      "offset_s": 4.91,
+      "duration_s": 0.73,
+      "volume": 0.3
+    },
+    {
+      "frame": 2,
+      "file": "audio/sfx/whoosh.mp3",
+      "offset_s": 5.709,
+      "duration_s": 0.55,
+      "volume": 0.32
+    },
+    {
+      "frame": 3,
+      "file": "audio/sfx/accent.mp3",
+      "offset_s": 0.25,
+      "duration_s": 0.73,
+      "volume": 0.28
+    },
+    {
+      "frame": 3,
+      "file": "audio/sfx/tap.mp3",
+      "offset_s": 2.23,
+      "duration_s": 0.24,
+      "volume": 0.4
+    },
+    {
+      "frame": 3,
+      "file": "audio/sfx/whoosh.mp3",
+      "offset_s": 2.897,
+      "duration_s": 0.55,
+      "volume": 0.28
+    },
+    {
+      "frame": 4,
+      "file": "audio/sfx/swipe.mp3",
+      "offset_s": 1.01,
+      "duration_s": 0.37,
+      "volume": 0.35
+    },
+    {
+      "frame": 4,
+      "file": "audio/sfx/pago.mp3",
+      "offset_s": 1.83,
+      "duration_s": 0.78,
+      "volume": 0.42
+    },
+    {
+      "frame": 4,
+      "file": "audio/sfx/whoosh.mp3",
+      "offset_s": 2.428,
+      "duration_s": 0.55,
+      "volume": 0.3
+    },
+    {
+      "frame": 5,
+      "file": "audio/sfx/pedido-novo.mp3",
+      "offset_s": 0.21,
+      "duration_s": 0.68,
+      "volume": 0.45
+    },
+    {
+      "frame": 5,
+      "file": "audio/sfx/buzz.mp3",
+      "offset_s": 0.21,
+      "duration_s": 0.63,
+      "volume": 0.22
+    },
+    {
+      "frame": 6,
+      "file": "audio/sfx/accent.mp3",
+      "offset_s": 0.0,
+      "duration_s": 0.73,
+      "volume": 0.4
+    },
+    {
+      "frame": 6,
+      "file": "audio/sfx/swipe.mp3",
+      "offset_s": 2.6,
+      "duration_s": 0.37,
+      "volume": 0.3
+    },
+    {
+      "frame": 6,
+      "file": "audio/sfx/tap.mp3",
+      "offset_s": 4.7,
+      "duration_s": 0.24,
+      "volume": 0.38
+    }
+  ]
+}

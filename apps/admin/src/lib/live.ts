@@ -22,7 +22,9 @@ type Topic =
   | 'payment.received'
   | 'billing'
   | 'alerts'
-  | 'import';
+  | 'import'
+  | 'whatsapp'
+  | 'printers';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity],
@@ -38,6 +40,8 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   billing: [qk.account, qk.payments, qk.home, qk.store],
   alerts: [qk.alerts, qk.home],
   import: [qk.imports],
+  whatsapp: [qk.whatsapp],
+  printers: [['printers']],
 };
 
 // ── connection + alert state (a tiny external store) ───────────────────────

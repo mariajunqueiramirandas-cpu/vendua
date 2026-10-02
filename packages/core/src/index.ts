@@ -25,6 +25,7 @@ import { fleetDeps } from './modules/fleet/deps.ts';
 import { startFleetJobs } from './modules/fleet/jobs.ts';
 import { startMenuImportJobs } from './modules/menu-import/jobs.ts';
 import { startWebAnalyticsJobs } from './modules/web-analytics.ts';
+import { startStoreWhatsappWatch } from './store-whatsapp/watch.ts';
 import { onUnhandledError } from './platform/http.ts';
 import { recordBoot, unhandledErrorReporter } from './modules/system-events.ts';
 
@@ -104,8 +105,10 @@ const stopFleetJobs = startFleetJobs(fleetDeps(sql, { notify }));
 // menu import ("cole o link do seu cardápio"): reads pasted stores, re-hosts their photos
 const stopMenuImportJobs = startMenuImportJobs({ sql });
 
-// privacy-first page views (ADR 0026): the daily salt and 13-month retention expire on a clock
+// privacy-first page views (ADR 0028): the daily salt and 13-month retention expire on a clock
 const stopWebAnalyticsJobs = startWebAnalyticsJobs(sql);
+// stores' own WhatsApp runs in the wa-gateway process (ADR 0028); Core only watches it beat
+const stopStoreWhatsappWatch = startStoreWhatsappWatch(sql);
 
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
 const stopPushNotifier = startPushNotifier(sql, adminHub);
@@ -178,6 +181,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     stopFleetJobs();
     stopMenuImportJobs();
     stopWebAnalyticsJobs();
+    stopStoreWhatsappWatch();
     stopInstagramReconcile();
     void stopPushNotifier.then((stop) => stop()).catch(() => undefined);
     // event streams never finish on their own: requests get a few seconds, then the rest close

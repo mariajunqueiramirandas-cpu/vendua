@@ -1,0 +1,372 @@
+<template id="05-pedido-chega-template">
+  <style>
+    @font-face {
+      font-family: 'Space Grotesk Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 700;
+      src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2')
+        format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Figtree Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 900;
+      src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: normal;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: italic;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-italic.woff2') format('woff2');
+    }
+
+    #root {
+      --canvas: #f7f4ea;
+      --surface: #fffdf8;
+      --ink: #123c32;
+      --ink-muted: #4f6a5e;
+      --spark: #d9f875;
+      --e1: 0 1px 2px rgb(18 60 50 / 0.06), 0 4px 16px rgb(18 60 50 / 0.05);
+      --e2: 0 2px 4px rgb(18 60 50 / 0.08), 0 12px 32px rgb(18 60 50 / 0.1);
+      --e3: 0 8px 16px rgb(18 60 50 / 0.1), 0 24px 64px rgb(18 60 50 / 0.16);
+      position: relative;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+    }
+
+    .\30 5-pedido-chega-layer {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+    }
+    .\30 5-pedido-chega-ground {
+      background: var(--canvas);
+      container-type: size;
+      overflow: hidden;
+    }
+    .\30 5-pedido-chega-grain {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+      display: block;
+    }
+
+    /* CSS phone — identical to frame 4 so the push-slide reads as two phones */
+    .\30 5-pedido-chega-phone {
+      position: absolute;
+      left: 295px;
+      top: 248px;
+      width: 490px;
+      height: 1026px;
+      box-sizing: border-box;
+      padding: 16px;
+      border-radius: 79px;
+      background: linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%);
+      box-shadow:
+        inset 0 0 0 1.5px rgb(255 255 255 / 0.08),
+        0 8px 16px rgb(18 60 50 / 0.12),
+        0 30px 70px rgb(18 60 50 / 0.22);
+    }
+    .\30 5-pedido-chega-screen {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      border-radius: 64px;
+      overflow: hidden;
+      background: var(--canvas);
+    }
+    .\30 5-pedido-chega-shot {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: top;
+    }
+    .\30 5-pedido-chega-island {
+      position: absolute;
+      top: 13px;
+      left: 35%;
+      width: 30%;
+      height: 37px;
+      border-radius: 999px;
+      background: #050807;
+    }
+
+    /* push: system UI carrying Core's real payload */
+    .\30 5-pedido-chega-push {
+      position: absolute;
+      left: 72px;
+      top: 270px;
+      width: 864px;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      padding: 26px 32px 26px 30px;
+      border-radius: 37px;
+      background: rgb(255 253 248 / 0.92);
+      -webkit-backdrop-filter: blur(24px);
+      backdrop-filter: blur(24px);
+      box-shadow: var(--e3);
+      /* grows out of the phone's island (x 540, y ~296 on the canvas) */
+      transform-origin: 468px 26px;
+      will-change: transform, opacity;
+    }
+    /* outer shadows/rings are painted outside the border box only, so these layers never
+       tint the translucent card; opacity crossfades stand in for animating box-shadow */
+    .\30 5-pedido-chega-sh2,
+    .\30 5-pedido-chega-sh1,
+    .\30 5-pedido-chega-ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 37px;
+      pointer-events: none;
+    }
+    .\30 5-pedido-chega-sh2 {
+      box-shadow: var(--e2);
+    }
+    .\30 5-pedido-chega-sh1 {
+      box-shadow: var(--e1);
+      opacity: 0;
+    }
+    .\30 5-pedido-chega-ring {
+      box-shadow: 0 0 0 5px var(--spark);
+    }
+    .\30 5-pedido-chega-ic {
+      position: relative;
+      flex: none;
+      width: 97px;
+      height: 97px;
+      border-radius: 24px;
+      background: var(--ink);
+      display: grid;
+      place-items: center;
+    }
+    .\30 5-pedido-chega-ic svg {
+      display: block;
+      width: 60px;
+      height: 60px;
+    }
+    .\30 5-pedido-chega-tx {
+      position: relative;
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-family: 'Figtree Variable', sans-serif;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+    .\30 5-pedido-chega-app {
+      font-size: 36px;
+      font-weight: 500;
+      line-height: 1.2;
+      color: var(--ink-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .\30 5-pedido-chega-title {
+      font-size: 46px;
+      font-weight: 750;
+      line-height: 1.1;
+      letter-spacing: -0.01em;
+    }
+    .\30 5-pedido-chega-body {
+      font-size: 38px;
+      font-weight: 500;
+      line-height: 1.2;
+      font-variant-numeric: tabular-nums;
+    }
+    .\30 5-pedido-chega-act {
+      position: relative;
+      flex: none;
+      align-self: flex-end;
+      font-family: 'Figtree Variable', sans-serif;
+      font-size: 36px;
+      font-weight: 650;
+      line-height: 1.2;
+      color: var(--surface);
+      background: var(--ink);
+      padding: 14px 28px;
+      border-radius: 16px;
+    }
+  </style>
+
+  <div
+    id="root"
+    data-composition-id="05-pedido-chega"
+    data-start="0"
+    data-duration="2.34375"
+    data-fps="30"
+    data-width="1080"
+    data-height="1920"
+  >
+    <div
+      id="05-pedido-chega-ground"
+      class="clip 05-pedido-chega-layer 05-pedido-chega-ground"
+      data-start="0"
+      data-duration="2.34375"
+      data-track-index="0"
+    >
+      <svg
+        class="05-pedido-chega-grain"
+        viewBox="0 0 1080 1920"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <filter id="05-pedido-chega-noise" x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.85"
+            numOctaves="2"
+            seed="5"
+            stitchTiles="stitch"
+          />
+          <feColorMatrix
+            type="matrix"
+            values="0.33 0.33 0.33 0 0  0.33 0.33 0.33 0 0  0.33 0.33 0.33 0 0  0 0 0 0 1"
+          />
+        </filter>
+        <rect width="1080" height="1920" filter="url(#05-pedido-chega-noise)" opacity="0.025" />
+      </svg>
+    </div>
+
+    <div
+      id="05-pedido-chega-device"
+      class="clip 05-pedido-chega-layer"
+      data-start="0"
+      data-duration="2.34375"
+      data-track-index="1"
+    >
+      <div id="05-pedido-chega-phone" class="05-pedido-chega-phone">
+        <div class="05-pedido-chega-screen">
+          <img
+            class="05-pedido-chega-shot"
+            src="assets/pedido-creme-750.webp"
+            alt="Pedido #29 — Luiz Fernando, total R$ 219,00"
+          />
+          <span class="05-pedido-chega-island"></span>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="05-pedido-chega-notice"
+      class="clip 05-pedido-chega-layer"
+      data-start="0"
+      data-duration="2.34375"
+      data-track-index="2"
+    >
+      <div id="05-pedido-chega-push" class="05-pedido-chega-push">
+        <span id="05-pedido-chega-sh2" class="05-pedido-chega-sh2"></span>
+        <span id="05-pedido-chega-sh1" class="05-pedido-chega-sh1"></span>
+        <span id="05-pedido-chega-ring" class="05-pedido-chega-ring"></span>
+        <span class="05-pedido-chega-ic">
+          <svg viewBox="0 0 128 128" aria-hidden="true">
+            <path
+              d="M32 48 L61 88 L98 34"
+              fill="none"
+              stroke="#d9f875"
+              stroke-width="17"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </span>
+        <span class="05-pedido-chega-tx">
+          <span class="05-pedido-chega-app">Minha loja · agora</span>
+          <b class="05-pedido-chega-title">Pedido #29 chegou</b>
+          <span class="05-pedido-chega-body">Luiz · R$ 219,00 · entrega</span>
+        </span>
+        <span class="05-pedido-chega-act">aceitar</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/vendor/gsap.min.js"></script>
+  <script>
+    (function () {
+      var byId = function (name) {
+        return document.getElementById('05-pedido-chega-' + name);
+      };
+      var phone = byId('phone');
+      var push = byId('push');
+      var sh2 = byId('sh2');
+      var sh1 = byId('sh1');
+      var ring = byId('ring');
+
+      var DURATION = 2.34375;
+      // the card is 199.4 px tall; this x/y keeps the punch centred on the card although its
+      // transform-origin sits on the island (s = 1.05 about the centre, rewritten about the origin)
+      var PUNCH = { scale: 1.05, x: 1.8, y: -3.7 };
+
+      var tl = gsap.timeline({ paused: true });
+
+      // Scene 1 (0–0.21): the phone is already in place on Pedido #29 as the push-slide lands it.
+
+      // Scene 2 (0.21): on "pedido" the push slams out of the island to its resting place.
+      tl.fromTo(push, { scale: 0.16 }, { scale: 1, duration: 0.2, ease: 'expo.out' }, 0.21);
+      tl.fromTo(push, { opacity: 0 }, { opacity: 1, duration: 0.06, ease: 'power2.out' }, 0.21);
+      // shadow e2 → e1 inside the slam, on top of the card's resting e3
+      tl.fromTo(sh2, { opacity: 1 }, { opacity: 0, duration: 0.2, ease: 'power2.out' }, 0.21);
+      tl.fromTo(sh1, { opacity: 0 }, { opacity: 1, duration: 0.2, ease: 'power2.out' }, 0.21);
+      // the lime edge is lit as it lands, then fades out over 0.6 s
+      tl.fromTo(ring, { opacity: 1 }, { opacity: 0, duration: 0.6, ease: 'power1.in' }, 0.41);
+
+      // double buzz: two fixed, decaying ±5 px shakes, each starting and ending at x 0
+      [0.23, 0.38].forEach(function (at) {
+        tl.to(
+          phone,
+          {
+            keyframes: { x: [0, -5, 5, -3, 2, 0], easeEach: 'sine.inOut' },
+            duration: 0.14,
+            ease: 'none',
+          },
+          at,
+        );
+      });
+
+      // Scene 3 (1.69): "celular!" punches the card.
+      tl.fromTo(
+        push,
+        { scale: 1, x: 0, y: 0 },
+        {
+          scale: PUNCH.scale,
+          x: PUNCH.x,
+          y: PUNCH.y,
+          duration: 0.1,
+          ease: 'power3.out',
+          immediateRender: false,
+        },
+        1.69,
+      );
+      tl.fromTo(
+        push,
+        { scale: PUNCH.scale, x: PUNCH.x, y: PUNCH.y },
+        { scale: 1, x: 0, y: 0, duration: 0.25, ease: 'power2.out', immediateRender: false },
+        1.79,
+      );
+
+      // Scene 4 (2.04–end): settled; the cut to frame 6 lands on the accent, nothing leaves.
+      tl.set({}, {}, DURATION);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['05-pedido-chega'] = tl;
+    })();
+  </script>
+</template>

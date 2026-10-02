@@ -53,7 +53,54 @@ export async function startPushNotifier(sql: Sql, hub: AdminHub): Promise<() => 
       void pushPayment(sql, tenantId, e.id).catch((err) =>
         workLog.warn({ err }, 'payment push failed'),
       );
+    else if (e.topic === 'whatsapp' && (e.id === 'logged_out' || e.id === 'banned'))
+      void pushWhatsappLost(sql, tenantId).catch((err) =>
+        workLog.warn({ err }, 'whatsapp push failed'),
+      );
   });
+}
+
+/** The store's own WhatsApp stopped for good (unlinked on the phone, or refused): its shoppers
+ *  stopped getting order updates, so the owner and managers hear it once per drop. */
+export async function pushWhatsappLost(sql: Sql, tenantId: string) {
+  const job = await withTenant(sql, tenantId, async (tx) => {
+    const wa = (
+      await tx<{ state: string; at: Date }[]>`
+        select state, state_changed_at as at from store_whatsapp
+        where tenant_id = ${tenantId} and wanted and state in ('logged_out', 'banned')`
+    )[0];
+    if (!wa) return null;
+    const won = await tx`
+      insert into push_deliveries (tenant_id, key)
+      values (${tenantId}, ${`whatsapp.lost:${wa.at.toISOString()}`})
+      on conflict do nothing returning key
+    `;
+    if (!won[0]) return null;
+    const subs = await tx<Sub[]>`
+      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
+        join merchant_users u on u.id = s.user_id
+      where s.tenant_id = ${tenantId} and u.status = 'active' and u.role in ('owner', 'manager')
+        and coalesce((u.prefs ->> 'push')::boolean, true)
+    `;
+    return { state: wa.state, subs };
+  });
+  if (!job) return;
+  await fanOut(
+    sql,
+    tenantId,
+    job.subs,
+    {
+      title: 'WhatsApp da loja desconectado',
+      body:
+        job.state === 'banned'
+          ? 'O WhatsApp recusou o número da loja. Toque para ver o que fazer.'
+          : 'Seus clientes pararam de receber os avisos de pedido. Toque para conectar de novo.',
+      tag: 'whatsapp-lost',
+      url: '/admin/whatsapp',
+    },
+    'whatsapp.lost',
+    job.state,
+  );
 }
 
 async function fanOut(

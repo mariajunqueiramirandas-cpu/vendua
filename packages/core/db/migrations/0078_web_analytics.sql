@@ -1,4 +1,4 @@
--- 0076_web_analytics.sql — privacy-first page views for Venduá's own surfaces, read in the CRM
+-- 0078_web_analytics.sql — privacy-first page views for Venduá's own surfaces, read in the CRM
 -- (docs/architecture/15-analytics.md "Platform-facing analytics").
 --   web_analytics_events — one row per page view on the marketing site or the merchant admin
 --     (platform table: no store owns it). No cookie, no IP, no user agent: `visitor` is a hash

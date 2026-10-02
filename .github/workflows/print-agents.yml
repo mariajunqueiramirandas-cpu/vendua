@@ -1,0 +1,128 @@
+name: print-agents
+
+# The store-side printing apps (ADR 0027): checked on every PR that touches them, and published on
+# main as a GitHub Release when apps/print-agents/VERSION names a version not released yet, with
+# both agents in it. The admin links to releases/latest/download/…, so the newest release is what
+# merchants download.
+on:
+  push:
+    branches: [main]
+    paths: ['apps/print-agents/**', '.github/workflows/print-agents.yml']
+  pull_request:
+    paths: ['apps/print-agents/**', '.github/workflows/print-agents.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/print-agents/windows
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: apps/print-agents/windows/go.mod
+          cache-dependency-path: apps/print-agents/windows/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: GOOS=windows go vet ./...
+      - run: go test -race ./...
+      - name: Build the Windows exe
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
+            -ldflags "-H windowsgui -s -w -X main.version=$(cat ../VERSION)" \
+            -o vendua-impressora.exe .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows
+          path: apps/print-agents/windows/vendua-impressora.exe
+          retention-days: 7
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/print-agents/android
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Java 21 and the SDK pieces the build compiles against
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' > /dev/null
+      - name: Release keystore (main only, when the secrets exist)
+        if: github.event_name != 'pull_request'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set: the APK is built but not published (apps/print-agents/android/README.md)"
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "VENDUA_KEYSTORE=$RUNNER_TEMP/release.jks"
+            echo "VENDUA_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "VENDUA_KEY_ALIAS=$KEY_ALIAS"
+            echo "VENDUA_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+      - run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease
+      - name: Collect a signed APK
+        run: |
+          mkdir -p out
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk out/vendua-impressora.apk
+          fi
+          ls -la out
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android
+          path: apps/print-agents/android/out/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+      - name: Publish what this version doesn't have yet
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="$(tr -d '[:space:]' < apps/print-agents/VERSION)"
+          tag="print-agents-v$version"
+          # the admin links releases/latest/download/… and both agents read version.json there:
+          # a release without the APK would send tablets to a 404, so none goes out without it
+          if [ ! -f dist/android/vendua-impressora.apk ]; then
+            echo "::warning::no signed APK (set the ANDROID_KEYSTORE_* secrets, then run this workflow on main): nothing published"
+            exit 0
+          fi
+          mkdir -p assets
+          cp dist/windows/vendua-impressora.exe dist/android/vendua-impressora.apk assets/
+          printf '{"version":"%s"}\n' "$version" > assets/version.json
+          if ! gh release view "$tag" > /dev/null 2>&1; then
+            gh release create "$tag" --title "Venduá Impressora $version" --latest \
+              --notes "Windows e Android. Baixe pelo painel: Impressoras." assets/*
+            exit 0
+          fi
+          # a re-run of a version already out fills in only what's missing (an upload that died):
+          # a published file never changes under the same version
+          have="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+          for f in assets/*; do
+            grep -qx "$(basename "$f")" <<< "$have" || gh release upload "$tag" "$f"
+          done

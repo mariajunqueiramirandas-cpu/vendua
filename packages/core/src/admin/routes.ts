@@ -49,6 +49,7 @@ import { activeCarts, type PresenceTracker } from '../modules/presence.ts';
 import { mountPaymentsPublic } from '../modules/payments/routes-public.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import { mountSignup } from '../modules/billing/routes-signup.ts';
+import { mountPrintAgent } from '../modules/printing/agent-routes.ts';
 import { publicIncidents } from '../modules/incidents.ts';
 import { mountImports } from '../modules/menu-import/routes.ts';
 import { mountAccount } from './routes-account.ts';
@@ -63,6 +64,8 @@ import { mountPayments } from './routes-payments.ts';
 import { mountReports } from './routes-reports.ts';
 import { mountStore } from './routes-store.ts';
 import { mountTeam } from './routes-team.ts';
+import { mountWhatsapp } from './routes-whatsapp.ts';
+import { mountPrinting } from './routes-print.ts';
 import { processImage } from './media.ts';
 import { isPushEndpoint, pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
 import { recordPushAttempt } from './workers.ts';
@@ -217,6 +220,15 @@ export function mountAdmin(o: MountAdminOpts) {
   };
   mountPaymentsPublic(admin, shared);
   mountSignup(admin, shared);
+  // print agents: anonymous pairing, then their own device token — never the session cookie
+  mountPrintAgent({
+    admin,
+    sql,
+    idempotency: o.idempotency,
+    publicOrigin: o.publicOrigin,
+    trustProxy: o.trustProxy,
+    proxyHops: o.proxyHops,
+  });
 
   // status.vendua.com.br's checker (apps/status) reads this from outside, every few minutes
   const statusLimit = rateLimitByIp(60, {
@@ -745,6 +757,8 @@ export function mountAdmin(o: MountAdminOpts) {
   mountMarketing(deps);
   mountReports(deps);
   mountTeam(deps);
+  mountWhatsapp(deps);
+  mountPrinting(deps);
   mountAccount(deps);
   mountAppearance(deps);
   mountImports(deps);
