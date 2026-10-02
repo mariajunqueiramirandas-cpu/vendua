@@ -77,13 +77,16 @@ export function preordersWhileClosed(settings: StoreSettingsRow | null): boolean
 export function takesOrdersWhileClosed(
   settings: StoreSettingsRow | null,
   cart: Pick<CartView, 'items'>,
-  /** the locked rows: a product just turned regular counts as regular */
+  /** the locked rows: a line is an encomenda only if the cart (whose schedule checkout
+   *  enforces) and the locked product both say so */
   products?: Map<string, ProductDetail | null>,
 ): boolean {
   return (
     preordersWhileClosed(settings) &&
     cart.items.length > 0 &&
-    cart.items.every((i) => products?.get(i.productId)?.requiresPreorder ?? i.requiresPreorder)
+    cart.items.every(
+      (i) => i.requiresPreorder && (products?.get(i.productId)?.requiresPreorder ?? true),
+    )
   );
 }
 

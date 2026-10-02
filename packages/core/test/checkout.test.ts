@@ -142,6 +142,12 @@ describe('validateCheckout', () => {
       code(() => validateCheckout(closed, settings, encomendas(2000), pickup, zones, now, null)),
     ).toBe('STORE_CLOSED');
   });
+  test('closed store → STORE_CLOSED when only the locked product just became an encomenda', () => {
+    const now = new Map([['p', { requiresPreorder: true } as ProductDetail]]);
+    expect(
+      code(() => validateCheckout(closed, settings, cart(2000), pickup, zones, now, null)),
+    ).toBe('STORE_CLOSED');
+  });
   test('closed store with encomendas off → STORE_CLOSED even for encomendas', () => {
     const s = { ...settings, preorders_while_closed: false };
     let err: { code?: string; details?: Record<string, unknown> } = {};
