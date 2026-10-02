@@ -47,6 +47,12 @@ interface MigrationRow {
   name: string;
 }
 
+// a migration renumbered after it shipped: old ledger name → new file name, so
+// a DB that already ran it moves the row instead of running it again
+export const RENAMED_MIGRATIONS: Readonly<Record<string, string>> = {
+  '0079_kitchen.sql': '0080_kitchen.sql',
+};
+
 export async function migrate(sql: Sql, dir: string): Promise<string[]> {
   await sql`
     create table if not exists schema_migrations (
@@ -59,6 +65,12 @@ export async function migrate(sql: Sql, dir: string): Promise<string[]> {
   // starters, each file commits atomically, a failure rolls back cleanly
   return sql.begin(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtext('vendua.migrate'))`;
+    for (const [from, to] of Object.entries(RENAMED_MIGRATIONS)) {
+      await tx`
+        update schema_migrations set name = ${to}
+        where name = ${from} and not exists (select 1 from schema_migrations where name = ${to})
+      `;
+    }
     const applied = new Set(
       (await tx<MigrationRow[]>`select name from schema_migrations`).map((r) => r.name),
     );
