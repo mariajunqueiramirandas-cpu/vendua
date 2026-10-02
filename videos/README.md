@@ -162,4 +162,4 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
   frame 5 and a retime of that frame's cues; nothing else moved, because the later frames are
   frame-relative.
 - Final cut (v3): 27.42 s, six frames (7.03 / 5.86 / 3.05 / 2.58 / 2.34 / 6.56 s), 23 SFX,
-  captions in 28 groups.
+  captions in 28 groups, −14 LUFS.
