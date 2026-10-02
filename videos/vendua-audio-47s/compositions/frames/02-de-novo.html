@@ -61,11 +61,20 @@
       position: absolute;
       inset: 0;
     }
+    /* the whole pile jolts, shakes and punches about its centre */
+    .\30 2-de-novo-pile,
+    .\30 2-de-novo-punch {
+      position: absolute;
+      inset: 0;
+      transform-origin: 493px 758px;
+    }
 
-    /* Luiz: frame 1's bubble, rebuilt 1:1 so the cut is invisible; its parts FLIP into slot 1 */
+    /* Luiz: frame 1's bubble, rebuilt 1:1 so the cut is invisible; its parts FLIP into slot 0,
+       which tilts about the centre of its 0.94 box (72, 259, 609x163) */
     .\30 2-de-novo-luiz {
       position: absolute;
       inset: 0;
+      transform-origin: 376.56px 340.31px;
     }
     .\30 2-de-novo-sender {
       position: absolute;
@@ -245,7 +254,7 @@
       font-size: 58.75px;
     }
 
-    /* the pile: four new voice notes on the slot layout (648x173) */
+    /* the burst: nine new voice notes on the slot layout (648x173), each above the last */
     .\30 2-de-novo-nb {
       position: absolute;
       width: 648px;
@@ -320,7 +329,7 @@
     id="root"
     data-composition-id="02-de-novo"
     data-start="0"
-    data-duration="7.8"
+    data-duration="6.109"
     data-width="1080"
     data-height="1920"
   >
@@ -328,7 +337,7 @@
       id="02-de-novo-ground"
       class="02-de-novo-ground clip"
       data-start="0"
-      data-duration="7.8"
+      data-duration="6.109"
       data-track-index="0"
     >
       <svg
@@ -368,230 +377,483 @@
       id="02-de-novo-stage"
       class="02-de-novo-stage clip"
       data-start="0"
-      data-duration="7.8"
+      data-duration="6.109"
       data-track-index="1"
     >
-      <div class="02-de-novo-luiz">
-        <div class="02-de-novo-shell-a"></div>
-        <div class="02-de-novo-shell-m"></div>
-        <div class="02-de-novo-shell-b"></div>
-        <div class="02-de-novo-sender">
-          <span class="02-de-novo-who">Luiz</span><span class="02-de-novo-when">agora</span>
+      <div class="02-de-novo-pile">
+        <div class="02-de-novo-punch">
+          <div class="02-de-novo-luiz">
+            <div class="02-de-novo-shell-a"></div>
+            <div class="02-de-novo-shell-m"></div>
+            <div class="02-de-novo-shell-b"></div>
+            <div class="02-de-novo-sender">
+              <span class="02-de-novo-who">Luiz</span><span class="02-de-novo-when">agora</span>
+            </div>
+            <div class="02-de-novo-bubble">
+              <span class="02-de-novo-avatar">L</span>
+              <span class="02-de-novo-btn">
+                <span class="02-de-novo-btn-shadow"></span>
+                <span class="02-de-novo-btn-fill"></span>
+                <svg class="02-de-novo-tri" viewBox="0 0 64 72" aria-hidden="true">
+                  <path
+                    d="M9 8 L57 36 L9 64 Z"
+                    fill="#fffdf8"
+                    stroke="#fffdf8"
+                    stroke-width="10"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              <span class="02-de-novo-wave">
+                <i class="02-de-novo-bar" style="height: 77.3px"
+                  ><b class="02-de-novo-played"></b
+                ></i>
+                <i class="02-de-novo-bar" style="height: 87.9px"
+                  ><b class="02-de-novo-played"></b
+                ></i>
+                <i class="02-de-novo-bar" style="height: 102.7px"
+                  ><b class="02-de-novo-played"></b
+                ></i>
+                <i class="02-de-novo-bar" style="height: 88.9px"
+                  ><b class="02-de-novo-played"></b
+                ></i>
+                <i class="02-de-novo-bar" style="height: 169.9px"></i>
+                <i class="02-de-novo-bar" style="height: 169px"></i>
+                <i class="02-de-novo-bar" style="height: 83.6px"></i>
+                <i class="02-de-novo-bar" style="height: 116.1px"></i>
+                <i class="02-de-novo-bar" style="height: 105.4px"></i>
+                <i class="02-de-novo-bar" style="height: 65.4px"></i>
+                <i class="02-de-novo-bar" style="height: 76.6px"></i>
+                <i class="02-de-novo-bar" style="height: 140px"></i>
+                <i class="02-de-novo-bar" style="height: 158.7px"></i>
+                <i class="02-de-novo-bar" style="height: 84px"></i>
+                <i class="02-de-novo-bar" style="height: 140.7px"></i>
+                <i class="02-de-novo-bar" style="height: 157.9px"></i>
+                <i class="02-de-novo-bar" style="height: 98.9px"></i>
+                <i class="02-de-novo-bar" style="height: 69.9px"></i>
+                <i class="02-de-novo-bar" style="height: 86.9px"></i>
+                <i class="02-de-novo-bar" style="height: 120.6px"></i>
+                <i class="02-de-novo-bar" style="height: 78.7px"></i>
+                <i class="02-de-novo-bar" style="height: 143px"></i>
+                <i class="02-de-novo-bar" style="height: 182.4px"></i>
+                <i class="02-de-novo-bar" style="height: 123.1px"></i>
+                <span class="02-de-novo-elapsed"
+                  ><span>0:0</span><span class="02-de-novo-digit"><span>7</span></span></span
+                >
+              </span>
+              <span class="02-de-novo-dur">0:47</span>
+            </div>
+          </div>
+
+          <!-- slot 1 -->
+          <div
+            class="02-de-novo-nb"
+            data-beat="0.469"
+            data-rot="2.5"
+            style="left: 230px; top: 345px"
+          >
+            <div class="02-de-novo-bloom"></div>
+            <div class="02-de-novo-nshell"></div>
+            <span class="02-de-novo-navatar">M</span>
+            <span class="02-de-novo-nbtn"
+              ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+                <path
+                  d="M9 8 L57 36 L9 64 Z"
+                  fill="#fffdf8"
+                  stroke="#fffdf8"
+                  stroke-width="10"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            <i class="02-de-novo-nbar" style="left: 195.202px; top: 50.326px; height: 72.348px"></i>
+            <i class="02-de-novo-nbar" style="left: 209.03px; top: 66.486px; height: 40.028px"></i>
+            <i class="02-de-novo-nbar" style="left: 222.858px; top: 68.785px; height: 35.43px"></i>
+            <i class="02-de-novo-nbar" style="left: 236.686px; top: 65.877px; height: 41.245px"></i>
+            <i class="02-de-novo-nbar" style="left: 250.514px; top: 60.671px; height: 51.658px"></i>
+            <i class="02-de-novo-nbar" style="left: 264.342px; top: 68.718px; height: 35.565px"></i>
+            <i class="02-de-novo-nbar" style="left: 278.17px; top: 48.23px; height: 76.54px"></i>
+            <i class="02-de-novo-nbar" style="left: 291.998px; top: 45.052px; height: 82.896px"></i>
+            <i class="02-de-novo-nbar" style="left: 305.826px; top: 63.376px; height: 46.249px"></i>
+            <i class="02-de-novo-nbar" style="left: 319.654px; top: 61.212px; height: 50.576px"></i>
+            <i class="02-de-novo-nbar" style="left: 333.482px; top: 61.617px; height: 49.765px"></i>
+            <i class="02-de-novo-nbar" style="left: 347.31px; top: 71.016px; height: 30.968px"></i>
+            <i class="02-de-novo-nbar" style="left: 361.138px; top: 69.934px; height: 33.131px"></i>
+            <i class="02-de-novo-nbar" style="left: 374.966px; top: 54.788px; height: 63.423px"></i>
+            <i class="02-de-novo-nbar" style="left: 388.794px; top: 47.621px; height: 77.757px"></i>
+            <i class="02-de-novo-nbar" style="left: 402.622px; top: 62.835px; height: 47.33px"></i>
+            <i class="02-de-novo-nbar" style="left: 416.45px; top: 56.343px; height: 60.313px"></i>
+            <i class="02-de-novo-nbar" style="left: 430.278px; top: 49.312px; height: 74.376px"></i>
+            <i class="02-de-novo-nbar" style="left: 444.106px; top: 61.55px; height: 49.9px"></i>
+            <i class="02-de-novo-nbar" style="left: 457.934px; top: 70.678px; height: 31.644px"></i>
+            <i class="02-de-novo-nbar" style="left: 471.762px; top: 66.418px; height: 40.163px"></i>
+            <i class="02-de-novo-nbar" style="left: 485.59px; top: 57.155px; height: 58.69px"></i>
+            <i class="02-de-novo-nbar" style="left: 499.418px; top: 64.796px; height: 43.409px"></i>
+            <i class="02-de-novo-nbar" style="left: 513.246px; top: 55.803px; height: 61.394px"></i>
+            <span class="02-de-novo-ndur">0:32</span>
+            <span class="02-de-novo-dot"></span>
+          </div>
+          <!-- slot 2 -->
+          <div
+            class="02-de-novo-nb"
+            data-beat="0.938"
+            data-rot="-1.5"
+            style="left: 96px; top: 437px"
+          >
+            <div class="02-de-novo-bloom"></div>
+            <div class="02-de-novo-nshell"></div>
+            <span class="02-de-novo-navatar">A</span>
+            <span class="02-de-novo-nbtn"
+              ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+                <path
+                  d="M9 8 L57 36 L9 64 Z"
+                  fill="#fffdf8"
+                  stroke="#fffdf8"
+                  stroke-width="10"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            <i class="02-de-novo-nbar" style="left: 195.202px; top: 64.593px; height: 43.814px"></i>
+            <i class="02-de-novo-nbar" style="left: 209.03px; top: 63.916px; height: 45.167px"></i>
+            <i class="02-de-novo-nbar" style="left: 222.858px; top: 46.134px; height: 80.732px"></i>
+            <i class="02-de-novo-nbar" style="left: 236.686px; top: 47.959px; height: 77.081px"></i>
+            <i class="02-de-novo-nbar" style="left: 250.514px; top: 69.191px; height: 34.619px"></i>
+            <i class="02-de-novo-nbar" style="left: 264.342px; top: 56.614px; height: 59.772px"></i>
+            <i class="02-de-novo-nbar" style="left: 278.17px; top: 59.657px; height: 53.686px"></i>
+            <i class="02-de-novo-nbar" style="left: 291.998px; top: 70.475px; height: 32.049px"></i>
+            <i class="02-de-novo-nbar" style="left: 305.826px; top: 68.244px; height: 36.512px"></i>
+            <i class="02-de-novo-nbar" style="left: 319.654px; top: 54.518px; height: 63.964px"></i>
+            <i class="02-de-novo-nbar" style="left: 333.482px; top: 51.34px; height: 70.32px"></i>
+            <i class="02-de-novo-nbar" style="left: 347.31px; top: 69.529px; height: 33.943px"></i>
+            <i class="02-de-novo-nbar" style="left: 361.138px; top: 51.002px; height: 70.996px"></i>
+            <i class="02-de-novo-nbar" style="left: 374.966px; top: 48.23px; height: 76.54px"></i>
+            <i class="02-de-novo-nbar" style="left: 388.794px; top: 63.444px; height: 46.113px"></i>
+            <i class="02-de-novo-nbar" style="left: 402.622px; top: 68.718px; height: 35.565px"></i>
+            <i class="02-de-novo-nbar" style="left: 416.45px; top: 67.974px; height: 37.053px"></i>
+            <i class="02-de-novo-nbar" style="left: 430.278px; top: 60.468px; height: 52.064px"></i>
+            <i class="02-de-novo-nbar" style="left: 444.106px; top: 70.273px; height: 32.455px"></i>
+            <i class="02-de-novo-nbar" style="left: 457.934px; top: 51.408px; height: 70.184px"></i>
+            <i class="02-de-novo-nbar" style="left: 471.762px; top: 43.7px; height: 85.601px"></i>
+            <i class="02-de-novo-nbar" style="left: 485.59px; top: 59.183px; height: 54.633px"></i>
+            <i class="02-de-novo-nbar" style="left: 499.418px; top: 63.376px; height: 46.249px"></i>
+            <i class="02-de-novo-nbar" style="left: 513.246px; top: 60.13px; height: 52.74px"></i>
+            <span class="02-de-novo-ndur">1:12</span>
+            <span class="02-de-novo-dot"></span>
+          </div>
+          <!-- slot 3 -->
+          <div class="02-de-novo-nb" data-beat="1.406" data-rot="3" style="left: 262px; top: 529px">
+            <div class="02-de-novo-bloom"></div>
+            <div class="02-de-novo-nshell"></div>
+            <span class="02-de-novo-navatar">R</span>
+            <span class="02-de-novo-nbtn"
+              ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+                <path
+                  d="M9 8 L57 36 L9 64 Z"
+                  fill="#fffdf8"
+                  stroke="#fffdf8"
+                  stroke-width="10"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            <i class="02-de-novo-nbar" style="left: 195.202px; top: 67.162px; height: 38.676px"></i>
+            <i class="02-de-novo-nbar" style="left: 209.03px; top: 52.422px; height: 68.156px"></i>
+            <i class="02-de-novo-nbar" style="left: 222.858px; top: 58.575px; height: 55.85px"></i>
+            <i class="02-de-novo-nbar" style="left: 236.686px; top: 70.205px; height: 32.59px"></i>
+            <i class="02-de-novo-nbar" style="left: 250.514px; top: 67.703px; height: 37.594px"></i>
+            <i class="02-de-novo-nbar" style="left: 264.342px; top: 55.6px; height: 61.8px"></i>
+            <i class="02-de-novo-nbar" style="left: 278.17px; top: 56.005px; height: 60.989px"></i>
+            <i class="02-de-novo-nbar" style="left: 291.998px; top: 66.553px; height: 39.893px"></i>
+            <i class="02-de-novo-nbar" style="left: 305.826px; top: 46.81px; height: 79.38px"></i>
+            <i class="02-de-novo-nbar" style="left: 319.654px; top: 48.703px; height: 75.594px"></i>
+            <i class="02-de-novo-nbar" style="left: 333.482px; top: 66.621px; height: 39.758px"></i>
+            <i class="02-de-novo-nbar" style="left: 347.31px; top: 66.013px; height: 40.975px"></i>
+            <i class="02-de-novo-nbar" style="left: 361.138px; top: 70.137px; height: 32.726px"></i>
+            <i class="02-de-novo-nbar" style="left: 374.966px; top: 63.984px; height: 45.032px"></i>
+            <i class="02-de-novo-nbar" style="left: 388.794px; top: 67.568px; height: 37.864px"></i>
+            <i class="02-de-novo-nbar" style="left: 402.622px; top: 48.501px; height: 75.999px"></i>
+            <i class="02-de-novo-nbar" style="left: 416.45px; top: 45.728px; height: 81.544px"></i>
+            <i class="02-de-novo-nbar" style="left: 430.278px; top: 64.796px; height: 43.409px"></i>
+            <i class="02-de-novo-nbar" style="left: 444.106px; top: 58.237px; height: 56.526px"></i>
+            <i class="02-de-novo-nbar" style="left: 457.934px; top: 57.696px; height: 57.608px"></i>
+            <i class="02-de-novo-nbar" style="left: 471.762px; top: 68.92px; height: 35.16px"></i>
+            <i class="02-de-novo-nbar" style="left: 485.59px; top: 70.002px; height: 32.996px"></i>
+            <i class="02-de-novo-nbar" style="left: 499.418px; top: 57.087px; height: 58.825px"></i>
+            <i class="02-de-novo-nbar" style="left: 513.246px; top: 50.326px; height: 72.348px"></i>
+            <span class="02-de-novo-ndur">0:58</span>
+            <span class="02-de-novo-dot"></span>
+          </div>
+          <!-- slot 4 -->
+          <div
+            class="02-de-novo-nb"
+            data-beat="1.875"
+            data-rot="-3"
+            style="left: 120px; top: 621px"
+          >
+            <div class="02-de-novo-bloom"></div>
+            <div class="02-de-novo-nshell"></div>
+            <span class="02-de-novo-navatar">J</span>
+            <span class="02-de-novo-nbtn"
+              ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+                <path
+                  d="M9 8 L57 36 L9 64 Z"
+                  fill="#fffdf8"
+                  stroke="#fffdf8"
+                  stroke-width="10"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            <i class="02-de-novo-nbar" style="left: 195.202px; top: 63.578px; height: 45.843px"></i>
+            <i class="02-de-novo-nbar" style="left: 209.03px; top: 53.639px; height: 65.722px"></i>
+            <i class="02-de-novo-nbar" style="left: 222.858px; top: 62.023px; height: 48.953px"></i>
+            <i class="02-de-novo-nbar" style="left: 236.686px; top: 57.561px; height: 57.878px"></i>
+            <i class="02-de-novo-nbar" style="left: 250.514px; top: 44.444px; height: 84.113px"></i>
+            <i class="02-de-novo-nbar" style="left: 264.342px; top: 54.585px; height: 63.829px"></i>
+            <i class="02-de-novo-nbar" style="left: 278.17px; top: 70.205px; height: 32.59px"></i>
+            <i class="02-de-novo-nbar" style="left: 291.998px; top: 66.621px; height: 39.758px"></i>
+            <i class="02-de-novo-nbar" style="left: 305.826px; top: 66.959px; height: 39.081px"></i>
+            <i class="02-de-novo-nbar" style="left: 319.654px; top: 66.215px; height: 40.569px"></i>
+            <i class="02-de-novo-nbar" style="left: 333.482px; top: 60.13px; height: 52.74px"></i>
+            <i class="02-de-novo-nbar" style="left: 347.31px; top: 44.714px; height: 83.572px"></i>
+            <i class="02-de-novo-nbar" style="left: 361.138px; top: 51.07px; height: 70.86px"></i>
+            <i class="02-de-novo-nbar" style="left: 374.966px; top: 68.987px; height: 35.025px"></i>
+            <i class="02-de-novo-nbar" style="left: 388.794px; top: 55.195px; height: 62.611px"></i>
+            <i class="02-de-novo-nbar" style="left: 402.622px; top: 61.279px; height: 50.441px"></i>
+            <i class="02-de-novo-nbar" style="left: 416.45px; top: 71.219px; height: 30.562px"></i>
+            <i class="02-de-novo-nbar" style="left: 430.278px; top: 66.283px; height: 40.434px"></i>
+            <i class="02-de-novo-nbar" style="left: 444.106px; top: 52.895px; height: 67.209px"></i>
+            <i class="02-de-novo-nbar" style="left: 457.934px; top: 53.572px; height: 65.857px"></i>
+            <i class="02-de-novo-nbar" style="left: 471.762px; top: 68.311px; height: 36.377px"></i>
+            <i class="02-de-novo-nbar" style="left: 485.59px; top: 48.365px; height: 76.27px"></i>
+            <i class="02-de-novo-nbar" style="left: 499.418px; top: 49.92px; height: 73.159px"></i>
+            <i class="02-de-novo-nbar" style="left: 513.246px; top: 66.418px; height: 40.163px"></i>
+            <span class="02-de-novo-ndur">2:05</span>
+            <span class="02-de-novo-dot"></span>
+          </div>
+          <!-- slot 5 -->
+          <div
+            class="02-de-novo-nb"
+            data-beat="2.344"
+            data-rot="1.5"
+            style="left: 210px; top: 713px"
+          >
+            <div class="02-de-novo-bloom"></div>
+            <div class="02-de-novo-nshell"></div>
+            <span class="02-de-novo-navatar">C</span>
+            <span class="02-de-novo-nbtn"
+              ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+                <path
+                  d="M9 8 L57 36 L9 64 Z"
+                  fill="#fffdf8"
+                  stroke="#fffdf8"
+                  stroke-width="10"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            <i class="02-de-novo-nbar" style="left: 195.202px; top: 53.319px; height: 66.361px"></i>
+            <i class="02-de-novo-nbar" style="left: 209.03px; top: 47.227px; height: 78.546px"></i>
+            <i class="02-de-novo-nbar" style="left: 222.858px; top: 69.281px; height: 34.439px"></i>
+            <i class="02-de-novo-nbar" style="left: 236.686px; top: 63.617px; height: 45.766px"></i>
+            <i class="02-de-novo-nbar" style="left: 250.514px; top: 58.349px; height: 56.301px"></i>
+            <i class="02-de-novo-nbar" style="left: 264.342px; top: 59.474px; height: 54.052px"></i>
+            <i class="02-de-novo-nbar" style="left: 278.17px; top: 65.802px; height: 41.397px"></i>
+            <i class="02-de-novo-nbar" style="left: 291.998px; top: 57.349px; height: 58.301px"></i>
+            <i class="02-de-novo-nbar" style="left: 305.826px; top: 57.853px; height: 57.294px"></i>
+            <i class="02-de-novo-nbar" style="left: 319.654px; top: 45.764px; height: 81.472px"></i>
+            <i class="02-de-novo-nbar" style="left: 333.482px; top: 71px; height: 31px"></i>
+            <i class="02-de-novo-nbar" style="left: 347.31px; top: 46.821px; height: 79.358px"></i>
+            <i class="02-de-novo-nbar" style="left: 361.138px; top: 45.5px; height: 82px"></i>
+            <i class="02-de-novo-nbar" style="left: 374.966px; top: 67.276px; height: 38.448px"></i>
+            <i class="02-de-novo-nbar" style="left: 388.794px; top: 50.438px; height: 72.123px"></i>
+            <i class="02-de-novo-nbar" style="left: 402.622px; top: 62.206px; height: 48.588px"></i>
+            <i class="02-de-novo-nbar" style="left: 416.45px; top: 60.207px; height: 52.586px"></i>
+            <i class="02-de-novo-nbar" style="left: 430.278px; top: 66.827px; height: 39.346px"></i>
+            <i class="02-de-novo-nbar" style="left: 444.106px; top: 60.281px; height: 52.439px"></i>
+            <i class="02-de-novo-nbar" style="left: 457.934px; top: 64.513px; height: 43.974px"></i>
+            <i class="02-de-novo-nbar" style="left: 471.762px; top: 59.502px; height: 53.997px"></i>
+            <i class="02-de-novo-nbar" style="left: 485.59px; top: 66.415px; height: 40.17px"></i>
+            <i class="02-de-novo-nbar" style="left: 499.418px; top: 57.602px; height: 57.795px"></i>
+            <i class="02-de-novo-nbar" style="left: 513.246px; top: 45.883px; height: 81.234px"></i>
+            <span class="02-de-novo-ndur">0:41</span>
+            <span class="02-de-novo-dot"></span>
+          </div>
+          <!-- slot 6 -->
+          <div
+            class="02-de-novo-nb"
+            data-beat="2.813"
+            data-rot="-2.5"
+            style="left: 84px; top: 805px"
+          >
+            <div class="02-de-novo-bloom"></div>
+            <div class="02-de-novo-nshell"></div>
+            <span class="02-de-novo-navatar">P</span>
+            <span class="02-de-novo-nbtn"
+              ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+                <path
+                  d="M9 8 L57 36 L9 64 Z"
+                  fill="#fffdf8"
+                  stroke="#fffdf8"
+                  stroke-width="10"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            <i class="02-de-novo-nbar" style="left: 195.202px; top: 69.577px; height: 33.846px"></i>
+            <i class="02-de-novo-nbar" style="left: 209.03px; top: 58.105px; height: 56.789px"></i>
+            <i class="02-de-novo-nbar" style="left: 222.858px; top: 58.114px; height: 56.772px"></i>
+            <i class="02-de-novo-nbar" style="left: 236.686px; top: 64.084px; height: 44.832px"></i>
+            <i class="02-de-novo-nbar" style="left: 250.514px; top: 50.462px; height: 72.077px"></i>
+            <i class="02-de-novo-nbar" style="left: 264.342px; top: 45.967px; height: 81.067px"></i>
+            <i class="02-de-novo-nbar" style="left: 278.17px; top: 58.674px; height: 55.653px"></i>
+            <i class="02-de-novo-nbar" style="left: 291.998px; top: 48.605px; height: 75.79px"></i>
+            <i class="02-de-novo-nbar" style="left: 305.826px; top: 47.945px; height: 77.11px"></i>
+            <i class="02-de-novo-nbar" style="left: 319.654px; top: 50.884px; height: 71.232px"></i>
+            <i class="02-de-novo-nbar" style="left: 333.482px; top: 68.286px; height: 36.428px"></i>
+            <i class="02-de-novo-nbar" style="left: 347.31px; top: 61.57px; height: 49.86px"></i>
+            <i class="02-de-novo-nbar" style="left: 361.138px; top: 55.566px; height: 61.868px"></i>
+            <i class="02-de-novo-nbar" style="left: 374.966px; top: 71px; height: 31px"></i>
+            <i class="02-de-novo-nbar" style="left: 388.794px; top: 54.065px; height: 64.87px"></i>
+            <i class="02-de-novo-nbar" style="left: 402.622px; top: 66.115px; height: 40.769px"></i>
+            <i class="02-de-novo-nbar" style="left: 416.45px; top: 54.377px; height: 64.245px"></i>
+            <i class="02-de-novo-nbar" style="left: 430.278px; top: 69.612px; height: 33.776px"></i>
+            <i class="02-de-novo-nbar" style="left: 444.106px; top: 62.642px; height: 47.715px"></i>
+            <i class="02-de-novo-nbar" style="left: 457.934px; top: 56.061px; height: 60.878px"></i>
+            <i class="02-de-novo-nbar" style="left: 471.762px; top: 45px; height: 83px"></i>
+            <i class="02-de-novo-nbar" style="left: 485.59px; top: 60.778px; height: 51.445px"></i>
+            <i class="02-de-novo-nbar" style="left: 499.418px; top: 57.043px; height: 58.915px"></i>
+            <i class="02-de-novo-nbar" style="left: 513.246px; top: 62.231px; height: 48.538px"></i>
+            <span class="02-de-novo-ndur">1:36</span>
+            <span class="02-de-novo-dot"></span>
+          </div>
+          <!-- slot 7 -->
+          <div class="02-de-novo-nb" data-beat="3.281" data-rot="2" style="left: 250px; top: 897px">
+            <div class="02-de-novo-bloom"></div>
+            <div class="02-de-novo-nshell"></div>
+            <span class="02-de-novo-navatar">D</span>
+            <span class="02-de-novo-nbtn"
+              ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+                <path
+                  d="M9 8 L57 36 L9 64 Z"
+                  fill="#fffdf8"
+                  stroke="#fffdf8"
+                  stroke-width="10"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            <i class="02-de-novo-nbar" style="left: 195.202px; top: 70.478px; height: 32.044px"></i>
+            <i class="02-de-novo-nbar" style="left: 209.03px; top: 66.088px; height: 40.825px"></i>
+            <i class="02-de-novo-nbar" style="left: 222.858px; top: 61.74px; height: 49.519px"></i>
+            <i class="02-de-novo-nbar" style="left: 236.686px; top: 54.605px; height: 63.789px"></i>
+            <i class="02-de-novo-nbar" style="left: 250.514px; top: 65.984px; height: 41.031px"></i>
+            <i class="02-de-novo-nbar" style="left: 264.342px; top: 48.225px; height: 76.55px"></i>
+            <i class="02-de-novo-nbar" style="left: 278.17px; top: 48.12px; height: 76.761px"></i>
+            <i class="02-de-novo-nbar" style="left: 291.998px; top: 54.844px; height: 63.312px"></i>
+            <i class="02-de-novo-nbar" style="left: 305.826px; top: 60.68px; height: 51.64px"></i>
+            <i class="02-de-novo-nbar" style="left: 319.654px; top: 55.261px; height: 62.479px"></i>
+            <i class="02-de-novo-nbar" style="left: 333.482px; top: 71px; height: 31px"></i>
+            <i class="02-de-novo-nbar" style="left: 347.31px; top: 69.835px; height: 33.329px"></i>
+            <i class="02-de-novo-nbar" style="left: 361.138px; top: 65.341px; height: 42.317px"></i>
+            <i class="02-de-novo-nbar" style="left: 374.966px; top: 59.578px; height: 53.843px"></i>
+            <i class="02-de-novo-nbar" style="left: 388.794px; top: 67.793px; height: 37.414px"></i>
+            <i class="02-de-novo-nbar" style="left: 402.622px; top: 61.029px; height: 50.941px"></i>
+            <i class="02-de-novo-nbar" style="left: 416.45px; top: 69.639px; height: 33.722px"></i>
+            <i class="02-de-novo-nbar" style="left: 430.278px; top: 51.789px; height: 69.421px"></i>
+            <i class="02-de-novo-nbar" style="left: 444.106px; top: 49.367px; height: 74.266px"></i>
+            <i class="02-de-novo-nbar" style="left: 457.934px; top: 44.5px; height: 84px"></i>
+            <i class="02-de-novo-nbar" style="left: 471.762px; top: 48.888px; height: 75.224px"></i>
+            <i class="02-de-novo-nbar" style="left: 485.59px; top: 64.031px; height: 44.939px"></i>
+            <i class="02-de-novo-nbar" style="left: 499.418px; top: 54.269px; height: 64.463px"></i>
+            <i class="02-de-novo-nbar" style="left: 513.246px; top: 70.174px; height: 32.651px"></i>
+            <span class="02-de-novo-ndur">0:19</span>
+            <span class="02-de-novo-dot"></span>
+          </div>
+          <!-- slot 8 -->
+          <div class="02-de-novo-nb" data-beat="3.75" data-rot="-1" style="left: 140px; top: 989px">
+            <div class="02-de-novo-bloom"></div>
+            <div class="02-de-novo-nshell"></div>
+            <span class="02-de-novo-navatar">T</span>
+            <span class="02-de-novo-nbtn"
+              ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+                <path
+                  d="M9 8 L57 36 L9 64 Z"
+                  fill="#fffdf8"
+                  stroke="#fffdf8"
+                  stroke-width="10"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            <i class="02-de-novo-nbar" style="left: 195.202px; top: 65.112px; height: 42.776px"></i>
+            <i class="02-de-novo-nbar" style="left: 209.03px; top: 67.974px; height: 37.053px"></i>
+            <i class="02-de-novo-nbar" style="left: 222.858px; top: 59.433px; height: 54.135px"></i>
+            <i class="02-de-novo-nbar" style="left: 236.686px; top: 59.454px; height: 54.092px"></i>
+            <i class="02-de-novo-nbar" style="left: 250.514px; top: 64.612px; height: 43.775px"></i>
+            <i class="02-de-novo-nbar" style="left: 264.342px; top: 54.243px; height: 64.514px"></i>
+            <i class="02-de-novo-nbar" style="left: 278.17px; top: 59.127px; height: 54.745px"></i>
+            <i class="02-de-novo-nbar" style="left: 291.998px; top: 65.779px; height: 41.443px"></i>
+            <i class="02-de-novo-nbar" style="left: 305.826px; top: 45.279px; height: 82.443px"></i>
+            <i class="02-de-novo-nbar" style="left: 319.654px; top: 52.638px; height: 67.724px"></i>
+            <i class="02-de-novo-nbar" style="left: 333.482px; top: 67.226px; height: 38.548px"></i>
+            <i class="02-de-novo-nbar" style="left: 347.31px; top: 55.766px; height: 61.469px"></i>
+            <i class="02-de-novo-nbar" style="left: 361.138px; top: 62.972px; height: 47.056px"></i>
+            <i class="02-de-novo-nbar" style="left: 374.966px; top: 64.787px; height: 43.426px"></i>
+            <i class="02-de-novo-nbar" style="left: 388.794px; top: 59.144px; height: 54.713px"></i>
+            <i class="02-de-novo-nbar" style="left: 402.622px; top: 64.179px; height: 44.642px"></i>
+            <i class="02-de-novo-nbar" style="left: 416.45px; top: 71px; height: 31px"></i>
+            <i class="02-de-novo-nbar" style="left: 430.278px; top: 53.23px; height: 66.54px"></i>
+            <i class="02-de-novo-nbar" style="left: 444.106px; top: 44px; height: 85px"></i>
+            <i class="02-de-novo-nbar" style="left: 457.934px; top: 54.745px; height: 63.509px"></i>
+            <i class="02-de-novo-nbar" style="left: 471.762px; top: 51.967px; height: 69.066px"></i>
+            <i class="02-de-novo-nbar" style="left: 485.59px; top: 48.955px; height: 75.09px"></i>
+            <i class="02-de-novo-nbar" style="left: 499.418px; top: 54.764px; height: 63.473px"></i>
+            <i class="02-de-novo-nbar" style="left: 513.246px; top: 51.736px; height: 69.528px"></i>
+            <span class="02-de-novo-ndur">3:02</span>
+            <span class="02-de-novo-dot"></span>
+          </div>
+          <!-- slot 9 -->
+          <div
+            class="02-de-novo-nb"
+            data-beat="4.219"
+            data-rot="2.5"
+            style="left: 220px; top: 1081px"
+          >
+            <div class="02-de-novo-bloom"></div>
+            <div class="02-de-novo-nshell"></div>
+            <span class="02-de-novo-navatar">S</span>
+            <span class="02-de-novo-nbtn"
+              ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
+                <path
+                  d="M9 8 L57 36 L9 64 Z"
+                  fill="#fffdf8"
+                  stroke="#fffdf8"
+                  stroke-width="10"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            <i class="02-de-novo-nbar" style="left: 195.202px; top: 51.047px; height: 70.905px"></i>
+            <i class="02-de-novo-nbar" style="left: 209.03px; top: 59.006px; height: 54.988px"></i>
+            <i class="02-de-novo-nbar" style="left: 222.858px; top: 46.57px; height: 79.86px"></i>
+            <i class="02-de-novo-nbar" style="left: 236.686px; top: 51.393px; height: 70.214px"></i>
+            <i class="02-de-novo-nbar" style="left: 250.514px; top: 67.005px; height: 38.989px"></i>
+            <i class="02-de-novo-nbar" style="left: 264.342px; top: 66.765px; height: 39.47px"></i>
+            <i class="02-de-novo-nbar" style="left: 278.17px; top: 65.07px; height: 42.861px"></i>
+            <i class="02-de-novo-nbar" style="left: 291.998px; top: 71px; height: 31px"></i>
+            <i class="02-de-novo-nbar" style="left: 305.826px; top: 48.486px; height: 76.028px"></i>
+            <i class="02-de-novo-nbar" style="left: 319.654px; top: 70.865px; height: 31.269px"></i>
+            <i class="02-de-novo-nbar" style="left: 333.482px; top: 52.923px; height: 67.154px"></i>
+            <i class="02-de-novo-nbar" style="left: 347.31px; top: 45.5px; height: 82px"></i>
+            <i class="02-de-novo-nbar" style="left: 361.138px; top: 63.295px; height: 46.41px"></i>
+            <i class="02-de-novo-nbar" style="left: 374.966px; top: 57.88px; height: 57.241px"></i>
+            <i class="02-de-novo-nbar" style="left: 388.794px; top: 66.84px; height: 39.319px"></i>
+            <i class="02-de-novo-nbar" style="left: 402.622px; top: 67.645px; height: 37.71px"></i>
+            <i class="02-de-novo-nbar" style="left: 416.45px; top: 61.064px; height: 50.872px"></i>
+            <i class="02-de-novo-nbar" style="left: 430.278px; top: 66.05px; height: 40.899px"></i>
+            <i class="02-de-novo-nbar" style="left: 444.106px; top: 66.017px; height: 40.967px"></i>
+            <i class="02-de-novo-nbar" style="left: 457.934px; top: 57.636px; height: 57.728px"></i>
+            <i class="02-de-novo-nbar" style="left: 471.762px; top: 54.764px; height: 63.471px"></i>
+            <i class="02-de-novo-nbar" style="left: 485.59px; top: 48.662px; height: 75.676px"></i>
+            <i class="02-de-novo-nbar" style="left: 499.418px; top: 61.696px; height: 49.608px"></i>
+            <i class="02-de-novo-nbar" style="left: 513.246px; top: 69.514px; height: 33.972px"></i>
+            <span class="02-de-novo-ndur">0:54</span>
+            <span class="02-de-novo-dot"></span>
+          </div>
         </div>
-        <div class="02-de-novo-bubble">
-          <span class="02-de-novo-avatar">L</span>
-          <span class="02-de-novo-btn">
-            <span class="02-de-novo-btn-shadow"></span>
-            <span class="02-de-novo-btn-fill"></span>
-            <svg class="02-de-novo-tri" viewBox="0 0 64 72" aria-hidden="true">
-              <path
-                d="M9 8 L57 36 L9 64 Z"
-                fill="#fffdf8"
-                stroke="#fffdf8"
-                stroke-width="10"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </span>
-          <span class="02-de-novo-wave">
-            <i class="02-de-novo-bar" style="height: 77.3px"><b class="02-de-novo-played"></b></i>
-            <i class="02-de-novo-bar" style="height: 87.9px"><b class="02-de-novo-played"></b></i>
-            <i class="02-de-novo-bar" style="height: 102.7px"><b class="02-de-novo-played"></b></i>
-            <i class="02-de-novo-bar" style="height: 88.9px"><b class="02-de-novo-played"></b></i>
-            <i class="02-de-novo-bar" style="height: 169.9px"><b class="02-de-novo-played"></b></i>
-            <i class="02-de-novo-bar" style="height: 169px"></i>
-            <i class="02-de-novo-bar" style="height: 83.6px"></i>
-            <i class="02-de-novo-bar" style="height: 116.1px"></i>
-            <i class="02-de-novo-bar" style="height: 105.4px"></i>
-            <i class="02-de-novo-bar" style="height: 65.4px"></i>
-            <i class="02-de-novo-bar" style="height: 76.6px"></i>
-            <i class="02-de-novo-bar" style="height: 140px"></i>
-            <i class="02-de-novo-bar" style="height: 158.7px"></i>
-            <i class="02-de-novo-bar" style="height: 84px"></i>
-            <i class="02-de-novo-bar" style="height: 140.7px"></i>
-            <i class="02-de-novo-bar" style="height: 157.9px"></i>
-            <i class="02-de-novo-bar" style="height: 98.9px"></i>
-            <i class="02-de-novo-bar" style="height: 69.9px"></i>
-            <i class="02-de-novo-bar" style="height: 86.9px"></i>
-            <i class="02-de-novo-bar" style="height: 120.6px"></i>
-            <i class="02-de-novo-bar" style="height: 78.7px"></i>
-            <i class="02-de-novo-bar" style="height: 143px"></i>
-            <i class="02-de-novo-bar" style="height: 182.4px"></i>
-            <i class="02-de-novo-bar" style="height: 123.1px"></i>
-            <span class="02-de-novo-elapsed"
-              ><span>0:0</span><span class="02-de-novo-digit"><span>8</span></span></span
-            >
-          </span>
-          <span class="02-de-novo-dur">0:47</span>
-        </div>
-      </div>
-
-      <div class="02-de-novo-nb" data-cue="0.66" style="left: 216px; top: 464px">
-        <div class="02-de-novo-bloom"></div>
-        <div class="02-de-novo-nshell"></div>
-        <span class="02-de-novo-navatar">M</span>
-        <span class="02-de-novo-nbtn"
-          ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
-            <path
-              d="M9 8 L57 36 L9 64 Z"
-              fill="#fffdf8"
-              stroke="#fffdf8"
-              stroke-width="10"
-              stroke-linejoin="round"
-            /></svg
-        ></span>
-        <i class="02-de-novo-nbar" style="left: 195.202px; top: 50.326px; height: 72.348px"></i>
-        <i class="02-de-novo-nbar" style="left: 209.03px; top: 66.486px; height: 40.028px"></i>
-        <i class="02-de-novo-nbar" style="left: 222.858px; top: 68.785px; height: 35.43px"></i>
-        <i class="02-de-novo-nbar" style="left: 236.686px; top: 65.877px; height: 41.245px"></i>
-        <i class="02-de-novo-nbar" style="left: 250.514px; top: 60.671px; height: 51.658px"></i>
-        <i class="02-de-novo-nbar" style="left: 264.342px; top: 68.717px; height: 35.565px"></i>
-        <i class="02-de-novo-nbar" style="left: 278.17px; top: 48.23px; height: 76.54px"></i>
-        <i class="02-de-novo-nbar" style="left: 291.998px; top: 45.052px; height: 82.896px"></i>
-        <i class="02-de-novo-nbar" style="left: 305.826px; top: 63.376px; height: 46.249px"></i>
-        <i class="02-de-novo-nbar" style="left: 319.654px; top: 61.212px; height: 50.576px"></i>
-        <i class="02-de-novo-nbar" style="left: 333.483px; top: 61.618px; height: 49.765px"></i>
-        <i class="02-de-novo-nbar" style="left: 347.311px; top: 71.016px; height: 30.968px"></i>
-        <i class="02-de-novo-nbar" style="left: 361.139px; top: 69.934px; height: 33.131px"></i>
-        <i class="02-de-novo-nbar" style="left: 374.967px; top: 54.789px; height: 63.423px"></i>
-        <i class="02-de-novo-nbar" style="left: 388.795px; top: 47.621px; height: 77.757px"></i>
-        <i class="02-de-novo-nbar" style="left: 402.623px; top: 62.835px; height: 47.33px"></i>
-        <i class="02-de-novo-nbar" style="left: 416.451px; top: 56.344px; height: 60.313px"></i>
-        <i class="02-de-novo-nbar" style="left: 430.279px; top: 49.312px; height: 74.376px"></i>
-        <i class="02-de-novo-nbar" style="left: 444.107px; top: 61.55px; height: 49.9px"></i>
-        <i class="02-de-novo-nbar" style="left: 457.935px; top: 70.678px; height: 31.644px"></i>
-        <i class="02-de-novo-nbar" style="left: 471.763px; top: 66.418px; height: 40.163px"></i>
-        <i class="02-de-novo-nbar" style="left: 485.591px; top: 57.155px; height: 58.69px"></i>
-        <i class="02-de-novo-nbar" style="left: 499.419px; top: 64.796px; height: 43.409px"></i>
-        <i class="02-de-novo-nbar" style="left: 513.248px; top: 55.803px; height: 61.394px"></i>
-        <span class="02-de-novo-ndur">0:32</span>
-        <span class="02-de-novo-dot"></span>
-      </div>
-
-      <div class="02-de-novo-nb" data-cue="2.14" style="left: 86px; top: 670px">
-        <div class="02-de-novo-bloom"></div>
-        <div class="02-de-novo-nshell"></div>
-        <span class="02-de-novo-navatar">A</span>
-        <span class="02-de-novo-nbtn"
-          ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
-            <path
-              d="M9 8 L57 36 L9 64 Z"
-              fill="#fffdf8"
-              stroke="#fffdf8"
-              stroke-width="10"
-              stroke-linejoin="round"
-            /></svg
-        ></span>
-        <i class="02-de-novo-nbar" style="left: 195.202px; top: 64.593px; height: 43.814px"></i>
-        <i class="02-de-novo-nbar" style="left: 209.03px; top: 63.917px; height: 45.167px"></i>
-        <i class="02-de-novo-nbar" style="left: 222.858px; top: 46.134px; height: 80.732px"></i>
-        <i class="02-de-novo-nbar" style="left: 236.686px; top: 47.959px; height: 77.081px"></i>
-        <i class="02-de-novo-nbar" style="left: 250.514px; top: 69.191px; height: 34.619px"></i>
-        <i class="02-de-novo-nbar" style="left: 264.342px; top: 56.614px; height: 59.772px"></i>
-        <i class="02-de-novo-nbar" style="left: 278.17px; top: 59.657px; height: 53.686px"></i>
-        <i class="02-de-novo-nbar" style="left: 291.998px; top: 70.475px; height: 32.049px"></i>
-        <i class="02-de-novo-nbar" style="left: 305.826px; top: 68.244px; height: 36.512px"></i>
-        <i class="02-de-novo-nbar" style="left: 319.654px; top: 54.518px; height: 63.964px"></i>
-        <i class="02-de-novo-nbar" style="left: 333.483px; top: 51.34px; height: 70.32px"></i>
-        <i class="02-de-novo-nbar" style="left: 347.311px; top: 69.529px; height: 33.943px"></i>
-        <i class="02-de-novo-nbar" style="left: 361.139px; top: 51.002px; height: 70.996px"></i>
-        <i class="02-de-novo-nbar" style="left: 374.967px; top: 48.23px; height: 76.54px"></i>
-        <i class="02-de-novo-nbar" style="left: 388.795px; top: 63.443px; height: 46.113px"></i>
-        <i class="02-de-novo-nbar" style="left: 402.623px; top: 68.717px; height: 35.565px"></i>
-        <i class="02-de-novo-nbar" style="left: 416.451px; top: 67.974px; height: 37.053px"></i>
-        <i class="02-de-novo-nbar" style="left: 430.279px; top: 60.468px; height: 52.064px"></i>
-        <i class="02-de-novo-nbar" style="left: 444.107px; top: 70.272px; height: 32.455px"></i>
-        <i class="02-de-novo-nbar" style="left: 457.935px; top: 51.408px; height: 70.184px"></i>
-        <i class="02-de-novo-nbar" style="left: 471.763px; top: 43.7px; height: 85.601px"></i>
-        <i class="02-de-novo-nbar" style="left: 485.591px; top: 59.184px; height: 54.633px"></i>
-        <i class="02-de-novo-nbar" style="left: 499.419px; top: 63.376px; height: 46.249px"></i>
-        <i class="02-de-novo-nbar" style="left: 513.248px; top: 60.13px; height: 52.74px"></i>
-        <span class="02-de-novo-ndur">1:12</span>
-        <span class="02-de-novo-dot"></span>
-      </div>
-
-      <div class="02-de-novo-nb" data-cue="4.18" style="left: 238px; top: 875px">
-        <div class="02-de-novo-bloom"></div>
-        <div class="02-de-novo-nshell"></div>
-        <span class="02-de-novo-navatar">R</span>
-        <span class="02-de-novo-nbtn"
-          ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
-            <path
-              d="M9 8 L57 36 L9 64 Z"
-              fill="#fffdf8"
-              stroke="#fffdf8"
-              stroke-width="10"
-              stroke-linejoin="round"
-            /></svg
-        ></span>
-        <i class="02-de-novo-nbar" style="left: 195.202px; top: 67.162px; height: 38.676px"></i>
-        <i class="02-de-novo-nbar" style="left: 209.03px; top: 52.422px; height: 68.156px"></i>
-        <i class="02-de-novo-nbar" style="left: 222.858px; top: 58.575px; height: 55.85px"></i>
-        <i class="02-de-novo-nbar" style="left: 236.686px; top: 70.205px; height: 32.59px"></i>
-        <i class="02-de-novo-nbar" style="left: 250.514px; top: 67.703px; height: 37.594px"></i>
-        <i class="02-de-novo-nbar" style="left: 264.342px; top: 55.6px; height: 61.8px"></i>
-        <i class="02-de-novo-nbar" style="left: 278.17px; top: 56.006px; height: 60.989px"></i>
-        <i class="02-de-novo-nbar" style="left: 291.998px; top: 66.554px; height: 39.893px"></i>
-        <i class="02-de-novo-nbar" style="left: 305.826px; top: 46.81px; height: 79.38px"></i>
-        <i class="02-de-novo-nbar" style="left: 319.654px; top: 48.703px; height: 75.594px"></i>
-        <i class="02-de-novo-nbar" style="left: 333.483px; top: 66.621px; height: 39.758px"></i>
-        <i class="02-de-novo-nbar" style="left: 347.311px; top: 66.013px; height: 40.975px"></i>
-        <i class="02-de-novo-nbar" style="left: 361.139px; top: 70.137px; height: 32.726px"></i>
-        <i class="02-de-novo-nbar" style="left: 374.967px; top: 63.984px; height: 45.032px"></i>
-        <i class="02-de-novo-nbar" style="left: 388.795px; top: 67.568px; height: 37.864px"></i>
-        <i class="02-de-novo-nbar" style="left: 402.623px; top: 48.5px; height: 75.999px"></i>
-        <i class="02-de-novo-nbar" style="left: 416.451px; top: 45.728px; height: 81.544px"></i>
-        <i class="02-de-novo-nbar" style="left: 430.279px; top: 64.796px; height: 43.409px"></i>
-        <i class="02-de-novo-nbar" style="left: 444.107px; top: 58.237px; height: 56.526px"></i>
-        <i class="02-de-novo-nbar" style="left: 457.935px; top: 57.696px; height: 57.608px"></i>
-        <i class="02-de-novo-nbar" style="left: 471.763px; top: 68.92px; height: 35.16px"></i>
-        <i class="02-de-novo-nbar" style="left: 485.591px; top: 70.002px; height: 32.996px"></i>
-        <i class="02-de-novo-nbar" style="left: 499.419px; top: 57.087px; height: 58.825px"></i>
-        <i class="02-de-novo-nbar" style="left: 513.248px; top: 50.326px; height: 72.348px"></i>
-        <span class="02-de-novo-ndur">0:58</span>
-        <span class="02-de-novo-dot"></span>
-      </div>
-
-      <div class="02-de-novo-nb" data-cue="6.74" style="left: 97px; top: 1080px">
-        <div class="02-de-novo-bloom"></div>
-        <div class="02-de-novo-nshell"></div>
-        <span class="02-de-novo-navatar">J</span>
-        <span class="02-de-novo-nbtn"
-          ><svg class="02-de-novo-ntri" viewBox="0 0 64 72" aria-hidden="true">
-            <path
-              d="M9 8 L57 36 L9 64 Z"
-              fill="#fffdf8"
-              stroke="#fffdf8"
-              stroke-width="10"
-              stroke-linejoin="round"
-            /></svg
-        ></span>
-        <i class="02-de-novo-nbar" style="left: 195.202px; top: 63.579px; height: 45.843px"></i>
-        <i class="02-de-novo-nbar" style="left: 209.03px; top: 53.639px; height: 65.722px"></i>
-        <i class="02-de-novo-nbar" style="left: 222.858px; top: 62.023px; height: 48.953px"></i>
-        <i class="02-de-novo-nbar" style="left: 236.686px; top: 57.561px; height: 57.878px"></i>
-        <i class="02-de-novo-nbar" style="left: 250.514px; top: 44.443px; height: 84.113px"></i>
-        <i class="02-de-novo-nbar" style="left: 264.342px; top: 54.586px; height: 63.829px"></i>
-        <i class="02-de-novo-nbar" style="left: 278.17px; top: 70.205px; height: 32.59px"></i>
-        <i class="02-de-novo-nbar" style="left: 291.998px; top: 66.621px; height: 39.758px"></i>
-        <i class="02-de-novo-nbar" style="left: 305.826px; top: 66.959px; height: 39.081px"></i>
-        <i class="02-de-novo-nbar" style="left: 319.654px; top: 66.216px; height: 40.569px"></i>
-        <i class="02-de-novo-nbar" style="left: 333.483px; top: 60.13px; height: 52.74px"></i>
-        <i class="02-de-novo-nbar" style="left: 347.311px; top: 44.714px; height: 83.572px"></i>
-        <i class="02-de-novo-nbar" style="left: 361.139px; top: 51.07px; height: 70.86px"></i>
-        <i class="02-de-novo-nbar" style="left: 374.967px; top: 68.988px; height: 35.025px"></i>
-        <i class="02-de-novo-nbar" style="left: 388.795px; top: 55.194px; height: 62.611px"></i>
-        <i class="02-de-novo-nbar" style="left: 402.623px; top: 61.28px; height: 50.441px"></i>
-        <i class="02-de-novo-nbar" style="left: 416.451px; top: 71.219px; height: 30.562px"></i>
-        <i class="02-de-novo-nbar" style="left: 430.279px; top: 66.283px; height: 40.434px"></i>
-        <i class="02-de-novo-nbar" style="left: 444.107px; top: 52.895px; height: 67.209px"></i>
-        <i class="02-de-novo-nbar" style="left: 457.935px; top: 53.572px; height: 65.857px"></i>
-        <i class="02-de-novo-nbar" style="left: 471.763px; top: 68.312px; height: 36.377px"></i>
-        <i class="02-de-novo-nbar" style="left: 485.591px; top: 48.365px; height: 76.27px"></i>
-        <i class="02-de-novo-nbar" style="left: 499.419px; top: 49.92px; height: 73.159px"></i>
-        <i class="02-de-novo-nbar" style="left: 513.248px; top: 66.418px; height: 40.163px"></i>
-        <span class="02-de-novo-ndur">2:05</span>
-        <span class="02-de-novo-dot"></span>
       </div>
     </div>
   </div>
@@ -603,14 +865,17 @@
       function all(name) {
         return Array.prototype.slice.call(root.getElementsByClassName(P + name));
       }
-      function one(name) {
-        return root.getElementsByClassName(P + name)[0];
+      function one(name, scope) {
+        return (scope || root).getElementsByClassName(P + name)[0];
       }
 
-      var DURATION = 7.4;
+      var DURATION = 5.859375;
+      var HIT = 4.91; // "fila!"
       var F = 0.94; // Luiz's settled scale in the pile
       var K = 173 / 367; // slot height / frame-1 bubble height
-      var LIFT = 259 - 638; // slot 1 top - handoff top
+      var LIFT = 259 - 638; // slot 0 top - handoff top
+      var SNAP = 0.25;
+      var SNAP_EASE = 'expo.out';
 
       // Frame-1 bubble parts, bubble-local [x, y, width] (measured from 01-o-audio.html at 8.35 s)
       // and their places on the 648x173 slot layout the new bubbles use.
@@ -626,17 +891,6 @@
         ['sender', [0, -98, 214.391], [0, -46.196, 101.062]],
       ];
 
-      // Scene 1 ease: a critically damped spring released from rest, so the bubble leaves
-      // frame 1's still pose with zero velocity and settles on a long tail (no overshoot).
-      var MOVE = 0.9;
-      var OMEGA = 8.5;
-      var SPRING_END = 1 - (1 + OMEGA * MOVE) * Math.exp(-OMEGA * MOVE);
-      function settle(p) {
-        if (p >= 1) return 1;
-        var t = p * MOVE;
-        return (1 - (1 + OMEGA * t) * Math.exp(-OMEGA * t)) / SPRING_END;
-      }
-
       var tl = gsap.timeline({ paused: true });
 
       function flip(el, big, slot) {
@@ -647,14 +901,14 @@
             x: F * slot[0] - big[0],
             y: LIFT + F * slot[1] - big[1],
             scale: (F * slot[2]) / big[2],
-            duration: MOVE,
-            ease: settle,
+            duration: SNAP,
+            ease: SNAP_EASE,
           },
           0,
         );
       }
 
-      // Scene 1 (0-0.66 s, "Audio de"): Luiz's bubble shrinks and lifts into slot 1
+      // Scene 1 (0-0.25 s, "Áudio de"): Luiz's bubble snaps into slot 0
       for (var i = 0; i < PARTS.length; i++) flip(one(PARTS[i][0]), PARTS[i][1], PARTS[i][2]);
       var bars = all('bar');
       for (var b = 0; b < bars.length; b++) {
@@ -667,7 +921,7 @@
       }
       // The shell reshapes 864x367 -> 648x173 with scaleX/scaleY only. Non-uniform scale
       // stretches corners, so three real-radius shells (handoff, mid-move, slot) ride the same
-      // box and hand over where their stretch is equal (~12% at worst).
+      // box and hand over at the move progress where their stretch is equal (~12% at worst).
       function shell(name, top, w, h) {
         tl.fromTo(
           one(name),
@@ -677,8 +931,8 @@
             y: 259 - top,
             scaleX: (F * 648) / w,
             scaleY: (F * 173) / h,
-            duration: MOVE,
-            ease: settle,
+            duration: SNAP,
+            ease: SNAP_EASE,
           },
           0,
         );
@@ -686,70 +940,127 @@
       shell('shell-a', 638, 864, 367);
       shell('shell-m', 395.061, 700.622, 235.992);
       shell('shell-b', 259, 648, 173);
-      function handover(from, to, at) {
+      // expo.out reaches progress p at SNAP * -log2(1 - p) / 10
+      var HD = 0.02;
+      function handover(from, to, p) {
+        var at = (SNAP * -Math.log(1 - p)) / (10 * Math.LN2);
         tl.fromTo(
           one(to),
           { opacity: 0 },
-          { opacity: 1, duration: 0.1, ease: 'power1.inOut' },
-          at - 0.07,
+          { opacity: 1, duration: HD, ease: 'none' },
+          at - 0.7 * HD,
         );
         tl.fromTo(
           one(from),
           { opacity: 1 },
-          { opacity: 0, duration: 0.1, ease: 'power1.inOut', immediateRender: false },
-          at - 0.03,
+          { opacity: 0, duration: HD, ease: 'none', immediateRender: false },
+          at - 0.3 * HD,
         );
       }
-      handover('shell-a', 'shell-m', 0.15);
-      handover('shell-m', 'shell-b', 0.39);
+      handover('shell-a', 'shell-m', 0.366);
+      handover('shell-m', 'shell-b', 0.847);
       // compact form: the name row and the elapsed counter give way as the note joins the pile
       tl.fromTo(
         one('sender'),
         { opacity: 1 },
-        { opacity: 0, duration: 0.3, ease: 'power1.out' },
-        0.02,
+        { opacity: 0, duration: 0.12, ease: 'power1.out' },
+        0,
       );
       tl.fromTo(
         one('elapsed'),
         { opacity: 1 },
-        { opacity: 0, duration: 0.24, ease: 'power1.out' },
-        0.02,
+        { opacity: 0, duration: 0.1, ease: 'power1.out' },
+        0,
       );
-      tl.fromTo(
-        one('luiz'),
-        { opacity: 1 },
-        { opacity: 0.55, duration: 0.6, ease: 'power2.inOut' },
-        0.15,
-      );
+      var luiz = one('luiz');
+      tl.fromTo(luiz, { rotation: 0 }, { rotation: -2, duration: SNAP, ease: SNAP_EASE }, 0);
+      tl.fromTo(luiz, { opacity: 1 }, { opacity: 0.55, duration: SNAP, ease: 'power2.out' }, 0);
 
-      // Scenes 2-5: each new voice note drops into its slot on its word ("47", "Enquanto",
-      // "forno", "fila") — smooth spring-pop (power3.out, no overshoot), lifted shadow e2
-      // blooming down to e1, then the lime new-dot.
+      // consecutive fromTo segments through fixed keys; none renders before its own start
+      var pile = one('pile');
+      var punch = one('punch');
+      function chain(el, keys, steps, at) {
+        var t = at;
+        for (var k = 1; k < keys.length; k++) {
+          var to = { duration: steps[k - 1], ease: k === 1 ? 'power2.out' : 'sine.inOut' };
+          to.immediateRender = false;
+          for (var key in keys[k]) to[key] = keys[k][key];
+          tl.fromTo(el, Object.assign({}, keys[k - 1]), to, t);
+          t += steps[k - 1];
+        }
+      }
+      // Scene 2 (0.469-4.219 s): a note slams into its slot on every beat, each above the last;
+      // its e2 lift fades to e1, the lime dot pops, the pile jolts toward the side it hit.
       var notes = all('nb');
       for (var n = 0; n < notes.length; n++) {
-        var at = parseFloat(notes[n].getAttribute('data-cue')) - 0.03;
+        var note = notes[n];
+        var beat = parseFloat(note.getAttribute('data-beat'));
+        var rot = parseFloat(note.getAttribute('data-rot'));
+        var land = beat - 0.03;
         tl.fromTo(
-          notes[n],
-          { scale: 0, y: -32 },
-          { scale: 1, y: 0, duration: 0.45, ease: 'power3.out' },
-          at,
+          note,
+          { y: -110, scale: 1.12, rotation: rot },
+          { y: 0, scale: 1, rotation: rot, duration: 0.2, ease: 'expo.out' },
+          land,
         );
-        tl.fromTo(notes[n], { opacity: 0 }, { opacity: 1, duration: 0.2, ease: 'power2.out' }, at);
+        tl.fromTo(note, { opacity: 0 }, { opacity: 1, duration: 0.03, ease: 'none' }, land);
         tl.fromTo(
-          notes[n].getElementsByClassName(P + 'bloom')[0],
+          one('bloom', note),
           { opacity: 1 },
-          { opacity: 0, duration: 0.45, ease: 'power2.inOut' },
-          at + 0.15,
+          { opacity: 0, duration: 0.2, ease: 'power2.out' },
+          land,
         );
         tl.fromTo(
-          notes[n].getElementsByClassName(P + 'dot')[0],
+          one('dot', note),
           { scale: 0 },
-          { scale: 1, duration: 0.36, ease: 'power3.out' },
-          at + 0.12,
+          { scale: 1, duration: 0.12, ease: 'power3.out' },
+          beat + 0.05,
+        );
+        var s = rot > 0 ? 1 : -1;
+        chain(
+          pile,
+          [
+            { x: 0, y: 0 },
+            { x: 3 * s, y: 4 },
+            { x: -1.8 * s, y: -2.4 },
+            { x: 0.6 * s, y: 1 },
+            { x: 0, y: 0 },
+          ],
+          [0.03, 0.045, 0.045, 0.04],
+          beat + 0.02,
         );
       }
 
-      // Scene 6 (6.9-7.4 s): hold, still
+      // Scene 3 (4.91 s, "fila!", the hit): hard decaying shake + punch to 1.04, settled by 5.31
+      tl.fromTo(
+        punch,
+        { scale: 1 },
+        { scale: 1.04, duration: 0.1, ease: 'power3.out', immediateRender: false },
+        HIT,
+      );
+      tl.fromTo(
+        punch,
+        { scale: 1.04 },
+        { scale: 1, duration: 0.3, ease: 'power2.out', immediateRender: false },
+        HIT + 0.1,
+      );
+      chain(
+        pile,
+        [
+          { x: 0, y: 0, rotation: 0 },
+          { x: 14, y: 0, rotation: -0.8 },
+          { x: -11, y: -3, rotation: 0.6 },
+          { x: 8, y: 2, rotation: -0.45 },
+          { x: -5, y: -1, rotation: 0.3 },
+          { x: 2.5, y: 0.5, rotation: -0.15 },
+          { x: -1, y: 0, rotation: 0.05 },
+          { x: 0, y: 0, rotation: 0 },
+        ],
+        [0.03, 0.045, 0.045, 0.045, 0.045, 0.045, 0.045],
+        HIT,
+      );
+
+      // Scene 4 (5.31-5.859 s): settled; the zoom-through takes it from 5.859
       tl.set({}, {}, DURATION);
 
       window.__timelines = window.__timelines || {};
