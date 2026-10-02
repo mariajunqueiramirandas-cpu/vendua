@@ -46,15 +46,18 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
    site. Settle the pace (default frenético) and the voices before writing a storyboard.
 2. **Pronunciation and voice test first**: one line containing "Venduá" with the chosen narrator
    (`elevenlabs.py tts …`), heard by the author, before generating the whole script.
-3. **Voices**: generate every line with `eleven_v3` tags. Run `scripts/build-audio.py voices`
-   (pauses cut to ≤0.14 s, light rubberband speed-ups only to fit a frame).
+3. **Voices set the pace**: generate every line with `eleven_v3` tags (`[energetic, fast]` is
+   what makes it frenético), then run `scripts/build-audio.py voices` (pauses cut to ≤0.14 s, no
+   speed-ups). The voice is the clock: each frame is as long as its line plus a short lead and
+   tail, and nothing is decided about frame lengths before the takes exist. A line that feels slow
+   gets a faster take or fewer words, not a rubberband stretch or a frame that cuts it short.
 4. **Words**: Whisper small (faster-whisper, int8) gives word starts. Map them onto the script's
    own spelling and punctuation: captions group on punctuation, and Whisper writes "está" for
    "tá", "PIX" for "Pix", and splits "Vendu-á" into "vendo a" (that split is the stress you
    wanted; glue it back to "Venduá").
 5. **Bed**: generate at 128 BPM, measure it (`videos/tools/measure.py tempo`), start it on its first
-   beat. Frame lengths are whole eighth notes (0.234375 s), so every cut lands on the grid; frame 2's
-   pile lands one note per beat.
+   beat. Each frame's length is its voice's length rounded **up** to whole eighth notes (0.234375 s),
+   so every cut lands on the grid without trimming a word; frame 2's pile lands one note per beat.
 6. **Mix**: `scripts/build-audio.py sfx` turns the chosen SFX takes into `audio/sfx/`; `mix` pads
    each frame's voice, ducks the bed under the voices (sidechain threshold 0.02, ratio 4: the bed
    sits 6–8 dB under speech, louder in the gaps), hangs each SFX off the word that triggers it, and
@@ -148,6 +151,9 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
 - Six parallel Opus frame agents with one shared brief built most frames in 3–15 minutes; the
   slowest parts were audio generation, review round-trips, one hung agent and seams (frame 1 → 2
   drifted once, by one played bar: write the end state of every seam as numbers in the brief).
+- Let the voice set the pace. On this video the frame lengths were fixed first and three lines were
+  sped up (1.08–1.1×) to fit; the author's rule since: generate the takes, then size each frame to
+  its line (rounded up to the eighth grid). A pace change is a new take, not a new frame plan.
 - Read every line as a stranger would. "E o pedido chega sozinho!" was heard as Venduá delivering
   the order; "E o pedido cai prontinho no seu celular!" says where it lands (the shop's phone,
   ready to accept) and matches the push on screen. Prefer where-it-lands over how-it-travels verbs

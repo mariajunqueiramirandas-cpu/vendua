@@ -21,6 +21,9 @@ The playbook is `videos/README.md`: read it first. This skill is the checklist.
   punch-ins and shakes, no hold over ~0.5 s except the end card (~1.2 s, the CTA must read).
 - Narrator **Bruna da Costa** (`AKXBn24T1f9tvTDnWzWT`), customer voices **Talis**
   (`E9a8LlXPNWtyvvSoZzrb`), model `eleven_v3` with tags such as `[energetic, fast]`.
+- **The voice sets the pace**: generate the lines first, then size each frame to its line (voice +
+  short lead/tail, rounded up to whole eighths). Never speed a take up or cut it to fit a planned
+  frame; if it is too slow, generate a faster take or trim words.
 - The brand is said **ven-du-Á**: spell it `Vendu-á` in every TTS prompt and have the author hear
   one line with it before generating the rest.
 - Sound effects are the premium set: soft, tonal UI sounds mixed low under the voice, one per
@@ -45,7 +48,7 @@ The playbook is `videos/README.md`: read it first. This skill is the checklist.
 ## Order of work
 
 Brief → voice + pronunciation test → all lines → Whisper words mapped onto the script →
-`build-audio.py voices`/`mix` (bed on its first beat, frames in whole eighths, SFX on words) →
+`build-audio.py voices`/`mix` (bed on its first beat, frame lengths from the voice lengths rounded up to whole eighths, SFX on words) →
 storyboard with numeric seams → one Opus agent per frame from a shared brief file (tell them to
 wrap their browser checks in `timeout 120`; a hung agent can be stopped and its frame finished by
 hand) → assemble, local GSAP, transitions, `hyperframes check`, snapshots → draft render to the
