@@ -22,12 +22,13 @@ function decodeURIComponentSafe(s: string) {
 }
 
 export function trackPageview(pathname: string): void {
-  const path = `/admin${routeShape(pathname)}`;
-  // StrictMode and replace-navigations re-run the effect for the same screen
-  if (path === last || typeof navigator === 'undefined' || navigator.webdriver) return;
+  // StrictMode re-runs the effect for the same address; two orders in a row are two views even
+  // though both send /pedidos/:id, so this compares the address (kept in memory, never sent)
+  if (pathname === last || typeof navigator === 'undefined' || navigator.webdriver) return;
   const n = navigator as Navigator & { globalPrivacyControl?: boolean };
   if (n.globalPrivacyControl || n.doNotTrack === '1') return;
-  last = path;
+  last = pathname;
+  const path = `/admin${routeShape(pathname)}`;
   let ref = '';
   if (first && document.referrer) {
     try {

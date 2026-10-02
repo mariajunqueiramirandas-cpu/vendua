@@ -44,7 +44,9 @@ party. Any analytics had to keep those promises.
     Core.
   - The salt table has no policies at all. It is reached only through the security-definer
     `web_analytics_salt()`.
-- **Retention.** Raw page views are kept 13 months. Minting a day's salt prunes older ones.
+- **Retention.** Raw page views are kept 13 months. `web_analytics_prune()` deletes older
+  ones and every salt but today's. It runs when a day's salt is minted and hourly from Core,
+  so expiry never depends on traffic.
 - **The CRM view.** Pipeline → Analytics (`/pipeline/analytics`) has three views, each over
   7/30/90 days:
   - site and painel: visitors, views, pages, referrers, campaigns, devices.

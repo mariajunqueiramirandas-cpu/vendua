@@ -156,6 +156,23 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
     expect(again!.salt).toBe(minted!.salt);
   });
 
+  test('expiry runs without traffic: stale salts and page views past 13 months go', async () => {
+    await sql`insert into web_analytics_salts (day, salt) values (current_date - 3, 'stale')
+      on conflict do nothing`;
+    await sql`
+      insert into web_analytics_events (beacon_id, property, day, at, path, device, visitor)
+      values (${`b${run}old1`}, 'site', current_date - 400, now() - interval '14 months',
+        ${`/t-${run}/old`}, 'mobile', '0123456789abcdef')
+    `;
+    await sql.begin(async (tx) => {
+      await tx`set local role vendua_app`;
+      await tx`select web_analytics_prune()`;
+    });
+    const salts = await sql<{ day: string }[]>`select day::text from web_analytics_salts`;
+    expect(salts.every((x) => x.day === brDay())).toBe(true);
+    expect((await rows()).filter((r) => r.path === `/t-${run}/old`)).toHaveLength(0);
+  });
+
   test('utm values that look like a phone or an order number are dropped', async () => {
     await collect({
       p: 'site',

@@ -3,6 +3,7 @@ import type { Context, Hono } from 'hono';
 import type { Sql } from '../platform/db.ts';
 import { bodyJson, clientIp, HttpError } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
+import { log } from '../platform/log.ts';
 import { controlTx } from './control.ts';
 
 // Privacy-first page views for Venduá's own surfaces (the marketing site, the merchant admin),
@@ -320,6 +321,20 @@ export async function storefrontReport(sql: Sql, days: ReportDays): Promise<Stor
       stores: stores.map((r) => ({ ...r, revenueCents: Number(r.revenueCents) })),
     };
   });
+}
+
+/** Hourly expiry (salts past their day, page views past 13 months), whatever the traffic. */
+export function startWebAnalyticsJobs(sql: Sql): () => void {
+  const run = () =>
+    void sql`select web_analytics_prune()`.catch((err: unknown) =>
+      log.warn({ err, mod: 'web-analytics' }, 'prune failed'),
+    );
+  const first = setTimeout(run, 30_000);
+  const every = setInterval(run, 60 * 60_000);
+  return () => {
+    clearTimeout(first);
+    clearInterval(every);
+  };
 }
 
 // ── routes ─────────────────────────────────────────────────────────────────────

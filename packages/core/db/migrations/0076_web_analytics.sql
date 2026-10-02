@@ -5,8 +5,9 @@
 --     of (today's salt, IP, user agent) that only dedupes a visitor within one day.
 --   web_analytics_salts  — the day's salt; yesterday's is deleted when today's is minted, so a
 --     stored hash can't be recomputed (or linked to another day's) once the day is over.
---   web_analytics_salt() — the collector's only way to the salt; minting a day also prunes raw
---     events past 13 months.
+--   web_analytics_salt() — the collector's only way to the salt (minting a day prunes too)
+--   web_analytics_prune() — deletes every salt but today's and page views past 13 months; Core
+--     also runs it hourly, so expiry never depends on traffic.
 --   store_order_days()   — the CRM's order totals per store and day (aggregates, never rows).
 --   analytics_events: the CRM reads it across stores (select only) and by time alone.
 
@@ -46,6 +47,17 @@ create table if not exists web_analytics_salts (
 -- no policy: only web_analytics_salt() (security definer) touches it
 alter table web_analytics_salts enable row level security;
 
+-- Expiry that doesn't wait for traffic: Core runs it hourly too, so the last salt and old page
+-- views go even when page views stop coming.
+create or replace function web_analytics_prune()
+returns void
+language sql security definer set search_path = public, pg_temp as $$
+  delete from web_analytics_salts where day <> (now() at time zone 'America/Sao_Paulo')::date;
+  delete from web_analytics_events where at < now() - interval '13 months';
+$$;
+revoke all on function web_analytics_prune() from public;
+grant execute on function web_analytics_prune() to vendua_app;
+
 -- the day is the database's own (Brazil's calendar), never the caller's: a skewed replica clock
 -- can't mint tomorrow's salt early or bring back a deleted one
 drop function if exists web_analytics_salt(date);
@@ -61,8 +73,7 @@ begin
   on conflict on constraint web_analytics_salts_pkey do nothing
   returning w.salt into s;
   if s is not null then
-    delete from web_analytics_salts w where w.day <> d;
-    delete from web_analytics_events where at < now() - interval '13 months';
+    perform web_analytics_prune();
   else
     select w.salt into s from web_analytics_salts w where w.day = d;
   end if;
