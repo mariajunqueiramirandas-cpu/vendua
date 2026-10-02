@@ -63,6 +63,7 @@ import { mountPayments } from './routes-payments.ts';
 import { mountReports } from './routes-reports.ts';
 import { mountStore } from './routes-store.ts';
 import { mountTeam } from './routes-team.ts';
+import { mountWhatsapp } from './routes-whatsapp.ts';
 import { processImage } from './media.ts';
 import { isPushEndpoint, pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
 import { recordPushAttempt } from './workers.ts';
@@ -745,6 +746,7 @@ export function mountAdmin(o: MountAdminOpts) {
   mountMarketing(deps);
   mountReports(deps);
   mountTeam(deps);
+  mountWhatsapp(deps);
   mountAccount(deps);
   mountAppearance(deps);
   mountImports(deps);

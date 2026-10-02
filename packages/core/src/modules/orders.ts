@@ -2,6 +2,7 @@ import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { mintLoyaltyRewards } from './customer.ts';
+import { enqueueOrderMessageTx, isOrderEvent } from '../store-whatsapp/messages.ts';
 import { recordStaffEventTx, type OrderStep } from './staff-events.ts';
 import { restoreStock } from './stock.ts';
 
@@ -300,6 +301,8 @@ export async function transitionOrder(
       to as OrderStep,
       actor,
     );
+  // the shopper hears it from the store's own WhatsApp (ADR 0026), when the store turned it on
+  if (isOrderEvent(to)) await enqueueOrderMessageTx(tx, tenantId, orderId, to);
   // delivered on commit — live waiters (order-live.ts) wake then, never on a rolled-back change
   await tx`select pg_notify(${ORDER_CHANNEL}, ${orderId})`;
   await emitAdminTx(tx, tenantId, 'order.changed', orderId);

@@ -118,7 +118,13 @@ export function duration(fromIso: string | null | undefined, to: Date = new Date
 }
 
 const LABELS: Record<string, Record<string, string>> = {
-  channel: { whatsapp: 'WhatsApp', email: 'email', instagram: 'Instagram', manual: 'manual' },
+  channel: {
+    whatsapp: 'WhatsApp',
+    whatsapp_lojas: 'WhatsApp das lojas',
+    email: 'email',
+    instagram: 'Instagram',
+    manual: 'manual',
+  },
   method: {
     pix: 'Pix',
     card_online: 'cartão online',

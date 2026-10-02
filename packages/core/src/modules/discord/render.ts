@@ -437,6 +437,30 @@ function paymentsConnection(ev: Ev<'payments.connection'>, ctx: RenderCtx): Rend
   };
 }
 
+const WA_STEP: Record<Ev<'whatsapp.store'>['data']['step'], [string, string]> = {
+  connected: ['conectou o WhatsApp da loja', 'os clientes passam a receber os avisos de pedido'],
+  back: ['está com o WhatsApp de volta', 'os avisos que esperavam saem agora'],
+  lost: ['perdeu a conexão do WhatsApp', 'o gateway segue tentando; avisos esperam até 6 h'],
+  logged_out: [
+    'teve o WhatsApp desvinculado',
+    'o aparelho foi removido no celular: a loja precisa parear de novo',
+  ],
+  banned: ['teve o WhatsApp recusado', 'o WhatsApp recusou o número (403): falar com a loja'],
+  disconnected: ['desconectou o WhatsApp da loja', 'os avisos de pedido aos clientes pararam'],
+};
+
+function whatsappStore(ev: Ev<'whatsapp.store'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  const [title, description] = WA_STEP[d.step];
+  return {
+    card: card(
+      ev,
+      { title: `${esc(d.storeName)} ${title}`, description },
+      row(linkButton('ver loja', ctx.storeUrl)),
+    ),
+  };
+}
+
 // ── assinaturas ──────────────────────────────────────────────────────────────
 
 const SOURCE: Record<string, string> = {
@@ -747,7 +771,9 @@ function channel(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
         down ? esc(down.data.detail) : '',
         up
           ? `✅ de volta ${ts(up.created_at, 'R')}${down ? ` · fora por ${duration(isoOf(down.created_at), new Date(up.created_at))}` : ''}`
-          : '⛔ o agente não consegue mandar mensagens por este canal',
+          : name === label('channel', 'whatsapp_lojas')
+            ? '⛔ nenhuma loja está mandando avisos de pedido pelo WhatsApp'
+            : '⛔ o agente não consegue mandar mensagens por este canal',
       ]
         .filter(Boolean)
         .join('\n'),
@@ -1003,6 +1029,7 @@ const STANDALONE: Standalone = {
   'store.first_order': firstOrder,
   'payment.problem': paymentProblem,
   'payments.connection': paymentsConnection,
+  'whatsapp.store': whatsappStore,
   'billing.paid': billingPaid,
   'billing.problem': billingProblem,
   'domain.ready': domainReady,
