@@ -16,6 +16,7 @@ import { Confetti } from '../../ui/Celebration.tsx';
 import { ErrorState, messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PixCode } from '../../ui/PixCode.tsx';
+import { ChapterList } from '../onboarding/Overview.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import type { Draft } from './progress.ts';
 
@@ -424,13 +425,14 @@ export function Welcome({
           </div>
         </div>
       </section>
-      <div className="rounded-lg bg-surface p-5 depth-1">
-        <p className="t-title-2">Agora, a parte gostosa</p>
+      <div>
+        <p className="t-title-2">Agora, a parte gostosa: montar a loja</p>
         <p className="t-body mt-1 text-muted">
-          Horários, entrega, Pix e o cardápio com foto. Uma pergunta de cada vez, e você vê a loja
-          aparecendo.
+          Quatro partes, uma pergunta de cada vez, e você vê a loja aparecendo. Já começo com o que
+          você me contou.
         </p>
       </div>
+      <ChapterList />
       <Button variant="spark" size="lg" block onClick={onGo}>
         montar minha loja <ArrowRight />
       </Button>

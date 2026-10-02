@@ -543,7 +543,9 @@ export interface Home {
     href: string;
     productId?: string;
   }[];
-  checklist: { id: string; label: string; done: boolean; href: string }[];
+  checklist: ChecklistItem[];
+  /** where the store's setup stands (the onboarding at /bem-vindo) */
+  onboarding: { finished: boolean; dismissed: boolean; from: 'signup' | null; step: string | null };
   totalOrders: number;
   feed: {
     at: string;
@@ -825,6 +827,27 @@ export type SubscriptionStatus = 'pending' | 'active' | 'past_due' | 'cancelled'
 export type InvoiceStatus = 'open' | 'paid' | 'failed' | 'void';
 export type DomainStatus = 'active' | 'pending_dns' | 'dns_ok' | 'failed';
 
+export interface ChecklistItem {
+  /** profile | hours | delivery | pix | menu | first_order */
+  id: string;
+  label: string;
+  done: boolean;
+  href: string;
+}
+
+/** The store's setup, kept by Core so it resumes on any device (GET/PATCH /onboarding). */
+export interface Onboarding {
+  /** what the store sells: one of Core's segment ids (features/onboarding/segments.ts) */
+  segment: string | null;
+  /** 'signup': born in /comecar — the onboarding doesn't ask again what signup knew */
+  from: 'signup' | null;
+  step: string | null;
+  skipped: string[];
+  finishedAt: string | null;
+  dismissedAt: string | null;
+  checklist: ChecklistItem[];
+}
+
 export interface Invoice {
   id: string;
   number: number;
@@ -1082,6 +1105,7 @@ export const api = {
       slug: string;
       ownerName: string;
       email: string;
+      segment?: string;
       accessCode?: string;
     }) => send<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
   },
@@ -1218,6 +1242,15 @@ export const api = {
     });
   },
 
+  onboarding: () => get<Onboarding>('/onboarding'),
+  updateOnboarding: (p: {
+    step?: string | null;
+    skipped?: string[];
+    segment?: string | null;
+    finished?: true;
+    dismissed?: boolean;
+  }) => send<Onboarding>('PATCH', '/onboarding', p),
+
   store: () => get<StoreView>('/store'),
   updateStore: (patch: Record<string, unknown>) => send<StoreView>('PATCH', '/store', patch),
   /** roughly where a one-line address is (Core asks the geocoder); null = not found */
@@ -1246,7 +1279,9 @@ export const api = {
     /** replaces the whole map */
     adjustments?: PaymentAdjustments | null;
   }) => send<Payments>('PATCH', '/payments', p),
-  mpConnect: () => send<{ url: string }>('POST', '/payments/mercadopago/connect'),
+  /** back: 'onboarding' — Mercado Pago returns to /bem-vindo instead of Pagamentos */
+  mpConnect: (back?: 'onboarding') =>
+    send<{ url: string }>('POST', '/payments/mercadopago/connect', back ? { back } : undefined),
   mpDisconnect: () => send<Payments>('POST', '/payments/mercadopago/disconnect'),
   statement: (month: string) => get<Statement>(`/payments/statement?month=${month}`),
 

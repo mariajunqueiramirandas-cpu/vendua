@@ -16,9 +16,12 @@ export function StepFrame({
   busy,
   back,
   aside,
+  eyebrow,
   focusTitle = true,
 }: {
   title: ReactNode;
+  /** a small line above the title: which part of a longer flow this is */
+  eyebrow?: ReactNode;
   hint?: ReactNode;
   children?: ReactNode;
   onSubmit: () => void;
@@ -46,6 +49,7 @@ export function StepFrame({
       }}
     >
       <div>
+        {eyebrow ? <p className="t-label tnum mb-2 text-muted">{eyebrow}</p> : null}
         <h1
           ref={head}
           tabIndex={-1}
@@ -58,15 +62,20 @@ export function StepFrame({
       {children}
       <div
         data-kb-reveal
-        className="sticky bottom-0 z-20 -mx-4 flex flex-col-reverse gap-3 border-t border-line bg-bg/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-sm sm:flex-row sm:items-center md:-mx-8 md:px-8 lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:pb-0 lg:backdrop-blur-none kb:static kb:border-0 kb:bg-transparent kb:pb-2 kb:backdrop-blur-none"
+        className="sticky bottom-0 z-20 -mx-4 flex flex-col-reverse gap-2 border-t border-line bg-bg/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-sm sm:flex-row sm:items-center sm:gap-3 md:-mx-8 md:px-8 lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:pb-0 lg:backdrop-blur-none kb:static kb:border-0 kb:bg-transparent kb:pb-2 kb:backdrop-blur-none"
       >
-        {back ? (
-          <Button variant="ghost" size="lg" icon={<ArrowLeft />} onClick={back}>
-            voltar
-          </Button>
+        {/* phones: the way back and the way around share one row under the main button */}
+        {back || aside ? (
+          <div className="flex items-center gap-2 sm:flex-1 sm:gap-3 [&>*]:flex-1 sm:[&>*]:flex-none">
+            {back ? (
+              <Button variant="ghost" size="lg" icon={<ArrowLeft />} onClick={back}>
+                voltar
+              </Button>
+            ) : null}
+            <div className="hidden sm:block sm:!flex-1" />
+            {aside}
+          </div>
         ) : null}
-        <div className="hidden flex-1 sm:block" />
-        {aside}
         <Button type="submit" size="lg" loading={!!busy} disabled={disabled}>
           {label} <ArrowRight />
         </Button>

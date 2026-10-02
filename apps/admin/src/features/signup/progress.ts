@@ -7,6 +7,7 @@ import type { PayNext, StoreRef } from '../../lib/api.ts';
 export type StepId =
   | 'plano'
   | 'loja'
+  | 'tipo'
   | 'voce'
   | 'whatsapp'
   | 'codigo'
@@ -24,6 +25,8 @@ export interface Draft {
   slug: string;
   /** the merchant edited the address by hand: stop deriving it from the name */
   slugTouched: boolean;
+  /** what the store sells (features/onboarding/segments.ts) — tunes the onboarding */
+  segment: string | null;
   ownerName: string;
   email: string;
   phone: string | null;
@@ -47,6 +50,7 @@ export const EMPTY: Draft = {
   storeName: '',
   slug: '',
   slugTouched: false,
+  segment: null,
   ownerName: '',
   email: '',
   phone: null,

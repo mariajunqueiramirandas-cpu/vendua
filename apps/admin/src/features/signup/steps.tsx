@@ -25,6 +25,9 @@ import { perMonth, PlanOption } from '../../ui/PlanCard.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { StepFrame } from '../../ui/StepFrame.tsx';
 import { EMAIL_RE, expiry, savePending } from '../auth/pending.ts';
+import { SegmentPicker } from '../onboarding/SegmentPicker.tsx';
+import { MiniStore } from '../onboarding/MiniStore.tsx';
+import { GENERIC, segmentOf } from '../onboarding/segments.ts';
 import { saveToken, type Draft, type StepId, type Verified } from './progress.ts';
 
 export type PlansData = Awaited<ReturnType<typeof api.signup.plans>>;
@@ -162,7 +165,7 @@ export function StoreStep({ d, patch, go, plans, notice }: FlowProps) {
       back={() => go('plano')}
       // a check that failed (offline blip) doesn't block: Core checks again when creating
       disabled={name.length < 2 || (state !== 'free' && state !== 'unknown')}
-      onSubmit={() => go('voce', { praise: `${name}… que nome bonito!` })}
+      onSubmit={() => go('tipo', { praise: `${name}… que nome bonito!` })}
     >
       <Field label="Nome da loja" htmlFor="su-name">
         <TextInput
@@ -260,6 +263,26 @@ export function StoreStep({ d, patch, go, plans, notice }: FlowProps) {
   );
 }
 
+// ── 2b · what the store sells ───────────────────────────────────────────────
+
+export function TipoStep({ d, patch, go }: FlowProps) {
+  const pick = (id: string) => {
+    patch({ segment: id });
+    go('voce', { praise: segmentOf(id)?.praise ?? null });
+  };
+  return (
+    <StepFrame
+      title="E o que a loja vende?"
+      hint="Com isso eu já deixo horários, exemplos e ideias que combinam com você. Um toque basta."
+      back={() => go('loja')}
+      disabled={!d.segment}
+      onSubmit={() => d.segment && pick(d.segment)}
+    >
+      <SegmentPicker value={d.segment} onPick={pick} />
+    </StepFrame>
+  );
+}
+
 // ── 3 · você ────────────────────────────────────────────────────────────────
 
 export function YouStep({ d, patch, go, notice }: FlowProps) {
@@ -272,7 +295,7 @@ export function YouStep({ d, patch, go, notice }: FlowProps) {
     <StepFrame
       title="E você, como se chama?"
       hint="O e-mail recebe as faturas do plano e também serve para entrar no painel."
-      back={() => go('loja')}
+      back={() => go('tipo')}
       disabled={name.length < 2}
       onSubmit={() => {
         setTouched(true);
@@ -570,6 +593,7 @@ function stepFor(e: unknown): { step: StepId; notice: string } | null {
       step: 'voce',
       notice: field === 'email' ? 'Confira o e-mail, como maria@gmail.com.' : 'Confira o seu nome.',
     };
+  if (field === 'segment') return { step: 'tipo', notice: 'Escolha de novo o que a loja vende.' };
   if (e.code === 'UNKNOWN_PLAN' || field === 'planId')
     return { step: 'plano', notice: 'Esse plano mudou. Escolha de novo.' };
   return null;
@@ -606,6 +630,7 @@ export function PayStep({
         slug: d.slug,
         ownerName: d.ownerName.trim(),
         email: d.email.trim(),
+        ...(d.segment ? { segment: d.segment } : {}),
         ...(byCode ? { accessCode: code.trim() } : {}),
       }),
     onSuccess: onCreated,
@@ -731,9 +756,15 @@ export function PayStep({
   );
 }
 
-/** A short "o que você escolheu" beside the questions on desktop: the store taking shape. */
+const NO_WEEK = Array.from({ length: 7 }, () => []);
+
+/**
+ * Beside the questions on desktop: the same phone the onboarding builds the store in, already
+ * with its name and address, and a short receipt of what was chosen.
+ */
 export function Summary({ d, plans }: { d: Draft; plans: PlansData | undefined }) {
   const plan = plans?.plans.find((p) => p.id === d.planId);
+  const seg = segmentOf(d.segment);
   const rows: { label: string; value: string | null }[] = [
     {
       label: 'Plano',
@@ -741,6 +772,7 @@ export function Summary({ d, plans }: { d: Draft; plans: PlansData | undefined }
         ? `${plan.name}${plan.priceCents !== null ? ` · ${money(plan.priceCents)}/mês` : ''}`
         : null,
     },
+    { label: 'Vende', value: seg?.label ?? null },
     { label: 'Dono', value: d.ownerName.trim() || null },
     { label: 'WhatsApp', value: d.phone ? fmtPhone(d.phone) : null },
     {
@@ -757,40 +789,42 @@ export function Summary({ d, plans }: { d: Draft; plans: PlansData | undefined }
     },
   ];
   return (
-    <div className="overflow-hidden rounded-xl bg-surface depth-2">
-      <div className="flex items-center gap-2 border-b border-line bg-sunken px-4 py-3">
-        <span className="flex gap-1.5" aria-hidden>
-          {[0, 1, 2].map((i) => (
-            <span key={i} className="size-2.5 rounded-full bg-line-strong" />
-          ))}
-        </span>
-        <p className="t-caption tnum min-w-0 flex-1 truncate rounded-full bg-surface px-3 py-1 text-muted">
-          {addressOf(d.slug, plans?.storeDomain ?? 'vendua.com.br')}
-        </p>
+    <div className="space-y-4">
+      <div className="mx-auto max-w-[260px]">
+        <MiniStore
+          draft={{
+            name: d.storeName,
+            tagline: '',
+            logoUrl: null,
+            week: NO_WEEK,
+            pickup: false,
+            delivery: false,
+            accent: null,
+            onAccent: null,
+          }}
+          products={[]}
+          whatsapp={false}
+          timeZone="America/Sao_Paulo"
+          specialDays={[]}
+          url={addressOf(d.slug, plans?.storeDomain ?? 'vendua.com.br')}
+          examples={(seg ?? GENERIC).examples}
+        />
       </div>
-      <div className="p-6">
-        <span className="grid size-14 place-items-center rounded-full bg-spark-soft">
-          <Storefront weight="duotone" className="size-7" aria-hidden />
-        </span>
-        <p className={cn('t-title-1 mt-4 break-words', !d.storeName.trim() && 'text-faint')}>
-          {d.storeName.trim() || 'Sua loja'}
-        </p>
-        <dl className="mt-5 space-y-3">
-          {rows.map((r) => (
-            <div key={r.label} className="flex items-baseline justify-between gap-4">
-              <dt className="t-caption text-muted">{r.label}</dt>
-              <dd
-                className={cn(
-                  't-body min-w-0 text-right',
-                  r.value ? 'animate-fade-up font-semibold' : 'text-faint',
-                )}
-              >
-                {r.value ?? '—'}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </div>
+      <dl className="space-y-2 rounded-lg bg-surface p-4 depth-1">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-baseline justify-between gap-4">
+            <dt className="t-caption text-muted">{r.label}</dt>
+            <dd
+              className={cn(
+                't-body min-w-0 text-right',
+                r.value ? 'animate-fade-up font-semibold' : 'text-faint',
+              )}
+            >
+              {r.value ?? '—'}
+            </dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }

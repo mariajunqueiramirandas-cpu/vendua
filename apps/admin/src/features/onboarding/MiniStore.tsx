@@ -12,17 +12,29 @@ export interface Draft {
   week: WeekModel;
   pickup: boolean;
   delivery: boolean;
+  /** the store's main colour (appearance tokens), null until chosen */
+  accent: string | null;
+  onAccent: string | null;
 }
 
 type Item = { id: string; name: string; priceCents: number; imageUrl: string | null };
 
-/** The store assembling itself: name → header, logo → avatar, hours → status, products → the grid. */
+// imitates a storefront, so it keeps its own colours (the README's one exception to tokens)
+const INK = '#123c32';
+
+/**
+ * The store assembling itself: name → header, logo → avatar, colour → the buttons, hours → the
+ * status, products → the grid. Signup shows it too, before the store exists, so the same phone
+ * carries the whole journey.
+ */
 export function MiniStore({
   draft,
   products,
   whatsapp,
   timeZone,
   specialDays,
+  url,
+  examples,
 }: {
   draft: Draft;
   products: Item[];
@@ -30,6 +42,10 @@ export function MiniStore({
   /** the store's: "today" is its day, not the phone's */
   timeZone: string;
   specialDays: SpecialDay[];
+  /** shown in the address bar, without https:// */
+  url?: string | undefined;
+  /** ghost products until real ones exist (from what the store sells) */
+  examples?: readonly string[] | undefined;
 }) {
   const hours = todayHours({
     timezone: timeZone,
@@ -39,11 +55,23 @@ export function MiniStore({
   const weekday = localNow(timeZone).weekday;
   const anyHours = draft.week.some((d) => d.length);
   const how = [draft.pickup && 'retirada', draft.delivery && 'entrega'].filter(Boolean).join(' · ');
+  const accent = draft.accent ?? INK;
+  const onAccent = draft.onAccent ?? '#ffffff';
   return (
     <div className="mx-auto max-w-[340px] rounded-[40px] bg-[#0c1410] p-3 depth-3">
-      <div className="aspect-[9/17] overflow-hidden rounded-[30px] bg-[#fcfbf8] text-[#1a1714]">
+      <div className="relative flex aspect-[9/17] flex-col overflow-hidden rounded-[30px] bg-[#fcfbf8] text-[#1a1714]">
+        {url ? (
+          <div className="px-4 pt-3">
+            <p className="tnum truncate rounded-full bg-black/5 px-3 py-1 text-center text-[11px] text-black/60">
+              {url}
+            </p>
+          </div>
+        ) : null}
         <div className="flex items-center gap-2 border-b border-black/5 px-4 py-3">
-          <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full bg-[#123c32] text-sm font-semibold text-white">
+          <span
+            className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full text-sm font-semibold transition-colors duration-(--duration-smooth)"
+            style={{ background: accent, color: onAccent }}
+          >
             {draft.logoUrl ? (
               <img src={draft.logoUrl} alt="" className="size-full object-cover" />
             ) : (
@@ -57,7 +85,7 @@ export function MiniStore({
           )}
           <span className="rounded-full bg-black/5 px-2 py-0.5 text-[11px]">sacola</span>
         </div>
-        <div className="px-4 py-4">
+        <div className="min-h-0 flex-1 overflow-hidden px-4 py-4">
           {draft.tagline ? (
             <p key={draft.tagline} className="animate-fade-up font-display text-xl leading-tight">
               {draft.tagline}
@@ -87,9 +115,8 @@ export function MiniStore({
           )}
           <p className="mt-1 min-h-4 text-[11px] text-black/65">{how}</p>
           <div className="mt-3 grid grid-cols-2 gap-2">
-            {(products.length ? products.slice(0, 6) : Array.from({ length: 4 }, () => null)).map(
-              (p, i) =>
-                p ? (
+            {products.length
+              ? products.slice(0, 4).map((p) => (
                   <div
                     key={p.id}
                     className="animate-fade-up overflow-hidden rounded-lg bg-white shadow-sm"
@@ -106,19 +133,32 @@ export function MiniStore({
                       <p className="text-[11px] text-black/60">{money(p.priceCents)}</p>
                     </div>
                   </div>
-                ) : (
+                ))
+              : Array.from({ length: 4 }, (_, i) => (
                   <div
                     key={i}
-                    className="aspect-[4/5] rounded-lg border border-dashed border-black/10"
-                  />
-                ),
-            )}
+                    aria-hidden
+                    className="flex aspect-[4/5] flex-col justify-end rounded-lg border border-dashed border-black/10 p-1.5"
+                  >
+                    {examples?.[i] ? (
+                      <p className="truncate text-[11px] text-black/60">{examples[i]}</p>
+                    ) : null}
+                  </div>
+                ))}
           </div>
           {whatsapp ? (
             <p className="animate-fade-up mt-3 text-center text-[11px] font-semibold text-[#1f7a4d]">
               ● fale com a gente no WhatsApp
             </p>
           ) : null}
+        </div>
+        <div className="px-4 pb-4">
+          <p
+            className="rounded-full py-2 text-center text-[12px] font-semibold transition-colors duration-(--duration-smooth)"
+            style={{ background: accent, color: onAccent }}
+          >
+            ver sacola
+          </p>
         </div>
       </div>
     </div>
