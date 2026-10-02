@@ -94,8 +94,9 @@ export function renderOrderTicket(
     }
     r.text(`Pedido ${dayMonth(order.placedAt, tz)} às ${clock(order.placedAt, tz)}`);
     if (order.delivery.promisedTo) {
-      const from = order.delivery.promisedFrom ? `${clock(order.delivery.promisedFrom, tz)}–` : '';
-      r.text(`Previsão: ${from}${clock(order.delivery.promisedTo, tz)}`);
+      const to = clock(order.delivery.promisedTo, tz);
+      const from = order.delivery.promisedFrom ? clock(order.delivery.promisedFrom, tz) : to;
+      r.text(`Previsão: ${from === to ? to : `${from}–${to}`}`);
     }
     r.rule();
 
@@ -115,7 +116,8 @@ export function renderOrderTicket(
     r.bold(true).pair('TOTAL', brl(order.totalCents)).bold(false);
     const method = METHOD[order.payment.method] ?? order.payment.method;
     const paid = order.payment.status === 'paid';
-    r.text(`${method}${paid ? ' - PAGO' : ' - cobrar na entrega'}`);
+    const collect = pickup ? 'cobrar na retirada' : 'cobrar na entrega';
+    r.text(`${method} - ${paid ? 'PAGO' : collect}`);
     if (order.payment.instructions) r.text(order.payment.instructions);
   });
 }
