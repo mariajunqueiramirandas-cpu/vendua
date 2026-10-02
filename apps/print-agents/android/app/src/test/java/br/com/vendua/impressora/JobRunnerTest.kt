@@ -136,6 +136,41 @@ class JobRunnerTest {
         }
     }
 
+    @Test fun aStuckAttemptTimesOutAndTheQueueMovesOn() {
+        val sink = RecordingSink()
+        val prints = AtomicInteger()
+        val transport = Transport { _, _ ->
+            // the first job never returns, like a write to a printer that stopped reading
+            if (prints.incrementAndGet() == 1) kotlinx.coroutines.awaitCancellation()
+        }
+        val runner = JobRunner(
+            scope, transport, FinishedStore(null), sink, { listOf(printer) },
+            retryDelaysMs = emptyList(), attemptTimeoutMs = 200,
+        )
+        runner.submit(job("stuck"))
+        runner.submit(job("next"))
+        val first = sink.next()
+        assertEquals("stuck", first.id)
+        assertFalse(first.ok)
+        assertTrue(first.error!!.contains("não respondeu"))
+        assertEquals(Reported("next", true, null), sink.next())
+    }
+
+    @Test fun aTcpPrinterThatStopsReadingFailsInsteadOfHanging() = runBlocking {
+        java.net.ServerSocket(0).use { server ->
+            // accepts, then never reads: the write fills both socket buffers and blocks
+            val accepted = Thread { runCatching { server.accept() }.getOrNull()?.let { Thread.sleep(10_000) } }
+            accepted.isDaemon = true
+            accepted.start()
+            val tcp = br.com.vendua.impressora.print.TcpTransport(connectTimeoutMs = 2_000, writeTimeoutMs = 500)
+            val target = Printer("p9", "tcp:127.0.0.1:${server.localPort}", "tcp", "Balcão", "127.0.0.1:${server.localPort}")
+            val started = System.nanoTime()
+            val err = runCatching { tcp.send(target, ByteArray(64 * 1024 * 1024)) }.exceptionOrNull()
+            assertTrue("expected a PrintException, got $err", err is PrintException)
+            assertTrue((System.nanoTime() - started) / 1_000_000 < 5_000)
+        }
+    }
+
     @Test fun nonRetryableErrorStopsEarly() {
         val attempts = AtomicInteger()
         val sink = RecordingSink()

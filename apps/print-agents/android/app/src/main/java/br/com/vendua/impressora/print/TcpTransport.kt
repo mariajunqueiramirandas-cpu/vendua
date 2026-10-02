@@ -17,12 +17,15 @@ class TcpTransport(
         try {
             Socket().use { socket ->
                 socket.connect(InetSocketAddress(host, port), connectTimeoutMs)
-                socket.soTimeout = writeTimeoutMs
-                socket.getOutputStream().apply {
-                    write(bytes)
-                    flush()
+                // soTimeout only bounds reads: a printer that stops draining its buffer would
+                // block this write, and the printer's whole queue behind it, for good
+                withDeadline(writeTimeoutMs.toLong(), socket) {
+                    socket.getOutputStream().apply {
+                        write(bytes)
+                        flush()
+                    }
+                    socket.shutdownOutput()
                 }
-                socket.shutdownOutput()
             }
         } catch (_: IOException) {
             throw PrintException("Sem resposta da impressora ($host:$port)")

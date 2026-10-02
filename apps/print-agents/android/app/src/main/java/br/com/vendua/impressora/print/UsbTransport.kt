@@ -20,8 +20,9 @@ class UsbTransport(
             ?: throw PrintException("USB indisponível neste aparelho", retryable = false)
         val wanted = printer.address.ifBlank { printer.key.removePrefix("usb:") }.lowercase(Locale.ROOT)
         val model = UsbPrinters.model(wanted)
-        val sameModel = manager.deviceList.values.filter { UsbPrinters.model(UsbPrinters.address(it, manager)) == model }
-        val device = sameModel.firstOrNull { UsbPrinters.address(it, manager) == wanted }
+        val addresses = UsbPrinters.addresses(manager)
+        val sameModel = manager.deviceList.values.filter { UsbPrinters.model(addresses.getValue(it.deviceName)) == model }
+        val device = sameModel.firstOrNull { addresses[it.deviceName] == wanted }
             // a serial is only readable with permission: ask for the one we can't tell apart yet
             ?: sameModel.firstOrNull { !manager.hasPermission(it) }?.let {
                 requestPermission(it)
@@ -71,6 +72,24 @@ object UsbPrinters {
         val clean = serial?.lowercase(Locale.ROOT)?.filter { it.isLetterOrDigit() }?.take(64)
         return if (clean.isNullOrEmpty()) model else "$model:$clean"
     }
+
+    /**
+     * Every attached device's address. Identical printers with no readable serial share
+     * `vid:pid`, so those (and only those) get the port they sit on: a lone printer keeps the key
+     * that survives replugging, and two identical ones are still two printers.
+     */
+    fun addresses(manager: UsbManager): Map<String, String> {
+        val devices = manager.deviceList.values.toList()
+        val base = devices.associate { it.deviceName to address(it, manager) }
+        val clashing = base.values.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        return devices.associate { d ->
+            val a = base.getValue(d.deviceName)
+            d.deviceName to if (a in clashing) "$a:${port(d)}" else a
+        }
+    }
+
+    /** `/dev/bus/usb/001/004` → `p001004` */
+    private fun port(device: UsbDevice): String = "p" + device.deviceName.filter(Char::isDigit).takeLast(12)
 
     /** the `vid:pid` part of an address */
     fun model(address: String): String = address.split(':').take(2).joinToString(":")

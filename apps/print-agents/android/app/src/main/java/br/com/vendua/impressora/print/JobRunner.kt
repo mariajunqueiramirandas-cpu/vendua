@@ -3,10 +3,12 @@ package br.com.vendua.impressora.print
 import br.com.vendua.impressora.api.JobEvent
 import br.com.vendua.impressora.api.Printer
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 
@@ -24,6 +26,8 @@ class JobRunner(
     private val printers: () -> List<Printer>,
     /** Waits before attempts 2 and 3 (spec: immediately, after 3 s, after 10 s). */
     private val retryDelaysMs: List<Long> = listOf(3_000, 10_000),
+    /** a backstop over the transports' own deadlines: one stuck attempt never parks the queue */
+    private val attemptTimeoutMs: Long = 45_000,
     private val onFinished: (printerId: String, ok: Boolean, error: String?) -> Unit = { _, _, _ -> },
 ) {
     private val queues = ConcurrentHashMap<String, Channel<JobEvent>>()
@@ -71,8 +75,10 @@ class JobRunner(
         for (attempt in 0..retryDelaysMs.size) {
             if (attempt > 0) delay(retryDelaysMs[attempt - 1])
             try {
-                transport.send(printer, bytes)
+                withTimeout(attemptTimeoutMs) { transport.send(printer, bytes) }
                 return null
+            } catch (_: TimeoutCancellationException) {
+                lastError = "A impressora não respondeu (${printer.name})"
             } catch (e: CancellationException) {
                 throw e
             } catch (e: PrintException) {

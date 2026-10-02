@@ -125,6 +125,28 @@ describe('ESC/POS', () => {
     );
     expect(has(refunded, bytes('Pix - PAGO'))).toBe(true);
     expect(has(refunded, bytes('cobrar'))).toBe(false);
+
+    // only an offline method on a live order is collected at the door
+    const line = (o: Partial<OrderView>, payment: Partial<OrderView['payment']>) =>
+      renderOrderTicket(
+        { ...order, ...o, payment: { ...order.payment, ...payment } },
+        store,
+        { paper: 80, codepage: 'ascii', copies: 1, cut: false },
+        now,
+        now,
+      );
+    expect(has(line({}, { status: 'pending', online: true }), bytes('nao cobrar'))).toBe(true);
+    expect(has(line({}, { status: 'pending', online: true }), bytes('cobrar na'))).toBe(false);
+    expect(has(line({}, { status: 'refunded' }), bytes('ESTORNADO'))).toBe(true);
+    expect(has(line({ state: 'cancelled' }, { status: 'pending' }), bytes('cobrar na'))).toBe(
+      false,
+    );
+    expect(
+      has(
+        line({}, { method: 'cash', status: 'pending', online: false }),
+        bytes('cobrar na entrega'),
+      ),
+    ).toBe(true);
   });
 
   test('inputs from the merchant and the agent are bounded', () => {
@@ -436,6 +458,46 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
       (await owner('POST', `/printers/devices/${deviceId}/printers`, { address: 'x y' })).status,
     ).toBe(422);
     expect((await owner('DELETE', `/printers/${net.body.id}`)).status).toBe(200);
+
+    // a network printer the agent found in a scan, added by hand: it becomes the merchant's and
+    // stays present when the next scan misses it
+    const a2 = agent(token);
+    await a2('PUT', '/printers', {
+      printers: [
+        {
+          key: 'spooler:EPSON TM-T20',
+          kind: 'spooler',
+          name: 'EPSON TM-T20',
+          address: 'EPSON TM-T20',
+        },
+        {
+          key: 'tcp:192.168.0.88:9100',
+          kind: 'tcp',
+          name: 'Rede 192.168.0.88',
+          address: '192.168.0.88:9100',
+        },
+      ],
+    });
+    const claimed = await owner('POST', `/printers/devices/${deviceId}/printers`, {
+      address: '192.168.0.88',
+      label: 'Bar',
+    });
+    expect(claimed.body).toMatchObject({ source: 'manual', name: 'Bar', present: true });
+    await a2('PUT', '/printers', {
+      printers: [
+        {
+          key: 'spooler:EPSON TM-T20',
+          kind: 'spooler',
+          name: 'EPSON TM-T20',
+          address: 'EPSON TM-T20',
+        },
+      ],
+    });
+    const after88 = (await owner('GET', '/printers')).body.devices[0].printers.find(
+      (p: any) => p.id === claimed.body.id,
+    );
+    expect(after88.present).toBe(true);
+    expect((await owner('DELETE', `/printers/${claimed.body.id}`)).status).toBe(200);
 
     // another store sees none of it and can't touch it
     expect((await other('GET', '/printers')).body.devices).toEqual([]);

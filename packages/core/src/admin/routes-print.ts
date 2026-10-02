@@ -164,7 +164,11 @@ export function mountPrinting(d: AdminDeps) {
         insert into printers (tenant_id, device_id, key, kind, name, address, source, label)
         values (${t.id}, ${deviceId}, ${`tcp:${address}`}, 'tcp', ${`Rede ${address}`}, ${address},
                 'manual', ${label})
-        on conflict (device_id, key) do update set present = true, updated_at = now()
+        -- the agent may have found it in a scan already: adding it by hand makes it the merchant's,
+        -- so a later scan that misses it can't mark it absent
+        on conflict (device_id, key) do update
+          set present = true, source = 'manual', label = coalesce(excluded.label, printers.label),
+              updated_at = now()
         returning id`;
       await notifyDeviceTx(tx, t.id, deviceId, 'config');
       await audit(tx, t.id, m, {

@@ -54,6 +54,21 @@ function copies(o: PrintOptions, draw: (r: Receipt) => void): Uint8Array {
   return r.done();
 }
 
+/**
+ * What the counter does about money. Only an offline method on a live order is collected at the
+ * door: an online payment still pending settles with the provider, and telling staff to charge
+ * it (or a refunded or cancelled order) would charge twice.
+ */
+function paymentLine(order: OrderView, pickup: boolean): string {
+  const s = order.payment.status;
+  // a partial refund leaves the rest captured
+  if (s === 'paid' || s === 'partially_refunded') return 'PAGO';
+  if (s === 'refunded') return 'ESTORNADO - não cobrar';
+  if (order.state === 'cancelled' || order.state === 'refunded') return 'não cobrar';
+  if (order.payment.online) return 'aguardando pagamento online - não cobrar';
+  return pickup ? 'cobrar na retirada' : 'cobrar na entrega';
+}
+
 /** The kitchen ticket: big number, how it leaves, items with their choices, notes, total. */
 export function renderOrderTicket(
   order: OrderView,
@@ -118,10 +133,7 @@ export function renderOrderTicket(
 
     r.bold(true).pair('TOTAL', brl(order.totalCents)).bold(false);
     const method = METHOD[order.payment.method] ?? order.payment.method;
-    // a partial refund leaves the rest captured: nothing to collect at the door
-    const paid = order.payment.status === 'paid' || order.payment.status === 'partially_refunded';
-    const collect = pickup ? 'cobrar na retirada' : 'cobrar na entrega';
-    r.text(`${method} - ${paid ? 'PAGO' : collect}`);
+    r.text(`${method} - ${paymentLine(order, pickup)}`);
     if (order.payment.instructions) r.text(order.payment.instructions);
   });
 }
