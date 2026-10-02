@@ -315,23 +315,30 @@ const endTrials: Step = async (sql, base, now, o) => {
   );
   const pix = o.provider.platformConfigured;
   await each(rows, 'trials', async ({ tenant_id }) => {
-    await withEffects(base, (ctx) =>
+    const stale = await withEffects(base, (ctx) =>
       withTenant(sql, tenant_id, async (tx) => {
         const sub = await lockSub(tx, tenant_id);
         if (!sub || sub.status !== 'trialing' || sub.cancel_at_period_end || !sub.trial_ends_at)
-          return;
+          return null;
         const authorized =
           sub.method === 'card' && !!sub.provider_subscription_id && !sub.checkout_url;
-        if (sub.trial_ends_at > (authorized ? cardCutoff : now)) return;
+        if (sub.trial_ends_at > (authorized ? cardCutoff : now)) return null;
+        // a card never authorized (its first charge date is now past) gives way to the Pix, so
+        // there's something to pay right away; the owner can still switch back to card
+        const unused = sub.method === 'card' && !authorized ? sub.provider_subscription_id : null;
+        const method = sub.method === 'card' && !authorized ? 'pix' : sub.method;
         await tx`
-          update subscriptions set status = 'pending', current_period_start = null,
-            current_period_end = null, updated_at = now(), status_changed_at = now()
+          update subscriptions set status = 'pending', method = ${method},
+            provider_subscription_id = ${method === sub.method ? sub.provider_subscription_id : null},
+            checkout_url = ${method === sub.method ? sub.checkout_url : null},
+            current_period_start = null, current_period_end = null,
+            updated_at = now(), status_changed_at = now()
           where tenant_id = ${tenant_id}
         `;
         const plan = await planRow(tx, chargePlanId(sub));
         // the first month's invoice is what reopens the store; a Pix one normally went out ahead
         // of the end (Conta asks Mercado Pago for a fresh Pix when the owner opens it)
-        if (sub.method === 'pix' && plan) {
+        if (method === 'pix' && plan) {
           const open = await tx`
             select 1 from invoices where tenant_id = ${tenant_id} and kind = 'period'
               and status in ('open', 'failed')
@@ -366,8 +373,11 @@ const endTrials: Step = async (sql, base, now, o) => {
           `O teste grátis do plano ${planName} terminou em ${dayMonth(sub.trial_ends_at)} sem pagamento; a loja parou de receber pedidos até pagar.`,
           sub.trial_ends_at.toISOString(),
         );
+        return unused;
       }),
     );
+    // after the tx (Mercado Pago never runs under the store's lock): the unused assinatura stops
+    if (stale) await stopPreapproval({ ...base, later: () => {} }, stale, 'cancelled');
   });
 };
 
@@ -610,7 +620,9 @@ const remindTrials: Step = async (sql, base, now) => {
       select tenant_id, trial_ends_at, trial_reminded from subscriptions
       where status = 'trialing' and not cancel_at_period_end and trial_ends_at > ${now}
         and trial_ends_at <= ${new Date(now.getTime() + 3 * DAY_MS)}
-        and not ('last' = any(trial_reminded))
+        -- only rows whose current stage is still unsent, so sent ones never crowd the batch
+        and not (case when trial_ends_at <= ${new Date(now.getTime() + DAY_MS)} then 'last' else 'soon' end
+                 = any(trial_reminded))
       order by trial_ends_at limit ${BATCH}
     `,
   );

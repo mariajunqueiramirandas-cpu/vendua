@@ -199,6 +199,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
               payerEmail: email,
               provider: d.provider.name,
               now: new Date(),
+              phone,
             });
             trialEndsAt = next.kind === 'trial' ? next.endsAt : null;
             const owner = (

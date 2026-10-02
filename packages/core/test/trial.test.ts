@@ -209,6 +209,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
     expect(paid.body.next.kind).toBe('pix');
   });
 
+  test('the phone that took the trial keeps it taken, whatever its role becomes', async () => {
+    const t = await trialStore('role');
+    await sql`update merchant_users set role = 'manager' where tenant_id = ${t.id} and phone = ${t.phone}`;
+    expect((await verified(t.phone)).trialEligible).toBe(false);
+  });
+
   test('a plan without a trial refuses one; a bad flag is a 422', async () => {
     const { signupToken } = await verified(mkPhone());
     const pro = await signup(signupToken, `trial-${nonce}-pro`, { planId: 'pro_plus' });
@@ -313,6 +319,35 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
     await tick(new Date(Date.now() + 1.1 * DAY));
     expect((await sub(t.id)).status).toBe('pending');
     expect((await settings(t.id)).billing_hold).toBe(true);
+  });
+
+  test('a card never authorized gives way to the Pix at the end, its assinatura stopped', async () => {
+    const t = await trialStore('noauth');
+    await endAt(t.id, new Date(Date.now() + 5 * DAY));
+    expect((await t.owner('PATCH', '/account/subscription', { method: 'card' })).status).toBe(200);
+    const pre = (await sub(t.id)).provider_subscription_id;
+    await endAt(t.id, new Date(Date.now() - 60_000));
+    await tick();
+    const s = await sub(t.id);
+    expect(s).toMatchObject({ status: 'pending', method: 'pix', provider_subscription_id: null });
+    expect(s.checkout_url).toBeNull();
+    expect(fake.subscriptions.get(pre)!.status).toBe('cancelled');
+    const open = await sql`select 1 from invoices where tenant_id = ${t.id} and status = 'open'`;
+    expect(open.length).toBe(1);
+  });
+
+  test('PRO+ chosen and paid during the trial: its site request opens with the first payment', async () => {
+    const t = await trialStore('prosite');
+    expect((await t.owner('PATCH', '/account/subscription', { planId: 'pro_plus' })).status).toBe(
+      200,
+    );
+    await endAt(t.id, new Date(Date.now() + 3 * DAY));
+    await tick();
+    const inv = (await sql`select id, amount_cents from invoices where tenant_id = ${t.id}`)[0]!;
+    expect(inv.amount_cents).toBe(9900);
+    await call('POST', `/admin/v1/dev/billing/invoices/${inv.id}/pay`, {});
+    expect((await sub(t.id)).status).toBe('active');
+    expect((await sql`select 1 from site_requests where tenant_id = ${t.id}`).length).toBe(1);
   });
 
   test('cancelled during the trial: it runs to its end, then the store closes', async () => {

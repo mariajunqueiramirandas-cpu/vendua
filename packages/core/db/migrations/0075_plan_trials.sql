@@ -4,6 +4,8 @@
 --   subscriptions.status 'trialing' — the free first period: current_period_end = trial_ends_at
 --   subscriptions.trial_ends_at — when the trial ends (kept after it converts: it marks the trial used)
 --   subscriptions.trial_reminded — which "your trial ends" notices went out (claimed atomically)
+--   subscriptions.trial_phone — the owner phone that took it: one trial per phone, whatever roles
+--     later change
 
 alter table plans add column if not exists trial_days int not null default 0
   check (trial_days between 0 and 60);
@@ -14,18 +16,19 @@ alter table subscriptions add constraint subscriptions_status_check
   check (status in ('pending', 'trialing', 'active', 'past_due', 'cancelled'));
 alter table subscriptions add column if not exists trial_ends_at timestamptz;
 alter table subscriptions add column if not exists trial_reminded text[] not null default '{}';
+alter table subscriptions add column if not exists trial_phone text
+  check (trial_phone ~ '^[0-9]{10,13}$');
+create index if not exists subscriptions_trial_phone on subscriptions (trial_phone)
+  where trial_phone is not null;
 create index if not exists subscriptions_trial_end on subscriptions (trial_ends_at)
   where status = 'trialing';
 
--- Signup knows a verified phone but no tenant yet: "did this phone already own a store that
--- trialed?" and nothing else — the twin of merchant_memberships_for_phone, RLS stays on otherwise.
+-- Signup knows a verified phone but no tenant yet: "did this phone already take a trial?" and
+-- nothing else — the twin of merchant_memberships_for_phone, RLS stays on otherwise.
 create or replace function phone_had_trial(p_phone text)
 returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (
-    select 1 from merchant_users u join subscriptions s on s.tenant_id = u.tenant_id
-    where u.phone = p_phone and u.role = 'owner' and s.trial_ends_at is not null
-  )
+  select exists (select 1 from subscriptions where trial_phone = p_phone)
 $$;
 revoke all on function phone_had_trial(text) from public;
 grant execute on function phone_had_trial(text) to vendua_app;

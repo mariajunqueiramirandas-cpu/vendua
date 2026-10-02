@@ -239,14 +239,15 @@ export async function startSubscription(
 export async function startTrial(
   tx: Sql,
   tenantId: string,
-  o: { plan: PlanRow; payerEmail: string | null; provider: string; now: Date },
+  o: { plan: PlanRow; payerEmail: string | null; provider: string; now: Date; phone: string },
 ): Promise<PayNext> {
   const endsAt = new Date(o.now.getTime() + o.plan.trial_days * DAY_MS);
+  // trial_phone: the phone that took it keeps it taken, whatever its role in the store becomes
   await tx`
     insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email,
-                               current_period_start, current_period_end, trial_ends_at)
+                               current_period_start, current_period_end, trial_ends_at, trial_phone)
     values (${tenantId}, ${o.plan.id}, 'pix', 'trialing', ${o.provider}, ${o.payerEmail},
-            ${o.now}, ${endsAt}, ${endsAt})
+            ${o.now}, ${endsAt}, ${endsAt}, ${o.phone})
   `;
   await setTenantPlan(tx, tenantId, o.plan.id);
   await releaseHold(tx, tenantId);
@@ -857,13 +858,17 @@ export async function markInvoicePaid(
     await activate(ctx, tx, sub, inv, paidAt);
   } else {
     const end = sub.current_period_end?.getTime() ?? 0;
-    if (inv.period_end.getTime() > end)
+    if (inv.period_end.getTime() > end) {
       await tx`
         update subscriptions set status = 'active', current_period_start = ${inv.period_start},
           current_period_end = ${inv.period_end}, updated_at = now(),
           status_changed_at = case when status = 'active' then status_changed_at else now() end
         where tenant_id = ${tenantId}
       `;
+      // a trial's first payment is the plan's first: a PRO+ chosen during it gets its site now
+      if (sub.status === 'trialing' && (await planRow(tx, sub.plan_id))?.features?.customSite)
+        await openSiteRequest(ctx, tx, tenantId);
+    }
     if (downgradeDue(sub, inv.period_start, now))
       await applyPendingPlan(ctx, tx, tenantId, sub.pending_plan_id!);
   }

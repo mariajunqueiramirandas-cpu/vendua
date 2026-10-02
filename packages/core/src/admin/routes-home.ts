@@ -233,14 +233,23 @@ async function platformAttention(
   const out: Attention[] = [];
   if (roleAtLeast(role, 'owner')) {
     const sub = (
-      await tx<{ status: string; trial_ends_at: Date | null; cancel_at_period_end: boolean }[]>`
-        select status, trial_ends_at, cancel_at_period_end from subscriptions
-        where tenant_id = ${tenantId}
+      await tx<
+        {
+          status: string;
+          trial_ends_at: Date | null;
+          cancel_at_period_end: boolean;
+          ever_paid: boolean;
+        }[]
+      >`
+        select status, trial_ends_at, cancel_at_period_end,
+               exists (select 1 from invoices where tenant_id = ${tenantId} and status = 'paid') as ever_paid
+        from subscriptions where tenant_id = ${tenantId}
       `
     )[0];
     if (billingHold && sub?.status === 'pending')
       out.push(
-        sub.trial_ends_at
+        // a trial that never converted, not a store that paid once and came back later
+        sub.trial_ends_at && !sub.ever_paid
           ? {
               kind: 'billing_pending',
               count: 1,
