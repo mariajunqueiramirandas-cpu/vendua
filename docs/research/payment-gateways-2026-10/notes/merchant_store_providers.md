@@ -49,7 +49,7 @@ Only Mercado Pago (already integrated) and PagBank (Connect OAuth plus Split) cl
 
 ### Takeaway
 
-PagBank (Pix, card, boleto, Apple Pay and Google Pay on hosted checkout, with sandbox and webhooks) and InfinitePay (Pix plus card on a hosted link, webhook) both fit "card via redirect, no PCI scope". Efí and Pagar.me cover Pix well but through sub-account models. Pix por Aproximação and Pix Automático are regulatory features that are now live but provider API support was not verified.
+PagBank (Pix, card, boleto, Apple Pay and Google Pay on hosted checkout, with sandbox and webhooks) and InfinitePay (Pix plus card on a hosted link, webhook) both fit "card via redirect": card data stays off Venduá's systems, which shrinks PCI DSS scope (typically to SAQ A) but does not remove it. Efí and Pagar.me cover Pix well but through sub-account models. Pix por Aproximação and Pix Automático are regulatory features that are now live but provider API support was not verified.
 
 ### Cited Findings
 
@@ -89,7 +89,7 @@ Five acquirers handle most card volume: Stone, PagBank, Cielo, Mercado Pago and 
 
 ### Inferences
 
-- A merchant who already has a Pix-capable machine account is likely to be with InfinitePay, Ton/Stone, PagBank or Mercado Pago. This makes InfinitePay and PagBank the two most likely "I already have an account" matches after Mercado Pago, and Stone/Ton a gap (Stone is reached through Pagar.me, which uses sub-accounts).
+- A merchant who already has a Pix-capable machine account is likely to be with InfinitePay, Ton/Stone, PagBank or Mercado Pago. This makes InfinitePay and PagBank the two most likely "I already have an account" matches after Mercado Pago, and Stone/Ton an unserved gap: Pagar.me is a separate account, and no source shows an existing Stone or Ton account works with it.
 
 ### Gaps
 

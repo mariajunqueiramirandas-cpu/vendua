@@ -54,7 +54,7 @@ Asaas, Vindi (card), Mercado Pago (Pix) are cheapest on percentage; Asaas and Ga
 - Credit card à vista R$ 0,49 + 2,99% (promo 3 months R$ 0,49 + 1,99%); 2-6x 3,49%; 7-12x 3,99%
 - Notifications: WhatsApp R$ 0,55/msg; email+SMS package R$ 0,99/cobrança; voice robot R$ 0,55
 - Antecipação: card à vista 1,25%/mês, parcelado 1,70%/mês; boleto from 5,79%/mês
-- Receipt: card D+2 to D+3 (subject to credit analysis); boleto D+32 (as listed)
+- Receipt: the page summary gave card D+2 to D+3 and boleto D+32, which looks swapped. Asaas's usual terms are card around D+30/32 unless anticipated (1,25%/mês above) and a paid boleto in about one business day; confirm with Asaas.
 - NFS-e: R$ 0,49 per note, no monthly fee; can be issued with the charge, scheduled for recurring charges; integrates 1.347+ municipalities (page also says 2.000+ prefeituras) and the NFS-e Nacional portal — [Asaas nota fiscal](https://www.asaas.com/nota-fiscal)
 - Promo valid "until 01/02/2027 for accounts created today" (i.e., 3 months)
 - A third-party blog lists "Asaas Pix Recorrente 0,99%" — [SystemForge](https://forjadesistemas.com.br/blog/pix-automatico-recorrencia-saas-proprio-2026/); conflicts with Asaas's R$ 0,99 flat promo; likely misread, do not use. Mind Group lists Asaas Pix R$ 0,49 and card 2,99% — [Mind Group](https://mindconsulting.com.br/2026/07/gateways-pagamento-online-brasil-comparativo-2026/) — also conflicts with the official R$ 1,99 (older/other tier?).
