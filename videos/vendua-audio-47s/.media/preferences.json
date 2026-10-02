@@ -25,6 +25,11 @@
       "value": "yes",
       "confirmed_in": ["vendua-audio-47s"],
       "updated_at": "2026-10-02T01:54:05.073Z"
+    },
+    "voice": {
+      "value": "elevenlabs:mmTLZX6tO1YdiYVoUVN5 (Adriane, narrator)",
+      "confirmed_in": ["vendua-audio-47s"],
+      "updated_at": "2026-10-02T02:54:42.396Z"
     }
   },
   "sightings": {}

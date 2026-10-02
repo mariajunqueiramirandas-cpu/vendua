@@ -56,6 +56,18 @@ these; no AI images, photos, people or drawn app UI.
 - Space Grotesk Variable (display), Figtree Variable (body), Instrument Serif 400 (moments such as
   "Bom dia, Nena"), latin subsets from the site's @fontsource packages.
 
-## Not available yet
+## Customer storefront (`capture/assets/`)
 
-- The customer-facing storefront (menu, cart, Pix checkout) of Bolos da Nena has no captured screens.
+Captured by `scripts/storefront-shots.mjs` from the real standard storefront (`storefronts/_template`,
+the Venduá Basic look) running Bolos da Nena on the dev database, 375×812 CSS px at 2× (750×1624).
+
+- `vitrine-cardapio-750.webp` — Cardápio: search, category pills (Bolos inteiros, Fatias do dia,
+  Encomendas), "Bolos inteiros 6": Bolo de banana com canela R$ 40,00, Bolo de cenoura com
+  brigadeiro R$ 45,00, Bolo de chocolate molhadinho R$ 48,00, each with a "+" button.
+- `vitrine-produto-750.webp` — the product page of Bolo de chocolate molhadinho, R$ 48,00, quantity
+  1 and "Adicionar à sacola R$ 48,00". The "preço" beat.
+- `vitrine-pagamento-750.webp` — Finalizar pedido, step Pagamento: Pix selected (radio), Cartão na
+  entrega, Dinheiro; "Confirmar pedido · R$ 48,00". The "Pix" beat.
+- `vitrine-pix-750.webp` — the order page after confirming: "Pedido #1 recebido! R$ 48,00 · Pix",
+  "Pague com Pix R$ 48,00", "Copiar código Pix", Pix copia e cola. Not used: its "#1" would contradict
+  order #29 in Frame 5.

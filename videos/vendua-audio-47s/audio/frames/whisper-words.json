@@ -1,0 +1,344 @@
+{
+  "f01-voice.mp3": [
+    {
+      "text": "Oi,",
+      "start": 0.0,
+      "end": 0.52
+    },
+    {
+      "text": "boa",
+      "start": 0.64,
+      "end": 0.74
+    },
+    {
+      "text": "tarde,",
+      "start": 0.74,
+      "end": 1.18
+    },
+    {
+      "text": "tudo",
+      "start": 1.44,
+      "end": 1.58
+    },
+    {
+      "text": "bem?",
+      "start": 1.58,
+      "end": 1.82
+    },
+    {
+      "text": "Então,",
+      "start": 2.52,
+      "end": 2.82
+    },
+    {
+      "text": "vocês",
+      "start": 3.18,
+      "end": 3.48
+    },
+    {
+      "text": "têm",
+      "start": 3.48,
+      "end": 3.72
+    },
+    {
+      "text": "cardápio?",
+      "start": 3.72,
+      "end": 4.44
+    },
+    {
+      "text": "Quanto",
+      "start": 4.76,
+      "end": 5.12
+    },
+    {
+      "text": "está",
+      "start": 5.12,
+      "end": 5.32
+    },
+    {
+      "text": "o",
+      "start": 5.32,
+      "end": 5.44
+    },
+    {
+      "text": "bolo",
+      "start": 5.44,
+      "end": 5.68
+    },
+    {
+      "text": "de",
+      "start": 5.68,
+      "end": 5.82
+    },
+    {
+      "text": "chocolate?",
+      "start": 5.82,
+      "end": 6.12
+    },
+    {
+      "text": "Ah,",
+      "start": 6.86,
+      "end": 7.0
+    },
+    {
+      "text": "e",
+      "start": 7.2,
+      "end": 7.28
+    },
+    {
+      "text": "a",
+      "start": 7.28,
+      "end": 7.44
+    },
+    {
+      "text": "ceita",
+      "start": 7.44,
+      "end": 7.68
+    },
+    {
+      "text": "PIX?",
+      "start": 7.68,
+      "end": 8.08
+    }
+  ],
+  "f02-voice.mp3": [
+    {
+      "text": "áudio",
+      "start": 0.0,
+      "end": 0.5
+    },
+    {
+      "text": "de",
+      "start": 0.5,
+      "end": 0.66
+    },
+    {
+      "text": "47",
+      "start": 0.66,
+      "end": 1.46
+    },
+    {
+      "text": "segundos",
+      "start": 1.46,
+      "end": 2.14
+    },
+    {
+      "text": "enquanto",
+      "start": 2.14,
+      "end": 3.28
+    },
+    {
+      "text": "o",
+      "start": 3.28,
+      "end": 3.64
+    },
+    {
+      "text": "bolo",
+      "start": 3.64,
+      "end": 3.86
+    },
+    {
+      "text": "está",
+      "start": 3.86,
+      "end": 4.04
+    },
+    {
+      "text": "no",
+      "start": 4.04,
+      "end": 4.18
+    },
+    {
+      "text": "forno",
+      "start": 4.18,
+      "end": 5.5
+    },
+    {
+      "text": "e",
+      "start": 5.5,
+      "end": 5.66
+    },
+    {
+      "text": "ainda",
+      "start": 5.66,
+      "end": 5.86
+    },
+    {
+      "text": "tem",
+      "start": 5.86,
+      "end": 6.16
+    },
+    {
+      "text": "mais",
+      "start": 6.16,
+      "end": 6.56
+    },
+    {
+      "text": "na",
+      "start": 6.56,
+      "end": 6.74
+    },
+    {
+      "text": "fila.",
+      "start": 6.74,
+      "end": 7.26
+    }
+  ],
+  "f03-voice.mp3": [
+    {
+      "text": "Com",
+      "start": 0.0,
+      "end": 0.34
+    },
+    {
+      "text": "o",
+      "start": 0.34,
+      "end": 0.46
+    },
+    {
+      "text": "Vendua,",
+      "start": 0.46,
+      "end": 0.94
+    },
+    {
+      "text": "você",
+      "start": 1.2,
+      "end": 1.38
+    },
+    {
+      "text": "responde",
+      "start": 1.38,
+      "end": 2.24
+    },
+    {
+      "text": "com",
+      "start": 2.24,
+      "end": 2.5
+    },
+    {
+      "text": "o",
+      "start": 2.5,
+      "end": 2.58
+    },
+    {
+      "text": "link",
+      "start": 2.58,
+      "end": 2.9
+    },
+    {
+      "text": "só.",
+      "start": 2.9,
+      "end": 3.26
+    }
+  ],
+  "f04-voice.mp3": [
+    {
+      "text": "cardápio,",
+      "start": 0.0,
+      "end": 1.24
+    },
+    {
+      "text": "preso",
+      "start": 1.76,
+      "end": 2.74
+    },
+    {
+      "text": "e",
+      "start": 2.74,
+      "end": 3.58
+    },
+    {
+      "text": "pix.",
+      "start": 3.58,
+      "end": 3.92
+    }
+  ],
+  "f05-voice.mp3": [
+    {
+      "text": "E",
+      "start": 0.0,
+      "end": 0.66
+    },
+    {
+      "text": "o",
+      "start": 0.66,
+      "end": 0.78
+    },
+    {
+      "text": "pedido",
+      "start": 0.78,
+      "end": 1.44
+    },
+    {
+      "text": "chega",
+      "start": 1.44,
+      "end": 1.94
+    },
+    {
+      "text": "sozinho.",
+      "start": 1.94,
+      "end": 2.88
+    }
+  ],
+  "f06-voice.mp3": [
+    {
+      "text": "Comece",
+      "start": 0.0,
+      "end": 0.9
+    },
+    {
+      "text": "com",
+      "start": 0.9,
+      "end": 1.16
+    },
+    {
+      "text": "14",
+      "start": 1.16,
+      "end": 1.92
+    },
+    {
+      "text": "dias",
+      "start": 1.92,
+      "end": 2.42
+    },
+    {
+      "text": "grátis.",
+      "start": 2.42,
+      "end": 3.54
+    },
+    {
+      "text": "Vendua",
+      "start": 3.72,
+      "end": 4.44
+    },
+    {
+      "text": "Basic",
+      "start": 4.44,
+      "end": 5.0
+    },
+    {
+      "text": "sem",
+      "start": 5.0,
+      "end": 5.72
+    },
+    {
+      "text": "cartão.",
+      "start": 5.72,
+      "end": 6.32
+    },
+    {
+      "text": "Link",
+      "start": 6.72,
+      "end": 7.12
+    },
+    {
+      "text": "na",
+      "start": 7.12,
+      "end": 7.38
+    },
+    {
+      "text": "bio.",
+      "start": 7.38,
+      "end": 7.62
+    }
+  ]
+}

@@ -45,9 +45,10 @@ The wording matches the site ("14 dias grátis, sem cartão") and the signup's l
 
 ## Customizations
 
-- Audio through the ElevenLabs MCP, not HeyGen: TTS for the customer and the narrator (voice picks
-  offered after the script is approved, 2–3 each with previews), ElevenLabs Music for a light bed
-  ducked under the voices, ElevenLabs Sound Effects v2 for the SFX.
+- Audio through the ElevenLabs MCP, not HeyGen: Luiz = Talis, narrator = Adriane (the user's pick
+  after Bruna da Costa turned out to need an ElevenLabs Creator plan), ElevenLabs Music v2.5
+  (instrumental, pre-mixed and ducked under the voices in `audio/music-bed.mp3`), ElevenLabs Sound
+  Effects v2 for the SFX (`audio/sfx/`).
 - Sound effects must be very good: the voice note's play tap, waveform ticks, a chime when the
   store link opens. If ElevenLabs can't make one well, synthesize it, synced to the video.
 - Word-timed burned-in captions styled to the design system, inside the Reels safe zone.

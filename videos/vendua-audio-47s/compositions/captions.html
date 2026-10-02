@@ -1,0 +1,504 @@
+<template
+  id="captions-template"
+  data-composition-id="captions"
+  data-width="1080"
+  data-height="1920"
+>
+  <script src="assets/vendor/gsap.min.js"></script>
+
+  <style data-brand-tokens>
+    @font-face {
+      font-family: 'Space Grotesk Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 700;
+      src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2')
+        format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Figtree Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 900;
+      src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2-variations');
+    }
+    :root {
+      --canvas: #f7f4ea;
+      --ink: #123c32;
+      --surface: #fffdf8;
+      --surface-sunken: #efe9d8;
+      --ink-muted: #4f6a5e;
+      --line: rgba(18, 60, 50, 0.12);
+      --line-strong: rgba(18, 60, 50, 0.2);
+      --spark: #d9f875;
+      --spark-soft: #f0fcc9;
+      --on-spark: #123c32;
+      --novo-ink: #2f4a00;
+      --night: #0a100d;
+      --night-surface: #131d18;
+      --night-ink: #f7f4ea;
+      --night-muted: #9dafa4;
+      --success: #1f7a4d;
+      --cap-ink: #123c32;
+      --cap-canvas: #f7f4ea;
+      --cap-accent: #d9f875;
+      --cap-accent-2: #2f4a00;
+      --font-display: 'Space Grotesk Variable', system-ui, serif;
+      --font-body: 'Figtree Variable', system-ui, sans-serif;
+      --cap-band-top: 1600px;
+      --cap-band-height: 320px;
+    }
+  </style>
+
+  <style>
+    #captions-root {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    .caption-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      pointer-events: none;
+    }
+    /* Reels caption band: y 1300-1520, above the bottom 20% (y >= 1536) and clear of the
+     right action column (140px). captionBand(H) would put it at y 1600-1920, under the
+     Reels UI, so the injected --cap-band-* vars are deliberately not used here. Frame
+     content stays above y 1280. */
+    .caption-stage {
+      position: absolute;
+      left: 72px;
+      right: 140px;
+      top: 1300px;
+      height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .caption-group {
+      /* every group is absolutely stacked over the SAME band — exactly one shown at a
+       time via opacity. Must be absolute: in-flow groups would lay out side-by-side. */
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+    }
+
+    /* paper pill: surface + Venduá's forest-tinted e2 shadow, radius lg, no outline */
+    .caption-pill {
+      max-width: 100%;
+      padding: 18px 34px 22px;
+      background: var(--surface, #fffdf8);
+      box-shadow:
+        0 2px 4px rgb(18 60 50 / 0.08),
+        0 12px 32px rgb(18 60 50 / 0.1);
+      border-radius: 24px;
+    }
+    .caption-line {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.1em 0.34em;
+      font-family: 'Figtree Variable', system-ui, sans-serif;
+      font-weight: 750;
+      font-size: 66px;
+      line-height: 1.15;
+      letter-spacing: -0.01em;
+    }
+
+    /* upcoming — muted forest, no chip */
+    .caption-word {
+      display: inline-block;
+      padding: 0 0.18em;
+      border-radius: 0.32em;
+      color: color-mix(in srgb, var(--cap-ink, #123c32) 52%, var(--cap-canvas, #f7f4ea));
+    }
+    /* current word — the lime chip behind forest text (frame.md: lime is always a fill
+     behind forest, never text on cream; 10.3:1) */
+    .caption-word.is-active {
+      color: var(--cap-ink, #123c32);
+      background: var(--cap-accent, #d9f875);
+      box-shadow: none;
+    }
+    /* already spoken — solid forest, chip cleared */
+    .caption-word.is-spoken {
+      color: var(--cap-ink, #123c32);
+      background: transparent;
+      box-shadow: none;
+    }
+
+    /* optional per-word accents (dormant until a word-classer tags them) */
+    /* brand / key term — forest (lime never carries text) */
+    .caption-word.cap-brand {
+      color: var(--cap-ink, #123c32);
+    }
+    /* numerals / data — Space Grotesk 700, the figure voice */
+    .caption-word.cap-num {
+      font-family: 'Space Grotesk Variable', system-ui, sans-serif;
+      font-weight: 700;
+      color: var(--cap-ink, #123c32);
+    }
+    /* emphasis — a hairline underline in the second accent (inline only, never a fill) */
+    .caption-word.cap-cta {
+      text-decoration: underline;
+      text-decoration-thickness: 2px;
+      text-decoration-color: var(--cap-accent-2, #2f4a00);
+      text-underline-offset: 0.1em;
+    }
+  </style>
+
+  <div
+    id="captions-root"
+    data-composition-id="captions"
+    data-timeline-locked
+    data-start="0"
+    data-duration="36.1"
+    data-fps="30"
+    data-width="1080"
+    data-height="1920"
+  >
+    <div class="caption-layer" aria-hidden="true">
+      <div id="caption-stage" class="caption-stage"></div>
+    </div>
+  </div>
+
+  <script>
+    // captions.mjs injects the engine's scene-aware groups + real duration here.
+    var GROUPS = [
+      {
+        id: 'caption-group-0',
+        frame: 1,
+        start: 0.3,
+        end: 0.64,
+        text: 'Oi,',
+        words: [{ id: 'caption-word-0-0', text: 'Oi,', start: 0.3, end: 0.52 }],
+      },
+      {
+        id: 'caption-group-1',
+        frame: 1,
+        start: 0.64,
+        end: 1.3,
+        text: 'boa tarde!',
+        words: [
+          { id: 'caption-word-1-0', text: 'boa', start: 0.64, end: 0.74 },
+          { id: 'caption-word-1-1', text: 'tarde!', start: 0.74, end: 1.18 },
+        ],
+      },
+      {
+        id: 'caption-group-2',
+        frame: 1,
+        start: 1.44,
+        end: 1.94,
+        text: 'Tudo bem?',
+        words: [
+          { id: 'caption-word-2-0', text: 'Tudo', start: 1.44, end: 1.58 },
+          { id: 'caption-word-2-1', text: 'bem?', start: 1.58, end: 1.82 },
+        ],
+      },
+      {
+        id: 'caption-group-3',
+        frame: 1,
+        start: 2.52,
+        end: 2.94,
+        text: 'Então…',
+        words: [{ id: 'caption-word-3-0', text: 'Então…', start: 2.52, end: 2.82 }],
+      },
+      {
+        id: 'caption-group-4',
+        frame: 1,
+        start: 3.18,
+        end: 4.56,
+        text: 'vocês têm cardápio?',
+        words: [
+          { id: 'caption-word-4-0', text: 'vocês', start: 3.18, end: 3.48 },
+          { id: 'caption-word-4-1', text: 'têm', start: 3.48, end: 3.72 },
+          { id: 'caption-word-4-2', text: 'cardápio?', start: 3.72, end: 4.44 },
+        ],
+      },
+      {
+        id: 'caption-group-5',
+        frame: 1,
+        start: 4.76,
+        end: 5.32,
+        text: 'Quanto tá',
+        words: [
+          { id: 'caption-word-5-0', text: 'Quanto', start: 4.76, end: 5.12 },
+          { id: 'caption-word-5-1', text: 'tá', start: 5.12, end: 5.32 },
+        ],
+      },
+      {
+        id: 'caption-group-6',
+        frame: 1,
+        start: 5.32,
+        end: 5.68,
+        text: 'o bolo',
+        words: [
+          { id: 'caption-word-6-0', text: 'o', start: 5.32, end: 5.44 },
+          { id: 'caption-word-6-1', text: 'bolo', start: 5.44, end: 5.68 },
+        ],
+      },
+      {
+        id: 'caption-group-7',
+        frame: 1,
+        start: 5.68,
+        end: 6.24,
+        text: 'de chocolate?',
+        words: [
+          { id: 'caption-word-7-0', text: 'de', start: 5.68, end: 5.82 },
+          { id: 'caption-word-7-1', text: 'chocolate?', start: 5.82, end: 6.12 },
+        ],
+      },
+      {
+        id: 'caption-group-8',
+        frame: 1,
+        start: 6.86,
+        end: 7.12,
+        text: 'Ah,',
+        words: [{ id: 'caption-word-8-0', text: 'Ah,', start: 6.86, end: 7 }],
+      },
+      {
+        id: 'caption-group-9',
+        frame: 1,
+        start: 7.2,
+        end: 8.2,
+        text: 'e aceita Pix?',
+        words: [
+          { id: 'caption-word-9-0', text: 'e', start: 7.2, end: 7.28 },
+          { id: 'caption-word-9-1', text: 'aceita', start: 7.28, end: 7.68 },
+          { id: 'caption-word-9-2', text: 'Pix?', start: 7.68, end: 8.08 },
+        ],
+      },
+      {
+        id: 'caption-group-10',
+        frame: 2,
+        start: 8.4,
+        end: 9.81,
+        text: 'Áudio de 47',
+        words: [
+          { id: 'caption-word-10-0', text: 'Áudio', start: 8.4, end: 8.85 },
+          { id: 'caption-word-10-1', text: 'de', start: 8.85, end: 9.01 },
+          { id: 'caption-word-10-2', text: '47', start: 9.01, end: 9.81 },
+        ],
+      },
+      {
+        id: 'caption-group-11',
+        frame: 2,
+        start: 9.81,
+        end: 10.49,
+        text: 'segundos.',
+        words: [{ id: 'caption-word-11-0', text: 'segundos.', start: 9.81, end: 10.49 }],
+      },
+      {
+        id: 'caption-group-12',
+        frame: 2,
+        start: 10.49,
+        end: 12.39,
+        text: 'Enquanto o bolo tá',
+        words: [
+          { id: 'caption-word-12-0', text: 'Enquanto', start: 10.49, end: 11.63 },
+          { id: 'caption-word-12-1', text: 'o', start: 11.63, end: 11.99 },
+          { id: 'caption-word-12-2', text: 'bolo', start: 11.99, end: 12.21 },
+          { id: 'caption-word-12-3', text: 'tá', start: 12.21, end: 12.39 },
+        ],
+      },
+      {
+        id: 'caption-group-13',
+        frame: 2,
+        start: 12.39,
+        end: 13.85,
+        text: 'no forno.',
+        words: [
+          { id: 'caption-word-13-0', text: 'no', start: 12.39, end: 12.53 },
+          { id: 'caption-word-13-1', text: 'forno.', start: 12.53, end: 13.85 },
+        ],
+      },
+      {
+        id: 'caption-group-14',
+        frame: 2,
+        start: 13.85,
+        end: 14.21,
+        text: 'E ainda',
+        words: [
+          { id: 'caption-word-14-0', text: 'E', start: 13.85, end: 14.01 },
+          { id: 'caption-word-14-1', text: 'ainda', start: 14.01, end: 14.21 },
+        ],
+      },
+      {
+        id: 'caption-group-15',
+        frame: 2,
+        start: 14.21,
+        end: 14.91,
+        text: 'tem mais',
+        words: [
+          { id: 'caption-word-15-0', text: 'tem', start: 14.21, end: 14.51 },
+          { id: 'caption-word-15-1', text: 'mais', start: 14.51, end: 14.91 },
+        ],
+      },
+      {
+        id: 'caption-group-16',
+        frame: 2,
+        start: 14.91,
+        end: 15.73,
+        text: 'na fila.',
+        words: [
+          { id: 'caption-word-16-0', text: 'na', start: 14.91, end: 15.09 },
+          { id: 'caption-word-16-1', text: 'fila.', start: 15.09, end: 15.61 },
+        ],
+      },
+      {
+        id: 'caption-group-17',
+        frame: 3,
+        start: 15.85,
+        end: 16.81,
+        text: 'Com o Venduá,',
+        words: [
+          { id: 'caption-word-17-0', text: 'Com', start: 15.85, end: 16.09 },
+          { id: 'caption-word-17-1', text: 'o', start: 16.09, end: 16.21 },
+          { id: 'caption-word-17-2', text: 'Venduá,', start: 16.21, end: 16.69 },
+        ],
+      },
+      {
+        id: 'caption-group-18',
+        frame: 3,
+        start: 16.95,
+        end: 18.33,
+        text: 'você responde com um',
+        words: [
+          { id: 'caption-word-18-0', text: 'você', start: 16.95, end: 17.13 },
+          { id: 'caption-word-18-1', text: 'responde', start: 17.13, end: 17.99 },
+          { id: 'caption-word-18-2', text: 'com', start: 17.99, end: 18.25 },
+          { id: 'caption-word-18-3', text: 'um', start: 18.25, end: 18.33 },
+        ],
+      },
+      {
+        id: 'caption-group-19',
+        frame: 3,
+        start: 18.33,
+        end: 19.13,
+        text: 'link só.',
+        words: [
+          { id: 'caption-word-19-0', text: 'link', start: 18.33, end: 18.65 },
+          { id: 'caption-word-19-1', text: 'só.', start: 18.65, end: 19.01 },
+        ],
+      },
+      {
+        id: 'caption-group-20',
+        frame: 4,
+        start: 19.57,
+        end: 20.81,
+        text: 'Cardápio…',
+        words: [{ id: 'caption-word-20-0', text: 'Cardápio…', start: 19.57, end: 20.69 }],
+      },
+      {
+        id: 'caption-group-21',
+        frame: 4,
+        start: 21.21,
+        end: 23.49,
+        text: 'preço… e Pix.',
+        words: [
+          { id: 'caption-word-21-0', text: 'preço…', start: 21.21, end: 22.19 },
+          { id: 'caption-word-21-1', text: 'e', start: 22.19, end: 23.03 },
+          { id: 'caption-word-21-2', text: 'Pix.', start: 23.03, end: 23.37 },
+        ],
+      },
+      {
+        id: 'caption-group-22',
+        frame: 5,
+        start: 24.35,
+        end: 24.63,
+        text: 'E o',
+        words: [
+          { id: 'caption-word-22-0', text: 'E', start: 24.35, end: 24.51 },
+          { id: 'caption-word-22-1', text: 'o', start: 24.51, end: 24.63 },
+        ],
+      },
+      {
+        id: 'caption-group-23',
+        frame: 5,
+        start: 24.63,
+        end: 26.85,
+        text: 'pedido chega sozinho.',
+        words: [
+          { id: 'caption-word-23-0', text: 'pedido', start: 24.63, end: 25.29 },
+          { id: 'caption-word-23-1', text: 'chega', start: 25.29, end: 25.79 },
+          { id: 'caption-word-23-2', text: 'sozinho.', start: 25.79, end: 26.73 },
+        ],
+      },
+    ];
+    var DURATION = 36.1;
+
+    (function () {
+      var stage = document.getElementById('caption-stage');
+
+      // build DOM: one .caption-group per group, .caption-word per word
+      GROUPS.forEach(function (group, g) {
+        var groupEl = document.createElement('div');
+        groupEl.className = 'caption-group';
+        groupEl.id = 'caption-group-' + g;
+        var pill = document.createElement('div');
+        pill.className = 'caption-pill';
+        var line = document.createElement('div');
+        line.className = 'caption-line';
+        (group.words || []).forEach(function (w, i) {
+          var span = document.createElement('span');
+          span.className = 'caption-word';
+          span.id = 'caption-word-' + g + '-' + i;
+          span.textContent = String(w.text);
+          line.appendChild(span);
+        });
+        pill.appendChild(line);
+        groupEl.appendChild(pill);
+        stage.appendChild(groupEl);
+      });
+
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+
+      GROUPS.forEach(function (group, g) {
+        var groupEl = document.getElementById('caption-group-' + g);
+        var words = group.words || [];
+        var next = GROUPS[g + 1];
+        var isLast = g === GROUPS.length - 1;
+        var start = Math.max(0, Number(group.start));
+        var end = isLast ? DURATION : Math.min(Number(next.start), Number(group.end) + 0.3);
+        if (end <= start) end = start + 0.01;
+
+        // group on/off — exactly one group visible at a time
+        tl.set(groupEl, { opacity: 1 }, start);
+        tl.set(groupEl, { opacity: 0 }, end);
+
+        // 3-state karaoke via className SETS — seek-safe (gsap.set applies on the
+        // engine's frame-by-frame seek; .call callbacks would NOT fire).
+        words.forEach(function (w, i) {
+          var el = document.getElementById('caption-word-' + g + '-' + i);
+          var at = Math.max(start, Number(w.start));
+          tl.set(el, { className: 'caption-word' }, start); // upcoming (also resets on reverse-seek)
+          tl.set(el, { className: 'caption-word is-active' }, at); // current
+          tl.fromTo(el, { scale: 0.985 }, { scale: 1, duration: 0.18, ease: 'power1.out' }, at);
+          if (i + 1 < words.length) {
+            var nextAt = Math.max(start, Number(words[i + 1].start));
+            tl.set(el, { className: 'caption-word is-spoken' }, nextAt); // demote when next activates
+          }
+        });
+        if (words.length) {
+          var lastEl = document.getElementById('caption-word-' + g + '-' + (words.length - 1));
+          var lastSpoken = Math.min(end, Number(words[words.length - 1].end) + 0.1);
+          tl.set(lastEl, { className: 'caption-word is-spoken' }, lastSpoken);
+        }
+      });
+
+      // full-span anchor so the sub-comp timeline spans the whole video
+      tl.to({}, { duration: DURATION }, 0);
+      window.__timelines['captions'] = tl;
+    })();
+  </script>
+
+  <style>
+    .caption-line {
+      line-height: 1.1 !important;
+    }
+  </style>
+</template>

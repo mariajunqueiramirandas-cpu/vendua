@@ -1,7 +1,7 @@
 # SCRIPT — vendua-audio-47s
 
-**Voice:** two ElevenLabs voices, picked after this script is approved — the customer (Luiz) and the narrator
-**Voice settings:** to tune per voice (customer: lower stability for a natural, rambling voice note; narrator: steady)
+**Voice:** ElevenLabs eleven_v3 — Luiz: Talis (E9a8LlXPNWtyvvSoZzrb); narrator: Adriane (mmTLZX6tO1YdiYVoUVN5), picked by the user (Bruna da Costa needs a Creator plan)
+**Voice settings:** model defaults with eleven_v3 audio tags; post: Luiz band-limited (phone-mic feel) with pauses cut to ~0.35 s; narrator at 1.06× tempo with pauses ≤ 0.42 s. Takes used: Luiz B, lines 2A 3B 4B 5B 6B (files in `audio/vo/`, padded per frame in `audio/frames/`)
 **Voice direction:** Brazilian Portuguese. The customer sounds like a real voice note: casual, friendly, a little hesitant, recorded on a phone. The narrator is warm, direct and brief, a helpful friend who runs a shop; a touch wry in Line 2, plain and confident in the CTA.
 
 ---
