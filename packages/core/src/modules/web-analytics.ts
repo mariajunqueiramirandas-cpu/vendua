@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Context, Hono } from 'hono';
+import type { PendingQuery, Row } from 'postgres';
 import type { Sql } from '../platform/db.ts';
 import { bodyJson, clientIp, HttpError } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
@@ -251,7 +252,11 @@ export async function storefrontReport(sql: Sql, days: ReportDays): Promise<Stor
   const today = brDay();
   return controlTx(sql, async (tx) => {
     const from = tx`(${today}::date - ${days - 1}::int)`;
-    const since = tx`${from}::timestamp at time zone ${TZ}`;
+    // client clocks may run up to a day ahead (ingest accepts them): the window ends with today,
+    // as the daily series does
+    const inWindow = (at: PendingQuery<Row[]>) =>
+      tx`${at} >= ${from}::timestamp at time zone ${TZ}
+        and ${at} < (${today}::date + 1)::timestamp at time zone ${TZ}`;
     // `order_placed` is Core's and keyed by cart, so it counts as a step, never as a session
     const funnel = tx`
       count(distinct e.session_id) filter (where e.name = 'page_view')::int as sessions,
@@ -264,14 +269,14 @@ export async function storefrontReport(sql: Sql, days: ReportDays): Promise<Stor
     const od = tx`store_order_days(${from})`;
     const [totals, orderTotals, sessionDays, orderDays, stores] = await Promise.all([
       tx<Omit<Funnel, 'orders' | 'revenueCents'>[]>`
-        select ${funnel} from analytics_events e where e.at >= ${since}
+        select ${funnel} from analytics_events e where ${inWindow(tx`e.at`)}
       `,
       tx<{ orders: number; revenueCents: string; avgTicketCents: number | null; stores: number }[]>`
         select coalesce(sum(orders), 0)::int as orders,
           coalesce(sum(revenue_cents), 0)::bigint as "revenueCents",
           round(sum(revenue_cents)::numeric / nullif(sum(orders), 0))::int as "avgTicketCents",
           (select count(*) from (
-            select tenant_id from analytics_events where at >= ${since}
+            select tenant_id from analytics_events where ${inWindow(tx`at`)}
             union select tenant_id from ${od}
           ) x)::int as stores
         from ${od}
@@ -298,7 +303,7 @@ export async function storefrontReport(sql: Sql, days: ReportDays): Promise<Stor
       >`
         with ev as (
           select e.tenant_id, ${funnel} from analytics_events e
-          where e.at >= ${since} group by e.tenant_id
+          where ${inWindow(tx`e.at`)} group by e.tenant_id
         ), o as (
           select tenant_id, sum(orders)::int as orders, sum(revenue_cents)::bigint as revenue
           from ${od} group by tenant_id

@@ -250,6 +250,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
         insert into analytics_events (tenant_id, name, at, session_id, props) values
           (${tenantId}, 'page_view', now(), 's1aaaaaaaa', '{}'),
           (${tenantId}, 'page_view', now(), 's2aaaaaaaa', '{}'),
+          (${tenantId}, 'page_view', now() + interval '2 days', 's3future00', '{}'),
           (${tenantId}, 'add_to_cart', now(), 's1aaaaaaaa', '{}'),
           (${tenantId}, 'checkout_start', now(), 's1aaaaaaaa', '{}'),
           (${tenantId}, 'order_placed', now(), 'cartaaaaaa', ${tx.json({ value: 4590 })})
