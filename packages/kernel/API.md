@@ -261,6 +261,19 @@ state? })` → `GET /storefront/v1/geocode` (`{ point: GeoPoint | null }`), quot
   `'estimate'` (straight line × 1.3, while no route could be had); `zoneKind`/`DeliveryZone.kind`
   may be `'distance'` (a quote only — never in the zone list).
 
+### Closed hours take only encomendas (Kernel 1.16)
+
+Additive — no storefront edit. Core stops a closed store's checkout with `STORE_CLOSED` (423;
+`details.resumesAt`, `details.preordersOnly`) unless every line is an encomenda and the merchant
+lets encomendas in while closed.
+
+- `StoreProfile.preorder.whileClosed` (optional): a closed store still takes a cart made only of
+  encomendas; `false` = no orders while closed.
+- `takesOrders(status, store, items)` (rules) is that gate; `CheckoutButton` is blocked
+  (`data-state="blocked"`) whenever it says no, and the Kernel's cart and checkout pages say why
+  (`[data-part="closed-note"]`) and hold the confirm button. A `STORE_CLOSED` or `STORE_PAUSED`
+  answer to checkout rereads the store.
+
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's.
@@ -352,6 +365,7 @@ separate function a store may skip for its own voice. Additive — no storefront
 - `todayHours` `(hours, now?)` — today's windows, a special day (`hours.specialDays`) first.
 - `statusHint` `({ status, closesAt?, resumesAt? })` — `open-until` / `opens` / `paused-until` / `open` / `closed` / `paused`; a time only when Core served one.
 - `statusWords` `(hint, timeZone, now?)` — `Aberto até 18:00`, `Abre amanhã às 09:00`, `Pausado até 14:30`, `Fechado`.
+- `takesOrders` `(status, store, items)` — 1.16: Core's checkout gate. Open takes any cart, paused none; closed takes a cart only when every line `requiresPreorder` and `store.preorder.whileClosed` is on (a Core without the flag takes any cart while closed).
 
 **Delivery** (`rules/delivery.ts`)
 

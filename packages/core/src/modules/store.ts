@@ -56,6 +56,8 @@ export interface StoreSettingsRow {
   // Phase 2 (migration 0051) — optional so pre-0051 fixtures still type
   preorder_payment_methods?: string[];
   preorder_max_days?: number;
+  /** migration 0079: a closed store still takes a cart made only of encomendas */
+  preorders_while_closed?: boolean;
   loyalty?: LoyaltyProgram | null;
   pix_key?: string | null;
   pix_key_type?: 'cpf' | 'cnpj' | 'email' | 'phone' | 'random' | null;

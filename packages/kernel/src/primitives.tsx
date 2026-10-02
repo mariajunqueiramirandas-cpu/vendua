@@ -20,6 +20,7 @@ import {
   useStoreStatus,
 } from './hooks.ts';
 import { MAX_LINE_QTY } from './rules/card.ts';
+import { takesOrders } from './rules/hours.ts';
 import { mediaSrcSet, plural } from './rules/format.ts';
 import { digitsOf, isValidPhone } from './rules/phone.ts';
 import { useKernel, prefetchQuery } from './provider.tsx';
@@ -312,15 +313,21 @@ export interface CheckoutButtonProps {
   className?: string;
 }
 
-/** Starts the checkout session; disabled while paused, empty or below the minimum. */
+/** Starts the checkout session; disabled while paused, empty or below the minimum, and while
+ *  closed unless the store takes this cart then (`takesOrders`). */
 export function CheckoutButton({ asChild, children, onStart, className }: CheckoutButtonProps) {
   const { api } = useKernel();
-  const { status } = useStore();
+  const { store } = useStore();
+  // re-reads the store when it opens, so the button wakes up by itself
+  const { status } = useStoreStatus();
   const { cart } = useCart();
   const go = useNavigateTo();
   const [pending, setPending] = useState(false);
   const empty = !cart || cart.status !== 'open' || cart.items.length === 0;
-  const blocked = empty || status === 'paused' || cart.totals.belowMinOrder;
+  const blocked =
+    empty ||
+    (status !== undefined && !takesOrders(status, store, cart.items)) ||
+    cart.totals.belowMinOrder;
   const disabled = pending || blocked;
   return withChild(
     asChild,

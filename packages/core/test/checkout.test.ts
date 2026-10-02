@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { validateCheckout, type CheckoutInput } from '../src/modules/checkout.ts';
 import { canTransition } from '../src/modules/orders.ts';
 import type { CartView } from '../src/modules/cart.ts';
+import type { ProductDetail } from '../src/modules/catalog.ts';
 import type { StoreSettingsRow } from '../src/modules/store.ts';
 
 const open = { status: 'open' as const };
@@ -96,6 +97,15 @@ function cart(subtotalCents: number): CartView {
   };
 }
 
+function encomendas(subtotalCents: number): CartView {
+  const c = cart(subtotalCents);
+  return {
+    ...c,
+    items: c.items.map((i) => ({ ...i, requiresPreorder: true, preorderLeadDays: 1 })),
+    schedule: { ...c.schedule, required: true, leadDays: 1 },
+  };
+}
+
 const code = (fn: () => unknown) => {
   try {
     fn();
@@ -111,8 +121,37 @@ describe('validateCheckout', () => {
       'STORE_PAUSED',
     );
   });
-  test('closed store → proceeds (preorder for next window)', () => {
-    expect(validateCheckout(closed, settings, cart(2000), pickup, zones).zone).toBeNull();
+  test('closed store → STORE_CLOSED for a regular cart', () => {
+    expect(code(() => validateCheckout(closed, settings, cart(2000), pickup, zones))).toBe(
+      'STORE_CLOSED',
+    );
+  });
+  test('closed store → proceeds when every line is an encomenda', () => {
+    expect(validateCheckout(closed, settings, encomendas(2000), pickup, zones).zone).toBeNull();
+  });
+  test('closed store → STORE_CLOSED when encomendas share the cart with a regular item', () => {
+    const mixed = encomendas(2000);
+    mixed.items = [...mixed.items, { ...cart(500).items[0]!, id: 'j', productId: 'q' }];
+    expect(code(() => validateCheckout(closed, settings, mixed, pickup, zones))).toBe(
+      'STORE_CLOSED',
+    );
+  });
+  test('closed store → STORE_CLOSED when the locked product is no longer an encomenda', () => {
+    const now = new Map([['p', { requiresPreorder: false } as ProductDetail]]);
+    expect(
+      code(() => validateCheckout(closed, settings, encomendas(2000), pickup, zones, now, null)),
+    ).toBe('STORE_CLOSED');
+  });
+  test('closed store with encomendas off → STORE_CLOSED even for encomendas', () => {
+    const s = { ...settings, preorders_while_closed: false };
+    let err: { code?: string; details?: Record<string, unknown> } = {};
+    try {
+      validateCheckout(closed, s, encomendas(2000), pickup, zones);
+    } catch (e) {
+      err = e as typeof err;
+    }
+    expect(err.code).toBe('STORE_CLOSED');
+    expect(err.details).toEqual({ resumesAt: closed.resumesAt, preordersOnly: false });
   });
   test('pickup when disabled → PICKUP_UNAVAILABLE', () => {
     const s = { ...settings, pickup_enabled: false };
@@ -120,9 +159,9 @@ describe('validateCheckout', () => {
       'PICKUP_UNAVAILABLE',
     );
   });
-  test('closed + pickup disabled → delivery preorder still allowed', () => {
+  test('closed + pickup disabled → delivery encomenda still allowed', () => {
     const s = { ...settings, pickup_enabled: false };
-    expect(validateCheckout(closed, s, cart(1600), delivery, zones).zone?.id).toBe('z1');
+    expect(validateCheckout(closed, s, encomendas(1600), delivery, zones).zone?.id).toBe('z1');
   });
   test('empty cart → EMPTY_CART', () => {
     const empty = { ...cart(0), items: [] };

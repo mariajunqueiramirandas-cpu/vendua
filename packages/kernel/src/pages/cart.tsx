@@ -10,6 +10,7 @@ import { haptic } from '../haptics.ts';
 import { MAX_LINE_QTY } from '../rules/card.ts';
 import type { Vocabulary } from '../rules/copy.ts';
 import { usePageTitle } from '../head.ts';
+import { closedNote } from './closed.ts';
 
 // /sacola — Kernel page (17 — Kernel pages), rendered inside the store's layout.
 // Totals are Core's; the page only wires slots to the cart mutations.
@@ -131,6 +132,7 @@ export function CartContents({
   const currency = store?.currency ?? 'BRL';
   const browse = onClose ?? (() => go(resolvePaths(config).catalog));
   const open = cart?.status === 'open' && cart.items.length > 0;
+  const closed = open ? closedNote(store, cart.items, vocabulary.bag) : null;
 
   if (loading && !cart)
     return <div aria-busy="true" aria-label={`Carregando ${vocabulary.bag}`} className="v-panel" />;
@@ -161,11 +163,18 @@ export function CartContents({
         </>
       }
       checkout={
-        <CheckoutButton asChild>
-          <button type="button" className="v-btn v-btn-accent v-btn-block">
-            Ir para o pagamento
-          </button>
-        </CheckoutButton>
+        <>
+          <CheckoutButton asChild>
+            <button type="button" className="v-btn v-btn-accent v-btn-block">
+              Ir para o pagamento
+            </button>
+          </CheckoutButton>
+          {closed ? (
+            <p className="v-note" role="status" data-part="closed-note">
+              {closed}
+            </p>
+          ) : null}
+        </>
       }
     />
   );
