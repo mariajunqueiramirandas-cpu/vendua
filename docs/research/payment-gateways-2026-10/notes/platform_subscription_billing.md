@@ -150,7 +150,7 @@ Built-in reminders with price tags: Asaas (WhatsApp R$ 0,55/msg, email+SMS R$ 0,
 | Mercado Pago Pix 0,99%                          | 0,39               | 1,0%        | 0,98        | 1,0% | secondary source                                             |
 | Mercado Pago card 3,03% (30d) / 4,98% (instant) | 1,21 / 1,99        | 3,0% / 5,0% | 3,00 / 4,93 |      | assinatura rate unverified                                   |
 | Iugu Pix 0,99%                                  | 0,39               | 1,0%        | 0,98        | 1,0% | + R$ 149/mês plan                                            |
-| Iugu card 3,34%                                 | 1,33               | 3,3%        | 3,31        | 3,3% | fixed component unknown; + R$ 149/mês                        |
+| Iugu card 3,34% + R$ 0,40                       | 1,73               | 4,3%        | 3,71        | 3,7% | fixed fee per fees_comparison (secondary); + R$ 149/mês      |
 | Vindi Pix 0,95% (min 1,60)                      | 1,60               | 4,0%        | 1,60        | 1,6% | + R$ 299/mês plan                                            |
 | Vindi card 2,75% + R$ 0,39                      | 1,49               | 3,7%        | 3,11        | 3,1% | D+30; D+14 3,25%: 1,69 / 3,61                                |
 | Efí Pix cobrança 1,19%                          | 0,47               | 1,2%        | 1,18        | 1,2% |                                                              |

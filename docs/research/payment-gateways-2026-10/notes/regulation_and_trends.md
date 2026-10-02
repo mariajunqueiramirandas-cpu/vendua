@@ -102,7 +102,7 @@ Pix has become the most-used e-commerce method by order count (about half of ord
 
 ### Takeaway
 
-Platforms that take no custody of funds and let each merchant's PSP settle directly are outside BCB's IP perimeter by design; but BCB tightened the net around anyone in the payment flow in Sept-Nov 2025 (IP authorization, capital, BaaS rules, centralized settlement for subcredenciadores). Venduá's "no custody, merchant-owned account" model aligns with the direction of travel (ban on bucket accounts); the exposure is if the platform ever receives funds, defines flows, or splits.
+Not holding funds does not by itself put a platform outside BCB's perimeter: a subcredenciador is defined by enabling merchants to accept payment instruments, not by custody, and the platform/marketplace exemption was not verified here (see Gaps). Venduá's classification needs a legal opinion. BCB tightened the net around anyone in the payment flow in Sept-Nov 2025 (IP authorization, capital, BaaS rules, centralized settlement for subcredenciadores). Venduá's "no custody, merchant-owned account" model aligns with the direction of travel (ban on bucket accounts); the exposure is if the platform ever receives funds, defines flows, or splits.
 
 ### Cited Findings
 
