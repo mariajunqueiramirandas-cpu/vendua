@@ -279,6 +279,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('onboarding (db)', () => {
     expect(await delivery()).toBe(true);
   });
 
+  test('the Pix key item is done when the store takes no Pix', async () => {
+    const pix = async () =>
+      ((await owner('GET', '/onboarding')).body.checklist as any[]).find((x) => x.id === 'pix')
+        .done as boolean;
+    await sql`update store_settings set pix_key = null, payment_methods = '["pix","cash"]'::jsonb where tenant_id = ${tenantId}`;
+    expect(await pix()).toBe(false);
+    await sql`update store_settings set payment_methods = '["cash"]'::jsonb where tenant_id = ${tenantId}`;
+    expect(await pix()).toBe(true);
+  });
+
   test('Mercado Pago connect from the wizard comes back to the wizard — and only to it', async () => {
     const start = await owner('POST', '/payments/mercadopago/connect', { back: 'onboarding' });
     expect(start.status).toBe(200);

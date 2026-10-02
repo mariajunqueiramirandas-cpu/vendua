@@ -21,10 +21,12 @@ import { toast } from '../../ui/Toast.tsx';
 import { ImportFlow } from '../import/ImportFlow.tsx';
 import { Finale, type Pending } from './Finale.tsx';
 import {
+  after,
   answered,
   CHAPTERS,
   chapterOf,
   isStep,
+  landOn,
   LINE,
   POSE,
   FOLLOWS,
@@ -196,18 +198,19 @@ function Flow({
   const first = useRef<{ step: StepId; solo: boolean; resume: StepId | null } | null>(null);
   if (!first.current) {
     const passo = params.get('passo');
-    const saved = [ob.step, readStep(storeId)].find(
-      (x): x is StepId => isStep(x) && x !== 'oi' && x !== 'pronto' && steps.includes(x),
+    // a saved question that dropped out of this store's list (answered elsewhere, Mercado Pago
+    // connected) resumes at the one after it
+    const raw = [ob.step, readStep(storeId)].find(
+      (x): x is StepId => isStep(x) && x !== 'oi' && x !== 'pronto',
     );
+    const landed = raw ? landOn(steps, raw) : null;
+    const saved = landed && landed !== 'pronto' ? landed : undefined;
     const mp = params.get('mp');
     if (isStep(passo) && steps.includes(passo))
       first.current = { step: passo, solo: true, resume: null };
-    else if (mp && steps.includes('mercadopago'))
+    else if (mp && owner)
       first.current = {
-        step:
-          mp === 'connected'
-            ? (steps[steps.indexOf('mercadopago') + 1] ?? 'pronto')
-            : 'mercadopago',
+        step: mp === 'connected' ? after(steps, 'mercadopago') : landOn(steps, 'mercadopago'),
         solo: false,
         resume: null,
       };
@@ -290,6 +293,7 @@ function Flow({
     segment: ob.segment,
     products: products.length,
     hasColors: !!tokens,
+    reached: ob.finishedAt ? ('pronto' as const) : isStep(ob.step) ? ob.step : null,
   };
   const at = steps.indexOf(step);
   // a detour from the finale answers its question and what that question opens, then goes back
@@ -355,6 +359,12 @@ function Flow({
           to: to && steps.includes(to) ? `/bem-vindo?passo=${to}` : c.href,
         };
       }),
+    // delivery the merchant wants but left unpriced: pickup alone already ticks Core's item
+    ...((draft.delivery || ob.skipped.includes('entrega')) &&
+    !answered('entrega', facts) &&
+    ob.checklist.some((c) => c.id === 'delivery' && c.done)
+      ? [{ id: 'entrega', label: 'Preço da entrega', to: '/bem-vindo?passo=entrega' }]
+      : []),
     ...(owner && pay.mercadoPago.available && pay.mercadoPago.status !== 'connected'
       ? [
           {

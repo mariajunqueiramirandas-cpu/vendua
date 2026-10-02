@@ -61,7 +61,13 @@ export async function setupChecklist(
         (s.pickup_enabled && !s.delivery_enabled),
       href: '/loja#entrega',
     },
-    { id: 'pix', label: 'Chave Pix para receber', done: !!s.pix_key, href: '/pagamentos' },
+    {
+      id: 'pix',
+      label: 'Chave Pix para receber',
+      // a store that doesn't take Pix has no key to set
+      done: !!s.pix_key || !(s.payment_methods ?? ['pix']).includes('pix'),
+      href: '/pagamentos',
+    },
     {
       id: 'menu',
       label: '3 produtos com foto',

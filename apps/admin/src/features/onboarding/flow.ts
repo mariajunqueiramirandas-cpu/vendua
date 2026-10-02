@@ -70,6 +70,15 @@ export const isStep = (v: unknown): v is StepId =>
 
 export const chapterOf = (step: StepId) => CHAPTERS.find((c) => c.steps.includes(step)) ?? null;
 
+/** The first of this store's questions that comes after `from` in the map — whether or not
+ *  `from` is still one of them (Mercado Pago drops out once connected). */
+export const after = (steps: StepId[], from: StepId): StepId =>
+  steps.find((s) => ALL_STEPS.indexOf(s) > ALL_STEPS.indexOf(from)) ?? 'pronto';
+
+/** `s` if it's still one of the store's questions, else the next one that is. */
+export const landOn = (steps: StepId[], s: StepId): StepId =>
+  steps.includes(s) ? s : after(steps, s);
+
 export const LINE: Record<StepId, string> = {
   oi: 'Vou montar a sua loja junto com você, sem pressa e sem palavra difícil.',
   tipo: 'Primeiro, me conta: o que você vende?',
@@ -145,6 +154,8 @@ export function answered(
     segment: string | null;
     products: number;
     hasColors: boolean;
+    /** the furthest the wizard got ('pronto' once finished) */
+    reached: StepId | null;
   },
 ): boolean {
   switch (step) {
@@ -172,9 +183,11 @@ export function answered(
     case 'entrega':
       return x.s.zones.some((z) => z.active) || x.s.distancePricing.enabled;
     case 'formas':
-      return false;
+      // the methods always have an answer (Core's defaults): it counts once the owner went past
+      return !!x.reached && ALL_STEPS.indexOf(x.reached) > ALL_STEPS.indexOf('formas');
     case 'pix':
-      return !!x.pay?.pix;
+      // a store that doesn't take Pix has nothing to set here
+      return !!x.pay?.pix || (!!x.pay && !x.pay.methods.includes('pix'));
     case 'mercadopago':
       return x.pay?.mercadoPago.status === 'connected';
     default:
