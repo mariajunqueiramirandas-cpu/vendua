@@ -463,7 +463,10 @@
         var next = GROUPS[g + 1];
         var isLast = g === GROUPS.length - 1;
         var start = Math.max(0, Number(group.start));
-        var end = isLast ? DURATION : Math.min(Number(next.start), Number(group.end) + 0.3);
+        // the last group ends with its own words, not the film: the end card stays clean
+        var end = isLast
+          ? Math.min(DURATION, Number(group.end) + 0.3)
+          : Math.min(Number(next.start), Number(group.end) + 0.3);
         if (end <= start) end = start + 0.01;
 
         // group on/off — exactly one group visible at a time
