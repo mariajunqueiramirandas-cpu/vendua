@@ -267,6 +267,9 @@ func (a *Agent) pair(ctx context.Context, auto, openBrowser bool) {
 }
 
 // poll returns true once approved, false when the code expired or ctx ended.
+// collectGrace outlasts Core's own window for collecting an approved code after it expires.
+const collectGrace = 6 * time.Minute
+
 func (a *Agent) poll(ctx context.Context, pr *api.PairResponse) bool {
 	interval := time.Duration(max(pr.Interval, 1)) * time.Second
 	if a.o.PollInterval > 0 {
@@ -276,7 +279,9 @@ func (a *Agent) poll(ctx context.Context, pr *api.PairResponse) bool {
 	if expiresIn <= 0 {
 		expiresIn = 10 * time.Minute
 	}
-	deadline := time.Now().Add(expiresIn)
+	// Core answers 410 once an unapproved code expires, and still hands out the token for a few
+	// minutes after expiry when it was approved: only a Core that never answers hits this cap
+	deadline := time.Now().Add(expiresIn + collectGrace)
 	for {
 		t := time.NewTimer(interval)
 		select {

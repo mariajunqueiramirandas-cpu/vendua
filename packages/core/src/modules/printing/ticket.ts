@@ -115,7 +115,8 @@ export function renderOrderTicket(
 
     r.bold(true).pair('TOTAL', brl(order.totalCents)).bold(false);
     const method = METHOD[order.payment.method] ?? order.payment.method;
-    const paid = order.payment.status === 'paid';
+    // a partial refund leaves the rest captured: nothing to collect at the door
+    const paid = order.payment.status === 'paid' || order.payment.status === 'partially_refunded';
     const collect = pickup ? 'cobrar na retirada' : 'cobrar na entrega';
     r.text(`${method} - ${paid ? 'PAGO' : collect}`);
     if (order.payment.instructions) r.text(order.payment.instructions);

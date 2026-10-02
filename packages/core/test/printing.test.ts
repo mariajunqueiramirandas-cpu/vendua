@@ -114,6 +114,17 @@ describe('ESC/POS', () => {
     );
     expect(count(uncut, CUT)).toBe(0);
     expect(has(uncut, bytes('*** IMPRESSAO ATRASADA ***'))).toBe(true);
+
+    // a partial refund leaves the rest captured: the door must not charge again
+    const refunded = renderOrderTicket(
+      { ...order, payment: { ...order.payment, status: 'partially_refunded' } },
+      store,
+      { paper: 80, codepage: 'cp850', copies: 1, cut: true },
+      now,
+      now,
+    );
+    expect(has(refunded, bytes('Pix - PAGO'))).toBe(true);
+    expect(has(refunded, bytes('cobrar'))).toBe(false);
   });
 
   test('inputs from the merchant and the agent are bounded', () => {
