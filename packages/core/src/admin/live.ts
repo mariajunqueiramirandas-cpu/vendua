@@ -24,7 +24,9 @@ export type AdminTopic =
   // an alert attempt was recorded (devices, missed alerts)
   | 'alerts'
   // a menu import moved: read, applied, photos re-hosted (id = import id)
-  | 'import';
+  | 'import'
+  // the store's own WhatsApp: connection state, pairing code, opt-outs (id = state)
+  | 'whatsapp';
 
 const liveLog = log.child({ mod: 'admin-live' });
 

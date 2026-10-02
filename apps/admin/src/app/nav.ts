@@ -11,6 +11,7 @@ import {
   Users,
   UsersThree,
   Wallet,
+  WhatsappLogo,
   type Icon,
 } from '@phosphor-icons/react';
 import type { Role } from '../lib/api.ts';
@@ -31,6 +32,7 @@ export const NAV: NavItem[] = [
   { to: '/cardapio', label: 'Cardápio', Icon: ForkKnife, min: 'manager', primary: true },
   { to: '/loja', label: 'Loja', Icon: Storefront, min: 'manager', primary: true },
   { to: '/pagamentos', label: 'Pagamentos', Icon: Wallet, min: 'manager' },
+  { to: '/whatsapp', label: 'WhatsApp', Icon: WhatsappLogo, min: 'manager' },
   { to: '/clientes', label: 'Clientes', Icon: Users, min: 'manager' },
   { to: '/marketing', label: 'Marketing', Icon: Megaphone, min: 'manager' },
   { to: '/aparencia', label: 'Aparência', Icon: PaintBrush, min: 'manager' },

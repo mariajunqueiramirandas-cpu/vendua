@@ -28,6 +28,13 @@ function MoreSheet({
       return n ? `${n} ${n === 1 ? 'cupom ativo' : 'cupons ativos'}` : 'crie um cupom';
     }
     if (to === '/pagamentos' && pay) return pay.pix ? 'Pix configurado' : 'configure seu Pix';
+    const wa = qc.getQueryData<{ state: string }>(qk.whatsapp);
+    if (to === '/whatsapp' && wa)
+      return wa.state === 'open'
+        ? 'avisando seus clientes'
+        : ['logged_out', 'banned', 'error'].includes(wa.state)
+          ? 'precisa de você'
+          : 'avise seus clientes';
     const status = qc.getQueryData<{ incidents: Incident[] }>(qk.helpStatus);
     if (to === '/ajuda' && status?.incidents.some((i) => !i.resolvedAt && i.severity !== 'info'))
       return 'um problema na Venduá agora';
@@ -63,6 +70,7 @@ function MoreSheet({
 
 const HINTS: Record<string, string> = {
   '/clientes': 'quem compra de você',
+  '/whatsapp': 'avisos aos clientes',
   '/aparencia': 'página e cores',
   '/relatorios': 'vendas e horários',
   '/equipe': 'quem ajuda na loja',

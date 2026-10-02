@@ -50,6 +50,8 @@ Copy `.env.example` into the service's environment and fill it in:
 | `MP_PLATFORM_ACCESS_TOKEN`                 | Venduá's own MP account — plan billing (assinatura + Pix)         |
 | `VENDUA_SIGNUP_ACCESS_CODE`                | signup without MP; staff mark the plan invoices paid (≥ 12 chars) |
 | `VENDUA_SECRETS_KEY`                       | seals stores' MP tokens at rest (falls back to SESSION_SECRET)    |
+| `WA_MAX_SESSIONS`                          | stores' WhatsApp sockets one `wa-gateway` holds (default 300)     |
+| `WA_MIN_SEND_GAP_MS` / `WA_MAX_PER_HOUR`   | per-store pacing of shopper messages (1500 ms, 200/h)             |
 | `MP_PAYER_EMAIL`                           | payer email MP requires on Pix (default `pagador@<store domain>`) |
 
 Generate secrets with `openssl rand -hex 32`.
@@ -186,6 +188,24 @@ people who never wrote first, and Instagram can challenge or restrict the accoun
 A logged-out session shows up on the card as "reconectar conta" — log in again
 there. The sidecar is AGPL-3.0 (its `LICENSE`); keep it a separate service.
 
+## Stores' own WhatsApp (order updates to shoppers)
+
+The `wa-gateway` service ([ADR 0026](../adr/0026-store-whatsapp-gateway.md)) runs from Core's
+image with its own entrypoint and links each store's WhatsApp as a device (Baileys, the
+WhatsApp Web protocol). It needs nothing of its own: it shares Core's database role,
+`SESSION_SECRET` and `VENDUA_SECRETS_KEY` (the logins are sealed under them, so both services
+must have the same values). It never migrates; it starts once `core` is healthy.
+
+- A store links its number in the admin (WhatsApp → gerar código) and chooses which order steps
+  message its shoppers. Staff see connects and drops in Discord (`whatsapp.store`); a gateway
+  that stops beating for 2 min while stores need it raises `channel.down` (`whatsapp_lojas`).
+- Scale out by adding replicas: each claims stores by lease up to `WA_MAX_SESSIONS`. A deploy
+  sends SIGTERM; the gateway closes its sockets (logins kept) and hands the leases back, so the
+  new one reconnects every store within seconds. Messages wait in the queue meanwhile (they
+  expire after 6 h).
+- It is an unofficial client: WhatsApp can restrict a number that looks like spam. The gateway
+  only sends order updates to people who ordered, paced per store, with SAIR to stop.
+
 ## 4. Deploy
 
 Boot order is handled by healthchecks: `db` healthy → `core` migrates
@@ -217,16 +237,17 @@ through the edge with the store's Host header (DNS and TLS unchecked).
 
 ## Services
 
-| Service      | Image                                                     | Exposed port   |
-| ------------ | --------------------------------------------------------- | -------------- |
-| `db`         | postgres:16-alpine                                        | internal only  |
-| `core`       | `packages/core/Dockerfile` (Bun)                          | 8787, internal |
-| `edge`       | `packages/edge/Dockerfile` (Bun) — every store            | 8080           |
-| `publish`    | `storefronts/Dockerfile` `target: publish` — one-shot     | none           |
-| `crm`        | `apps/control/Dockerfile` (nginx + conf baked in)         | 80             |
-| `admin`      | `apps/admin/Dockerfile` (nginx + conf baked in)           | 80             |
-| `site`       | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx) | 80             |
-| `ig-sidecar` | `services/ig-sidecar/Dockerfile` (Go)                     | 8790, internal |
+| Service      | Image                                                      | Exposed port   |
+| ------------ | ---------------------------------------------------------- | -------------- |
+| `db`         | postgres:16-alpine                                         | internal only  |
+| `core`       | `packages/core/Dockerfile` (Bun)                           | 8787, internal |
+| `edge`       | `packages/edge/Dockerfile` (Bun) — every store             | 8080           |
+| `publish`    | `storefronts/Dockerfile` `target: publish` — one-shot      | none           |
+| `crm`        | `apps/control/Dockerfile` (nginx + conf baked in)          | 80             |
+| `admin`      | `apps/admin/Dockerfile` (nginx + conf baked in)            | 80             |
+| `site`       | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
+| `ig-sidecar` | `services/ig-sidecar/Dockerfile` (Go)                      | 8790, internal |
+| `wa-gateway` | `packages/core/Dockerfile`, entrypoint `src/wa-gateway.ts` | 8791, internal |
 
 `site` and `publish` share the storefronts Dockerfile's `build` stage, so a deploy runs one
 `bun install` + one vite pass for both (compose/bake dedupe the shared stage).

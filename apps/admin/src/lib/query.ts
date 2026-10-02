@@ -20,6 +20,7 @@ export const qk = {
   store: ['store'] as const,
   onboarding: ['onboarding'] as const,
   payments: ['payments'] as const,
+  whatsapp: ['whatsapp'] as const,
   customers: (p: object) => ['customers', p] as const,
   customer: (phone: string) => ['customers', 'one', phone] as const,
   marketing: ['marketing'] as const,

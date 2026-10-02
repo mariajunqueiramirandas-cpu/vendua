@@ -35,6 +35,7 @@ export const chunks = {
   stock: once(() => import('../features/menu/Stock.tsx')),
   store: once(() => import('../features/store/Store.tsx')),
   payments: once(() => import('../features/payments/Payments.tsx')),
+  whatsapp: once(() => import('../features/whatsapp/Whatsapp.tsx')),
   customers: once(() => import('../features/customers/Customers.tsx')),
   customer: once(() => import('../features/customers/CustomerPage.tsx')),
   marketing: once(() => import('../features/marketing/Marketing.tsx')),
@@ -78,6 +79,7 @@ export type RouteId =
   | 'menu'
   | 'store'
   | 'payments'
+  | 'whatsapp'
   | 'customer'
   | 'customers'
   | 'marketing'
@@ -173,6 +175,12 @@ const ROUTES: RouteDef[] = [
     match: /^\/pagamentos$/,
     chunk: chunks.payments,
     data: (qc) => q(qc, qk.payments, api.payments),
+  },
+  {
+    id: 'whatsapp',
+    match: /^\/whatsapp$/,
+    chunk: chunks.whatsapp,
+    data: (qc) => q(qc, qk.whatsapp, api.whatsapp),
   },
   {
     id: 'customer',

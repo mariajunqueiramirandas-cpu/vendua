@@ -1,3 +1,4 @@
+import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
 import type { Context } from 'hono';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
@@ -641,8 +642,9 @@ export function mountOrders(d: AdminDeps) {
       if (prep) meta.prepMinutes = prep;
       if (refunded) meta.refundedCents = refunded;
       const before = await loadOrderView(tx, t.id, id);
-      await transitionOrder(tx, t.id, id, to, 'merchant', meta);
-      if (to === 'confirmed' && prep) {
+      // the new promise lands before the step, so the shopper's "aceito" message carries it; an
+      // invalid step still throws below and rolls this back with it
+      if (to === 'confirmed' && prep && before.state === 'placed') {
         // accepting with a prep time re-promises the window the customer sees
         const dl = before.delivery;
         const now = Date.now();
@@ -655,6 +657,7 @@ export function mountOrders(d: AdminDeps) {
             where tenant_id = ${t.id} and id = ${id}
           `;
       }
+      await transitionOrder(tx, t.id, id, to, 'merchant', meta);
       await audit(tx, t.id, m, {
         action: `order.${to}`,
         entity: 'order',
@@ -694,8 +697,11 @@ export function mountOrders(d: AdminDeps) {
         update orders set payment = payment || ${tx.json(patch as never)}, updated_at = now()
         where tenant_id = ${t.id} and id = ${id}
       `;
-      if (status === 'paid')
+      if (status === 'paid') {
         await recordOrderStep(tx, t.id, { id, number: cur.number }, 'paid', 'merchant');
+        // the Pix the store confirmed by hand tells the shopper too (once per order: unique)
+        await enqueueOrderMessageTx(tx, t.id, id, 'paid');
+      }
       await audit(tx, t.id, m, {
         action: `order.payment.${status}`,
         entity: 'order',

@@ -5,6 +5,7 @@ Monorepo (bun workspaces): `packages/core` (Hono + Postgres API), `packages/kern
 `packages/ui-defaults` (slot defaults + all default CSS), `packages/templates` (template
 model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages/codemods`,
 `packages/conformance`, `packages/cli`, `apps/control` (staff CRM console, React),
+`packages/core/src/wa-gateway.ts` (stores' own WhatsApp, its own process — ADR 0026),
 `apps/admin` (merchant admin PWA at `/admin/`, API `/admin/v1`),
 `storefronts/*`, `site/`. `docs/README.md` has the architecture.
 

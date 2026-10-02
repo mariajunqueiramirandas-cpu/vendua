@@ -5,6 +5,7 @@ import { loadCartView, loadZoneRows, repriceLines, storeCoords } from './cart.ts
 import { getProductsById, type ProductDetail } from './catalog.ts';
 import { addressParts, composeAddress, validateCheckout, type CheckoutInput } from './checkout.ts';
 import { couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
+import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
 import { normalizePhone } from './customer.ts';
 import { effectiveFee, routeMatches, validCoords, type RouteQuote } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
@@ -303,5 +304,6 @@ export async function placeOrderTx(
       { tenantId, dedupeKey: `onboarding:${tenantId}:first_order` },
     );
   }
+  await enqueueOrderMessageTx(tx, tenantId, orderId, 'placed');
   return orderId;
 }

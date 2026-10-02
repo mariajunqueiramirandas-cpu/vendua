@@ -6,6 +6,7 @@ import { storeOrigin } from '../../platform/store-origin.ts';
 import { ORDER_CHANNEL, loadOrderView, recordOrderStep, type OrderView } from '../orders.ts';
 import type { PaymentAdjustment, PaymentAdjustments } from '../payment-adjustments.ts';
 import { pixPayload, type PixKeyType } from '../pix.ts';
+import { enqueueOrderMessageTx } from '../../store-whatsapp/messages.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import type { StoreSettingsRow } from '../store.ts';
 import {
@@ -708,6 +709,7 @@ export async function syncOrderPayment(
       'paid',
       settled[0]!.provider,
     );
+    await enqueueOrderMessageTx(tx, tenantId, orderId, 'paid');
   }
   return { changed: true, status };
 }

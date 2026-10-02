@@ -202,6 +202,48 @@ services:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
 
+  # Every store's own WhatsApp (ADR 0026): one linked-device socket per store that turned it on.
+  # Core's image, its own process, so a Core deploy or a baileys crash never takes the other
+  # down. Talks only to Postgres (leases, the message queue, sealed logins); never migrates.
+  wa-gateway:
+    build:
+      context: .
+      dockerfile: packages/core/Dockerfile
+    entrypoint: ['bun', 'src/wa-gateway.ts']
+    command: []
+    environment:
+      DATABASE_URL: postgres://vendua_app:${VENDUA_APP_DB_PASSWORD:?set VENDUA_APP_DB_PASSWORD in .env}@db:5432/vendua
+      # Logins are sealed under these: the same values Core has, or nothing opens.
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      VENDUA_SECRETS_KEY: ${VENDUA_SECRETS_KEY:-}
+      # sockets this process holds; a second replica takes the rest (leases split the stores)
+      WA_MAX_SESSIONS: ${WA_MAX_SESSIONS:-300}
+      # per store: pause between messages (plus jitter) and an hourly ceiling
+      WA_MIN_SEND_GAP_MS: ${WA_MIN_SEND_GAP_MS:-1500}
+      WA_MAX_PER_HOUR: ${WA_MAX_PER_HOUR:-200}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BAILEYS_LOG_LEVEL: ${BAILEYS_LOG_LEVEL:-warn}
+    depends_on:
+      # Core migrates on boot; the gateway starts on the schema it expects
+      core:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'bun -e "fetch(''http://127.0.0.1:8791/healthz'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    # SIGTERM closes every socket and hands the leases back; 15 s is its own hard stop
+    stop_grace_period: 20s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
   # Instagram DM transport (services/ig-sidecar, Go + mautrix-meta, AGPL-3.0). Internal
   # only: Core pushes the stored session in and it posts signed events back. Without
   # IG_SIDECAR_SECRET it idles and refuses every call.

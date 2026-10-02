@@ -23,6 +23,7 @@ export type TopicId =
   | 'cardapio'
   | 'loja'
   | 'pagamentos'
+  | 'whatsapp'
   | 'clientes'
   | 'marketing'
   | 'aparencia'
@@ -225,6 +226,32 @@ export const TOPICS: Record<TopicId, Topic> = {
       },
     ],
   },
+  whatsapp: {
+    title: 'WhatsApp',
+    intro: 'Os avisos do pedido que seus clientes recebem pelo número da loja.',
+    items: [
+      {
+        q: 'Como conecto?',
+        a: 'Digite o número do WhatsApp da loja e toque em gerar código. No celular da loja, abra o WhatsApp, vá em Aparelhos conectados, toque em Conectar aparelho e depois em Conectar com número de telefone. Digite o código que aparece aqui.',
+      },
+      {
+        q: 'Continuo usando o WhatsApp normalmente?',
+        a: 'Sim. A Venduá entra como um aparelho conectado, como o WhatsApp Web. As respostas dos clientes chegam no seu celular, como sempre.',
+      },
+      {
+        q: 'Quais avisos o cliente recebe?',
+        a: 'Os que estão ligados em Avisos aos clientes. Cada um mostra a mensagem como o cliente vai ler.',
+      },
+      {
+        q: 'E se o cliente não quiser receber?',
+        a: 'A primeira mensagem diz como parar: é só responder SAIR. Se ele responder VOLTAR, recebe de novo.',
+      },
+      {
+        q: 'Por que o WhatsApp desconectou?',
+        a: 'O WhatsApp desconecta os aparelhos quando alguém remove a Venduá em Aparelhos conectados ou quando o celular da loja fica muitos dias sem abrir o WhatsApp. Conecte de novo com um código novo.',
+      },
+    ],
+  },
   clientes: {
     title: 'Clientes',
     intro: 'Todo mundo que já pediu, pelo telefone.',
@@ -385,6 +412,7 @@ const BY_ROUTE: Partial<Record<RouteId, TopicId>> = {
   product: 'cardapio',
   store: 'loja',
   payments: 'pagamentos',
+  whatsapp: 'whatsapp',
   customers: 'clientes',
   customer: 'clientes',
   marketing: 'marketing',

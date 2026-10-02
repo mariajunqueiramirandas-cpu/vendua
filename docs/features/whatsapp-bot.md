@@ -80,24 +80,23 @@ Proposed, not decided. Order is a suggested build sequence.
 
 ## What we already have
 
-| Piece              | State                                                                                                                                    |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Transport          | baileys (unofficial WhatsApp Web), **one** platform number (`agent/channels/whatsapp.ts`). No per-tenant numbers. Text only on inbound.  |
-| Order birth        | `placeOrderTx` (`modules/place-order.ts:22`), single entry point, behind `idempotency()` in `platform/http.ts`. Orders have no `source`. |
-| Catalog            | `GET /catalog`, `/products/:slug`, modifiers with min/max, pricing rules and quantities, combos, availability schedules                  |
-| Quote and cart     | `/session`, `/cart/items`, `/cart/delivery`, `/quote` (cart session, shopper identified by phone, ADR 0019)                              |
-| Pix                | `createPix` returns `copyPaste` (`payments/provider.ts`); static-key fallback in `modules/pix.ts`                                        |
-| Order transitions  | `transitionOrder` writes an outbox row (`order.<state>`) and `pg_notify`; **nothing messages the shopper**                               |
-| Merchant alerts    | push plus a WhatsApp fallback to owners (`admin/workers.ts`)                                                                             |
-| Planned, not built | WhatsApp Cloud API templates for order status (`architecture/01-core.md:104`)                                                            |
-| ADR / roadmap      | none for a shopper bot; roadmap Phase 7 "WhatsApp intake agent" is merchant onboarding                                                   |
+| Piece              | State                                                                                                                                                                                                            |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transport          | Per store since [ADR 0026](../adr/0026-store-whatsapp-gateway.md): the `wa-gateway` links each store's own number (Baileys). Inbound text reaches `StoreSession.onInbound`; only SAIR/VOLTAR are acted on today. |
+| Order birth        | `placeOrderTx` (`modules/place-order.ts:22`), single entry point, behind `idempotency()` in `platform/http.ts`. Orders have no `source`.                                                                         |
+| Catalog            | `GET /catalog`, `/products/:slug`, modifiers with min/max, pricing rules and quantities, combos, availability schedules                                                                                          |
+| Quote and cart     | `/session`, `/cart/items`, `/cart/delivery`, `/quote` (cart session, shopper identified by phone, ADR 0019)                                                                                                      |
+| Pix                | `createPix` returns `copyPaste` (`payments/provider.ts`); static-key fallback in `modules/pix.ts`                                                                                                                |
+| Order transitions  | Each step queues a `store_wa_messages` row in its own transaction; the store's WhatsApp sends it (ADR 0026)                                                                                                      |
+| Merchant alerts    | push plus a WhatsApp fallback to owners (`admin/workers.ts`)                                                                                                                                                     |
+| Planned, not built | WhatsApp Cloud API templates for order status (`architecture/01-core.md:104`)                                                                                                                                    |
+| ADR / roadmap      | none for a shopper bot; roadmap Phase 7 "WhatsApp intake agent" is merchant onboarding                                                                                                                           |
 
 ## Open decisions
 
-1. **Transport.** Official Cloud API per tenant (compliant, template and window
-   rules, per-message costs, needs onboarding via Embedded Signup) versus the
-   existing unofficial socket pool (cheap, fast, ban risk on the merchant's
-   own number). This decides almost everything else; it needs an ADR.
+1. **Transport.** Decided (2026-10-02): the unofficial client per store, on the
+   `wa-gateway` ([ADR 0026](../adr/0026-store-whatsapp-gateway.md)). Order
+   updates run on it; an ordering bot would sit on its `onInbound` hook.
 2. **Whose number?** Merchant's own (coexistence limits apply) or a Venduá
    number per store.
 3. **Scope.** Link-sender (cheap, what Delivery Direto does) versus full
