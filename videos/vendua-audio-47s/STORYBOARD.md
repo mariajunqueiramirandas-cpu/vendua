@@ -174,7 +174,7 @@ Scene 4 (2.9–3.7s): hold on "só." — still.
 - voiceover: "Cardápio… preço… e Pix."
 - duration: 4.4s
 - transition_in: crossfade
-- status: built
+- status: animated
 - src: compositions/frames/04-cardapio-preco-pix.html
 - type: feature_showcase
 - persuasion: Show-don't-tell proof (each question answered by a real screen)

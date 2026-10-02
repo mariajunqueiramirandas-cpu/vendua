@@ -1,0 +1,314 @@
+<template>
+  <style>
+    @font-face {
+      font-family: 'Space Grotesk Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 700;
+      src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2')
+        format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Figtree Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 900;
+      src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: normal;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: italic;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-italic.woff2') format('woff2');
+    }
+
+    #root {
+      position: relative;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+      font-family: 'Figtree Variable', sans-serif;
+    }
+
+    /* cream ground + static seeded paper grain (forest-tinted, ~2%) */
+    .\30 4-cardapio-preco-pix-ground {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+      container-type: size;
+      background-color: #f7f4ea;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1080' height='1920' viewBox='0 0 1080 1920'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.071 0 0 0 0 0.235 0 0 0 0 0.196 0 0 0 2.4 -1'/%3E%3C/filter%3E%3Crect width='1080' height='1920' filter='url(%23g)' opacity='0.08'/%3E%3C/svg%3E");
+      background-size: 1080px 1920px;
+      background-repeat: no-repeat;
+    }
+
+    .\30 4-cardapio-preco-pix-stage {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+    }
+
+    /* virtual camera: outer scales around the frame centre, inner counter-translates */
+    .\30 4-cardapio-preco-pix-cam-outer,
+    .\30 4-cardapio-preco-pix-cam-inner {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+      transform-origin: 50% 50%;
+    }
+
+    /* CSS phone — geometry shared with frame 05 */
+    .\30 4-cardapio-preco-pix-settle {
+      position: absolute;
+      left: 295px;
+      top: 248px;
+      width: 490px;
+      height: 1026px;
+    }
+    .\30 4-cardapio-preco-pix-bloom {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 490px;
+      height: 1026px;
+      border-radius: 79px;
+      box-shadow:
+        0 8px 16px rgb(18 60 50 / 0.1),
+        0 24px 64px rgb(18 60 50 / 0.16);
+    }
+    .\30 4-cardapio-preco-pix-phone {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 490px;
+      height: 1026px;
+      box-sizing: border-box;
+      padding: 16px;
+      border-radius: 79px;
+      background: linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%);
+      box-shadow:
+        inset 0 0 0 1.5px rgb(255 255 255 / 0.08),
+        0 8px 16px rgb(18 60 50 / 0.12),
+        0 30px 70px rgb(18 60 50 / 0.22);
+    }
+    .\30 4-cardapio-preco-pix-screen {
+      position: relative;
+      width: 458px;
+      height: 994px;
+      border-radius: 64px;
+      overflow: hidden;
+      background: #f6f2e8;
+    }
+    .\30 4-cardapio-preco-pix-strip {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1374px;
+      height: 994px;
+    }
+    .\30 4-cardapio-preco-pix-panel {
+      position: absolute;
+      top: 0;
+      width: 458px;
+      height: 994px;
+      overflow: hidden;
+      background: #f6f2e8;
+    }
+    /* 750x1624 capture = 375x812 CSS px, filling the 458px screen width at native aspect */
+    .\30 4-cardapio-preco-pix-shot {
+      display: block;
+      width: 458px;
+      height: 991.74px;
+    }
+    .\30 4-cardapio-preco-pix-island {
+      position: absolute;
+      top: 13px;
+      left: 160.3px;
+      width: 137.4px;
+      height: 37px;
+      border-radius: 999px;
+      background: #050807;
+      z-index: 2;
+    }
+
+    /* Pix row on the payment capture: CSS box x 15, y 231, 345x53, radius 16 (x 458/375) */
+    .\30 4-cardapio-preco-pix-mark {
+      position: absolute;
+      left: 18.32px;
+      top: 282.13px;
+      width: 421.36px;
+      height: 64.73px;
+      border-radius: 19.54px;
+      transform-origin: 50% 50%;
+    }
+    .\30 4-cardapio-preco-pix-ring {
+      box-shadow:
+        0 0 0 6px #d9f875,
+        0 2px 4px rgb(18 60 50 / 0.08),
+        0 12px 32px rgb(18 60 50 / 0.1);
+    }
+  </style>
+
+  <div
+    id="root"
+    data-composition-id="04-cardapio-preco-pix"
+    data-width="1080"
+    data-height="1920"
+    data-duration="4.4"
+  >
+    <div
+      class="04-cardapio-preco-pix-ground clip"
+      data-start="0"
+      data-duration="4.4"
+      data-track-index="0"
+    ></div>
+
+    <div
+      class="04-cardapio-preco-pix-stage clip"
+      data-start="0"
+      data-duration="4.4"
+      data-track-index="1"
+      data-layout-allow-overflow
+    >
+      <div class="04-cardapio-preco-pix-cam-outer" data-layout-allow-overflow>
+        <div class="04-cardapio-preco-pix-cam-inner" data-layout-allow-overflow>
+          <div class="04-cardapio-preco-pix-settle">
+            <div class="04-cardapio-preco-pix-bloom"></div>
+            <div class="04-cardapio-preco-pix-phone">
+              <div class="04-cardapio-preco-pix-screen">
+                <div class="04-cardapio-preco-pix-strip" data-layout-allow-overflow>
+                  <div class="04-cardapio-preco-pix-panel" style="left: 0px">
+                    <img
+                      class="04-cardapio-preco-pix-shot"
+                      src="assets/vitrine-cardapio-750.webp"
+                      alt="Cardápio da Bolos da Nena"
+                    />
+                  </div>
+                  <div class="04-cardapio-preco-pix-panel" style="left: 458px">
+                    <img
+                      class="04-cardapio-preco-pix-shot"
+                      src="assets/vitrine-produto-750.webp"
+                      alt="Bolo de chocolate molhadinho, R$ 48,00"
+                    />
+                  </div>
+                  <div class="04-cardapio-preco-pix-panel" style="left: 916px">
+                    <img
+                      class="04-cardapio-preco-pix-shot"
+                      src="assets/vitrine-pagamento-750.webp"
+                      alt="Pagamento com Pix selecionado"
+                    />
+                    <div class="04-cardapio-preco-pix-mark 04-cardapio-preco-pix-ring"></div>
+                  </div>
+                </div>
+                <span class="04-cardapio-preco-pix-island"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/vendor/gsap.min.js"></script>
+  <script>
+    (function () {
+      var NS = '04-cardapio-preco-pix';
+      var DURATION = 4.4;
+      var root = document.querySelector('[data-composition-id="' + NS + '"]');
+      var part = function (name) {
+        return root.getElementsByClassName(NS + '-' + name)[0];
+      };
+
+      var settle = part('settle');
+      var bloom = part('bloom');
+      var strip = part('strip');
+      var camOuter = part('cam-outer');
+      var camInner = part('cam-inner');
+      var ring = part('ring');
+
+      // Punch-in target from fixed geometry (no runtime measurement): screen origin 311,264
+      // (phone 295,248 + 16 padding), capture CSS px x 458/375. Target = the title + price block's
+      // horizontal centre (CSS x 137.25) on the "R$ 48,00" line (CSS y 619.6) of the product page.
+      var K = 458 / 375;
+      var TARGET_X = 311 + 137.25 * K;
+      var TARGET_Y = 264 + 619.6 * K;
+      var CX = 540;
+      var CY = 960;
+      var FOCUS_X = 506; // centre of the x 72–940 safe column
+      var FOCUS_Y = 780; // centre of the readable band (y 240–1280)
+      var ZOOM = 1.5; // 750px source shows at 458 x 1.5 = 687px: no upsampling
+      // nested wrappers: final = C + S·(p + T − C)  →  T = (F − C)/S − (p − C)
+      var TX = (FOCUS_X - CX) / ZOOM - (TARGET_X - CX);
+      var TY = (FOCUS_Y - CY) / ZOOM - (TARGET_Y - CY);
+
+      var SCREEN_W = 458;
+
+      var tl = gsap.timeline({ paused: true });
+
+      // Scene 1 — the phone settles in on the cardápio: short drop, lifted shadow lands
+      tl.fromTo(
+        settle,
+        { y: -24, scale: 0.97 },
+        { y: 0, scale: 1, duration: 0.9, ease: 'power3.out' },
+        0,
+      );
+      tl.fromTo(bloom, { opacity: 1 }, { opacity: 0, duration: 0.9, ease: 'power2.out' }, 0);
+
+      // Scene 2 — "preço": swipe to the product page, then punch in on R$ 48,00 and hold
+      tl.fromTo(strip, { x: 0 }, { x: -SCREEN_W, duration: 0.6, ease: 'expo.out' }, 1.7);
+      tl.fromTo(camOuter, { scale: 1 }, { scale: ZOOM, duration: 1.0, ease: 'power3.inOut' }, 1.8);
+      tl.fromTo(
+        camInner,
+        { x: 0, y: 0 },
+        { x: TX, y: TY, duration: 1.0, ease: 'power3.inOut' },
+        1.8,
+      );
+
+      // Scene 3 — "Pix": swipe to the payment step while the camera eases back to the full phone
+      tl.fromTo(
+        strip,
+        { x: -SCREEN_W },
+        { x: -2 * SCREEN_W, duration: 0.6, ease: 'expo.out', immediateRender: false },
+        3.52,
+      );
+      tl.fromTo(
+        camOuter,
+        { scale: ZOOM },
+        { scale: 1, duration: 0.62, ease: 'power3.out', immediateRender: false },
+        3.52,
+      );
+      tl.fromTo(
+        camInner,
+        { x: TX, y: TY },
+        { x: 0, y: 0, duration: 0.62, ease: 'power3.out', immediateRender: false },
+        3.52,
+      );
+
+      // 3.83 — the lime ring lands on the Pix row (contracts onto it and settles)
+      tl.fromTo(
+        ring,
+        { opacity: 0, scale: 1.035 },
+        { opacity: 1, scale: 1, duration: 0.5, ease: 'power3.out' },
+        3.83,
+      );
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['04-cardapio-preco-pix'] = tl;
+    })();
+  </script>
+</template>
