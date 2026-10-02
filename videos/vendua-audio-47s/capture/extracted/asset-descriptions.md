@@ -66,8 +66,8 @@ the Venduá Basic look) running Bolos da Nena on the dev database, 375×812 CSS 
   brigadeiro R$ 45,00, Bolo de chocolate molhadinho R$ 48,00, each with a "+" button.
 - `vitrine-produto-750.webp` — the product page of Bolo de chocolate molhadinho, R$ 48,00, quantity
   1 and "Adicionar à sacola R$ 48,00". The "preço" beat.
-- `vitrine-pagamento-750.webp` — Finalizar pedido, step Pagamento: Pix selected (radio), Cartão na
-  entrega, Dinheiro; "Confirmar pedido · R$ 48,00". The "Pix" beat.
-- `vitrine-pix-750.webp` — the order page after confirming: "Pedido #1 recebido! R$ 48,00 · Pix",
-  "Pague com Pix R$ 48,00", "Copiar código Pix", Pix copia e cola. Not used: its "#1" would contradict
-  order #29 in Frame 5.
+- `vitrine-pagamento-750.webp` — Finalizar pedido, step Pagamento, carrying order #29's cart (2× Bolo
+  de chocolate molhadinho, 1× Bolo de laranja com calda, 2× Bolo de milho cremoso, delivery to
+  Centro): Pix selected (radio), Cartão na entrega, Dinheiro; Sacola 5; "Confirmar pedido · R$
+  219,00", the total Frame 5's order #29 arrives with. The "Pix" beat. No order is placed: its
+  number would not be #29.

@@ -1,7 +1,7 @@
 // Real phone screenshots of the customer storefront of the fictional store Bolos da Nena, for
 // Frame 4 (cardápio, preço, Pix). Dev database only: it turns the seed store into Bolos da Nena the
-// way site/scripts/assets.ts does (menu, hours, delivery zones), sets a Pix key so the order page
-// shows the QR, opens the store for the shoot and puts the hours back after.
+// way site/scripts/assets.ts does (menu, hours, delivery zones), sets a Pix key, opens the store for
+// the shoot and puts the hours back after. The checkout carries order #29's cart up to the Pix step.
 //
 // Needs Core on :8787 started with VENDUA_ADMIN_DEV_OTP=1, and `bun run dev` in storefronts/_template
 // (:5175). Run: node videos/vendua-audio-47s/scripts/storefront-shots.mjs
@@ -162,17 +162,37 @@ try {
   await page.waitForTimeout(800);
   await webp(page, 'vitrine-cardapio');
 
-  // Luiz's cake: open it, add it, check out
   await page.getByText('Bolo de chocolate molhadinho').first().click();
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(500);
   await webp(page, 'vitrine-produto');
-  await page.locator('[data-vendua="add-to-cart"]').first().click();
-  await page.waitForTimeout(600);
-  const trigger = page.locator('[data-vendua="cart-trigger"]').first();
-  if (await trigger.count()) await trigger.click();
-  else await page.goto(`${STORE}/sacola`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(500);
+
+  // the cart of order #29, the one Frame 5's push and order screen show (site/scripts/assets.ts)
+  const ORDER_29 = [
+    ['Bolo de chocolate molhadinho', 2],
+    ['Bolo de laranja com calda', 1],
+    ['Bolo de milho cremoso', 2],
+  ];
+  for (const [name] of ORDER_29) {
+    if (name !== ORDER_29[0][0]) {
+      await page.goto(`${STORE}/cardapio`, { waitUntil: 'networkidle' });
+      await page.getByText(name).first().click();
+      await page.waitForLoadState('networkidle');
+    }
+    await page.locator('[data-vendua="add-to-cart"]').first().click();
+    await page.waitForTimeout(700);
+  }
+  // each add opens the cart: the quantities go on its lines' steppers
+  const checkout = page.locator('[data-vendua="checkout-button"]').first();
+  if (!(await checkout.isVisible()))
+    await page.locator('[data-vendua="cart-trigger"]').first().click();
+  for (const [name, qty] of ORDER_29) {
+    const line = page.locator('[data-vendua="cart-line"]', { hasText: name });
+    for (let i = 1; i < qty; i++) {
+      await line.getByRole('button', { name: 'aumentar' }).click();
+      await page.waitForTimeout(600);
+    }
+  }
   await page.locator('[data-vendua="checkout-button"]').first().click();
   await page.waitForLoadState('networkidle');
   await page
@@ -185,11 +205,15 @@ try {
     .first()
     .click();
   await page.waitForTimeout(600);
+  // #29 is a delivery to Centro (the R$ 5,00 zone)
   await page
-    .getByRole('radio', { name: /retirada|retirar/i })
+    .getByRole('radio', { name: /entrega|entregar/i })
     .first()
     .click({ force: true });
   await page.waitForTimeout(300);
+  await page.locator('input[name="neighborhood"]').fill('Centro');
+  await page.locator('input[name="street"]').fill('Rua Tenente Coronel Cardoso');
+  await page.locator('input[name="number"]').fill('118');
   await page
     .getByRole('button', { name: /continuar/i })
     .first()
@@ -200,15 +224,11 @@ try {
   await pix.click({ force: true, timeout: 5000 });
   if (!(await pix.isChecked())) throw new Error('the Pix option did not get selected');
   await page.waitForTimeout(400);
+  const confirm = page.getByRole('button', { name: /confirmar pedido/i }).first();
+  if (!/219,00/.test(await confirm.innerText()))
+    throw new Error(`the cart is not order #29's: ${await confirm.innerText()}`);
+  // no order is placed: its number would not be #29
   await webp(page, 'vitrine-pagamento');
-  await page
-    .getByRole('button', { name: /confirmar|finalizar|fazer pedido|enviar pedido/i })
-    .first()
-    .click();
-  await page.waitForURL(/\/pedido\//, { timeout: 15000 });
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(800);
-  await webp(page, 'vitrine-pix');
 } finally {
   await browser?.close();
   await api('PATCH', '/store', { hours: NENA_HOURS }).catch((e) =>
