@@ -144,7 +144,7 @@ Scene 6 (6.9–7.4s): hold, still. The slots and offsets are the sketch's.
 - voiceover: "Com o Venduá, você responde com um link só."
 - duration: 3.7s
 - transition_in: zoom-through
-- status: built
+- status: animated
 - src: compositions/frames/03-um-link.html
 - type: product_intro
 - persuasion: Friction reduction (many answers → one link)

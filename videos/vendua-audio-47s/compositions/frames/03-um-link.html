@@ -1,0 +1,313 @@
+<template>
+  <style>
+    @font-face {
+      font-family: 'Space Grotesk Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 700;
+      src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2')
+        format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Figtree Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 900;
+      src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: normal;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: italic;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-italic.woff2') format('woff2');
+    }
+
+    #root {
+      --canvas: #f7f4ea;
+      --ink: #123c32;
+      --spark: #d9f875;
+      --e1: 0 1px 2px rgb(18 60 50 / 0.06), 0 4px 16px rgb(18 60 50 / 0.05);
+      --e2: 0 2px 4px rgb(18 60 50 / 0.08), 0 12px 32px rgb(18 60 50 / 0.1);
+      position: relative;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+      container-type: size;
+      font-family: 'Figtree Variable', sans-serif;
+      color: var(--ink);
+    }
+
+    /* full-bleed ground: cream + static seeded paper grain */
+    [class~='03-um-link-bg'] {
+      position: absolute;
+      inset: 0;
+      width: 1080px;
+      height: 1920px;
+      background: var(--canvas);
+    }
+    [class~='03-um-link-grain'] {
+      position: absolute;
+      inset: 0;
+      width: 1080px;
+      height: 1920px;
+      opacity: 0.09;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.071 0 0 0 0 0.235 0 0 0 0 0.196 1.7 0 0 0 -0.6'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-size: 400px 400px;
+    }
+
+    [class~='03-um-link-stage'] {
+      position: absolute;
+      inset: 0;
+      width: 1080px;
+      height: 1920px;
+    }
+
+    /* ghosts sit on Frame 2's pile slots (Luiz's at its 0.94 settle) */
+    [class~='03-um-link-ghost'] {
+      position: absolute;
+      width: 648px;
+      height: 173px;
+      border: 4px dashed rgb(18 60 50 / 0.22);
+      border-radius: 32px 32px 32px 10px;
+      transform-origin: 50% 50%;
+      z-index: 1;
+    }
+    [class~='03-um-link-ghost-l'] {
+      left: 72px;
+      top: 259px;
+      width: 609px;
+      height: 163px;
+    }
+    [class~='03-um-link-ghost-m'] {
+      left: 216px;
+      top: 464px;
+    }
+    [class~='03-um-link-ghost-a'] {
+      left: 86px;
+      top: 670px;
+    }
+    [class~='03-um-link-ghost-r'] {
+      left: 238px;
+      top: 875px;
+    }
+    [class~='03-um-link-ghost-j'] {
+      left: 97px;
+      top: 1080px;
+    }
+
+    /* the link pill: 80% wide, centred on y 810 */
+    [class~='03-um-link-pill'] {
+      position: absolute;
+      left: 72px;
+      top: 729px;
+      width: 864px;
+      height: 162px;
+      transform-origin: 50% 50%;
+      z-index: 2;
+    }
+    [class~='03-um-link-sh1'],
+    [class~='03-um-link-sh2'],
+    [class~='03-um-link-face'],
+    [class~='03-um-link-dim'] {
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+    }
+    [class~='03-um-link-sh1'] {
+      box-shadow: var(--e1);
+    }
+    [class~='03-um-link-sh2'] {
+      box-shadow: var(--e2);
+    }
+    [class~='03-um-link-face'] {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      padding: 0 0 4px 38px;
+      background: var(--spark);
+      overflow: hidden;
+    }
+    [class~='03-um-link-mark'] {
+      flex: none;
+      display: block;
+      width: 64px;
+      height: 64px;
+      color: var(--ink);
+      transform-origin: 50% 50%;
+    }
+    [class~='03-um-link-url'] {
+      flex: none;
+      font-family: 'Space Grotesk Variable', sans-serif;
+      font-weight: 600;
+      font-size: 52px;
+      line-height: 1;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+      color: var(--ink);
+    }
+    [class~='03-um-link-dim'] {
+      background: var(--ink);
+      opacity: 0;
+    }
+
+    /* finger tap: lands on the pill's right end, a little below centre */
+    [class~='03-um-link-tap'],
+    [class~='03-um-link-ripple'] {
+      position: absolute;
+      left: 688px;
+      top: 772px;
+      width: 108px;
+      height: 108px;
+      border-radius: 999px;
+      transform-origin: 50% 50%;
+      pointer-events: none;
+      opacity: 0;
+    }
+    [class~='03-um-link-ripple'] {
+      border: 3px solid rgb(18 60 50 / 0.42);
+      z-index: 3;
+    }
+    [class~='03-um-link-tap'] {
+      border: 5px solid rgb(18 60 50 / 0.55);
+      background: rgb(18 60 50 / 0.08);
+      z-index: 4;
+    }
+  </style>
+
+  <div
+    id="root"
+    data-composition-id="03-um-link"
+    data-width="1080"
+    data-height="1920"
+    data-duration="3.7"
+  >
+    <div class="03-um-link-bg clip" data-start="0" data-duration="3.7" data-track-index="0">
+      <div class="03-um-link-grain"></div>
+    </div>
+
+    <div class="03-um-link-stage clip" data-start="0" data-duration="3.7" data-track-index="1">
+      <div class="03-um-link-ghost 03-um-link-ghost-l"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-m"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-a"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-r"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-j"></div>
+
+      <div class="03-um-link-pill">
+        <div class="03-um-link-sh2"></div>
+        <div class="03-um-link-sh1"></div>
+        <div class="03-um-link-face">
+          <svg class="03-um-link-mark" viewBox="0 0 128 128" aria-hidden="true">
+            <path
+              d="M32 48 L61 88 L98 34"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="17"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span class="03-um-link-url">bolosdanena.vendua.com.br</span>
+          <div class="03-um-link-dim"></div>
+        </div>
+      </div>
+
+      <div class="03-um-link-ripple"></div>
+      <div class="03-um-link-tap"></div>
+    </div>
+  </div>
+
+  <script src="assets/vendor/gsap.min.js"></script>
+  <script>
+    (function () {
+      var root = document.querySelector('[data-composition-id="03-um-link"]');
+      var q = function (name) {
+        return root.querySelector('[class~="03-um-link-' + name + '"]');
+      };
+      var tl = gsap.timeline({ paused: true });
+
+      // Scene 1 (0.02, on the whoosh): the five ghosts rush into the pill's centre (504, 810)
+      [
+        ['ghost-l', 127.5, 469.5, 0.02],
+        ['ghost-j', 83, -356.5, 0.02],
+        ['ghost-m', -36, 259.5, 0.04],
+        ['ghost-r', -58, -151.5, 0.04],
+        ['ghost-a', 94, 53.5, 0.06],
+      ].forEach(function (g) {
+        tl.fromTo(
+          q(g[0]),
+          { x: 0, y: 0, scale: 1, opacity: 1 },
+          { x: g[1], y: g[2], scale: 0.72, opacity: 0, duration: 0.42, ease: 'power2.in' },
+          g[3],
+        );
+      });
+
+      // scale-swap: the pill takes over the same centre on "Venduá" (0.46); drop + e2 -> e1
+      tl.fromTo(
+        q('pill'),
+        { y: -24, scale: 0.7, opacity: 0 },
+        { y: 0, scale: 1, opacity: 1, duration: 0.75, ease: 'expo.out' },
+        0.42,
+      );
+      tl.fromTo(q('sh2'), { opacity: 1 }, { opacity: 0, duration: 0.8, ease: 'power2.out' }, 0.7);
+      tl.fromTo(
+        q('mark'),
+        { scale: 0.6, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.5, ease: 'power3.out' },
+        0.6,
+      );
+      tl.fromTo(
+        q('url'),
+        { x: -18, opacity: 0 },
+        { x: 0, opacity: 1, duration: 0.6, ease: 'power3.out' },
+        0.66,
+      );
+
+      // Scene 2 (to 2.33): still.
+
+      // Scene 3: the finger arrives, contact at 2.53, "link" at 2.58
+      tl.fromTo(
+        q('tap'),
+        { scale: 1.4, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.16, ease: 'power2.out' },
+        2.33,
+      );
+      tl.to(q('tap'), { scale: 0.86, duration: 0.09, ease: 'power2.in' }, 2.53);
+      tl.to(q('pill'), { scale: 0.965, duration: 0.1, ease: 'power1.in' }, 2.53);
+      tl.to(q('sh1'), { opacity: 0.35, duration: 0.1, ease: 'power1.in' }, 2.53);
+      tl.fromTo(
+        q('dim'),
+        { opacity: 0 },
+        { opacity: 0.06, duration: 0.1, ease: 'power1.in' },
+        2.53,
+      );
+
+      tl.fromTo(
+        q('ripple'),
+        { scale: 1 },
+        { scale: 3.4, duration: 0.62, ease: 'power2.out' },
+        2.56,
+      );
+      tl.fromTo(q('ripple'), { opacity: 0 }, { opacity: 0.6, duration: 0.06, ease: 'none' }, 2.56);
+      tl.to(q('ripple'), { opacity: 0, duration: 0.42, ease: 'power1.out' }, 2.62);
+
+      // release: critically damped (the video bans back/elastic eases)
+      tl.to(q('pill'), { scale: 1, duration: 0.55, ease: 'power3.out' }, 2.63);
+      tl.to(q('sh1'), { opacity: 1, duration: 0.55, ease: 'power3.out' }, 2.63);
+      tl.to(q('dim'), { opacity: 0, duration: 0.4, ease: 'power2.out' }, 2.63);
+      tl.to(q('tap'), { scale: 1.8, opacity: 0, duration: 0.38, ease: 'power2.out' }, 2.62);
+
+      // Scene 4 (2.9-3.7): hold on "só." with the pill at rest.
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['03-um-link'] = tl;
+    })();
+  </script>
+</template>
