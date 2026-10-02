@@ -82,6 +82,7 @@ const RULES_V1 = [
   'slotUnits',
   'statusHint',
   'statusWords',
+  'takesOrders',
   'todayHours',
   'visibleNotices',
   'vocabularyOf',

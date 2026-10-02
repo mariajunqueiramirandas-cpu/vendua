@@ -62,7 +62,7 @@ import {
   quoteInput,
   storeCoords,
 } from './modules/cart.ts';
-import { validateCheckoutShape } from './modules/checkout.ts';
+import { preordersWhileClosed, validateCheckoutShape } from './modules/checkout.ts';
 import { loadOrderView, orderVersion, TERMINAL_STATES } from './modules/orders.ts';
 import { placeOrderTx } from './modules/place-order.ts';
 import { parseSelections } from './modules/combos.ts';
@@ -619,6 +619,7 @@ export function createApp({
       preorder: {
         paymentMethods: settings?.preorder_payment_methods ?? ['pix'],
         maxDays: settings?.preorder_max_days ?? 30,
+        whileClosed: preordersWhileClosed(settings),
       },
       ...online,
       pickup: {

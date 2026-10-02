@@ -508,7 +508,12 @@ export interface StoreView {
     maxKm: number;
     freeOverCents: number | null;
   };
-  preorder: { paymentMethods: PayMethod[]; maxDays: number };
+  preorder: {
+    paymentMethods: PayMethod[];
+    maxDays: number;
+    /** while closed, a cart made only of encomendas still goes through */
+    whileClosed: boolean;
+  };
   zones: Zone[];
 }
 

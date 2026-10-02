@@ -174,6 +174,10 @@ export const TOPICS: Record<TopicId, Topic> = {
         a: 'Em Horários, toque no dia para mudar a hora ou use a chave para abrir ou fechar. Para um feriado, use “Feriados e dias especiais”: não mexe na semana.',
       },
       {
+        q: 'Recebo pedidos com a loja fechada?',
+        a: 'Fora do horário, o cliente monta a sacola mas só finaliza quando a loja abrir. A exceção são as encomendas: com “Encomendas com a loja fechada” ligado, um pedido feito apenas de encomendas entra a qualquer hora. Desligue para não receber nada com a loja fechada.',
+      },
+      {
         q: 'Como configuro a entrega?',
         a: 'Em Entrega e retirada, ligue a entrega e crie áreas por bairro ou por distância, cada uma com a sua taxa e tempo. O pedido mínimo vale para a loja toda.',
       },

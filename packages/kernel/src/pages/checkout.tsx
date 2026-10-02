@@ -12,8 +12,10 @@ import {
   useDeliverySummary,
   useDeliveryZones,
   useStore,
+  useStoreStatus,
 } from '../hooks.ts';
 import { useNavigateTo } from '../primitives.tsx';
+import { closedNote } from './closed.ts';
 import { Slot } from '../slot.tsx';
 import { errorCopy, errorCode } from '../errors.ts';
 import { emit } from '../telemetry.ts';
@@ -100,6 +102,8 @@ function validate(step: StepId, d: CustomerDraft, mode: 'pickup' | 'delivery', l
 export function CheckoutPage() {
   const { cart, loading, mutations } = useCart();
   const { store } = useStore();
+  // re-reads the store when it opens or closes, so the closed note comes and goes by itself
+  useStoreStatus();
   const { zones } = useDeliveryZones();
   const cepLookup = useCep();
   const quote = useDeliveryQuote();
@@ -251,6 +255,7 @@ export function CheckoutPage() {
     zones.some((z) => z.kind === 'radius' || z.kind === 'polygon');
   const schedule = cart?.schedule;
   const encomenda = schedule?.required === true;
+  const closedNow = cart?.status === 'open' ? closedNote(store, cart.items, vocabulary.bag) : null;
   const allowed = encomenda ? schedule!.paymentMethods.join(',') : '';
   // the store's own list (Kernel 1.4); absent on an older Core = the three offline ones
   const accepted = store?.paymentMethods?.join(',') ?? '';
@@ -594,7 +599,7 @@ export function CheckoutPage() {
   };
 
   const place = async () => {
-    if (submitting.current || pending) return;
+    if (submitting.current || pending || closedNow) return;
     if (encomenda && !scheduledFor) {
       setScheduleError('Escolha a data da encomenda.');
       return;
@@ -801,6 +806,11 @@ export function CheckoutPage() {
                 ) : null}
               </>
             ) : null}
+            {closedNow ? (
+              <p className="v-note" role="status" data-part="closed-note">
+                {closedNow}
+              </p>
+            ) : null}
             <div className="v-form-actions" data-part="actions">
               {step !== 'dados' ? (
                 <button
@@ -815,7 +825,7 @@ export function CheckoutPage() {
                 <button
                   type="submit"
                   className="v-btn v-btn-accent"
-                  disabled={pending || pricing}
+                  disabled={pending || pricing || !!closedNow}
                   aria-busy={pending || undefined}
                 >
                   {pending

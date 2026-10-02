@@ -3,6 +3,17 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.16.0
+
+Closed hours take only encomendas — additive; no storefront edit.
+
+- Core answers a closed store's checkout with `STORE_CLOSED` unless every line is an encomenda
+  and the store allows encomendas while closed (`StoreProfile.preorder.whileClosed`).
+- New rule `takesOrders(status, store, items)`. `CheckoutButton` is blocked whenever it says no
+  (it was blocked only while paused); the cart and checkout pages show why
+  (`[data-part="closed-note"]`) and hold the confirm button.
+- A `STORE_CLOSED`/`STORE_PAUSED` answer to `useCheckout().submit` rereads the store.
+
 ## 1.15.0
 
 Delivery priced by road distance (ADR 0024) — additive; no storefront edit.

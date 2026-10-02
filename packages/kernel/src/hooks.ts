@@ -26,6 +26,7 @@ import type {
 } from './api.ts';
 import { ApiError } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
+import { refreshOnStatus } from './errors.ts';
 import { cardState, type CardInput, type CardState } from './rules/card.ts';
 import { couponMessage } from './rules/errors.ts';
 import { countdown, formatCents, interpolate } from './rules/format.ts';
@@ -544,6 +545,8 @@ export function useCheckout(): {
             : { code: 'INTERNAL', message: err instanceof Error ? err.message : 'checkout failed' };
         setError(e);
         emit('order_failed', { code: e.code });
+        // closed or paused meanwhile: reread the store so the page shows why
+        refreshOnStatus(e.code);
         // Core already moved the lines to the live price: show the new total
         if (e.code === 'PRICES_CHANGED') {
           invalidateQuery('cart');

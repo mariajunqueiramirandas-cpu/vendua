@@ -23,7 +23,7 @@ export type { PriceDisplay, PriceInput } from './price.ts';
 export { MAX_LINE_QTY, cardState } from './card.ts';
 export type { CardInput, CardState } from './card.ts';
 export { arrangeMenu, matchProduct } from './menu.ts';
-export { hoursRows, todayHours, statusHint, statusWords } from './hours.ts';
+export { hoursRows, todayHours, statusHint, statusWords, takesOrders } from './hours.ts';
 export type { HoursRow, HoursWindow, StatusHint, StoreHours, TodayHours } from './hours.ts';
 export { zoneFeeFloor, deliverySummary, deliveryWords } from './delivery.ts';
 export type { DeliverySummary, DeliveryWords } from './delivery.ts';

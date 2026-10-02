@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
-import { DETAIL, PRODUCT, flush, mockCore, mount, type Mounted } from './harness.tsx';
+import { DETAIL, PRODUCT, STORE, flush, mockCore, mount, type Mounted } from './harness.tsx';
 
 // Kernel 1.2 (roadmap Phase 2): kits, live orders, share links, cross-device history.
 
@@ -620,5 +620,76 @@ describe('stock already in the cart — kits, modifier lines, catalog', () => {
     expect($('.v-card [data-part="badge"]')?.textContent).toBe('Tudo na sacola');
     expect($('.v-card [data-vendua="add-to-cart"]')).toBeNull();
     expect(c.calls.some((x) => x.path === '/checkout/v1/cart/items')).toBe(false);
+  });
+});
+
+describe('a closed store takes only encomendas (Kernel 1.16)', () => {
+  const resumesAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
+  const line = (id: string, requiresPreorder: boolean) => ({
+    id,
+    productId: DETAIL.id,
+    slug: 'pudim',
+    name: 'Pudim',
+    qty: 1,
+    unitPriceCents: 1800,
+    productStatus: 'active',
+    modifiers: [],
+    lineTotalCents: 1800,
+    requiresPreorder,
+  });
+  const sacola = async (whileClosed: boolean, items: unknown[]) => {
+    core((url) => {
+      if (url.pathname === '/storefront/v1/store')
+        return json(200, {
+          ...STORE,
+          status: 'closed',
+          resumesAt,
+          preorder: { paymentMethods: ['pix'], maxDays: 30, whileClosed },
+        });
+      if (url.pathname === '/checkout/v1/cart')
+        return json(200, {
+          cart: {
+            id: 'cart',
+            status: 'open',
+            items,
+            totals: {
+              subtotalCents: 1800 * items.length,
+              deliveryFeeCents: 0,
+              totalCents: 1800 * items.length,
+              itemCount: items.length,
+              minOrderCents: 0,
+              remainingMinOrderCents: 0,
+              belowMinOrder: false,
+            },
+            delivery: null,
+          },
+        });
+      return null;
+    });
+    m = await mount({ path: '/sacola', session: 'tok' });
+    await flush();
+    return {
+      button: $('[data-vendua="checkout-button"]') as HTMLButtonElement,
+      note: $('[data-part="closed-note"]')?.textContent ?? null,
+    };
+  };
+
+  test('a regular item blocks checkout and says why', async () => {
+    const { button, note } = await sacola(true, [line('l1', true), line('l2', false)]);
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute('data-state')).toBe('blocked');
+    expect(note).toContain('aceitamos só encomendas');
+  });
+
+  test('a bag of encomendas checks out while closed', async () => {
+    const { button, note } = await sacola(true, [line('l1', true)]);
+    expect(button.disabled).toBe(false);
+    expect(note).toBeNull();
+  });
+
+  test('with encomendas off, nothing checks out while closed', async () => {
+    const { button, note } = await sacola(false, [line('l1', true)]);
+    expect(button.disabled).toBe(true);
+    expect(note).toContain('Estamos fechados — abrimos');
   });
 });

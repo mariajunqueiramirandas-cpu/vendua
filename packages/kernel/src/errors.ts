@@ -24,6 +24,9 @@ let onStatusChange: (() => void) | null = null;
 export function setStatusRefresher(fn: (() => void) | null) {
   onStatusChange = fn;
 }
+export function refreshOnStatus(code: string) {
+  if (STATUS_CODES.has(code)) onStatusChange?.();
+}
 
 export function showError(err: unknown) {
   const code = errorCode(err);
@@ -44,7 +47,7 @@ export function showError(err: unknown) {
   ].slice(-3);
   notify();
   setTimeout(() => dismissError(id), 8000);
-  if (STATUS_CODES.has(code)) onStatusChange?.();
+  refreshOnStatus(code);
 }
 
 /** An informational toast on the same transient stack (e.g. "sacola recuperada"). */

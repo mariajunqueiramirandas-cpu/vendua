@@ -80,7 +80,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('catalog model gaps (db)', () =>
     await sql`insert into domains (host, tenant_id) values (${host}, ${tenantId})`;
     await sql`
       insert into store_settings (tenant_id, hours, prep_time_minutes, min_order_cents, currency, vocabulary, city)
-      values (${tenantId}, ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '23:59' }] })},
+      values (${tenantId}, ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '00:00' }] })},
               25, 0, 'BRL', ${sql.json({})}, 'Saquarema')
     `;
     await sql`insert into merchant_users (tenant_id, name, phone, role) values (${tenantId}, 'Ana', ${ownerPhone}, 'owner')`;

@@ -121,3 +121,18 @@ export function statusWords(hint: StatusHint, timeZone: string, now: Date = new 
       return 'Fechado';
   }
 }
+
+/** Kernel 1.16 — Core's checkout gate over the status: open takes any cart and paused none;
+ *  closed takes one only when every line is an encomenda and the store allows that
+ *  (`StoreProfile.preorder.whileClosed`). A Core that doesn't send the flag takes any cart. */
+export function takesOrders(
+  status: StoreProfile['status'],
+  store: Pick<StoreProfile, 'preorder'> | null | undefined,
+  items: readonly { requiresPreorder?: boolean | undefined }[],
+): boolean {
+  if (status === 'open') return true;
+  if (status === 'paused') return false;
+  const allowed = store?.preorder?.whileClosed;
+  if (allowed === undefined) return true;
+  return allowed && items.length > 0 && items.every((i) => i.requiresPreorder === true);
+}

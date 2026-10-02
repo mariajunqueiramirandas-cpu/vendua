@@ -71,7 +71,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     await sql`
       insert into store_settings (tenant_id, hours, prep_time_minutes, min_order_cents, currency, vocabulary, city,
                                   latitude, longitude)
-      values (${tenantId}, ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '23:59' }] })},
+      values (${tenantId}, ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '00:00' }] })},
               25, 0, 'BRL', ${sql.json({})}, 'Saquarema', -22.93, -42.51)
     `;
     await sql`
@@ -682,5 +682,61 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     expect(zones.find((z: any) => z.name === 'Centro').minFeeCents).toBe(500);
     const far = await call('POST', '/checkout/v1/quote', { lat: -22.0, lng: -42.0 });
     expect(far.body.eligible).toBe(false);
+  });
+
+  test('closed: only a bag of encomendas checks out, and only while the store allows it', async () => {
+    await sql`update store_settings set status_override = 'closed' where tenant_id = ${tenantId}`;
+    try {
+      const store = await call('GET', '/storefront/v1/store');
+      expect(store.body).toMatchObject({ status: 'closed', preorder: { whileClosed: true } });
+      const bag = async (...products: string[]) => {
+        const auth = await session();
+        let cart: any;
+        for (const p of products)
+          cart = (
+            await call('POST', '/checkout/v1/cart/items', { productId: ids[p], qty: 1 }, auth)
+          ).body.cart;
+        return { auth, date: cart.schedule.dates[0] as string };
+      };
+      const input = (date: string) => ({
+        customer: { name: 'Bia', phone: '22988887777' },
+        delivery: { mode: 'pickup' },
+        payment: { method: 'pix' },
+        scheduledFor: date,
+      });
+
+      const mixed = await bag('bolo', 'coco');
+      const refused = await call('POST', '/checkout/v1/checkout', input(mixed.date), mixed.auth);
+      expect(refused.status).toBe(423);
+      expect(refused.body.error).toMatchObject({
+        code: 'STORE_CLOSED',
+        details: { preordersOnly: true },
+      });
+
+      const encomendas = await bag('bolo');
+      const placed = await call(
+        'POST',
+        '/checkout/v1/checkout',
+        input(encomendas.date),
+        encomendas.auth,
+      );
+      expect(placed.status).toBe(201);
+      expect(placed.body.order.scheduledFor).toBe(encomendas.date);
+
+      await sql`update store_settings set preorders_while_closed = false where tenant_id = ${tenantId}`;
+      expect((await call('GET', '/storefront/v1/store')).body.preorder.whileClosed).toBe(false);
+      const off = await bag('bolo');
+      const none = await call('POST', '/checkout/v1/checkout', input(off.date), off.auth);
+      expect(none.status).toBe(423);
+      expect(none.body.error).toMatchObject({
+        code: 'STORE_CLOSED',
+        details: { preordersOnly: false },
+      });
+    } finally {
+      await sql`
+        update store_settings set status_override = null, preorders_while_closed = true
+        where tenant_id = ${tenantId}
+      `;
+    }
   });
 });

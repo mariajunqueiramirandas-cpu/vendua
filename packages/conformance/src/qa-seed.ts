@@ -158,7 +158,8 @@ export async function seedQaTenants(opts: QaSeedOptions = {}): Promise<void> {
         city: 'Cidade QA',
         address: 'Rua Fixture, 1 — Centro',
         windows:
-          slug === 'qa-closed' ? [closedWindow] : [{ days: ALL, open: '00:00', close: '23:59' }],
+          // 00:00–00:00 is open all day; 23:59 would leave a minute that refuses checkout
+          slug === 'qa-closed' ? [closedWindow] : [{ days: ALL, open: '00:00', close: '00:00' }],
         minOrderCents: 0,
         prepTimeMinutes: 20,
         promo:

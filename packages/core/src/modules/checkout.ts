@@ -69,6 +69,27 @@ export function addressParts(d: CheckoutInput['delivery']): AddressParts {
   };
 }
 
+export function preordersWhileClosed(settings: StoreSettingsRow | null): boolean {
+  return settings?.preorders_while_closed ?? true;
+}
+
+/** A closed store takes only a cart of encomendas, and only when the merchant allows it. */
+export function takesOrdersWhileClosed(
+  settings: StoreSettingsRow | null,
+  cart: Pick<CartView, 'items'>,
+  /** the locked rows: a line is an encomenda only if the cart (whose schedule checkout
+   *  enforces) and the locked product both say so */
+  products?: Map<string, ProductDetail | null>,
+): boolean {
+  return (
+    preordersWhileClosed(settings) &&
+    cart.items.length > 0 &&
+    cart.items.every(
+      (i) => i.requiresPreorder && (products?.get(i.productId)?.requiresPreorder ?? true),
+    )
+  );
+}
+
 /** pure validation; throws the typed error a client sees */
 export function validateCheckout<Z extends ZoneLike>(
   status: DerivedStatus,
@@ -93,7 +114,12 @@ export function validateCheckout<Z extends ZoneLike>(
       ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
     });
   }
-  // closed stores still take orders (preorder); capability is per-mode, independent of open state
+  if (status.status === 'closed' && !takesOrdersWhileClosed(settings, cart, products)) {
+    throw new HttpError(423, 'STORE_CLOSED', 'store is closed', {
+      ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
+      preordersOnly: preordersWhileClosed(settings),
+    });
+  }
   if (input.delivery.mode === 'pickup' && !(settings?.pickup_enabled ?? true)) {
     throw new HttpError(422, 'PICKUP_UNAVAILABLE', 'pickup is not available');
   }

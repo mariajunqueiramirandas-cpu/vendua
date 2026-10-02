@@ -455,7 +455,7 @@ test('[S01] paused fixture → blocking overlay, primitives disabled, checkout r
   expect(errs, `uncaught page errors: ${errs.join('; ')}`).toHaveLength(0);
 });
 
-test('[S02] closed fixture → closed notice shows next opening; browsing still works', async ({
+test('[S02] closed fixture → closed notice shows next opening; browsing works, checkout waits', async ({
   page,
   request,
 }) => {
@@ -478,7 +478,7 @@ test('[S02] closed fixture → closed notice shows next opening; browsing still 
   ).toBeTruthy();
   await expectStoreContent(page);
 
-  // Closed still sells — preorders for the next window (contract asymmetry).
+  // Closed takes no regular order (only a bag of encomendas, when the store allows it).
   const { sessionToken: tok } = await apiAddItem(request, CLOSED, SIMPLE_PRODUCT);
   const checkout = await apiPost(
     request,
@@ -492,8 +492,8 @@ test('[S02] closed fixture → closed notice shows next opening; browsing still 
     tok,
   );
   expect(
-    [200, 201].includes(checkout.status),
-    `closed store must accept preorders, got ${checkout.status}: ${JSON.stringify(checkout.body)}`,
+    checkout.status === 423 && checkout.body?.error?.code === 'STORE_CLOSED',
+    `closed store must refuse a regular order with STORE_CLOSED, got ${checkout.status}: ${JSON.stringify(checkout.body)}`,
   ).toBeTruthy();
   expect(errs, `uncaught page errors: ${errs.join('; ')}`).toHaveLength(0);
 });

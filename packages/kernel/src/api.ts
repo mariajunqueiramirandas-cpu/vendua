@@ -53,8 +53,9 @@ export interface StoreProfile {
   pix?: PixInfo | null;
   /** Kernel 1.2 — the stamp card, when the store runs one. */
   loyalty?: { stampsRequired: number; minOrderCents: number; rewardLabel: string } | null;
-  /** Kernel 1.2 — encomenda rules. */
-  preorder?: { paymentMethods: string[]; maxDays: number };
+  /** Kernel 1.2 — encomenda rules. Kernel 1.16: `whileClosed` — a closed store still takes a
+   *  cart made only of encomendas (false = no orders while closed; see `takesOrders`). */
+  preorder?: { paymentMethods: string[]; maxDays: number; whileClosed?: boolean };
   /** Kernel 1.4 — methods the store accepts at checkout (the merchant admin toggles them). */
   paymentMethods?: string[];
   /** Kernel 1.4 — the store's uploaded logo, when it has one. */

@@ -52,7 +52,7 @@ referenced by ID in failure bundles and codemod reports.
 | ID  | Requirement                                                                                                                        |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | S01 | `paused` fixture → blocking notice on first paint (from injected state), primitives disabled, checkout rejects `STORE_PAUSED`      |
-| S02 | `closed` fixture → `StoreClosedNotice` shows next opening; browsing still works                                                    |
+| S02 | `closed` fixture → `StoreClosedNotice` shows next opening; browsing still works, a regular order's checkout rejects `STORE_CLOSED` |
 | S03 | Unknown `kind` fixture → generic `system.Notice` renders, no crash                                                                 |
 | S04 | Unknown `severity`/action `type` fixtures → degrade per spec, never crash                                                          |
 | S05 | Override crash fixture → error boundary renders Kernel default, failure reported                                                   |

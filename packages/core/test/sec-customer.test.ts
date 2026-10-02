@@ -81,7 +81,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('customer / storefront security 
     await sql`insert into domains (host, tenant_id) values (${host}, ${tenantId})`;
     await sql`
       insert into store_settings (tenant_id, hours, prep_time_minutes, min_order_cents, currency, vocabulary, city, loyalty)
-      values (${tenantId}, ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '23:59' }] })},
+      values (${tenantId}, ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '00:00' }] })},
               25, 0, 'BRL', ${sql.json({})}, 'Saquarema',
               ${sql.json({ stampsRequired: 2, minOrderCents: 0, reward: { kind: 'fixed', value: 500, label: 'R$ 5' }, rewardValidDays: 60 })})
     `;

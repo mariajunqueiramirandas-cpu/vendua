@@ -143,7 +143,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     await sql`insert into domains (host, tenant_id) values (${host}, ${tenantId})`;
     await sql`
       insert into store_settings (tenant_id, hours, prep_time_minutes, min_order_cents, currency, vocabulary, city)
-      values (${tenantId}, ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '23:59' }] })},
+      values (${tenantId}, ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '00:00' }] })},
               25, 0, 'BRL', ${sql.json({})}, 'Saquarema')
     `;
     await sql`
@@ -256,11 +256,23 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(bad.status).toBe(422);
     const ok = await owner('PATCH', '/store', {
       profile: { name: 'Doces da Maria', whatsapp: '(22) 99999-1234' },
-      hours: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '23:59' }],
+      // all day with no minute left closed at midnight: the checkouts below need it open
+      hours: [
+        { days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '12:00' },
+        { days: [0, 1, 2, 3, 4, 5, 6], open: '12:00', close: '00:00' },
+      ],
       specialDays: [{ date: '2031-12-25', closed: true, label: 'Natal' }],
       operations: { prepTimeMinutes: 20, acceptTargetMinutes: 4 },
+      preorder: { whileClosed: false },
     });
     expect(ok.status).toBe(200);
+    expect(ok.body.status.status).toBe('open');
+    expect(ok.body.preorder.whileClosed).toBe(false);
+    expect((await owner('PATCH', '/store', { preorder: { whileClosed: 'no' } })).status).toBe(422);
+    expect(
+      (await owner('PATCH', '/store', { preorder: { whileClosed: true } })).body.preorder
+        .whileClosed,
+    ).toBe(true);
     expect(ok.body.profile.name).toBe('Doces da Maria');
     expect(ok.body.profile.whatsapp).toBe('5522999991234');
     expect(ok.body.specialDays).toHaveLength(1);

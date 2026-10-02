@@ -142,7 +142,7 @@ function StoreEditor({ s }: { s: StoreView }) {
       </nav>
       <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
         <div className="space-y-8">
-          <Hours s={s} />
+          <Hours s={s} patch={patch} />
           <SpecialDays s={s} run={run} />
           <Section
             id="mensagens"
@@ -197,7 +197,7 @@ function StoreEditor({ s }: { s: StoreView }) {
   );
 }
 
-function Hours({ s }: { s: StoreView }) {
+function Hours({ s, patch }: { s: StoreView; patch: (b: Record<string, unknown>) => void }) {
   const qc = useQueryClient();
   const { draft, setDraft, state } = useAutosave<WeekModel>(toWeek(s.hours.windows), async (w) => {
     const next = await api.updateStore({ hours: fromWeek(w) });
@@ -214,6 +214,18 @@ function Hours({ s }: { s: StoreView }) {
     >
       <Card className="px-4 py-1">
         <TimeRangeField value={draft} onChange={setDraft} />
+      </Card>
+      <Card className="mt-3 px-4 py-1">
+        <Toggle
+          checked={s.preorder.whileClosed}
+          onChange={(v) => patch({ preorder: { whileClosed: v } })}
+          label="Encomendas com a loja fechada"
+          description={
+            s.preorder.whileClosed
+              ? 'Fora do horário, só entram pedidos feitos apenas de encomendas.'
+              : 'Fora do horário, a loja não recebe pedidos, nem de encomenda.'
+          }
+        />
       </Card>
     </Section>
   );
