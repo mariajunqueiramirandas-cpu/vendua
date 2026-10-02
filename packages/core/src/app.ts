@@ -214,6 +214,7 @@ import {
 } from './modules/payment-adjustments.ts';
 import { mountControlBilling } from './modules/control-billing.ts';
 import { mountIncidentsControl } from './modules/incidents.ts';
+import { mountWebAnalytics } from './modules/web-analytics.ts';
 import { mountDiscord } from './modules/discord/routes.ts';
 import { recordStaffEventTx } from './modules/staff-events.ts';
 import type { DiscordFetch } from './modules/discord/rest.ts';
@@ -2889,6 +2890,13 @@ export function createApp({
     storeDomain: publicStoreDomain,
   });
   mountIncidentsControl({ app, sql, controlGate });
+  mountWebAnalytics({
+    app,
+    sql,
+    controlGate,
+    trustProxy,
+    proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
+  });
   mountImportsControl({ app, sql, controlGate });
   mountDiscord({ app, sql, controlGate, kickDrain, fetch: discordFetch });
   mountFleet({

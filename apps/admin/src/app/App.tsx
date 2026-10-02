@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { awaitingCardReturn } from '../features/signup/progress.ts';
+import { trackPageview } from '../lib/analytics.ts';
 import { ApiError } from '../lib/api.ts';
 import { clearPersisted } from '../lib/persist.ts';
 import { qk } from '../lib/query.ts';
@@ -53,6 +54,7 @@ export default function App() {
     window.addEventListener('vendua:unauthenticated', on);
     return () => window.removeEventListener('vendua:unauthenticated', on);
   }, [qc]);
+  useEffect(() => trackPageview(loc.pathname), [loc.pathname]);
   useEffect(() => {
     const t = q.data?.user.prefs.theme as ThemePref | undefined;
     if (t) applyTheme(t);

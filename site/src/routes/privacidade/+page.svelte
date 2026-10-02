@@ -10,7 +10,8 @@
     { item: 'Dados pessoais', value: 'nenhum' },
     { item: 'Formulários', value: 'nenhum' },
     { item: 'Cookies', value: 'nenhum' },
-    { item: 'Análises e rastreadores', value: 'nenhum' },
+    { item: 'Rastreadores', value: 'nenhum' },
+    { item: 'Contagem de visitas', value: 'anônima' },
     { item: 'Serviços de terceiros', value: 'nenhum' },
   ];
 </script>
@@ -30,7 +31,7 @@
         <p class="t-label kicker">Privacidade</p>
         <h1 class="t-display">Sua visita fica só com você.</h1>
         <p class="t-lede">
-          Este site não pede nada, não guarda nada e não segue ninguém. Aqui está, em palavras
+          Este site não pede nada, não usa cookies e não segue ninguém. Aqui está, em palavras
           simples, tudo o que acontece quando você passa por aqui.
         </p>
       </div>
@@ -53,7 +54,7 @@
         {/each}
         <div class="line total">
           <dt>Total</dt>
-          <dd><span class="chip">nada</span></dd>
+          <dd><span class="chip">nada seu</span></dd>
         </div>
       </dl>
       <p class="receipt-note">
@@ -73,8 +74,29 @@
       <section aria-labelledby="cookies">
         <h2 id="cookies" class="t-title-2">Sem cookies, sem rastreadores</h2>
         <p>
-          Não usamos cookies. Também não há análise de audiência, pixel de anúncio, mapa de cliques
-          ou qualquer outro rastreador. O site não grava nada no seu navegador.
+          Não usamos cookies. Também não há pixel de anúncio, mapa de cliques ou qualquer outro
+          rastreador. O site não grava nada no seu navegador.
+        </p>
+      </section>
+
+      <section aria-labelledby="contagem">
+        <h2 id="contagem" class="t-title-2">Contamos visitas, não pessoas</h2>
+        <p>
+          Para saber quantas pessoas chegam aqui e o que elas leem, cada página aberta manda um
+          aviso curto para o nosso próprio servidor, com:
+        </p>
+        <ul class="ticks">
+          <li>o endereço da página;</li>
+          <li>o site de onde você veio, só o nome dele (como google.com);</li>
+          <li>a campanha do link, quando ele traz uma (como “instagram”);</li>
+          <li>se a tela é de celular, tablet ou computador.</li>
+        </ul>
+        <p>
+          O seu IP e o seu navegador não são guardados. O servidor mistura os dois com uma chave
+          sorteada que vale um dia só e depois é apagada. Isso serve apenas para não contar a mesma
+          pessoa duas vezes no mesmo dia: não dá para voltar até você nem ligar a visita de hoje à
+          de amanhã. Se o seu navegador pede para não ser rastreado, nada é enviado. As contagens
+          ficam guardadas por até 13 meses.
         </p>
       </section>
 
@@ -89,9 +111,9 @@
       <section aria-labelledby="erros">
         <h2 id="erros" class="t-title-2">Quando algo dá errado</h2>
         <p>
-          O servidor não anota as visitas que dão certo. Ele só registra os pedidos que falham, como
-          uma página que não existe ou um erro nosso. Nesses casos ficam os dados técnicos de
-          costume:
+          Fora a contagem acima, o servidor não anota as visitas que dão certo. Ele só registra os
+          pedidos que falham, como uma página que não existe ou um erro nosso. Nesses casos ficam os
+          dados técnicos de costume:
         </p>
         <ul class="ticks">
           <li>o endereço IP de onde veio o acesso;</li>
@@ -131,7 +153,7 @@
         </ul>
       </section>
 
-      <p class="t-caption updated">Atualizada em setembro de 2026.</p>
+      <p class="t-caption updated">Atualizada em outubro de 2026.</p>
     </article>
   </div>
 </main>

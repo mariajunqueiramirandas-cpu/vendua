@@ -275,6 +275,38 @@ export interface AgentRun {
   steps?: unknown[];
   params?: Record<string, unknown>;
 }
+/** Privacy-first page views on the site or the admin: visitors are unique per day (a daily hash). */
+export type WebProperty = 'site' | 'admin';
+export type AnalyticsDays = 7 | 30 | 90;
+export interface WebReport {
+  property: WebProperty;
+  days: AnalyticsDays;
+  totals: { visitors: number; pageviews: number; prevVisitors: number; prevPageviews: number };
+  series: { day: string; visitors: number; pageviews: number }[];
+  pages: { path: string; visitors: number; pageviews: number }[];
+  referrers: { referrer: string; visitors: number }[];
+  campaigns: { source: string; medium: string; campaign: string; visitors: number }[];
+  devices: { device: 'mobile' | 'tablet' | 'desktop'; visitors: number }[];
+}
+export interface StoreFunnel {
+  sessions: number;
+  pageviews: number;
+  carts: number;
+  checkouts: number;
+  /** storefront checkouts that placed an order (the funnel's last step) */
+  ordered: number;
+  /** every channel's orders, cancelled and refunded left out */
+  orders: number;
+  revenueCents: number;
+}
+/** The storefront funnel across every store (Kernel beacon + Core's order_placed). */
+export interface StorefrontReport {
+  days: AnalyticsDays;
+  totals: StoreFunnel & { stores: number; avgTicketCents: number | null };
+  series: { day: string; sessions: number; orders: number }[];
+  stores: (StoreFunnel & { tenantId: string; slug: string; name: string })[];
+}
+
 export interface AgentMetrics {
   window: { from: string; to: string };
   byKind: {
@@ -642,6 +674,11 @@ const apiBase = {
     req<{ ok: true; status?: string }>(`/agent/runs/${id}/cancel`, { method: 'POST' }),
 
   agentMetrics: (days: 7 | 30 = 7) => req<AgentMetrics>(`/agent/metrics?days=${days}`),
+
+  webAnalytics: (property: WebProperty, days: AnalyticsDays) =>
+    req<WebReport>(`/analytics/web?property=${property}&days=${days}`),
+  storefrontAnalytics: (days: AnalyticsDays) =>
+    req<StorefrontReport>(`/analytics/storefronts?days=${days}`),
 
   briefs: () => req<{ briefs: Brief[] }>('/agent/briefs'),
   createBrief: (b: {

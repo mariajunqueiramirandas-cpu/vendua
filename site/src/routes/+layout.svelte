@@ -4,8 +4,12 @@
   import '$lib/styles/theme.css';
   import '$lib/styles/base.css';
   import type { Snippet } from 'svelte';
+  import { afterNavigate } from '$app/navigation';
+  import { trackPageview } from '$lib/analytics';
 
   let { children }: { children: Snippet } = $props();
+
+  afterNavigate(trackPageview);
 </script>
 
 <a class="skip" href="#conteudo">Pular para o conteúdo</a>

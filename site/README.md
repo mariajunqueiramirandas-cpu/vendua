@@ -53,6 +53,9 @@ Other pages: `/privacidade/` and the 404.
 - Banned words (platform jargon, "sob medida", "sem taxa", "grátis" other than "14 dias grátis", "em breve", real store names) are checked
   on the rendered text of every page by `scripts/postbuild.ts`.
 - Works without JavaScript; motion is CSS-only and respects `prefers-reduced-motion`.
+- Page views are counted first-party and cookieless (`src/lib/analytics.ts` → nginx
+  `/analytics/v1/collect` → Core, ADR 0028); `/privacidade/` describes exactly what is kept, so
+  keep the two in step.
 - No generic template chrome: no eyebrow labels above headings, no all-caps labels, no `A · B`
   meta strings, no numbers on lists that aren't steps, no sparkle bullets, no pulsing dots, no single
   italic or highlighted word in a headline, no identical card grids. Instrument Serif appears only

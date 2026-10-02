@@ -55,7 +55,17 @@ the critical path.
 
 ## Platform-facing analytics
 
-Cross-tenant (aggregated, no PII): train health (checkout success rate per
+Read by staff in the CRM (Pipeline → Analytics,
+[ADR 0028](../adr/0028-privacy-first-platform-analytics.md)):
+
+- **Venduá's own surfaces.** The marketing site and the merchant admin send one
+  first-party page view per navigation to `POST /analytics/v1/collect`. That table is
+  `web_analytics_events`. It has no cookie, no stored IP or user agent, and a daily-salted
+  visitor hash. GPC/DNT are honoured.
+- **The storefront funnel across stores.** These are the events above, read under
+  `vendua.control`: sessions → cart → checkout → orders, plus sales per store.
+
+Still to come, cross-tenant (aggregated, no PII): train health (checkout success rate per
 Kernel release — a release gate input), notice efficacy (paused-notice →
 notify-me conversion), per-segment conversion, agent-quality proxy
 (post-launch defect/funnel regression per generated storefront).
