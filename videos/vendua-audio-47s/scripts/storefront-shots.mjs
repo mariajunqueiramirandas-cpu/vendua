@@ -137,13 +137,14 @@ async function webp(page, name) {
 }
 
 await seed();
-await api('PATCH', '/store', { hours: OPEN_ALL_DAY });
 mkdirSync(OUT, { recursive: true });
-const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM ?? '/opt/pw-browsers/chromium',
-  args: ['--disable-gpu', '--host-resolver-rules=MAP *.localhost 127.0.0.1'],
-});
+let browser;
 try {
+  await api('PATCH', '/store', { hours: OPEN_ALL_DAY });
+  browser = await chromium.launch({
+    executablePath: process.env.CHROMIUM ?? '/opt/pw-browsers/chromium',
+    args: ['--disable-gpu', '--host-resolver-rules=MAP *.localhost 127.0.0.1'],
+  });
   const page = await browser.newPage({
     viewport: { width: 375, height: 812 },
     deviceScaleFactor: 2,
@@ -200,7 +201,7 @@ try {
   await page.waitForTimeout(800);
   await webp(page, 'vitrine-pix');
 } finally {
-  await browser.close();
+  await browser?.close();
   await api('PATCH', '/store', { hours: NENA_HOURS }).catch((e) =>
     console.error('hours not restored:', e.message),
   );
