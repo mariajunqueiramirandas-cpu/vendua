@@ -71,8 +71,7 @@ the same `agent_runs` machinery the Phase-6 generation pipeline will reuse:
   every mutation path, service-worker self-healing, screen-shaped skeletons,
   the mascot Duá, and its own domain (`VENDUA_ADMIN_HOST`).
 - **Marketing site** — `site/` rebuilt as "um dia na loja" with a Playwright
-  suite ([`site/README.md`](../site/README.md)); sign-up is not open yet. A
-  15 s teaser video lives in `videos/vendua-teaser/`.
+  suite ([`site/README.md`](../site/README.md)); sign-up is not open yet.
 
 **Priority call (2026-09-26): no customers before the Kernel is complete and
 updatable.** Every store launched on an incomplete Kernel is a store that later
