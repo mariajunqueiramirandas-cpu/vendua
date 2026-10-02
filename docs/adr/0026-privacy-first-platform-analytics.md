@@ -22,28 +22,34 @@ party. Any analytics had to keep those promises.
   `utm_*`, the viewport width and a random per-view `id` (dedupe, because `sendBeacon` can't
   send headers). It sends no cookie and uses no storage. Core stores no IP and no user agent.
   - A visitor is `sha256(day salt | property | IP | UA)` truncated to 16 hex.
-  - The salt lives one Brazil calendar day in `web_analytics_salts` and is deleted when the
-    next day's is minted.
+  - The salt lives one Brazil calendar day in `web_analytics_salts`. The database picks the
+    day, never the caller, and minting a day deletes every other salt.
   - So a hash dedupes within a day and can't be linked across days or reversed afterwards.
   - Ranges count visitor-days.
 - **Less is sent.**
   - Automation (`navigator.webdriver`), Do Not Track and Global Privacy Control send nothing.
     Core also drops requests carrying `Sec-GPC`/`DNT` headers or a bot user agent.
   - Paths lose their query and hash. Segments that look like ids, phones or emails become
-    `:id`, on the client and again in Core.
+    `:id`, on the client and again in Core. `utm_*` values with 4+ digits are dropped.
 - **RLS as a one-way door.**
   - `web_analytics_events` is a platform table. The app role may insert but never read it.
     That rules out `ON CONFLICT` and `RETURNING`, so a replayed beacon surfaces as the unique
     violation instead.
   - Only `vendua.control` reads it. The CRM also gets a select-only `control_read` policy on
     `analytics_events` to read the funnel across stores.
+  - Order totals reach the CRM only through `store_order_days()`, a security-definer function
+    that returns per-store, per-day counts and sums. It returns nothing outside
+    `vendua.control`, so staff never get a row-level read of `orders`. Cancelled and refunded
+    orders don't count, as in the merchant's own reports. The average ticket is computed in
+    Core.
   - The salt table has no policies at all. It is reached only through the security-definer
     `web_analytics_salt()`.
 - **Retention.** Raw page views are kept 13 months. Minting a day's salt prunes older ones.
 - **The CRM view.** Pipeline → Analytics (`/pipeline/analytics`) has three views, each over
   7/30/90 days:
   - site and painel: visitors, views, pages, referrers, campaigns, devices.
-  - lojas: sessions → cart → checkout → orders, plus sales per store.
+  - lojas: sessions (`page_view`, as the merchant's reports count visits) → cart → checkout
+    → ordered, plus orders, sales and average ticket from the orders themselves.
 
   The routes are `GET /control/v1/analytics/web` and `/control/v1/analytics/storefronts`.
 

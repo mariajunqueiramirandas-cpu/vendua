@@ -7,6 +7,7 @@
 --     stored hash can't be recomputed (or linked to another day's) once the day is over.
 --   web_analytics_salt() — the collector's only way to the salt; minting a day also prunes raw
 --     events past 13 months.
+--   store_order_days()   — the CRM's order totals per store and day (aggregates, never rows).
 --   analytics_events: the CRM reads it across stores (select only) and by time alone.
 
 create table if not exists web_analytics_events (
@@ -45,27 +46,48 @@ create table if not exists web_analytics_salts (
 -- no policy: only web_analytics_salt() (security definer) touches it
 alter table web_analytics_salts enable row level security;
 
-create or replace function web_analytics_salt(p_day date)
-returns text
-language plpgsql security definer set search_path = public as $$
+-- the day is the database's own (Brazil's calendar), never the caller's: a skewed replica clock
+-- can't mint tomorrow's salt early or bring back a deleted one
+drop function if exists web_analytics_salt(date);
+create or replace function web_analytics_salt()
+returns table (day date, salt text)
+language plpgsql security definer set search_path = public, pg_temp as $$
 declare
+  d date := (now() at time zone 'America/Sao_Paulo')::date;
   s text;
 begin
-  insert into web_analytics_salts (day, salt)
-  values (p_day, replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''))
-  on conflict (day) do nothing
-  returning salt into s;
+  insert into web_analytics_salts as w (day, salt)
+  values (d, replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''))
+  on conflict on constraint web_analytics_salts_pkey do nothing
+  returning w.salt into s;
   if s is not null then
-    delete from web_analytics_salts where day < p_day;
+    delete from web_analytics_salts w where w.day <> d;
     delete from web_analytics_events where at < now() - interval '13 months';
-    return s;
+  else
+    select w.salt into s from web_analytics_salts w where w.day = d;
   end if;
-  select salt into s from web_analytics_salts where day = p_day;
-  return s;
+  return query select d, s;
 end
 $$;
-revoke all on function web_analytics_salt(date) from public;
-grant execute on function web_analytics_salt(date) to vendua_app;
+revoke all on function web_analytics_salt() from public;
+grant execute on function web_analytics_salt() to vendua_app;
+
+-- The CRM's order totals across stores: per store and day, aggregates only, so staff never get a
+-- row-level read of orders (shoppers' names and phones stay behind tenant RLS). Cancelled and
+-- refunded orders don't count, as in the merchant's own reports. Empty outside vendua.control.
+create or replace function store_order_days(p_from date)
+returns table (tenant_id uuid, day date, orders int, revenue_cents bigint)
+language sql stable security definer set search_path = public, pg_temp as $$
+  select o.tenant_id, (o.placed_at at time zone 'America/Sao_Paulo')::date,
+    count(*)::int, coalesce(sum(o.total_cents), 0)::bigint
+  from orders o
+  where current_setting('vendua.control', true) = '1'
+    and o.placed_at >= p_from::timestamp at time zone 'America/Sao_Paulo'
+    and o.state <> all (array['cancelled', 'refunded'])
+  group by 1, 2
+$$;
+revoke all on function store_order_days(date) from public;
+grant execute on function store_order_days(date) to vendua_app;
 
 drop policy if exists control_read on analytics_events;
 create policy control_read on analytics_events for select

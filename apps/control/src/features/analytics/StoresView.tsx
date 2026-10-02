@@ -33,7 +33,7 @@ const COLS: Column<Row>[] = [
   { key: 'carts', header: 'carrinho', align: 'end', cell: (r) => r.carts },
   { key: 'checkouts', header: 'checkout', align: 'end', cell: (r) => r.checkouts },
   { key: 'orders', header: 'pedidos', align: 'end', cell: (r) => r.orders },
-  { key: 'rate', header: 'conversão', align: 'end', cell: (r) => rate(r.orders, r.sessions) },
+  { key: 'rate', header: 'conversão', align: 'end', cell: (r) => rate(r.ordered, r.sessions) },
   { key: 'revenue', header: 'vendas', align: 'end', cell: (r) => fmtMoney(r.revenueCents) },
 ];
 
@@ -65,11 +65,15 @@ export function StoresView({ days }: { days: AnalyticsDays }) {
             hint: `${t.stores} loja${t.stores === 1 ? '' : 's'}`,
           },
           { label: 'pedidos', value: t.orders },
-          { label: 'conversão', value: rate(t.orders, t.sessions), hint: 'pedidos / sessões' },
+          {
+            label: 'conversão',
+            value: rate(t.ordered, t.sessions),
+            hint: 'pedidos da loja / sessões',
+          },
           { label: 'vendas', value: fmtMoney(t.revenueCents) },
           {
             label: 'ticket médio',
-            value: t.orders ? fmtMoney(Math.round(t.revenueCents / t.orders)) : '—',
+            value: fmtMoney(t.avgTicketCents),
           },
         ]}
       />
@@ -88,7 +92,7 @@ export function StoresView({ days }: { days: AnalyticsDays }) {
               { label: 'visitaram', value: t.sessions },
               { label: 'puseram no carrinho', value: t.carts },
               { label: 'abriram o checkout', value: t.checkouts },
-              { label: 'pediram', value: t.orders },
+              { label: 'pediram', value: t.ordered },
             ]}
           />
         </Panel>
@@ -108,7 +112,7 @@ export function StoresView({ days }: { days: AnalyticsDays }) {
               <span className="min-w-0 truncate font-medium">{s.name}</span>
               <span className="shrink-0 text-right text-xs text-muted-foreground tnum">
                 {s.sessions} sessões · {s.orders} pedidos ·{' '}
-                <b className="font-medium text-foreground">{rate(s.orders, s.sessions)}</b>
+                <b className="font-medium text-foreground">{rate(s.ordered, s.sessions)}</b>
               </span>
             </Link>
           )}

@@ -293,13 +293,16 @@ export interface StoreFunnel {
   pageviews: number;
   carts: number;
   checkouts: number;
+  /** storefront checkouts that placed an order (the funnel's last step) */
+  ordered: number;
+  /** every channel's orders, cancelled and refunded left out */
   orders: number;
   revenueCents: number;
 }
 /** The storefront funnel across every store (Kernel beacon + Core's order_placed). */
 export interface StorefrontReport {
   days: AnalyticsDays;
-  totals: StoreFunnel & { stores: number };
+  totals: StoreFunnel & { stores: number; avgTicketCents: number | null };
   series: { day: string; sessions: number; orders: number }[];
   stores: (StoreFunnel & { tenantId: string; slug: string; name: string })[];
 }

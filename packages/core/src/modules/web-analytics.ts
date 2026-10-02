@@ -55,7 +55,8 @@ const host = (v: unknown) => {
 const utm = (v: unknown) => {
   if (typeof v !== 'string') return null;
   const s = v.trim().toLowerCase().slice(0, 60);
-  return /^[a-z0-9 ._+-]+$/.test(s) ? s : null;
+  // a campaign name, never a phone, an order number or an email pasted into a link
+  return /^[a-z0-9 ._+-]+$/.test(s) && !/\d{4,}/.test(s) ? s : null;
 };
 
 export const deviceOf = (w: unknown) =>
@@ -67,14 +68,21 @@ export const deviceOf = (w: unknown) =>
         ? 'tablet'
         : 'desktop';
 
-/** One process-wide cache of the day's salt; every replica gets the same one from the DB. */
-let salt: { day: string; value: string } | null = null;
-async function daySalt(sql: Sql, day: string): Promise<string> {
-  if (salt?.day === day) return salt.value;
-  const row = (await sql<{ s: string }[]>`select web_analytics_salt(${day}::date) as s`)[0]!;
-  salt = { day, value: row.s };
-  return row.s;
+/** The day's salt, cached per local day; the DB picks the day, so every replica gets the same. */
+let salt: { key: string; day: string; value: string } | null = null;
+async function daySalt(sql: Sql): Promise<{ day: string; value: string }> {
+  const key = brDay();
+  if (salt?.key === key) return salt;
+  const row = (
+    await sql<{ day: string; salt: string }[]>`select day::text, salt from web_analytics_salt()`
+  )[0]!;
+  salt = { key, day: row.day, value: row.salt };
+  return salt;
 }
+
+/** A visitor for one day: unlinkable to another day's once that day's salt is deleted. */
+export const visitorHash = (salt: string, property: string, ip: string, userAgent: string) =>
+  createHash('sha256').update(`${salt}|${property}|${ip}|${userAgent}`).digest('hex').slice(0, 16);
 
 export interface CollectInput {
   body: Record<string, unknown>;
@@ -82,7 +90,6 @@ export interface CollectInput {
   userAgent: string;
   /** the page's own host — a referrer from it is internal navigation, not a source */
   host: string;
-  now?: Date | undefined;
 }
 
 /** Records one page view; false when it was dropped (a bot, a replayed beacon). */
@@ -100,11 +107,8 @@ export async function collectPageview(sql: Sql, input: CollectInput): Promise<bo
   const self = host(input.host.split(':')[0]);
   const ref = host(b.ref);
   const u = (b.utm && typeof b.utm === 'object' ? b.utm : {}) as Record<string, unknown>;
-  const day = brDay(input.now);
-  const visitor = createHash('sha256')
-    .update(`${await daySalt(sql, day)}|${property}|${input.ip}|${input.userAgent}`)
-    .digest('hex')
-    .slice(0, 16);
+  const { day, value } = await daySalt(sql);
+  const visitor = visitorHash(value, property as string, input.ip, input.userAgent);
   // a plain insert: ON CONFLICT and RETURNING both need to read the table, which the collector's
   // role can't (RLS) — a replayed beacon is the unique violation instead
   try {
@@ -216,16 +220,20 @@ export async function webReport(
 }
 
 interface Funnel {
+  /** browsing sessions (a tab), as the merchant's own reports count visits */
   sessions: number;
   pageviews: number;
   carts: number;
   checkouts: number;
+  /** checkouts that placed an order — the funnel's last step */
+  ordered: number;
+  /** orders from the orders table (every channel), cancelled and refunded left out */
   orders: number;
   revenueCents: number;
 }
 export interface StorefrontReport {
   days: ReportDays;
-  totals: Funnel & { stores: number };
+  totals: Funnel & { stores: number; avgTicketCents: number | null };
   series: { day: string; sessions: number; orders: number }[];
   stores: (Funnel & { tenantId: string; slug: string; name: string })[];
 }
@@ -234,51 +242,82 @@ export interface StorefrontReport {
 export async function storefrontReport(sql: Sql, days: ReportDays): Promise<StorefrontReport> {
   const today = brDay();
   return controlTx(sql, async (tx) => {
-    const since = tx`(${today}::date - ${days - 1}::int)::timestamp at time zone ${TZ}`;
-    // `order_placed` is Core's, keyed by cart: it counts orders, not browsing sessions
+    const from = tx`(${today}::date - ${days - 1}::int)`;
+    const since = tx`${from}::timestamp at time zone ${TZ}`;
+    // `order_placed` is Core's and keyed by cart, so it counts as a step, never as a session
     const funnel = tx`
-      count(distinct e.session_id) filter (where e.name <> 'order_placed')::int as sessions,
+      count(distinct e.session_id) filter (where e.name = 'page_view')::int as sessions,
       count(*) filter (where e.name = 'page_view')::int as pageviews,
       count(distinct e.session_id) filter (where e.name = 'add_to_cart')::int as carts,
       count(distinct e.session_id) filter (where e.name = 'checkout_start')::int as checkouts,
-      count(*) filter (where e.name = 'order_placed')::int as orders,
-      coalesce(sum(case when e.props ->> 'value' ~ '^[0-9]{1,12}$' then (e.props ->> 'value')::bigint end)
-        filter (where e.name = 'order_placed'), 0)::bigint as "revenueCents"
+      count(distinct e.session_id) filter (where e.name = 'order_placed')::int as ordered
     `;
-    const [totals, series, stores] = await Promise.all([
-      tx<(Funnel & { stores: number })[]>`
-        select ${funnel}, count(distinct e.tenant_id)::int as stores
-        from analytics_events e where e.at >= ${since}
+    // money comes from the orders themselves, through an aggregate-only definer function
+    const od = tx`store_order_days(${from})`;
+    const [totals, orderTotals, sessionDays, orderDays, stores] = await Promise.all([
+      tx<Omit<Funnel, 'orders' | 'revenueCents'>[]>`
+        select ${funnel} from analytics_events e where e.at >= ${since}
       `,
-      tx<StorefrontReport['series']>`
+      tx<{ orders: number; revenueCents: string; avgTicketCents: number | null; stores: number }[]>`
+        select coalesce(sum(orders), 0)::int as orders,
+          coalesce(sum(revenue_cents), 0)::bigint as "revenueCents",
+          round(sum(revenue_cents)::numeric / nullif(sum(orders), 0))::int as "avgTicketCents",
+          (select count(*) from (
+            select tenant_id from analytics_events where at >= ${since}
+            union select tenant_id from ${od}
+          ) x)::int as stores
+        from ${od}
+      `,
+      tx<{ day: string; sessions: number }[]>`
         select d::date::text as day,
-          count(distinct e.session_id) filter (where e.name <> 'order_placed')::int as sessions,
-          count(e.id) filter (where e.name = 'order_placed')::int as orders
-        from generate_series(${today}::date - ${days - 1}::int, ${today}::date, interval '1 day') d
+          count(distinct e.session_id) filter (where e.name = 'page_view')::int as sessions
+        from generate_series(${from}, ${today}::date, interval '1 day') d
         left join analytics_events e
           on e.at >= d::timestamp at time zone ${TZ}
           and e.at < (d + interval '1 day')::timestamp at time zone ${TZ}
         group by d order by d
       `,
-      tx<StorefrontReport['stores']>`
-        select t.id as "tenantId", t.slug, t.name, ${funnel}
-        from analytics_events e join tenants t on t.id = e.tenant_id
-        where e.at >= ${since}
-        group by t.id order by sessions desc, orders desc, t.slug limit 100
+      tx<{ day: string; orders: number }[]>`
+        select day::text, sum(orders)::int as orders from ${od} group by day
+      `,
+      tx<
+        (Omit<Funnel, 'revenueCents'> & {
+          revenueCents: string;
+          tenantId: string;
+          slug: string;
+          name: string;
+        })[]
+      >`
+        with ev as (
+          select e.tenant_id, ${funnel} from analytics_events e
+          where e.at >= ${since} group by e.tenant_id
+        ), o as (
+          select tenant_id, sum(orders)::int as orders, sum(revenue_cents)::bigint as revenue
+          from ${od} group by tenant_id
+        )
+        select t.id as "tenantId", t.slug, t.name,
+          coalesce(ev.sessions, 0) as sessions, coalesce(ev.pageviews, 0) as pageviews,
+          coalesce(ev.carts, 0) as carts, coalesce(ev.checkouts, 0) as checkouts,
+          coalesce(ev.ordered, 0) as ordered, coalesce(o.orders, 0) as orders,
+          coalesce(o.revenue, 0) as "revenueCents"
+        from ev full join o using (tenant_id)
+        join tenants t on t.id = tenant_id
+        order by sessions desc, orders desc, t.slug limit 100
       `,
     ]);
-    const num = <T extends object>(r: T) =>
-      Object.fromEntries(
-        Object.entries(r).map(([k, v]) => [
-          k,
-          typeof v === 'string' && /Cents$/.test(k) ? Number(v) : v,
-        ]),
-      ) as T;
+    const ordersOn = new Map(orderDays.map((d) => [d.day, d.orders]));
+    const o = orderTotals[0]!;
     return {
       days,
-      totals: num(totals[0]!),
-      series,
-      stores: stores.map(num),
+      totals: {
+        ...totals[0]!,
+        orders: o.orders,
+        revenueCents: Number(o.revenueCents),
+        avgTicketCents: o.avgTicketCents,
+        stores: o.stores,
+      },
+      series: sessionDays.map((d) => ({ ...d, orders: ordersOn.get(d.day) ?? 0 })),
+      stores: stores.map((r) => ({ ...r, revenueCents: Number(r.revenueCents) })),
     };
   });
 }

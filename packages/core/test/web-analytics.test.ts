@@ -3,7 +3,13 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { migrate } from '../src/platform/db.ts';
-import { brDay, collectPageview, deviceOf, normalizePath } from '../src/modules/web-analytics.ts';
+import {
+  brDay,
+  collectPageview,
+  deviceOf,
+  normalizePath,
+  visitorHash,
+} from '../src/modules/web-analytics.ts';
 
 const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1';
 
@@ -42,7 +48,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
 
   beforeAll(async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
-    await sql`delete from web_analytics_salts where day > now()::date + 1`;
     tenantId = (
       await sql<
         { id: string }[]
@@ -128,27 +133,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
     expect((await collect({ p: 'site', id: `b${run}zzzz`, path: 'nope' })).status).toBe(400);
   });
 
-  test('a visitor hash lives one day: the next day it is another hash and the old salt is gone', async () => {
-    const at = (iso: string) => new Date(iso);
-    const input = (id: string, now: Date) => ({
-      body: { p: 'admin', id: `b${run}${id}`, path: `/t-${run}/day` },
-      ip: '203.0.113.9',
-      userAgent: UA,
-      host: 'painel.vendua.com.br',
-      now,
-    });
-    await collectPageview(sql, input('d1a', at('2099-01-01T15:00:00Z')));
-    await collectPageview(sql, input('d1b', at('2099-01-01T16:00:00Z')));
-    await collectPageview(sql, input('d2a', at('2099-01-02T15:00:00Z')));
-    const v = (await rows()).filter((r) => r.path === `/t-${run}/day`).map((r) => r.visitor);
-    expect(v[0]).toBe(v[1]!);
-    expect(v[2]).not.toBe(v[0]!);
-    const salts = await sql<{ day: string }[]>`select day::text from web_analytics_salts`;
-    expect(salts.map((s) => s.day)).toEqual(['2099-01-02']);
-    // leave today's salt for the next run instead of a future one
+  test('a visitor hash lives one day: the DB picks the day, minting it deletes every other salt', async () => {
+    const h = (salt: string) => visitorHash(salt, 'admin', '203.0.113.9', UA);
+    expect(h('a')).toBe(h('a'));
+    expect(h('a')).not.toBe(h('b'));
+    expect(h('a')).toMatch(/^[0-9a-f]{16}$/);
+    // yesterday's and a stray future salt: both go when today's is minted
     await sql`delete from web_analytics_salts`;
-    await collectPageview(sql, input('d3a', new Date()));
-    expect(brDay()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    await sql`
+      insert into web_analytics_salts (day, salt) values
+        (current_date - 1, 'old'), (current_date + 30, 'future')
+    `;
+    const [minted] = await sql<{ day: string; salt: string }[]>`
+      select day::text, salt from web_analytics_salt()
+    `;
+    expect(minted!.day).toBe(brDay());
+    expect(minted!.salt).toMatch(/^[0-9a-f]{64}$/);
+    const salts = await sql<{ day: string }[]>`select day::text from web_analytics_salts`;
+    expect(salts.map((s) => s.day)).toEqual([brDay()]);
+    // the same day hands back the same salt
+    const [again] = await sql<{ salt: string }[]>`select salt from web_analytics_salt()`;
+    expect(again!.salt).toBe(minted!.salt);
+  });
+
+  test('utm values that look like a phone or an order number are dropped', async () => {
+    await collect({
+      p: 'site',
+      id: `b${run}utm1`,
+      path: `/t-${run}/utm`,
+      utm: { source: '5511987654321', medium: 'whatsapp' },
+    });
+    const r = (await rows()).find((x) => x.path === `/t-${run}/utm`);
+    expect(r?.utm_source).toBeNull();
   });
 
   test('the CRM reads the site report and the cross-store funnel; others get 404', async () => {
@@ -186,6 +202,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
           (${tenantId}, 'checkout_start', now(), 's1aaaaaaaa', '{}'),
           (${tenantId}, 'order_placed', now(), 'cartaaaaaa', ${tx.json({ value: 4590 })})
       `;
+      // revenue is the orders' own: a cancelled one doesn't count
+      for (const [n, state, total] of [
+        [1, 'delivered', 4590],
+        [2, 'cancelled', 9900],
+      ] as const) {
+        const [cart] = await tx<{ id: string }[]>`
+          insert into carts (tenant_id, session_hash) values (${tenantId}, ${`h${run}${n}`}) returning id
+        `;
+        await tx`
+          insert into orders (tenant_id, cart_id, number, customer, delivery, payment,
+            subtotal_cents, total_cents, state)
+          values (${tenantId}, ${cart!.id}, ${n}, '{}', '{}', '{}', ${total}, ${total}, ${state})
+        `;
+      }
     });
     const sf = await app.request('/control/v1/analytics/storefronts?days=7', { headers: staff });
     expect(sf.status).toBe(200);
@@ -197,9 +227,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
         pageviews: number;
         carts: number;
         checkouts: number;
+        ordered: number;
         orders: number;
         revenueCents: number;
       }[];
+      totals: { avgTicketCents: number | null };
     };
     expect(s.series).toHaveLength(7);
     expect(s.stores.find((r) => r.slug === slug)).toMatchObject({
@@ -207,15 +239,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
       pageviews: 2,
       carts: 1,
       checkouts: 1,
+      ordered: 1,
       orders: 1,
       revenueCents: 4590,
     });
+    expect(s.totals.avgTicketCents).toBeGreaterThan(0);
   });
 
   test('the app role collects (salt through the definer function) without reading back', async () => {
     const ok = await sql.begin(async (tx) => {
       await tx`set local role vendua_app`;
-      const [salt] = await tx<{ s: string }[]>`select web_analytics_salt(${brDay()}::date) as s`;
+      const [salt] = await tx<{ s: string }[]>`select salt as s from web_analytics_salt()`;
       expect(salt!.s).toMatch(/^[0-9a-f]{64}$/);
       return collectPageview(tx as never, {
         body: { p: 'site', id: `b${run}role`, path: `/t-${run}/role` },
@@ -228,12 +262,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
     expect((await rows()).filter((r) => r.path === `/t-${run}/role`)).toHaveLength(1);
   });
 
-  test('the collector never reads page views back', async () => {
-    // the app role (no vendua.control) can insert but sees nothing
+  test('outside vendua.control the app role reads no page views and no order totals', async () => {
     const seen = await sql.begin(async (tx) => {
       await tx`set local role vendua_app`;
-      return tx`select count(*)::int as n from web_analytics_events`;
+      return tx`
+        select (select count(*) from web_analytics_events)::int as views,
+          (select count(*) from store_order_days(current_date - 30))::int as order_days
+      `;
     });
-    expect(seen[0]!.n).toBe(0);
+    expect(seen[0]).toEqual({ views: 0, order_days: 0 });
   });
 });
