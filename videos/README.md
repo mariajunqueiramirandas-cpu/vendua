@@ -17,7 +17,7 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
 | Customer voice | ElevenLabs **Talis** `E9a8LlXPNWtyvvSoZzrb`, band-limited to sound like a phone voice note                                                           |
 | Brand name     | "Venduá" is stressed on the final **á**. Prompts spell it `Vendu-á`. Bruna says it right on every take; other voices vary per take, so check by ear. |
 | Music          | ElevenLabs Music, instrumental, 128 BPM, "full energy from the first second, no intro, no fade", 30 s                                                |
-| SFX            | ElevenLabs Sound Effects: tap, pops, whoosh (peak on the cut), short impact, chime, buzz                                                             |
+| SFX            | ElevenLabs Sound Effects, **premium**: soft and tonal, under the voice (recipe below). The hard v2 set (impacts, whips) was rejected as harsh.       |
 | Visuals        | Real captures only (admin screens from `site/`, storefront shots from the dev stack); no AI images, no photos of people                              |
 | Copy           | Prices, plans and dates on screen need the author's decision (repo `CLAUDE.md`)                                                                      |
 | Safe area      | Readable content in y 250–1280, x 72–940; captions in y 1300–1520; nothing in the Reels UI zones                                                     |
@@ -55,9 +55,10 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
 5. **Bed**: generate at 128 BPM, measure it (`videos/tools/measure.py tempo`), start it on its first
    beat. Frame lengths are whole eighth notes (0.234375 s), so every cut lands on the grid; frame 2's
    pile lands one note per beat.
-6. **Mix**: `scripts/build-audio.py mix` pads each frame's voice, ducks the bed under the voices
-   (sidechain threshold 0.02, ratio 4: the bed sits 6–8 dB under speech, louder in the gaps), hangs
-   each SFX off the word that triggers it, and writes `audio/cues.json` and `audio_meta.json`.
+6. **Mix**: `scripts/build-audio.py sfx` turns the chosen SFX takes into `audio/sfx/`; `mix` pads
+   each frame's voice, ducks the bed under the voices (sidechain threshold 0.02, ratio 4: the bed
+   sits 6–8 dB under speech, louder in the gaps), hangs each SFX off the word that triggers it, and
+   writes `audio/cues.json` and `audio_meta.json`.
 7. **Storyboard**: per frame, the duration, `transition_in`, SFX and Scene lines with the cue times.
    Write seams as numbers (the handoff box, the pile's ten slots, the phone box), not prose.
 8. **Frames**: one Opus agent per frame, all in parallel, each editing only its own
@@ -69,6 +70,33 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
 10. **Draft for the author**: `npx hyperframes render --quality draft`, Whisper the draft to
     confirm every line sits in its frame, send it with a contact sheet. Only after "render it":
     `--quality high`, then loudness (below), then commit `renders/<name>.mp4`.
+
+## Premium SFX (the house sound)
+
+The author's ask, after the v2 cut: "cleaner and more premium" instead of hard effects. What
+worked: soft, tonal UI sounds from ElevenLabs Sound Effects, two takes each (`elevenlabs.py sfx
+"<prompt>" out.mp3 --seconds N`), the better one picked by ear and by `measure.py levels` (one
+tap take came back at −62 dBFS, nearly silent).
+
+| Sound  | s   | Prompt                                                                                                                                                               |
+| ------ | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tap    | 0.6 | A soft, premium UI tap: a subtle, crisp, rounded click like a high-end app button, very short and clean, close and dry, no reverb, no harsh transient.               |
+| pop    | 0.6 | A soft, premium notification blip: a short, clean, glassy pluck with a gentle round tail, modern minimal UI sound, warm and pleasant, not wooden, not cartoonish.    |
+| whoosh | 0.8 | A smooth, silky, premium swoosh for a UI screen transition: soft airy motion that rises and settles, clean and elegant, no rough noise, no wind rumble.              |
+| accent | 0.8 | A soft, premium accent for a logo or key moment: a gentle, warm low sine bloom with a delicate glassy shimmer on top, clean, modern, subtle, no boom, no distortion. |
+| swipe  | 0.5 | A very soft, smooth swipe of a fingertip across a glass phone screen, subtle and silky, clean, short, no scratch.                                                    |
+| pago   | 1.0 | A clean, premium payment-success chime: two soft glassy bell notes rising, bright but gentle, modern banking app, short tail, no reverb wash.                        |
+| pedido | 1.4 | An elegant new-order notification for a premium business app: three soft, bright, bell-like glass notes ascending, warm and clean, short and pleasant, no harshness. |
+| buzz   | 0.7 | A soft, muted double haptic vibration of a phone on a table, subtle and clean, low hum, very short, no rattle.                                                       |
+
+- `build-audio.py sfx` trims each take to its attack, band-limits it (high-pass 60–200 Hz, low-pass
+  4–11 kHz: nothing brittle or boomy), fades it, and limits peaks to −3 dB. The pile's four pops are
+  one pluck pitched 0/+3/+5/+7 semitones, so a burst of nine reads as a rising phrase, not a click
+  track.
+- Mix them low: volumes 0.22–0.45 (v2 ran 0.4–0.6 with a 0 dBFS impact), one sound per moment (no
+  swipe stacked on a chime), and an accent instead of an impact on the logo and the end-card cut.
+- A soft whoosh swells for ~0.15 s before its peak (the v2 whip took 0.25 s): start it that much
+  before the cut (`WHOOSH_PEAK`).
 
 ## Gotchas that each cost a round on vendua-audio-47s
 
@@ -96,6 +124,10 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
 - Story continuity: the checkout shown must be the order that arrives (same cart, same total).
 - Shell: a trailing `&` runs the command in a subshell that loses `cd` and `export`; loops need
   `ffmpeg -nostdin`; never return GSAP objects from Playwright's `page.evaluate`.
+- Cuts off the 3-decimal grid (20.859375 s) broke two "nothing crosses the cut" rules once a
+  frame grew by an eighth: an SFX placed on the cut was hosted by the frame before (now picked from
+  the unrounded time), and the caption skin's 0.3 s tail on the last group showed "no seu celular!"
+  over the end card (the last group now ends with its words). Snapshot 0.1 s after every cut.
 - Frame agents' own headless-Chromium checks can hang (two did, for 10+ minutes, and a message to
   an agent waits until its current tool call returns). Tell them to wrap checks in `timeout 120`;
   if one hangs, kill only that process by pid, or stop the agent and finish the frame yourself.
@@ -116,5 +148,12 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
 - Six parallel Opus frame agents with one shared brief built most frames in 3–15 minutes; the
   slowest parts were audio generation, review round-trips, one hung agent and seams (frame 1 → 2
   drifted once, by one played bar: write the end state of every seam as numbers in the brief).
-- Final frenético cut: 27.19 s, six frames (7.03 / 5.86 / 3.05 / 2.58 / 2.11 / 6.56 s), 24 SFX,
-  captions in 27 groups, −14 LUFS.
+- Read every line as a stranger would. "E o pedido chega sozinho!" was heard as Venduá delivering
+  the order; "E o pedido cai prontinho no seu celular!" says where it lands (the shop's phone,
+  ready to accept) and matches the push on screen. Prefer where-it-lands over how-it-travels verbs
+  ("chega", "vai", "sai") for anything a viewer could take as logistics.
+- A one-line rewrite cost one Bruna batch (4 takes, 2 wordings), a re-Whisper, one more eighth on
+  frame 5 and a retime of that frame's cues; nothing else moved, because the later frames are
+  frame-relative.
+- Final cut (v3): 27.42 s, six frames (7.03 / 5.86 / 3.05 / 2.58 / 2.34 / 6.56 s), 23 SFX,
+  captions in 28 groups.

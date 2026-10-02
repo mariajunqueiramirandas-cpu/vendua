@@ -65,7 +65,7 @@ all six frames are locked. Build dresses those layouts; it never redraws them.
   covers the top 240, the bottom 20% and the right 140 px). The caption pill owns y 1300–1520; only
   backgrounds may run behind it. No captions over Frame 6.
 - **Timing source**: `audio/cues.json` holds every word's frame-relative start (Whisper on the real
-  voice files) and every SFX hit. Each Scene below already uses those times; reveals land on them.
+  voice files) and every SFX. Each Scene below already uses those times; reveals land on them.
 - **Motion grammar (frenético)**: arrivals are 0.18–0.28 s slams (`expo.out` / `power4.out`, from
   scale ~1.12 or a 60–120 px drop, shadow e2→e1 inside the same 0.2 s); **punch-ins** on stressed
   words (the hero scales 1→1.05 in 0.1 s and eases back in 0.25 s); **shakes** on every hit (a
@@ -74,7 +74,10 @@ all six frames are locked. Build dresses those layouts; it never redraws them.
 - **Reveal model**: nothing appears before the voice names it; something moves on every beat of
   frames 1–5; no hold longer than ~0.5 s except the end card's last ~1.2 s.
 - **Rhythm**: 128 BPM (a beat is 0.469 s, an eighth 0.234 s). Frame 2's notes land on the beats.
-  Whooshes peak on the cuts 2→3, 3→4 and 4→5; a hit lands the cut 5→6.
+  Whooshes peak on the cuts 2→3, 3→4 and 4→5; a soft accent lands the cut 5→6.
+- **Sound (v3, premium)**: soft and tonal, never harsh: a muted click (tap), glassy plucks (pops),
+  a silky air whoosh, a warm sine-bloom accent (where v2 had a hard impact), a glass swipe, chimes,
+  a muted haptic buzz. All of it sits under the voice; one sound per moment.
 - **Recurring components** (frame.md `components`): the voice-note bubble (generic, never WhatsApp's
   look: no green, ticks, tails or icons), the CSS phone (site's Phone.svelte geometry, real screens
   at native aspect inside it, ~1030 px tall, centered, y 250–1280), the push card (Core's real text).
@@ -132,7 +135,7 @@ keyMessage: "Answering one by one doesn't scale."
 - blueprint: overwhelm-surround (Adapt)
 - focal: the pile of voice notes (drawn)
 - roles: Luiz's bubble = slot 0, dimmed; nine new bubbles = the burst
-- sfx: pops on the beats (0.469, 0.938, 1.406, 1.875, 2.344, 2.813, 3.281, 3.75, 4.219 s), hit (4.91 s, "fila"), whip (5.61 s, into the cut)
+- sfx: pops on the beats (0.469, 0.938, 1.406, 1.875, 2.344, 2.813, 3.281, 3.75, 4.219 s), accent (4.91 s, "fila"), whoosh (5.71 s, into the cut)
 - handoff_in: voice-note bubble (Luiz) — at 0.0 s: x 72 px, y 638 px (top-left), width 864 px, height 367 px, scale 1, opacity 1, still (no motion)
 
 Adapt: things pile in until they crowd the frame; the pile is a messy, overlapping stack of cards (slight rotations, alternating offsets, each new one on top), not a tidy column.
@@ -160,7 +163,7 @@ keyMessage: "Your store is a link."
 - blueprint: cta-morph-press (Adapt)
 - focal: the lime link pill "bolosdanena.vendua.com.br"
 - roles: loja-creme-750.webp = reference only (the source of the link text, not on screen)
-- sfx: hit (0.25 s, the pill lands on "Venduá"), tap (2.23 s, on "link"), whip (2.797 s, into the cut)
+- sfx: accent (0.25 s, the pill lands on "Venduá"), tap (2.23 s, on "link"), whoosh (2.896 s, into the cut)
 
 Adapt: the pile condenses into the single thing you tap, and the tap lands — a finger-tap ring, no cursor.
 Scene 1 (0.0–0.25s): ten dashed ghost outlines on Frame 2's ten slots rush into the pill's center (504, 810) and vanish by 0.23.
@@ -188,7 +191,7 @@ keyMessage: "Everything they asked is already there."
 - blueprint: device-surface-showcase (Adapt)
 - focal: the customer's phone (CSS frame) showing the real storefront
 - roles: vitrine-cardapio-750.webp = screen 1 (cardápio); vitrine-produto-750.webp = screen 2 (preço); vitrine-pagamento-750.webp = screen 3 (Pix)
-- sfx: swipe (1.01 s), swipe + pago (1.83 s), whip (2.328 s, into the cut)
+- sfx: swipe (1.01 s), pago (1.83 s), whoosh (2.428 s, into the cut)
 
 Adapt: one held device whose screen whips on the three spoken cues.
 Scene 1 (0.0–1.01s): the phone is in place as the push-slide brings it up, on the cardápio screen; a punch-in on "Cardápio!" (0.05: 1→1.04 and back).
@@ -196,11 +199,11 @@ Scene 2 (1.01s): on "Preço!" the screen whips left to the product page (0.18 s 
 Scene 3 (1.83s): on "Pix!" the screen whips to the payment step and the camera pulls back to the full phone (0.22 s); at 1.87 the lime ring snaps onto the Pix row (0.15 s) with a shake (≤8 px).
 Scene 4 (2.15–2.578s): settled; the push-slide takes it from 2.578.
 
-## Frame 5 — O pedido chega sozinho
+## Frame 5 — O pedido cai prontinho
 
 - scene: A push slams in, "Pedido #29 chegou · Luiz · R$ 219,00 · entrega", with the brand's chime; the phone shows order #29 with "aceitar"
-- voiceover: "E o pedido chega sozinho!"
-- duration: 2.109s
+- voiceover: "E o pedido cai prontinho no seu celular!"
+- duration: 2.344s
 - transition_in: push-slide LEFT 0.3s
 - status: animated
 - src: compositions/frames/05-pedido-chega.html
@@ -218,13 +221,13 @@ two sides of the same order read as two phones.
 - blueprint: compose
 - focal: the push notification "Pedido #29 chegou"
 - roles: pedido-creme-750.webp = the merchant's phone screen (Pedido #29, Luiz Fernando, R$ 219,00)
-- sfx: pedido-novo + buzz (0.23 s, on "pedido")
+- sfx: pedido-novo + buzz (0.21 s, on "pedido")
 
 Compose: the admin's own "an order arrives" moment, at speed.
-Scene 1 (0.0–0.23s): the merchant's phone (same CSS frame and position as Frame 4) on the real Pedido #29 screen as the push-slide lands it.
-Scene 2 (0.23s): on "pedido" the push card slams out of the island to y 270 (0.2 s `expo.out`, shadow e2→e1 on its resting e3), the 5 px lime edge fades over 0.6 s; the phone buzzes twice (±5 px at 0.25 and 0.40).
-Scene 3 (0.97s): on "sozinho!" the push card punches to 1.05 and back.
-Scene 4 (1.32–2.109s): settled; the cut to Frame 6 lands on a hit.
+Scene 1 (0.0–0.21s): the merchant's phone (same CSS frame and position as Frame 4) on the real Pedido #29 screen as the push-slide lands it.
+Scene 2 (0.21s): on "pedido" the push card slams out of the island to y 270 (0.2 s `expo.out`, shadow e2→e1 on its resting e3), the 5 px lime edge fades over 0.6 s; the phone buzzes twice (±5 px at 0.23 and 0.38).
+Scene 3 (1.69s): on "celular!" the push card punches to 1.05 and back.
+Scene 4 (2.04–2.344s): settled; the cut to Frame 6 lands on the accent.
 
 ## Frame 6 — 14 dias grátis
 
@@ -249,10 +252,10 @@ na bio · @vendua.digital". No captions on this frame. The handle holds to the l
 - blueprint: titlecard-reveal (Adapt)
 - focal: "Comece com 14 dias grátis."
 - roles: mark-lime.svg = the Venduá mark in the logo
-- sfx: hit (0.0 s, the cut), whip (2.60 s, the chip), tap (4.70 s, "Link")
+- sfx: accent (0.0 s, the cut), swipe (2.60 s, the chip), tap (4.70 s, "Link")
 
 Adapt: the end-card stack lands fast, word by word, then holds still so the CTA reads.
-Scene 1 (0.0–0.25s): on the hit the lime check slams in (scale 1.3→1, 0.2 s) and draws itself (0.25 s); "venduá." pops beside it.
+Scene 1 (0.0–0.25s): on the accent the lime check slams in (scale 1.3→1, 0.2 s) and draws itself (0.25 s); "venduá." pops beside it.
 Scene 2 (0.10–2.0s): "Comece com / 14 dias grátis." slams in word by word on 0.10, 0.62, 0.82, 1.38, 1.74 (each 0.2 s from 60 px below at scale 1.08, `expo.out`); the whole stack punches to 1.03 on "grátis!" (1.74).
 Scene 3 (2.60s): on "Venduá" the lime chip "Venduá Basic, sem cartão." shoots out from its left edge (0.22 s `expo.out`); it punches to 1.05 on "cartão." (4.00).
 Scene 4 (4.70s): on "Link" "Link na bio · @vendua.digital" slams up (0.2 s).

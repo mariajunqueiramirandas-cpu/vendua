@@ -318,43 +318,61 @@
     },
     "5": {
       "start_s": 18.515625,
-      "duration_s": 2.109375,
+      "duration_s": 2.34375,
       "lead_s": 0.05,
       "words": [
         {
           "id": "w5-0",
           "text": "E",
           "start": 0.05,
-          "end": 0.17
+          "end": 0.15
         },
         {
           "id": "w5-1",
           "text": "o",
-          "start": 0.17,
-          "end": 0.23
+          "start": 0.15,
+          "end": 0.21
         },
         {
           "id": "w5-2",
           "text": "pedido",
-          "start": 0.23,
-          "end": 0.69
+          "start": 0.21,
+          "end": 0.57
         },
         {
           "id": "w5-3",
-          "text": "chega",
-          "start": 0.69,
-          "end": 0.97
+          "text": "cai",
+          "start": 0.57,
+          "end": 0.73
         },
         {
           "id": "w5-4",
-          "text": "sozinho!",
-          "start": 0.97,
-          "end": 1.71
+          "text": "prontinho",
+          "start": 0.73,
+          "end": 1.39
+        },
+        {
+          "id": "w5-5",
+          "text": "no",
+          "start": 1.39,
+          "end": 1.53
+        },
+        {
+          "id": "w5-6",
+          "text": "seu",
+          "start": 1.53,
+          "end": 1.69
+        },
+        {
+          "id": "w5-7",
+          "text": "celular!",
+          "start": 1.69,
+          "end": 2.05
         }
       ]
     },
     "6": {
-      "start_s": 20.625,
+      "start_s": 20.859375,
       "duration_s": 6.5625,
       "lead_s": 0.1,
       "words": [
@@ -455,7 +473,7 @@
     {
       "frame": 2,
       "name": "pop-3",
-      "offset_s": 1.407,
+      "offset_s": 1.406,
       "abs_s": 8.438
     },
     {
@@ -473,7 +491,7 @@
     {
       "frame": 2,
       "name": "pop-2",
-      "offset_s": 2.813,
+      "offset_s": 2.812,
       "abs_s": 9.844
     },
     {
@@ -496,19 +514,19 @@
     },
     {
       "frame": 2,
-      "name": "hit",
+      "name": "accent",
       "offset_s": 4.91,
       "abs_s": 11.941
     },
     {
       "frame": 2,
-      "name": "whip",
-      "offset_s": 5.61,
-      "abs_s": 12.641
+      "name": "whoosh",
+      "offset_s": 5.709,
+      "abs_s": 12.741
     },
     {
       "frame": 3,
-      "name": "hit",
+      "name": "accent",
       "offset_s": 0.25,
       "abs_s": 13.141
     },
@@ -520,64 +538,58 @@
     },
     {
       "frame": 3,
-      "name": "whip",
-      "offset_s": 2.797,
-      "abs_s": 15.688
+      "name": "whoosh",
+      "offset_s": 2.897,
+      "abs_s": 15.787
     },
     {
       "frame": 4,
       "name": "swipe",
-      "offset_s": 1.011,
+      "offset_s": 1.01,
       "abs_s": 16.948
     },
     {
       "frame": 4,
-      "name": "swipe",
-      "offset_s": 1.829,
-      "abs_s": 17.767
-    },
-    {
-      "frame": 4,
       "name": "pago",
-      "offset_s": 1.829,
+      "offset_s": 1.83,
       "abs_s": 17.767
     },
     {
       "frame": 4,
-      "name": "whip",
-      "offset_s": 2.328,
-      "abs_s": 18.266
+      "name": "whoosh",
+      "offset_s": 2.428,
+      "abs_s": 18.366
     },
     {
       "frame": 5,
       "name": "pedido-novo",
-      "offset_s": 0.23,
-      "abs_s": 18.746
+      "offset_s": 0.21,
+      "abs_s": 18.726
     },
     {
       "frame": 5,
       "name": "buzz",
-      "offset_s": 0.23,
-      "abs_s": 18.746
+      "offset_s": 0.21,
+      "abs_s": 18.726
     },
     {
       "frame": 6,
-      "name": "hit",
+      "name": "accent",
       "offset_s": 0.0,
-      "abs_s": 20.625
+      "abs_s": 20.859
     },
     {
       "frame": 6,
-      "name": "whip",
+      "name": "swipe",
       "offset_s": 2.6,
-      "abs_s": 23.225
+      "abs_s": 23.459
     },
     {
       "frame": 6,
       "name": "tap",
       "offset_s": 4.7,
-      "abs_s": 25.325
+      "abs_s": 25.559
     }
   ],
-  "total_s": 27.1875
+  "total_s": 27.421875
 }

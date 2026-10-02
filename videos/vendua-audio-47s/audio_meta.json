@@ -3,7 +3,7 @@
     "path": "audio/music-bed.mp3",
     "volume": 1,
     "query": "ElevenLabs Music v2.5, 128 BPM funk-pop from its first beat, ducked under the voices",
-    "duration_s": 27.1875
+    "duration_s": 27.421875
   },
   "bgm_pending": false,
   "voices": [
@@ -326,37 +326,55 @@
     {
       "frame": 5,
       "path": "audio/frames/f05-voice.mp3",
-      "duration_s": 2.109375,
+      "duration_s": 2.34375,
       "words": [
         {
           "id": "w5-0",
           "text": "E",
           "start": 0.05,
-          "end": 0.17
+          "end": 0.15
         },
         {
           "id": "w5-1",
           "text": "o",
-          "start": 0.17,
-          "end": 0.23
+          "start": 0.15,
+          "end": 0.21
         },
         {
           "id": "w5-2",
           "text": "pedido",
-          "start": 0.23,
-          "end": 0.69
+          "start": 0.21,
+          "end": 0.57
         },
         {
           "id": "w5-3",
-          "text": "chega",
-          "start": 0.69,
-          "end": 0.97
+          "text": "cai",
+          "start": 0.57,
+          "end": 0.73
         },
         {
           "id": "w5-4",
-          "text": "sozinho!",
-          "start": 0.97,
-          "end": 1.71
+          "text": "prontinho",
+          "start": 0.73,
+          "end": 1.39
+        },
+        {
+          "id": "w5-5",
+          "text": "no",
+          "start": 1.39,
+          "end": 1.53
+        },
+        {
+          "id": "w5-6",
+          "text": "seu",
+          "start": 1.53,
+          "end": 1.69
+        },
+        {
+          "id": "w5-7",
+          "text": "celular!",
+          "start": 1.69,
+          "end": 2.05
         }
       ]
     },
@@ -372,169 +390,162 @@
       "frame": 1,
       "file": "audio/sfx/tap.mp3",
       "offset_s": 0.04,
-      "duration_s": 0.26,
-      "volume": 0.55
+      "duration_s": 0.24,
+      "volume": 0.45
     },
     {
       "frame": 2,
       "file": "audio/sfx/pop-1.mp3",
       "offset_s": 0.469,
-      "duration_s": 0.39,
-      "volume": 0.42
+      "duration_s": 0.34,
+      "volume": 0.3
     },
     {
       "frame": 2,
       "file": "audio/sfx/pop-2.mp3",
       "offset_s": 0.938,
-      "duration_s": 0.37,
-      "volume": 0.42
+      "duration_s": 0.34,
+      "volume": 0.3
     },
     {
       "frame": 2,
       "file": "audio/sfx/pop-3.mp3",
-      "offset_s": 1.407,
-      "duration_s": 0.31,
-      "volume": 0.42
+      "offset_s": 1.406,
+      "duration_s": 0.34,
+      "volume": 0.3
     },
     {
       "frame": 2,
       "file": "audio/sfx/pop-4.mp3",
       "offset_s": 1.875,
-      "duration_s": 0.31,
-      "volume": 0.42
+      "duration_s": 0.34,
+      "volume": 0.3
     },
     {
       "frame": 2,
       "file": "audio/sfx/pop-1.mp3",
       "offset_s": 2.344,
-      "duration_s": 0.39,
-      "volume": 0.42
+      "duration_s": 0.34,
+      "volume": 0.3
     },
     {
       "frame": 2,
       "file": "audio/sfx/pop-2.mp3",
-      "offset_s": 2.813,
-      "duration_s": 0.37,
-      "volume": 0.42
+      "offset_s": 2.812,
+      "duration_s": 0.34,
+      "volume": 0.3
     },
     {
       "frame": 2,
       "file": "audio/sfx/pop-3.mp3",
       "offset_s": 3.281,
-      "duration_s": 0.31,
-      "volume": 0.42
+      "duration_s": 0.34,
+      "volume": 0.3
     },
     {
       "frame": 2,
       "file": "audio/sfx/pop-4.mp3",
       "offset_s": 3.75,
-      "duration_s": 0.31,
-      "volume": 0.42
+      "duration_s": 0.34,
+      "volume": 0.3
     },
     {
       "frame": 2,
       "file": "audio/sfx/pop-1.mp3",
       "offset_s": 4.219,
-      "duration_s": 0.39,
-      "volume": 0.42
+      "duration_s": 0.34,
+      "volume": 0.3
     },
     {
       "frame": 2,
-      "file": "audio/sfx/hit.mp3",
+      "file": "audio/sfx/accent.mp3",
       "offset_s": 4.91,
-      "duration_s": 0.84,
-      "volume": 0.45
+      "duration_s": 0.73,
+      "volume": 0.3
     },
     {
       "frame": 2,
-      "file": "audio/sfx/whip.mp3",
-      "offset_s": 5.61,
-      "duration_s": 0.78,
-      "volume": 0.45
+      "file": "audio/sfx/whoosh.mp3",
+      "offset_s": 5.709,
+      "duration_s": 0.55,
+      "volume": 0.32
     },
     {
       "frame": 3,
-      "file": "audio/sfx/hit.mp3",
+      "file": "audio/sfx/accent.mp3",
       "offset_s": 0.25,
-      "duration_s": 0.84,
-      "volume": 0.4
+      "duration_s": 0.73,
+      "volume": 0.28
     },
     {
       "frame": 3,
       "file": "audio/sfx/tap.mp3",
       "offset_s": 2.23,
-      "duration_s": 0.26,
-      "volume": 0.55
-    },
-    {
-      "frame": 3,
-      "file": "audio/sfx/whip.mp3",
-      "offset_s": 2.797,
-      "duration_s": 0.78,
+      "duration_s": 0.24,
       "volume": 0.4
     },
     {
-      "frame": 4,
-      "file": "audio/sfx/swipe.mp3",
-      "offset_s": 1.011,
-      "duration_s": 0.42,
-      "volume": 0.45
+      "frame": 3,
+      "file": "audio/sfx/whoosh.mp3",
+      "offset_s": 2.897,
+      "duration_s": 0.55,
+      "volume": 0.28
     },
     {
       "frame": 4,
       "file": "audio/sfx/swipe.mp3",
-      "offset_s": 1.829,
-      "duration_s": 0.42,
-      "volume": 0.45
+      "offset_s": 1.01,
+      "duration_s": 0.37,
+      "volume": 0.35
     },
     {
       "frame": 4,
       "file": "audio/sfx/pago.mp3",
-      "offset_s": 1.829,
-      "duration_s": 1.23,
-      "volume": 0.5
+      "offset_s": 1.83,
+      "duration_s": 0.78,
+      "volume": 0.42
     },
     {
       "frame": 4,
-      "file": "audio/sfx/whip.mp3",
-      "offset_s": 2.328,
-      "duration_s": 0.78,
-      "volume": 0.45
+      "file": "audio/sfx/whoosh.mp3",
+      "offset_s": 2.428,
+      "duration_s": 0.55,
+      "volume": 0.3
     },
     {
       "frame": 5,
       "file": "audio/sfx/pedido-novo.mp3",
-      "offset_s": 0.23,
-      "duration_s": 2.04,
-      "volume": 0.6
+      "offset_s": 0.21,
+      "duration_s": 0.68,
+      "volume": 0.45
     },
     {
       "frame": 5,
       "file": "audio/sfx/buzz.mp3",
-      "offset_s": 0.23,
-      "duration_s": 1.65,
-      "volume": 0.45
+      "offset_s": 0.21,
+      "duration_s": 0.63,
+      "volume": 0.22
     },
     {
       "frame": 6,
-      "file": "audio/sfx/hit.mp3",
+      "file": "audio/sfx/accent.mp3",
       "offset_s": 0.0,
-      "duration_s": 0.84,
-      "volume": 0.6
+      "duration_s": 0.73,
+      "volume": 0.4
     },
     {
       "frame": 6,
-      "file": "audio/sfx/whip.mp3",
+      "file": "audio/sfx/swipe.mp3",
       "offset_s": 2.6,
-      "duration_s": 0.78,
-      "volume": 0.35
+      "duration_s": 0.37,
+      "volume": 0.3
     },
     {
       "frame": 6,
       "file": "audio/sfx/tap.mp3",
       "offset_s": 4.7,
-      "duration_s": 0.26,
-      "volume": 0.45
+      "duration_s": 0.24,
+      "volume": 0.38
     }
   ]
 }

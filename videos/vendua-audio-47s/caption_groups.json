@@ -1,5 +1,5 @@
 {
-  "total_duration_s": 27.187,
+  "total_duration_s": 27.422,
   "width": 1080,
   "height": 1920,
   "groups": [
@@ -520,47 +520,74 @@
       "id": "caption-group-25",
       "frame": 5,
       "start": 18.565,
-      "end": 18.745,
+      "end": 18.725,
       "text": "E o",
       "words": [
         {
           "id": "caption-word-25-0",
           "text": "E",
           "start": 18.565,
-          "end": 18.685
+          "end": 18.665
         },
         {
           "id": "caption-word-25-1",
           "text": "o",
-          "start": 18.685,
-          "end": 18.745
+          "start": 18.665,
+          "end": 18.725
         }
       ]
     },
     {
       "id": "caption-group-26",
       "frame": 5,
-      "start": 18.745,
-      "end": 20.345,
-      "text": "pedido chega sozinho!",
+      "start": 18.725,
+      "end": 19.905,
+      "text": "pedido cai prontinho",
       "words": [
         {
           "id": "caption-word-26-0",
           "text": "pedido",
-          "start": 18.745,
-          "end": 19.205
+          "start": 18.725,
+          "end": 19.085
         },
         {
           "id": "caption-word-26-1",
-          "text": "chega",
-          "start": 19.205,
-          "end": 19.485
+          "text": "cai",
+          "start": 19.085,
+          "end": 19.245
         },
         {
           "id": "caption-word-26-2",
-          "text": "sozinho!",
-          "start": 19.485,
-          "end": 20.225
+          "text": "prontinho",
+          "start": 19.245,
+          "end": 19.905
+        }
+      ]
+    },
+    {
+      "id": "caption-group-27",
+      "frame": 5,
+      "start": 19.905,
+      "end": 20.685,
+      "text": "no seu celular!",
+      "words": [
+        {
+          "id": "caption-word-27-0",
+          "text": "no",
+          "start": 19.905,
+          "end": 20.045
+        },
+        {
+          "id": "caption-word-27-1",
+          "text": "seu",
+          "start": 20.045,
+          "end": 20.205
+        },
+        {
+          "id": "caption-word-27-2",
+          "text": "celular!",
+          "start": 20.205,
+          "end": 20.565
         }
       ]
     }

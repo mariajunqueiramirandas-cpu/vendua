@@ -23,6 +23,11 @@ The playbook is `videos/README.md`: read it first. This skill is the checklist.
   (`E9a8LlXPNWtyvvSoZzrb`), model `eleven_v3` with tags such as `[energetic, fast]`.
 - The brand is said **ven-du-Á**: spell it `Vendu-á` in every TTS prompt and have the author hear
   one line with it before generating the rest.
+- Sound effects are the premium set: soft, tonal UI sounds mixed low under the voice, one per
+  moment, an accent (never an impact) on the logo. Prompts and processing are in
+  `videos/README.md` → Premium SFX; `scripts/build-audio.py sfx` rebuilds them from the takes.
+- Read every line as a stranger would before generating it: a verb like "chega" can sound like
+  Venduá delivers. Say where the order lands (the shop's phone), not how it travels.
 - Real captures only; prices, plans and dates on screen are the author's decision.
 
 ## ElevenLabs = the API key

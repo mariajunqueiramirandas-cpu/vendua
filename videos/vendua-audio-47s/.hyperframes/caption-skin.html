@@ -183,9 +183,10 @@
       var next = GROUPS[g + 1];
       var isLast = g === GROUPS.length - 1;
       var start = Math.max(0, Number(group.start));
-      // the last group ends with its own words, not the film: the end card stays clean
+      // the last group ends with its own words (no 0.3 s tail: that would cross the cut into the
+      // caption-free end card)
       var end = isLast
-        ? Math.min(DURATION, Number(group.end) + 0.3)
+        ? Math.min(DURATION, Number(group.end))
         : Math.min(Number(next.start), Number(group.end) + 0.3);
       if (end <= start) end = start + 0.01;
 
