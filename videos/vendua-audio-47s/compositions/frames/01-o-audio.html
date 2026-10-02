@@ -1,0 +1,615 @@
+<template>
+  <script src="assets/vendor/gsap.min.js"></script>
+  <style>
+    @font-face {
+      font-family: 'Space Grotesk Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 700;
+      src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2')
+        format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Figtree Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 900;
+      src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: normal;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: italic;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-italic.woff2') format('woff2');
+    }
+
+    #root {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+      font-family: 'Figtree Variable', sans-serif;
+      color: #123c32;
+    }
+
+    /* ground: cream canvas + static seeded paper grain */
+    .\30 1-o-audio-ground {
+      position: absolute;
+      inset: 0;
+      background: #f7f4ea;
+      container-type: size;
+    }
+    .\30 1-o-audio-grain {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+      opacity: 0.09;
+    }
+    .\30 1-o-audio-stage {
+      position: absolute;
+      inset: 0;
+    }
+
+    /* sender row */
+    .\30 1-o-audio-sender {
+      position: absolute;
+      left: 72px;
+      top: 540px;
+      display: flex;
+      align-items: baseline;
+      gap: 21.6px;
+      white-space: nowrap;
+      transform-origin: 432px 281.5px; /* the bubble's centre: punches scale both as one */
+    }
+    .\30 1-o-audio-who {
+      font-weight: 650;
+      font-size: 54px;
+      line-height: 1.2;
+      color: #123c32;
+    }
+    .\30 1-o-audio-when {
+      font-weight: 500;
+      font-size: 36.7px;
+      line-height: 1.2;
+      color: #4f6a5e;
+    }
+
+    /* the voice-note bubble (handoff geometry: x 72, y 638, 864x367) */
+    .\30 1-o-audio-bubble {
+      position: absolute;
+      left: 72px;
+      top: 638px;
+      width: 864px;
+      height: 367px;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      gap: 19px;
+      padding: 0 36.7px 0 32.4px;
+      background: #fffdf8;
+      border-radius: 32px 32px 32px 10px;
+      transform-origin: 50% 50%;
+      box-shadow:
+        0 2px 4px rgb(18 60 50 / 0.08),
+        0 12px 32px rgb(18 60 50 / 0.1);
+    }
+    .\30 1-o-audio-avatar {
+      flex: none;
+      width: 117.5px;
+      height: 117.5px;
+      border-radius: 999px;
+      background: #efe9d8;
+      color: #123c32;
+      display: grid;
+      place-items: center;
+      font-weight: 650;
+      font-size: 55px;
+      line-height: 1;
+    }
+
+    /* play button: shadow layer sinks on press (opacity only), forest fill, two icons */
+    .\30 1-o-audio-btn {
+      flex: none;
+      position: relative;
+      width: 168.9px;
+      height: 168.9px;
+      transform-origin: 50% 50%;
+    }
+    .\30 1-o-audio-btn-shadow,
+    .\30 1-o-audio-btn-fill {
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+    }
+    .\30 1-o-audio-btn-shadow {
+      box-shadow:
+        0 1px 2px rgb(18 60 50 / 0.06),
+        0 4px 16px rgb(18 60 50 / 0.05);
+    }
+    .\30 1-o-audio-btn-fill {
+      background: #123c32;
+    }
+    .\30 1-o-audio-tri {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 64px;
+      height: 72px;
+      margin: -36px 0 0 -26px;
+      transform-origin: 40% 50%;
+    }
+    .\30 1-o-audio-pause {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 47.6px;
+      height: 64.8px;
+      margin: -32.4px 0 0 -23.8px;
+      display: flex;
+      gap: 13px;
+      opacity: 0;
+      transform-origin: 50% 50%;
+    }
+    .\30 1-o-audio-pause b {
+      display: block;
+      width: 17.3px;
+      height: 64.8px;
+      border-radius: 6.5px;
+      background: #fffdf8;
+    }
+
+    /* waveform: 24 rounded bars; played layer = ink, playhead ring = spark */
+    .\30 1-o-audio-wave {
+      flex: 1;
+      min-width: 0;
+      position: relative;
+      height: 183.6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .\30 1-o-audio-bar {
+      position: relative;
+      display: block;
+      flex: none;
+      width: 11.9px;
+      border-radius: 6px;
+      background: rgb(79 106 94 / 0.38);
+      transform-origin: 50% 50%;
+    }
+    .\30 1-o-audio-played,
+    .\30 1-o-audio-ring {
+      position: absolute;
+      inset: 0;
+      display: block;
+      border-radius: inherit;
+      opacity: 0;
+    }
+    .\30 1-o-audio-played {
+      background: #123c32;
+    }
+    .\30 1-o-audio-ring {
+      box-shadow: 0 0 0 6px #d9f875;
+    }
+
+    /* elapsed counter (meta), odometer last digit */
+    .\30 1-o-audio-elapsed {
+      position: absolute;
+      left: 0;
+      top: calc(100% + 16px);
+      display: flex;
+      font-weight: 500;
+      font-size: 36px;
+      line-height: 44px;
+      color: #4f6a5e;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      opacity: 0;
+    }
+    .\30 1-o-audio-digit-win {
+      position: relative;
+      height: 44px;
+      overflow: hidden;
+    }
+    .\30 1-o-audio-digit-col {
+      display: block;
+    }
+    .\30 1-o-audio-digit-col span {
+      display: block;
+      height: 44px;
+    }
+
+    .\30 1-o-audio-dur {
+      flex: none;
+      font-family: 'Space Grotesk Variable', sans-serif;
+      font-weight: 600;
+      font-size: 58.75px;
+      line-height: 1.28;
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+      color: #123c32;
+    }
+  </style>
+
+  <div
+    id="root"
+    data-composition-id="01-o-audio"
+    data-start="0"
+    data-duration="7.031"
+    data-width="1080"
+    data-height="1920"
+  >
+    <div
+      id="01-o-audio-ground"
+      class="01-o-audio-ground clip"
+      data-start="0"
+      data-duration="7.031"
+      data-track-index="0"
+    >
+      <svg
+        class="01-o-audio-grain"
+        width="1080"
+        height="1920"
+        viewBox="0 0 1080 1920"
+        aria-hidden="true"
+      >
+        <filter
+          id="01-o-audio-grain-filter"
+          x="0"
+          y="0"
+          width="1080"
+          height="1920"
+          filterUnits="userSpaceOnUse"
+        >
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.85"
+            numOctaves="2"
+            seed="7"
+            stitchTiles="stitch"
+            result="noise"
+          />
+          <feColorMatrix
+            in="noise"
+            type="matrix"
+            values="0 0 0 0 0.071  0 0 0 0 0.235  0 0 0 0 0.196  1.6 0 0 0 -0.55"
+          />
+        </filter>
+        <rect width="1080" height="1920" filter="url(#01-o-audio-grain-filter)" />
+      </svg>
+    </div>
+
+    <div
+      id="01-o-audio-stage"
+      class="01-o-audio-stage clip"
+      data-start="0"
+      data-duration="7.031"
+      data-track-index="1"
+    >
+      <div class="01-o-audio-sender">
+        <span class="01-o-audio-who">Luiz</span><span class="01-o-audio-when">agora</span>
+      </div>
+
+      <div class="01-o-audio-bubble">
+        <span class="01-o-audio-avatar">L</span>
+        <span class="01-o-audio-btn">
+          <span class="01-o-audio-btn-shadow"></span>
+          <span class="01-o-audio-btn-fill"></span>
+          <svg class="01-o-audio-tri" viewBox="0 0 64 72" aria-hidden="true">
+            <path
+              d="M9 8 L57 36 L9 64 Z"
+              fill="#fffdf8"
+              stroke="#fffdf8"
+              stroke-width="10"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span class="01-o-audio-pause"><b></b><b></b></span>
+        </span>
+        <span class="01-o-audio-wave">
+          <i class="01-o-audio-bar" style="height: 77.3px"
+            ><b class="01-o-audio-played"></b><b class="01-o-audio-ring"></b
+          ></i>
+          <i class="01-o-audio-bar" style="height: 87.9px"
+            ><b class="01-o-audio-played"></b><b class="01-o-audio-ring"></b
+          ></i>
+          <i class="01-o-audio-bar" style="height: 102.7px"
+            ><b class="01-o-audio-played"></b><b class="01-o-audio-ring"></b
+          ></i>
+          <i class="01-o-audio-bar" style="height: 88.9px"
+            ><b class="01-o-audio-played"></b><b class="01-o-audio-ring"></b
+          ></i>
+          <i class="01-o-audio-bar" style="height: 169.9px"
+            ><b class="01-o-audio-played"></b><b class="01-o-audio-ring"></b
+          ></i>
+          <i class="01-o-audio-bar" style="height: 169px"
+            ><b class="01-o-audio-played"></b><b class="01-o-audio-ring"></b
+          ></i>
+          <i class="01-o-audio-bar" style="height: 83.6px"
+            ><b class="01-o-audio-played"></b><b class="01-o-audio-ring"></b
+          ></i>
+          <i class="01-o-audio-bar" style="height: 116.1px"></i>
+          <i class="01-o-audio-bar" style="height: 105.4px"></i>
+          <i class="01-o-audio-bar" style="height: 65.4px"></i>
+          <i class="01-o-audio-bar" style="height: 76.6px"></i>
+          <i class="01-o-audio-bar" style="height: 140px"></i>
+          <i class="01-o-audio-bar" style="height: 158.7px"></i>
+          <i class="01-o-audio-bar" style="height: 84px"></i>
+          <i class="01-o-audio-bar" style="height: 140.7px"></i>
+          <i class="01-o-audio-bar" style="height: 157.9px"></i>
+          <i class="01-o-audio-bar" style="height: 98.9px"></i>
+          <i class="01-o-audio-bar" style="height: 69.9px"></i>
+          <i class="01-o-audio-bar" style="height: 86.9px"></i>
+          <i class="01-o-audio-bar" style="height: 120.6px"></i>
+          <i class="01-o-audio-bar" style="height: 78.7px"></i>
+          <i class="01-o-audio-bar" style="height: 143px"></i>
+          <i class="01-o-audio-bar" style="height: 182.4px"></i>
+          <i class="01-o-audio-bar" style="height: 123.1px"></i>
+          <span class="01-o-audio-elapsed"
+            ><span>0:0</span
+            ><span class="01-o-audio-digit-win"
+              ><span class="01-o-audio-digit-col"
+                ><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span
+                ><span>6</span><span>7</span></span
+              ></span
+            ></span
+          >
+        </span>
+        <span class="01-o-audio-dur">0:47</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var root = document.querySelector('[data-composition-id="01-o-audio"]') || document;
+      function all(name) {
+        return Array.prototype.slice.call(root.getElementsByClassName(name));
+      }
+      function one(name) {
+        return root.getElementsByClassName(name)[0];
+      }
+
+      // audio/f01-envelope.json "values": Luiz's loudness, 30 fps, frame-relative (211 values)
+      var ENV = [
+        0.0, 0.0, 0.02, 0.289, 0.77, 0.999, 0.997, 0.969, 0.884, 0.707, 0.482, 0.526, 0.838, 0.98,
+        0.797, 0.531, 0.561, 0.819, 0.953, 0.909, 0.763, 0.617, 0.549, 0.442, 0.289, 0.315, 0.523,
+        0.581, 0.386, 0.206, 0.139, 0.104, 0.072, 0.081, 0.238, 0.415, 0.516, 0.601, 0.517, 0.531,
+        0.761, 0.788, 0.685, 0.644, 0.567, 0.379, 0.195, 0.11, 0.076, 0.066, 0.066, 0.048, 0.026,
+        0.019, 0.015, 0.011, 0.007, 0.019, 0.111, 0.36, 0.657, 0.691, 0.469, 0.354, 0.542, 0.798,
+        0.786, 0.619, 0.48, 0.359, 0.253, 0.156, 0.085, 0.046, 0.035, 0.101, 0.326, 0.549, 0.545,
+        0.409, 0.4, 0.536, 0.542, 0.368, 0.315, 0.502, 0.648, 0.602, 0.51, 0.543, 0.636, 0.54,
+        0.371, 0.288, 0.429, 0.72, 0.76, 0.652, 0.537, 0.344, 0.207, 0.209, 0.317, 0.391, 0.303,
+        0.17, 0.099, 0.055, 0.027, 0.016, 0.012, 0.009, 0.015, 0.021, 0.016, 0.012, 0.079, 0.314,
+        0.637, 0.754, 0.618, 0.484, 0.357, 0.202, 0.233, 0.545, 0.864, 0.941, 0.798, 0.558, 0.378,
+        0.489, 0.828, 0.882, 0.653, 0.587, 0.587, 0.449, 0.354, 0.383, 0.37, 0.352, 0.406, 0.383,
+        0.306, 0.426, 0.738, 0.88, 0.818, 0.73, 0.593, 0.43, 0.305, 0.213, 0.189, 0.273, 0.345, 0.3,
+        0.182, 0.078, 0.03, 0.015, 0.009, 0.007, 0.009, 0.012, 0.012, 0.11, 0.425, 0.774, 0.876,
+        0.816, 0.81, 0.831, 0.831, 0.857, 0.88, 0.816, 0.658, 0.484, 0.331, 0.432, 0.73, 0.695,
+        0.454, 0.437, 0.504, 0.413, 0.263, 0.222, 0.385, 0.595, 0.564, 0.382, 0.264, 0.219, 0.178,
+        0.14, 0.118, 0.085, 0.046, 0.02, 0.006, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+      ];
+      var FPS = 30;
+      var DURATION = 7.031;
+
+      var BEAT = 60 / 128;
+      var TAP = 0.04; // sfx "tap"
+      var PRESS_DUR = 0.08;
+      var RELEASE = TAP + PRESS_DUR;
+      var RELEASE_DUR = 0.12;
+      var NOTE_S = 47; // "0:47"
+      var LAST_BAR = 23;
+      var PLAYED_S = 7; // the counter lands on "0:07"
+      // the note plays fast: one of its seconds per two beats of the bed, so the counter rolls on
+      // the grid and the 7th second lands just after "Pix?"
+      var NOTE_SECOND = 2 * BEAT;
+      var STOP = PLAYED_S * NOTE_SECOND; // 6.5625
+      var LIVE_IN = 0.2; // bars start following the voice after the tap
+      var LIVE_OUT_START = STOP;
+      var LIVE_OUT_END = 6.75; // bars back at rest, everything still from 6.8
+      var REACH = 3; // bars either side of the playhead that move with the voice
+      var QUICK = 0.15;
+      var OUT = 'power3.out';
+      var SLAM = 'expo.out';
+
+      // punch-ins on the three questions: "cardápio?", "chocolate?", "Pix?"
+      var PUNCHES = [2.92, 4.66, 6.22];
+      var PUNCH_SCALE = 1.05;
+      var PUNCH_UP = 0.1;
+      var PUNCH_BACK = 0.25;
+      var SHAKE_X = [6, -5, 4, -3, 2, -1, 0];
+      var SHAKE_R = [0.5, -0.4, 0.3, -0.2, 0.1, -0.05, 0];
+      var SHAKE_DUR = 0.25;
+
+      function noteAt(t) {
+        return Math.min(Math.max(t / NOTE_SECOND, 0), PLAYED_S);
+      }
+      function playheadAt(t) {
+        return (noteAt(t) / NOTE_S) * LAST_BAR;
+      }
+      function smoothstep(x) {
+        var c = Math.min(Math.max(x, 0), 1);
+        return c * c * (3 - 2 * c);
+      }
+      function liveAt(t) {
+        return (
+          smoothstep((t - TAP) / LIVE_IN) *
+          (1 - smoothstep((t - LIVE_OUT_START) / (LIVE_OUT_END - LIVE_OUT_START)))
+        );
+      }
+
+      var sender = one('01-o-audio-sender');
+      var bubble = one('01-o-audio-bubble');
+      var btn = one('01-o-audio-btn');
+      var btnShadow = one('01-o-audio-btn-shadow');
+      var tri = one('01-o-audio-tri');
+      var pause = one('01-o-audio-pause');
+      var bars = all('01-o-audio-bar');
+      var played = all('01-o-audio-played');
+      var rings = all('01-o-audio-ring');
+      var digits = one('01-o-audio-digit-col');
+      var elapsed = one('01-o-audio-elapsed');
+
+      var tl = gsap.timeline({ paused: true });
+
+      // Scene 1 — the tap: quick press, quick release; the triangle swaps to pause at the dip
+      tl.fromTo(btn, { scale: 1 }, { scale: 0.92, duration: PRESS_DUR, ease: 'power1.in' }, TAP);
+      tl.fromTo(
+        btn,
+        { scale: 0.92 },
+        { scale: 1, duration: RELEASE_DUR, ease: OUT, immediateRender: false },
+        RELEASE,
+      );
+      tl.fromTo(
+        btnShadow,
+        { opacity: 1 },
+        { opacity: 0.25, duration: PRESS_DUR, ease: 'power1.in' },
+        TAP,
+      );
+      tl.fromTo(
+        btnShadow,
+        { opacity: 0.25 },
+        { opacity: 1, duration: RELEASE_DUR, ease: OUT, immediateRender: false },
+        RELEASE,
+      );
+      tl.fromTo(
+        tri,
+        { opacity: 1, scale: 1 },
+        { opacity: 0, scale: 0.6, duration: PRESS_DUR, ease: 'power1.in' },
+        TAP,
+      );
+      tl.fromTo(
+        pause,
+        { opacity: 0, scale: 0.6 },
+        { opacity: 1, scale: 1, duration: 0.13, ease: SLAM },
+        RELEASE,
+      );
+      tl.fromTo(played[0], { opacity: 0 }, { opacity: 1, duration: QUICK, ease: OUT }, RELEASE);
+      tl.fromTo(rings[0], { opacity: 0 }, { opacity: 1, duration: QUICK, ease: OUT }, RELEASE);
+      tl.fromTo(
+        elapsed,
+        { opacity: 0, y: 6 },
+        { opacity: 1, y: 0, duration: 0.2, ease: SLAM },
+        RELEASE,
+      );
+
+      // Scene 2 — the playhead steps: it reaches each next bar's centre at 0.5 bar past the
+      // last (0.96, 2.87, 4.79 s), ringing it in spark and leaving the bar behind in ink
+      var headBars = Math.round(playheadAt(STOP));
+      for (var k = 1; k <= headBars; k++) {
+        var at = ((k - 0.5) / LAST_BAR) * NOTE_S * NOTE_SECOND;
+        tl.fromTo(
+          rings[k - 1],
+          { opacity: 1 },
+          { opacity: 0, duration: QUICK, ease: OUT, immediateRender: false },
+          at,
+        );
+        tl.fromTo(rings[k], { opacity: 0 }, { opacity: 1, duration: QUICK, ease: OUT }, at);
+        tl.fromTo(played[k], { opacity: 0 }, { opacity: 1, duration: QUICK, ease: OUT }, at);
+      }
+
+      // elapsed counter "0:00" -> "0:07": the last digit rolls like an odometer every 2 beats
+      var DIGIT_H = 44;
+      for (var s = 1; s <= PLAYED_S; s++) {
+        tl.fromTo(
+          digits,
+          { y: -DIGIT_H * (s - 1) },
+          { y: -DIGIT_H * s, duration: QUICK, ease: OUT, immediateRender: s === 1 },
+          s * NOTE_SECOND,
+        );
+      }
+
+      // bars near the playhead follow Luiz's loudness, one keyframe per envelope frame
+      var KF_START = 1; // frame 1 (0.033 s), before the tap: everything still at rest
+      var KF_END = Math.min(ENV.length - 1, Math.ceil(LIVE_OUT_END * FPS));
+      for (var i = 0; i < bars.length; i++) {
+        var rest = parseFloat(bars[i].style.height);
+        var maxScale = 190 / rest;
+        var frames = [];
+        var moves = false;
+        for (var f = KF_START + 1; f <= KF_END; f++) {
+          var t = f / FPS;
+          var d = Math.abs(i - playheadAt(t));
+          var w = d < REACH ? 0.5 * (1 + Math.cos((Math.PI * d) / REACH)) : 0;
+          var sc = 1 + liveAt(t) * w * (0.7 * ENV[f] - 0.2);
+          sc = Math.min(Math.max(sc, 0.55), maxScale);
+          if (w > 0) moves = true;
+          frames.push({ scaleY: Math.round(sc * 10000) / 10000, duration: 1 / FPS, ease: 'none' });
+        }
+        if (!moves) continue;
+        tl.to(bars[i], { keyframes: frames, ease: 'none' }, KF_START / FPS);
+      }
+
+      // the punches: bubble and sender row scale together about the bubble's centre (both
+      // transform-origins sit on it), with a fixed decaying shake
+      var hero = [sender, bubble];
+      var shakeStep = SHAKE_DUR / SHAKE_X.length;
+      for (var p = 0; p < PUNCHES.length; p++) {
+        var hit = PUNCHES[p];
+        tl.fromTo(
+          hero,
+          { scale: 1 },
+          { scale: PUNCH_SCALE, duration: PUNCH_UP, ease: 'power3.out', immediateRender: false },
+          hit,
+        );
+        tl.fromTo(
+          hero,
+          { scale: PUNCH_SCALE },
+          { scale: 1, duration: PUNCH_BACK, ease: 'power2.out', immediateRender: false },
+          hit + PUNCH_UP,
+        );
+        for (var j = 0; j < SHAKE_X.length; j++) {
+          tl.fromTo(
+            hero,
+            { x: j ? SHAKE_X[j - 1] : 0, rotation: j ? SHAKE_R[j - 1] : 0 },
+            {
+              x: SHAKE_X[j],
+              rotation: SHAKE_R[j],
+              duration: shakeStep,
+              ease: 'sine.inOut',
+              immediateRender: false,
+            },
+            hit + j * shakeStep,
+          );
+        }
+      }
+
+      // Scene 3 — "Pix?" is done: the playhead stops on bar 3, the note goes back to paused
+      tl.fromTo(
+        rings[headBars],
+        { opacity: 1 },
+        { opacity: 0, duration: QUICK, ease: OUT, immediateRender: false },
+        STOP,
+      );
+      tl.fromTo(
+        pause,
+        { opacity: 1, scale: 1 },
+        { opacity: 0, scale: 0.6, duration: 0.1, ease: 'power1.in', immediateRender: false },
+        STOP,
+      );
+      tl.fromTo(
+        tri,
+        { opacity: 0, scale: 0.6 },
+        { opacity: 1, scale: 1, duration: QUICK, ease: SLAM, immediateRender: false },
+        STOP + 0.02,
+      );
+
+      tl.set({}, {}, DURATION);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['01-o-audio'] = tl;
+    })();
+  </script>
+</template>

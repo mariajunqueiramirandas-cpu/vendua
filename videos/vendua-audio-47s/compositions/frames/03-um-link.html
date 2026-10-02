@@ -1,0 +1,411 @@
+<template>
+  <style>
+    @font-face {
+      font-family: 'Space Grotesk Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 700;
+      src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2')
+        format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Figtree Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 900;
+      src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: normal;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: italic;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-italic.woff2') format('woff2');
+    }
+
+    #root {
+      --canvas: #f7f4ea;
+      --ink: #123c32;
+      --spark: #d9f875;
+      --e1: 0 1px 2px rgb(18 60 50 / 0.06), 0 4px 16px rgb(18 60 50 / 0.05);
+      --e2: 0 2px 4px rgb(18 60 50 / 0.08), 0 12px 32px rgb(18 60 50 / 0.1);
+      position: relative;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+      container-type: size;
+      font-family: 'Figtree Variable', sans-serif;
+      color: var(--ink);
+    }
+
+    /* full-bleed ground: cream + static seeded paper grain */
+    [class~='03-um-link-bg'] {
+      position: absolute;
+      inset: 0;
+      width: 1080px;
+      height: 1920px;
+      background: var(--canvas);
+    }
+    [class~='03-um-link-grain'] {
+      position: absolute;
+      inset: 0;
+      width: 1080px;
+      height: 1920px;
+      opacity: 0.09;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.071 0 0 0 0 0.235 0 0 0 0 0.196 1.7 0 0 0 -0.6'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-size: 400px 400px;
+    }
+
+    [class~='03-um-link-stage'] {
+      position: absolute;
+      inset: 0;
+      width: 1080px;
+      height: 1920px;
+    }
+
+    /* ghosts sit on Frame 2's ten pile slots (Luiz's at its 0.94 settle); rotations set in the script */
+    [class~='03-um-link-ghost'] {
+      position: absolute;
+      width: 648px;
+      height: 173px;
+      border: 4px dashed rgb(18 60 50 / 0.22);
+      border-radius: 32px 32px 32px 10px;
+      transform-origin: 50% 50%;
+      z-index: 1;
+    }
+    [class~='03-um-link-ghost-l'] {
+      left: 72px;
+      top: 259px;
+      width: 609px;
+      height: 163px;
+    }
+    [class~='03-um-link-ghost-m'] {
+      left: 230px;
+      top: 345px;
+    }
+    [class~='03-um-link-ghost-a'] {
+      left: 96px;
+      top: 437px;
+    }
+    [class~='03-um-link-ghost-r'] {
+      left: 262px;
+      top: 529px;
+    }
+    [class~='03-um-link-ghost-j'] {
+      left: 120px;
+      top: 621px;
+    }
+    [class~='03-um-link-ghost-c'] {
+      left: 210px;
+      top: 713px;
+    }
+    [class~='03-um-link-ghost-p'] {
+      left: 84px;
+      top: 805px;
+    }
+    [class~='03-um-link-ghost-d'] {
+      left: 250px;
+      top: 897px;
+    }
+    [class~='03-um-link-ghost-t'] {
+      left: 140px;
+      top: 989px;
+    }
+    [class~='03-um-link-ghost-s'] {
+      left: 220px;
+      top: 1081px;
+    }
+
+    /* the link pill: 80% wide, centred on y 810 */
+    [class~='03-um-link-pill'] {
+      position: absolute;
+      left: 72px;
+      top: 729px;
+      width: 864px;
+      height: 162px;
+      transform-origin: 50% 50%;
+      z-index: 2;
+    }
+    [class~='03-um-link-sh1'],
+    [class~='03-um-link-sh2'],
+    [class~='03-um-link-face'],
+    [class~='03-um-link-dim'] {
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+    }
+    [class~='03-um-link-sh1'] {
+      box-shadow: var(--e1);
+    }
+    [class~='03-um-link-sh2'] {
+      box-shadow: var(--e2);
+    }
+    [class~='03-um-link-face'] {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      padding: 0 0 4px 38px;
+      background: var(--spark);
+      overflow: hidden;
+    }
+    [class~='03-um-link-mark'] {
+      flex: none;
+      display: block;
+      width: 64px;
+      height: 64px;
+      color: var(--ink);
+      transform-origin: 50% 50%;
+    }
+    [class~='03-um-link-url'] {
+      flex: none;
+      font-family: 'Space Grotesk Variable', sans-serif;
+      font-weight: 600;
+      font-size: 52px;
+      line-height: 1;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+      color: var(--ink);
+    }
+    [class~='03-um-link-dim'] {
+      background: var(--ink);
+      opacity: 0;
+    }
+
+    /* finger tap: lands on the pill's right end, a little below centre */
+    [class~='03-um-link-tap'],
+    [class~='03-um-link-ripple'] {
+      position: absolute;
+      left: 688px;
+      top: 772px;
+      width: 108px;
+      height: 108px;
+      border-radius: 999px;
+      transform-origin: 50% 50%;
+      pointer-events: none;
+      opacity: 0;
+    }
+    [class~='03-um-link-ripple'] {
+      border: 3px solid rgb(18 60 50 / 0.42);
+      z-index: 3;
+    }
+    [class~='03-um-link-tap'] {
+      border: 5px solid rgb(18 60 50 / 0.55);
+      background: rgb(18 60 50 / 0.08);
+      z-index: 4;
+    }
+  </style>
+
+  <div
+    id="root"
+    data-composition-id="03-um-link"
+    data-width="1080"
+    data-height="1920"
+    data-duration="3.297"
+  >
+    <div class="03-um-link-bg clip" data-start="0" data-duration="3.297" data-track-index="0">
+      <div class="03-um-link-grain"></div>
+    </div>
+
+    <div class="03-um-link-stage clip" data-start="0" data-duration="3.297" data-track-index="1">
+      <div class="03-um-link-ghost 03-um-link-ghost-l"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-m"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-a"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-r"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-j"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-c"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-p"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-d"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-t"></div>
+      <div class="03-um-link-ghost 03-um-link-ghost-s"></div>
+
+      <div class="03-um-link-pill">
+        <div class="03-um-link-sh2"></div>
+        <div class="03-um-link-sh1"></div>
+        <div class="03-um-link-face">
+          <svg class="03-um-link-mark" viewBox="0 0 128 128" aria-hidden="true">
+            <path
+              d="M32 48 L61 88 L98 34"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="17"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span class="03-um-link-url">bolosdanena.vendua.com.br</span>
+          <div class="03-um-link-dim"></div>
+        </div>
+      </div>
+
+      <div class="03-um-link-ripple"></div>
+      <div class="03-um-link-tap"></div>
+    </div>
+  </div>
+
+  <script src="assets/vendor/gsap.min.js"></script>
+  <script>
+    (function () {
+      var root = document.querySelector('[data-composition-id="03-um-link"]');
+      var q = function (name) {
+        return root.querySelector('[class~="03-um-link-' + name + '"]');
+      };
+      var DURATION = 3.046875;
+      var HIT = 0.25; // "Venduá," + hit
+      var BEAT = 0.703; // the bed's beat in the hold before "responde"
+      var PUNCH = 1.33; // "responde"
+      var TAP = 2.23; // "link" + tap
+      var GONE = 2.63; // ripple and ring gone; settled after
+      var tl = gsap.timeline({ paused: true });
+
+      // a later tween on a property an earlier one owns: explicit from, no immediate render
+      function step(el, from, to, at) {
+        to.immediateRender = false;
+        tl.fromTo(el, from, to, at);
+      }
+
+      // Scene 1 (0-0.23): the ten ghosts leave Frame 2's slots for the pill's centre (504, 810),
+      // the farthest first, so all ten vanish together at 0.23. [slot, dx, dy, rotation, opacity]
+      [
+        ['l', 127.5, 469.5, -2, 0.55],
+        ['m', -50, 378.5, 2.5, 1],
+        ['s', -40, -357.5, 2.5, 1],
+        ['a', 84, 286.5, -1.5, 1],
+        ['t', 40, -265.5, -1, 1],
+        ['r', -82, 194.5, 3, 1],
+        ['d', -70, -173.5, 2, 1],
+        ['p', 96, -81.5, -2.5, 1],
+        ['j', 60, 102.5, -3, 1],
+        ['c', -30, 10.5, 1.5, 1],
+      ].forEach(function (g, i) {
+        var at = Math.floor(i / 2) * 0.0075;
+        tl.fromTo(
+          q('ghost-' + g[0]),
+          { x: 0, y: 0, rotation: g[3], scale: 1, opacity: g[4] },
+          {
+            x: g[1],
+            y: g[2],
+            rotation: 0,
+            scale: 0.72,
+            opacity: 0,
+            duration: 0.23 - at,
+            ease: 'power2.in',
+          },
+          at,
+        );
+      });
+
+      // Scene 2 (0.25): the pill slams in, e2 -> e1 in the same 0.2 s, and shakes (<=10 px)
+      tl.fromTo(q('pill'), { scale: 1.15 }, { scale: 1, duration: 0.2, ease: 'expo.out' }, HIT);
+      tl.fromTo(q('pill'), { opacity: 0 }, { opacity: 1, duration: 0.05, ease: 'none' }, HIT);
+      tl.fromTo(q('sh2'), { opacity: 1 }, { opacity: 0, duration: 0.2, ease: 'power2.out' }, HIT);
+      var SX = [10, -8, 6, -4, 2.5, -1, 0];
+      var SY = [-4, 3, -2, 1.5, -0.8, 0.3, 0];
+      var SR = [0.6, -0.5, 0.35, -0.2, 0.1, -0.04, 0];
+      for (var k = 0; k < SX.length; k++) {
+        step(
+          q('pill'),
+          { x: k ? SX[k - 1] : 0, y: k ? SY[k - 1] : 0, rotation: k ? SR[k - 1] : 0 },
+          { x: SX[k], y: SY[k], rotation: SR[k], duration: 0.036, ease: 'sine.inOut' },
+          HIT + k * 0.036,
+        );
+      }
+      tl.fromTo(
+        q('mark'),
+        { scale: 0.6, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.22, ease: 'power4.out' },
+        HIT + 0.05,
+      );
+      tl.fromTo(
+        q('url'),
+        { x: -18, opacity: 0 },
+        { x: 0, opacity: 1, duration: 0.25, ease: 'power4.out' },
+        HIT + 0.05,
+      );
+
+      // Scene 3: a beat pulse in the hold, then a small punch on "responde"
+      step(q('pill'), { scale: 1 }, { scale: 1.02, duration: 0.08, ease: 'power3.out' }, BEAT);
+      step(
+        q('pill'),
+        { scale: 1.02 },
+        { scale: 1, duration: 0.2, ease: 'power2.out' },
+        BEAT + 0.08,
+      );
+      step(q('pill'), { scale: 1 }, { scale: 1.04, duration: 0.1, ease: 'power3.out' }, PUNCH);
+      step(
+        q('pill'),
+        { scale: 1.04 },
+        { scale: 1, duration: 0.25, ease: 'power2.out' },
+        PUNCH + 0.1,
+      );
+
+      // Scene 4: the ring comes down during "um" and lands on "link"; press 0.965 and back in 0.18 s
+      tl.fromTo(
+        q('tap'),
+        { scale: 1.4, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.12, ease: 'power3.out' },
+        TAP - 0.12,
+      );
+      step(q('tap'), { scale: 1 }, { scale: 0.86, duration: 0.06, ease: 'power2.out' }, TAP);
+      step(q('pill'), { scale: 1 }, { scale: 0.965, duration: 0.07, ease: 'power2.out' }, TAP);
+      step(q('sh1'), { opacity: 1 }, { opacity: 0.35, duration: 0.07, ease: 'power2.out' }, TAP);
+      step(q('dim'), { opacity: 0 }, { opacity: 0.06, duration: 0.07, ease: 'power2.out' }, TAP);
+      // release with no overshoot (the video bans back/elastic eases)
+      step(
+        q('pill'),
+        { scale: 0.965 },
+        { scale: 1, duration: 0.11, ease: 'power2.out' },
+        TAP + 0.07,
+      );
+      step(
+        q('sh1'),
+        { opacity: 0.35 },
+        { opacity: 1, duration: 0.11, ease: 'power2.out' },
+        TAP + 0.07,
+      );
+      step(
+        q('dim'),
+        { opacity: 0.06 },
+        { opacity: 0, duration: 0.11, ease: 'power2.out' },
+        TAP + 0.07,
+      );
+      step(
+        q('tap'),
+        { scale: 0.86, opacity: 1 },
+        { scale: 1.8, opacity: 0, duration: 0.3, ease: 'power2.out' },
+        TAP + 0.06,
+      );
+      // ripple: spreads from contact, gone by 2.63
+      tl.fromTo(
+        q('ripple'),
+        { scale: 1 },
+        { scale: 3.4, duration: GONE - (TAP + 0.01), ease: 'power2.out' },
+        TAP + 0.01,
+      );
+      tl.fromTo(
+        q('ripple'),
+        { opacity: 0 },
+        { opacity: 0.6, duration: 0.04, ease: 'none' },
+        TAP + 0.01,
+      );
+      step(
+        q('ripple'),
+        { opacity: 0.6 },
+        { opacity: 0, duration: GONE - (TAP + 0.05), ease: 'power1.out' },
+        TAP + 0.05,
+      );
+
+      // Scene 5 (2.63-3.047): settled; the push-slide takes it from 3.047
+      tl.set({}, {}, DURATION);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['03-um-link'] = tl;
+    })();
+  </script>
+</template>

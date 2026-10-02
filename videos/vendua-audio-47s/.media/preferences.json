@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "preferences": {
+    "destination": {
+      "value": "instagram-reels",
+      "confirmed_in": ["vendua-audio-47s"],
+      "updated_at": "2026-10-02T01:54:04.906Z"
+    },
+    "aspect": {
+      "value": "1080x1920",
+      "confirmed_in": ["vendua-audio-47s"],
+      "updated_at": "2026-10-02T01:54:04.949Z"
+    },
+    "language": {
+      "value": "pt-BR",
+      "confirmed_in": ["vendua-audio-47s"],
+      "updated_at": "2026-10-02T01:54:04.989Z"
+    },
+    "flow": {
+      "value": "automation",
+      "confirmed_in": ["vendua-audio-47s"],
+      "updated_at": "2026-10-02T01:54:05.031Z"
+    },
+    "storyboard": {
+      "value": "yes",
+      "confirmed_in": ["vendua-audio-47s"],
+      "updated_at": "2026-10-02T01:54:05.073Z"
+    },
+    "voice": {
+      "value": "elevenlabs:mmTLZX6tO1YdiYVoUVN5 (Adriane, narrator)",
+      "confirmed_in": ["vendua-audio-47s"],
+      "updated_at": "2026-10-02T02:54:42.396Z"
+    }
+  },
+  "sightings": {}
+}

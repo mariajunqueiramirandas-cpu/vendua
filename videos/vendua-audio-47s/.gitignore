@@ -1,0 +1,7 @@
+# raw ElevenLabs takes (kept on the ElevenLabs flow "Venduá Reel — O áudio de 47 segundos")
+audio/takes/
+# generated per run
+.hyperframes/frame-packets/
+snapshots/
+renders/*
+!renders/vendua-audio-47s.mp4

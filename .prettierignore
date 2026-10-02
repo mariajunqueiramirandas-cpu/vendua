@@ -3,5 +3,6 @@ packages/conformance/stale/
 
 # third-party agent skills installed by `npx skills add` (kept byte-for-byte as upstream ships them)
 .agents/
-# vendored minified libraries in video projects
-videos/*/assets/vendor/
+# HyperFrames video projects stay byte-for-byte what their tools and authors write: the scripts parse
+# frame.md, STORYBOARD.md and index.html as text, and regenerate the JSON and caption files
+videos/*/
