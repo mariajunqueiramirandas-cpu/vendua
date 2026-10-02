@@ -26,7 +26,7 @@ Only Mercado Pago (already integrated) and PagBank (Connect OAuth plus Split) cl
 - Efí has a Partnership Program exclusive to the "Efí Empresas" account, covering API integration and client referrals. — [Efí Programa de Parcerias](https://sejaefi.com.br/programa-de-parceria) (search summary)
 - **InfinitePay Checkout API**: `POST https://api.checkout.infinitepay.io/links` with `handle` (the merchant's InfiniteTag) and `items` (price in cents). It returns a payment link and supports `webhook_url`, `redirect_url` and `order_nsu`. `POST /payment_check` verifies a payment. Card (up to 12x) and Pix are supported. The merchant must hold an active InfinitePay account. The doc describes no OAuth, partner-platform, platform-fee or split features. — [InfinitePay Checkout docs](https://www.infinitepay.io/checkout-documentacao) (accessed 2026-10-02)
 - **Stripe**: Brazilian Stripe accounts support Pix one-time payments with BRL settlement, on an invite-only basis. A business needs good standing and at least 60 days of processing, and Pix Automático is not available. — [Stripe support: how to enable Pix in Brazil](https://support.stripe.com/questions/how-to-enable-pix-as-a-payment-method-in-brazil) (search summary; undated)
-- Stripe's cross-border payout docs list platforms in the US, UK, EEA, CA and CH only. Brazil is not listed as a platform country on that page. — [Stripe cross-border payouts](https://docs.stripe.com/connect/cross-border-payouts) (accessed 2026-10-02)
+- Stripe's cross-border payout docs list platforms in the US, UK, EEA, CA and CH only. Brazil is not listed as a platform country on that page, but the page covers cross-border platform/account combinations, so it says nothing about a Brazilian platform with Brazilian connected accounts. — [Stripe cross-border payouts](https://docs.stripe.com/connect/cross-border-payouts) (accessed 2026-10-02)
 - A search summary says Brazil appears on a list of countries supporting Express connected accounts, and that Express is deprecated for new integrations. — [Stripe Express accounts](https://docs.stripe.com/connect/express-accounts) (search summary; weak)
 
 ### Inferences
@@ -35,7 +35,7 @@ Only Mercado Pago (already integrated) and PagBank (Connect OAuth plus Split) cl
 - PagBank Split is not equivalent to the MP model in liability terms: the platform becomes the Primary and absorbs fees and chargebacks. Using PagBank Connect with each merchant's own credentials (create checkout or orders as the merchant, not via Split) might avoid this, but I did not find documentation confirming that a platform fee can be taken outside Split. This needs a direct test or a question to PagBank.
 - Asaas, Pagar.me and Efí put the platform in the position of onboarding sub-accounts (KYC, ledger balances) and carrying liability, which sits close to the "subadquirente" role Venduá wants to avoid. This is a legal question for counsel, not settled by these sources.
 - InfinitePay can fit as a "bring your own account" adapter with no fee: the merchant types a handle and the platform creates links. It gives no application fee and no proof the handle belongs to the person entering it, so verification would be weak.
-- Stripe is a poor fit for Brazilian merchants today. I found no confirmation that Connect works with Brazil-based platforms or merchants, and Pix is invite-only.
+- Stripe is a poor fit for Brazilian merchants today. Pix is invite-only; whether domestic Connect works for a Brazilian platform was not verified (the cross-border page doesn't settle it).
 
 ### Gaps
 
