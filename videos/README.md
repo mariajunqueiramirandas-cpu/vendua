@@ -67,14 +67,13 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
 8. **Frames**: one Opus agent per frame, all in parallel, each editing only its own
    `compositions/frames/NN-*.html`, each starting with "read the shared brief file". When the audio
    changes later, message the same agents with the new cue table; they retime in a minute.
-9. **Assemble and check**: `videos/tools/build-reel.sh videos/<project> --bpm 128 --snapshots
-
-<dir> [--draft out.mp4]` does it in one go (~40 s): assemble, vendored GSAP, transitions inject +
-   verify, captions, `hyperframes check`, then `videos/tools/cutcheck.py`, which fails on a word,
-   caption or SFX outside its frame, a caption on a caption-free frame, a frame mounted off the
-   schedule, a frame that is not whole eighths, or a CDN GSAP tag (a caption carried a few frames
-   into the next captioned frame is a warning). Then look at the snapshots it takes 0.1 s either
-   side of every cut, plus frame midpoints.
+9. **Assemble and check**: run `videos/tools/build-reel.sh videos/<project> --bpm 128`, adding
+   `--snapshots DIR` and `--draft OUT.mp4` as needed. It does it in one go (~40 s): assemble,
+   vendored GSAP, transitions inject + verify, captions, `hyperframes check`, then
+   `videos/tools/cutcheck.py`, which fails on a word, caption or SFX outside its frame, a caption on
+   a caption-free frame, a frame mounted off the schedule, a frame that is not whole eighths, or a
+   CDN GSAP tag (a caption carried a few frames into the next captioned frame is a warning). Then
+   look at the snapshots it takes 0.1 s either side of every cut, plus frame midpoints.
 10. **Draft for the author**: `npx hyperframes render --quality draft`, Whisper the draft to
     confirm every line sits in its frame, send it with a contact sheet. Only after "render it":
     `--quality high`, then loudness (below), then commit `renders/<name>.mp4`.
