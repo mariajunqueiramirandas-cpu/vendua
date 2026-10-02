@@ -3,5 +3,5 @@ audio/takes/
 # generated per run
 .hyperframes/frame-packets/
 snapshots/
-renders/*.mp4
+renders/*
 !renders/vendua-audio-47s.mp4
