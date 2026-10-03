@@ -6,6 +6,7 @@ WORKDIR /app
 
 # All workspace manifests must be present or --frozen-lockfile fails.
 COPY package.json bun.lock tsconfig.base.json ./
+COPY packages/agent-runtime/package.json packages/agent-runtime/package.json
 COPY packages/cli/package.json packages/cli/package.json
 COPY packages/codemods/package.json packages/codemods/package.json
 COPY packages/conformance/package.json packages/conformance/package.json
@@ -30,6 +31,8 @@ RUN --mount=type=cache,id=vendua-bun,target=/root/.bun/install/cache \
 COPY packages/templates packages/templates
 COPY packages/loader packages/loader
 COPY packages/kernel packages/kernel
+# Core imports the Agent Runtime v3 sources (ADR 0030)
+COPY packages/agent-runtime packages/agent-runtime
 
 # Control SPA — built in-image so Core can serve apps/control/dist at /control/.
 COPY apps/control apps/control
