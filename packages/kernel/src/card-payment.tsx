@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef } from 'react';
 import type { CardPaymentInput, DeclineReason } from './api.ts';
 
-// Kernel 1.17 — the in-page card. Card number, expiry and CVV live in Mercado Pago's own
+// Kernel 1.19 — the in-page card. Card number, expiry and CVV live in Mercado Pago's own
 // iframes (the Card Payment Brick's Secure Fields); the Kernel only ever sees the single-use
 // token the Brick hands back, and Core charges the order's total.
 

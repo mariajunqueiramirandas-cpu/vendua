@@ -364,4 +364,44 @@ describe('slot defaults', () => {
     expect(long).toContain('placeholder="Buscar sabor"');
     expect(html(group(40, 'Adicionais'))).toContain('placeholder="Buscar opção"');
   });
+
+  test('the store chat names who speaks and links only what the Kernel resolves', () => {
+    const C = SLOT_DEFAULTS['system.Chat'];
+    const fx = SLOT_FIXTURES['system.Chat'];
+    const html = renderToStaticMarkup(
+      <C
+        {...fx}
+        messages={[
+          ...fx.messages,
+          {
+            id: 'x1',
+            author: 'agent',
+            body: 'Veja https://outra.example/sacola.',
+            at: '2026-09-26T21:01:00Z',
+            card: null,
+          },
+          {
+            id: 'x2',
+            author: 'merchant',
+            body: 'Oi, aqui é a Ana.',
+            at: '2026-09-26T21:02:00Z',
+            card: null,
+          },
+        ]}
+        resolveLink={(u) => (u.includes('doces.vendua.test') ? '/sacola' : null)}
+        vocabulary={vocabularyOf({ vocabulary: { bag: 'carrinho' } })}
+      />,
+    );
+    expect(html).toContain('data-vendua="chat"');
+    expect(html).toContain('aria-modal="true"');
+    expect(html).toContain('href="/sacola"');
+    expect(html).not.toContain('href="https://outra.example');
+    expect(tags(html)).toContain('Veja https://outra.example/sacola.');
+    expect(tags(html)).toContain('Oi! Aqui é Bia, assistente virtual da Doces da Ana.');
+    expect(html).toContain('data-author="merchant"');
+    expect(tags(html)).toContain('Doces da Ana');
+    expect(tags(html)).toContain('Bia está digitando…');
+    expect(tags(html)).toContain('Bia pode montar seu carrinho com você.');
+    expect(html).toContain('data-part="unread"');
+  });
 });

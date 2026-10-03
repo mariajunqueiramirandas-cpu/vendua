@@ -379,6 +379,469 @@
       transition: none;
     }
   }
+  /* ── the store's assistant (system.Chat, Kernel 1.18): a launcher in the corner, above the
+     bag bar and the buy row; the conversation is a modal dialog — a bottom sheet on phones, a
+     panel in the corner from 768 px ─────────────────────────────────────────────────────── */
+  .v-chat {
+    font-family: var(--v-font-body, system-ui, sans-serif);
+    line-height: 1.5;
+    color: var(--v-color-text, #1c1b1a);
+  }
+  .v-chat *,
+  .v-chat *::before,
+  .v-chat *::after {
+    box-sizing: border-box;
+  }
+  .v-chat :focus-visible {
+    outline: var(--v-focus);
+    outline-offset: 2px;
+  }
+  .v-chat-launcher {
+    position: fixed;
+    right: max(16px, env(safe-area-inset-right, 0px));
+    bottom: max(16px, env(safe-area-inset-bottom, 0px));
+    z-index: 45;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 56px;
+    height: 56px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 28px;
+    background: var(--v-color-accent, #3f5e4e);
+    color: var(--v-color-on-accent, #fff);
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    box-shadow: 0 10px 26px -10px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 70%, #000);
+    transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+    animation: v-chat-rise 260ms var(--_v-vt-ease) both;
+  }
+  .v-chat-launcher:active {
+    transform: scale(0.94);
+    transition-duration: calc(var(--v-motion-duration, 180ms) / 3);
+  }
+  .v-chat-launcher-label {
+    display: none;
+  }
+  .v-chat-unread {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    display: grid;
+    place-items: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 11px;
+    border: 2px solid var(--v-color-bg, #f7f6f4);
+    background: var(--v-color-danger, #a33b32);
+    color: var(--v-color-on-accent, #fff);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  @media (min-width: 768px) {
+    .v-chat-launcher {
+      right: max(24px, env(safe-area-inset-right, 0px));
+      bottom: max(24px, env(safe-area-inset-bottom, 0px));
+      padding: 0 20px 0 16px;
+    }
+    .v-chat-launcher-label {
+      display: inline;
+    }
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .v-chat-launcher:hover {
+      filter: brightness(1.06);
+    }
+  }
+  /* over the bag bar (phones) and the product page's buy row; toasts rise above it */
+  @media (max-width: 767px) {
+    body:has(.v-bag-bar) .v-chat-launcher {
+      bottom: calc(72px + max(12px, env(safe-area-inset-bottom, 0px)));
+    }
+    body:has(.v-chat-launcher) {
+      padding-bottom: calc(72px + max(16px, env(safe-area-inset-bottom, 0px)));
+    }
+    body:has(.v-chat-launcher):has(.v-bag-bar) {
+      padding-bottom: calc(132px + max(12px, env(safe-area-inset-bottom, 0px)));
+    }
+  }
+  @media (max-width: 859px) {
+    body:has(.v-pp-buy) .v-chat-launcher {
+      bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    }
+    html:has(.v-chat-launcher):not(:has(.v-sheet[open])) .v-toast-region {
+      translate: 0 -68px;
+    }
+  }
+  @keyframes v-chat-rise {
+    from {
+      transform: translateY(16px) scale(0.9);
+      opacity: 0;
+    }
+  }
+
+  .v-chat-dialog[open] {
+    position: fixed;
+    inset: 0;
+    z-index: 110;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    background: transparent;
+    color: var(--v-color-text, #1c1b1a);
+    overscroll-behavior: contain;
+  }
+  .v-chat-dialog::backdrop {
+    background: var(--_v-scrim);
+  }
+  html:has(.v-chat-dialog[open]) {
+    overflow: hidden;
+    scrollbar-gutter: stable;
+  }
+  .v-chat-panel {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: min(88vh, 720px);
+    height: min(88dvh, 720px);
+    border-radius: min(var(--v-radius-lg, 14px), 20px) min(var(--v-radius-lg, 14px), 20px) 0 0;
+    background: var(--v-color-bg, #f7f6f4);
+    box-shadow: 0 -12px 40px -12px rgb(0 0 0 / 0.28);
+    animation: v-chat-up 300ms var(--_v-vt-ease) both;
+  }
+  @keyframes v-chat-up {
+    from {
+      transform: translateY(100%);
+    }
+  }
+  @media (min-width: 768px) {
+    .v-chat-dialog[open] {
+      align-items: flex-end;
+      padding: max(24px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-right, 0px))
+        max(24px, env(safe-area-inset-bottom, 0px));
+    }
+    .v-chat-dialog::backdrop {
+      background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 18%, transparent);
+    }
+    .v-chat-panel {
+      width: min(400px, 100%);
+      height: min(640px, 100%);
+      border-radius: min(var(--v-radius-lg, 14px), 20px);
+      box-shadow: 0 24px 60px -16px rgb(0 0 0 / 0.32);
+      animation-name: v-chat-pop;
+      transform-origin: bottom right;
+    }
+  }
+  @keyframes v-chat-pop {
+    from {
+      transform: translateY(12px) scale(0.96);
+      opacity: 0;
+    }
+  }
+  .v-chat-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 8px 12px max(16px, env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+  }
+  .v-chat-avatar {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: color-mix(
+      in srgb,
+      var(--v-color-accent, #3f5e4e) 14%,
+      var(--v-color-surface, #fff)
+    );
+    color: var(--v-color-text, #1c1b1a);
+    font-family: var(--v-font-display, var(--v-font-body, system-ui));
+    font-weight: 600;
+    font-size: 16px;
+  }
+  .v-chat-who {
+    flex: 1;
+    min-width: 0;
+  }
+  .v-chat-title {
+    margin: 0;
+    font-family: var(--v-font-display, var(--v-font-body, system-ui));
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  .v-chat-title:focus {
+    outline: none;
+  }
+  .v-chat-subtitle {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.3;
+    color: var(--v-color-muted, #6e6a64);
+  }
+  .v-chat-close {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--v-color-text, #1c1b1a);
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .v-chat-close:active {
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 8%, transparent);
+  }
+  .v-chat-log {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0;
+    padding: 16px max(16px, env(safe-area-inset-right, 0px)) 12px
+      max(16px, env(safe-area-inset-left, 0px));
+    list-style: none;
+  }
+  .v-chat-msg {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    max-width: 85%;
+  }
+  .v-chat-msg[data-run='start'] {
+    margin-top: 8px;
+  }
+  .v-chat-msg[data-author='shopper'] {
+    align-self: flex-end;
+    align-items: flex-end;
+  }
+  .v-chat-author {
+    margin: 0 12px 2px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--v-color-muted, #6e6a64);
+  }
+  .v-chat-bubble {
+    margin: 0;
+    padding: 9px 13px;
+    border-radius: 18px;
+    background: var(--v-color-surface, #fff);
+    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+    color: var(--v-color-text, #1c1b1a);
+    font-size: 16px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .v-chat-msg[data-author='shopper'] .v-chat-bubble {
+    border-color: transparent;
+    background: var(--v-color-accent, #3f5e4e);
+    color: var(--v-color-on-accent, #fff);
+  }
+  .v-chat-msg[data-author='merchant'] .v-chat-bubble {
+    border-left: 3px solid var(--v-color-accent, #3f5e4e);
+  }
+  .v-chat-msg[data-author='core'] .v-chat-bubble {
+    background: color-mix(in srgb, var(--v-color-accent, #3f5e4e) 8%, var(--v-color-surface, #fff));
+  }
+  .v-chat-link {
+    color: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .v-chat-msg[data-card='link'] .v-chat-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  .v-chat-time {
+    margin: 2px 12px 0;
+    font-size: 12px;
+    color: var(--v-color-muted, #6e6a64);
+    font-variant-numeric: tabular-nums;
+  }
+  .v-chat-typing {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--v-color-muted, #6e6a64);
+  }
+  .v-chat-dots {
+    display: inline-flex;
+    gap: 3px;
+  }
+  .v-chat-dots i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: v-chat-dot 1.2s ease-in-out infinite;
+  }
+  .v-chat-dots i:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+  .v-chat-dots i:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+  @keyframes v-chat-dot {
+    0%,
+    60%,
+    100% {
+      opacity: 0.35;
+      transform: none;
+    }
+    30% {
+      opacity: 1;
+      transform: translateY(-3px);
+    }
+  }
+  .v-chat-error {
+    flex: none;
+    margin: 0 16px 8px;
+    padding: 8px 12px;
+    border-radius: var(--v-radius-md, 10px);
+    background: color-mix(in srgb, var(--v-color-danger, #a33b32) 10%, var(--v-color-bg, #f7f6f4));
+    color: var(--v-color-text, #1c1b1a);
+    font-size: 14px;
+  }
+  .v-chat-composer {
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 8px max(12px, env(safe-area-inset-right, 0px)) 4px
+      max(12px, env(safe-area-inset-left, 0px));
+    border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+  }
+  .v-chat-input {
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+    max-height: 132px;
+    padding: 10px 14px;
+    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 20%, transparent);
+    border-radius: 22px;
+    background: var(--v-color-surface, #fff);
+    color: var(--v-color-text, #1c1b1a);
+    font: inherit;
+    font-size: 16px;
+    line-height: 1.4;
+    resize: none;
+    field-sizing: content;
+  }
+  .v-chat-input::placeholder {
+    color: var(--v-color-muted, #6e6a64);
+    opacity: 1;
+  }
+  .v-chat-input:focus-visible {
+    outline: var(--v-focus);
+    outline-offset: 1px;
+  }
+  .v-chat-send {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--v-color-accent, #3f5e4e);
+    color: var(--v-color-on-accent, #fff);
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 120ms ease;
+  }
+  .v-chat-send:active:not([aria-disabled='true']) {
+    transform: scale(0.92);
+  }
+  .v-chat-send[aria-disabled='true'] {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .v-chat-send[aria-busy='true'] {
+    opacity: 0.7;
+    cursor: progress;
+  }
+  .v-chat-count {
+    flex-basis: 100%;
+    padding: 0 14px;
+    font-size: 12px;
+    color: var(--v-color-muted, #6e6a64);
+  }
+  .v-chat-note {
+    flex: none;
+    margin: 0;
+    padding: 4px 16px max(12px, env(safe-area-inset-bottom, 0px));
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--v-color-muted, #6e6a64);
+    text-align: center;
+  }
+  @media (min-width: 768px) {
+    .v-chat-note {
+      padding-bottom: 12px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .v-chat-launcher,
+    .v-chat-panel {
+      animation: v-fade-in 120ms ease both;
+    }
+    .v-chat-launcher,
+    .v-chat-send {
+      transition: opacity 120ms linear;
+      transform: none !important;
+    }
+    .v-chat-launcher:active,
+    .v-chat-send:active:not([aria-disabled='true']) {
+      opacity: 0.7;
+    }
+    .v-chat-dots i {
+      animation: none;
+      opacity: 0.6;
+    }
+  }
+  @media print {
+    .v-chat {
+      display: none !important;
+    }
+  }
   @keyframes v-fade-in {
     from {
       opacity: 0;

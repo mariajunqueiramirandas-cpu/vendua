@@ -83,7 +83,7 @@ export type DeclineReason =
 
 export type PayNext =
   | { kind: 'pix'; copyPaste: string; expiresAt: string | null }
-  /** Kernels before 1.17: MP's hosted checkout */
+  /** Kernels before 1.19: MP's hosted checkout */
   | { kind: 'redirect'; url: string }
   /** the Kernel mounts MP's card fields with this key; Core charges the order total */
   | {
@@ -382,7 +382,7 @@ export interface PayCtx {
   publicOrigin: string;
   storeDomain: string;
   payerEmail?: string;
-  /** Kernel 1.17+: a card order gets the in-page form, never a hosted checkout */
+  /** Kernel 1.19+: a card order gets the in-page form, never a hosted checkout */
   cardForm?: boolean;
   /** the key MP's card fields run under (MP_PUBLIC_KEY); unset → the store's own, from OAuth */
   publicKey?: string;
@@ -518,7 +518,7 @@ async function planPayment(
   return create(row);
 }
 
-/** The in-page card form (Kernel 1.17+): show it, or say a payment is already on its way. */
+/** The in-page card form (Kernel 1.19+): show it, or say a payment is already on its way. */
 async function cardFormPlan(
   tx: Sql,
   d: PayDeps,
@@ -777,7 +777,7 @@ type CardPlan =
 
 /**
  * POST /checkout/v1/orders/:id/card — the shopper typed a card into MP's fields on the order page
- * (Kernel 1.17+). Same shape as preparePayment: a short tx reserves a `creating` attempt, MP is
+ * (Kernel 1.19+). Same shape as preparePayment: a short tx reserves a `creating` attempt, MP is
  * called outside any tx with key `${orderId}:${attempt}`, a second tx records the answer. One
  * card at a time: while an attempt is in flight or in review, another submit gets
  * PAYMENT_IN_PROGRESS — a second token would be a second charge.

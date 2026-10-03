@@ -162,6 +162,11 @@ class FakeSocket implements WaSocket {
     this.world.outbox.push({ jid, text: content.text, id: opts?.messageId });
     return { key: { id: opts?.messageId ?? 'x' } };
   }
+  async updateMediaMessage<M>(m: M) {
+    return m;
+  }
+  async presenceSubscribe() {}
+  async sendPresenceUpdate() {}
   async logout() {
     this.loggedOut = true;
     this.close(401);
@@ -185,6 +190,7 @@ class FakeWorld {
       codec: { replacer: (_k, v) => v, reviver: (_k, v) => v },
       initCreds: () => ({ noiseKey: 'fresh' }),
       normalize: (m) => m,
+      download: async () => new Uint8Array(),
       connect: async ({ creds, keys }) => {
         const s = new FakeSocket(creds, keys, this);
         this.sockets.push(s);

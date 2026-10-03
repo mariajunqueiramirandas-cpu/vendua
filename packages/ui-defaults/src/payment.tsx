@@ -4,7 +4,7 @@ import { formatCents, PAYMENT_METHOD_LABEL } from '@vendua/kernel/rules';
 
 // checkout.PaymentStatus — one card for every state of an online payment (card, online
 // Pix). The Kernel decides the state and the next step; this only says it. Busy states carry
-// a progress rail + copy, never a bare spinner. Since Kernel 1.17 the card is paid in the page;
+// a progress rail + copy, never a bare spinner. Since Kernel 1.19 the card is paid in the page;
 // only `redirecting` (an older Core's hosted checkout) talks about leaving it.
 
 type Tone = 'success' | 'info' | 'warning' | 'neutral';

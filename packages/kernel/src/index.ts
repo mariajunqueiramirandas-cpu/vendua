@@ -72,6 +72,8 @@ export {
 } from './hooks.ts';
 export type { CartMutations, CustomerProfile, QueryError } from './hooks.ts';
 export { useErrorSurface } from './errors.ts';
+// Kernel 1.18 — the store's assistant (the Vendedor) chatting on the site
+export { useStoreChat } from './chat.ts';
 
 // Kernel 1.14 — presentation rules (pure; also `@vendua/kernel/rules`) and display components
 export * from './rules/index.ts';
@@ -180,7 +182,7 @@ export type {
   PixInfo,
   // Kernel 1.7
   PaymentNext,
-  // Kernel 1.17
+  // Kernel 1.19
   CardPaymentInput,
   DeclineReason,
   // Kernel 1.12
@@ -197,4 +199,7 @@ export type {
   GeoPoint,
   LatLng,
   MapTiles,
+  // Kernel 1.18
+  StoreChat,
+  StoreChatMessage,
 } from './api.ts';

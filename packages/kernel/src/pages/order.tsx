@@ -85,7 +85,7 @@ type CardView =
   | { kind: 'challenge'; cfg: CardConfig; url: string; creq: string };
 
 /** Kernel 1.7 — the order's online payment (card, online Pix): asks Core for the Pix or, since
- *  1.17, the in-page card form; takes the card's token to Core; and turns the payment's state
+ *  1.19, the in-page card form; takes the card's token to Core; and turns the payment's state
  *  into what `checkout.PaymentStatus` / `checkout.CardPayment` show. Offline orders: none. */
 function useOnlinePayment(
   order: Order | undefined,

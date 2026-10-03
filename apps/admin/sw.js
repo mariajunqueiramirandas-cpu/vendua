@@ -1,8 +1,9 @@
 // Venduá merchant admin service worker. The build (vite.config.ts `serviceWorker`)
 // prepends VERSION and PRECACHE: every file the app can load, so any screen opens
 // offline and a deploy rolls out as one atomic version (the page asks before
-// switching). Also: web push for new orders with "aceitar" from the notification,
-// the app icon badge, and the share target (a photo shared from the gallery).
+// switching). Also: web push for new orders with "aceitar" from the notification, for a
+// shopper waiting in a Vendedor conversation with "assumir", the app icon badge, and the
+// share target (a photo shared from the gallery).
 /* global VERSION, PRECACHE */
 const SHELL = `vendua-admin-${VERSION}`;
 const MEDIA = 'vendua-admin-media';
@@ -147,8 +148,8 @@ self.addEventListener('fetch', (e) => {
 
 async function setBadge() {
   if (!self.navigator.setAppBadge) return;
-  const n = (await self.registration.getNotifications()).filter((x) =>
-    (x.tag || '').startsWith('order-'),
+  const n = (await self.registration.getNotifications()).filter(
+    (x) => (x.tag || '').startsWith('order-') || (x.tag || '').startsWith('vendedor-'),
   ).length;
   await (n ? self.navigator.setAppBadge(n) : self.navigator.clearAppBadge()).catch(() => {});
 }
@@ -173,18 +174,30 @@ self.addEventListener('push', (e) => {
         // Android draws the badge as a white silhouette in the status bar
         badge: '/admin/icons/badge-96.png',
         vibrate: [180, 90, 180],
-        data: { url: data.url || '/admin/pedidos', orderId: data.orderId },
-        actions: data.orderId ? [{ action: 'accept', title: 'Aceitar' }] : [],
+        data: { url: data.url || '/admin/pedidos', orderId: data.orderId, threadId: data.threadId },
+        actions: data.threadId
+          ? takeActions(data.actions)
+          : data.orderId
+            ? [{ action: 'accept', title: 'Aceitar' }]
+            : [],
       })
       .then(setBadge),
   );
 });
 
+// a waiting shopper: "assumir" takes the conversation from the lock screen, "abrir" opens it as is
+function takeActions(sent) {
+  const list = Array.isArray(sent) && sent.length ? sent : [{ action: 'take', title: 'assumir' }];
+  return list.some((a) => a.action === 'open')
+    ? list
+    : [...list, { action: 'open', title: 'abrir' }];
+}
+
 self.addEventListener('notificationclose', (e) => e.waitUntil(setBadge()));
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const { url, orderId } = e.notification.data || {};
+  const { url, orderId, threadId } = e.notification.data || {};
   const open = async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const win = wins.find((w) => new URL(w.url).pathname.startsWith('/admin'));
@@ -195,6 +208,25 @@ self.addEventListener('notificationclick', (e) => {
     }
     await self.clients.openWindow(url || '/admin/pedidos');
   };
+  if (e.action === 'take' && threadId) {
+    e.waitUntil(
+      fetch(`/admin/v1/vendedor/threads/${encodeURIComponent(threadId)}/take`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'content-type': 'application/json',
+          'x-vendua-admin': '1',
+          'idempotency-key': `push-take-${threadId}`,
+        },
+        body: '{}',
+      })
+        .catch(() => undefined)
+        // taken or not, the conversation is where the reply happens
+        .then(open)
+        .then(setBadge),
+    );
+    return;
+  }
   if (e.action === 'accept' && orderId) {
     e.waitUntil(
       fetch(`/admin/v1/orders/${orderId}/transition`, {

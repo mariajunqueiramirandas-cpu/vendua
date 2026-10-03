@@ -433,7 +433,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     expect(audits.length).toBe(2);
   });
 
-  test('card form (Kernel 1.17): no redirect — a token pays, a decline shows the form again', async () => {
+  test('card form (Kernel 1.19): no redirect — a token pays, a decline shows the form again', async () => {
     const nonce = () => `.${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
     const form = (id: string, auth: Record<string, string>) =>
       call('POST', `/checkout/v1/orders/${id}/pay`, { card: 'form' }, auth);

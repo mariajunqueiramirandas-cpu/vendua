@@ -188,7 +188,7 @@ export interface PaymentProvider {
 
   // store orders, on the merchant's token
   createPix(token: string, req: PixRequest): Promise<ProviderPayment>;
-  /** Kernels before 1.17 only: MP's hosted checkout, reached by a redirect */
+  /** Kernels before 1.19 only: MP's hosted checkout, reached by a redirect */
   createCardCheckout(token: string, req: CardCheckoutRequest): Promise<CardCheckout>;
   /** a card tokenized in our page — no redirect; may come back waiting on a 3DS challenge */
   createCardPayment(token: string, req: CardPaymentRequest): Promise<ProviderPayment>;

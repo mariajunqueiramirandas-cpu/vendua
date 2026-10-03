@@ -1,6 +1,6 @@
 # 13 — Payments
 
-> Status: Implemented (Core migration 0054, Kernel 1.7; in-page card Kernel 1.17) · Last reviewed: 2026-10-03
+> Status: Implemented (Core migration 0054, Kernel 1.7; in-page card Kernel 1.19) · Last reviewed: 2026-10-03
 > Decision: [ADR 0009](../adr/0009-mercado-pago-marketplace.md)
 
 Consumer payments go **directly into each merchant's own Mercado Pago account**
@@ -19,7 +19,7 @@ shopper → Kernel-owned checkout → Core /checkout/v1 →
 
 - **PIX first** (BR reality): an MP dynamic Pix (`POST /v1/payments`, 30-minute expiry)
   shown by the Kernel-owned order page with its QR and copia e cola.
-- **Card in the page, no redirect** (Kernel 1.17): the order page mounts MP's Card Payment
+- **Card in the page, no redirect** (Kernel 1.19): the order page mounts MP's Card Payment
   Brick. Card number, expiry and CVV are MP's Secure Fields — iframes served by MP — so card data
   never touches storefront code or Venduá servers (PCI SAQ A), which is why checkout can't be
   custom storefront code ([ADR 0004](../adr/0004-kernel-owned-checkout.md)). The Brick hands the
@@ -45,7 +45,7 @@ shopper → Kernel-owned checkout → Core /checkout/v1 →
   - Money that lands on an order already paid (a replaced card MP settled anyway, a Pix paid
     twice) is flagged `paid_twice` in Pagamentos and posted to the team; the job re-reads
     cancelled card attempts for 48 h so a lost webhook can't hide it.
-  - Kernels before 1.17 still get MP's hosted checkout (Checkout Pro preference, redirect back
+  - Kernels before 1.19 still get MP's hosted checkout (Checkout Pro preference, redirect back
     with `?pagamento=retorno`) until their store takes the Kernel train.
 - `application_fee` is set per-transaction in cents by Core from the tenant's
   plan (`plans.fee_bps`). Venduá's margin is a platform parameter, not a per-store code
@@ -121,7 +121,7 @@ interface PaymentProvider {
   refreshIfNeeded(conn): Promise<Connection>;
   createPix(token, req): Promise<ProviderPayment>;
   createCardPayment(token, req): Promise<ProviderPayment>; // a Brick token; may need 3DS
-  createCardCheckout(token, req): Promise<CardCheckout>; // hosted, Kernels before 1.17
+  createCardCheckout(token, req): Promise<CardCheckout>; // hosted, Kernels before 1.19
   parseWebhook(headers, body): WebhookEvent; // verified, typed
   refund(payment, amount?): Promise<RefundResult>;
 }

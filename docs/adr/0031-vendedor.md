@@ -1,6 +1,7 @@
 # ADR 0031: The Vendedor, an AI seller on the store's own WhatsApp
 
-- Status: Proposed
+- Status: Accepted; built 2026-10-03 (V0–V3 and V4's storefront chat; Instagram DM and the official
+  Cloud API wait for open decision 5 and Meta credentials)
 - Date: 2026-10-03
 
 ## Context
@@ -103,6 +104,33 @@ listed in [`features/sales-agent-features.md`](../features/sales-agent-features.
       or fix lands only when the owner confirms it.
 12. **Phases V0 to V4**, each with exit gates measured by order-accuracy simulations and pilot
     stores ([`sales-agent.md` §8](../features/sales-agent.md#8-phases)).
+
+## As built
+
+Phases V0–V3 and the storefront chat of V4. Each decision lives in:
+
+| #   | Where                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | `src/vendedor/cards.ts` (Core's receipts and Pix), `agents/vendedor/guards.ts` on top of the runtime's `grounded` (ledger-backed promises, allergen claims only from `products.dietary`, no typed links, no sold-out offers), `noHumanClaim`.                                                                                                                                                                |
+| 2   | `agents/vendedor/tools-order.ts`: `send_summary` dry-runs the real `placeOrderTx` in a savepoint and stores the card's hash (`src/vendedor/gate.ts`); `place_order` needs that card sent, a deterministic yes after it (`readAnswer`), the hash after `for update` on the cart, `claimTx` keyed `vendedor:<thread>:<hash>` (`src/platform/http.ts`), and rolls back when the order's total isn't the card's. |
+| 3   | `placeOrderTx(…, { source: 'whatsapp_agent', threadId })`; `orders.source`/`thread_id` (migration `0082_vendedor.sql`).                                                                                                                                                                                                                                                                                      |
+| 4   | The tools in `agents/vendedor/tools-*.ts` take the thread from `ctx.subject`; none writes the menu, prices, hours or another customer.                                                                                                                                                                                                                                                                       |
+| 5   | The gateway (`src/store-whatsapp/chat.ts`, `gateway.ts`) stores conversations only for stores with the Vendedor on, sends `chat` rows by jid with a per-conversation gap and no hourly ceiling; recovery, Pix expiry and back-in-stock are timers the sweeper writes only inside the shopper's last 24 h (`src/vendedor/sweeper.ts`).                                                                        |
+| 6   | `src/vendedor/settings.ts` (coverage, capabilities, handoff, incentives; owner-only fields 403), `src/vendedor/floor.ts` (who answers), `src/vendedor/knowledge.ts` (`compileRule`: "sempre cumprida" or guidance).                                                                                                                                                                                          |
+| 7   | `src/vendedor/suggest.ts` (pinned, basket, combo saving, habit), `src/vendedor/incentives.ts` (merchant-picked coupons, monthly budget, per-phone frequency, `mintCouponTx` source `agent`), `reorder`, the best own coupon before the summary, encomendas, pickup out of zone, the waitlist.                                                                                                                |
+| 8   | Migration 0082 (all tables under tenant RLS); customer facts are `agent_memory` scoped to the thread, sensitive keys only with consent; the LGPD forget (`src/admin/routes-customers.ts`) erases threads, media, actors, memory, cart addresses and message bodies; media and models only through ZDR routes (`src/vendedor/media.ts`, the runtime gateway).                                                 |
+| 9   | `apps/admin` Vendedor area and the phone bar while it's on; the waiting-shopper push (`pushWaiting` in `src/admin/workers.ts`).                                                                                                                                                                                                                                                                              |
+| 10  | `introduction()` in settings, the `disclose` switch, `noHumanClaim`.                                                                                                                                                                                                                                                                                                                                         |
+| 11  | `/vendedor/comecar` and the `vendedor-onboarding` agent (`agents/vendedor-onboarding`), which only proposes; `src/vendedor/gaps.ts` computes the menu gaps.                                                                                                                                                                                                                                                  |
+| 12  | `test/vendedor*.test.ts` (scripted goldens, the admin API, the storefront chat) and `bun run sims:vendedor` (`src/vendedor/sims/`: five fixture stores, hidden orders, pass^k on live models).                                                                                                                                                                                                               |
+
+Outside turns, `src/vendedor/ingest.ts` turns each stored message into text (voice notes transcribed, photos read and matched to the menu), moves the floor (a merchant reply is a takeover; code triggers hand off with Core's own notice) and dispatches it; `src/vendedor/worker.ts` runs the ingest, voice replies, the sweeper (recovery, Pix expiry, the outbox consumer, the `vendedor.monitor` staff event) and Cliente oculto (`src/vendedor/cliente-oculto.ts`).
+
+Not built:
+
+- **Instagram DM and the official Cloud API (V4).** Both need a Meta app with the store's account linked, and the Cloud API's economics is open decision 5.
+- **The daily summary's Vendedor line.** There is no merchant daily summary yet to add it to.
+- **A merchant AI budget.** Its unit depends on how AI is charged (deferred). Staff caps (`agent_runtime.budgets`, key `vendedor`) bound spend meanwhile.
 
 ## Consequences
 

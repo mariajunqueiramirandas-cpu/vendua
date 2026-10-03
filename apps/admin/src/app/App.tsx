@@ -6,7 +6,7 @@ import { trackPageview } from '../lib/analytics.ts';
 import { ApiError } from '../lib/api.ts';
 import { clearPersisted } from '../lib/persist.ts';
 import { qk } from '../lib/query.ts';
-import { SessionCtx, useSessionQuery } from '../lib/session.ts';
+import { can, SessionCtx, useSessionQuery } from '../lib/session.ts';
 import { applyTheme, type ThemePref } from '../lib/theme.ts';
 import { ErrorBoundary } from '../ui/ErrorBoundary.tsx';
 import { ErrorState, Splash } from '../ui/feedback.tsx';
@@ -42,6 +42,16 @@ const Help = screen(chunks.help, (m) => m.default);
 const Onboarding = screen(chunks.onboarding, (m) => m.default);
 const Signup = screen(chunks.signup, (m) => m.default);
 const NotFound = screen(chunks.notFound, (m) => m.default);
+const VendedorHome = screen(chunks.vendedorHome, (m) => m.default);
+const VendedorTrain = screen(chunks.vendedorTrain, (m) => m.default);
+const VendedorConversations = screen(chunks.vendedorConversations, (m) => m.default);
+const VendedorConversation = screen(chunks.vendedorConversation, (m) => m.default);
+const VendedorTeach = screen(chunks.vendedorTeach, (m) => m.default);
+const VendedorEnsaio = screen(chunks.vendedorEnsaio, (m) => m.default);
+const VendedorClienteOculto = screen(chunks.vendedorClienteOculto, (m) => m.default);
+const VendedorResults = screen(chunks.vendedorResults, (m) => m.default);
+const VendedorSettings = screen(chunks.vendedorSettings, (m) => m.default);
+const VendedorTest = screen(chunks.vendedorTest, (m) => m.default);
 const UiReference = lazy(() => import('../features/dev/UiReference.tsx'));
 
 export default function App() {
@@ -139,6 +149,9 @@ export default function App() {
         <ErrorState error={q.error} retry={() => void q.refetch()} />
       </div>
     );
+  // a screen above this person's role isn't there for them (NotFound), like its nav entry
+  const manager = can(q.data.user.role, 'manager');
+  const owner = can(q.data.user.role, 'owner');
   return (
     <SessionCtx.Provider value={q.data}>
       <ErrorBoundary>
@@ -183,6 +196,20 @@ export default function App() {
                   <Route path="conta" element={<Account />} />
                   <Route path="perfil" element={<Profile />} />
                   <Route path="ajuda" element={<Help />} />
+                  <Route path="vendedor" element={<VendedorHome />} />
+                  {owner ? <Route path="vendedor/comecar" element={<VendedorTrain />} /> : null}
+                  <Route path="vendedor/conversas" element={<VendedorConversations />} />
+                  <Route path="vendedor/conversas/:id" element={<VendedorConversation />} />
+                  {manager ? (
+                    <>
+                      <Route path="vendedor/ensinar" element={<VendedorTeach />} />
+                      <Route path="vendedor/ensaio" element={<VendedorEnsaio />} />
+                      <Route path="vendedor/cliente-oculto" element={<VendedorClienteOculto />} />
+                      <Route path="vendedor/resultados" element={<VendedorResults />} />
+                      <Route path="vendedor/configurar" element={<VendedorSettings />} />
+                      <Route path="vendedor/testar" element={<VendedorTest />} />
+                    </>
+                  ) : null}
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </Shell>

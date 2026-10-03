@@ -23,7 +23,7 @@ rewrite.
 Amended 2026-10-03: card payments happen **in the page, never by redirect** (the user's
 decision). The Kernel-owned order page mounts MP's Card Payment Brick (Secure Fields iframes);
 Core creates the payment from the Brick's token with 3-D Secure on, and a challenge renders in
-an iframe on the same page. The interim Checkout Pro redirect stays only for Kernels before 1.17.
+an iframe on the same page. The interim Checkout Pro redirect stays only for Kernels before 1.19.
 
 ## Consequences
 

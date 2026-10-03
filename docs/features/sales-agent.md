@@ -1,6 +1,6 @@
 # Vendedor: the merchant's AI sales agent (P-017)
 
-> Status: Proposed, not planned · Decision: [ADR 0031](../adr/0031-vendedor.md) · Started 2026-10-02 · Gap: [P-017](../competitor-parity.md)
+> Status: Built 2026-10-03 (V0–V3 and V4's storefront chat; see ADR 0031 "As built") · Decision: [ADR 0031](../adr/0031-vendedor.md) · Started 2026-10-02 · Gap: [P-017](../competitor-parity.md)
 > (also P-001 abandoned cart, P-018 campaigns, P-020 descriptions) · Builds on: ADRs
 > [0030](../adr/0030-agent-runtime-v3.md),
 > [0019](../adr/0019-customer-identity-without-accounts.md),
@@ -1025,3 +1025,4 @@ vendor publishes.
 ## Change log
 
 - 2026-10-02: first design.
+- 2026-10-03: built (V0–V3, the storefront chat). Defaults follow §10's recommendations and nothing is dropped for retention until the owner decides; Instagram DM and the Cloud API wait for decision 5.

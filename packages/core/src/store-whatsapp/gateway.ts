@@ -5,19 +5,35 @@ import { controlTx } from '../modules/control.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log as rootLog } from '../platform/log.ts';
 import { authStore, LeaseLost, type Fence } from './auth-store.ts';
+import {
+  agentEnabled,
+  recordTyping,
+  storeChatMessage,
+  threadAddress,
+  threadForJid,
+  voiceNote,
+} from './chat.ts';
 import { contactedTx, OPT_OUT_FOOTER, optedOutTx } from './messages.ts';
-import { NotOnWhatsApp, SessionClosed, StoreSession, type WaRuntime } from './session.ts';
+import {
+  NotOnWhatsApp,
+  SessionClosed,
+  StoreSession,
+  type OutContent,
+  type WaInbound,
+  type WaRuntime,
+} from './session.ts';
 import {
   finishWipe,
   handleInbound,
   housekeeping,
   messageText,
+  mirrorStatusTx,
   recordReceipts,
   reportState,
   takePairRequest,
   wipeFenced,
 } from './state.ts';
-import { messageIdFor, retryDelayMs } from './text.ts';
+import { messageIdFor, phoneForJid, retryDelayMs } from './text.ts';
 
 // The wa-gateway process (ADR 0026): holds one linked-device socket per store that wants one.
 // Stores are spread across gateway processes by leases on store_whatsapp; a lease's epoch fences
@@ -41,6 +57,12 @@ export interface GatewayOptions {
   minSendGapMs?: number;
   /** per store, a ceiling against a runaway loop ever spamming from a merchant's number */
   maxPerHour?: number;
+  /** Vendedor replies (kind 'chat'): pause between two messages of one conversation */
+  chatGapMs?: number;
+  /** between any two messages of one store, conversations included */
+  conversationGapMs?: number;
+  /** how long a store's store_agent.enabled is trusted before it is read again */
+  agentGateMs?: number;
   maxAttempts?: number;
   /** false in tests: they call tick() themselves */
   listen?: boolean;
@@ -59,8 +81,22 @@ interface Owned {
   reconciling: boolean;
   pumping: boolean;
   pumpAgain: boolean;
+  /** cuts a pacing wait short when new work arrives */
+  wake: (() => void) | null;
+  /** non-chat sends of the last hour (chat rows don't count against the ceiling) */
   sentTimes: number[];
+  lastSendAt: number;
+  /** the store-wide gap for non-chat rows */
+  nextOtherAt: number;
+  /** the last send per conversation (jid, else phone), while its gap runs */
+  chatLast: Map<string, number>;
+  lastLane: Lane;
+  /** chat jid → thread, for presence updates */
+  threads: Map<string, string>;
+  typedAt: Map<string, number>;
 }
+
+type Lane = 'chat' | 'other';
 
 interface LeaseRow {
   tenant_id: string;
@@ -73,6 +109,10 @@ interface LeaseRow {
 
 const HOUSEKEEPING_MS = 10 * 60_000;
 const SEND_LEASE = '2 minutes';
+const TYPING_EVERY_MS = 3_000;
+const THREAD_CACHE_MAX = 2_000;
+const VOICE_MIME = 'audio/ogg; codecs=opus';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** wanted-and-active, a pairing to start, or a disconnect to finish — anything else is idle */
 const NEEDS_SOCKET = `(
@@ -89,6 +129,7 @@ export class Gateway {
   private stopping = false;
   private unlisten: (() => Promise<void>) | null = null;
   private lastHousekeeping = 0;
+  private agentGate = new Map<string, { on: boolean; at: number }>();
   /** local clock of the last renew that reached the database */
   private renewedAt = Date.now();
   private log: Logger;
@@ -112,6 +153,9 @@ export class Gateway {
       tickMs: opts.tickMs ?? 5_000,
       minSendGapMs: opts.minSendGapMs ?? 1_500,
       maxPerHour: opts.maxPerHour ?? 200,
+      chatGapMs: opts.chatGapMs ?? 1_500,
+      conversationGapMs: opts.conversationGapMs ?? 250,
+      agentGateMs: opts.agentGateMs ?? 30_000,
       maxAttempts: opts.maxAttempts ?? 5,
       listen: opts.listen ?? true,
       tenants: opts.tenants ?? null,
@@ -151,10 +195,14 @@ export class Gateway {
   }
 
   private onNotify(payload: string) {
-    const [tenantId, kind] = payload.split('|');
+    const [tenantId, kind, arg] = payload.split('|');
     if (!tenantId) return;
     if (kind === 'send') {
       if (this.owned.has(tenantId)) this.pump(tenantId);
+      return;
+    }
+    if (kind === 'typing') {
+      if (arg) this.typing(tenantId, arg);
       return;
     }
     // a wish changed (pair, disconnect) — reconcile now rather than at the next tick
@@ -265,7 +313,14 @@ export class Gateway {
       reconciling: false,
       pumping: false,
       pumpAgain: false,
+      wake: null,
       sentTimes: [],
+      lastSendAt: 0,
+      nextOtherAt: 0,
+      chatLast: new Map(),
+      lastLane: 'other',
+      threads: new Map(),
+      typedAt: new Map(),
       session: null as unknown as StoreSession,
     };
     const lost = () => {
@@ -290,12 +345,21 @@ export class Gateway {
               else log.error({ err: e, state: u.state }, 'state not saved');
             });
         },
-        onInbound: (m) => {
-          // SAIR then VOLTAR delivered together must apply in that order
+        onMessage: (m) => {
+          // SAIR then VOLTAR delivered together must apply in that order, and a conversation
+          // keeps the order its messages arrived in
           inboundTail = inboundTail
-            .then(() => handleInbound(this.o.sql, tenantId, m))
-            .then(() => this.pump(tenantId))
-            .catch((e) => log.warn({ err: e }, 'inbound not handled'));
+            .then(() => this.inbound(tenantId, owned, m))
+            .catch((e) => {
+              if (e instanceof LeaseLost) lost();
+              else log.warn({ err: e }, 'inbound not handled');
+            });
+        },
+        onTyping: (jid) => {
+          void this.shopperTyping(tenantId, owned, jid).catch((e) => {
+            if (e instanceof LeaseLost) lost();
+            else log.warn({ err: e }, 'presence not saved');
+          });
         },
         onReceipts: (rs) => {
           void recordReceipts(this.o.sql, tenantId, rs).catch((e) =>
@@ -312,7 +376,86 @@ export class Gateway {
     this.owned.set(tenantId, owned);
   }
 
+  /** store_agent.enabled, trusted for agentGateMs: off, the store behaves as before the Vendedor */
+  private async agentOn(tenantId: string): Promise<boolean> {
+    const c = this.agentGate.get(tenantId);
+    if (c && Date.now() - c.at < this.o.agentGateMs) return c.on;
+    try {
+      const on = await agentEnabled(this.o.sql, tenantId);
+      this.agentGate.set(tenantId, { on, at: Date.now() });
+      return on;
+    } catch (e) {
+      this.log.warn({ err: e, tenantId }, 'store_agent unreadable');
+      return c?.on ?? false;
+    }
+  }
+
+  private async inbound(tenantId: string, o: Owned, m: WaInbound): Promise<void> {
+    const { sql } = this.o;
+    const isPn = (j: string | null) => !!j?.endsWith('@s.whatsapp.net');
+    if (!(await this.agentOn(tenantId))) {
+      // as before the Vendedor: only a shopper's text, for SAIR / VOLTAR
+      if (m.fromMe || !m.text) return;
+      const phone =
+        phoneForJid(m.jid) ??
+        phoneForJid(m.alt) ??
+        (m.jid.endsWith('@lid') ? phoneForJid(await m.pnForLid(m.jid)) : null);
+      await handleInbound(sql, tenantId, { phone, text: m.text, id: m.id });
+      this.pump(tenantId);
+      return;
+    }
+    const pn = isPn(m.jid) ? m.jid : isPn(m.alt) ? m.alt : await m.pnForLid(m.jid);
+    const lid = m.jid.endsWith('@lid') ? m.jid : m.alt?.endsWith('@lid') ? m.alt : null;
+    if (m.content) {
+      try {
+        const r = await storeChatMessage(
+          sql,
+          tenantId,
+          o.fence,
+          { id: m.id, fromMe: m.fromMe, pn, lid, pushName: m.pushName, content: m.content },
+          m.download,
+        );
+        if (r.stored) {
+          if (o.threads.size >= THREAD_CACHE_MAX) o.threads.clear();
+          for (const j of [m.jid, m.alt, pn, lid]) if (j) o.threads.set(j, r.threadId);
+          if (!m.fromMe)
+            void o.session
+              .subscribePresence(m.jid)
+              .catch((e) => this.log.debug({ err: e, tenantId }, 'presence subscribe failed'));
+        }
+      } catch (e) {
+        if (e instanceof LeaseLost) throw e;
+        this.log.warn({ err: e, tenantId }, 'conversation message not stored');
+      }
+    }
+    if (m.fromMe || !m.text) return;
+    await handleInbound(sql, tenantId, { phone: phoneForJid(pn), text: m.text, id: m.id });
+    this.pump(tenantId);
+  }
+
+  private async shopperTyping(tenantId: string, o: Owned, jid: string): Promise<void> {
+    if (!(await this.agentOn(tenantId))) return;
+    const threadId = o.threads.get(jid) ?? (await threadForJid(this.o.sql, tenantId, jid));
+    if (!threadId || this.owned.get(tenantId) !== o) return;
+    const now = Date.now();
+    if (now - (o.typedAt.get(threadId) ?? 0) < TYPING_EVERY_MS) return;
+    if (o.typedAt.size >= THREAD_CACHE_MAX) o.typedAt.clear();
+    o.typedAt.set(threadId, now);
+    await recordTyping(this.o.sql, tenantId, o.fence, threadId);
+  }
+
+  /** Core is writing a reply: "digitando…" in the shopper's chat. */
+  private typing(tenantId: string, threadId: string) {
+    const o = this.owned.get(tenantId);
+    if (!o || o.session.state !== 'open' || !UUID.test(threadId)) return;
+    void (async () => {
+      const jid = await threadAddress(this.o.sql, tenantId, threadId);
+      if (jid) await o.session.typing(jid);
+    })().catch((e) => this.log.debug({ err: e, tenantId }, 'typing not shown'));
+  }
+
   private drop(tenantId: string, o: Owned) {
+    this.agentGate.delete(tenantId);
     this.owned.delete(tenantId);
     void o.session.stop().catch(() => undefined);
   }
@@ -404,34 +547,59 @@ export class Gateway {
     ).catch((e) => this.log.warn({ err: e }, 'heartbeat failed'));
   }
 
-  /** Drain this store's due messages, one at a time, paced. Re-entrant calls fold into one. */
+  /** Drain this store's due messages, one at a time, paced. Re-entrant calls fold into one.
+   *  Two lanes: notices (orders, acks, tests) keep the hourly ceiling and the store-wide gap;
+   *  Vendedor replies are paced per conversation. When both have work they take turns, so a
+   *  burst of either can't hold the other back. */
   pump(tenantId: string): void {
     const o = this.owned.get(tenantId);
     if (!o) return;
     if (o.pumping) {
       o.pumpAgain = true;
+      o.wake?.();
       return;
     }
     o.pumping = true;
     void (async () => {
+      let warned = false;
       try {
         do {
           o.pumpAgain = false;
           while (this.owned.get(tenantId) === o && o.session.state === 'open' && !this.stopping) {
-            const hourAgo = Date.now() - 3_600_000;
-            o.sentTimes = o.sentTimes.filter((t) => t > hourAgo);
-            if (o.sentTimes.length >= this.o.maxPerHour) {
-              this.log.warn({ tenantId }, 'hourly send ceiling reached — holding the queue');
-              break;
+            const now = Date.now();
+            o.sentTimes = o.sentTimes.filter((t) => t > now - 3_600_000);
+            const capped = o.sentTimes.length >= this.o.maxPerHour;
+            if (capped && !warned) {
+              warned = true;
+              this.log.warn({ tenantId }, 'hourly send ceiling reached — holding the notices');
             }
-            const sent = await this.sendOne(tenantId, o);
-            if (sent === 'none') break;
-            if (sent === 'closed') break;
-            if (sent === 'sent') {
-              o.sentTimes.push(Date.now());
-              const gap = this.o.minSendGapMs * (1 + Math.random());
-              await new Promise((r) => setTimeout(r, gap));
+            for (const [k, t] of o.chatLast) if (now - t >= this.o.chatGapMs) o.chatLast.delete(k);
+            const busy = [...o.chatLast.keys()];
+            const floor = o.lastSendAt + this.o.conversationGapMs;
+            const lanes: Lane[] = o.lastLane === 'chat' ? ['other', 'chat'] : ['chat', 'other'];
+            let wake = Infinity;
+            let res: 'sent' | 'settled' | 'none' | 'closed' = 'none';
+            for (const lane of lanes) {
+              if (lane === 'other' && capped) continue;
+              const readyAt = Math.max(floor, lane === 'other' ? o.nextOtherAt : 0);
+              if (readyAt > now) {
+                wake = Math.min(wake, readyAt);
+                continue;
+              }
+              res = await this.sendOne(tenantId, o, lane, busy);
+              if (res !== 'none') break;
+              // the only due replies may be in a conversation whose gap is still running
+              if (lane === 'chat' && busy.length)
+                wake = Math.min(wake, Math.min(...o.chatLast.values()) + this.o.chatGapMs);
             }
+            if (res === 'closed') break;
+            if (res !== 'none') continue;
+            if (wake === Infinity) break;
+            await new Promise<void>((r) => {
+              o.wake = r;
+              setTimeout(r, Math.max(1, wake - Date.now()));
+            });
+            o.wake = null;
           }
         } while (o.pumpAgain && this.owned.get(tenantId) === o);
       } catch (e) {
@@ -444,9 +612,22 @@ export class Gateway {
     })();
   }
 
+  private sentNow(o: Owned, lane: Lane, to: string) {
+    const now = Date.now();
+    o.lastSendAt = now;
+    o.lastLane = lane;
+    if (lane === 'chat') o.chatLast.set(to, now);
+    else {
+      o.sentTimes.push(now);
+      o.nextOtherAt = now + this.o.minSendGapMs * (1 + Math.random());
+    }
+  }
+
   private async sendOne(
     tenantId: string,
     o: Owned,
+    lane: Lane,
+    busy: string[],
   ): Promise<'sent' | 'settled' | 'none' | 'closed'> {
     const { sql } = this.o;
     const row = await withTenant(sql, tenantId, async (tx) => {
@@ -463,6 +644,8 @@ export class Gateway {
           where tenant_id = ${tenantId}
             and ((status = 'pending' and next_attempt_at <= now())
               or (status = 'sending' and lease_until < now()))
+            and (kind = 'chat') = ${lane === 'chat'}
+            and not (coalesce(jid, phone) = any(${busy}::text[]))
           order by created_at
           limit 1
           for update skip locked`
@@ -472,8 +655,11 @@ export class Gateway {
         {
           id: string;
           kind: string;
-          phone: string;
+          phone: string | null;
+          jid: string | null;
           body: string;
+          media_id: string | null;
+          shopper_message_id: string | null;
           attempts: number;
           wa_id: string;
           expired: boolean;
@@ -483,7 +669,8 @@ export class Gateway {
         update store_wa_messages set status = 'sending', attempts = attempts + 1,
           lease_until = now() + ${SEND_LEASE}::interval, wa_id = ${next.wa_id ?? messageIdFor(next.id)}
         where id = ${next.id}
-        returning id, kind, phone, body, attempts, wa_id, expires_at < now() as expired,
+        returning id, kind, phone, jid, body, media_id, shopper_message_id, attempts, wa_id,
+          expires_at < now() as expired,
           exists (select 1 from store_wa_messages later
                   where later.tenant_id = store_wa_messages.tenant_id
                     and later.order_id = store_wa_messages.order_id
@@ -492,6 +679,8 @@ export class Gateway {
       const r = claimed[0]!;
       if (r.expired) {
         await tx`update store_wa_messages set status = 'expired', lease_until = null where id = ${r.id}`;
+        if (r.shopper_message_id)
+          await mirrorStatusTx(tx, tenantId, r.shopper_message_id, 'failed', null);
         return { ...r, settled: true };
       }
       // a retry that a later step of the same order already overtook would arrive out of
@@ -501,7 +690,7 @@ export class Gateway {
                  where id = ${r.id}`;
         return { ...r, settled: true };
       }
-      if (r.kind === 'order' && (await optedOutTx(tx, tenantId, r.phone))) {
+      if (r.kind === 'order' && (await optedOutTx(tx, tenantId, r.phone!))) {
         await tx`update store_wa_messages set status = 'skipped', error = 'opted_out', lease_until = null
                  where id = ${r.id}`;
         return { ...r, settled: true };
@@ -511,7 +700,7 @@ export class Gateway {
       if (
         r.kind === 'order' &&
         !r.body.endsWith(OPT_OUT_FOOTER) &&
-        !(await contactedTx(tx, tenantId, r.phone))
+        !(await contactedTx(tx, tenantId, r.phone!))
       ) {
         r.body += OPT_OUT_FOOTER;
         await tx`update store_wa_messages set body = ${r.body} where id = ${r.id}`;
@@ -540,13 +729,28 @@ export class Gateway {
                    attempts = greatest(attempts - ${extra.refund ? 1 : 0}, 0),
                    next_attempt_at = now() + ${`${Math.round((extra.retryMs ?? 0) / 1000)} seconds`}::interval
                    where id = ${row.id} and status = 'sending'`;
-        await import('../admin/live.ts').then((m) =>
-          m.emitAdminTx(tx, tenantId, 'whatsapp', 'message'),
-        );
+        if (row.shopper_message_id && status !== 'pending')
+          await mirrorStatusTx(tx, tenantId, row.shopper_message_id, status, row.wa_id);
+        await emitAdminTx(tx, tenantId, 'whatsapp', 'message');
       });
     };
     try {
-      await o.session.send(row.phone, row.body, row.wa_id);
+      let content: OutContent = { text: row.body };
+      if (row.kind === 'chat' && row.media_id) {
+        const voice = await voiceNote(sql, tenantId, row.media_id);
+        if (!voice) {
+          await settle('failed', 'media_missing');
+          return 'settled';
+        }
+        content = {
+          audio: voice.bytes,
+          ptt: true,
+          mimetype: VOICE_MIME,
+          ...(voice.seconds != null ? { seconds: voice.seconds } : {}),
+        };
+      }
+      await o.session.sendTo({ jid: row.jid, phone: row.phone }, content, row.wa_id);
+      this.sentNow(o, lane, row.jid ?? row.phone ?? '');
       await settle('sent', null);
       return 'sent';
     } catch (e) {

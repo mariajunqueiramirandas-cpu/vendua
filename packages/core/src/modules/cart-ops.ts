@@ -1,0 +1,266 @@
+import type { Sql } from '../platform/db.ts';
+import { HttpError, UUID_RE, mintSessionToken, str } from '../platform/http.ts';
+import {
+  assertCartOpen,
+  assertLineQty,
+  deliveryPricing,
+  loadCartView,
+  loadZoneRows,
+  storeCoords,
+  type CartDelivery,
+  type CartTotals,
+  type CartView,
+} from './cart.ts';
+import { couponUsage, evaluateCoupon, loadCoupon, parseCode } from './coupons.ts';
+import { normalizeCep, resolveDelivery, validCoords, type RouteQuote } from './geo.ts';
+import type { StoreSettingsRow } from './store.ts';
+
+// The cart's mutations, shared by the checkout routes and the Vendedor's tools: each runs in the
+// caller's tx (the idempotency claim's), and every one re-reads the cart under its row lock.
+
+function itemIdOf(itemId: string): string {
+  if (!UUID_RE.test(itemId)) throw new HttpError(400, 'BAD_REQUEST', 'itemId must be a uuid');
+  return itemId;
+}
+
+export async function createCartTx(
+  tx: Sql,
+  tenantId: string,
+  secret: string,
+): Promise<{ cartId: string; sessionToken: string }> {
+  const cartId = crypto.randomUUID();
+  const sessionToken = await mintSessionToken(cartId, tenantId, secret);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sessionToken));
+  const hash = Buffer.from(digest).toString('hex');
+  await tx`insert into carts (id, tenant_id, session_hash) values (${cartId}, ${tenantId}, ${hash})`;
+  return { cartId, sessionToken };
+}
+
+/** qty 0 removes the line. An item id the cart doesn't hold changes nothing. */
+export async function setLineQtyTx(
+  tx: Sql,
+  tenantId: string,
+  cartId: string,
+  itemId: string,
+  qty: number,
+): Promise<CartView> {
+  if (!Number.isInteger(qty) || qty < 0 || qty > 99) {
+    throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 0 and 99');
+  }
+  await assertCartOpen(tx, tenantId, cartId);
+  const id = itemIdOf(itemId);
+  if (qty === 0) {
+    await tx`delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`;
+  } else {
+    await assertLineQty(tx, tenantId, cartId, id, qty);
+    await tx`update cart_items set qty = ${qty} where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`;
+  }
+  await tx`update carts set updated_at = now() where id = ${cartId}`;
+  return loadCartView(tx, tenantId, cartId);
+}
+
+export async function removeLineTx(
+  tx: Sql,
+  tenantId: string,
+  cartId: string,
+  itemId: string,
+): Promise<CartView> {
+  await assertCartOpen(tx, tenantId, cartId);
+  await tx`delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${itemIdOf(itemId)}`;
+  return loadCartView(tx, tenantId, cartId);
+}
+
+/** The bounded address a cart holds (POST /cart/delivery's body). */
+export function parseDeliveryInput(input: unknown): CartDelivery {
+  if (!input || typeof input !== 'object' || Array.isArray(input))
+    throw new HttpError(422, 'INVALID_DELIVERY', 'mode must be pickup or delivery');
+  const body = input as Record<string, unknown>;
+  const { mode } = body;
+  if (mode !== 'pickup' && mode !== 'delivery') {
+    throw new HttpError(422, 'INVALID_DELIVERY', 'mode must be pickup or delivery');
+  }
+  const opt = (k: string, max: number) =>
+    body[k] === undefined || body[k] === null ? null : str(body[k], k, max);
+  const cepRaw = opt('cep', 12);
+  const cep = cepRaw ? normalizeCep(cepRaw) : null;
+  if (cepRaw && !cep) throw new HttpError(422, 'INVALID_DELIVERY', 'cep must have 8 digits');
+  const hasCoords = body.lat !== undefined && body.lat !== null;
+  const coords = hasCoords ? validCoords(body.lat, body.lng) : null;
+  if (hasCoords && !coords)
+    throw new HttpError(422, 'INVALID_DELIVERY', 'lat/lng must be coordinates');
+  return {
+    mode,
+    neighborhood: opt('neighborhood', 200),
+    address: opt('address', 500),
+    street: opt('street', 120),
+    number: opt('number', 10),
+    complement: opt('complement', 80),
+    reference: opt('reference', 120),
+    cep,
+    lat: coords?.lat ?? null,
+    lng: coords?.lng ?? null,
+  };
+}
+
+/** `route`: a road leg fetched before the tx; kept only for the pin it was fetched for
+ *  (loadCartView re-checks the store's end). */
+export async function setDeliveryTx(
+  tx: Sql,
+  tenantId: string,
+  cartId: string,
+  delivery: CartDelivery,
+  route: RouteQuote | null,
+): Promise<CartView> {
+  await assertCartOpen(tx, tenantId, cartId);
+  const leg =
+    route &&
+    delivery.lat != null &&
+    delivery.lng != null &&
+    route.to[0] === delivery.lat &&
+    route.to[1] === delivery.lng
+      ? route
+      : null;
+  await tx`
+    update carts set delivery = ${tx.json(delivery as never)},
+      delivery_route = ${leg ? tx.json({ ...leg }) : null}, updated_at = now()
+    where tenant_id = ${tenantId} and id = ${cartId}
+  `;
+  return loadCartView(tx, tenantId, cartId);
+}
+
+export type DeliveryQuote =
+  | { eligible: false; reason: 'OUT_OF_ZONE' }
+  | {
+      eligible: true;
+      zoneId: string;
+      zoneName: string;
+      zoneKind: string;
+      feeCents: number;
+      etaMin: number;
+      etaMax: number;
+      distanceKm: number | null;
+      distanceSource: 'route' | 'estimate' | null;
+      minOrderCents: number;
+      freeDeliveryOverCents: number | null;
+      /** with a cart: its totals delivered here and paid this way */
+      totals?: CartTotals;
+    };
+
+/** Can the store deliver here, for how much (POST /quote). A cep alone prices nothing: the
+ *  caller resolves it to a neighbourhood or a pin first (that lookup is a network call). */
+export async function quoteDeliveryTx(
+  tx: Sql,
+  tenantId: string,
+  where: { neighborhood?: string | null; lat?: number | null; lng?: number | null },
+  opts: { cartId?: string | null; route?: RouteQuote | null; paymentMethod?: string | null } = {},
+): Promise<DeliveryQuote> {
+  const neighborhood =
+    where.neighborhood == null ? '' : str(where.neighborhood, 'neighborhood', 200);
+  const hasCoords = where.lat !== undefined && where.lat !== null;
+  const coords = hasCoords ? validCoords(where.lat, where.lng) : null;
+  if (hasCoords && !coords)
+    throw new HttpError(422, 'INVALID_DELIVERY', 'lat/lng must be coordinates');
+  const cartId = opts.cartId ?? null;
+  const [zones, settingsRows] = await Promise.all([
+    loadZoneRows(tx, tenantId),
+    tx<StoreSettingsRow[]>`select * from store_settings where tenant_id = ${tenantId}`,
+  ]);
+  const settings = settingsRows[0] ?? null;
+  // one leg prices the whole answer: the fresh one, else the one the cart holds for this pin
+  const stored = cartId
+    ? ((
+        await tx<{ delivery_route: RouteQuote | null }[]>`
+          select delivery_route from carts where tenant_id = ${tenantId} and id = ${cartId}
+        `
+      )[0]?.delivery_route ?? null)
+    : null;
+  const leg = opts.route ?? stored;
+  const match = resolveDelivery(
+    zones,
+    { neighborhood, coords },
+    storeCoords(settings),
+    deliveryPricing(settings, leg),
+  );
+  // Relatórios' zone conversion: who asked for delivery where (server-side, like order_placed);
+  // a quote without a cart session still answers, it just isn't counted
+  if (cartId)
+    await tx`
+      insert into analytics_events (tenant_id, name, at, session_id, props)
+      values (${tenantId}, 'delivery_quoted', now(), ${cartId}, ${tx.json({
+        zone: match?.zone.name ?? null,
+        neighborhood: neighborhood.trim().slice(0, 80) || null,
+        eligible: !!match,
+      })})
+    `;
+  if (!match) return { eligible: false, reason: 'OUT_OF_ZONE' };
+  const totals = cartId
+    ? await loadCartView(tx, tenantId, cartId, new Date(), {
+        paymentMethod: opts.paymentMethod ?? null,
+        delivery: {
+          mode: 'delivery',
+          neighborhood,
+          lat: coords?.lat ?? null,
+          lng: coords?.lng ?? null,
+        },
+        route: leg,
+      }).then(
+        (v) => v.totals,
+        (err) => {
+          if (err instanceof HttpError && err.code === 'CART_NOT_FOUND') return null;
+          throw err;
+        },
+      )
+    : null;
+  return {
+    eligible: true,
+    zoneId: match.zone.id,
+    zoneName: match.zone.name,
+    zoneKind: match.zone.kind,
+    feeCents: match.feeCents,
+    etaMin: match.zone.eta_min_minutes,
+    etaMax: match.zone.eta_max_minutes,
+    distanceKm: match.distanceKm,
+    distanceSource: match.distanceSource ?? null,
+    minOrderCents: Math.max(settings?.min_order_cents ?? 0, match.zone.min_order_cents),
+    freeDeliveryOverCents: match.zone.free_delivery_over_cents,
+    ...(totals ? { totals } : {}),
+  };
+}
+
+/** `phone`: the shopper's, when known; `provenPhone`: the one a proven token vouches for
+ *  (personal coupons need it). "Add R$ X more" stays on the cart; other refusals 422. */
+export async function applyCouponTx(
+  tx: Sql,
+  tenantId: string,
+  cartId: string,
+  code: string,
+  phone: string | null = null,
+  provenPhone: string | null = null,
+): Promise<CartView> {
+  const normalized = parseCode(code);
+  await assertCartOpen(tx, tenantId, cartId);
+  const row = await loadCoupon(tx, tenantId, normalized);
+  if (!row) throw new HttpError(422, 'COUPON_NOT_FOUND', 'coupon not found', { field: 'code' });
+  const cart = await loadCartView(tx, tenantId, cartId);
+  const out = evaluateCoupon(row, {
+    subtotalCents: cart.totals.subtotalCents,
+    deliveryFeeCents: cart.totals.deliveryFeeCents,
+    phone,
+    provenPhone,
+    usage: await couponUsage(tx, tenantId, row.id, phone),
+    now: new Date(),
+  });
+  if (!out.ok && out.reason !== 'COUPON_MIN_SUBTOTAL')
+    throw new HttpError(422, out.reason!, 'coupon does not apply', {
+      field: 'code',
+      ...out.details,
+    });
+  await tx`update carts set coupon_code = ${row.code}, updated_at = now() where id = ${cartId}`;
+  return loadCartView(tx, tenantId, cartId);
+}
+
+export async function clearCouponTx(tx: Sql, tenantId: string, cartId: string): Promise<CartView> {
+  await assertCartOpen(tx, tenantId, cartId);
+  await tx`update carts set coupon_code = null, updated_at = now() where id = ${cartId}`;
+  return loadCartView(tx, tenantId, cartId);
+}
