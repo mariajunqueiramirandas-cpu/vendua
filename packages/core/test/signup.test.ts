@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { foldSlug, slugify } from '../src/admin/context.ts';
 import { createApp } from '../src/app.ts';
+import { validEmail } from '../src/modules/billing/input.ts';
 import { runBillingTick } from '../src/modules/billing/jobs.ts';
 import {
   normalizeSlug,
@@ -15,6 +16,26 @@ import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { migrate } from '../src/platform/db.ts';
 
 describe('signup units', () => {
+  test('only an email Mercado Pago takes as the payer passes', () => {
+    expect(validEmail('  Ana.Lima+doces@Gmail.com ', 'email')).toBe('ana.lima+doces@gmail.com');
+    expect(validEmail('ana_lima@doces-da-ana.com.br', 'email')).toBe(
+      'ana_lima@doces-da-ana.com.br',
+    );
+    for (const bad of [
+      'niná@gmail.com',
+      'ana@gmail.com.',
+      'ana..lima@gmail.com',
+      '.ana@gmail.com',
+      'ana.@gmail.com',
+      'ana@gmail,com.br',
+      'ana@gmail',
+      'ana@-gmail.com',
+      'ana@gmail.c',
+      'ana lima@gmail.com',
+    ])
+      expect(() => validEmail(bad, 'email')).toThrow('email looks wrong');
+  });
+
   test('slugs normalize like slugify, capped at 40', () => {
     expect(normalizeSlug('Açaí da Praia!!')).toBe('acai-da-praia');
     expect(normalizeSlug('  --Doces   da Maria-- ')).toBe('doces-da-maria');

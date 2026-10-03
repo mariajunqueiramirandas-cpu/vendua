@@ -25,7 +25,7 @@ import { perMonth, shortName } from '../../ui/PlanCard.tsx';
 import { PlanCards, PlanCompare, PlanTrialStrip } from '../../ui/PlanPicker.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { StepFrame } from '../../ui/StepFrame.tsx';
-import { EMAIL_RE, expiry, savePending } from '../auth/pending.ts';
+import { PAYER_EMAIL_RE, expiry, savePending } from '../auth/pending.ts';
 import { SegmentPicker } from '../onboarding/SegmentPicker.tsx';
 import { MiniStore } from '../onboarding/MiniStore.tsx';
 import { GENERIC, segmentOf } from '../onboarding/segments.ts';
@@ -325,7 +325,7 @@ export function YouStep({ d, patch, go, notice }: FlowProps) {
   const [touched, setTouched] = useState(false);
   const name = d.ownerName.trim();
   const email = d.email.trim();
-  const emailOk = EMAIL_RE.test(email);
+  const emailOk = PAYER_EMAIL_RE.test(email);
   const first = name.split(/\s+/)[0] ?? '';
   return (
     <StepFrame
@@ -352,7 +352,14 @@ export function YouStep({ d, patch, go, notice }: FlowProps) {
       <Field
         label="Seu e-mail"
         htmlFor="su-email"
-        error={notice ?? (touched && !emailOk ? 'Confira o e-mail, como maria@gmail.com.' : null)}
+        error={
+          notice ??
+          (touched && !emailOk
+            ? /[^\x20-\x7e]/.test(email)
+              ? 'Escreva o e-mail sem acento nem ç, como maria@gmail.com.'
+              : 'Confira o e-mail, como maria@gmail.com.'
+            : null)
+        }
       >
         <TextInput
           id="su-email"

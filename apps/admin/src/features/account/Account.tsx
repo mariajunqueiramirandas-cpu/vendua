@@ -58,7 +58,7 @@ import {
 import { FEATURE_LABEL, PlanCards, PlanCompare, promiseOf } from '../../ui/PlanPicker.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { EMAIL_RE } from '../auth/pending.ts';
+import { PAYER_EMAIL_RE } from '../auth/pending.ts';
 
 type Sub = NonNullable<AccountData['subscription']>;
 type Method = 'card' | 'pix';
@@ -1050,7 +1050,8 @@ function PlanSheet({
         icon={method === 'card' ? <ArrowSquareOut /> : undefined}
         onClick={() => {
           const e = email.trim();
-          if (!EMAIL_RE.test(e)) return setEmailErr('Confira o e-mail, como maria@gmail.com.');
+          if (!PAYER_EMAIL_RE.test(e))
+            return setEmailErr('Confira o e-mail, como maria@gmail.com.');
           setEmailErr(null);
           if (plan) start.mutate({ planId: plan.id, method, payerEmail: e });
         }}
@@ -1258,7 +1259,7 @@ function MethodSection({ a, s }: { a: AccountData; s: Sub }) {
             maxLength={200}
             value={s.payerEmail ?? ''}
             validate={(v) =>
-              EMAIL_RE.test(v.trim()) ? null : 'Confira o e-mail, como maria@gmail.com.'
+              PAYER_EMAIL_RE.test(v.trim()) ? null : 'Confira o e-mail, como maria@gmail.com.'
             }
             onCommit={(v) => email.mutate(v)}
           />

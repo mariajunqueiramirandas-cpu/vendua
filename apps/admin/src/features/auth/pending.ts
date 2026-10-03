@@ -26,3 +26,6 @@ export function savePending(p: Pending | null) {
 export const expiry = (iso: string) => Date.parse(iso) || Date.now() + 10 * 60_000;
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+/** an email that goes to Mercado Pago as the payer's: Core's validEmail pattern (billing/input.ts) */
+export const PAYER_EMAIL_RE =
+  /^[a-z0-9_%+-]+(?:\.[a-z0-9_%+-]+)*@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/i;
