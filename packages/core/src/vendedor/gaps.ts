@@ -79,7 +79,7 @@ export async function menuGaps(tx: Sql, tenantId: string): Promise<MenuGap[]> {
         productId: null,
         categoryId: id,
         title: `${c.name}: nada sobre glúten ou lactose`,
-        detail: 'Sem essa informação a Ana não afirma nada e chama você quando perguntarem.',
+        detail: 'Sem essa informação, nada é afirmado ao cliente: quando perguntarem, a conversa passa para você.',
       });
 
   const seen = new Map<string, string>();
@@ -92,7 +92,7 @@ export async function menuGaps(tx: Sql, tenantId: string): Promise<MenuGap[]> {
         productId: p.id,
         categoryId: p.category_id,
         title: `Dois produtos chamados "${p.name}"`,
-        detail: 'Com o mesmo nome a Ana não sabe qual o cliente quer.',
+        detail: 'Com o mesmo nome, não dá para saber qual o cliente quer.',
       });
     else seen.set(k, p.id);
   }

@@ -89,7 +89,7 @@ export function describeGuard(g: CompiledGuard): string {
     case 'handoff_above':
       return `Pedidos acima de ${brl(g.cents)} passam para você.`;
     case 'cash_max':
-      return `Dinheiro só em pedidos até ${brl(g.cents)}; acima disso a Ana pede outra forma de pagamento.`;
+      return `Dinheiro só em pedidos até ${brl(g.cents)}; acima disso, o cliente escolhe outra forma de pagamento.`;
     case 'coupon_min':
       return `Nenhum cupom em pedidos abaixo de ${brl(g.cents)}.`;
     case 'pix_only_above':
