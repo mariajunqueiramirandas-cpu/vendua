@@ -134,7 +134,7 @@ export function orderLine(o: NonNullable<ThreadDetail['order']>, short = false) 
     .join(' · ');
 }
 
-// What Core's cards did, in the Vendedor's past tense (sales-agent-ux §5)
+// What Core's cards did, in Duá's past tense (sales-agent-ux §5)
 const CARD: Record<string, { words: string; title: string; Icon: Icon }> = {
   summary: { words: 'gerou o resumo do pedido', title: 'Seu pedido', Icon: Receipt },
   pix: { words: 'mandou o Pix', title: 'Pix', Icon: QrCode },
@@ -160,12 +160,11 @@ export interface Outgoing {
 
 /**
  * The messages of a conversation in three voices, with Core's receipts and cards between them
- * and "por quê" once per turn of hers. `asCustomer` is the test chat: the owner plays the
- * shopper on the right in forest, and she answers from the left (MiniChat's `owner`).
+ * and "por quê" once per turn of his. `asCustomer` is the test chat: the owner plays the
+ * shopper on the right in forest, and Duá answers from the left (MiniChat's `owner`).
  */
 export function ThreadMessages({
   detail,
-  name,
   onWhy,
   outgoing = [],
   onRetry,
@@ -173,7 +172,6 @@ export function ThreadMessages({
   asCustomer,
 }: {
   detail: ThreadDetail;
-  name: string;
   onWhy?: ((m: ThreadMessage) => void) | undefined;
   outgoing?: Outgoing[] | undefined;
   onRetry?: ((o: Outgoing) => void) | undefined;
@@ -181,7 +179,7 @@ export function ThreadMessages({
   verdict?: ((m: ThreadMessage, v: 'same' | 'different') => void) | undefined;
   asCustomer?: boolean | undefined;
 }) {
-  // skipped: she wrote it while the floor wasn't hers, and it never went out
+  // skipped: Duá wrote it while the floor wasn't his, and it never went out
   const msgs = detail.messages.filter((m) => !(m.author === 'agent' && m.status === 'skipped'));
   // "por quê" once per turn: on its card's receipt, else under its last bubble
   const carded = new Set(msgs.filter((m) => m.card && m.turnId).map((m) => m.turnId));
@@ -225,7 +223,6 @@ export function ThreadMessages({
             <>
               <Bubble
                 voice="seller"
-                name={name}
                 time={time}
                 status={STATUS[m.status]}
                 tag={m.suggestion ? 'sugestão' : undefined}
@@ -318,7 +315,7 @@ function WhyLink({
     <button
       type="button"
       onClick={onClick}
-      aria-label={suggestion ? 'por que ela sugeriu isso' : 'por que ela respondeu assim'}
+      aria-label={suggestion ? 'por que o Duá sugeriu isso' : 'por que o Duá respondeu assim'}
       className={cn(
         "t-caption relative mb-1 font-semibold text-muted underline underline-offset-2 hover:text-ink after:absolute after:-inset-x-2 after:-inset-y-3.5 after:content-['']",
         align === 'end' ? 'self-end' : 'self-start',
@@ -425,27 +422,19 @@ const STEP: Record<WhyView['steps'][number]['kind'], { Icon: Icon; tone: string 
   blocked: { Icon: Prohibit, tone: 'text-warning' },
 };
 
-export const whyTitle = (name: string, m: ThreadMessage | null) =>
+export const whyTitle = (m: ThreadMessage | null) =>
   m?.suggestion
-    ? `Por que a ${name} sugeriu isso`
+    ? 'Por que o Duá sugeriu isso'
     : m?.card
-      ? `Por que a ${name} fez isso`
-      : `Por que a ${name} respondeu assim`;
+      ? 'Por que o Duá fez isso'
+      : 'Por que o Duá respondeu assim';
 
 /**
- * The turn behind a message in plain words (UX §3.3): what the shopper asked, what she looked
+ * The turn behind a message in plain words (UX §3.3): what the shopper asked, what he looked
  * up, which figures came from the store, which rule applied. Then "ensinar a responder
  * diferente", which opens Ensinar with the question filled in.
  */
-export function WhyBody({
-  threadId,
-  message,
-  name,
-}: {
-  threadId: string;
-  message: ThreadMessage;
-  name: string;
-}) {
+export function WhyBody({ threadId, message }: { threadId: string; message: ThreadMessage }) {
   const teach = useCan('manager');
   const q = useQuery({
     queryKey: qk.vendedor.why(threadId, message.id),
@@ -495,7 +484,7 @@ export function WhyBody({
           })}
         </ul>
       ) : (
-        <p className="t-body text-muted">Ela só respondeu, sem consultar nada da loja.</p>
+        <p className="t-body text-muted">Ele só respondeu, sem consultar nada da loja.</p>
       )}
       {teach && w.asked ? (
         <ButtonLink
@@ -504,7 +493,7 @@ export function WhyBody({
           icon={<BookOpen weight="bold" />}
           className="self-start"
         >
-          ensinar a {name} a responder diferente
+          ensinar o Duá a responder diferente
         </ButtonLink>
       ) : null}
     </div>

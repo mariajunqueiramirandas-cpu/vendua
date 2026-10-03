@@ -7,13 +7,12 @@ import { SELLER_EDGE } from './tones.ts';
 
 /**
  * Who answers this conversation, always visible under it (sales-agent-ux §1.3). The agent's
- * floor: "Ana está atendendo", "assumir" and the phone hint. The owner's: "Você está
- * atendendo", "devolver à Ana", her suggested replies (a tap puts one in the composer), the
- * composer, and when she comes back on her own. Taking over is one tap and a light haptic.
+ * floor: "O Duá está atendendo", "assumir" and the phone hint. The owner's: "Você está
+ * atendendo", "devolver ao Duá", his suggested replies (a tap puts one in the composer), the
+ * composer, and when he comes back on his own. Taking over is one tap and a light haptic.
  */
 export function Floor({
   variant,
-  name,
   title,
   hint,
   onTake,
@@ -27,9 +26,7 @@ export function Floor({
   className,
 }: {
   variant: 'agent' | 'owner';
-  /** the Vendedor's name */
-  name: string;
-  /** replaces the first line ("Ana está em ensaio") */
+  /** replaces the first line ("O Duá está em ensaio") */
   title?: ReactNode | undefined;
   /** replaces the hint under it */
   hint?: ReactNode | undefined;
@@ -41,7 +38,7 @@ export function Floor({
   /** the owner's reply; resolve to clear the composer */
   onSend?: ((text: string) => unknown) | undefined;
   sending?: boolean | undefined;
-  /** "A Ana volta se você ficar 30 min sem responder" (the store's setting) */
+  /** "O Duá volta se você ficar 30 min sem responder" (the store's setting) */
   silenceMin?: number | undefined;
   /** desktop: show the keyboard shortcuts (A assumir · D devolver · J/K) */
   keys?: boolean | undefined;
@@ -67,7 +64,7 @@ export function Floor({
                 aria-hidden
                 className={cn('size-2 shrink-0 rounded-full bg-ink', SELLER_EDGE)}
               />
-              <span className="min-w-0">{title ?? `${name} está atendendo`}</span>
+              <span className="min-w-0">{title ?? 'O Duá está atendendo'}</span>
             </p>
             {onTake ? (
               <Button
@@ -84,7 +81,7 @@ export function Floor({
             ) : null}
           </div>
           <p className="t-caption text-muted">
-            {hint ?? 'Ou responda pelo seu celular: ela pausa sozinha nesta conversa.'}
+            {hint ?? 'Ou responda pelo seu celular: ele pausa sozinho nesta conversa.'}
           </p>
         </>
       ) : (
@@ -105,14 +102,14 @@ export function Floor({
                 }}
                 className="-mr-2"
               >
-                devolver à {name}
+                devolver ao Duá
               </Button>
             ) : null}
           </div>
           {suggestions.length ? (
             <div
               className="scroll-row -mx-3.5 flex gap-1.5 px-3.5"
-              aria-label={`sugestões da ${name}`}
+              aria-label="sugestões do Duá"
               role="group"
             >
               {suggestions.map((s) => (
@@ -170,7 +167,7 @@ export function Floor({
           ) : null}
           {silenceMin ? (
             <p className="t-caption text-muted">
-              A {name} volta se você ficar {silenceMin} min sem responder.
+              O Duá volta se você ficar {silenceMin} min sem responder.
             </p>
           ) : null}
         </>

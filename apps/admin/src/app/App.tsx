@@ -153,7 +153,7 @@ export default function App() {
   // a screen above this person's role isn't there for them (NotFound), like its nav entry
   const manager = can(q.data.user.role, 'manager');
   const owner = can(q.data.user.role, 'owner');
-  // a plan without the Vendedor shows its screens as the upsell (ADR 0032)
+  // a plan without Duá shows his screens as the upsell (ADR 0032)
   const vendedorOpen = featureOpen(q.data, 'vendedor');
   return (
     <SessionCtx.Provider value={q.data}>
@@ -205,7 +205,7 @@ export default function App() {
                   {!vendedorOpen ? (
                     <Route
                       path="vendedor/*"
-                      element={<LockedPage title="Vendedor" feature="vendedor" />}
+                      element={<LockedPage title="Duá" feature="vendedor" />}
                     />
                   ) : null}
                   <Route
@@ -214,7 +214,7 @@ export default function App() {
                       vendedorOpen ? (
                         <VendedorHome />
                       ) : (
-                        <LockedPage title="Vendedor" feature="vendedor" />
+                        <LockedPage title="Duá" feature="vendedor" />
                       )
                     }
                   />

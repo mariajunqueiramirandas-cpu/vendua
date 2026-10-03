@@ -6,7 +6,7 @@ import { cn } from '../cn.ts';
 import { PAPER } from './tones.ts';
 
 /**
- * What the Vendedor did, in one past-tense line between bubbles ("anotou 2 itens na sacola",
+ * What Duá did, in one past-tense line between bubbles ("anotou 2 itens na sacola",
  * "entrega: R$ 7,00 · ~40 min"), with "por quê" beside it (sales-agent-ux §3.3).
  */
 export function ActionReceipt({

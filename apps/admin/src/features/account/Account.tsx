@@ -746,7 +746,7 @@ function Upsell({ next, a, onGo }: { next: Plan; a: AccountData; onGo: (() => vo
   );
 }
 
-// ── the Vendedor's conversations ────────────────────────────────────────────
+// ── Duá's conversations ─────────────────────────────────────────────────────
 
 const n = (x: number) => x.toLocaleString('pt-BR');
 
@@ -784,29 +784,34 @@ function Vendedor({ a, onInvoice }: { a: AccountData; onInvoice: (id: string) =>
 
   return (
     <Section
-      title="Vendedor"
+      title="Duá"
       id="vendedor"
-      hint="O atendente com IA da sua loja no WhatsApp. Cada cliente conta como uma conversa, uma vez a cada 24 h."
+      hint="O vendedor com IA da sua loja no WhatsApp. Cada cliente conta como uma conversa, uma vez a cada 24 h."
     >
       <Card className="space-y-5 p-5">
         {!ai.included ? (
           <p className="t-body flex gap-2">
             <Info className="mt-0.5 size-5 shrink-0 text-muted" aria-hidden />
-            <span>O Vendedor do seu plano libera assim que o pagamento do plano entrar.</span>
+            <span>O Duá do seu plano fica liberado assim que o pagamento do plano entrar.</span>
           </p>
         ) : (
           <>
             <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
-              <div>
-                <p className="t-caption text-muted">
-                  {ai.period === 'trial' ? 'no teste grátis' : 'neste mês'}
-                </p>
-                <p className="mt-0.5">
-                  <span className="tnum font-display text-[2rem] font-semibold leading-10">
-                    {n(ai.used)}
-                  </span>
-                  <span className="t-body text-muted"> de {n(ai.limit)} conversas</span>
-                </p>
+              <div className="flex items-center gap-3">
+                <span className="dua-disc grid size-14 shrink-0 place-items-center overflow-hidden bg-spark-soft">
+                  <Mascote pose={over ? 'avatar-ajuda' : 'avatar-feliz'} size={56} />
+                </span>
+                <div>
+                  <p className="t-caption text-muted">
+                    {ai.period === 'trial' ? 'no teste grátis' : 'neste mês'}
+                  </p>
+                  <p className="mt-0.5">
+                    <span className="tnum font-display text-[2rem] font-semibold leading-10">
+                      {n(ai.used)}
+                    </span>
+                    <span className="t-body text-muted"> de {n(ai.limit)} conversas</span>
+                  </p>
+                </div>
               </div>
               {ai.resetsAt ? (
                 <p className="t-body text-muted">
@@ -841,7 +846,7 @@ function Vendedor({ a, onInvoice }: { a: AccountData; onInvoice: (id: string) =>
                     </>
                   ) : (
                     <>
-                      <strong>As conversas acabaram.</strong> O Vendedor volta{' '}
+                      <strong>As conversas acabaram.</strong> O Duá volta{' '}
                       {ai.resetsAt && ai.period === 'month'
                         ? `em ${dateShort(ai.resetsAt)}`
                         : 'com um pacote de conversas'}
@@ -1018,7 +1023,9 @@ function PlanSheet({
         size="lg"
         block
         loading={busy}
-        disabled={!plan || (same && !s?.pendingPlan && !s?.pendingUpgrade)}
+        disabled={
+          !plan || (!plan.available && !same) || (same && !s?.pendingPlan && !s?.pendingUpgrade)
+        }
         onClick={() => plan && change.mutate(plan.id)}
       >
         {same
@@ -1032,7 +1039,7 @@ function PlanSheet({
         size="lg"
         block
         loading={busy}
-        disabled={!plan}
+        disabled={!plan || (!plan.available && !same)}
         icon={method === 'card' ? <ArrowSquareOut /> : undefined}
         onClick={() => {
           const e = email.trim();
@@ -1155,7 +1162,7 @@ function lostOn(from: Plan, to: Plan): string | null {
     );
   }
   if (from.features.vendedor && to.features.vendedor && to.aiConversations < from.aiConversations)
-    out.push(`O Vendedor passa a ter ${n(to.aiConversations)} conversas por mês.`);
+    out.push(`O Duá passa a ter ${n(to.aiConversations)} conversas por mês.`);
   return out.length ? out.join(' ') : null;
 }
 
@@ -1287,7 +1294,7 @@ function Invoices({ a, onOpen }: { a: AccountData; onOpen: (id: string) => void 
                   {invoiceTitle(i)}
                 </span>
                 <span className="t-caption block text-muted">
-                  {i.kind === 'ai_pack' ? 'conversas do Vendedor' : i.planName} ·{' '}
+                  {i.kind === 'ai_pack' ? 'conversas do Duá' : i.planName} ·{' '}
                   {i.status === 'paid' && i.paidAt
                     ? `paga em ${dateShort(i.paidAt)}`
                     : payable
@@ -1372,7 +1379,7 @@ function InvoiceSheet({
           : inv.kind === 'upgrade'
             ? `A diferença até ${dateShort(inv.periodEnd)} · nº ${inv.number}`
             : inv.kind === 'ai_pack'
-              ? `Conversas do Vendedor, que não vencem · nº ${inv.number}`
+              ? `Conversas do Duá, que não vencem · nº ${inv.number}`
               : `${inv.planName} · nº ${inv.number}`
       }
     >
@@ -1384,7 +1391,7 @@ function InvoiceSheet({
           <p className="t-title-2 mt-3">Pagamento recebido ✓</p>
           <p className="t-body mt-1 text-muted">
             {inv.paidAt ? `Entrou ${ago(inv.paidAt)}.` : null}{' '}
-            {inv.kind === 'ai_pack' ? 'As conversas já estão na conta do Vendedor.' : 'Obrigado!'}
+            {inv.kind === 'ai_pack' ? 'As conversas já estão na conta do Duá.' : 'Obrigado!'}
           </p>
           <Button variant="secondary" className="mt-5" onClick={onClose}>
             fechar

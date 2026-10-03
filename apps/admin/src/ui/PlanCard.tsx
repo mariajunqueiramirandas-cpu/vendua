@@ -97,7 +97,7 @@ export function perksOf(
   if (f.vendedor)
     out.push({
       key: 'vendedor',
-      text: 'Vendedor com IA no WhatsApp',
+      text: 'Duá, vendedor com IA no WhatsApp',
       extra: `${count(plan.aiConversations)} conversas/mês`,
       sub:
         opts.trial && plan.trialDays > 0 && plan.aiTrialConversations > 0
@@ -150,7 +150,7 @@ export function perksOf(
   return out;
 }
 
-/** What `plan` has that `base` doesn't: a feature it lacks, or more of the Vendedor. */
+/** What `plan` has that `base` doesn't: a feature it lacks, or more of Duá's conversations. */
 export function perksAdded(
   plan: Plan,
   base: Plan,
@@ -192,11 +192,12 @@ export const featuresLost = (plan: Plan, base: Plan) =>
     (f) => base.features[f] && !plan.features[f],
   );
 
-/** The first plan up from `current` that adds something to it. */
+/** The first plan up from `current` that adds something to it and a store can pick. */
 export function nextUp(plans: Plan[], current: Plan) {
   return publicPlans(plans).find(
     (p) =>
       p.id !== current.id &&
+      p.available &&
       (current.priceCents === null || p.priceCents! > current.priceCents) &&
       perksAdded(p, current, '').length > 0,
   );
@@ -205,7 +206,7 @@ export function nextUp(plans: Plan[], current: Plan) {
 /** The cheapest public plan that has `f`. */
 export const cheapestWith = (plans: Plan[], f: PlanFeature) =>
   publicPlans(plans)
-    .filter((p) => p.features[f])
+    .filter((p) => p.features[f] && p.available)
     .sort((a, b) => a.priceCents! - b.priceCents!)[0];
 
 export function PlanPerks({

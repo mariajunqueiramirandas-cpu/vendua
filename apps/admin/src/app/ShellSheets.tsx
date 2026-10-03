@@ -25,7 +25,7 @@ function MoreSheet({
   const hint = (to: string): string | null => {
     if (to === '/vendedor')
       return !vendedor?.enabled
-        ? `conheça a ${vendedor?.name ?? 'Ana'}`
+        ? 'vendedor com IA no WhatsApp'
         : vendedor.waiting
           ? `${vendedor.waiting} ${vendedor.waiting === 1 ? 'precisa' : 'precisam'} de você`
           : 'vendas no WhatsApp';

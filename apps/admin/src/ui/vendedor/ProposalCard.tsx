@@ -5,7 +5,7 @@ import { cn } from '../cn.ts';
 import { GuaranteeChip } from './chips.tsx';
 
 /**
- * A Resposta or a Regra she proposes from what the owner said (the interview, a reply to a
+ * A Resposta or a Regra Duá proposes from what the owner said (the interview, a reply to a
  * handed-off shopper). Nothing is kept until "está certo"; a Regra wears its guarantee chip.
  */
 export function ProposalCard({
@@ -14,7 +14,6 @@ export function ProposalCard({
   question,
   answer,
   guaranteed,
-  name,
   onAccept,
   onEdit,
   busy,
@@ -29,8 +28,6 @@ export function ProposalCard({
   answer?: string | null | undefined;
   /** for a rule: the system enforces it */
   guaranteed?: boolean | undefined;
-  /** the Vendedor's name */
-  name: string;
   onAccept?: (() => void) | undefined;
   onEdit?: (() => void) | undefined;
   busy?: boolean | undefined;
@@ -56,9 +53,7 @@ export function ProposalCard({
       </div>
       <p className="t-body-lg font-semibold leading-6">{question}</p>
       {kind === 'answer' && answer ? <p className="t-body-lg leading-6">{answer}</p> : null}
-      {kind === 'rule' ? (
-        <GuaranteeChip guaranteed={!!guaranteed} name={name} className="self-start" />
-      ) : null}
+      {kind === 'rule' ? <GuaranteeChip guaranteed={!!guaranteed} className="self-start" /> : null}
       <p className="t-caption text-muted">Só vale depois do seu ok.</p>
       {onAccept || onEdit ? (
         <div className="mt-1 flex flex-wrap gap-2">

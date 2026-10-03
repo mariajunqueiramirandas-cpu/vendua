@@ -12,7 +12,6 @@ import { TextInput } from '../../ui/fields.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { ChecklistRow, MiniChat, ScoreRing } from '../../ui/vendedor/index.ts';
-import { articleOf } from './Train.model.ts';
 import { TestLines, TrainFrame } from './Train.parts.tsx';
 
 // ── Peça para mim ───────────────────────────────────────────────────────────
@@ -20,13 +19,11 @@ import { TestLines, TrainFrame } from './Train.parts.tsx';
 const STARTERS = ['oi, vocês entregam?', 'qual é o mais pedido?', 'quero fazer um pedido'];
 
 export function OrderStep({
-  name,
   onNext,
   onSkip,
   back,
   eyebrow,
 }: {
-  name: string;
   onNext: () => void;
   onSkip: () => void;
   back: () => void;
@@ -37,7 +34,7 @@ export function OrderStep({
   const chat = useQuery({
     queryKey: qk.vendedor.testChat,
     queryFn: api.vendedor.testChat,
-    // her reply is an agent turn; the stream says when it lands, polling covers a quiet stream
+    // his reply is an agent turn; the stream says when it lands, polling covers a quiet stream
     refetchInterval: (q) => (q.state.data?.messages.at(-1)?.author === 'shopper' ? poll : false),
   });
   const [text, setText] = useState('');
@@ -93,7 +90,6 @@ export function OrderStep({
       }
     >
       <MiniChat
-        name={name}
         owner
         typing={typing}
         label="teste · só você vê"
@@ -135,7 +131,7 @@ export function OrderStep({
         {!chat.data ? (
           <Skeleton className="h-24 w-3/4 self-start rounded-lg" />
         ) : msgs.length ? (
-          <TestLines messages={msgs} name={name} />
+          <TestLines messages={msgs} />
         ) : (
           <div className="space-y-3 py-2">
             <p className="t-body text-muted">
@@ -182,12 +178,10 @@ export function useClienteOculto(enabled = true) {
 const SHOWN = 7;
 
 export function OcultoStep({
-  name,
   onNext,
   back,
   eyebrow,
 }: {
-  name: string;
   onNext: () => void;
   back: () => void;
   eyebrow: string;
@@ -252,8 +246,7 @@ export function OcultoStep({
                   : `${passed} de ${total} pedidos saíram certos`}
           </p>
           <p className="t-caption text-muted">
-            Cada um tem um pedido escondido. Comparamos item por item com o que {articleOf(name)}{' '}
-            {name} fechar.
+            Cada um tem um pedido escondido. Comparamos item por item com o que o Duá fechar.
           </p>
         </div>
       </Card>

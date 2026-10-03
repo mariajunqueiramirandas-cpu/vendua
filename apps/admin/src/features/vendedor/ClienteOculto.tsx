@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type ClienteOculto as View, type ClienteOcultoResult } from '../../lib/api.ts';
 import { when } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
-import { useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -47,8 +46,6 @@ const isRunning = (r: Run | null | undefined) =>
   !!r && (r.status === 'queued' || r.status === 'running');
 
 export default function ClienteOculto() {
-  const s = useSession();
-  const name = s.vendedor?.name || 'Vendedor';
   const qc = useQueryClient();
   const { data, error, refetch } = useQuery({
     queryKey: qk.vendedor.clienteOculto,
@@ -118,7 +115,7 @@ export default function ClienteOculto() {
           <EmptyState
             art={<ArtBag />}
             title="Veja a nota antes de ligar"
-            body={`Clientes de teste pedem no seu cardápio, cada um com um pedido escondido. Comparamos item por item com o que a ${name} fechar.`}
+            body="Clientes de teste pedem no seu cardápio, cada um com um pedido escondido. Comparamos item por item com o que o Duá fechar."
             action={
               <Button loading={run.isPending} onClick={() => run.mutate()}>
                 rodar agora
@@ -139,7 +136,7 @@ export default function ClienteOculto() {
       {header}
       <div className="flex flex-col gap-8">
         {running ? (
-          <RunningCard latest={latest} name={name} />
+          <RunningCard latest={latest} />
         ) : latest.status === 'failed' ? (
           <Notice
             tone="warning"
@@ -186,7 +183,7 @@ export default function ClienteOculto() {
                 </p>
                 <p className="t-body mt-1 text-muted">
                   Cada cliente de teste tinha um pedido escondido. Comparamos item por item com o
-                  que a {name} fechou.
+                  que o Duá fechou.
                 </p>
               </div>
             </div>
@@ -236,7 +233,7 @@ export default function ClienteOculto() {
               icon={<Lightning weight="fill" />}
               className="md:max-w-sm"
             >
-              ligar a {name}
+              ligar o Duá
             </ButtonLink>
           ) : null}
           {!running && latest.status !== 'failed' ? (
@@ -291,7 +288,7 @@ export default function ClienteOculto() {
   );
 }
 
-function RunningCard({ latest, name }: { latest: Run; name: string }) {
+function RunningCard({ latest }: { latest: Run }) {
   const done = latest.results?.length ?? 0;
   const total = latest.total;
   return (
@@ -324,8 +321,8 @@ function RunningCard({ latest, name }: { latest: Run; name: string }) {
               : 'preparando os clientes de teste…'}
           </p>
           <p className="t-caption mt-1 text-muted">
-            Cada um tem um pedido escondido. Comparamos item por item com o que a {name} fechar.
-            Pode sair da tela: o teste continua.
+            Cada um tem um pedido escondido. Comparamos item por item com o que o Duá fechar. Pode
+            sair da tela: o teste continua.
           </p>
         </div>
       </div>

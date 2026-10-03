@@ -1,12 +1,23 @@
 import { useEffect, useRef } from 'react';
 import { cn } from '../cn.ts';
+import { Mascote, type Pose } from '../Mascote.tsx';
 
-const SIZES = {
-  xs: 'size-[18px] text-[10px] font-bold',
-  sm: 'size-8 text-[0.875rem]',
-  md: 'size-14 text-[1.375rem]',
-  lg: 'size-20 text-[2rem]',
-} as const;
+export type AvatarPose = Extract<
+  Pose,
+  'avatar-ola' | 'avatar-pensando' | 'avatar-feliz' | 'avatar-ajuda'
+>;
+
+const SIZES = { xs: 18, sm: 32, md: 56, lg: 80 } as const;
+
+// Below 48 px the whole figure is a smudge: the small sizes zoom on the head. Centre of the
+// head in each pose's 640×640 art, as fractions.
+const HEAD: Record<AvatarPose, [number, number]> = {
+  'avatar-ola': [0.6, 0.33],
+  'avatar-pensando': [0.66, 0.34],
+  'avatar-feliz': [0.67, 0.36],
+  'avatar-ajuda': [0.67, 0.36],
+};
+const ZOOM = { xs: 1.6, sm: 1.5, md: 1, lg: 1 } as const;
 
 const still = () =>
   typeof window === 'undefined' ||
@@ -14,19 +25,21 @@ const still = () =>
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /**
- * The Vendedor's face: a spark disc with the initial of the name the merchant chose. The ring
- * breathes (3.2 s) only while it is answering; paused, in Ensaio or with the owner on the floor
- * it is still (sales-agent-ux §6). Decorative unless `label` is given: the name is in the text.
+ * Duá's face: the mascot on a lit disc (cream in Noite, where forest green would vanish).
+ * `answering` switches to the thinking pose and the ring breathes (3.2 s); paused, in Ensaio or
+ * with the owner on the floor it is still (sales-agent-ux §6). Decorative unless `label` is
+ * given: the name is in the text.
  */
 export function PersonaAvatar({
-  name,
   size = 'md',
+  pose,
   answering = false,
   label,
   className,
 }: {
-  name: string;
   size?: keyof typeof SIZES | undefined;
+  /** defaults to `avatar-ola`, or `avatar-pensando` while answering */
+  pose?: AvatarPose | undefined;
   answering?: boolean | undefined;
   /** an accessible name, when the avatar stands alone */
   label?: string | undefined;
@@ -47,19 +60,28 @@ export function PersonaAvatar({
     );
     return () => a.cancel();
   }, [answering]);
-  const initial = (name.trim().slice(0, 1) || 'A').toUpperCase();
+  const shown: AvatarPose = pose ?? (answering ? 'avatar-pensando' : 'avatar-ola');
+  const px = SIZES[size];
+  const k = ZOOM[size];
+  const [cx, cy] = HEAD[shown];
+  // zoomed: the head's centre lands on the disc's centre; whole: the bust sits on the rim
+  const place =
+    k === 1
+      ? { width: '100%', left: 0, top: '4%' }
+      : { width: `${k * 100}%`, left: `${50 - cx * k * 100}%`, top: `${50 - cy * k * 100}%` };
   return (
     <span
       role={label ? 'img' : undefined}
       aria-label={label}
       aria-hidden={label ? undefined : true}
-      className={cn(
-        'relative grid shrink-0 place-items-center rounded-full bg-spark font-display font-semibold leading-none text-on-spark',
-        SIZES[size],
-        className,
-      )}
+      style={{ width: px, height: px }}
+      className={cn('dua-disc relative inline-block shrink-0 bg-spark-soft', className)}
     >
-      {initial}
+      <span className="absolute inset-0 overflow-hidden rounded-full">
+        <span className="absolute block aspect-square" style={place}>
+          <Mascote pose={shown} size={Math.round(px * k)} className="w-full" />
+        </span>
+      </span>
       {answering ? (
         <span
           ref={ring}

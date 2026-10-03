@@ -87,7 +87,7 @@ export function Shell({ children }: { children: ReactNode }) {
   // the kitchen screens own the whole display: no rail, bars or pull-to-refresh, their own keys
   // (locked by the plan, the kitchen is an ordinary page: the lock is the upsell)
   const kitchen = loc.pathname.startsWith('/cozinha') && featureOpen(session, 'kds');
-  // the Vendedor's onboarding is a journey with its own header, like /bem-vindo, but it keeps
+  // Duá's onboarding is a journey with its own header, like /bem-vindo, but it keeps
   // the live stream (the interviewer's replies arrive on it)
   const bare = kitchen || loc.pathname === '/vendedor/comecar';
   const bareRef = useRef(kitchen);

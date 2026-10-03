@@ -60,7 +60,7 @@ export function PlanStep({
   const open = plans.billing.available || plans.billing.accessCode;
   // the trial is for a new owner paying the Venduá: not with an access code
   const trial = plans.billing.available && !d.byCode && trialEligible !== false;
-  const trialPlan = trial ? plans.plans.find((p) => p.trialDays > 0) : undefined;
+  const trialPlan = trial ? plans.plans.find((p) => p.trialDays > 0 && p.available) : undefined;
   const chosen = plans.plans.find((p) => p.id === d.planId);
   return (
     <StepFrame
@@ -71,7 +71,7 @@ export function PlanStep({
           : 'Um preço por mês, com Pix ou cartão. Dá para trocar quando quiser.'
       }
       label={chosen ? `Continuar com o ${shortName(chosen)}` : 'Continuar'}
-      disabled={!open || !d.planId}
+      disabled={!open || !chosen?.available}
       onSubmit={() => go('loja')}
       solidBar
     >
@@ -676,6 +676,11 @@ function stepFor(e: unknown): { step: StepId; notice: string } | null {
       notice: field === 'email' ? 'Confira o e-mail, como maria@gmail.com.' : 'Confira o seu nome.',
     };
   if (field === 'segment') return { step: 'tipo', notice: 'Escolha de novo o que a loja vende.' };
+  if (e.code === 'PLAN_UNAVAILABLE')
+    return {
+      step: 'plano',
+      notice: 'Esse plano ainda não está aberto para assinatura. Escolha outro.',
+    };
   if (e.code === 'UNKNOWN_PLAN' || field === 'planId')
     return { step: 'plano', notice: 'Esse plano mudou. Escolha de novo.' };
   return null;

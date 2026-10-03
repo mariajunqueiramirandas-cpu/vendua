@@ -856,6 +856,7 @@ const SAMPLE_PLANS: Plan[] = [
     recommended: false,
     aiConversations: 0,
     aiTrialConversations: 0,
+    available: true,
   },
   {
     id: 'bandeira',
@@ -867,10 +868,11 @@ const SAMPLE_PLANS: Plan[] = [
     recommended: true,
     aiConversations: 250,
     aiTrialConversations: 50,
+    available: true,
   },
   {
-    id: 'pangolin',
-    name: 'Venduá Pangolin',
+    id: 'pangolim',
+    name: 'Venduá Pangolim',
     priceCents: 44900,
     feeBps: 0,
     features: {
@@ -885,6 +887,7 @@ const SAMPLE_PLANS: Plan[] = [
     recommended: false,
     aiConversations: 1000,
     aiTrialConversations: 0,
+    available: false,
   },
 ];
 
@@ -906,8 +909,7 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-// Forno da Vila, a fictional pizzeria whose owner named her Vendedor "Ana" (sales-agent-ux)
-const ANA = 'Ana';
+// Forno da Vila, a fictional pizzeria where Duá sells (sales-agent-ux)
 const SUMMARY: SummaryCardData = {
   id: 's1',
   lines: [
@@ -944,7 +946,7 @@ function VendedorReference() {
   const [owner, setOwner] = useState(false);
   return (
     <>
-      <Block title="Vendedor: as três vozes">
+      <Block title="Duá: as três vozes">
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="flex flex-col gap-1.5 rounded-lg bg-bg p-3 ring-1 ring-line">
             <SacolaBar
@@ -960,7 +962,7 @@ function VendedorReference() {
               transcript="Oi, boa noite, queria uma pizza grande metade calabresa metade frango com catupiry e uma coca de dois litros"
             />
             <ActionReceipt onWhy={() => toast('por quê')}>anotou 2 itens na sacola</ActionReceipt>
-            <Bubble voice="seller" name={ANA} time="19:42" status="read">
+            <Bubble voice="seller" time="19:42" status="read">
               Boa noite, Carla! Anotei a pizza G meio calabresa, meio frango com catupiry, e a Coca
               2 L. Entrego na Rua das Acácias, 120, como da última vez?
             </Bubble>
@@ -968,14 +970,7 @@ function VendedorReference() {
               isso
             </Bubble>
             <ActionReceipt onWhy={() => toast('por quê')}>entrega: R$ 7,00 · ~40 min</ActionReceipt>
-            <Bubble
-              voice="seller"
-              name={ANA}
-              signed={false}
-              tag="sugestão"
-              time="19:43"
-              status="delivered"
-            >
+            <Bubble voice="seller" signed={false} tag="sugestão" time="19:43" status="delivered">
               Quer borda recheada de catupiry por mais R$ 9,00? É a que mais sai com essa pizza.
             </Bubble>
             <Bubble voice="in" author="Carla" time="19:44">
@@ -988,7 +983,7 @@ function VendedorReference() {
             <EventChip to="/pedidos/o1284">
               Pedido #1284 feito · Pix enviado · aguardando pagamento
             </EventChip>
-            <Bubble voice="seller" name={ANA} draft time="19:45">
+            <Bubble voice="seller" draft time="19:45">
               Aqui é uma forma de pagamento por pedido. Prefere Pix ou cartão?
             </Bubble>
             <Bubble voice="you" status="failed" time="19:46">
@@ -1000,7 +995,6 @@ function VendedorReference() {
               {owner ? (
                 <Floor
                   variant="owner"
-                  name={ANA}
                   onRelease={() => setOwner(false)}
                   suggestions={[
                     'Já sai em 40 min!',
@@ -1012,7 +1006,7 @@ function VendedorReference() {
                   keys
                 />
               ) : (
-                <Floor variant="agent" name={ANA} onTake={() => setOwner(true)} keys />
+                <Floor variant="agent" onTake={() => setOwner(true)} keys />
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1020,30 +1014,31 @@ function VendedorReference() {
               <ReasonChip reason="reclamação: atraso" />
               <ReasonChip reason="pedido grande" />
               <ReasonChip reason="o cliente pediu uma pessoa" />
-              <FloorChip floor="agent" name={ANA} />
-              <FloorChip floor="rehearsal" name={ANA} />
-              <FloorChip floor="store" name={ANA} />
-              <FloorChip floor="agent" waiting name={ANA} />
-              <FloorChip floor="muted" name={ANA} />
+              <FloorChip floor="agent" />
+              <FloorChip floor="rehearsal" />
+              <FloorChip floor="store" />
+              <FloorChip floor="agent" waiting />
+              <FloorChip floor="muted" />
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <GuaranteeChip guaranteed />
-              <GuaranteeChip guaranteed={false} name={ANA} />
+              <GuaranteeChip guaranteed={false} />
               <GuaranteeChip guaranteed={false} short />
             </div>
             <div className="flex items-center gap-4">
-              <PersonaAvatar name={ANA} size="lg" answering label="Ana está atendendo" />
-              <PersonaAvatar name={ANA} size="md" answering />
-              <PersonaAvatar name={ANA} size="md" />
-              <PersonaAvatar name="Léo" size="sm" />
-              <PersonaAvatar name={ANA} size="xs" />
+              <PersonaAvatar size="lg" answering label="Duá está atendendo" />
+              <PersonaAvatar size="md" />
+              <PersonaAvatar size="md" pose="avatar-feliz" />
+              <PersonaAvatar size="md" pose="avatar-ajuda" />
+              <PersonaAvatar size="sm" />
+              <PersonaAvatar size="xs" />
             </div>
             <CoreReceipt data={LONG} title="Pedido de teste" align="stretch" />
           </div>
         </div>
       </Block>
 
-      <Block title="Vendedor: provas e resultados">
+      <Block title="Duá: provas e resultados">
         <div className="grid gap-6 lg:grid-cols-2">
           <Card className="p-4">
             <div className="flex items-center gap-4">
@@ -1052,7 +1047,7 @@ function VendedorReference() {
                 <p className="font-semibold">pedidos saíram certos</p>
                 <p className="t-caption text-muted">
                   Cada cliente de teste tinha um pedido escondido. Comparamos item por item com o
-                  que a Ana fechou.
+                  que o Duá fechou.
                 </p>
               </div>
             </div>
@@ -1070,7 +1065,7 @@ function VendedorReference() {
               state="done"
               eyebrow="Parte 1"
               title="Conhecer"
-              detail="Nome, jeito de falar e o WhatsApp da loja"
+              detail="Jeito de falar e o WhatsApp da loja"
               value="pronto"
             />
             <ChecklistRow
@@ -1097,7 +1092,7 @@ function VendedorReference() {
               eyebrow="Parte 4"
               title="Começar"
               icon={Lightning}
-              detail="Quando ela atende e como começa"
+              detail="Quando ele atende e como começa"
               value="a fazer"
             />
           </div>
@@ -1120,22 +1115,20 @@ function VendedorReference() {
             <Discordance
               who="Bruno Lima"
               when="ontem, 20h14"
-              name={ANA}
               shopper="dá pra pagar metade no pix e metade no cartão?"
               draft="Aqui é uma forma de pagamento por pedido. Prefere Pix ou cartão?"
               merchant="Dá sim! Me fala quanto vai em cada um."
               onTeach={() => toast('ensinar')}
-              onDismiss={() => toast('ela estava certa')}
+              onDismiss={() => toast('ele estava certo')}
             />
           </Card>
         </div>
       </Block>
 
-      <Block title="Vendedor: treinar a Ana">
+      <Block title="Duá: o treino">
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="space-y-4 overflow-hidden rounded-lg bg-bg pb-4 ring-1 ring-line">
             <AgentJourney
-              name={ANA}
               part="ensinar"
               progress={3 / 7}
               status="3 de 7"
@@ -1146,12 +1139,11 @@ function VendedorReference() {
               }
             />
             <div className="space-y-4 px-4">
-              <AgentGuide name={ANA} turn="entrevista-3">
+              <AgentGuide turn="entrevista-3">
                 Anotado! Agora: dá pra pedir pizza com 3 sabores?
               </AgentGuide>
               <ProposalCard
                 kind="answer"
-                name={ANA}
                 source="Da sua resposta anterior"
                 question="Tem estacionamento?"
                 answer="Tem, na rua lateral, de graça."
@@ -1160,7 +1152,6 @@ function VendedorReference() {
               />
               <ProposalCard
                 kind="rule"
-                name={ANA}
                 source="Da entrevista"
                 question="Pedidos com mais de 10 pizzas: passe para mim."
                 guaranteed
@@ -1171,18 +1162,16 @@ function VendedorReference() {
           </div>
           <div className="space-y-4">
             <MiniChat
-              name={ANA}
               label="prévia no WhatsApp"
               lines={[
                 { voice: 'in', text: 'oi, vocês entregam?' },
                 {
                   voice: 'seller',
-                  text: 'Oi, boa tarde! Sou a Ana, assistente virtual da Forno da Vila. Entregamos sim, em 6 bairros. Qual é o seu?',
+                  text: 'Oi, boa tarde! Sou o Duá, assistente virtual da Forno da Vila. Entregamos sim, em 6 bairros. Qual é o seu?',
                 },
               ]}
             />
             <MiniChat
-              name={ANA}
               owner
               label="teste · só você vê"
               typing
@@ -1190,7 +1179,7 @@ function VendedorReference() {
                 { voice: 'you', text: 'oi, entregam no Centro?', time: '16:07' },
                 {
                   voice: 'seller',
-                  text: 'Oi, boa tarde! Sou a Ana, assistente virtual da Forno da Vila. Entregamos no Centro, sim. O que vai ser?',
+                  text: 'Oi, boa tarde! Sou o Duá, assistente virtual da Forno da Vila. Entregamos no Centro, sim. O que vai ser?',
                   time: '16:07',
                 },
                 {

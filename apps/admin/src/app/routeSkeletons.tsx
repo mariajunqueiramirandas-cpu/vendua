@@ -128,7 +128,7 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
   help: () => page('Ajuda', <RowsSkeleton rows={5} avatar={false} trailing={false} />),
   vendedorHome: () =>
     page(
-      'Vendedor',
+      'Duá',
       <div className="space-y-4">
         <StatTilesSkeleton count={3} />
         <RowsSkeleton rows={3} />

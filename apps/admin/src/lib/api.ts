@@ -163,10 +163,12 @@ export interface Plan {
   trialDays: number;
   /** the one plan the admin points to first (exactly one public plan has it) */
   recommended: boolean;
-  /** the Vendedor's conversations a month (0 without it) */
+  /** Duá's conversations a month (0 without it) */
   aiConversations: number;
   /** …and during the free trial */
   aiTrialConversations: number;
+  /** a store can pick it now; a closed one is shown, never picked (PLAN_UNAVAILABLE) */
+  available: boolean;
 }
 
 export interface StoreRef {
@@ -1564,15 +1566,15 @@ export interface VendedorResults {
 export interface VendedorSettings {
   enabled: boolean;
   settings: StoreAgentSettings;
-  /** how she introduces herself to a shopper, from the settings */
+  /** how Duá introduces himself to a shopper: "o Duá, assistente virtual da …" */
   intro: string;
   coupons: { id: string; code: string; label: string | null; kind: string; value: number }[];
   incentivesUsedCents: number;
 }
 
-/** partial settings; nested groups merge field by field in Core */
+/** partial settings; nested groups merge field by field in Core. The name is always Duá. */
 export type VendedorSettingsPatch = Partial<
-  Omit<StoreAgentSettings, 'capabilities' | 'handoff' | 'recovery'>
+  Omit<StoreAgentSettings, 'name' | 'capabilities' | 'handoff' | 'recovery'>
 > & {
   enabled?: boolean;
   capabilities?: Partial<StoreAgentSettings['capabilities']>;

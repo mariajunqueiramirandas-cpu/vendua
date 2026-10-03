@@ -2,7 +2,7 @@ import type { AgentTone, Coverage, MenuGap, VendedorOnboarding } from '../../lib
 import { greeting } from '../../lib/format.ts';
 import type { AgentPart } from '../../ui/vendedor/index.ts';
 
-// "Treinar a Ana" (sales-agent-ux §3.12): the screens of the four parts, in order. Where the
+// "Treinar o Duá" (sales-agent-ux §3.12): the screens of the four parts, in order. Where the
 // owner stopped is Core's (`progress.step`), so another device resumes on the same screen.
 
 export type StepId =
@@ -58,28 +58,21 @@ export function journeyAt(step: StepId, question: number): { progress: number; s
     case 'oculto':
       return { progress: 0.75, status: '2 de 2' };
     case 'quando':
-      return { progress: 0.5, status: 'quando ela atende' };
+      return { progress: 0.5, status: 'quando ele atende' };
     case 'pronto':
       return { progress: 1, status: 'pronto!' };
   }
 }
 
-export const NAME_PRESETS = ['Ana', 'Bia', 'Léo'] as const;
-
-/** "a Ana", "o Léo": the article only shapes the preview's words */
-export const articleOf = (name: string) => (/o$/i.test(name.trim()) ? 'o' : 'a');
-
 export interface Persona {
-  name: string;
   disclose: boolean;
   tone: AgentTone;
 }
 
-/** How she greets a shopper who asks "vocês entregam?", in the tone chosen. A preview only:
- *  the real words are hers, built from the same settings. */
+/** How Duá greets a shopper who asks "vocês entregam?", in the tone chosen. A preview only:
+ *  the real words are his, built from the same settings (Core's `intro`). */
 export function greetingPreview(p: Persona, store: string, delivers: boolean): string {
-  const name = p.name.trim() || 'Ana';
-  const who = `${articleOf(name)} ${name}${p.disclose ? `, assistente virtual da ${store}` : `, da ${store}`}`;
+  const who = `o Duá${p.disclose ? `, assistente virtual da ${store}` : `, da ${store}`}`;
   const hello = greeting();
   if (p.tone === 'relaxed')
     return `Oi! Aqui é ${who}. ${delivers ? 'Entregamos sim! Me fala o seu bairro?' : 'Por enquanto é só retirada aqui na loja, tá?'}`;
@@ -98,7 +91,7 @@ export function questionOf(text: string | null | undefined): { text: string; yes
   return { text: t, yesNo: !!q && !open.test(q) };
 }
 
-/** the interview so far: her questions, whether her reply is still on its way */
+/** the interview so far: his questions, whether his reply is still on its way */
 export function interviewState(ob: VendedorOnboarding) {
   const msgs = ob.interview.messages.filter((m) => m.author === 'agent' || m.author === 'shopper');
   const last = msgs.at(-1) ?? null;
@@ -143,7 +136,7 @@ export const COVERAGE: {
   {
     id: 'when_slow',
     title: 'Quando eu demorar',
-    detail: 'Ela responde se você não responder a tempo, e com a loja fechada.',
+    detail: 'Ele responde se você não responder a tempo, e com a loja fechada.',
   },
   {
     id: 'after_hours',
@@ -158,7 +151,7 @@ export const COVERAGE: {
   {
     id: 'rehearsal',
     title: 'Ensaio',
-    detail: 'Ela escreve o que diria, mas não manda nada.',
+    detail: 'Ele escreve o que diria, mas não manda nada.',
   },
 ];
 

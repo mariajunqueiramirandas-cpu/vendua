@@ -19,10 +19,9 @@ import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { AgentGuide, AgentJourney, MiniChat, type ChatLine } from '../../ui/vendedor/index.ts';
 import { Finale, WhenStep } from './Train.comecar.tsx';
-import { NameStep, WhatsappStep } from './Train.conhecer.tsx';
+import { VoiceStep, WhatsappStep } from './Train.conhecer.tsx';
 import { HandoffStep, InterviewStep, ReadStep, useSaveSettings } from './Train.ensinar.tsx';
 import {
-  articleOf,
   gapKey,
   greetingPreview,
   interviewState,
@@ -37,9 +36,9 @@ import {
 import { Dots, Exit } from './Train.parts.tsx';
 import { OcultoStep, OrderStep } from './Train.testar.tsx';
 
-// Treinar a Ana (sales-agent-ux §3.12): the Vendedor's own onboarding, owner only, in the Shell's
-// bare mode. She guides it in first person, and a WhatsApp preview shows her answering better
-// as the owner chooses. Nothing she proposes is kept without "está certo"; turning her on is the
+// Treinar o Duá (sales-agent-ux §3.12): the AI seller's own onboarding, owner only, in the Shell's
+// bare mode. He guides it in first person, and a WhatsApp preview shows him answering better
+// as the owner chooses. Nothing he proposes is kept without "está certo"; turning him on is the
 // owner's last tap, never gated by what was skipped.
 
 export default function Train() {
@@ -56,11 +55,11 @@ export default function Train() {
   if (!owner)
     return (
       <div className="mx-auto max-w-lg space-y-6 p-6 pt-12">
-        <AgentGuide name={session.vendedor?.name ?? 'Ana'} turn="sem-acesso">
+        <AgentGuide turn="sem-acesso" pose="avatar-ajuda">
           Quem me treina e me liga é o dono da loja. Peça a ele!
         </AgentGuide>
         <ButtonLink to="/vendedor" size="lg" block>
-          ir para o Vendedor
+          ir para o Duá
         </ButtonLink>
       </div>
     );
@@ -90,12 +89,10 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
   });
   const [peek, setPeek] = useState(false);
   const [draft, setDraftState] = useState<Persona>(() => ({
-    name: ob.settings.name,
     disclose: ob.settings.disclose,
     tone: ob.settings.tone,
   }));
   const setDraft = useCallback((p: Partial<Persona>) => setDraftState((d) => ({ ...d, ...p })), []);
-  const name = (step === 'nome' ? draft.name.trim() : ob.settings.name) || ob.settings.name;
 
   const progress = useMutation({
     mutationFn: (p: VendedorOnboardingProgress) => api.vendedor.updateOnboarding(p),
@@ -147,7 +144,7 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
       await progress.mutateAsync({ finished: true, part: 'comecar', step: 'pronto' });
       void qc.invalidateQueries({ queryKey: qk.session });
       haptic.commit();
-      toast(how === 'ensaio' ? `${name} começou em ensaio` : `${name} está atendendo`);
+      toast(how === 'ensaio' ? 'O Duá começou em ensaio' : 'O Duá está atendendo');
       nav('/vendedor');
     } catch {
       setStarting(null);
@@ -158,9 +155,10 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
   let body: ReactNode;
   switch (step) {
     case 'nome':
-      guide = `Oi! Eu vou atender seus clientes no WhatsApp. Como você quer me chamar?`;
+      guide =
+        'Oi! Eu sou o Duá, o vendedor com IA no WhatsApp da sua loja. Antes de atender seus clientes, me diga como eu falo com eles.';
       body = (
-        <NameStep
+        <VoiceStep
           ob={ob}
           draft={draft}
           setDraft={setDraft}
@@ -168,7 +166,6 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
           busy={settings.isPending}
           onNext={() => {
             const patch = {
-              ...(draft.name.trim() !== ob.settings.name ? { name: draft.name.trim() } : {}),
               ...(draft.disclose !== ob.settings.disclose ? { disclose: draft.disclose } : {}),
               ...(draft.tone !== ob.settings.tone ? { tone: draft.tone } : {}),
             };
@@ -182,14 +179,7 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
       guide = linked
         ? 'Já estou no WhatsApp da loja. Só um cuidado antes de seguir:'
         : 'Eu atendo pelo WhatsApp da loja. Vamos conectar?';
-      body = (
-        <WhatsappStep
-          name={name}
-          eyebrow={eyebrow('2 de 2')}
-          back={back!}
-          onNext={() => next('li')}
-        />
-      );
+      body = <WhatsappStep eyebrow={eyebrow('2 de 2')} back={back!} onNext={() => next('li')} />;
       break;
     case 'li':
       guide = left.length
@@ -198,7 +188,6 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
       body = (
         <ReadStep
           ob={ob}
-          name={name}
           left={left}
           eyebrow={eyebrow('o que eu li')}
           back={back!}
@@ -211,7 +200,7 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
       guide = iv.done ? (
         'Anotei tudo! Confira o que eu aprendi, e seguimos.'
       ) : iv.waiting ? (
-        <Dots name={name} />
+        <Dots />
       ) : iv.current ? (
         iv.current
       ) : (
@@ -220,7 +209,6 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
       body = (
         <InterviewStep
           ob={ob}
-          name={name}
           eyebrow={eyebrow(iv.asked ? `pergunta ${iv.asked}` : 'a entrevista')}
           back={back!}
           onNext={() => (iv.done ? next('passar') : skip('entrevista', 'passar'))}
@@ -233,7 +221,6 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
       body = (
         <HandoffStep
           settings={ob.settings}
-          name={name}
           eyebrow={eyebrow('quando passar para você')}
           back={back!}
           onNext={() => next('peca')}
@@ -244,7 +231,6 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
       guide = 'Agora me teste: peça como se fosse um cliente. Nada vai para a cozinha.';
       body = (
         <OrderStep
-          name={name}
           eyebrow={eyebrow('1 de 2')}
           back={back!}
           onNext={() => next('oculto', { tested: true })}
@@ -255,21 +241,13 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
     case 'oculto':
       guide =
         'Agora clientes de teste pedem no seu cardápio. Pode seguir: eu termino enquanto você escolhe quando eu atendo.';
-      body = (
-        <OcultoStep
-          name={name}
-          eyebrow={eyebrow('2 de 2')}
-          back={back!}
-          onNext={() => next('quando')}
-        />
-      );
+      body = <OcultoStep eyebrow={eyebrow('2 de 2')} back={back!} onNext={() => next('quando')} />;
       break;
     case 'quando':
       guide = 'Por último: quando você quer que eu atenda?';
       body = (
         <WhenStep
           settings={ob.settings}
-          name={name}
           eyebrow={eyebrow('quando atender')}
           back={back!}
           busy={settings.isPending}
@@ -285,7 +263,6 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
       body = (
         <Finale
           ob={ob}
-          name={name}
           store={store}
           linked={linked}
           go={(s) => {
@@ -299,12 +276,11 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
       break;
   }
 
-  // the preview shows her getting better: the greeting as chosen, then what she just learned
+  // the preview shows him getting better: the greeting as chosen, then what he just learned
   const lines = previewLines(step, ob, step === 'nome' ? draft : { ...ob.settings }, store);
   const preview =
     step === 'peca' || step === 'pronto' ? null : (
       <MiniChat
-        name={name}
         label={
           step === 'entrevista' && ob.proposals.length
             ? 'prévia com a sua resposta'
@@ -313,13 +289,13 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
         lines={lines}
       />
     );
-  // on phones the first screen shows the preview up top: every answer there changes her greeting
+  // on phones the first screen shows the preview up top: every answer there changes his greeting
   const topPreview = step === 'nome';
   // Peça para mim is the chat itself: wide screens get ideas of what to try beside it
   const side = preview ? (
     <section
       className="hidden lg:sticky lg:top-28 lg:block lg:self-start"
-      aria-label={`prévia de ${articleOf(name)} ${name} no WhatsApp`}
+      aria-label="prévia do Duá no WhatsApp"
     >
       <p className="t-label mb-3 text-center text-muted">No WhatsApp, ao vivo</p>
       {preview}
@@ -346,7 +322,6 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
   return (
     <div className="min-h-dvh overflow-x-clip">
       <AgentJourney
-        name={name}
         part={PART_OF[step]}
         progress={fill}
         status={status}
@@ -362,8 +337,12 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
           {topPreview && preview ? <div className="lg:hidden">{preview}</div> : null}
           {guide ? (
             <AgentGuide
-              name={name}
               turn={step === 'entrevista' ? `${step}-${iv.currentId}-${iv.waiting}` : step}
+              pose={
+                (step === 'entrevista' && iv.done) || (step === 'li' && !left.length)
+                  ? 'avatar-feliz'
+                  : undefined
+              }
             >
               {guide}
             </AgentGuide>
@@ -381,7 +360,7 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
                 aria-controls="tr-peek"
                 onClick={() => setPeek((v) => !v)}
               >
-                {peek ? 'fechar a prévia' : `espiar ${articleOf(name)} ${name}`}
+                {peek ? 'fechar a prévia' : 'espiar o Duá'}
               </Button>
               <div id="tr-peek" hidden={!peek} className="animate-fade-up mt-4">
                 {peek ? preview : null}

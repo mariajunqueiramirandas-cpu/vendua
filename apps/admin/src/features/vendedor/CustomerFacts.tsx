@@ -12,7 +12,7 @@ import { toast } from '../../ui/Toast.tsx';
 
 type Facts = { facts: CustomerFact[] };
 
-// the keys the Vendedor's remember tool writes (agent-host/agents/vendedor/tools-conversation.ts)
+// the keys Duá's remember tool writes (agent-host/agents/vendedor/tools-conversation.ts)
 const LABEL: Record<string, string> = {
   nome: 'Nome',
   idioma: 'Idioma',
@@ -36,14 +36,13 @@ const valueOf = (v: unknown): string => {
 };
 
 /**
- * "O que a Ana sabe" on the customer page (sales-agent-ux §3.11): what the Vendedor remembers
- * about this shopper, each with when it noted it and "esquecer". Nothing while it's off.
+ * "O que o Duá sabe" on the customer page (sales-agent-ux §3.11): what Duá remembers
+ * about this shopper, each with when he noted it and "esquecer". Nothing while it's off.
  */
 export function CustomerFacts({ phone, customer }: { phone: string; customer: string }) {
   const s = useSession();
   const manager = useCan('manager');
   const on = !!s.vendedor?.enabled && manager;
-  const name = s.vendedor?.name || 'Vendedor';
   const qc = useQueryClient();
   const key = qk.customerFacts(phone);
   const { data, error } = useQuery({
@@ -57,7 +56,7 @@ export function CustomerFacts({ phone, customer }: { phone: string; customer: st
       optimistic<Facts>(qc, key, (o) => ({ facts: o.facts.filter((x) => x.key !== f.key) })),
     onSuccess: (r, f) => {
       qc.setQueryData(key, r);
-      toast(`A ${name} esqueceu: ${valueOf(f.value) || labelOf(f).toLowerCase()}.`);
+      toast(`O Duá esqueceu: ${valueOf(f.value) || labelOf(f).toLowerCase()}.`);
     },
     onError: (e, _f, ctx) => {
       ctx?.restore();
@@ -68,8 +67,8 @@ export function CustomerFacts({ phone, customer }: { phone: string; customer: st
   const first = customer.split(' ')[0] || customer;
   return (
     <Section
-      title={`O que a ${name} sabe`}
-      hint={`Ela lembra disso nos próximos pedidos de ${first}. Apagar os dados do cliente apaga isto também.`}
+      title="O que o Duá sabe"
+      hint={`Ele lembra disso nos próximos pedidos de ${first}. Apagar os dados do cliente apaga isto também.`}
     >
       {!data ? (
         <RowsSkeleton rows={2} avatar={false} />
@@ -83,9 +82,7 @@ export function CustomerFacts({ phone, customer }: { phone: string; customer: st
                   {valueOf(f.value)}
                 </p>
                 <p className="t-caption mt-0.5 flex flex-wrap items-center gap-x-1.5 text-muted">
-                  <span>
-                    a {name} anotou em {dateShort(f.at).split(', ').pop()}
-                  </span>
+                  <span>o Duá anotou em {dateShort(f.at).split(', ').pop()}</span>
                   {f.sensitive ? (
                     <span className="inline-flex items-center gap-1">
                       <LockSimple weight="bold" className="size-3.5" aria-hidden />
@@ -108,7 +105,7 @@ export function CustomerFacts({ phone, customer }: { phone: string; customer: st
         </Card>
       ) : (
         <Card className="t-body p-4 text-muted">
-          A {name} ainda não anotou nada sobre {first}. Uma preferência contada no WhatsApp aparece
+          O Duá ainda não anotou nada sobre {first}. Uma preferência contada no WhatsApp aparece
           aqui.
         </Card>
       )}

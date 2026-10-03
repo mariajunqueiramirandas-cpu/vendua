@@ -170,15 +170,18 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
     if (!list?.length) return;
     const site = fromSite.current;
     fromSite.current = null;
-    if (site && !cur.current.created && list.some((p) => p.id === site)) {
+    // a closed plan (Pangolim before own domains) is never preselected, even from the site
+    const open = list.filter((p) => p.available);
+    if (site && !cur.current.created && open.some((p) => p.id === site)) {
       patch({ planId: site });
       if (window.location.search.includes('plano='))
         window.history.replaceState(null, '', '/admin/comecar');
-    } else if (!list.some((p) => p.id === cur.current.planId)) {
+    } else if (!open.some((p) => p.id === cur.current.planId)) {
       const trial = plans.data?.billing.available
-        ? list.find((p) => p.trialDays > 0 && p.priceCents !== null)
+        ? open.find((p) => p.trialDays > 0 && p.priceCents !== null)
         : undefined;
-      patch({ planId: (trial ?? list.find((p) => p.recommended) ?? list[0]!).id });
+      const pick = trial ?? open.find((p) => p.recommended) ?? open[0];
+      if (pick) patch({ planId: pick.id });
     }
   }, [plans.data, patch]);
 

@@ -19,6 +19,7 @@ import { Card } from './Card.tsx';
 import { cn } from './cn.ts';
 import { Skeleton } from './feedback.tsx';
 import { PageBody, PageHeader } from './Page.tsx';
+import { Mascote } from './Mascote.tsx';
 import { cheapestWith, perMonth, PlanBadge } from './PlanCard.tsx';
 
 // A feature the store's plan doesn't open: the screen stays reachable and becomes the upsell.
@@ -59,11 +60,11 @@ const COPY: Record<Locked, { name: string; g: 'a' | 'o'; Icon: Icon; points: str
     ],
   },
   vendedor: {
-    name: 'O Vendedor',
+    name: 'O Duá',
     g: 'o',
     Icon: Sparkle,
     points: [
-      'Atende os seus clientes no WhatsApp da loja e no site',
+      'Vende por você no WhatsApp da loja e no site, com IA',
       'Monta o pedido, manda o Pix e chama você quando precisa',
       'Você ensina, testa e escolhe quando ele responde',
     ],
@@ -134,7 +135,11 @@ export function PlanLocked({
           )}
           aria-hidden
         >
-          <c.Icon weight="duotone" className={compact ? 'size-7' : 'size-8 md:size-10'} />
+          {feature === 'vendedor' ? (
+            <Mascote pose="avatar-ola" size={compact ? 56 : 80} />
+          ) : (
+            <c.Icon weight="duotone" className={compact ? 'size-7' : 'size-8 md:size-10'} />
+          )}
           <span className="absolute -bottom-1.5 -right-1.5 grid size-8 place-items-center rounded-full bg-surface depth-1">
             <Lock weight="fill" className="size-4" />
           </span>

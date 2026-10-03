@@ -1,10 +1,10 @@
 import {
   CaretDown,
-  ChatCircleDots,
   Check,
   CheckCircle,
   Circle,
   Gift,
+  LockSimple,
   Sparkle,
   Table,
 } from '@phosphor-icons/react';
@@ -13,6 +13,7 @@ import type { Plan, PlanFeature } from '../lib/api.ts';
 import { money } from '../lib/format.ts';
 import { haptic } from '../lib/haptics.ts';
 import { cn } from './cn.ts';
+import { Mascote } from './Mascote.tsx';
 import {
   PerkText,
   PlanBadge,
@@ -34,7 +35,7 @@ export const FEATURE_LABEL: Record<PlanFeature, string> = {
   kds: 'a Cozinha (KDS)',
   printing: 'a impressão automática',
   loyalty: 'o cartão fidelidade',
-  vendedor: 'o Vendedor',
+  vendedor: 'o Duá, vendedor com IA',
   customDomain: 'o domínio próprio',
   customSite: 'o site personalizado',
 };
@@ -52,8 +53,8 @@ export function promiseOf(p: Plan): string {
   if (f.customSite) return 'Um site feito para a sua marca, por IA.';
   if (f.vendedor)
     return f.kds || f.printing
-      ? 'Um vendedor com IA no seu WhatsApp, e a cozinha em ordem.'
-      : 'Um vendedor com IA no seu WhatsApp.';
+      ? 'O Duá vende por você no WhatsApp, e a cozinha fica em ordem.'
+      : 'O Duá vende por você no WhatsApp.';
   if (f.kds || f.printing) return 'A cozinha em ordem, do pedido à comanda.';
   if (f.loyalty) return 'O cliente volta, com o cartão fidelidade.';
   return 'A loja online com o seu nome, pronta para vender.';
@@ -98,7 +99,11 @@ function Price({ cents, hero }: { cents: number; hero?: boolean }) {
 
 type Look = 'base' | 'hero' | 'top';
 
-/** A plan as a radio card: name, monthly price, a promise, the Vendedor and what it adds. */
+/** Said where a closed plan's choice would be (ADR 0032: Pangolim waits on own domains). */
+export const CLOSED_LINE = 'Ainda não está aberto para assinatura.';
+
+/** A plan as a radio card: name, monthly price, a promise, Duá and what it adds. A plan that isn't
+ * open shows all of that but can't be picked. */
 export function PlanOption({
   plan,
   selected,
@@ -134,9 +139,10 @@ export function PlanOption({
   const price = perMonth(plan);
   const hero = look === 'hero';
   const f = plan.features;
-  const trialOn = !!trial && plan.trialDays > 0;
+  const closed = !plan.available;
+  const trialOn = !!trial && plan.trialDays > 0 && !closed;
   const all = prev ? perksAdded(plan, prev, address, { trial }) : perksOf(plan, address, { trial });
-  // the Vendedor has its own tile; the list keeps it only when it's all the plan adds
+  // Duá has its own tile; the list keeps it only when it's all the plan adds
   const perks =
     f.vendedor && all.some((p) => p.key !== 'vendedor')
       ? all.filter((p) => p.key !== 'vendedor')
@@ -153,12 +159,14 @@ export function PlanOption({
       type="button"
       role="radio"
       aria-checked={selected}
-      aria-label={`${plan.name}${price ? `, ${price}` : ''}${plan.recommended ? ', recomendado' : ''}${badge ? `, ${badge}` : ''}`}
+      aria-label={`${plan.name}${price ? `, ${price}` : ''}${plan.recommended ? ', recomendado' : ''}${badge ? `, ${badge}` : ''}${closed ? `. ${CLOSED_LINE}` : ''}`}
       aria-describedby={`${id}-perks`}
+      aria-disabled={closed || undefined}
       disabled={disabled}
       tabIndex={tabIndex}
       data-plan={plan.id}
       onClick={() => {
+        if (closed) return;
         haptic.tick();
         onSelect();
       }}
@@ -166,6 +174,7 @@ export function PlanOption({
         'relative flex w-full min-w-0 flex-col text-left',
         'transition-[scale,box-shadow,background-color,border-color] duration-(--duration-quick) active:scale-[0.99]',
         'disabled:pointer-events-none disabled:opacity-60',
+        closed && 'cursor-default active:scale-100',
         hero
           ? cn(
               'gap-4 rounded-xl bg-raised bg-linear-to-b from-spark-soft to-raised to-45% px-5 pb-6 pt-8 depth-3 md:px-6',
@@ -173,13 +182,15 @@ export function PlanOption({
             )
           : look === 'base'
             ? cn(
-                'gap-3.5 rounded-lg border-2 p-5 hover:bg-hover',
+                'gap-3.5 rounded-lg border-2 p-5',
+                !closed && 'hover:bg-hover',
                 selected
                   ? 'border-solid border-primary bg-surface'
                   : 'border-dashed border-line-strong bg-transparent',
               )
             : cn(
-                'gap-3.5 rounded-lg bg-surface p-5 depth-1 hover:bg-hover',
+                'gap-3.5 rounded-lg bg-surface p-5 depth-1',
+                !closed && 'hover:bg-hover',
                 selected ? 'ring-2 ring-primary' : 'ring-1 ring-line-strong',
               ),
         className,
@@ -209,7 +220,7 @@ export function PlanOption({
             </span>
           ) : null}
         </span>
-        {selected ? (
+        {closed ? null : selected ? (
           <CheckCircle weight="fill" className="size-8 shrink-0 text-primary" aria-hidden />
         ) : (
           <Circle className="size-8 shrink-0 text-faint" aria-hidden />
@@ -235,11 +246,11 @@ export function PlanOption({
               hero ? 'bg-surface ring-1 ring-line' : 'bg-sunken',
             )}
           >
-            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-spark text-on-spark">
-              <ChatCircleDots weight="fill" className="size-5" aria-hidden />
+            <span className="dua-disc grid size-11 shrink-0 place-items-center overflow-hidden bg-spark-soft">
+              <Mascote pose="avatar-ola" size={44} />
             </span>
             <span className="min-w-0">
-              <span className="t-caption block text-muted">Vendedor com IA no WhatsApp</span>
+              <span className="t-caption block text-muted">Duá, vendedor com IA no WhatsApp</span>
               <span className="tnum block font-semibold">
                 {count(plan.aiConversations)} conversas/mês
               </span>
@@ -276,6 +287,12 @@ export function PlanOption({
                 </span>
               ))}
             </span>
+          </span>
+        ) : null}
+        {closed ? (
+          <span className="t-label flex items-center gap-2 border-t border-line pt-3.5 text-muted">
+            <LockSimple weight="bold" className="size-4 shrink-0" aria-hidden />
+            {CLOSED_LINE}
           </span>
         ) : null}
       </span>
@@ -321,9 +338,14 @@ export function PlanCards({
         : e.key === 'ArrowUp' || e.key === 'ArrowLeft'
           ? -1
           : 0;
-    if (!step || !list.length) return;
+    const open = list.filter((p) => p.available);
+    if (!step || !open.length) return;
     e.preventDefault();
-    const next = list[(at + step + list.length) % list.length]!;
+    const from = Math.max(
+      0,
+      open.findIndex((p) => p.id === selected),
+    );
+    const next = open[(from + step + open.length) % open.length]!;
     onSelect(next.id);
     group.current?.querySelector<HTMLElement>(`[data-plan="${next.id}"]`)?.focus();
   };
@@ -395,7 +417,7 @@ export function PlanTrialStrip({
           <p className="t-body mt-1">
             No teste vem tudo do {shortName(plan)}
             {plan.features.vendedor && plan.aiTrialConversations > 0
-              ? `, com ${count(plan.aiTrialConversations)} conversas do Vendedor`
+              ? `, com ${count(plan.aiTrialConversations)} conversas do Duá`
               : ''}
             . Você só escolhe como pagar depois.
           </p>
@@ -471,7 +493,7 @@ export function PlanCompare({
     },
     { name: 'Clientes', rows: [feat('Cartão fidelidade', 'loyalty')] },
     {
-      name: 'Vendedor com IA no WhatsApp',
+      name: 'Duá, vendedor com IA no WhatsApp',
       rows: [
         {
           name: 'Conversas por mês',
@@ -570,6 +592,9 @@ export function PlanCompare({
                       {money(p.priceCents)}
                       <span className="max-sm:block">/mês</span>
                     </span>
+                  ) : null}
+                  {!p.available ? (
+                    <span className="t-caption mt-0.5 block text-muted">ainda fechado</span>
                   ) : null}
                 </th>
               ))}
