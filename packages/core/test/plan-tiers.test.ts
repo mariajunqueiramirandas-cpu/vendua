@@ -662,6 +662,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       expect(next.body.invoiceId).not.toBe(buy.body.invoiceId);
     });
 
+    test('packs never crowd an unpaid plan invoice out of Conta', async () => {
+      const s = await store('packcap', 'bandeira');
+      const st = await s.owner('POST', '/account/subscription', {
+        planId: 'bandeira',
+        method: 'pix',
+        payerEmail: 'bia@example.com',
+      });
+      expect((await payInvoice(st.body.invoices[0].id)).status).toBe(200);
+      const t0 = Date.now() - 40 * DAY;
+      await sql`
+        insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end,
+                              method, status, provider, due_at, kind)
+        values (${s.id}, 100, 'bandeira', 16900, ${new Date(t0)}, ${new Date(t0 + 30 * DAY)},
+                'pix', 'open', 'fake', ${new Date(t0)}, 'period')`;
+      for (let n = 0; n < 13; n++)
+        await sql`
+          insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end,
+                                method, status, provider, due_at, paid_at, kind, ai_pack_id,
+                                ai_conversations)
+          values (${s.id}, ${101 + n}, 'bandeira', 3990, ${new Date(t0 + (n + 1) * 1000)},
+                  ${new Date(t0 + (n + 1) * 1000)}, 'pix', 'paid', 'fake', ${new Date(t0)}, now(),
+                  'ai_pack', 'ai_100', 100)`;
+      const acct = await s.owner('GET', '/account');
+      const numbers = acct.body.invoices.map((i: any) => i.number);
+      expect(numbers).toContain(100);
+      expect(acct.body.invoices.find((i: any) => i.number === 100)).toMatchObject({
+        kind: 'period',
+        status: 'open',
+      });
+      expect(numbers.filter((n: number) => n > 100)).toHaveLength(12);
+    });
+
     test('the pack is frozen at purchase: a catalog change before paying credits what was bought', async () => {
       const s = await store('pack-frozen', 'bandeira');
       const st = await s.owner('POST', '/account/subscription', {

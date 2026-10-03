@@ -38,7 +38,8 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   // storefront operations changed elsewhere (prep time, demand) show in Loja too
   surfaces: [qk.store],
   'payment.received': [['orders'], qk.home, ['payments'], ['reports'], qk.activity],
-  billing: [qk.account, qk.payments, qk.home, qk.store],
+  // a payment can open a plan's features: the session carries what is open
+  billing: [qk.account, qk.payments, qk.home, qk.store, qk.session],
   alerts: [qk.alerts, qk.home],
   import: [qk.imports],
   whatsapp: [qk.whatsapp],

@@ -235,6 +235,9 @@ export function mountPrintAgent(o: PrintAgentOpts) {
                 returning d.id`,
             );
             if (alive.length === 0) return void revoke();
+            // a plan that lost printing ends the stream; the reconnect is refused PLAN_REQUIRED
+            if (!(await withTenant(sql, tenantId, (tx) => planHas(tx, tenantId, 'printing'))))
+              return void finish();
           } catch {
             /* the database blinked: keep the stream, the next beat asks again */
           }
