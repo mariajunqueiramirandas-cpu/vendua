@@ -476,7 +476,7 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     const grants = await sql<
       { value_cents: number; phone: string }[]
     >`select value_cents, phone from agent_incentives where tenant_id = ${tenantId}`;
-    expect(grants).toEqual([{ value_cents: 1000, phone: '11935793579' }]);
+    expect([...grants]).toEqual([{ value_cents: 1000, phone: '11935793579' }]);
     const [c] = await sql<
       { code: string; phone: string; max_redemptions: number; source: string }[]
     >`
