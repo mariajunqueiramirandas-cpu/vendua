@@ -494,6 +494,17 @@ test.describe('preços ao vivo', () => {
     await expect(row.locator('td').nth(1)).toContainText('não');
   });
 
+  test('um plano oculto no CRM fica sem botão', async ({ page }) => {
+    const all = catalog({});
+    await page.route('**/precos.json', (r) =>
+      r.fulfill({ json: { plans: all.plans.filter((p) => p.id !== 'mirim') } }),
+    );
+    await page.goto(HOME);
+    const mirim = page.locator('#preco li.plan', { hasText: 'Venduá Mirim' });
+    await expect(mirim).toContainText('Ainda não está aberto para assinatura.');
+    await expect(page.locator('a[href*="plano=mirim"]')).toHaveCount(0);
+  });
+
   test('sem o catálogo, a página fica com os preços do build', async ({ page }) => {
     await page.route('**/precos.json', (r) => r.abort());
     await page.goto(HOME);

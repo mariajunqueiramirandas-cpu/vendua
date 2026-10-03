@@ -15,7 +15,14 @@ import { platformHost, storeOrigin } from '../../platform/store-origin.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { mountBillingDev } from './dev-routes.ts';
 import { validEmail } from './input.ts';
-import { heldPlans, openOr409, publicPlanOr422, publicPlans, type PlanRow } from './plans.ts';
+import {
+  heldPlans,
+  openOr409,
+  planRow,
+  publicPlanOr422,
+  publicPlans,
+  type PlanRow,
+} from './plans.ts';
 import {
   accessCodeMatches,
   normalizeSlug,
@@ -422,8 +429,17 @@ async function ensureFirstCharge(
     withTenant(d.sql, owner.tenant_id, async (tx) => {
       const sub = await lockSub(tx, owner.tenant_id);
       if (!sub) {
+        // a resumed signup (its first charge failed before): the plan is reread under the
+        // availability lock, so one closed meanwhile can't start a subscription unless held
+        await tx`select pg_advisory_xact_lock_shared(hashtextextended(${`plan-available:${o.plan.id}`}, 0))`;
+        const plan = await planRow(tx, o.plan.id);
+        if (!plan || !plan.public)
+          throw new HttpError(422, 'UNKNOWN_PLAN', 'pick one of the plans offered', {
+            field: 'planId',
+          });
+        openOr409(plan, await heldPlans(tx, owner.tenant_id));
         const next = await startSubscription(ctx, tx, owner.tenant_id, {
-          plan: o.plan,
+          plan,
           method: o.method,
           payerEmail: o.email,
           key: `signup:${owner.tenant_id}`,

@@ -65,7 +65,12 @@ export async function loadLivePlans(fetcher: typeof fetch = fetch) {
     clearTimeout(timer);
     if (!r.ok) return;
     const body = (await r.json()) as { plans?: CatalogPlan[] };
-    for (const c of body.plans ?? []) {
+    if (!Array.isArray(body.plans)) return;
+    // a plan staff hid in the CRM isn't in the catalog: its card stays, closed, with no button
+    const listed = new Set(body.plans.map((c) => c?.id));
+    for (const id of Object.keys(plans) as PlanId[])
+      if (!listed.has(id)) plans[id].available = false;
+    for (const c of body.plans) {
       if (!(c.id in plans)) continue;
       const p = plans[c.id as PlanId];
       const cents = count(c.priceCents, MAX_PRICE_CENTS);
