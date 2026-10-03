@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createGateway } from '@vendua/agent-runtime';
+import { createGateway, type ProviderAdapter } from '@vendua/agent-runtime';
 import { adaptersFromEnv } from '../../agent-host/models.ts';
 import { createSql, migrate } from '../../platform/db.ts';
 import { runSuite } from './run.ts';
@@ -12,8 +12,14 @@ import { runSuite } from './run.ts';
 //   SIM_DATABASE_URL (default: TEST_DATABASE_URL)  — a migrated database; stores are created fresh
 //   AGENT_MODEL_ROUTES='{"default":{"fast":[{"provider":"anthropic","model":"…","zdr":true}],"strong":[…]}}'
 //   SIM_USER_ROUTES  (same shape; default: the agent's routes) — the simulated shoppers' models
-//   plus the provider keys (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, …)
-//   bun run sims:vendedor -- [--k 3] [--only pizzaria,acai]
+//   plus the provider keys (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, …)
+//   SIM_RPM (default 0 = unthrottled) and SIM_MAX_REQUESTS — a free tier's limits (e.g. 15 and 450)
+//   bun run sims:vendedor -- [--k 3] [--only pizzaria,acai] [--pick "meia calabresa"]
+//
+// With only GEMINI_API_KEY and no AGENT_MODEL_ROUTES, both sides use SIM_GEMINI_MODEL. The suite
+// sends synthetic fixture stores only, never a store's or a shopper's data, which is why a test
+// key outside a zero-data-retention arrangement may serve it; never put such a route in
+// production's agent_runtime.routes.
 
 const url = process.env.SIM_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('set SIM_DATABASE_URL or TEST_DATABASE_URL');
@@ -30,7 +36,34 @@ const routesOf = (json: string | undefined) => {
       (v.default?.[tier] ?? v.default?.fast ?? []) as never[],
   };
 };
-const adapters = adaptersFromEnv();
+/** Spaces requests to a rate limit and stops before a daily quota, across both sides. */
+function throttled(a: ProviderAdapter, rpm: number, max: number): ProviderAdapter {
+  let next = 0;
+  let used = 0;
+  const gap = rpm > 0 ? Math.ceil(60_000 / rpm) : 0;
+  return {
+    id: a.id,
+    async generate(req, signal) {
+      if (max && used >= max) throw new Error(`SIM_MAX_REQUESTS (${max}) reached`);
+      used++;
+      const wait = next - Date.now();
+      next = Math.max(Date.now(), next) + gap;
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      return a.generate(req, signal);
+    },
+  };
+}
+const adapters = adaptersFromEnv().map((a) =>
+  throttled(a, Number(process.env.SIM_RPM ?? 0), Number(process.env.SIM_MAX_REQUESTS ?? 0)),
+);
+if (!process.env.AGENT_MODEL_ROUTES && process.env.GEMINI_API_KEY) {
+  const route = {
+    provider: 'gemini',
+    model: process.env.SIM_GEMINI_MODEL ?? 'gemini-3.5-flash-lite',
+    zdr: true,
+  };
+  process.env.AGENT_MODEL_ROUTES = JSON.stringify({ default: { fast: [route], strong: [route] } });
+}
 if (!adapters.length) {
   console.error('no provider keys in env: the suite needs a live model (ZDR routes only)');
   process.exit(2);
@@ -48,7 +81,9 @@ const result = await runSuite(sql, {
   userGateway,
   k: Number(arg('k') ?? 3),
   ...(arg('only') ? { only: arg('only')!.split(',') } : {}),
+  ...(arg('pick') ? { pick: (_store: string, name: string) => name.includes(arg('pick')!) } : {}),
   log: (s) => console.log(s),
+  ...(process.env.SIM_RPM ? { turnWaitMs: 240_000 } : {}),
 });
 const dir = join(import.meta.dir, '../../../sim-results');
 await mkdir(dir, { recursive: true });

@@ -33,6 +33,8 @@ export async function runSuite(
     log?: (s: string) => void;
     /** tests skip the quiet window with a clock ahead of the database */
     clock?: Clock;
+    /** a throttled free tier needs longer than the in-product minute per answer */
+    turnWaitMs?: number;
   },
 ): Promise<SuiteResult> {
   const k = o.k ?? 3;
@@ -78,6 +80,7 @@ export async function runSuite(
               ...sc,
               check: sc.expect === 'handoff' ? 'chamou a loja' : 'pedido certo',
             },
+            o.turnWaitMs ? { turnWaitMs: o.turnWaitMs } : {},
           );
           runs.push(res);
           o.log?.(

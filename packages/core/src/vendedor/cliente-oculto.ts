@@ -196,26 +196,32 @@ export function score(
 const TURN_WAIT_MS = 60_000;
 const MAX_TURNS = 10;
 
+/** The Vendedor's whole answer: what it sent once its actor has nothing left to do. */
 async function waitForAnswer(
   sql: Sql,
   tenantId: string,
   threadId: string,
   after: Date,
+  waitMs: number,
 ): Promise<string | null> {
-  const deadline = Date.now() + TURN_WAIT_MS;
+  const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
-    const rows = await withTenant(
+    const [r] = await withTenant(
       sql,
       tenantId,
       (tx) =>
-        tx<{ body: string | null; created_at: Date }[]>`
-        select body, created_at from shopper_messages
-        where tenant_id = ${tenantId} and thread_id = ${threadId} and author in ('agent', 'core')
-          and created_at > ${after} order by created_at`,
+        tx<{ sent: number; busy: boolean }[]>`
+          select
+            (select count(*) from shopper_messages where tenant_id = ${tenantId} and thread_id = ${threadId}
+               and author in ('agent', 'core') and created_at > ${after})::int as sent,
+            exists (select 1 from shopper_messages where tenant_id = ${tenantId} and thread_id = ${threadId}
+                      and ingest = 'pending')
+            or exists (select 1 from agent_actors a where a.tenant_id = ${tenantId} and a.subject_id = ${threadId}
+                         and (a.lease_until > now() or exists (
+                           select 1 from agent_mailbox m where m.actor_id = a.id and m.consumed_by_turn is null
+                             and m.kind in ('message.inbound', 'merchant.message')))) as busy`,
     );
-    if (rows.length) {
-      // wait a beat for the rest of the turn (a card after the text)
-      await new Promise((r) => setTimeout(r, 1500));
+    if (r && r.sent > 0 && !r.busy) {
       const all = await withTenant(
         sql,
         tenantId,
@@ -224,9 +230,9 @@ async function waitForAnswer(
           select body from shopper_messages where tenant_id = ${tenantId} and thread_id = ${threadId}
             and author in ('agent', 'core') and created_at > ${after} order by created_at`,
       );
-      return all.map((r) => r.body ?? '').join('\n');
+      return all.map((x) => x.body ?? '').join('\n');
     }
-    await new Promise((r) => setTimeout(r, 700));
+    await new Promise((res) => setTimeout(res, 700));
   }
   return null;
 }
@@ -239,6 +245,7 @@ export async function runScenario(
   runId: string,
   i: number,
   sc: Scenario,
+  o: { turnWaitMs?: number } = {},
 ): Promise<ScenarioResult> {
   const address = STREETS[i % STREETS.length]!;
   const threadId = await withTenant(sql, tenantId, async (tx) => {
@@ -292,7 +299,13 @@ export async function runScenario(
       (tx) => tx`
       update shopper_threads set last_in_at = now(), pending_since = coalesce(pending_since, now()) where id = ${threadId}`,
     );
-    const answer = await waitForAnswer(sql, tenantId, threadId, sentAt);
+    const answer = await waitForAnswer(
+      sql,
+      tenantId,
+      threadId,
+      sentAt,
+      o.turnWaitMs ?? TURN_WAIT_MS,
+    );
     if (answer === null) break;
     history.push({ role: 'user', text: answer });
   }
