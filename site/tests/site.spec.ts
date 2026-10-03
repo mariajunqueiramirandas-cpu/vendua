@@ -162,7 +162,7 @@ test.describe('conteúdo', () => {
     await page.goto(HOME);
     await expect(page.locator('h1')).toBeVisible();
     const sections = page.locator('main section[aria-labelledby]');
-    expect(await sections.count(), 'seções da home').toBeGreaterThanOrEqual(6);
+    expect(await sections.count(), 'seções da home').toBeGreaterThanOrEqual(5);
     for (const id of await sections.evaluateAll((els) =>
       els.map((e) => e.getAttribute('aria-labelledby')!),
     )) {
@@ -178,8 +178,17 @@ test.describe('conteúdo', () => {
       ...Array(tags.length - 1).fill('H2'),
     ]);
     await expect(page.locator(`header a[href="${START}"]`)).toBeVisible();
-    for (const id of ['pedidos', 'preco', 'perguntas'])
+    for (const id of ['veja', 'preco', 'perguntas'])
       await expect(page.locator(`#${id}`)).toBeAttached();
+    // the demos can't play without a script: all four show, finished and still, with no tabs
+    await expect(page.locator('#veja [role="tab"]')).toHaveCount(0);
+    for (const id of ['vendedor', 'pedido', 'cozinha', 'loja']) {
+      const demo = page.locator(`#demo-${id}`);
+      await expect(demo, `demo ${id}`).toBeVisible();
+      expect((await demo.innerText()).trim().length, `demo ${id} sem conteúdo`).toBeGreaterThan(80);
+    }
+    // the calculator shows its R$ 8.000 example as text
+    await expect(page.locator('#preco')).toContainText('R$ 960');
 
     // FAQ: native <details>, so every answer ships in the HTML and opens without a script
     const faq = page.locator('#perguntas details');
@@ -241,7 +250,14 @@ test.describe('conteúdo', () => {
       /cadastr|inscrev|assin[ae]|criar|come[cç]ar agora|comece|teste|experimente|fale|contato|whats|agend|quero/i;
     for (const path of PAGES) {
       await page.goto(path);
-      await expect(page.locator('form, input, textarea, select'), path).toHaveCount(0);
+      // the only control is the plans' calculator (a number, no submit): nothing collects data
+      await expect(page.locator('form, textarea, select'), path).toHaveCount(0);
+      expect(
+        await page
+          .locator('input')
+          .evaluateAll((els) => els.filter((e) => !e.closest('#preco')).length),
+        path,
+      ).toBe(0);
       await expect(page.locator('button[type="submit"], [role="button"]'), path).toHaveCount(0);
       // the header's call to action, on every page
       await expect(page.locator(`header a[href="${START}"]`), path).toHaveCount(1);
@@ -282,7 +298,12 @@ test.describe('conteúdo', () => {
       ).toHaveLength(1);
       // at most one "acompanhe no Instagram" line near the closing call to action
       expect(instagram.filter((l) => !l.footer).length, path).toBeLessThanOrEqual(1);
-      for (const b of await page.locator('button').allTextContents())
+      // the demos' buttons are the visitor's lines in a simulation ("Quero a fatia também"), not calls to action
+      for (const b of await page
+        .locator('button')
+        .evaluateAll((els) =>
+          els.filter((e) => !e.closest('.demo')).map((e) => e.textContent ?? ''),
+        ))
         expect(b, `${path}: botão`).not.toMatch(CTA);
     }
   });
@@ -295,35 +316,46 @@ test.describe('conteúdo', () => {
     const text = (await preco.innerText()).replace(/\s+/g, ' ');
     expect(text).toContain('Venduá Mirim R$ 69,90/mês');
     expect(text).toContain('Venduá Pangolin R$ 449/mês');
-    // Bandeira is the recommended plan, and its trial sits by its price; the others have none
-    expect(text).toContain('Recomendado Venduá Bandeira R$ 169/mês 14 dias grátis, sem cartão');
+    // Bandeira is the recommended plan: the trial leads the section and sits by its price; the others have none
+    expect(text).toContain('Comece pelo Venduá Bandeira: 14 dias grátis, sem cartão.');
+    expect(text).toMatch(
+      /Recomendado Venduá Bandeira .*R\$ 169\/mês começa com 14 dias grátis, sem cartão/,
+    );
     expect(text.match(/Recomendado/g)).toHaveLength(1);
-    expect(text.match(/grátis, sem cartão/g)).toHaveLength(1);
+    expect(text.match(/grátis, sem cartão/g)).toHaveLength(2);
     expect(text).toContain('seunome.vendua.com.br');
     expect(text).toContain('250 conversas por mês');
     expect(text).toMatch(
       /Pangolin.*Domínio próprio.*site feito pelo nosso agente de IA.*1\.000 conversas por mês/,
     );
-    expect(text).toContain('Taxa da Venduá por pedido nenhuma');
-    for (const plano of ['mirim', 'bandeira', 'pangolin'])
+    // the comparison opens without a script, and every plan has no per-order fee
+    await preco.locator('details summary').first().click();
+    expect((await preco.innerText()).replace(/\s+/g, ' ')).toMatch(/Taxa da Venduá por pedido/);
+    // the calculator cites iFood's own published rates
+    expect(text).toContain('blog-parceiros.ifood.com.br/taxas-ifood');
+    for (const plano of ['mirim', 'pangolin'])
       await expect(preco.locator(`a[href="${SIGNUP}?plano=${plano}"]`)).toHaveCount(1);
-    // the plans read cheapest first, with Bandeira in the middle
+    await expect(preco.locator(`a[href="${SIGNUP}?plano=bandeira"]`)).toHaveCount(2);
+    // perks open their demo
+    for (const id of ['vendedor', 'pedido', 'cozinha', 'loja'])
+      expect(await preco.locator(`a[href="#demo-${id}"]`).count(), id).toBeGreaterThan(0);
+    // the trial strip's Bandeira first, then the plans cheapest first, with Bandeira in the middle
     expect(
       await preco
         .locator('a[href*="?plano="]')
         .evaluateAll((els) =>
           els.map((a) => new URL((a as HTMLAnchorElement).href).searchParams.get('plano')),
         ),
-    ).toEqual(['mirim', 'bandeira', 'pangolin']);
+    ).toEqual(['bandeira', 'mirim', 'bandeira', 'pangolin']);
     // no other price anywhere on the page
     const prices = (await page.locator('main').innerText()).match(/R\$\s?\d+(,\d{2})?\/mês/g) ?? [];
     expect([...new Set(prices)].sort()).toEqual(['R$ 169/mês', 'R$ 449/mês', 'R$ 69,90/mês']);
   });
 
   for (const width of [375, 1280])
-    test(`âncoras #pedidos #preco #perguntas e os links do topo a ${width}px`, async ({ page }) => {
+    test(`âncoras #veja #preco #perguntas e os links do topo a ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
-      const anchors = ['#pedidos', '#preco', '#perguntas'];
+      const anchors = ['#veja', '#preco', '#perguntas'];
       // the bar shows its links inline on wide screens and behind a <details> menu on phones
       const links = page.locator('header nav a:visible');
       const open = async () => {
@@ -348,8 +380,8 @@ test.describe('conteúdo', () => {
       await open();
       expect(await hrefs()).toEqual(anchors.map((a) => `/${a}`));
       await links.first().click();
-      await expect(page).toHaveURL(/\/#pedidos$/);
-      await expect(page.locator('#pedidos')).toBeInViewport();
+      await expect(page).toHaveURL(/\/#veja$/);
+      await expect(page.locator('#veja')).toBeInViewport();
     });
 });
 
@@ -381,7 +413,8 @@ test.describe('imagens', () => {
           expect(imgs.length, path).toBeGreaterThan(0);
           for (const i of imgs) expect(i.w, `${path}: ${i.src} não carregou`).toBeGreaterThan(0);
           const screens = imgs.filter((i) => i.screen);
-          if (path === HOME) expect(screens.length, 'telas na home').toBeGreaterThanOrEqual(4);
+          // the hero's two phones; the product further down is the four drawn demos (#veja)
+          if (path === HOME) expect(screens.length, 'telas na home').toBeGreaterThanOrEqual(2);
           const want = colorScheme === 'dark' ? '-noite-' : '-creme-';
           for (const s of screens) expect(s.src, `tela ${colorScheme}`).toContain(want);
         }
@@ -435,8 +468,10 @@ test.describe('rede', () => {
     const report = `JS ${jsBytes} B gzip em ${js.length} arquivos; fontes ${fontBytes} B em ${fonts.length}`;
     test.info().annotations.push({ type: 'orçamento', description: report });
     // Measured 2026-09-29: JS 45.2 KB gzip (9 files), fonts 64.6 KB (3 woff2: Figtree, Space Grotesk,
-    // Instrument Serif italic, latin subsets). Budgets are ~20% above; raise them only on purpose.
-    expect(jsBytes, report).toBeLessThanOrEqual(55_000);
+    // Instrument Serif italic, latin subsets). 2026-10-03: the four interactive demos and the plans
+    // calculator (the owner's decision) bring JS to 67.0 KB gzip (10 files). Budgets are ~20% above;
+    // raise them only on purpose.
+    expect(jsBytes, report).toBeLessThanOrEqual(80_000);
     expect(fontBytes, report).toBeLessThanOrEqual(78_000);
   });
 });

@@ -3,11 +3,10 @@
   import Header from '$lib/components/Header.svelte';
   import Seo from '$lib/components/Seo.svelte';
   import Hero from '$lib/sections/Hero.svelte';
+  import Demos from '$lib/sections/Demos.svelte';
   import Night from '$lib/sections/Night.svelte';
-  import Orders from '$lib/sections/Orders.svelte';
+  import Plans from '$lib/sections/Plans.svelte';
   import WhoFor from '$lib/sections/WhoFor.svelte';
-  import YourDay from '$lib/sections/YourDay.svelte';
-  import YourStore from '$lib/sections/YourStore.svelte';
 </script>
 
 <Seo title="Venduá · Sua loja viva na palma da mão" />
@@ -16,9 +15,8 @@
 <main id="conteudo">
   <Hero />
   <WhoFor />
-  <Orders />
-  <YourStore />
-  <YourDay />
+  <Demos />
+  <Plans />
   <Night />
 </main>
 <Footer />

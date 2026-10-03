@@ -58,6 +58,15 @@
       0 8px 16px rgb(18 60 50 / 0.12),
       0 30px 70px rgb(18 60 50 / 0.22);
   }
+  /* Noite: the bezel would melt into the night sky without a brighter rim */
+  @media (prefers-color-scheme: dark) {
+    .body {
+      box-shadow:
+        inset 0 0 0 1.5px rgb(255 255 255 / 0.18),
+        0 0 0 1px rgb(255 255 255 / 0.06),
+        0 30px 70px rgb(0 0 0 / 0.45);
+    }
+  }
   .screen {
     position: relative;
     overflow: hidden;

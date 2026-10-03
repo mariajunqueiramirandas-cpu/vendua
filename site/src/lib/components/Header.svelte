@@ -47,7 +47,7 @@
   });
 
   const links = [
-    { href: '#pedidos', label: 'Como funciona' },
+    { href: '#veja', label: 'Como funciona' },
     { href: '#preco', label: 'Preço' },
     { href: '#perguntas', label: 'Perguntas' },
   ];

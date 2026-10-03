@@ -3,10 +3,11 @@
 The marketing site for vendua.com.br: SvelteKit 2 + Svelte 5, prerendered with adapter-static, copy
 in pt-BR. Sign-up is open, in the merchant admin (not on this site).
 
-The home page is **"um dia na loja"**: one day of a small shop, dawn to night, told by the sky
-flowing continuously between sections (no hour labels): hero (`#inicio`), who it's for
-(`#para-quem`), an order arrives (`#pedidos`), the store and its price (`#sua-loja`, `#preco`), the
-day's recap (`#seu-dia`), how to start + FAQ (`#comecar`, `#perguntas`).
+The home page is **"um dia na loja"**, kept short (the owner, 2026-10-03: about half its old
+length): one day of a small shop, dawn to night, told by the sky flowing continuously between five
+sections (no hour labels): hero (`#inicio`), who it's for (`#para-quem`), the product working
+(`#veja`, four interactive demos behind one tab bar), the plans (`#preco`), and the sunset into night
+with how to start + FAQ (`#comecar`, `#perguntas`).
 
 The hero is the name: "venduá." poster-size, with Duá standing behind the letters. On load the letters
 spring up, the accent and the dot land, Duá climbs out and waves, the paragraph arrives word by word,
@@ -44,15 +45,26 @@ Other pages: `/privacidade/` and the 404.
   `src/lib/content.ts`.
 - Every planned feature (`docs/merchant-admin.md` scope) is presented as available at launch.
   Nothing beyond that list.
+- **The plans pitch** (owner, 2026-10-03): the trial up front ("Comece pelo Venduá Bandeira: 14 dias
+  grátis, sem cartão"), the three cards (perks with a demo link to it), a full comparison table
+  closed in a `<details>`, and a commission calculator. The calculator is the site's only mention of
+  another company: iFood's own published commissions (12% Plano Básico, 23% Plano Entrega,
+  `blog-parceiros.ifood.com.br/taxas-ifood`, updated 15/09/2026), cited under it with what they
+  leave out (3,2% online payment fee, the monthly fee) and that Mercado Pago charges its own fee on
+  Venduá too. Re-check the rates before changing that copy; no other competitor claims.
 - No custom software ("sob medida", software house, projects).
 - One store only: the fictional **Bolos da Nena** (owner Nena). Numbers quoted in copy come from
   `src/lib/content.ts`, so they match the screenshots.
 
 ## Visual rules
 
-- The product appears only as real admin screens of Bolos da Nena (`<Screen key=…>`, registry in
-  `src/lib/screens.ts`) inside device frames drawn in CSS (`Phone`, `Tablet`). The only UI drawn in
-  code is system UI: lock screen and push notifications, with Core's real push text.
+- The product appears as real admin screens of Bolos da Nena (`<Screen key=…>`, registry in
+  `src/lib/screens.ts`) inside device frames drawn in CSS (`Phone`, `Tablet`), and in the four
+  **demos** (`src/lib/demos/`, the owner's decision 2026-10-03): drawn in code, scripted (no
+  network, no model), each mirroring the real admin or storefront screen it shows (labels, states
+  and Core's card wording copied from the source named at the top of each file) and labelled an
+  example by `DemoFrame`. Any other UI drawn in code is system UI: lock screen and push
+  notifications, with Core's real push text.
 - The only character is Duá (`static/dua/`, never mirrored or recolored), plus line drawings in the
   admin's illustration style. No photos, people, AI images, stock, or fake testimonials/numbers.
 - Colors come from `src/lib/styles/theme.css`, copied from `apps/admin/src/ui/theme.css` (Creme,
@@ -63,7 +75,10 @@ Other pages: `/privacidade/` and the 404.
   fails the build if a shared token drifts.
 - Banned words (platform jargon, "sob medida", "sem taxa", "grátis" other than "14 dias grátis", "em breve", real store names) are checked
   on the rendered text of every page by `scripts/postbuild.ts`.
-- Works without JavaScript; motion is CSS-only and respects `prefers-reduced-motion`.
+- Works without JavaScript: the demos render their finished state, still, and the calculator its
+  R$ 8.000 example; with JavaScript they become interactive (the visitor drives every step). All
+  other motion is CSS-only, and everything respects `prefers-reduced-motion` (demo waits become
+  instant).
 - Page views are counted first-party and cookieless (`src/lib/analytics.ts` → nginx
   `/analytics/v1/collect` → Core, ADR 0028); `/privacidade/` describes exactly what is kept, so
   keep the two in step.
@@ -107,8 +122,11 @@ Images are committed; `scripts/assets.ts` rebuilds them (no argument = all three
 ## Structure
 
 - `src/routes/`: home, `/privacidade/`, 404.
-- `src/lib/sections/`: the six moments (`Hero`, `WhoFor`, `Orders`, `YourStore`, `YourDay`,
-  `Night`).
+- `src/lib/sections/`: the five moments (`Hero`, `WhoFor`, `Demos`, `Plans`, `Night`).
+- `src/lib/demos/`: `DemoFrame` (example note, recomeçar, reduced motion, hydration) and the four
+  demos (`Vendedor`, `Pedido`, `Cozinha`, `Loja`, each with its parts in a folder). `Demos.svelte`
+  opens one from `?demo=<id>` or `#demo-<id>`.
+- `src/lib/plans/`: the cards, the comparison table, the calculator and its cents math.
 - `src/lib/components/`: `Section`, device frames, `Screen`, `Notification`, `LockScreen`, `Dua`,
   `Start` (the sign-up link), header, footer, SEO, 404.
 - `src/lib/content.ts`: site facts and the store's numbers; `src/lib/screens.ts`: screen registry.
