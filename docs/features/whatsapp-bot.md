@@ -6,6 +6,9 @@ A bot on the **merchant's** WhatsApp that takes shopper orders in chat. Not the
 sales agent that talks to leads (`agent/channels/whatsapp.ts`); that one is a
 different product on Venduá's own number.
 
+The design proposal is [`sales-agent.md`](sales-agent.md) (2026-10-02): it covers
+this checklist and goes past it, with a newer competitor scan.
+
 ## What competitors ship
 
 Y = stated by the vendor's page (marketing claim, not verified), ? = not
@@ -124,3 +127,4 @@ coexistence docs, omnichat unofficial-API article, Yahoo Tech news item.
 ## Change log
 
 - 2026-10-01: first pass.
+- 2026-10-02: linked the design proposal, [`sales-agent.md`](sales-agent.md).
