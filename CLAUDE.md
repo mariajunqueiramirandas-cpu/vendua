@@ -4,7 +4,8 @@ Monorepo (bun workspaces): `packages/core` (Hono + Postgres API), `packages/kern
 (storefront runtime, 1.x = Contract 2 — public surface in `packages/kernel/API.md`),
 `packages/ui-defaults` (slot defaults + all default CSS), `packages/templates` (template
 model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages/codemods`,
-`packages/conformance`, `packages/cli`, `apps/control` (staff CRM console, React),
+`packages/conformance`, `packages/cli`, `packages/agent-runtime` (Agent Runtime v3, ADR 0030;
+Core's side is `packages/core/src/agent-host/`), `apps/control` (staff CRM console, React),
 `packages/core/src/wa-gateway.ts` (stores' own WhatsApp, its own process — ADR 0026),
 `apps/admin` (merchant admin PWA at `/admin/`, API `/admin/v1`),
 `apps/print-agents` (Windows Go + Android Kotlin printing agents, ADR 0027),
@@ -24,8 +25,14 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
   `[data-vendua]` — `vendua check` (K01–K15) enforces it.
 - Kernel changes are additive within a Contract major; a new export needs `API.md` +
   `test/api-surface.test.ts`, a version bump and a `CHANGELOG.md` line.
-- Agent work is requested only through `requestAgentTx` (`agent/dispatch.ts`) with a `source`;
-  nothing else inserts runs. Future touches on a lead are `agent_wakeups` rows (ADR 0016).
+- Agent work has one producer per runtime, each the only way to start work on its side (ADR
+  0030 step 1): the CRM agent's `requestAgentTx` (`agent/dispatch.ts`) with a `source`, nothing
+  else inserts runs, future touches on a lead are `agent_wakeups` rows (ADR 0016); Agent Runtime
+  v3's `dispatchTx` (`agent-host/dispatch.ts`), a mailbox row with a `source` written inside the
+  transaction that caused it, nothing else creates turns, future touches are timer rows of it.
+- `packages/agent-runtime` imports nothing from Core (`tools/check-agent-runtime-boundary.mjs`);
+  a turn's writes run behind the actor's lease fence in `withTenant`, and a tool takes its
+  tenant and subject from the runtime, never from the model's arguments.
 - What the team should hear about is a `recordStaffEventTx` call (`modules/staff-events.ts`,
   ADR 0023) inside the transaction that commits the change — never a direct Discord call, never
   inside a `Promise.all` with other statements of that tx (it runs in a savepoint). A store's own

@@ -1,6 +1,6 @@
 # 18 — Agent Runtime v3
 
-> Status: Proposed · Last reviewed: 2026-10-03 · Decision: [ADR 0030](../adr/0030-agent-runtime-v3.md) · Supersedes when the migration ends: the run machinery of
+> Status: Accepted, built (step 1) · Last reviewed: 2026-10-03 · Decision: [ADR 0030](../adr/0030-agent-runtime-v3.md) · Supersedes when the migration ends: the run machinery of
 > ADRs [0014](../adr/0014-crm-agent-v2.md)–[0017](../adr/0017-due-time-scheduler.md) · First
 > user: the [Vendedor](../features/sales-agent.md) · Later: the CRM sales agent
 
@@ -553,3 +553,8 @@ Researched 2026-10-02. Vendor figures are claims; several pages were read throug
 ## Change log
 
 - 2026-10-02: first proposal.
+- 2026-10-03: built: `packages/agent-runtime` and `packages/core/src/agent-host/` (ADR 0030's
+  "As built" maps each decision to its code). Differences from the text above: the claim's
+  backoff is computed in SQL (5 s doubling to 10 min); claims rotate across tenants by position
+  without weights; compaction and consolidation run as maintenance turns of the same actor
+  after its reply, not on a separate lane; online QA alerts per store, on a rolling mean.
