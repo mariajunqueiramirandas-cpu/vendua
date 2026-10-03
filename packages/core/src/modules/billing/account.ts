@@ -26,14 +26,14 @@ export async function accountView(
       where s.tenant_id = ${t.id}
     `
   )[0];
-  // the last 12, plus any plan invoice still to pay however old: packs never crowd one out
+  // the last 12, plus anything still to pay however old: a plan month or the open pack
   const invoices = await tx<(InvoiceRow & { plan_name: string; ai_pack_name: string | null })[]>`
     select i.*, p.name as plan_name, a.name as ai_pack_name from invoices i
       join plans p on p.id = i.plan_id
       left join ai_packs a on a.id = i.ai_pack_id
     where i.tenant_id = ${t.id}
       and (i.id in (select id from invoices where tenant_id = ${t.id} order by number desc limit 12)
-           or (i.status in ('open', 'failed') and i.kind <> 'ai_pack'))
+           or i.status in ('open', 'failed'))
     order by i.number desc
   `;
   const upInv = sub?.upgrade_invoice_id

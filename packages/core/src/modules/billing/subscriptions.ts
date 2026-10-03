@@ -463,11 +463,15 @@ export async function reissuePix(
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
-  const plan = await planOrThrow(tx, inv.plan_id);
+  // a pack's Pix keeps the pack's description, not the plan's month
+  const label =
+    inv.kind === 'ai_pack'
+      ? `Vendedor ${(await aiPackRow(tx, inv.ai_pack_id!))?.name ?? inv.ai_pack_id}`
+      : (await planOrThrow(tx, inv.plan_id)).name;
   const out = await viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
       payerEmail,
-      planName: plan.name,
+      planName: label,
       origin: ctx.origin,
       now,
       drop: dropPix(ctx),
