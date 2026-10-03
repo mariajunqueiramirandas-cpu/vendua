@@ -19,7 +19,7 @@ mesmo formato, salvar aqui, e incluir o nome em `Pose` em `apps/admin/src/ui/Mas
 ## Regras (do kit)
 
 - Verde `#123C32`, lima `#D9F875`, creme `#F7F4EA`. Não esticar, não espelhar (o V inverte), sem filtros de cor.
-- Avatares 64–96 px; ilustrações 180–320 px. Abaixo de 48 px use o símbolo V, não o personagem.
+- Avatares 64–96 px; ilustrações 180–320 px. Abaixo de 48 px, o rosto do Duá vendedor usa o personagem recortado na cabeça (decisão do dono, 2026-10-03); o resto usa o símbolo V.
 - Em fundo verde, coloque o mascote sobre uma superfície creme.
 - `alt=""` quando decorativo: erro/sucesso/carregamento precisam de texto no HTML.
 - Carregue só as poses usadas; não sirva o pacote todo.

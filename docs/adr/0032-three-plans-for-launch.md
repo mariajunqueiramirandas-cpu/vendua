@@ -144,6 +144,9 @@ the team runs by hand, and the Vendedor's pilots among them.
     Duá, and `PATCH /vendedor/settings` with `name` answers 422. It introduces itself as "o Duá,
     assistente virtual da <loja>", or "o Duá, da <loja>" with disclosure off. Its coupons start
     `DUA-`.
+  - **Its face is the mascot everywhere,** small sizes included (the owner's call over the brand
+    kit's V mark below 48 px): the admin's avatars, the site's demo and the storefront chat, which
+    carries a 2.7 KB crop in `ui-defaults` because the assistant is always Duá.
   - **Turning it on needs the plan,** and so do the test chat, Cliente oculto and the onboarding
     interviewer. Those three are the owner's own tools and don't count conversations.
   - **Ingest claims a conversation** (`thread:<id>`) before it dispatches a shopper's message to
@@ -161,8 +164,6 @@ the team runs by hand, and the Vendedor's pilots among them.
   - Whether pack conversations should expire.
   - Telling owners when Duá runs out of conversations (the Vendedor's admin screens).
   - When Pangolim opens, which waits on own domains being offered.
-  - The storefront web chat still shows Duá's initial, not the mascot. The mascot there needs an
-    additive Kernel field (an avatar URL) and a release.
 
 ## Alternatives considered
 
