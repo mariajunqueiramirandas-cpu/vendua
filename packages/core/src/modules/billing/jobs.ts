@@ -8,11 +8,12 @@ import {
   billingLog,
   DAY_MS,
   pixIsLive,
-  payerEmailFor,
+  payerFor,
   PIX_TTL_MS,
   requestPix,
   storePix,
   upsertInvoice,
+  type BillingPayer,
   type InvoiceRow,
   type PixCharge,
 } from './invoices.ts';
@@ -145,7 +146,7 @@ interface PixNeed {
   tenantId: string;
   /** as reserved: its pix_attempt keys this Pix */
   invoice: InvoiceRow;
-  payerEmail: string;
+  payer: BillingPayer;
   planName: string;
 }
 
@@ -155,7 +156,7 @@ async function reservePix(
   tx: Sql,
   tenantId: string,
   inv: InvoiceRow,
-  payerEmail: string,
+  payer: BillingPayer,
   planName: string,
 ): Promise<PixNeed> {
   const invoice = (
@@ -163,12 +164,12 @@ async function reservePix(
       update invoices set pix_attempt = pix_attempt + 1 where id = ${inv.id} returning *
     `
   )[0]!;
-  return { tenantId, invoice, payerEmail, planName };
+  return { tenantId, invoice, payer, planName };
 }
 
 const askPix = (base: Omit<BillingCtx, 'later'>, need: PixNeed, now: Date) =>
   requestPix(base.provider, need.invoice, need.invoice.pix_attempt, {
-    payerEmail: need.payerEmail,
+    payer: need.payer,
     planName: need.planName,
     origin: base.origin,
     now,
@@ -515,9 +516,9 @@ const issueRenewals: Step = async (sql, base, now) => {
         if (!pix && inv.status === 'open')
           await recordManualInvoice(tx, inv, (await planRow(tx, inv.plan_id))?.name ?? inv.plan_id);
         if (!pix || inv.status !== 'open' || pixIsLive(inv, now)) return null;
-        const payerEmail = await payerEmailFor(tx, tenant_id, sub.payer_email);
-        const plan = payerEmail ? await planRow(tx, inv.plan_id) : null;
-        return payerEmail && plan ? reservePix(tx, tenant_id, inv, payerEmail, plan.name) : null;
+        const payer = await payerFor(tx, tenant_id, sub.payer_email);
+        const plan = payer ? await planRow(tx, inv.plan_id) : null;
+        return payer && plan ? reservePix(tx, tenant_id, inv, payer, plan.name) : null;
       }),
     );
     if (need) await issueReserved(sql, base, need, now);
@@ -565,8 +566,8 @@ const sendReminders: Step = async (sql, base, now) => {
           await tx<InvoiceRow[]>`select * from invoices where id = ${inv.id} and status = 'open'`
         )[0];
         if (!cur || cur.reminded.includes(stage) || pixIsLive(cur, now)) return null;
-        const payerEmail = await payerEmailFor(tx, inv.tenant_id, sub?.payer_email);
-        return payerEmail ? reservePix(tx, inv.tenant_id, cur, payerEmail, inv.plan_name) : null;
+        const payer = await payerFor(tx, inv.tenant_id, sub?.payer_email);
+        return payer ? reservePix(tx, inv.tenant_id, cur, payer, inv.plan_name) : null;
       });
       if (need) pix = { need, charge: await askPix(base, need, now) };
     }
@@ -757,15 +758,15 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       withTenant(sql, tenant_id, async (tx) => {
         const got = await load(tx);
         if (!got) return null;
-        const payerEmail = got.inv.pix_copy_paste
-          ? await payerEmailFor(tx, tenant_id, got.sub.payer_email)
+        const payer = got.inv.pix_copy_paste
+          ? await payerFor(tx, tenant_id, got.sub.payer_email)
           : null;
-        if (!payerEmail) {
+        if (!payer) {
           const next = await reprice(ctx, tx, got.inv, got.plan.price_cents);
           await emitAdminTx(tx, tenant_id, 'billing', next.id);
           return null;
         }
-        const r = await reservePix(tx, tenant_id, got.inv, payerEmail, got.plan.name);
+        const r = await reservePix(tx, tenant_id, got.inv, payer, got.plan.name);
         return { ...r, from: r.invoice.amount_cents, to: got.plan.price_cents };
       }),
     );

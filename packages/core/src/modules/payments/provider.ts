@@ -51,12 +51,25 @@ export interface ProviderPayment {
   attempt?: number | null;
 }
 
+/** One line of what a Pix pays for — the provider's anti-fraud scores on it. */
+export interface PixItem {
+  id: string;
+  title: string;
+  quantity: number;
+  unitPriceCents: number;
+}
+
 export interface PixRequest {
   amountCents: number;
   description: string;
-  /** MP requires a payer email for Pix */
+  /** MP requires a payer email for Pix. One per person: an address shared by many payers reads
+   *  to MP's anti-fraud as one payer paying everyone, and it refuses the money. */
   payerEmail: string;
+  /** full name; the adapter splits it */
   payerName?: string;
+  /** national digits (DDD + number) */
+  payerPhone?: string;
+  items?: PixItem[];
   externalReference: string;
   /** stable per logical attempt — a retry returns the same payment */
   idempotencyKey: string;

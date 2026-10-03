@@ -44,6 +44,23 @@ export function mpDate(d: Date) {
   return new Date(d.getTime() - 3 * 3_600_000).toISOString().replace('Z', '-03:00');
 }
 
+/** "Ana Maria da Silva" → first "Ana", last "Maria da Silva"; nothing for a blank name. */
+export function splitName(full: string | undefined) {
+  const parts = (full ?? '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return null;
+  const last = parts.slice(1).join(' ').slice(0, 60);
+  return { first_name: parts[0]!.slice(0, 60), ...(last ? { last_name: last } : {}) };
+}
+
+/** National digits (DDD + number) as MP's phone object; null for anything else. */
+export function mpPhone(phone: string | undefined) {
+  const d = (phone ?? '').replace(/\D/g, '');
+  const national = (d.length === 12 || d.length === 13) && d.startsWith('55') ? d.slice(2) : d;
+  return /^\d{10,11}$/.test(national)
+    ? { area_code: national.slice(0, 2), number: national.slice(2) }
+    : null;
+}
+
 type Json = Record<string, unknown>;
 
 interface MpPayment {
@@ -311,14 +328,28 @@ export class MercadoPagoProvider implements PaymentProvider {
   // ── store orders ─────────────────────────────────────────────────────────
 
   private pixBody(req: PixRequest) {
+    const name = splitName(req.payerName);
+    const phone = mpPhone(req.payerPhone);
+    // additional_info is what MP's anti-fraud scores the payment on
+    const info = {
+      ...(req.items?.length
+        ? {
+            items: req.items.slice(0, 50).map((i) => ({
+              id: i.id.slice(0, 60),
+              title: i.title.slice(0, 120),
+              quantity: i.quantity,
+              unit_price: toReais(i.unitPriceCents),
+            })),
+          }
+        : {}),
+      ...(name || phone ? { payer: { ...name, ...(phone ? { phone } : {}) } } : {}),
+    };
     return {
       transaction_amount: toReais(req.amountCents),
       description: req.description.slice(0, 200),
       payment_method_id: 'pix',
-      payer: {
-        email: req.payerEmail,
-        ...(req.payerName ? { first_name: req.payerName.slice(0, 60) } : {}),
-      },
+      payer: { email: req.payerEmail, ...name },
+      ...(Object.keys(info).length ? { additional_info: info } : {}),
       external_reference: req.externalReference,
       ...(req.notificationUrl ? { notification_url: req.notificationUrl } : {}),
       ...(req.applicationFeeCents > 0 ? { application_fee: toReais(req.applicationFeeCents) } : {}),

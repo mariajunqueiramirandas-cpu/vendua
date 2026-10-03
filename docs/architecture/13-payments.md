@@ -52,8 +52,14 @@ shopper → Kernel-owned checkout → Core /checkout/v1 →
   plan (`plans.fee_bps`). Venduá's margin is a platform parameter, not a per-store code
   path; today it is **0 on every plan** (the user's decision, 2026-09-30) — Venduá earns
   the plan only ([ADR 0021](../adr/0021-self-serve-signup-and-plan-billing.md)).
-- MP requires a payer email on Pix and shoppers don't give one: Core sends
-  `MP_PAYER_EMAIL` when set, else `pagador@<store domain>`. A card payment uses the email the
+- MP requires a payer email on Pix and shoppers don't give one: Core sends one stable address
+  per shopper, `cliente.<HMAC of their phone>@<store domain>`. Never one address for everyone:
+  MP's anti-fraud reads it as a single payer paying every store and refuses the money
+  (`rejected_high_risk`; the payer's bank shows a PSP error). Every Pix — orders and plan
+  invoices — also carries the payer's full name and phone and what is being paid
+  (`additional_info`, which MP scores). No shopper IP: behind an untrusted proxy it would be one
+  address for everyone again, and it would change the body MP gets on a retried attempt. A card
+  payment uses the email the
   shopper types into the Brick (it shows the field because we pass none).
 
 ## Merchant connection (OAuth)

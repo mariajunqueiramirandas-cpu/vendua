@@ -416,7 +416,6 @@ export function mountCommerce(d: Deps) {
   const payCtx = (c: Context, cardForm: boolean, challengeDone = false): PayCtx => ({
     publicOrigin: d.publicOrigin(c),
     storeDomain: d.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
-    ...(process.env.MP_PAYER_EMAIL ? { payerEmail: process.env.MP_PAYER_EMAIL } : {}),
     cardForm,
     challengeDone,
     ...(d.provider.name === 'mercadopago' && process.env.MP_PUBLIC_KEY
