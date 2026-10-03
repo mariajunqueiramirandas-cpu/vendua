@@ -13,11 +13,11 @@ import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { copyText } from '../../ui/CopyValue.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
-import { Field, PhoneInput, Segmented, TextInput, Toggle } from '../../ui/fields.tsx';
+import { Field, PhoneInput, Segmented, Toggle } from '../../ui/fields.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { articleOf, NAME_PRESETS, type Persona } from './Train.model.ts';
+import type { Persona } from './Train.model.ts';
 import { TrainFrame } from './Train.parts.tsx';
 
 const TONES: { value: AgentTone; label: string }[] = [
@@ -60,7 +60,7 @@ export function Preset({
   );
 }
 
-/** What the store needs before she can sell: a menu, hours and a way to get the order. */
+/** What the store needs before Duá can sell: a menu, hours and a way to get the order. */
 export function NotReady({ ob }: { ob: VendedorOnboarding }) {
   const missing = [
     !ob.readiness.menu && { label: 'o cardápio', to: '/bem-vindo?passo=produtos' },
@@ -87,7 +87,8 @@ export function NotReady({ ob }: { ob: VendedorOnboarding }) {
   );
 }
 
-export function NameStep({
+/** The first screen (step id `nome`, kept in Core's progress): how Duá introduces himself. */
+export function VoiceStep({
   ob,
   draft,
   setDraft,
@@ -102,60 +103,21 @@ export function NameStep({
   busy: boolean;
   eyebrow: string;
 }) {
-  const preset = (NAME_PRESETS as readonly string[]).includes(draft.name);
-  const [other, setOther] = useState(!preset);
-  const ok = draft.name.trim().length >= 2;
   return (
     <TrainFrame
       eyebrow={eyebrow}
-      title="Nome e jeito de falar"
+      title="Como o Duá fala"
+      hint="Como ele se apresenta aos seus clientes e o tom das respostas. Dá para mudar depois."
       next={onNext}
       busy={busy}
-      disabled={!ok}
     >
       <NotReady ob={ob} />
-      <div role="group" aria-label="Nome" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {NAME_PRESETS.map((n) => (
-          <Preset
-            key={n}
-            on={!other && draft.name === n}
-            onClick={() => {
-              setOther(false);
-              setDraft({ name: n });
-            }}
-          >
-            {n}
-          </Preset>
-        ))}
-        <Preset
-          on={other}
-          onClick={() => {
-            setOther(true);
-            if (preset) setDraft({ name: '' });
-          }}
-        >
-          outro
-        </Preset>
-      </div>
-      {other ? (
-        <Field label="Qual nome?" htmlFor="tr-name" helper="Até 20 letras.">
-          <TextInput
-            id="tr-name"
-            autoFocus
-            maxLength={20}
-            autoComplete="off"
-            value={draft.name}
-            placeholder="Ex.: Duda"
-            onChange={(e) => setDraft({ name: e.target.value })}
-          />
-        </Field>
-      ) : null}
       <Card className="divide-y divide-line px-4">
         <Toggle
           checked={draft.disclose}
           onChange={(v) => setDraft({ disclose: v })}
           label="Dizer que é assistente virtual"
-          description={`Desligado, ${draft.name.trim() ? `${articleOf(draft.name)} ${draft.name.trim()}` : 'ela'} não se anuncia, mas nunca diz que é uma pessoa e conta a verdade se perguntarem.`}
+          description="Desligado, o Duá não se anuncia, mas nunca diz que é uma pessoa e conta a verdade se perguntarem."
         />
         <div className="space-y-2 py-4">
           <p className="t-label" id="tr-tone">
@@ -178,12 +140,10 @@ const accountPhone = (p: string | null) =>
   p ? (p.startsWith('55') ? phoneText(p.slice(2)) : `+${p}`) : null;
 
 export function WhatsappStep({
-  name,
   onNext,
   back,
   eyebrow,
 }: {
-  name: string;
   onNext: () => void;
   back: () => void;
   eyebrow: string;
@@ -207,7 +167,7 @@ export function WhatsappStep({
     <TrainFrame
       eyebrow={eyebrow}
       title="O WhatsApp da loja"
-      hint={`${articleOf(name).toUpperCase()} ${name} atende no número que seus clientes já usam. Você continua usando o celular normalmente.`}
+      hint="O Duá atende no número que seus clientes já usam. Você continua usando o celular normalmente."
       next={onNext}
       nextLabel={linked || lost || !wa.data ? 'continuar' : 'conectar depois'}
       back={back}

@@ -60,6 +60,17 @@
     #2b3a4f 340px,
     var(--sky-5) 100%
   );
+  /* the closing section: the same band, then dusk deepens into night */
+  --sunset-night: linear-gradient(
+    180deg,
+    var(--sky-4) 0px,
+    #efc6a4 70px,
+    #b58c8d 150px,
+    #5d5e76 240px,
+    #2b3a4f 340px,
+    var(--sky-5) 640px,
+    var(--sky-6) 100%
+  );
 
   /* sections after sunset keep light text in both themes */
   --after-ink: #f7f4ea;
@@ -143,6 +154,14 @@
       #2a2230 120px,
       #22283a 260px,
       var(--sky-5) 100%
+    );
+    --sunset-night: linear-gradient(
+      180deg,
+      var(--sky-4) 0px,
+      #2a2230 120px,
+      #22283a 260px,
+      var(--sky-5) 640px,
+      var(--sky-6) 100%
     );
 
     color-scheme: dark;

@@ -15,7 +15,7 @@ const WORD: Record<CheckState, string> = {
 
 /**
  * One step or check with its state in colour, icon and word: the resume map's parts, the
- * Cliente oculto checks, what she knows at the finale. `value` is a short figure ("20/20",
+ * Cliente oculto checks, what Duá knows at the finale. `value` is a short figure ("20/20",
  * "3 de 7"); `action` a button or link. `card` draws it as its own card (the resume map).
  */
 export function ChecklistRow({

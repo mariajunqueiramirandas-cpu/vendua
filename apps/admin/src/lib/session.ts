@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { createContext, useContext } from 'react';
-import { api, ApiError, type Role, type Session } from './api.ts';
+import { api, ApiError, type PlanFeature, type Role, type Session } from './api.ts';
 import { qk } from './query.ts';
 
 const RANK: Record<Role, number> = { attendant: 1, manager: 2, owner: 3 };
@@ -40,3 +40,15 @@ export function useSession(): Session {
 export function useCan(min: Role) {
   return can(useSession().user.role, min);
 }
+
+/** Open right now (Core's session.plan). A cache from before Core said so counts as open:
+ *  the gated endpoints still answer PLAN_REQUIRED, and the screen locks then. */
+export const featureOpen = (s: Session, f: PlanFeature) => s.plan?.features?.[f] !== false;
+
+export function useFeature(f: PlanFeature) {
+  return featureOpen(useSession(), f);
+}
+
+/** Core's 403 for a feature the plan doesn't have (or hasn't paid for yet). */
+export const isPlanRequired = (e: unknown): e is ApiError =>
+  e instanceof ApiError && e.code === 'PLAN_REQUIRED';

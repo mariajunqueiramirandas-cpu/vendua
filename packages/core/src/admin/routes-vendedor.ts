@@ -7,6 +7,7 @@ import {
   INTERVIEW_ADDRESS,
 } from '../agent-host/agents/vendedor-onboarding/index.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
+import { requireFeature } from '../modules/billing/plans.ts';
 import { HttpError, UUID_RE, bodyJson } from '../platform/http.ts';
 import { vendedorDeps } from '../vendedor/deps.ts';
 import { menuGaps } from '../vendedor/gaps.ts';
@@ -135,7 +136,7 @@ export function mountVendedor(d: AdminDeps) {
         action: 'vendedor.release',
         entity: 'thread',
         entityId: id,
-        summary: 'Devolveu a conversa ao Vendedor',
+        summary: 'Devolveu a conversa ao Duá',
       });
       await emitAdminTx(tx, t.id, 'vendedor', id);
       return { status: 200, body: await threadDetail(tx, t.id, id) };
@@ -320,6 +321,8 @@ export function mountVendedor(d: AdminDeps) {
       const body = await bodyJson(c);
       const agent = await loadAgent(tx, t.id);
       const patch = parseSettingsPatch(body, agent.settings, m.role);
+      // the plan opens it (ADR 0032); switching it off is always allowed
+      if (patch.enabled) await requireFeature(tx, t.id, 'vendedor');
       const { categoryIds, productIds, couponIds } = patch.refs;
       if (categoryIds.length) {
         const n =
@@ -341,7 +344,7 @@ export function mountVendedor(d: AdminDeps) {
             field: 'incentives.couponIds',
           });
       }
-      const enabled = patch.enabled ?? agent.enabled;
+      const enabled = patch.enabled ?? agent.switchedOn;
       await tx`
         insert into store_agent (tenant_id, enabled, settings, enabled_at)
         values (${t.id}, ${enabled}, ${tx.json(patch.settings as never)}, ${enabled ? new Date() : null})
@@ -354,10 +357,10 @@ export function mountVendedor(d: AdminDeps) {
         entityId: t.id,
         summary:
           patch.enabled === undefined
-            ? `Ajustou o Vendedor (${patch.changed.join(', ')})`
+            ? `Ajustou o Duá (${patch.changed.join(', ')})`
             : patch.enabled
-              ? 'Ligou o Vendedor'
-              : 'Desligou o Vendedor',
+              ? 'Ligou o Duá'
+              : 'Desligou o Duá',
         before: { enabled: agent.enabled, settings: agent.settings },
         after: { enabled, settings: patch.settings },
       });
@@ -457,7 +460,7 @@ export function mountVendedor(d: AdminDeps) {
         action: 'vendedor.knowledge',
         entity: 'store_knowledge',
         entityId: id,
-        summary: status === 'dismissed' ? 'Ignorou uma proposta' : 'Ensinou o Vendedor',
+        summary: status === 'dismissed' ? 'Ignorou uma proposta' : 'Ensinou o Duá',
       });
       await emitAdminTx(tx, t.id, 'vendedor', 'knowledge');
       return { status: 200, body: await knowledgeView(tx, t.id) };
@@ -520,6 +523,7 @@ export function mountVendedor(d: AdminDeps) {
   admin.post(
     '/vendedor/cliente-oculto',
     write('manager', async (tx, t, m) => {
+      await requireFeature(tx, t.id, 'vendedor');
       const [open] =
         await tx`select id from vendedor_runs where tenant_id = ${t.id} and status in ('queued', 'running') limit 1`;
       if (!open)
@@ -566,6 +570,7 @@ export function mountVendedor(d: AdminDeps) {
   admin.post(
     '/vendedor/test-chat',
     write('manager', async (tx, t, m, c) => {
+      await requireFeature(tx, t.id, 'vendedor');
       const body = await bodyJson(c);
       if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
       const msg = text(body.text, 'text', 1000, 1);
@@ -680,6 +685,7 @@ export function mountVendedor(d: AdminDeps) {
   admin.post(
     '/vendedor/onboarding/interview',
     write('owner', async (tx, t, m, c) => {
+      await requireFeature(tx, t.id, 'vendedor');
       const body = await bodyJson(c);
       if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
       const msg = text(body.text, 'text', 1000, 1);
@@ -747,7 +753,7 @@ export function mountVendedor(d: AdminDeps) {
         action: 'vendedor.forget_fact',
         entity: 'customer',
         entityId: phone.slice(-4),
-        summary: 'Apagou algo que o Vendedor sabia do cliente',
+        summary: 'Apagou algo que o Duá sabia do cliente',
       });
       return {
         status: 200,

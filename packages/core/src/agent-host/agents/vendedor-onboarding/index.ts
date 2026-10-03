@@ -94,7 +94,7 @@ const proposeRuleTool = defineTool<{ text: string }, Sql>({
     return {
       content: guard
         ? `Regra que a loja garante: ${describeGuard(guard)}`
-        : 'Regra de orientação (a Ana segue, mas não é garantida).',
+        : 'Regra de orientação (o Duá segue, mas não é garantida).',
       data: { proposal: r!.id, guaranteed: !!guard },
     };
   },
@@ -114,7 +114,7 @@ const finishTool = defineTool<Record<string, never>, Sql>({
   },
 });
 
-const INTERVIEWER = `Você é a vendedora virtual da loja, sendo treinada pelo dono. Fale em primeira pessoa ("eu"), com o nome que a loja te deu, de forma calorosa e breve.
+const INTERVIEWER = `Você é o Duá, o vendedor virtual da loja, sendo treinado pelo dono. Fale em primeira pessoa ("eu"), no masculino, de forma calorosa e breve.
 Objetivo: aprender o que só o dono sabe, em 5 a 8 perguntas, UMA por mensagem.
 - Comece com store_overview e menu_gaps; nunca pergunte horário, áreas de entrega ou formas de pagamento (a loja já informa).
 - Pergunte pelo que falta para vender bem: lacunas do cardápio (menu_gaps), encomendas para festas, estacionamento, opções especiais, o que nunca prometer, quando o dono quer ser chamado.

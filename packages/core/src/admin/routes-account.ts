@@ -10,9 +10,10 @@ import {
   normalizeHost,
 } from '../modules/billing/domains.ts';
 import { validEmail } from '../modules/billing/input.ts';
-import { publicPlanOr422, requireFeature } from '../modules/billing/plans.ts';
+import { heldPlans, publicPlanOr422, requireFeature } from '../modules/billing/plans.ts';
 import {
   afterResponse,
+  buyAiPack,
   cancelSubscription,
   lockBilling,
   changeSubscription,
@@ -32,7 +33,7 @@ const METHODS = ['card', 'pix'] as const;
 const validPayerEmail = (v: unknown) => validEmail(v, 'payerEmail');
 
 // Conta e plano: the plan and its subscription (card assinatura or monthly Pix), invoices,
-// the PRO+ own domain and site request. Owner only; every write is idempotent (handlers.write).
+// the Pangolim own domain and site request. Owner only; every write is idempotent (handlers.write).
 export function mountAccount(d: AdminDeps) {
   const { admin } = d;
   const { read, write } = handlers(d);
@@ -64,7 +65,7 @@ export function mountAccount(d: AdminDeps) {
     write('owner', async (tx, t, m, c) => {
       billingOn();
       const body = await bodyJson(c);
-      const plan = await publicPlanOr422(tx, body.planId);
+      const plan = await publicPlanOr422(tx, body.planId, await heldPlans(tx, t.id));
       const method = oneOf(body.method, 'method', METHODS);
       const payerEmail = validPayerEmail(body.payerEmail);
       await startSubscription(ctxFor(c), tx, t.id, {
@@ -87,7 +88,10 @@ export function mountAccount(d: AdminDeps) {
     write('owner', async (tx, t, m, c) => {
       billingOn();
       const body = await bodyJson(c);
-      const plan = body.planId === undefined ? undefined : await publicPlanOr422(tx, body.planId);
+      const plan =
+        body.planId === undefined
+          ? undefined
+          : await publicPlanOr422(tx, body.planId, await heldPlans(tx, t.id));
       const method = body.method === undefined ? undefined : oneOf(body.method, 'method', METHODS);
       const payerEmail =
         body.payerEmail === undefined ? undefined : validPayerEmail(body.payerEmail);
@@ -165,7 +169,28 @@ export function mountAccount(d: AdminDeps) {
     }),
   );
 
-  // ── PRO+: own domain ─────────────────────────────────────────────────────
+  // the Vendedor's extra conversations (ADR 0032): a one-off Pix, credited when it is paid
+  admin.post(
+    '/account/ai-packs',
+    write('owner', async (tx, t, m, c) => {
+      billingOn();
+      const body = await bodyJson(c, 1024);
+      const inv = await buyAiPack(ctxFor(c), tx, t.id, body.packId, new Date(), {
+        priceCents: body.priceCents,
+        conversations: body.conversations,
+      });
+      await audit(tx, t.id, m, {
+        action: 'ai_pack.buy',
+        entity: 'invoice',
+        entityId: inv.id,
+        summary: `pediu um pacote de conversas do Duá (fatura ${inv.number})`,
+        after: { packId: inv.ai_pack_id, amountCents: inv.amount_cents },
+      });
+      return { status: 200, body: { invoiceId: inv.id, ...(await view(tx, t)) } };
+    }),
+  );
+
+  // ── Pangolim: own domain ─────────────────────────────────────────────────
   admin.post(
     '/account/domains',
     write('owner', async (tx, t, m, c) => {
@@ -278,7 +303,7 @@ export function mountAccount(d: AdminDeps) {
     }),
   );
 
-  // ── PRO+: a site made by our agent ───────────────────────────────────────
+  // ── Pangolim: a site made by our agent ───────────────────────────────────
   admin.post(
     '/account/site-request',
     write('owner', async (tx, t, m, c) => {
@@ -293,7 +318,7 @@ export function mountAccount(d: AdminDeps) {
       // a request opened at checkout has no brief yet — the team hears when it arrives
       else await siteBriefEventTx(tx, t, brief);
       await emitAdminTx(tx, t.id, 'billing');
-      await log(tx, t, m, 'site_request.create', 'pediu o site PRO+', { brief });
+      await log(tx, t, m, 'site_request.create', 'pediu o site sob medida', { brief });
       return { status: updated.count ? 200 : 201, body: await view(tx, t) };
     }),
   );
@@ -312,7 +337,9 @@ export function mountAccount(d: AdminDeps) {
         throw new HttpError(404, 'SITE_REQUEST_NOT_FOUND', 'there is no open site request');
       await siteBriefEventTx(tx, t, brief);
       await emitAdminTx(tx, t.id, 'billing');
-      await log(tx, t, m, 'site_request.update', 'atualizou o pedido de site PRO+', { brief });
+      await log(tx, t, m, 'site_request.update', 'atualizou o pedido de site sob medida', {
+        brief,
+      });
       return { status: 200, body: await view(tx, t) };
     }),
   );
@@ -322,7 +349,7 @@ function siteBriefEventTx(tx: Sql, t: { id: string; name: string }, brief: strin
   return recordStaffEventTx(
     tx,
     'store.request',
-    { storeName: t.name, title: 'briefing do site PRO+', detail: brief },
+    { storeName: t.name, title: 'briefing do site sob medida', detail: brief },
     { tenantId: t.id },
   );
 }

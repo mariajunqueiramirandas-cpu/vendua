@@ -9,7 +9,6 @@ import {
 } from '../../lib/api.ts';
 import { money, num, plural } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
-import { useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -31,8 +30,6 @@ const seconds = (s: number) => (s < 1 ? 'menos de 1 s' : `${num(Math.round(s))} 
 const sentence = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 export default function Results() {
-  const session = useSession();
-  const name = session.vendedor?.name ?? 'Vendedor';
   // the route prefetches '7d', so the screen opens on it
   const [period, setPeriod] = useState<ResultsPeriod>('7d');
   const { data, error, refetch, isFetching } = useQuery({
@@ -45,7 +42,7 @@ export default function Results() {
       <PageHeader
         title="Resultados"
         back="/vendedor"
-        subtitle={`O que a ${name} vendeu e o que dá pra melhorar.`}
+        subtitle="O que o Duá vendeu e o que dá pra melhorar."
       />
       <Chips
         label="período"
@@ -63,23 +60,23 @@ export default function Results() {
           aria-busy={isFetching || undefined}
           className={cn('space-y-6 transition-opacity', isFetching && 'opacity-70')}
         >
-          <Body d={data} name={name} />
+          <Body d={data} />
         </div>
       )}
     </PageBody>
   );
 }
 
-function Body({ d, name }: { d: VendedorResults; name: string }) {
+function Body({ d }: { d: VendedorResults }) {
   const empty = d.funnel.conversations === 0 && d.closed.orders === 0;
   if (empty)
     return (
       <Card className="flex flex-col items-center px-6 py-10 text-center">
-        <PersonaAvatar name={name} size="lg" />
+        <PersonaAvatar size="lg" />
         <p className="t-title-2 mt-4 max-w-sm">Nenhuma conversa nesse período</p>
         <p className="t-body mt-2 max-w-sm text-muted">
-          Os números aparecem quando a {name} começar a atender. Com uma semana de conversas eles
-          ficam confiáveis.
+          Os números aparecem quando o Duá começar a atender. Com uma semana de conversas eles ficam
+          confiáveis.
         </p>
         <ButtonLink to="/vendedor/testar" variant="secondary" className="mt-5">
           testar como cliente
@@ -102,7 +99,7 @@ function Body({ d, name }: { d: VendedorResults; name: string }) {
       ) : null}
 
       <Card className="p-5">
-        <p className="t-caption text-muted">Vendido pela {name}</p>
+        <p className="t-caption text-muted">Vendido pelo Duá</p>
         <p className="t-display tnum mt-1">{money(d.closed.cents)}</p>
         <p className="t-caption tnum text-muted">
           {plural(d.closed.orders, 'pedido fechado', 'pedidos fechados')} na conversa
@@ -112,7 +109,7 @@ function Body({ d, name }: { d: VendedorResults; name: string }) {
             <p className="t-label tnum">+ ajudou em {money(d.assisted.cents)}</p>
             <p className="t-caption text-muted">
               {plural(d.assisted.orders, 'pedido feito', 'pedidos feitos')} no site até{' '}
-              {d.assisted.windowHours} h depois de ela mandar o link.
+              {d.assisted.windowHours} h depois de ele mandar o link.
             </p>
           </div>
         ) : null}
@@ -140,7 +137,7 @@ function Body({ d, name }: { d: VendedorResults; name: string }) {
           <dl className="mt-3 grid grid-cols-2 gap-3">
             <Figure
               value={d.closed.averageCents === null ? '—' : money(d.closed.averageCents)}
-              label={`com a ${name}`}
+              label="com o Duá"
             />
             <Figure
               value={d.siteAverageCents === null ? '—' : money(d.siteAverageCents)}
@@ -285,7 +282,7 @@ function Proposals({ d }: { d: VendedorResults }) {
                 </ButtonLink>
               );
             else if (p.kind === 'recovery_delay' && delay !== null && sooner !== null) {
-              evidence = `${sentence(p.evidence)}. Hoje ela lembra depois de ${delay} min.`;
+              evidence = `${sentence(p.evidence)}. Hoje ele lembra depois de ${delay} min.`;
               if (sooner < delay)
                 action = (
                   <Button

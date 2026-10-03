@@ -1,13 +1,14 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { signup, type PlanId } from '$lib/content';
+  import { recommended, signup, type PlanId } from '$lib/content';
 
   // The one call to action: a plain link to sign-up in the merchant admin, so it works without JS.
+  // It preselects the recommended plan; the price block links each plan on its own.
   // `short` drops "minha" on the narrowest bars. `children` is the note beside it when it needs markup.
   let {
     size = 'lg',
     tone = 'day',
-    plano,
+    plano = recommended.id,
     label = 'Criar minha loja',
     short = false,
     note,

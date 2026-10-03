@@ -6,7 +6,8 @@ import { trackPageview } from '../lib/analytics.ts';
 import { ApiError } from '../lib/api.ts';
 import { clearPersisted } from '../lib/persist.ts';
 import { qk } from '../lib/query.ts';
-import { can, SessionCtx, useSessionQuery } from '../lib/session.ts';
+import { can, featureOpen, SessionCtx, useSessionQuery } from '../lib/session.ts';
+import { LockedPage } from '../ui/PlanLocked.tsx';
 import { applyTheme, type ThemePref } from '../lib/theme.ts';
 import { ErrorBoundary } from '../ui/ErrorBoundary.tsx';
 import { ErrorState, Splash } from '../ui/feedback.tsx';
@@ -152,6 +153,8 @@ export default function App() {
   // a screen above this person's role isn't there for them (NotFound), like its nav entry
   const manager = can(q.data.user.role, 'manager');
   const owner = can(q.data.user.role, 'owner');
+  // a plan without Duá shows his screens as the upsell (ADR 0032)
+  const vendedorOpen = featureOpen(q.data, 'vendedor');
   return (
     <SessionCtx.Provider value={q.data}>
       <ErrorBoundary>
@@ -196,11 +199,29 @@ export default function App() {
                   <Route path="conta" element={<Account />} />
                   <Route path="perfil" element={<Profile />} />
                   <Route path="ajuda" element={<Help />} />
-                  <Route path="vendedor" element={<VendedorHome />} />
-                  {owner ? <Route path="vendedor/comecar" element={<VendedorTrain />} /> : null}
+                  {/* conversations stay open on any plan: threads handed to the store live there */}
                   <Route path="vendedor/conversas" element={<VendedorConversations />} />
                   <Route path="vendedor/conversas/:id" element={<VendedorConversation />} />
-                  {manager ? (
+                  {!vendedorOpen ? (
+                    <Route
+                      path="vendedor/*"
+                      element={<LockedPage title="Duá" feature="vendedor" />}
+                    />
+                  ) : null}
+                  <Route
+                    path="vendedor"
+                    element={
+                      vendedorOpen ? (
+                        <VendedorHome />
+                      ) : (
+                        <LockedPage title="Duá" feature="vendedor" />
+                      )
+                    }
+                  />
+                  {owner && vendedorOpen ? (
+                    <Route path="vendedor/comecar" element={<VendedorTrain />} />
+                  ) : null}
+                  {manager && vendedorOpen ? (
                     <>
                       <Route path="vendedor/ensinar" element={<VendedorTeach />} />
                       <Route path="vendedor/ensaio" element={<VendedorEnsaio />} />

@@ -1,4 +1,4 @@
-// The Vendedor's three voices and its receipt paper (sales-agent-ux §1), built from theme.css
+// The conversation's three voices and its receipt paper (sales-agent-ux §1), built from theme.css
 // tokens. The board's seller edge, owner bubble and paper have no token of their own, so they
 // are mixed here from existing ones, in one place.
 
@@ -6,7 +6,7 @@
 export const SELLER_EDGE =
   'ring-1 ring-inset ring-[color:color-mix(in_srgb,var(--spark)_88%,var(--ink-muted))] noite:ring-[color:color-mix(in_srgb,var(--spark)_30%,transparent)]';
 
-/** the Vendedor's voice: spark-soft with the spark edge */
+/** Duá's voice: spark-soft with the spark edge */
 export const SELLER = `bg-spark-soft text-ink ${SELLER_EDGE}`;
 
 /** the owner's voice: forest. Noite's primary is lime, so the owner keeps a deep green there */

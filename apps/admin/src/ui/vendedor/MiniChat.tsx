@@ -12,13 +12,12 @@ export interface ChatLine {
 
 /**
  * The onboarding's live WhatsApp preview, the counterpart of `MiniStore`: a small chat in
- * which she answers better at each step ("prévia no WhatsApp"), and the frame of "Peça para
+ * which Duá answers better at each step ("prévia no WhatsApp"), and the frame of "Peça para
  * mim", where the owner is the customer. `owner` flips the sides: the owner (as the customer)
- * on the right in forest, her on the left. Pass `lines` for a scripted preview, or children
+ * on the right in forest, Duá on the left. Pass `lines` for a scripted preview, or children
  * (bubbles, receipts) for a live one; `composer` sits at the bottom.
  */
 export function MiniChat({
-  name,
   label,
   lines,
   children,
@@ -27,13 +26,11 @@ export function MiniChat({
   composer,
   className,
 }: {
-  /** the Vendedor's name */
-  name: string;
   /** the caption on top: "prévia no WhatsApp", "teste · só você vê" */
   label?: ReactNode | undefined;
   lines?: ChatLine[] | undefined;
   children?: ReactNode | undefined;
-  /** she is writing */
+  /** Duá is writing */
   typing?: boolean | undefined;
   /** the owner plays the customer: their lines are `you`, on the right */
   owner?: boolean | undefined;
@@ -42,12 +39,12 @@ export function MiniChat({
 }) {
   return (
     <section
-      aria-label={typeof label === 'string' ? label : `conversa com a ${name}`}
+      aria-label={typeof label === 'string' ? label : 'conversa com o Duá'}
       className={cn('flex flex-col gap-1.5 rounded-lg bg-sunken p-3.5', className)}
     >
       {label ? (
         <p className="t-caption mb-1 flex items-center gap-1.5 self-start font-semibold text-muted">
-          <PersonaAvatar name={name} size="xs" />
+          <PersonaAvatar size="xs" />
           {label}
         </p>
       ) : null}
@@ -57,7 +54,6 @@ export function MiniChat({
           <Bubble
             key={i}
             voice={l.voice}
-            name={name}
             author={owner && l.voice === 'you' ? 'você, como cliente' : undefined}
             time={l.time}
             signed={l.voice === 'seller' && prev?.voice !== 'seller'}
@@ -68,14 +64,14 @@ export function MiniChat({
         );
       })}
       {children}
-      {typing ? <Typing name={name} owner={owner} /> : null}
+      {typing ? <Typing owner={owner} /> : null}
       {composer ? <div className="mt-2">{composer}</div> : null}
     </section>
   );
 }
 
-/** "Ana está escrevendo": three dots in her bubble, still under reduced motion */
-function Typing({ name, owner }: { name: string; owner?: boolean | undefined }) {
+/** "Duá está escrevendo": three dots in his bubble, still under reduced motion */
+function Typing({ owner }: { owner?: boolean | undefined }) {
   return (
     <div
       role="status"
@@ -85,7 +81,7 @@ function Typing({ name, owner }: { name: string; owner?: boolean | undefined }) 
         SELLER,
       )}
     >
-      <span className="sr-only">{name} está escrevendo</span>
+      <span className="sr-only">Duá está escrevendo</span>
       {[0, 1, 2].map((i) => (
         <span
           key={i}

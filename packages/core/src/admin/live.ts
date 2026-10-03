@@ -34,7 +34,9 @@ export type AdminTopic =
   // the Vendedor: a conversation moved (id = thread id), its settings or knowledge (id = 'settings' | 'knowledge')
   | 'vendedor'
   // a shopper is waiting for the store in a Vendedor conversation (id = thread id): may push (law 13)
-  | 'vendedor.waiting';
+  | 'vendedor.waiting'
+  // Duá ran out of conversations (id = the period: its month's reset date, or 'trial'): may push
+  | 'vendedor.exhausted';
 
 const liveLog = log.child({ mod: 'admin-live' });
 

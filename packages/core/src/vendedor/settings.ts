@@ -1,4 +1,5 @@
 import { HttpError } from '../platform/http.ts';
+import { planHas } from '../modules/billing/plans.ts';
 import type { Sql } from '../platform/db.ts';
 
 // The merchant's controls (sales-agent.md §5). Defaults are the design's recommendations
@@ -39,8 +40,11 @@ export interface StoreAgentSettings {
   webChat: boolean;
 }
 
+/** The seller is Duá, Venduá's mascot, on every store: the name is not a setting any more. */
+export const AGENT_NAME = 'Duá';
+
 export const DEFAULT_SETTINGS: StoreAgentSettings = {
-  name: 'Ana',
+  name: AGENT_NAME,
   disclose: true,
   tone: 'balanced',
   voice: '',
@@ -59,7 +63,10 @@ export const DEFAULT_SETTINGS: StoreAgentSettings = {
 };
 
 export interface StoreAgentRow {
+  /** switched on by the merchant AND open on the store's plan (ADR 0032) */
   enabled: boolean;
+  /** the merchant's switch alone: a plan that lost the Vendedor keeps it for when it's back */
+  switchedOn: boolean;
   settings: StoreAgentSettings;
   onboarding: Record<string, unknown>;
   packVersion: number;
@@ -79,6 +86,8 @@ export function withDefaults(stored: unknown): StoreAgentSettings {
   return {
     ...d,
     ...(s as Partial<StoreAgentSettings>),
+    // a row from when stores named their seller still reads as Duá
+    name: AGENT_NAME,
     capabilities: sub('capabilities', d.capabilities),
     handoff: sub('handoff', d.handoff),
     recovery: sub('recovery', d.recovery),
@@ -101,8 +110,10 @@ export async function loadAgent(tx: Sql, tenantId: string): Promise<StoreAgentRo
     }[]
   >`select enabled, settings, onboarding, pack_version, enabled_at, first_sale_at
     from store_agent where tenant_id = ${tenantId}`;
+  const switchedOn = row?.enabled ?? false;
   return {
-    enabled: row?.enabled ?? false,
+    enabled: switchedOn && (await planHas(tx, tenantId, 'vendedor')),
+    switchedOn,
     settings: withDefaults(row?.settings),
     onboarding: row?.onboarding ?? {},
     packVersion: Number(row?.pack_version ?? 1),
@@ -188,14 +199,6 @@ export function parseSettingsPatch(
         mark(k);
         enabled = bool(v, k);
         break;
-      case 'name': {
-        if (typeof v !== 'string' || !v.trim() || v.trim().length > 30)
-          bad(k, 'name must be 1–30 characters');
-        if (/[\n\r{}<>]/.test(v)) bad(k, 'name has characters that are not allowed');
-        mark(k);
-        next.name = v.trim();
-        break;
-      }
       case 'disclose':
         mark(k);
         next.disclose = bool(v, k);
@@ -332,6 +335,6 @@ export function parseSettingsPatch(
 /** The greeting the merchant previews and the shopper reads first. */
 export function introduction(s: StoreAgentSettings, storeName: string): string {
   return s.disclose
-    ? `${s.name}, assistente virtual da ${storeName}`
-    : `${s.name}, da ${storeName}`;
+    ? `o ${s.name}, assistente virtual da ${storeName}`
+    : `o ${s.name}, da ${storeName}`;
 }

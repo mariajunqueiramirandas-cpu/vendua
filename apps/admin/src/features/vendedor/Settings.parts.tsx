@@ -58,8 +58,7 @@ export function useSettingsPatch() {
       if (mine === seq) qc.setQueryData(qk.vendedor.settings, s);
       else void qc.invalidateQueries({ queryKey: qk.vendedor.settings });
       void qc.invalidateQueries({ queryKey: qk.vendedor.home });
-      if (p.enabled !== undefined || p.name !== undefined)
-        void qc.invalidateQueries({ queryKey: qk.session });
+      if (p.enabled !== undefined) void qc.invalidateQueries({ queryKey: qk.session });
       failed.current = null;
       setState('saved');
       timer.current = setTimeout(() => setState((x) => (x === 'saved' ? 'idle' : x)), 2400);
@@ -138,13 +137,13 @@ const TONES: { value: AgentTone; label: string }[] = [
   { value: 'formal', label: 'formal' },
 ];
 
-/** The board's sample greeting per tone; how she introduces herself follows the switch. */
-export function greetingFor(tone: AgentTone, name: string, disclose: boolean, store: string) {
-  const who = disclose ? `${name}, assistente virtual da ${store}` : `${name}, da ${store}`;
-  if (tone === 'relaxed') return `Oi, Carla! Aqui é a ${who} 😊 Bora pedir hoje?`;
+/** The board's sample greeting per tone, around Core's `intro` ("o Duá, assistente virtual da
+ *  …", or "o Duá, da …" with the disclosure off). */
+export function greetingFor(tone: AgentTone, intro: string) {
+  if (tone === 'relaxed') return `Oi, Carla! Aqui é ${intro} 😊 Bora pedir hoje?`;
   if (tone === 'formal')
-    return `${greeting()}, Carla. Sou a ${who}. Como posso ajudar com o seu pedido?`;
-  return `${greeting()}, Carla! Sou a ${who}. O que vai ser hoje?`;
+    return `${greeting()}, Carla. Sou ${intro}. Como posso ajudar com o seu pedido?`;
+  return `${greeting()}, Carla! Sou ${intro}. O que vai ser hoje?`;
 }
 
 export function ToneField({
@@ -168,7 +167,7 @@ const COVERAGE: { value: Coverage; title: string; detail: (min: number) => strin
   {
     value: 'rehearsal',
     title: 'Ensaio',
-    detail: () => 'Ela escreve o que diria, mas não manda nada. Você compara.',
+    detail: () => 'Ele escreve o que diria, mas não manda nada. Você compara.',
   },
   {
     value: 'when_slow',
@@ -193,15 +192,13 @@ const WAITS = [
   { value: '5', label: '5 min' },
 ] as const;
 
-/** Coverage replaces an autonomy slider (sales-agent-ux §1.5): when does she answer? */
+/** Coverage replaces an autonomy slider (sales-agent-ux §1.5): when does Duá answer? */
 export function CoverageField({
-  name,
   value,
   slowAfterMin,
   onChange,
   onWait,
 }: {
-  name: string;
   value: Coverage;
   slowAfterMin: number;
   onChange: (c: Coverage) => void;
@@ -209,7 +206,7 @@ export function CoverageField({
 }) {
   const group = useId();
   return (
-    <div role="radiogroup" aria-label={`Quando a ${name} atende`} className="-mx-4">
+    <div role="radiogroup" aria-label="Quando o Duá atende" className="-mx-4">
       {COVERAGE.map((o) => {
         const on = o.value === value;
         return (
@@ -247,9 +244,9 @@ export function CoverageField({
             </label>
             {on && o.value === 'when_slow' ? (
               <div className="space-y-2 px-4 pb-4 pl-13">
-                <p className="t-caption text-muted">Quanto esperar antes de a {name} responder</p>
+                <p className="t-caption text-muted">Quanto esperar antes de o Duá responder</p>
                 <Segmented
-                  label={`Quanto esperar antes de a ${name} responder`}
+                  label="Quanto esperar antes de o Duá responder"
                   value={String(slowAfterMin) as '1' | '2' | '5'}
                   onChange={(v) => onWait(Number(v) as 1 | 2 | 5)}
                   options={[...WAITS]}

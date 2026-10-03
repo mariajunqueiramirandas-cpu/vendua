@@ -407,7 +407,7 @@
     gap: 8px;
     min-width: 56px;
     height: 56px;
-    padding: 0 16px;
+    padding: 0 8px;
     border: 0;
     border-radius: 28px;
     background: var(--v-color-accent, #3f5e4e);
@@ -451,7 +451,7 @@
     .v-chat-launcher {
       right: max(24px, env(safe-area-inset-right, 0px));
       bottom: max(24px, env(safe-area-inset-bottom, 0px));
-      padding: 0 20px 0 16px;
+      padding: 0 20px 0 8px;
     }
     .v-chat-launcher-label {
       display: inline;
@@ -566,19 +566,17 @@
   .v-chat-avatar {
     flex: none;
     display: grid;
-    place-items: center;
+    width: 40px;
+    height: 40px;
+  }
+  /* the mascot is forest green: always on cream, whatever the store's colors (brand kit) */
+  .v-chat-face {
+    display: block;
     width: 40px;
     height: 40px;
     border-radius: 50%;
-    background: color-mix(
-      in srgb,
-      var(--v-color-accent, #3f5e4e) 14%,
-      var(--v-color-surface, #fff)
-    );
-    color: var(--v-color-text, #1c1b1a);
-    font-family: var(--v-font-display, var(--v-font-body, system-ui));
-    font-weight: 600;
-    font-size: 16px;
+    background: #f7f4ea;
+    object-fit: cover;
   }
   .v-chat-who {
     flex: 1;

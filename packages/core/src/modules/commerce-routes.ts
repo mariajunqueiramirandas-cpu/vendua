@@ -1,4 +1,5 @@
 import type { Context, Hono } from 'hono';
+import { requireFeature } from './billing/plans.ts';
 import { streamSSE } from 'hono/streaming';
 import { emitAdminTx } from '../admin/live.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
@@ -872,6 +873,7 @@ export function mountCommerce(d: Deps) {
         const program = body.loyalty === null ? null : readLoyalty(body.loyalty);
         if (body.loyalty !== null && !program)
           throw new HttpError(400, 'BAD_REQUEST', 'loyalty needs stampsRequired 2–50 and a reward');
+        if (program) await requireFeature(tx, t.id, 'loyalty');
         await tx`update store_settings set loyalty = ${program ? tx.json(program as never) : null} where tenant_id = ${t.id}`;
       }
       if (body.location !== undefined) {

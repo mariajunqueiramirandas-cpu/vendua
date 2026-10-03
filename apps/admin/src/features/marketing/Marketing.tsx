@@ -38,6 +38,8 @@ import { availability } from '../../ui/ProductTile.tsx';
 import { Qr, qrPng } from '../../ui/Qr.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
+import { PlanLocked } from '../../ui/PlanLocked.tsx';
+import { isPlanRequired, useFeature } from '../../lib/session.ts';
 import { toast } from '../../ui/Toast.tsx';
 import { shareCard } from './shareCard.ts';
 
@@ -391,6 +393,16 @@ function CouponSheet({
 }
 
 function Loyalty({ data }: { data: M }) {
+  return useFeature('loyalty') ? (
+    <LoyaltyCard data={data} />
+  ) : (
+    <Section title="Cartão fidelidade">
+      <PlanLocked feature="loyalty" compact />
+    </Section>
+  );
+}
+
+function LoyaltyCard({ data }: { data: M }) {
   const qc = useQueryClient();
   const saveState = useSaveState();
   const cur = data.loyalty.program;
@@ -427,6 +439,8 @@ function Loyalty({ data }: { data: M }) {
         setKind(cur?.reward.kind ?? 'fixed');
         setValue(cur?.reward.value ?? 1500);
         toast.error(messageOf(e));
+        // the plan changed under the screen: the session says so, and the lock shows
+        if (isPlanRequired(e)) void qc.invalidateQueries({ queryKey: qk.session });
       });
   };
   return (

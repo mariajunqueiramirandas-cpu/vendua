@@ -22,6 +22,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('onboarding (db)', () => {
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     paymentProvider: fake,
+    // signup's gate (the CRM switch, WhatsApp, email, billing) is open here; signup.test checks it
+    signupReady: async () => ({ on: true, whatsapp: true, email: true, billing: true, open: true }),
     notify: {
       whatsapp: async (phone: string, text: string) => void wa.push({ phone, text }),
       email: async () => {},
@@ -85,7 +87,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('onboarding (db)', () => {
     const v = await call('POST', '/admin/v1/signup/otp/verify', { phone, code });
     const r = await call('POST', '/admin/v1/signup', {
       signupToken: v.body.signupToken,
-      planId: 'basic',
+      planId: 'mirim',
       method: 'pix',
       storeName: 'Açaí da Onda',
       slug: `onb-${nonce}`,

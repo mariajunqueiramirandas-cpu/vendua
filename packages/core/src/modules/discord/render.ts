@@ -790,7 +790,7 @@ function vendedorMonitor(ev: Ev<'vendedor.monitor'>): Rendered {
   const d = ev.data;
   return {
     card: card(ev, {
-      title: `Vendedor fora do normal · ${esc(d.storeName ?? 'loja')}`,
+      title: `Duá fora do normal · ${esc(d.storeName ?? 'loja')}`,
       description: `${d.today.toFixed(1)} ${MONITOR_WORDS[d.metric]} hoje (de costume ${d.baseline.toFixed(1)}; ${d.volume} no dia)`,
     }),
   };

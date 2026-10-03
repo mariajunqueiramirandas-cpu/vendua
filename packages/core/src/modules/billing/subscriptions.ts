@@ -30,7 +30,8 @@ import {
   dayMonth,
   queueOwners,
 } from './notices.ts';
-import { formatBRL, planRow, type PlanRow } from './plans.ts';
+import { formatBRL, planRow, tenantPlan, type PlanRow } from './plans.ts';
+import { PACK_DAYS } from './ai-allowance.ts';
 
 // The plan's state machine (docs/roadmap.md, Phase 3). One subscriptions row per store:
 //   pending ─(first invoice paid / first card charge)→ active ─(period ended unpaid)→ past_due
@@ -463,11 +464,15 @@ export async function reissuePix(
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
-  const plan = await planOrThrow(tx, inv.plan_id);
+  // a pack's Pix keeps the pack's description, not the plan's month
+  const label =
+    inv.kind === 'ai_pack'
+      ? `Duá ${(await aiPackRow(tx, inv.ai_pack_id!))?.name ?? inv.ai_pack_id}`
+      : (await planOrThrow(tx, inv.plan_id)).name;
   const out = await viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
       payerEmail,
-      planName: plan.name,
+      planName: label,
       origin: ctx.origin,
       now,
       drop: dropPix(ctx),
@@ -616,6 +621,140 @@ async function startUpgrade(
     await repriceAhead(ctx, tx, { ...sub, pending_plan_id: null }, current, now);
   }
   await upgradePix(ctx, tx, sub, inv, now);
+}
+
+export interface AiPackRow {
+  id: string;
+  name: string;
+  price_cents: number;
+  conversations: number;
+  public: boolean;
+  sort: number;
+}
+
+export async function aiPackRow(tx: Sql, id: string): Promise<AiPackRow | null> {
+  if (!/^[a-z0-9_]{2,30}$/.test(id)) return null;
+  return (await tx<AiPackRow[]>`select * from ai_packs where id = ${id}`)[0] ?? null;
+}
+
+export async function publicAiPacks(tx: Sql) {
+  const rows = await tx<
+    AiPackRow[]
+  >`select * from ai_packs where public order by sort, price_cents`;
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    priceCents: r.price_cents,
+    conversations: r.conversations,
+  }));
+}
+
+/**
+ * More Vendedor conversations (ADR 0032): a one-off Pix invoice for the pack; the conversations
+ * land when it is paid. Only on a paid plan that has the Vendedor — a trial has its own allowance.
+ * One open pack invoice at a time: asking again returns it, with a fresh Pix if it lapsed.
+ */
+export async function buyAiPack(
+  ctx: BillingCtx,
+  tx: Sql,
+  tenantId: string,
+  packId: unknown,
+  now: Date,
+  /** what the owner saw on the offer: a pack staff repriced since answers 409, not a surprise */
+  seen?: { priceCents?: unknown; conversations?: unknown },
+): Promise<InvoiceRow> {
+  const sub = await lockSub(tx, tenantId);
+  const pack = typeof packId === 'string' ? await aiPackRow(tx, packId) : null;
+  if (!pack || !pack.public)
+    throw new HttpError(422, 'UNKNOWN_AI_PACK', 'pick one of the packs offered', {
+      field: 'packId',
+    });
+  // both terms are required: a client that sends only the id (an old admin) can't buy blind
+  if (seen?.priceCents === undefined || seen.conversations === undefined)
+    throw new HttpError(422, 'BAD_REQUEST', 'send the priceCents and conversations shown', {
+      field: 'priceCents',
+    });
+  if (seen.priceCents !== pack.price_cents || seen.conversations !== pack.conversations)
+    throw new HttpError(409, 'AI_PACK_CHANGED', 'the pack changed since it was shown', {
+      field: 'packId',
+    });
+  if (!(await tenantPlan(tx, tenantId)).features.vendedor)
+    throw new HttpError(403, 'PLAN_REQUIRED', "the store's plan does not include the Vendedor", {
+      feature: 'vendedor',
+    });
+  if (!sub || (sub.status !== 'active' && sub.status !== 'past_due'))
+    throw new HttpError(409, 'AI_PACK_NEEDS_PAID_PLAN', 'packs are sold once the plan is paid');
+  const open = (
+    await tx<InvoiceRow[]>`
+      select * from invoices where tenant_id = ${tenantId} and kind = 'ai_pack' and status = 'open'
+      order by created_at desc limit 1
+    `
+  )[0];
+  if (
+    open &&
+    open.ai_pack_id === pack.id &&
+    open.amount_cents === pack.price_cents &&
+    open.ai_conversations === pack.conversations
+  )
+    return pixIsLive(open, now) ? open : await packPix(ctx, tx, sub, open, pack, now);
+  // another pack (or an old price) waiting: it gives way to this one
+  if (open) await voidOpenPack(ctx, tx, open);
+  const inv = (
+    await tx<InvoiceRow[]>`
+      insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end,
+                            method, status, provider, due_at, kind, ai_pack_id, ai_conversations)
+      values (${tenantId},
+              (select coalesce(max(number), 0) + 1 from invoices where tenant_id = ${tenantId}),
+              ${sub.plan_id}, ${pack.price_cents}, ${now}, ${now}, 'pix', 'open',
+              ${ctx.provider.name}, ${now}, 'ai_pack', ${pack.id}, ${pack.conversations})
+      returning *
+    `
+  )[0]!;
+  return packPix(ctx, tx, sub, inv, pack, now);
+}
+
+async function packPix(
+  ctx: BillingCtx,
+  tx: Sql,
+  sub: SubRow,
+  inv: InvoiceRow,
+  pack: AiPackRow,
+  now: Date,
+) {
+  const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
+  if (!payerEmail)
+    throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
+      field: 'payerEmail',
+    });
+  return viaProvider(() =>
+    issuePix(tx, ctx.provider, inv, {
+      payerEmail,
+      planName: `Duá ${pack.name}`,
+      origin: ctx.origin,
+      now,
+      drop: dropPix(ctx),
+    }),
+  );
+}
+
+async function voidOpenPack(ctx: BillingCtx, tx: Sql, inv: InvoiceRow) {
+  if (inv.provider_payment_id) dropPix(ctx)(inv.provider_payment_id);
+  await tx`
+    update invoices set status = 'void', ${supersedePix(tx)}
+    where id = ${inv.id} and status = 'open'
+  `;
+}
+
+/** A pack invoice was paid: what it promised when bought joins the store's for PACK_DAYS, once
+ *  per invoice. */
+async function creditAiPack(tx: Sql, tenantId: string, inv: InvoiceRow, paidAt: Date) {
+  // from the payment itself, not when Core learned of it (a late webhook, a CRM "pago")
+  await tx`
+    insert into ai_credits (tenant_id, invoice_id, conversations, expires_at)
+    values (${tenantId}, ${inv.id}, ${inv.ai_conversations!},
+            ${paidAt}::timestamptz + make_interval(days => ${PACK_DAYS}))
+    on conflict (invoice_id) do nothing
+  `;
 }
 
 /** The upgrade invoice was paid: the plan moves now, and so do the charges ahead. */
@@ -835,7 +974,30 @@ export async function markInvoicePaid(
     `
   )[0];
   if (!inv || !sub) return false;
-  if (inv.kind === 'upgrade') {
+  if (inv.kind === 'ai_pack') {
+    // the Pix was asked for while the plan had Duá; paid after it lost Duá (a cancel, a
+    // downgrade, a CRM toggle) it could never be spent: no credit, and the team refunds it
+    const usable =
+      (await tenantPlan(tx, tenantId)).features.vendedor &&
+      (sub.status === 'active' || sub.status === 'past_due');
+    if (usable) await creditAiPack(tx, tenantId, inv, paidAt);
+    else {
+      const t = (
+        await tx<
+          { name: string; slug: string }[]
+        >`select name, slug from tenants where id = ${tenantId}`
+      )[0];
+      const body = `A fatura ${inv.number} (pacote de conversas do Duá, ${formatBRL(inv.amount_cents)}) da loja ${t?.name} (${t?.slug}) foi paga quando o plano já não tinha o Duá. As conversas não entraram: devolva pelo Mercado Pago.`;
+      ctx.later(() =>
+        billingStaff.notify(ctx.sql, {
+          subject: `Pacote do Duá pago sem o Duá: ${t?.name ?? tenantId}`,
+          body,
+          idemKey: `invoice-pack-unusable:${inv.id}`,
+        }),
+      );
+      await recordBillingProblem(tx, tenantId, 'pix_mismatch', body, `pack-unusable:${inv.id}`);
+    }
+  } else if (inv.kind === 'upgrade') {
     if (upgradeLive(sub, { ...inv, status: 'open' }, paidAt))
       await applyUpgrade(ctx, tx, sub, inv, now);
     else {
@@ -865,7 +1027,7 @@ export async function markInvoicePaid(
           status_changed_at = case when status = 'active' then status_changed_at else now() end
         where tenant_id = ${tenantId}
       `;
-      // a trial's first payment is the plan's first: a PRO+ chosen during it gets its site now
+      // a trial's first payment is the plan's first: a plan with the site, chosen during it, gets its site now
       if (sub.status === 'trialing' && (await planRow(tx, sub.plan_id))?.features?.customSite)
         await openSiteRequest(ctx, tx, tenantId);
     }
@@ -895,7 +1057,10 @@ async function recordPaid(tx: Sql, tenantId: string, inv: InvoiceRow, method: st
       amountCents: inv.amount_cents,
       first,
       method,
-      plan: (await planRow(tx, inv.plan_id))?.name ?? inv.plan_id,
+      plan:
+        inv.kind === 'ai_pack'
+          ? `${(await aiPackRow(tx, inv.ai_pack_id!))?.name ?? inv.ai_pack_id} (Duá)`
+          : ((await planRow(tx, inv.plan_id))?.name ?? inv.plan_id),
     },
     { tenantId, dedupeKey: `billing.paid:${inv.id}` },
   );
@@ -981,7 +1146,7 @@ export async function applyPendingPlan(ctx: BillingCtx, tx: Sql, tenantId: strin
     await openSiteRequest(ctx, tx, tenantId);
 }
 
-/** PRO+ comes with a site made by our agent: one open request per store, and the team hears. */
+/** Pangolim comes with a site made by our agent: one open request per store, and the team hears. */
 export async function openSiteRequest(
   ctx: BillingCtx,
   tx: Sql,
@@ -1003,15 +1168,15 @@ export async function openSiteRequest(
   )[0];
   ctx.later(() =>
     billingStaff.notify(ctx.sql, {
-      subject: `Site PRO+: ${t?.name ?? tenantId}`,
-      body: `A loja ${t?.name} (${t?.slug}) está no Venduá PRO+ e tem um pedido de site aberto.${brief ? `\n\n${brief}` : ''}`,
+      subject: `Site sob medida: ${t?.name ?? tenantId}`,
+      body: `A loja ${t?.name} (${t?.slug}) tem um plano com site sob medida e um pedido de site aberto.${brief ? `\n\n${brief}` : ''}`,
       idemKey: `site-request:${row.id}`,
     }),
   );
   await recordStaffEventTx(
     tx,
     'store.request',
-    { storeName: t?.name ?? tenantId, title: 'site PRO+', detail: brief },
+    { storeName: t?.name ?? tenantId, title: 'site sob medida', detail: brief },
     { tenantId, dedupeKey: `store.request:site:${row.id}` },
   );
   await emitAdminTx(tx, tenantId, 'billing');

@@ -2,6 +2,7 @@ import {
   CaretLeft,
   CaretUpDown,
   DotsNine,
+  Lock,
   MagnifyingGlass,
   SignOut,
   WifiSlash,
@@ -20,7 +21,7 @@ import {
 } from '../lib/live.ts';
 import { applyUpdate, onUpdate, setBadge, updateReady } from '../lib/pwa.ts';
 import { qk } from '../lib/query.ts';
-import { can, ROLE_LABEL, useSession } from '../lib/session.ts';
+import { can, featureOpen, ROLE_LABEL, useSession } from '../lib/session.ts';
 import { setVolume, unlockAudio } from '../lib/sound.ts';
 import { Boundary } from '../ui/Boundary.tsx';
 import { cn } from '../ui/cn.ts';
@@ -84,8 +85,9 @@ export function Shell({ children }: { children: ReactNode }) {
   const nav = useNavigate();
   const liveRegion = useRef<HTMLDivElement>(null);
   // the kitchen screens own the whole display: no rail, bars or pull-to-refresh, their own keys
-  const kitchen = loc.pathname.startsWith('/cozinha');
-  // the Vendedor's onboarding is a journey with its own header, like /bem-vindo, but it keeps
+  // (locked by the plan, the kitchen is an ordinary page: the lock is the upsell)
+  const kitchen = loc.pathname.startsWith('/cozinha') && featureOpen(session, 'kds');
+  // Duá's onboarding is a journey with its own header, like /bem-vindo, but it keeps
   // the live stream (the interviewer's replies arrive on it)
   const bare = kitchen || loc.pathname === '/vendedor/comecar';
   const bareRef = useRef(kitchen);
@@ -222,6 +224,8 @@ export function Shell({ children }: { children: ReactNode }) {
                           to={n.to}
                           className="absolute right-2 top-1 lg:static lg:ml-auto"
                         />
+                      ) : n.feature && !featureOpen(session, n.feature) ? (
+                        <NavLock className="absolute right-2 top-1.5 lg:static lg:ml-auto" />
                       ) : null}
                     </>
                   )}
@@ -499,5 +503,15 @@ export function UserMenu() {
         <SignOut className="size-5" />
       </button>
     </div>
+  );
+}
+
+/** A screen the plan doesn't open: still a link (the screen shows the plan that has it). */
+export function NavLock({ className, quiet }: { className?: string; quiet?: boolean }) {
+  return (
+    <span className={cn('text-faint', className)}>
+      <Lock weight="fill" className="size-3.5" aria-hidden />
+      {quiet ? null : <span className="sr-only">, fora do seu plano</span>}
+    </span>
   );
 }

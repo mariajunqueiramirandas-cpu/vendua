@@ -3,6 +3,7 @@ import { loadCartView } from '../modules/cart.ts';
 import { lineText } from './cards.ts';
 import { describeGuard, type CompiledGuard } from './knowledge.ts';
 import { customerCard, type CustomerCard } from './pack.ts';
+import { aiAllowanceTx } from '../modules/billing/ai-allowance.ts';
 import { DEFAULT_SETTINGS, introduction, loadAgent, type StoreAgentSettings } from './settings.ts';
 import {
   loadStoreSettings,
@@ -40,6 +41,14 @@ export interface HomeView {
     firstSaleAt: string | null;
   };
   presence: Presence;
+  /** what Duá can still take this period (ADR 0032): 0 left means shoppers go to the store */
+  allowance: {
+    period: 'month' | 'trial' | null;
+    limit: number;
+    used: number;
+    remaining: number;
+    resetsAt: string | null;
+  };
   whatsapp: { state: string | null; linked: boolean };
   active: number;
   replyP50Sec: number | null;
@@ -160,6 +169,7 @@ export async function homeView(tx: Sql, tenantId: string, now = new Date()): Pro
         : agent.settings.coverage === 'always'
           ? 'answering'
           : 'covering';
+  const ai = await aiAllowanceTx(tx, tenantId, now);
   const ob = agent.onboarding as { started?: boolean; finished?: boolean; part?: string };
   return {
     agent: {
@@ -173,6 +183,13 @@ export async function homeView(tx: Sql, tenantId: string, now = new Date()): Pro
       firstSaleAt: agent.firstSaleAt?.toISOString() ?? null,
     },
     presence,
+    allowance: {
+      period: ai.period,
+      limit: ai.limit,
+      used: ai.used,
+      remaining: ai.remaining,
+      resetsAt: ai.resetsAt?.toISOString() ?? null,
+    },
     whatsapp: { state: wa?.state ?? null, linked },
     active: active?.n ?? 0,
     replyP50Sec: p50.p50,

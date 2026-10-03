@@ -63,6 +63,7 @@ export async function recoveryPass(sql: Sql, tenantId: string, now = new Date())
 /** An online Pix that lapsed unpaid: offered once more. */
 export async function pixExpiryPass(sql: Sql, tenantId: string, now = new Date()): Promise<number> {
   return withTenant(sql, tenantId, async (tx) => {
+    if (!(await loadAgent(tx, tenantId)).enabled) return 0;
     const due = await tx<{ thread_id: string; order_id: string; number: number }[]>`
       select distinct on (o.id) t.id as thread_id, o.id as order_id, o.number
       from orders o join shopper_threads t on t.id = o.thread_id
@@ -147,6 +148,8 @@ async function outboxRow(
   r: { id: string; tenant_id: string; topic: string; payload: Record<string, unknown> },
 ): Promise<void> {
   await withTenant(sql, r.tenant_id, async (tx) => {
+    // the switch or the plan turned it off since enabledStores read it
+    if (!(await loadAgent(tx, r.tenant_id)).enabled) return;
     if (r.topic === 'waitlist.restocked') {
       const productId = String(r.payload.productId ?? '');
       const contacts = (Array.isArray(r.payload.contacts) ? r.payload.contacts : []).map((c) =>
@@ -336,6 +339,8 @@ export async function menuChangePass(
 ): Promise<boolean> {
   if (!hasModel) return false;
   return withTenant(sql, tenantId, async (tx) => {
+    // switched off, or a plan without the Vendedor: no model runs on its own (ADR 0032)
+    if (!(await loadAgent(tx, tenantId)).enabled) return false;
     const [r] = await tx<{ changed: boolean }[]>`
       select exists (select 1 from audit_log where tenant_id = ${tenantId} and entity in ('product', 'category', 'modifier', 'catalog')
           and at > coalesce((select max(created_at) from vendedor_runs where tenant_id = ${tenantId}), 'epoch'::timestamptz))

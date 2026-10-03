@@ -1,7 +1,7 @@
 import { Check } from '@phosphor-icons/react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '../cn.ts';
-import { PersonaAvatar } from './PersonaAvatar.tsx';
+import { PersonaAvatar, type AvatarPose } from './PersonaAvatar.tsx';
 
 export type AgentPart = 'conhecer' | 'ensinar' | 'testar' | 'comecar';
 
@@ -13,17 +13,15 @@ export const AGENT_PARTS: { id: AgentPart; label: string }[] = [
 ];
 
 /**
- * The header of "Treinar a Ana" (sales-agent-ux §3.12): the store onboarding's journey bar
- * with the Vendedor's four parts, her name and avatar, and the way out ("continuar depois").
+ * The header of "Treinar o Duá" (sales-agent-ux §3.12): the store onboarding's journey bar
+ * with Duá's four parts, his face, and the way out ("continuar depois").
  */
 export function AgentJourney({
-  name,
   part,
   progress,
   status,
   exit,
 }: {
-  name: string;
   part: AgentPart;
   /** 0..1 inside the current part */
   progress: number;
@@ -39,8 +37,8 @@ export function AgentJourney({
       <div className="mx-auto max-w-6xl px-4 pb-2.5 pt-2 md:px-8">
         <div className="flex min-h-12 items-center gap-2">
           <p className="flex min-w-0 flex-1 items-center gap-2 font-display text-[1.0625rem] font-semibold">
-            <PersonaAvatar name={name} size="xs" />
-            <span className="truncate">Treinar a {name}</span>
+            <PersonaAvatar size="sm" />
+            <span className="truncate">Treinar o Duá</span>
           </p>
           {exit}
         </div>
@@ -87,16 +85,17 @@ const still = () =>
   navigator.webdriver || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /**
- * Ana guiding her own onboarding, in first person: her avatar beside a speech bubble (the
- * store onboarding's `Guide`, with the persona instead of Duá). It "types" for a beat when
- * the turn changes; the bubble keeps its final size meanwhile, so nothing below jumps.
+ * Duá guiding his own onboarding, in first person: his face beside a speech bubble (the store
+ * onboarding's `Guide`). It "types" for a beat when the turn changes, thinking meanwhile; the
+ * bubble keeps its final size, so nothing below jumps.
  */
 export function AgentGuide({
-  name,
   turn,
+  pose,
   children,
 }: {
-  name: string;
+  /** the face for this turn: `avatar-feliz` when something worked, `avatar-ajuda` when he needs you */
+  pose?: AvatarPose | undefined;
   /** changes with each question: replays the typing beat */
   turn: string;
   children: ReactNode;
@@ -110,12 +109,12 @@ export function AgentGuide({
   }, [turn]);
   return (
     <div className="flex items-end gap-3">
-      <PersonaAvatar name={name} size="md" />
+      <PersonaAvatar size="md" pose={typing ? 'avatar-pensando' : pose} />
       <div
         aria-live="polite"
         className="t-body-lg min-h-12 min-w-0 rounded-lg rounded-bl-sm bg-surface px-4 py-3 depth-1"
       >
-        <span className="sr-only">{name}: </span>
+        <span className="sr-only">Duá: </span>
         {typing ? (
           <span aria-hidden className="typing-lines skeleton">
             {children}

@@ -5,7 +5,6 @@ import { useSearchParams } from 'react-router-dom';
 import { api, type Knowledge, type KnowledgeItem } from '../../lib/api.ts';
 import { when } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
-import { useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -16,7 +15,7 @@ import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { FieldSkeleton, RowsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { GuaranteeChip } from '../../ui/vendedor/index.ts';
-import { TeachSheet, withName, type TeachValues } from './Teach.sheet.tsx';
+import { TeachSheet, type TeachValues } from './Teach.sheet.tsx';
 
 type SheetState =
   | { mode: 'new'; initial: TeachValues }
@@ -33,8 +32,6 @@ const timesUsed = (n: number) =>
   n === 0 ? 'ainda não usada' : n === 1 ? 'usada 1 vez' : `usada ${n} vezes`;
 
 export default function Teach() {
-  const s = useSession();
-  const name = s.vendedor?.name || 'Vendedor';
   const qc = useQueryClient();
   const { data, error, refetch } = useQuery({
     queryKey: qk.vendedor.knowledge,
@@ -70,8 +67,8 @@ export default function Teach() {
       put(k);
       toast(
         v.replyWaiting
-          ? `A ${name} aprendeu, e mandamos a resposta para quem perguntou.`
-          : `A ${name} aprendeu. Na próxima vez, ela responde assim.`,
+          ? 'O Duá aprendeu, e mandamos a resposta para quem perguntou.'
+          : 'O Duá aprendeu. Na próxima vez, ele responde assim.',
       );
     },
     onError: (e) => toast.error(messageOf(e)),
@@ -81,7 +78,7 @@ export default function Teach() {
       api.vendedor.updateKnowledge(v.id, { status: v.status }),
     onSuccess: (k, v) => {
       put(k);
-      toast(v.status === 'live' ? `A ${name} aprendeu.` : 'Ignorado.');
+      toast(v.status === 'live' ? 'O Duá aprendeu.' : 'Ignorado.');
     },
     onError: (e) => toast.error(messageOf(e)),
   });
@@ -102,7 +99,7 @@ export default function Teach() {
     onSuccess: (k, { st }) => {
       put(k);
       setOpen(false);
-      toast(st.mode === 'edit' ? 'Salvo.' : `A ${name} aprendeu.`);
+      toast(st.mode === 'edit' ? 'Salvo.' : 'O Duá aprendeu.');
     },
     onError: (e) => toast.error(messageOf(e)),
   });
@@ -133,7 +130,7 @@ export default function Teach() {
     <PageHeader
       title="Ensinar"
       back="/vendedor"
-      subtitle={`O que a ${name} sabe sobre a sua loja: respostas e regras.`}
+      subtitle="O que o Duá sabe sobre a sua loja: respostas e regras."
       actions={
         <ButtonLink
           to="/vendedor/testar"
@@ -176,7 +173,7 @@ export default function Teach() {
         <Card className="mb-8">
           <EmptyState
             art={<ArtChat />}
-            title={`A ${name} já sabe o seu cardápio, horários e taxas.`}
+            title="O Duá já sabe o seu cardápio, horários e taxas."
             body="Ensine aqui o que só você sabe: estacionamento, encomendas para festa…"
             action={
               <Button icon={<Plus weight="bold" />} onClick={newAnswer}>
@@ -196,14 +193,13 @@ export default function Teach() {
                 <Count n={data.questions.length} />
               </span>
             }
-            hint={`A ${name} não soube responder. Ensine uma vez e ela responde sozinha daqui pra frente.`}
+            hint="O Duá não soube responder. Ensine uma vez e ele responde sozinho daqui pra frente."
           >
             <Card as="div" className="divide-y divide-line">
               {data.questions.map((q) => (
                 <QuestionCard
                   key={q.id}
                   item={q}
-                  name={name}
                   busy={answer.isPending && answer.variables?.id === q.id}
                   dismissing={setStatus.isPending && setStatus.variables?.id === q.id}
                   onAnswer={(text, replyWaiting) =>
@@ -220,7 +216,6 @@ export default function Teach() {
           <LearnedCard
             key={k.id}
             item={k}
-            name={name}
             busy={setStatus.isPending && setStatus.variables?.id === k.id}
             onAccept={() => setStatus.mutate({ id: k.id, status: 'live' })}
             onEdit={() => show({ mode: 'learned', item: k, initial: valuesOf(k) })}
@@ -266,8 +261,8 @@ export default function Teach() {
               <>
                 <strong className="font-semibold text-ink">Sempre cumprida</strong>: o sistema
                 confere em todo pedido.{' '}
-                <strong className="font-semibold text-ink">Orientação</strong>: a {name} segue como
-                uma instrução para a equipe.
+                <strong className="font-semibold text-ink">Orientação</strong>: o Duá segue como uma
+                instrução para a equipe.
               </>
             }
             action={
@@ -285,9 +280,9 @@ export default function Teach() {
                     onClick={() => show({ mode: 'edit', item: k, initial: valuesOf(k) })}
                   >
                     <p className="font-semibold">{k.answer}</p>
-                    <GuaranteeChip guaranteed={k.guaranteed} name={name} className="mt-2" />
+                    <GuaranteeChip guaranteed={k.guaranteed} className="mt-2" />
                     {k.guaranteed && k.guarantee ? (
-                      <p className="t-caption mt-1.5 text-muted">{withName(k.guarantee, name)}</p>
+                      <p className="t-caption mt-1.5 text-muted">{k.guarantee}</p>
                     ) : null}
                   </ItemButton>
                 ))}
@@ -303,7 +298,7 @@ export default function Teach() {
         <p className="t-body flex items-start gap-3 rounded-md bg-info-soft px-4 py-3.5">
           <Info weight="fill" className="mt-0.5 size-5 shrink-0 text-info" aria-hidden />
           <span>
-            Horário, taxas, preços e estoque a {name} lê da loja na hora. Não precisa ensinar.
+            Horário, taxas, preços e estoque o Duá lê da loja na hora. Não precisa ensinar.
           </span>
         </p>
 
@@ -322,7 +317,6 @@ export default function Teach() {
         <TeachSheet
           open={open}
           onOpenChange={setOpen}
-          name={name}
           initial={sheet.initial}
           title={
             sheet.mode === 'new'
@@ -339,7 +333,7 @@ export default function Teach() {
             sheet.mode === 'learned'
               ? 'Ajuste as palavras. Só vale depois do seu ok.'
               : sheet.initial.kind === 'rule'
-                ? `Escreva como você falaria para a equipe. A ${name} segue a partir de agora.`
+                ? 'Escreva como você falaria para a equipe. O Duá segue a partir de agora.'
                 : undefined
           }
           submitLabel={sheet.mode === 'edit' ? 'salvar' : 'ensinar'}
@@ -384,14 +378,12 @@ function ItemButton({
 
 function QuestionCard({
   item,
-  name,
   busy,
   dismissing,
   onAnswer,
   onDismiss,
 }: {
   item: KnowledgeItem;
-  name: string;
   busy: boolean;
   dismissing: boolean;
   onAnswer: (text: string, replyWaiting: boolean) => void;
@@ -423,7 +415,7 @@ function QuestionCard({
         onChange={(e) => setText(e.target.value)}
       />
       <span id={`${id}-h`} className="sr-only">
-        Sua resposta, que a {name} vai usar daqui pra frente
+        Sua resposta, que o Duá vai usar daqui pra frente
       </span>
       {text.trim() ? (
         <label className="t-body flex min-h-12 cursor-pointer items-center gap-3">
@@ -463,14 +455,12 @@ const SOURCE: Record<string, string> = {
 /** "Aprendi com você": the owner's reply to a handed-off shopper, back as a proposal (§3.5). */
 function LearnedCard({
   item,
-  name,
   busy,
   onAccept,
   onEdit,
   onDismiss,
 }: {
   item: KnowledgeItem;
-  name: string;
   busy: boolean;
   onAccept: () => void;
   onEdit: () => void;
@@ -496,11 +486,11 @@ function LearnedCard({
       >
         {item.answer}
       </blockquote>
-      {rule ? <GuaranteeChip guaranteed={item.guaranteed} name={name} /> : null}
+      {rule ? <GuaranteeChip guaranteed={item.guaranteed} /> : null}
       <p className="t-label">
         {rule
-          ? `Quer que a ${name} siga essa regra daqui pra frente?`
-          : `Quer que a ${name} responda assim daqui pra frente?`}
+          ? 'Quer que o Duá siga essa regra daqui pra frente?'
+          : 'Quer que o Duá responda assim daqui pra frente?'}
       </p>
       <div className="flex flex-wrap gap-2">
         <Button icon={<Check weight="bold" />} onClick={onAccept} loading={busy}>

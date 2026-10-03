@@ -10,6 +10,7 @@ import {
 } from 'react';
 import type { SlotProps, StoreChatMessage } from '@vendua/kernel';
 import { DEFAULT_VOCABULARY, formatTime } from '@vendua/kernel/rules';
+import { DUA_FACE } from './dua.ts';
 import { zoneOr } from './format.ts';
 
 // system.Chat — the store's assistant on the site (Kernel 1.18): a launcher in the bottom
@@ -49,18 +50,9 @@ function Body({
 const side = (a: StoreChatMessage['author']) => (a === 'shopper' ? 'shopper' : a);
 const run = (a: StoreChatMessage['author']) => (a === 'core' ? 'agent' : a);
 
-function ChatIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false">
-      <path
-        d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.2 3.6c-.5.4-1.3.1-1.3-.6V16A2.5 2.5 0 0 1 4 13.5Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
+/** Duá, the stores' assistant (ADR 0032): the mascot on a cream disc, legible on any theme. */
+function Face() {
+  return <img className="v-chat-face" src={DUA_FACE} alt="" width={40} height={40} />;
 }
 
 function SendIcon() {
@@ -199,7 +191,7 @@ export function StoreChat({
         }`}
         onClick={onOpen}
       >
-        <ChatIcon />
+        <Face />
         <span className="v-chat-launcher-label" data-part="launcher-label" aria-hidden="true">
           {assistant.name}
         </span>
@@ -243,7 +235,7 @@ export function StoreChat({
         <section className="v-chat-panel" data-part="panel">
           <header className="v-chat-head" data-part="head">
             <span className="v-chat-avatar" data-part="avatar" aria-hidden="true">
-              {assistant.name.trim().charAt(0).toLocaleUpperCase('pt-BR')}
+              <Face />
             </span>
             <div className="v-chat-who">
               <h2

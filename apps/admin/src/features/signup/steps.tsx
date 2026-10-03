@@ -21,7 +21,8 @@ import { cn } from '../../ui/cn.ts';
 import { CodeInput, type CodeInputHandle } from '../../ui/CodeInput.tsx';
 import { DuaNote, messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
-import { perMonth, PlanOption } from '../../ui/PlanCard.tsx';
+import { perMonth, shortName } from '../../ui/PlanCard.tsx';
+import { PlanCards, PlanCompare, PlanTrialStrip } from '../../ui/PlanPicker.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { StepFrame } from '../../ui/StepFrame.tsx';
 import { EMAIL_RE, expiry, savePending } from '../auth/pending.ts';
@@ -45,14 +46,35 @@ export const addressOf = (slug: string, domain: string) => `${slug || 'sualoja'}
 
 // ── 1 · plano ────────────────────────────────────────────────────────────
 
-export function PlanStep({ d, patch, go, plans, notice }: FlowProps) {
-  const open = plans.billing.available || plans.billing.accessCode;
+export function PlanStep({
+  d,
+  patch,
+  go,
+  plans,
+  notice,
+  trialEligible,
+}: FlowProps & {
+  /** known once the phone is confirmed (a return to this step): one trial per owner */
+  trialEligible?: boolean | undefined;
+}) {
+  // the CRM's switch plus the platform's WhatsApp, email and a way to pay (Core decides)
+  const open = plans.signup.open;
+  // the trial is for a new owner paying the Venduá: not with an access code
+  const trial = plans.billing.available && !d.byCode && trialEligible !== false;
+  const trialPlan = trial ? plans.plans.find((p) => p.trialDays > 0 && p.available) : undefined;
+  const chosen = plans.plans.find((p) => p.id === d.planId);
   return (
     <StepFrame
       title="Escolha o seu plano"
-      hint="Dá para trocar depois, quando quiser. Você paga por mês, com Pix ou cartão."
-      disabled={!open || !d.planId}
+      hint={
+        plans.plans.every((p) => p.feeBps === 0)
+          ? 'Um preço por mês, com Pix ou cartão, e nenhuma taxa por pedido. Dá para trocar quando quiser.'
+          : 'Um preço por mês, com Pix ou cartão. Dá para trocar quando quiser.'
+      }
+      label={chosen ? `Continuar com o ${shortName(chosen)}` : 'Continuar'}
+      disabled={!open || !chosen?.available}
       onSubmit={() => go('loja')}
+      solidBar
     >
       {notice ? (
         <p className="t-body rounded-md bg-warning-soft px-4 py-3 text-warning" role="status">
@@ -76,18 +98,23 @@ export function PlanStep({ d, patch, go, plans, notice }: FlowProps) {
           Recebeu um código da Venduá? Pode seguir: ele vai na última pergunta.
         </DuaNote>
       ) : null}
-      <div role="radiogroup" aria-label="planos" className="grid gap-3 xl:grid-cols-2">
-        {plans.plans.map((p) => (
-          <PlanOption
-            key={p.id}
-            plan={p}
-            selected={d.planId === p.id}
-            onSelect={() => patch({ planId: p.id })}
-            address={addressOf(d.slug, plans.storeDomain)}
-            trial={plans.billing.available}
-          />
-        ))}
-      </div>
+      {trialPlan ? (
+        <PlanTrialStrip
+          plan={trialPlan}
+          selected={d.planId === trialPlan.id}
+          onPick={() => patch({ planId: trialPlan.id })}
+        />
+      ) : null}
+      <PlanCards
+        plans={plans.plans}
+        selected={d.planId}
+        onSelect={(planId) => patch({ planId })}
+        address={addressOf(d.slug, plans.storeDomain)}
+        trial={trial}
+        wide
+        className="pt-2"
+      />
+      <PlanCompare plans={plans.plans} trial={trial} />
     </StepFrame>
   );
 }
@@ -97,14 +124,22 @@ export function PlanStepSkeleton() {
     <div className="space-y-6" role="status" aria-label="carregando os planos">
       <Skeleton className="h-9 w-64" />
       <Skeleton className="h-6 w-full max-w-md" />
-      {[0, 1].map((i) => (
-        <div key={i} className="space-y-3 rounded-lg bg-surface p-5 depth-1">
-          <Skeleton className="h-7 w-40" />
-          <Skeleton className="h-8 w-32" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
-      ))}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)] lg:items-start lg:gap-5">
+        {[0, 1, 2].map((i) => (
+          <div
+            key={i}
+            className={cn(
+              'space-y-3 rounded-lg bg-surface p-5 depth-1',
+              i === 1 ? 'rounded-xl pt-8 depth-3' : 'lg:mt-8',
+            )}
+          >
+            <Skeleton className="h-7 w-40" />
+            <Skeleton className={cn('w-32', i === 1 ? 'h-11' : 'h-8')} />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -356,7 +391,12 @@ export function WhatsappStep({
       patch({ phone: p, codeSentAt: Date.now(), codeExpiresAt: expiry(r.expiresAt) });
       go('codigo');
     },
-    onError: (e) => setErr(messageOf(e)),
+    onError: (e) =>
+      setErr(
+        e instanceof ApiError && e.code === 'SIGNUP_CLOSED'
+          ? CREATE_ERR.SIGNUP_CLOSED!
+          : messageOf(e),
+      ),
   });
   return (
     <StepFrame
@@ -642,6 +682,11 @@ function stepFor(e: unknown): { step: StepId; notice: string } | null {
       notice: field === 'email' ? 'Confira o e-mail, como maria@gmail.com.' : 'Confira o seu nome.',
     };
   if (field === 'segment') return { step: 'tipo', notice: 'Escolha de novo o que a loja vende.' };
+  if (e.code === 'PLAN_UNAVAILABLE')
+    return {
+      step: 'plano',
+      notice: 'Esse plano ainda não está aberto para assinatura. Escolha outro.',
+    };
   if (e.code === 'UNKNOWN_PLAN' || field === 'planId')
     return { step: 'plano', notice: 'Esse plano mudou. Escolha de novo.' };
   return null;
@@ -650,6 +695,7 @@ function stepFor(e: unknown): { step: StepId; notice: string } | null {
 const CREATE_ERR: Record<string, string> = {
   SIGNUP_LIMIT: 'Esse WhatsApp já abriu lojas demais hoje. Tente de novo amanhã.',
   BILLING_UNAVAILABLE: 'O cadastro pela internet ainda não abriu. Tente de novo em breve.',
+  SIGNUP_CLOSED: 'O cadastro pela internet está fechado agora. Tente de novo mais tarde.',
   INVALID_ACCESS_CODE: 'Esse código não confere. Confira e tente de novo.',
 };
 

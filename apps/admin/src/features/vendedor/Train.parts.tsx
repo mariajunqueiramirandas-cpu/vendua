@@ -80,13 +80,13 @@ export function TrainFrame({
   );
 }
 
-/** "continuar depois" (or "ir ao painel" at the end): back to the Vendedor's home */
+/** "continuar depois" (or "ir ao painel" at the end): back to Duá's home */
 export function Exit({ done }: { done?: boolean }) {
   return (
     <Link
       to="/vendedor"
       className="t-label inline-flex min-h-12 shrink-0 items-center gap-1 rounded-md px-3 text-muted hover:bg-hover"
-      aria-label={done ? 'ir ao painel do Vendedor' : 'sair e continuar depois'}
+      aria-label={done ? 'ir ao painel do Duá' : 'sair e continuar depois'}
     >
       <X className="size-5" aria-hidden />
       <span className="hidden sm:inline">{done ? 'ir ao painel' : 'continuar depois'}</span>
@@ -94,11 +94,11 @@ export function Exit({ done }: { done?: boolean }) {
   );
 }
 
-/** Three dots where her words will be: still under reduced motion (the dots just don't pulse). */
-export function Dots({ name }: { name: string }) {
+/** Three dots where his words will be: still under reduced motion (the dots just don't pulse). */
+export function Dots() {
   return (
     <span role="status" className="inline-flex h-6 items-center gap-1.5">
-      <span className="sr-only">{name} está escrevendo</span>
+      <span className="sr-only">Duá está escrevendo</span>
       {[0, 1, 2].map((i) => (
         <span
           key={i}
@@ -113,15 +113,13 @@ export function Dots({ name }: { name: string }) {
 
 /**
  * A test conversation (Peça para mim, the interview) as the owner sees it: they are the
- * customer on the right in forest, she answers on the left; Core's receipt sits in her column.
+ * customer on the right in forest, Duá answers on the left; Core's receipt sits in his column.
  */
 export function TestLines({
   messages,
-  name,
   owner = 'você, como cliente',
 }: {
   messages: ThreadMessage[];
-  name: string;
   owner?: string;
 }) {
   return (
@@ -147,7 +145,6 @@ export function TestLines({
             <Bubble
               key={m.id}
               voice="seller"
-              name={name}
               align="start"
               time={time}
               signed={prev?.author !== 'agent'}

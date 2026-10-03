@@ -1,6 +1,7 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { createElement, lazy, type ComponentType } from 'react';
-import { api } from '../lib/api.ts';
+import { api, type Session } from '../lib/api.ts';
+import { featureOpen } from '../lib/session.ts';
 import { isoDate } from '../lib/format.ts';
 import { qk } from '../lib/query.ts';
 import { rangeOf } from '../features/reports/range.ts';
@@ -127,6 +128,12 @@ interface RouteDef {
 const q = (qc: QueryClient, queryKey: readonly unknown[], queryFn: () => Promise<unknown>) =>
   qc.prefetchQuery({ queryKey, queryFn });
 
+// a plan without the kitchen gets its locked page, not a 403 warm-up
+const kds = (qc: QueryClient) => {
+  const s = qc.getQueryData<Session>(qk.session);
+  return !s || featureOpen(s, 'kds');
+};
+
 const ROUTES: RouteDef[] = [
   {
     id: 'home',
@@ -170,13 +177,13 @@ const ROUTES: RouteDef[] = [
     id: 'pickup',
     match: /^\/cozinha\/painel$/,
     chunk: chunks.pickup,
-    data: (qc) => q(qc, qk.kitchen, api.kitchen),
+    data: (qc) => (kds(qc) ? q(qc, qk.kitchen, api.kitchen) : Promise.resolve()),
   },
   {
     id: 'kitchen',
     match: /^\/cozinha$/,
     chunk: chunks.kitchen,
-    data: (qc) => q(qc, qk.kitchen, api.kitchen),
+    data: (qc) => (kds(qc) ? q(qc, qk.kitchen, api.kitchen) : Promise.resolve()),
   },
   {
     id: 'product',

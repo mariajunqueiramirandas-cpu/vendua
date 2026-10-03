@@ -29,14 +29,11 @@ function useDebounced<T>(v: T, ms: number) {
   return d;
 }
 
-/** Core's own words name the persona "a Ana"; say the name this store chose. */
-export const withName = (text: string, name: string) => text.replace(/\ba Ana\b/g, `a ${name}`);
-
 /**
  * What a rule will be before it's saved: "sempre cumprida" when Core recognizes and enforces
  * it, "orientação" otherwise (sales-agent-ux §3.5). Asked of Core as the words settle.
  */
-export function RulePreview({ text, name }: { text: string; name: string }) {
+export function RulePreview({ text }: { text: string }) {
   const words = useDebounced(text.trim(), 400);
   const ready = words.length >= 3;
   const { data, isFetching } = useQuery({
@@ -59,11 +56,11 @@ export function RulePreview({ text, name }: { text: string; name: string }) {
       </div>
       {data ? (
         <>
-          <GuaranteeChip guaranteed={data.guaranteed} name={name} className="self-start" />
+          <GuaranteeChip guaranteed={data.guaranteed} className="self-start" />
           <p className="t-body">
             {data.guaranteed && data.guarantee
-              ? withName(data.guarantee, name)
-              : `A ${name} segue como uma instrução para a equipe. Para ser sempre cumprida, fale de valor ou quantidade, como "não aceite dinheiro acima de R$ 200".`}
+              ? data.guarantee
+              : 'O Duá segue como uma instrução para a equipe. Para ser sempre cumprida, fale de valor ou quantidade, como "não aceite dinheiro acima de R$ 200".'}
           </p>
         </>
       ) : null}
@@ -82,7 +79,6 @@ export function TeachSheet({
   description,
   initial,
   kinds,
-  name,
   submitLabel,
   busy,
   onSubmit,
@@ -96,7 +92,6 @@ export function TeachSheet({
   initial: TeachValues;
   /** offer both kinds (Ensaio); otherwise the initial kind is fixed */
   kinds?: boolean | undefined;
-  name: string;
   submitLabel: string;
   busy?: boolean | undefined;
   onSubmit: (v: TeachValues) => void;
@@ -189,7 +184,7 @@ export function TeachSheet({
                 onChange={(e) => setV((o) => ({ ...o, question: e.target.value }))}
               />
             </Field>
-            <Field label={`A ${name} responde`} htmlFor={`${formId}-a`} error={tried ? errA : null}>
+            <Field label="O Duá responde" htmlFor={`${formId}-a`} error={tried ? errA : null}>
               <TextArea
                 id={`${formId}-a`}
                 value={v.answer}
@@ -218,7 +213,7 @@ export function TeachSheet({
                 onChange={(e) => setV((o) => ({ ...o, answer: e.target.value }))}
               />
             </Field>
-            <RulePreview text={v.answer} name={name} />
+            <RulePreview text={v.answer} />
           </>
         )}
       </form>

@@ -27,7 +27,8 @@ type Topic =
   | 'printers'
   | 'kitchen'
   | 'vendedor'
-  | 'vendedor.waiting';
+  | 'vendedor.waiting'
+  | 'vendedor.exhausted';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity],
@@ -40,15 +41,18 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   // storefront operations changed elsewhere (prep time, demand) show in Loja too
   surfaces: [qk.store],
   'payment.received': [['orders'], qk.home, ['payments'], ['reports'], qk.activity],
-  billing: [qk.account, qk.payments, qk.home, qk.store],
+  // a payment can open a plan's features: the session carries what is open
+  billing: [qk.account, qk.payments, qk.home, qk.store, qk.session],
   alerts: [qk.alerts, qk.home],
   import: [qk.imports],
   whatsapp: [qk.whatsapp],
   printers: [['printers']],
   kitchen: [qk.kitchen],
   // the session carries the Vendedor's tab and its "precisa de você" badge
-  vendedor: [['vendedor'], qk.session],
+  // a conversation counted moves Conta's usage meter too
+  vendedor: [['vendedor'], qk.session, qk.account],
   'vendedor.waiting': [['vendedor'], qk.session],
+  'vendedor.exhausted': [['vendedor'], qk.account],
 };
 
 // ── connection + alert state (a tiny external store) ───────────────────────

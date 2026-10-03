@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, type IncidentSeverity, type SiteRequestStatus } from '@/lib/api.ts';
+import {
+  api,
+  type AiPackPatch,
+  type IncidentSeverity,
+  type PlanPatch,
+  type SiteRequestStatus,
+} from '@/lib/api.ts';
 import { errorMessage, qk } from '@/lib/query.ts';
 
 export const useBillingStores = () =>
@@ -8,6 +14,19 @@ export const useBillingStores = () =>
 
 export const useControlPlans = () =>
   useQuery({ queryKey: qk.controlPlans(), queryFn: api.controlPlans, select: (r) => r.plans });
+
+export const useAiPacks = () =>
+  useQuery({ queryKey: qk.aiPacks(), queryFn: api.listAiPacks, select: (r) => r.packs });
+
+export function usePatchAiPack() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: AiPackPatch & { id: string }) => api.patchAiPack(id, patch),
+    onSuccess: () => toast.success('pacote salvo'),
+    onError: (e) => toast.error(`não salvou: ${errorMessage(e)}`),
+    onSettled: () => void qc.invalidateQueries({ queryKey: qk.aiPacks() }),
+  });
+}
 
 export const useIncidents = () =>
   useQuery({ queryKey: qk.incidents(), queryFn: api.incidents, select: (r) => r.incidents });
@@ -53,13 +72,7 @@ export function usePatchSiteRequest() {
 export function usePatchPlan() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: {
-      id: string;
-      name?: string;
-      priceCents?: number;
-      public?: boolean;
-      trialDays?: number;
-    }) => {
+    mutationFn: (v: PlanPatch & { id: string }) => {
       const { id, ...patch } = v;
       return api.patchPlan(id, patch);
     },

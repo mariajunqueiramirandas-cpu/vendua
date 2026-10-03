@@ -21,7 +21,7 @@ import { Mascote } from '../../ui/Mascote.tsx';
 import { HelpButton, PageBody, PageHeader } from '../../ui/Page.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { FloorChip, ReasonChip } from '../../ui/vendedor/index.ts';
-import { ConversationPane, useAgentName, useMedia } from './Conversation.tsx';
+import { ConversationPane, useMedia } from './Conversation.tsx';
 import { Initials, dayLabel, msgTime } from './Conversation.parts.tsx';
 
 const FILTERS: ThreadFilter[] = ['all', 'waiting', 'orders', 'agent', 'others'];
@@ -199,7 +199,6 @@ function ListTools({
   search: RefObject<HTMLInputElement>;
   desktop: boolean;
 }) {
-  const name = useAgentName();
   const waiting = useSession().vendedor?.waiting ?? 0;
   return (
     <div className="space-y-3">
@@ -225,7 +224,7 @@ function ListTools({
             label: waiting ? `precisa de você · ${waiting}` : 'precisa de você',
           },
           { value: 'orders', label: 'com pedido' },
-          { value: 'agent', label: `${name} atendendo` },
+          { value: 'agent', label: 'Duá atendendo' },
           { value: 'others', label: 'outros' },
         ]}
       />
@@ -314,7 +313,6 @@ function Row({
   desktop: boolean;
   onPick: (id: string) => void;
 }) {
-  const name = useAgentName();
   const preload = usePreload();
   const to = desktop
     ? `/vendedor/conversas?c=${encodeURIComponent(r.id)}`
@@ -322,7 +320,7 @@ function Row({
   const waited = r.waitingSince ? minutesSince(r.waitingSince) : null;
   const by =
     r.previewAuthor === 'agent'
-      ? `${name}: `
+      ? 'Duá: '
       : r.previewAuthor === 'merchant'
         ? 'você: '
         : r.previewAuthor === 'core'
@@ -370,11 +368,7 @@ function Row({
         <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {r.waitingSince ? (
             <>
-              {r.reason ? (
-                <ReasonChip reason={r.reason} />
-              ) : (
-                <FloorChip floor={r.floor} waiting name={name} />
-              )}
+              {r.reason ? <ReasonChip reason={r.reason} /> : <FloorChip floor={r.floor} waiting />}
               <span
                 className={cn(
                   't-caption',
@@ -390,7 +384,7 @@ function Row({
               pedido #{r.orderNumber}
             </span>
           ) : (
-            <FloorChip floor={r.floor} name={name} />
+            <FloorChip floor={r.floor} />
           )}
         </span>
       </span>
@@ -399,7 +393,6 @@ function Row({
 }
 
 function Empty({ filter, q }: { filter: ThreadFilter; q: string }) {
-  const name = useAgentName();
   const test = useCan('manager');
   if (q)
     return (
@@ -412,7 +405,7 @@ function Empty({ filter, q }: { filter: ThreadFilter; q: string }) {
   const copy: Record<ThreadFilter, { title: string; body: string }> = {
     all: {
       title: 'Ninguém escreveu ainda',
-      body: `A ${name} responde assim que alguém chamar no WhatsApp da loja.`,
+      body: 'O Duá responde assim que alguém chamar no WhatsApp da loja.',
     },
     waiting: {
       title: 'Ninguém esperando por você',
@@ -420,11 +413,11 @@ function Empty({ filter, q }: { filter: ThreadFilter; q: string }) {
     },
     orders: {
       title: 'Nenhuma conversa virou pedido ainda',
-      body: `Os pedidos que a ${name} fechar aparecem aqui.`,
+      body: 'Os pedidos que o Duá fechar aparecem aqui.',
     },
     agent: {
-      title: `A ${name} não está atendendo ninguém agora`,
-      body: 'As conversas dela aparecem aqui enquanto ela atende.',
+      title: 'O Duá não está atendendo ninguém agora',
+      body: 'As conversas dele aparecem aqui enquanto ele atende.',
     },
     others: {
       title: 'Nenhum número em “outros”',

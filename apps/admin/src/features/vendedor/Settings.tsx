@@ -12,7 +12,7 @@ import { qk } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { ErrorState } from '../../ui/feedback.tsx';
-import { Chips, Field, MoneyField, Segmented, TextInput, Toggle } from '../../ui/fields.tsx';
+import { Chips, Field, MoneyField, Segmented, Toggle } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { Bubble, PersonaAvatar } from '../../ui/vendedor/index.ts';
@@ -32,16 +32,15 @@ export default function VendedorSettings() {
     queryKey: qk.vendedor.settings,
     queryFn: api.vendedor.settings,
   });
-  const name = data?.settings.name ?? session.vendedor?.name ?? 'Vendedor';
   return (
     <PageBody>
       <PageHeader
         title="Configurar"
         back="/vendedor"
-        subtitle={`Como a ${name} fala e o que ela pode fazer.`}
+        subtitle="Como o Duá fala e o que ele pode fazer."
       />
       {data ? (
-        <Editor v={data} owner={session.user.role === 'owner'} store={session.store.name} />
+        <Editor v={data} owner={session.user.role === 'owner'} />
       ) : error ? (
         <ErrorState error={error} retry={() => void refetch()} />
       ) : (
@@ -51,12 +50,12 @@ export default function VendedorSettings() {
   );
 }
 
-function Editor({ v, owner, store }: { v: VendedorSettings; owner: boolean; store: string }) {
+function Editor({ v, owner }: { v: VendedorSettings; owner: boolean }) {
   const s = v.settings;
   return (
     <div className="space-y-5">
       <Power v={v} owner={owner} />
-      <Persona s={s} owner={owner} store={store} />
+      <Persona s={s} intro={v.intro} owner={owner} />
       <When s={s} />
       <Can v={v} owner={owner} />
       <Handoff s={s} />
@@ -66,14 +65,13 @@ function Editor({ v, owner, store }: { v: VendedorSettings; owner: boolean; stor
 
 function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
   const { run, state, retry } = useSettingsPatch();
-  const name = v.settings.name;
   const live = v.enabled && v.settings.coverage !== 'rehearsal';
   return (
     <Group
       title={
         <span className="flex items-center gap-2.5">
-          <PersonaAvatar name={name} size="sm" answering={live} />
-          {name} ligada
+          <PersonaAvatar size="sm" answering={live} />
+          Ligar o Duá
         </span>
       }
       status={<SaveStatus state={state} retry={retry} />}
@@ -82,7 +80,7 @@ function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
         checked={v.enabled}
         disabled={!owner}
         onChange={(enabled) => void run({ enabled })}
-        label={v.enabled ? 'Ligada' : 'Desligada'}
+        label={v.enabled ? 'Ligado' : 'Desligado'}
         description={
           <>
             {v.enabled
@@ -101,45 +99,10 @@ function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
   );
 }
 
-const NAME_BAD = /[\n\r{}<>]/;
-
-function Persona({ s, owner, store }: { s: StoreAgentSettings; owner: boolean; store: string }) {
+function Persona({ s, intro, owner }: { s: StoreAgentSettings; intro: string; owner: boolean }) {
   const { run, state, retry } = useSettingsPatch();
-  const [draft, setDraft] = useState(s.name);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => setDraft(s.name), [s.name]);
-  const commit = () => {
-    const t = draft.trim();
-    const e = !t
-      ? 'Dê um nome a ela.'
-      : t.length > 30
-        ? 'Até 30 letras.'
-        : NAME_BAD.test(t)
-          ? 'Use só letras, números e espaços.'
-          : null;
-    setErr(e);
-    if (!e && t !== s.name) void run({ name: t });
-  };
   return (
-    <Group title="Como ela se apresenta" status={<SaveStatus state={state} retry={retry} />}>
-      <Field
-        label="Nome"
-        htmlFor="v-name"
-        error={err}
-        helper={`Para o cliente: ${s.disclose ? `${s.name}, assistente virtual` : s.name}.`}
-        className="py-2"
-      >
-        <TextInput
-          id="v-name"
-          value={draft}
-          maxLength={30}
-          autoComplete="off"
-          aria-invalid={err ? true : undefined}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-        />
-      </Field>
+    <Group title="Como ele se apresenta" status={<SaveStatus state={state} retry={retry} />}>
       <Toggle
         checked={s.disclose}
         disabled={!owner}
@@ -148,8 +111,8 @@ function Persona({ s, owner, store }: { s: StoreAgentSettings; owner: boolean; s
         description={
           <>
             {s.disclose
-              ? 'Ela se apresenta como assistente virtual da loja.'
-              : 'Ela se apresenta só pelo nome, nunca diz que é uma pessoa e conta a verdade se perguntarem.'}
+              ? 'Ele se apresenta como assistente virtual da loja.'
+              : 'Ele se apresenta só como o Duá da loja, nunca diz que é uma pessoa e conta a verdade se perguntarem.'}
             {owner ? null : (
               <>
                 {' '}
@@ -162,8 +125,8 @@ function Persona({ s, owner, store }: { s: StoreAgentSettings; owner: boolean; s
       <ToneField value={s.tone} onChange={(tone) => void run({ tone })} />
       <div aria-live="polite" className="mt-2 flex flex-col rounded-md bg-sunken p-3">
         <span className="t-caption mb-1 text-muted">prévia</span>
-        <Bubble voice="seller" name={s.name} align="start">
-          {greetingFor(s.tone, s.name, s.disclose, store)}
+        <Bubble voice="seller" align="start">
+          {greetingFor(s.tone, intro)}
         </Bubble>
       </div>
     </Group>
@@ -173,9 +136,8 @@ function Persona({ s, owner, store }: { s: StoreAgentSettings; owner: boolean; s
 function When({ s }: { s: StoreAgentSettings }) {
   const { run, state, retry } = useSettingsPatch();
   return (
-    <Group title={`Quando a ${s.name} atende`} status={<SaveStatus state={state} retry={retry} />}>
+    <Group title="Quando o Duá atende" status={<SaveStatus state={state} retry={retry} />}>
       <CoverageField
-        name={s.name}
         value={s.coverage}
         slowAfterMin={s.slowAfterMin}
         onChange={(coverage) => void run({ coverage })}
@@ -195,16 +157,13 @@ function Can({ v, owner }: { v: VendedorSettings; owner: boolean }) {
     ? REMIND
     : [...REMIND, s.recovery.delayMin].sort((a, b) => a - b);
   return (
-    <Group
-      title={`O que a ${s.name} pode fazer`}
-      status={<SaveStatus state={state} retry={retry} />}
-    >
+    <Group title="O que o Duá pode fazer" status={<SaveStatus state={state} retry={retry} />}>
       <div className="divide-y divide-line">
         <Toggle
           checked={c.closeOrder}
           onChange={(closeOrder) => void run({ capabilities: { closeOrder } })}
           label="Fechar o pedido"
-          description="Desligado, ela manda o link com a sacola pronta."
+          description="Desligado, ele manda o link com a sacola pronta."
         />
         <Toggle
           checked={c.sendPix}
@@ -226,7 +185,7 @@ function Can({ v, owner }: { v: VendedorSettings; owner: boolean }) {
             description={
               s.recovery.enabled
                 ? `Escreve para quem montou a sacola e sumiu, depois de ${s.recovery.delayMin} min.`
-                : 'Ela não escreve para quem montou a sacola e sumiu.'
+                : 'Ele não escreve para quem montou a sacola e sumiu.'
             }
           />
           {s.recovery.enabled ? (
@@ -360,7 +319,7 @@ function Incentives({
       <Field
         label="Limite por mês"
         htmlFor="v-budget"
-        helper={`Este mês ela já deu ${money(v.incentivesUsedCents)} em descontos.`}
+        helper={`Este mês ele já deu ${money(v.incentivesUsedCents)} em descontos.`}
       >
         <MoneyField
           id="v-budget"
@@ -375,7 +334,7 @@ function Incentives({
       </Field>
       {!ready ? (
         <p className="t-caption text-muted">
-          Escolha ao menos um cupom, quando oferecer e o limite do mês para ela começar.
+          Escolha ao menos um cupom, quando oferecer e o limite do mês para ele começar.
         </p>
       ) : null}
     </div>
@@ -399,20 +358,20 @@ function Handoff({ s }: { s: StoreAgentSettings }) {
           checked={h.complaint}
           onChange={(complaint) => void run({ handoff: { complaint } })}
           label="Reclamação ou atraso"
-          description="Ela pede desculpa, diz o que sabe do pedido e chama você."
+          description="Ele pede desculpa, diz o que sabe do pedido e chama você."
         />
         <Toggle
           checked={h.allergy}
           onChange={(allergy) => void run({ handoff: { allergy } })}
           label="Alergia ou restrição"
-          description="Ela não arrisca: chama você antes de responder."
+          description="Ele não arrisca: chama você antes de responder."
         />
         <div>
           <Toggle
             checked={above}
             onChange={(on) => void run({ handoff: { aboveCents: on ? 30_000 : null } })}
             label={above ? `Pedido acima de ${money(h.aboveCents ?? 0)}` : 'Pedido grande'}
-            description="Para você conferir antes de ela fechar."
+            description="Para você conferir antes de ele fechar."
           />
           {above ? (
             <div className="pb-3">
@@ -436,7 +395,7 @@ function Handoff({ s }: { s: StoreAgentSettings }) {
         <div className="py-2">
           <div className="flex flex-wrap items-center justify-between gap-x-3">
             <p className="t-body min-w-0 flex-1 basis-52 text-muted">
-              A {s.name} volta sozinha depois de {s.humanSilenceMin} min sem resposta sua.
+              O Duá volta sozinho depois de {s.humanSilenceMin} min sem resposta sua.
             </p>
             <Button
               variant="ghost"
@@ -450,7 +409,7 @@ function Handoff({ s }: { s: StoreAgentSettings }) {
           </div>
           {silence ? (
             <Segmented
-              label={`a ${s.name} volta depois de`}
+              label="o Duá volta depois de"
               value={String(s.humanSilenceMin)}
               onChange={(m) => void run({ humanSilenceMin: Number(m) })}
               options={silences.map((m) => ({

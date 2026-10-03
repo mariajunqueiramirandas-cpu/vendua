@@ -32,7 +32,7 @@ writeFileSync(
 );
 
 // Words the site must never say (docs/merchant-admin-design.md §9 and the launch decisions): no platform
-// jargon, no custom-software pitch, no price promise beyond the two plans, and no real store standing in for the
+// jargon, no custom-software pitch, no price promise beyond the three plans, and no real store standing in for the
 // fictional one. Checked on the text a visitor reads, not on the source.
 const BANNED: [RegExp, string][] = [
   [/\btemplates?\b/i, 'platform word'],
@@ -45,7 +45,7 @@ const BANNED: [RegExp, string][] = [
   [/sob medida/i, 'custom software is gone'],
   [/software house/i, 'custom software is gone'],
   [/sem taxas?/i, "Mercado Pago keeps its fee on each payment (Venduá's is none)"],
-  [/(?<!\b14\s+dias\s+)\bgr[aá]tis\b/i, "only Basic's 14-day trial is free"],
+  [/(?<!\b14\s+dias\s+)\bgr[aá]tis\b/i, "only Bandeira's 14-day trial is free"],
   [/\bem breve\b/i, 'sign-up is open'],
   [/quero pudim/i, 'the site shows only the fictional Bolos da Nena'],
 ];

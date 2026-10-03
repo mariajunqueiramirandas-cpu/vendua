@@ -11,9 +11,10 @@ import { qk, useMutation } from '../../lib/query.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
+import { Mascote, type Pose } from '../../ui/Mascote.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { AGENT_PARTS, AgentGuide, ChecklistRow, PersonaAvatar } from '../../ui/vendedor/index.ts';
+import { AGENT_PARTS, AgentGuide, ChecklistRow } from '../../ui/vendedor/index.ts';
 
 export const COVERAGE_LABEL: Record<Coverage, string> = {
   rehearsal: 'Ensaio',
@@ -22,7 +23,7 @@ export const COVERAGE_LABEL: Record<Coverage, string> = {
   always: 'Sempre',
 };
 
-/** Turning her on (owner) or into Ensaio: one PATCH, then every Vendedor view and the nav. */
+/** Turning Duá on (owner) or into Ensaio: one PATCH, then every one of his views and the nav. */
 export function useAgentSwitch() {
   const qc = useQueryClient();
   return useMutation({
@@ -38,10 +39,10 @@ export function useAgentSwitch() {
 }
 
 const PART_DETAIL: Record<string, string> = {
-  conhecer: 'Nome, jeito de falar e o WhatsApp da loja',
-  ensinar: 'O que ela leu da loja e a entrevista',
+  conhecer: 'Jeito de falar e o WhatsApp da loja',
+  ensinar: 'O que ele leu da loja e a entrevista',
   testar: 'Peça para mim e cliente oculto',
-  comecar: 'Quando ela atende e como começa',
+  comecar: 'Quando ele atende e como começa',
 };
 const PART_ICON = {
   conhecer: WhatsappLogo,
@@ -50,13 +51,21 @@ const PART_ICON = {
   comecar: Lightning,
 };
 
+/** The first-use moments' Duá: larger than an avatar, on the lit disc. */
+function Hero({ pose }: { pose: Pose }) {
+  return (
+    <span className="dua-disc grid size-32 place-items-center bg-spark-soft">
+      <Mascote pose={pose} size={120} className="size-[120px]" />
+    </span>
+  );
+}
+
 /**
- * `/vendedor` before she's on (sales-agent-ux §3.1): the door to "Treinar a Ana", its resume map
+ * `/vendedor` before Duá is on (sales-agent-ux §3.1): the door to "Treinar o Duá", its resume map
  * midway, and the finale's two actions once it's done. "Ligar" is never gated: the onboarding
  * informs, the owner decides.
  */
 export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }) {
-  const name = data.agent.name;
   const on = useAgentSwitch();
   const { started, finished, part } = data.onboarding;
   const at = Math.max(
@@ -67,8 +76,8 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
     on.mutate(patch, { onSuccess: () => toast(done) });
 
   const notOwner = owner ? null : (
-    <Notice title={`Quem liga a ${name} é o dono da loja`}>
-      Quando ela estiver atendendo, as conversas e quem precisa de você aparecem aqui.
+    <Notice title="Quem liga o Duá é o dono da loja">
+      Quando ele estiver atendendo, as conversas e quem precisa de você aparecem aqui.
     </Notice>
   );
 
@@ -76,11 +85,11 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
     return (
       <div className="mx-auto max-w-lg space-y-5">
         <Card className="flex flex-col items-center px-5 py-8 text-center">
-          <PersonaAvatar name={name} size="lg" />
-          <h2 className="t-moment mt-4 text-[2.25rem] leading-[2.5rem]">A {name} está pronta</h2>
+          <Hero pose="avatar-feliz" />
+          <h2 className="t-moment mt-4 text-[2.25rem] leading-[2.5rem]">O Duá está pronto</h2>
           <p className="t-body mt-2 max-w-sm text-muted">
-            Ela já conhece o cardápio, os horários e as taxas da loja. Comece em ensaio para ver o
-            que ela diria antes de ela falar com alguém.
+            Ele já conhece o cardápio, os horários e as taxas da loja. Comece em ensaio para ver o
+            que ele diria antes de falar com alguém.
           </p>
         </Card>
         {owner ? (
@@ -90,7 +99,7 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
               block
               loading={on.isPending && on.variables?.coverage === 'rehearsal'}
               onClick={() =>
-                turnOn({ enabled: true, coverage: 'rehearsal' }, `A ${name} está em ensaio`)
+                turnOn({ enabled: true, coverage: 'rehearsal' }, 'O Duá está em ensaio')
               }
             >
               começar em ensaio
@@ -100,7 +109,7 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
               block
               icon={<Lightning weight="bold" />}
               loading={on.isPending && on.variables?.coverage === undefined}
-              onClick={() => turnOn({ enabled: true }, `A ${name} está ligada`)}
+              onClick={() => turnOn({ enabled: true }, 'O Duá está ligado')}
             >
               ligar agora
             </Button>
@@ -115,22 +124,22 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
   return (
     <div className="mx-auto max-w-lg space-y-5">
       {started ? (
-        <AgentGuide name={name} turn="resume">
+        <AgentGuide turn="resume">
           Que bom te ver de novo! Guardei tudo o que você já me ensinou. Falta pouco.
         </AgentGuide>
       ) : (
         <Card className="flex flex-col items-center px-5 py-8 text-center">
-          <PersonaAvatar name={name} size="lg" />
-          <h2 className="t-title-1 mt-4">Conheça a {name}</h2>
+          <Hero pose="avatar-ola" />
+          <h2 className="t-title-1 mt-4">Conheça o Duá</h2>
           <p className="t-body mt-2 max-w-sm text-muted">
-            Ela atende no WhatsApp da loja: tira dúvidas, monta a sacola e fecha o pedido. Preços,
-            taxas e horários ela lê da loja, na hora.
+            O vendedor com IA no WhatsApp da loja: tira dúvidas, monta a sacola e fecha o pedido.
+            Preços, taxas e horários ele lê da loja, na hora.
           </p>
         </Card>
       )}
 
       {started ? (
-        <ol aria-label={`Treinar a ${name}`} className="space-y-2.5">
+        <ol aria-label="Treinar o Duá" className="space-y-2.5">
           {AGENT_PARTS.map((p, i) => (
             <li key={p.id} aria-current={i === at ? 'step' : undefined}>
               <ChecklistRow
@@ -168,7 +177,7 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
               </>
             ) : (
               <>
-                treinar a {name}
+                treinar o Duá
                 <span className="font-normal opacity-80">· cerca de 5 min</span>
               </>
             )}
@@ -178,9 +187,9 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
             block
             icon={<Lightning weight="bold" />}
             loading={on.isPending}
-            onClick={() => turnOn({ enabled: true }, `A ${name} está ligada`)}
+            onClick={() => turnOn({ enabled: true }, 'O Duá está ligado')}
           >
-            ligar a {name}
+            ligar o Duá
           </Button>
           <p className="t-caption text-center text-muted">
             {started

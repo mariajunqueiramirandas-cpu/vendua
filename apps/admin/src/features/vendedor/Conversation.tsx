@@ -19,7 +19,6 @@ import {
   type VendedorHome,
 } from '../../lib/api.ts';
 import { qk, useMutation } from '../../lib/query.ts';
-import { useSession } from '../../lib/session.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -58,11 +57,6 @@ export function useMedia(q: string) {
   return m;
 }
 
-/** The Vendedor's name as the merchant chose it (never a hard-coded one) */
-export function useAgentName() {
-  return useSession().vendedor?.name?.trim() || 'Vendedor';
-}
-
 /** `/vendedor/conversas/:id`: on phones its own screen; from 1200 px it opens in the inbox. */
 export default function Conversation() {
   const { id = '' } = useParams();
@@ -92,7 +86,6 @@ export function ConversationPane({
   row?: ThreadRow | undefined;
 }) {
   const qc = useQueryClient();
-  const name = useAgentName();
   const q = useQuery({
     queryKey: qk.vendedor.thread(id),
     queryFn: () => api.vendedor.thread(id),
@@ -122,7 +115,7 @@ export function ConversationPane({
     mutationFn: () => api.vendedor.release(id),
     onSuccess: (r) => {
       put(r);
-      toast(`A ${name} voltou a atender esta conversa.`);
+      toast('O Duá voltou a atender esta conversa.');
     },
     onError: fail,
   });
@@ -136,7 +129,7 @@ export function ConversationPane({
     onSuccess: (r) => {
       put(r);
       setSheet(null);
-      toast('Marcado: não é cliente. Ela não responde mais este número.', {
+      toast('Marcado: não é cliente. O Duá não responde mais este número.', {
         undo: () => unmute.mutate(),
       });
     },
@@ -209,11 +202,11 @@ export function ConversationPane({
         t ? (
           t.waitingSince ? (
             <span className="flex flex-wrap items-center gap-1.5">
-              <FloorChip floor={t.floor} waiting name={name} />
+              <FloorChip floor={t.floor} waiting />
               {t.reason ? <ReasonChip reason={t.reason} /> : null}
             </span>
           ) : t.test ? null : (
-            <FloorChip floor={t.floor} name={name} />
+            <FloorChip floor={t.floor} />
           )
         ) : null
       }
@@ -249,13 +242,12 @@ export function ConversationPane({
             title="Conversa de teste"
             className="mb-2"
           >
-            Um cliente de teste falando com a {name}. Nada daqui foi para a cozinha.
+            Um cliente de teste falando com o Duá. Nada daqui foi para a cozinha.
           </Notice>
         ) : null}
         {d.messages.length ? (
           <ThreadMessages
             detail={d}
-            name={name}
             onWhy={openWhy}
             outgoing={outgoing}
             onRetry={(o) => send(o.text, o.key)}
@@ -272,7 +264,6 @@ export function ConversationPane({
     d && !d.thread.test ? (
       <FloorFor
         d={d}
-        name={name}
         onTake={() => take.mutate()}
         onRelease={() => release.mutate()}
         busy={take.isPending || release.isPending}
@@ -338,7 +329,7 @@ export function ConversationPane({
                 não é cliente
               </Button>
               <p className="t-caption text-center text-muted">
-                Para fornecedor, entregador ou família: a {name} para de responder este número.
+                Para fornecedor, entregador ou família: o Duá para de responder este número.
               </p>
             </div>
           )
@@ -347,8 +338,8 @@ export function ConversationPane({
         <CustomerFacts detail={d} />
       </Sheet>
       {!rail ? (
-        <Sheet open={whyOpen} onOpenChange={setWhyOpen} title={whyTitle(name, why)}>
-          {why ? <WhyBody threadId={id} message={why} name={name} /> : null}
+        <Sheet open={whyOpen} onOpenChange={setWhyOpen} title={whyTitle(why)}>
+          {why ? <WhyBody threadId={id} message={why} /> : null}
         </Sheet>
       ) : null}
     </>
@@ -368,7 +359,7 @@ export function ConversationPane({
           </div>
           {floorEl}
         </section>
-        {rail && d ? <Rail d={d} name={name} why={why} threadId={id} /> : null}
+        {rail && d ? <Rail d={d} why={why} threadId={id} /> : null}
         {sheets}
       </div>
     );
@@ -458,7 +449,6 @@ function AppBar({
 /** Who answers now, from Core's floor (sales-agent-ux §1.3), with the words each one needs. */
 function FloorFor({
   d,
-  name,
   onTake,
   onRelease,
   busy,
@@ -469,7 +459,6 @@ function FloorFor({
   keys,
 }: {
   d: ThreadDetail;
-  name: string;
   onTake: () => void;
   onRelease: () => void;
   busy: boolean;
@@ -496,27 +485,25 @@ function FloorFor({
         </Button>
       </section>
     );
-  if (t.floor === 'agent')
-    return <Floor variant="agent" name={name} onTake={onTake} busy={busy} keys={keys} />;
+  if (t.floor === 'agent') return <Floor variant="agent" onTake={onTake} busy={busy} keys={keys} />;
   const slow = qc.getQueryData<VendedorHome>(qk.vendedor.home)?.agent.slowAfterMin;
   const hint =
     t.floor === 'rehearsal'
-      ? `A ${name} está em ensaio: escreve o que diria, sem mandar.`
+      ? 'O Duá está em ensaio: escreve o que diria, sem mandar.'
       : t.floor === 'wait'
         ? slow
-          ? `Se ninguém responder em ${slow} min, a ${name} entra.`
-          : `Se ninguém responder logo, a ${name} entra.`
+          ? `Se ninguém responder em ${slow} min, o Duá entra.`
+          : 'Se ninguém responder logo, o Duá entra.'
         : t.floor === 'off'
           ? t.class === 'other'
-            ? `Número em “outros”: a ${name} não responde.`
-            : `A ${name} está desligada. Quem responde é você.`
+            ? 'Número em “outros”: o Duá não responde.'
+            : 'O Duá está desligado. Quem responde é você.'
           : t.owner !== 'human'
-            ? `Com a loja aberta, quem responde é você. A ${name} atende quando a loja fecha.`
+            ? 'Com a loja aberta, quem responde é você. O Duá atende quando a loja fecha.'
             : null;
   return (
     <Floor
       variant="owner"
-      name={name}
       title={
         <>
           Você está atendendo
@@ -535,7 +522,7 @@ function FloorFor({
 }
 
 /**
- * Her suggested replies for the store. Asked once per shopper message, not on every live
+ * Duá's suggested replies for the store. Asked once per shopper message, not on every live
  * refresh: each ask is a model call, and the `vendedor` topic refreshes the whole tree.
  */
 function useSuggestions(d: ThreadDetail, on: boolean) {
@@ -565,12 +552,10 @@ function useSuggestions(d: ThreadDetail, on: boolean) {
 /** Desktop's third pane: the customer, and "por quê" for the message picked in the thread */
 function Rail({
   d,
-  name,
   why,
   threadId,
 }: {
   d: ThreadDetail;
-  name: string;
   why: ThreadMessage | null;
   threadId: string;
 }) {
@@ -590,13 +575,13 @@ function Rail({
         <CustomerFacts detail={d} />
       </Card>
       <Card className="p-4">
-        <h2 className="t-label mb-3">{why ? whyTitle(name, why) : 'Por quê'}</h2>
+        <h2 className="t-label mb-3">{why ? whyTitle(why) : 'Por quê'}</h2>
         {why ? (
-          <WhyBody key={why.id} threadId={threadId} message={why} name={name} />
+          <WhyBody key={why.id} threadId={threadId} message={why} />
         ) : (
           <p className="t-body text-muted">
-            Toque em “por quê” numa resposta da {name} para ver o que ela consultou e de onde veio
-            cada valor.
+            Toque em “por quê” numa resposta do Duá para ver o que ele consultou e de onde veio cada
+            valor.
           </p>
         )}
       </Card>

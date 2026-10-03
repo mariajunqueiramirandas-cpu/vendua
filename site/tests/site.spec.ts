@@ -13,6 +13,8 @@ const INSTAGRAM = 'https://www.instagram.com/vendua.digital/';
 // sign-up lives in the merchant admin (src/lib/content.ts); the build bakes PUBLIC_ADMIN_URL in
 const ADMIN = new URL(process.env.PUBLIC_ADMIN_URL || 'https://painel.vendua.com.br');
 const SIGNUP = new URL('/admin/comecar', ADMIN).href;
+// the site's own call to action preselects the recommended plan
+const START = `${SIGNUP}?plano=bandeira`;
 const THEMES = ['light', 'dark'] as const;
 
 // Lazy images load only near the viewport: walk the page one screen at a time, waiting a frame
@@ -160,7 +162,7 @@ test.describe('conteúdo', () => {
     await page.goto(HOME);
     await expect(page.locator('h1')).toBeVisible();
     const sections = page.locator('main section[aria-labelledby]');
-    expect(await sections.count(), 'seções da home').toBeGreaterThanOrEqual(6);
+    expect(await sections.count(), 'seções da home').toBeGreaterThanOrEqual(5);
     for (const id of await sections.evaluateAll((els) =>
       els.map((e) => e.getAttribute('aria-labelledby')!),
     )) {
@@ -175,9 +177,22 @@ test.describe('conteúdo', () => {
       'H1',
       ...Array(tags.length - 1).fill('H2'),
     ]);
-    await expect(page.locator(`header a[href="${SIGNUP}"]`)).toBeVisible();
-    for (const id of ['pedidos', 'preco', 'perguntas'])
+    await expect(page.locator(`header a[href="${START}"]`)).toBeVisible();
+    for (const id of ['veja', 'preco', 'perguntas'])
       await expect(page.locator(`#${id}`)).toBeAttached();
+    // the demos can't play without a script: all four show, finished and still, with no tabs
+    await expect(page.locator('#veja [role="tab"]')).toHaveCount(0);
+    for (const id of ['vendedor', 'pedido', 'cozinha', 'loja']) {
+      const demo = page.locator(`#demo-${id}`);
+      await expect(demo, `demo ${id}`).toBeVisible();
+      expect((await demo.innerText()).trim().length, `demo ${id} sem conteúdo`).toBeGreaterThan(80);
+    }
+    // the AI seller is Duá, and says it's the store's virtual assistant
+    await expect(page.locator('#demo-vendedor')).toContainText(
+      'Oi! Sou o Duá, assistente virtual da Bolos da Nena.',
+    );
+    // the calculator shows its R$ 8.000 example as text
+    await expect(page.locator('#preco')).toContainText('R$ 960');
 
     // FAQ: native <details>, so every answer ships in the HTML and opens without a script
     const faq = page.locator('#perguntas details');
@@ -239,10 +254,17 @@ test.describe('conteúdo', () => {
       /cadastr|inscrev|assin[ae]|criar|come[cç]ar agora|comece|teste|experimente|fale|contato|whats|agend|quero/i;
     for (const path of PAGES) {
       await page.goto(path);
-      await expect(page.locator('form, input, textarea, select'), path).toHaveCount(0);
+      // the only control is the plans' calculator (a number, no submit): nothing collects data
+      await expect(page.locator('form, textarea, select'), path).toHaveCount(0);
+      expect(
+        await page
+          .locator('input')
+          .evaluateAll((els) => els.filter((e) => !e.closest('#preco')).length),
+        path,
+      ).toBe(0);
       await expect(page.locator('button[type="submit"], [role="button"]'), path).toHaveCount(0);
       // the header's call to action, on every page
-      await expect(page.locator(`header a[href="${SIGNUP}"]`), path).toHaveCount(1);
+      await expect(page.locator(`header a[href="${START}"]`), path).toHaveCount(1);
 
       const links = await page.locator('a[href]').evaluateAll((els) =>
         els.map((a) => ({
@@ -262,10 +284,10 @@ test.describe('conteúdo', () => {
         );
         const url = new URL(l.href);
         if (url.origin === ADMIN.origin) {
-          // the admin only at its sign-up, with no plan or one of the two
+          // the admin only at its sign-up, with no plan or an open one (Pangolim is closed)
           expect(url.pathname, `${path}: ${l.text}`).toBe('/admin/comecar');
           expect([...url.searchParams.keys()].filter((k) => k !== 'plano')).toEqual([]);
-          expect([null, 'basic', 'pro_plus']).toContain(url.searchParams.get('plano'));
+          expect([null, 'mirim', 'bandeira']).toContain(url.searchParams.get('plano'));
         } else if (url.origin !== new URL(page.url()).origin)
           // besides sign-up, Instagram is the only site linked (the profile, and its privacy policy on /privacidade/)
           expect(url.hostname, `${path}: link externo "${l.text}"`).toMatch(
@@ -280,36 +302,69 @@ test.describe('conteúdo', () => {
       ).toHaveLength(1);
       // at most one "acompanhe no Instagram" line near the closing call to action
       expect(instagram.filter((l) => !l.footer).length, path).toBeLessThanOrEqual(1);
-      for (const b of await page.locator('button').allTextContents())
+      // the demos' buttons are the visitor's lines in a simulation ("Quero a fatia também"), not calls to action
+      for (const b of await page
+        .locator('button')
+        .evaluateAll((els) =>
+          els.filter((e) => !e.closest('.demo')).map((e) => e.textContent ?? ''),
+        ))
         expect(b, `${path}: botão`).not.toMatch(CTA);
     }
   });
 
-  test('#preco mostra os dois planos como decididos, cada um com o seu cadastro', async ({
+  test('#preco mostra os três planos como decididos, o Bandeira recomendado, cada um com o seu cadastro', async ({
     page,
   }) => {
     await page.goto(HOME);
     const preco = page.locator('#preco');
     const text = (await preco.innerText()).replace(/\s+/g, ' ');
-    expect(text).toContain('Venduá Basic R$ 39,90/mês');
-    expect(text).toContain('Venduá PRO+ R$ 99/mês');
-    // Basic's trial sits by its price; PRO+ has none
-    expect(text).toContain('Venduá Basic R$ 39,90/mês 14 dias grátis, sem cartão');
-    expect(text.match(/grátis, sem cartão/g)).toHaveLength(1);
+    expect(text).toContain('Venduá Mirim R$ 69,90/mês');
+    expect(text).toContain('Venduá Pangolim R$ 449/mês');
+    // Bandeira is the recommended plan: the trial leads the section and sits by its price; the others have none
+    expect(text).toContain('Comece pelo Venduá Bandeira: 14 dias grátis, sem cartão.');
+    expect(text).toMatch(
+      /Recomendado Venduá Bandeira .*R\$ 169\/mês começa com 14 dias grátis, sem cartão/,
+    );
+    expect(text.match(/Recomendado/g)).toHaveLength(1);
+    expect(text.match(/grátis, sem cartão/g)).toHaveLength(2);
     expect(text).toContain('seunome.vendua.com.br');
-    expect(text).toContain('Domínio próprio e um site feito pelo nosso agente de IA.');
-    expect(text).toContain('Taxa da Venduá por pedido nenhuma');
-    for (const plano of ['basic', 'pro_plus'])
-      await expect(preco.locator(`a[href="${SIGNUP}?plano=${plano}"]`)).toHaveCount(1);
+    expect(text).toContain('250 conversas por mês');
+    expect(text).toMatch(
+      /Pangolim.*Domínio próprio.*site feito pelo nosso agente de IA.*1\.000 conversas por mês/,
+    );
+    // the comparison opens without a script, and every plan has no per-order fee
+    await preco.locator('details summary').first().click();
+    expect((await preco.innerText()).replace(/\s+/g, ' ')).toMatch(/Taxa da Venduá por pedido/);
+    // the calculator cites iFood's own published rates
+    expect(text).toContain('blog-parceiros.ifood.com.br/taxas-ifood');
+    await expect(preco.locator(`a[href="${SIGNUP}?plano=mirim"]`)).toHaveCount(1);
+    await expect(preco.locator(`a[href="${SIGNUP}?plano=bandeira"]`)).toHaveCount(2);
+    // Pangolim is shown but closed: price and perks, a plain line instead of its button
+    const pangolim = preco.locator('li.plan', { hasText: 'Venduá Pangolim' });
+    await expect(pangolim).toContainText('R$ 449/mês');
+    await expect(pangolim).toContainText('Ainda não está aberto para assinatura.');
+    await expect(pangolim.locator('a[href*="/admin/comecar"]')).toHaveCount(0);
+    await expect(page.locator('a[href*="plano=pangolim"]')).toHaveCount(0);
+    // perks open their demo
+    for (const id of ['vendedor', 'pedido', 'cozinha', 'loja'])
+      expect(await preco.locator(`a[href="#demo-${id}"]`).count(), id).toBeGreaterThan(0);
+    // the trial strip's Bandeira first, then the plans cheapest first, with Bandeira in the middle
+    expect(
+      await preco
+        .locator('a[href*="?plano="]')
+        .evaluateAll((els) =>
+          els.map((a) => new URL((a as HTMLAnchorElement).href).searchParams.get('plano')),
+        ),
+    ).toEqual(['bandeira', 'mirim', 'bandeira']);
     // no other price anywhere on the page
     const prices = (await page.locator('main').innerText()).match(/R\$\s?\d+(,\d{2})?\/mês/g) ?? [];
-    expect([...new Set(prices)].sort()).toEqual(['R$ 39,90/mês', 'R$ 99/mês']);
+    expect([...new Set(prices)].sort()).toEqual(['R$ 169/mês', 'R$ 449/mês', 'R$ 69,90/mês']);
   });
 
   for (const width of [375, 1280])
-    test(`âncoras #pedidos #preco #perguntas e os links do topo a ${width}px`, async ({ page }) => {
+    test(`âncoras #veja #preco #perguntas e os links do topo a ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
-      const anchors = ['#pedidos', '#preco', '#perguntas'];
+      const anchors = ['#veja', '#preco', '#perguntas'];
       // the bar shows its links inline on wide screens and behind a <details> menu on phones
       const links = page.locator('header nav a:visible');
       const open = async () => {
@@ -334,9 +389,129 @@ test.describe('conteúdo', () => {
       await open();
       expect(await hrefs()).toEqual(anchors.map((a) => `/${a}`));
       await links.first().click();
-      await expect(page).toHaveURL(/\/#pedidos$/);
-      await expect(page.locator('#pedidos')).toBeInViewport();
+      await expect(page).toHaveURL(/\/#veja$/);
+      await expect(page.locator('#veja')).toBeInViewport();
     });
+});
+
+test.describe('preços ao vivo', () => {
+  const catalog = (over: Record<string, object>) => ({
+    plans: [
+      {
+        id: 'mirim',
+        name: 'Venduá Mirim',
+        priceCents: 6990,
+        trialDays: 0,
+        available: true,
+        aiConversations: 0,
+        aiTrialConversations: 0,
+        features: { vendedor: false },
+      },
+      {
+        id: 'bandeira',
+        name: 'Venduá Bandeira',
+        priceCents: 16900,
+        trialDays: 14,
+        available: true,
+        aiConversations: 250,
+        aiTrialConversations: 50,
+        features: { vendedor: true },
+      },
+      {
+        id: 'pangolim',
+        name: 'Venduá Pangolim',
+        priceCents: 44900,
+        trialDays: 0,
+        available: false,
+        aiConversations: 1000,
+        aiTrialConversations: 50,
+        features: { vendedor: true },
+      },
+    ].map((p) => ({ ...p, ...(over[p.id] ?? {}) })),
+  });
+
+  test('o que o CRM muda aparece na página, sem build novo', async ({ page }) => {
+    await page.route('**/precos.json', (r) =>
+      r.fulfill({
+        json: catalog({
+          bandeira: { priceCents: 19900, trialDays: 7, aiConversations: 300 },
+          pangolim: { available: true },
+        }),
+      }),
+    );
+    await page.goto(HOME);
+    const preco = page.locator('#preco');
+    const bandeira = preco.locator('li.plan', { hasText: 'Venduá Bandeira' });
+    await expect(bandeira).toContainText('R$ 199/mês');
+    await expect(bandeira).toContainText('começa com 7 dias grátis, sem cartão');
+    await expect(bandeira).toContainText('300 conversas por mês');
+    await expect(preco).toContainText('Comece pelo Venduá Bandeira: 7 dias grátis, sem cartão.');
+    // Pangolim opened in the CRM: its button comes back
+    const pangolim = preco.locator('li.plan', { hasText: 'Venduá Pangolim' });
+    await expect(pangolim.locator(`a[href="${SIGNUP}?plano=pangolim"]`)).toHaveCount(1);
+    await expect(pangolim).not.toContainText('Ainda não está aberto');
+    // the calculator and the night's closing line follow too
+    await expect(preco.locator('.calc, [class*="calc"]').first()).toContainText('R$ 199');
+    await expect(page.locator('#perguntas, #comecar').first()).toContainText('R$ 199');
+  });
+
+  test('recursos ligados e desligados no CRM mudam os cartões e a tabela', async ({ page }) => {
+    const F = {
+      kds: true,
+      printing: true,
+      loyalty: true,
+      vendedor: true,
+      customDomain: false,
+      customSite: false,
+    };
+    await page.route('**/precos.json', (r) =>
+      r.fulfill({
+        json: catalog({
+          bandeira: { features: { ...F, loyalty: false } },
+          pangolim: {
+            priceCents: 1_500_000,
+            features: { ...F, customDomain: true, customSite: true },
+          },
+        }),
+      }),
+    );
+    await page.goto(HOME);
+    const preco = page.locator('#preco');
+    const bandeira = preco.locator('li.plan', { hasText: 'Venduá Bandeira' });
+    await expect(bandeira).not.toContainText('Cartão fidelidade');
+    // what Mirim lacks follows what Bandeira has
+    await expect(preco.locator('li.plan', { hasText: 'Venduá Mirim' })).toContainText(
+      'Sem a tela da cozinha, a impressão e o Duá.',
+    );
+    // Pangolim still has everything Bandeira has, and now the loyalty card on top
+    const pangolim = preco.locator('li.plan', { hasText: 'Venduá Pangolim' });
+    await expect(pangolim).toContainText('Tudo do Bandeira, e mais:');
+    await expect(pangolim).toContainText('Cartão fidelidade');
+    // any price the CRM takes shows
+    await expect(pangolim).toContainText('R$ 15.000/mês');
+    await preco.locator('details summary').first().click();
+    const row = preco.locator('tr', { hasText: 'Cartão fidelidade' });
+    await expect(row.locator('td').nth(1)).toContainText('não');
+  });
+
+  test('um plano oculto no CRM fica sem botão', async ({ page }) => {
+    const all = catalog({});
+    await page.route('**/precos.json', (r) =>
+      r.fulfill({ json: { plans: all.plans.filter((p) => p.id !== 'mirim') } }),
+    );
+    await page.goto(HOME);
+    const mirim = page.locator('#preco li.plan', { hasText: 'Venduá Mirim' });
+    await expect(mirim).toContainText('Ainda não está aberto para assinatura.');
+    await expect(page.locator('a[href*="plano=mirim"]')).toHaveCount(0);
+  });
+
+  test('sem o catálogo, a página fica com os preços do build', async ({ page }) => {
+    await page.route('**/precos.json', (r) => r.abort());
+    await page.goto(HOME);
+    const bandeira = page.locator('#preco li.plan', { hasText: 'Venduá Bandeira' });
+    await expect(bandeira).toContainText('R$ 169/mês');
+    await expect(bandeira).toContainText('começa com 14 dias grátis, sem cartão');
+  });
 });
 
 test.describe('imagens', () => {
@@ -367,7 +542,8 @@ test.describe('imagens', () => {
           expect(imgs.length, path).toBeGreaterThan(0);
           for (const i of imgs) expect(i.w, `${path}: ${i.src} não carregou`).toBeGreaterThan(0);
           const screens = imgs.filter((i) => i.screen);
-          if (path === HOME) expect(screens.length, 'telas na home').toBeGreaterThanOrEqual(4);
+          // the hero's two phones; the product further down is the four drawn demos (#veja)
+          if (path === HOME) expect(screens.length, 'telas na home').toBeGreaterThanOrEqual(2);
           const want = colorScheme === 'dark' ? '-noite-' : '-creme-';
           for (const s of screens) expect(s.src, `tela ${colorScheme}`).toContain(want);
         }
@@ -421,8 +597,10 @@ test.describe('rede', () => {
     const report = `JS ${jsBytes} B gzip em ${js.length} arquivos; fontes ${fontBytes} B em ${fonts.length}`;
     test.info().annotations.push({ type: 'orçamento', description: report });
     // Measured 2026-09-29: JS 45.2 KB gzip (9 files), fonts 64.6 KB (3 woff2: Figtree, Space Grotesk,
-    // Instrument Serif italic, latin subsets). Budgets are ~20% above; raise them only on purpose.
-    expect(jsBytes, report).toBeLessThanOrEqual(55_000);
+    // Instrument Serif italic, latin subsets). 2026-10-03: the four interactive demos and the plans
+    // calculator (the owner's decision) bring JS to 67.0 KB gzip (10 files). Budgets are ~20% above;
+    // raise them only on purpose.
+    expect(jsBytes, report).toBeLessThanOrEqual(80_000);
     expect(fontBytes, report).toBeLessThanOrEqual(78_000);
   });
 });

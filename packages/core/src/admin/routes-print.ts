@@ -12,6 +12,7 @@ import {
   queueJobsTx,
   type PrinterView,
 } from '../modules/printing/jobs.ts';
+import { planHas, requireFeature } from '../modules/billing/plans.ts';
 import { audit } from './audit.ts';
 import { bool, int, oneOf, optText, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
@@ -53,9 +54,12 @@ async function printerOr404(tx: Sql, tenantId: string, id: string): Promise<Prin
 async function overview(tx: Sql, tenantId: string) {
   const [s] = await tx<{ print_on: 'placed' | 'confirmed' }[]>`
     select print_on from store_settings where tenant_id = ${tenantId}`;
+  // a plan without printing shows no devices: the order screen then offers no "imprimir"
+  const included = await planHas(tx, tenantId, 'printing');
   return {
+    included,
     printOn: s?.print_on ?? 'confirmed',
-    devices: await devicesTx(tx, tenantId),
+    devices: included ? await devicesTx(tx, tenantId) : [],
     downloads: AGENT_DOWNLOADS,
   };
 }
@@ -73,6 +77,7 @@ export function mountPrinting(d: AdminDeps) {
   admin.patch(
     '/printers/settings',
     write('manager', async (tx, t, m, c) => {
+      await requireFeature(tx, t.id, 'printing');
       const body = await bodyJson(c, 1024);
       const printOn = oneOf(body.printOn, 'printOn', ['placed', 'confirmed'] as const);
       await tx`insert into store_settings (tenant_id) values (${t.id}) on conflict do nothing`;
@@ -100,6 +105,7 @@ export function mountPrinting(d: AdminDeps) {
   admin.get(
     '/printers/pairing/:code',
     read('manager', async (tx, t, _m, c) => {
+      await requireFeature(tx, t.id, 'printing');
       const code = normalizeUserCode(c.req.param('code'));
       if (!code) throw new HttpError(404, 'PAIRING_NOT_FOUND', 'pairing not found');
       return pairingByCodeTx(tx, t.id, code);
@@ -109,6 +115,7 @@ export function mountPrinting(d: AdminDeps) {
   admin.post(
     '/printers/pairing',
     write('manager', async (tx, t, m, c) => {
+      await requireFeature(tx, t.id, 'printing');
       const body = await bodyJson(c, 1024);
       const code = normalizeUserCode(body.code);
       if (!code)
@@ -153,6 +160,7 @@ export function mountPrinting(d: AdminDeps) {
   admin.post(
     '/printers/devices/:id/printers',
     write('manager', async (tx, t, m, c) => {
+      await requireFeature(tx, t.id, 'printing');
       const deviceId = uuidParam(c, 'id');
       const body = await bodyJson(c, 1024);
       const address = networkAddress(body.address);
@@ -186,6 +194,7 @@ export function mountPrinting(d: AdminDeps) {
   admin.patch(
     '/printers/:id',
     write('manager', async (tx, t, m, c) => {
+      await requireFeature(tx, t.id, 'printing');
       const id = uuidParam(c, 'id');
       const body = await bodyJson(c, 2 * 1024);
       const before = await printerOr404(tx, t.id, id);
@@ -240,6 +249,7 @@ export function mountPrinting(d: AdminDeps) {
   admin.post(
     '/printers/:id/test',
     write('attendant', async (tx, t, m, c) => {
+      await requireFeature(tx, t.id, 'printing');
       const id = uuidParam(c, 'id');
       await printerOr404(tx, t.id, id);
       const [jobId] = await queueJobsTx(tx, t.id, [id], {
@@ -256,6 +266,7 @@ export function mountPrinting(d: AdminDeps) {
   admin.post(
     '/orders/:id/print',
     write('attendant', async (tx, t, m, c) => {
+      await requireFeature(tx, t.id, 'printing');
       const orderId = uuidParam(c, 'id');
       const body = await bodyJson(c, 1024);
       const printerId = body.printerId;

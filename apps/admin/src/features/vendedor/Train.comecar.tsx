@@ -8,23 +8,22 @@ import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Segmented } from '../../ui/fields.tsx';
 import { Notice } from '../../ui/Notice.tsx';
-import { ChecklistRow, PersonaAvatar } from '../../ui/vendedor/index.ts';
-import { articleOf, COVERAGE, coverageShort, gapKey, type StepId } from './Train.model.ts';
+import { Mascote } from '../../ui/Mascote.tsx';
+import { ChecklistRow } from '../../ui/vendedor/index.ts';
+import { COVERAGE, coverageShort, gapKey, type StepId } from './Train.model.ts';
 import { TrainFrame } from './Train.parts.tsx';
 import { running, useClienteOculto } from './Train.testar.tsx';
 
-// ── Quando a Ana atende ───────────────────────────────────────────────────
+// ── Quando o Duá atende ───────────────────────────────────────────────────
 
 export function WhenStep({
   settings,
-  name,
   onNext,
   busy,
   back,
   eyebrow,
 }: {
   settings: StoreAgentSettings;
-  name: string;
   onNext: (p: { coverage: Coverage; slowAfterMin: 1 | 2 | 5 }) => void;
   busy: boolean;
   back: () => void;
@@ -35,13 +34,13 @@ export function WhenStep({
   return (
     <TrainFrame
       eyebrow={eyebrow}
-      title={`Quando ${articleOf(name)} ${name} atende`}
+      title="Quando o Duá atende"
       hint="Dá para trocar quando quiser, em Configurar."
       next={() => onNext({ coverage, slowAfterMin: slow })}
       busy={busy}
       back={back}
     >
-      <div role="radiogroup" aria-label="Quando ela atende" className="space-y-2.5">
+      <div role="radiogroup" aria-label="Quando ele atende" className="space-y-2.5">
         {COVERAGE.map((c) => {
           const on = coverage === c.id;
           return (
@@ -110,11 +109,10 @@ export function WhenStep({
   );
 }
 
-// ── A Ana está pronta ─────────────────────────────────────────────────────
+// ── O Duá está pronto ─────────────────────────────────────────────────────
 
 export function Finale({
   ob,
-  name,
   store,
   linked,
   onStart,
@@ -122,7 +120,6 @@ export function Finale({
   go,
 }: {
   ob: VendedorOnboarding;
-  name: string;
   store: string;
   linked: boolean;
   onStart: (how: 'ensaio' | 'agora') => void;
@@ -132,7 +129,6 @@ export function Finale({
   const co = useClienteOculto();
   const s = ob.settings;
   const skipped = ob.progress.skipped ?? [];
-  const art = articleOf(name);
   const latest = co.data?.latest ?? null;
   const live = running(co.data);
   const done = latest?.results?.length ?? 0;
@@ -143,7 +139,7 @@ export function Finale({
     later.push({
       id: 'wa',
       title: 'Conectar o WhatsApp da loja',
-      detail: `Sem ele, ${art} ${name} não tem onde atender.`,
+      detail: 'Sem ele, o Duá não tem onde atender.',
       to: 'whatsapp',
       label: 'conectar',
     });
@@ -151,7 +147,7 @@ export function Finale({
     later.push({
       id: 'entrevista',
       title: 'A entrevista',
-      detail: 'Se perguntarem o que só você sabe, ela passa para você.',
+      detail: 'Se perguntarem o que só você sabe, ele passa para você.',
       to: 'entrevista',
       label: 'responder',
     });
@@ -159,7 +155,7 @@ export function Finale({
     later.push({
       id: 'entrevista',
       title: 'O resto da entrevista',
-      detail: 'Ela continua de onde vocês pararam.',
+      detail: 'Ele continua de onde vocês pararam.',
       to: 'entrevista',
       label: 'continuar',
     });
@@ -175,7 +171,7 @@ export function Finale({
     later.push({
       id: 'cardapio',
       title: plural(gapsLeft, 'coisa do cardápio sem resposta', 'coisas do cardápio sem resposta'),
-      detail: 'Se perguntarem, ela passa para você.',
+      detail: 'Se perguntarem, ele passa para você.',
       to: 'li',
       label: 'ver',
     });
@@ -183,7 +179,7 @@ export function Finale({
     later.push({
       id: 'peca',
       title: 'Pedir como cliente',
-      detail: `Ver ${art} ${name} atender antes de todo mundo.`,
+      detail: 'Ver o Duá atender antes de todo mundo.',
       to: 'peca',
       label: 'testar',
     });
@@ -192,20 +188,22 @@ export function Finale({
     <div className="animate-fade-up space-y-6">
       <section className="flex flex-col items-center gap-3 pt-2 text-center">
         <p className="t-label text-muted">Começar · pronto!</p>
-        <PersonaAvatar name={name} size="lg" />
+        <span className="dua-disc grid size-32 place-items-center bg-spark-soft">
+          <Mascote pose="avatar-feliz" size={120} className="size-[120px]" />
+        </span>
         <h1 className="t-moment text-[2.5rem] leading-[2.75rem] md:text-[3rem] md:leading-[3.25rem]">
-          {art === 'o' ? 'O' : 'A'} {name} está {art === 'o' ? 'pronto' : 'pronta'}
+          O Duá está pronto
         </h1>
         <p className="t-body-lg max-w-md text-muted">
           {ob.enabled
-            ? `${art === 'o' ? 'Ele' : 'Ela'} já está atendendo a ${store}, ${coverageShort(s.coverage, s.slowAfterMin)}.`
-            : `${art === 'o' ? 'Ele' : 'Ela'} já sabe atender a ${store}. Você escolhe como começa.`}
+            ? `Ele já está atendendo a ${store}, ${coverageShort(s.coverage, s.slowAfterMin)}.`
+            : `Ele já sabe atender a ${store}. Você escolhe como começa.`}
         </p>
       </section>
 
       <Card as="section" aria-labelledby="tr-knows" className="px-4 pb-1.5 pt-4">
         <h2 id="tr-knows" className="t-label mb-1">
-          O que {art === 'o' ? 'ele' : 'ela'} sabe
+          O que ele sabe
         </h2>
         <ChecklistRow
           state="done"
@@ -272,13 +270,13 @@ export function Finale({
 
       {ob.enabled ? (
         <ButtonLink to="/vendedor" size="lg" block>
-          ir para o Vendedor <ArrowRight />
+          ir para o Duá <ArrowRight />
         </ButtonLink>
       ) : (
         <div className="space-y-3">
           {!linked ? (
             <Notice tone="warning" title="O WhatsApp da loja ainda não está conectado">
-              Dá para ligar agora: {art} {name} começa a atender assim que ele conectar.
+              Dá para ligar agora: o Duá começa a atender assim que o WhatsApp conectar.
             </Notice>
           ) : null}
           <Button
@@ -292,8 +290,7 @@ export function Finale({
             começar em ensaio
           </Button>
           <p className="t-caption text-center text-muted">
-            Recomendado: por alguns dias {art === 'o' ? 'ele' : 'ela'} escreve sem mandar, e você
-            compara.
+            Recomendado: por alguns dias ele escreve sem mandar, e você compara.
           </p>
           <Button
             variant="secondary"

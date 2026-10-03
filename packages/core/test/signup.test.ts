@@ -58,6 +58,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   // provider ids are process-local counters; start past anything another run left behind
   (fake as unknown as { seq: number }).seq = Math.floor(Math.random() * 1e9);
   const wa: { phone: string; text: string }[] = [];
+  const mails: { to: string; subject: string; text: string; key: string }[] = [];
   const staff: { subject: string; body: string }[] = [];
   const deps = {
     sql: appSql,
@@ -67,9 +68,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     paymentProvider: fake,
+    // signup's gate (the CRM switch, WhatsApp, email, billing) is open here; signup.test checks it
+    signupReady: async () => ({ on: true, whatsapp: true, email: true, billing: true, open: true }),
     notify: {
       whatsapp: async (phone: string, text: string) => void wa.push({ phone, text }),
-      email: async () => {},
+      email: async (to: string, subject: string, text: string, key: string) =>
+        void mails.push({ to, subject, text, key }),
     },
   };
   const app = createApp(deps);
@@ -126,7 +130,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       '/admin/v1/signup',
       {
         signupToken: token,
-        planId: 'basic',
+        planId: 'mirim',
         method: 'pix',
         storeName: 'Doces da Praia',
         slug,
@@ -149,6 +153,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
 
   beforeAll(async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    // these run billing on the top plan, which launches closed to new stores (ADR 0032)
+    await sql`update plans set available = true where id = 'pangolim'`;
     billingStaff.notify = async (_sql, n) => void staff.push({ subject: n.subject, body: n.body });
   });
 
@@ -164,16 +170,35 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(plans.status).toBe(200);
     expect(plans.body.storeDomain).toBe('vendua.test');
     expect(plans.body.billing.available).toBe(true);
-    const basic = plans.body.plans.find((p: any) => p.id === 'basic');
-    expect(basic).toEqual({
-      id: 'basic',
-      name: 'Venduá Basic',
-      priceCents: 3990,
+    expect(plans.body.plans.map((p: any) => p.id)).toEqual(['mirim', 'bandeira', 'pangolim']);
+    const mirim = plans.body.plans.find((p: any) => p.id === 'mirim');
+    expect(mirim).toEqual({
+      id: 'mirim',
+      name: 'Venduá Mirim',
+      priceCents: 6990,
       feeBps: 0,
-      features: { customDomain: false, customSite: false },
-      trialDays: 14,
+      features: {
+        customDomain: false,
+        customSite: false,
+        kds: false,
+        printing: false,
+        loyalty: false,
+        vendedor: false,
+      },
+      trialDays: 0,
+      recommended: false,
+      aiConversations: 0,
+      aiTrialConversations: 0,
+      available: true,
     });
-    expect(plans.body.plans.find((p: any) => p.id === 'pro_plus').priceCents).toBe(9900);
+    expect(plans.body.plans.find((p: any) => p.id === 'bandeira')).toMatchObject({
+      priceCents: 16900,
+      trialDays: 14,
+      recommended: true,
+      aiConversations: 250,
+      aiTrialConversations: 50,
+    });
+    expect(plans.body.plans.find((p: any) => p.id === 'pangolim').priceCents).toBe(44900);
 
     const reserved = await call('GET', '/admin/v1/signup/slug?slug=Admin');
     expect(reserved.body).toMatchObject({ slug: 'admin', available: false, reason: 'reserved' });
@@ -213,6 +238,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(r.body.signedIn).toBe(true);
     expect(r.body.store).toMatchObject({ slug: pixSlug, name: 'Doces da Praia', role: 'owner' });
     expect(r.body.next.kind).toBe('pix');
+    // the owner's welcome: where the store is, how to get in, what happens next
+    const welcome = mails.filter((m) => m.key === `signup-welcome:${pixSlug}`);
+    expect(welcome).toHaveLength(1);
+    expect(welcome[0]).toMatchObject({
+      to: 'ana@example.com',
+      subject: 'Doces da Praia está criada na Venduá',
+    });
+    expect(welcome[0]!.text).toContain('Oi, Ana!');
+    expect(welcome[0]!.text).toContain(`https://${pixSlug}.vendua.test`);
+    expect(welcome[0]!.text).toContain('primeiro pagamento');
     pixStore = r.body.store.id;
     pixCookie = r.cookie;
     expect(pixCookie).toContain('vendua_admin=');
@@ -224,16 +259,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     const owner = session(pixCookie);
     const acct = await owner('GET', '/account');
     expect(acct.status).toBe(200);
-    expect(acct.body.plan).toMatchObject({ id: 'basic', priceCents: 3990 });
+    expect(acct.body.plan).toMatchObject({ id: 'mirim', priceCents: 6990 });
     expect(acct.body.subscription).toMatchObject({
       status: 'pending',
       method: 'pix',
-      planId: 'basic',
+      planId: 'mirim',
       payerEmail: 'ana@example.com',
     });
     expect(acct.body.invoices).toHaveLength(1);
     const inv = acct.body.invoices[0];
-    expect(inv).toMatchObject({ id: r.body.next.invoiceId, number: 1, amountCents: 3990 });
+    expect(inv).toMatchObject({ id: r.body.next.invoiceId, number: 1, amountCents: 6990 });
     expect(inv.pix.copyPaste).toContain('FAKEPIX');
     expect(acct.body.address).toBe(`https://${pixSlug}.vendua.test`);
     const audit =
@@ -268,9 +303,138 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     const again = await signup(pixToken, pixSlug);
     expect(again.status).toBe(201);
     expect(again.body.store.id).toBe(pixStore);
+    // a replay finds the store: no second welcome
+    expect(mails.filter((m) => m.key === `signup-welcome:${pixSlug}`)).toHaveLength(1);
     expect(again.body.next).toEqual({ kind: 'pix', invoiceId: expect.any(String) });
     expect((await sql`select 1 from tenants where slug = ${pixSlug}`).length).toBe(1);
     expect((await sql`select 1 from invoices where tenant_id = ${pixStore}`).length).toBe(1);
+  });
+
+  test('closed until the CRM switch, WhatsApp, email and billing are all there', async () => {
+    let gate = { on: false, whatsapp: true, email: true, billing: true, open: false };
+    const closed = createApp({ ...deps, signupReady: async () => gate });
+    const phone = mkPhone(12);
+    expect(
+      (await call('GET', '/admin/v1/signup/plans', undefined, {}, closed)).body.signup,
+    ).toEqual({
+      open: false,
+    });
+    const otp = await call('POST', '/admin/v1/signup/otp/start', { phone }, {}, closed);
+    expect(otp.status).toBe(503);
+    expect(otp.body.error.code).toBe('SIGNUP_CLOSED');
+    expect(wa.some((m) => m.phone === phone)).toBe(false);
+    // a token from when it was open can't create a store once it closed
+    const token = (await verified(phone, createApp(deps))).signupToken;
+    const r = await signup(token, `signup-${nonce}-shut`, {}, closed);
+    expect(r.status).toBe(503);
+    expect(r.body.error.code).toBe('SIGNUP_CLOSED');
+    // a WhatsApp reconnecting doesn't fail an owner whose code already came: only the code needs it
+    gate = { on: true, whatsapp: false, email: true, billing: true, open: false };
+    expect((await call('POST', '/admin/v1/signup/otp/start', { phone }, {}, closed)).status).toBe(
+      503,
+    );
+    expect((await signup(token, `signup-${nonce}-shut`, {}, closed)).status).toBe(201);
+  });
+
+  test('readiness: the switch, a WhatsApp and an email integration, and billing', async () => {
+    const { signupReadiness } = await import('../src/modules/billing/signup-gate.ts');
+    const ready = () => signupReadiness(appSql, { platformConfigured: true });
+    const put = (enabled: boolean) =>
+      call(
+        'PUT',
+        '/control/v1/settings/signup',
+        { value: { enabled } },
+        { 'x-vendua-control': 'ctl' },
+      );
+    const before = (await sql`select value from control_settings where key = 'signup'`)[0]?.value;
+    const added: string[] = [];
+    try {
+      expect((await put('yes' as never)).status).toBe(422);
+      expect((await put(false)).status).toBe(200);
+      expect(await ready()).toMatchObject({ on: false, open: false, billing: true });
+      expect((await put(true)).status).toBe(200);
+      for (const kind of ['whatsapp', 'email'])
+        added.push(
+          ...(
+            await sql<{ id: string }[]>`
+              insert into control_integrations (kind, driver, enabled, updated_at)
+              values (${kind}, 'log', true, now() + interval '1 minute')
+              on conflict do nothing returning id`
+          ).map((r) => r.id),
+        );
+      expect(await ready()).toMatchObject({ on: true, whatsapp: true, email: true, open: true });
+      expect((await signupReadiness(appSql, { platformConfigured: false })).open).toBe(
+        !!process.env.VENDUA_SIGNUP_ACCESS_CODE,
+      );
+      const crm = await call('GET', '/control/v1/signup', undefined, { 'x-vendua-control': 'ctl' });
+      expect(crm.body).toMatchObject({ on: true, billing: true });
+    } finally {
+      if (added.length) await sql`delete from control_integrations where id = any(${added})`;
+      if (before === undefined) await sql`delete from control_settings where key = 'signup'`;
+      else
+        await sql`update control_settings set value = ${sql.json(before as never)} where key = 'signup'`;
+    }
+  });
+
+  test('a welcome that fails to send is tried again on the next try', async () => {
+    let fail = true;
+    const sent: string[] = [];
+    const flaky = createApp({
+      ...deps,
+      notify: {
+        ...deps.notify,
+        email: async (_to: string, _s: string, _t: string, key: string) => {
+          if (fail) throw new Error('provider down');
+          sent.push(key);
+        },
+      },
+    });
+    const token = (await verified(mkPhone(13), flaky)).signupToken;
+    const slug = `signup-${nonce}-flaky`;
+    const r = await signup(token, slug, {}, flaky);
+    expect(r.status).toBe(201);
+    const marker = () =>
+      sql`select 1 from push_deliveries where tenant_id = ${r.body.store.id} and key = 'signup.welcome'`;
+    // the send runs after the answer: wait for it to settle
+    const until = async (ok: () => Promise<boolean> | boolean) => {
+      for (let i = 0; i < 50 && !(await ok()); i++) await Bun.sleep(20);
+    };
+    await until(async () => (await marker()).length === 0);
+    expect((await marker()).length).toBe(0);
+    fail = false;
+    expect((await signup(token, slug, {}, flaky)).status).toBe(201);
+    await until(() => sent.length === 1);
+    expect(sent).toEqual([`signup-welcome:${slug}`]);
+    expect((await marker()).length).toBe(1);
+  });
+
+  test('a plan that is listed but closed is refused before anything is created', async () => {
+    const other = createApp(deps);
+    const token = (await verified(mkPhone(11), other)).signupToken;
+    await sql`update plans set available = false where id = 'pangolim'`;
+    try {
+      const r = await signup(token, `signup-${nonce}-closed`, { planId: 'pangolim' }, other);
+      expect(r.status).toBe(409);
+      expect(r.body.error).toMatchObject({
+        code: 'PLAN_UNAVAILABLE',
+        details: { field: 'planId' },
+      });
+      expect(
+        (await sql`select 1 from tenants where slug = ${`signup-${nonce}-closed`}`).length,
+      ).toBe(0);
+      // a store that went through on Mirim can't come back for the closed plan
+      const made = await signup(token, `signup-${nonce}-resume`, {}, other);
+      expect(made.status).toBe(201);
+      const again = await signup(token, `signup-${nonce}-resume`, { planId: 'pangolim' }, other);
+      expect(again.body.error?.code).toBe('PLAN_UNAVAILABLE');
+      expect(
+        (await sql`select plan from tenants where slug = ${`signup-${nonce}-resume`}`)[0]!.plan,
+      ).toBe('mirim');
+      // …while the same request again still finds its store
+      expect((await signup(token, `signup-${nonce}-resume`, {}, other)).status).toBe(201);
+    } finally {
+      await sql`update plans set available = true where id = 'pangolim'`;
+    }
   });
 
   test('segment: kept with the store, onboarding marked from signup; a replay changes neither', async () => {
@@ -341,7 +505,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       await sql`select provider_subscription_id, status from subscriptions where tenant_id = ${tenant}`
     )[0]!;
     expect(sub.status).toBe('pending');
-    expect(fake.subscriptions.get(sub.provider_subscription_id)!.amountCents).toBe(3990);
+    expect(fake.subscriptions.get(sub.provider_subscription_id)!.amountCents).toBe(6990);
     expect(fake.subscriptions.get(sub.provider_subscription_id)!.externalReference).toBe(tenant);
     const s = await call(
       'POST',
@@ -358,23 +522,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(acct.body.invoices[0]).toMatchObject({
       method: 'card',
       status: 'paid',
-      amountCents: 3990,
+      amountCents: 6990,
     });
     const st = (await sql`select billing_hold from store_settings where tenant_id = ${tenant}`)[0]!;
     expect(st.billing_hold).toBe(false);
   });
 
-  test('PRO+ signup opens a site request for the team once paid', async () => {
+  test('Pangolim signup opens a site request for the team once paid', async () => {
     const token = (await verified(mkPhone(5))).signupToken;
-    const r = await signup(token, `signup-${nonce}-pro`, { planId: 'pro_plus' });
+    const r = await signup(token, `signup-${nonce}-pro`, { planId: 'pangolim' });
     expect(r.status).toBe(201);
     const tenant = r.body.store.id;
     await call('POST', `/admin/v1/dev/billing/invoices/${r.body.next.invoiceId}/pay`, {});
     const reqs = await sql`select status from site_requests where tenant_id = ${tenant}`;
     expect([...reqs]).toEqual([{ status: 'requested' }]);
-    expect(staff.some((n) => n.subject.includes('Site PRO+'))).toBe(true);
+    expect(staff.some((n) => n.subject.includes('Site sob medida'))).toBe(true);
     const acct = await session(r.cookie)('GET', '/account');
-    expect(acct.body.plan.features).toEqual({ customDomain: true, customSite: true });
+    expect(acct.body.plan.features).toEqual({
+      customDomain: true,
+      customSite: true,
+      kds: true,
+      printing: true,
+      loyalty: true,
+      vendedor: true,
+    });
     expect(acct.body.siteRequest.status).toBe('requested');
   });
 
@@ -465,7 +636,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       expect(inv).toMatchObject({
         id: invoiceId,
         status: 'open',
-        amount_cents: 3990,
+        amount_cents: 6990,
         pix_copy_paste: null,
         provider_payment_id: null,
       });
@@ -487,7 +658,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       const list = await control('GET', '/control/v1/billing/stores');
       const row = list.body.stores.find((st: { tenantId: string }) => st.tenantId === id);
       expect(row.subscription.status).toBe('pending');
-      expect(row.openInvoice).toMatchObject({ id: invoiceId, number: 1, amountCents: 3990 });
+      expect(row.openInvoice).toMatchObject({ id: invoiceId, number: 1, amountCents: 6990 });
       expect(
         (await call('POST', `/control/v1/billing/invoices/${invoiceId}/mark-paid`, {})).status,
       ).toBe(404);
@@ -568,7 +739,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       await sql`
         insert into invoices (tenant_id, number, plan_id, amount_cents, method, status, provider,
                               period_start, period_end, due_at)
-        values (${card.body.store.id}, 1, 'basic', 3990, 'card', 'open', 'fake',
+        values (${card.body.store.id}, 1, 'mirim', 6990, 'card', 'open', 'fake',
                 now(), now() + interval '1 month', now())
         returning id
       `

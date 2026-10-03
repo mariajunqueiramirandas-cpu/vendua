@@ -1,6 +1,6 @@
 # ADR 0025: A 14-day free trial on Venduá Basic, no card
 
-- Status: Accepted (implemented 2026-10-02, Core migration 0075)
+- Status: Accepted (implemented 2026-10-02, Core migration 0075); the trial moved to Venduá Bandeira by [ADR 0032](0032-three-plans-for-launch.md)
 - Date: 2026-10-02
 
 ## Context

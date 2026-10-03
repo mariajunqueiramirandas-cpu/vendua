@@ -4,6 +4,7 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
+import type { SignupReadiness } from '../modules/billing/signup-gate.ts';
 import type { AdminHub } from './live.ts';
 
 export type Role = 'owner' | 'manager' | 'attendant';
@@ -38,6 +39,8 @@ export interface AdminDeps {
   publicOrigin: (c: Context) => string;
   /** address → approximate point, to place the store's pin (ADR 0024) */
   geocode: Geocoder;
+  /** may a visitor sign up now (modules/billing/signup-gate.ts) */
+  signupReady: () => Promise<SignupReadiness>;
 }
 
 /** Messages to store people (not shoppers) from the platform's own number and address. */

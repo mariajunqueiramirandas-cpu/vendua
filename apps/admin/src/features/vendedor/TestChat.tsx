@@ -11,14 +11,13 @@ import { DetailSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { MiniChat } from '../../ui/vendedor/index.ts';
 import { ThreadMessages, useFollow } from './Conversation.parts.tsx';
-import { useAgentName } from './Conversation.tsx';
 
-// she answers through the same runtime as a real shopper, a few seconds later
+// Duá answers through the same runtime as a real shopper, a few seconds later
 const WAIT_MS = 90_000;
 
 const STARTERS = ['oi, o que vocês têm hoje?', 'quanto fica a entrega?', 'quero fazer um pedido'];
 
-/** the owner's last message still has no answer from her */
+/** the owner's last message still has no answer from him */
 function awaiting(d: ThreadDetail | undefined, now = Date.now()) {
   const last = d?.messages.filter((m) => m.status !== 'draft').at(-1);
   return !!last && last.author === 'shopper' && now - new Date(last.at).getTime() < WAIT_MS;
@@ -26,16 +25,15 @@ function awaiting(d: ThreadDetail | undefined, now = Date.now()) {
 
 /**
  * "Testar como cliente" (sales-agent-ux §3.12 "Peça para mim"): the owner chats with the real
- * Vendedor on the real menu, as a shopper. The order is checked the way checkout checks it but
+ * Duá on the real menu, as a shopper. The order is checked the way checkout checks it but
  * stops before it exists, so nothing reaches the kitchen; the screen says so up front.
  */
 export default function TestChat() {
   const qc = useQueryClient();
-  const name = useAgentName();
   const q = useQuery({
     queryKey: qk.vendedor.testChat,
     queryFn: api.vendedor.testChat,
-    // her answer lands a few seconds after: look again while one is due
+    // his answer lands a few seconds after: look again while one is due
     refetchInterval: (query) => (awaiting(query.state.data) ? 1500 : false),
   });
   const d = q.data;
@@ -74,7 +72,7 @@ export default function TestChat() {
       <PageHeader
         title="Testar como cliente"
         back="/vendedor"
-        subtitle={`Peça como se fosse um cliente. A ${name} responde com o seu cardápio de verdade.`}
+        subtitle="Peça como se fosse um cliente. O Duá responde com o seu cardápio de verdade."
         actions={
           d?.messages.length ? (
             <Button
@@ -103,7 +101,6 @@ export default function TestChat() {
         <DetailSkeleton />
       ) : (
         <MiniChat
-          name={name}
           owner
           label="teste · só você vê"
           typing={waiting || send.isPending}
@@ -129,7 +126,7 @@ export default function TestChat() {
               ) : null}
               {silent ? (
                 <p className="t-caption text-muted" role="status">
-                  A {name} ainda não respondeu. Mande de novo ou recomece a conversa.
+                  O Duá ainda não respondeu. Mande de novo ou recomece a conversa.
                 </p>
               ) : null}
               <form
@@ -171,7 +168,7 @@ export default function TestChat() {
           }
         >
           {d.messages.length ? (
-            <ThreadMessages detail={d} name={name} asCustomer />
+            <ThreadMessages detail={d} asCustomer />
           ) : (
             <p className="t-body py-8 text-center text-muted">
               Aqui você é o cliente. Escreva como escreveria no WhatsApp da loja.

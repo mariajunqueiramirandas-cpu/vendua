@@ -875,11 +875,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
   test('Início: billing, Mercado Pago and incident items', async () => {
     await sql`
       insert into subscriptions (tenant_id, plan_id, method, status, provider)
-      values (${tenantId}, 'basic', 'pix', 'pending', 'fake')
+      values (${tenantId}, 'mirim', 'pix', 'pending', 'fake')
     `;
     await sql`
       insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end, method, provider, due_at)
-      values (${tenantId}, 1, 'basic', 3990, now(), now() + interval '1 month', 'pix', 'fake', now() + interval '2 days')
+      values (${tenantId}, 1, 'mirim', 6990, now(), now() + interval '1 month', 'pix', 'fake', now() + interval '2 days')
     `;
     await sql`
       insert into payment_connections (tenant_id, provider, provider_user_id, status, access_token, expires_at)
@@ -901,7 +901,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
     expect(k).toContain('mp_disconnected');
     const inv = home.find((a) => a.kind === 'invoice_open');
     expect(inv.title).toBe('A fatura do plano vence em 2 dias');
-    expect(inv.detail).toContain('39,90');
+    expect(inv.detail).toContain('69,90');
     expect(inv.href).toBe('/conta');
 
     await sql`update payment_connections set status = 'restricted' where tenant_id = ${tenantId}`;

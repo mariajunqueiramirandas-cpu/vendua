@@ -162,18 +162,32 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
       window.history.replaceState(null, '', '/admin/comecar');
   }, []);
 
-  // the plan chosen on the site (?plano=) wins; otherwise the first one offered, one less tap
+  // the plan chosen on the site (?plano=) wins; otherwise the one with the trial (said above the
+  // cards), then the recommended one: one less tap
   const fromSite = useRef(new URLSearchParams(window.location.search).get('plano'));
   useEffect(() => {
     const list = plans.data?.plans;
     if (!list?.length) return;
     const site = fromSite.current;
     fromSite.current = null;
-    if (site && !cur.current.created && list.some((p) => p.id === site)) {
+    // a closed plan (Pangolim before own domains) is never preselected, even from the site
+    const open = list.filter((p) => p.available);
+    if (site && !cur.current.created && open.some((p) => p.id === site)) {
       patch({ planId: site });
       if (window.location.search.includes('plano='))
         window.history.replaceState(null, '', '/admin/comecar');
-    } else if (!list.some((p) => p.id === cur.current.planId)) patch({ planId: list[0]!.id });
+    } else if (
+      !list.some((p) => p.id === cur.current.planId) ||
+      // a closed plan is swapped only before the owner moves on: further along (a signup that
+      // created its store and is resuming) Core decides whether the store still holds it
+      (cur.current.step === 'plano' && !open.some((p) => p.id === cur.current.planId))
+    ) {
+      const trial = plans.data?.billing.available
+        ? open.find((p) => p.trialDays > 0 && p.priceCents !== null)
+        : undefined;
+      const pick = trial ?? open.find((p) => p.recommended) ?? open[0];
+      if (pick) patch({ planId: pick.id });
+    }
   }, [plans.data, patch]);
 
   const finish = useCallback(() => {
@@ -187,6 +201,8 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
   const answered = at ?? QUESTIONS.length;
   const questions = QUESTIONS.length;
   const done = !PRE.has(step);
+  // three plans side by side need the whole width: the summary waits for the next step
+  const wide = step === 'plano';
 
   const props: FlowProps | null = plans.data ? { d, patch, go, notice, plans: plans.data } : null;
   // the free days this signup starts with, once the phone is known to be eligible
@@ -248,7 +264,8 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
     ) : (
       <PlanStepSkeleton />
     );
-  else if (step === 'plano') body = <PlanStep {...props} />;
+  else if (step === 'plano')
+    body = <PlanStep {...props} trialEligible={verified ? verified.trialEligible : undefined} />;
   else if (step === 'loja') body = <StoreStep {...props} />;
   else if (step === 'tipo') body = <TipoStep {...props} />;
   else if (step === 'voce') body = <YouStep {...props} />;
@@ -321,10 +338,12 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
       <div
         className={cn(
           'mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] gap-10 px-4 pb-[calc(1rem+var(--kb,0px))] pt-8 md:px-8',
-          step !== 'pronto' && 'lg:grid-cols-[minmax(0,1fr)_360px]',
+          step !== 'pronto' && !wide && 'lg:grid-cols-[minmax(0,1fr)_360px]',
         )}
       >
-        <main className="mx-auto w-full max-w-xl space-y-8 lg:mx-0">
+        <main
+          className={cn('mx-auto w-full max-w-xl space-y-8', wide ? 'lg:max-w-none' : 'lg:mx-0')}
+        >
           {step !== 'pronto' ? (
             <Guide turn={step} pose={POSE[step]}>
               {praise ? <strong className="mr-1">{praise}</strong> : null}
@@ -333,7 +352,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
           ) : null}
           {body}
         </main>
-        {step !== 'pronto' ? (
+        {step !== 'pronto' && !wide ? (
           <aside
             className="hidden lg:sticky lg:top-24 lg:block lg:self-start"
             aria-label="resumo da sua loja"

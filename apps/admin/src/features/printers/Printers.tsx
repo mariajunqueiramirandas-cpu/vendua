@@ -32,6 +32,8 @@ import { Field, Segmented, Select, Stepper, TextInput, Toggle } from '../../ui/f
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { LockedPage, reasonOf } from '../../ui/PlanLocked.tsx';
+import { isPlanRequired, useFeature } from '../../lib/session.ts';
 import { TONE, type Tone } from '../../ui/PaymentChip.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
@@ -72,7 +74,12 @@ function formatCode(v: string) {
 }
 
 export default function Printers() {
-  const { data, error, refetch } = useQuery({ queryKey: qk.printers, queryFn: api.printers });
+  const open = useFeature('printing');
+  const { data, error, refetch } = useQuery({
+    queryKey: qk.printers,
+    queryFn: api.printers,
+    enabled: open,
+  });
   const [params] = useSearchParams();
   const nav = useNavigate();
   const linked = params.get('code');
@@ -85,6 +92,11 @@ export default function Printers() {
     if (!v && linked) nav('/impressoras', { replace: true });
   };
 
+  // the plan without printing: the screen shows the plan that has it (pairing links included)
+  if (!open || data?.included === false || isPlanRequired(error))
+    return (
+      <LockedPage title="Impressoras" feature="printing" reason={reasonOf(error)} refresh={open} />
+    );
   if (error && !data)
     return (
       <PageBody>

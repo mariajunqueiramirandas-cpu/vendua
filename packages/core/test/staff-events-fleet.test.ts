@@ -489,7 +489,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         leadId: lead,
         slug,
         storeName: 'Doces da Ana',
-        planId: 'basic',
+        planId: 'mirim',
         ownerName: 'Ana Souza',
         ownerPhone: `(21) 9${String(Date.now()).slice(-8)}`,
         ownerEmail: `ana@${nonce}.test`,

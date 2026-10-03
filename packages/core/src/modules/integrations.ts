@@ -419,6 +419,13 @@ export function validateSetting(key: string, value: unknown): void {
   const bad = (field: string, why: string) =>
     new HttpError(422, 'BAD_REQUEST', `settings.${key}.${field} ${why}`, { field });
 
+  if (key === 'signup') {
+    const v = value as Record<string, unknown> | null;
+    if (!v || typeof v !== 'object' || Array.isArray(v) || typeof v.enabled !== 'boolean')
+      throw bad('enabled', 'must be true or false');
+    if (Object.keys(v).some((k) => k !== 'enabled')) throw bad('*', 'only takes enabled');
+    return;
+  }
   if (key === 'guardrails') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw bad('*', 'must be an object');

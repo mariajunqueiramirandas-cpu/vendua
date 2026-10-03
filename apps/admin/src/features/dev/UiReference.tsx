@@ -11,7 +11,7 @@ import {
   WhatsappLogo,
 } from '@phosphor-icons/react';
 import { useState, type ReactNode } from 'react';
-import type { Order, Plan, Product } from '../../lib/api.ts';
+import type { Order, Plan, Product, Session } from '../../lib/api.ts';
 import { setTheme } from '../../lib/theme.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
@@ -52,7 +52,10 @@ import { CodeInput } from '../../ui/CodeInput.tsx';
 import { CopyValue } from '../../ui/CopyValue.tsx';
 import { PaymentChip } from '../../ui/PaymentChip.tsx';
 import { PixCode } from '../../ui/PixCode.tsx';
-import { PlanCardSkeleton, PlanOption } from '../../ui/PlanCard.tsx';
+import { PlanCardSkeleton } from '../../ui/PlanCard.tsx';
+import { PlanCards, PlanCompare, PlanTrialStrip } from '../../ui/PlanPicker.tsx';
+import { PlanLocked } from '../../ui/PlanLocked.tsx';
+import { SessionCtx } from '../../lib/session.ts';
 import { StepFrame } from '../../ui/StepFrame.tsx';
 import { OutcomeList, OutcomeRow } from '../../ui/Outcome.tsx';
 import { HelpButton } from '../../ui/Page.tsx';
@@ -229,7 +232,7 @@ export default function UiReference() {
   const [sales, setSales] = useState(34890);
   const [phase, setPhase] = useState<DayPhase>('open');
   const [code, setCode] = useState('12');
-  const [plan, setPlan] = useState('basic');
+  const [plan, setPlan] = useState('bandeira');
   return (
     <div className="mx-auto max-w-6xl space-y-12 px-4 py-8 md:px-8">
       <header className="flex flex-wrap items-center gap-3">
@@ -708,18 +711,29 @@ export default function UiReference() {
             </Card>
           </div>
         </div>
+        <div className="mt-6 space-y-6">
+          <PlanTrialStrip
+            plan={SAMPLE_PLANS[1]!}
+            selected={plan === 'bandeira'}
+            onPick={() => setPlan('bandeira')}
+          />
+          <PlanCards
+            plans={SAMPLE_PLANS}
+            selected={plan}
+            onSelect={setPlan}
+            address="sualoja.vendua.com.br"
+            badge={(p) => (p.id === 'mirim' ? 'seu plano' : undefined)}
+            trial
+            wide
+            className="pt-2"
+          />
+          <PlanCompare plans={SAMPLE_PLANS} trial current="mirim" />
+        </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {SAMPLE_PLANS.map((p) => (
-            <PlanOption
-              key={p.id}
-              plan={p}
-              selected={plan === p.id}
-              onSelect={() => setPlan(p.id)}
-              address="sualoja.vendua.com.br"
-              badge={p.id === 'basic' ? 'para começar' : undefined}
-              trial
-            />
-          ))}
+          <SessionCtx.Provider value={SAMPLE_SESSION}>
+            <PlanLocked feature="kds" plans={SAMPLE_PLANS} />
+            <PlanLocked feature="loyalty" plans={SAMPLE_PLANS} compact />
+          </SessionCtx.Provider>
           <PlanCardSkeleton />
         </div>
         <Card className="mt-4 p-5 [&_.sticky]:static">
@@ -823,24 +837,69 @@ export default function UiReference() {
 const SAMPLE_PIX =
   '00020126580014BR.GOV.BCB.PIX0136a1b2c3d4-e5f6-7890-abcd-ef1234567890520400005303986540539.905802BR5920QUERO PUDIM GOURMET6009SAO PAULO62070503***6304ABCD';
 
+const NONE = {
+  customDomain: false,
+  customSite: false,
+  kds: false,
+  printing: false,
+  loyalty: false,
+  vendedor: false,
+};
 const SAMPLE_PLANS: Plan[] = [
   {
-    id: 'basic',
-    name: 'Venduá Basic',
-    priceCents: 3990,
+    id: 'mirim',
+    name: 'Venduá Mirim',
+    priceCents: 6990,
     feeBps: 0,
-    features: { customDomain: false, customSite: false },
-    trialDays: 14,
+    features: NONE,
+    trialDays: 0,
+    recommended: false,
+    aiConversations: 0,
+    aiTrialConversations: 0,
+    available: true,
   },
   {
-    id: 'pro_plus',
-    name: 'Venduá PRO+',
-    priceCents: 9900,
+    id: 'bandeira',
+    name: 'Venduá Bandeira',
+    priceCents: 16900,
     feeBps: 0,
-    features: { customDomain: true, customSite: true },
+    features: { ...NONE, kds: true, printing: true, loyalty: true, vendedor: true },
+    trialDays: 14,
+    recommended: true,
+    aiConversations: 250,
+    aiTrialConversations: 50,
+    available: true,
+  },
+  {
+    id: 'pangolim',
+    name: 'Venduá Pangolim',
+    priceCents: 44900,
+    feeBps: 0,
+    features: {
+      customDomain: true,
+      customSite: true,
+      kds: true,
+      printing: true,
+      loyalty: true,
+      vendedor: true,
+    },
     trialDays: 0,
+    recommended: false,
+    aiConversations: 1000,
+    aiTrialConversations: 0,
+    available: false,
   },
 ];
+
+// PlanLocked reads the role and the plan from the session; the reference has none
+const SAMPLE_SESSION = {
+  user: { id: 'u', name: 'Vinícius', phone: '', role: 'owner', email: null, prefs: {} },
+  store: { id: 's', slug: 'quero-pudim', name: 'Quero Pudim', logoUrl: null, url: '' },
+  stores: [],
+  push: { publicKey: null },
+  support: { whatsapp: null },
+  plan: { id: 'mirim', name: 'Venduá Mirim', features: NONE },
+} satisfies Session;
 
 function Block({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -850,8 +909,7 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-// Forno da Vila, a fictional pizzeria whose owner named her Vendedor "Ana" (sales-agent-ux)
-const ANA = 'Ana';
+// Forno da Vila, a fictional pizzeria where Duá sells (sales-agent-ux)
 const SUMMARY: SummaryCardData = {
   id: 's1',
   lines: [
@@ -888,8 +946,8 @@ function VendedorReference() {
   const [owner, setOwner] = useState(false);
   return (
     <>
-      <Block title="Vendedor: as três vozes">
-        <div className="grid gap-6 lg:grid-cols-2">
+      <Block title="Duá: as três vozes">
+        <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
           <div className="flex flex-col gap-1.5 rounded-lg bg-bg p-3 ring-1 ring-line">
             <SacolaBar
               count={2}
@@ -904,7 +962,7 @@ function VendedorReference() {
               transcript="Oi, boa noite, queria uma pizza grande metade calabresa metade frango com catupiry e uma coca de dois litros"
             />
             <ActionReceipt onWhy={() => toast('por quê')}>anotou 2 itens na sacola</ActionReceipt>
-            <Bubble voice="seller" name={ANA} time="19:42" status="read">
+            <Bubble voice="seller" time="19:42" status="read">
               Boa noite, Carla! Anotei a pizza G meio calabresa, meio frango com catupiry, e a Coca
               2 L. Entrego na Rua das Acácias, 120, como da última vez?
             </Bubble>
@@ -912,14 +970,7 @@ function VendedorReference() {
               isso
             </Bubble>
             <ActionReceipt onWhy={() => toast('por quê')}>entrega: R$ 7,00 · ~40 min</ActionReceipt>
-            <Bubble
-              voice="seller"
-              name={ANA}
-              signed={false}
-              tag="sugestão"
-              time="19:43"
-              status="delivered"
-            >
+            <Bubble voice="seller" signed={false} tag="sugestão" time="19:43" status="delivered">
               Quer borda recheada de catupiry por mais R$ 9,00? É a que mais sai com essa pizza.
             </Bubble>
             <Bubble voice="in" author="Carla" time="19:44">
@@ -932,7 +983,7 @@ function VendedorReference() {
             <EventChip to="/pedidos/o1284">
               Pedido #1284 feito · Pix enviado · aguardando pagamento
             </EventChip>
-            <Bubble voice="seller" name={ANA} draft time="19:45">
+            <Bubble voice="seller" draft time="19:45">
               Aqui é uma forma de pagamento por pedido. Prefere Pix ou cartão?
             </Bubble>
             <Bubble voice="you" status="failed" time="19:46">
@@ -944,7 +995,6 @@ function VendedorReference() {
               {owner ? (
                 <Floor
                   variant="owner"
-                  name={ANA}
                   onRelease={() => setOwner(false)}
                   suggestions={[
                     'Já sai em 40 min!',
@@ -956,7 +1006,7 @@ function VendedorReference() {
                   keys
                 />
               ) : (
-                <Floor variant="agent" name={ANA} onTake={() => setOwner(true)} keys />
+                <Floor variant="agent" onTake={() => setOwner(true)} keys />
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -964,30 +1014,31 @@ function VendedorReference() {
               <ReasonChip reason="reclamação: atraso" />
               <ReasonChip reason="pedido grande" />
               <ReasonChip reason="o cliente pediu uma pessoa" />
-              <FloorChip floor="agent" name={ANA} />
-              <FloorChip floor="rehearsal" name={ANA} />
-              <FloorChip floor="store" name={ANA} />
-              <FloorChip floor="agent" waiting name={ANA} />
-              <FloorChip floor="muted" name={ANA} />
+              <FloorChip floor="agent" />
+              <FloorChip floor="rehearsal" />
+              <FloorChip floor="store" />
+              <FloorChip floor="agent" waiting />
+              <FloorChip floor="muted" />
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <GuaranteeChip guaranteed />
-              <GuaranteeChip guaranteed={false} name={ANA} />
+              <GuaranteeChip guaranteed={false} />
               <GuaranteeChip guaranteed={false} short />
             </div>
-            <div className="flex items-center gap-4">
-              <PersonaAvatar name={ANA} size="lg" answering label="Ana está atendendo" />
-              <PersonaAvatar name={ANA} size="md" answering />
-              <PersonaAvatar name={ANA} size="md" />
-              <PersonaAvatar name="Léo" size="sm" />
-              <PersonaAvatar name={ANA} size="xs" />
+            <div className="flex flex-wrap items-center gap-4">
+              <PersonaAvatar size="lg" answering label="O Duá está atendendo" />
+              <PersonaAvatar size="md" />
+              <PersonaAvatar size="md" pose="avatar-feliz" />
+              <PersonaAvatar size="md" pose="avatar-ajuda" />
+              <PersonaAvatar size="sm" />
+              <PersonaAvatar size="xs" />
             </div>
             <CoreReceipt data={LONG} title="Pedido de teste" align="stretch" />
           </div>
         </div>
       </Block>
 
-      <Block title="Vendedor: provas e resultados">
+      <Block title="Duá: provas e resultados">
         <div className="grid gap-6 lg:grid-cols-2">
           <Card className="p-4">
             <div className="flex items-center gap-4">
@@ -996,7 +1047,7 @@ function VendedorReference() {
                 <p className="font-semibold">pedidos saíram certos</p>
                 <p className="t-caption text-muted">
                   Cada cliente de teste tinha um pedido escondido. Comparamos item por item com o
-                  que a Ana fechou.
+                  que o Duá fechou.
                 </p>
               </div>
             </div>
@@ -1014,7 +1065,7 @@ function VendedorReference() {
               state="done"
               eyebrow="Parte 1"
               title="Conhecer"
-              detail="Nome, jeito de falar e o WhatsApp da loja"
+              detail="Jeito de falar e o WhatsApp da loja"
               value="pronto"
             />
             <ChecklistRow
@@ -1041,7 +1092,7 @@ function VendedorReference() {
               eyebrow="Parte 4"
               title="Começar"
               icon={Lightning}
-              detail="Quando ela atende e como começa"
+              detail="Quando ele atende e como começa"
               value="a fazer"
             />
           </div>
@@ -1064,22 +1115,20 @@ function VendedorReference() {
             <Discordance
               who="Bruno Lima"
               when="ontem, 20h14"
-              name={ANA}
               shopper="dá pra pagar metade no pix e metade no cartão?"
               draft="Aqui é uma forma de pagamento por pedido. Prefere Pix ou cartão?"
               merchant="Dá sim! Me fala quanto vai em cada um."
               onTeach={() => toast('ensinar')}
-              onDismiss={() => toast('ela estava certa')}
+              onDismiss={() => toast('ele estava certo')}
             />
           </Card>
         </div>
       </Block>
 
-      <Block title="Vendedor: treinar a Ana">
+      <Block title="Duá: o treino">
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="space-y-4 overflow-hidden rounded-lg bg-bg pb-4 ring-1 ring-line">
             <AgentJourney
-              name={ANA}
               part="ensinar"
               progress={3 / 7}
               status="3 de 7"
@@ -1090,12 +1139,11 @@ function VendedorReference() {
               }
             />
             <div className="space-y-4 px-4">
-              <AgentGuide name={ANA} turn="entrevista-3">
+              <AgentGuide turn="entrevista-3">
                 Anotado! Agora: dá pra pedir pizza com 3 sabores?
               </AgentGuide>
               <ProposalCard
                 kind="answer"
-                name={ANA}
                 source="Da sua resposta anterior"
                 question="Tem estacionamento?"
                 answer="Tem, na rua lateral, de graça."
@@ -1104,7 +1152,6 @@ function VendedorReference() {
               />
               <ProposalCard
                 kind="rule"
-                name={ANA}
                 source="Da entrevista"
                 question="Pedidos com mais de 10 pizzas: passe para mim."
                 guaranteed
@@ -1115,18 +1162,16 @@ function VendedorReference() {
           </div>
           <div className="space-y-4">
             <MiniChat
-              name={ANA}
               label="prévia no WhatsApp"
               lines={[
                 { voice: 'in', text: 'oi, vocês entregam?' },
                 {
                   voice: 'seller',
-                  text: 'Oi, boa tarde! Sou a Ana, assistente virtual da Forno da Vila. Entregamos sim, em 6 bairros. Qual é o seu?',
+                  text: 'Oi, boa tarde! Sou o Duá, assistente virtual da Forno da Vila. Entregamos sim, em 6 bairros. Qual é o seu?',
                 },
               ]}
             />
             <MiniChat
-              name={ANA}
               owner
               label="teste · só você vê"
               typing
@@ -1134,7 +1179,7 @@ function VendedorReference() {
                 { voice: 'you', text: 'oi, entregam no Centro?', time: '16:07' },
                 {
                   voice: 'seller',
-                  text: 'Oi, boa tarde! Sou a Ana, assistente virtual da Forno da Vila. Entregamos no Centro, sim. O que vai ser?',
+                  text: 'Oi, boa tarde! Sou o Duá, assistente virtual da Forno da Vila. Entregamos no Centro, sim. O que vai ser?',
                   time: '16:07',
                 },
                 {

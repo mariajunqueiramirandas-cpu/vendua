@@ -1,4 +1,4 @@
-import type { Context } from 'hono';
+import type { Context, Hono } from 'hono';
 import { audit } from '../../admin/audit.ts';
 import {
   createSession,
@@ -10,11 +10,19 @@ import {
 import { text, type AdminApp, type AdminDeps, type Merchant } from '../../admin/context.ts';
 import { withTenant, type Sql } from '../../platform/db.ts';
 import { HttpError, bodyJson, clientIp, windowCounter } from '../../platform/http.ts';
-import { platformHost } from '../../platform/store-origin.ts';
+import { log } from '../../platform/log.ts';
+import { platformHost, storeOrigin } from '../../platform/store-origin.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { mountBillingDev } from './dev-routes.ts';
 import { validEmail } from './input.ts';
-import { publicPlanOr422, publicPlans, type PlanRow } from './plans.ts';
+import {
+  heldPlans,
+  openOr409,
+  planRow,
+  publicPlanOr422,
+  publicPlans,
+  type PlanRow,
+} from './plans.ts';
 import {
   accessCodeMatches,
   normalizeSlug,
@@ -37,6 +45,8 @@ import {
   type PayNext,
 } from './subscriptions.ts';
 import { FakeProvider } from '../payments/fake.ts';
+
+const signupLog = log.child({ mod: 'signup' });
 
 /** stores one phone may open per rolling day */
 const STORES_PER_PHONE_PER_DAY = 3;
@@ -78,6 +88,8 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     return c.json({
       plans: await publicPlans(sql),
       billing: { available: d.provider.platformConfigured, accessCode: !!signupAccessCode() },
+      // the CRM switch and what signup relies on; which part is missing is for the team (CRM)
+      signup: { open: (await d.signupReady()).open },
       storeDomain: d.storeDomain,
     });
   });
@@ -92,6 +104,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     const phone = validAdminPhone(body.phone);
     if (!phone)
       throw new HttpError(422, 'INVALID_PHONE', 'type the phone with DDD', { field: 'phone' });
+    await signupOpenOr503(d);
     const ip = clientIp(c, ipFlags());
     // 'local' = no trusted edge (dev): every client looks the same, so no per-IP day cap
     return c.json(await startSignupOtp(sql, phone, d.notify, ip === 'local' ? {} : { ip }));
@@ -127,7 +140,8 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       throw new HttpError(422, 'INVALID_ACCESS_CODE', 'wrong access code', { field: 'accessCode' });
     if (!manual && !d.provider.platformConfigured)
       throw new HttpError(503, 'BILLING_UNAVAILABLE', 'plan billing is not set up on this install');
-    const plan = await publicPlanOr422(sql, body.planId);
+    // open or not is checked once we know this isn't a replay of a signup that went through
+    const plan = await publicPlanOr422(sql, body.planId, null);
     // `trial: true` starts a plan's free trial (ADR 0025): no payment method asked
     if (body.trial !== undefined && typeof body.trial !== 'boolean')
       throw new HttpError(422, 'BAD_REQUEST', 'trial must be true or false', { field: 'trial' });
@@ -159,6 +173,13 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     // one trial per owner phone; a replay of this very signup finds its store first
     const trialUsed = () =>
       new HttpError(409, 'TRIAL_USED', 'this phone already had its free trial', { field: 'trial' });
+    // a replay or a resumed signup may only ask again for the plan the store already holds
+    openOr409(
+      plan,
+      owned ? await withTenant(sql, owned.tenant_id, (tx) => heldPlans(tx, owned!.tenant_id)) : [],
+    );
+    // a replay of a store already made goes through even if signup closed since
+    if (!owned) await signupOpenOr503(d, 'create');
     if (!owned && trial && (await phoneHadTrial(sql, phone))) throw trialUsed();
     if (!owned) {
       if ((await slugStatus(sql, slug, d.storeDomain)).reason === 'taken')
@@ -177,6 +198,17 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
           )[0]!.n;
           if (recent >= STORES_PER_PHONE_PER_DAY)
             throw new HttpError(429, 'SIGNUP_LIMIT', 'this phone opened too many stores today');
+          // the plan still open now: staff closing it in the CRM waits on this lock (and the
+          // other way round), so a store is never made on a plan closed a moment ago
+          await tx`select pg_advisory_xact_lock_shared(hashtextextended(${`plan-available:${plan.id}`}, 0))`;
+          const fresh = (
+            await tx<{ available: boolean }[]>`select available from plans where id = ${plan.id}`
+          )[0];
+          if (!fresh)
+            throw new HttpError(422, 'UNKNOWN_PLAN', 'pick one of the plans offered', {
+              field: 'planId',
+            });
+          openOr409({ ...plan, available: fresh.available });
           const tenantId = (
             await tx<{ id: string }[]>`
               select provision_store(${slug}, ${storeName}, ${plan.id}, ${platformHost(slug, d.storeDomain)},
@@ -246,6 +278,45 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     }
 
     const next = await ensureFirstCharge(d, c, owned, { plan, method, email, ownerName, manual });
+    // once per new store, and only once it went out: the send finishes before the answer, and
+    // the marker is written after it, so a failed send or a restart mid-send leaves no marker
+    // and the owner's next try sends it (the provider dedupes on the key if both went out)
+    const store = owned;
+    const welcome = await withTenant(sql, store.tenant_id, async (tx) => {
+      const due = await tx`
+        select 1 from tenants t where t.id = ${store.tenant_id}
+          and t.created_at > now() - interval '1 day'
+          and not exists (select 1 from push_deliveries p
+                          where p.tenant_id = t.id and p.key = 'signup.welcome')
+      `;
+      return due[0] ? storeOrigin(tx, { id: store.tenant_id, slug }, d.storeDomain) : null;
+    });
+    if (welcome) {
+      try {
+        // a slow provider doesn't hold the owner's answer: no marker, the next try sends it
+        await within(
+          sendWelcome(d, c, {
+            email,
+            ownerName,
+            storeName,
+            slug,
+            storeUrl: welcome,
+            planName: plan.name,
+            next,
+          }),
+          8000,
+        );
+        await withTenant(
+          sql,
+          store.tenant_id,
+          (tx) => tx`insert into push_deliveries (tenant_id, key)
+                     values (${store.tenant_id}, 'signup.welcome') on conflict do nothing`,
+        );
+      } catch (err) {
+        // never in the way of the answer: the store exists and the owner is signed in
+        signupLog.warn({ err, tenantId: store.tenant_id }, 'welcome email failed');
+      }
+    }
     setAdminCookie(
       c,
       await createSession(sql, owned, c.req.header('user-agent'), {
@@ -259,6 +330,77 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
 
   if (d.provider instanceof FakeProvider && process.env.NODE_ENV !== 'production')
     mountBillingDev(admin, d, d.provider);
+}
+
+/** Closed: no phone code, no new store. Creating one doesn't recheck the WhatsApp, which only
+ *  sends the code (already delivered), so a reconnect blip can't fail a verified owner. */
+/**
+ * The marketing site's prices (site/src/lib/plans/live.svelte.ts): the public catalog, read by
+ * the visitor's browser through the site's own nginx (/precos.json), so a price changed in the
+ * CRM shows without a new build. Outside /admin, which only the admin host serves.
+ */
+export function mountSiteCatalog(app: Hono<any>, sql: Sql) {
+  const allow = windowCounter({ windowMs: 60_000, max: 120 });
+  const flags = ipFlags();
+  app.get('/site/v1/plans', async (c) => {
+    if (!allow(clientIp(c, flags)))
+      throw new HttpError(429, 'RATE_LIMITED', 'too many requests — wait a minute');
+    c.header('cache-control', 'public, max-age=60');
+    return c.json({ plans: await publicPlans(sql) });
+  });
+}
+
+/** `p`, or a rejection after `ms` (the timer is cleared either way) */
+function within<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, no) => {
+    timer = setTimeout(() => no(new Error(`timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
+}
+
+async function signupOpenOr503(d: Omit<AdminDeps, 'admin'>, step: 'code' | 'create' = 'code') {
+  const r = await d.signupReady();
+  if (!(step === 'create' ? r.on && r.email && r.billing : r.open))
+    throw new HttpError(503, 'SIGNUP_CLOSED', 'self-serve signup is not open right now');
+}
+
+/** The owner's welcome (ADR 0032): where the store is, how to get in, and what happens next. */
+async function sendWelcome(
+  d: Omit<AdminDeps, 'admin'>,
+  c: Context,
+  o: {
+    email: string;
+    ownerName: string;
+    storeName: string;
+    slug: string;
+    storeUrl: string;
+    planName: string;
+    next: PayNext;
+  },
+) {
+  const first = o.ownerName.trim().split(/\s+/)[0] ?? o.ownerName;
+  const panel = `${d.publicOrigin(c)}/admin/`;
+  const next =
+    o.next.kind === 'trial'
+      ? `Seu teste grátis vai até ${new Date(o.next.endsAt).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', timeZone: 'America/Sao_Paulo' })}. A loja já pode receber pedidos.`
+      : o.next.kind === 'manual'
+        ? 'A loja abre para pedidos assim que a equipe da Venduá confirmar o pagamento do plano.'
+        : 'A loja abre para pedidos assim que o primeiro pagamento do plano for confirmado. O Pix e a fatura ficam em Conta e plano, no painel.';
+  await d.notify.email(
+    o.email,
+    `${o.storeName} está criada na Venduá`,
+    [
+      `Oi, ${first}!`,
+      `A ${o.storeName} foi criada no plano ${o.planName}.`,
+      next,
+      `Painel da loja: ${panel}`,
+      `Endereço da loja: ${o.storeUrl}`,
+      'Para entrar no painel, use o número de WhatsApp que você confirmou no cadastro.',
+      'Se precisar de ajuda, toque em Ajuda no painel.',
+    ].join('\n\n'),
+    `signup-welcome:${o.slug}`,
+  );
 }
 
 async function ownedStore(sql: Sql, phone: string, slug: string) {
@@ -287,8 +429,17 @@ async function ensureFirstCharge(
     withTenant(d.sql, owner.tenant_id, async (tx) => {
       const sub = await lockSub(tx, owner.tenant_id);
       if (!sub) {
+        // a resumed signup (its first charge failed before): the plan is reread under the
+        // availability lock, so one closed meanwhile can't start a subscription unless held
+        await tx`select pg_advisory_xact_lock_shared(hashtextextended(${`plan-available:${o.plan.id}`}, 0))`;
+        const plan = await planRow(tx, o.plan.id);
+        if (!plan || !plan.public)
+          throw new HttpError(422, 'UNKNOWN_PLAN', 'pick one of the plans offered', {
+            field: 'planId',
+          });
+        openOr409(plan, await heldPlans(tx, owner.tenant_id));
         const next = await startSubscription(ctx, tx, owner.tenant_id, {
-          plan: o.plan,
+          plan,
           method: o.method,
           payerEmail: o.email,
           key: `signup:${owner.tenant_id}`,

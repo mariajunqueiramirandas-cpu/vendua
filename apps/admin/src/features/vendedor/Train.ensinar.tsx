@@ -43,7 +43,6 @@ const listWords = (w: string[]) =>
 
 export function ReadStep({
   ob,
-  name,
   left,
   onLeave,
   onNext,
@@ -51,7 +50,6 @@ export function ReadStep({
   eyebrow,
 }: {
   ob: VendedorOnboarding;
-  name: string;
   /** the gaps not yet left as they are */
   left: MenuGap[];
   onLeave: (g: MenuGap) => void;
@@ -62,9 +60,9 @@ export function ReadStep({
   const pay = useQuery({ queryKey: qk.payments, queryFn: api.payments });
   const methods = [...new Set((pay.data?.methods ?? []).map((m) => PAY_WORD[m]))];
   return (
-    <TrainFrame eyebrow={eyebrow} title={`O que ${a(name)} já sabe`} next={onNext} back={back}>
+    <TrainFrame eyebrow={eyebrow} title="O que o Duá já sabe" next={onNext} back={back}>
       <Card className="space-y-3 p-4">
-        <ul className="flex flex-wrap gap-2" aria-label="o que ela leu da loja">
+        <ul className="flex flex-wrap gap-2" aria-label="o que ele leu da loja">
           <li className={CHIP}>
             <Check weight="bold" className="size-4" aria-hidden />
             cardápio · {plural(ob.read.products, 'item', 'itens')}
@@ -94,7 +92,7 @@ export function ReadStep({
           ) : null}
         </ul>
         <p className="t-caption text-muted">
-          Isso {a(name)} lê da loja na hora. Se você mudar, ela já sabe.
+          Isso o Duá lê da loja na hora. Se você mudar, ele já sabe.
         </p>
       </Card>
 
@@ -145,23 +143,18 @@ export function ReadStep({
   );
 }
 
-/** "a Ana", "o Léo" */
-const a = (name: string) => `${/o$/i.test(name.trim()) ? 'o' : 'a'} ${name}`;
-
 // ── A entrevista ────────────────────────────────────────────────────────────
 
 const STALL_MS = 60_000;
 
 export function InterviewStep({
   ob,
-  name,
   onNext,
   onSkip,
   back,
   eyebrow,
 }: {
   ob: VendedorOnboarding;
-  name: string;
   onNext: () => void;
   onSkip: () => void;
   back: () => void;
@@ -179,7 +172,7 @@ export function InterviewStep({
     onError: (e) => toast.error(messageOf(e)),
   });
   const waiting = iv.waiting || ask.isPending;
-  // her reply is an agent turn: a long silence gets said, not hidden behind dots
+  // his reply is an agent turn: a long silence gets said, not hidden behind dots
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!iv.waitingSince) return;
@@ -275,8 +268,8 @@ export function InterviewStep({
             </Button>
           </form>
           {stalled ? (
-            <Notice tone="warning" role="status" title={`${name} está demorando para responder`}>
-              A resposta chega aqui assim que ela terminar. Se preferir, siga e volte à entrevista
+            <Notice tone="warning" role="status" title="O Duá está demorando para responder">
+              A resposta chega aqui assim que ele terminar. Se preferir, siga e volte à entrevista
               depois.
             </Notice>
           ) : null}
@@ -287,14 +280,14 @@ export function InterviewStep({
         <Notice tone="success" title="Entrevista feita">
           {proposals.length
             ? `Falta o seu ok em ${plural(proposals.length, 'sugestão', 'sugestões')}.`
-            : 'Tudo o que ela aprendeu já está valendo.'}
+            : 'Tudo o que ele aprendeu já está valendo.'}
         </Notice>
       ) : null}
 
       {proposals.length ? (
-        <section aria-label="o que ela aprendeu" className="space-y-3">
+        <section aria-label="o que ele aprendeu" className="space-y-3">
           {proposals.map((p, i) => (
-            <Proposal key={p.id} item={p} name={name} latest={i === 0} />
+            <Proposal key={p.id} item={p} latest={i === 0} />
           ))}
         </section>
       ) : null}
@@ -304,8 +297,8 @@ export function InterviewStep({
           title="A entrevista até aqui"
           summary={plural(iv.asked, 'pergunta', 'perguntas')}
         >
-          <MiniChat name={name} owner typing={waiting}>
-            <TestLines messages={iv.msgs} name={name} owner="você" />
+          <MiniChat owner typing={waiting}>
+            <TestLines messages={iv.msgs} owner="você" />
           </MiniChat>
         </Disclosure>
       ) : null}
@@ -313,8 +306,8 @@ export function InterviewStep({
   );
 }
 
-/** One Resposta or Regra she proposes: kept only on "está certo", or after "editar". */
-function Proposal({ item, name, latest }: { item: KnowledgeItem; name: string; latest: boolean }) {
+/** One Resposta or Regra Duá proposes: kept only on "está certo", or after "editar". */
+function Proposal({ item, latest }: { item: KnowledgeItem; latest: boolean }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const rule = item.kind === 'rule';
@@ -326,7 +319,7 @@ function Proposal({ item, name, latest }: { item: KnowledgeItem; name: string; l
     onSuccess: (k, p) => {
       qc.setQueryData(qk.vendedor.knowledge, k);
       void qc.invalidateQueries({ queryKey: qk.vendedor.onboarding });
-      toast(p.status === 'live' ? `${name} aprendeu` : 'Descartado');
+      toast(p.status === 'live' ? 'O Duá aprendeu' : 'Descartado');
     },
     onError: (e) => toast.error(messageOf(e)),
   });
@@ -334,7 +327,6 @@ function Proposal({ item, name, latest }: { item: KnowledgeItem; name: string; l
     return (
       <ProposalCard
         kind={rule ? 'rule' : 'answer'}
-        name={name}
         source={latest ? 'Da sua resposta' : 'Da entrevista'}
         question={rule ? (item.answer ?? '') : (item.question ?? '')}
         answer={rule ? null : item.answer}
@@ -367,7 +359,7 @@ function Proposal({ item, name, latest }: { item: KnowledgeItem; name: string; l
               onChange={(e) => setQuestion(e.target.value)}
             />
           </Field>
-          <Field label={`${name} responde`} htmlFor={`tr-a-${item.id}`}>
+          <Field label="O Duá responde" htmlFor={`tr-a-${item.id}`}>
             <TextArea
               id={`tr-a-${item.id}`}
               rows={3}
@@ -430,13 +422,11 @@ const DEFAULT_ABOVE = 30_000;
 
 export function HandoffStep({
   settings,
-  name,
   onNext,
   back,
   eyebrow,
 }: {
   settings: StoreAgentSettings;
-  name: string;
   onNext: () => void;
   back: () => void;
   eyebrow: string;
@@ -452,7 +442,7 @@ export function HandoffStep({
     <TrainFrame
       eyebrow={eyebrow}
       title="Quando passar para você"
-      hint={`Nesses casos ${a(name)} avisa o cliente e chama você.`}
+      hint="Nesses casos o Duá avisa o cliente e chama você."
       next={onNext}
       back={back}
     >
@@ -466,7 +456,7 @@ export function HandoffStep({
           checked={h.allergy}
           onChange={(v) => set({ allergy: v })}
           label="Alergia ou restrição"
-          description="Ela nunca afirma o que o cardápio não diz."
+          description="Ele nunca afirma o que o cardápio não diz."
         />
         <div>
           <Toggle
@@ -500,7 +490,7 @@ export function HandoffStep({
       <p className="t-caption flex items-start gap-2 text-muted">
         <WarningCircle weight="bold" className="mt-0.5 size-4 shrink-0" aria-hidden />
         <span>
-          Quando você assume, {a(name)} volta sozinha depois de {settings.humanSilenceMin} min sem
+          Quando você assume, o Duá volta sozinho depois de {settings.humanSilenceMin} min sem
           resposta sua. Dá para trocar em Configurar.
         </span>
       </p>

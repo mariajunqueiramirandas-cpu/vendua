@@ -1,4 +1,5 @@
 import { withTenant, type Sql } from '../platform/db.ts';
+import { planHas } from '../modules/billing/plans.ts';
 import type { Fence } from './auth-store.ts';
 import {
   IMAGES_PER_MINUTE,
@@ -18,13 +19,12 @@ import { threadPhoneForJid } from './text.ts';
 export const SHOPPER_CHANNEL = 'vendua_shopper';
 
 export async function agentEnabled(sql: Sql, tenantId: string): Promise<boolean> {
-  const rows = await withTenant(
-    sql,
-    tenantId,
-    (tx) => tx<{ enabled: boolean }[]>`
-      select enabled from store_agent where tenant_id = ${tenantId}`,
-  );
-  return rows[0]?.enabled === true;
+  return withTenant(sql, tenantId, async (tx) => {
+    const rows = await tx<{ enabled: boolean }[]>`
+        select enabled from store_agent where tenant_id = ${tenantId}`;
+    // a plan without the Vendedor is the switch off (ADR 0032)
+    return rows[0]?.enabled === true && (await planHas(tx, tenantId, 'vendedor'));
+  });
 }
 
 export interface ChatMessage {

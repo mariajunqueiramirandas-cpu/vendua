@@ -82,7 +82,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('the storefront chat (db)', () =
     const session = (await call('POST', '/checkout/v1/session', {})).body.sessionToken as string;
     expect((await call('POST', '/checkout/v1/chat', { text: 'oi' }, session)).status).toBe(404);
     await sql`update store_agent set settings = settings || '{"webChat": true}'::jsonb where tenant_id = ${tenantId}`;
-    expect((await call('GET', '/storefront/v1/store')).body.chat).toMatchObject({ name: 'Ana' });
+    expect((await call('GET', '/storefront/v1/store')).body.chat).toMatchObject({
+      name: 'Duá',
+      intro: expect.stringMatching(/^o Duá, assistente virtual da /),
+    });
     expect((await call('POST', '/checkout/v1/chat', { text: 'oi' })).status).toBe(401);
     expect((await call('POST', '/checkout/v1/chat', { text: '' }, session)).status).toBe(422);
     const sent = await call(

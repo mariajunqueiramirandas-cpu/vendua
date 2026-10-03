@@ -5,9 +5,9 @@ import { Bubble } from './Bubble.tsx';
 import { PersonaAvatar } from './PersonaAvatar.tsx';
 
 /**
- * One Ensaio disagreement (sales-agent-ux §3.6): what the shopper wrote, what she would have
+ * One Ensaio disagreement (sales-agent-ux §3.6): what the shopper wrote, what Duá would have
  * said (dashed, never sent) and what the owner sent, all three voices labelled in words. Ends
- * in one tap: a lesson ("ensinar como eu fiz") or a vote for her ("a Ana estava certa").
+ * in one tap: a lesson ("ensinar como eu fiz") or a vote for him ("o Duá estava certo").
  */
 export function Discordance({
   who,
@@ -15,7 +15,6 @@ export function Discordance({
   shopper,
   draft,
   merchant,
-  name,
   onTeach,
   onDismiss,
   busy,
@@ -28,8 +27,6 @@ export function Discordance({
   shopper: string | null;
   draft: string;
   merchant: string | null;
-  /** the Vendedor's name */
-  name: string;
   onTeach?: (() => void) | undefined;
   onDismiss?: (() => void) | undefined;
   busy?: 'teach' | 'dismiss' | null | undefined;
@@ -47,9 +44,9 @@ export function Discordance({
           </Bubble>
         ) : null}
         <p className="t-caption mt-1 flex items-center gap-1.5 self-end font-semibold text-muted">
-          <PersonaAvatar name={name} size="xs" />a {name} diria
+          <PersonaAvatar size="xs" />o Duá diria
         </p>
-        <Bubble voice="seller" name={name} signed={false} draft>
+        <Bubble voice="seller" signed={false} draft>
           {draft}
         </Bubble>
         {merchant ? (
@@ -76,7 +73,7 @@ export function Discordance({
               loading={busy === 'dismiss'}
               className="text-muted"
             >
-              a {name} estava certa
+              o Duá estava certo
             </Button>
           ) : null}
         </div>

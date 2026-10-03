@@ -3,13 +3,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { KitchenTicket } from '../../lib/api.ts';
 import { setSoundOn } from '../../lib/live.ts';
-import { useSession } from '../../lib/session.ts';
+import { isPlanRequired, useFeature, useSession } from '../../lib/session.ts';
 import { chimeCall, unlockAudio } from '../../lib/sound.ts';
 import { useWakeLock } from '../../lib/wakeLock.ts';
 import { StoreAvatar } from '../../app/StoreAvatar.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState } from '../../ui/feedback.tsx';
 import { Toggle } from '../../ui/fields.tsx';
+import { LockedPage, PlanLocked, reasonOf } from '../../ui/PlanLocked.tsx';
 import { KitchenSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { useKitchen, usePref } from './data.ts';
@@ -24,6 +25,14 @@ const SPOTLIGHT_MS = 7_000;
 const MAX_READY = 12;
 
 export default function Pickup() {
+  return useFeature('kds') ? (
+    <PickupPanel />
+  ) : (
+    <LockedPage title="Painel de retirada" feature="kds" />
+  );
+}
+
+function PickupPanel() {
   const { data, error, refetch, isPending } = useKitchen();
   const s = useSession();
   const [deliveries, setDeliveries] = usePref('vendua-painel-entregas', false);
@@ -110,7 +119,11 @@ export default function Pickup() {
   if (error && !data)
     return (
       <div className="mx-auto max-w-lg p-6">
-        <ErrorState error={error} retry={() => void refetch()} />
+        {isPlanRequired(error) ? (
+          <PlanLocked feature="kds" reason={reasonOf(error)} refresh />
+        ) : (
+          <ErrorState error={error} retry={() => void refetch()} />
+        )}
       </div>
     );
 

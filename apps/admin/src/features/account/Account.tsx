@@ -1,6 +1,7 @@
 import {
   ArrowSquareOut,
   ArrowsClockwise,
+  ChatCircleDots,
   CheckCircle,
   Clock,
   Copy,
@@ -24,8 +25,10 @@ import {
   ApiError,
   type Account as AccountData,
   type DomainStatus,
+  type AiPack,
   type Invoice,
   type Plan,
+  type PlanFeature,
 } from '../../lib/api.ts';
 import { ago, dateShort, money } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
@@ -40,7 +43,19 @@ import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { PixCode } from '../../ui/PixCode.tsx';
-import { perMonth, PlanCardSkeleton, PlanOption, PlanPerks } from '../../ui/PlanCard.tsx';
+import {
+  featuresLost,
+  keepsAll,
+  nextUp,
+  perksAdded,
+  perMonth,
+  PerkText,
+  PlanCardSkeleton,
+  PlanPerks,
+  publicPlans,
+  shortName,
+} from '../../ui/PlanCard.tsx';
+import { FEATURE_LABEL, PlanCards, PlanCompare, promiseOf } from '../../ui/PlanPicker.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { EMAIL_RE } from '../auth/pending.ts';
@@ -77,6 +92,8 @@ function useAccountWrite<V>(
     mutationFn: fn,
     onSuccess: (a, v) => {
       qc.setQueryData(qk.account, a);
+      // the plan opens and closes screens (session.plan.features): the locks follow
+      void qc.invalidateQueries({ queryKey: qk.session });
       void qc.invalidateQueries({ queryKey: qk.home });
       void qc.invalidateQueries({ queryKey: qk.store });
       done?.(a, v);
@@ -316,12 +333,9 @@ function AccountView({ a }: { a: AccountData }) {
   const s = a.subscription;
   const live = !!s && s.status !== 'cancelled';
   const openInvoice = a.invoices.find(
-    (i) => (i.status === 'open' || i.status === 'failed') && i.kind !== 'upgrade',
+    (i) => (i.status === 'open' || i.status === 'failed') && i.kind === 'period',
   );
-  const pro = a.plans.find(
-    (p) => p.priceCents !== null && p.features.customDomain && p.features.customSite,
-  );
-  const hasPro = a.plan.features.customDomain || a.plan.features.customSite;
+  const next = nextUp(a.plans, a.plan);
   const choose = (preselect?: string) =>
     setSheet(
       live
@@ -418,6 +432,14 @@ function AccountView({ a }: { a: AccountData }) {
         />
       </Section>
 
+      {next ? (
+        <Upsell next={next} a={a} onGo={a.billing.available ? () => choose(next.id) : undefined} />
+      ) : null}
+
+      {a.plan.features.vendedor ? (
+        <Vendedor a={a} onInvoice={(id) => setSheet({ kind: 'invoice', id })} />
+      ) : null}
+
       {live && a.billing.available ? <MethodSection a={a} s={s} /> : null}
 
       <Section title="Faturas" id="faturas">
@@ -446,10 +468,6 @@ function AccountView({ a }: { a: AccountData }) {
         >
           <SiteRequest a={a} />
         </Section>
-      ) : null}
-
-      {!hasPro && pro ? (
-        <Upsell pro={pro} a={a} onGo={a.billing.available ? () => choose(pro.id) : undefined} />
       ) : null}
 
       <Section title="Notificações e aparência do painel">
@@ -541,9 +559,8 @@ function PlanHero({
             ? ' Quando quiser, escolha um dos planos: você vê o preço e o que cada um tem antes de assinar.'
             : null}
         </p>
-      ) : (
-        <PlanPerks plan={plan} address={hostOf(a.address)} className="relative mt-5" />
-      )}
+      ) : null}
+      <PlanPerks plan={plan} address={hostOf(a.address)} className="relative mt-5" />
 
       {s && a.billing.available ? (
         <div className="relative mt-5 space-y-2">
@@ -648,51 +665,255 @@ function PlanHero({
   );
 }
 
-function Upsell({ pro, a, onGo }: { pro: Plan; a: AccountData; onGo: (() => void) | undefined }) {
+function Upsell({ next, a, onGo }: { next: Plan; a: AccountData; onGo: (() => void) | undefined }) {
+  const adds = perksAdded(next, a.plan, hostOf(a.address));
   return (
     <section
       aria-labelledby="upsell-t"
-      className="relative overflow-hidden rounded-lg bg-surface p-5 ring-1 ring-spark depth-1 md:p-6"
+      className="relative overflow-hidden rounded-xl bg-raised bg-linear-to-b from-spark-soft to-raised to-55% p-5 ring-2 ring-spark depth-3 md:p-7"
     >
-      <div
-        aria-hidden
-        className="absolute -bottom-16 -left-10 size-48 rounded-full bg-spark opacity-15 blur-3xl"
+      <Mascote
+        pose="publicar"
+        size={128}
+        className="absolute -bottom-2 right-3 hidden size-32 md:block"
       />
-      <div className="relative">
-        <p className="t-caption inline-flex items-center gap-1.5 font-semibold text-muted">
-          <Sparkle weight="fill" className="size-4" aria-hidden /> o que o {pro.name} adiciona
+      <div className="relative md:pr-36">
+        <p className="t-caption flex flex-wrap items-center gap-2 font-semibold text-muted">
+          <span className="inline-flex items-center gap-1.5">
+            <Sparkle weight="fill" className="size-4" aria-hidden /> o próximo passo da loja
+          </span>
+          {next.recommended ? (
+            <span className="t-caption inline-flex -rotate-2 items-center rounded-full bg-spark px-2.5 py-0.5 font-display font-bold text-on-spark">
+              Recomendado
+            </span>
+          ) : null}
         </p>
-        <h2 id="upsell-t" className="t-title-2 mt-1">
-          Seu endereço e um site só seu
+        <h2 id="upsell-t" className="t-title-1 mt-2 max-w-[28ch] text-balance">
+          {promiseOf(next)}
         </h2>
-        <p className="tnum t-body mt-1 font-semibold">{perMonth(pro)}</p>
-        <ul className="mt-4 space-y-3">
-          <li className="flex gap-3">
-            <Globe weight="duotone" className="mt-0.5 size-6 shrink-0" aria-hidden />
-            <span>
-              <span className="block font-medium">Domínio próprio</span>
-              <span className="t-body block text-muted">
-                A loja também em www.sualoja.com.br, além de {hostOf(a.address)}.
+        <p className="t-body mt-2 text-muted">
+          {/* staff toggle features one by one: say "tudo do" only when it's true */}
+          {keepsAll(next, a.plan) ? (
+            <>
+              O <strong className="text-ink">{next.name}</strong> tem tudo do{' '}
+              {a.plan.priceCents === null ? 'seu plano' : shortName(a.plan)}, e mais:
+            </>
+          ) : (
+            <>
+              O <strong className="text-ink">{next.name}</strong> traz:
+            </>
+          )}
+        </p>
+        <ul className={cn('mt-4 grid gap-3', adds.length > 1 && 'md:grid-cols-2')}>
+          {adds.map((p) => (
+            <li key={p.key} className="flex gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-surface ring-1 ring-line">
+                <p.Icon weight="duotone" className="size-5" aria-hidden />
               </span>
-            </span>
-          </li>
-          <li className="flex gap-3">
-            <MagicWand weight="duotone" className="mt-0.5 size-6 shrink-0" aria-hidden />
-            <span>
-              <span className="block font-medium">Site personalizado</span>
-              <span className="t-body block text-muted">
-                Feito para a sua loja pelo nosso agente de IA, no lugar do visual padrão.
+              <span className="min-w-0">
+                <span className="block break-words font-medium">
+                  <PerkText p={p} />
+                </span>
+                <span className="t-caption block text-muted">{p.sub}</span>
               </span>
-            </span>
-          </li>
+            </li>
+          ))}
         </ul>
-        {onGo ? (
-          <Button variant="spark" className="mt-5" onClick={onGo}>
-            mudar para o {pro.name}
-          </Button>
+        {featuresLost(next, a.plan).length ? (
+          <p className="t-caption mt-3 text-muted">
+            Não inclui{' '}
+            {featuresLost(next, a.plan)
+              .map((f) => FEATURE_LABEL[f])
+              .join(', ')}
+            , que o seu plano tem.
+          </p>
         ) : null}
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+          {next.priceCents !== null ? (
+            <p className="tnum font-display text-[1.75rem] font-semibold leading-9 tracking-tight">
+              {money(next.priceCents)}
+              <span className="t-body font-sans font-medium text-muted">/mês</span>
+            </p>
+          ) : null}
+          {onGo ? (
+            <Button variant="primary" size="lg" className="max-sm:w-full" onClick={onGo}>
+              mudar para o {shortName(next)}
+            </Button>
+          ) : null}
+        </div>
       </div>
     </section>
+  );
+}
+
+// ── Duá's conversations ─────────────────────────────────────────────────────
+
+const n = (x: number) => x.toLocaleString('pt-BR');
+
+function Vendedor({ a, onInvoice }: { a: AccountData; onInvoice: (id: string) => void }) {
+  const ai = a.ai;
+  const s = a.subscription;
+  const [needsPaid, setNeedsPaid] = useState(false);
+  const qc = useQueryClient();
+  const buy = useMutation({
+    mutationFn: (pack: AiPack) => api.buyAiPack(pack),
+    onSuccess: (r) => {
+      qc.setQueryData(qk.account, r);
+      onInvoice(r.invoiceId);
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.code === 'AI_PACK_NEEDS_PAID_PLAN') setNeedsPaid(true);
+      if (e instanceof ApiError && e.code === 'AI_PACK_CHANGED') {
+        void qc.invalidateQueries({ queryKey: qk.account });
+        return void toast.error('O pacote mudou. Confira o novo preço antes de comprar.');
+      }
+      toast.error(messageOf(e));
+    },
+  });
+
+  // why a pack can't be bought here yet (Core checks it again)
+  const why = !a.billing.available
+    ? 'A compra de pacotes pelo painel ainda não está disponível.'
+    : !s || s.status === 'cancelled'
+      ? 'Disponível para quem assina um plano.'
+      : needsPaid || s.status === 'trialing' || s.status === 'pending'
+        ? 'Disponível depois do primeiro pagamento do plano.'
+        : null;
+  // a pack asked for and not paid yet: its Pix lives here, not in the plan's callouts
+  const openPack = a.invoices.find(
+    (i) => i.kind === 'ai_pack' && (i.status === 'open' || i.status === 'failed'),
+  );
+  const pct = ai.limit > 0 ? Math.min(100, Math.round((ai.used / ai.limit) * 100)) : 100;
+  const over = ai.limit > 0 && ai.used >= ai.limit;
+
+  return (
+    <Section
+      title="Duá"
+      id="vendedor"
+      hint="O vendedor com IA da sua loja no WhatsApp. Cada cliente conta como uma conversa, uma vez a cada 24 h."
+    >
+      <Card className="space-y-5 p-5">
+        {!ai.included ? (
+          <p className="t-body flex gap-2">
+            <Info className="mt-0.5 size-5 shrink-0 text-muted" aria-hidden />
+            <span>O Duá do seu plano fica liberado assim que o pagamento do plano entrar.</span>
+          </p>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+              <div className="flex items-center gap-3">
+                <span className="dua-disc grid size-14 shrink-0 place-items-center overflow-hidden bg-spark-soft">
+                  <Mascote pose={over ? 'avatar-ajuda' : 'avatar-feliz'} size={56} />
+                </span>
+                <div>
+                  <p className="t-caption text-muted">
+                    {ai.period === 'trial' ? 'no teste grátis' : 'neste mês'}
+                  </p>
+                  <p className="mt-0.5">
+                    <span className="tnum font-display text-[2rem] font-semibold leading-10">
+                      {n(ai.used)}
+                    </span>
+                    <span className="t-body text-muted"> de {n(ai.limit)} conversas</span>
+                  </p>
+                </div>
+              </div>
+              {ai.resetsAt ? (
+                <p className="t-body text-muted">
+                  {ai.period === 'trial' ? 'o teste vai até' : 'renova em'} {dateShort(ai.resetsAt)}
+                </p>
+              ) : null}
+            </div>
+            <div
+              role="meter"
+              aria-label="conversas usadas"
+              aria-valuemin={0}
+              aria-valuemax={Math.max(ai.limit, 1)}
+              aria-valuenow={Math.min(ai.used, Math.max(ai.limit, 1))}
+              className="h-2.5 overflow-hidden rounded-full bg-sunken"
+            >
+              <div
+                className={cn(
+                  'h-full rounded-full transition-[width] duration-(--duration-quick)',
+                  over ? 'bg-danger' : pct >= 80 ? 'bg-warning' : 'bg-[var(--chart)]',
+                )}
+                style={{ width: `${Math.max(pct, ai.used > 0 ? 2 : 0)}%` }}
+              />
+            </div>
+            <ul className="t-body space-y-1.5">
+              <li className="flex items-center gap-2">
+                <ChatCircleDots className="size-5 shrink-0 text-muted" aria-hidden />
+                <span>
+                  {ai.remaining > 0 ? (
+                    <>
+                      Restam <strong className="tnum">{n(ai.remaining)}</strong> conversas
+                      {ai.packRemaining > 0 ? ', contando os pacotes' : ''}.
+                    </>
+                  ) : (
+                    <>
+                      <strong>As conversas acabaram.</strong> O Duá volta{' '}
+                      {ai.resetsAt && ai.period === 'month'
+                        ? `em ${dateShort(ai.resetsAt)}`
+                        : 'com um pacote de conversas'}
+                      .
+                    </>
+                  )}
+                </span>
+              </li>
+              {ai.packRemaining > 0 ? (
+                <li className="flex items-center gap-2">
+                  <Gift className="size-5 shrink-0 text-muted" aria-hidden />
+                  <span>
+                    <strong className="tnum">{n(ai.packRemaining)}</strong> de pacotes
+                    {ai.packExpiresAt
+                      ? `, ${ai.packRemaining === 1 ? 'que vence' : 'as primeiras vencem'} em ${dateShort(ai.packExpiresAt)}`
+                      : ''}
+                    .
+                  </span>
+                </li>
+              ) : null}
+            </ul>
+          </>
+        )}
+        {openPack ? (
+          <div className="flex flex-col gap-3 rounded-md bg-warning-soft p-4 sm:flex-row sm:items-center">
+            <p className="t-body min-w-0 flex-1">
+              <strong>Pacote {openPack.aiPackName ?? 'de conversas'} esperando o Pix</strong> de{' '}
+              <strong className="tnum">{money(openPack.amountCents)}</strong>. As conversas entram
+              assim que o pagamento cair.
+            </p>
+            <Button
+              className="shrink-0 max-sm:w-full"
+              icon={<PixLogo />}
+              onClick={() => onInvoice(openPack.id)}
+            >
+              pagar com Pix
+            </Button>
+          </div>
+        ) : null}
+        {(openPack ? [] : a.aiPacks).map((p) => (
+          <div
+            key={p.id}
+            className="flex flex-col gap-3 rounded-md bg-sunken p-4 sm:flex-row sm:items-center"
+          >
+            <p className="t-body min-w-0 flex-1">
+              <strong>Precisa de mais?</strong> {n(p.conversations)} conversas por{' '}
+              <strong className="tnum">{money(p.priceCents)}</strong>, pagas uma vez com Pix. Valem
+              por 30 dias depois do pagamento.
+              {why ? <span className="t-caption mt-1 block text-muted">{why}</span> : null}
+            </p>
+            <Button
+              className="shrink-0 max-sm:w-full"
+              icon={<PixLogo />}
+              disabled={!!why}
+              loading={buy.isPending && buy.variables?.id === p.id}
+              onClick={() => buy.mutate(p)}
+            >
+              comprar {p.name} · {money(p.priceCents)}
+            </Button>
+          </div>
+        ))}
+      </Card>
+    </Section>
   );
 }
 
@@ -714,8 +935,7 @@ function PlanSheet({
   const session = useSession();
   const s = a.subscription;
   const current = a.plan;
-  const offered = a.plans.filter((p) => p.priceCents !== null);
-  const other = offered.find((p) => p.id !== current.id);
+  const offered = publicPlans(a.plans);
   const [sel, setSel] = useState<string | null>(null);
   const [method, setMethod] = useState<Method>(s?.method ?? 'pix');
   const [email, setEmail] = useState('');
@@ -725,8 +945,8 @@ function PlanSheet({
     setSel(
       preselect ??
         (mode === 'change'
-          ? (s?.pendingPlan?.id ?? other?.id ?? current.id)
-          : (offered[0]?.id ?? null)),
+          ? (s?.pendingPlan?.id ?? nextUp(a.plans, current)?.id ?? current.id)
+          : ((offered.find((p) => p.recommended) ?? offered[0])?.id ?? null)),
     );
     setMethod(s?.method ?? 'pix');
     setEmail(s?.payerEmail ?? session.user.email ?? '');
@@ -753,17 +973,14 @@ function PlanSheet({
     (n) => {
       const url = n.subscription?.checkoutUrl;
       if (n.subscription?.method === 'card' && url) return window.location.assign(url);
-      const inv = n.invoices.find((i) => i.status === 'open');
+      const inv = n.invoices.find((i) => i.status === 'open' && i.kind === 'period');
       if (inv) onInvoice(inv.id);
       else onClose();
     },
   );
 
   const upgrade = plan && current.priceCents !== null && plan.priceCents! > current.priceCents;
-  const losing =
-    plan &&
-    ((current.features.customDomain && !plan.features.customDomain) ||
-      (current.features.customSite && !plan.features.customSite));
+  const losing = plan ? lostOn(current, plan) : null;
   const same = plan?.id === current.id;
   const end = s?.currentPeriodEnd ? dateShort(s.currentPeriodEnd) : null;
   // a paid period: the difference is charged first (Core says how much)
@@ -795,12 +1012,16 @@ function PlanSheet({
         <>
           Muda <strong>{end ? `em ${end}` : 'no fim do período já pago'}</strong>. Até lá, você
           continua com tudo do {current.name}. Depois, a cobrança passa a ser {perMonth(plan)}.
-          {losing
-            ? ` O domínio próprio e o site personalizado não fazem parte do ${plan.name}.`
-            : ''}
+          {losing ? ` ${losing}` : ''}
         </>
       );
   }
+
+  // a move up: what it opens, under the explanation
+  const gains =
+    mode === 'change' && plan && !same && (upgrade || current.priceCents === null)
+      ? perksAdded(plan, current, hostOf(a.address))
+      : [];
 
   const busy = change.isPending || start.isPending;
   const footer =
@@ -809,7 +1030,9 @@ function PlanSheet({
         size="lg"
         block
         loading={busy}
-        disabled={!plan || (same && !s?.pendingPlan && !s?.pendingUpgrade)}
+        disabled={
+          !plan || (!plan.available && !same) || (same && !s?.pendingPlan && !s?.pendingUpgrade)
+        }
         onClick={() => plan && change.mutate(plan.id)}
       >
         {same
@@ -823,7 +1046,7 @@ function PlanSheet({
         size="lg"
         block
         loading={busy}
-        disabled={!plan}
+        disabled={!plan || (!plan.available && !same)}
         icon={method === 'card' ? <ArrowSquareOut /> : undefined}
         onClick={() => {
           const e = email.trim();
@@ -849,27 +1072,45 @@ function PlanSheet({
       footer={
         <div className="space-y-3">
           {explain ? (
-            <p className="t-body rounded-md bg-sunken px-4 py-3" aria-live="polite">
-              {explain}
-            </p>
+            <div className="t-body rounded-md bg-sunken px-4 py-3" aria-live="polite">
+              <p>{explain}</p>
+              {gains.length ? (
+                <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="o que você ganha">
+                  {gains.map((p) => (
+                    <li
+                      key={p.key}
+                      className="t-caption inline-flex max-w-full items-start gap-1 rounded-md bg-surface px-2 py-1 font-semibold ring-1 ring-line"
+                    >
+                      <CheckCircle
+                        weight="fill"
+                        className="mt-px size-4 shrink-0 text-success"
+                        aria-hidden
+                      />
+                      <span className="min-w-0">
+                        <PerkText p={p} />
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
           ) : null}
           {footer}
         </div>
       }
     >
       <div className="space-y-5 pt-1">
-        <div role="radiogroup" aria-label="planos" className="space-y-3">
-          {offered.map((p) => (
-            <PlanOption
-              key={p.id}
-              plan={p}
-              selected={sel === p.id}
-              onSelect={() => setSel(p.id)}
-              address={hostOf(a.address)}
-              badge={p.id === current.id && s?.status !== 'cancelled' ? 'seu plano' : undefined}
-            />
-          ))}
-        </div>
+        <PlanCards
+          plans={offered}
+          selected={sel}
+          onSelect={setSel}
+          address={hostOf(a.address)}
+          badge={(p) =>
+            p.id === current.id && s?.status !== 'cancelled' ? 'seu plano' : undefined
+          }
+          className="pt-4"
+        />
+        <PlanCompare plans={offered} current={s?.status !== 'cancelled' ? current.id : undefined} />
         {mode === 'start' ? (
           <>
             <Field label="Como pagar">
@@ -910,6 +1151,26 @@ function PlanSheet({
       </div>
     </Sheet>
   );
+}
+
+const listPt = (xs: string[]) =>
+  new Intl.ListFormat('pt-BR', { style: 'long', type: 'conjunction' }).format(xs);
+
+/** What a move down leaves behind, in one sentence (null when nothing). */
+function lostOn(from: Plan, to: Plan): string | null {
+  const lost = (Object.keys(FEATURE_LABEL) as PlanFeature[]).filter(
+    (f) => from.features[f] && !to.features[f],
+  );
+  const out: string[] = [];
+  if (lost.length) {
+    const what = listPt(lost.map((f) => FEATURE_LABEL[f]));
+    out.push(
+      `${what[0]!.toUpperCase()}${what.slice(1)} não ${lost.length > 1 ? 'fazem' : 'faz'} parte do ${to.name}.`,
+    );
+  }
+  if (from.features.vendedor && to.features.vendedor && to.aiConversations < from.aiConversations)
+    out.push(`O Duá passa a ter ${n(to.aiConversations)} conversas por mês.`);
+  return out.length ? out.join(' ') : null;
 }
 
 // ── how the plan is paid ────────────────────────────────────────────────────
@@ -1037,10 +1298,10 @@ function Invoices({ a, onOpen }: { a: AccountData; onOpen: (id: string) => void 
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold first-letter:uppercase">
-                  {i.kind === 'upgrade' ? `troca para o ${i.planName}` : monthOf(i.periodStart)}
+                  {invoiceTitle(i)}
                 </span>
                 <span className="t-caption block text-muted">
-                  {i.planName} ·{' '}
+                  {i.kind === 'ai_pack' ? 'conversas do Duá' : i.planName} ·{' '}
                   {i.status === 'paid' && i.paidAt
                     ? `paga em ${dateShort(i.paidAt)}`
                     : payable
@@ -1061,7 +1322,7 @@ function Invoices({ a, onOpen }: { a: AccountData; onOpen: (id: string) => void 
               type="button"
               onClick={() => onOpen(i.id)}
               className={cn(cls, 'hover:bg-hover active:bg-press')}
-              aria-label={`fatura ${i.kind === 'upgrade' ? `da troca para o ${i.planName}` : `de ${monthOf(i.periodStart)}`}, em aberto: pagar`}
+              aria-label={`fatura ${i.kind === 'upgrade' ? `da troca para o ${i.planName}` : i.kind === 'ai_pack' ? `do pacote ${i.aiPackName ?? 'de conversas'}` : `de ${monthOf(i.periodStart)}`}, em aberto: pagar`}
             >
               {row}
             </button>
@@ -1075,6 +1336,13 @@ function Invoices({ a, onOpen }: { a: AccountData; onOpen: (id: string) => void 
     </Card>
   );
 }
+
+const invoiceTitle = (i: Invoice) =>
+  i.kind === 'upgrade'
+    ? `troca para o ${i.planName}`
+    : i.kind === 'ai_pack'
+      ? `pacote ${i.aiPackName ?? 'de conversas'}`
+      : monthOf(i.periodStart);
 
 function InvoiceSheet({
   a,
@@ -1108,14 +1376,18 @@ function InvoiceSheet({
           ? 'Fatura'
           : inv.kind === 'upgrade'
             ? `Troca para o ${inv.planName}`
-            : `Fatura de ${monthOf(inv.periodStart)}`
+            : inv.kind === 'ai_pack'
+              ? `Pacote ${inv.aiPackName ?? 'de conversas'}`
+              : `Fatura de ${monthOf(inv.periodStart)}`
       }
       description={
         !inv
           ? undefined
           : inv.kind === 'upgrade'
             ? `A diferença até ${dateShort(inv.periodEnd)} · nº ${inv.number}`
-            : `${inv.planName} · nº ${inv.number}`
+            : inv.kind === 'ai_pack'
+              ? `Conversas do Duá, por 30 dias · nº ${inv.number}`
+              : `${inv.planName} · nº ${inv.number}`
       }
     >
       {!inv ? null : inv.status === 'paid' ? (
@@ -1125,7 +1397,12 @@ function InvoiceSheet({
           </span>
           <p className="t-title-2 mt-3">Pagamento recebido ✓</p>
           <p className="t-body mt-1 text-muted">
-            {inv.paidAt ? `Entrou ${ago(inv.paidAt)}.` : null} Obrigado!
+            {inv.paidAt ? `Entrou ${ago(inv.paidAt)}.` : null}{' '}
+            {inv.kind !== 'ai_pack'
+              ? 'Obrigado!'
+              : inv.aiCredited
+                ? 'As conversas já estão na conta do Duá.'
+                : 'O seu plano não tem mais o Duá, então as conversas não entraram. A equipe da Venduá vai devolver esse pagamento.'}
           </p>
           <Button variant="secondary" className="mt-5" onClick={onClose}>
             fechar

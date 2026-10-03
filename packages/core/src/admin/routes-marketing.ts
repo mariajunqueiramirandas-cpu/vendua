@@ -1,4 +1,5 @@
 import type { Sql } from '../platform/db.ts';
+import { requireFeature } from '../modules/billing/plans.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import {
   COUPON_CODE_RE,
@@ -184,6 +185,8 @@ export function mountMarketing(d: AdminDeps) {
         throw new HttpError(422, 'BAD_REQUEST', 'the card needs 2–50 stamps and a reward', {
           field: 'program',
         });
+      // switching it off is always allowed: a plan without loyalty only blocks turning it on
+      if (program) await requireFeature(tx, t.id, 'loyalty');
       await tx`update store_settings set loyalty = ${program ? tx.json(program as never) : null} where tenant_id = ${t.id}`;
       await audit(tx, t.id, m, {
         action: program ? 'loyalty.update' : 'loyalty.off',

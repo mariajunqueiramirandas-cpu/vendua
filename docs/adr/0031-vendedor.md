@@ -2,6 +2,8 @@
 
 - Status: Accepted; built 2026-10-03 (V0–V3 and V4's storefront chat; Instagram DM and the official
   Cloud API wait for open decision 5 and Meta credentials)
+- Renamed: the seller is Duá on every store, with no name setting
+  ([ADR 0032](0032-three-plans-for-launch.md), 2026-10-03).
 - Date: 2026-10-03
 
 ## Context

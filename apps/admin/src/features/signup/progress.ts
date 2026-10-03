@@ -63,8 +63,9 @@ export const EMPTY: Draft = {
 
 const KEY = 'vendua-signup';
 const TOKEN = 'vendua-signup-token';
-// abandoned signups don't come back weeks later
-const MAX_AGE = 3 * 24 * 60 * 60_000;
+// an unfinished signup is kept 30 minutes from its last answer (the owner's call), as long as
+// Core's signup token lasts: after that the flow starts over
+export const MAX_AGE = 30 * 60_000;
 
 export function loadDraft(): Draft {
   try {

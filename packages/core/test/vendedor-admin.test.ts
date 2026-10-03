@@ -114,14 +114,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('vendedor admin API (db)', () =>
     expect((await attendant('GET', '/vendedor/settings')).status).toBe(403);
     expect((await manager('PATCH', '/vendedor/settings', { enabled: true })).status).toBe(403);
     expect((await manager('PATCH', '/vendedor/settings', { disclose: false })).status).toBe(403);
+    // the seller is always Duá (ADR 0032): its name is not a setting
+    expect((await manager('PATCH', '/vendedor/settings', { name: 'Bia' })).status).toBe(422);
     const ok = await manager('PATCH', '/vendedor/settings', {
-      name: 'Bia',
       coverage: 'always',
       slowAfterMin: 5,
     });
     expect(ok.status).toBe(200);
-    expect(ok.body.settings).toMatchObject({ name: 'Bia', coverage: 'always', slowAfterMin: 5 });
-    expect(ok.body.intro).toBe('Bia, assistente virtual da Forno da Vila');
+    expect(ok.body.settings).toMatchObject({ name: 'Duá', coverage: 'always', slowAfterMin: 5 });
+    expect(ok.body.intro).toBe('o Duá, assistente virtual da Forno da Vila');
     expect((await manager('PATCH', '/vendedor/settings', { slowAfterMin: 3 })).status).toBe(422);
     expect((await manager('PATCH', '/vendedor/settings', { whatever: 1 })).status).toBe(422);
     const bad = await owner('PATCH', '/vendedor/settings', {

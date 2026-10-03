@@ -25,7 +25,7 @@ await sql`delete from suggestion_events where tenant_id = ${tid}`;
 
 await sql`
   insert into store_agent (tenant_id, enabled, settings, onboarding, enabled_at, first_sale_at)
-  values (${tid}, true, ${json({ name: 'Ana', coverage: 'when_slow', slowAfterMin: 2 })},
+  values (${tid}, true, ${json({ coverage: 'when_slow', slowAfterMin: 2 })},
           ${json({ started: true, finished: true, part: 'comecar', interviewDone: true })}, ${ago(60 * 24 * 6)}, ${ago(60 * 24 * 5)})
   on conflict (tenant_id) do update set enabled = true, settings = excluded.settings,
     onboarding = excluded.onboarding, enabled_at = excluded.enabled_at, first_sale_at = excluded.first_sale_at`;

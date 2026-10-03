@@ -30,8 +30,12 @@ export interface InvoiceRow {
   reminded: string[];
   pix_attempt: number;
   pix_superseded: string[];
-  /** 'upgrade': the one-off difference for the rest of a paid period (0062) */
-  kind: 'period' | 'upgrade';
+  /** 'upgrade': the one-off difference for the rest of a paid period (0062);
+   *  'ai_pack': extra Vendedor conversations bought one-off (0083) */
+  kind: 'period' | 'upgrade' | 'ai_pack';
+  ai_pack_id: string | null;
+  /** the pack's conversations as bought */
+  ai_conversations: number | null;
   short_payments: string[];
   created_at: Date;
 }
@@ -233,12 +237,18 @@ export async function payerEmailFor(
   return row?.email ?? null;
 }
 
-export function invoiceView(inv: InvoiceRow & { plan_name: string }, now: Date) {
+export function invoiceView(
+  inv: InvoiceRow & { plan_name: string; ai_pack_name?: string | null; ai_credited?: boolean },
+  now: Date,
+) {
   return {
     id: inv.id,
     number: inv.number,
     kind: inv.kind,
     planName: inv.plan_name,
+    aiPackName: inv.ai_pack_name ?? null,
+    /** a paid pack whose conversations went in (false: paid without Duá, the team refunds it) */
+    aiCredited: inv.kind === 'ai_pack' ? inv.ai_credited === true : null,
     amountCents: inv.amount_cents,
     periodStart: inv.period_start,
     periodEnd: inv.period_end,

@@ -5,6 +5,7 @@ import { searchCatalog } from '../modules/catalog-search.ts';
 import { controlTx } from '../modules/control.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
+import { claimForTurnTx } from './allowance.ts';
 import { readPhoto, type MediaProviders } from './media.ts';
 import { sendDirectTx, typingTx } from './outbound.ts';
 import { loadAgent } from './settings.ts';
@@ -239,6 +240,19 @@ export async function ingestOne(d: IngestDeps, r: Row): Promise<void> {
         deliverAt: new Date(now.getTime() + agent.settings.humanSilenceMin * 60_000 + 5_000),
       });
     }
+
+    // the plan's conversations (ADR 0032): counted once a day before any model call (the turn
+    // claims again for floors that answer later, e.g. "quando eu demorar")
+    if (
+      !trigger &&
+      !(await claimForTurnTx(tx, thread, floor.floor, {
+        key: `allowance:${r.id}`,
+        silenceMin: agent.settings.humanSilenceMin,
+        note: closedNotice(status, settings?.hours?.timezone ?? 'America/Sao_Paulo'),
+        now,
+      }))
+    )
+      return done('skipped');
 
     const meta = r.meta ?? {};
     let quoted: string | null = null;

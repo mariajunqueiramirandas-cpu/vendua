@@ -42,18 +42,15 @@ export function ReasonChip({ reason, className }: { reason: string; className?: 
 
 /**
  * How sure a rule is (sales-agent-ux §1.6): "sempre cumprida" for what the system enforces,
- * "orientação" for what she follows by judgement. The screens never promise more.
+ * "orientação" for what Duá follows by judgement. The screens never promise more.
  */
 export function GuaranteeChip({
   guaranteed,
-  name = 'Ana',
   short,
   className,
 }: {
   guaranteed: boolean;
-  /** the Vendedor's name, for "a Ana segue como orientação" */
-  name?: string | undefined;
-  /** just "orientação" where the rule's own text already names her */
+  /** just "orientação" where the rule's own text already names Duá */
   short?: boolean | undefined;
   className?: string | undefined;
 }) {
@@ -65,20 +62,18 @@ export function GuaranteeChip({
   ) : (
     <span className={cn(CHIP, 'bg-sunken text-muted', className)}>
       <Compass weight="bold" className="size-[15px] shrink-0" aria-hidden />
-      {short ? 'orientação' : `a ${name} segue como orientação`}
+      {short ? 'orientação' : 'o Duá segue como orientação'}
     </span>
   );
 }
 
-/** Who answers a conversation now, for the list and the app bar ("Ana atendendo", "você"). */
+/** Who answers a conversation now, for the list and the app bar ("Duá atendendo", "você"). */
 export function FloorChip({
   floor,
-  name = 'Ana',
   waiting,
   className,
 }: {
   floor: ThreadFloor;
-  name?: string | undefined;
   /** a shopper waiting for the store outranks the floor */
   waiting?: boolean | undefined;
   className?: string | undefined;
@@ -98,7 +93,7 @@ export function FloorChip({
     body = (
       <>
         <span aria-hidden className="size-2 rounded-full bg-ink" />
-        {floor === 'agent' ? `${name} atendendo` : `${name} em ensaio`}
+        {floor === 'agent' ? 'Duá atendendo' : 'Duá em ensaio'}
       </>
     );
   } else if (floor === 'store' || floor === 'wait') {

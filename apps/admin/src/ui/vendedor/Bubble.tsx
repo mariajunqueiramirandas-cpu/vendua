@@ -23,14 +23,13 @@ const STATUS_WORD: Record<BubbleStatus, string> = {
 
 /**
  * One message in a conversation, in one of three voices (sales-agent-ux §1): the shopper on
- * paper, the Vendedor on spark-soft and signed "<name> · Vendedor", the owner in forest. The
+ * paper, Duá on spark-soft and signed "Duá · IA", the owner in forest. The
  * author is always in text (the signature, or a screen-reader name), never colour alone. A
  * draft is Ensaio's: dashed, "não enviado · ensaio".
  */
 export function Bubble({
   voice,
   children,
-  name,
   author,
   time,
   status,
@@ -42,8 +41,6 @@ export function Bubble({
 }: {
   voice: Voice;
   children: ReactNode;
-  /** the Vendedor's name, for its signature */
-  name?: string | undefined;
   /** who wrote it, for screen readers ("Carla", "você"); the seller's is its signature */
   author?: string | undefined;
   /** "19:42" */
@@ -61,10 +58,7 @@ export function Bubble({
 }) {
   const side = align ?? (voice === 'in' ? 'start' : 'end');
   const sign = voice === 'seller' && (signed ?? true);
-  const who =
-    voice === 'seller'
-      ? `${name ?? 'Vendedor'} · Vendedor`
-      : (author ?? (voice === 'you' ? 'você' : 'cliente'));
+  const who = voice === 'seller' ? 'Duá · IA' : (author ?? (voice === 'you' ? 'você' : 'cliente'));
   return (
     <div
       className={cn(
@@ -75,7 +69,7 @@ export function Bubble({
     >
       {sign ? (
         <p className="t-caption mt-1.5 flex items-center gap-1.5 font-semibold text-muted">
-          <PersonaAvatar name={name ?? 'V'} size="xs" />
+          <PersonaAvatar size="xs" />
           {who}
         </p>
       ) : null}

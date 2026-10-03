@@ -7,22 +7,22 @@
     {
       art: 'bolo',
       name: 'Doces e bolos',
-      how: 'Encomenda com data marcada. O cliente escolhe o dia da festa e o pedido já entra no seu calendário.',
+      how: 'Encomenda com data marcada, direto no seu calendário.',
     },
     {
       art: 'marmita',
       name: 'Marmitas',
-      how: 'O cardápio do dia muda com o horário. No almoço aparece o prato do dia, à noite entra a janta.',
+      how: 'O cardápio muda sozinho do almoço para a janta.',
     },
     {
       art: 'burger',
       name: 'Hambúrgueres',
-      how: 'Adicionais e combos do seu jeito. Bacon extra, sem cebola, com batata: o pedido chega montado.',
+      how: 'Adicionais e combos: o pedido chega montado.',
     },
     {
       art: 'pao',
       name: 'Pães e fornadas',
-      how: 'Acabou a fornada? O cliente entra na lista de espera e recebe o aviso quando o pão sai do forno.',
+      how: 'Acabou a fornada? O cliente entra na lista de espera.',
     },
   ];
 </script>
@@ -125,52 +125,42 @@
     color: var(--body);
   }
 
+  /* two by two on phones, one row of four on wide screens: a glance, not a chapter */
   .tiles {
     list-style: none;
-    margin: clamp(40px, 6vw, 72px) 0 0;
+    margin: clamp(28px, 4vw, 48px) 0 0;
     padding: 0;
     display: grid;
-    gap: 32px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 28px 16px;
   }
-  /* phones: the drawing sits beside the name; the text runs under both */
   .tile {
     display: grid;
-    grid-template-columns: 88px 1fr;
-    align-items: center;
-    column-gap: 16px;
+    align-content: start;
     row-gap: 6px;
     color: var(--ink);
   }
   .tile svg {
-    width: 100%;
+    width: 76px;
     height: auto;
+    margin-bottom: 2px;
   }
   .how {
-    grid-column: 1 / -1;
     color: var(--body);
-    font-size: 1rem;
-    line-height: 1.55;
-    max-width: 36ch;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    max-width: 28ch;
   }
-  @media (min-width: 560px) {
+  @media (min-width: 900px) {
     .tiles {
-      grid-template-columns: repeat(2, 1fr);
-      gap: 48px 40px;
-    }
-    .tile {
-      grid-template-columns: 1fr;
-      align-items: start;
-      row-gap: 10px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 40px;
     }
     .tile svg {
-      width: 150px;
-      margin-bottom: 4px;
+      width: 120px;
     }
-  }
-  @media (min-width: 1100px) {
-    .tiles {
-      grid-template-columns: repeat(4, 1fr);
-      gap: 40px;
+    .how {
+      font-size: 1rem;
     }
   }
 </style>

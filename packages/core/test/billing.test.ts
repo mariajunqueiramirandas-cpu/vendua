@@ -106,7 +106,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     call(method, path, body, { 'x-vendua-control': 'ctl' });
 
   /** a self-serve store (provision_store, paused behind billing_hold) with a signed-in owner */
-  const store = async (name: string, plan: 'basic' | 'pro_plus', email: string | null = null) => {
+  const store = async (name: string, plan: 'mirim' | 'pangolim', email: string | null = null) => {
     const slug = `bill-${nonce}-${name}`;
     const phone = `219${String(Date.now() + created.length * 13).slice(-8)}`;
     const id = (
@@ -133,7 +133,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     )[0]!;
   const payInvoice = (id: string) => call('POST', `/admin/v1/dev/billing/invoices/${id}/pay`, {});
   /** a store whose plan is paid (pix, first invoice settled) */
-  const paidStore = async (name: string, plan: 'basic' | 'pro_plus') => {
+  const paidStore = async (name: string, plan: 'mirim' | 'pangolim') => {
     const s = await store(name, plan, 'bia@example.com');
     const st = await s.owner('POST', '/account/subscription', {
       planId: plan,
@@ -148,6 +148,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
 
   beforeAll(async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    // these run billing on the top plan, which launches closed to new stores (ADR 0032)
+    await sql`update plans set available = true where id = 'pangolim'`;
     billingStaff.notify = async (_sql, n) => void staff.push({ subject: n.subject });
   });
 
@@ -160,11 +162,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     await sql.end();
   });
 
-  test('Basic: PLAN_REQUIRED for domain and site; pix start → pay → open', async () => {
-    const s = await store('pix', 'basic', 'bia@example.com');
+  test('Mirim: PLAN_REQUIRED for domain and site; pix start → pay → open', async () => {
+    const s = await store('pix', 'mirim', 'bia@example.com');
     const acct = await s.owner('GET', '/account');
     expect(acct.status).toBe(200);
-    expect(acct.body.plan).toMatchObject({ id: 'basic', name: 'Venduá Basic', priceCents: 3990 });
+    expect(acct.body.plan).toMatchObject({ id: 'mirim', name: 'Venduá Mirim', priceCents: 6990 });
     expect(acct.body.subscription).toBeNull();
     expect(acct.body.billing).toEqual({ available: true });
     expect(acct.body.domains).toEqual([
@@ -177,22 +179,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(site.body.error.code).toBe('PLAN_REQUIRED');
 
     const bad = await s.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'boleto',
       payerEmail: 'bia@example.com',
     });
     expect(bad.status).toBe(422);
     const started = await s.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
     });
     expect(started.status).toBe(200);
     expect(started.body.subscription).toMatchObject({ status: 'pending', method: 'pix' });
     const inv = started.body.invoices[0];
-    expect(inv).toMatchObject({ number: 1, amountCents: 3990, status: 'open', method: 'pix' });
+    expect(inv).toMatchObject({ number: 1, amountCents: 6990, status: 'open', method: 'pix' });
     const again = await s.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
     });
@@ -218,43 +220,43 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     sql`select status from site_requests where tenant_id = ${tenant}`;
 
   test('upgrade mid-period: a pro-rata invoice first, the plan when it is paid; downgrade waits', async () => {
-    const s = await store('updown', 'basic', 'bia@example.com');
+    const s = await store('updown', 'mirim', 'bia@example.com');
     const st = await s.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
     });
     await payInvoice(st.body.invoices[0].id);
 
-    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     expect(up.status).toBe(200);
     // nothing changes until the difference is paid
-    expect(up.body.plan.id).toBe('basic');
-    expect(up.body.subscription).toMatchObject({ planId: 'basic', pendingPlan: null });
-    expect(await planOf(s.id)).toBe('basic');
+    expect(up.body.plan.id).toBe('mirim');
+    expect(up.body.subscription).toMatchObject({ planId: 'mirim', pendingPlan: null });
+    expect(await planOf(s.id)).toBe('mirim');
     expect(up.body.siteRequest).toBeNull();
     const pu = up.body.subscription.pendingUpgrade;
-    // (9900 − 3990) × almost the whole month
-    expect(pu).toMatchObject({ planId: 'pro_plus', planName: 'Venduá PRO+' });
-    expect(pu.amountCents).toBeGreaterThan(5890);
-    expect(pu.amountCents).toBeLessThanOrEqual(5910);
+    // (44900 − 6990) × almost the whole month
+    expect(pu).toMatchObject({ planId: 'pangolim', planName: 'Venduá Pangolim' });
+    expect(pu.amountCents).toBeGreaterThan(37810);
+    expect(pu.amountCents).toBeLessThanOrEqual(37910);
     expect(pu.invoice).toMatchObject({ kind: 'upgrade', status: 'open', method: 'pix' });
     expect(pu.invoice.amountCents).toBe(pu.amountCents);
     expect(pu.invoice.pix.copyPaste).toContain('FAKEPIX');
     // asking again returns the same invoice
-    const again = await s.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
+    const again = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     expect(again.body.subscription.pendingUpgrade.invoice.id).toBe(pu.invoice.id);
     expect(await invoices(s.id)).toHaveLength(2);
 
     await payInvoice(pu.invoice.id);
     const paid = await s.owner('GET', '/account');
-    expect(paid.body.plan.id).toBe('pro_plus');
-    expect(paid.body.subscription).toMatchObject({ planId: 'pro_plus', pendingUpgrade: null });
-    expect(await planOf(s.id)).toBe('pro_plus');
-    // PRO+ comes with the site request, once paid
+    expect(paid.body.plan.id).toBe('pangolim');
+    expect(paid.body.subscription).toMatchObject({ planId: 'pangolim', pendingUpgrade: null });
+    expect(await planOf(s.id)).toBe('pangolim');
+    // Pangolim comes with the site request, once paid
     expect(paid.body.siteRequest.status).toBe('requested');
     await Bun.sleep(20);
-    expect(staff.some((n) => n.subject.includes('Site PRO+'))).toBe(true);
+    expect(staff.some((n) => n.subject.includes('Site sob medida'))).toBe(true);
     // the paid period itself is unchanged
     expect((await sub(s.id)).current_period_end.getTime()).toBe(
       (await invoices(s.id))[0]!.period_end.getTime(),
@@ -263,27 +265,27 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     // 4 days before the end: the renewal Pix goes out at the downgraded price
     const end = new Date(Date.now() + 4 * DAY);
     await sql`update subscriptions set current_period_end = ${end} where tenant_id = ${s.id}`;
-    const down = await s.owner('PATCH', '/account/subscription', { planId: 'basic' });
-    expect(down.body.plan.id).toBe('pro_plus');
-    expect(down.body.subscription.pendingPlan).toEqual({ id: 'basic', name: 'Venduá Basic' });
+    const down = await s.owner('PATCH', '/account/subscription', { planId: 'mirim' });
+    expect(down.body.plan.id).toBe('pangolim');
+    expect(down.body.subscription.pendingPlan).toEqual({ id: 'mirim', name: 'Venduá Mirim' });
     await tick();
-    expect((await sub(s.id)).plan_id).toBe('pro_plus');
+    expect((await sub(s.id)).plan_id).toBe('pangolim');
     await tick();
     await tick();
     const invs = (await invoices(s.id)).filter((i) => i.kind === 'period');
     expect(invs).toHaveLength(2);
     expect(invs[1]).toMatchObject({
       number: 3,
-      plan_id: 'basic',
-      amount_cents: 3990,
+      plan_id: 'mirim',
+      amount_cents: 6990,
       status: 'open',
     });
     expect(invs[1]!.pix_copy_paste).toContain('FAKEPIX');
-    // paid early: the new period hasn't begun, PRO+ stays until it does
+    // paid early: the new period hasn't begun, Pangolim stays until it does
     await payInvoice(invs[1]!.id);
     let row = await sub(s.id);
     expect(row.current_period_start.getTime()).toBe(end.getTime());
-    expect(row.pending_plan_id).toBe('basic');
+    expect(row.pending_plan_id).toBe('mirim');
     // the period turns over
     const past = new Date(Date.now() - 60_000);
     await sql`update invoices set period_start = ${past} where id = ${invs[1]!.id}`;
@@ -293,14 +295,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     `;
     await tick();
     row = await sub(s.id);
-    expect(row).toMatchObject({ plan_id: 'basic', pending_plan_id: null, status: 'active' });
-    expect((await sql`select plan from tenants where id = ${s.id}`)[0]!.plan).toBe('basic');
+    expect(row).toMatchObject({ plan_id: 'mirim', pending_plan_id: null, status: 'active' });
+    expect((await sql`select plan from tenants where id = ${s.id}`)[0]!.plan).toBe('mirim');
   });
 
   test('card: start → authorized → active; upgrade reprices; cancel → hold at period end', async () => {
-    const s = await store('card', 'basic', 'bia@example.com');
+    const s = await store('card', 'mirim', 'bia@example.com');
     const st = await s.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'card',
       payerEmail: 'bia@example.com',
     });
@@ -325,12 +327,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(await invoices(s.id)).toHaveLength(1);
 
     // a card store pays the difference by Pix too; the assinatura moves once it's paid
-    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
-    expect(fs.amountCents).toBe(3990);
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
+    expect(fs.amountCents).toBe(6990);
     expect(up.body.subscription.pendingUpgrade.invoice).toMatchObject({ method: 'pix' });
     await payInvoice(up.body.subscription.pendingUpgrade.invoice.id);
-    expect(fs.amountCents).toBe(9900);
-    expect((await sub(s.id)).plan_id).toBe('pro_plus');
+    expect(fs.amountCents).toBe(44900);
+    expect((await sub(s.id)).plan_id).toBe('pangolim');
 
     // a monthly charge renews the period
     const before = (await sub(s.id)).current_period_end as Date;
@@ -338,7 +340,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     const renewal = [...fake.subscriptionPayments.values()]
       .filter((p) => p.subscriptionId === pre)
       .at(-1)!;
-    renewal.amountCents = 9900;
+    renewal.amountCents = 44900;
     await handleBillingWebhook({ sql: appSql, provider: fake, notify } as never, {
       kind: 'subscription_payment',
       resourceId: renewal.id,
@@ -347,7 +349,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     });
     const invs = (await invoices(s.id)).filter((i) => i.kind === 'period');
     expect(invs).toHaveLength(2);
-    expect(invs[1]).toMatchObject({ status: 'paid', amount_cents: 9900, plan_id: 'pro_plus' });
+    expect(invs[1]).toMatchObject({ status: 'paid', amount_cents: 44900, plan_id: 'pangolim' });
     expect(invs[1]!.period_start.getTime()).toBe(before.getTime());
     expect(((await sub(s.id)).current_period_end as Date).getTime()).toBe(
       invs[1]!.period_end.getTime(),
@@ -397,12 +399,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
   });
 
   test('concurrent starts create one assinatura', async () => {
-    const s = await store('race', 'basic', 'bia@example.com');
+    const s = await store('race', 'mirim', 'bia@example.com');
     const before = fake.subscriptions.size;
     const res = await Promise.all(
       [1, 2, 3].map(() =>
         s.owner('POST', '/account/subscription', {
-          planId: 'basic',
+          planId: 'mirim',
           method: 'card',
           payerEmail: 'bia@example.com',
         }),
@@ -421,45 +423,45 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     });
 
   test('a reissued Pix cancels the old one at MP; a cancelled one never settles', async () => {
-    const s = await store('drop', 'basic', 'bia@example.com');
+    const s = await store('drop', 'mirim', 'bia@example.com');
     await s.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
     });
     const oldPix = (await invoices(s.id))[0]!.provider_payment_id;
     // upgrading before paying reprices the invoice and reissues its Pix
-    await s.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
+    await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     await Bun.sleep(30);
     const inv = (await invoices(s.id))[0]!;
-    expect(inv).toMatchObject({ amount_cents: 9900, pix_superseded: [oldPix] });
+    expect(inv).toMatchObject({ amount_cents: 44900, pix_superseded: [oldPix] });
     expect(inv.provider_payment_id).not.toBe(oldPix);
     expect(fake.payments.get(oldPix)!.status).toBe('cancelled');
     await hook(oldPix);
     expect((await invoices(s.id))[0]!.status).toBe('open');
     await payInvoice(inv.id);
-    expect((await invoices(s.id))[0]).toMatchObject({ status: 'paid', amount_cents: 9900 });
+    expect((await invoices(s.id))[0]).toMatchObject({ status: 'paid', amount_cents: 44900 });
   });
 
   test('an old Pix for a lower price leaves the invoice open; odd amounts and double pays reach the team', async () => {
-    const s = await store('super', 'basic', 'bia@example.com');
+    const s = await store('super', 'mirim', 'bia@example.com');
     await s.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
     });
     const oldPix = (await invoices(s.id))[0]!.provider_payment_id;
     // the owner scanned the old QR; MP's webhook hasn't arrived when the price changes
     fake.settle(oldPix, 'approved');
-    await s.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
+    await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     await Bun.sleep(30);
     expect(fake.payments.get(oldPix)!.status).toBe('approved');
     const staffBefore = staff.length;
     await hook(oldPix);
     await Bun.sleep(30);
-    // R$ 39,90 never pays a R$ 99,00 invoice: it stays open, the payment is kept for the team
+    // R$ 69,90 never pays a R$ 449,00 invoice: it stays open, the payment is kept for the team
     let inv = (await invoices(s.id))[0]!;
-    expect(inv).toMatchObject({ status: 'open', amount_cents: 9900, short_payments: [oldPix] });
+    expect(inv).toMatchObject({ status: 'open', amount_cents: 44900, short_payments: [oldPix] });
     expect(inv.provider_payment_id).not.toBe(oldPix);
     expect((await sub(s.id)).status).toBe('pending');
     expect((await settings(s.id)).billing_hold).toBe(true);
@@ -468,7 +470,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     // the current Pix pays it; the old one landing again is a double payment
     await payInvoice(inv.id);
     inv = (await invoices(s.id))[0]!;
-    expect(inv).toMatchObject({ status: 'paid', amount_cents: 9900 });
+    expect(inv).toMatchObject({ status: 'paid', amount_cents: 44900 });
     expect((await sub(s.id)).status).toBe('active');
     await hook(oldPix);
     await Bun.sleep(30);
@@ -477,16 +479,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(flagged.some((x) => x.startsWith('Fatura paga duas vezes'))).toBe(true);
   });
 
-  test('upgrade then downgrade before paying: Basic, the invoice void, no site request', async () => {
-    const s = await paidStore('updown2', 'basic');
-    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
+  test('upgrade then downgrade before paying: Mirim, the invoice void, no site request', async () => {
+    const s = await paidStore('updown2', 'mirim');
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     const inv = up.body.subscription.pendingUpgrade.invoice;
     const pix = (await sql`select provider_payment_id from invoices where id = ${inv.id}`)[0]!
       .provider_payment_id;
-    const down = await s.owner('PATCH', '/account/subscription', { planId: 'basic' });
+    const down = await s.owner('PATCH', '/account/subscription', { planId: 'mirim' });
     expect(down.status).toBe(200);
     expect(down.body.subscription).toMatchObject({
-      planId: 'basic',
+      planId: 'mirim',
       pendingPlan: null,
       pendingUpgrade: null,
     });
@@ -498,8 +500,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     fake.settle(pix, 'approved');
     await hook(pix);
     await Bun.sleep(30);
-    expect(await planOf(s.id)).toBe('basic');
-    expect((await sub(s.id)).plan_id).toBe('basic');
+    expect(await planOf(s.id)).toBe('mirim');
+    expect((await sub(s.id)).plan_id).toBe('mirim');
     expect(await siteRequests(s.id)).toHaveLength(0);
     expect(staff.slice(staffBefore).some((n) => n.subject.startsWith('Upgrade pago fora'))).toBe(
       true,
@@ -507,54 +509,54 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
   });
 
   test('an upgrade paid after the renewal was paid first does not apply', async () => {
-    const s = await paidStore('late-up', 'basic');
+    const s = await paidStore('late-up', 'mirim');
     const soon = new Date(Date.now() + 4 * DAY);
     await sql`update subscriptions set current_period_end = ${soon} where tenant_id = ${s.id}`;
-    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     const inv = up.body.subscription.pendingUpgrade.invoice;
     const pix = (await sql`select provider_payment_id from invoices where id = ${inv.id}`)[0]!
       .provider_payment_id;
     await tick();
     const renewal = (await invoices(s.id)).filter((r) => r.kind === 'period').at(-1)!;
-    expect(renewal).toMatchObject({ plan_id: 'basic', amount_cents: 3990 });
+    expect(renewal).toMatchObject({ plan_id: 'mirim', amount_cents: 6990 });
     await payInvoice(renewal.id);
     // the difference was priced for the old period: paying it now must not buy the new one
     const staffBefore = staff.length;
     fake.settle(pix, 'approved');
     await hook(pix);
     await Bun.sleep(30);
-    expect(await planOf(s.id)).toBe('basic');
+    expect(await planOf(s.id)).toBe('mirim');
     expect(await siteRequests(s.id)).toHaveLength(0);
     expect(staff.slice(staffBefore).some((n) => n.subject.startsWith('Upgrade pago fora'))).toBe(
       true,
     );
   });
 
-  test('the old exploit (Basic → PRO+ → Basic, repeated) never yields PRO+', async () => {
-    const s = await paidStore('exploit', 'basic');
+  test('the old exploit (Mirim → Pangolim → Mirim, repeated) never yields Pangolim', async () => {
+    const s = await paidStore('exploit', 'mirim');
     for (let i = 0; i < 3; i++) {
-      await s.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
-      expect(await planOf(s.id)).toBe('basic');
+      await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
+      expect(await planOf(s.id)).toBe('mirim');
       const site = await s.owner('POST', '/account/site-request', { brief: 'Um site bonito' });
       expect(site.body.error.code).toBe('PLAN_REQUIRED');
       const dom = await s.owner('POST', '/account/domains', { host: `x-${nonce}.example.com` });
       expect(dom.body.error.code).toBe('PLAN_REQUIRED');
-      await s.owner('PATCH', '/account/subscription', { planId: 'basic' });
+      await s.owner('PATCH', '/account/subscription', { planId: 'mirim' });
     }
     expect(await siteRequests(s.id)).toHaveLength(0);
     const upgrades =
       await sql`select status from invoices where tenant_id = ${s.id} and kind = 'upgrade'`;
     expect(upgrades.map((r) => r.status)).toEqual(['void', 'void', 'void']);
-    // the renewal is still Basic
+    // the renewal is still Mirim
     await sql`update subscriptions set current_period_end = now() + interval '4 days' where tenant_id = ${s.id}`;
     await tick();
     const renewal = (await invoices(s.id)).filter((r) => r.kind === 'period').at(-1)!;
-    expect(renewal).toMatchObject({ plan_id: 'basic', amount_cents: 3990 });
+    expect(renewal).toMatchObject({ plan_id: 'mirim', amount_cents: 6990 });
   });
 
   test('an unpaid upgrade expires with the period; a tiny one waits for the renewal', async () => {
-    const s = await paidStore('expire', 'basic');
-    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
+    const s = await paidStore('expire', 'mirim');
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     const inv = up.body.subscription.pendingUpgrade.invoice;
     // the period ends unpaid (the store renews): the upgrade never applies
     const past = new Date(Date.now() - 60_000);
@@ -562,7 +564,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     await tick();
     expect((await sql`select status from invoices where id = ${inv.id}`)[0]!.status).toBe('void');
     expect(await sub(s.id)).toMatchObject({
-      plan_id: 'basic',
+      plan_id: 'mirim',
       upgrade_plan_id: null,
       upgrade_invoice_id: null,
     });
@@ -570,18 +572,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       'INVOICE_NOT_OPEN',
     );
 
-    // under R$ 1 left to charge: no invoice, PRO+ from the next (PRO+-priced) period
+    // under R$ 1 left to charge: no invoice, Pangolim from the next (Pangolim-priced) period
     const end = new Date(Date.now() + 60 * 60_000);
     await sql`
       update subscriptions set current_period_start = ${new Date(end.getTime() - 30 * DAY)},
         current_period_end = ${end}
       where tenant_id = ${s.id}
     `;
-    const tiny = await s.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
-    expect(tiny.body.plan.id).toBe('basic');
+    const tiny = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
+    expect(tiny.body.plan.id).toBe('mirim');
     expect(tiny.body.subscription).toMatchObject({
       pendingUpgrade: null,
-      pendingPlan: { id: 'pro_plus', name: 'Venduá PRO+' },
+      pendingPlan: { id: 'pangolim', name: 'Venduá Pangolim' },
     });
     expect(
       (
@@ -590,7 +592,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     ).toBe(0);
     await tick();
     const renewal = (await invoices(s.id)).filter((r) => r.kind === 'period').at(-1)!;
-    expect(renewal).toMatchObject({ plan_id: 'pro_plus', amount_cents: 9900 });
+    expect(renewal).toMatchObject({ plan_id: 'pangolim', amount_cents: 44900 });
     await payInvoice(renewal.id);
     await sql`update invoices set period_start = ${past} where id = ${renewal.id}`;
     await sql`
@@ -598,12 +600,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       where tenant_id = ${s.id}
     `;
     await tick();
-    expect(await planOf(s.id)).toBe('pro_plus');
+    expect(await planOf(s.id)).toBe('pangolim');
     expect((await siteRequests(s.id)).map((r) => r.status)).toEqual(['requested']);
   });
 
   test('pix → card mid-period: the assinatura starts when the paid period ends', async () => {
-    const s = await paidStore('switch', 'basic');
+    const s = await paidStore('switch', 'mirim');
     const end = (await sub(s.id)).current_period_end as Date;
     const r = await s.owner('PATCH', '/account/subscription', { method: 'card' });
     expect(r.body.subscription).toMatchObject({ method: 'card', status: 'active' });
@@ -611,8 +613,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(fake.subscriptions.get(pre)!.req.startDate?.getTime()).toBe(end.getTime());
   });
 
-  test('features need a paid plan: a pending PRO+ store gets PLAN_REQUIRED', async () => {
-    const s = await store('unpaid', 'pro_plus', 'bia@example.com');
+  test('features need a paid plan: a pending Pangolim store gets PLAN_REQUIRED', async () => {
+    const s = await store('unpaid', 'pangolim', 'bia@example.com');
     const noSub = await s.owner('POST', '/account/domains', {
       host: `unpaid-${nonce}.example.com`,
     });
@@ -621,7 +623,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       details: { reason: 'unpaid' },
     });
     await s.owner('POST', '/account/subscription', {
-      planId: 'pro_plus',
+      planId: 'pangolim',
       method: 'pix',
       payerEmail: 'bia@example.com',
     });
@@ -630,10 +632,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
   });
 
   test('pix renewal: reminders once each, past_due, paid again → active', async () => {
-    const s = await store('late', 'basic', 'bia@example.com');
+    const s = await store('late', 'mirim', 'bia@example.com');
     await sql`update merchant_users set prefs = '{"emailInvoices": false}' where tenant_id = ${s.id}`;
     const st = await s.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
     });
@@ -646,7 +648,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     await tick();
     expect(mine()).toHaveLength(1);
     expect(mine()[0]!.text).toContain('vence em');
-    expect(mine()[0]!.text).toContain('R$ 39,90');
+    expect(mine()[0]!.text).toContain('R$ 69,90');
     expect(mine()[0]!.text).toContain('https://painel.vendua.test/admin/conta');
 
     const inv2 = (await invoices(s.id))[1]!;
@@ -689,7 +691,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
   });
 
   test('the renewal asks MP with no billing lock held; a reprice meanwhile drops that Pix', async () => {
-    const s = await paidStore('lockfree', 'basic');
+    const s = await paidStore('lockfree', 'mirim');
     const realPix = fake.platformPix.bind(fake);
     const asked: { free: boolean; id: string; amountCents: number }[] = [];
     let repriceOnce = true;
@@ -731,9 +733,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       expect(asked).toHaveLength(2);
       expect(asked[1]!.free).toBe(true);
       inv = (await invoices(s.id))[1]!;
-      expect(inv.amount_cents).toBe(3990);
+      expect(inv.amount_cents).toBe(6990);
       expect(inv.provider_payment_id).toBe(asked[1]!.id);
-      expect(asked[1]!.amountCents).toBe(3990);
+      expect(asked[1]!.amountCents).toBe(6990);
       expect(inv.pix_attempt).toBe(2);
 
       await tick();
@@ -744,7 +746,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
   });
 
   test('two replicas remind at once: one message, and it points at a Pix that is stored', async () => {
-    const s = await paidStore('replicas', 'basic');
+    const s = await paidStore('replicas', 'mirim');
     await sql`update merchant_users set prefs = '{"emailInvoices": false}' where tenant_id = ${s.id}`;
     const due = () =>
       wa.filter((m) => m.phone === s.phone && m.text.includes('vence hoje')).map((m) => m.text);
@@ -790,9 +792,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(fake.payments.get(row.provider_payment_id)!.status).toBe('pending');
   });
 
-  test('PRO+ domain: add → DNS check → dns_ok (team told once) → CRM activates', async () => {
-    const s = await paidStore('dom', 'pro_plus');
-    const other = await paidStore('dom2', 'pro_plus');
+  test('Pangolim domain: add → DNS check → dns_ok (team told once) → CRM activates', async () => {
+    const s = await paidStore('dom', 'pangolim');
+    const other = await paidStore('dom2', 'pangolim');
     const host = `loja-${nonce}.example.com`;
     const bad = await s.owner('POST', '/account/domains', { host: `x.vendua.test` });
     expect(bad.body.error.code).toBe('INVALID_DOMAIN');
@@ -847,13 +849,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(lost.body.customDomain).toMatchObject({ host, status: 'failed' });
     expect(lost.body.customDomain.lastError).toContain('Outra loja');
     const third = await (
-      await paidStore('dom3', 'pro_plus')
+      await paidStore('dom3', 'pangolim')
     ).owner('POST', '/account/domains', {
       host,
     });
     expect(third.body.error.code).toBe('DOMAIN_TAKEN');
 
     expect((await call('POST', `/control/v1/custom-domains/${cd.id}/activate`)).status).toBe(404);
+    // a store whose plan lost the domain doesn't get it switched on
+    await sql`update tenants set plan = 'mirim' where id = ${s.id}`;
+    const refused = await control('POST', `/control/v1/custom-domains/${cd.id}/activate`);
+    expect(refused.body.error).toMatchObject({
+      code: 'PLAN_REQUIRED',
+      details: { feature: 'customDomain' },
+    });
+    await sql`update tenants set plan = 'pangolim' where id = ${s.id}`;
     const act = await control('POST', `/control/v1/custom-domains/${cd.id}/activate`);
     expect(act.status).toBe(200);
     expect(act.body).toEqual({ ok: true });
@@ -884,7 +894,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect((await other.owner('GET', '/account')).body.customDomain).toBeNull();
 
     // the CRM won't activate a host another store already serves
-    const x = await paidStore('dom4', 'pro_plus');
+    const x = await paidStore('dom4', 'pangolim');
     const xh = `clash-${nonce}.example.com`;
     const xa = await x.owner('POST', '/account/domains', { host: xh });
     await sql`update custom_domains set status = 'dns_ok' where id = ${xa.body.customDomain.id}`;
@@ -897,12 +907,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(clash.body.error.code).toBe('DOMAIN_TAKEN');
   });
 
-  test('site request (PRO+) and the CRM', async () => {
-    const s = await paidStore('site', 'pro_plus');
+  test('site request (Pangolim) and the CRM', async () => {
+    const s = await paidStore('site', 'pangolim');
     const r = await s.owner('POST', '/account/site-request', {
       brief: 'Loja de doces, tons pastel',
     });
-    // paying PRO+ already opened the request; the brief fills it in
+    // paying Pangolim already opened the request; the brief fills it in
     expect(r.status).toBe(200);
     expect(r.body.siteRequest).toMatchObject({
       status: 'requested',
@@ -920,7 +930,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(row).toMatchObject({
       slug: s.slug,
       url: `https://${s.slug}.vendua.test`,
-      plan: { id: 'pro_plus', name: 'Venduá PRO+' },
+      plan: { id: 'pangolim', name: 'Venduá Pangolim' },
       subscription: { status: 'active', method: 'pix' },
       siteRequest: { status: 'requested', brief: 'Tons pastel e fotos grandes', staffNote: null },
     });
@@ -937,16 +947,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
 
     expect((await call('GET', '/control/v1/plans')).status).toBe(404);
     const plans = await control('GET', '/control/v1/plans');
-    expect(plans.body.plans.find((x: any) => x.id === 'basic')).toMatchObject({
-      priceCents: 3990,
+    expect(plans.body.plans.find((x: any) => x.id === 'mirim')).toMatchObject({
+      priceCents: 6990,
       public: true,
     });
-    const same = await control('PATCH', '/control/v1/plans/basic', { public: true });
-    expect(same.body.plan).toMatchObject({ id: 'basic', public: true, priceCents: 3990 });
+    const same = await control('PATCH', '/control/v1/plans/mirim', { public: true });
+    expect(same.body.plan).toMatchObject({ id: 'mirim', public: true, priceCents: 6990 });
     expect((await control('PATCH', '/control/v1/plans/nope_plan', { public: true })).status).toBe(
       404,
     );
-    expect((await control('PATCH', '/control/v1/plans/basic', { priceCents: 1.5 })).status).toBe(
+    expect((await control('PATCH', '/control/v1/plans/mirim', { priceCents: 1.5 })).status).toBe(
       422,
     );
   });
@@ -957,7 +967,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       insert into plans (id, name, price_cents, features, public, sort)
       values (${planId}, 'Plano teste', 5000, '{}', false, 99)
     `;
-    const a = await store('price-card', 'basic', 'bia@example.com');
+    const a = await store('price-card', 'mirim', 'bia@example.com');
     const ps = await fake.createSubscription({
       reason: 'x',
       amountCents: 5000,
@@ -972,7 +982,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
                                  charge_cents, current_period_start, current_period_end)
       values (${a.id}, ${planId}, 'card', 'active', 'fake', ${ps.id}, 5000, now(), now() + interval '10 days')
     `;
-    const b = await store('price-pix', 'basic', 'bia@example.com');
+    const b = await store('price-pix', 'mirim', 'bia@example.com');
     await sql`insert into subscriptions (tenant_id, plan_id, method, status, provider) values (${b.id}, ${planId}, 'pix', 'pending', 'fake')`;
     await sql`
       insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end, method, provider, due_at)
@@ -992,7 +1002,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       insert into plans (id, name, price_cents, features, public, sort)
       values (${planId}, 'Plano vivo', 5000, '{}', false, 99)
     `;
-    const s = await store('price-live', 'basic', 'bia@example.com');
+    const s = await store('price-live', 'mirim', 'bia@example.com');
     await sql`insert into subscriptions (tenant_id, plan_id, method, status, provider) values (${s.id}, ${planId}, 'pix', 'pending', 'fake')`;
     const inv = (
       await sql`
@@ -1045,7 +1055,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
   test('webhooks: unknown references and other stores’ ids are ignored', async () => {
     const d = { sql: appSql, provider: fake, notify } as never;
     const stray = await fake.platformPix({
-      amountCents: 3990,
+      amountCents: 6990,
       description: 'x',
       payerEmail: 'x@example.com',
       externalReference: crypto.randomUUID(),
@@ -1061,10 +1071,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       providerUserId: null,
       action: null,
     });
-    const s = await store('hook', 'basic', 'bia@example.com');
+    const s = await store('hook', 'mirim', 'bia@example.com');
     const ps = await fake.createSubscription({
       reason: 'x',
-      amountCents: 3990,
+      amountCents: 6990,
       payerEmail: 'x@example.com',
       externalReference: s.id,
       backUrl: 'https://painel.vendua.test/admin/',
@@ -1084,7 +1094,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     fake.platformConfigured = false;
     try {
       const off = await s.owner('POST', '/account/subscription', {
-        planId: 'basic',
+        planId: 'mirim',
         method: 'pix',
         payerEmail: 'bia@example.com',
       });

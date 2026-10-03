@@ -17,7 +17,7 @@ import {
   WhatsappLogo,
   type Icon,
 } from '@phosphor-icons/react';
-import type { Role } from '../lib/api.ts';
+import type { PlanFeature, Role } from '../lib/api.ts';
 
 export interface NavItem {
   to: string;
@@ -26,6 +26,8 @@ export interface NavItem {
   min: Role;
   /** in the phone bottom bar (the rest live under "Mais") */
   primary?: boolean;
+  /** the plan feature the screen needs: without it the entry shows a lock (and the screen the plan) */
+  feature?: PlanFeature;
 }
 
 // Plain pt-BR, no platform words (§2.2.8). Order = the sidebar; `primary` ones make the phone
@@ -34,13 +36,13 @@ export const NAV: NavItem[] = [
   { to: '/', label: 'Início', Icon: House, min: 'attendant', primary: true },
   { to: '/pedidos', label: 'Pedidos', Icon: Receipt, min: 'attendant', primary: true },
   // in the bar while it's on, in "Mais" before (navFor)
-  { to: '/vendedor', label: 'Vendedor', Icon: Sparkle, min: 'attendant' },
-  { to: '/cozinha', label: 'Cozinha', Icon: CookingPot, min: 'attendant' },
+  { to: '/vendedor', label: 'Duá', Icon: Sparkle, min: 'attendant', feature: 'vendedor' },
+  { to: '/cozinha', label: 'Cozinha', Icon: CookingPot, min: 'attendant', feature: 'kds' },
   { to: '/cardapio', label: 'Cardápio', Icon: ForkKnife, min: 'manager', primary: true },
   { to: '/loja', label: 'Loja', Icon: Storefront, min: 'manager', primary: true },
   { to: '/pagamentos', label: 'Pagamentos', Icon: Wallet, min: 'manager' },
   { to: '/whatsapp', label: 'WhatsApp', Icon: WhatsappLogo, min: 'manager' },
-  { to: '/impressoras', label: 'Impressoras', Icon: Printer, min: 'manager' },
+  { to: '/impressoras', label: 'Impressoras', Icon: Printer, min: 'manager', feature: 'printing' },
   { to: '/clientes', label: 'Clientes', Icon: Users, min: 'manager' },
   { to: '/marketing', label: 'Marketing', Icon: Megaphone, min: 'manager' },
   { to: '/aparencia', label: 'Aparência', Icon: PaintBrush, min: 'manager' },
@@ -53,8 +55,8 @@ export const NAV: NavItem[] = [
 // Phones stack screens left to right (§3.3): tab and "Mais" roots are depth 0, a drill-down
 // is depth 1 with the root it belongs to. `title` names the screen in the next one's back button.
 /**
- * The nav for this store: once the Vendedor is on, the phone bar is Início · Pedidos · Vendedor
- * · Cardápio · Mais and Loja heads "Mais" (sales-agent-ux §2); before, the Vendedor waits in Mais.
+ * The nav for this store: once Duá (the AI seller) is on, the phone bar is Início · Pedidos · Duá
+ * · Cardápio · Mais and Loja heads "Mais" (sales-agent-ux §2); before, Duá waits in Mais.
  */
 export function navFor(vendedorOn: boolean): NavItem[] {
   if (!vendedorOn) return NAV;
@@ -67,7 +69,7 @@ export function navFor(vendedorOn: boolean): NavItem[] {
   );
 }
 
-/** What "Mais" holds, in order: Loja first when the Vendedor took its place in the bar. */
+/** What "Mais" holds, in order: Loja first when Duá took its place in the bar. */
 export function moreOf(items: NavItem[], vendedorOn: boolean): NavItem[] {
   const more = items.filter((n) => !n.primary);
   const loja = more.findIndex((n) => n.to === '/loja');

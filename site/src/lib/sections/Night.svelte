@@ -2,7 +2,8 @@
   import Dua, { type Pose } from '$lib/components/Dua.svelte';
   import Section from '$lib/components/Section.svelte';
   import Start from '$lib/components/Start.svelte';
-  import { plans, site } from '$lib/content';
+  import { site } from '$lib/content';
+  import { plans } from '$lib/plans/live.svelte';
 
   const steps: { pose: Pose; title: string; text: string }[] = [
     {
@@ -22,18 +23,15 @@
     },
   ];
 
-  const faq: { q: string; a: string }[] = [
+  const { mirim, bandeira, pangolim } = plans;
+  const faq: { q: string; a: string }[] = $derived([
     {
       q: 'Já posso criar a minha loja?',
-      a: `Pode, o cadastro está aberto. Você escolhe o plano, dá o nome da loja e confirma o seu WhatsApp. No ${plans.basic.short}, você começa com ${plans.basic.trial}, sem cartão; no ${plans.pro_plus.short}, paga o primeiro mês.`,
+      a: `Pode, o cadastro está aberto. Você escolhe o plano, dá o nome da loja e confirma o seu WhatsApp. ${bandeira.trial ? `No ${bandeira.short}, você começa com ${bandeira.trial}, sem cartão; no ${mirim.short}${pangolim.available ? ` e no ${pangolim.short}` : ''}, paga o primeiro mês.` : 'Você paga o primeiro mês pelo Pix ou pelo cartão.'}${pangolim.available ? '' : ` O ${pangolim.short} ainda não está aberto para assinatura.`}`,
     },
     {
-      q: 'Quanto custa?',
-      a: `Depende do plano. O ${plans.basic.name} custa ${plans.basic.price} por mês e começa com ${plans.basic.trial}. A loja fica em seunome.vendua.com.br, com o visual padrão da Venduá. O ${plans.pro_plus.name} custa ${plans.pro_plus.price} por mês e traz domínio próprio e um site feito pelo nosso agente de IA. A Venduá não cobra nada por pedido; o Mercado Pago fica com a tarifa dele em cada pagamento.`,
-    },
-    {
-      q: 'Como eu pago o plano?',
-      a: `Por Pix, todo mês, ou no cartão, com a cobrança renovando sozinha a cada mês. Os dois pelo Mercado Pago. No ${plans.basic.short}, a primeira cobrança vem depois dos ${plans.basic.trial}.`,
+      q: 'O que é o Duá?',
+      a: `É o vendedor com IA no WhatsApp da sua loja: atende os seus clientes e fecha o pedido com eles, sempre com os preços e os horários da loja. É o mesmo Duá que monta a loja com você e que você encontra no app. Para o cliente, ele se apresenta como assistente virtual da sua loja, nunca como uma pessoa. Vem no ${bandeira.short}, com ${bandeira.conversations} conversas por mês${bandeira.trial && bandeira.trialConversations ? ` (${bandeira.trialConversations} durante o teste)` : ''}, e no ${pangolim.short}, com ${pangolim.conversations}. Cada cliente que fala com o Duá conta uma conversa a cada 24 horas.`,
     },
     {
       q: 'Preciso entender de tecnologia?',
@@ -59,16 +57,15 @@
       q: 'Dá pra ter mais gente cuidando?',
       a: 'Dá. Você chama a sua equipe e escolhe o papel de cada um: dono, gerente ou atendente. E o app guarda quem fez o quê.',
     },
-  ];
+  ]);
 </script>
 
-<Section
-  id="comecar"
-  tone="after"
-  sky="linear-gradient(180deg, var(--sky-5), var(--sky-6))"
-  labelledby="comecar-t"
-  class="night"
->
+<Section id="comecar" tone="after" sky="var(--sunset-night)" labelledby="comecar-t" class="night">
+  <!-- the sun sets in the band at the top, then the stars come out -->
+  <div class="dusk" aria-hidden="true">
+    <span class="sun"></span>
+    <span class="horizon"></span>
+  </div>
   <div class="stars" aria-hidden="true"><i></i><i></i><i></i></div>
 
   <!-- 1 · how it starts -->
@@ -120,8 +117,9 @@
     <div class="cta">
       <Start tone="after" />
       <p class="plans tnum">
-        {plans.basic.short} por {plans.basic.price}/mês ou {plans.pro_plus.short} por {plans
-          .pro_plus.price}/mês.
+        {bandeira.short} por {bandeira.price}/mês{bandeira.trial ? `, com ${bandeira.trial}` : ''}.
+        Também tem o {mirim.short}, por {mirim.price}/mês{#if pangolim.available}, e o {pangolim.short},
+          por {pangolim.price}/mês{/if}.
       </p>
       <p class="follow">
         Acompanhe no Instagram:
@@ -134,11 +132,64 @@
 </Section>
 
 <style>
+  /* ── dusk: the sun on the horizon, drawn in section coordinates inside the 340 px band ── */
+  .dusk {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+  .sun {
+    --d: clamp(140px, 18vw, 210px);
+    position: absolute;
+    top: calc(200px - var(--d) / 2);
+    right: 8%;
+    width: var(--d);
+    height: calc(var(--d) / 2);
+    border-radius: var(--d) var(--d) 0 0;
+    /* illustration colours: a late sun that warms to rose where it meets the horizon */
+    background: linear-gradient(180deg, #fbe1b0 0%, #f2b98c 55%, #d99282 100%);
+    box-shadow: 0 0 80px 24px rgb(251 214 160 / 0.35);
+    opacity: 0.95;
+  }
+  .horizon {
+    position: absolute;
+    top: 200px;
+    left: 50%;
+    width: 100vw;
+    height: 1.5px;
+    transform: translateX(-50%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(247 244 234 / 0.35) 20%,
+      rgb(247 244 234 / 0.35) 80%,
+      transparent
+    );
+  }
+  @media (prefers-color-scheme: dark) {
+    .sun {
+      background: linear-gradient(180deg, #7d5a4a 0%, #5a3f3d 100%);
+      box-shadow: 0 0 60px 12px rgb(160 110 80 / 0.18);
+      opacity: 0.8;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .sun {
+      animation: settle 1.4s var(--ease-soft) both;
+    }
+  }
+  @keyframes settle {
+    from {
+      transform: translateY(-14px);
+    }
+  }
+
   /* ── the night sky: three star layers, denser near the top, fading before the questions ── */
   .stars {
     position: absolute;
     z-index: -1;
-    top: 0;
+    top: 260px;
     left: 50%;
     width: 100vw;
     height: min(100%, 1400px);
@@ -203,19 +254,19 @@
     display: grid;
     gap: 14px;
     max-width: 640px;
-    margin-top: 24px;
+    padding-top: calc(272px - clamp(64px, 9vw, 128px));
   }
   .head .t-lede {
     margin-top: 4px;
   }
 
   .steps {
-    --lamp: 112px;
+    --lamp: 88px;
     --path: color-mix(in srgb, var(--after-ink) 30%, transparent);
     position: relative;
     display: grid;
-    gap: 36px;
-    margin: clamp(40px, 6vw, 72px) 0 0;
+    gap: 28px;
+    margin: clamp(32px, 5vw, 56px) 0 0;
     padding: 0;
     list-style: none;
   }
@@ -232,7 +283,7 @@
     position: absolute;
     left: calc(var(--lamp) / 2 - 1px);
     top: calc(var(--lamp) + 8px);
-    height: calc(100% - var(--lamp) + 36px - 16px);
+    height: calc(100% - var(--lamp) + 28px - 16px);
     border-left: 2px dotted var(--path);
   }
   .lamp {
@@ -288,7 +339,7 @@
 
   @media (max-width: 399px) {
     .steps {
-      --lamp: 84px;
+      --lamp: 72px;
     }
     .step {
       column-gap: 16px;
@@ -303,7 +354,7 @@
 
   @media (min-width: 900px) {
     .steps {
-      --lamp: clamp(180px, 17vw, 220px);
+      --lamp: clamp(120px, 11vw, 150px);
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: clamp(28px, 4vw, 56px);
     }
@@ -312,7 +363,7 @@
       grid-template-rows: auto auto;
       justify-items: center;
       text-align: center;
-      row-gap: 28px;
+      row-gap: 20px;
       align-items: start;
     }
     .step:not(:last-child)::after {
@@ -340,7 +391,7 @@
   .faq {
     display: grid;
     gap: 28px;
-    margin-top: clamp(80px, 11vw, 144px);
+    margin-top: clamp(48px, 6vw, 72px);
     padding-top: clamp(40px, 5vw, 56px);
     border-top: 1px solid var(--after-line);
     scroll-margin-top: 88px;
@@ -459,7 +510,7 @@
     display: grid;
     justify-items: center;
     text-align: center;
-    margin-top: clamp(96px, 13vw, 176px);
+    margin-top: clamp(56px, 7vw, 88px);
     padding-bottom: clamp(8px, 2vw, 24px);
   }
   .moment {

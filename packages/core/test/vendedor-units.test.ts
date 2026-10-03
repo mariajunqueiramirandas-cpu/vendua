@@ -210,13 +210,14 @@ describe('triggers and rules', () => {
 
 describe('settings', () => {
   test('defaults fill an old row; patches are bounded and role-gated', () => {
-    expect(withDefaults({ name: 'Bia' }).coverage).toBe('when_slow');
+    // a row from when stores named their seller reads as Duá
+    expect(withDefaults({ name: 'Bia' })).toMatchObject({ name: 'Duá', coverage: 'when_slow' });
     const p = parseSettingsPatch(
-      { name: 'Bia', coverage: 'always', slowAfterMin: 5 },
+      { coverage: 'always', slowAfterMin: 5 },
       DEFAULT_SETTINGS,
       'manager',
     );
-    expect(p.settings).toMatchObject({ name: 'Bia', coverage: 'always', slowAfterMin: 5 });
+    expect(p.settings).toMatchObject({ name: 'Duá', coverage: 'always', slowAfterMin: 5 });
     expect(() => parseSettingsPatch({ slowAfterMin: 3 }, DEFAULT_SETTINGS, 'manager')).toThrow();
     expect(() => parseSettingsPatch({ nope: 1 }, DEFAULT_SETTINGS, 'manager')).toThrow();
     expect(() => parseSettingsPatch({ enabled: true }, DEFAULT_SETTINGS, 'manager')).toThrow();
@@ -224,7 +225,7 @@ describe('settings', () => {
       parseSettingsPatch({ capabilities: { coupons: true } }, DEFAULT_SETTINGS, 'manager'),
     ).toThrow();
     expect(parseSettingsPatch({ enabled: true }, DEFAULT_SETTINGS, 'owner').enabled).toBe(true);
-    expect(() => parseSettingsPatch({ name: 'x'.repeat(31) }, DEFAULT_SETTINGS, 'owner')).toThrow();
+    expect(() => parseSettingsPatch({ name: 'Bia' }, DEFAULT_SETTINGS, 'owner')).toThrow();
   });
   test('phones are masked', () => {
     expect(maskPhone('11987654821')).toBe('(11) 9••••-4821');

@@ -15,6 +15,7 @@ import {
   type AgentPlatform,
   type AuthedDevice,
 } from './devices.ts';
+import { planHas } from '../billing/plans.ts';
 import { PrintHub } from './hub.ts';
 import {
   PRINTER_KINDS,
@@ -114,9 +115,17 @@ export function mountPrintAgent(o: PrintAgentOpts) {
     return c.json(out);
   });
 
-  const device = async (c: Context): Promise<AuthedDevice> => {
+  // a store whose plan has no printing stops getting jobs; it can still report and disconnect
+  const device = async (c: Context, o: { plan?: boolean } = {}): Promise<AuthedDevice> => {
     const d = await authDevice(sql, c.req.header('authorization'));
     c.set('tenant', d.tenant);
+    if (
+      o.plan !== false &&
+      !(await withTenant(sql, d.tenant.id, (tx) => planHas(tx, d.tenant.id, 'printing')))
+    )
+      throw new HttpError(403, 'PLAN_REQUIRED', "the store's plan does not include printing", {
+        feature: 'printing',
+      });
     return d;
   };
 
@@ -226,6 +235,9 @@ export function mountPrintAgent(o: PrintAgentOpts) {
                 returning d.id`,
             );
             if (alive.length === 0) return void revoke();
+            // a plan that lost printing ends the stream; the reconnect is refused PLAN_REQUIRED
+            if (!(await withTenant(sql, tenantId, (tx) => planHas(tx, tenantId, 'printing'))))
+              return void finish();
           } catch {
             /* the database blinked: keep the stream, the next beat asks again */
           }
@@ -255,7 +267,7 @@ export function mountPrintAgent(o: PrintAgentOpts) {
   });
 
   admin.post('/agent/jobs/:id/result', async (c) => {
-    const d = await device(c);
+    const d = await device(c, { plan: false });
     const jobId = uuidParam(c, 'id');
     return o.idempotency(sql, async (c2, tx) => {
       const body = await bodyJson(c2, 2 * 1024);
@@ -329,7 +341,7 @@ export function mountPrintAgent(o: PrintAgentOpts) {
   });
 
   admin.delete('/agent/self', async (c) => {
-    const d = await device(c);
+    const d = await device(c, { plan: false });
     return o.idempotency(sql, async (_c2, tx) => {
       await tx`delete from print_devices where tenant_id = ${d.tenant.id} and id = ${d.id}`;
       await notifyDeviceTx(tx, d.tenant.id, d.id, 'revoked');

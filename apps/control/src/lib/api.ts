@@ -878,16 +878,64 @@ export interface BillingStore {
     dueAt: string;
   } | null;
 }
+export type PlanFeature =
+  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor';
+export type PlanFeatures = Record<PlanFeature, boolean>;
 export interface ControlPlan {
   id: string;
   name: string;
   priceCents: number | null;
   feeBps: number;
-  features: { customDomain: boolean; customSite: boolean };
+  features: PlanFeatures;
   public: boolean;
   sort: number;
   /** free days before the first charge for new stores; 0 = no trial */
   trialDays: number;
+  /** the one plan signup and the site preselect */
+  recommended: boolean;
+  /** Duá conversations a paid month includes */
+  aiConversations: number;
+  /** Duá conversations the free trial includes */
+  aiTrialConversations: number;
+  /** stores can pick it; a closed plan shows on the site and in signup but can't be chosen */
+  available: boolean;
+}
+export interface PlanPatch {
+  name?: string;
+  priceCents?: number;
+  public?: boolean;
+  trialDays?: number;
+  /** true moves the mark here — Core clears it on the other plan */
+  recommended?: boolean;
+  aiConversations?: number;
+  aiTrialConversations?: number;
+  /** false closes it to new subscriptions (the recommended plan must stay open) */
+  available?: boolean;
+  /** merged into the plan's features by Core */
+  features?: Partial<PlanFeatures>;
+}
+/** GET /control/v1/signup: the CRM switch and what self-serve signup waits on */
+export interface SignupReadiness {
+  on: boolean;
+  whatsapp: boolean;
+  email: boolean;
+  billing: boolean;
+  open: boolean;
+}
+export interface AiPack {
+  id: string;
+  name: string;
+  priceCents: number;
+  conversations: number;
+  /** offered to stores in the admin */
+  public: boolean;
+  sort: number;
+}
+export interface AiPackPatch {
+  name?: string;
+  priceCents?: number;
+  conversations?: number;
+  public?: boolean;
 }
 export interface Incident {
   id: string;
@@ -901,11 +949,16 @@ export interface Incident {
 const fleet = {
   billingStores: () => req<{ stores: BillingStore[] }>('/billing/stores'),
   controlPlans: () => req<{ plans: ControlPlan[] }>('/plans'),
-  patchPlan: (
-    id: string,
-    patch: { name?: string; priceCents?: number; public?: boolean; trialDays?: number },
-  ) =>
-    req<unknown>(`/plans/${encodeURIComponent(id)}`, {
+  patchPlan: (id: string, patch: PlanPatch) =>
+    req<{ plan: ControlPlan }>(`/plans/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  listAiPacks: () => req<{ packs: AiPack[] }>('/ai-packs'),
+  /** may a visitor sign up now, and if not, what is missing (Core decides) */
+  signupReadiness: () => req<SignupReadiness>('/signup'),
+  patchAiPack: (id: string, patch: AiPackPatch) =>
+    req<{ pack: AiPack }>(`/ai-packs/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),

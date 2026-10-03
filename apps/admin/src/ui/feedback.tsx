@@ -141,6 +141,10 @@ export function messageOf(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.code === 'TIMEOUT') return 'A conexão está lenta. Confira a internet e tente de novo.';
     if (err.status === 0) return 'Sem conexão. Confira a internet e tente de novo.';
+    if (err.code === 'PLAN_REQUIRED')
+      return err.details?.reason === 'unpaid'
+        ? 'Isso libera assim que o pagamento do plano entrar. Veja em Conta e plano.'
+        : 'Isso faz parte de outro plano. Veja os planos em Conta e plano.';
     if (err.status === 403)
       return 'Seu acesso não permite fazer isso. Peça para quem é dono da loja.';
     if (err.status === 429) return 'Muitas tentativas seguidas. Espere um minuto e tente de novo.';
@@ -161,6 +165,9 @@ const FRIENDLY: Record<string, string> = {
   COUPON_EXISTS: 'Já existe um cupom com esse código.',
   LAST_OWNER: 'A loja precisa ter pelo menos um dono.',
   MEMBER_EXISTS: 'Esse celular já faz parte da equipe. Toque na pessoa para mudar o papel.',
+  AI_PACK_NEEDS_PAID_PLAN:
+    'Os pacotes de conversas ficam disponíveis depois do primeiro pagamento do plano.',
+  UNKNOWN_AI_PACK: 'Esse pacote mudou. A tela foi atualizada, escolha de novo.',
   BILLING_HOLD:
     'A loja abre para pedidos assim que o primeiro pagamento do plano for confirmado. Veja em Conta e plano.',
   INVALID_PIX: 'Essa chave Pix não parece certa. Confira o tipo e a chave.',

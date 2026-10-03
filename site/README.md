@@ -3,10 +3,11 @@
 The marketing site for vendua.com.br: SvelteKit 2 + Svelte 5, prerendered with adapter-static, copy
 in pt-BR. Sign-up is open, in the merchant admin (not on this site).
 
-The home page is **"um dia na loja"**: one day of a small shop, dawn to night, told by the sky
-flowing continuously between sections (no hour labels): hero (`#inicio`), who it's for
-(`#para-quem`), an order arrives (`#pedidos`), the store and its price (`#sua-loja`, `#preco`), the
-day's recap (`#seu-dia`), how to start + FAQ (`#comecar`, `#perguntas`).
+The home page is **"um dia na loja"**, kept short (the owner, 2026-10-03: about half its old
+length): one day of a small shop, dawn to night, told by the sky flowing continuously between five
+sections (no hour labels): hero (`#inicio`), who it's for (`#para-quem`), the product working
+(`#veja`, four interactive demos behind one tab bar), the plans (`#preco`), and the sunset into night
+with how to start + FAQ (`#comecar`, `#perguntas`).
 
 The hero is the name: "venduá." poster-size, with Duá standing behind the letters. On load the letters
 spring up, the accent and the dot land, Duá climbs out and waves, the paragraph arrives word by word,
@@ -18,30 +19,82 @@ Other pages: `/privacidade/` and the 404.
 ## Launch decisions the copy encodes
 
 - Sign-up is open. The only call to action is `<Start/>` ("Criar minha loja"), a plain link to
-  `<PUBLIC_ADMIN_URL>/admin/comecar` (works without JS): in the header, and in the closing. Not in
-  the hero, where it would sit right under the header's. The price block links each plan to the same
-  page with `?plano=basic` or `?plano=pro_plus`. No form, contact or WhatsApp CTA on the site;
-  Instagram only in the footer (and at most one line near the closing CTA).
-- Prices are the user's decision, shown exactly: **Venduá Basic, R$ 39,90/mês** (store at
-  `seunome.vendua.com.br`, the standard Venduá look, no own domain, no custom site) and **Venduá
-  PRO+, R$ 99/mês** (own domain + a site made by our AI agent). The plan is paid by Pix every month
-  or by recurring card, through Mercado Pago. Venduá takes no per-order fee, but Mercado Pago keeps
-  its own on each payment, so never "sem taxas".
-- Venduá Basic starts with a **14-day free trial, no card** (the user's decision, 2026-10-02); PRO+
-  pays the first month. "14 dias grátis" is the only "grátis" the site says: no other free offer, no
-  discount, and no date for the custom site. Plan names, prices and the trial live in `plans` in
+  `<PUBLIC_ADMIN_URL>/admin/comecar?plano=bandeira` (works without JS): in the header, and in the
+  closing. Not in the hero, where it would sit right under the header's. The price block links each
+  open plan to the same page with `?plano=mirim` or `?plano=bandeira` (and `?plano=pangolim` once it
+  opens, see below). No form, contact
+  or WhatsApp CTA on the site; Instagram only in the footer (and at most one line near the closing
+  CTA).
+- Three plans, the owner's decision (2026-10-03), shown exactly and cheapest first, with Bandeira in
+  the middle as the recommended one ("Recomendado", raised, the section's main button, and the plan
+  `<Start/>` preselects):
+  - **Venduá Mirim, R$ 69,90/mês**: the store at `seunome.vendua.com.br`, the standard Venduá look,
+    and everything on the receipt (menu, orders, Pix, coupons...). Copy says plainly what it leaves
+    out: the kitchen screen, automatic printing, the loyalty card and Duá.
+  - **Venduá Bandeira, R$ 169/mês**: everything in Mirim plus the kitchen screen (KDS), automatic
+    printing of the comanda, the loyalty card and **Duá**, the AI seller (code name Vendedor, ADR 0031) that answers the store's customers on its WhatsApp, with 250 conversations a month (50
+    during the trial).
+  - **Venduá Pangolim, R$ 449/mês**: everything in Bandeira plus own domain, a site made by our AI
+    agent, and 1.000 Duá conversations a month. **Shown but closed** (owner, 2026-10-03: Venduá
+    can't offer own domains yet): the card keeps its price and perks, and its button is replaced by
+    the quiet line "Ainda não está aberto para assinatura." (no date, never "em breve"); nothing
+    links to `?plano=pangolim`, and the FAQ and closing don't offer it. Open/closed follows the CRM's
+    `available` flag (Core answers 409 `PLAN_UNAVAILABLE`), mirrored in `available` in `plans`
+    like the prices; `signup()` throws on a closed plan, so the prerender fails before a link ships.
+  - Duá is the AI seller's only name, the same on every store (stores don't name it), and the
+    grammar is masculine: o Duá, do Duá, ele. First mention: "o Duá, o vendedor com IA no WhatsApp
+    da loja"; never "o Vendedor" as a product name. It tells shoppers it's the store's virtual
+    assistant ("Oi! Sou o Duá, assistente virtual da Bolos da Nena."), never a person; in the chat
+    demo the mascot is its face (`avatar-ola`, `avatar-pensando` while typing, `avatar-feliz` when the
+    order is done) on a lit disc, while the header stays the store's WhatsApp.
+  - A conversation is one customer talking to Duá, counted once every 24 hours (FAQ).
+  - The plan is paid by Pix every month or by recurring card, through Mercado Pago. Venduá takes no
+    per-order fee on any plan, but Mercado Pago keeps its own on each payment, so never "sem taxas".
+- Bandeira starts with a **14-day free trial, no card**; Mirim (and Pangolim, once open) pays the
+  first month.
+  "14 dias grátis" is the only "grátis" the site says: no other free offer, no discount, no price
+  beyond the three plans (the +100-conversation pack is sold in the admin, not quoted here), and no
+  date for the custom site. Plan names, prices, conversations and the trial live in `plans` in
   `src/lib/content.ts`.
+- **Prices follow the CRM by themselves.** On the home page, `src/lib/plans/live.svelte.ts` reads
+  `/precos.json` once. In production the site's nginx answers it from Core's public catalog
+  (`/site/v1/plans`, a minute of cache), and the plan cards, the comparison table, the calculator,
+  the trial strip, the FAQ and the closing line update in place.
+  - It covers the price (any the CRM takes), the trial, Duá's conversations, `available`, the
+    name and the features. The cards' perks, the "Sem …" line, the "Tudo do …" lines and the
+    comparison table come from the feature flags, so a feature switched on or off in the CRM
+    shows.
+  - The request is first-party, like the visit counter, so the privacy page's "seu navegador não
+    conversa com nenhum outro serviço" stays true.
+  - The built page carries `content.ts`'s values, which crawlers, readers without JavaScript and a
+    Core that's down get. The build prerenders the same values as `/precos.json`, for the preview
+    and the tests.
+  - Keep `content.ts` close to the CRM, and update it when a decision changes. The SEO description
+    ("A partir de R$ 69,90") and the copy check read the build, not the CRM.
+  - A trial set to 0 in the CRM removes the trial line, the strip and the FAQ's mention. A closed
+    plan loses its button.
 - Every planned feature (`docs/merchant-admin.md` scope) is presented as available at launch.
   Nothing beyond that list.
+- **The plans pitch** (owner, 2026-10-03): the trial up front ("Comece pelo Venduá Bandeira: 14 dias
+  grátis, sem cartão"), the three cards (perks with a demo link to it), a full comparison table
+  closed in a `<details>`, and a commission calculator. The calculator is the site's only mention of
+  another company: iFood's own published commissions (12% Plano Básico, 23% Plano Entrega,
+  `blog-parceiros.ifood.com.br/taxas-ifood`, updated 15/09/2026), cited under it with what they
+  leave out (3,2% online payment fee, the monthly fee) and that Mercado Pago charges its own fee on
+  Venduá too. Re-check the rates before changing that copy; no other competitor claims.
 - No custom software ("sob medida", software house, projects).
 - One store only: the fictional **Bolos da Nena** (owner Nena). Numbers quoted in copy come from
   `src/lib/content.ts`, so they match the screenshots.
 
 ## Visual rules
 
-- The product appears only as real admin screens of Bolos da Nena (`<Screen key=…>`, registry in
-  `src/lib/screens.ts`) inside device frames drawn in CSS (`Phone`, `Tablet`). The only UI drawn in
-  code is system UI: lock screen and push notifications, with Core's real push text.
+- The product appears as real admin screens of Bolos da Nena (`<Screen key=…>`, registry in
+  `src/lib/screens.ts`) inside device frames drawn in CSS (`Phone`, `Tablet`), and in the four
+  **demos** (`src/lib/demos/`, the owner's decision 2026-10-03): drawn in code, scripted (no
+  network, no model), each mirroring the real admin or storefront screen it shows (labels, states
+  and Core's card wording copied from the source named at the top of each file) and labelled an
+  example by `DemoFrame`. Any other UI drawn in code is system UI: lock screen and push
+  notifications, with Core's real push text.
 - The only character is Duá (`static/dua/`, never mirrored or recolored), plus line drawings in the
   admin's illustration style. No photos, people, AI images, stock, or fake testimonials/numbers.
 - Colors come from `src/lib/styles/theme.css`, copied from `apps/admin/src/ui/theme.css` (Creme,
@@ -52,7 +105,10 @@ Other pages: `/privacidade/` and the 404.
   fails the build if a shared token drifts.
 - Banned words (platform jargon, "sob medida", "sem taxa", "grátis" other than "14 dias grátis", "em breve", real store names) are checked
   on the rendered text of every page by `scripts/postbuild.ts`.
-- Works without JavaScript; motion is CSS-only and respects `prefers-reduced-motion`.
+- Works without JavaScript: the demos render their finished state, still, and the calculator its
+  R$ 8.000 example; with JavaScript they become interactive (the visitor drives every step). All
+  other motion is CSS-only, and everything respects `prefers-reduced-motion` (demo waits become
+  instant).
 - Page views are counted first-party and cookieless (`src/lib/analytics.ts` → nginx
   `/analytics/v1/collect` → Core, ADR 0028); `/privacidade/` describes exactly what is kept, so
   keep the two in step.
@@ -96,8 +152,11 @@ Images are committed; `scripts/assets.ts` rebuilds them (no argument = all three
 ## Structure
 
 - `src/routes/`: home, `/privacidade/`, 404.
-- `src/lib/sections/`: the six moments (`Hero`, `WhoFor`, `Orders`, `YourStore`, `YourDay`,
-  `Night`).
+- `src/lib/sections/`: the five moments (`Hero`, `WhoFor`, `Demos`, `Plans`, `Night`).
+- `src/lib/demos/`: `DemoFrame` (example note, recomeçar, reduced motion, hydration) and the four
+  demos (`Vendedor` (Duá's chat, tab "Duá"), `Pedido`, `Cozinha`, `Loja`, each with its parts in a folder). `Demos.svelte`
+  opens one from `?demo=<id>` or `#demo-<id>`.
+- `src/lib/plans/`: the cards, the comparison table, the calculator and its cents math.
 - `src/lib/components/`: `Section`, device frames, `Screen`, `Notification`, `LockScreen`, `Dua`,
   `Start` (the sign-up link), header, footer, SEO, 404.
 - `src/lib/content.ts`: site facts and the store's numbers; `src/lib/screens.ts`: screen registry.

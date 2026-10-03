@@ -2,11 +2,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { NavLink } from 'react-router-dom';
 import { api, type Incident } from '../lib/api.ts';
 import { qk } from '../lib/query.ts';
-import { ROLE_LABEL, useSession } from '../lib/session.ts';
+import { featureOpen, ROLE_LABEL, useSession } from '../lib/session.ts';
 import { Sheet } from '../ui/Sheet.tsx';
 import type { NAV } from './nav.ts';
 import { intent } from './routes.ts';
-import { UserMenu } from './Shell.tsx';
+import { NavLock, UserMenu } from './Shell.tsx';
 import { resetClient } from '../lib/persist.ts';
 
 export /** "Mais": large tiles with a live hint each (§3.1). */
@@ -20,11 +20,12 @@ function MoreSheet({
   items: typeof NAV;
 }) {
   const qc = useQueryClient();
-  const { vendedor } = useSession();
+  const session = useSession();
+  const { vendedor } = session;
   const hint = (to: string): string | null => {
     if (to === '/vendedor')
       return !vendedor?.enabled
-        ? `conheça a ${vendedor?.name ?? 'Ana'}`
+        ? 'vendedor com IA no WhatsApp'
         : vendedor.waiting
           ? `${vendedor.waiting} ${vendedor.waiting === 1 ? 'precisa' : 'precisam'} de você`
           : 'vendas no WhatsApp';
@@ -55,12 +56,17 @@ function MoreSheet({
             <NavLink
               to={n.to}
               {...intent(qc, n.to)}
-              className="press flex min-h-28 flex-col justify-between rounded-lg bg-sunken p-4 hover:bg-press active:bg-press"
+              className="press relative flex min-h-28 flex-col justify-between rounded-lg bg-sunken p-4 hover:bg-press active:bg-press"
             >
               <n.Icon weight="duotone" className="size-8" />
+              {n.feature && !featureOpen(session, n.feature) ? (
+                <NavLock quiet className="absolute right-4 top-4" />
+              ) : null}
               <span>
                 <span className="block font-semibold">{n.label}</span>
-                {hint(n.to) ? (
+                {n.feature && !featureOpen(session, n.feature) ? (
+                  <span className="t-caption block text-muted">fora do seu plano</span>
+                ) : hint(n.to) ? (
                   <span className="t-caption block text-muted">{hint(n.to)}</span>
                 ) : null}
               </span>

@@ -18,12 +18,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { usePreload } from '../../app/routes.ts';
 import { api, type VendedorHome as Data, type WaitingRow } from '../../lib/api.ts';
-import { clock, minutesSince, money, num, plural } from '../../lib/format.ts';
+import { clock, dateShort, minutesSince, money, num, plural } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
+import { Notice } from '../../ui/Notice.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, messageOf } from '../../ui/feedback.tsx';
 import { Odometer } from '../../ui/Odometer.tsx';
@@ -39,7 +40,7 @@ export default function VendedorHome() {
     queryKey: qk.vendedor.home,
     queryFn: api.vendedor.home,
   });
-  const header = <PageHeader title="Vendedor" subtitle={session.store.name} />;
+  const header = <PageHeader title="Duá" subtitle={session.store.name} />;
   if (!data)
     return (
       <PageBody>
@@ -90,6 +91,7 @@ function Running({ data }: { data: Data }) {
       <p aria-live="polite" className="sr-only">
         {announce}
       </p>
+      <OutOfConversations data={data} owner={session.user.role === 'owner'} />
       <div className="grid gap-4 md:grid-cols-2 [&>*]:min-w-0">
         <Presence data={data} manager={manager} owner={session.user.role === 'owner'} />
         <Today data={data} />
@@ -99,7 +101,7 @@ function Running({ data }: { data: Data }) {
       {data.agent.enabled && data.today.conversations === 0 && data.presence !== 'rehearsal' ? (
         <Card className="flex flex-wrap items-center gap-x-4 gap-y-3 p-4">
           <p className="t-body min-w-0 flex-1 basis-60">
-            Ninguém escreveu ainda hoje. A {data.agent.name} responde assim que alguém chamar.
+            Ninguém escreveu ainda hoje. O Duá responde assim que alguém chamar.
           </p>
           {manager ? (
             <ButtonLink to="/vendedor/testar" variant="secondary" icon={<ChatText />}>
@@ -121,6 +123,32 @@ function Running({ data }: { data: Data }) {
   );
 }
 
+/** Duá's conversations ran out (ADR 0032): new shoppers wait in the inbox until the month turns
+ *  or a pack is bought. Core pushes the owner too. */
+function OutOfConversations({ data, owner }: { data: Data; owner: boolean }) {
+  const a = data.allowance;
+  if (!data.agent.enabled || !a.period || a.remaining > 0) return null;
+  const month = a.period === 'month';
+  return (
+    <Notice
+      tone="warning"
+      title="O Duá ficou sem conversas"
+      action={
+        owner ? (
+          <ButtonLink to={month ? '/conta#vendedor' : '/conta'} size="sm">
+            {month ? 'comprar mais conversas' : 'ver os planos'}
+          </ButtonLink>
+        ) : null
+      }
+    >
+      {month
+        ? `Usou as ${num(a.limit)} do mês. Os clientes novos vão para Conversas e esperam por você${a.resetsAt ? ` até ${dateShort(a.resetsAt)}` : ''}.`
+        : `Usou as ${num(a.limit)} do teste grátis. Os clientes novos vão para Conversas e esperam por você.`}
+      {owner ? null : ' Para o Duá voltar antes, peça ao dono da loja.'}
+    </Notice>
+  );
+}
+
 /** "Júlia precisa de você, alergia" and a new sale, said once each (sales-agent-ux §7). */
 function useAnnouncer(data: Data) {
   const seen = useRef<Set<string> | null>(null);
@@ -135,7 +163,7 @@ function useAnnouncer(data: Data) {
     sold.current = data.today.closedCents;
     const parts = [
       ...fresh.map((w) => `${w.name} precisa de você${w.reason ? `, ${w.reason}` : ''}`),
-      ...(sale ? [`A ${data.agent.name} vendeu mais ${money(sale)}`] : []),
+      ...(sale ? [`O Duá vendeu mais ${money(sale)}`] : []),
     ];
     if (parts.length) setText(parts.join('. '));
   }, [data]);
@@ -143,7 +171,6 @@ function useAnnouncer(data: Data) {
 }
 
 function Presence({ data, manager, owner }: { data: Data; manager: boolean; owner: boolean }) {
-  const name = data.agent.name;
   const on = useAgentSwitch();
   const warn =
     data.presence === 'disconnected' || data.presence === 'budget' || data.presence === 'trouble';
@@ -152,11 +179,11 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
   let action: ReactNode = null;
   switch (data.presence) {
     case 'answering':
-      title = `${name} está atendendo`;
+      title = 'O Duá está atendendo';
       detail = `${plural(data.active, 'conversa', 'conversas')} agora · responde em ${seconds(data.replyP50Sec)}`;
       break;
     case 'rehearsal':
-      title = `${name} está em ensaio`;
+      title = 'O Duá está em ensaio';
       detail = `escreveu ${plural(data.today.drafts, 'resposta', 'respostas')} hoje, sem mandar`;
       action = manager ? (
         <ButtonLink to="/vendedor/ensaio" variant="secondary" size="sm" className="h-12">
@@ -168,11 +195,11 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
       title = 'Você está atendendo';
       detail =
         data.agent.coverage === 'after_hours'
-          ? `a ${name} entra quando a loja fechar`
-          : `a ${name} entra se você demorar ${data.agent.slowAfterMin} min`;
+          ? 'o Duá entra quando a loja fechar'
+          : `o Duá entra se você demorar ${data.agent.slowAfterMin} min`;
       break;
     case 'disconnected':
-      title = `${name} parou: o WhatsApp da loja desconectou`;
+      title = 'O Duá parou: o WhatsApp da loja desconectou';
       action = manager ? (
         <ButtonLink to="/whatsapp" variant="secondary" size="sm" className="h-12">
           reconectar
@@ -180,7 +207,7 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
       ) : null;
       break;
     case 'budget':
-      title = `${name} está mandando o link da loja até o mês virar`;
+      title = 'O Duá está mandando o link da loja até o mês virar';
       action = owner ? (
         <ButtonLink to="/conta" variant="secondary" size="sm" className="h-12">
           ver limite
@@ -188,10 +215,10 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
       ) : null;
       break;
     case 'trouble':
-      title = `A ${name} está com instabilidade; as conversas foram para você`;
+      title = 'O Duá está com instabilidade; as conversas foram para você';
       break;
     default:
-      title = `${name} pausada`;
+      title = 'O Duá está pausado';
       detail = 'As conversas ficam com você.';
       action = owner ? (
         <Button
@@ -200,7 +227,7 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
           className="h-12"
           loading={on.isPending}
           onClick={() =>
-            on.mutate({ enabled: true }, { onSuccess: () => toast(`A ${name} está ligada`) })
+            on.mutate({ enabled: true }, { onSuccess: () => toast('O Duá está ligado') })
           }
         >
           ligar
@@ -220,7 +247,11 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
   return (
     <Card className="flex flex-col p-4">
       <div role="status" className="flex flex-1 items-center gap-4">
-        <PersonaAvatar name={name} size="md" answering={data.presence === 'answering'} />
+        <PersonaAvatar
+          size="md"
+          answering={data.presence === 'answering'}
+          pose={warn ? 'avatar-ajuda' : undefined}
+        />
         <div className="min-w-0 flex-1">
           <p className={cn('t-title-2', warn && 'text-warning')}>{title}</p>
           {detail ? <p className="t-body text-muted">{detail}</p> : null}
@@ -250,7 +281,7 @@ function Today({ data }: { data: Data }) {
   const conversion = t.conversion === null ? '—' : `${Math.round(t.conversion * 100)}%`;
   return (
     <Card className="p-4">
-      <p className="t-caption text-muted">Vendido pela {data.agent.name} hoje</p>
+      <p className="t-caption text-muted">Vendido pelo Duá hoje</p>
       <Odometer cents={t.closedCents} className="t-display mt-1 tnum" />
       <p className="t-caption tnum text-muted">
         {plural(t.orders, 'pedido', 'pedidos')}
@@ -279,7 +310,7 @@ function Stat({ value, label }: { value: string; label: string }) {
   );
 }
 
-/** The first order she closes gets one moment (sales-agent-ux §6), once per device. */
+/** The first order Duá closes gets one moment (sales-agent-ux §6), once per device. */
 function FirstSale({ data, storeId }: { data: Data; storeId: string }) {
   const key = `vendua-vendedor-first-sale:${storeId}`;
   const at = data.agent.firstSaleAt;
@@ -302,11 +333,9 @@ function FirstSale({ data, storeId }: { data: Data; storeId: string }) {
   if (!fresh || seen) return null;
   return (
     <Card className="flex items-center gap-4 bg-spark-soft p-5">
-      <PersonaAvatar name={data.agent.name} size="md" />
+      <PersonaAvatar size="lg" pose="avatar-feliz" />
       <div className="min-w-0 flex-1">
-        <p className="t-moment text-[1.75rem] leading-8">
-          A {data.agent.name} fez a primeira venda
-        </p>
+        <p className="t-moment text-[1.75rem] leading-8">O Duá fez a primeira venda</p>
         <p className="t-caption text-muted">às {clock(at)}, no WhatsApp da loja.</p>
       </div>
       <Button variant="ghost" size="sm" className="h-12" onClick={() => setSeen(true)}>
@@ -438,7 +467,7 @@ function WhileAway({ data }: { data: Data }) {
         {slept ? 'Enquanto você dormia' : 'Enquanto você estava fora'}
       </h2>
       <p className="t-caption mt-0.5 text-muted">
-        A {data.agent.name} fechou {plural(rows.length, 'pedido', 'pedidos')} sem precisar de você.
+        O Duá fechou {plural(rows.length, 'pedido', 'pedidos')} sem precisar de você.
       </p>
       <ul className="-mx-4 -mb-4 mt-3 divide-y divide-line border-t border-line">
         {rows.map((o) => {
@@ -548,12 +577,11 @@ function Demand({ data, manager }: { data: Data; manager: boolean }) {
 
 function Shortcuts({ data, manager }: { data: Data; manager: boolean }) {
   const preload = usePreload();
-  const name = data.agent.name;
   const links: { to: string; label: string; hint: string; Icon: Icon; show: boolean }[] = [
     {
       to: '/vendedor/conversas',
       label: 'Conversas',
-      hint: 'tudo o que ela está atendendo',
+      hint: 'tudo o que ele está atendendo',
       Icon: ChatsCircle,
       show: true,
     },
@@ -567,7 +595,7 @@ function Shortcuts({ data, manager }: { data: Data; manager: boolean }) {
     {
       to: '/vendedor/ensaio',
       label: 'Ensaio',
-      hint: 'o que ela diria, sem mandar',
+      hint: 'o que ele diria, sem mandar',
       Icon: MaskHappy,
       show: manager,
     },
@@ -581,27 +609,27 @@ function Shortcuts({ data, manager }: { data: Data; manager: boolean }) {
     {
       to: '/vendedor/resultados',
       label: 'Resultados',
-      hint: 'o que ela vendeu',
+      hint: 'o que ele vendeu',
       Icon: ChartLineUp,
       show: manager,
     },
     {
       to: '/vendedor/testar',
       label: 'Testar como cliente',
-      hint: 'peça para ela, só você vê',
+      hint: 'peça para ele, só você vê',
       Icon: ChatText,
       show: manager,
     },
     {
       to: '/vendedor/configurar',
       label: 'Configurar',
-      hint: `como a ${name} fala e o que pode fazer`,
+      hint: 'como o Duá fala e o que pode fazer',
       Icon: GearSix,
       show: manager,
     },
   ];
   return (
-    <nav aria-label={`Mais sobre a ${name}`}>
+    <nav aria-label="Mais sobre o Duá">
       <ul className="grid gap-2 sm:grid-cols-2">
         {links
           .filter((l) => l.show)

@@ -433,39 +433,47 @@ export const TOPICS: Record<TopicId, Topic> = {
     ],
   },
   vendedor: {
-    title: 'Vendedor',
-    intro: 'Quem atende e vende no WhatsApp da loja, e como você entra na conversa.',
+    title: 'Duá',
+    intro: 'O Duá, o vendedor com IA no WhatsApp da loja, e como você entra na conversa.',
     items: [
       {
         q: 'Como assumo uma conversa?',
         a: (
           <>
             Toque em <strong>assumir</strong> na conversa, ou no aviso do celular. Responder pelo
-            WhatsApp da loja também vale: ela pausa sozinha naquela conversa. Para devolver, toque
+            WhatsApp da loja também vale: ele pausa sozinho naquela conversa. Para devolver, toque
             em <strong>devolver</strong>.
           </>
         ),
       },
       {
-        q: 'Quando ela me chama?',
+        q: 'Quando o Duá me chama?',
         a: 'Quando o cliente pede uma pessoa e nos casos que você escolheu em Configurar, como reclamação ou alergia. A conversa aparece em “Precisa de você” e o celular avisa.',
       },
       {
-        q: 'Os preços que ela manda estão certos?',
-        a: 'O resumo do pedido, a entrega e o Pix são calculados pela loja, como no site, e vêm com “calculado pela loja”. Quando ela cita um preço na conversa, é o do seu cardápio.',
+        q: 'Os preços que ele manda estão certos?',
+        a: 'O resumo do pedido, a entrega e o Pix são calculados pela loja, como no site, e vêm com “calculado pela loja”. Quando ele cita um preço na conversa, é o do seu cardápio.',
       },
       {
         q: 'O que é o ensaio?',
-        a: 'Ela escreve o que responderia, mas não manda nada. Você continua atendendo e compara as respostas antes de ligar.',
+        a: 'O Duá escreve o que responderia, mas não manda nada. Você continua atendendo e compara as respostas antes de ligar.',
       },
       {
         q: 'Como ensino algo que só eu sei?',
         a: (
           <>
-            Em <L to="/vendedor/ensinar">Ensinar</L>: responda às perguntas que ela não soube ou
-            escreva uma regra. Horário, taxas, preços e estoque ela já lê da loja.
+            Em <L to="/vendedor/ensinar">Ensinar</L>: responda às perguntas que ele não soube ou
+            escreva uma regra. Horário, taxas, preços e estoque ele já lê da loja.
           </>
         ),
+      },
+      {
+        q: 'O Duá diz que é uma pessoa?',
+        a: 'Nunca. Ele se apresenta como assistente virtual da loja (dá para tirar isso em Configurar) e, se perguntarem, conta que não é uma pessoa.',
+      },
+      {
+        q: 'Posso dar outro nome a ele?',
+        a: 'Não: em todas as lojas ele é o Duá. O jeito de falar e como ele se apresenta você escolhe em Configurar.',
       },
     ],
   },

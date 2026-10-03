@@ -148,15 +148,27 @@ export type PaymentStatus =
   | 'in_mediation';
 export type MpStatus = 'not_connected' | 'connected' | 'expiring' | 'disconnected' | 'restricted';
 
+export type PlanFeature =
+  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor';
+export type PlanFeatures = Record<PlanFeature, boolean>;
+
 export interface Plan {
   id: string;
   name: string;
   /** null for a legacy/pilot plan with no catalog price */
   priceCents: number | null;
   feeBps: number;
-  features: { customDomain: boolean; customSite: boolean };
+  features: PlanFeatures;
   /** a new store on this plan starts with these free days, no card (0 = none; ADR 0025) */
   trialDays: number;
+  /** the one plan the admin points to first (exactly one public plan has it) */
+  recommended: boolean;
+  /** Duá's conversations a month (0 without it) */
+  aiConversations: number;
+  /** …and during the free trial */
+  aiTrialConversations: number;
+  /** a store can pick it now; a closed one is shown, never picked (PLAN_UNAVAILABLE) */
+  available: boolean;
 }
 
 export interface StoreRef {
@@ -190,6 +202,8 @@ export interface Session {
   stores: StoreRef[];
   push: { publicKey: string | null };
   support: { whatsapp: string | null };
+  /** `features` is what's open right now: in the plan AND paid for (or in its trial) */
+  plan: { id: string; name: string; features: PlanFeatures };
   /** the nav: Vendedor in the phone bar once on, its "precisa de você" count as the badge */
   vendedor?: { enabled: boolean; name: string; waiting: number };
 }
@@ -829,6 +843,8 @@ export interface PrintDevice {
   printers: Printer[];
 }
 export interface Printers {
+  /** the plan has printing (when false, `devices` is empty and the screen shows the lock) */
+  included: boolean;
   printOn: 'placed' | 'confirmed';
   devices: PrintDevice[];
   downloads: { windows: string; android: string };
@@ -1022,9 +1038,13 @@ export interface Onboarding {
 export interface Invoice {
   id: string;
   number: number;
-  /** 'upgrade': the difference to change plan mid-period; the plan changes once it's paid */
-  kind: 'period' | 'upgrade';
+  /** 'upgrade': the difference to change plan mid-period; the plan changes once it's paid.
+   *  'ai_pack': a one-off pack of the Vendedor's conversations */
+  kind: 'period' | 'upgrade' | 'ai_pack';
   planName: string;
+  aiPackName: string | null;
+  /** a paid pack's conversations went in; false = paid after the plan lost Duá, refunded */
+  aiCredited: boolean | null;
   amountCents: number;
   periodStart: string;
   periodEnd: string;
@@ -1060,6 +1080,20 @@ export interface Account {
     trialEndsAt: string | null;
   } | null;
   billing: { available: boolean };
+  /** Duá's conversations: this month's (or the trial's) allowance, plus packs bought */
+  ai: {
+    included: boolean;
+    period: 'month' | 'trial' | null;
+    limit: number;
+    used: number;
+    /** bought in packs and left over: each pack lasts 30 days from its payment */
+    packRemaining: number;
+    /** when the first of those packs lapses */
+    packExpiresAt: string | null;
+    remaining: number;
+    resetsAt: string | null;
+  };
+  aiPacks: AiPack[];
   invoices: Invoice[];
   address: string;
   domains: { host: string; kind: 'store' | 'custom'; status: DomainStatus; primary: boolean }[];
@@ -1080,6 +1114,13 @@ export interface Account {
     createdAt: string;
     updatedAt: string;
   } | null;
+}
+
+export interface AiPack {
+  id: string;
+  name: string;
+  priceCents: number;
+  conversations: number;
 }
 
 export type SignInResult =
@@ -1289,6 +1330,14 @@ export interface VendedorHome {
     firstSaleAt: string | null;
   };
   presence: VendedorPresence;
+  /** what Duá can still take this period: 0 left means new shoppers go to the store */
+  allowance: {
+    period: 'month' | 'trial' | null;
+    limit: number;
+    used: number;
+    remaining: number;
+    resetsAt: string | null;
+  };
   whatsapp: { state: string | null; linked: boolean };
   active: number;
   replyP50Sec: number | null;
@@ -1529,15 +1578,15 @@ export interface VendedorResults {
 export interface VendedorSettings {
   enabled: boolean;
   settings: StoreAgentSettings;
-  /** how she introduces herself to a shopper, from the settings */
+  /** how Duá introduces himself to a shopper: "o Duá, assistente virtual da …" */
   intro: string;
   coupons: { id: string; code: string; label: string | null; kind: string; value: number }[];
   incentivesUsedCents: number;
 }
 
-/** partial settings; nested groups merge field by field in Core */
+/** partial settings; nested groups merge field by field in Core. The name is always Duá. */
 export type VendedorSettingsPatch = Partial<
-  Omit<StoreAgentSettings, 'capabilities' | 'handoff' | 'recovery'>
+  Omit<StoreAgentSettings, 'name' | 'capabilities' | 'handoff' | 'recovery'>
 > & {
   enabled?: boolean;
   capabilities?: Partial<StoreAgentSettings['capabilities']>;
@@ -1615,6 +1664,8 @@ export const api = {
       get<{
         plans: Plan[];
         billing: { available: boolean; accessCode: boolean };
+        /** the team turned signup on and its WhatsApp, email and billing are set up */
+        signup: { open: boolean };
         storeDomain: string;
       }>('/signup/plans'),
     slug: (slug: string) =>
@@ -1927,6 +1978,14 @@ export const api = {
   cancelSubscription: () => send<Account>('POST', '/account/subscription/cancel'),
   resumeSubscription: () => send<Account>('POST', '/account/subscription/resume'),
   invoicePix: (id: string) => send<Account>('POST', `/account/invoices/${id}/pix`),
+  /** a one-off Pix invoice for the pack (an open one is reused); the terms shown go along, so a
+   *  pack repriced meanwhile answers AI_PACK_CHANGED instead of charging something else */
+  buyAiPack: (pack: Pick<AiPack, 'id' | 'priceCents' | 'conversations'>) =>
+    send<Account & { invoiceId: string }>('POST', '/account/ai-packs', {
+      packId: pack.id,
+      priceCents: pack.priceCents,
+      conversations: pack.conversations,
+    }),
   addDomain: (host: string) => send<Account>('POST', '/account/domains', { host }),
   checkDomain: (id: string) => send<Account>('POST', `/account/domains/${id}/check`),
   removeDomain: (id: string) => send<Account>('DELETE', `/account/domains/${id}`),

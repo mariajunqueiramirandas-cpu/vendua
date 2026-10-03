@@ -112,13 +112,13 @@ const KEYS: [string, string][] = [
   ['Enter', 'abrir o pedido selecionado'],
 ];
 
-// the Vendedor's inbox reads A and the arrows its own way (sales-agent-ux §3.10)
+// Duá's inbox reads A and the arrows its own way (sales-agent-ux §3.10)
 const INBOX_KEYS: [string, string][] = [
   ['/', 'buscar nas conversas'],
   ['?', 'abrir esta ajuda'],
   ['J / K', 'próxima / anterior conversa'],
   ['A', 'assumir a conversa aberta'],
-  ['D', 'devolver ao Vendedor'],
+  ['D', 'devolver ao Duá'],
 ];
 
 /** Keyboard shortcuts (§10), for the computer at the counter. */
