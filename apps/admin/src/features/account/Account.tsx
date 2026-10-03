@@ -1398,7 +1398,11 @@ function InvoiceSheet({
           <p className="t-title-2 mt-3">Pagamento recebido ✓</p>
           <p className="t-body mt-1 text-muted">
             {inv.paidAt ? `Entrou ${ago(inv.paidAt)}.` : null}{' '}
-            {inv.kind === 'ai_pack' ? 'As conversas já estão na conta do Duá.' : 'Obrigado!'}
+            {inv.kind !== 'ai_pack'
+              ? 'Obrigado!'
+              : inv.aiCredited
+                ? 'As conversas já estão na conta do Duá.'
+                : 'O seu plano não tem mais o Duá, então as conversas não entraram. A equipe da Venduá vai devolver esse pagamento.'}
           </p>
           <Button variant="secondary" className="mt-5" onClick={onClose}>
             fechar

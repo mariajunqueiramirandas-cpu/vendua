@@ -238,7 +238,7 @@ export async function payerEmailFor(
 }
 
 export function invoiceView(
-  inv: InvoiceRow & { plan_name: string; ai_pack_name?: string | null },
+  inv: InvoiceRow & { plan_name: string; ai_pack_name?: string | null; ai_credited?: boolean },
   now: Date,
 ) {
   return {
@@ -247,6 +247,8 @@ export function invoiceView(
     kind: inv.kind,
     planName: inv.plan_name,
     aiPackName: inv.ai_pack_name ?? null,
+    /** a paid pack whose conversations went in (false: paid without Duá, the team refunds it) */
+    aiCredited: inv.kind === 'ai_pack' ? inv.ai_credited === true : null,
     amountCents: inv.amount_cents,
     periodStart: inv.period_start,
     periodEnd: inv.period_end,

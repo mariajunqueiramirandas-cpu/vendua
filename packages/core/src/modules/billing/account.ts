@@ -27,8 +27,12 @@ export async function accountView(
     `
   )[0];
   // the last 12, plus anything still to pay however old: a plan month or the open pack
-  const invoices = await tx<(InvoiceRow & { plan_name: string; ai_pack_name: string | null })[]>`
-    select i.*, p.name as plan_name, a.name as ai_pack_name from invoices i
+  const invoices = await tx<
+    (InvoiceRow & { plan_name: string; ai_pack_name: string | null; ai_credited: boolean })[]
+  >`
+    select i.*, p.name as plan_name, a.name as ai_pack_name,
+           exists (select 1 from ai_credits c where c.invoice_id = i.id) as ai_credited
+    from invoices i
       join plans p on p.id = i.plan_id
       left join ai_packs a on a.id = i.ai_pack_id
     where i.tenant_id = ${t.id}

@@ -1212,6 +1212,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       await sql`update tenants set plan = 'mirim' where id = ${s.id}`;
       expect((await payInvoice(buy.body.invoiceId)).status).toBe(200);
       expect((await sql`select 1 from ai_credits where tenant_id = ${s.id}`).length).toBe(0);
+      // Conta says so instead of promising the conversations
+      const shown = (await s.owner('GET', '/account')).body.invoices.find(
+        (i: any) => i.id === buy.body.invoiceId,
+      );
+      expect(shown).toMatchObject({ status: 'paid', aiCredited: false });
       expect(
         (await sql`select status from invoices where id = ${buy.body.invoiceId}`)[0]!.status,
       ).toBe('paid');

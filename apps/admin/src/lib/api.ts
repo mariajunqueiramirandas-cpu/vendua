@@ -1043,6 +1043,8 @@ export interface Invoice {
   kind: 'period' | 'upgrade' | 'ai_pack';
   planName: string;
   aiPackName: string | null;
+  /** a paid pack's conversations went in; false = paid after the plan lost Duá, refunded */
+  aiCredited: boolean | null;
   amountCents: number;
   periodStart: string;
   periodEnd: string;
