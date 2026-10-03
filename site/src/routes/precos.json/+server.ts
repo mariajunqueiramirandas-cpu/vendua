@@ -18,7 +18,7 @@ export function GET() {
       available: p.available,
       aiConversations: num('conversations' in p ? p.conversations : undefined),
       aiTrialConversations: num('trialConversations' in p ? p.trialConversations : undefined),
-      features: { vendedor: 'conversations' in p },
+      features: p.features,
     })),
   });
 }

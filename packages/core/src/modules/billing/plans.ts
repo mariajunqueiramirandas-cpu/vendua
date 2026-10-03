@@ -131,6 +131,10 @@ export async function publicPlanOr422(
   id: unknown,
   held: readonly string[] | null = [],
 ): Promise<PlanRow> {
+  // staff closing this plan in the CRM takes this lock exclusively: inside the caller's
+  // transaction the plan can't close between this read and the subscription it starts
+  if (typeof id === 'string' && id.length <= 64)
+    await tx`select pg_advisory_xact_lock_shared(hashtextextended(${`plan-available:${id}`}, 0))`;
   const row = typeof id === 'string' ? await planRow(tx, id) : null;
   if (!row || !row.public)
     throw new HttpError(422, 'UNKNOWN_PLAN', 'pick one of the plans offered', { field: 'planId' });

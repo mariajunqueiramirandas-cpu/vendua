@@ -35,6 +35,14 @@ export const plans = {
     price: 'R$ 69,90',
     trial: null,
     available: true,
+    features: {
+      kds: false,
+      printing: false,
+      loyalty: false,
+      vendedor: false,
+      customDomain: false,
+      customSite: false,
+    },
   },
   bandeira: {
     id: 'bandeira',
@@ -43,6 +51,14 @@ export const plans = {
     price: 'R$ 169',
     trial: '14 dias grátis',
     available: true,
+    features: {
+      kds: true,
+      printing: true,
+      loyalty: true,
+      vendedor: true,
+      customDomain: false,
+      customSite: false,
+    },
     /** Duá's monthly conversations, and how many the trial gets */
     conversations: '250',
     trialConversations: '50',
@@ -55,6 +71,14 @@ export const plans = {
     trial: null,
     // closed until Venduá can offer own domains (owner, 2026-10-03)
     available: false,
+    features: {
+      kds: true,
+      printing: true,
+      loyalty: true,
+      vendedor: true,
+      customDomain: true,
+      customSite: true,
+    },
     conversations: '1.000',
   },
 } as const;

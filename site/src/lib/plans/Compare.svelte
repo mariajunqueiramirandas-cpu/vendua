@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { plans } from './live.svelte';
+  import { plans, type Feature } from './live.svelte';
 
   const { mirim, bandeira, pangolim } = plans;
   const cols = [mirim, bandeira, pangolim];
@@ -8,8 +8,8 @@
   type Cell = boolean | string;
   type Row = { name: string; cells: [Cell, Cell, Cell]; note?: [string?, string?, string?] };
   const all: [Cell, Cell, Cell] = [true, true, true];
-  const up: [Cell, Cell, Cell] = [false, true, true];
-  const top: [Cell, Cell, Cell] = [false, false, true];
+  // what each plan includes, as the CRM has it (live.svelte.ts)
+  const has = (f: Feature) => cols.map((p) => p.features[f]) as [Cell, Cell, Cell];
 
   const groups: { name: string; rows: Row[] }[] = $derived([
     {
@@ -28,31 +28,32 @@
     {
       name: 'Cozinha',
       rows: [
-        { name: 'Tela da cozinha', cells: up },
-        { name: 'Impressão automática da comanda', cells: up },
+        { name: 'Tela da cozinha', cells: has('kds') },
+        { name: 'Impressão automática da comanda', cells: has('printing') },
       ],
     },
-    { name: 'Clientes', rows: [{ name: 'Cartão fidelidade', cells: up }] },
+    { name: 'Clientes', rows: [{ name: 'Cartão fidelidade', cells: has('loyalty') }] },
     {
       name: 'Duá, vendedor com IA no WhatsApp',
       rows: [
         {
           name: 'Conversas por mês',
-          cells: [false, bandeira.conversations ?? false, pangolim.conversations ?? false],
-          note: [
-            undefined,
-            bandeira.trial && bandeira.trialConversations
-              ? `${bandeira.trialConversations} no teste`
+          cells: cols.map((p) =>
+            p.features.vendedor && p.conversations ? p.conversations : false,
+          ) as [Cell, Cell, Cell],
+          note: cols.map((p) =>
+            p.features.vendedor && p.trial && p.trialConversations
+              ? `${p.trialConversations} no teste`
               : undefined,
-          ],
+          ) as [string?, string?, string?],
         },
       ],
     },
     {
       name: 'Marca',
       rows: [
-        { name: 'Domínio próprio', cells: top },
-        { name: 'Site feito pelo nosso agente de IA', cells: top },
+        { name: 'Domínio próprio', cells: has('customDomain') },
+        { name: 'Site feito pelo nosso agente de IA', cells: has('customSite') },
       ],
     },
     {

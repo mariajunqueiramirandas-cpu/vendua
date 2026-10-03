@@ -4,6 +4,16 @@ import { brl, group } from './money';
 // The plans as the CRM has them now. The prerendered page carries content.ts's values (crawlers,
 // no JS, Core down); once in the browser, Core's public catalog replaces them in place.
 
+export const FEATURES = [
+  'kds',
+  'printing',
+  'loyalty',
+  'vendedor',
+  'customDomain',
+  'customSite',
+] as const;
+export type Feature = (typeof FEATURES)[number];
+
 export interface LivePlan {
   id: PlanId;
   name: string;
@@ -12,6 +22,8 @@ export interface LivePlan {
   /** "14 dias grátis", or null without a trial */
   trial: string | null;
   available: boolean;
+  /** what the plan includes, as the CRM has it (the perks and the comparison come from this) */
+  features: Record<Feature, boolean>;
   /** Duá's conversations a month and in the trial ("1.000"), absent without Duá */
   conversations?: string | undefined;
   trialConversations?: string | undefined;
@@ -32,11 +44,13 @@ interface CatalogPlan {
   available: boolean;
   aiConversations: number;
   aiTrialConversations: number;
-  features: { vendedor?: boolean };
+  features: Partial<Record<Feature, boolean>>;
 }
 
-const count = (n: unknown) =>
-  typeof n === 'number' && Number.isInteger(n) && n >= 0 && n < 1_000_000 ? n : null;
+const count = (n: unknown, max = 1_000_000) =>
+  typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= max ? n : null;
+/** the CRM takes prices up to R$ 100.000 (control-billing.ts) */
+const MAX_PRICE_CENTS = 10_000_000;
 
 let started = false;
 
@@ -54,7 +68,7 @@ export async function loadLivePlans(fetcher: typeof fetch = fetch) {
     for (const c of body.plans ?? []) {
       if (!(c.id in plans)) continue;
       const p = plans[c.id as PlanId];
-      const cents = count(c.priceCents);
+      const cents = count(c.priceCents, MAX_PRICE_CENTS);
       if (cents && cents >= 100) p.price = brl(cents).replace(' ', ' ');
       if (typeof c.name === 'string' && c.name.trim().length >= 2) {
         p.name = c.name.trim();
@@ -63,6 +77,9 @@ export async function loadLivePlans(fetcher: typeof fetch = fetch) {
       const days = count(c.trialDays);
       if (days !== null) p.trial = days > 0 ? `${days} dias grátis` : null;
       if (typeof c.available === 'boolean') p.available = c.available;
+      if (c.features && typeof c.features === 'object')
+        for (const f of FEATURES)
+          if (typeof c.features[f] === 'boolean') p.features[f] = c.features[f]!;
       const month = count(c.aiConversations);
       const trial = count(c.aiTrialConversations);
       if (c.features?.vendedor && month) {

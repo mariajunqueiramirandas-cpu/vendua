@@ -1,44 +1,79 @@
 <script lang="ts">
   import Dua from '$lib/components/Dua.svelte';
-  import { plans, signupFor } from './live.svelte';
+  import { plans, signupFor, type Feature, type LivePlan } from './live.svelte';
 
-  // live: the CRM's prices, trial and Duá's conversations replace the built ones (live.svelte.ts)
+  // Everything here follows the CRM (live.svelte.ts): prices, trial, Duá's conversations, what is
+  // open, and what each plan includes, so a feature staff switch on or off shows on the card.
   const { mirim, bandeira, pangolim } = plans;
-  const duaLine = (p: typeof bandeira, lead: string) =>
-    p.conversations
-      ? `${lead} ${p.conversations} conversas por mês${p.trialConversations && p.trial ? ` (${p.trialConversations} no teste)` : ''}`
-      : null;
 
   // a perk with a live demo links to it in the hub (`#demo-<id>`, Demos.svelte)
   type Perk = { text: string; demo?: 'vendedor' | 'pedido' | 'cozinha' | 'loja'; see?: string };
-  const perks: Record<'mirim' | 'bandeira' | 'pangolim', Perk[]> = $derived({
-    mirim: [
-      { text: 'A loja com o seu nome', demo: 'loja', see: 'a loja' },
-      { text: 'Pedidos no celular', demo: 'pedido', see: 'um pedido chegando' },
-      { text: 'Cardápio, Pix, entrega, cupons e relatórios' },
-    ],
-    bandeira: [
-      { text: 'Tela da cozinha', demo: 'cozinha', see: 'a tela da cozinha' },
-      { text: 'Impressão automática da comanda' },
-      { text: 'Cartão fidelidade' },
-      ...(duaLine(bandeira, 'Duá, vendedor com IA no WhatsApp da loja:')
-        ? [
-            {
-              text: duaLine(bandeira, 'Duá, vendedor com IA no WhatsApp da loja:')!,
-              demo: 'vendedor' as const,
-              see: 'o Duá',
-            },
-          ]
-        : []),
-    ],
-    pangolim: [
-      { text: 'Domínio próprio' },
-      { text: 'Um site feito pelo nosso agente de IA' },
-      ...(duaLine(pangolim, 'Duá com')
-        ? [{ text: duaLine(pangolim, 'Duá com')!, demo: 'vendedor' as const, see: 'o Duá' }]
-        : []),
-    ],
+  const FEATS: { f: Feature; perk?: Perk; lack: string }[] = [
+    {
+      f: 'kds',
+      perk: { text: 'Tela da cozinha', demo: 'cozinha', see: 'a tela da cozinha' },
+      lack: 'a tela da cozinha',
+    },
+    { f: 'printing', perk: { text: 'Impressão automática da comanda' }, lack: 'a impressão' },
+    { f: 'loyalty', perk: { text: 'Cartão fidelidade' }, lack: 'o cartão fidelidade' },
+    { f: 'customDomain', perk: { text: 'Domínio próprio' }, lack: 'o domínio próprio' },
+    {
+      f: 'customSite',
+      perk: { text: 'Um site feito pelo nosso agente de IA' },
+      lack: 'o site feito por IA',
+    },
+    // Duá last: it's the line a card ends on
+    { f: 'vendedor', lack: 'o Duá' },
+  ];
+  const conv = (p: LivePlan) =>
+    p.features.vendedor ? Number(p.conversations?.replace(/\./g, '') ?? 0) : 0;
+
+  /** the plan below keeps all of it: "Tudo do <below>, e mais:" is true */
+  const keepsAll = (p: LivePlan, below: LivePlan) =>
+    FEATS.every(({ f }) => !below.features[f] || p.features[f]) && conv(p) >= conv(below);
+
+  /** what `p` adds over `below` (everything it has when there's no `below`) */
+  function perksOf(p: LivePlan, below?: LivePlan): Perk[] {
+    const out: Perk[] = [];
+    for (const { f, perk } of FEATS) {
+      if (!p.features[f]) continue;
+      if (f === 'vendedor') {
+        if (!p.conversations || (below && conv(below) >= conv(p))) continue;
+        const test = p.trial && p.trialConversations ? ` (${p.trialConversations} no teste)` : '';
+        out.push({
+          text: below?.features.vendedor
+            ? `Duá com ${p.conversations} conversas por mês${test}`
+            : `Duá, vendedor com IA no WhatsApp da loja: ${p.conversations} conversas por mês${test}`,
+          demo: 'vendedor',
+          see: 'o Duá',
+        });
+      } else if (!below?.features[f] && perk) out.push(perk);
+    }
+    return out;
+  }
+
+  /** "a, b e c" */
+  const listE = (xs: string[]) =>
+    xs.length < 2 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} e ${xs[xs.length - 1]}`;
+
+  const base: Perk[] = [
+    { text: 'A loja com o seu nome', demo: 'loja', see: 'a loja' },
+    { text: 'Pedidos no celular', demo: 'pedido', see: 'um pedido chegando' },
+    { text: 'Cardápio, Pix, entrega, cupons e relatórios' },
+  ];
+  const card = (p: LivePlan, below: LivePlan) =>
+    keepsAll(p, below)
+      ? { more: `Tudo do ${below.short}, e mais:`, perks: perksOf(p, below) }
+      : { more: 'A loja completa, e mais:', perks: perksOf(p) };
+  const view = $derived({
+    mirim: [...base, ...perksOf(mirim)],
+    bandeira: card(bandeira, mirim),
+    pangolim: card(pangolim, bandeira),
   });
+  // what the entry plan leaves out of the recommended one
+  const lacks = $derived(
+    FEATS.filter(({ f }) => bandeira.features[f] && !mirim.features[f]).map((x) => x.lack),
+  );
 </script>
 
 {#snippet take(p: typeof bandeira, main = false)}
@@ -73,8 +108,8 @@
       <p class="cost tnum">{mirim.price}<small>/mês</small></p>
     </div>
     <p class="addr"><span class="lock" aria-hidden="true"></span>seunome.vendua.com.br</p>
-    {@render list(perks.mirim)}
-    <p class="lacks">Sem a tela da cozinha, a impressão, o cartão fidelidade e o Duá.</p>
+    {@render list(view.mirim)}
+    {#if lacks.length}<p class="lacks">Sem {listE(lacks)}.</p>{/if}
     {@render take(mirim)}
   </li>
 
@@ -82,13 +117,15 @@
     <Dua pose="publicar" size={128} class="flag" />
     <p class="rec">Recomendado</p>
     <h3 class="name">{bandeira.name}</h3>
-    <p class="promise">Do WhatsApp à cozinha, num plano só.</p>
+    {#if bandeira.features.vendedor && bandeira.features.kds}
+      <p class="promise">Do WhatsApp à cozinha, num plano só.</p>
+    {/if}
     <p class="cost tnum">
       <strong>{bandeira.price}<small>/mês</small></strong>
       {#if bandeira.trial}<span class="trial">começa com {bandeira.trial}, sem cartão</span>{/if}
     </p>
-    <p class="more">Tudo do {mirim.short}, e mais:</p>
-    {@render list(perks.bandeira)}
+    <p class="more">{view.bandeira.more}</p>
+    {@render list(view.bandeira.perks)}
     {@render take(bandeira, true)}
   </li>
 
@@ -97,9 +134,13 @@
       <h3 class="name">{pangolim.name}</h3>
       <p class="cost tnum">{pangolim.price}<small>/mês</small></p>
     </div>
-    <p class="addr"><span class="lock" aria-hidden="true"></span>bolosdanena.com.br</p>
-    <p class="more">Tudo do {bandeira.short}, e mais:</p>
-    {@render list(perks.pangolim)}
+    <p class="addr">
+      <span class="lock" aria-hidden="true"></span>{pangolim.features.customDomain
+        ? 'bolosdanena.com.br'
+        : 'seunome.vendua.com.br'}
+    </p>
+    <p class="more">{view.pangolim.more}</p>
+    {@render list(view.pangolim.perks)}
     {@render take(pangolim)}
   </li>
 </ul>

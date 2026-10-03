@@ -455,6 +455,45 @@ test.describe('preços ao vivo', () => {
     await expect(page.locator('#perguntas, #comecar').first()).toContainText('R$ 199');
   });
 
+  test('recursos ligados e desligados no CRM mudam os cartões e a tabela', async ({ page }) => {
+    const F = {
+      kds: true,
+      printing: true,
+      loyalty: true,
+      vendedor: true,
+      customDomain: false,
+      customSite: false,
+    };
+    await page.route('**/precos.json', (r) =>
+      r.fulfill({
+        json: catalog({
+          bandeira: { features: { ...F, loyalty: false } },
+          pangolim: {
+            priceCents: 1_500_000,
+            features: { ...F, customDomain: true, customSite: true },
+          },
+        }),
+      }),
+    );
+    await page.goto(HOME);
+    const preco = page.locator('#preco');
+    const bandeira = preco.locator('li.plan', { hasText: 'Venduá Bandeira' });
+    await expect(bandeira).not.toContainText('Cartão fidelidade');
+    // what Mirim lacks follows what Bandeira has
+    await expect(preco.locator('li.plan', { hasText: 'Venduá Mirim' })).toContainText(
+      'Sem a tela da cozinha, a impressão e o Duá.',
+    );
+    // Pangolim still has everything Bandeira has, and now the loyalty card on top
+    const pangolim = preco.locator('li.plan', { hasText: 'Venduá Pangolim' });
+    await expect(pangolim).toContainText('Tudo do Bandeira, e mais:');
+    await expect(pangolim).toContainText('Cartão fidelidade');
+    // any price the CRM takes shows
+    await expect(pangolim).toContainText('R$ 15.000/mês');
+    await preco.locator('details summary').first().click();
+    const row = preco.locator('tr', { hasText: 'Cartão fidelidade' });
+    await expect(row.locator('td').nth(1)).toContainText('não');
+  });
+
   test('sem o catálogo, a página fica com os preços do build', async ({ page }) => {
     await page.route('**/precos.json', (r) => r.abort());
     await page.goto(HOME);

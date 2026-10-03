@@ -60,7 +60,10 @@ Other pages: `/privacidade/` and the 404.
   `/precos.json` once. In production the site's nginx answers it from Core's public catalog
   (`/site/v1/plans`, a minute of cache), and the plan cards, the comparison table, the calculator,
   the trial strip, the FAQ and the closing line update in place.
-  - It covers the price, the trial, Duá's conversations, `available` and the name.
+  - It covers the price (any the CRM takes), the trial, Duá's conversations, `available`, the
+    name and the features. The cards' perks, the "Sem …" line, the "Tudo do …" lines and the
+    comparison table come from the feature flags, so a feature switched on or off in the CRM
+    shows.
   - The request is first-party, like the visit counter, so the privacy page's "seu navegador não
     conversa com nenhum outro serviço" stays true.
   - The built page carries `content.ts`'s values, which crawlers, readers without JavaScript and a

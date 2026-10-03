@@ -271,37 +271,45 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     }
 
     const next = await ensureFirstCharge(d, c, owned, { plan, method, email, ownerName, manual });
-    // once per new store, durably: a retry after a failed first charge still welcomes the owner
+    // once per new store, and only once it went out: the send finishes before the answer, and
+    // the marker is written after it, so a failed send or a restart mid-send leaves no marker
+    // and the owner's next try sends it (the provider dedupes on the key if both went out)
     const store = owned;
     const welcome = await withTenant(sql, store.tenant_id, async (tx) => {
-      const won = await tx`
-        insert into push_deliveries (tenant_id, key)
-        select id, 'signup.welcome' from tenants
-        where id = ${store.tenant_id} and created_at > now() - interval '1 day'
-        on conflict do nothing returning key
+      const due = await tx`
+        select 1 from tenants t where t.id = ${store.tenant_id}
+          and t.created_at > now() - interval '1 day'
+          and not exists (select 1 from push_deliveries p
+                          where p.tenant_id = t.id and p.key = 'signup.welcome')
       `;
-      return won[0] ? storeOrigin(tx, { id: store.tenant_id, slug }, d.storeDomain) : null;
+      return due[0] ? storeOrigin(tx, { id: store.tenant_id, slug }, d.storeDomain) : null;
     });
-    // after the commit and never in the way of the answer: a failed email is logged, not fatal
-    if (welcome)
-      void sendWelcome(d, c, {
-        email,
-        ownerName,
-        storeName,
-        slug,
-        storeUrl: welcome,
-        planName: plan.name,
-        next,
-      }).catch(async (err) => {
-        signupLog.warn({ err, tenantId: store.tenant_id }, 'welcome email failed');
-        // not sent: the marker goes, so the owner's next try (a replay) sends it
+    if (welcome) {
+      try {
+        // a slow provider doesn't hold the owner's answer: no marker, the next try sends it
+        await within(
+          sendWelcome(d, c, {
+            email,
+            ownerName,
+            storeName,
+            slug,
+            storeUrl: welcome,
+            planName: plan.name,
+            next,
+          }),
+          8000,
+        );
         await withTenant(
           sql,
           store.tenant_id,
-          (tx) =>
-            tx`delete from push_deliveries where tenant_id = ${store.tenant_id} and key = 'signup.welcome'`,
-        ).catch(() => undefined);
-      });
+          (tx) => tx`insert into push_deliveries (tenant_id, key)
+                     values (${store.tenant_id}, 'signup.welcome') on conflict do nothing`,
+        );
+      } catch (err) {
+        // never in the way of the answer: the store exists and the owner is signed in
+        signupLog.warn({ err, tenantId: store.tenant_id }, 'welcome email failed');
+      }
+    }
     setAdminCookie(
       c,
       await createSession(sql, owned, c.req.header('user-agent'), {
@@ -333,6 +341,15 @@ export function mountSiteCatalog(app: Hono<any>, sql: Sql) {
     c.header('cache-control', 'public, max-age=60');
     return c.json({ plans: await publicPlans(sql) });
   });
+}
+
+/** `p`, or a rejection after `ms` (the timer is cleared either way) */
+function within<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, no) => {
+    timer = setTimeout(() => no(new Error(`timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
 }
 
 async function signupOpenOr503(d: Omit<AdminDeps, 'admin'>, step: 'code' | 'create' = 'code') {
