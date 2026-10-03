@@ -251,6 +251,11 @@ export function mountControlBilling(o: {
         `
       )[0];
       if (!row) throw new HttpError(404, 'NOT_FOUND', 'plan not found');
+      // stores on it see what is open and their Vendedor limits change: their admins refetch
+      if (features || aiMonth !== undefined || aiTrial !== undefined) {
+        const stores = await tx<{ id: string }[]>`select id from tenants where plan = ${id}`;
+        for (const s of stores) await emitAdminTx(tx, s.id, 'billing', 'plan');
+      }
       return { status: 200, body: { plan: controlPlan(row) } };
     });
     // a new price applies to future charges; the billing job repeats this every tick

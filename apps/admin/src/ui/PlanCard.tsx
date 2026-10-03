@@ -171,11 +171,20 @@ export function perksAdded(
 /** The plans one can pick, in Core's order (cheapest first): legacy ones carry no price. */
 export const publicPlans = (plans: Plan[]) => plans.filter((p) => p.priceCents !== null);
 
-/** The plan before `plan` in that order: its card says "tudo do <it>, mais:". */
+/**
+ * The plan before `plan` in that order, when `plan` keeps all of it: its card then says "tudo do
+ * <it>, mais:". Staff toggle features one by one, so a plan that drops one lists all its own.
+ */
 export function prevOf(plans: Plan[], plan: Plan) {
   const list = publicPlans(plans);
   const i = list.findIndex((p) => p.id === plan.id);
-  return i > 0 ? list[i - 1] : undefined;
+  const prev = i > 0 ? list[i - 1] : undefined;
+  if (!prev) return undefined;
+  const keeps =
+    (Object.keys(prev.features) as PlanFeature[]).every(
+      (f) => !prev.features[f] || plan.features[f],
+    ) && plan.aiConversations >= prev.aiConversations;
+  return keeps ? prev : undefined;
 }
 
 /** The first plan up from `current` that adds something to it. */
