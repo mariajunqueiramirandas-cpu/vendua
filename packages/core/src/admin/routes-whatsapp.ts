@@ -231,9 +231,15 @@ export function mountWhatsapp(d: AdminDeps) {
           where tenant_id = ${t.id}`;
       }
       // queued messages would only go out on a number the store just let go
-      await tx`
+      const skipped = await tx<{ shopper_message_id: string | null }[]>`
         update store_wa_messages set status = 'skipped', error = 'disconnected', lease_until = null
-        where tenant_id = ${t.id} and status in ('pending', 'sending')`;
+        where tenant_id = ${t.id} and status in ('pending', 'sending')
+        returning shopper_message_id`;
+      // the Vendedor's replies that never left say so in its conversations
+      const replies = skipped.map((r) => r.shopper_message_id).filter((x): x is string => !!x);
+      if (replies.length)
+        await tx`update shopper_messages set status = 'failed'
+          where tenant_id = ${t.id} and id = any(${replies}::uuid[]) and status = 'queued'`;
       await audit(tx, t.id, m, {
         action: 'whatsapp.disconnect',
         entity: 'whatsapp',

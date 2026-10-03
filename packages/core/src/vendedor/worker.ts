@@ -64,7 +64,9 @@ export function startVendedorWorker(sql: Sql, o: VendedorWorkerOpts): () => Prom
   const poll = setInterval(() => void drain(), POLL_MS);
   poll.unref?.();
   const sweep = setInterval(() => {
-    void sweepAll(sql).catch((err) => workerLog.warn({ err }, 'vendedor sweep failed'));
+    void sweepAll(sql, new Date(), !!o.gateway).catch((err) =>
+      workerLog.warn({ err }, 'vendedor sweep failed'),
+    );
     void clienteOcultoPass(sql, o.gateway).catch((err) =>
       workerLog.warn({ err }, 'cliente oculto pass failed'),
     );

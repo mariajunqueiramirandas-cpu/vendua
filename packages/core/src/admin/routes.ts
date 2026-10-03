@@ -254,7 +254,7 @@ export function mountAdmin(o: MountAdminOpts) {
     const tenant = c.get('tenant');
     const m = c.get('merchant');
     const { stores } = await sessionStores(sql, tenant.id, m.sessionId, currentMembership(c));
-    const { settings, url } = await withTenant(sql, tenant.id, async (tx) => ({
+    const { settings, url, agent } = await withTenant(sql, tenant.id, async (tx) => ({
       url: await storeOrigin(tx, tenant, o.storeDomain),
       settings: (
         await tx<
@@ -263,6 +263,15 @@ export function mountAdmin(o: MountAdminOpts) {
           select s.logo_url, u.prefs, u.email from merchant_users u
             left join store_settings s on s.tenant_id = u.tenant_id
           where u.id = ${m.userId}
+        `
+      )[0],
+      // the nav: the Vendedor's tab and its "precisa de você" badge (sales-agent-ux §2)
+      agent: (
+        await tx<{ enabled: boolean; name: string | null; waiting: number }[]>`
+          select coalesce(a.enabled, false) as enabled, a.settings ->> 'name' as name,
+            (select count(*) from shopper_threads t where t.tenant_id = ${tenant.id}
+               and t.waiting_since is not null and t.owner <> 'muted' and t.channel = 'whatsapp')::int as waiting
+          from (select 1) one left join store_agent a on a.tenant_id = ${tenant.id}
         `
       )[0],
     }));
@@ -286,6 +295,11 @@ export function mountAdmin(o: MountAdminOpts) {
       push: { publicKey: vapidPublicKey() },
       // "falar com a Venduá" (Ajuda); unset = the page offers the in-app message only
       support: { whatsapp: process.env.VENDUA_SUPPORT_WHATSAPP?.replace(/\D/g, '') || null },
+      vendedor: {
+        enabled: agent?.enabled ?? false,
+        name: agent?.name || 'Ana',
+        waiting: agent?.waiting ?? 0,
+      },
     });
   });
 

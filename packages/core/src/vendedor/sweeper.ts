@@ -1,4 +1,5 @@
 import { dispatchTx } from '../agent-host/dispatch.ts';
+import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { controlTx } from '../modules/control.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import type { MediaProviders } from './media.ts';
@@ -206,10 +207,129 @@ export async function voicePass(sql: Sql, media: MediaProviders | null): Promise
   return due.length;
 }
 
-export async function sweepAll(sql: Sql, now = new Date()): Promise<void> {
+/**
+ * The team hears when a store's Vendedor leaves its normal (sales-agent.md §6): verifier blocks
+ * per 100 replies, the share of conversations handed to the store, or shoppers asking it to stop,
+ * today against the last week. Counts only, never a shopper (ADR 0023).
+ */
+export async function monitorPass(sql: Sql, tenantId: string, now = new Date()): Promise<number> {
+  return withTenant(sql, tenantId, async (tx) => {
+    const day = new Date(now.getTime() - 24 * 3600_000);
+    const week = new Date(now.getTime() - 8 * 24 * 3600_000);
+    const [r] = await tx<
+      {
+        replies_d: number;
+        blocks_d: number;
+        replies_w: number;
+        blocks_w: number;
+        threads_d: number;
+        handed_d: number;
+        threads_w: number;
+        handed_w: number;
+        stop_d: number;
+        stop_w: number;
+      }[]
+    >`
+      select
+        count(*) filter (where e.type = 'message.sent' and e.at >= ${day})::int as replies_d,
+        count(*) filter (where e.type = 'guard.blocked' and e.payload ->> 'stage' = 'output' and e.at >= ${day})::int as blocks_d,
+        count(*) filter (where e.type = 'message.sent' and e.at < ${day})::int as replies_w,
+        count(*) filter (where e.type = 'guard.blocked' and e.payload ->> 'stage' = 'output' and e.at < ${day})::int as blocks_w,
+        (select count(*) from shopper_threads where tenant_id = ${tenantId} and channel = 'whatsapp' and last_in_at >= ${day})::int as threads_d,
+        (select count(*) from shopper_threads where tenant_id = ${tenantId} and channel = 'whatsapp' and waiting_since >= ${day})::int as handed_d,
+        (select count(*) from shopper_threads where tenant_id = ${tenantId} and channel = 'whatsapp' and last_in_at between ${week} and ${day})::int as threads_w,
+        (select count(*) from shopper_threads where tenant_id = ${tenantId} and channel = 'whatsapp' and waiting_since between ${week} and ${day})::int as handed_w,
+        (select count(*) from store_wa_optouts where tenant_id = ${tenantId} and created_at >= ${day})::int as stop_d,
+        (select count(*) from store_wa_optouts where tenant_id = ${tenantId} and created_at between ${week} and ${day})::int as stop_w
+      from agent_events e join agent_actors a on a.id = e.actor_id
+      where e.tenant_id = ${tenantId} and a.agent_id = ${AGENT_ID} and e.at >= ${week}
+        and e.type in ('message.sent', 'guard.blocked')`;
+    if (!r) return 0;
+    const checks: {
+      metric: 'blocks' | 'handoffs' | 'optouts';
+      today: number;
+      baseline: number;
+      volume: number;
+      floor: number;
+    }[] = [
+      {
+        metric: 'blocks',
+        today: r.replies_d ? (100 * r.blocks_d) / r.replies_d : 0,
+        baseline: r.replies_w ? (100 * r.blocks_w) / r.replies_w : 0,
+        volume: r.replies_d,
+        floor: 20,
+      },
+      {
+        metric: 'handoffs',
+        today: r.threads_d ? (100 * r.handed_d) / r.threads_d : 0,
+        baseline: r.threads_w ? (100 * r.handed_w) / r.threads_w : 0,
+        volume: r.threads_d,
+        floor: 10,
+      },
+      {
+        metric: 'optouts',
+        today: r.stop_d,
+        baseline: r.stop_w / 7,
+        volume: r.threads_d,
+        floor: 10,
+      },
+    ];
+    let n = 0;
+    const [store] = await tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`;
+    for (const c of checks) {
+      if (c.volume < c.floor) continue;
+      const jumped =
+        c.today >=
+        Math.max(2 * c.baseline, c.metric === 'optouts' ? 3 : c.metric === 'blocks' ? 15 : 40);
+      if (!jumped) continue;
+      // awaited alone: it runs in a savepoint of this transaction
+      await recordStaffEventTx(
+        tx,
+        'vendedor.monitor',
+        {
+          storeName: store?.name ?? null,
+          metric: c.metric,
+          today: Math.round(c.today * 10) / 10,
+          baseline: Math.round(c.baseline * 10) / 10,
+          volume: c.volume,
+        },
+        {
+          tenantId,
+          dedupeKey: `vendedor.monitor:${tenantId}:${c.metric}:${now.toISOString().slice(0, 10)}`,
+        },
+      );
+      n++;
+    }
+    return n;
+  });
+}
+
+/** Cliente oculto re-runs on its own after the menu changes (G4), at most once a day. */
+export async function menuChangePass(
+  sql: Sql,
+  tenantId: string,
+  hasModel: boolean,
+): Promise<boolean> {
+  if (!hasModel) return false;
+  return withTenant(sql, tenantId, async (tx) => {
+    const [r] = await tx<{ changed: boolean }[]>`
+      select exists (select 1 from audit_log where tenant_id = ${tenantId} and entity in ('product', 'category', 'modifier', 'catalog')
+          and at > coalesce((select max(created_at) from vendedor_runs where tenant_id = ${tenantId}), 'epoch'::timestamptz))
+        and not exists (select 1 from vendedor_runs where tenant_id = ${tenantId} and created_at > now() - interval '1 day')
+        and exists (select 1 from vendedor_runs where tenant_id = ${tenantId} and status = 'done') as changed`;
+    if (!r?.changed) return false;
+    await tx`insert into vendedor_runs (tenant_id, trigger) values (${tenantId}, 'menu_change')`;
+    return true;
+  });
+}
+
+export async function sweepAll(sql: Sql, now = new Date(), hasModel = false): Promise<void> {
   for (const tenantId of await enabledStores(sql)) {
     await recoveryPass(sql, tenantId, now);
     await pixExpiryPass(sql, tenantId, now);
+    await monitorPass(sql, tenantId, now);
+    await menuChangePass(sql, tenantId, hasModel);
   }
-  await outboxPass(sql);
+  // catch up in batches: a busy hour's outbox is read in one sweep
+  for (let i = 0; i < 10 && (await outboxPass(sql)) === 200; i++);
 }

@@ -150,7 +150,9 @@ async function fanOut(
 export async function pushWaiting(sql: Sql, tenantId: string, threadId: string) {
   const job = await withTenant(sql, tenantId, async (tx) => {
     const t = (
-      await tx<{ since: Date; reason: string | null; name: string | null; preview: string | null }[]>`
+      await tx<
+        { since: Date; reason: string | null; name: string | null; preview: string | null }[]
+      >`
         select t.waiting_since as since, t.owner_reason as reason,
           coalesce(t.checkout ->> 'name', split_part(t.profile_name, ' ', 1)) as name,
           (select coalesce(m.transcript, m.body) from shopper_messages m where m.thread_id = t.id

@@ -9,6 +9,9 @@ import {
 } from '@vendua/agent-runtime';
 import { scriptedAdapter } from '@vendua/agent-runtime/testing';
 import { vendedor } from '../src/agent-host/agents/vendedor/index.ts';
+import { vendedorOnboarding } from '../src/agent-host/agents/vendedor-onboarding/index.ts';
+import { dispatchTx } from '../src/agent-host/dispatch.ts';
+import { outboxPass, recoveryPass } from '../src/vendedor/sweeper.ts';
 import { hostHooks } from '../src/agent-host/hooks.ts';
 import { pgMemory } from '../src/agent-host/store/memory.ts';
 import { PgActorStore } from '../src/agent-host/store/pg-store.ts';
@@ -103,7 +106,7 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
       routes: { routes: async () => [{ provider: 'scripted', model: 't', zdr: true }] },
     });
     const rt = new Runtime<Sql>({
-      agents: [vendedor],
+      agents: [vendedor, vendedorOnboarding],
       store: new PgActorStore(app),
       gateway,
       transports: [vendedorTransport],
@@ -394,5 +397,177 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     );
     expect(seen).toHaveLength(0);
     expect(msgs).toHaveLength(0);
+  });
+
+  test('recovery: one nudge per thread per day, only once the shopper stopped', async () => {
+    const tenantId = await store();
+    await sql`update store_agent set settings = settings || ${sql.json({ recovery: { enabled: true, delayMin: 5 } })} where tenant_id = ${tenantId}`;
+    const threadId = await thread(tenantId, '11913571357');
+    const { rt } = runtime([
+      tools(call('cart_edit', { ops: [{ op: 'add', product: 'pizza-calabresa', options: [] }] })),
+      reply('Qual borda?'),
+      tools(call('get_product', { product: 'pizza-calabresa' })),
+      tools(
+        call('cart_edit', {
+          ops: [{ op: 'add', product: 'pizza-calabresa', options: [{ id: 'm1' }] }],
+        }),
+      ),
+      reply('Anotei! Entrega ou retirada?'),
+    ]);
+    await inbound(tenantId, threadId, 'quero uma calabresa');
+    await settle(rt, tenantId);
+    await inbound(tenantId, threadId, 'catupiry');
+    await settle(rt, tenantId);
+    await sql`update shopper_threads set last_in_at = now() - interval '10 minutes', stage = 'building' where id = ${threadId}`;
+    expect(await recoveryPass(app, tenantId)).toBe(1);
+    expect(await recoveryPass(app, tenantId)).toBe(0);
+    const rows =
+      await sql`select 1 from agent_mailbox where tenant_id = ${tenantId} and kind = 'timer.recovery'`;
+    expect(rows).toHaveLength(1);
+  });
+
+  test('back in stock: the outbox wakes the thread that asked, once', async () => {
+    const tenantId = await store();
+    const threadId = await thread(tenantId, '11924682468');
+    await sql`update shopper_threads set last_in_at = now() where id = ${threadId}`;
+    const [p] = await sql<
+      { id: string }[]
+    >`select id from products where tenant_id = ${tenantId} limit 1`;
+    await sql`insert into outbox (tenant_id, topic, payload) values
+      (${tenantId}, 'waitlist.restocked', ${sql.json({ productId: p!.id, contacts: ['5511924682468'] })})`;
+    while ((await outboxPass(app)) === 200);
+    await outboxPass(app);
+    const rows = await sql<{ kind: string; payload: { name: string } }[]>`
+      select kind, payload from agent_mailbox where tenant_id = ${tenantId} and kind = 'timer.back_in_stock'`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.payload.name).toBe('Pizza Calabresa');
+  });
+
+  test("an incentive comes only from the merchant's budget, once per phone", async () => {
+    const tenantId = await store();
+    const [cp] = await sql<{ id: string }[]>`
+      insert into coupons (tenant_id, code, kind, value, label, source) values (${tenantId}, 'VOLTA10', 'fixed', 1000, 'R$ 10 de volta', 'merchant')
+      returning id`;
+    await sql`update store_agent set settings = settings || ${sql.json({
+      capabilities: { closeOrder: true, sendPix: true, suggest: true, coupons: true },
+      incentives: {
+        couponIds: [cp!.id],
+        reasons: ['recovery'],
+        minOrderCents: 0,
+        monthlyBudgetCents: 1500,
+        perCustomerDays: 30,
+      },
+    })} where tenant_id = ${tenantId}`;
+    const threadId = await thread(tenantId, '11935793579');
+    const { rt } = runtime([
+      tools(call('get_product', { product: 'pizza-calabresa' })),
+      tools(
+        call('cart_edit', {
+          ops: [{ op: 'add', product: 'pizza-calabresa', options: [{ id: 'm1' }] }],
+        }),
+      ),
+      tools(call('offer_incentive', { reason: 'recovery' })),
+      reply('Consegui um cupom de {{cupom.valor}} para você: {{cupom.codigo}}.'),
+      tools(call('offer_incentive', { reason: 'recovery' })),
+      reply('Seu cupom já está aplicado.'),
+    ]);
+    await inbound(tenantId, threadId, 'uma calabresa com catupiry');
+    await settle(rt, tenantId);
+    const grants = await sql<
+      { value_cents: number; phone: string }[]
+    >`select value_cents, phone from agent_incentives where tenant_id = ${tenantId}`;
+    expect(grants).toEqual([{ value_cents: 1000, phone: '11935793579' }]);
+    const [c] = await sql<
+      { code: string; phone: string; max_redemptions: number; source: string }[]
+    >`
+      select code, phone, max_redemptions, source from coupons where tenant_id = ${tenantId} and source = 'agent'`;
+    expect(c).toMatchObject({ phone: '11935793579', max_redemptions: 1 });
+    expect((await outbox(tenantId)).map((m) => m.body)[0]).toContain(c!.code);
+    await inbound(tenantId, threadId, 'e mais um cupom?');
+    await settle(rt, tenantId);
+    expect(await sql`select 1 from agent_incentives where tenant_id = ${tenantId}`).toHaveLength(1);
+  });
+
+  test('a pinned pairing is the suggestion Core offers, with its figures', async () => {
+    const tenantId = await store();
+    const [cat] = await sql<
+      { id: string }[]
+    >`select id from categories where tenant_id = ${tenantId}`;
+    const [dc] = await sql<
+      { id: string }[]
+    >`insert into categories (tenant_id, slug, name) values (${tenantId}, 'doces', 'Doces') returning id`;
+    const [brownie] = await sql<{ id: string }[]>`
+      insert into products (tenant_id, category_id, slug, name, base_price_cents)
+      values (${tenantId}, ${dc!.id}, 'brownie', 'Brownie', 1200) returning id`;
+    await sql`update store_agent set settings = settings || ${sql.json({ pinnedPairings: [{ whenCategoryId: cat!.id, suggestProductId: brownie!.id }] })}
+      where tenant_id = ${tenantId}`;
+    const threadId = await thread(tenantId, '11946804680');
+    const { rt, adapter } = runtime([
+      tools(call('get_product', { product: 'pizza-calabresa' })),
+      tools(
+        call('cart_edit', {
+          ops: [{ op: 'add', product: 'pizza-calabresa', options: [{ id: 'm1' }] }],
+        }),
+      ),
+      tools(call('suggest')),
+      tools(call('offer_suggestion', { product: 'p1' })),
+      reply('Anotei! Quer um {{p1.name}} por {{p1.price}} de sobremesa?'),
+    ]);
+    await inbound(tenantId, threadId, 'uma calabresa com catupiry');
+    await settle(rt, tenantId);
+    expect((await outbox(tenantId)).map((m) => m.body)).toEqual([
+      'Anotei! Quer um Brownie por R$ 12,00 de sobremesa?',
+    ]);
+    const [ev] = await sql<
+      { source: string; outcome: string }[]
+    >`select source, outcome from suggestion_events where tenant_id = ${tenantId}`;
+    expect(ev).toEqual({ source: 'pinned', outcome: 'offered' });
+    if (process.env.VD_DEBUG)
+      console.log(
+        JSON.stringify(adapter.requests[0]!.messages[0]),
+        JSON.stringify(
+          (
+            await sql`select payload from agent_mailbox where tenant_id = ${tenantId} and kind = 'message.inbound'`
+          )[0],
+        ),
+      );
+    expect(adapter.requests.at(-1)!.volatile).toContain('a loja pediu para sugerir junto');
+  });
+
+  test('the onboarding interviewer only proposes: a rule lands as a proposal with its guarantee', async () => {
+    const tenantId = await store();
+    const [t] = await sql<{ id: string }[]>`
+      insert into shopper_threads (tenant_id, channel, address, test_kind, class)
+      values (${tenantId}, 'test', 'onboarding:interview', 'owner', 'shopper') returning id`;
+    const { rt } = runtime([
+      tools(call('store_overview'), call('menu_gaps')),
+      tools(call('propose_rule', { text: 'Pedidos acima de R$ 300: passe para mim' })),
+      reply('Anotei essa regra. Confirma tocando em "está certo"?'),
+    ]);
+    await withTenant(app, tenantId, (tx) =>
+      dispatchTx(tx, {
+        actor: {
+          tenantId,
+          agentId: 'vendedor-onboarding',
+          subject: { kind: 'shopper_thread', id: t!.id },
+        },
+        kind: 'message.inbound',
+        source: 'admin:test',
+        dedupeKey: `interview:${Math.random()}`,
+        payload: { text: 'pedido acima de 300 reais me chama', at: new Date().toISOString() },
+      }),
+    );
+    await settle(rt, tenantId);
+    const [k] = await sql<{ kind: string; status: string; guard: unknown }[]>`
+      select kind, status, guard from store_knowledge where tenant_id = ${tenantId}`;
+    expect(k).toEqual({
+      kind: 'rule',
+      status: 'proposed',
+      guard: { kind: 'handoff_above', cents: 30000 },
+    });
+    expect((await shopperMessages(t!.id)).at(-1)).toMatchObject({
+      author: 'agent',
+      status: 'sent',
+    });
   });
 });

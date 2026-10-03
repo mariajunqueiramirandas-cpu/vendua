@@ -266,7 +266,13 @@ end
 $$;
 grant usage on sequence vendedor_demand_id_seq to vendua_app;
 
--- Core consumes outbox topics (waitlist.restocked, order.*) from a cursor: platform data
+-- Core consumes outbox topics (waitlist.restocked, order.*) from a cursor across stores
+drop policy if exists control_access on outbox;
+create policy control_access on outbox for all
+  using (current_setting('vendua.control', true) = '1')
+  with check (current_setting('vendua.control', true) = '1');
+
+-- the cursor itself is platform data
 create table if not exists outbox_cursors (
   consumer text primary key check (consumer ~ '^[a-z][a-z0-9_.-]{0,60}$'),
   last_id bigint not null default 0,
