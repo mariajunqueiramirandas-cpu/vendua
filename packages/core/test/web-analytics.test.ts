@@ -142,7 +142,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
     await sql`delete from web_analytics_salts`;
     await sql`
       insert into web_analytics_salts (day, salt) values
-        (current_date - 1, 'old'), (current_date + 30, 'future')
+        (${brDay()}::date - 1, 'old'), (${brDay()}::date + 30, 'future')
     `;
     const [minted] = await sql<{ day: string; salt: string }[]>`
       select day::text, salt from web_analytics_salt()
