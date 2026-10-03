@@ -233,6 +233,9 @@ export default function UiReference() {
   const [phase, setPhase] = useState<DayPhase>('open');
   const [code, setCode] = useState('12');
   const [plan, setPlan] = useState('bandeira');
+  // the store order's 30-minute Pix counts down; the plan's 3-day one names its day
+  const [pixSoon] = useState(() => new Date(Date.now() + 25 * 60_000).toISOString());
+  const [pixLater] = useState(() => new Date(Date.now() + 3 * 86_400_000).toISOString());
   return (
     <div className="mx-auto max-w-6xl space-y-12 px-4 py-8 md:px-8">
       <header className="flex flex-wrap items-center gap-3">
@@ -691,13 +694,14 @@ export default function UiReference() {
           <PaymentChip payment={{ method: 'pix', status: 'failed', online: true }} />
         </div>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <Card className="p-5">
-            <PixCode
-              copyPaste={SAMPLE_PIX}
-              amountCents={3990}
-              expiresAt={new Date(Date.now() + 25 * 60_000).toISOString()}
-            />
-          </Card>
+          <div className="space-y-4">
+            <Card className="p-5">
+              <PixCode copyPaste={SAMPLE_PIX} amountCents={3990} expiresAt={pixSoon} />
+            </Card>
+            <Card className="p-5">
+              <PixCode copyPaste={SAMPLE_PIX} amountCents={4900} expiresAt={pixLater} />
+            </Card>
+          </div>
           <div className="space-y-4">
             <CopyValue label="Link da loja" value="https://quero-pudim.vendua.com.br" />
             <CopyValue label="Pix copia e cola" value={SAMPLE_PIX} lines={2} />

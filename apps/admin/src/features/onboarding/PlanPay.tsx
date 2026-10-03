@@ -5,7 +5,7 @@ import { api, type Account } from '../../lib/api.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button } from '../../ui/Button.tsx';
 import { messageOf, Skeleton } from '../../ui/feedback.tsx';
-import { PixCode } from '../../ui/PixCode.tsx';
+import { PixCode, useIssuePix } from '../../ui/PixCode.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -62,12 +62,7 @@ export function PlanPix({ a, invoiceId }: { a: Account; invoiceId: string | null
     mutationFn: (id: string) => api.invoicePix(id),
     onSuccess: (n) => qc.setQueryData(qk.account, n),
   });
-  const asked = useRef<string | null>(null);
-  useEffect(() => {
-    if (!inv || inv.pix || inv.status === 'paid' || asked.current === inv.id) return;
-    asked.current = inv.id;
-    issue.mutate(inv.id);
-  }, [inv, issue]);
+  useIssuePix(inv, inv?.status !== 'paid' && !issue.isPending, issue.mutate);
   if (!inv)
     return (
       <p className="t-body text-muted">
