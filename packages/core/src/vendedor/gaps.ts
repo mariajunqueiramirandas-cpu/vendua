@@ -79,7 +79,8 @@ export async function menuGaps(tx: Sql, tenantId: string): Promise<MenuGap[]> {
         productId: null,
         categoryId: id,
         title: `${c.name}: nada sobre glúten ou lactose`,
-        detail: 'Sem essa informação, nada é afirmado ao cliente: quando perguntarem, a conversa passa para você.',
+        detail:
+          'Sem essa informação, nada é afirmado ao cliente: quando perguntarem, a conversa passa para você.',
       });
 
   const seen = new Map<string, string>();
