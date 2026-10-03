@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, type Plan, type Session, type StoreRef } from '../../lib/api.ts';
 import { money, phone as fmtPhone } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
+import { parseDocument } from '../../lib/parse.ts';
 import { resetClient } from '../../lib/persist.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL } from '../../lib/session.ts';
@@ -20,12 +21,12 @@ import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { CodeInput, type CodeInputHandle } from '../../ui/CodeInput.tsx';
 import { DuaNote, messageOf, Skeleton } from '../../ui/feedback.tsx';
-import { Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
+import { DocumentInput, Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
 import { perMonth, shortName } from '../../ui/PlanCard.tsx';
 import { PlanCards, PlanCompare, PlanTrialStrip } from '../../ui/PlanPicker.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { StepFrame } from '../../ui/StepFrame.tsx';
-import { PAYER_EMAIL_RE, expiry, savePending } from '../auth/pending.ts';
+import { DOCUMENT_ERR, PAYER_EMAIL_RE, expiry, savePending } from '../auth/pending.ts';
 import { SegmentPicker } from '../onboarding/SegmentPicker.tsx';
 import { MiniStore } from '../onboarding/MiniStore.tsx';
 import { GENERIC, segmentOf } from '../onboarding/segments.ts';
@@ -323,9 +324,14 @@ export function TipoStep({ d, patch, go }: FlowProps) {
 
 export function YouStep({ d, patch, go, notice }: FlowProps) {
   const [touched, setTouched] = useState(false);
+  const [docTouched, setDocTouched] = useState(false);
   const name = d.ownerName.trim();
   const email = d.email.trim();
   const emailOk = PAYER_EMAIL_RE.test(email);
+  const docOk = parseDocument(d.document) !== null;
+  // Core sent us back here for the document: its notice goes on that field
+  const docNotice = notice === DOCUMENT_ERR ? notice : null;
+  const emailNotice = docNotice ? null : notice;
   const first = name.split(/\s+/)[0] ?? '';
   return (
     <StepFrame
@@ -335,7 +341,8 @@ export function YouStep({ d, patch, go, notice }: FlowProps) {
       disabled={name.length < 2}
       onSubmit={() => {
         setTouched(true);
-        if (emailOk) go('whatsapp', { praise: first ? `Prazer, ${first}!` : null });
+        setDocTouched(true);
+        if (emailOk && docOk) go('whatsapp', { praise: first ? `Prazer, ${first}!` : null });
       }}
     >
       <Field label="Seu nome" htmlFor="su-owner">
@@ -353,7 +360,7 @@ export function YouStep({ d, patch, go, notice }: FlowProps) {
         label="Seu e-mail"
         htmlFor="su-email"
         error={
-          notice ??
+          emailNotice ??
           (touched && !emailOk
             ? /[^\x20-\x7e]/.test(email)
               ? 'Escreva o e-mail sem acento nem ç, como maria@gmail.com.'
@@ -373,6 +380,20 @@ export function YouStep({ d, patch, go, notice }: FlowProps) {
           aria-invalid={(touched && !emailOk) || undefined}
           onBlur={() => email && setTouched(true)}
           onChange={(e) => patch({ email: e.target.value })}
+        />
+      </Field>
+      <Field
+        label="CPF ou CNPJ"
+        htmlFor="su-doc"
+        helper="Vai na cobrança do plano: o seu CPF ou o CNPJ da loja."
+        error={docNotice ?? (docTouched && !docOk ? DOCUMENT_ERR : null)}
+      >
+        <DocumentInput
+          id="su-doc"
+          value={d.document}
+          invalid={docTouched && !docOk}
+          onBlur={() => d.document && setDocTouched(true)}
+          onChange={(v) => patch({ document: v })}
         />
       </Field>
     </StepFrame>
@@ -683,10 +704,15 @@ function stepFor(e: unknown): { step: StepId; notice: string } | null {
     return { step: 'loja', notice: 'Esse endereço não pode ser usado. Escolha outro.' };
   if (field === 'storeName')
     return { step: 'loja', notice: 'O nome da loja precisa ter de 2 a 60 letras.' };
-  if (field === 'ownerName' || field === 'email')
+  if (field === 'ownerName' || field === 'email' || field === 'document')
     return {
       step: 'voce',
-      notice: field === 'email' ? 'Confira o e-mail, como maria@gmail.com.' : 'Confira o seu nome.',
+      notice:
+        field === 'email'
+          ? 'Confira o e-mail, como maria@gmail.com.'
+          : field === 'document'
+            ? DOCUMENT_ERR
+            : 'Confira o seu nome.',
     };
   if (field === 'segment') return { step: 'tipo', notice: 'Escolha de novo o que a loja vende.' };
   if (e.code === 'PLAN_UNAVAILABLE')
@@ -738,6 +764,7 @@ export function PayStep({
         slug: d.slug,
         ownerName: d.ownerName.trim(),
         email: d.email.trim(),
+        document: d.document,
         ...(d.segment ? { segment: d.segment } : {}),
         ...(byCode ? { accessCode: code.trim() } : {}),
       }),

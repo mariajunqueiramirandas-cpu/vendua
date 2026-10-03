@@ -14,7 +14,7 @@ import { log } from '../../platform/log.ts';
 import { platformHost, storeOrigin } from '../../platform/store-origin.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { mountBillingDev } from './dev-routes.ts';
-import { validEmail } from './input.ts';
+import { validDocument, validEmail } from './input.ts';
 import {
   heldPlans,
   openOr409,
@@ -158,6 +158,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     const storeName = text(body.storeName, 'storeName', 60, 2);
     const ownerName = text(body.ownerName, 'ownerName', 80, 2);
     const email = validEmail(body.email, 'email');
+    const document = validDocument(body.document, 'document');
     const segment = segmentOr422(body.segment);
     const slug = normalizeSlug(body.slug);
     if (!/^[a-z0-9]([a-z0-9-]{1,38}[a-z0-9])$/.test(slug))
@@ -231,6 +232,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
             const next = await startTrial(tx, tenantId, {
               plan,
               payerEmail: email,
+              payerDocument: document,
               provider: d.provider.name,
               now: new Date(),
               phone,
@@ -284,6 +286,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       plan,
       method,
       email,
+      document,
       ownerName,
       manual,
     }).catch(async (err: unknown) => {
@@ -445,7 +448,14 @@ async function ensureFirstCharge(
   d: Omit<AdminDeps, 'admin'>,
   c: Context,
   owner: Membership,
-  o: { plan: PlanRow; method: 'card' | 'pix'; email: string; ownerName: string; manual: boolean },
+  o: {
+    plan: PlanRow;
+    method: 'card' | 'pix';
+    email: string;
+    document: string;
+    ownerName: string;
+    manual: boolean;
+  },
 ): Promise<PayNext> {
   const origin = d.publicOrigin(c);
   const now = new Date();
@@ -473,6 +483,7 @@ async function ensureFirstCharge(
           plan,
           method: o.method,
           payerEmail: o.email,
+          payerDocument: o.document,
           key: `signup:${owner.tenant_id}`,
           now,
           manual: o.manual,
@@ -486,6 +497,13 @@ async function ensureFirstCharge(
         });
         return next;
       }
+      // a signup resumed from before it asked for the CPF/CNPJ: fill it in, never overwrite one
+      // (the owner may have changed it in Conta since)
+      if (!sub.payer_document)
+        await tx`
+          update subscriptions set payer_document = ${o.document}, updated_at = now()
+          where tenant_id = ${owner.tenant_id} and payer_document is null
+        `;
       if (sub.status === 'trialing' && sub.trial_ends_at)
         return { kind: 'trial', endsAt: sub.trial_ends_at.toISOString() };
       if (sub.status === 'pending')

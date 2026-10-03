@@ -348,7 +348,18 @@ export class MercadoPagoProvider implements PaymentProvider {
       transaction_amount: toReais(req.amountCents),
       description: req.description.slice(0, 200),
       payment_method_id: 'pix',
-      payer: { email: req.payerEmail, ...name },
+      payer: {
+        email: req.payerEmail,
+        ...name,
+        ...(req.payerDocument
+          ? {
+              identification: {
+                type: req.payerDocument.length === 11 ? 'CPF' : 'CNPJ',
+                number: req.payerDocument,
+              },
+            }
+          : {}),
+      },
       ...(Object.keys(info).length ? { additional_info: info } : {}),
       external_reference: req.externalReference,
       ...(req.notificationUrl ? { notification_url: req.notificationUrl } : {}),

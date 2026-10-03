@@ -69,6 +69,8 @@ export interface PixRequest {
   payerName?: string;
   /** national digits (DDD + number) */
   payerPhone?: string;
+  /** CPF (11 digits) or CNPJ (14, letters allowed), normalized */
+  payerDocument?: string;
   items?: PixItem[];
   externalReference: string;
   /** stable per logical attempt — a retry returns the same payment */

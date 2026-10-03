@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { foldSlug, slugify } from '../src/admin/context.ts';
 import { createApp } from '../src/app.ts';
-import { validEmail } from '../src/modules/billing/input.ts';
+import { cpfCnpj, validDocument, validEmail } from '../src/modules/billing/input.ts';
 import { runBillingTick } from '../src/modules/billing/jobs.ts';
 import {
   normalizeSlug,
@@ -13,6 +13,7 @@ import {
 } from '../src/modules/billing/signup.ts';
 import { billingStaff } from '../src/modules/billing/subscriptions.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
+import type { PixRequest } from '../src/modules/payments/provider.ts';
 import { migrate } from '../src/platform/db.ts';
 
 describe('signup units', () => {
@@ -34,6 +35,29 @@ describe('signup units', () => {
       'ana lima@gmail.com',
     ])
       expect(() => validEmail(bad, 'email')).toThrow('email looks wrong');
+  });
+
+  test('CPF and CNPJ: any formatting, check digits verified, alphanumeric CNPJ too', () => {
+    expect(cpfCnpj('529.982.247-25')).toBe('52998224725');
+    expect(cpfCnpj(' 390 533 447 05 ')).toBe('39053344705');
+    expect(cpfCnpj('11.222.333/0001-81')).toBe('11222333000181');
+    // the Receita Federal's own example of the alphanumeric CNPJ (July 2026)
+    expect(cpfCnpj('12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
+    expect(cpfCnpj('12abc34501de35')).toBe('12ABC34501DE35');
+    for (const bad of [
+      '529.982.247-24',
+      '111.111.111-11',
+      '11.222.333/0001-82',
+      '00000000000000',
+      '12ABC34501DE34',
+      '12ABC34501DEAB',
+      '1234567890',
+      '',
+    ])
+      expect(cpfCnpj(bad)).toBeNull();
+    expect(validDocument('529.982.247-25', 'document')).toBe('52998224725');
+    expect(() => validDocument('529.982.247-24', 'document')).toThrow('cpf or cnpj looks wrong');
+    expect(() => validDocument(52998224725, 'document')).toThrow();
   });
 
   test('slugs normalize like slugify, capped at 40', () => {
@@ -157,6 +181,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         slug,
         ownerName: 'Ana Lima',
         email: 'ana@example.com',
+        document: '529.982.247-25',
         ...extra,
       },
       {},
@@ -318,6 +343,62 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     );
     const inv2 = await sql`select status, paid_at from invoices where tenant_id = ${pixStore}`;
     expect(inv2).toHaveLength(1);
+  });
+
+  test('the payer CPF/CNPJ: required, checked, stored, sent to MP, changed in Conta', async () => {
+    // its own app: three signups here would spend the shared one's per-IP limit
+    const other = createApp(deps);
+    const token = (await verified(mkPhone(15), other)).signupToken;
+    const slug = `signup-${nonce}-doc`;
+    const missing = await signup(token, slug, { document: undefined }, other);
+    expect(missing.status).toBe(422);
+    expect(missing.body.error.details).toEqual({ field: 'document' });
+    const wrong = await signup(token, slug, { document: '529.982.247-24' }, other);
+    expect(wrong.body.error.details).toEqual({ field: 'document' });
+    expect((await sql`select 1 from tenants where slug = ${slug}`).length).toBe(0);
+
+    const seen: PixRequest[] = [];
+    const realPix = fake.platformPix.bind(fake);
+    fake.platformPix = async (req) => {
+      seen.push(req);
+      return realPix(req);
+    };
+    let r: Awaited<ReturnType<typeof signup>>;
+    try {
+      r = await signup(token, slug, { document: '12.abc.345/01de-35' }, other);
+    } finally {
+      fake.platformPix = realPix;
+    }
+    expect(r.status).toBe(201);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ payerDocument: '12ABC34501DE35', payerName: 'Ana Lima' });
+
+    const owner = session(r.cookie);
+    expect((await owner('GET', '/account')).body.subscription.payerDocument).toBe('12ABC34501DE35');
+    // a signup resumed from before it asked: the replay fills the document in, never overwrites it
+    const docOf = async () =>
+      (await sql`select payer_document from subscriptions where tenant_id = ${r.body.store.id}`)[0]!
+        .payer_document;
+    await sql`update subscriptions set payer_document = null where tenant_id = ${r.body.store.id}`;
+    expect((await signup(token, slug, { document: '390.533.447-05' }, other)).status).toBe(201);
+    expect(await docOf()).toBe('39053344705');
+    expect((await signup(token, slug, { document: '529.982.247-25' }, other)).status).toBe(201);
+    expect(await docOf()).toBe('39053344705');
+    const bad = await owner('PATCH', '/account/subscription', { payerDocument: '123' });
+    expect(bad.status).toBe(422);
+    expect(bad.body.error.details).toEqual({ field: 'payerDocument' });
+    const changed = await owner('PATCH', '/account/subscription', {
+      payerDocument: '529.982.247-25',
+    });
+    expect(changed.status).toBe(200);
+    expect(changed.body.subscription.payerDocument).toBe('52998224725');
+    // the audit names the change, never the number
+    const audit = await sql`
+      select summary, after::text as after from audit_log
+      where tenant_id = ${r.body.store.id} and action = 'subscription.change'
+    `;
+    expect(audit[0]!.summary).toContain('CPF/CNPJ de cobrança');
+    expect(JSON.stringify(audit)).not.toContain('52998224725');
   });
 
   test('the same token+slug again is the same store — no second store, no second charge', async () => {

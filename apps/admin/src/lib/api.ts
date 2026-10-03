@@ -1076,6 +1076,8 @@ export interface Account {
     /** card: where the owner authorizes the recurring charge (while pending) */
     checkoutUrl: string | null;
     payerEmail: string | null;
+    /** the plan payer's CPF (11 digits) or CNPJ (14) */
+    payerDocument: string | null;
     /** the free trial's end (the first charge); kept after it converts */
     trialEndsAt: string | null;
   } | null;
@@ -1695,6 +1697,8 @@ export const api = {
       slug: string;
       ownerName: string;
       email: string;
+      /** the plan payer's CPF or CNPJ */
+      document: string;
       segment?: string;
       accessCode?: string;
     }) => send<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
@@ -1971,10 +1975,18 @@ export const api = {
       `/activity${before ? `?before=${before}` : ''}`,
     ),
   account: () => get<Account>('/account'),
-  startSubscription: (p: { planId: string; method: 'card' | 'pix'; payerEmail: string }) =>
-    send<Account>('POST', '/account/subscription', p),
-  updateSubscription: (p: { planId?: string; method?: 'card' | 'pix'; payerEmail?: string }) =>
-    send<Account>('PATCH', '/account/subscription', p),
+  startSubscription: (p: {
+    planId: string;
+    method: 'card' | 'pix';
+    payerEmail: string;
+    payerDocument: string;
+  }) => send<Account>('POST', '/account/subscription', p),
+  updateSubscription: (p: {
+    planId?: string;
+    method?: 'card' | 'pix';
+    payerEmail?: string;
+    payerDocument?: string;
+  }) => send<Account>('PATCH', '/account/subscription', p),
   cancelSubscription: () => send<Account>('POST', '/account/subscription/cancel'),
   resumeSubscription: () => send<Account>('POST', '/account/subscription/resume'),
   invoicePix: (id: string) => send<Account>('POST', `/account/invoices/${id}/pix`),

@@ -29,6 +29,8 @@ export interface Draft {
   segment: string | null;
   ownerName: string;
   email: string;
+  /** CPF or CNPJ, as typed (masked); Core checks it */
+  document: string;
   phone: string | null;
   codeSentAt: number | null;
   codeExpiresAt: number | null;
@@ -53,6 +55,7 @@ export const EMPTY: Draft = {
   segment: null,
   ownerName: '',
   email: '',
+  document: '',
   phone: null,
   codeSentAt: null,
   codeExpiresAt: null,

@@ -199,6 +199,28 @@ describe('mercado pago adapter', () => {
     expect(seen[1]!.body.notification_url).toBeUndefined();
     expect(seen[1]!.body.payer).toEqual({ email: 'a@b.co' });
     expect(seen[1]!.body.additional_info).toBeUndefined();
+
+    // the payer's CPF/CNPJ goes as identification; its kind follows from the length
+    for (const [doc, type] of [
+      ['52998224725', 'CPF'],
+      ['12ABC34501DE35', 'CNPJ'],
+    ] as const) {
+      await p.createPix('t', {
+        amountCents: 1000,
+        description: 'x',
+        payerEmail: 'a@b.co',
+        payerDocument: doc,
+        externalReference: 'r',
+        idempotencyKey: `k-${doc}`,
+        notificationUrl: null,
+        applicationFeeCents: 0,
+        expiresAt: new Date(),
+      });
+      expect(seen.at(-1)!.body.payer).toEqual({
+        email: 'a@b.co',
+        identification: { type, number: doc },
+      });
+    }
   });
 
   test('payer name and phone in the shape MP wants', () => {

@@ -26,6 +26,7 @@ import {
 } from '../../ui/skeletons.tsx';
 import {
   Chips,
+  DocumentInput,
   Field,
   MoneyField,
   PhoneInput,
@@ -228,6 +229,7 @@ export default function UiReference() {
   const [step, setStep] = useState(30);
   const [cents, setCents] = useState<number | null>(1250);
   const [ph, setPh] = useState('');
+  const [doc, setDoc] = useState('');
   const [sheet, setSheet] = useState(false);
   const [sales, setSales] = useState(34890);
   const [phase, setPhase] = useState<DayPhase>('open');
@@ -368,6 +370,13 @@ export default function UiReference() {
           </Field>
           <Field label="Celular" htmlFor="u-ph">
             <PhoneInput id="u-ph" value={ph} onChange={(v) => setPh(v)} />
+          </Field>
+          <Field
+            label="CPF ou CNPJ"
+            htmlFor="u-doc"
+            helper="Máscara de CPF; vira CNPJ depois de 11."
+          >
+            <DocumentInput id="u-doc" value={doc} onChange={(v) => setDoc(v)} />
           </Field>
           <Field label="Com erro" htmlFor="u-err" error="O preço precisa ser maior que zero.">
             <TextInput id="u-err" aria-invalid defaultValue="0" />

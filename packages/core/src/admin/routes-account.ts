@@ -9,7 +9,7 @@ import {
   newVerifyToken,
   normalizeHost,
 } from '../modules/billing/domains.ts';
-import { validEmail } from '../modules/billing/input.ts';
+import { validDocument, validEmail } from '../modules/billing/input.ts';
 import { heldPlans, publicPlanOr422, requireFeature } from '../modules/billing/plans.ts';
 import {
   afterResponse,
@@ -31,6 +31,8 @@ import { recordStaffEventTx } from '../modules/staff-events.ts';
 
 const METHODS = ['card', 'pix'] as const;
 const validPayerEmail = (v: unknown) => validEmail(v, 'payerEmail');
+const payerDocumentOr = (v: unknown) =>
+  v === undefined ? undefined : validDocument(v, 'payerDocument');
 
 // Conta e plano: the plan and its subscription (card assinatura or monthly Pix), invoices,
 // the Pangolim own domain and site request. Owner only; every write is idempotent (handlers.write).
@@ -68,10 +70,12 @@ export function mountAccount(d: AdminDeps) {
       const plan = await publicPlanOr422(tx, body.planId, await heldPlans(tx, t.id));
       const method = oneOf(body.method, 'method', METHODS);
       const payerEmail = validPayerEmail(body.payerEmail);
+      const payerDocument = payerDocumentOr(body.payerDocument);
       await startSubscription(ctxFor(c), tx, t.id, {
         plan,
         method,
         payerEmail,
+        payerDocument,
         key: idemKey(c),
         now: new Date(),
       });
@@ -95,10 +99,12 @@ export function mountAccount(d: AdminDeps) {
       const method = body.method === undefined ? undefined : oneOf(body.method, 'method', METHODS);
       const payerEmail =
         body.payerEmail === undefined ? undefined : validPayerEmail(body.payerEmail);
+      const payerDocument = payerDocumentOr(body.payerDocument);
       const { before, after } = await changeSubscription(ctxFor(c), tx, t.id, {
         plan,
         method,
         payerEmail,
+        payerDocument,
         key: idemKey(c),
         now: new Date(),
       });
@@ -111,6 +117,7 @@ export function mountAccount(d: AdminDeps) {
               : `trocou para ${plan.name}`),
         method && `pagamento por ${method === 'card' ? 'cartão' : 'Pix'}`,
         payerEmail && 'email de cobrança',
+        payerDocument && 'CPF/CNPJ de cobrança',
       ].filter(Boolean);
       await audit(tx, t.id, m, {
         action: 'subscription.change',

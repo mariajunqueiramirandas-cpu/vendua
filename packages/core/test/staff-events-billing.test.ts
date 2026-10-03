@@ -178,6 +178,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       slug,
       ownerName: 'Ana Lima',
       email: 'ana@example.com',
+      document: '529.982.247-25',
     };
     const r = await call('POST', '/admin/v1/signup', body, {}, via);
     expect(r.status).toBe(201);
@@ -271,6 +272,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
         slug,
         ownerName: 'Rita Souza',
         email: 'rita@example.com',
+        document: '529.982.247-25',
         accessCode: 'abre-sem-mp-1234',
       };
       const r = await call('POST', '/admin/v1/signup', body, {}, via);

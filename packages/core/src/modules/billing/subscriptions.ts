@@ -71,6 +71,8 @@ export interface SubRow {
   provider_subscription_id: string | null;
   checkout_url: string | null;
   payer_email: string | null;
+  /** CPF (11 digits) or CNPJ (14), normalized */
+  payer_document: string | null;
   current_period_start: Date | null;
   current_period_end: Date | null;
   cancel_at_period_end: boolean;
@@ -202,6 +204,7 @@ export async function startSubscription(
     plan: PlanRow;
     method: BillingMethod;
     payerEmail: string | null;
+    payerDocument?: string | null | undefined;
     key: string;
     now: Date;
     manual?: boolean;
@@ -213,12 +216,16 @@ export async function startSubscription(
   // a restart never carries the old preapproval, period or pending downgrade
   const sub = (
     await tx<SubRow[]>`
-      insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email)
-      values (${tenantId}, ${o.plan.id}, ${o.method}, 'pending', ${ctx.provider.name}, ${o.payerEmail})
+      insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email,
+                                 payer_document)
+      values (${tenantId}, ${o.plan.id}, ${o.method}, 'pending', ${ctx.provider.name}, ${o.payerEmail},
+              ${o.payerDocument ?? null})
       on conflict (tenant_id) do update set
         plan_id = excluded.plan_id, pending_plan_id = null, method = excluded.method,
         status = 'pending', provider = excluded.provider, provider_subscription_id = null,
-        checkout_url = null, payer_email = excluded.payer_email, current_period_start = null,
+        checkout_url = null, payer_email = excluded.payer_email,
+        payer_document = coalesce(excluded.payer_document, subscriptions.payer_document),
+        current_period_start = null,
         current_period_end = null, cancel_at_period_end = false, upgrade_plan_id = null,
         upgrade_invoice_id = null, updated_at = now(), status_changed_at = now()
       returning *
@@ -240,15 +247,23 @@ export async function startSubscription(
 export async function startTrial(
   tx: Sql,
   tenantId: string,
-  o: { plan: PlanRow; payerEmail: string | null; provider: string; now: Date; phone: string },
+  o: {
+    plan: PlanRow;
+    payerEmail: string | null;
+    payerDocument: string | null;
+    provider: string;
+    now: Date;
+    phone: string;
+  },
 ): Promise<PayNext> {
   const endsAt = new Date(o.now.getTime() + o.plan.trial_days * DAY_MS);
   // trial_phone: the phone that took it keeps it taken, whatever its role in the store becomes
   await tx`
     insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email,
-                               current_period_start, current_period_end, trial_ends_at, trial_phone)
+                               payer_document, current_period_start, current_period_end,
+                               trial_ends_at, trial_phone)
     values (${tenantId}, ${o.plan.id}, 'pix', 'trialing', ${o.provider}, ${o.payerEmail},
-            ${o.now}, ${endsAt}, ${endsAt}, ${o.phone})
+            ${o.payerDocument}, ${o.now}, ${endsAt}, ${endsAt}, ${o.phone})
   `;
   await setTenantPlan(tx, tenantId, o.plan.id);
   await releaseHold(tx, tenantId);
@@ -790,6 +805,7 @@ export async function changeSubscription(
     plan?: PlanRow | undefined;
     method?: BillingMethod | undefined;
     payerEmail?: string | undefined;
+    payerDocument?: string | undefined;
     key: string;
     now: Date;
   },
@@ -802,6 +818,10 @@ export async function changeSubscription(
 
   if (o.payerEmail !== undefined && o.payerEmail !== sub.payer_email) {
     await tx`update subscriptions set payer_email = ${o.payerEmail}, updated_at = now() where tenant_id = ${tenantId}`;
+    await reload();
+  }
+  if (o.payerDocument !== undefined && o.payerDocument !== sub.payer_document) {
+    await tx`update subscriptions set payer_document = ${o.payerDocument}, updated_at = now() where tenant_id = ${tenantId}`;
     await reload();
   }
 

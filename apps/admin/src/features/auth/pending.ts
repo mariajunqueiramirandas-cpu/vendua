@@ -26,6 +26,8 @@ export function savePending(p: Pending | null) {
 export const expiry = (iso: string) => Date.parse(iso) || Date.now() + 10 * 60_000;
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+/** a CPF/CNPJ whose check digits fail (lib/parse.ts parseDocument) */
+export const DOCUMENT_ERR = 'Confira os números do CPF ou do CNPJ.';
 /** an email that goes to Mercado Pago as the payer's: Core's validEmail pattern (billing/input.ts) */
 export const PAYER_EMAIL_RE =
   /^[a-z0-9_%+-]+(?:\.[a-z0-9_%+-]+)*@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/i;

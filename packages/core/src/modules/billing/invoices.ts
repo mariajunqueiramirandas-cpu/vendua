@@ -189,6 +189,7 @@ export async function requestPix(
     payerEmail: o.payer.email,
     ...(o.payer.name ? { payerName: o.payer.name } : {}),
     ...(o.payer.phone ? { payerPhone: o.payer.phone } : {}),
+    ...(o.payer.document ? { payerDocument: o.payer.document } : {}),
     items: [
       {
         id: inv.ai_pack_id ?? inv.plan_id,
@@ -238,24 +239,29 @@ export interface BillingPayer {
   name: string | null;
   /** national digits (DDD + number) */
   phone: string | null;
+  /** the subscription's CPF (11 digits) or CNPJ (14) */
+  document: string | null;
 }
 
 /** The plan Pix/assinatura's payer: the subscription's email, else the owner's, else the store's;
- *  the name and phone of that owner (the first one with an email). */
+ *  the name and phone of that owner (the first one with an email); the subscription's CPF/CNPJ. */
 export async function payerFor(
   tx: Sql,
   tenantId: string,
   payerEmail: string | null | undefined,
 ): Promise<BillingPayer | null> {
   const row = (
-    await tx<{ email: string | null; name: string | null; phone: string | null }[]>`
+    await tx<
+      { email: string | null; name: string | null; phone: string | null; document: string | null }[]
+    >`
       select
         coalesce(
           ${payerEmail || null}::text,
           o.email,
           (select email from store_settings where tenant_id = ${tenantId})
         ) as email,
-        o.name, o.phone
+        o.name, o.phone,
+        (select payer_document from subscriptions where tenant_id = ${tenantId}) as document
       from (select 1) one
       left join lateral (
         select email, name, phone from merchant_users where tenant_id = ${tenantId}
@@ -264,7 +270,9 @@ export async function payerFor(
       ) o on true
     `
   )[0];
-  return row?.email ? { email: row.email, name: row.name, phone: row.phone } : null;
+  return row?.email
+    ? { email: row.email, name: row.name, phone: row.phone, document: row.document }
+    : null;
 }
 
 export function invoiceView(

@@ -31,6 +31,7 @@ import {
   type PlanFeature,
 } from '../../lib/api.ts';
 import { ago, dateShort, money } from '../../lib/format.ts';
+import { maskDocument, parseDocument } from '../../lib/parse.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -38,7 +39,14 @@ import { Card, Divided, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { copyText, CopyValue } from '../../ui/CopyValue.tsx';
 import { DuaNote, ErrorState, messageOf, Skeleton } from '../../ui/feedback.tsx';
-import { CommitInput, Field, Segmented, TextArea, TextInput } from '../../ui/fields.tsx';
+import {
+  CommitInput,
+  DocumentInput,
+  Field,
+  Segmented,
+  TextArea,
+  TextInput,
+} from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
@@ -58,7 +66,7 @@ import {
 import { FEATURE_LABEL, PlanCards, PlanCompare, promiseOf } from '../../ui/PlanPicker.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { PAYER_EMAIL_RE } from '../auth/pending.ts';
+import { DOCUMENT_ERR, PAYER_EMAIL_RE } from '../auth/pending.ts';
 
 type Sub = NonNullable<AccountData['subscription']>;
 type Method = 'card' | 'pix';
@@ -940,6 +948,8 @@ function PlanSheet({
   const [method, setMethod] = useState<Method>(s?.method ?? 'pix');
   const [email, setEmail] = useState('');
   const [emailErr, setEmailErr] = useState<string | null>(null);
+  const [doc, setDoc] = useState('');
+  const [docErr, setDocErr] = useState<string | null>(null);
   useEffect(() => {
     if (!mode) return;
     setSel(
@@ -951,6 +961,8 @@ function PlanSheet({
     setMethod(s?.method ?? 'pix');
     setEmail(s?.payerEmail ?? session.user.email ?? '');
     setEmailErr(null);
+    setDoc(maskDocument(s?.payerDocument ?? ''));
+    setDocErr(null);
     // only when the sheet opens
   }, [mode]);
   const plan = offered.find((p) => p.id === sel);
@@ -969,7 +981,8 @@ function PlanSheet({
     },
   );
   const start = useAccountWrite(
-    (v: { planId: string; method: Method; payerEmail: string }) => api.startSubscription(v),
+    (v: { planId: string; method: Method; payerEmail: string; payerDocument: string }) =>
+      api.startSubscription(v),
     (n) => {
       const url = n.subscription?.checkoutUrl;
       if (n.subscription?.method === 'card' && url) return window.location.assign(url);
@@ -1050,10 +1063,11 @@ function PlanSheet({
         icon={method === 'card' ? <ArrowSquareOut /> : undefined}
         onClick={() => {
           const e = email.trim();
-          if (!PAYER_EMAIL_RE.test(e))
-            return setEmailErr('Confira o e-mail, como maria@gmail.com.');
-          setEmailErr(null);
-          if (plan) start.mutate({ planId: plan.id, method, payerEmail: e });
+          const payerDocument = parseDocument(doc);
+          setEmailErr(PAYER_EMAIL_RE.test(e) ? null : 'Confira o e-mail, como maria@gmail.com.');
+          setDocErr(payerDocument ? null : DOCUMENT_ERR);
+          if (plan && payerDocument && PAYER_EMAIL_RE.test(e))
+            start.mutate({ planId: plan.id, method, payerEmail: e, payerDocument });
         }}
       >
         {method === 'card'
@@ -1143,6 +1157,19 @@ function PlanSheet({
                 onChange={(e) => setEmail(e.target.value)}
               />
             </Field>
+            <Field
+              label="CPF ou CNPJ"
+              htmlFor="payer-doc"
+              helper="Vai na cobrança do plano: o seu CPF ou o CNPJ da loja."
+              error={docErr}
+            >
+              <DocumentInput
+                id="payer-doc"
+                value={doc}
+                invalid={!!docErr}
+                onChange={(v) => setDoc(v)}
+              />
+            </Field>
           </>
         ) : null}
         <p className="t-caption text-muted">
@@ -1191,6 +1218,10 @@ function MethodSection({ a, s }: { a: AccountData; s: Sub }) {
   const email = useAccountWrite(
     (payerEmail: string) => api.updateSubscription({ payerEmail }),
     () => toast('E-mail dos recibos salvo ✓'),
+  );
+  const doc = useAccountWrite(
+    (payerDocument: string) => api.updateSubscription({ payerDocument }),
+    () => toast('CPF/CNPJ da cobrança salvo ✓'),
   );
   const needsAuth = s.method === 'card' && !!s.checkoutUrl;
   return (
@@ -1262,6 +1293,36 @@ function MethodSection({ a, s }: { a: AccountData; s: Sub }) {
               PAYER_EMAIL_RE.test(v.trim()) ? null : 'Confira o e-mail, como maria@gmail.com.'
             }
             onCommit={(v) => email.mutate(v)}
+          />
+        </Field>
+        <Field
+          label="CPF ou CNPJ"
+          htmlFor="payer-doc"
+          helper={
+            s.payerDocument
+              ? 'Vai na cobrança do plano: o seu CPF ou o CNPJ da loja.'
+              : 'Falta preencher. Sem o seu CPF ou o CNPJ da loja, o Mercado Pago pode recusar o Pix do plano.'
+          }
+          state={doc.isPending ? 'saving' : doc.isSuccess ? 'saved' : 'idle'}
+        >
+          <CommitInput
+            id="payer-doc"
+            autoComplete="off"
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
+            maxLength={18}
+            placeholder="000.000.000-00"
+            className="tnum"
+            value={maskDocument(s.payerDocument ?? '')}
+            // a store from before signup asked for it may leave it blank; once set, it stays set
+            validate={(v) =>
+              parseDocument(v) || (!v.trim() && !s.payerDocument) ? null : DOCUMENT_ERR
+            }
+            onCommit={(v) => {
+              const next = parseDocument(v);
+              if (next && next !== s.payerDocument) doc.mutate(next);
+            }}
           />
         </Field>
         {a.invoices.length === 0 ? null : (
