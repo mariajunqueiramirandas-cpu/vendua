@@ -5,6 +5,7 @@ import { clock, money, phone } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { markOrdersSeen } from '../../lib/live.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
+import { useFeature } from '../../lib/session.ts';
 import { METHOD_LABEL, payError } from '../../ui/PaymentChip.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
@@ -260,7 +261,13 @@ ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
  *  else this device's print dialog. Decided before the tap: a dialog opened after a request is
  *  blocked. */
 export function usePrintOrder(storeName: string) {
-  const { data } = useQuery({ queryKey: qk.printers, queryFn: api.printers, staleTime: 60_000 });
+  const open = useFeature('printing');
+  const { data } = useQuery({
+    queryKey: qk.printers,
+    queryFn: api.printers,
+    staleTime: 60_000,
+    enabled: open,
+  });
   // the printers POST /orders/:id/print picks (automatic ones, else any present), and at least
   // one of them on a device that's online now
   const devices = data?.devices ?? [];
@@ -277,5 +284,7 @@ export function usePrintOrder(storeName: string) {
     print: (o: Order) => (viaPrinter ? send.mutate(o) : printTicket(o, storeName)),
     pending: send.isPending,
     viaPrinter,
+    /** the plan has printing: without it, there is no "imprimir comanda" at all */
+    available: open && data?.included !== false,
   };
 }

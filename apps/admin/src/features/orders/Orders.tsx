@@ -374,15 +374,17 @@ export default function Orders() {
             >
               chamar no WhatsApp
             </a>
-            <Button
-              variant="secondary"
-              size="lg"
-              block
-              loading={printing.pending}
-              onClick={() => printing.print(more)}
-            >
-              imprimir comanda
-            </Button>
+            {printing.available ? (
+              <Button
+                variant="secondary"
+                size="lg"
+                block
+                loading={printing.pending}
+                onClick={() => printing.print(more)}
+              >
+                imprimir comanda
+              </Button>
+            ) : null}
             {!['delivered', 'cancelled', 'refunded'].includes(more.state) ? (
               <Button
                 variant="ghost"

@@ -148,15 +148,25 @@ export type PaymentStatus =
   | 'in_mediation';
 export type MpStatus = 'not_connected' | 'connected' | 'expiring' | 'disconnected' | 'restricted';
 
+export type PlanFeature =
+  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor';
+export type PlanFeatures = Record<PlanFeature, boolean>;
+
 export interface Plan {
   id: string;
   name: string;
   /** null for a legacy/pilot plan with no catalog price */
   priceCents: number | null;
   feeBps: number;
-  features: { customDomain: boolean; customSite: boolean };
+  features: PlanFeatures;
   /** a new store on this plan starts with these free days, no card (0 = none; ADR 0025) */
   trialDays: number;
+  /** the one plan the admin points to first (exactly one public plan has it) */
+  recommended: boolean;
+  /** the Vendedor's conversations a month (0 without it) */
+  aiConversations: number;
+  /** …and during the free trial */
+  aiTrialConversations: number;
 }
 
 export interface StoreRef {
@@ -190,6 +200,8 @@ export interface Session {
   stores: StoreRef[];
   push: { publicKey: string | null };
   support: { whatsapp: string | null };
+  /** `features` is what's open right now: in the plan AND paid for (or in its trial) */
+  plan: { id: string; name: string; features: PlanFeatures };
 }
 
 export interface Order {
@@ -827,6 +839,8 @@ export interface PrintDevice {
   printers: Printer[];
 }
 export interface Printers {
+  /** the plan has printing (when false, `devices` is empty and the screen shows the lock) */
+  included: boolean;
   printOn: 'placed' | 'confirmed';
   devices: PrintDevice[];
   downloads: { windows: string; android: string };
@@ -1018,9 +1032,11 @@ export interface Onboarding {
 export interface Invoice {
   id: string;
   number: number;
-  /** 'upgrade': the difference to change plan mid-period; the plan changes once it's paid */
-  kind: 'period' | 'upgrade';
+  /** 'upgrade': the difference to change plan mid-period; the plan changes once it's paid.
+   *  'ai_pack': a one-off pack of the Vendedor's conversations */
+  kind: 'period' | 'upgrade' | 'ai_pack';
   planName: string;
+  aiPackName: string | null;
   amountCents: number;
   periodStart: string;
   periodEnd: string;
@@ -1056,6 +1072,18 @@ export interface Account {
     trialEndsAt: string | null;
   } | null;
   billing: { available: boolean };
+  /** the Vendedor's conversations: this month's (or the trial's) allowance, plus packs bought */
+  ai: {
+    included: boolean;
+    period: 'month' | 'trial' | null;
+    limit: number;
+    used: number;
+    /** bought in packs, left over (they don't expire) */
+    packRemaining: number;
+    remaining: number;
+    resetsAt: string | null;
+  };
+  aiPacks: AiPack[];
   invoices: Invoice[];
   address: string;
   domains: { host: string; kind: 'store' | 'custom'; status: DomainStatus; primary: boolean }[];
@@ -1076,6 +1104,13 @@ export interface Account {
     createdAt: string;
     updatedAt: string;
   } | null;
+}
+
+export interface AiPack {
+  id: string;
+  name: string;
+  priceCents: number;
+  conversations: number;
 }
 
 export type SignInResult =
@@ -1562,6 +1597,9 @@ export const api = {
   cancelSubscription: () => send<Account>('POST', '/account/subscription/cancel'),
   resumeSubscription: () => send<Account>('POST', '/account/subscription/resume'),
   invoicePix: (id: string) => send<Account>('POST', `/account/invoices/${id}/pix`),
+  /** a one-off Pix invoice for the pack (an open one is reused) */
+  buyAiPack: (packId: string) =>
+    send<Account & { invoiceId: string }>('POST', '/account/ai-packs', { packId }),
   addDomain: (host: string) => send<Account>('POST', '/account/domains', { host }),
   checkDomain: (id: string) => send<Account>('POST', `/account/domains/${id}/check`),
   removeDomain: (id: string) => send<Account>('DELETE', `/account/domains/${id}`),

@@ -8,7 +8,7 @@ import {
   WhatsappLogo,
 } from '@phosphor-icons/react';
 import { useState, type ReactNode } from 'react';
-import type { Order, Plan, Product } from '../../lib/api.ts';
+import type { Order, Plan, Product, Session } from '../../lib/api.ts';
 import { setTheme } from '../../lib/theme.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
@@ -49,7 +49,9 @@ import { CodeInput } from '../../ui/CodeInput.tsx';
 import { CopyValue } from '../../ui/CopyValue.tsx';
 import { PaymentChip } from '../../ui/PaymentChip.tsx';
 import { PixCode } from '../../ui/PixCode.tsx';
-import { PlanCardSkeleton, PlanOption } from '../../ui/PlanCard.tsx';
+import { PlanCardSkeleton, PlanOption, prevOf } from '../../ui/PlanCard.tsx';
+import { PlanLocked } from '../../ui/PlanLocked.tsx';
+import { SessionCtx } from '../../lib/session.ts';
 import { StepFrame } from '../../ui/StepFrame.tsx';
 import { OutcomeList, OutcomeRow } from '../../ui/Outcome.tsx';
 import { HelpButton } from '../../ui/Page.tsx';
@@ -203,7 +205,7 @@ export default function UiReference() {
   const [sales, setSales] = useState(34890);
   const [phase, setPhase] = useState<DayPhase>('open');
   const [code, setCode] = useState('12');
-  const [plan, setPlan] = useState('basic');
+  const [plan, setPlan] = useState('bandeira');
   return (
     <div className="mx-auto max-w-6xl space-y-12 px-4 py-8 md:px-8">
       <header className="flex flex-wrap items-center gap-3">
@@ -682,7 +684,7 @@ export default function UiReference() {
             </Card>
           </div>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div role="radiogroup" aria-label="planos" className="mt-4 grid gap-3 lg:grid-cols-3">
           {SAMPLE_PLANS.map((p) => (
             <PlanOption
               key={p.id}
@@ -690,10 +692,17 @@ export default function UiReference() {
               selected={plan === p.id}
               onSelect={() => setPlan(p.id)}
               address="sualoja.vendua.com.br"
-              badge={p.id === 'basic' ? 'para começar' : undefined}
+              prev={prevOf(SAMPLE_PLANS, p)}
+              badge={p.id === 'mirim' ? 'seu plano' : undefined}
               trial
             />
           ))}
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <SessionCtx.Provider value={SAMPLE_SESSION}>
+            <PlanLocked feature="kds" plans={SAMPLE_PLANS} />
+            <PlanLocked feature="loyalty" plans={SAMPLE_PLANS} compact />
+          </SessionCtx.Provider>
           <PlanCardSkeleton />
         </div>
         <Card className="mt-4 p-5 [&_.sticky]:static">
@@ -796,24 +805,66 @@ export default function UiReference() {
 const SAMPLE_PIX =
   '00020126580014BR.GOV.BCB.PIX0136a1b2c3d4-e5f6-7890-abcd-ef1234567890520400005303986540539.905802BR5920QUERO PUDIM GOURMET6009SAO PAULO62070503***6304ABCD';
 
+const NONE = {
+  customDomain: false,
+  customSite: false,
+  kds: false,
+  printing: false,
+  loyalty: false,
+  vendedor: false,
+};
 const SAMPLE_PLANS: Plan[] = [
   {
-    id: 'basic',
-    name: 'Venduá Basic',
-    priceCents: 3990,
+    id: 'mirim',
+    name: 'Venduá Mirim',
+    priceCents: 6990,
     feeBps: 0,
-    features: { customDomain: false, customSite: false },
-    trialDays: 14,
+    features: NONE,
+    trialDays: 0,
+    recommended: false,
+    aiConversations: 0,
+    aiTrialConversations: 0,
   },
   {
-    id: 'pro_plus',
-    name: 'Venduá PRO+',
-    priceCents: 9900,
+    id: 'bandeira',
+    name: 'Venduá Bandeira',
+    priceCents: 16900,
     feeBps: 0,
-    features: { customDomain: true, customSite: true },
+    features: { ...NONE, kds: true, printing: true, loyalty: true, vendedor: true },
+    trialDays: 14,
+    recommended: true,
+    aiConversations: 250,
+    aiTrialConversations: 50,
+  },
+  {
+    id: 'pangolin',
+    name: 'Venduá Pangolin',
+    priceCents: 44900,
+    feeBps: 0,
+    features: {
+      customDomain: true,
+      customSite: true,
+      kds: true,
+      printing: true,
+      loyalty: true,
+      vendedor: true,
+    },
     trialDays: 0,
+    recommended: false,
+    aiConversations: 1000,
+    aiTrialConversations: 0,
   },
 ];
+
+// PlanLocked reads the role and the plan from the session; the reference has none
+const SAMPLE_SESSION = {
+  user: { id: 'u', name: 'Vinícius', phone: '', role: 'owner', email: null, prefs: {} },
+  store: { id: 's', slug: 'quero-pudim', name: 'Quero Pudim', logoUrl: null, url: '' },
+  stores: [],
+  push: { publicKey: null },
+  support: { whatsapp: null },
+  plan: { id: 'mirim', name: 'Venduá Mirim', features: NONE },
+} satisfies Session;
 
 function Block({ title, children }: { title: string; children: ReactNode }) {
   return (

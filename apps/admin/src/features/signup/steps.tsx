@@ -21,7 +21,7 @@ import { cn } from '../../ui/cn.ts';
 import { CodeInput, type CodeInputHandle } from '../../ui/CodeInput.tsx';
 import { DuaNote, messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
-import { perMonth, PlanOption } from '../../ui/PlanCard.tsx';
+import { perMonth, PlanOption, prevOf } from '../../ui/PlanCard.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { StepFrame } from '../../ui/StepFrame.tsx';
 import { EMAIL_RE, expiry, savePending } from '../auth/pending.ts';
@@ -76,7 +76,11 @@ export function PlanStep({ d, patch, go, plans, notice }: FlowProps) {
           Recebeu um código da Venduá? Pode seguir: ele vai na última pergunta.
         </DuaNote>
       ) : null}
-      <div role="radiogroup" aria-label="planos" className="grid gap-3 xl:grid-cols-2">
+      <div
+        role="radiogroup"
+        aria-label="planos"
+        className={cn('grid gap-3', plans.plans.length >= 3 && 'lg:grid-cols-3 lg:gap-4 lg:py-3')}
+      >
         {plans.plans.map((p) => (
           <PlanOption
             key={p.id}
@@ -85,6 +89,9 @@ export function PlanStep({ d, patch, go, plans, notice }: FlowProps) {
             onSelect={() => patch({ planId: p.id })}
             address={addressOf(d.slug, plans.storeDomain)}
             trial={plans.billing.available}
+            prev={prevOf(plans.plans, p)}
+            // side by side, the recommended card stands a little taller than its neighbours
+            className={p.recommended ? 'lg:-my-3' : undefined}
           />
         ))}
       </div>
@@ -97,14 +104,16 @@ export function PlanStepSkeleton() {
     <div className="space-y-6" role="status" aria-label="carregando os planos">
       <Skeleton className="h-9 w-64" />
       <Skeleton className="h-6 w-full max-w-md" />
-      {[0, 1].map((i) => (
-        <div key={i} className="space-y-3 rounded-lg bg-surface p-5 depth-1">
-          <Skeleton className="h-7 w-40" />
-          <Skeleton className="h-8 w-32" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
-      ))}
+      <div className="grid gap-3 lg:grid-cols-3 lg:gap-4">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="space-y-3 rounded-lg bg-surface p-5 depth-1">
+            <Skeleton className="h-7 w-40" />
+            <Skeleton className="h-8 w-32" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

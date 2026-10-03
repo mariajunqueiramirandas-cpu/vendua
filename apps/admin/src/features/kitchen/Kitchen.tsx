@@ -4,13 +4,14 @@ import { useNavigate } from 'react-router-dom';
 import { api, type KitchenItem, type KitchenTicket } from '../../lib/api.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { markOrdersSeen } from '../../lib/live.ts';
-import { useCan } from '../../lib/session.ts';
+import { isPlanRequired, useCan, useFeature } from '../../lib/session.ts';
 import { chimeLate, chimeTicket } from '../../lib/sound.ts';
 import { useWakeLock } from '../../lib/wakeLock.ts';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState } from '../../ui/feedback.tsx';
 import { Segmented } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
+import { LockedPage, PlanLocked, reasonOf } from '../../ui/PlanLocked.tsx';
 import { KitchenSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { useAdvance, useBumpQueue, useKitchen, useMarkItems, usePref, useRush } from './data.ts';
@@ -67,6 +68,11 @@ function useFullscreen() {
 }
 
 export default function Kitchen() {
+  // the plan without the kitchen: the screen stays, as what it would be (no kitchen request)
+  return useFeature('kds') ? <KitchenBoard /> : <LockedPage title="Cozinha" feature="kds" />;
+}
+
+function KitchenBoard() {
   const { data, error, refetch, isPending } = useKitchen();
   const nav = useNavigate();
   const canManage = useCan('manager');
@@ -406,7 +412,11 @@ export default function Kitchen() {
         <KitchenSkeleton />
       ) : error && !data ? (
         <div className="mx-auto w-full max-w-lg p-6">
-          <ErrorState error={error} retry={() => void refetch()} />
+          {isPlanRequired(error) ? (
+            <PlanLocked feature="kds" reason={reasonOf(error)} refresh />
+          ) : (
+            <ErrorState error={error} retry={() => void refetch()} />
+          )}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1">

@@ -293,14 +293,16 @@ export function OrderDetail({
       </section>
 
       <div className="flex flex-wrap gap-2">
-        <Button
-          variant="secondary"
-          icon={<Printer />}
-          loading={printing.pending}
-          onClick={() => printing.print(order)}
-        >
-          imprimir comanda
-        </Button>
+        {printing.available ? (
+          <Button
+            variant="secondary"
+            icon={<Printer />}
+            loading={printing.pending}
+            onClick={() => printing.print(order)}
+          >
+            imprimir comanda
+          </Button>
+        ) : null}
         {!inPanel ? null : (
           <Link
             to={`/pedidos/${order.id}`}
