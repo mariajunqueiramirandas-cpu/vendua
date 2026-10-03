@@ -199,6 +199,8 @@ const FROZEN_V1 = [
   'useScrollSpy',
   'useStoreHours',
   'useStoreStatus',
+  // Kernel 1.18 — the store's assistant (the Vendedor) chatting on the site
+  'useStoreChat',
   // …and every rule (RULES_V1), also served by the main entry
   ...RULES_V1,
 ];

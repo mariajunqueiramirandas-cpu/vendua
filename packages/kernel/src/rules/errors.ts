@@ -64,6 +64,11 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
   },
   CEP_NOT_FOUND: { title: 'CEP não encontrado', body: 'Preencha o endereço à mão.' },
   CEP_UNAVAILABLE: { title: 'Busca de CEP indisponível', body: 'Preencha o endereço à mão.' },
+  // Kernel 1.18 — the storefront chat
+  CHAT_UNAVAILABLE: {
+    title: 'O chat da loja está desligado agora',
+    body: 'Você ainda pode fazer o pedido pelo site.',
+  },
 };
 
 const FALLBACK = { title: 'Não foi possível concluir', body: 'Tente novamente em instantes.' };
@@ -107,11 +112,25 @@ export function couponMessage(
   return ERROR_COPY[code]?.title ?? 'Este cupom não vale agora.';
 }
 
-/** Kernel 1.17 — why Core refused the cash change (`INVALID_CHANGE`), with the least it takes
- *  when Core sent `details.minCents`. */
-export function changeMessage(details?: Record<string, unknown> | null, currency = 'BRL'): string {
-  const min = details?.minCents;
-  return typeof min === 'number' && min > 0
+/** Kernel 1.17 — why Core refused the cash change (`INVALID_CHANGE`): the least it takes
+ *  (`details.minCents`, the total) or, Kernel 1.18, the most (`details.maxCents`, Core's cap)
+ *  when the amount the shopper typed (`changeForCents`) is above it. Core sends both bounds and
+ *  not the amount, so without `changeForCents` both are named. */
+export function changeMessage(
+  details?: Record<string, unknown> | null,
+  currency = 'BRL',
+  changeForCents?: number | null,
+): string {
+  const bound = (v: unknown) => (typeof v === 'number' && v > 0 ? v : null);
+  const min = bound(details?.minCents);
+  const max = bound(details?.maxCents);
+  const atLeast = min
     ? `O troco precisa ser para um valor igual ou maior que o total, ${formatCents(min, currency)}.`
     : 'O troco precisa ser para um valor igual ou maior que o total.';
+  if (!max) return atLeast;
+  const upTo = `O troco pode ser para até ${formatCents(max, currency)}.`;
+  if (typeof changeForCents === 'number') return changeForCents > max ? upTo : atLeast;
+  return min
+    ? `O troco precisa ser para um valor entre o total, ${formatCents(min, currency)}, e ${formatCents(max, currency)}.`
+    : upTo;
 }

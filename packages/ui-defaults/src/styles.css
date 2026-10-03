@@ -3509,7 +3509,8 @@
         border-top: 0;
       }
       & .v-bag-bar,
-      & .v-consent {
+      & .v-consent,
+      & .v-chat-launcher {
         display: none;
       }
     }

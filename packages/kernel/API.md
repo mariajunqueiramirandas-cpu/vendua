@@ -11,18 +11,18 @@ retypes (those need a Contract major, a codemod and an alias window).
 
 ## Config and required mounts
 
-| Export             | What it is                                                                                     |
-| ------------------ | ---------------------------------------------------------------------------------------------- |
-| `defineStorefront` | Types `vendua.config.ts` (`contract: 2`, tokens, overrides, paths, redirects, consent, images) |
-| `VenduaProvider`   | Tenant context, API client, cache, tokens → `--v-*`, beacon. Props: `config`, `storefront`     |
-| `SystemSurfaces`   | Server-driven surfaces: banner stack, blocking overlay, consent. Mount before the router       |
-| `StorefrontRoutes` | The route table: template pages + the Kernel's `(vendua)` pages, inside the layout template    |
-| `KERNEL_ROUTES`    | The reserved `(vendua)` group: `/sacola`, `/checkout`, `/pedido/:id`, `/pedidos`               |
-| `KERNEL_PATHS`     | Same paths by name                                                                             |
-| `SurfaceRegion`    | Inline notices targeted at a region name                                                       |
-| `ErrorBoundary`    | Fallback-on-throw wrapper for storefront code                                                  |
-| `SLOT_KEYS`        | The slot registry (32 slots, each with a default in `@vendua/ui-defaults`)                     |
-| `SLOT_ALIASES`     | Deprecated slot keys → their replacement and the codemod that rewrites them                    |
+| Export             | What it is                                                                                                  |
+| ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `defineStorefront` | Types `vendua.config.ts` (`contract: 2`, tokens, overrides, paths, redirects, consent, images)              |
+| `VenduaProvider`   | Tenant context, API client, cache, tokens → `--v-*`, beacon. Props: `config`, `storefront`                  |
+| `SystemSurfaces`   | Server-driven surfaces: banner stack, blocking overlay, consent, store chat (1.18). Mount before the router |
+| `StorefrontRoutes` | The route table: template pages + the Kernel's `(vendua)` pages, inside the layout template                 |
+| `KERNEL_ROUTES`    | The reserved `(vendua)` group: `/sacola`, `/checkout`, `/pedido/:id`, `/pedidos`                            |
+| `KERNEL_PATHS`     | Same paths by name                                                                                          |
+| `SurfaceRegion`    | Inline notices targeted at a region name                                                                    |
+| `ErrorBoundary`    | Fallback-on-throw wrapper for storefront code                                                               |
+| `SLOT_KEYS`        | The slot registry (34 slots, each with a default in `@vendua/ui-defaults`)                                  |
+| `SLOT_ALIASES`     | Deprecated slot keys → their replacement and the codemod that rewrites them                                 |
 
 ```tsx
 import { StrictMode } from 'react';
@@ -67,6 +67,9 @@ Since 1.14, hooks that bind the rules (below) to the store's live data: `useCard
 `useCopy`, `useCartCount`, `useCoupon`, `useCouponCheck`, `useLineQuote`, `usePixTimer`,
 `useReducedMotion` and `useScrollSpy`; `useNotices` returns only notices inside their
 `startsAt`/`endsAt` window and `blocking` follows `isBlocking`.
+
+Since 1.18, `useStoreChat` — the store's assistant on the site (below, "The store's assistant on
+the site").
 
 Hooks never compute prices or eligibility; every read exposes `refetch`. Since 1.6 the
 reads behind `useCatalog`, `useProduct`, `useStore`, `useDeliveryZones` and `useNotices` also refresh by
@@ -293,6 +296,42 @@ sends what the shopper typed and compares nothing.
   ser para um valor igual ou maior que o total, R$ 47,00."
 - `order.StatusPage`'s default shows "Troco para R$ 100,00" under a cash order's payment.
 
+### The store's assistant on the site (Kernel 1.18)
+
+Additive — no storefront edit. The Vendedor (ADR 0031, `docs/features/sales-agent.md` §8 V4)
+chats on the store's own site and works this tab's cart session; the shopper still closes the
+order on the page's checkout. Server-driven: Core says whether the store turned it on.
+
+- `StoreProfile.chat` (`{ name, intro } | null`, absent on an older Core): the assistant's
+  name and how it introduces itself, in Core's words (they follow the merchant's disclosure
+  switch). null = no chat; the Kernel renders nothing.
+- Client: `api.chat()` → `GET /checkout/v1/chat` and `api.sendChat(text, { idempotencyKey? })`
+  → `POST /checkout/v1/chat` (Bearer cart session, like the cart; sending starts the session
+  when there is none), both answering `StoreChat` (`available`, `name`, `intro`, `messages:
+StoreChatMessage[]` — `id`, `author` shopper | agent | core | merchant, `body`, `at`, `card`
+  — and `pending`, a reply on its way). Core refuses with `CHAT_UNAVAILABLE` (404, now in
+  `ERROR_CODES`), `CART_NOT_OPEN` (409), `RATE_LIMITED` (429) or `BAD_REQUEST` (422, 1–1000
+  characters).
+- `useStoreChat({ live? })` → `{ available, name, intro, messages, pending, send(text),
+sending, error, message, loading, refetch }`. `send` resolves true once Core took the message
+  and never throws (`error` is the code, `message` the words); a send that may have landed (no
+  connection, a 5xx) is retried with the same Idempotency-Key. The Kernel reads the chat every
+  2 s while a reply is pending (open or not) and every 12 s while `live`, pauses while the tab is
+  hidden, and rereads the cart when the Vendedor's turn lands — `useCart()` and the page's
+  sacola show what it changed. One feed per page: every reader shares it.
+- New slot `system.Chat`, rendered by `SystemSurfaces` while `StoreProfile.chat` is set (not
+  under a blocking notice): `assistant` (`{ name, intro }`), `messages`, `pending`, `open`,
+  `onOpen`, `onClose`, `onSend(text)` (a promise of whether Core took it), `sending`, and
+  optional `error` (words), `unread` (replies since it was last open), `maxLength` (1000),
+  `resolveLink(url)` (a URL in a message → an href on this page's origin — the store's public
+  origin maps onto it — or null: show it as text), `storeName`, `timeZone`, `vocabulary`. The
+  default is a launcher in the bottom corner (above the bag bar, the buy row and the safe area;
+  toasts rise above it on phones) and, while open, a modal `<dialog>` (a bottom sheet on phones,
+  a corner panel from 768 px): Escape, × and the backdrop close it and focus returns to the
+  launcher; replies are announced politely; "<name> está digitando…" while pending; a line that
+  it's the store's assistant and the order only goes out when the shopper finishes it. Same-origin
+  links in a message (Core's link card to `/sacola`) are tappable; any other URL stays text.
+
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's.
@@ -435,7 +474,7 @@ separate function a store may skip for its own voice. Additive — no storefront
 - `ERROR_COPY` / `errorCopy` `(code)` — default pt-BR `{ title, body? }` per Core error code.
 - `couponMessage` `(code, details?, currency?)` — a coupon's refusal in words (`Faltam R$ 12,00 para usar este cupom.`).
 - `COUPON_REASON` — coupon code → message (ui-defaults' name); `isCouponError` `(code)` — the code is about the coupon.
-- `changeMessage` `(details?, currency?)` — Kernel 1.17: Core's `INVALID_CHANGE` in words, with `details.minCents` (`O troco precisa ser para um valor igual ou maior que o total, R$ 47,00.`).
+- `changeMessage` `(details?, currency?, changeForCents?)` — Kernel 1.17: Core's `INVALID_CHANGE` in words, with `details.minCents` (`O troco precisa ser para um valor igual ou maior que o total, R$ 47,00.`); Kernel 1.18: with `details.maxCents` (Core's cap) and a typed amount above it, `O troco pode ser para até R$ 10.000,00.` (both bounds named when the amount isn't passed).
 
 **Options and kits** (`rules/modifiers.ts`) — Core counts a group's min/max in units and
 refuses an add that breaks them; these say the same before the add.
@@ -586,6 +625,15 @@ Parts added in Kernel 1.17: in the checkout's payment options `[data-part="chang
 and `no-change` (the "Não preciso de troco" checkbox), and in `[data-vendua="order-status"]`
 `change-for` (the "Troco para R$ …" line under a cash order's payment).
 
+Parts added in Kernel 1.18, inside `[data-vendua="chat"]` (root `data-state` open | closed):
+`launcher` (the corner button), `launcher-label`, `unread` (the count of new replies),
+`announce` (the polite live region), `dialog`, `panel`, `head`, `avatar`, `title`, `subtitle`,
+`close`, `messages` (the list), `intro` (the assistant's greeting), `message` (`data-author`
+shopper | agent | core | merchant, `data-card` = Core's card kind, `data-run` start | end of a
+run by one author), `author`, `body`, `link` (a same-origin URL in a message), `time`,
+`typing` (the "digitando…" row), `error`, `composer`, `send`, `count` (characters left, near
+the limit) and `note`; the field is `textarea[name="chat-message"]`.
+
 `vendua check` (`no-v-namespace`) allows exactly those; any other `.v-*` or
 `[data-vendua]` selector in store CSS fails. Slot overrides stay available but are
 the last resort — each one is counted in the artifact manifest.
@@ -603,7 +651,7 @@ an override, and K07 allows `@vendua/kernel/rules` in store code.
 `CartCoupon`, `CartSchedule`, `CouponCheck`, `DeliveryAddress`, `CepResult`, `ImportLine`,
 `ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo` (Kernel 1.7: `PaymentNext`;
 Kernel 1.12: `PaymentAdjustment`, `ModifierPricingRule`; Kernel 1.15: `DistancePricing`,
-`GeoPoint`, `LatLng`, `MapTiles`); every new DTO field
+`GeoPoint`, `LatLng`, `MapTiles`; Kernel 1.18: `StoreChat`, `StoreChatMessage`); every new DTO field
 is optional so a Kernel 1.2 storefront still runs against an older Core. Slot prop types: `SlotProps`, `CheckoutStep`,
 `CustomerDraft`, `DeliveryOption`, `PaymentMethod`, `ModifierGroup`, `PaymentStatusKind` (1.7).
 

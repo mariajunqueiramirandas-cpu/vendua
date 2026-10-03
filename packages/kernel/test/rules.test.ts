@@ -13,6 +13,7 @@ import {
   arrangeMenu,
   cardState,
   catalogHref,
+  changeMessage,
   contactLinks,
   couponMessage,
   deliverySummary,
@@ -751,6 +752,27 @@ describe('errors and coupons', () => {
     expect(isCouponError('INVALID_COUPON')).toBe(true);
     expect(isCouponError('SOLD_OUT')).toBe(false);
     expect(Object.keys(COUPON_REASON)).toHaveLength(9);
+  });
+  test('changeMessage names the bound the typed amount broke (Kernel 1.18: maxCents)', () => {
+    const both = { field: 'payment.changeForCents', minCents: 4700, maxCents: 1_000_000 };
+    expect(changeMessage(both, 'BRL', 2_000_000)).toBe(
+      `O troco pode ser para até ${brl(1_000_000)}.`,
+    );
+    expect(changeMessage(both, 'BRL', 2000)).toBe(
+      `O troco precisa ser para um valor igual ou maior que o total, ${brl(4700)}.`,
+    );
+    expect(changeMessage(both)).toBe(
+      `O troco precisa ser para um valor entre o total, ${brl(4700)}, e ${brl(1_000_000)}.`,
+    );
+    expect(changeMessage({ maxCents: 1_000_000 })).toBe(
+      `O troco pode ser para até ${brl(1_000_000)}.`,
+    );
+    expect(changeMessage({ minCents: 4700 }, 'BRL', 2_000_000)).toBe(
+      `O troco precisa ser para um valor igual ou maior que o total, ${brl(4700)}.`,
+    );
+    expect(changeMessage(undefined)).toBe(
+      'O troco precisa ser para um valor igual ou maior que o total.',
+    );
   });
   test('errorCopy falls back', () => {
     expect(errorCopy('SOLD_OUT').title).toBe('Esgotou agora há pouco');

@@ -665,7 +665,11 @@ export function CheckoutPage() {
         setScheduleError(errorCopy(code).title);
       if (code === 'INVALID_CHANGE')
         setChangeError(
-          changeMessage((err as { details?: Record<string, unknown> }).details, currency),
+          changeMessage(
+            (err as { details?: Record<string, unknown> }).details,
+            currency,
+            pay === 'cash' ? changeFor : null,
+          ),
         );
       if (isCouponError(code))
         setCouponError(

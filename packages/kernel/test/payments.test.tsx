@@ -523,6 +523,27 @@ describe('cash change (Kernel 1.17)', () => {
     expect($('#v-change-error')).toBeNull();
   });
 
+  test("Core's cap on the change (maxCents) shows the upper bound, not the total", async () => {
+    const c = await toPayment(() =>
+      json(422, {
+        error: {
+          code: 'INVALID_CHANGE',
+          message: 'change above cap',
+          details: { field: 'payment.changeForCents', minCents: 4700, maxCents: 1_000_000 },
+        },
+      }),
+    );
+    await click($('input[value="cash"]'));
+    await act(async () => setValue('#v-change-for', '20.000'));
+    await submitForm();
+    await flush(10);
+    expect((checkoutBody(c)[0] as { payment: unknown }).payment).toEqual({
+      method: 'cash',
+      changeForCents: 2_000_000,
+    });
+    expect(text('#v-change-error')).toMatch(/^O troco pode ser para até R\$\s10\.000,00\.$/);
+  });
+
   test('the order page says what the change is for, only for cash', async () => {
     const offline = { status: 'pending', provider: 'sandbox', online: false };
     core((url) =>

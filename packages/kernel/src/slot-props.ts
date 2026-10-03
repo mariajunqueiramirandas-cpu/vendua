@@ -16,6 +16,7 @@ import type {
   GeoPoint,
   LatLng,
   MapTiles,
+  StoreChatMessage,
 } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
 import type { Vocabulary } from './rules/copy.ts';
@@ -122,6 +123,35 @@ export interface SlotProps {
   'system.ErrorFallback': { error: { code: string; message: string }; retry: () => void };
   'system.NotFound': { path: string; homeHref: string };
   'system.EmergencyOverlay': { notice: Notice };
+  /** Kernel 1.18 — the store's assistant (the Vendedor) on the site, working this tab's cart.
+   *  Rendered by `SystemSurfaces` while `StoreProfile.chat` is set: a launcher and, while `open`,
+   *  the conversation as a modal dialog. The Kernel owns the reads, the polling and the cart. */
+  'system.Chat': {
+    /** who answers, in Core's words (`StoreProfile.chat`): "Bia", "Bia, assistente virtual da …" */
+    assistant: { name: string; intro: string };
+    /** oldest first */
+    messages: StoreChatMessage[];
+    /** a reply is on its way ("digitando…") */
+    pending: boolean;
+    open: boolean;
+    onOpen: () => void;
+    /** Escape, the close button, the backdrop; focus goes back to the launcher */
+    onClose: () => void;
+    /** resolves true once Core took the message (clear the composer), false with `error` set */
+    onSend: (text: string) => Promise<boolean>;
+    sending: boolean;
+    /** the last failure, in words */
+    error?: string;
+    /** replies that arrived while the chat was closed */
+    unread?: number;
+    /** the most characters a message takes (Core's bound) */
+    maxLength?: number;
+    /** a URL found in a message → an href on this page's origin, or null: show it as text */
+    resolveLink?: (url: string) => string | null;
+    /** the store's name, for its people's own messages (`author: 'merchant'`) */
+    storeName?: string;
+  } & StoreTime &
+    StoreWords;
   'checkout.Layout': {
     steps: CheckoutStep[];
     current: CheckoutStep['id'];
