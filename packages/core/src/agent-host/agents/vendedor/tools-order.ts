@@ -292,7 +292,8 @@ export const placeOrderTool = defineTool<Record<string, never>, Sql>({
     const claimed = await claimTx<Placed>(
       ctx.tx,
       ctx.tenantId,
-      `vendedor:${t.id}:${summary.hash}`,
+      // per card: the same cart again (a reorder) is a new card, so a new order
+      `vendedor:${t.id}:${cartId}:${summary.id}:${summary.hash}`,
       t.id,
       async () => {
         // the hash, checked after the cart row is locked: no edit can land between this and the order

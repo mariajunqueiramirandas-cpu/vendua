@@ -187,7 +187,8 @@ export function mountCustomers(d: AdminDeps) {
       const jids = variants.flatMap((v) => jidForPhone(v) ?? []);
       const threads = await tx<{ id: string; cart_id: string | null }[]>`
         select id, cart_id from shopper_threads
-        where tenant_id = ${t.id} and (phone = any(${variants}::text[]) or address = any(${jids}::text[]))
+        where tenant_id = ${t.id} and (phone = any(${variants}::text[]) or address = any(${jids}::text[])
+          or checkout ->> 'phone' = any(${variants}::text[]))
       `;
       const s = await summary(tx, t.id, phone);
       if (!s && !threads.length)
@@ -216,6 +217,10 @@ export function mountCustomers(d: AdminDeps) {
           { kind: 'shopper_thread', id: th.id },
           `shopper_thread:${th.id}`,
         );
+      // a question still waiting for the store is the shopper's own words; an answered one is the store's
+      if (threads.length)
+        await tx`delete from store_knowledge where tenant_id = ${t.id} and source = 'unanswered'
+          and status <> 'live' and thread_id = any(${threads.map((th) => th.id)}::uuid[])`;
       if (threads.length)
         await tx`delete from shopper_threads where tenant_id = ${t.id} and id = any(${threads.map((th) => th.id)}::uuid[])`;
       await tx`update agent_incentives set phone = null where tenant_id = ${t.id} and phone = any(${variants}::text[])`;

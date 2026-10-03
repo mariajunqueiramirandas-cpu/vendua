@@ -120,7 +120,8 @@ export async function grantIncentiveTx(
       value: t.value,
       label: t.label ?? undefined,
       minSubtotalCents: t.min_subtotal_cents,
-      maxDiscountCents: t.max_discount_cents ?? undefined,
+      // the budget was charged for today's cart: a bigger cart later can't take more off
+      maxDiscountCents: cost,
       endsAt: new Date(o.now.getTime() + 48 * 3600_000),
       maxRedemptions: 1,
       perPhoneLimit: 1,

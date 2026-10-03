@@ -13,6 +13,7 @@ import { compileRule, parseMoney } from '../src/vendedor/knowledge.ts';
 import { DEFAULT_SETTINGS, parseSettingsPatch, withDefaults } from '../src/vendedor/settings.ts';
 import { readsAsShopper, triggerOf } from '../src/vendedor/signals.ts';
 import { maskPhone } from '../src/vendedor/threads.ts';
+import { claim } from '../src/platform/http.ts';
 import type { CartView } from '../src/modules/cart.ts';
 
 const cart = (over: Partial<CartView['totals']> = {}, qty = 1): CartView =>
@@ -302,4 +303,11 @@ describe('the fold', () => {
     s.context.subject = { floor: 'store' } as never;
     expect(finished(s)).toBe(true);
   });
+});
+
+test("a client key can't take an internal claim's namespace", async () => {
+  const run = async () => ({ status: 200, body: null });
+  await expect(
+    claim(null as never, crypto.randomUUID(), 'vendedor:t:c:r1:h', 'f', run),
+  ).rejects.toMatchObject({ status: 400 });
 });

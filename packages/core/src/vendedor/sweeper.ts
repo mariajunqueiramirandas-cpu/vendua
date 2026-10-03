@@ -2,6 +2,7 @@ import { dispatchTx } from '../agent-host/dispatch.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { controlTx } from '../modules/control.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
+import { log } from '../platform/log.ts';
 import type { MediaProviders } from './media.ts';
 import { loadAgent } from './settings.ts';
 import { AGENT_ID, SUBJECT_KIND, loadStoreSettings, storeStatus } from './threads.ts';
@@ -85,6 +86,8 @@ export async function pixExpiryPass(sql: Sql, tenantId: string, now = new Date()
   });
 }
 
+const sweepLog = log.child({ mod: 'vendedor-sweeper' });
+
 const STATE_LABEL: Record<string, string> = {
   confirmed: 'aceito pela loja',
   preparing: 'em preparo',
@@ -95,29 +98,29 @@ const STATE_LABEL: Record<string, string> = {
 };
 
 /** Outbox topics nobody consumed before (§4.3): back in stock, and order updates on a thread. */
-export async function outboxPass(sql: Sql): Promise<number> {
+export async function outboxPass(sql: Sql, o: { lagMs?: number } = {}): Promise<number> {
   const consumer = 'vendedor';
+  // ids are taken at insert, not commit: reading only rows older than the lag means a slower tx
+  // holding a lower id has committed before the cursor passes it
+  const before = new Date(Date.now() - (o.lagMs ?? 30_000));
   const rows = await controlTx(sql, async (tx) => {
     await tx`insert into outbox_cursors (consumer, last_id) values (${consumer}, 0) on conflict do nothing`;
     const [cur] = await tx<
       { last_id: string }[]
-    >`select last_id from outbox_cursors where consumer = ${consumer} for update`;
-    const batch = await tx<
-      { id: string; tenant_id: string; topic: string; payload: Record<string, unknown> }[]
-    >`
+    >`select last_id from outbox_cursors where consumer = ${consumer}`;
+    return tx<{ id: string; tenant_id: string; topic: string; payload: Record<string, unknown> }[]>`
       select id, tenant_id, topic, payload from outbox
-      where id > ${cur!.last_id} and (topic = 'waitlist.restocked' or topic like 'order.%')
+      where id > ${cur!.last_id} and created_at < ${before}
+        and (topic = 'waitlist.restocked' or topic like 'order.%')
       order by id limit 200`;
-    if (batch.length)
-      await tx`update outbox_cursors set last_id = ${batch[batch.length - 1]!.id}, updated_at = now() where consumer = ${consumer}`;
-    return batch;
   });
   if (!rows.length) {
     // the cursor jumps the topics it doesn't read, so a quiet store never rescans
     await controlTx(
       sql,
       (tx) => tx`
-      update outbox_cursors set last_id = greatest(last_id, coalesce((select max(id) from outbox), 0)), updated_at = now()
+      update outbox_cursors set last_id = greatest(last_id,
+        coalesce((select max(id) from outbox where created_at < ${before}), 0)), updated_at = now()
       where consumer = ${consumer} and updated_at < now() - interval '1 hour'`,
     );
     return 0;
@@ -125,49 +128,65 @@ export async function outboxPass(sql: Sql): Promise<number> {
   const enabled = new Set(await enabledStores(sql));
   for (const r of rows) {
     if (!enabled.has(r.tenant_id)) continue;
-    await withTenant(sql, r.tenant_id, async (tx) => {
-      if (r.topic === 'waitlist.restocked') {
-        const productId = String(r.payload.productId ?? '');
-        const contacts = (Array.isArray(r.payload.contacts) ? r.payload.contacts : []).map((c) =>
-          String(c)
-            .replace(/\D/g, '')
-            .replace(/^55(?=\d{10,11}$)/, ''),
-        );
-        if (!productId || !contacts.length) return;
-        const [p] = await tx<
-          { name: string }[]
-        >`select name from products where tenant_id = ${r.tenant_id} and id = ${productId}`;
-        const threads = await tx<{ id: string }[]>`
+    // one bad row loses only its own touch; a crash before the cursor moves replays the batch,
+    // which the dedupe keys make harmless
+    await outboxRow(sql, r).catch((err) =>
+      sweepLog.error({ err, outboxId: r.id }, 'outbox row failed'),
+    );
+  }
+  await controlTx(
+    sql,
+    (tx) => tx`update outbox_cursors set last_id = greatest(last_id, ${rows[rows.length - 1]!.id}),
+      updated_at = now() where consumer = ${consumer}`,
+  );
+  return rows.length;
+}
+
+async function outboxRow(
+  sql: Sql,
+  r: { id: string; tenant_id: string; topic: string; payload: Record<string, unknown> },
+): Promise<void> {
+  await withTenant(sql, r.tenant_id, async (tx) => {
+    if (r.topic === 'waitlist.restocked') {
+      const productId = String(r.payload.productId ?? '');
+      const contacts = (Array.isArray(r.payload.contacts) ? r.payload.contacts : []).map((c) =>
+        String(c)
+          .replace(/\D/g, '')
+          .replace(/^55(?=\d{10,11}$)/, ''),
+      );
+      if (!productId || !contacts.length) return;
+      const [p] = await tx<
+        { name: string }[]
+      >`select name from products where tenant_id = ${r.tenant_id} and id = ${productId}`;
+      const threads = await tx<{ id: string }[]>`
           select id from shopper_threads where tenant_id = ${r.tenant_id} and channel = 'whatsapp'
             and phone = any(${contacts}) and owner <> 'muted' and last_in_at > now() - interval '24 hours'`;
-        for (const t of threads)
-          await dispatchTx(tx, {
-            actor: actorOf(r.tenant_id, t.id),
-            kind: 'timer.back_in_stock',
-            source: 'outbox:waitlist',
-            dedupeKey: `stock:${t.id}:${productId}:${r.id}`,
-            payload: { productId, name: p?.name ?? 'O produto' },
-          });
-        return;
-      }
-      const orderId = String(r.payload.orderId ?? '');
-      const state = r.topic.slice('order.'.length);
-      if (!orderId || !STATE_LABEL[state]) return;
-      const [o] = await tx<{ thread_id: string | null; number: number }[]>`
+      for (const t of threads)
+        await dispatchTx(tx, {
+          actor: actorOf(r.tenant_id, t.id),
+          kind: 'timer.back_in_stock',
+          source: 'outbox:waitlist',
+          dedupeKey: `stock:${t.id}:${productId}:${r.id}`,
+          payload: { productId, name: p?.name ?? 'O produto' },
+        });
+      return;
+    }
+    const orderId = String(r.payload.orderId ?? '');
+    const state = r.topic.slice('order.'.length);
+    if (!orderId || !STATE_LABEL[state]) return;
+    const [o] = await tx<{ thread_id: string | null; number: number }[]>`
         select thread_id, number from orders where tenant_id = ${r.tenant_id} and id = ${orderId}`;
-      if (!o?.thread_id) return;
-      await tx`update shopper_threads set stage = 'after', updated_at = now()
+    if (!o?.thread_id) return;
+    await tx`update shopper_threads set stage = 'after', updated_at = now()
         where id = ${o.thread_id} and order_id = ${orderId} and ${state} in ('delivered', 'cancelled')`;
-      await dispatchTx(tx, {
-        actor: actorOf(r.tenant_id, o.thread_id),
-        kind: 'webhook.order',
-        source: 'outbox:order',
-        dedupeKey: `order:${orderId}:${state}`,
-        payload: { orderId, number: o.number, state, label: STATE_LABEL[state]! },
-      });
+    await dispatchTx(tx, {
+      actor: actorOf(r.tenant_id, o.thread_id),
+      kind: 'webhook.order',
+      source: 'outbox:order',
+      dedupeKey: `order:${orderId}:${state}`,
+      payload: { orderId, number: o.number, state, label: STATE_LABEL[state]! },
     });
-  }
-  return rows.length;
+  });
 }
 
 /** Voice replies (V3): the verified words spoken; on any failure the text goes as text. */

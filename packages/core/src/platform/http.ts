@@ -183,12 +183,18 @@ const inProgress = () =>
     'a request with this Idempotency-Key is still in flight — retry',
   );
 
-function checkKey(key: string | undefined | null): asserts key is string {
+// claimTx's own keys (the Vendedor's place_order); a client key can't occupy one
+const INTERNAL_KEY = /^vendedor:/;
+
+function checkKey(key: string | undefined | null, internal = false): asserts key is string {
   if (!key) {
     throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
   }
   if (key.length > 200) {
     throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
+  }
+  if (!internal && INTERNAL_KEY.test(key)) {
+    throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key uses a reserved prefix');
   }
 }
 
@@ -311,7 +317,7 @@ export async function claimTx<T>(
   fingerprint: string,
   run: () => Promise<{ status: number; body: T }>,
 ): Promise<Claimed<T>> {
-  checkKey(key);
+  checkKey(key, true);
   fingerprint = fingerprintOf(fingerprint);
   const owner = crypto.randomUUID();
   // serializes with claim()'s second tx, so a dead-claim steal never runs beside its owner

@@ -229,6 +229,20 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     return { rt, adapter };
   }
 
+  test('the same order again is a new order: a reorder never replays the last one', async () => {
+    const tenantId = await store();
+    const threadId = await thread(tenantId, '11955556666');
+    for (const round of [1, 2]) {
+      const { rt } = await toSummary(tenantId, threadId, [
+        tools(call('place_order')),
+        reply('Pedido {{pedido.numero}} feito!'),
+      ]);
+      await inbound(tenantId, threadId, 'sim');
+      await settle(rt, tenantId);
+      expect(await sql`select 1 from orders where tenant_id = ${tenantId}`).toHaveLength(round);
+    }
+  });
+
   test('no plain yes after the card: no order, the model is told to ask', async () => {
     const tenantId = await store();
     const threadId = await thread(tenantId, '11911112222');
@@ -434,8 +448,8 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     >`select id from products where tenant_id = ${tenantId} limit 1`;
     await sql`insert into outbox (tenant_id, topic, payload) values
       (${tenantId}, 'waitlist.restocked', ${sql.json({ productId: p!.id, contacts: ['5511924682468'] })})`;
-    while ((await outboxPass(app)) === 200);
-    await outboxPass(app);
+    while ((await outboxPass(app, { lagMs: 0 })) === 200);
+    await outboxPass(app, { lagMs: 0 });
     const rows = await sql<{ kind: string; payload: { name: string } }[]>`
       select kind, payload from agent_mailbox where tenant_id = ${tenantId} and kind = 'timer.back_in_stock'`;
     expect(rows).toHaveLength(1);
@@ -477,10 +491,18 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     >`select value_cents, phone from agent_incentives where tenant_id = ${tenantId}`;
     expect([...grants]).toEqual([{ value_cents: 1000, phone: '11935793579' }]);
     const [c] = await sql<
-      { code: string; phone: string; max_redemptions: number; source: string }[]
+      {
+        code: string;
+        phone: string;
+        max_redemptions: number;
+        max_discount_cents: number;
+        source: string;
+      }[]
     >`
-      select code, phone, max_redemptions, source from coupons where tenant_id = ${tenantId} and source = 'agent'`;
-    expect(c).toMatchObject({ phone: '11935793579', max_redemptions: 1 });
+      select code, phone, max_redemptions, max_discount_cents, source from coupons
+      where tenant_id = ${tenantId} and source = 'agent'`;
+    // capped at what the budget was charged
+    expect(c).toMatchObject({ phone: '11935793579', max_redemptions: 1, max_discount_cents: 1000 });
     expect((await outbox(tenantId)).map((m) => m.body)[0]).toContain(c!.code);
     await inbound(tenantId, threadId, 'e mais um cupom?');
     await settle(rt, tenantId);
