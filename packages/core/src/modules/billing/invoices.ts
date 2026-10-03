@@ -194,10 +194,13 @@ export async function requestPix(
       {
         id: inv.ai_pack_id ?? inv.plan_id,
         title: o.planName,
+        description: `${o.planName} — fatura ${inv.number}`,
+        categoryId: 'services',
         quantity: 1,
         unitPriceCents: inv.amount_cents,
       },
     ],
+    statementDescriptor: 'Venduá',
     externalReference: inv.id,
     // a retried request (its tx rolled back) repeats the attempt number → the same Pix
     idempotencyKey: `invoice:${inv.id}:${attempt}`,

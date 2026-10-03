@@ -55,6 +55,9 @@ export interface ProviderPayment {
 export interface PixItem {
   id: string;
   title: string;
+  description?: string;
+  /** one of MP's item categories (GET /item_categories): `services`, `others`… */
+  categoryId?: string;
   quantity: number;
   unitPriceCents: number;
 }
@@ -72,6 +75,8 @@ export interface PixRequest {
   /** CPF (11 digits) or CNPJ (14, letters allowed), normalized */
   payerDocument?: string;
   items?: PixItem[];
+  /** who charged, on the payer's statement; the adapter fits it to the provider's format */
+  statementDescriptor?: string;
   externalReference: string;
   /** stable per logical attempt — a retry returns the same payment */
   idempotencyKey: string;
@@ -115,6 +120,8 @@ export interface CardPaymentRequest {
   applicationFeeCents: number;
   /** MP's device fingerprint from the SDK (anti-fraud), forwarded as X-meli-session-id */
   deviceId: string | null;
+  /** who charged, on the card statement; the adapter fits it to the provider's format */
+  statementDescriptor?: string;
 }
 
 export interface CardCheckout {

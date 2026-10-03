@@ -52,6 +52,19 @@ export function splitName(full: string | undefined) {
   return { first_name: parts[0]!.slice(0, 60), ...(last ? { last_name: last } : {}) };
 }
 
+/** MP's statement descriptor: its docs cap it at 13 or 50 characters depending on the API and
+ *  restrict the charset, so only what fits every reading goes (A–Z, 0–9, 13 at most). */
+export function statementDescriptor(name: string | undefined) {
+  return (
+    (name ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .slice(0, 13) || null
+  );
+}
+
 /** National digits (DDD + number) as MP's phone object; null for anything else. */
 export function mpPhone(phone: string | undefined) {
   const d = (phone ?? '').replace(/\D/g, '');
@@ -330,6 +343,7 @@ export class MercadoPagoProvider implements PaymentProvider {
   private pixBody(req: PixRequest) {
     const name = splitName(req.payerName);
     const phone = mpPhone(req.payerPhone);
+    const statement = statementDescriptor(req.statementDescriptor);
     // additional_info is what MP's anti-fraud scores the payment on
     const info = {
       ...(req.items?.length
@@ -337,6 +351,8 @@ export class MercadoPagoProvider implements PaymentProvider {
             items: req.items.slice(0, 50).map((i) => ({
               id: i.id.slice(0, 60),
               title: i.title.slice(0, 120),
+              ...(i.description ? { description: i.description.slice(0, 250) } : {}),
+              ...(i.categoryId ? { category_id: i.categoryId } : {}),
               quantity: i.quantity,
               unit_price: toReais(i.unitPriceCents),
             })),
@@ -361,6 +377,7 @@ export class MercadoPagoProvider implements PaymentProvider {
           : {}),
       },
       ...(Object.keys(info).length ? { additional_info: info } : {}),
+      ...(statement ? { statement_descriptor: statement } : {}),
       external_reference: req.externalReference,
       ...(req.notificationUrl ? { notification_url: req.notificationUrl } : {}),
       ...(req.applicationFeeCents > 0 ? { application_fee: toReais(req.applicationFeeCents) } : {}),
@@ -381,6 +398,7 @@ export class MercadoPagoProvider implements PaymentProvider {
   }
 
   async createCardPayment(token: string, req: CardPaymentRequest) {
+    const statement = statementDescriptor(req.statementDescriptor);
     const body = {
       transaction_amount: toReais(req.amountCents),
       token: req.cardToken,
@@ -395,6 +413,7 @@ export class MercadoPagoProvider implements PaymentProvider {
       },
       external_reference: req.externalReference,
       metadata: { vendua_attempt: req.attempt },
+      ...(statement ? { statement_descriptor: statement } : {}),
       ...(req.notificationUrl ? { notification_url: req.notificationUrl } : {}),
       ...(req.applicationFeeCents > 0 ? { application_fee: toReais(req.applicationFeeCents) } : {}),
       // 3DS 2.0 needs capture and a non-binary payment; the challenge renders in our page

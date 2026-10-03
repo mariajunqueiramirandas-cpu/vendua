@@ -378,6 +378,8 @@ type Plan =
       row: PaymentRow;
       tok: StoreToken;
       title: string;
+      /** the store's name, for the payer's statement */
+      statement: string;
       buyer: PixBuyer | null;
       backUrl: string | null;
     };
@@ -445,6 +447,18 @@ export function shopperPayerEmail(
   return `cliente.${tag}@${storeDomain}`;
 }
 
+/** "X-Burguer: bacon extra, 2× sem cebola" — the line's name, then what was chosen with it */
+function lineDescription(l: {
+  name: string;
+  modifiers: { name: string; qty?: number }[];
+  combo: { name: string; qty?: number }[];
+}) {
+  const picked = [...(l.combo ?? []), ...(l.modifiers ?? [])].map((m) =>
+    (m.qty ?? 1) > 1 ? `${m.qty}× ${m.name}` : m.name,
+  );
+  return picked.length ? `${l.name}: ${picked.join(', ')}` : l.name;
+}
+
 async function pixBuyer(
   tx: Sql,
   tenantId: string,
@@ -459,9 +473,11 @@ async function pixBuyer(
       name: string;
       qty: number;
       line_total_cents: number;
+      modifiers: { name: string; qty?: number }[];
+      combo: { name: string; qty?: number }[];
     }[]
   >`
-    select product_id, slug, name, qty, line_total_cents from order_items
+    select product_id, slug, name, qty, line_total_cents, modifiers, combo from order_items
     where tenant_id = ${tenantId} and order_id = ${order.id}
     order by sort limit 50
   `;
@@ -474,6 +490,8 @@ async function pixBuyer(
       ...lines.map((l) => ({
         id: l.product_id ?? l.slug,
         title: l.qty > 1 ? `${l.qty}× ${l.name}` : l.name,
+        description: lineDescription(l),
+        categoryId: 'others',
         quantity: 1,
         unitPriceCents: l.line_total_cents,
       })),
@@ -482,6 +500,8 @@ async function pixBuyer(
             {
               id: 'entrega',
               title: 'Entrega',
+              description: 'Taxa de entrega do pedido',
+              categoryId: 'services',
               quantity: 1,
               unitPriceCents: order.delivery_fee_cents,
             },
@@ -546,6 +566,7 @@ async function planPayment(
     row,
     tok,
     title: `Pedido #${order.number} — ${tenant.name}`.slice(0, 200),
+    statement: tenant.name,
     buyer:
       row.kind === 'pix'
         ? await pixBuyer(tx, tenant.id, order, ctx.storeDomain, d.sessionSecret)
@@ -674,6 +695,7 @@ async function createAttempt(
         ...(buyer.name ? { payerName: buyer.name } : {}),
         ...(buyer.phone ? { payerPhone: buyer.phone } : {}),
         items: buyer.items,
+        statementDescriptor: plan.statement,
         externalReference: row.order_id,
         idempotencyKey,
         notificationUrl,
@@ -856,6 +878,8 @@ type CardPlan =
       row: PaymentRow;
       tok: StoreToken;
       title: string;
+      /** the store's name, for the card statement */
+      statement: string;
       firstName: string | null;
       /** an older Kernel's hosted checkout the form replaces — expired at MP, best effort */
       supersededCheckout: string | null;
@@ -972,6 +996,7 @@ async function planCard(
     row,
     tok,
     title: `Pedido #${order.number} — ${tenant.name}`.slice(0, 200),
+    statement: tenant.name,
     firstName: order.customer.name?.trim().split(/\s+/)[0]?.slice(0, 60) || null,
     supersededCheckout,
   });
@@ -1048,6 +1073,7 @@ async function createCardAttempt(
       notificationUrl: notificationUrlFor(ctx, tenantId),
       applicationFeeCents: row.application_fee_cents,
       deviceId: input.deviceId,
+      statementDescriptor: plan.statement,
     });
   } catch (err) {
     markConnectionLater(d, tenantId, err, tok);

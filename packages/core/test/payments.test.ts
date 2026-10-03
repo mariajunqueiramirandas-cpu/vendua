@@ -375,10 +375,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
         {
           id: productId,
           title: expect.stringMatching(/^2× /),
+          description: expect.any(String),
+          categoryId: 'others',
           quantity: 1,
           unitPriceCents: line!.line_total_cents,
         },
       ]);
+      expect(a.statementDescriptor).toBe(b.statementDescriptor);
+      expect(a.statementDescriptor).toEqual(expect.any(String));
     } finally {
       fake.createPix = createPix;
     }

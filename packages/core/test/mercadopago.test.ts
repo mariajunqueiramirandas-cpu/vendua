@@ -6,6 +6,7 @@ import {
   mpDate,
   mpPhone,
   splitName,
+  statementDescriptor,
   toCents,
   toReais,
 } from '../src/modules/payments/mercadopago.ts';
@@ -148,9 +149,17 @@ describe('mercado pago adapter', () => {
       payerName: '  Joana   da Silva ',
       payerPhone: '11987654321',
       items: [
-        { id: 'p-1', title: '2× Brigadeiro', quantity: 1, unitPriceCents: 1260 },
+        {
+          id: 'p-1',
+          title: '2× Brigadeiro',
+          description: 'Brigadeiro: granulado',
+          categoryId: 'others',
+          quantity: 1,
+          unitPriceCents: 1260,
+        },
         { id: 'p-2', title: 'Bolo de pote', quantity: 1, unitPriceCents: 12600 },
       ],
+      statementDescriptor: 'Doces da Praia',
       externalReference: PAYMENT.external_reference,
       idempotencyKey: 'order:1',
       notificationUrl: 'https://painel.x/admin/v1/hooks/mercadopago?t=abc',
@@ -168,7 +177,14 @@ describe('mercado pago adapter', () => {
       payer: { email: 'cliente.3f9a@vendua.com.br', first_name: 'Joana', last_name: 'da Silva' },
       additional_info: {
         items: [
-          { id: 'p-1', title: '2× Brigadeiro', quantity: 1, unit_price: 12.6 },
+          {
+            id: 'p-1',
+            title: '2× Brigadeiro',
+            description: 'Brigadeiro: granulado',
+            category_id: 'others',
+            quantity: 1,
+            unit_price: 12.6,
+          },
           { id: 'p-2', title: 'Bolo de pote', quantity: 1, unit_price: 126 },
         ],
         payer: {
@@ -177,6 +193,7 @@ describe('mercado pago adapter', () => {
           phone: { area_code: '11', number: '987654321' },
         },
       },
+      statement_descriptor: 'DOCESDAPRAIA',
       external_reference: PAYMENT.external_reference,
       notification_url: 'https://painel.x/admin/v1/hooks/mercadopago?t=abc',
       date_of_expiration: '2026-09-30T12:30:00.000-03:00',
@@ -221,6 +238,14 @@ describe('mercado pago adapter', () => {
         identification: { type, number: doc },
       });
     }
+  });
+
+  test("the statement descriptor: only what fits every reading of MP's format", () => {
+    expect(statementDescriptor('Venduá')).toBe('VENDUA');
+    expect(statementDescriptor('Açaí & Cia — São João')).toBe('ACAICIASAOJOA');
+    expect(statementDescriptor('Pão 24h')).toBe('PAO24H');
+    expect(statementDescriptor('—')).toBeNull();
+    expect(statementDescriptor(undefined)).toBeNull();
   });
 
   test('payer name and phone in the shape MP wants', () => {
@@ -351,6 +376,7 @@ describe('mercado pago adapter', () => {
       notificationUrl: 'https://painel.x/hook',
       applicationFeeCents: 50,
       deviceId: 'dev-123',
+      statementDescriptor: 'Doces da Praia',
     });
     expect(out).toMatchObject({
       id: '777',
@@ -378,6 +404,7 @@ describe('mercado pago adapter', () => {
       },
       external_reference: 'order-1',
       metadata: { vendua_attempt: 2 },
+      statement_descriptor: 'DOCESDAPRAIA',
       notification_url: 'https://painel.x/hook',
       application_fee: 0.5,
       capture: true,

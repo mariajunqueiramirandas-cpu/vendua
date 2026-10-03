@@ -237,7 +237,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       payerEmail: 'bia@example.com',
       payerName: 'Bia Dona',
       payerPhone: s.phone,
-      items: [{ id: 'mirim', title: 'Venduá Mirim', quantity: 1, unitPriceCents: 6990 }],
+      items: [
+        {
+          id: 'mirim',
+          title: 'Venduá Mirim',
+          description: expect.stringMatching(/^Venduá Mirim — fatura \d+$/),
+          categoryId: 'services',
+          quantity: 1,
+          unitPriceCents: 6990,
+        },
+      ],
+      statementDescriptor: 'Venduá',
     });
   });
 
