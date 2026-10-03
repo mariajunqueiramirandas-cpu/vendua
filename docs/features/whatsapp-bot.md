@@ -1,6 +1,11 @@
 # WhatsApp ordering bot (P-017)
 
 > Status: Tracked, not planned · Started 2026-10-01 · Gap: [P-017](../competitor-parity.md) (related: P-018 broadcasts, P-001 abandoned cart)
+>
+> **Design proposed (2026-10-02):** [`merchant-sales-agent.md`](merchant-sales-agent.md) and
+> [ADR 0030](../adr/0030-merchant-sales-agent.md) answer the open decisions below (full in-chat
+> ordering on the merchant's own number, `orders.source`) and leave cost to the user. This file
+> stays as the market and platform-constraints record.
 
 A bot on the **merchant's** WhatsApp that takes shopper orders in chat. Not the
 sales agent that talks to leads (`agent/channels/whatsapp.ts`); that one is a
@@ -124,3 +129,4 @@ coexistence docs, omnichat unofficial-API article, Yahoo Tech news item.
 ## Change log
 
 - 2026-10-01: first pass.
+- 2026-10-02: linked the proposed design ([ADR 0030](../adr/0030-merchant-sales-agent.md)).
