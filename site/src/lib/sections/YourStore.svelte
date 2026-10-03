@@ -34,22 +34,26 @@
     'Pix na sua conta do Mercado Pago',
     'Cardápio, estoque e encomendas',
     'Entrega e retirada',
-    'Cupons, fidelidade e lista de espera',
+    'Cupons e lista de espera',
     'Relatórios',
     'Equipe',
   ];
 
-  // what each plan adds, in the user's words (never more)
-  const tiers = [
-    {
-      plan: plans.basic,
-      text: 'Loja em seunome.vendua.com.br, com o visual padrão da Venduá. Sem domínio próprio e sem site personalizado.',
-    },
-    {
-      plan: plans.pro_plus,
-      text: 'Domínio próprio e um site feito pelo nosso agente de IA.',
-    },
-  ];
+  const { mirim, bandeira, pangolin } = plans;
+  // what each plan adds over the one before it, in the owner's words (never more)
+  const adds = {
+    bandeira: [
+      'Tela da cozinha',
+      'Impressão automática da comanda',
+      'Cartão fidelidade',
+      `Vendedor: uma IA que atende os seus clientes no WhatsApp da loja, com ${bandeira.conversations} conversas por mês (${bandeira.trialConversations} durante o teste)`,
+    ],
+    pangolin: [
+      'Domínio próprio',
+      'Um site feito pelo nosso agente de IA',
+      `Vendedor com ${pangolin.conversations} conversas por mês`,
+    ],
+  };
 </script>
 
 <Section
@@ -141,7 +145,7 @@
             tem endereço próprio:
           </p>
           <p class="addr tnum"><span aria-hidden="true" class="lock"></span>{address}</p>
-          <p class="aside">ou o seu próprio domínio, no plano PRO+.</p>
+          <p class="aside">ou o seu próprio domínio, no {pangolin.name}.</p>
         </div>
       </div>
     </div>
@@ -156,8 +160,8 @@
         a Venduá não cobra nada por pedido.
       </p>
       <p class="pay">
-        Pix todo mês ou cartão, pelo Mercado Pago. No {plans.basic.short}, você começa com {plans
-          .basic.trial} e só paga depois.
+        Pix todo mês ou cartão, pelo Mercado Pago. No {bandeira.short}, você começa com {bandeira.trial}
+        e só paga depois.
       </p>
     </div>
 
@@ -166,33 +170,13 @@
       <div class="paper">
         <div class="receipt">
           <p class="brand">venduá</p>
-          <h4 class="rt">O que vem na sua loja</h4>
+          <h4 class="rt">O que vem em todo plano</h4>
           <ul role="list">
             {#each receipt as item (item)}
               <li>
                 <span class="item">{item}</span>
                 <i aria-hidden="true"></i>
                 <em>incluso</em>
-              </li>
-            {/each}
-          </ul>
-
-          <h4 class="choose">Escolha o plano</h4>
-          <ul class="tiers" role="list">
-            {#each tiers as t (t.plan.id)}
-              <li class="tier">
-                <p class="total">
-                  <span>{t.plan.name}</span>
-                  <i aria-hidden="true"></i>
-                  <strong class="tnum">{t.plan.price}<small>/mês</small></strong>
-                </p>
-                {#if t.plan.trial}
-                  <p class="trial">{t.plan.trial}, sem cartão</p>
-                {/if}
-                <p class="what">{t.text}</p>
-                <a class="take" href={signup(t.plan.id)}
-                  >Criar loja no {t.plan.short}<i class="go" aria-hidden="true"></i></a
-                >
               </li>
             {/each}
           </ul>
@@ -205,6 +189,53 @@
           <p class="fine">O Mercado Pago fica com a tarifa dele em cada pagamento.</p>
         </div>
       </div>
+    </div>
+
+    <div class="plans">
+      <h4 class="plans-t t-title-1">Escolha o plano</h4>
+      <ul class="plan-list" role="list">
+        <li class="plan mirim">
+          <h5 class="name">{mirim.name}</h5>
+          <p class="cost tnum">{mirim.price}<small>/mês</small></p>
+          <p class="what">
+            A loja em seunome.vendua.com.br, com o visual padrão da Venduá e tudo o que está no
+            recibo.
+          </p>
+          <p class="lacks">
+            Não inclui a tela da cozinha, a impressão automática, o cartão fidelidade nem o
+            Vendedor.
+          </p>
+          <a class="take" href={signup(mirim.id)}
+            >Criar loja no {mirim.short}<i class="go" aria-hidden="true"></i></a
+          >
+        </li>
+
+        <li class="plan bandeira">
+          <p class="rec">Recomendado</p>
+          <h5 class="name">{bandeira.name}</h5>
+          <p class="cost tnum"><strong>{bandeira.price}<small>/mês</small></strong></p>
+          <p class="trial">{bandeira.trial}, sem cartão</p>
+          <p class="more">Tudo do {mirim.short}, e mais:</p>
+          <ul class="adds" role="list">
+            {#each adds.bandeira as item (item)}<li>{item}</li>{/each}
+          </ul>
+          <a class="take main" href={signup(bandeira.id)}
+            >Criar loja no {bandeira.short}<i class="go" aria-hidden="true"></i></a
+          >
+        </li>
+
+        <li class="plan pangolin">
+          <h5 class="name">{pangolin.name}</h5>
+          <p class="cost tnum">{pangolin.price}<small>/mês</small></p>
+          <p class="more">Tudo do {bandeira.short}, e mais:</p>
+          <ul class="adds" role="list">
+            {#each adds.pangolin as item (item)}<li>{item}</li>{/each}
+          </ul>
+          <a class="take" href={signup(pangolin.id)}
+            >Criar loja no {pangolin.short}<i class="go" aria-hidden="true"></i></a
+          >
+        </li>
+      </ul>
     </div>
   </div>
 </Section>
@@ -467,10 +498,6 @@
       font-size: 0.875rem !important;
     }
   }
-  .total span {
-    white-space: nowrap;
-  }
-
   /* the drop shadow sits on the wrapper so the torn edge casts it too */
   .paper {
     filter: drop-shadow(0 2px 2px rgb(18 60 50 / 0.08))
@@ -514,7 +541,6 @@
     padding: 0;
   }
   .receipt li,
-  .total,
   .fee {
     display: flex;
     align-items: last baseline;
@@ -534,71 +560,6 @@
     font: 600 0.8125rem/1 var(--font-display);
     font-style: normal;
     color: var(--success);
-  }
-  .choose {
-    margin-top: 18px;
-    padding-top: 16px;
-    border-top: 2px dashed var(--line-strong);
-    text-align: center;
-    font: 500 0.8125rem/1.3 var(--font-sans);
-    color: var(--ink-muted);
-  }
-  .receipt .tiers {
-    gap: 0;
-    margin-top: 4px;
-  }
-  .receipt .tier {
-    display: grid;
-    gap: 6px;
-    padding-block: 14px 12px;
-  }
-  .tier + .tier {
-    border-top: 1px dotted var(--line-strong);
-  }
-  .total {
-    font: 700 1.0625rem/1.2 var(--font-display);
-  }
-  .total strong {
-    flex: none;
-    padding: 5px 10px;
-    border-radius: 6px;
-    background: var(--spark);
-    color: var(--on-spark);
-    font-weight: 700;
-  }
-  .total small {
-    font-size: 0.8125rem;
-    font-weight: 600;
-  }
-  .trial {
-    justify-self: end;
-    margin-top: -2px;
-    font: 600 0.8125rem/1.2 var(--font-display);
-    color: var(--success);
-  }
-  .what {
-    max-width: 38ch;
-    color: var(--ink-muted);
-    font-size: 0.875rem;
-    line-height: 1.45;
-  }
-  .take {
-    justify-self: start;
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 44px;
-    margin-top: 2px;
-    padding: 0 14px;
-    border-radius: var(--radius-md);
-    box-shadow: inset 0 0 0 1.5px var(--ink);
-    color: var(--ink);
-    font: 600 0.9375rem/1 var(--font-sans);
-    text-decoration: none;
-    transition: background var(--duration-quick) var(--ease-soft);
-  }
-  .take:hover {
-    background: var(--spark-soft);
   }
   .go {
     position: relative;
@@ -621,9 +582,6 @@
     border-radius: 1px;
     rotate: 45deg;
   }
-  .take:hover .go {
-    translate: 3px 0;
-  }
   .fee {
     margin-top: 6px;
     padding-top: 14px;
@@ -637,6 +595,209 @@
     color: var(--ink-muted);
     font-size: 0.8125rem;
     line-height: 1.4;
+  }
+
+  /* ── the plans: Mirim plain, Bandeira raised in the middle, Pangolin on the night sky ── */
+  .plans {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 20px;
+    min-width: 0;
+  }
+  .plan-list {
+    list-style: none;
+    display: grid;
+    gap: 16px;
+    width: min(100%, 520px);
+    justify-self: center;
+    margin: 0;
+    padding: 0;
+  }
+  @media (min-width: 1024px) {
+    .plans {
+      margin-top: 8px;
+    }
+    .plan-list {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr);
+      align-items: start;
+      gap: 0;
+      width: 100%;
+    }
+  }
+  .plan {
+    position: relative;
+    display: grid;
+    justify-items: start;
+    align-content: start;
+    gap: 8px;
+    min-width: 0;
+    padding: 24px 22px;
+  }
+  .name {
+    margin: 0;
+    font: 600 1.0625rem/1.3 var(--font-display);
+    letter-spacing: -0.01em;
+  }
+  .cost {
+    font: 700 1.625rem/1.1 var(--font-display);
+    letter-spacing: -0.02em;
+  }
+  .cost small {
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  .what,
+  .lacks,
+  .more {
+    max-width: 38ch;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+  }
+  .lacks {
+    color: var(--ink-muted);
+  }
+  .more {
+    margin-top: 4px;
+    font-weight: 600;
+  }
+  .adds {
+    list-style: none;
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+  }
+  .adds li {
+    position: relative;
+    padding-left: 24px;
+  }
+  /* a drawn tick, the same stroke as the arrows */
+  .adds li::before {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 0.32em;
+    width: 6px;
+    height: 11px;
+    border: solid var(--tick, var(--success));
+    border-width: 0 2px 2px 0;
+    border-radius: 1px;
+    rotate: 40deg;
+  }
+  .take {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    margin-top: 10px;
+    padding: 0 16px;
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1.5px currentColor;
+    color: inherit;
+    font: 600 0.9375rem/1 var(--font-sans);
+    text-decoration: none;
+    transition: background var(--duration-quick) var(--ease-soft);
+  }
+  .take:hover {
+    background: var(--hover);
+  }
+  .take:hover .go {
+    translate: 3px 0;
+  }
+
+  /* Mirim: no card, just the facts on the panel */
+  .mirim {
+    padding-inline: 0;
+    border-top: 2px dashed var(--line-strong);
+  }
+  @media (min-width: 1024px) {
+    .mirim {
+      margin-top: 40px;
+      padding: 24px 40px 8px 0;
+    }
+  }
+
+  /* Bandeira: the one to pick */
+  .bandeira {
+    gap: 10px;
+    padding: 34px 24px 26px;
+    border-radius: var(--radius-xl);
+    background: var(--surface-raised);
+    box-shadow:
+      0 0 0 2px var(--primary),
+      var(--shadow-e3);
+    z-index: 1;
+  }
+  @media (min-width: 1024px) {
+    .bandeira {
+      margin-bottom: -28px;
+      padding: 44px 36px 36px;
+    }
+  }
+  .rec {
+    position: absolute;
+    top: -14px;
+    left: 20px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--spark);
+    color: var(--on-spark);
+    font: 700 0.875rem/1 var(--font-display);
+    rotate: -2deg;
+    box-shadow: var(--shadow-e1);
+  }
+  .bandeira .name {
+    font-size: 1.25rem;
+  }
+  .bandeira .cost strong {
+    display: inline-block;
+    padding: 6px 12px 7px;
+    border-radius: 10px;
+    background: var(--spark);
+    color: var(--on-spark);
+    font-size: clamp(2.25rem, 6vw, 2.75rem);
+  }
+  .bandeira .cost small {
+    font-size: 1rem;
+  }
+  .trial {
+    font: 600 0.9375rem/1.2 var(--font-display);
+    color: var(--success);
+  }
+  .take.main {
+    align-self: end;
+    justify-content: center;
+    width: 100%;
+    min-height: 52px;
+    margin-top: 14px;
+    background: var(--primary);
+    color: var(--on-primary);
+    box-shadow: var(--shadow-e1);
+    font-size: 1rem;
+  }
+  .take.main:hover {
+    background: var(--primary-hover);
+  }
+
+  /* Pangolin: the top of the line, under the night sky in both themes */
+  .pangolin {
+    --tick: var(--spark);
+    border-radius: var(--radius-lg);
+    background: var(--sky-5);
+    color: var(--after-ink);
+    box-shadow: 0 0 0 1px var(--after-line);
+  }
+  .pangolin .take:hover {
+    background: var(--after-card);
+  }
+  @media (min-width: 1024px) {
+    .pangolin {
+      margin: 40px 0 0 20px;
+      padding: 28px 26px;
+    }
   }
 
   @media (prefers-color-scheme: dark) {

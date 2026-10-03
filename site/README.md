@@ -18,18 +18,29 @@ Other pages: `/privacidade/` and the 404.
 ## Launch decisions the copy encodes
 
 - Sign-up is open. The only call to action is `<Start/>` ("Criar minha loja"), a plain link to
-  `<PUBLIC_ADMIN_URL>/admin/comecar` (works without JS): in the header, and in the closing. Not in
-  the hero, where it would sit right under the header's. The price block links each plan to the same
-  page with `?plano=basic` or `?plano=pro_plus`. No form, contact or WhatsApp CTA on the site;
-  Instagram only in the footer (and at most one line near the closing CTA).
-- Prices are the user's decision, shown exactly: **Venduá Basic, R$ 39,90/mês** (store at
-  `seunome.vendua.com.br`, the standard Venduá look, no own domain, no custom site) and **Venduá
-  PRO+, R$ 99/mês** (own domain + a site made by our AI agent). The plan is paid by Pix every month
-  or by recurring card, through Mercado Pago. Venduá takes no per-order fee, but Mercado Pago keeps
-  its own on each payment, so never "sem taxas".
-- Venduá Basic starts with a **14-day free trial, no card** (the user's decision, 2026-10-02); PRO+
-  pays the first month. "14 dias grátis" is the only "grátis" the site says: no other free offer, no
-  discount, and no date for the custom site. Plan names, prices and the trial live in `plans` in
+  `<PUBLIC_ADMIN_URL>/admin/comecar?plano=bandeira` (works without JS): in the header, and in the
+  closing. Not in the hero, where it would sit right under the header's. The price block links each
+  plan to the same page with `?plano=mirim`, `?plano=bandeira` or `?plano=pangolin`. No form, contact
+  or WhatsApp CTA on the site; Instagram only in the footer (and at most one line near the closing
+  CTA).
+- Three plans, the owner's decision (2026-10-03), shown exactly and cheapest first, with Bandeira in
+  the middle as the recommended one ("Recomendado", raised, the section's main button, and the plan
+  `<Start/>` preselects):
+  - **Venduá Mirim, R$ 69,90/mês**: the store at `seunome.vendua.com.br`, the standard Venduá look,
+    and everything on the receipt (menu, orders, Pix, coupons...). Copy says plainly what it leaves
+    out: the kitchen screen, automatic printing, the loyalty card and the Vendedor.
+  - **Venduá Bandeira, R$ 169/mês**: everything in Mirim plus the kitchen screen (KDS), automatic
+    printing of the comanda, the loyalty card and the **Vendedor** (an AI that answers the store's
+    customers on its WhatsApp), with 250 conversations a month (50 during the trial).
+  - **Venduá Pangolin, R$ 449/mês**: everything in Bandeira plus own domain, a site made by our AI
+    agent, and 1.000 Vendedor conversations a month.
+  - A conversation is one customer talking to the Vendedor, counted once every 24 hours (FAQ).
+  - The plan is paid by Pix every month or by recurring card, through Mercado Pago. Venduá takes no
+    per-order fee on any plan, but Mercado Pago keeps its own on each payment, so never "sem taxas".
+- Bandeira starts with a **14-day free trial, no card**; Mirim and Pangolin pay the first month.
+  "14 dias grátis" is the only "grátis" the site says: no other free offer, no discount, no price
+  beyond the three plans (the +100-conversation pack is sold in the admin, not quoted here), and no
+  date for the custom site. Plan names, prices, conversations and the trial live in `plans` in
   `src/lib/content.ts`.
 - Every planned feature (`docs/merchant-admin.md` scope) is presented as available at launch.
   Nothing beyond that list.
