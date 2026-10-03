@@ -376,6 +376,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     }
   });
 
+  test('a welcome that fails to send is tried again on the next try', async () => {
+    let fail = true;
+    const sent: string[] = [];
+    const flaky = createApp({
+      ...deps,
+      notify: {
+        ...deps.notify,
+        email: async (_to: string, _s: string, _t: string, key: string) => {
+          if (fail) throw new Error('provider down');
+          sent.push(key);
+        },
+      },
+    });
+    const token = (await verified(mkPhone(13), flaky)).signupToken;
+    const slug = `signup-${nonce}-flaky`;
+    const r = await signup(token, slug, {}, flaky);
+    expect(r.status).toBe(201);
+    const marker = () =>
+      sql`select 1 from push_deliveries where tenant_id = ${r.body.store.id} and key = 'signup.welcome'`;
+    // the send runs after the answer: wait for it to settle
+    const until = async (ok: () => Promise<boolean> | boolean) => {
+      for (let i = 0; i < 50 && !(await ok()); i++) await Bun.sleep(20);
+    };
+    await until(async () => (await marker()).length === 0);
+    expect((await marker()).length).toBe(0);
+    fail = false;
+    expect((await signup(token, slug, {}, flaky)).status).toBe(201);
+    await until(() => sent.length === 1);
+    expect(sent).toEqual([`signup-welcome:${slug}`]);
+    expect((await marker()).length).toBe(1);
+  });
+
   test('a plan that is listed but closed is refused before anything is created', async () => {
     const other = createApp(deps);
     const token = (await verified(mkPhone(11), other)).signupToken;

@@ -669,10 +669,12 @@ export async function buyAiPack(
     throw new HttpError(422, 'UNKNOWN_AI_PACK', 'pick one of the packs offered', {
       field: 'packId',
     });
-  if (
-    (seen?.priceCents !== undefined && seen.priceCents !== pack.price_cents) ||
-    (seen?.conversations !== undefined && seen.conversations !== pack.conversations)
-  )
+  // both terms are required: a client that sends only the id (an old admin) can't buy blind
+  if (seen?.priceCents === undefined || seen.conversations === undefined)
+    throw new HttpError(422, 'BAD_REQUEST', 'send the priceCents and conversations shown', {
+      field: 'priceCents',
+    });
+  if (seen.priceCents !== pack.price_cents || seen.conversations !== pack.conversations)
     throw new HttpError(409, 'AI_PACK_CHANGED', 'the pack changed since it was shown', {
       field: 'packId',
     });

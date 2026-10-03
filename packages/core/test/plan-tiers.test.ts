@@ -1016,6 +1016,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
   });
 
   describe('AI packs', () => {
+    /** a purchase as the admin sends it: the pack and the terms it shows (read from the catalog) */
+    const packBody = async (packId: string) => {
+      const p = (
+        await sql`select price_cents, conversations from ai_packs where id = ${packId}`
+      )[0]!;
+      return {
+        packId,
+        priceCents: p.price_cents as number,
+        conversations: p.conversations as number,
+      };
+    };
     const payInvoice = (id: string) => call('POST', `/admin/v1/dev/billing/invoices/${id}/pay`, {});
     const hook = (id: string) =>
       handleBillingWebhook({ sql: appSql, provider: fake, notify } as never, {
@@ -1054,6 +1065,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       ).toBe('UNKNOWN_AI_PACK');
 
       // the terms the owner saw go along: a pack repriced meanwhile is refused, not charged
+      // an old admin that sends only the id can't buy blind
+      const blind = await s.owner('POST', '/account/ai-packs', { packId: 'ai_100' });
+      expect(blind.status).toBe(422);
+      expect(blind.body.error.details).toMatchObject({ field: 'priceCents' });
       const stale = await s.owner('POST', '/account/ai-packs', {
         packId: 'ai_100',
         priceCents: 2990,
@@ -1076,7 +1091,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
         method: 'pix',
       });
       expect(inv.pix.copyPaste).toContain('FAKEPIX');
-      const again = await s.owner('POST', '/account/ai-packs', { packId: 'ai_100' });
+      const again = await s.owner('POST', '/account/ai-packs', await packBody('ai_100'));
       expect(again.body.invoiceId).toBe(buy.body.invoiceId);
       const open =
         await sql`select id, provider_payment_id from invoices where tenant_id = ${s.id} and kind = 'ai_pack'`;
@@ -1108,7 +1123,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       expect((await s.owner('GET', '/account')).body.ai.packRemaining).toBe(100);
 
       // the next pack is a new invoice
-      const next = await s.owner('POST', '/account/ai-packs', { packId: 'ai_100' });
+      const next = await s.owner('POST', '/account/ai-packs', await packBody('ai_100'));
       expect(next.status).toBe(200);
       expect(next.body.invoiceId).not.toBe(buy.body.invoiceId);
     });
@@ -1155,7 +1170,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       await payInvoice(st.body.invoices[0].id);
       await sql`update ai_packs set public = true where id = ${tempPack}`;
       try {
-        const buy = await s.owner('POST', '/account/ai-packs', { packId: tempPack });
+        const buy = await s.owner('POST', '/account/ai-packs', await packBody(tempPack));
         expect(buy.status).toBe(200);
         const first = buy.body.invoiceId as string;
         // the team changes the pack while the Pix is open
@@ -1170,9 +1185,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
         expect((await s.owner('GET', '/account')).body.ai.packRemaining).toBe(10);
 
         // an open pack invoice is reused only while it still matches the pack
-        const b2 = await s.owner('POST', '/account/ai-packs', { packId: tempPack });
+        const b2 = await s.owner('POST', '/account/ai-packs', await packBody(tempPack));
         await control('PATCH', `/control/v1/ai-packs/${tempPack}`, { conversations: 30 });
-        const b3 = await s.owner('POST', '/account/ai-packs', { packId: tempPack });
+        const b3 = await s.owner('POST', '/account/ai-packs', await packBody(tempPack));
         expect(b3.body.invoiceId).not.toBe(b2.body.invoiceId);
         const rows = await sql`
           select id, status, ai_conversations from invoices
@@ -1192,7 +1207,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
 
     test('a pack paid after the plan lost Duá is not credited: the team refunds it', async () => {
       const s = await store('pack-lost', 'bandeira', 'active');
-      const buy = await s.owner('POST', '/account/ai-packs', { packId: 'ai_100' });
+      const buy = await s.owner('POST', '/account/ai-packs', await packBody('ai_100'));
       expect(buy.status).toBe(200);
       await sql`update tenants set plan = 'mirim' where id = ${s.id}`;
       expect((await payInvoice(buy.body.invoiceId)).status).toBe(200);
@@ -1208,12 +1223,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
 
     test('a trial or a plan without the Vendedor can not buy one', async () => {
       const trial = await store('pack-trial', 'bandeira', 'trialing');
-      const t = await trial.owner('POST', '/account/ai-packs', { packId: 'ai_100' });
+      const t = await trial.owner('POST', '/account/ai-packs', await packBody('ai_100'));
       expect(t.status).toBe(409);
       expect(t.body.error.code).toBe('AI_PACK_NEEDS_PAID_PLAN');
 
       const mirim = await store('pack-mirim', 'mirim', 'active');
-      const m = await mirim.owner('POST', '/account/ai-packs', { packId: 'ai_100' });
+      const m = await mirim.owner('POST', '/account/ai-packs', await packBody('ai_100'));
       expect(m.status).toBe(403);
       expect(m.body.error).toMatchObject({
         code: 'PLAN_REQUIRED',
@@ -1222,7 +1237,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       // a pilot store has the Vendedor but no paid plan to add a pack to
       const pilot = await store('pack-spike', 'spike');
       await sql`update store_settings set billing_hold = false where tenant_id = ${pilot.id}`;
-      const sp = await pilot.owner('POST', '/account/ai-packs', { packId: 'ai_100' });
+      const sp = await pilot.owner('POST', '/account/ai-packs', await packBody('ai_100'));
       expect(sp.status).toBe(409);
       expect(sp.body.error.code).toBe('AI_PACK_NEEDS_PAID_PLAN');
       expect(

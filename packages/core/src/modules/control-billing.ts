@@ -243,6 +243,9 @@ export function mountControlBilling(o: {
       });
     const features = optFeatures(body.features);
     const res = await claimControl(sql, idemKey(c), async (tx) => {
+      // a signup creating a store on this plan holds this lock shared: closing waits for it
+      if (body.available !== undefined)
+        await tx`select pg_advisory_xact_lock(hashtextextended(${`plan-available:${id}`}, 0))`;
       // at most one plan leads: recommending this one takes it off the other (one at a time, so
       // two staff picking different plans can't trip the unique index)
       if (body.recommended === true) {

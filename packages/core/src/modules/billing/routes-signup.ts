@@ -191,6 +191,17 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
           )[0]!.n;
           if (recent >= STORES_PER_PHONE_PER_DAY)
             throw new HttpError(429, 'SIGNUP_LIMIT', 'this phone opened too many stores today');
+          // the plan still open now: staff closing it in the CRM waits on this lock (and the
+          // other way round), so a store is never made on a plan closed a moment ago
+          await tx`select pg_advisory_xact_lock_shared(hashtextextended(${`plan-available:${plan.id}`}, 0))`;
+          const fresh = (
+            await tx<{ available: boolean }[]>`select available from plans where id = ${plan.id}`
+          )[0];
+          if (!fresh)
+            throw new HttpError(422, 'UNKNOWN_PLAN', 'pick one of the plans offered', {
+              field: 'planId',
+            });
+          openOr409({ ...plan, available: fresh.available });
           const tenantId = (
             await tx<{ id: string }[]>`
               select provision_store(${slug}, ${storeName}, ${plan.id}, ${platformHost(slug, d.storeDomain)},
@@ -281,7 +292,16 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
         storeUrl: welcome,
         planName: plan.name,
         next,
-      }).catch((err) => signupLog.warn({ err, tenantId: store.tenant_id }, 'welcome email failed'));
+      }).catch(async (err) => {
+        signupLog.warn({ err, tenantId: store.tenant_id }, 'welcome email failed');
+        // not sent: the marker goes, so the owner's next try (a replay) sends it
+        await withTenant(
+          sql,
+          store.tenant_id,
+          (tx) =>
+            tx`delete from push_deliveries where tenant_id = ${store.tenant_id} and key = 'signup.welcome'`,
+        ).catch(() => undefined);
+      });
     setAdminCookie(
       c,
       await createSession(sql, owned, c.req.header('user-agent'), {
