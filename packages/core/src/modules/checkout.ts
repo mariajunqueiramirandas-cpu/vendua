@@ -29,7 +29,8 @@ export interface CheckoutInput {
     lng?: number;
   };
   /** card_online: Mercado Pago's hosted checkout — offered only while the store is connected */
-  payment: { method: PaymentMethod };
+  /** changeForCents: cash only — the note the shopper will pay with (≥ the total) */
+  payment: { method: PaymentMethod; changeForCents?: number | null };
   /** "Alguma observação?" */
   notes?: string;
   /** encomenda date, YYYY-MM-DD in the store's timezone */
@@ -271,6 +272,11 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
       },
     );
   }
+  const change = i.payment.changeForCents;
+  if (change !== undefined && change !== null && !Number.isInteger(change))
+    throw new HttpError(422, 'INVALID_CHANGE', 'payment.changeForCents must be an integer', {
+      field: 'payment.changeForCents',
+    });
   optional(i.notes, 500, 'notes', 'INVALID_NOTES');
   if (
     i.scheduledFor !== undefined &&

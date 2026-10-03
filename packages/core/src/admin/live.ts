@@ -30,7 +30,11 @@ export type AdminTopic =
   // print agents and their printers: paired, online, a job printed or failed
   | 'printers'
   // the kitchen display: lines marked done, a rush flag, the stations (id = order id | 'stations')
-  | 'kitchen';
+  | 'kitchen'
+  // the Vendedor: a conversation moved (id = thread id), its settings or knowledge (id = 'settings' | 'knowledge')
+  | 'vendedor'
+  // a shopper is waiting for the store in a Vendedor conversation (id = thread id): may push (law 13)
+  | 'vendedor.waiting';
 
 const liveLog = log.child({ mod: 'admin-live' });
 

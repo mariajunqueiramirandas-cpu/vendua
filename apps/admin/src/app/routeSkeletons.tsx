@@ -126,6 +126,39 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
   account: () => page('Conta e plano', <PlanCardSkeleton />, { subtitle: false }),
   profile: () => page('Meu perfil', <SectionsSkeleton />, { subtitle: false }),
   help: () => page('Ajuda', <RowsSkeleton rows={5} avatar={false} trailing={false} />),
+  vendedorHome: () =>
+    page(
+      'Vendedor',
+      <div className="space-y-4">
+        <StatTilesSkeleton count={3} />
+        <RowsSkeleton rows={3} />
+      </div>,
+    ),
+  // a journey without the shell's bars, like /bem-vindo
+  vendedorTrain: () => page('Treinar', <SectionsSkeleton />, { subtitle: false }),
+  vendedorConversations: () =>
+    page(
+      'Conversas',
+      <div className="space-y-4">
+        <ChipsSkeleton count={4} />
+        <RowsSkeleton rows={7} />
+      </div>,
+      { wide: true, subtitle: false },
+    ),
+  vendedorConversation: () => page('Conversa', <DetailSkeleton />, { subtitle: false }),
+  vendedorTeach: () =>
+    page(
+      'Ensinar',
+      <div className="space-y-4">
+        <FieldSkeleton />
+        <RowsSkeleton rows={5} avatar={false} />
+      </div>,
+    ),
+  vendedorEnsaio: () => page('Ensaio', <SectionsSkeleton />),
+  vendedorClienteOculto: () => page('Cliente oculto', <SectionsSkeleton />),
+  vendedorResults: () => page('Resultados', <ReportsSkeleton />),
+  vendedorSettings: () => page('Configurar', <SectionsSkeleton />),
+  vendedorTest: () => page('Testar como cliente', <DetailSkeleton />, { subtitle: false }),
 };
 
 export default function RouteSkeleton({ pathname }: { pathname: string }) {

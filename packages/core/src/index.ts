@@ -7,6 +7,10 @@ import { join } from 'node:path';
 import { ingestInbound } from './agent/inbound.ts';
 import { startScheduler, stopScheduler } from './agent/scheduler.ts';
 import { startAgentRuntime } from './agent-host/scheduler.ts';
+import { hostGateway } from './agent-host/models.ts';
+import { configureVendedor } from './vendedor/deps.ts';
+import { mediaProviders } from './vendedor/media.ts';
+import { startVendedorWorker } from './vendedor/worker.ts';
 import {
   ensureSocket,
   onHistoryMessage,
@@ -121,8 +125,22 @@ setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
 // Scheduler (work loop + job loop over the durable pg queue, woken by LISTEN/NOTIFY) +
 // WhatsApp socket when the baileys driver is enabled.
 startScheduler(sql);
-// Agent Runtime v3 (ADR 0030): idle until an agent is registered in agent-host/agents
-const agentRuntime = startAgentRuntime(sql);
+// Agent Runtime v3 (ADR 0030) with the Vendedor (ADR 0031): its tools reach checkout and
+// payments through these deps; its worker ingests the stores' conversations
+configureVendedor({
+  sql,
+  provider: paymentProvider,
+  sessionSecret,
+  storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+  publicOrigin: adminOrigin,
+});
+const agentGateway = hostGateway(sql);
+configureVendedor({ gateway: agentGateway });
+const agentRuntime = startAgentRuntime(sql, { gateway: agentGateway });
+const stopVendedor = startVendedorWorker(sql, {
+  gateway: agentGateway,
+  media: mediaProviders(sql),
+});
 onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
   await ingestInbound(sql, {
     channel: 'whatsapp',
@@ -192,7 +210,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
       server.stop(),
       new Promise((r) => setTimeout(r, 5_000)).then(() => server.stop(true)),
     ]);
-    void Promise.all([drained, stopScheduler(), agentRuntime.stop()])
+    void Promise.all([drained, stopScheduler(), agentRuntime.stop(), stopVendedor()])
       .then(() => sql.end({ timeout: 5 }))
       .finally(() => process.exit(0));
   });

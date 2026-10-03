@@ -45,6 +45,8 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
   PAYMENT_NOT_REQUIRED: { title: 'Esse pedido não precisa de pagamento online' },
   PAYMENT_ONLINE: { title: 'Esse pagamento é confirmado pelo Mercado Pago' },
   PAYMENT_NOT_ALLOWED: { title: 'Encomendas aceitam outra forma de pagamento' },
+  // Kernel 1.17 — the checkout shows `changeMessage` at the change field
+  INVALID_CHANGE: { title: 'Confira o valor do troco' },
   // coupons — the one table (`couponMessage`, `COUPON_REASON` read it)
   COUPON_NOT_FOUND: { title: 'Cupom não encontrado' },
   INVALID_COUPON: { title: 'Cupom inválido' },
@@ -62,6 +64,11 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
   },
   CEP_NOT_FOUND: { title: 'CEP não encontrado', body: 'Preencha o endereço à mão.' },
   CEP_UNAVAILABLE: { title: 'Busca de CEP indisponível', body: 'Preencha o endereço à mão.' },
+  // Kernel 1.18 — the storefront chat
+  CHAT_UNAVAILABLE: {
+    title: 'O chat da loja está desligado agora',
+    body: 'Você ainda pode fazer o pedido pelo site.',
+  },
 };
 
 const FALLBACK = { title: 'Não foi possível concluir', body: 'Tente novamente em instantes.' };
@@ -103,4 +110,27 @@ export function couponMessage(
   if (code === 'COUPON_MIN_SUBTOTAL' && typeof remaining === 'number' && remaining > 0)
     return `Faltam ${formatCents(remaining, currency)} para usar este cupom.`;
   return ERROR_COPY[code]?.title ?? 'Este cupom não vale agora.';
+}
+
+/** Kernel 1.17 — why Core refused the cash change (`INVALID_CHANGE`): the least it takes
+ *  (`details.minCents`, the total) or, Kernel 1.18, the most (`details.maxCents`, Core's cap)
+ *  when the amount the shopper typed (`changeForCents`) is above it. Core sends both bounds and
+ *  not the amount, so without `changeForCents` both are named. */
+export function changeMessage(
+  details?: Record<string, unknown> | null,
+  currency = 'BRL',
+  changeForCents?: number | null,
+): string {
+  const bound = (v: unknown) => (typeof v === 'number' && v > 0 ? v : null);
+  const min = bound(details?.minCents);
+  const max = bound(details?.maxCents);
+  const atLeast = min
+    ? `O troco precisa ser para um valor igual ou maior que o total, ${formatCents(min, currency)}.`
+    : 'O troco precisa ser para um valor igual ou maior que o total.';
+  if (!max) return atLeast;
+  const upTo = `O troco pode ser para até ${formatCents(max, currency)}.`;
+  if (typeof changeForCents === 'number') return changeForCents > max ? upTo : atLeast;
+  return min
+    ? `O troco precisa ser para um valor entre o total, ${formatCents(min, currency)}, e ${formatCents(max, currency)}.`
+    : upTo;
 }

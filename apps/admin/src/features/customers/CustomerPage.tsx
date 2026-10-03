@@ -18,6 +18,7 @@ import { DetailSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { OrderRowView } from '../orders/OrderRowView.tsx';
+import { CustomerFacts } from '../vendedor/CustomerFacts.tsx';
 
 export default function CustomerPage() {
   const { phone: ph = '' } = useParams();
@@ -91,7 +92,7 @@ export default function CustomerPage() {
         ))}
       </div>
 
-      <div className="mt-8 grid gap-8 lg:grid-cols-2">
+      <div className="mt-8 grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
         <div className="space-y-8">
           {l.enabled ? (
             <Section title="Cartão fidelidade">
@@ -143,6 +144,7 @@ export default function CustomerPage() {
               </Card>
             </Section>
           ) : null}
+          <CustomerFacts phone={ph} customer={c.name} />
           {data.lastAddress ? (
             <Section title="Último endereço">
               <Card className="p-4">

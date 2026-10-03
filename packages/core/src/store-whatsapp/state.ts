@@ -24,7 +24,8 @@ interface Row {
   lease_epoch: string | number;
 }
 
-async function heldTx(tx: Sql, tenantId: string, fence: Fence): Promise<Row> {
+/** The store's row, locked, if this gateway still holds its lease; LeaseLost otherwise. */
+export async function heldTx(tx: Sql, tenantId: string, fence: Fence): Promise<Row> {
   const row = (
     await tx<Row[]>`
       select state, wanted, connected_at, outage_since, owner, lease_epoch from store_whatsapp
@@ -201,6 +202,38 @@ export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Pro
   });
 }
 
+/** A Vendedor reply's outcome on its conversation message: queued → sent | failed. */
+export async function mirrorStatusTx(
+  tx: Sql,
+  tenantId: string,
+  shopperMessageId: string,
+  status: 'sent' | 'failed',
+  waId: string | null,
+): Promise<void> {
+  // the WhatsApp id lets Core find which reply a shopper quoted
+  await tx`
+    update shopper_messages set status = ${status},
+      wa_id = case when ${status} = 'sent' and wa_id is null and not exists (
+                select 1 from shopper_messages o where o.tenant_id = ${tenantId} and o.wa_id = ${waId})
+              then ${waId} else wa_id end
+    where tenant_id = ${tenantId} and id = ${shopperMessageId} and status = 'queued'`;
+}
+
+/** Ticks on Vendedor replies: never back from read to delivered. */
+async function mirrorReceiptsTx(tx: Sql, tenantId: string, delivered: string[], read: string[]) {
+  await tx`
+    update shopper_messages m set status = 'delivered'
+    from store_wa_messages w
+    where w.tenant_id = ${tenantId} and w.wa_id = any(${delivered}) and m.id = w.shopper_message_id
+      and m.status in ('queued', 'sent', 'failed')`;
+  if (read.length)
+    await tx`
+      update shopper_messages m set status = 'read'
+      from store_wa_messages w
+      where w.tenant_id = ${tenantId} and w.wa_id = any(${read}) and m.id = w.shopper_message_id
+        and m.status in ('queued', 'sent', 'failed', 'delivered')`;
+}
+
 export async function recordReceipts(sql: Sql, tenantId: string, rs: Receipt[]): Promise<void> {
   const read = rs.filter((r) => r.status === 'read').map((r) => r.waId);
   const delivered = rs.map((r) => r.waId);
@@ -210,6 +243,7 @@ export async function recordReceipts(sql: Sql, tenantId: string, rs: Receipt[]):
     if (read.length)
       await tx`update store_wa_messages set read_at = coalesce(read_at, now())
                where tenant_id = ${tenantId} and wa_id = any(${read})`;
+    await mirrorReceiptsTx(tx, tenantId, delivered, read);
     // the open screen's ticks move on their own
     await emitAdminTx(tx, tenantId, 'whatsapp', 'receipt');
   });
@@ -224,7 +258,8 @@ export async function messageText(
     sql,
     tenantId,
     (tx) => tx<{ body: string }[]>`
-      select body from store_wa_messages where tenant_id = ${tenantId} and wa_id = ${waId} limit 1`,
+      select body from store_wa_messages
+      where tenant_id = ${tenantId} and wa_id = ${waId} and media_id is null limit 1`,
   );
   return rows[0]?.body ?? null;
 }
@@ -233,10 +268,15 @@ export async function messageText(
  *  late is worse than none). Any gateway may run it. */
 export async function housekeeping(sql: Sql): Promise<{ expired: number; deleted: number }> {
   return controlTx(sql, async (tx) => {
-    const expired = await tx`
+    const expired = await tx<{ tenant_id: string; shopper_message_id: string | null }[]>`
       update store_wa_messages set status = 'expired', lease_until = null
       where status in ('pending', 'sending') and expires_at < now()
-        and (lease_until is null or lease_until < now())`;
+        and (lease_until is null or lease_until < now())
+      returning tenant_id, shopper_message_id`;
+    const replies = expired.flatMap((r) => (r.shopper_message_id ? [r.shopper_message_id] : []));
+    if (replies.length)
+      await tx`update shopper_messages set status = 'failed'
+               where id = any(${replies}::uuid[]) and status = 'queued'`;
     const deleted = await tx`
       delete from store_wa_messages where created_at < now() - ${RETENTION}::interval`;
     await tx`delete from wa_gateways where seen_at < now() - interval '1 day'`;

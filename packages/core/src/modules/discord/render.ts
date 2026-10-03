@@ -780,6 +780,22 @@ function qaAlert(ev: Ev<'agent.qa_alert'>): Rendered {
   };
 }
 
+const MONITOR_WORDS = {
+  blocks: 'respostas barradas a cada 100',
+  handoffs: '% das conversas passadas para a loja',
+  optouts: 'pedidos para parar de receber',
+} as const;
+
+function vendedorMonitor(ev: Ev<'vendedor.monitor'>): Rendered {
+  const d = ev.data;
+  return {
+    card: card(ev, {
+      title: `Vendedor fora do normal · ${esc(d.storeName ?? 'loja')}`,
+      description: `${d.today.toFixed(1)} ${MONITOR_WORDS[d.metric]} hoje (de costume ${d.baseline.toFixed(1)}; ${d.volume} no dia)`,
+    }),
+  };
+}
+
 function costCap(ev: Ev<'agent.cost_cap'>, ctx: RenderCtx): Rendered {
   const d = ev.data;
   return {
@@ -1059,6 +1075,7 @@ const STANDALONE: Standalone = {
   'agent.turn_failed': turnFailed,
   'agent.version_rollback': versionRollback,
   'agent.qa_alert': qaAlert,
+  'vendedor.monitor': vendedorMonitor,
   'merchant.help': merchantHelp,
   'store.request': storeRequest,
   'billing.manual': billingManual,

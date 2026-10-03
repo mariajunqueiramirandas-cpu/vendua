@@ -3,6 +3,41 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.18.0
+
+The store's assistant on the site (ADR 0031 V4) — additive; no storefront edit.
+
+- `StoreProfile.chat` (`{ name, intro } | null`): the store turned its Vendedor's chat on. Client
+  `api.chat()` / `api.sendChat(text, { idempotencyKey? })` (`GET`/`POST /checkout/v1/chat`, on
+  the cart session; `StoreChat`, `StoreChatMessage`); `CHAT_UNAVAILABLE` in `ERROR_CODES`, its
+  copy in `ERROR_COPY`.
+- New hook `useStoreChat({ live? })`: the conversation, `pending`, `send` (never throws; a send
+  that may have landed retries with its Idempotency-Key). The Kernel polls every 2 s while a
+  reply is pending and every 12 s while the chat is open, and rereads the cart when the
+  Vendedor's turn lands, so the page's sacola shows what it changed.
+- New slot `system.Chat`, rendered by `SystemSurfaces` while `StoreProfile.chat` is set. The
+  default: a launcher in the bottom corner (above the bag bar and the buy row) and a modal
+  dialog — a bottom sheet on phones, a corner panel from 768 px — with authorship per message,
+  "digitando…", a polite announcement per reply, same-origin links only, and focus back on the
+  launcher when it closes (`[data-vendua="chat"]` parts in API.md). On phones toasts rise above
+  the launcher.
+- Fix: `changeMessage(details, currency, changeForCents?)` reads Core's `details.maxCents`: change
+  typed above Core's cap reads "O troco pode ser para até R$ 10.000,00." instead of asking for at
+  least the total (which it already was). The checkout passes the amount it sent.
+
+## 1.17.0
+
+Cash change ("troco para") — additive; no storefront edit.
+
+- `CheckoutInput.payment.changeForCents` (cash only, cents) and `Order.payment.changeForCents`;
+  Core refuses change below the total with `INVALID_CHANGE` (`details.minCents`), now in
+  `ERROR_CODES`.
+- `checkout.PaymentMethods` gains optional `changeForCents`, `onChangeFor` and `changeForError`;
+  the default asks "Precisa de troco?" while cash is chosen (`[data-part="change"]`,
+  `no-change`), and Core's refusal shows at the field.
+- New rule `changeMessage(details, currency)`. The order page's default shows "Troco para R$ …"
+  for cash orders (`[data-part="change-for"]`).
+
 ## 1.16.0
 
 Closed hours take only encomendas — additive; no storefront edit.

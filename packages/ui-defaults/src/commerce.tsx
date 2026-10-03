@@ -305,6 +305,11 @@ export function OrderStatusPage({
                   · {PAYMENT_STATUS_LABEL[pay.status]}
                 </span>
               ) : null}
+              {pay.method === 'cash' && pay.changeForCents ? (
+                <span className="v-order-fact-note v-muted v-num" data-part="change-for">
+                  Troco para {formatCents(pay.changeForCents, currency)}
+                </span>
+              ) : null}
             </dd>
           </div>
           <div>

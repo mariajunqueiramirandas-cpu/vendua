@@ -7,6 +7,8 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
 `packages/conformance`, `packages/cli`, `packages/agent-runtime` (Agent Runtime v3, ADR 0030;
 Core's side is `packages/core/src/agent-host/`), `apps/control` (staff CRM console, React),
 `packages/core/src/wa-gateway.ts` (stores' own WhatsApp, its own process — ADR 0026),
+`packages/core/src/vendedor/` + `agent-host/agents/vendedor*` (the Vendedor, ADR 0031: the AI seller on
+the store's WhatsApp, its ingest, sweeper and admin views),
 `apps/admin` (merchant admin PWA at `/admin/`, API `/admin/v1`),
 `apps/print-agents` (Windows Go + Android Kotlin printing agents, ADR 0027),
 `storefronts/*`, `site/`. `docs/README.md` has the architecture.

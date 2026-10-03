@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
-import { couponLabel, type CouponRow } from './coupons.ts';
+import { couponLabel, mintCouponTx, type CouponRow } from './coupons.ts';
 import type { LoyaltyProgram, StoreSettingsRow } from './store.ts';
 
 // "Sem senha, sem cadastro" (roadmap 2a/2c). Anyone can type any phone at checkout, so a
@@ -334,12 +334,6 @@ export async function loyaltyCard(
   };
 }
 
-function rewardCode(): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = crypto.getRandomValues(new Uint8Array(6));
-  return `FIEL-${[...bytes].map((b) => alphabet[b % alphabet.length]).join('')}`;
-}
-
 /** Called when an order reaches `delivered`: mints every reward the phone has now earned. */
 export async function mintLoyaltyRewards(
   tx: Sql,
@@ -360,14 +354,24 @@ export async function mintLoyaltyRewards(
   const { earned, minted } = await stampCounts(tx, tenantId, phone, program);
   const codes: string[] = [];
   for (let n = minted; (n + 1) * program.stampsRequired <= earned; n++) {
-    const code = rewardCode();
-    await tx`
-      insert into coupons (tenant_id, code, kind, value, label, max_redemptions, per_phone_limit,
-                           phone, source, ends_at)
-      values (${tenantId}, ${code}, ${program.reward.kind}, ${program.reward.kind === 'percent' ? Math.min(100, Math.max(1, program.reward.value)) : program.reward.value},
-              ${program.reward.label}, 1, 1, ${phone}, 'loyalty',
-              now() + make_interval(days => ${program.rewardValidDays}))
-    `;
+    const { code } = await mintCouponTx(
+      tx,
+      tenantId,
+      {
+        prefix: 'FIEL',
+        kind: program.reward.kind,
+        value:
+          program.reward.kind === 'percent'
+            ? Math.min(100, Math.max(1, program.reward.value))
+            : program.reward.value,
+        label: program.reward.label,
+        maxRedemptions: 1,
+        perPhoneLimit: 1,
+        phone,
+        validDays: program.rewardValidDays,
+      },
+      'loyalty',
+    );
     codes.push(code);
   }
   if (codes.length)

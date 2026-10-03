@@ -1,6 +1,6 @@
 # Vendedor: the merchant's screens
 
-> Status: Proposed · Started 2026-10-03 · Board: [`sales-agent-screens.html`](sales-agent-screens.html)
+> Status: Built 2026-10-03 · Started 2026-10-03 · Board: [`sales-agent-screens.html`](sales-agent-screens.html)
 > (open it in a browser; Creme and Noite) · Features: [`sales-agent-features.md`](sales-agent-features.md)
 > · Design: [`sales-agent.md`](sales-agent.md) · Follows: [`merchant-admin-design.md`](../merchant-admin-design.md)
 

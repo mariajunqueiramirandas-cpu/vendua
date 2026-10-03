@@ -85,6 +85,8 @@ export interface OrderRow {
       expiresAt?: string | null;
     } | null;
     redirectUrl?: string | null;
+    /** cash: the note the shopper pays with; null = exact money or not cash */
+    changeForCents?: number | null;
   };
   subtotal_cents: number;
   delivery_fee_cents: number;
@@ -203,7 +205,7 @@ export async function loadOrderView(
     state: order.state,
     customer: order.customer,
     delivery: order.delivery,
-    payment: order.payment,
+    payment: { ...order.payment, changeForCents: order.payment.changeForCents ?? null },
     items: items.map((i) => ({
       productId: i.product_id,
       slug: i.slug,

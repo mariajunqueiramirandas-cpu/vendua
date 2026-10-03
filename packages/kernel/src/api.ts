@@ -73,6 +73,31 @@ export interface StoreProfile {
   /** Kernel 1.15 — set when the store prices delivery by road distance from a pin the
    *  shopper confirms on a map (ADR 0024); null/absent = zones price every address */
   distancePricing?: DistancePricing | null;
+  /** Kernel 1.18 — the store's own assistant (the Vendedor) chats on the site: its name and how
+   *  it introduces itself, in Core's words. null/absent = the merchant didn't turn it on. */
+  chat?: { name: string; intro: string } | null;
+}
+
+/** Kernel 1.18 — one message of the storefront chat. `core` = a card Core wrote (a summary, a
+ *  link to the sacola: `card` names it); `merchant` = the store's people, by hand. */
+export interface StoreChatMessage {
+  id: string;
+  author: 'shopper' | 'agent' | 'core' | 'merchant';
+  body: string;
+  at: string;
+  card: string | null;
+}
+
+/** Kernel 1.18 — the chat bound to this tab's cart session (`GET /checkout/v1/chat`). */
+export interface StoreChat {
+  /** false = the store turned the chat off since the page loaded */
+  available: boolean;
+  name: string | null;
+  intro: string | null;
+  /** oldest first, the latest 60 */
+  messages: StoreChatMessage[];
+  /** a reply is on its way */
+  pending: boolean;
 }
 
 /** Kernel 1.15 — a point on the map. */
@@ -410,7 +435,12 @@ export interface CheckoutInput {
   customer: { name: string; phone: string };
   delivery: { mode: 'pickup' | 'delivery' } & DeliveryAddress;
   /** Kernel 1.7 adds 'card_online' (Mercado Pago's hosted checkout), 1.11 'meal_voucher' */
-  payment: { method: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher' };
+  payment: {
+    method: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher';
+    /** Kernel 1.17 — cash only: the note the shopper pays with ("troco para R$ 100,00"),
+     *  integer cents. Core answers `INVALID_CHANGE` (`details.minCents`) below the total. */
+    changeForCents?: number;
+  };
   /** Kernel 1.2 — "Alguma observação?" (≤500) */
   notes?: string;
   /** Kernel 1.2 — encomenda date, YYYY-MM-DD */
@@ -560,6 +590,8 @@ export interface Order {
     refundedCents?: number;
     /** Kernel 1.7 — the hosted card checkout of the current attempt */
     redirectUrl?: string | null;
+    /** Kernel 1.17 — cash: the amount the shopper asked change for (null = no change) */
+    changeForCents?: number | null;
   };
   subtotalCents: number;
   deliveryFeeCents: number;
@@ -721,7 +753,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return body;
 }
 
-function idemKey(): string {
+export function idemKey(): string {
   return globalThis.crypto?.randomUUID?.() ?? `k-${Date.now()}-${Math.random()}`;
 }
 
@@ -1049,6 +1081,19 @@ export function createApi(baseUrl = '') {
       }
       return r.order;
     },
+    /** Kernel 1.18 — the storefront chat of this cart session (needs one: Bearer, like the
+     *  cart). The Vendedor answers asynchronously and edits this session's cart. */
+    chat: () => apiFetch<StoreChat>(co('/chat'), { headers: auth() }),
+    /** Kernel 1.18 — say something in the chat (1–1000 characters); starts the cart session when
+     *  there is none. Pass the same `idempotencyKey` to retry a send that may have landed. */
+    sendChat: async (text: string, opts: { idempotencyKey?: string } = {}) => {
+      await ensureSessionNow();
+      return apiFetch<StoreChat>(co('/chat'), {
+        method: 'POST',
+        headers: { ...auth(), 'idempotency-key': opts.idempotencyKey ?? idemKey() },
+        body: JSON.stringify({ text }),
+      });
+    },
     order: (id: string) => {
       const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
       return apiFetch<{ order: Order }>(co(`/orders/${id}`), {
@@ -1172,6 +1217,8 @@ export const ERROR_CODES = [
   'INVALID_DELIVERY',
   'INVALID_CUSTOMER',
   'INVALID_PAYMENT',
+  // Kernel 1.17 — cash change below the total (`details.minCents`) or above Core's cap
+  'INVALID_CHANGE',
   'ORDER_NOT_FOUND',
   'PAYLOAD_TOO_LARGE',
   'INVALID_ORDER_TRANSITION',
@@ -1266,6 +1313,8 @@ export const ERROR_CODES = [
   'INTERNAL',
   'EMAIL_PROVIDER_UNAVAILABLE',
   'EMAIL_FETCH_FAILED',
+  // Kernel 1.18 — the store has no storefront chat (off, or turned off since the page loaded)
+  'CHAT_UNAVAILABLE',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

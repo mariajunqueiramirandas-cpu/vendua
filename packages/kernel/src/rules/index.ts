@@ -64,7 +64,14 @@ export {
   lineSummary,
 } from './orders.ts';
 export type { OrderProgress } from './orders.ts';
-export { ERROR_COPY, errorCopy, COUPON_REASON, isCouponError, couponMessage } from './errors.ts';
+export {
+  ERROR_COPY,
+  errorCopy,
+  COUPON_REASON,
+  isCouponError,
+  couponMessage,
+  changeMessage,
+} from './errors.ts';
 export { qrMatrix, qrSvgPath, qrSvg } from './qr.ts';
 export { DEFAULT_VOCABULARY, vocabularyOf } from './copy.ts';
 export {

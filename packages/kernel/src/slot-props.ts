@@ -16,6 +16,7 @@ import type {
   GeoPoint,
   LatLng,
   MapTiles,
+  StoreChatMessage,
 } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
 import type { Vocabulary } from './rules/copy.ts';
@@ -122,6 +123,35 @@ export interface SlotProps {
   'system.ErrorFallback': { error: { code: string; message: string }; retry: () => void };
   'system.NotFound': { path: string; homeHref: string };
   'system.EmergencyOverlay': { notice: Notice };
+  /** Kernel 1.18 — the store's assistant (the Vendedor) on the site, working this tab's cart.
+   *  Rendered by `SystemSurfaces` while `StoreProfile.chat` is set: a launcher and, while `open`,
+   *  the conversation as a modal dialog. The Kernel owns the reads, the polling and the cart. */
+  'system.Chat': {
+    /** who answers, in Core's words (`StoreProfile.chat`): "Bia", "Bia, assistente virtual da …" */
+    assistant: { name: string; intro: string };
+    /** oldest first */
+    messages: StoreChatMessage[];
+    /** a reply is on its way ("digitando…") */
+    pending: boolean;
+    open: boolean;
+    onOpen: () => void;
+    /** Escape, the close button, the backdrop; focus goes back to the launcher */
+    onClose: () => void;
+    /** resolves true once Core took the message (clear the composer), false with `error` set */
+    onSend: (text: string) => Promise<boolean>;
+    sending: boolean;
+    /** the last failure, in words */
+    error?: string;
+    /** replies that arrived while the chat was closed */
+    unread?: number;
+    /** the most characters a message takes (Core's bound) */
+    maxLength?: number;
+    /** a URL found in a message → an href on this page's origin, or null: show it as text */
+    resolveLink?: (url: string) => string | null;
+    /** the store's name, for its people's own messages (`author: 'merchant'`) */
+    storeName?: string;
+  } & StoreTime &
+    StoreWords;
   'checkout.Layout': {
     steps: CheckoutStep[];
     current: CheckoutStep['id'];
@@ -181,6 +211,14 @@ export interface SlotProps {
     methods: PaymentMethod[];
     selected: PaymentMethod['id'];
     onSelect: (id: PaymentMethod['id']) => void;
+    /** Kernel 1.17 — cash change ("troco para"), in cents; null = no change. Present with
+     *  `onChangeFor` when the store takes cash; show it while `selected` is `'cash'`. */
+    changeForCents?: number | null;
+    /** Kernel 1.17 — the shopper typed an amount (cents) or said no change is needed (null).
+     *  Core decides whether it covers the total. */
+    onChangeFor?: (cents: number | null) => void;
+    /** Kernel 1.17 — Core refused the change (`INVALID_CHANGE`), in words */
+    changeForError?: string;
   } & StoreMoney;
   'checkout.SuccessPage': { order: Order; currency: string } & StoreTime;
   'checkout.EmptyCart': { onBrowse: () => void } & StoreWords;

@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 import type { BufferCodec } from './auth-store.ts';
-import type { Creds, SocketKeys, WaRuntime, WaSocket } from './session.ts';
+import type { Creds, SocketKeys, WaMessage, WaRuntime, WaSocket } from './session.ts';
 
 // The real baileys behind WaRuntime. Loaded once per process; tests use a fake runtime.
 
@@ -11,6 +11,12 @@ interface Baileys {
   initAuthCreds(): Creds;
   makeCacheableSignalKeyStore(store: SocketKeys, logger?: Logger): SocketKeys;
   normalizeMessageContent(content: unknown): unknown;
+  downloadMediaMessage(
+    message: WaMessage,
+    type: 'buffer',
+    options: Record<string, unknown>,
+    ctx: { reuploadRequest: (m: WaMessage) => Promise<WaMessage>; logger: Logger },
+  ): Promise<Uint8Array>;
   fetchLatestWaWebVersion(opts?: RequestInit): Promise<{
     version: [number, number, number];
     isLatest: boolean;
@@ -50,6 +56,13 @@ export async function baileysRuntime(log: Logger): Promise<WaRuntime> {
     codec: b.BufferJSON,
     initCreds: () => b.initAuthCreds(),
     normalize: (m) => b.normalizeMessageContent(m),
+    download: (message, sock, logger) =>
+      b.downloadMediaMessage(
+        message,
+        'buffer',
+        {},
+        { reuploadRequest: (m) => sock.updateMediaMessage(m), logger },
+      ),
     connect: async ({ creds, keys, logger, getMessage }) => {
       const v = await currentVersion();
       const socketLog = logger.child({ mod: 'baileys' }, { level });
