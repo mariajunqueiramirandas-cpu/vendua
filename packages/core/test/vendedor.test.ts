@@ -26,7 +26,7 @@ const APP_URL =
 
 const call = (name: string, args: Record<string, unknown> = {}) => ({ name, args });
 const tools = (...calls: { name: string; args: Record<string, unknown> }[]): ScriptedOutput => ({
-  toolCalls: calls as ScriptedOutput['toolCalls'],
+  toolCalls: calls as NonNullable<ScriptedOutput['toolCalls']>,
 });
 const reply = (text: string): ScriptedOutput => tools(call('reply', { text }));
 

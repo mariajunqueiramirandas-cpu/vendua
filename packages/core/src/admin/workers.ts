@@ -53,6 +53,10 @@ export async function startPushNotifier(sql: Sql, hub: AdminHub): Promise<() => 
       void pushPayment(sql, tenantId, e.id).catch((err) =>
         workLog.warn({ err }, 'payment push failed'),
       );
+    else if (e.topic === 'vendedor.waiting')
+      void pushWaiting(sql, tenantId, e.id).catch((err) =>
+        workLog.warn({ err }, 'vendedor push failed'),
+      );
     else if (e.topic === 'whatsapp' && (e.id === 'logged_out' || e.id === 'banned'))
       void pushWhatsappLost(sql, tenantId).catch((err) =>
         workLog.warn({ err }, 'whatsapp push failed'),
@@ -139,6 +143,54 @@ async function fanOut(
     }
     await emitAdminTx(tx, tenantId, 'alerts');
   });
+}
+
+/** A shopper waiting for the store in a Vendedor conversation (ADR 0031, law 13): one push per
+ *  conversation per handoff; "assumir" opens it on the store's floor. */
+export async function pushWaiting(sql: Sql, tenantId: string, threadId: string) {
+  const job = await withTenant(sql, tenantId, async (tx) => {
+    const t = (
+      await tx<{ since: Date; reason: string | null; name: string | null; preview: string | null }[]>`
+        select t.waiting_since as since, t.owner_reason as reason,
+          coalesce(t.checkout ->> 'name', split_part(t.profile_name, ' ', 1)) as name,
+          (select coalesce(m.transcript, m.body) from shopper_messages m where m.thread_id = t.id
+             and m.author = 'shopper' order by m.created_at desc limit 1) as preview
+        from shopper_threads t
+        where t.tenant_id = ${tenantId} and t.id = ${threadId} and t.waiting_since is not null
+          and t.channel = 'whatsapp'`
+    )[0];
+    if (!t) return null;
+    const won = await tx`
+      insert into push_deliveries (tenant_id, key)
+      values (${tenantId}, ${`vendedor.waiting:${threadId}:${t.since.toISOString()}`})
+      on conflict do nothing returning key
+    `;
+    if (!won[0]) return null;
+    const subs = await tx<Sub[]>`
+      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
+        join merchant_users u on u.id = s.user_id
+      where s.tenant_id = ${tenantId} and u.status = 'active' and coalesce((u.prefs ->> 'push')::boolean, true)
+    `;
+    return { t, subs };
+  });
+  if (!job) return;
+  const { t, subs } = job;
+  const minutes = Math.max(1, Math.round((Date.now() - t.since.getTime()) / 60_000));
+  await fanOut(
+    sql,
+    tenantId,
+    subs,
+    {
+      title: `${t.name || 'Um cliente'} precisa de você${t.reason ? ` · ${t.reason}` : ''}`,
+      body: `${t.preview ? `“${t.preview.slice(0, 80)}” · ` : ''}esperando há ${minutes} min`,
+      tag: `vendedor-${threadId}`,
+      url: `/admin/vendedor/conversas/${threadId}`,
+      threadId,
+      actions: [{ action: 'take', title: 'assumir' }],
+    },
+    'vendedor.waiting',
+    threadId,
+  );
 }
 
 export async function pushOrder(sql: Sql, tenantId: string, orderId: string) {

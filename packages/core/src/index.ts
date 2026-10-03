@@ -135,6 +135,7 @@ configureVendedor({
   publicOrigin: adminOrigin,
 });
 const agentGateway = hostGateway(sql);
+configureVendedor({ gateway: agentGateway });
 const agentRuntime = startAgentRuntime(sql, { gateway: agentGateway });
 const stopVendedor = startVendedorWorker(sql, {
   gateway: agentGateway,

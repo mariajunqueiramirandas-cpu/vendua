@@ -1,3 +1,4 @@
+import type { ModelGateway } from '@vendua/agent-runtime';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import type { Sql } from '../platform/db.ts';
 
@@ -8,6 +9,8 @@ export interface VendedorDeps {
   /** the pool, for calls that open their own transactions (preparePayment) */
   sql?: Sql | undefined;
   provider?: PaymentProvider | undefined;
+  /** the model gateway, for the admin's suggested replies */
+  gateway?: ModelGateway | undefined;
   /** signs cart session tokens; the agent's carts never leave Core, but the row needs one */
   sessionSecret: string;
   storeDomain: string;
