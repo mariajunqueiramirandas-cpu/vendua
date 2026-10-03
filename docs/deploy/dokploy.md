@@ -48,6 +48,7 @@ Copy `.env.example` into the service's environment and fill it in:
 | `MP_CLIENT_ID` / `MP_CLIENT_SECRET`        | Venduá's Mercado Pago application — stores connect by OAuth       |
 | `MP_WEBHOOK_SECRET`                        | the application's webhook signing secret (x-signature)            |
 | `MP_PLATFORM_ACCESS_TOKEN`                 | Venduá's own MP account — plan billing (assinatura + Pix)         |
+| `MP_PUBLIC_KEY`                            | the application's public key — the in-page card form (see below)  |
 | `VENDUA_SIGNUP_ACCESS_CODE`                | signup without MP; staff mark the plan invoices paid (≥ 12 chars) |
 | `VENDUA_SECRETS_KEY`                       | seals stores' MP tokens at rest (falls back to SESSION_SECRET)    |
 | `WA_MAX_SESSIONS`                          | stores' WhatsApp sockets one `wa-gateway` holds (default 300)     |
@@ -56,10 +57,14 @@ Copy `.env.example` into the service's environment and fill it in:
 
 Generate secrets with `openssl rand -hex 32`.
 
-Mercado Pago: create the application at developers.mercadopago.com.br (marketplace,
-OAuth), set its redirect URL to `https://<VENDUA_ADMIN_HOST>/admin/v1/payments/mercadopago/callback`
+Mercado Pago: create the application at developers.mercadopago.com.br as **Checkout
+Transparente** (card and Pix happen on our pages, never a redirect; stores connect by OAuth), set its redirect URL to `https://<VENDUA_ADMIN_HOST>/admin/v1/payments/mercadopago/callback`
 and its webhook URL to `https://<VENDUA_ADMIN_HOST>/admin/v1/hooks/mercadopago?t=platform`
-(events: payments, subscriptions). Store payments carry their own notification URL. Without
+(events: payments, subscriptions). Store payments carry their own notification URL. Leave PKCE
+off (Core's OAuth sends no `code_verifier`). `MP_PUBLIC_KEY` is the public key of the same
+application's production credentials: MP's marketplace guidance tokenizes cards with the
+integrator's key and charges them on the seller's token. Unset, the card form uses each store's
+own key from OAuth; if MP refuses tokens under one choice, try the other with a test payment. Without
 `MP_CLIENT_ID`/`MP_CLIENT_SECRET` stores keep the offline methods (static Pix, cash, card on
 delivery) and the admin says online payments aren't available; without
 `MP_PLATFORM_ACCESS_TOKEN` self-serve signup stays closed, except to whoever has

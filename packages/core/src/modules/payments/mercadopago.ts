@@ -3,6 +3,7 @@ import {
   ProviderError,
   type CardCheckout,
   type CardCheckoutRequest,
+  type CardPaymentRequest,
   type OAuthTokens,
   type PaymentProvider,
   type PixRequest,
@@ -60,6 +61,7 @@ interface MpPayment {
   date_approved?: string | null;
   date_of_expiration?: string | null;
   point_of_interaction?: { transaction_data?: { qr_code?: string | null } | null } | null;
+  three_ds_info?: { external_resource_url?: string | null; creq?: string | null } | null;
 }
 
 function paymentStatus(status: string | undefined, detail: string | null | undefined) {
@@ -131,6 +133,12 @@ export function mapPayment(p: MpPayment): ProviderPayment {
       p.collector_id === null || p.collector_id === undefined ? null : String(p.collector_id),
     approvedAt: p.date_approved ?? null,
     pix: qr ? { copyPaste: qr, expiresAt: p.date_of_expiration ?? null } : null,
+    challenge:
+      p.status_detail === 'pending_challenge' &&
+      p.three_ds_info?.external_resource_url &&
+      p.three_ds_info.creq
+        ? { url: p.three_ds_info.external_resource_url, creq: p.three_ds_info.creq }
+        : null,
   };
 }
 
@@ -200,8 +208,9 @@ export class MercadoPagoProvider implements PaymentProvider {
     token: string | null,
     body?: unknown,
     idempotencyKey?: string,
+    extra?: Record<string, string>,
   ): Promise<Json> {
-    const headers: Record<string, string> = { accept: 'application/json' };
+    const headers: Record<string, string> = { accept: 'application/json', ...extra };
     if (token) headers.authorization = `Bearer ${token}`;
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (idempotencyKey) headers['x-idempotency-key'] = idempotencyKey;
@@ -321,6 +330,39 @@ export class MercadoPagoProvider implements PaymentProvider {
         token,
         this.pixBody(req),
         req.idempotencyKey,
+      )) as MpPayment,
+    );
+  }
+
+  async createCardPayment(token: string, req: CardPaymentRequest) {
+    const body = {
+      transaction_amount: toReais(req.amountCents),
+      token: req.cardToken,
+      description: req.description.slice(0, 200),
+      installments: req.installments,
+      payment_method_id: req.paymentMethodId,
+      ...(req.issuerId ? { issuer_id: Number(req.issuerId) || req.issuerId } : {}),
+      payer: {
+        email: req.payer.email,
+        ...(req.payer.identification ? { identification: req.payer.identification } : {}),
+        ...(req.payer.firstName ? { first_name: req.payer.firstName.slice(0, 60) } : {}),
+      },
+      external_reference: req.externalReference,
+      ...(req.notificationUrl ? { notification_url: req.notificationUrl } : {}),
+      ...(req.applicationFeeCents > 0 ? { application_fee: toReais(req.applicationFeeCents) } : {}),
+      // 3DS 2.0 needs capture and a non-binary payment; the challenge renders in our page
+      capture: true,
+      binary_mode: false,
+      three_d_secure_mode: 'optional',
+    };
+    return mapPayment(
+      (await this.call(
+        'POST',
+        '/v1/payments',
+        token,
+        body,
+        req.idempotencyKey,
+        req.deviceId ? { 'x-meli-session-id': req.deviceId } : undefined,
       )) as MpPayment,
     );
   }

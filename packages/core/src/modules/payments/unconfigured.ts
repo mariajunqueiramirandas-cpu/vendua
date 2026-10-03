@@ -13,6 +13,7 @@ export class UnconfiguredProvider implements PaymentProvider {
   refresh = off;
   createPix = off;
   createCardCheckout = off;
+  createCardPayment = off;
   getPayment = off;
   findPayment = off;
   refund = off;

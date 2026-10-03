@@ -237,6 +237,9 @@ export async function reconcilePayments(sql: Sql, o: PaymentJobDeps, now = new D
           where p.tenant_id = ${tenantId} and p.review is distinct from 'amount_mismatch' and (
             -- open attempts: webhooks get lost
             (p.status in ('creating', 'pending') and p.created_at > ${new Date(now.getTime() - 2 * DAY)})
+            -- a card we replaced here (a 3DS challenge, a hosted checkout) that MP could still settle
+            or (p.status = 'cancelled' and p.kind = 'card' and p.provider_payment_id is not null
+                and p.created_at > ${new Date(now.getTime() - 2 * DAY)})
             -- a Pix we closed here that MP could still take until its expiry
             or (p.status in ('cancelled', 'expired') and p.kind = 'pix' and p.provider_payment_id is not null
                 and p.pix_expires_at > ${new Date(now.getTime() - 60 * 60_000)})

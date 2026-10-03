@@ -45,6 +45,8 @@ export interface ProviderPayment {
   collectorId: string | null;
   approvedAt: string | null;
   pix: { copyPaste: string; expiresAt: string | null } | null;
+  /** a card payment waiting on the issuer's 3-D Secure challenge (MP `pending_challenge`) */
+  challenge?: { url: string; creq: string } | null;
 }
 
 export interface PixRequest {
@@ -72,6 +74,28 @@ export interface CardCheckoutRequest {
   applicationFeeCents: number;
   payerEmail?: string;
   expiresAt: Date;
+}
+
+/** A card the shopper typed into the provider's own fields on our page (MP Card Payment Brick). */
+export interface CardPaymentRequest {
+  amountCents: number;
+  description: string;
+  /** single-use token from the provider's card fields — the card itself never reaches Core */
+  cardToken: string;
+  paymentMethodId: string;
+  issuerId: string | null;
+  installments: number;
+  payer: {
+    email: string;
+    identification: { type: string; number: string } | null;
+    firstName?: string;
+  };
+  externalReference: string;
+  idempotencyKey: string;
+  notificationUrl: string | null;
+  applicationFeeCents: number;
+  /** MP's device fingerprint from the SDK (anti-fraud), forwarded as X-meli-session-id */
+  deviceId: string | null;
 }
 
 export interface CardCheckout {
@@ -160,7 +184,10 @@ export interface PaymentProvider {
 
   // store orders, on the merchant's token
   createPix(token: string, req: PixRequest): Promise<ProviderPayment>;
+  /** Kernels before 1.17 only: MP's hosted checkout, reached by a redirect */
   createCardCheckout(token: string, req: CardCheckoutRequest): Promise<CardCheckout>;
+  /** a card tokenized in our page — no redirect; may come back waiting on a 3DS challenge */
+  createCardPayment(token: string, req: CardPaymentRequest): Promise<ProviderPayment>;
   getPayment(token: string, id: string): Promise<ProviderPayment>;
   /** the latest payment for an external reference (a card checkout before its webhook) */
   findPayment(token: string, externalReference: string): Promise<ProviderPayment | null>;

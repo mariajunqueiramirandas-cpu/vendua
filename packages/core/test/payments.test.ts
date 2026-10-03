@@ -433,6 +433,190 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     expect(audits.length).toBe(2);
   });
 
+  test('card form (Kernel 1.17): no redirect — a token pays, a decline shows the form again', async () => {
+    const nonce = () => `.${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const form = (id: string, auth: Record<string, string>) =>
+      call('POST', `/checkout/v1/orders/${id}/pay`, { card: 'form' }, auth);
+    const card = (id: string, auth: Record<string, string>, token: string, extra = {}) =>
+      call(
+        'POST',
+        `/checkout/v1/orders/${id}/card`,
+        {
+          token,
+          paymentMethodId: 'visa',
+          issuerId: null,
+          installments: 1,
+          payer: {
+            email: 'Ana@Example.com',
+            identification: { type: 'CPF', number: '123.456.789-09' },
+          },
+          deviceId: null,
+          ...extra,
+        },
+        auth,
+      );
+
+    const o = await place('card_online');
+    const id = o.body.order.id;
+    const f = await form(id, o.auth);
+    expect(f.status).toBe(200);
+    expect(f.body.next).toMatchObject({
+      kind: 'card',
+      provider: 'fake',
+      amountCents: o.body.order.totalCents,
+      declined: null,
+    });
+    expect(f.body.next.publicKey).toMatch(/^fake-pk-/);
+    // showing the form reserves nothing, and no hosted checkout exists
+    expect(await attempts(id)).toHaveLength(0);
+    // an amount from the page is never read: Core charges the order total
+    const ok = await card(id, o.auth, `fake-card-approved${nonce()}`, { transaction_amount: 1 });
+    expect(ok.status).toBe(200);
+    expect(ok.body.next).toEqual({ kind: 'none' });
+    expect(ok.body.order.payment.status).toBe('paid');
+    expect(ok.body.order.payment.redirectUrl).toBeNull();
+    const rows = await attempts(id);
+    expect(rows.map((r) => [r.status, r.provider_checkout_id])).toEqual([['approved', null]]);
+    expect(fake.payments.get(rows[0]!.provider_payment_id!)!.amountCents).toBe(
+      o.body.order.totalCents,
+    );
+    const again = await card(id, o.auth, `fake-card-approved${nonce()}`);
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe('PAYMENT_NOT_REQUIRED');
+
+    // declined → why, then the form again with it; a reused token is MP's 400 → re-type the card
+    const o2 = await place('card_online');
+    const id2 = o2.body.order.id;
+    const tok = `fake-card-rejected-cc_rejected_insufficient_amount${nonce()}`;
+    const d1 = await card(id2, o2.auth, tok);
+    expect(d1.body.next).toEqual({ kind: 'declined', reason: 'insufficient_funds' });
+    expect(d1.body.order.payment.status).toBe('failed');
+    expect((await form(id2, o2.auth)).body.next).toMatchObject({
+      kind: 'card',
+      declined: 'insufficient_funds',
+    });
+    expect((await card(id2, o2.auth, tok)).body.next).toEqual({
+      kind: 'declined',
+      reason: 'card_data',
+    });
+    const d3 = await card(id2, o2.auth, `fake-card-approved${nonce()}`);
+    expect(d3.body.order.payment.status).toBe('paid');
+    expect((await attempts(id2)).map((a) => [a.attempt, a.status])).toEqual([
+      [1, 'rejected'],
+      [2, 'cancelled'],
+      [3, 'approved'],
+    ]);
+
+    // in review at MP: one card at a time, the webhook settles it
+    const o3 = await place('card_online');
+    const id3 = o3.body.order.id;
+    const r1 = await card(id3, o3.auth, `fake-card-pending${nonce()}`);
+    expect(r1.body.next).toEqual({ kind: 'none' });
+    expect(r1.body.order.payment.status).toBe('pending');
+    const r2 = await card(id3, o3.auth, `fake-card-approved${nonce()}`);
+    expect(r2.status).toBe(409);
+    expect(r2.body.error.code).toBe('PAYMENT_IN_PROGRESS');
+    expect((await form(id3, o3.auth)).body.next).toEqual({ kind: 'none' });
+    const pid = (await attempts(id3))[0]!.provider_payment_id!;
+    fake.settle(pid, 'approved');
+    expect((await hook(pid)).status).toBe(200);
+    expect((await getOrder(id3, o3.auth)).payment.status).toBe('paid');
+
+    // 3DS: the challenge comes back to render in the page; a finished one syncs on /pay
+    const o4 = await place('card_online');
+    const id4 = o4.body.order.id;
+    const c1 = await card(id4, o4.auth, `fake-card-challenge${nonce()}`);
+    expect(c1.body.next).toMatchObject({ kind: 'challenge', url: fake.challengeUrl });
+    fake.completeChallenge(c1.body.next.creq, true);
+    const synced = await form(id4, o4.auth);
+    expect(synced.body.next).toEqual({ kind: 'none' });
+    expect(synced.body.order.payment.status).toBe('paid');
+
+    // an abandoned challenge: the form comes back, and a new card replaces it (cancelled at MP)
+    const o5 = await place('card_online');
+    const id5 = o5.body.order.id;
+    const c5 = await card(id5, o5.auth, `fake-card-challenge${nonce()}`);
+    // the dev bank page the Kernel's iframe posts creq to (fake driver only)
+    const formPost = (body: string) =>
+      app.request('http://core.localhost/admin/v1/dev/mp/challenge', {
+        method: 'POST',
+        headers: { host: 'core.localhost', 'content-type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+    expect(await (await formPost(`creq=${c5.body.next.creq}`)).text()).toContain('Confirmar');
+    expect((await form(id5, o5.auth)).body.next.kind).toBe('card');
+    const c6 = await card(id5, o5.auth, `fake-card-approved${nonce()}`);
+    expect(c6.body.order.payment.status).toBe('paid');
+    expect(fake.payments.get(c5.body.next.creq)!.status).toBe('cancelled');
+    expect((await attempts(id5)).map((a) => a.status)).toEqual(['cancelled', 'approved']);
+
+    // if MP settles a replaced payment anyway, the second charge is flagged, never silent
+    const late = c5.body.next.creq as string;
+    fake.payments.get(late)!.status = 'pending';
+    fake.settle(late, 'approved');
+    expect((await hook(late)).status).toBe(200);
+    const flagged = await sql<{ review: string | null; status: string }[]>`
+      select review, status from payments where provider_payment_id = ${late}
+    `;
+    expect(flagged[0]).toEqual({ review: 'paid_twice', status: 'approved' });
+    const reviews = await owner('GET', '/payments');
+    expect(
+      reviews.body.review.some(
+        (r: { orderId: string; reason: string }) => r.orderId === id5 && r.reason === 'paid_twice',
+      ),
+    ).toBe(true);
+  });
+
+  test('card form: MP down leaves the attempt for the lookup; bad bodies are 422s', async () => {
+    const nonce = () => `.${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const card = (id: string, auth: Record<string, string>, body: Record<string, unknown>) =>
+      call(
+        'POST',
+        `/checkout/v1/orders/${id}/card`,
+        { paymentMethodId: 'master', installments: 2, payer: { email: 'a@b.co' }, ...body },
+        auth,
+      );
+    const o = await place('card_online');
+    const id = o.body.order.id;
+    const real = fake.createCardPayment.bind(fake);
+    fake.createCardPayment = async () => {
+      throw new ProviderError('unavailable', 'down');
+    };
+    try {
+      const down = await card(id, o.auth, { token: `fake-card-approved${nonce()}` });
+      expect(down.status).toBe(503);
+      expect(down.body.error.code).toBe('PAYMENT_UNAVAILABLE');
+    } finally {
+      fake.createCardPayment = real;
+    }
+    // MP may have taken that token: no second card while it could still answer…
+    const wait = await card(id, o.auth, { token: `fake-card-approved${nonce()}` });
+    expect(wait.status).toBe(409);
+    expect(wait.body.error.code).toBe('PAYMENT_IN_PROGRESS');
+    // …then the same attempt is retried: MP's key replays a payment it took, else takes this card
+    await sql`update payments set created_at = now() - interval '3 minutes' where order_id = ${id}`;
+    const ok = await card(id, o.auth, { token: `fake-card-approved${nonce()}` });
+    expect(ok.body.order.payment.status).toBe('paid');
+    expect((await attempts(id)).map((a) => [a.attempt, a.status])).toEqual([[1, 'approved']]);
+
+    const o2 = await place('card_online');
+    // /card allows 20 submits a minute per shopper IP, and both card tests share one
+    for (const body of [
+      { token: 'x', installments: 1.5 },
+      { token: 'x', payer: { email: 'not-an-email' } },
+      { token: 'tok en' },
+      { token: 'x', payer: { email: 'a@b.co', identification: { type: 'CPF', number: '' } } },
+    ]) {
+      const r = await card(o2.body.order.id, o2.auth, body);
+      expect(r.status).toBe(422);
+      expect(r.body.error.code).toBe('INVALID_PAYMENT');
+    }
+    const pix = await place('pix');
+    const notCard = await card(pix.body.order.id, pix.auth, { token: 'abc' });
+    expect(notCard.status).toBe(422);
+    expect((await card(crypto.randomUUID(), o2.auth, { token: 'abc' })).status).toBe(404);
+  });
+
   test('full refund of a delivered online order → refunded; cancelling a paid order refunds it', async () => {
     for (const to of ['confirmed', 'preparing', 'ready', 'delivered'])
       expect((await owner('POST', `/orders/${paidPix.id}/transition`, { to })).status).toBe(200);
