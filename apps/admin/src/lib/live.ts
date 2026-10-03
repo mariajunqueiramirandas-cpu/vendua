@@ -158,9 +158,13 @@ async function onShopperWaiting(threadId: string) {
   if (Date.now() - last < 60_000) return;
   rung.set(threadId, Date.now());
   // already looking at that conversation: the floor on screen says it, no need to ring
+  const loc = window.location;
   const here =
     document.visibilityState === 'visible' &&
-    window.location.pathname.endsWith(`/vendedor/conversas/${threadId}`);
+    (loc.pathname.endsWith(`/vendedor/conversas/${threadId}`) ||
+      // the desktop inbox keeps the open conversation in ?c=
+      (loc.pathname.endsWith('/vendedor/conversas') &&
+        new URLSearchParams(loc.search).get('c') === threadId));
   if (!here) ring();
   try {
     const { api } = await import('./api.ts');

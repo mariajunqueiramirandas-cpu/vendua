@@ -1,6 +1,7 @@
 import { ChatCircleDots, Check, Info, Plus } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useId, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, type Knowledge, type KnowledgeItem } from '../../lib/api.ts';
 import { when } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
@@ -46,6 +47,21 @@ export default function Teach() {
     setOpen(true);
   };
   const put = (k: Knowledge) => qc.setQueryData(qk.vendedor.knowledge, k);
+  // "ensinar a responder diferente" from a conversation: the shopper's question, ready to answer
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('pergunta');
+  useEffect(() => {
+    if (!asked) return;
+    show({ mode: 'new', initial: { kind: 'answer', question: asked.slice(0, 500), answer: '' } });
+    setParams(
+      (p) => {
+        p.delete('pergunta');
+        return p;
+      },
+      { replace: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked]);
 
   const answer = useMutation({
     mutationFn: (v: { id: string; answer: string; replyWaiting: boolean }) =>

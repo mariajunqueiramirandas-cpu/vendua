@@ -112,15 +112,26 @@ const KEYS: [string, string][] = [
   ['Enter', 'abrir o pedido selecionado'],
 ];
 
+// the Vendedor's inbox reads A and the arrows its own way (sales-agent-ux §3.10)
+const INBOX_KEYS: [string, string][] = [
+  ['/', 'buscar nas conversas'],
+  ['?', 'abrir esta ajuda'],
+  ['J / K', 'próxima / anterior conversa'],
+  ['A', 'assumir a conversa aberta'],
+  ['D', 'devolver ao Vendedor'],
+];
+
 /** Keyboard shortcuts (§10), for the computer at the counter. */
 function Shortcuts() {
+  const inbox = useLocation().pathname.includes('/vendedor/conversas');
+  const keys = inbox ? INBOX_KEYS : KEYS;
   return (
     <section aria-labelledby="help-keys" className="hidden md:block">
       <h3 id="help-keys" className="t-label mb-2 inline-flex items-center gap-2">
         <Keyboard className="size-5 text-muted" aria-hidden /> Atalhos no computador
       </h3>
       <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2">
-        {KEYS.map(([k, v]) => (
+        {keys.map(([k, v]) => (
           <div key={k} className="contents">
             <dt>
               <kbd className="t-caption inline-grid h-7 min-w-7 place-items-center rounded-sm bg-sunken px-2 font-semibold ring-1 ring-line-strong">

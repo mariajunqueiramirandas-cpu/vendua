@@ -1354,7 +1354,7 @@ export interface ThreadMessage {
   at: string;
   /** Core's cards: summary | pix | order | link | product */
   card: string | null;
-  /** SummaryCardData for card 'summary' (and 'order') */
+  /** SummaryCardData for card 'summary', OrderCardData for 'order' */
   data: unknown;
   hasMedia: boolean;
   seconds: number | null;
@@ -1403,6 +1403,15 @@ export interface ThreadDetail {
 }
 
 /** Core's receipt: every figure here is Core's ("calculado pela loja") */
+/** Core's order card (src/vendedor/cards.ts) */
+export interface OrderCardData {
+  number: number;
+  state: string;
+  totalCents: number;
+  payment: string | null;
+  paymentUrl: string | null;
+}
+
 export interface SummaryCardData {
   id: string;
   lines: { text: string; totalCents: number }[];

@@ -553,6 +553,8 @@ const TOOL_WORDS: Record<string, string> = {
   offer_incentive: 'pediu um cupom do seu orçamento',
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** The turn behind a message, read in plain words from its events (UX §3.3). */
 export async function whyView(
   tx: Sql,
@@ -562,7 +564,9 @@ export async function whyView(
 ): Promise<WhyView> {
   const [m] = await tx<{ meta: { turnId?: string } }[]>`
     select meta from shopper_messages where tenant_id = ${tenantId} and thread_id = ${threadId} and id = ${messageId}`;
-  const turnId = m?.meta?.turnId;
+  const raw = m?.meta?.turnId;
+  // a turn id that isn't a uuid (old or hand-written rows) reads as no turn, never a 500
+  const turnId = typeof raw === 'string' && UUID_RE.test(raw) ? raw : null;
   if (!turnId)
     return {
       asked: null,

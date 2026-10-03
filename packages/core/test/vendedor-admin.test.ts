@@ -101,6 +101,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('vendedor admin API (db)', () =>
     expect((await attendant('GET', '/vendedor/threads/nope')).status).toBe(400);
     expect((await attendant('GET', `/vendedor/threads/${crypto.randomUUID()}`)).status).toBe(404);
     expect((await attendant('GET', '/vendedor/threads?filter=bogus')).status).toBe(422);
+    const [odd] = await sql<{ id: string }[]>`
+      insert into shopper_messages (tenant_id, thread_id, author, kind, body, status, meta)
+      values (${tenantId}, ${threadId}, 'agent', 'text', 'oi', 'sent', ${sql.json({ turnId: 'not-a-uuid' })})
+      returning id`;
+    const why = await attendant('GET', `/vendedor/threads/${threadId}/why/${odd!.id}`);
+    expect(why.status).toBe(200);
+    await sql`delete from shopper_messages where id = ${odd!.id}`;
   });
 
   test('settings: managers configure, the owner turns it on and sets money', async () => {
