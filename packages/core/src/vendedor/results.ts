@@ -51,6 +51,7 @@ export async function resultsView(
     {
       closed_cents: number;
       closed_n: number;
+      ordered_threads: number;
       site_avg: number | null;
       conversations: number;
       carts: number;
@@ -67,6 +68,7 @@ export async function resultsView(
     select
       coalesce(sum(o.total_cents) filter (where o.source = 'whatsapp_agent'), 0)::int as closed_cents,
       count(*) filter (where o.source = 'whatsapp_agent')::int as closed_n,
+      count(distinct o.thread_id) filter (where o.source = 'whatsapp_agent')::int as ordered_threads,
       avg(o.total_cents) filter (where o.source = 'storefront')::int as site_avg,
       (select count(*) from shopper_threads t where t.tenant_id = ${tenantId} and t.channel = 'whatsapp'
          and t.class <> 'other' and t.last_in_at >= ${since})::int as conversations,
@@ -151,12 +153,7 @@ export async function resultsView(
       windowHours: ASSIST_WINDOW_HOURS,
     },
     siteAverageCents: r?.site_avg ?? null,
-    funnel: {
-      conversations: r?.conversations ?? 0,
-      carts: r?.carts ?? 0,
-      summaries: r?.summaries ?? 0,
-      orders: r?.closed_n ?? 0,
-    },
+    funnel: funnelOf(r),
     suggestions: {
       offered: r?.offered ?? 0,
       taken: r?.taken ?? 0,
@@ -168,4 +165,18 @@ export async function resultsView(
     proposals: proposals.slice(0, 3),
     enoughData: (r?.conversations ?? 0) >= 20,
   };
+}
+
+/** Conversations at each step, never more at a step than at the one before: a thread that ordered
+ *  twice is one conversation that closed, and one whose first message predates the period still
+ *  went through every step. */
+function funnelOf(
+  r:
+    | { conversations: number; carts: number; summaries: number; ordered_threads: number }
+    | undefined,
+): ResultsView['funnel'] {
+  const orders = r?.ordered_threads ?? 0;
+  const summaries = Math.max(r?.summaries ?? 0, orders);
+  const carts = Math.max(r?.carts ?? 0, summaries);
+  return { conversations: Math.max(r?.conversations ?? 0, carts), carts, summaries, orders };
 }
