@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { createGateway, type ScriptedOutput } from '@vendua/agent-runtime';
+import { createGateway, type Json, type ScriptedOutput } from '@vendua/agent-runtime';
 import { scriptedAdapter } from '@vendua/agent-runtime/testing';
 import { migrate, type Sql } from '../src/platform/db.ts';
 import { score } from '../src/vendedor/cliente-oculto.ts';
@@ -18,7 +18,7 @@ const gw = (script: ScriptedOutput[]) =>
     adapters: [scriptedAdapter(script)],
     routes: { routes: async () => [{ provider: 'scripted', model: 't', zdr: true }] },
   });
-const call = (name: string, args: Record<string, unknown> = {}) => ({ name, args });
+const call = (name: string, args: Record<string, Json> = {}) => ({ name, args });
 
 describe('scoring is code', () => {
   const sc = FIXTURES[0]!.scenarios[0]!;

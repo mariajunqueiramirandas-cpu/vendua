@@ -47,7 +47,7 @@ const result = await runSuite(sql, {
   agentGateway,
   userGateway,
   k: Number(arg('k') ?? 3),
-  only: arg('only')?.split(','),
+  ...(arg('only') ? { only: arg('only')!.split(',') } : {}),
   log: (s) => console.log(s),
 });
 const dir = join(import.meta.dir, '../../../sim-results');
