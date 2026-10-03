@@ -380,8 +380,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       (await sql`select payer_document from subscriptions where tenant_id = ${r.body.store.id}`)[0]!
         .payer_document;
     await sql`update subscriptions set payer_document = null where tenant_id = ${r.body.store.id}`;
-    expect((await signup(token, slug, { document: '390.533.447-05' }, other)).status).toBe(201);
+    // …and its live Pix, issued without one, is replaced by one that carries it
+    fake.platformPix = async (req) => {
+      seen.push(req);
+      return realPix(req);
+    };
+    try {
+      expect((await signup(token, slug, { document: '390.533.447-05' }, other)).status).toBe(201);
+    } finally {
+      fake.platformPix = realPix;
+    }
     expect(await docOf()).toBe('39053344705');
+    expect(seen.map((q) => q.payerDocument)).toEqual(['12ABC34501DE35', '39053344705']);
     expect((await signup(token, slug, { document: '529.982.247-25' }, other)).status).toBe(201);
     expect(await docOf()).toBe('39053344705');
     const bad = await owner('PATCH', '/account/subscription', { payerDocument: '123' });

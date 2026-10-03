@@ -237,6 +237,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       planId: 'pangolim',
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     expect(st.status).toBe(200);
 
@@ -1042,6 +1043,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
         planId: 'bandeira',
         method: 'pix',
         payerEmail: 'bia@example.com',
+        payerDocument: '529.982.247-25',
       });
       expect(st.status).toBe(200);
       expect((await payInvoice(st.body.invoices[0].id)).status).toBe(200);
@@ -1134,6 +1136,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
         planId: 'bandeira',
         method: 'pix',
         payerEmail: 'bia@example.com',
+        payerDocument: '529.982.247-25',
       });
       expect((await payInvoice(st.body.invoices[0].id)).status).toBe(200);
       const t0 = Date.now() - 40 * DAY;
@@ -1166,6 +1169,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
         planId: 'bandeira',
         method: 'pix',
         payerEmail: 'bia@example.com',
+        payerDocument: '529.982.247-25',
       });
       await payInvoice(st.body.invoices[0].id);
       await sql`update ai_packs set public = true where id = ${tempPack}`;

@@ -40,6 +40,7 @@ import {
   beginPayment,
   lockSub,
   recordBillingProblem,
+  reissueLivePix,
   startSubscription,
   startTrial,
   withEffects,
@@ -499,11 +500,14 @@ async function ensureFirstCharge(
       }
       // a signup resumed from before it asked for the CPF/CNPJ: fill it in, never overwrite one
       // (the owner may have changed it in Conta since)
-      if (!sub.payer_document)
+      if (!sub.payer_document) {
         await tx`
           update subscriptions set payer_document = ${o.document}, updated_at = now()
           where tenant_id = ${owner.tenant_id} and payer_document is null
         `;
+        // its first Pix went out without one: the owner gets a new Pix that carries it
+        if (sub.status === 'pending') await reissueLivePix(ctx, tx, owner.tenant_id, now);
+      }
       if (sub.status === 'trialing' && sub.trial_ends_at)
         return { kind: 'trial', endsAt: sub.trial_ends_at.toISOString() };
       if (sub.status === 'pending')

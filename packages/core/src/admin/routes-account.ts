@@ -70,7 +70,8 @@ export function mountAccount(d: AdminDeps) {
       const plan = await publicPlanOr422(tx, body.planId, await heldPlans(tx, t.id));
       const method = oneOf(body.method, 'method', METHODS);
       const payerEmail = validPayerEmail(body.payerEmail);
-      const payerDocument = payerDocumentOr(body.payerDocument);
+      // starting a plan issues its first Pix at once: it needs the document, as signup does
+      const payerDocument = validDocument(body.payerDocument, 'payerDocument');
       await startSubscription(ctxFor(c), tx, t.id, {
         plan,
         method,

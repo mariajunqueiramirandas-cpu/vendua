@@ -127,6 +127,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       planId: plan,
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     expect(st.status).toBe(200);
     expect((await payInvoice(st.body.invoices[0].id)).status).toBe(200);
@@ -342,6 +343,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       planId: 'mirim',
       method: 'card',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     expect(st.status).toBe(200);
     const pre = await preapproval(s.id);
@@ -406,6 +408,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       planId: 'mirim',
       method: 'card',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     const pre = await preapproval(s.id);
     await fake.updateSubscription(pre, { status: 'cancelled' });
@@ -426,6 +429,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     expect((await o.owner('POST', '/account/subscription/cancel', {})).status).toBe(200);
     expect((await events(o.id, 'billing.problem')).map((e) => e.data.detail)).toEqual([
@@ -465,6 +469,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     const oldPix = (
       await sql`select provider_payment_id from invoices where tenant_id = ${o.id}`

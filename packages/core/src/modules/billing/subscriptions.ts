@@ -459,6 +459,7 @@ export async function reissuePix(
   tenantId: string,
   invoiceId: string,
   now: Date,
+  o: { force?: boolean } = {},
 ) {
   const sub = await lockSub(tx, tenantId);
   const inv = (
@@ -473,7 +474,7 @@ export async function reissuePix(
     (inv.kind === 'upgrade' && (!sub || !upgradeLive(sub, inv, now)))
   )
     throw new HttpError(409, 'INVOICE_NOT_OPEN', 'only an open Pix invoice gets a new Pix');
-  if (pixIsLive(inv, now)) return inv;
+  if (pixIsLive(inv, now) && !o.force) return inv;
   const payer = await payerFor(tx, tenantId, sub?.payer_email);
   if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
@@ -495,6 +496,27 @@ export async function reissuePix(
   );
   await emitAdminTx(tx, tenantId, 'billing');
   return out;
+}
+
+/**
+ * The payer's CPF/CNPJ just changed: a live Pix issued without it is replaced, since MP scores
+ * the payer's document when the money arrives. MP down keeps the old one; the next Pix carries it.
+ */
+export async function reissueLivePix(ctx: BillingCtx, tx: Sql, tenantId: string, now: Date) {
+  const live = await tx<{ id: string }[]>`
+    select id from invoices where tenant_id = ${tenantId} and status = 'open' and method = 'pix'
+      and pix_copy_paste is not null and pix_expires_at > ${now}
+  `;
+  for (const { id } of live)
+    await reissuePix(ctx, tx, tenantId, id, now, { force: true }).catch((err: unknown) => {
+      // both throw before anything is written: the transaction goes on
+      if (
+        err instanceof HttpError &&
+        (err.code === 'BILLING_PROVIDER_ERROR' || err.code === 'INVOICE_NOT_OPEN')
+      )
+        return;
+      throw err;
+    });
 }
 
 // ── changing ────────────────────────────────────────────────────────────────
@@ -822,6 +844,7 @@ export async function changeSubscription(
   }
   if (o.payerDocument !== undefined && o.payerDocument !== sub.payer_document) {
     await tx`update subscriptions set payer_document = ${o.payerDocument}, updated_at = now() where tenant_id = ${tenantId}`;
+    await reissueLivePix(ctx, tx, tenantId, o.now);
     await reload();
   }
 
