@@ -305,6 +305,29 @@ export interface StaffEventMap {
     attempts: number;
   };
   'agent.cost_cap': { leadId: Id; leadName: Name; spentCents: number; capCents: number };
+  /** Agent Runtime v3 (ADR 0030): a turn that exhausted its retries. Ids only, never the shopper. */
+  'agent.turn_failed': {
+    agentId: string;
+    actorId: Id;
+    turnId: Id;
+    version: string;
+    storeName: Opt<Name>;
+    error: string;
+    attempts: number;
+  };
+  'agent.version_rollback': {
+    agentId: string;
+    version: string;
+    stage: string;
+    reasons: string[];
+  };
+  'agent.qa_alert': {
+    agentId: string;
+    version: string;
+    mean: number;
+    threshold: number;
+    window: number;
+  };
   /** whatsapp_lojas = the wa-gateway that runs every store's own WhatsApp (ADR 0026) */
   'channel.down': {
     channel: 'whatsapp' | 'instagram' | 'email' | 'whatsapp_lojas';
@@ -583,6 +606,28 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'normal',
     severity: 'warning',
     label: 'run do agente falhou de vez',
+  },
+  'agent.turn_failed': {
+    category: 'agente',
+    level: 'normal',
+    severity: 'warning',
+    label: 'turno do agente falhou de vez',
+    hint: 'runtime v3: a conversa caiu no plano B (link da loja ou a loja assume)',
+  },
+  'agent.version_rollback': {
+    category: 'agente',
+    level: 'ping',
+    severity: 'critical',
+    label: 'versão do agente voltou atrás',
+    hint: 'os monitores do anel pioraram e a versão anterior voltou para todas as lojas',
+    anchor: { role: 'opens', key: (d) => `agent-version:${d.version}` },
+  },
+  'agent.qa_alert': {
+    category: 'agente',
+    level: 'normal',
+    severity: 'warning',
+    label: 'nota de qualidade do agente caiu',
+    anchor: { role: 'opens', key: (d) => `agent-qa:${d.agentId}:${d.version}` },
   },
   'agent.cost_cap': {
     category: 'agente',

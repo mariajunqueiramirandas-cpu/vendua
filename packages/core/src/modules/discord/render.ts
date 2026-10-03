@@ -743,6 +743,43 @@ function runFailed(ev: Ev<'agent.run_failed'>, ctx: RenderCtx): Rendered {
   };
 }
 
+function turnFailed(ev: Ev<'agent.turn_failed'>): Rendered {
+  const d = ev.data;
+  return {
+    card: card(ev, {
+      title: `turno do agente falhou · ${esc(d.agentId)}`,
+      description: code(d.error, 900),
+      fields: fields(
+        field('loja', d.storeName ? esc(d.storeName) : null),
+        field('versão', esc(d.version)),
+        field('tentativas', String(d.attempts)),
+        field('ator', esc(d.actorId)),
+      ),
+    }),
+  };
+}
+
+function versionRollback(ev: Ev<'agent.version_rollback'>): Rendered {
+  const d = ev.data;
+  return {
+    card: card(ev, {
+      title: `rollback · ${esc(d.agentId)} ${esc(d.version)}`,
+      description: esc(clip(d.reasons.join('\n'), 900)),
+      fields: fields(field('estava em', esc(d.stage))),
+    }),
+  };
+}
+
+function qaAlert(ev: Ev<'agent.qa_alert'>): Rendered {
+  const d = ev.data;
+  return {
+    card: card(ev, {
+      title: `qualidade caiu · ${esc(d.agentId)} ${esc(d.version)}`,
+      description: `média ${d.mean.toFixed(2)} nas últimas ${d.window} conversas (mínimo ${d.threshold})`,
+    }),
+  };
+}
+
 function costCap(ev: Ev<'agent.cost_cap'>, ctx: RenderCtx): Rendered {
   const d = ev.data;
   return {
@@ -1019,6 +1056,9 @@ type Standalone = { [K in StaffEventKind]?: (ev: Ev<K>, ctx: RenderCtx) => Rende
 type Family = (ev: EventRow, history: EventRow[], ctx: RenderCtx) => Rendered;
 
 const STANDALONE: Standalone = {
+  'agent.turn_failed': turnFailed,
+  'agent.version_rollback': versionRollback,
+  'agent.qa_alert': qaAlert,
   'merchant.help': merchantHelp,
   'store.request': storeRequest,
   'billing.manual': billingManual,

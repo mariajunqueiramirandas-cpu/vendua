@@ -213,6 +213,7 @@ import {
   readPaymentAdjustments,
 } from './modules/payment-adjustments.ts';
 import { mountControlBilling } from './modules/control-billing.ts';
+import { mountAgentRuntimeControl } from './agent-host/control-routes.ts';
 import { mountIncidentsControl } from './modules/incidents.ts';
 import { mountWebAnalytics } from './modules/web-analytics.ts';
 import { mountDiscord } from './modules/discord/routes.ts';
@@ -2891,6 +2892,7 @@ export function createApp({
     storeDomain: publicStoreDomain,
   });
   mountIncidentsControl({ app, sql, controlGate });
+  mountAgentRuntimeControl({ app, sql, controlGate });
   mountWebAnalytics({
     app,
     sql,

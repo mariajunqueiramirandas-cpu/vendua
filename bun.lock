@@ -171,6 +171,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@openrouter/sdk": "1.3.2",
+        "@vendua/agent-runtime": "workspace:*",
         "@vendua/loader": "workspace:*",
         "@vendua/templates": "workspace:*",
         "baileys": "7.0.0-rc14",
