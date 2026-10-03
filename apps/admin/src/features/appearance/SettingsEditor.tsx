@@ -1,12 +1,18 @@
-import { Plus, Trash } from '@phosphor-icons/react';
+import { ArrowDown, ArrowUp, Plus, Trash } from '@phosphor-icons/react';
 import { DEFAULT_PATHS } from '@vendua/kernel/rules';
 import { useState } from 'react';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Chips, Field, TextArea, TextInput, Toggle, Stepper } from '../../ui/fields.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
-import { keepsUrl, optionName, type FieldSpec } from './fields.ts';
+import { groupFields, keepsUrl, optionName, type FieldSpec } from './fields.ts';
 
 type Values = Record<string, unknown>;
+
+const swap = <T,>(xs: T[], i: number, j: number) => {
+  const n = [...xs];
+  [n[i], n[j]] = [n[j]!, n[i]!];
+  return n;
+};
 
 /** Every change lands in the preview as it's typed; "publicar" makes it real. */
 export function SettingsEditor({
@@ -15,6 +21,7 @@ export function SettingsEditor({
   onChange,
   idPrefix,
   origin,
+  grouped,
 }: {
   fields: FieldSpec[];
   value: Values;
@@ -22,6 +29,8 @@ export function SettingsEditor({
   idPrefix: string;
   /** the store's own address: its relative images ("/images/…") live there */
   origin: string;
+  /** headed chunks (textos, fotos, botões, opções) for a section's own form */
+  grouped?: boolean;
 }) {
   const show = (u: string) =>
     u.startsWith('/') && !u.startsWith('/v1/media/') && !u.startsWith('//') ? origin + u : u;
@@ -34,9 +43,31 @@ export function SettingsEditor({
   const shown = fields.filter((f) => f.kind !== 'skip');
   if (!shown.length)
     return (
-      <p className="t-body text-muted">
-        Esta parte não tem textos para editar. Dá para mover ou esconder.
+      <p className="t-body rounded-md bg-sunken p-4 text-muted">
+        Esta parte se monta sozinha com os dados da loja: não tem textos para editar. Dá para mover
+        ou esconder.
       </p>
+    );
+  if (grouped)
+    return (
+      <div className="space-y-7">
+        {groupFields(shown).map((g, i) => (
+          <section key={g.label ?? `g${i}`} aria-label={g.label ?? undefined}>
+            {g.label ? (
+              <h3 className="t-caption mb-3 font-semibold uppercase tracking-wide text-muted">
+                {g.label}
+              </h3>
+            ) : null}
+            <SettingsEditor
+              fields={g.fields}
+              value={value}
+              onChange={onChange}
+              idPrefix={idPrefix}
+              origin={origin}
+            />
+          </section>
+        ))}
+      </div>
     );
   return (
     <div className="space-y-5">
@@ -127,8 +158,26 @@ export function SettingsEditor({
                 <div className="space-y-3">
                   {items.map((it, i) => (
                     <div key={i} className="rounded-md bg-sunken p-3">
-                      <div className="mb-2 flex items-center justify-between">
-                        <span className="t-caption font-semibold text-muted">{i + 1}º item</span>
+                      <div className="mb-2 flex items-center">
+                        <span className="t-caption flex-1 font-semibold text-muted">
+                          {i + 1}º item
+                        </span>
+                        <IconButton
+                          label="subir item"
+                          size="sm"
+                          disabled={i === 0}
+                          onClick={() => set(f.key, swap(items, i, i - 1))}
+                        >
+                          <ArrowUp />
+                        </IconButton>
+                        <IconButton
+                          label="descer item"
+                          size="sm"
+                          disabled={i === items.length - 1}
+                          onClick={() => set(f.key, swap(items, i, i + 1))}
+                        >
+                          <ArrowDown />
+                        </IconButton>
                         <IconButton
                           label="tirar item"
                           size="sm"

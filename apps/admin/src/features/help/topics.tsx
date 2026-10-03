@@ -339,11 +339,15 @@ export const TOPICS: Record<TopicId, Topic> = {
       },
       {
         q: 'Como mudo as cores?',
-        a: 'Toque em “cores”. Se uma combinação ficar difícil de ler, o painel avisa antes de publicar.',
+        a: 'Toque em “Cores e cantos”, no alto da lista. Se uma combinação ficar difícil de ler, o painel avisa antes de publicar.',
       },
       {
         q: 'Mudar a ordem ou esconder uma parte',
-        a: 'Em “partes da página”, suba, desça ou esconda cada parte, ou adicione uma nova.',
+        a: 'Na lista, suba, desça ou esconda cada parte, ou adicione uma nova. O topo e o rodapé aparecem em todas as páginas.',
+      },
+      {
+        q: 'Errei. Como volto atrás?',
+        a: 'Toque em desfazer (a seta para trás), ou em “descartar” para voltar ao que está no ar. Se sair da tela antes de publicar, as mudanças continuam guardadas neste aparelho.',
       },
     ],
   },

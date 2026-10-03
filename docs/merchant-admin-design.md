@@ -434,12 +434,19 @@ room.
 ### 6.7 Edit what you see
 
 Aparência opens the **real storefront** in a device frame (phone by default,
-toggle to desktop). Tapping anything on the page selects that section with a
-lime outline and opens its settings in a sheet: copy, images, show/hide,
-move up/down. Changes appear in the preview as they're typed. Colors are
-chosen from palettes generated from the store's logo, with the contrast check
-shown as a friendly "fácil de ler ✓" or "difícil de ler — ajustar", never a
-ratio. "Publicar" shows "publicando…" and then "no ar ✓" with the live URL.
+toggle to desktop), laid out at a real phone's width and scaled to fit. Tapping
+anything on the page selects that section with a lime outline and opens its
+settings beside the preview, never over it: copy, images, show/hide, move
+up/down, grouped as textos, fotos, botões e links, opções. Changes appear in the
+preview as they're typed. The list of what's on the page reads top to bottom
+like the page: the shared top ("em todas as páginas"), the page's own parts
+(each with its own title as a second line, so two Vitrines tell apart), the
+shared footer. Colors are one more entry in that list, chosen from palettes
+generated from the store's logo, with the contrast check shown as one friendly
+"tudo fácil de ler ✓" or the rows that aren't, never a ratio. Every edit can be
+undone (desfazer/refazer, ⌘Z), "descartar" goes back to what's live, and
+unpublished work is kept in the browser, so leaving the screen loses nothing.
+"Publicar" shows "publicando…" and then "no ar ✓" with the live URL.
 
 ### 6.8 The store builds itself (onboarding)
 
@@ -582,9 +589,14 @@ name, contacts, address), Mensagens (pause and closed copy with previews).
 
 ### Aparência
 
-The edit-what-you-see editor (6.7). The desktop layout shows preview center,
-sections outline left, settings right. Phones show the preview full width with
-the settings sheet.
+The edit-what-you-see editor (6.7). From tablets up it fits the screen and each
+column scrolls on its own. Wide screens (1400 px and up) show the outline left,
+preview center, settings right, with a "what do you want to change?" start in
+place of an empty panel. Tablets and laptops show the preview beside one panel:
+the outline, or what was picked from it, with a back arrow. Phones show the
+preview without a device frame and the panel under it; while something is
+selected the preview pins under the top bar, so each change stays in view.
+Publish and undo sit in the action bar.
 
 ### Relatórios
 
