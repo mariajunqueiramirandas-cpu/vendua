@@ -529,10 +529,17 @@ export class Runtime<H = unknown> {
       }
       await this.toolCalls(run, step, out.toolCalls);
     }
-    if (!finish(run.state))
+    if (!finish(run.state)) {
       await this.commit(run, [
         { type: 'turn.step_limit', step: `m${maxSteps}`, payload: { steps: maxSteps } },
       ]);
+      // the shopper still gets an answer: the definition's safe line, never silence
+      if (def.degrade && run.state.owner === 'agent' && !run.memo.has('degrade'))
+        await this.fenced(run, async (tx) => {
+          const events = await this.degradeEvents(run, tx);
+          if (events.length) await this.commitIn(tx, run, events, false);
+        });
+    }
   }
 
   private async modelStep(run: TurnRun<H>, step: string): Promise<AgentEvent> {
@@ -1009,39 +1016,10 @@ export class Runtime<H = unknown> {
   private async fail(run: TurnRun<H>, error: string): Promise<void> {
     const def = run.agent.def;
     await this.fenced(run, async (tx) => {
-      const events: NewEvent[] = [];
-      if (def.degrade && run.state.owner === 'agent') {
-        try {
-          const ctx = this.toolCtx(run, tx.host, tx);
-          const out = await tx.savepoint(() => def.degrade!(ctx));
-          events.push(...ctx.events);
-          if (out?.text) {
-            const transport = this.transports.get(def.transport)!;
-            const { outboxId } = await transport.send(tx, {
-              actorId: run.actor.id,
-              tenantId: run.actor.tenantId,
-              subject: run.actor.subject,
-              turnId: run.turnId,
-              step: 'degrade',
-              text: out.text,
-              cards: out.cards ?? [],
-            });
-            events.push({
-              type: 'message.sent',
-              step: 'degrade',
-              payload: {
-                text: out.text,
-                cards: (out.cards ?? []) as unknown as Json,
-                outboxId,
-                degraded: true,
-                transport: transport.id,
-              },
-            });
-          }
-        } catch (e) {
-          events.push({ type: 'degrade.failed', payload: { error: errText(e) } });
-        }
-      }
+      const events: NewEvent[] =
+        def.degrade && run.state.owner === 'agent' && !run.memo.has('degrade')
+          ? await this.degradeEvents(run, tx)
+          : [];
       events.push({
         type: 'turn.failed',
         payload: {
@@ -1067,6 +1045,43 @@ export class Runtime<H = unknown> {
       );
     });
     this.log('warn', 'turn failed', { actorId: run.actor.id, turnId: run.turnId, error });
+  }
+
+  /** The definition's safe line, sent as Core's own words (no guards: the model didn't write it). */
+  private async degradeEvents(run: TurnRun<H>, tx: FencedTx<H>): Promise<NewEvent[]> {
+    const def = run.agent.def;
+    const events: NewEvent[] = [];
+    try {
+      const ctx = this.toolCtx(run, tx.host, tx);
+      const out = await tx.savepoint(() => def.degrade!(ctx));
+      events.push(...ctx.events.map((e) => ({ ...e, step: e.step ?? 'degrade' })));
+      if (out?.text) {
+        const transport = this.transports.get(def.transport)!;
+        const { outboxId } = await transport.send(tx, {
+          actorId: run.actor.id,
+          tenantId: run.actor.tenantId,
+          subject: run.actor.subject,
+          turnId: run.turnId,
+          step: 'degrade',
+          text: out.text,
+          cards: out.cards ?? [],
+        });
+        events.push({
+          type: 'message.sent',
+          step: 'degrade',
+          payload: {
+            text: out.text,
+            cards: (out.cards ?? []) as unknown as Json,
+            outboxId,
+            degraded: true,
+            transport: transport.id,
+          },
+        });
+      }
+    } catch (e) {
+      events.push({ type: 'degrade.failed', step: 'degrade', payload: { error: errText(e) } });
+    }
+    return events;
   }
 
   /** A background turn: the older transcript becomes a summary the compiler uses instead. */
