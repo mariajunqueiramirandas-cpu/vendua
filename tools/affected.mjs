@@ -7,6 +7,8 @@
 // `conformance` gate the CI jobs of the same name; `adminGate` gates the merchant admin's
 // screenshot/axe job (it runs against Core + the Kernel's section catalog); `edgeSmoke` gates
 // the Control Plane smoke (Core + the edge + `vendua release` serving the `_template` build).
+// `packages/agent-runtime` is a Core dependency (not a storefront one): touching it flips
+// `coreTests`, `conformance`, `adminGate` and `edgeSmoke` like a Core change, never `allStorefronts`.
 //   bun tools/affected.mjs [--base <ref>]     (default base: origin/main)
 // Consumed by the `check` job's Builds step in .github/workflows/ci.yml.
 
@@ -20,16 +22,20 @@ const SHARED_PACKAGES = new Set([
   'templates',
   'codemods',
 ]);
+// Core's own inputs: Core imports these, so they run its tests
+const CORE_TEST_INPUTS = new Set(['packages/core', 'packages/agent-runtime']);
 const SHARED_ROOT_FILES = new Set(['package.json', 'bun.lock', 'tsconfig.base.json']);
 // the conformance e2e scaffolds from _template and runs against Core + Kernel
 const ADMIN_INPUTS = new Set([
   'apps/admin',
   'packages/core',
+  'packages/agent-runtime',
   'packages/kernel',
   'packages/templates',
 ]);
 const CONFORMANCE_INPUTS = new Set([
   'packages/core',
+  'packages/agent-runtime',
   'packages/kernel',
   'packages/cli',
   'packages/conformance',
@@ -42,6 +48,7 @@ const CONFORMANCE_INPUTS = new Set([
 // the smoke publishes the template's build and serves it through the edge from Core's routes
 const EDGE_INPUTS = new Set([
   'packages/core',
+  'packages/agent-runtime',
   'packages/edge',
   'packages/cli',
   'packages/kernel',
@@ -86,7 +93,7 @@ export function mapFiles(files) {
   return {
     packages: [...packages].sort(),
     allStorefronts,
-    coreTests: ciChanged || rootChanged || touches('packages/core'),
+    coreTests: ciChanged || rootChanged || [...CORE_TEST_INPUTS].some(touches),
     conformance: ciChanged || allStorefronts || [...CONFORMANCE_INPUTS].some(touches),
     adminGate: ciChanged || rootChanged || [...ADMIN_INPUTS].some(touches),
     edgeSmoke: ciChanged || rootChanged || [...EDGE_INPUTS].some(touches),

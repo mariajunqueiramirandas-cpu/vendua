@@ -1,6 +1,8 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { mapFiles } from './affected.mjs';
 
 describe('mapFiles', () => {
@@ -106,6 +108,119 @@ describe('mapFiles', () => {
       const r = mapFiles([f]);
       expect([r.coreTests, r.conformance]).toEqual([true, true]);
     }
+  });
+});
+
+describe('agent-runtime mapping', () => {
+  test('agent-runtime flips Core-dependent gates but not allStorefronts', () => {
+    const r = mapFiles(['packages/agent-runtime/src/index.ts']);
+    expect(r.packages).toEqual(['packages/agent-runtime']);
+    expect(r.allStorefronts).toBe(false);
+    expect([r.coreTests, r.conformance, r.adminGate, r.edgeSmoke]).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ]);
+  });
+
+  test('a docs-only diff next to agent-runtime churn elsewhere stays quiet', () => {
+    const r = mapFiles(['packages/agent-runtime/README.md', 'docs/roadmap.md']);
+    expect(r.coreTests).toBe(true);
+    expect(mapFiles(['docs/roadmap.md']).coreTests).toBe(false);
+  });
+});
+
+describe('check-agent-runtime-boundary', () => {
+  const checker = join(import.meta.dir, 'check-agent-runtime-boundary.mjs');
+  const run = (args: string[] = []) => spawnSync('bun', [checker, ...args], { encoding: 'utf8' });
+  const dirs: string[] = [];
+
+  // `pkg` is the fixture root; a sibling `core/` lets '../../core/…' escape it
+  function fixture(files: Record<string, string>) {
+    const base = mkdtempSync(join(tmpdir(), 'ar-boundary-'));
+    dirs.push(base);
+    const root = join(base, 'pkg');
+    mkdirSync(root);
+    for (const [name, body] of Object.entries(files)) {
+      const full = join(root, name);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, body);
+    }
+    return root;
+  }
+  afterAll(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+
+  test('allowed imports pass', () => {
+    const root = fixture({
+      'src/x.ts': `import { x } from './y.ts';\nimport { createHash } from 'node:crypto';\nimport { test } from 'bun:test';\nexport * from '../src/y.ts';\n`,
+      'src/y.ts': `import { z } from '@vendua/agent-runtime/testing';\n// import 'postgres'\nexport const x = 1;\n`,
+      'node_modules/dep/index.js': `import 'left-pad';\n`,
+    });
+    const r = run(['--root', root]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('OK');
+  });
+
+  test('@vendua/* other than agent-runtime fails with file:line', () => {
+    const root = fixture({
+      'src/a.ts': `export const a = 1;\nimport { db } from '@vendua/core';\n`,
+    });
+    const r = run(['--root', root]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('src/a.ts:2 @vendua/core');
+  });
+
+  test('a relative path escaping the package root fails', () => {
+    const root = fixture({
+      'src/deep/b.ts': `import { sql } from '../../../core/src/platform/db.ts';\n`,
+      'src/ok.ts': `import { y } from './deep/b.ts';\n`,
+    });
+    const r = run(['--root', root]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('src/deep/b.ts:1 ../../../core/src/platform/db.ts');
+    expect(r.stderr).not.toContain('src/ok.ts');
+    const shallow = fixture({ 'c.ts': `import { sql } from '../../core/src/platform/db.ts';\n` });
+    expect(run(['--root', shallow]).status).toBe(1);
+  });
+
+  test('npm packages fail', () => {
+    const root = fixture({
+      'src/c.ts': `import postgres from 'postgres';\nexport { z } from 'zod';\n`,
+    });
+    const r = run(['--root', root]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('src/c.ts:1 postgres');
+    expect(r.stderr).toContain('src/c.ts:2 zod');
+  });
+
+  test('dynamic import() and require() are caught', () => {
+    const root = fixture({
+      'd.ts': `export async function f() {\n  return await import('@vendua/kernel');\n}\n`,
+      'e.mjs': `const x = require('@vendua/core/src/app.ts');\n`,
+    });
+    const r = run(['--root', root]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('d.ts:2 @vendua/kernel');
+    expect(r.stderr).toContain('e.mjs:1 @vendua/core/src/app.ts');
+  });
+
+  test('multi-line import clauses and side-effect imports are caught', () => {
+    const root = fixture({
+      'f.ts': `import {\n  a,\n  b,\n} from '@vendua/templates';\nimport 'dotenv/config';\n`,
+    });
+    const r = run(['--root', root]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('f.ts:4 @vendua/templates');
+    expect(r.stderr).toContain('f.ts:5 dotenv/config');
+  });
+
+  test('the real package passes', () => {
+    const r = run();
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('OK');
   });
 });
 

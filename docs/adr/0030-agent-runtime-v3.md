@@ -1,6 +1,6 @@
 # ADR 0030: Agent Runtime v3, durable actors on Postgres
 
-- Status: Proposed
+- Status: Accepted; built 2026-10-03 (migration step 1, without the Vendedor itself: ADR 0031)
 - Date: 2026-10-03
 
 ## Context
@@ -100,6 +100,29 @@ invariant in `CLAUDE.md` changes twice:
   by `dispatchTx` inside the transaction that caused it; nothing else creates turns; future
   touches are timer messages."
 
+## As built
+
+Step 1's runtime and host, before any agent is registered. Each decision lives in:
+
+| #   | Where                                                                                                                                                                                                                                                |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Migration `0081_agent_runtime.sql`: the five tables with their policies, `agent_events` partitioned by month (`agent_events_partition`), the mailbox wake trigger.                                                                                   |
+| 2   | `agent-host/store/pg-store.ts`: control-scoped `claim`/`renew`/`nextDue` on lease columns only; `fenced` = `withTenant` + `FOR SHARE` fence; `release` locks the row first.                                                                          |
+| 3   | `packages/agent-runtime/src/engine/runtime.ts`: steps keyed `m0`, `m0.t1`…; a re-run turn fast-forwards through the recorded events.                                                                                                                 |
+| 4   | Tools run in the step's fenced transaction (a `ToolError` rolls back to a savepoint); replies are `store_wa_messages` rows of kind `agent`, unique per `agent_step` (`agent-host/transports/whatsapp.ts`); `ctx.external(key, …)` for outside calls. |
+| 5   | `agent-host/dispatch.ts` (`dispatchTx`); timers are `ctx.timer(…)` → `timer.<name>` rows.                                                                                                                                                            |
+| 6   | Preemption before each model call and send-effect tool; the reply's transaction checks the mailbox and supersedes instead of sending.                                                                                                                |
+| 7   | `src/define/`: `defineAgent` (version = hash of the manifest, function bodies included), `defineTool`, `defineSkill`, guards, `defineStatechart`.                                                                                                    |
+| 8   | `src/ledger/`: figures, `{{id}}` rendering, the verifier; stock guards in `src/guards/stock.ts`, the supervisor among them.                                                                                                                          |
+| 9   | `src/model/`: ZDR-only routes, fallback, breaker, hedging, budgets via the meter, PII tokens; adapters for Anthropic and OpenAI-compatible APIs (OpenRouter with `zdr`). Routes from `control_settings` `agent_runtime.routes`.                      |
+| 10  | `src/evals/`: scenarios, personas, assertions, pass^k, cassettes, counterfactual replay, online QA (`agent-host/qa.ts`), rings (`agent-host/versions.ts`: deploy, resolver, ring controller, CI's eval report endpoint).                             |
+| 11  | `tools/check-agent-runtime-boundary.mjs` in CI.                                                                                                                                                                                                      |
+| 12  | The own engine; DBOS stays plan B (open decision 1).                                                                                                                                                                                                 |
+| 13  | `agent.turn_failed`, `agent.version_rollback`, `agent.qa_alert` staff events.                                                                                                                                                                        |
+
+The turn inspector's API is `GET /control/v1/agent-runtime/actors/:id`; its CRM screen is not
+built yet.
+
 ## Consequences
 
 - The hard problems the CRM agent solved one incident at a time become properties of the
@@ -136,12 +159,16 @@ invariant in `CLAUDE.md` changes twice:
 
 ## Open decisions
 
-1. Own engine or DBOS, after the spike.
+1. Own engine or DBOS. The own engine is built and passes the turn contract on the in-memory and
+   Postgres ports; the DBOS spike remains the plan B if it fails in production.
 2. CRM tenancy for the port: a reserved platform tenant or control-scoped variants of the three
    tables.
-3. The schema library behind Standard Schema.
-4. The trace backend for the OpenTelemetry export, or the built-in inspector only at first.
-5. Retention of model I/O bodies.
+3. The schema library behind Standard Schema. The runtime ships a small built-in `s`; any
+   Standard Schema library works with an explicit `jsonSchema`.
+4. The trace backend for the OpenTelemetry export. Adapters exist (`otelTelemetry`,
+   `logTelemetry`); the host passes none yet, so the built-in inspector is the only view.
+5. Retention of model I/O bodies. Monthly partitions make dropping them cheap; nothing is
+   dropped until the owner sets it.
 
 ## Links
 

@@ -6,6 +6,7 @@ import { createSql, migrate } from './platform/db.ts';
 import { join } from 'node:path';
 import { ingestInbound } from './agent/inbound.ts';
 import { startScheduler, stopScheduler } from './agent/scheduler.ts';
+import { startAgentRuntime } from './agent-host/scheduler.ts';
 import {
   ensureSocket,
   onHistoryMessage,
@@ -120,6 +121,8 @@ setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
 // Scheduler (work loop + job loop over the durable pg queue, woken by LISTEN/NOTIFY) +
 // WhatsApp socket when the baileys driver is enabled.
 startScheduler(sql);
+// Agent Runtime v3 (ADR 0030): idle until an agent is registered in agent-host/agents
+const agentRuntime = startAgentRuntime(sql);
 onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
   await ingestInbound(sql, {
     channel: 'whatsapp',
@@ -189,7 +192,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
       server.stop(),
       new Promise((r) => setTimeout(r, 5_000)).then(() => server.stop(true)),
     ]);
-    void Promise.all([drained, stopScheduler()])
+    void Promise.all([drained, stopScheduler(), agentRuntime.stop()])
       .then(() => sql.end({ timeout: 5 }))
       .finally(() => process.exit(0));
   });
