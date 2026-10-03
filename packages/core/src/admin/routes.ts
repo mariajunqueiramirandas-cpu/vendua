@@ -300,7 +300,8 @@ export function mountAdmin(o: MountAdminOpts) {
       // "falar com a Venduá" (Ajuda); unset = the page offers the in-app message only
       support: { whatsapp: process.env.VENDUA_SUPPORT_WHATSAPP?.replace(/\D/g, '') || null },
       vendedor: {
-        enabled: agent?.enabled ?? false,
+        // on in the bar only while the plan opens it too (ADR 0032)
+        enabled: (agent?.enabled ?? false) && plan.features.vendedor,
         name: agent?.name || 'Ana',
         waiting: agent?.waiting ?? 0,
       },

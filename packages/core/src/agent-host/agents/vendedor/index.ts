@@ -12,6 +12,7 @@ import { loadCartView } from '../../../modules/cart.ts';
 import type { Sql } from '../../../platform/db.ts';
 import { lineText } from '../../../vendedor/cards.ts';
 import { buildPack, customerCard, type SubjectContext } from '../../../vendedor/pack.ts';
+import { claimForTurnTx } from '../../../vendedor/allowance.ts';
 import { loadAgent } from '../../../vendedor/settings.ts';
 import {
   AGENT_ID,
@@ -130,7 +131,19 @@ async function subjectContext(
   const t = await loadThread(tx, tenantId, threadId);
   if (!t) throw new Error(`no thread ${threadId}`);
   const agent = await loadAgent(tx, tenantId);
-  const f = threadFloor(t, agent, storeStatus(await loadStoreSettings(tx, tenantId), now), now);
+  let f = threadFloor(t, agent, storeStatus(await loadStoreSettings(tx, tenantId), now), now);
+  // every turn that can answer claims the plan's conversation first (ADR 0032): timers and the
+  // "quando eu demorar" wait reach here without passing ingest's claim. Thread lock first, as
+  // ingest takes it, then the claim's per-store lock.
+  if (t.channel !== 'test' && (f.floor === 'agent' || f.floor === 'rehearsal')) {
+    const locked = (await loadThread(tx, tenantId, threadId, { forUpdate: true }))!;
+    const ok = await claimForTurnTx(tx, locked, f.floor, {
+      key: `allowance:turn:${threadId}:${now.toISOString().slice(0, 10)}`,
+      silenceMin: agent.settings.humanSilenceMin,
+      now,
+    });
+    if (!ok) f = { floor: 'store', until: null };
+  }
   let cart: Json | null = null;
   if (t.cartId) {
     const view = await loadCartView(tx, tenantId, t.cartId, now);
