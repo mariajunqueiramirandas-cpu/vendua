@@ -207,16 +207,24 @@ The thread is now the merchant's until they hand it back.
 - **Setup in minutes.** The WhatsApp is already linked for order updates (ADR 0026). Turning the
   Vendedor on shows what it will know (menu, hours, zones, payment methods, knowledge) and a
   test chat where the merchant orders from their own agent before any shopper does.
-- **Shadow week.** In `shadow` mode it drafts a reply to every real conversation while the
-  merchant answers as always. The inbox shows "o Vendedor teria respondido…" with 👍/👎, and
-  the screen reports how often the draft would have done. The merchant switches to `seller`
+- **Ensaio.** In the `rehearsal` coverage mode it drafts a reply to every real conversation
+  while the merchant answers as always. The inbox shows the unsent drafts, and the Ensaio report
+  says how often the merchant would have sent the same thing. The merchant picks another mode
   when that number is good enough for them.
+- **Coverage.** Besides Ensaio: answer only when the store takes too long (1, 2 or 5 minutes)
+  or is closed, only outside hours, or always.
 - **One inbox.** Every conversation with its state (montando pedido, aguardando pagamento,
   pedido feito, precisa de você), the cart being built, and "Assumir" / "Devolver ao Vendedor".
-- **Questions it couldn't answer** arrive as a list. One answer becomes knowledge it uses next
-  time.
+- **Questions it couldn't answer** arrive as a list, and the merchant's own replies come back
+  as proposed answers ("aprendi com você"). One tap makes either knowledge it uses next time.
+- **Cliente oculto.** Twenty synthetic shoppers order from the store's own menu with hidden
+  target orders; the score and its misses (as menu fixes) are a merchant screen.
 - **Results.** Orders and revenue it closed, its average ticket against the storefront's, what
-  upsell and recovery added, how fast it replied and what it cost.
+  upsell and recovery added, how fast it replied, and what shoppers asked for that the store
+  doesn't sell or deliver.
+
+The screens are specified in [`sales-agent-ux.md`](sales-agent-ux.md), drawn on
+[`sales-agent-screens.html`](sales-agent-screens.html).
 
 ## 3. What makes it better
 
@@ -280,7 +288,7 @@ Today the gateway reads only bare SAIR/VOLTAR (`src/store-whatsapp/state.ts:162`
 messages typed on the merchant's phone (`fromMe`, `src/store-whatsapp/session.ts:449`) and all
 media (`extractText`, `session.ts:496`). ADR 0026 promised the gateway would neither store nor
 read the store's own conversations. The Vendedor changes that, only while the merchant has it
-on (`store_agent.mode <> 'off'`), and the setup says so in plain words:
+on (`store_agent.enabled`), and the setup says so in plain words:
 
 - **Every 1:1 message is stored** in `shopper_messages`, deduped by WhatsApp id: text, audio
   (≤ 3 min), images (≤ 3 per message, like Domínio), location pins, and replies to a previous
@@ -358,6 +366,11 @@ closes that.
   `mintCouponTx` serves the merchant, loyalty and incentives.
 - Outbox topics nobody consumes (`waitlist.restocked`, `loyalty.reward`, `order.*`) get a
   consumer where the Vendedor needs them.
+- A **sacola link**: a single-use, short-lived link that opens the storefront with a given cart
+  already built, for "fechar o pedido" switched off and for the assisted-revenue window. Today
+  no order or cart link can be sent, because the page needs the device's own cart session (ADR
+  0026). It is an additive Kernel change with the usual steps, and the link carries no
+  personal data.
 
 Today's `agent_runs` and friends can't hold this: they have no `tenant_id` and live under the
 `staff_all` control policy (migrations 0007, 0035–0038), while shopper conversations are store
@@ -584,6 +597,10 @@ this is the code version, and the sales agent can adopt it later.
   or delete any fact, and the LGPD forget erases it with the rest.
 - **Store learnings** are `store_knowledge` and the weekly review's notes, in the shape of
   `src/modules/agent-memory.ts`, scoped to the store.
+- **Demand capture.** A request for something the menu lacks, or a delivery quote outside
+  every zone, is an event (`demand.unmet`, `demand.out_of_zone`) with the normalized item or
+  neighbourhood and no shopper data. Weekly counts feed "pediram e você não tem" and "pediram
+  entrega onde você não entrega" on the Vendedor's home.
 
 ### 4.11 Selling
 
@@ -632,6 +649,16 @@ items, delivery polygons and distance pricing, payment-method adjustments (Domí
 - **Giving it back.** "Devolver ao Vendedor" in the inbox, or the window lapses. If the
   shopper's last message is still unanswered then, the agent answers it once (the handback
   wakeup); otherwise it waits for the shopper's next message.
+- **Quando eu demorar.** In that coverage mode, a shopper's message starts a timer
+  (`slowAfterMin`, a mailbox message with a `deliver_at`). A reply from the store's phone or
+  the admin before it fires cancels it; when it fires, or while the store is closed, the
+  Vendedor answers and the thread is its until the merchant writes again.
+- **Suggested replies for the merchant.** While the merchant holds the floor, a read-only turn
+  drafts two or three replies as chips. They pass the same verifier, and their figures are
+  references Core fills. Nothing is sent until the merchant taps one.
+- **Aprendi com você.** After a handoff, the merchant's own replies are read by the
+  post-conversation consolidation, which proposes them as answers or rules. A proposal goes
+  live only on "ensinar".
 - **Not every number is a shopper.** Suppliers, couriers and family write to the same number.
   A first message from a number that never ordered is answered only if it reads as a shopper's;
   otherwise the thread waits under "outros" in the inbox. "Não é cliente" mutes a number for
@@ -693,36 +720,54 @@ proposals.
 
 ```ts
 type StoreAgent = {
-  mode: 'off' | 'shadow' | 'attendant' | 'seller'; // shadow: drafts only, merchant answers
-  // Bounded like every admin write: unknown category or product ids → 422, out-of-range → 422.
-  name: string; // ≤ 30, how it introduces itself
-  voice: string; // ≤ 1000, tone in the merchant's words
-  instructions: string; // ≤ 4000, house rules (in the prompt; code rules are below)
-  whenClosed: 'answer' | 'answer_and_preorder' | 'silent';
-  humanSilenceMin: number; // 5..240, after the merchant types
+  // Bounded like every admin write: unknown category, product or coupon ids → 422, out-of-range → 422.
+  enabled: boolean; // "Ana ligada" (owner)
+  name: string; // ≤ 30; the shopper always sees "<name>, assistente virtual da <loja>"
+  tone: 'relaxed' | 'balanced' | 'formal'; // descontraído · equilibrado · formal
+  voice: string; // ≤ 1000, extra tone notes in the merchant's words
+  // When it answers (the board's coverage modes; replaces a single autonomy mode).
+  coverage: 'rehearsal' | 'when_slow' | 'after_hours' | 'always'; // Ensaio · Quando eu demorar · Fora do horário · Sempre
+  slowAfterMin: 1 | 2 | 5; // when_slow: answer if the store hasn't replied in this long (or is closed)
+  // What it may do.
+  capabilities: {
+    closeOrder: boolean; // off: sends a link that opens the storefront with the sacola built
+    sendPix: boolean;
+    suggest: boolean; // one suggestion per order
+    coupons: boolean; // only through `incentives` (owner)
+  };
+  pinnedPairings: { whenCategoryId: string; suggestProductId: string }[]; // ≤ 20
+  // When it hands the conversation to a person.
+  handoff: {
+    complaint: boolean; // complaint or a late order
+    allergy: boolean; // allergy or dietary restriction
+    aboveCents: number | null; // orders above this total: 1_00..100_000_00
+    newCashCustomer: boolean; // a first order paid in cash
+  };
+  humanSilenceMin: number; // 5..240: it takes back after this long without a store reply
   unknownNumbers: 'shoppers_only' | 'all';
-  upsell: { enabled: boolean; pinned: { whenCategoryId: string; suggestProductId: string }[] }; // ≤ 20
   recovery: { enabled: boolean; delayMin: number }; // 5..120
   incentives: null | {
+    couponIds: string[]; // ≤ 10, coupons the merchant picked (owner)
     reasons: ('recovery' | 'first_order' | 'hesitation')[];
-    couponPercent?: number; // 1..50, or a fixed amount, exactly one of the two
-    couponCents?: number; // 100..monthlyBudgetCents
     minOrderCents: number; // 0..100_000_00
     monthlyBudgetCents: number; // 0..100_000_00
     perCustomerDays: number; // 1..365, one incentive per phone per N days
   };
-  flags: {
-    aboveCents: number | null; // 1_00..100_000_00
-    firstCashOrder: boolean;
-    pixOnlyAfterCancels: number | null; // 1..10
-  };
+  pixOnlyAfterCancels: number | null; // 1..10
   voiceReplies: boolean; // answer an audio with audio; amounts stay in text cards
   monthlyAiBudget: number | null; // ceiling on the store's AI spend, unit per §10
 };
 ```
 
-Roles (ADR 0020): owner turns it on, sets incentives and budgets; manager edits voice,
-instructions, knowledge and upsell; attendant works the inbox.
+Rules and answers live in `store_knowledge`. A rule the system recognizes (a quantity or amount
+threshold for handoff, a payment limit, a coupon floor) is compiled into a guard and labelled
+"sempre cumprida"; any other rule goes into the prompt as guidance and says so
+([UX §3.5](sales-agent-ux.md#35-ensinar-vendedorensinar-board-extended)).
+
+Roles (ADR 0020): owner turns it on and sets incentives and budgets; manager edits voice,
+coverage, capabilities, handoff, rules and answers; attendant works the inbox. The screens that
+set all this are in [`sales-agent-ux.md`](sales-agent-ux.md), and every feature is listed in
+[`sales-agent-features.md`](sales-agent-features.md).
 
 ## 6. Measuring it
 
@@ -754,14 +799,14 @@ runtime's rings promote or roll back a version on these results
 
 ## 8. Phases
 
-Each phase ships behind `store_agent.mode` and exits on its gates. Thresholds are proposals for
+Each phase ships behind a per-store flag next to `store_agent` and exits on its gates. Thresholds are proposals for
 the owner.
 
 | Phase                     | Ships                                                                                                                                                                                                                                                                                                                                                     | Exit gate                                                                                                                                                           |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **V0 Foundations**        | `orders.source`; inbound, merchant-typed and media storage in the gateway; the new tables; Agent Runtime v3 with its interactive lane; the Core changes of [§4.3](#43-data) (cart and quote functions, in-process idempotency claim, cash change, catalog search, coupon minting); jid addressing; `store_agent`; a read-only inbox; the admin test chat. | Runtime ports pass their contract tests in memory and on Postgres; lead agent untouched; inbound stored and deduped under reconnects; RLS tests on every new table. |
 | **V1 Attendant + shadow** | Grounded answers (menu, hours, zones, payment, knowledge), links to the storefront, handoff and takeover, unanswered → knowledge, shadow drafts, audio transcription.                                                                                                                                                                                     | No ungrounded figure in the suite; three pilot stores in shadow for a week with agreement reported.                                                                 |
-| **V2 Seller**             | Cart, quote, summary card, confirmation gate, `place_order`, Pix, cash and card on delivery, order status, encomenda when closed, pickup when out of zone, substitutes and waitlist, location pins, the full verifier.                                                                                                                                    | Order accuracy ≥ 98% on the suite, 0 ungrounded figures, p50 reply ≤ 6 s; pilots switch to `seller`.                                                                |
+| **V2 Seller**             | Cart, quote, summary card, confirmation gate, `place_order`, Pix, cash and card on delivery, order status, encomenda when closed, pickup when out of zone, substitutes and waitlist, location pins, the full verifier.                                                                                                                                    | Order accuracy ≥ 98% on the suite, 0 ungrounded figures, p50 reply ≤ 6 s; pilots leave Ensaio.                                                                      |
 | **V3 Sells more**         | Customer card and reorder, suggestions, recovery and incentives, Resultados, daily line and weekly review, photo understanding, voice replies.                                                                                                                                                                                                            | Pilots' agent ticket and conversion measured against their storefront; incentive spend within budgets.                                                              |
 | **V4 Everywhere**         | Instagram DM; a storefront chat that edits the page's own cart (a server-driven system surface; its Kernel export follows the additive rules: `API.md`, the api-surface test, a version bump, `CHANGELOG.md`, `bun.lock`); the official Cloud API as a per-store transport option with templates for opted-in recovery and re-engagement (P-018).         | Same gates per channel.                                                                                                                                             |
 
