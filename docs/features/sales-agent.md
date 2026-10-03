@@ -16,7 +16,7 @@ code") and the design behind the unchecked list in [`whatsapp-bot.md`](whatsapp-
 
 It is not the merchant copilot (Domínio §4.3 A–C, an assistant for the merchant inside the
 admin) and not the sales agent that sells Venduá to leads (`src/agent/`, platform number). It
-reuses that agent's engine. Paths are under `packages/core/` unless they start with `apps/` or
+is the first agent on a new runtime that will replace that agent's engine. Paths are under `packages/core/` unless they start with `apps/` or
 `docs/`.
 
 ## Summary
@@ -49,11 +49,12 @@ reuses that agent's engine. Paths are under `packages/core/` unless they start w
   7. **It gets better every week.** Unanswered questions become knowledge with one tap,
      suggestion acceptance re-ranks offers, handoff reasons feed a weekly review, and every
      prompt or model change runs a simulation suite that scores order accuracy exactly.
-- **What it reuses.** The agent engine (journal, claim fence, replay, tool metadata, providers,
-  scripted and simulated evals), the per-store gateway, the checkout path, the cart, quote,
-  Pix, loyalty, waitlist and encomenda modules. What is new: tenant-scoped conversation tables,
-  a shopper lane in the scheduler, media ingest, the verifier, the confirmation gate, the
-  suggestion engine and the admin's Vendedor area ([§4](#4-architecture)).
+- **What it runs on.** A new agent runtime, [Agent Runtime v3](../architecture/18-agent-runtime.md):
+  durable actors on Postgres with an event log, exactly-once effects, references instead of
+  typed numbers, and evals that gate releases. It reuses the per-store gateway, the checkout
+  path and the cart, quote, Pix, loyalty, waitlist and encomenda modules. New here: the
+  Vendedor's tools, skills and guards, media ingest, the confirmation gate, the suggestion
+  engine and the admin's Vendedor area ([§4](#4-architecture)).
 - **Phases** V0 to V4, each with exit gates measured by the sim suite and by pilot stores
   ([§8](#8-phases)). V2 reaches order-taking parity with Domínio plus the trust layer; V3 is
   where it sells more than anyone; V4 adds Instagram, a storefront chat that shares the page's
@@ -258,12 +259,12 @@ shopper (WhatsApp)                                       merchant (phone, admin 
    │ text · audio · photo · pin                                ▲ push · inbox · Assumir
    ▼                                                           │
 wa-gateway  (one Baileys session per store, ADR 0026)          │
-   │ INSERT shopper_messages (in) + media ─ NOTIFY ─▶ Core, shopper lane
+   │ INSERT shopper_messages (in) + media ─ NOTIFY ─▶ Core, interactive lane
    │ shopper presence (typing…)                       1 ingest: audio → text, photo → text
    │                                                    + catalog candidates, pin → location
-   │                                                  2 requestAgentTx(subject: thread)
-   │                                                  3 coalesce, then claim (shopper_runs)
-   │                                                  4 engine: model ⇄ shopper tools
+   │                                                  2 mailbox message (source: shopper)
+   │                                                  3 coalesce, then lease the thread actor
+   │                                                  4 turn: model ⇄ shopper tools
    │                                                  5 verifier → shopper_messages (out)
    ◀── paced send, "digitando…" ── store_wa_messages ◀┘
                                                       6 place_order → placeOrderTx
@@ -319,17 +320,16 @@ responder" to the Vendedor mutes it for that thread.
 All new tables have `tenant_id` with the usual `tenant_isolation` + `control_access` policies
 (the pair in migration 0076), bounded text, and stable 4xx on bad ids.
 
-| Table                               | Holds                                                                                                                                                                                                                                  |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `store_agent`                       | One row per store: the merchant's settings ([§5](#5-merchant-controls)) and the store pack version.                                                                                                                                    |
-| `shopper_threads`                   | One per (channel, jid): phone once resolved, state, owner (`agent \| human \| muted`), `human_until`, the cart id, the open summary card, the figure ledger, language, last in/out, recovery stamp.                                    |
-| `shopper_messages`                  | Every message in and out: author (`shopper \| agent \| merchant \| core`), kind (`text \| audio \| image \| location \| card \| pix`), body, transcript, status (`draft \| queued \| sent \| delivered \| read \| failed \| blocked`). |
-| `shopper_media`                     | Audio and image bytes, bounded, same retention.                                                                                                                                                                                        |
-| `shopper_runs`, `shopper_run_steps` | The run queue and journal: `agent_runs` / `agent_run_steps` with `tenant_id` and `thread_id`, one active run per thread.                                                                                                               |
-| `shopper_wakeups`                   | Future touches on a thread (recovery, Pix expiry, handback, waitlist), materialized only through `requestAgentTx`.                                                                                                                     |
-| `customer_facts`                    | Per (tenant, phone): preferences and notes the agent or merchant recorded, keyed like `lead_facts`. There is no customer table; customers are orders grouped by phone (`src/modules/customer.ts:174`).                                 |
-| `store_knowledge`                   | Answers the merchant wrote, and the questions waiting for one.                                                                                                                                                                         |
-| `suggestion_events`                 | Each suggestion offered and whether it was taken, for ranking and reports.                                                                                                                                                             |
+| Table                                           | Holds                                                                                                                                                                                                                                  |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `store_agent`                                   | One row per store: the merchant's settings ([§5](#5-merchant-controls)) and the store pack version.                                                                                                                                    |
+| `shopper_threads`                               | One per (channel, jid): phone once resolved, state, owner (`agent \| human \| muted`), `human_until`, the cart id, the open summary card, the figure ledger, language, last in/out, recovery stamp.                                    |
+| `shopper_messages`                              | Every message in and out: author (`shopper \| agent \| merchant \| core`), kind (`text \| audio \| image \| location \| card \| pix`), body, transcript, status (`draft \| queued \| sent \| delivered \| read \| failed \| blocked`). |
+| `shopper_media`                                 | Audio and image bytes, bounded, same retention.                                                                                                                                                                                        |
+| `agent_actors`, `agent_mailbox`, `agent_events` | The runtime's tables ([18 §4.1](../architecture/18-agent-runtime.md#41-state)), one actor per thread: what wakes it and everything that happened.                                                                                      |
+| `customer_facts`                                | Per (tenant, phone): preferences and notes the agent or merchant recorded, keyed like `lead_facts`. There is no customer table; customers are orders grouped by phone (`src/modules/customer.ts:174`).                                 |
+| `store_knowledge`                               | Answers the merchant wrote, and the questions waiting for one.                                                                                                                                                                         |
+| `suggestion_events`                             | Each suggestion offered and whether it was taken, for ranking and reports.                                                                                                                                                             |
 
 Orders gain `source` (`storefront | whatsapp_agent | …`) and `thread_id`; today the only trace
 of a channel is a hardcoded `order_events.meta.via` (`src/modules/place-order.ts:252`). The
@@ -359,44 +359,39 @@ closes that.
 - Outbox topics nobody consumes (`waitlist.restocked`, `loyalty.reward`, `order.*`) get a
   consumer where the Vendedor needs them.
 
-Why not reuse `agent_runs` and friends: those tables have no `tenant_id` and live under the
-`staff_all` control policy (migrations 0007, 0035–0038). Shopper conversations are store data
-and must sit under tenant RLS. A separate queue also keeps a 30-step discovery run from ever
-delaying a shopper's reply.
+Today's `agent_runs` and friends can't hold this: they have no `tenant_id` and live under the
+`staff_all` control policy (migrations 0007, 0035–0038), while shopper conversations are store
+data under tenant RLS. The runtime's tables have both.
 
-### 4.4 One engine, two subjects
+### 4.4 The runtime
 
-The engine stays one piece of code; it gains a second subject and a second lane.
+The Vendedor is the first agent on [Agent Runtime v3](../architecture/18-agent-runtime.md), not
+on an extraction of today's runner. What that gives this design:
 
-- **Extract the kernel.** `runKernel` (`src/agent/runner.ts:2485`) with its journal, claim
-  fence (`assertRunClaimTx`), replay, loop guards and finish gate moves behind a `Subject`
-  adapter: load and save a run, build context, list tools, send, meter cost. Leads keep today's
-  adapter; threads get a new one. The providers (`src/agent/llm.ts`), the tool-metadata model
-  (`src/agent/tool-meta.ts`) and the style check (`src/agent/style.ts`) are shared as they are.
-- **One producer.** `requestAgentTx` (`src/agent/dispatch.ts:108`) gains
-  `subject: { kind: 'thread', tenantId, threadId }` and the sources `shopper`, `recovery`,
-  `payment`, `handback`, `waitlist` and `merchant_test`. It writes `shopper_runs`; nothing else
-  inserts them, as the invariant requires.
-- **A shopper lane.** Its own claim loop and concurrency on the scheduler (ADR 0017), ordered
-  by priority then age: a shopper waiting for a reply first, then payment events, then
-  recovery. Claiming runs as control (it spans stores, like the gateway's leases); every tool
-  runs `withTenant(tenantId)`, so RLS applies to everything the model can reach.
-- **Cost.** Each run meters tokens and cost like `agent_runs`. A per-store monthly cap,
-  checked at claim, sends the thread to the degrade path instead of silence.
-- **Idempotent tools.** Mutating tools already carry a key per call
-  (`agent:run:step:name:callId`, `src/agent/tools.ts:778`) and a claim fence. Shopper tools that
-  reach commerce code go through the in-process idempotency claim ([§4.3](#43-data)) with a
-  key derived from the thread's state, not the call, so a retried turn finds the first result.
-- **Model calls.** A hard timeout per call (the engine allows 120 s today, `llm.ts:97`), one
-  retry on the fallback model, then the degrade path. Calls stay non-streaming: WhatsApp shows
-  whole messages, and the typing indicator covers the wait.
+- **A durable actor per thread.** The thread's mailbox takes inbound messages, timers (recovery,
+  Pix expiry, handback) and merchant actions; its event log is the only state; one turn runs at a
+  time under a fenced lease. Nothing else starts work on a thread.
+- **Exactly-once effects.** A cart edit, an order or an outbound message commits in the same
+  transaction as the event that records it, so a crashed turn resumes without a second order or a
+  second message.
+- **The interactive lane**, with its own workers and fair rotation across stores, so a store's
+  Friday rush or the CRM's research never delays a shopper's reply.
+- **References instead of numbers.** Replies cite ledger figures (`{{cart.total}}`) that Core
+  renders; the verifier of [§4.8](#48-the-verifier) is the second net.
+- **Budgets** per turn, per thread and per store, enforced by the model gateway; over budget is
+  the degrade path, never silence.
+- **Models** through the gateway: a fast and a strong tier, a fallback chain, hedged requests on
+  slow calls, streaming inside so read tools start early, whole messages to WhatsApp.
+- **Every turn replayable and inspectable**, which is what the merchant's "por que respondeu
+  isso" and the sims of [§7](#7-quality) read.
 
 ### 4.5 Ingest, coalescing and turns
 
-**Media becomes text before the model sees it.** The engine's messages are strings
+**Media becomes text before the model sees it.** Today's engine takes only strings
 (`AgentMessage.content`, `llm.ts:18`), and the sales agent receives audio only as the tag
 `[áudio]` (`src/agent/channels/whatsapp.ts:740`). An ingest step in Core turns each inbound into
-text first, so the reasoning loop stays text and works with any provider:
+text first, so the loop works with a text-only model and evals stay cheap; the runtime's message
+model also carries image and audio parts for models that take them:
 
 - **Audio** is transcribed in pt-BR, with a confidence. A low-confidence transcript makes the
   agent read back what it understood before building on it.
@@ -409,15 +404,15 @@ text first, so the reasoning loop stays text and works with any provider:
 - **Voice replies** (V3, a merchant setting) speak the verified text when the shopper sent
   audio; amounts and the Pix code still go as cards.
 
-Shoppers send five short messages, an audio and a pin. The engine has no debounce today; the
-active run adopts new inbound between steps (`drainInbox`, `runner.ts:1643`). The shopper lane
-adds:
+Shoppers send five short messages, an audio and a pin. Today's engine has no debounce; its
+active run adopts new inbound between steps (`drainInbox`, `runner.ts:1643`). The Vendedor's
+mailbox policy on the runtime adds:
 
 - **A quiet window.** A run starts after a short silence (proposed 2.5 s, longer after a
   fragment that ends mid-sentence, shorter after a question), and waits while the shopper is
   typing or recording, up to a ceiling (proposed 20 s).
-- **No stale answers.** Before a reply is queued, the engine checks for inbound that arrived
-  during the turn. If any, the turn runs again with it instead of answering the old question.
+- **No stale answers.** A message that arrives mid-turn preempts it at the next step boundary
+  ([18 §4.3](../architecture/18-agent-runtime.md#43-the-turn)); the new turn answers both.
 - **Fewer, fuller messages.** One reply per turn by default, two at most plus cards. It keeps
   the hourly ceiling and reads like a person.
 
@@ -443,8 +438,8 @@ naturally. Store status comes from `deriveStatus` (`src/modules/store.ts:219`) o
 because the quote doesn't check open, paused or the minimum; only checkout does
 (`validateCheckout`, `checkout.ts:94`).
 
-**Tools.** Declared in the existing metadata model, with a class and the states that allow
-them. The runtime binds tenant, thread, phone and cart.
+**Tools.** Declared with the runtime's `defineTool`, with an effect class and the states that
+allow them. The runtime binds tenant, thread, phone and cart.
 
 | Tool                              | Class | Does                                                                                                                     |
 | --------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------ |
@@ -743,30 +738,32 @@ instructions, knowledge and upsell; attendant works the inbox.
 
 ## 7. Quality
 
-| Harness             | Runs                              | Checks                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scripted goldens    | CI, free (`scripted-provider.ts`) | The confirmation gate (no yes, stale card, changed cart); one order per cart on replay; the verifier blocks a wrong amount, an unavailable product, an invented discount; closed store takes no order unless encomenda; takeover silences; muted numbers; injection can't reach a merchant tool; recovery fires once; budget cap degrades.                                                                                                          |
-| Order-accuracy sims | Manual, paid (`bun run sim`)      | Store fixtures (pizzaria with halves and borda, hamburgueria with combos, açaí with many add-ons, padaria with encomendas, marmitaria with a daily menu) × shopper personas, each with a **hidden target order**. Scored in code: placed order equals the target by product, modifier, quantity, fulfillment, payment and change; turns to order; ungrounded figures (must be 0); right handoffs. A judge scores naturalness, brevity and pressure. |
-| Adversarial sims    | Manual, paid                      | Injection, prank orders, a receipt photo instead of payment, asking for another customer's order, off-topic use, abuse, a supplier writing.                                                                                                                                                                                                                                                                                                         |
-| Shadow agreement    | Per pilot store                   | Draft vs what the merchant sent, merchant thumbs.                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Production monitors | Always                            | Block, handoff and opt-out rates; orders placed then cancelled by the store; reply time.                                                                                                                                                                                                                                                                                                                                                            |
+| Harness             | Runs                                               | Checks                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scripted goldens    | CI, free (cassettes, scripted provider)            | The confirmation gate (no yes, stale card, changed cart); one order per cart on replay; the verifier blocks a wrong amount, an unavailable product, an invented discount; closed store takes no order unless encomenda; takeover silences; muted numbers; injection can't reach a merchant tool; recovery fires once; budget cap degrades.                                                                                                          |
+| Order-accuracy sims | Live models, paid, on every prompt or model change | Store fixtures (pizzaria with halves and borda, hamburgueria with combos, açaí with many add-ons, padaria with encomendas, marmitaria with a daily menu) × shopper personas, each with a **hidden target order**. Scored in code: placed order equals the target by product, modifier, quantity, fulfillment, payment and change; turns to order; ungrounded figures (must be 0); right handoffs. A judge scores naturalness, brevity and pressure. |
+| Adversarial sims    | Manual, paid                                       | Injection, prank orders, a receipt photo instead of payment, asking for another customer's order, off-topic use, abuse, a supplier writing.                                                                                                                                                                                                                                                                                                         |
+| Shadow agreement    | Per pilot store                                    | Draft vs what the merchant sent, merchant thumbs.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Production monitors | Always                                             | Block, handoff and opt-out rates; orders placed then cancelled by the store; reply time.                                                                                                                                                                                                                                                                                                                                                            |
 
 Every scenario runs several times and passes only if every run passes (pass^k, the measure Sierra
 publishes): a seller that gets an order right two times in three is not shippable. Every prompt,
-tool or model change runs the suite and is compared with the last accepted run (`sim_runs`).
+tool or model change runs the suite and is compared with the last accepted version; the
+runtime's rings promote or roll back a version on these results
+([18 §10](../architecture/18-agent-runtime.md#10-evals-and-releases)).
 
 ## 8. Phases
 
 Each phase ships behind `store_agent.mode` and exits on its gates. Thresholds are proposals for
 the owner.
 
-| Phase                     | Ships                                                                                                                                                                                                                                                                                                                                                 | Exit gate                                                                                                |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| **V0 Foundations**        | `orders.source`; inbound, merchant-typed and media storage in the gateway; the new tables; the kernel extraction and shopper lane; the Core changes of [§4.3](#43-data) (cart and quote functions, in-process idempotency claim, cash change, catalog search, coupon minting); jid addressing; `store_agent`; a read-only inbox; the admin test chat. | Lead agent goldens unchanged; inbound stored and deduped under reconnects; RLS tests on every new table. |
-| **V1 Attendant + shadow** | Grounded answers (menu, hours, zones, payment, knowledge), links to the storefront, handoff and takeover, unanswered → knowledge, shadow drafts, audio transcription.                                                                                                                                                                                 | No ungrounded figure in the suite; three pilot stores in shadow for a week with agreement reported.      |
-| **V2 Seller**             | Cart, quote, summary card, confirmation gate, `place_order`, Pix, cash and card on delivery, order status, encomenda when closed, pickup when out of zone, substitutes and waitlist, location pins, the full verifier.                                                                                                                                | Order accuracy ≥ 98% on the suite, 0 ungrounded figures, p50 reply ≤ 6 s; pilots switch to `seller`.     |
-| **V3 Sells more**         | Customer card and reorder, suggestions, recovery and incentives, Resultados, daily line and weekly review, photo understanding, voice replies.                                                                                                                                                                                                        | Pilots' agent ticket and conversion measured against their storefront; incentive spend within budgets.   |
-| **V4 Everywhere**         | Instagram DM; a storefront chat that edits the page's own cart (a server-driven system surface; its Kernel export follows the additive rules: `API.md`, the api-surface test, a version bump, `CHANGELOG.md`, `bun.lock`); the official Cloud API as a per-store transport option with templates for opted-in recovery and re-engagement (P-018).     | Same gates per channel.                                                                                  |
+| Phase                     | Ships                                                                                                                                                                                                                                                                                                                                                     | Exit gate                                                                                                                                                           |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **V0 Foundations**        | `orders.source`; inbound, merchant-typed and media storage in the gateway; the new tables; Agent Runtime v3 with its interactive lane; the Core changes of [§4.3](#43-data) (cart and quote functions, in-process idempotency claim, cash change, catalog search, coupon minting); jid addressing; `store_agent`; a read-only inbox; the admin test chat. | Runtime ports pass their contract tests in memory and on Postgres; lead agent untouched; inbound stored and deduped under reconnects; RLS tests on every new table. |
+| **V1 Attendant + shadow** | Grounded answers (menu, hours, zones, payment, knowledge), links to the storefront, handoff and takeover, unanswered → knowledge, shadow drafts, audio transcription.                                                                                                                                                                                     | No ungrounded figure in the suite; three pilot stores in shadow for a week with agreement reported.                                                                 |
+| **V2 Seller**             | Cart, quote, summary card, confirmation gate, `place_order`, Pix, cash and card on delivery, order status, encomenda when closed, pickup when out of zone, substitutes and waitlist, location pins, the full verifier.                                                                                                                                    | Order accuracy ≥ 98% on the suite, 0 ungrounded figures, p50 reply ≤ 6 s; pilots switch to `seller`.                                                                |
+| **V3 Sells more**         | Customer card and reorder, suggestions, recovery and incentives, Resultados, daily line and weekly review, photo understanding, voice replies.                                                                                                                                                                                                            | Pilots' agent ticket and conversion measured against their storefront; incentive spend within budgets.                                                              |
+| **V4 Everywhere**         | Instagram DM; a storefront chat that edits the page's own cart (a server-driven system surface; its Kernel export follows the additive rules: `API.md`, the api-surface test, a version bump, `CHANGELOG.md`, `bun.lock`); the official Cloud API as a per-store transport option with templates for opted-in recovery and re-engagement (P-018).         | Same gates per channel.                                                                                                                                             |
 
 ## 9. Scorecard
 
@@ -834,7 +831,7 @@ For the owner. Nothing here is decided by this document.
   on the board and the order-accuracy suite; measured by orders the store cancels.
 - **The merchant's personal chats.** Answering a supplier or a relative is the classic failure
   of bots on a shared number; the shoppers-only default and "Não é cliente" address it.
-- **Peak load.** Friday at 20h is when every store is busiest at once. The shopper lane scales
+- **Peak load.** Friday at 20h is when every store is busiest at once. The interactive lane scales
   by workers; provider rate limits and the hourly send ceiling are the real limits, so replies
   stay short and few.
 - **Cost.** Long chats with large menus. The cached store pack, the fast tier and the per-store

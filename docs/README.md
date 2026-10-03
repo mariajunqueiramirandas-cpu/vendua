@@ -60,6 +60,7 @@ Then per topic as needed:
 | Event taxonomy, funnels                  | [15-analytics](architecture/15-analytics.md)                                     |
 | SLOs, incidents, kill switch             | [16-operations-and-incidents](architecture/16-operations-and-incidents.md)       |
 | Templates, sections, blocks              | [17-page-composition](architecture/17-page-composition.md)                       |
+| Agent runtime v3 (proposed)              | [18-agent-runtime](architecture/18-agent-runtime.md)                             |
 | Menu import ("cole o link")              | [menu-import](menu-import.md), [phase 3](menu-import-phase3.md)                  |
 | Kernel ownership gaps (investigation)    | [kernel-helper-gaps](kernel-helper-gaps.md)                                      |
 | Competitor feature gaps (tracker)        | [competitor-parity](competitor-parity.md)                                        |
