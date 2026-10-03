@@ -4,8 +4,9 @@ import { DETAIL, PRODUCT, STORE, flush, mockCore, mount, type Mounted } from './
 import { Img } from '../src/index.ts';
 import { createApi } from '../src/api.ts';
 
-// Kernel 1.7 — online payments in the Kernel-owned checkout and order page (card via
-// Mercado Pago's hosted checkout, online Pix), pickup details, scheduled products, media srcsets.
+// Kernel 1.7 — online payments in the Kernel-owned checkout and order page (online Pix; the
+// card in the page since 1.19 — Mercado Pago's Card Payment Brick, or Core's fake provider in
+// tests), pickup details, scheduled products, media srcsets.
 
 let m: Mounted | null = null;
 let assigned: string[] = [];
@@ -28,7 +29,10 @@ const QR =
   '00020101021226300014br.gov.bcb.pix0110loja@x.com5204000053039865406100.005802BR5904LOJA6006CIDADE62070503***6304ABCD';
 const NEW_QR = QR.replace('ABCD', 'EFGH');
 
-type Handler = (url: URL, init: RequestInit | undefined) => Response | Promise<Response> | null;
+type Handler = (
+  url: URL,
+  init: RequestInit | undefined,
+) => Response | null | Promise<Response | null>;
 function core(extra: Handler) {
   const base = mockCore();
   const fallback = globalThis.fetch;
@@ -55,6 +59,14 @@ const ONLINE_STORE = {
   paymentMethods: ['pix', 'card_online', 'cash'],
   onlinePayments: { pix: true, card: true },
   pickup: { address: 'Rua das Flores, 12 — fundos', instructions: 'Toque a campainha azul.' },
+};
+
+const CARD_NEXT = {
+  kind: 'card',
+  provider: 'fake',
+  publicKey: 'TEST-fake',
+  amountCents: 4700,
+  declined: null,
 };
 
 type Pay = Record<string, unknown>;
@@ -145,7 +157,7 @@ function sse(init: RequestInit | undefined, onPush: (push: (o: unknown) => void)
 }
 
 describe('checkout — online methods and pickup', () => {
-  test('card_online: places the order, asks Core to pay, and leaves for Mercado Pago', async () => {
+  test('card_online: places the order and opens the card form on the order page', async () => {
     const c = core((url) => {
       if (url.pathname === '/storefront/v1/store') return json(200, ONLINE_STORE);
       if (url.pathname === '/checkout/v1/cart') return json(200, { cart: cartWithItem() });
@@ -153,10 +165,12 @@ describe('checkout — online methods and pickup', () => {
         return json(200, { cart: { ...cartWithItem(), delivery: { mode: 'pickup' } } });
       if (url.pathname === '/checkout/v1/checkout')
         return json(201, { order: order(1, { method: 'card_online', status: 'pending' }) });
+      if (url.pathname === `/checkout/v1/orders/${ORDER_ID}`)
+        return json(200, { order: order(1, { method: 'card_online', status: 'pending' }) });
       if (url.pathname === `/checkout/v1/orders/${ORDER_ID}/pay`)
         return json(200, {
-          order: order(2, { method: 'card_online', status: 'pending' }),
-          next: { kind: 'redirect', url: 'https://mp.test/checkout?pref=1' },
+          order: order(1, { method: 'card_online', status: 'pending' }),
+          next: CARD_NEXT,
         });
       return null;
     });
@@ -185,21 +199,19 @@ describe('checkout — online methods and pickup', () => {
     await click(card);
     expect(button('Ir para o pagamento')).not.toBeNull();
     await submitForm();
-    await flush(10);
+    await flush(12);
     expect(c.calls.find((x) => x.path === '/checkout/v1/checkout')?.body).toMatchObject({
       payment: { method: 'card_online' },
       delivery: { mode: 'pickup' },
     });
-    const pay = c.calls.find((x) => x.path === `/checkout/v1/orders/${ORDER_ID}/pay`);
-    expect(pay?.method).toBe('POST');
-    expect(assigned).toEqual(['https://mp.test/checkout?pref=1']);
-    // the hand-off is a designed state, with a manual link if the browser doesn't follow
-    const panel = $('[data-vendua="payment-status"]');
-    expect(panel?.getAttribute('data-status')).toBe('redirecting');
-    expect(panel?.textContent).toContain('Levando você ao Mercado Pago');
-    expect($('[data-part="provider-link"]')?.getAttribute('href')).toBe(
-      'https://mp.test/checkout?pref=1',
-    );
+    // no hand-off: the order page asks Core for the in-page form and shows it
+    expect(assigned).toEqual([]);
+    const pay = c.calls.filter((x) => x.path === `/checkout/v1/orders/${ORDER_ID}/pay`);
+    expect(pay).toHaveLength(1);
+    expect(pay[0]?.body).toEqual({ card: 'form' });
+    expect($('[data-vendua="checkout-success"]')).not.toBeNull();
+    expect($('[data-vendua="card-payment"]')?.getAttribute('data-phase')).toBe('ready');
+    expect($('[data-vendua="payment-status"]')).toBeNull();
   });
 
   test('an older Core (no paymentMethods) never offers the online card', async () => {
@@ -334,8 +346,8 @@ describe('order page — online payments', () => {
     expect(text('[data-vendua="order-status"] [data-part="payment-status"]')).toContain('pago');
   });
 
-  test('card return with nothing approved → "Tentar de novo" goes back to Mercado Pago', async () => {
-    core((url) => {
+  test('an older Core that still answers "redirect" → "Pagar com cartão" goes to Mercado Pago', async () => {
+    const c = core((url) => {
       if (url.pathname === '/storefront/v1/store') return json(200, ONLINE_STORE);
       if (url.pathname === `/checkout/v1/orders/${ORDER_ID}/pay`)
         return json(200, {
@@ -346,12 +358,14 @@ describe('order page — online payments', () => {
         return json(200, { order: order(2, { method: 'card_online', status: 'pending' }) });
       return null;
     });
-    m = await mount({ path: `/pedido/${ORDER_ID}?pagamento=retorno&status=rejected` });
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
     await flush(10);
-    expect($('[data-vendua="payment-status"]')?.getAttribute('data-status')).toBe('failed');
+    expect($('[data-vendua="payment-status"]')?.getAttribute('data-status')).toBe('due');
+    expect($('[data-vendua="card-payment"]')).toBeNull();
     expect(assigned).toEqual([]);
-    await click(button('Tentar de novo'));
+    await click(button('Pagar com cartão'));
     await flush(6);
+    expect(c.calls.filter((x) => x.path.endsWith('/pay'))).toHaveLength(2);
     expect(assigned).toEqual(['https://mp.test/checkout?pref=2']);
   });
 
@@ -421,6 +435,287 @@ describe('order page — online payments', () => {
     await flush(8);
     expect($('[data-vendua="order-status"]')).not.toBeNull();
     expect($('[data-vendua="payment-status"]')).toBeNull();
+  });
+});
+
+describe('order page — the card in the page (Kernel 1.19)', () => {
+  /** Core with a pending card order: `/pay` opens the form, `/card` answers `onCard`. */
+  function cardCore(
+    onCard: (body: Record<string, unknown>) => Response,
+    next: unknown = CARD_NEXT,
+  ) {
+    let paid = false;
+    // the order read follows the last order Core answered with
+    let last: unknown = order(1, { method: 'card_online', status: 'pending' });
+    const c = core(async (url, init) => {
+      if (url.pathname === '/storefront/v1/store') return json(200, ONLINE_STORE);
+      if (url.pathname === `/checkout/v1/orders/${ORDER_ID}/card`) {
+        const r = onCard(JSON.parse(String(init?.body)));
+        const body = await r.clone().json();
+        if (body?.order) last = body.order;
+        return r;
+      }
+      if (url.pathname === `/checkout/v1/orders/${ORDER_ID}/pay`) {
+        last = order(4, { method: 'card_online', status: paid ? 'paid' : 'pending' });
+        // like Core: an answered challenge MP hasn't settled yet is processing, not a new form
+        const answered =
+          (JSON.parse(String(init?.body ?? '{}')) as { challenge?: string }).challenge ===
+          'complete';
+        return json(200, { order: last, next: paid || answered ? { kind: 'none' } : next });
+      }
+      if (url.pathname === `/checkout/v1/orders/${ORDER_ID}`) return json(200, { order: last });
+      return null;
+    });
+    return Object.assign(c, { pay: () => (paid = true) });
+  }
+  const cards = (c: { calls: { path: string; body?: unknown }[] }) =>
+    c.calls.filter((x) => x.path.endsWith('/card'));
+  const fake = (outcome: string) => $(`[data-provider="fake"] [data-outcome="${outcome}"]`);
+  const phase = () => $('[data-vendua="card-payment"]')?.getAttribute('data-phase');
+
+  test('approved: posts the token (never an amount) and celebrates the payment', async () => {
+    const c = cardCore(() =>
+      json(200, {
+        order: order(3, { method: 'card_online', status: 'paid', paidAt: '2026-09-30T12:05:00Z' }),
+        next: { kind: 'none' },
+      }),
+    );
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(10);
+    expect(c.calls.find((x) => x.path.endsWith('/pay'))?.body).toEqual({ card: 'form' });
+    expect(phase()).toBe('ready');
+    expect(text('[data-vendua="card-payment"]')).toContain('vão direto para o Mercado Pago');
+    expect(text('[data-vendua="card-payment"] [data-part="amount"]')).toMatch(/R\$\s47,00/);
+    await click(fake('approved'));
+    await flush(8);
+    const [sent] = cards(c);
+    expect(sent?.body).toMatchObject({
+      paymentMethodId: 'visa',
+      issuerId: null,
+      installments: 1,
+      payer: { email: 'comprador@example.com', identification: null },
+      deviceId: null,
+    });
+    expect((sent?.body as { token: string }).token).toMatch(
+      /^fake-card-approved\.[A-Za-z0-9]{1,40}$/,
+    );
+    expect(JSON.stringify(sent?.body)).not.toMatch(/amount|cents/i);
+    const panel = $('[data-vendua="payment-status"]');
+    expect(panel?.getAttribute('data-status')).toBe('paid');
+    expect(panel?.hasAttribute('data-just-paid')).toBe(true);
+    expect($('[data-vendua="card-payment"]')).toBeNull();
+  });
+
+  test('declined: says why and offers a fresh form; a reload shows the last refusal', async () => {
+    const c = cardCore(() =>
+      json(200, {
+        order: order(2, { method: 'card_online', status: 'failed' }),
+        next: { kind: 'declined', reason: 'insufficient_funds' },
+      }),
+    );
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(10);
+    expect($('[data-part="declined"]')).toBeNull();
+    const before = $('[data-vendua="card-fields"]');
+    await click(fake('rejected-cc_rejected_insufficient_amount'));
+    await flush(8);
+    expect(text('[data-part="declined"]')).toContain('Saldo ou limite insuficiente');
+    expect(phase()).toBe('ready');
+    // tokens are single-use: a new form, and the next submit carries a new token
+    expect($('[data-vendua="card-fields"]')).not.toBe(before);
+    await click(fake('rejected-cc_rejected_insufficient_amount'));
+    await flush(8);
+    const tokens = cards(c).map((x) => (x.body as { token: string }).token);
+    expect(tokens).toHaveLength(2);
+    expect(tokens[0]).not.toBe(tokens[1]);
+    m.unmount();
+
+    cardCore(() => json(500, {}), { ...CARD_NEXT, declined: 'challenge_failed' });
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(10);
+    expect(text('[data-part="declined"]')).toContain('A verificação do banco não foi concluída');
+  });
+
+  test('3-D Secure: the challenge posts creq into a frame in the page; COMPLETE syncs', async () => {
+    const submitted: HTMLFormElement[] = [];
+    const realSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function (this: HTMLFormElement) {
+      submitted.push(this);
+    };
+    try {
+      const c = cardCore(() =>
+        json(200, {
+          order: order(2, { method: 'card_online', status: 'pending' }),
+          next: { kind: 'challenge', url: '/checkout/v1/fake/3ds', creq: 'CREQ-1' },
+        }),
+      );
+      m = await mount({ path: `/pedido/${ORDER_ID}` });
+      await flush(10);
+      await click(fake('challenge'));
+      await flush(8);
+      expect(phase()).toBe('challenge');
+      expect(assigned).toEqual([]);
+      const frame = $('[data-vendua="card-challenge"] iframe') as HTMLIFrameElement;
+      expect(frame).not.toBeNull();
+      expect(submitted).toHaveLength(1);
+      const form = submitted[0]!;
+      expect(form.getAttribute('action')).toBe('http://shop.test/checkout/v1/fake/3ds');
+      expect(form.getAttribute('method')).toBe('post');
+      expect(form.getAttribute('target')).toBe(frame.getAttribute('name'));
+      expect((form.querySelector('input[name="creq"]') as HTMLInputElement).value).toBe('CREQ-1');
+      // a message from anywhere else is ignored
+      await act(async () =>
+        window.dispatchEvent(new MessageEvent('message', { data: { status: 'COMPLETE' } })),
+      );
+      await flush(4);
+      expect(c.calls.filter((x) => x.path.endsWith('/pay'))).toHaveLength(1);
+      await act(async () =>
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { status: 'COMPLETE' },
+            source: frame.contentWindow as Window,
+          }),
+        ),
+      );
+      await act(() => new Promise((r) => setTimeout(r, 20)));
+      await flush(8);
+      // MP hasn't settled it yet: processing, never a fresh card form
+      const pays = c.calls.filter((x) => x.path.endsWith('/pay'));
+      expect(pays).toHaveLength(2);
+      expect(pays[1]?.body).toEqual({ card: 'form', challenge: 'complete' });
+      expect($('[data-vendua="card-challenge"]')).toBeNull();
+      expect($('[data-vendua="card-fields"]')).toBeNull();
+      expect($('[data-vendua="payment-status"]')?.getAttribute('data-status')).toBe('processing');
+    } finally {
+      HTMLFormElement.prototype.submit = realSubmit;
+    }
+  });
+
+  test('provider down (503) → unavailable, retry and the store’s WhatsApp', async () => {
+    const c = cardCore(() =>
+      json(503, { error: { code: 'PAYMENT_UNAVAILABLE', message: 'mp down' } }),
+    );
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(10);
+    await click(fake('approved'));
+    await flush(8);
+    expect($('[data-vendua="payment-status"]')?.getAttribute('data-status')).toBe('unavailable');
+    expect($('[data-part="whatsapp"]')?.getAttribute('href')).toStartWith('https://wa.me/');
+    await click(button('Tentar de novo'));
+    await flush(8);
+    expect(c.calls.filter((x) => x.path.endsWith('/pay'))).toHaveLength(2);
+    expect(phase()).toBe('ready');
+  });
+
+  test('an earlier submit still unresolved (PAYMENT_IN_PROGRESS) → processing', async () => {
+    cardCore(() => json(409, { error: { code: 'PAYMENT_IN_PROGRESS', message: 'busy' } }));
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(10);
+    await click(fake('pending'));
+    await flush(8);
+    const panel = $('[data-vendua="payment-status"]');
+    expect(panel?.getAttribute('data-status')).toBe('processing');
+    expect(panel?.textContent).toContain('Pagamento em análise');
+    expect(panel?.textContent).not.toContain('ambiente do Mercado Pago');
+    expect($('[data-vendua="card-payment"]')).toBeNull();
+  });
+
+  describe('Mercado Pago: the Card Payment Brick', () => {
+    const MP = { ...CARD_NEXT, provider: 'mercadopago', publicKey: 'APP_USR-pk' };
+    const settings = () =>
+      (window as unknown as { happyDOM: { settings: Record<string, boolean> } }).happyDOM.settings;
+    afterEach(() => {
+      delete (globalThis as { MercadoPago?: unknown }).MercadoPago;
+      settings().handleDisabledFileLoadingAsSuccess = false;
+      document.querySelectorAll('script[src*="mercadopago"]').forEach((s) => s.remove());
+    });
+
+    test('the SDK fails to load → the form says so and offers a retry', async () => {
+      cardCore(() => json(500, {}), MP);
+      m = await mount({ path: `/pedido/${ORDER_ID}` });
+      await flush(10);
+      expect(phase()).toBe('unavailable');
+      expect(text('[data-part="unavailable"]')).toContain('não carregou');
+      expect($('[data-part="retry"]')).not.toBeNull();
+    });
+
+    test('loads the SDK once and mounts the Brick with the amount and the store’s colours', async () => {
+      const created: { brick: string; id: string; settings: Record<string, any> }[] = [];
+      const unmounted: number[] = [];
+      class FakeMP {
+        constructor(
+          public key: string,
+          public opts: unknown,
+        ) {
+          expect(key).toBe('APP_USR-pk');
+          expect(opts).toEqual({ locale: 'pt-BR' });
+        }
+        bricks() {
+          return {
+            create: async (brick: string, id: string, s: Record<string, any>) => {
+              created.push({ brick, id, settings: s });
+              return { unmount: () => unmounted.push(1) };
+            },
+          };
+        }
+      }
+      // absent until the script "loads", like the real SDK
+      settings().handleDisabledFileLoadingAsSuccess = true;
+      let reads = 0;
+      Object.defineProperty(globalThis, 'MercadoPago', {
+        configurable: true,
+        get: () => (reads++ ? FakeMP : undefined),
+      });
+      const c = cardCore(
+        () =>
+          json(200, {
+            order: order(3, { method: 'card_online', status: 'paid' }),
+            next: { kind: 'none' },
+          }),
+        MP,
+      );
+      m = await mount({ path: `/pedido/${ORDER_ID}` });
+      await flush(10);
+      expect([...document.querySelectorAll('script')].map((s) => s.src)).toContain(
+        'https://sdk.mercadopago.com/js/v2',
+      );
+      expect(created).toHaveLength(1);
+      const [b] = created;
+      expect(b!.brick).toBe('cardPayment');
+      expect(document.getElementById(b!.id)?.getAttribute('data-vendua')).toBe('card-fields');
+      expect(b!.settings.initialization).toEqual({ amount: 47 });
+      expect(b!.settings.customization.visual.hideFormTitle).toBe(true);
+      expect(b!.settings.customization.visual.texts.formSubmit).toMatch(/^Pagar R\$\s47,00$/);
+      expect(b!.settings.customization.visual.style.theme).toBe('default');
+      expect(b!.settings.customization.visual.style.customVariables.baseColor).toBe('#224466');
+      expect(b!.settings.customization.paymentMethods.maxInstallments).toBe(12);
+      expect(phase()).toBe('loading');
+      await act(async () => b!.settings.callbacks.onReady());
+      expect(phase()).toBe('ready');
+      await act(async () => {
+        await b!.settings.callbacks.onSubmit({
+          token: 'mp-token-1',
+          payment_method_id: 'master',
+          issuer_id: '24',
+          installments: 3,
+          payer: {
+            email: 'ana@example.com',
+            identification: { type: 'CPF', number: '12345678909' },
+          },
+        });
+      });
+      await flush(6);
+      expect(cards(c)[0]?.body).toEqual({
+        token: 'mp-token-1',
+        paymentMethodId: 'master',
+        issuerId: '24',
+        installments: 3,
+        payer: { email: 'ana@example.com', identification: { type: 'CPF', number: '12345678909' } },
+        deviceId: null,
+      });
+      expect($('[data-vendua="payment-status"]')?.getAttribute('data-status')).toBe('paid');
+      expect(unmounted).toHaveLength(1);
+    });
   });
 });
 
@@ -620,6 +915,70 @@ describe('Img', () => {
     );
     expect(core.getAttribute('sizes')).toBe('(max-width: 320px) 100vw, 320px');
     expect(($('img[data-t="ext"]') as HTMLImageElement).hasAttribute('srcset')).toBe(false);
+  });
+});
+
+describe('payOrder / payCard — the Kernel 1.19 calls', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+  const seen: { url: string; init?: RequestInit }[] = [];
+  const answer = (next: unknown) => {
+    seen.length = 0;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      seen.push({ url, ...(init ? { init } : {}) });
+      return json(200, { order: order(2, { method: 'card_online', status: 'pending' }), next });
+    }) as unknown as typeof fetch;
+  };
+  const INPUT = {
+    token: 't',
+    paymentMethodId: 'visa',
+    issuerId: null,
+    installments: 1,
+    payer: { email: 'a@b.co', identification: null },
+    deviceId: null,
+  };
+
+  test('payOrder sends { card: "form" } only when asked', async () => {
+    answer({ kind: 'none' });
+    const api = createApi('https://api.test');
+    await api.payOrder(ORDER_ID);
+    expect(seen[0]?.init?.body).toBeUndefined();
+    await api.payOrder(ORDER_ID, { cardForm: true });
+    expect(JSON.parse(String(seen[1]?.init?.body))).toEqual({ card: 'form' });
+  });
+
+  test('payCard posts the input with a fresh Idempotency-Key each time', async () => {
+    answer({ kind: 'none' });
+    const api = createApi('https://api.test');
+    await api.payCard(ORDER_ID, INPUT);
+    await api.payCard(ORDER_ID, INPUT);
+    expect(seen[0]?.url).toBe(`https://api.test/checkout/v1/orders/${ORDER_ID}/card`);
+    expect(JSON.parse(String(seen[0]?.init?.body))).toEqual(INPUT);
+    const key = (i: number) =>
+      (seen[i]?.init?.headers as Record<string, string>)['idempotency-key'];
+    expect(key(0)).toBeTruthy();
+    expect(key(0)).not.toBe(key(1));
+  });
+
+  test('a relative challenge resolves against the API base; plain-http elsewhere is refused', async () => {
+    answer({ kind: 'challenge', url: '/checkout/v1/fake/3ds', creq: 'c' });
+    expect((await createApi('https://api.test').payCard(ORDER_ID, INPUT)).next).toEqual({
+      kind: 'challenge',
+      url: 'https://api.test/checkout/v1/fake/3ds',
+      creq: 'c',
+    });
+    answer({ kind: 'challenge', url: 'https://acs.bank.test/3ds', creq: 'c' });
+    expect((await createApi('').payCard(ORDER_ID, INPUT)).next).toMatchObject({
+      url: 'https://acs.bank.test/3ds',
+    });
+    for (const bad of ['http://evil.test/3ds', '//evil.test/3ds', 'javascript:alert(1)']) {
+      answer({ kind: 'challenge', url: bad, creq: 'c' });
+      await expect(createApi('').payCard(ORDER_ID, INPUT)).rejects.toMatchObject({
+        code: 'PAYMENT_UNAVAILABLE',
+      });
+    }
   });
 });
 

@@ -21,7 +21,7 @@ retypes (those need a Contract major, a codemod and an alias window).
 | `KERNEL_PATHS`     | Same paths by name                                                                                          |
 | `SurfaceRegion`    | Inline notices targeted at a region name                                                                    |
 | `ErrorBoundary`    | Fallback-on-throw wrapper for storefront code                                                               |
-| `SLOT_KEYS`        | The slot registry (34 slots, each with a default in `@vendua/ui-defaults`)                                  |
+| `SLOT_KEYS`        | The slot registry (35 slots, each with a default in `@vendua/ui-defaults`)                                  |
 | `SLOT_ALIASES`     | Deprecated slot keys → their replacement and the codemod that rewrites them                                 |
 
 ```tsx
@@ -170,7 +170,9 @@ joins the restock waitlist and shows how many wait.
 ### Online payments (Kernel 1.7)
 
 Checkout and `/pedido/:id` take payments through the store's Mercado Pago (Contract 2,
-additive — no storefront edit). Card data only ever touches Mercado Pago's hosted page.
+additive — no storefront edit). Since 1.19 the card is paid in the page: card number, expiry
+and CVV live in Mercado Pago's own iframes (Secure Fields), the Kernel only handles the
+single-use token they return, and Core charges the order's total (see Kernel 1.19).
 
 - `StoreProfile` gains `onlinePayments { pix, card }` and `pickup { address, instructions }`;
   `paymentMethods` / `PaymentMethod.id` / `CheckoutInput.payment.method` may be
@@ -331,6 +333,45 @@ sending, error, message, loading, refetch }`. `send` resolves true once Core too
   launcher; replies are announced politely; "<name> está digitando…" while pending; a line that
   it's the store's assistant and the order only goes out when the shopper finishes it. Same-origin
   links in a message (Core's link card to `/sacola`) are tappable; any other URL stays text.
+
+### The card in the page (Kernel 1.19)
+
+Additive — no storefront edit, no new runtime export. No more redirect to Mercado Pago's hosted
+checkout: the order page takes the card itself, through Mercado Pago's Card Payment Brick. Card
+number, expiry and CVV are typed into Mercado Pago's own iframes (Secure Fields); the Brick hands
+the Kernel a single-use token, the Kernel posts it to Core, and Core charges the order's total —
+no amount ever leaves the page. The Kernel loads `https://sdk.mercadopago.com/js/v2` itself, once,
+only on an order page that shows the form (a store's CSP needs `sdk.mercadopago.com` and Mercado
+Pago's frame origins).
+
+- A `card_online` checkout goes straight to `/pedido/:id`, which asks Core for the form:
+  `api.payOrder(id, opts?)` — new optional `{ cardForm?: boolean; challengeDone?: boolean }` sends
+  `{ "card": "form" }`, and Core answers `next.kind === 'card'` instead of a hosted checkout.
+  After the bank's 3DS frame says COMPLETE the page shows `processing` and asks again with
+  `challengeDone` (`{ "challenge": "complete" }`) for about a minute: MP settles a finished
+  challenge a few moments later, and a still-pending one must not come back as a new form. A Core that still answers
+  `redirect` is honoured (`checkout.PaymentStatus` `due` → the hosted page).
+- New `api.payCard(id, input: CardPaymentInput)` → `POST /checkout/v1/orders/:id/card` (fresh
+  Idempotency-Key, the order's credential): `{ token, paymentMethodId, issuerId, installments,
+payer: { email, identification }, deviceId }`. 409 `PAYMENT_IN_PROGRESS`, 409
+  `PAYMENT_NOT_REQUIRED`, 422 `INVALID_PAYMENT`, 503 `PAYMENT_UNAVAILABLE`.
+- `PaymentNext` gains `card` (`provider: 'mercadopago' | 'fake'`, `publicKey`, `amountCents`,
+  `declined: DeclineReason | null`), `challenge` (`url`, `creq` — the bank's 3-D Secure, posted
+  into an iframe in the page; https only, a relative URL is Core's own) and `declined`
+  (`reason`). `none` after a card answer = approved, or in review (`payment.status` `pending`,
+  shown as `processing` until the live order settles it).
+- New type `DeclineReason`: `card_data`, `insufficient_funds`, `call_for_authorize`,
+  `card_disabled`, `duplicated`, `high_risk`, `max_attempts`, `installments`, `challenge_failed`,
+  `other` (an unknown one reads as `other`). A refusal shows why above a fresh form (tokens are
+  single-use: the Brick is created again for every attempt).
+- New slot `checkout.CardPayment` — the chrome around the Kernel-owned fields: `amountCents`,
+  `currency`, `phase` (`loading`, `ready`, `challenge`, `unavailable`), `declined`
+  (`{ title, body? }` or null), `fields` (the Brick container or the challenge frame — render it
+  exactly once, never inspect or restyle it), optional `whatsappHref` and `onRetry` (while
+  unavailable). The Brick wears the store's tokens (`--v-color-*`, `--v-radius-*`, read at mount;
+  `theme` dark on a dark surface).
+- `ERROR_CODES` adds `PAYMENT_IN_PROGRESS`. `checkout.PaymentStatus`'s card copy no longer
+  mentions leaving the page; `redirecting` stays for a Core that still redirects.
 
 ### Timed promotions and "a partir de" (Kernel 1.13)
 

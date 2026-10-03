@@ -635,11 +635,50 @@ export interface LinePicks {
   comboSelections?: ComboSelection[];
 }
 
-/** Kernel 1.7 — what `POST /orders/:id/pay` asks the shopper to do next. */
+/** Kernel 1.7 — what `POST /orders/:id/pay` asks the shopper to do next. Kernel 1.19 adds
+ *  the in-page card: `card` (mount the card form), and from `POST /orders/:id/card`
+ *  `challenge` (the bank's 3-D Secure, in an iframe) and `declined`. `redirect` is what a Core
+ *  asked without `{ card: 'form' }` answers. */
 export type PaymentNext =
   | { kind: 'pix'; copyPaste: string; expiresAt: string | null }
   | { kind: 'redirect'; url: string }
-  | { kind: 'none' };
+  | { kind: 'none' }
+  | {
+      kind: 'card';
+      provider: 'mercadopago' | 'fake';
+      publicKey: string;
+      amountCents: number;
+      /** why the last attempt was refused (shown above a fresh form) */
+      declined: DeclineReason | null;
+    }
+  | { kind: 'challenge'; url: string; creq: string }
+  | { kind: 'declined'; reason: DeclineReason };
+
+/** Kernel 1.19 — why the card was refused, in the shopper's terms (Core maps the provider's
+ *  status detail). New reasons may appear: treat an unknown one as `'other'`. */
+export type DeclineReason =
+  | 'card_data'
+  | 'insufficient_funds'
+  | 'call_for_authorize'
+  | 'card_disabled'
+  | 'duplicated'
+  | 'high_risk'
+  | 'max_attempts'
+  | 'installments'
+  | 'challenge_failed'
+  | 'other';
+
+/** Kernel 1.19 — `api.payCard`'s body: the card form's single-use token and choices. Never
+ *  an amount — Core charges the order's total. */
+export interface CardPaymentInput {
+  token: string;
+  paymentMethodId: string;
+  issuerId: string | null;
+  installments: number;
+  payer: { email: string; identification: { type: string; number: string } | null };
+  /** Mercado Pago's device fingerprint (`window.MP_DEVICE_SESSION_ID`), when its SDK set one */
+  deviceId: string | null;
+}
 
 export interface OrderItem {
   productId: string | null;
@@ -760,6 +799,20 @@ export function idemKey(): string {
 export function createApi(baseUrl = '') {
   const sf = (path: string) => `${baseUrl}/storefront/v1${path}`;
   const co = (path: string) => `${baseUrl}/checkout/v1${path}`;
+  // the page navigates to a redirect and posts the shopper's bank challenge into a frame:
+  // https only, whatever Core sent; a relative challenge (the dev fake) is Core's own origin
+  const safeNext = (next: PaymentNext): PaymentNext => {
+    if (next.kind === 'redirect' && !isHttps(next.url))
+      throw new ApiError(503, 'PAYMENT_UNAVAILABLE', 'unsafe payment redirect');
+    if (next.kind === 'challenge') {
+      const relative = !/^([a-z][a-z0-9+.-]*:|\/\/)/i.test(next.url);
+      const url = resolveUrl(next.url, baseUrl);
+      if (!url || (!relative && !isHttps(url)))
+        throw new ApiError(503, 'PAYMENT_UNAVAILABLE', 'unsafe payment challenge');
+      return { ...next, url };
+    }
+    return next;
+  };
   let token: string | null = readStoredToken();
   let sessionPromise: Promise<{ cart: Cart }> | null = null;
   // Memory first (survives sessionStorage failures); the persisted copy covers refresh.
@@ -1101,9 +1154,10 @@ export function createApi(baseUrl = '') {
       }).then((r) => r.order);
     },
     /** Kernel 1.7 — start/resume the order's online payment and sync it with the
-     *  provider (a card return lands here before the webhook). Same order credential
-     *  as `order()`; 409 PAYMENT_NOT_REQUIRED, 503 PAYMENT_UNAVAILABLE. */
-    payOrder: (id: string) => {
+     *  provider. Same order credential as `order()`; 409 PAYMENT_NOT_REQUIRED, 503
+     *  PAYMENT_UNAVAILABLE. Kernel 1.19: `cardForm` asks for the in-page card form
+     *  (`next.kind === 'card'`) instead of a hosted checkout. */
+    payOrder: (id: string, opts?: { cardForm?: boolean; challengeDone?: boolean }) => {
       const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
       return apiFetch<{ order: Order; next: PaymentNext }>(co(`/orders/${id}/pay`), {
         method: 'POST',
@@ -1111,12 +1165,29 @@ export function createApi(baseUrl = '') {
           ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
           'idempotency-key': idemKey(),
         },
-      }).then((r) => {
-        // the page navigates to this URL and renders it as a link: https only, whatever Core sent
-        if (r.next.kind === 'redirect' && !isHttps(r.next.url))
-          throw new ApiError(503, 'PAYMENT_UNAVAILABLE', 'unsafe payment redirect');
-        return r;
-      });
+        ...(opts?.cardForm
+          ? {
+              body: JSON.stringify({
+                card: 'form',
+                ...(opts.challengeDone ? { challenge: 'complete' } : {}),
+              }),
+            }
+          : {}),
+      }).then((r) => ({ ...r, next: safeNext(r.next) }));
+    },
+    /** Kernel 1.19 — pay a card_online order with the card form's token. 409
+     *  PAYMENT_IN_PROGRESS (an earlier submit is unresolved), 409 PAYMENT_NOT_REQUIRED, 422
+     *  INVALID_PAYMENT, 503 PAYMENT_UNAVAILABLE. */
+    payCard: (id: string, input: CardPaymentInput) => {
+      const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
+      return apiFetch<{ order: Order; next: PaymentNext }>(co(`/orders/${id}/card`), {
+        method: 'POST',
+        headers: {
+          ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+          'idempotency-key': idemKey(),
+        },
+        body: JSON.stringify(input),
+      }).then((r) => ({ ...r, next: safeNext(r.next) }));
     },
     /** Kernel 1.3 — SSE over fetch (the session token rides as Bearer, which
      *  EventSource can't send). Calls `onOrder` per `order` event; resolves when
@@ -1254,6 +1325,8 @@ export const ERROR_CODES = [
   'PAYMENT_NOT_REQUIRED',
   'PAYMENT_UNAVAILABLE',
   'PAYMENT_ONLINE',
+  // Kernel 1.19 — an earlier card submit hasn't resolved yet
+  'PAYMENT_IN_PROGRESS',
   'INVALID_NOTES',
   'INVALID_COUPON',
   'COUPON_NOT_FOUND',
@@ -1319,6 +1392,16 @@ export const ERROR_CODES = [
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export type VenduaApi = ReturnType<typeof createApi>;
+
+function resolveUrl(url: string, base: string): string | null {
+  try {
+    // typed without the DOM lib: Core typechecks this file too
+    const here = (globalThis as { location?: { href?: string } }).location?.href;
+    return new URL(url, new URL(base || '/', here)).href;
+  } catch {
+    return null;
+  }
+}
 
 function isHttps(url: string) {
   try {

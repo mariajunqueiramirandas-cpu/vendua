@@ -53,7 +53,7 @@ export interface DeliveryOption {
 }
 
 export interface PaymentMethod {
-  /** Kernel 1.7 adds 'card_online' — card through Mercado Pago's hosted checkout;
+  /** Kernel 1.7 adds 'card_online' — card through Mercado Pago (in the page since 1.19);
    *  Kernel 1.12 adds 'meal_voucher' ("Vale-refeição", paid on delivery) */
   id: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher';
   label: string;
@@ -64,7 +64,8 @@ export interface PaymentMethod {
 }
 
 /** Kernel 1.7 — what `checkout.PaymentStatus` shows for an online payment:
- *  redirecting — leaving for Mercado Pago's card checkout (`href` = the link to tap)
+ *  redirecting — leaving for Mercado Pago's hosted checkout (`href` = the link to tap); only a
+ *    Core that still answers `redirect` reaches it — Kernel 1.19 takes the card in the page
  *  confirming — the Kernel is asking the provider (card return, a Pix being generated)
  *  due — not paid yet; `action` starts it
  *  paid — confirmed by the provider (`justPaid` = it happened while this page was open)
@@ -321,6 +322,23 @@ export interface SlotProps {
     whatsappHref?: string;
     /** one line of context, e.g. why the provider call failed */
     detail?: string;
+  };
+  /** Kernel 1.19 — the card form on the order page: the chrome around the Kernel-owned card
+   *  fields (Mercado Pago's Secure Fields, or the bank's 3-D Secure challenge) */
+  'checkout.CardPayment': {
+    amountCents: number;
+    currency: string;
+    /** loading — the fields are on their way; ready — fill and pay; challenge — the bank's
+     *  verification is in `fields`; unavailable — the fields didn't load */
+    phase: 'loading' | 'ready' | 'challenge' | 'unavailable';
+    /** why the last attempt was refused, in the shopper's words (a fresh form follows) */
+    declined: { title: string; body?: string } | null;
+    /** Kernel-owned card fields or challenge frame: render it exactly once and never inspect
+     *  or restyle its insides */
+    fields: ReactNode;
+    whatsappHref?: string;
+    /** while unavailable: load the fields again */
+    onRetry?: () => void;
   };
   'order.Items': {
     items: OrderItem[];

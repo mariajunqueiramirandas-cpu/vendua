@@ -237,6 +237,13 @@ export async function reconcilePayments(sql: Sql, o: PaymentJobDeps, now = new D
           where p.tenant_id = ${tenantId} and p.review is distinct from 'amount_mismatch' and (
             -- open attempts: webhooks get lost
             (p.status in ('creating', 'pending') and p.created_at > ${new Date(now.getTime() - 2 * DAY)})
+            -- a card we replaced here (a 3DS challenge, a hosted checkout) that MP could still settle
+            or (p.status = 'cancelled' and p.kind = 'card' and p.provider_payment_id is not null
+                and p.created_at > ${new Date(now.getTime() - 2 * DAY)})
+            -- a hosted checkout the form replaced before any payment was seen on it
+            or (p.status = 'cancelled' and p.kind = 'card' and p.provider_payment_id is null
+                and p.status_detail = 'superseded' and p.provider_checkout_id is not null
+                and p.created_at > ${new Date(now.getTime() - 2 * DAY)})
             -- a Pix we closed here that MP could still take until its expiry
             or (p.status in ('cancelled', 'expired') and p.kind = 'pix' and p.provider_payment_id is not null
                 and p.pix_expires_at > ${new Date(now.getTime() - 60 * 60_000)})
@@ -256,11 +263,17 @@ export async function reconcilePayments(sql: Sql, o: PaymentJobDeps, now = new D
             await withTenant(sql, tenantId, (tx) => markReview(tx, tenantId, row, 'unverified'));
           continue;
         }
-        let fresh: ProviderPayment | null = null;
+        let fresh: ProviderPayment[] = [];
         try {
-          fresh = row.provider_payment_id
-            ? await o.provider.getPayment(tok!.token, row.provider_payment_id)
-            : await o.provider.findPayment(tok!.token, row.order_id);
+          if (row.provider_payment_id)
+            fresh = [await o.provider.getPayment(tok!.token, row.provider_payment_id)];
+          // a superseded checkout: its late payment needn't be the order's newest
+          else if (row.status === 'cancelled')
+            fresh = await o.provider.findPayments(tok!.token, row.order_id);
+          else {
+            const p = await o.provider.findPayment(tok!.token, row.order_id);
+            fresh = p ? [p] : [];
+          }
         } catch (err) {
           if (!(err instanceof ProviderError && err.code === 'not_found')) {
             jobLog.warn({ err, tenantId, paymentId: row.id }, 'reconcile fetch failed');
@@ -269,9 +282,9 @@ export async function reconcilePayments(sql: Sql, o: PaymentJobDeps, now = new D
         }
         const applied = await withTenant(sql, tenantId, async (tx) => {
           // reservations nobody sent (older than a few minutes) are settled by MP's refunded total
-          const r = fresh
-            ? await applyProviderPayment(tx, tenantId, fresh, { release: { exceptKey: '' } })
-            : null;
+          const r = [];
+          for (const p of fresh)
+            r.push(await applyProviderPayment(tx, tenantId, p, { release: { exceptKey: '' } }));
           const cur = (
             await tx<PaymentRow[]>`select * from payments where id = ${row.id} for update`
           )[0];
@@ -281,7 +294,7 @@ export async function reconcilePayments(sql: Sql, o: PaymentJobDeps, now = new D
           }
           return r;
         });
-        if (applied) await autoRefundIfClosed(pay, tenantId, applied);
+        for (const a of applied) await autoRefundIfClosed(pay, tenantId, a);
       }
     } catch (err) {
       jobLog.error({ err, tenantId }, 'reconcile pass failed');

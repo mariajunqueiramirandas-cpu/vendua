@@ -160,6 +160,10 @@ export const REVIEW: Record<PaymentReview, { title: string; body: string }> = {
     title: 'Valor pago diferente do pedido',
     body: 'O cliente pagou um valor diferente do total. Confirme com ele e, se pagou a mais, devolva a diferença pelo pedido.',
   },
+  paid_twice: {
+    title: 'Pedido pago duas vezes',
+    body: 'Chegou um segundo pagamento para este pedido. Confira com o cliente e devolva um deles pelo pedido.',
+  },
   refund_duplicate: {
     title: 'Devolução registrada duas vezes',
     body: 'O Mercado Pago mostrou esta devolução repetida. Confira no app do Mercado Pago quanto saiu de fato.',

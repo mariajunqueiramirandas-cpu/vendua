@@ -3,6 +3,7 @@ import {
   ProviderError,
   type CardCheckout,
   type CardCheckoutRequest,
+  type CardPaymentRequest,
   type OAuthTokens,
   type PaymentProvider,
   type PixRequest,
@@ -41,6 +42,9 @@ export class FakeProvider implements PaymentProvider {
   /** tokens whose account is on hold */
   readonly restricted = new Set<string>();
   private byIdem = new Map<string, string>();
+  private usedCardTokens = new Set<string>();
+  /** where a fake 3DS challenge posts (dev-routes.ts); relative — the Kernel resolves it */
+  challengeUrl = '/admin/v1/dev/mp/challenge';
 
   // provider ids are unique forever at MP; a per-boot prefix keeps a restarted dev Core from
   // reusing ids the database already holds
@@ -129,6 +133,61 @@ export class FakeProvider implements PaymentProvider {
     return { id, redirectUrl: u.toString() };
   }
 
+  /**
+   * The fake's card fields mint tokens that say how the card behaves:
+   *   fake-card-approved | fake-card-pending (in review) | fake-card-challenge (3DS)
+   *   fake-card-rejected-<status_detail>, e.g. fake-card-rejected-cc_rejected_insufficient_amount
+   * each optionally with a `.<nonce>` suffix. Like MP, a token works once; the idempotency key
+   * replays the first answer.
+   */
+  async createCardPayment(token: string, req: CardPaymentRequest) {
+    this.guard(token);
+    const hit = this.byIdem.get(req.idempotencyKey);
+    if (hit) return strip(this.payments.get(hit)!);
+    const m =
+      /^fake-card-(approved|pending|challenge|rejected-([a-z0-9_]{1,60}))(\.[A-Za-z0-9]{1,40})?$/.exec(
+        req.cardToken,
+      );
+    if (!m || this.usedCardTokens.has(req.cardToken))
+      throw new ProviderError('invalid', 'invalid card token', 400);
+    this.usedCardTokens.add(req.cardToken);
+    const p = this.pay(
+      token,
+      {
+        amountCents: req.amountCents,
+        description: req.description,
+        payerEmail: req.payer.email,
+        externalReference: req.externalReference,
+        idempotencyKey: req.idempotencyKey,
+        notificationUrl: req.notificationUrl,
+        applicationFeeCents: req.applicationFeeCents,
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+      'card',
+    );
+    p.attempt = req.attempt;
+    const outcome = m[1]!;
+    if (outcome === 'approved') this.settle(p.id, 'approved');
+    else if (outcome.startsWith('rejected')) {
+      this.settle(p.id, 'rejected');
+      p.statusDetail = m[2]!;
+    } else if (outcome === 'challenge') {
+      p.statusDetail = 'pending_challenge';
+      p.challenge = { url: this.challengeUrl, creq: p.id };
+    } else p.statusDetail = 'pending_review_manual';
+    return strip(p);
+  }
+
+  /** the shopper answers the 3DS challenge: the payment settles and the challenge is gone */
+  completeChallenge(id: string, ok: boolean) {
+    const p = this.payments.get(id);
+    if (!p || p.statusDetail !== 'pending_challenge') throw new Error(`no challenge ${id}`);
+    p.challenge = null;
+    this.settle(id, ok ? 'approved' : 'rejected');
+    if (!ok) p.statusDetail = 'cc_rejected_3ds_challenge';
+    return strip(p);
+  }
+
   /** the shopper "pays" a card checkout: a payment appears for its external reference */
   completeCheckout(checkoutId: string, status: ProviderPaymentStatus = 'approved') {
     const c = this.checkouts.get(checkoutId);
@@ -165,6 +224,14 @@ export class FakeProvider implements PaymentProvider {
       (p) => p.externalReference === externalReference && p.token !== 'platform',
     );
     return hits.length ? strip(hits[hits.length - 1]!) : null;
+  }
+
+  async findPayments(token: string, externalReference: string) {
+    this.guard(token);
+    return [...this.payments.values()]
+      .filter((p) => p.externalReference === externalReference && p.token !== 'platform')
+      .reverse()
+      .map(strip);
   }
 
   /** move a payment the way MP would; tests then post webhook() */
@@ -346,7 +413,11 @@ export class FakeProvider implements PaymentProvider {
 
 function strip(p: Stored): ProviderPayment {
   const { token: _token, ...rest } = p;
-  return { ...rest, pix: p.pix ? { ...p.pix } : null };
+  return {
+    ...rest,
+    pix: p.pix ? { ...p.pix } : null,
+    challenge: p.challenge ? { ...p.challenge } : null,
+  };
 }
 
 function pub(s: ProviderSubscription & { req?: SubscriptionRequest }): ProviderSubscription {

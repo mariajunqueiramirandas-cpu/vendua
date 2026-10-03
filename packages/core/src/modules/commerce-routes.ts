@@ -6,6 +6,8 @@ import {
   HttpError,
   UUID_RE,
   bodyJson,
+  boundedText,
+  parseJsonObject,
   rateLimit,
   sessionCartId,
   str,
@@ -68,7 +70,13 @@ import type { StoreSettingsRow } from './store.ts';
 import { isPaymentMethod } from './payment-adjustments.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 import { refundLeftovers, refundOrderPayments } from '../admin/routes-orders.ts';
-import { cancelOpenAttempts, preparePayment } from './payments/store-payments.ts';
+import {
+  cancelOpenAttempts,
+  parseCardInput,
+  payWithCard,
+  preparePayment,
+  type PayCtx,
+} from './payments/store-payments.ts';
 
 type TenantApp = Hono<{ Variables: { tenant: Tenant } }>;
 
@@ -404,8 +412,31 @@ export function mountCommerce(d: Deps) {
 
   // ── online payment (Mercado Pago) ──────────────────────────────────────────
 
-  // The order page asks how to pay: the live Pix QR, the hosted card checkout, or nothing left
-  // to do. Also the card return's first stop — it syncs with the provider before the webhook.
+  const payCtx = (c: Context, cardForm: boolean, challengeDone = false): PayCtx => ({
+    publicOrigin: d.publicOrigin(c),
+    storeDomain: d.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+    ...(process.env.MP_PAYER_EMAIL ? { payerEmail: process.env.MP_PAYER_EMAIL } : {}),
+    cardForm,
+    challengeDone,
+    ...(d.provider.name === 'mercadopago' && process.env.MP_PUBLIC_KEY
+      ? { publicKey: process.env.MP_PUBLIC_KEY }
+      : {}),
+  });
+  const answered = async (tenantId: string, key: string) =>
+    (
+      await withTenant(
+        sql,
+        tenantId,
+        (tx) => tx`
+          select 1 from idempotency_keys
+          where tenant_id = ${tenantId} and key = ${key} and response is not null
+        `,
+      )
+    ).length > 0;
+
+  // The order page asks how to pay: the live Pix QR, the card form (Kernel 1.19+ sends
+  // `{"card":"form"}`; older Kernels get the hosted checkout), or nothing left to do. Also the
+  // card's sync point (a hosted return, a finished 3DS challenge) — it asks MP before the webhook.
   // per IP: shoppers behind one NAT (a shared wifi) pay at the same time
   checkout.use('/orders/:id/pay', limiter(60));
   // Mercado Pago runs before the recorded tx (never inside one): preparePayment is safe to
@@ -416,26 +447,44 @@ export function mountCommerce(d: Deps) {
     const cartId = await sessionCartId(c, sessionSecret);
     const orderId = uuidParam(c, 'id');
     const key = requireIdemKey(c);
-    const answered = await withTenant(
-      sql,
-      tenant.id,
-      (tx) => tx`
-        select 1 from idempotency_keys
-        where tenant_id = ${tenant.id} and key = ${key} and response is not null
-      `,
-    );
-    const next = answered.length
+    const raw = await boundedText(c, 1_000);
+    const body = raw.trim() !== '' ? parseJsonObject(raw) : {};
+    const cardForm = body.card === 'form';
+    const next = (await answered(tenant.id, key))
       ? null
       : await preparePayment(
           { sql, provider: d.provider, sessionSecret },
           tenant,
           orderId,
           cartId,
-          {
-            publicOrigin: d.publicOrigin(c),
-            storeDomain: d.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
-            ...(process.env.MP_PAYER_EMAIL ? { payerEmail: process.env.MP_PAYER_EMAIL } : {}),
-          },
+          payCtx(c, cardForm, cardForm && body.challenge === 'complete'),
+        );
+    return d.idempotency(sql, async (_c, tx) => ({
+      status: 200,
+      body: {
+        order: await loadOrderView(tx, tenant.id, orderId, cartId),
+        next: next ?? { kind: 'none' },
+      },
+    }))(c);
+  });
+
+  // The card the shopper typed into Mercado Pago's fields on the order page, as MP's single-use
+  // token — the card itself never reaches us. Same order as /pay: MP before the recorded tx.
+  checkout.use('/orders/:id/card', limiter(30));
+  checkout.post('/orders/:id/card', async (c) => {
+    const tenant = c.get('tenant') as Tenant;
+    const cartId = await sessionCartId(c, sessionSecret);
+    const orderId = uuidParam(c, 'id');
+    const key = requireIdemKey(c);
+    const next = (await answered(tenant.id, key))
+      ? null
+      : await payWithCard(
+          { sql, provider: d.provider, sessionSecret },
+          tenant,
+          orderId,
+          cartId,
+          parseCardInput(await bodyJson(c, 4_000)),
+          payCtx(c, true),
         );
     return d.idempotency(sql, async (_c, tx) => ({
       status: 200,

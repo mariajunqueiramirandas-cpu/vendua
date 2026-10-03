@@ -921,10 +921,12 @@ export interface Payments {
 }
 
 /** unverified (no usable token to confirm it) · amount_mismatch (paid ≠ order) ·
+ *  paid_twice (a second payment landed on a paid order) ·
  *  refund_duplicate / refund_amount_mismatch / refund_failed (a refund MP didn't settle as asked) */
 export type PaymentReview =
   | 'unverified'
   | 'amount_mismatch'
+  | 'paid_twice'
   | 'refund_duplicate'
   | 'refund_amount_mismatch'
   | 'refund_failed';

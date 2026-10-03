@@ -3,6 +3,19 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.19.0
+
+The card in the page — additive; no storefront edit.
+
+- `card_online` no longer redirects to Mercado Pago's hosted checkout: checkout goes to the order
+  page, which mounts Mercado Pago's Card Payment Brick (Secure Fields — card data stays in its
+  iframes) and posts the single-use token with `api.payCard` → `POST /checkout/v1/orders/:id/card`.
+  Core charges the order's total; 3-D Secure runs in an iframe in the page.
+- `api.payOrder(id, { cardForm: true })` asks for the form (`{ "card": "form" }`); a `redirect`
+  answer from an older Core is still honoured.
+- New slot `checkout.CardPayment`; `PaymentNext` gains `card`, `challenge`, `declined`; types
+  `DeclineReason`, `CardPaymentInput`; `ERROR_CODES` adds `PAYMENT_IN_PROGRESS`.
+
 ## 1.18.0
 
 The store's assistant on the site (ADR 0031 V4) — additive; no storefront edit.

@@ -47,6 +47,12 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
   PAYMENT_NOT_ALLOWED: { title: 'Encomendas aceitam outra forma de pagamento' },
   // Kernel 1.17 — the checkout shows `changeMessage` at the change field
   INVALID_CHANGE: { title: 'Confira o valor do troco' },
+  // Kernel 1.19 — the in-page card
+  PAYMENT_IN_PROGRESS: {
+    title: 'Seu pagamento ainda está sendo processado',
+    body: 'Espere a resposta do banco antes de tentar de novo.',
+  },
+  INVALID_PAYMENT: { title: 'Confira os dados do cartão' },
   // coupons — the one table (`couponMessage`, `COUPON_REASON` read it)
   COUPON_NOT_FOUND: { title: 'Cupom não encontrado' },
   INVALID_COUPON: { title: 'Cupom inválido' },

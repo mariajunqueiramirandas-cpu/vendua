@@ -29,7 +29,7 @@ import {
   PixPayment,
   SchedulePicker,
 } from './growth.tsx';
-import { PaymentStatus } from './payment.tsx';
+import { CardPayment, PaymentStatus } from './payment.tsx';
 import {
   ConsentBanner,
   EmergencyOverlay,
@@ -84,6 +84,7 @@ export const SLOT_DEFAULTS: SlotDefaults = {
   'checkout.LocationPicker': LocationPicker,
   'checkout.PaymentStatus': PaymentStatus,
   'system.Chat': StoreChat,
+  'checkout.CardPayment': CardPayment,
 };
 
 export { noticeSeverity, noticeLinks, NoticeCard } from './system.tsx';

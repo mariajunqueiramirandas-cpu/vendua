@@ -74,11 +74,6 @@ function adjustmentLabel(a: PaymentAdjustment, currency: string): PaymentMethod[
   return kind && label ? { label, kind } : undefined;
 }
 
-/** Full-page hand-off to the provider's hosted checkout (card data never touches us). */
-function leaveTo(url: string) {
-  globalThis.location.assign(url);
-}
-
 type PinStatus = SlotPropsOf<'checkout.LocationPicker'>['status'];
 
 const savedPin = (a: { lat?: number; lng?: number } | undefined): LatLng | null =>
@@ -193,8 +188,6 @@ export function CheckoutPage() {
   const [syncing, setSyncing] = useState(false);
   const submitting = useRef(false);
   const stepStarted = useRef(Date.now());
-  // card_online: the order exists and the shopper is on the way to Mercado Pago
-  const [leaving, setLeaving] = useState<{ totalCents: number; url?: string } | null>(null);
 
   useEffect(() => {
     emit('checkout_step', { step, duration_ms: Date.now() - stepStarted.current });
@@ -212,7 +205,7 @@ export function CheckoutPage() {
       navigate(location, { replace: true, state: { vStep: asked, vStepN: ORDER.indexOf(asked) } });
       return;
     }
-    if (submitting.current || leaving || loading) return;
+    if (submitting.current || loading) return;
     const n = ORDER.indexOf(asked);
     const back = closed && n > 0 ? n + 1 : reachable ? 0 : n;
     if (!back) return;
@@ -436,21 +429,6 @@ export function CheckoutPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinWanted, coords, pinHint, pinStatus]);
 
-  if (leaving)
-    return (
-      <main id="main" className="v-page" data-vendua-page="checkout">
-        <h1 className="v-page-title">Pagamento</h1>
-        <Slot
-          name="checkout.PaymentStatus"
-          status="redirecting"
-          method="card_online"
-          amountCents={leaving.totalCents}
-          currency={currency}
-          {...(leaving.url ? { href: leaving.url } : {})}
-        />
-      </main>
-    );
-
   if (loading && !cart)
     return (
       <main
@@ -640,23 +618,8 @@ export function CheckoutPage() {
           },
         });
       else forget();
+      // card_online included: the card form is on the order page (Kernel 1.19)
       const orderPath = `${paths.order.replace(':id', order.id)}?novo=1`;
-      if (pay === 'card_online') {
-        // the order is placed; the card is paid on Mercado Pago's page, which returns to
-        // the order page. No redirect (provider down) → the order page offers to retry.
-        setLeaving({ totalCents: order.totalCents });
-        try {
-          const r = await api.payOrder(order.id);
-          if (r.next.kind === 'redirect') {
-            setLeaving({ totalCents: order.totalCents, url: r.next.url });
-            leaveTo(r.next.url);
-            return;
-          }
-        } catch {
-          /* the order page shows why and how to retry */
-        }
-        setLeaving(null);
-      }
       go(orderPath);
     } catch (err) {
       // useCheckout().error carries the typed failure; route the fixable ones to their field

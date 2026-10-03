@@ -41,6 +41,30 @@ describe('slot defaults', () => {
     expect(r('system.Notice')).toContain('data-vendua="notice"');
   });
 
+  test('the card form renders the Kernel’s fields once; card copy never sends the shopper away', () => {
+    const Card = SLOT_DEFAULTS['checkout.CardPayment'];
+    const fx = SLOT_FIXTURES['checkout.CardPayment'];
+    const html = renderToStaticMarkup(<Card {...fx} />);
+    expect(html.match(/data-part="fixture-fields"/g)).toHaveLength(1);
+    expect(tags(html)).toContain('Saldo ou limite insuficiente');
+    expect(tags(html)).toContain('vão direto para o Mercado Pago');
+    const down = renderToStaticMarkup(
+      <Card {...fx} phase="unavailable" declined={null} onRetry={() => {}} />,
+    );
+    expect(down).toContain('data-part="retry"');
+    expect(down).toContain('data-part="whatsapp"');
+    const Status = SLOT_DEFAULTS['checkout.PaymentStatus'];
+    for (const status of ['confirming', 'processing', 'failed', 'paid', 'due'] as const) {
+      const t = tags(
+        renderToStaticMarkup(
+          <Status status={status} method="card_online" amountCents={4700} currency="BRL" />,
+        ),
+      );
+      expect(t).not.toContain('ambiente do Mercado Pago');
+      expect(t).not.toMatch(/Levando você|no Mercado Pago dá/);
+    }
+  });
+
   test('unknown action types degrade to links; unknown severity to info', () => {
     const C = SLOT_DEFAULTS['system.Notice'];
     const html = renderToStaticMarkup(
