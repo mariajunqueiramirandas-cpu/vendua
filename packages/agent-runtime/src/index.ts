@@ -96,3 +96,4 @@ export {
 } from './guards/stock.ts';
 export { decide as decideMemory, type MemoryDecision } from './memory/policy.ts';
 export * from './model/index.ts';
+export * from './telemetry/otel.ts';

@@ -145,11 +145,11 @@ export class Runtime<H = unknown> {
     return this.agents.filter((a) => a.def.lane === lane).map((a) => a.def.id);
   }
 
-  /** Claims due actors in a lane and runs them; the host's scheduler calls this. */
-  async pump(lane: Lane, opts: PumpOpts = {}): Promise<number> {
+  /** Claims due actors in a lane, rotating across tenants. Each must then be `activate`d. */
+  async claim(lane: Lane, opts: PumpOpts = {}): Promise<Claimed[]> {
     const agentIds = this.agentIdsIn(lane);
-    if (agentIds.length === 0) return 0;
-    const claimed = await this.o.store.claim({
+    if (agentIds.length === 0 || (opts.limit ?? 4) <= 0) return [];
+    return this.o.store.claim({
       lane,
       owner: this.o.owner,
       leaseMs: this.leaseMs,
@@ -158,6 +158,11 @@ export class Runtime<H = unknown> {
       perTenantCap: opts.perTenantCap ?? 2,
       backoffMs,
     });
+  }
+
+  /** Claims and runs to completion: for tests and simulations; the host keeps a pool instead. */
+  async pump(lane: Lane, opts: PumpOpts = {}): Promise<number> {
+    const claimed = await this.claim(lane, opts);
     await Promise.all(claimed.map((c) => this.activate(c)));
     return claimed.length;
   }
