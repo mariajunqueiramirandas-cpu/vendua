@@ -1668,6 +1668,14 @@
         background: var(--surface);
         box-shadow: 0 1px 3px rgb(0 0 0 / 0.2);
       }
+      button.switch {
+        border: 0;
+        padding: 0;
+        cursor: pointer;
+      }
+      .tg.disclose {
+        padding-bottom: 0;
+      }
       .switch.on {
         background: var(--primary);
       }
@@ -3469,7 +3477,26 @@
               <div class="card">
                 <div class="field">
                   <span class="lbl">Nome</span>
-                  <div class="textin">Ana <span class="t-caption">assistente virtual</span></div>
+                  <div class="textin">
+                    Ana <span class="t-caption" id="name-suffix">assistente virtual</span>
+                  </div>
+                </div>
+                <div class="tg disclose">
+                  <div>
+                    <b id="disc-l">Dizer que é assistente virtual</b
+                    ><span
+                      >Desligado, ela não se anuncia, mas nunca diz que é uma pessoa e conta a
+                      verdade se perguntarem.</span
+                    >
+                  </div>
+                  <button
+                    type="button"
+                    class="switch on"
+                    role="switch"
+                    aria-checked="true"
+                    aria-labelledby="disc-l"
+                    id="disc"
+                  ></button>
                 </div>
                 <div class="field">
                   <span class="lbl" id="tone-l">Jeito de falar</span>
@@ -3628,8 +3655,9 @@
               >The on switch comes first. Coverage modes replace an autonomy slider; there are no
               drafts to approve, and "Quando eu demorar" asks how long to wait (pick it). Handoffs
               are switches in plain words, with the amount right in the row. The preview bubble
-              answers as you change the tone (try it). It always says it's a virtual assistant.
-              Autosaves, like the rest of the admin.</span
+              answers as you change the tone (try it). Saying she's a virtual assistant is a switch,
+              on by default (try it too); switched off, she still never claims to be a person and
+              tells the truth when asked. Autosaves, like the rest of the admin.</span
             >
           </figcaption>
         </figure>
@@ -4011,15 +4039,37 @@
           'Boa noite, Carla! Sou a Ana, assistente virtual da Forno da Vila. O que vai ser hoje?',
           'Boa noite, Carla. Sou a Ana, assistente virtual da Forno da Vila. Como posso ajudar com o seu pedido?',
         ];
+        var tonesQuiet = [
+          'Oi, Carla! Aqui é a Ana, da Forno da Vila 😊 Bora de pizza hoje?',
+          'Boa noite, Carla! Sou a Ana, da Forno da Vila. O que vai ser hoje?',
+          'Boa noite, Carla. Sou a Ana, da Forno da Vila. Como posso ajudar com o seu pedido?',
+        ];
         var text = document.getElementById('tone-text');
         var toneBtns = document.querySelectorAll('[data-tone]');
+        var toneIdx = 1;
+        var disclose = true;
+        function renderTone() {
+          text.textContent = (disclose ? tones : tonesQuiet)[toneIdx];
+        }
         toneBtns.forEach(function (b) {
           b.addEventListener('click', function () {
             toneBtns.forEach(function (o) {
               o.setAttribute('aria-pressed', String(o === b));
             });
-            text.textContent = tones[Number(b.dataset.tone)];
+            toneIdx = Number(b.dataset.tone);
+            renderTone();
           });
+        });
+
+        // disclosure switch
+        var disc = document.getElementById('disc');
+        var suffix = document.getElementById('name-suffix');
+        disc.addEventListener('click', function () {
+          disclose = !disclose;
+          disc.setAttribute('aria-checked', String(disclose));
+          disc.classList.toggle('on', disclose);
+          suffix.hidden = !disclose;
+          renderTone();
         });
 
         // coverage mode: the wait choice only exists under "Quando eu demorar"

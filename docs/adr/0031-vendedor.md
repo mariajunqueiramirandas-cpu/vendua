@@ -76,11 +76,17 @@ listed in [`features/sales-agent-features.md`](../features/sales-agent-features.
      addresses, message bodies).
    - **Memory:** no health data is kept by default.
    - **Providers:** no training on conversations; no phone numbers sent to model providers.
-9. **The admin design spec changes in three places:**
+9. **The admin design spec changes** (decided by the owner on 2026-10-03; the first two are
+   already applied to [`merchant-admin-design.md`](../merchant-admin-design.md)):
    - a shopper waiting for the merchant may push (law 13);
-   - the Vendedor takes a phone-bar slot while it is on;
-   - new components join §7.
-10. **Phases V0 to V4**, each with exit gates measured by order-accuracy simulations and pilot
+   - while it is on, the phone bar is Início · Pedidos · Vendedor · Cardápio · Mais, and Loja
+     moves to Mais;
+   - new components join §7 when the screens are built.
+10. **Disclosure is the merchant's switch** (decided by the owner on 2026-10-03). On, it
+    introduces itself as "<name>, assistente virtual da <loja>"; off, by name only. Either way
+    it never claims to be a person, says it is the store's assistant when asked, and the
+    verifier blocks a reply that claims otherwise.
+11. **Phases V0 to V4**, each with exit gates measured by order-accuracy simulations and pilot
     stores ([`sales-agent.md` §8](../features/sales-agent.md#8-phases)).
 
 ## Consequences
@@ -121,19 +127,26 @@ listed in [`features/sales-agent-features.md`](../features/sales-agent-features.
 
 ## Open decisions
 
-For the owner; the full list is in [`sales-agent.md` §10](../features/sales-agent.md#10-open-decisions)
-and [`sales-agent-ux.md` §10](../features/sales-agent-ux.md#10-open-decisions).
+Decided by the owner on 2026-10-03:
+
+- **The phone bar:** yes (decision 9).
+- **The push for a waiting shopper:** yes (decision 9).
+- **Disclosure:** a merchant switch (decision 10).
+- **How AI is charged:** deferred. It includes Cliente oculto runs, and no prices go in these
+  docs until it is decided.
+
+Still open, for the owner (the full lists are in
+[`sales-agent.md` §10](../features/sales-agent.md#10-open-decisions) and
+[`sales-agent-ux.md` §10](../features/sales-agent-ux.md#10-open-decisions)):
 
 1. The per-store ceiling for replies on the unofficial client, and which stores should wait for
    the official API.
 2. Model providers that may see store and shopper data under LGPD.
-3. How AI is charged, Cliente oculto runs included. No prices here.
-4. Retention of conversations and media.
-5. Disclosure wording. Recommended: "assistente virtual" always, as the board does.
-6. Whether allergies may be remembered, after a legal read.
-7. Defaults for recovery, suggestions and unknown numbers.
-8. The product's name.
-9. The phone-bar slot, and the push for a waiting shopper.
+3. Retention of conversations and media.
+4. Whether allergies may be remembered, after a legal read.
+5. Defaults for recovery, suggestions, unknown numbers and the disclosure switch (on is
+   recommended).
+6. The product's name.
 
 ## Links
 

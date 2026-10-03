@@ -250,9 +250,9 @@ Ten rules. The first nine are enforced in code, not only asked of the model in t
    text or photo can't widen that.
 7. **A person can always take over, and the agent notices.** A message typed on the merchant's
    phone silences it for that thread; "Assumir" and "Devolver" are one tap.
-8. **Honest about itself.** It says it is the store's assistant when asked and offers a
-   person; the verifier blocks a reply that claims to be human. (The greeting wording is an
-   owner decision, [§10](#10-open-decisions).)
+8. **Honest about itself.** Whether it announces itself as "assistente virtual" is the
+   merchant's switch. Either way it says it is the store's assistant when asked and offers a
+   person, and the verifier blocks a reply that claims to be human.
 9. **Degrade, never go dark.** Over budget, provider down or verifier stuck, the shopper gets a
    Core-rendered message with the storefront link and the thread goes to the merchant.
 10. **Measured before and after it ships.** Simulations score order accuracy exactly; pilot
@@ -722,7 +722,8 @@ proposals.
 type StoreAgent = {
   // Bounded like every admin write: unknown category, product or coupon ids → 422, out-of-range → 422.
   enabled: boolean; // "Ana ligada" (owner)
-  name: string; // ≤ 30; the shopper always sees "<name>, assistente virtual da <loja>"
+  name: string; // ≤ 30
+  disclose: boolean; // owner; on: "<name>, assistente virtual da <loja>"; off: "<name>, da <loja>"; never claims to be a person
   tone: 'relaxed' | 'balanced' | 'formal'; // descontraído · equilibrado · formal
   voice: string; // ≤ 1000, extra tone notes in the merchant's words
   // When it answers (the board's coverage modes; replaces a single autonomy mode).
@@ -846,17 +847,27 @@ both.
 
 For the owner. Nothing here is decided by this document.
 
+Decided (owner, 2026-10-03), recorded in [ADR 0031](../adr/0031-vendedor.md):
+
+- **Disclosure** (was 5) is a merchant switch, `disclose`; it never claims to be a person either
+  way, and says it is the store's assistant when asked.
+- **The phone bar and the push** for a waiting shopper: yes
+  ([UX §10](sales-agent-ux.md#10-open-decisions)).
+- **How AI is charged** (3): deferred; it will be decided later, with no prices in these docs
+  meanwhile.
+
+Still open:
+
 1. **Replies on the unofficial transport.** ADR 0026 accepted the ban risk for order notices.
    An agent answering shoppers sends far more; the per-store ceiling for in-conversation
    replies, and whether some stores should wait for the official API, are a risk call.
 2. **Model providers** that may see store and shopper data under LGPD, and whether their terms
    exclude training (Domínio §4.6.3).
-3. **How AI is charged**: included, metered per conversation, per order or per interaction
-   (Domínio's unit), and on which plans. No prices here.
+3. **How AI is charged** (deferred by the owner): included, metered per conversation, per order
+   or per interaction (Domínio's unit), and on which plans. No prices here.
 4. **Retention**: message bodies and media for 30 days like ADR 0026, or 90 like Lis;
    merchant-typed messages are stored only while the Vendedor is on.
-5. **AI disclosure**: always say it's an assistant in the first message, or only when asked.
-   This design never lets it claim to be human either way.
+5. ~~**AI disclosure**~~: decided, a merchant switch (above).
 6. **Health data**: whether allergies may be remembered per customer, after a legal read.
 7. **Defaults**: recovery on or off and its delay, upsell on or off, unknown numbers answered or
    held.

@@ -91,9 +91,11 @@ These are testable. A usability session that breaks one files a bug.
 12. **Teach in place, once.** No tours or walkthrough carousels. The first
     time a feature matters, a single inline hint appears beside it, and it
     never returns after it's dismissed or used.
-13. **Respect attention.** Only new orders, payment problems and "store about
-    to close with orders pending" may interrupt with sound or push. Everything
-    else waits in Início's "precisa de você" list.
+13. **Respect attention.** Only new orders, payment problems, "store about
+    to close with orders pending" and, once the Vendedor ships, a shopper
+    waiting for you in a Vendedor conversation ([ADR 0031](adr/0031-vendedor.md))
+    may interrupt with sound or push. Everything else waits in Início's
+    "precisa de você" list.
 
 ### 2.3 Measured, continuously
 
@@ -115,6 +117,11 @@ These are testable. A usability session that breaks one files a bug.
 
 | Início | Pedidos | Cardápio | Loja | Mais |
 | ------ | ------- | -------- | ---- | ---- |
+
+While the store's Vendedor is on, the bar is Início · Pedidos · Vendedor ·
+Cardápio · Mais: the Vendedor carries the "precisa de você" count as its badge,
+and Loja moves to the top of "Mais"; its everyday tasks stay in the status pill ([ADR 0031](adr/0031-vendedor.md),
+[sales-agent-ux §2](features/sales-agent-ux.md#2-where-it-lives)).
 
 "Mais" opens a sheet with Pagamentos, Clientes, Marketing, Aparência,
 Relatórios, Equipe, Conta e plano and Ajuda, as large tiles with a live hint

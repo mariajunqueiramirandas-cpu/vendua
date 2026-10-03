@@ -72,11 +72,11 @@ skeleton (`apps/admin/CLAUDE.md`). Drill-downs stack with a back gesture (admin 
 conversation list and thread are one route each on phones, a split on desktop.
 
 **Navigation.** The phone bar is Início · Pedidos · Cardápio · Loja · Mais today
-(`apps/admin/src/app/nav.ts`). Recommendation: once the Vendedor is on, it takes Loja's slot,
-with the "precisa de você" count as its badge. Loja moves to Mais; its everyday tasks (pause,
-today's hours) stay one tap away in the status pill, which is always present (admin §3.2).
-Before it's on, the Vendedor lives in Mais with a hint ("conheça a Ana"), and Início shows one
-card inviting setup. The board draws the "on" bar. This is an owner decision ([§10](#10-open-decisions)).
+(`apps/admin/src/app/nav.ts`). Decided (owner, 2026-10-03): once the Vendedor is on, the bar is
+Início · Pedidos · Vendedor · Cardápio · Mais, as the board draws it, with the "precisa de você"
+count as the Vendedor's badge. Loja moves to Mais; its everyday tasks (pause, today's hours) stay
+one tap away in the status pill, which is always present (admin §3.2). Before it's on, the
+Vendedor lives in Mais with a hint ("conheça a Ana"), and Início shows one card inviting setup.
 
 ## 3. Screens
 
@@ -294,8 +294,11 @@ audio, one request for a person. They are the design's simulations with a hidden
 **Content.**
 
 1. **Ana ligada** (new): one switch (owner).
-2. **Nome** with the fixed suffix "assistente virtual", and **jeito de falar** (descontraído ·
-   equilibrado · formal) with the live preview bubble (board).
+2. **Nome**, **dizer que é assistente virtual** (a switch, on by default; owner), and **jeito
+   de falar** (descontraído · equilibrado · formal) with the live preview bubble (board). With
+   the switch on, the name shows the suffix "assistente virtual" and the greeting says it. Off,
+   it introduces itself by name only; it still never claims to be a person, and says it is the
+   store's assistant when asked.
 3. **Quando a Ana atende** (board):
    - **Ensaio:** "ela escreve o que diria, mas não manda nada".
    - **Quando eu demorar:** new, the wait is a choice, 1 · 2 · 5 min. It also covers the store
@@ -361,7 +364,8 @@ New components go in `apps/admin/src/ui/` and on the `/_ui` reference route.
 The admin's voice (admin §9): warm, direct, brief; "você"; lowercase-first buttons.
 
 - **Naming.** To the merchant it is "a Ana" (whatever they named it) or "o Vendedor". To the
-  shopper it is "Ana, assistente virtual da Forno da Vila". Never "IA", "robô", "bot", "modelo",
+  shopper it is "Ana, assistente virtual da Forno da Vila", or "Ana, da Forno da Vila" with the
+  disclosure switch off. Never "IA", "robô", "bot", "modelo",
   "prompt", "token" or "agente" in the admin.
 - **Its actions** are past-tense receipts: "anotou", "calculou a entrega", "mandou o Pix",
   "passou para você".
@@ -398,37 +402,44 @@ Everything in admin §10, plus:
 
 The controls write the `store_agent` setting ([sales-agent §5](sales-agent.md#5-merchant-controls)):
 
-| Control                | Field                                                                          | Role                   |
-| ---------------------- | ------------------------------------------------------------------------------ | ---------------------- |
-| Ana ligada             | `enabled`                                                                      | owner                  |
-| Nome, jeito de falar   | `name`, `tone`, `voice`                                                        | manager                |
-| Quando a Ana atende    | `coverage`, `slowAfterMin`                                                     | manager                |
-| O que a Ana pode fazer | `capabilities.{closeOrder, sendPix, suggest, coupons}`                         | manager; coupons owner |
-| Cupons e limite        | `incentives`                                                                   | owner                  |
-| Passe para mim quando  | `handoff.{complaint, allergy, aboveCents, newCashCustomer}`, `humanSilenceMin` | manager                |
-| Regras, respostas      | `store_knowledge`, compiled rules                                              | manager                |
-| Não é cliente          | a muted contact                                                                | attendant              |
+| Control                        | Field                                                                          | Role                   |
+| ------------------------------ | ------------------------------------------------------------------------------ | ---------------------- |
+| Ana ligada                     | `enabled`                                                                      | owner                  |
+| Nome, jeito de falar           | `name`, `tone`, `voice`                                                        | manager                |
+| Dizer que é assistente virtual | `disclose`                                                                     | owner                  |
+| Quando a Ana atende            | `coverage`, `slowAfterMin`                                                     | manager                |
+| O que a Ana pode fazer         | `capabilities.{closeOrder, sendPix, suggest, coupons}`                         | manager; coupons owner |
+| Cupons e limite                | `incentives`                                                                   | owner                  |
+| Passe para mim quando          | `handoff.{complaint, allergy, aboveCents, newCashCustomer}`, `humanSilenceMin` | manager                |
+| Regras, respostas              | `store_knowledge`, compiled rules                                              | manager                |
+| Não é cliente                  | a muted contact                                                                | attendant              |
 
 ## 9. Changes to the admin design spec
 
-If this is accepted, `merchant-admin-design.md` changes in three places:
+Decided (owner, 2026-10-03) and applied to `merchant-admin-design.md`:
 
 1. **Law 13 (respect attention)** adds "a shopper waiting for you in a Vendedor conversation" to
    the events that may push. A waiting shopper is as time-sensitive as a new order.
-2. **§3.1 navigation** gives the Vendedor the phone bar's fourth slot while it is on, with Loja
-   moving to Mais (see [§2](#2-where-it-lives)).
-3. **§7 components** gains the components of [§4](#4-components).
+2. **§3.1 navigation** puts the Vendedor in the phone bar while it is on, with Loja moving to
+   Mais (see [§2](#2-where-it-lives)).
+
+Still to do when the screens are built: **§7 components** gains the components of
+[§4](#4-components).
 
 ## 10. Open decisions
 
-1. **The phone bar slot:** the Vendedor replaces Loja while on (recommended), or stays in Mais.
-2. **Disclosure wording:** the board makes "assistente virtual" fixed in the name and the
-   greeting; that is the recommendation for the design's open decision 5.
-3. **The push** for a waiting shopper (law 13).
-4. **Who pays for Cliente oculto runs**, which spend AI on every re-run (part of the design's
-   decision 3, how AI is charged).
-5. **Ensaio's length:** a suggestion of three days, or until a number of conversations.
-6. **Tone presets alone, or presets plus free text** for the voice.
+Decided (owner, 2026-10-03):
+
+- **The phone bar:** yes, the Vendedor is in it while on ([§2](#2-where-it-lives)).
+- **The push** for a waiting shopper: yes ([§3.4](#34-aviso-the-push-new)).
+- **Disclosure:** a switch, not fixed ([§3.9](#39-configurar-vendedorconfigurar-board-extended)).
+- **Who pays for Cliente oculto runs:** deferred, with how AI is charged.
+
+Open:
+
+1. **Ensaio's length:** a suggestion of three days, or until a number of conversations.
+2. **Tone presets alone, or presets plus free text** for the voice.
+3. **The disclosure switch's default:** on is the recommendation.
 
 ## 11. Definition of done
 
@@ -443,3 +454,5 @@ and the wow test. Two Vendedor-specific tasks join the admin's usability set:
 ## Change log
 
 - 2026-10-03: first spec, from the team's board plus this pass's additions.
+- 2026-10-03: owner decisions: the phone bar, the push, disclosure as a switch; AI charging
+  deferred.
