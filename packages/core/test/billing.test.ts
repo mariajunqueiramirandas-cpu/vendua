@@ -120,7 +120,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     const cookie = `vendua_admin=${await createSession(appSql, m, 'test')}`;
     const owner = (method: string, path: string, body?: unknown) =>
       call(method, `/admin/v1${path}`, body, { cookie });
-    return { id, slug, phone, owner };
+    return { id, slug, phone, owner, cookie };
   };
 
   const sub = async (tenant: string) =>
@@ -169,7 +169,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(acct.status).toBe(200);
     expect(acct.body.plan).toMatchObject({ id: 'mirim', name: 'Venduá Mirim', priceCents: 6990 });
     expect(acct.body.subscription).toBeNull();
-    expect(acct.body.billing).toEqual({ available: true });
+    expect(acct.body.billing).toEqual({ available: true, publicKey: null });
     expect(acct.body.domains).toEqual([
       { host: `${s.slug}.vendua.test`, kind: 'store', status: 'active', primary: true },
     ]);
@@ -500,11 +500,32 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(none.body.error.details).toEqual({ field: 'payerDocument' });
     expect(await sql`select 1 from subscriptions where tenant_id = ${s.id}`).toHaveLength(0);
 
-    await s.owner('POST', '/account/subscription', {
-      planId: 'mirim',
-      method: 'pix',
-      payerEmail: 'bia@example.com',
-      payerDocument: '529.982.247-25',
+    const started: PixRequest[] = [];
+    const realStart = fake.platformPix.bind(fake);
+    fake.platformPix = async (req) => {
+      started.push(req);
+      return realStart(req);
+    };
+    try {
+      // the admin's MercadoPago.js device id rides on the request that issues the Pix
+      await call(
+        'POST',
+        '/admin/v1/account/subscription',
+        {
+          planId: 'mirim',
+          method: 'pix',
+          payerEmail: 'bia@example.com',
+          payerDocument: '529.982.247-25',
+        },
+        { cookie: s.cookie, 'x-vendua-device': 'armor.0wn3r' },
+      );
+    } finally {
+      fake.platformPix = realStart;
+    }
+    expect(started.map((r) => r.deviceId)).toEqual(['armor.0wn3r']);
+    expect((await s.owner('GET', '/account')).body.billing).toEqual({
+      available: true,
+      publicKey: null,
     });
     const oldPix = (await invoices(s.id))[0]!.provider_payment_id;
     const seen: PixRequest[] = [];

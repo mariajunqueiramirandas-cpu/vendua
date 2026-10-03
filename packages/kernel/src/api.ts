@@ -796,6 +796,10 @@ export function idemKey(): string {
   return globalThis.crypto?.randomUUID?.() ?? `k-${Date.now()}-${Math.random()}`;
 }
 
+/** Core's shape for Mercado Pago's device id: it ignores any other, and an oversized one would
+ *  push /pay past its body cap and lose the Pix. */
+const DEVICE_ID_RE = /^[A-Za-z0-9_:.-]{1,200}$/;
+
 export function createApi(baseUrl = '') {
   const sf = (path: string) => `${baseUrl}/storefront/v1${path}`;
   const co = (path: string) => `${baseUrl}/checkout/v1${path}`;
@@ -1156,20 +1160,26 @@ export function createApi(baseUrl = '') {
     /** Kernel 1.7 — start/resume the order's online payment and sync it with the
      *  provider. Same order credential as `order()`; 409 PAYMENT_NOT_REQUIRED, 503
      *  PAYMENT_UNAVAILABLE. Kernel 1.19: `cardForm` asks for the in-page card form
-     *  (`next.kind === 'card'`) instead of a hosted checkout. */
-    payOrder: (id: string, opts?: { cardForm?: boolean; challengeDone?: boolean }) => {
+     *  (`next.kind === 'card'`) instead of a hosted checkout. Kernel 1.20: `deviceId` is Mercado
+     *  Pago's device fingerprint, for the Pix Core creates in this call. */
+    payOrder: (
+      id: string,
+      opts?: { cardForm?: boolean; challengeDone?: boolean; deviceId?: string | null },
+    ) => {
       const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
+      const deviceId = opts?.deviceId && DEVICE_ID_RE.test(opts.deviceId) ? opts.deviceId : null;
       return apiFetch<{ order: Order; next: PaymentNext }>(co(`/orders/${id}/pay`), {
         method: 'POST',
         headers: {
           ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
           'idempotency-key': idemKey(),
         },
-        ...(opts?.cardForm
+        ...(opts?.cardForm || deviceId
           ? {
               body: JSON.stringify({
-                card: 'form',
-                ...(opts.challengeDone ? { challenge: 'complete' } : {}),
+                ...(opts?.cardForm ? { card: 'form' } : {}),
+                ...(opts?.cardForm && opts.challengeDone ? { challenge: 'complete' } : {}),
+                ...(deviceId ? { deviceId } : {}),
               }),
             }
           : {}),

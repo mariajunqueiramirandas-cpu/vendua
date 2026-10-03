@@ -3,6 +3,21 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.20.0
+
+Mercado Pago's device fingerprint on the online Pix — additive; no storefront edit.
+
+- The order page asks Core for an online Pix with Mercado Pago's device id (its anti-fraud):
+  it loads `https://www.mercadopago.com/v2/security.js` (`view="checkout"`) once and waits up
+  to 1.5 s for `MP_DEVICE_SESSION_ID` — reusing the card form's when MercadoPago.js already set
+  it. A blocked or slow script only means the Pix goes without one; card orders never wait.
+- The checkout starts loading that script as soon as online Pix is picked on the payment step,
+  so the fingerprint is usually there before the order page asks.
+- `api.payOrder(id, { deviceId })` sends `{ "deviceId": "…" }` in the `/pay` body (with
+  `card: "form"` when asked); anything but `[A-Za-z0-9_:.-]{1,200}` is left out.
+- A store with its own CSP must allow `https://www.mercadopago.com` (scripts), as it already
+  allows `sdk.mercadopago.com`.
+
 ## 1.19.0
 
 The card in the page — additive; no storefront edit.

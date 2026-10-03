@@ -47,7 +47,9 @@ import {
   type PayNext,
 } from './subscriptions.ts';
 import { FakeProvider } from '../payments/fake.ts';
+import { platformPublicKey } from '../payments/index.ts';
 import { ProviderError } from '../payments/provider.ts';
+import { deviceIdOr } from '../payments/store-payments.ts';
 
 const signupLog = log.child({ mod: 'signup' });
 
@@ -90,7 +92,12 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     c.header('cache-control', 'no-store');
     return c.json({
       plans: await publicPlans(sql),
-      billing: { available: d.provider.platformConfigured, accessCode: !!signupAccessCode() },
+      billing: {
+        available: d.provider.platformConfigured,
+        accessCode: !!signupAccessCode(),
+        // MercadoPago.js in the signup: its device fingerprint goes with the first Pix
+        publicKey: platformPublicKey(d.provider),
+      },
       // the CRM switch and what signup relies on; which part is missing is for the team (CRM)
       signup: { open: (await d.signupReady()).open },
       storeDomain: d.storeDomain,
@@ -467,63 +474,66 @@ async function ensureFirstCharge(
     phone: '',
     role: 'owner',
   };
-  return withEffects({ sql: d.sql, provider: d.provider, notify: d.notify, origin }, (ctx) =>
-    withTenant(d.sql, owner.tenant_id, async (tx) => {
-      const sub = await lockSub(tx, owner.tenant_id);
-      if (!sub) {
-        // a resumed signup (its first charge failed before): the plan is reread under the
-        // availability lock, so one closed meanwhile can't start a subscription unless held
-        await tx`select pg_advisory_xact_lock_shared(hashtextextended(${`plan-available:${o.plan.id}`}, 0))`;
-        const plan = await planRow(tx, o.plan.id);
-        if (!plan || !plan.public)
-          throw new HttpError(422, 'UNKNOWN_PLAN', 'pick one of the plans offered', {
-            field: 'planId',
+  const deviceId = deviceIdOr(c.req.header('x-vendua-device'));
+  return withEffects(
+    { sql: d.sql, provider: d.provider, notify: d.notify, origin, deviceId },
+    (ctx) =>
+      withTenant(d.sql, owner.tenant_id, async (tx) => {
+        const sub = await lockSub(tx, owner.tenant_id);
+        if (!sub) {
+          // a resumed signup (its first charge failed before): the plan is reread under the
+          // availability lock, so one closed meanwhile can't start a subscription unless held
+          await tx`select pg_advisory_xact_lock_shared(hashtextextended(${`plan-available:${o.plan.id}`}, 0))`;
+          const plan = await planRow(tx, o.plan.id);
+          if (!plan || !plan.public)
+            throw new HttpError(422, 'UNKNOWN_PLAN', 'pick one of the plans offered', {
+              field: 'planId',
+            });
+          openOr409(plan, await heldPlans(tx, owner.tenant_id));
+          const next = await startSubscription(ctx, tx, owner.tenant_id, {
+            plan,
+            method: o.method,
+            payerEmail: o.email,
+            payerDocument: o.document,
+            key: `signup:${owner.tenant_id}`,
+            now,
+            manual: o.manual,
           });
-        openOr409(plan, await heldPlans(tx, owner.tenant_id));
-        const next = await startSubscription(ctx, tx, owner.tenant_id, {
-          plan,
-          method: o.method,
-          payerEmail: o.email,
-          payerDocument: o.document,
-          key: `signup:${owner.tenant_id}`,
-          now,
-          manual: o.manual,
-        });
-        await audit(tx, owner.tenant_id, actor, {
-          action: 'store.signup',
-          entity: 'account',
-          entityId: owner.tenant_id,
-          summary: `criou a loja no plano ${o.plan.name} (${o.manual ? 'código de acesso, pagamento confirmado pela equipe' : o.method === 'card' ? 'cartão' : 'Pix'})`,
-          after: { planId: o.plan.id, method: o.manual ? 'manual' : o.method },
-        });
-        return next;
-      }
-      // a signup resumed from before it asked for the CPF/CNPJ: fill it in, never overwrite one
-      // (the owner may have changed it in Conta since)
-      if (!sub.payer_document) {
-        await tx`
+          await audit(tx, owner.tenant_id, actor, {
+            action: 'store.signup',
+            entity: 'account',
+            entityId: owner.tenant_id,
+            summary: `criou a loja no plano ${o.plan.name} (${o.manual ? 'código de acesso, pagamento confirmado pela equipe' : o.method === 'card' ? 'cartão' : 'Pix'})`,
+            after: { planId: o.plan.id, method: o.manual ? 'manual' : o.method },
+          });
+          return next;
+        }
+        // a signup resumed from before it asked for the CPF/CNPJ: fill it in, never overwrite one
+        // (the owner may have changed it in Conta since)
+        if (!sub.payer_document) {
+          await tx`
           update subscriptions set payer_document = ${o.document}, updated_at = now()
           where tenant_id = ${owner.tenant_id} and payer_document is null
         `;
-        // its first Pix went out without one: the owner gets a new Pix that carries it
-        if (sub.status === 'pending') await reissueLivePix(ctx, tx, owner.tenant_id, now);
-      }
-      if (sub.status === 'trialing' && sub.trial_ends_at)
-        return { kind: 'trial', endsAt: sub.trial_ends_at.toISOString() };
-      if (sub.status === 'pending')
-        return beginPayment(ctx, tx, sub, `signup:${owner.tenant_id}`, now, {
-          manual: o.manual && sub.method === 'pix',
-        });
-      // already paid (a late replay): point at what was paid
-      if (sub.method === 'pix') {
-        const inv = (
-          await tx<{ id: string }[]>`
+          // its first Pix went out without one: the owner gets a new Pix that carries it
+          if (sub.status === 'pending') await reissueLivePix(ctx, tx, owner.tenant_id, now);
+        }
+        if (sub.status === 'trialing' && sub.trial_ends_at)
+          return { kind: 'trial', endsAt: sub.trial_ends_at.toISOString() };
+        if (sub.status === 'pending')
+          return beginPayment(ctx, tx, sub, `signup:${owner.tenant_id}`, now, {
+            manual: o.manual && sub.method === 'pix',
+          });
+        // already paid (a late replay): point at what was paid
+        if (sub.method === 'pix') {
+          const inv = (
+            await tx<{ id: string }[]>`
             select id from invoices where tenant_id = ${owner.tenant_id} order by number desc limit 1
           `
-        )[0];
-        if (inv) return { kind: 'pix', invoiceId: inv.id };
-      }
-      return { kind: 'card', url: `${origin}/admin/` };
-    }),
+          )[0];
+          if (inv) return { kind: 'pix', invoiceId: inv.id };
+        }
+        return { kind: 'card', url: `${origin}/admin/` };
+      }),
   );
 }

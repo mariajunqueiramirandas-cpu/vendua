@@ -77,6 +77,8 @@ export interface PixRequest {
   items?: PixItem[];
   /** who charged, on the payer's statement; the adapter fits it to the provider's format */
   statementDescriptor?: string;
+  /** MP's device fingerprint from the payer's browser (anti-fraud), forwarded as X-meli-session-id */
+  deviceId?: string | null;
   externalReference: string;
   /** stable per logical attempt — a retry returns the same payment */
   idempotencyKey: string;
@@ -95,6 +97,8 @@ export interface CardCheckoutRequest {
   backUrl: string;
   applicationFeeCents: number;
   payerEmail?: string;
+  /** who charged, on the card statement; the adapter fits it to the provider's format */
+  statementDescriptor?: string;
   expiresAt: Date;
 }
 

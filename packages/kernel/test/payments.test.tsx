@@ -3,6 +3,7 @@ import { act } from 'react';
 import { DETAIL, PRODUCT, STORE, flush, mockCore, mount, type Mounted } from './harness.tsx';
 import { Img } from '../src/index.ts';
 import { createApi } from '../src/api.ts';
+import { MP_DEVICE_WAIT_MS, mpDeviceId } from '../src/mp-device.ts';
 
 // Kernel 1.7 — online payments in the Kernel-owned checkout and order page (online Pix; the
 // card in the page since 1.19 — Mercado Pago's Card Payment Brick, or Core's fake provider in
@@ -719,6 +720,168 @@ describe('order page — the card in the page (Kernel 1.19)', () => {
   });
 });
 
+describe("online Pix — Mercado Pago's device id (Kernel 1.20)", () => {
+  const SECURITY = 'https://www.mercadopago.com/v2/security.js';
+  const settings = () =>
+    (window as unknown as { happyDOM: { settings: Record<string, boolean> } }).happyDOM.settings;
+  const g = globalThis as { MP_DEVICE_SESSION_ID?: unknown };
+  const scripts = () => [...document.querySelectorAll(`script[src="${SECURITY}"]`)];
+  afterEach(() => {
+    delete g.MP_DEVICE_SESSION_ID;
+    settings().handleDisabledFileLoadingAsSuccess = false;
+    scripts().forEach((s) => s.remove());
+  });
+  const wait = (ms: number) => act(() => new Promise<void>((r) => setTimeout(r, ms)));
+
+  /** Core with a pending online Pix that has no code yet: `/pay` creates it. */
+  function pixCore() {
+    const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
+    const withPix = order(2, {
+      method: 'pix',
+      status: 'pending',
+      pix: { copyPaste: QR, expiresAt },
+    });
+    const c = core((url, init) => {
+      if (url.pathname === '/storefront/v1/store') return json(200, ONLINE_STORE);
+      // the live order opens 1.5 s in: a quiet stream, not a tight long-poll loop
+      if (url.pathname === `/checkout/v1/orders/${ORDER_ID}/events`) return sse(init, () => {});
+      if (url.pathname === `/checkout/v1/orders/${ORDER_ID}/pay`)
+        return json(200, { order: withPix, next: { kind: 'pix', copyPaste: QR, expiresAt } });
+      if (url.pathname === `/checkout/v1/orders/${ORDER_ID}`)
+        return json(200, {
+          order: c.calls.some((x) => x.path.endsWith('/pay'))
+            ? withPix
+            : order(1, { method: 'pix', status: 'pending', pix: null }),
+        });
+      return null;
+    });
+    return c;
+  }
+  const pays = (c: { calls: { path: string; body?: unknown }[] }) =>
+    c.calls.filter((x) => x.path.endsWith('/pay'));
+  const pixCode = () => ($('#v-pix-code') as HTMLInputElement | null)?.value;
+
+  test('the Pix waits for the fingerprint security.js publishes and carries it', async () => {
+    settings().handleDisabledFileLoadingAsSuccess = true;
+    const c = pixCore();
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(6);
+    expect(pays(c)).toHaveLength(0);
+    expect($('[data-vendua="payment-status"]')?.getAttribute('data-status')).toBe('confirming');
+    expect(scripts()).toHaveLength(1);
+    expect(scripts()[0]?.getAttribute('view')).toBe('checkout');
+    g.MP_DEVICE_SESSION_ID = 'armor.0fa5c2f8b4fb1c2d';
+    await wait(150);
+    await flush(6);
+    expect(pays(c)).toHaveLength(1);
+    expect(pays(c)[0]?.body).toEqual({ card: 'form', deviceId: 'armor.0fa5c2f8b4fb1c2d' });
+    expect(pixCode()).toBe(QR);
+    // re-renders and the order's refresh never inject it again
+    expect(scripts()).toHaveLength(1);
+  });
+
+  test('no fingerprint within the wait → the Pix still comes, without one', async () => {
+    settings().handleDisabledFileLoadingAsSuccess = true; // loads, never publishes an id
+    const c = pixCore();
+    const t0 = Date.now();
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(6);
+    expect(pays(c)).toHaveLength(0);
+    await wait(MP_DEVICE_WAIT_MS);
+    await flush(6);
+    expect(pays(c)).toHaveLength(1);
+    expect(pays(c)[0]?.body).toEqual({ card: 'form' });
+    expect(pixCode()).toBe(QR);
+    expect(Date.now() - t0).toBeLessThan(MP_DEVICE_WAIT_MS + 1000);
+  });
+
+  test('security.js blocked (CSP, an ad blocker) → the Pix at once, without one', async () => {
+    const c = pixCore();
+    const t0 = Date.now();
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(10);
+    expect(pays(c)[0]?.body).toEqual({ card: 'form' });
+    expect(pixCode()).toBe(QR);
+    expect(Date.now() - t0).toBeLessThan(MP_DEVICE_WAIT_MS);
+    expect(scripts()).toHaveLength(0);
+  });
+
+  test('an id already on the page (MercadoPago.js) is reused; nothing is injected', async () => {
+    g.MP_DEVICE_SESSION_ID = 'armor.from-the-sdk';
+    const c = pixCore();
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(10);
+    expect(pays(c)[0]?.body).toEqual({ card: 'form', deviceId: 'armor.from-the-sdk' });
+    expect(scripts()).toHaveLength(0);
+  });
+
+  test('the card neither waits for nor loads security.js (its token carries the id)', async () => {
+    settings().handleDisabledFileLoadingAsSuccess = true;
+    const c = core((url) => {
+      if (url.pathname === '/storefront/v1/store') return json(200, ONLINE_STORE);
+      if (url.pathname === `/checkout/v1/orders/${ORDER_ID}/pay`)
+        return json(200, {
+          order: order(1, { method: 'card_online', status: 'pending' }),
+          next: CARD_NEXT,
+        });
+      if (url.pathname === `/checkout/v1/orders/${ORDER_ID}`)
+        return json(200, { order: order(1, { method: 'card_online', status: 'pending' }) });
+      return null;
+    });
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(10);
+    expect(pays(c)[0]?.body).toEqual({ card: 'form' });
+    expect($('[data-vendua="card-payment"]')?.getAttribute('data-phase')).toBe('ready');
+    expect(scripts()).toHaveLength(0);
+  });
+
+  test('mpDeviceId: one script for concurrent calls, null once the wait passes', async () => {
+    settings().handleDisabledFileLoadingAsSuccess = true;
+    const t0 = Date.now();
+    const both = Promise.all([mpDeviceId({ timeoutMs: 250 }), mpDeviceId({ timeoutMs: 250 })]);
+    expect(scripts()).toHaveLength(1);
+    expect(await both).toEqual([null, null]);
+    expect(Date.now() - t0).toBeLessThan(600);
+    const late = mpDeviceId({ timeoutMs: 1000 });
+    g.MP_DEVICE_SESSION_ID = 'armor.late';
+    expect(await late).toBe('armor.late');
+    expect(scripts()).toHaveLength(1);
+    // junk in the global is not an id
+    g.MP_DEVICE_SESSION_ID = 42;
+    expect(await mpDeviceId({ timeoutMs: 120 })).toBeNull();
+  });
+
+  test('the checkout starts security.js once online Pix is picked, before the order page asks', async () => {
+    settings().handleDisabledFileLoadingAsSuccess = true;
+    core((url) => {
+      if (url.pathname === '/storefront/v1/store') return json(200, ONLINE_STORE);
+      if (url.pathname === '/checkout/v1/cart') return json(200, { cart: cartWithItem() });
+      if (url.pathname === '/checkout/v1/cart/delivery')
+        return json(200, { cart: { ...cartWithItem(), delivery: { mode: 'pickup' } } });
+      return null;
+    });
+    m = await mount({ path: '/checkout', session: 'tok' });
+    await act(async () => {
+      setValue('#checkout-name', 'Ana');
+      setValue('#checkout-phone', '(22) 99999-0001');
+    });
+    await submitForm();
+    // not on the details or delivery steps
+    expect(scripts()).toHaveLength(0);
+    await click($('input[value="pickup"]'));
+    await submitForm();
+    await flush();
+    // the payment step opens on Pix, the store's online one
+    expect(($('input[value="pix"]') as HTMLInputElement).checked).toBe(true);
+    expect(scripts()).toHaveLength(1);
+    // back and forth: still one
+    await click($('input[value="card_online"]'));
+    await click($('input[value="pix"]'));
+    await flush();
+    expect(scripts()).toHaveLength(1);
+  });
+});
+
 describe('cash change (Kernel 1.17)', () => {
   const CASH_STORE = { ...STORE, paymentMethods: ['pix', 'cash'] };
   /** dados → retirada → pagamento, with Core answering checkout through `checkout` */
@@ -947,6 +1110,23 @@ describe('payOrder / payCard — the Kernel 1.19 calls', () => {
     expect(seen[0]?.init?.body).toBeUndefined();
     await api.payOrder(ORDER_ID, { cardForm: true });
     expect(JSON.parse(String(seen[1]?.init?.body))).toEqual({ card: 'form' });
+  });
+
+  test('payOrder sends deviceId (Kernel 1.20) only when it is one Core takes', async () => {
+    answer({ kind: 'none' });
+    const api = createApi('https://api.test');
+    const body = (i: number) => seen[i]?.init?.body;
+    await api.payOrder(ORDER_ID, { cardForm: true, deviceId: 'armor.a1:b_2-c' });
+    expect(JSON.parse(String(body(0)))).toEqual({ card: 'form', deviceId: 'armor.a1:b_2-c' });
+    await api.payOrder(ORDER_ID, { deviceId: 'armor.1' });
+    expect(JSON.parse(String(body(1)))).toEqual({ deviceId: 'armor.1' });
+    await api.payOrder(ORDER_ID, { cardForm: true, deviceId: null });
+    expect(JSON.parse(String(body(2)))).toEqual({ card: 'form' });
+    // anything else would only push /pay toward its body cap: never sent
+    await api.payOrder(ORDER_ID, { deviceId: 'x'.repeat(201) });
+    await api.payOrder(ORDER_ID, { deviceId: 'a b' });
+    await api.payOrder(ORDER_ID, { deviceId: '' });
+    expect([body(3), body(4), body(5)]).toEqual([undefined, undefined, undefined]);
   });
 
   test('payCard posts the input with a fresh Idempotency-Key each time', async () => {

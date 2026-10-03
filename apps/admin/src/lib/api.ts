@@ -1,4 +1,5 @@
 import type { PageTemplate, SectionInstance, StorefrontTokens } from '@vendua/templates';
+import { mpDeviceId } from './mercadopago.ts';
 
 // Typed client for /admin/v1 — cookie session, x-vendua-admin CSRF marker, and an
 // Idempotency-Key minted per call (a retried mutation reuses its own key).
@@ -52,6 +53,7 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
     keys?.set(print, key);
   }
 
+  const device = mpDeviceId();
   const ctl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(
@@ -80,6 +82,7 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
           ...(raw ? {} : { 'content-type': 'application/json' }),
           'x-vendua-admin': '1',
           ...(key ? { 'idempotency-key': key } : {}),
+          ...(device ? { 'x-vendua-device': device } : {}),
           ...rest.headers,
         },
       });
@@ -1081,7 +1084,8 @@ export interface Account {
     /** the free trial's end (the first charge); kept after it converts */
     trialEndsAt: string | null;
   } | null;
-  billing: { available: boolean };
+  /** publicKey: MercadoPago.js's key (MP_PUBLIC_KEY), null off Mercado Pago */
+  billing: { available: boolean; publicKey: string | null };
   /** Duá's conversations: this month's (or the trial's) allowance, plus packs bought */
   ai: {
     included: boolean;
@@ -1665,7 +1669,7 @@ export const api = {
     plans: () =>
       get<{
         plans: Plan[];
-        billing: { available: boolean; accessCode: boolean };
+        billing: { available: boolean; accessCode: boolean; publicKey: string | null };
         /** the team turned signup on and its WhatsApp, email and billing are set up */
         signup: { open: boolean };
         storeDomain: string;

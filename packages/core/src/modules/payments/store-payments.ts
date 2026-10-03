@@ -403,6 +403,8 @@ export interface PayCtx {
   publicKey?: string;
   /** the page saw the bank's 3DS frame say COMPLETE: a still-pending challenge is MP catching up */
   challengeDone?: boolean;
+  /** the shopper's MP device id (Kernel 1.20+ sends it with a Pix /pay) */
+  deviceId?: string | null;
 }
 
 export async function preparePayment(
@@ -696,6 +698,7 @@ async function createAttempt(
         ...(buyer.phone ? { payerPhone: buyer.phone } : {}),
         items: buyer.items,
         statementDescriptor: plan.statement,
+        deviceId: ctx.deviceId ?? null,
         externalReference: row.order_id,
         idempotencyKey,
         notificationUrl,
@@ -719,6 +722,7 @@ async function createAttempt(
         notificationUrl,
         backUrl: plan.backUrl!,
         applicationFeeCents: row.application_fee_cents,
+        statementDescriptor: plan.statement,
         expiresAt: new Date(new Date(row.created_at).getTime() + CARD_TTL_MIN * 60_000),
       });
       patch = {
@@ -823,6 +827,13 @@ export interface CardInput {
 }
 
 const bad = (message: string) => new HttpError(422, 'INVALID_PAYMENT', message);
+
+/** MP's device fingerprint as browsers send it (MP_DEVICE_SESSION_ID) */
+export const DEVICE_ID_RE = /^[A-Za-z0-9_:.-]{1,200}$/;
+/** An optional device id beside a Pix: anything else is dropped, never refused (it only feeds
+ *  MP's scoring). */
+export const deviceIdOr = (v: unknown) =>
+  typeof v === 'string' && DEVICE_ID_RE.test(v) ? v : null;
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,63}$/;
 
 /** POST /orders/:id/card's body: what MP's card fields hand the Kernel, bounded. Never an amount. */
@@ -857,7 +868,7 @@ export function parseCardInput(b: Record<string, unknown>): CardInput {
     identification = { type: type.toUpperCase(), number };
   }
   const device = b.deviceId;
-  if (device != null && (typeof device !== 'string' || !/^[A-Za-z0-9_:.-]{1,200}$/.test(device)))
+  if (device != null && (typeof device !== 'string' || !DEVICE_ID_RE.test(device)))
     throw bad('deviceId is invalid');
   return {
     token,

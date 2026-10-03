@@ -10,6 +10,7 @@ import {
   toCents,
   toReais,
 } from '../src/modules/payments/mercadopago.ts';
+import { platformPublicKey } from '../src/modules/payments/index.ts';
 import { ProviderError } from '../src/modules/payments/provider.ts';
 
 interface Seen {
@@ -238,6 +239,28 @@ describe('mercado pago adapter', () => {
         identification: { type, number: doc },
       });
     }
+    // the payer's device fingerprint goes as X-meli-session-id, as on a card payment
+    expect(seen.at(-1)!.headers['x-meli-session-id']).toBeUndefined();
+    await p.createPix('t', {
+      amountCents: 1000,
+      description: 'x',
+      payerEmail: 'a@b.co',
+      deviceId: 'armor.abc123',
+      externalReference: 'r',
+      idempotencyKey: 'k-device',
+      notificationUrl: null,
+      applicationFeeCents: 0,
+      expiresAt: new Date(),
+    });
+    expect(seen.at(-1)!.headers['x-meli-session-id']).toBe('armor.abc123');
+  });
+
+  test('the platform public key is MP_PUBLIC_KEY, on Mercado Pago only', () => {
+    expect(platformPublicKey({ name: 'mercadopago' }, { MP_PUBLIC_KEY: ' APP_USR-1 ' })).toBe(
+      'APP_USR-1',
+    );
+    expect(platformPublicKey({ name: 'mercadopago' }, {})).toBeNull();
+    expect(platformPublicKey({ name: 'fake' }, { MP_PUBLIC_KEY: 'APP_USR-1' })).toBeNull();
   });
 
   test("the statement descriptor: only what fits every reading of MP's format", () => {
@@ -319,6 +342,7 @@ describe('mercado pago adapter', () => {
       notificationUrl: 'https://painel.x/hook',
       backUrl: 'https://doces.vendua.com.br/pedido/order-1?pagamento=retorno',
       applicationFeeCents: 0,
+      statementDescriptor: 'Doces da Praia',
       expiresAt: new Date('2026-09-30T17:00:00.000Z'),
     });
     expect(out).toEqual({
@@ -335,6 +359,7 @@ describe('mercado pago adapter', () => {
       notification_url: 'https://painel.x/hook',
       back_urls: { success: back, failure: back, pending: back },
       auto_return: 'approved',
+      statement_descriptor: 'DOCESDAPRAIA',
       expires: true,
       expiration_date_to: '2026-09-30T14:00:00.000-03:00',
       payment_methods: {

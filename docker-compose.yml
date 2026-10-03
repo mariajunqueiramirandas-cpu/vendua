@@ -60,7 +60,8 @@ services:
       MP_PLATFORM_ACCESS_TOKEN: ${MP_PLATFORM_ACCESS_TOKEN:-}
       # signup with this code skips Mercado Pago; the team marks its invoices paid in the CRM
       VENDUA_SIGNUP_ACCESS_CODE: ${VENDUA_SIGNUP_ACCESS_CODE:-}
-      # card-form key for a store whose OAuth answer carried none (the app's production public key)
+      # the app's production public key: card-form fallback for a store whose OAuth gave none, and
+      # MercadoPago.js in the admin (its device fingerprint goes with the plan's Pix)
       MP_PUBLIC_KEY: ${MP_PUBLIC_KEY:-}
       # Seals stores' MP tokens at rest (optional); unset = derived from SESSION_SECRET (warns at
       # boot). Setting it later is safe: tokens sealed under the derived key still open.

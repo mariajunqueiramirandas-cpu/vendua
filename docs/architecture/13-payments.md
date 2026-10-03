@@ -64,6 +64,17 @@ shopper → Kernel-owned checkout → Core /checkout/v1 →
   address for everyone again, and it would change the body MP gets on a retried attempt. A card
   payment uses the email the
   shopper types into the Brick (it shows the field because we pass none).
+- Every Pix also carries the payer's MP device fingerprint (`X-meli-session-id`, as a card
+  payment already did): MP's anti-fraud scores it, and the integration-quality report counts it
+  as the frontend SDK. The admin starts MercadoPago.js with `MP_PUBLIC_KEY` on the screens that
+  issue a plan Pix (its security script when there's no key) and sends the id on every request
+  (`x-vendua-device`), which plan billing carries on `BillingCtx` down to the Pix. The shopper's
+  order page (Kernel 1.20) loads MP's security script before a Pix `/pay` and sends `deviceId`
+  in its body. A malformed id is dropped, never refused; jobs, webhooks and the CRM send none.
+  Mercado Pago's script runs with the page's own access: in the admin from the first billing
+  screen for the rest of the session (it could read the admin's cached data), and on a shopper's
+  checkout and order page for an online Pix (order tokens in localStorage), as MercadoPago.js
+  already did on card orders. That access comes with the SDK the user asked for (2026-10-03).
 
 ## Merchant connection (OAuth)
 

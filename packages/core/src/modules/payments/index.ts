@@ -25,3 +25,12 @@ export function createPaymentProvider(env: NodeJS.ProcessEnv = process.env): Pay
     });
   return new UnconfiguredProvider();
 }
+
+/** MP_PUBLIC_KEY (the application's production public key) for the admin's MercadoPago.js: its
+ *  device fingerprint goes with the plan's Pix. Null on any other driver. */
+export function platformPublicKey(
+  provider: Pick<PaymentProvider, 'name'>,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  return provider.name === 'mercadopago' ? env.MP_PUBLIC_KEY?.trim() || null : null;
+}

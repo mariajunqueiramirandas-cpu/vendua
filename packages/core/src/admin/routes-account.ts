@@ -23,6 +23,7 @@ import {
   startSubscription,
   type BillingCtx,
 } from '../modules/billing/subscriptions.ts';
+import { deviceIdOr } from '../modules/payments/store-payments.ts';
 import { audit } from './audit.ts';
 import { oneOf, text, type AdminDeps, type Merchant } from './context.ts';
 import { handlers } from './handlers.ts';
@@ -48,6 +49,7 @@ export function mountAccount(d: AdminDeps) {
     notify: d.notify,
     origin: d.publicOrigin(c),
     later: afterResponse,
+    deviceId: deviceIdOr(c.req.header('x-vendua-device')),
   });
   const billingOn = () => {
     if (!d.provider.platformConfigured)

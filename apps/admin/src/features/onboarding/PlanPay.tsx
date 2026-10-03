@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { api, type Account } from '../../lib/api.ts';
 import { qk, useMutation } from '../../lib/query.ts';
+import { useMercadoPago } from '../../lib/mercadopago.ts';
 import { Button } from '../../ui/Button.tsx';
 import { messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { PixCode, useIssuePix } from '../../ui/PixCode.tsx';
@@ -41,6 +42,7 @@ export function usePlan(owner: boolean, hold: boolean) {
     refetchInterval: (x) => (x.state.data?.subscription?.status === 'pending' ? 15_000 : false),
     refetchIntervalInBackground: false,
   });
+  useMercadoPago(q.data?.billing);
   const was = useRef<string | null>(null);
   const status = q.data?.subscription?.status ?? null;
   useEffect(() => {

@@ -33,6 +33,7 @@ import {
 import { ago, dateShort, money } from '../../lib/format.ts';
 import { maskDocument, parseDocument } from '../../lib/parse.ts';
 import { qk, useMutation } from '../../lib/query.ts';
+import { useMercadoPago } from '../../lib/mercadopago.ts';
 import { can, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Divided, Section } from '../../ui/Card.tsx';
@@ -305,6 +306,7 @@ export default function Account() {
     queryFn: api.account,
     enabled: owner,
   });
+  useMercadoPago(data?.billing);
   if (!owner)
     return (
       <PageBody>

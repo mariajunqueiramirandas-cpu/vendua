@@ -393,6 +393,7 @@ export class MercadoPagoProvider implements PaymentProvider {
         token,
         this.pixBody(req),
         req.idempotencyKey,
+        req.deviceId ? { 'x-meli-session-id': req.deviceId } : undefined,
       )) as MpPayment,
     );
   }
@@ -434,6 +435,7 @@ export class MercadoPagoProvider implements PaymentProvider {
   }
 
   async createCardCheckout(token: string, req: CardCheckoutRequest): Promise<CardCheckout> {
+    const statement = statementDescriptor(req.statementDescriptor);
     const j = await this.call(
       'POST',
       '/checkout/preferences',
@@ -455,6 +457,7 @@ export class MercadoPagoProvider implements PaymentProvider {
           ? { marketplace_fee: toReais(req.applicationFeeCents) }
           : {}),
         ...(req.payerEmail ? { payer: { email: req.payerEmail } } : {}),
+        ...(statement ? { statement_descriptor: statement } : {}),
         expires: true,
         expiration_date_to: mpDate(req.expiresAt),
         payment_methods: {

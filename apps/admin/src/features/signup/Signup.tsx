@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, type Session } from '../../lib/api.ts';
 import { resetClient } from '../../lib/persist.ts';
 import { qk } from '../../lib/query.ts';
+import { useMercadoPago } from '../../lib/mercadopago.ts';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState } from '../../ui/feedback.tsx';
 import type { Pose } from '../../ui/Mascote.tsx';
@@ -126,6 +127,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
     queryFn: api.signup.plans,
     staleTime: 5 * 60_000,
   });
+  useMercadoPago(plans.data?.billing);
   const first = useRef<ReturnType<typeof resume>>();
   first.current ??= resume(
     signedIn ? prefill(loadDraft(), qc.getQueryData<Session>(qk.session)) : loadDraft(),

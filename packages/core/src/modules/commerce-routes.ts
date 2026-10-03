@@ -73,6 +73,7 @@ import type { PaymentProvider } from './payments/provider.ts';
 import { refundLeftovers, refundOrderPayments } from '../admin/routes-orders.ts';
 import {
   cancelOpenAttempts,
+  deviceIdOr,
   parseCardInput,
   payWithCard,
   preparePayment,
@@ -457,7 +458,10 @@ export function mountCommerce(d: Deps) {
           tenant,
           orderId,
           cartId,
-          payCtx(c, cardForm, cardForm && body.challenge === 'complete'),
+          {
+            ...payCtx(c, cardForm, cardForm && body.challenge === 'complete'),
+            deviceId: deviceIdOr(body.deviceId),
+          },
         );
     return d.idempotency(sql, async (_c, tx) => ({
       status: 200,

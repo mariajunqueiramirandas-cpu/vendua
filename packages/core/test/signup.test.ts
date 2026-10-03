@@ -169,6 +169,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     slug: string,
     extra: Record<string, unknown> = {},
     via = app,
+    headers: Record<string, string> = {},
   ) => {
     const r = await call(
       'POST',
@@ -184,7 +185,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         document: '529.982.247-25',
         ...extra,
       },
-      {},
+      headers,
       via,
     );
     if (r.body?.store?.id && !created.includes(r.body.store.id)) created.push(r.body.store.id);
@@ -216,6 +217,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(plans.status).toBe(200);
     expect(plans.body.storeDomain).toBe('vendua.test');
     expect(plans.body.billing.available).toBe(true);
+    // MercadoPago.js loads with MP_PUBLIC_KEY on Mercado Pago only; the fake has none
+    expect(plans.body.billing.publicKey).toBeNull();
     expect(plans.body.plans.map((p: any) => p.id)).toEqual(['mirim', 'bandeira', 'pangolim']);
     const mirim = plans.body.plans.find((p: any) => p.id === 'mirim');
     expect(mirim).toEqual({
@@ -365,13 +368,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     };
     let r: Awaited<ReturnType<typeof signup>>;
     try {
-      r = await signup(token, slug, { document: '12.abc.345/01de-35' }, other);
+      r = await signup(token, slug, { document: '12.abc.345/01de-35' }, other, {
+        'x-vendua-device': 'armor.s1gnup',
+      });
     } finally {
       fake.platformPix = realPix;
     }
     expect(r.status).toBe(201);
     expect(seen).toHaveLength(1);
-    expect(seen[0]).toMatchObject({ payerDocument: '12ABC34501DE35', payerName: 'Ana Lima' });
+    // the signup's MercadoPago.js device id goes with the first Pix
+    expect(seen[0]).toMatchObject({
+      payerDocument: '12ABC34501DE35',
+      payerName: 'Ana Lima',
+      deviceId: 'armor.s1gnup',
+    });
 
     const owner = session(r.cookie);
     expect((await owner('GET', '/account')).body.subscription.payerDocument).toBe('12ABC34501DE35');
@@ -756,6 +766,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       expect((await call('GET', '/admin/v1/signup/plans')).body.billing).toEqual({
         available: false,
         accessCode: false,
+        publicKey: null,
       });
       const short = await signup(token, slug, { accessCode: 'short-code' }, other);
       expect(short.body.error.code).toBe('INVALID_ACCESS_CODE');

@@ -94,6 +94,8 @@ export interface BillingCtx {
   origin: string | null;
   /** side effects that must not run inside the tx (staff messages) */
   later: (fn: () => Promise<unknown>) => void;
+  /** the owner's MP device id (the admin's x-vendua-device); none in jobs, webhooks and the CRM */
+  deviceId?: string | null;
 }
 
 /** Tests swap this to see staff notices; production goes through notifyStaff. */
@@ -320,6 +322,7 @@ export async function beginPayment(
           payer,
           planName: plan.name,
           origin: ctx.origin,
+          deviceId: ctx.deviceId ?? null,
           now,
           drop: dropPix(ctx),
         }),
@@ -445,6 +448,7 @@ export async function ensureRenewal(
         payer,
         planName: plan.name,
         origin: ctx.origin,
+        deviceId: ctx.deviceId ?? null,
         now,
         drop: dropPix(ctx),
       });
@@ -490,6 +494,7 @@ export async function reissuePix(
       payer,
       planName: label,
       origin: ctx.origin,
+      deviceId: ctx.deviceId ?? null,
       now,
       drop: dropPix(ctx),
     }),
@@ -555,6 +560,7 @@ async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow
             payer,
             planName: plan.name,
             origin: ctx.origin,
+            deviceId: ctx.deviceId ?? null,
             now,
             drop: dropPix(ctx),
           }),
@@ -617,6 +623,7 @@ async function upgradePix(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceRow
       payer,
       planName: plan.name,
       origin: ctx.origin,
+      deviceId: ctx.deviceId ?? null,
       now,
       drop: dropPix(ctx),
     }),
@@ -768,6 +775,7 @@ async function packPix(
       payer,
       planName: `Duá ${pack.name}`,
       origin: ctx.origin,
+      deviceId: ctx.deviceId ?? null,
       now,
       drop: dropPix(ctx),
     }),

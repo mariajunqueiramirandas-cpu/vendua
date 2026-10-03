@@ -157,7 +157,14 @@ export async function issuePix(
   tx: Sql,
   provider: PaymentProvider,
   inv: InvoiceRow,
-  o: { payer: BillingPayer; planName: string; origin: string | null; now: Date; drop?: DropPix },
+  o: {
+    payer: BillingPayer;
+    planName: string;
+    origin: string | null;
+    now: Date;
+    drop?: DropPix;
+    deviceId?: string | null;
+  },
 ): Promise<InvoiceRow> {
   return storePix(
     tx,
@@ -180,7 +187,13 @@ export async function requestPix(
   provider: PaymentProvider,
   inv: InvoiceRow,
   attempt: number,
-  o: { payer: BillingPayer; planName: string; origin: string | null; now: Date },
+  o: {
+    payer: BillingPayer;
+    planName: string;
+    origin: string | null;
+    now: Date;
+    deviceId?: string | null;
+  },
 ): Promise<PixCharge> {
   const expiresAt = new Date(o.now.getTime() + PIX_TTL_MS);
   const payment = await provider.platformPix({
@@ -201,6 +214,7 @@ export async function requestPix(
       },
     ],
     statementDescriptor: 'Venduá',
+    deviceId: o.deviceId ?? null,
     externalReference: inv.id,
     // a retried request (its tx rolled back) repeats the attempt number → the same Pix
     idempotencyKey: `invoice:${inv.id}:${attempt}`,
