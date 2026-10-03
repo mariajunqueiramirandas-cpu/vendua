@@ -1071,7 +1071,8 @@
       .sig.left {
         align-self: flex-start;
       }
-      .sig .mini {
+      .sig .mini,
+      .jtop .mini {
         width: 18px;
         height: 18px;
         border-radius: 50%;
@@ -2197,6 +2198,343 @@
         max-width: 80ch;
       }
 
+      /* ── Ana's onboarding ── */
+      .btn.lg {
+        height: 56px;
+        padding: 0 24px;
+        font-size: 16px;
+      }
+      /* the journey header: where the owner is in the four parts, and the way out */
+      .jbar {
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 0 8px 12px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .jbar + .screen {
+        padding-top: 16px;
+      }
+      .jtop {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .jtop b {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font: 600 15px/20px var(--font-display);
+        min-width: 0;
+      }
+      .jtop .btn {
+        padding-inline: 10px;
+      }
+      .jbar ol {
+        margin: 0;
+        padding: 0 8px 0 0;
+        list-style: none;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 4px;
+      }
+      .jbar li {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 0;
+        font: 500 12px/16px var(--font-sans);
+        color: var(--ink-muted);
+      }
+      .jbar li > i {
+        display: block;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--line-strong);
+        overflow: hidden;
+      }
+      .jbar li > i b {
+        display: block;
+        height: 100%;
+        border-radius: 999px;
+        background: var(--primary);
+      }
+      .jbar li.done > i {
+        background: var(--primary);
+      }
+      .jbar li > span {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .jbar li > span svg.i {
+        width: 13px;
+        height: 13px;
+        stroke-width: 2.6;
+        color: var(--success);
+      }
+      .jbar li.now {
+        color: var(--ink);
+        font-weight: 700;
+      }
+      .pagehead .eb,
+      .finale .eb {
+        display: block;
+        font: 600 13px/18px var(--font-sans);
+        color: var(--ink-muted);
+        font-variant-numeric: tabular-nums;
+        margin-bottom: 4px;
+      }
+      /* Ana guides it herself: her avatar beside a speech bubble, in first person */
+      .guide {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+      }
+      .guide p {
+        flex: 1;
+        min-width: 0;
+        margin: 0;
+        padding: 12px 14px;
+        border-radius: var(--r-lg);
+        border-bottom-left-radius: 6px;
+        background: var(--surface);
+        box-shadow: var(--e1);
+        font: 400 16px/23px var(--font-sans);
+      }
+      .guide p b {
+        font-weight: 700;
+      }
+      /* preset answers: one tap instead of a blank field */
+      .presets {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .presets.three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .presets button {
+        height: 56px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: var(--r-md);
+        background: var(--surface);
+        box-shadow:
+          inset 0 0 0 1px var(--line-strong),
+          var(--e1);
+        font: 600 16px/22px var(--font-sans);
+        color: var(--ink);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        cursor: pointer;
+        transition: transform 100ms ease-out;
+      }
+      .presets button:active {
+        transform: scale(0.97);
+      }
+      .presets button svg.i {
+        display: none;
+        width: 18px;
+        height: 18px;
+        stroke-width: 2.4;
+      }
+      .presets button[aria-pressed='true'] {
+        box-shadow:
+          inset 0 0 0 2px var(--primary),
+          var(--e1);
+      }
+      .presets button[aria-pressed='true'] svg.i {
+        display: block;
+      }
+      .btn.mic {
+        width: 48px;
+        padding: 0;
+        flex: none;
+      }
+      /* what Ana understood from an answer: nothing is kept until "está certo" */
+      .proposal {
+        background: var(--surface);
+        border-radius: var(--r-lg);
+        box-shadow:
+          var(--e2),
+          inset 0 0 0 2px var(--spark);
+        padding: 14px 16px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .proposal .sec {
+        margin-bottom: 6px;
+      }
+      .proposal b {
+        font: 600 16px/22px var(--font-sans);
+      }
+      .proposal p {
+        margin: 0;
+        font-size: 15px;
+        line-height: 22px;
+      }
+      .proposal small {
+        font-size: 12.5px;
+        line-height: 18px;
+        color: var(--ink-muted);
+        margin-top: 4px;
+      }
+      .proposal .actions {
+        margin-top: 8px;
+      }
+      .todo.warn .ic {
+        background: var(--warning-soft);
+        color: var(--warning);
+      }
+      .todo .txt > .actions {
+        margin-top: 8px;
+      }
+      /* "Peça para mim": the owner writes as a customer, and sees Ana as a shopper would */
+      .test .b.seller {
+        align-self: flex-start;
+        border-bottom-right-radius: 18px;
+        border-bottom-left-radius: 6px;
+      }
+      .test .receipt {
+        align-self: flex-start;
+        width: 96%;
+      }
+      .test .composer {
+        margin-top: 6px;
+      }
+      .test .day {
+        background: var(--bg);
+      }
+      .jbar ~ .floor {
+        padding-bottom: 22px;
+      }
+      .receipt .tst {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        padding: 6px 8px;
+        border-radius: 8px;
+        background: var(--info-soft);
+        color: var(--info);
+        font: 600 12.5px/17px var(--font-sans);
+      }
+      .receipt .tst svg.i {
+        width: 15px;
+        height: 15px;
+        margin-top: 1px;
+      }
+      .ck.run .ic {
+        background: var(--spark-soft);
+        box-shadow: inset 0 0 0 1px var(--seller-edge);
+      }
+      .ck.run .ic .dot {
+        background: var(--ink);
+      }
+      .qnav {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .finale {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 10px;
+        padding: 8px 8px 0;
+      }
+      .finale .avatar {
+        width: 72px;
+        height: 72px;
+        font-size: 28px;
+      }
+      .finale .t-moment {
+        font-size: 40px;
+        line-height: 44px;
+      }
+      /* the journey's four parts, as the resume map lists them */
+      .plist {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .plist li {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        min-height: 72px;
+        padding: 12px 14px;
+        border-radius: var(--r-md);
+        background: var(--surface);
+        box-shadow: var(--e1);
+      }
+      .plist .ic {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--sunken);
+        color: var(--ink-muted);
+      }
+      .plist li.done .ic {
+        background: var(--success-soft);
+        color: var(--success);
+      }
+      .plist li.done .ic svg.i {
+        stroke-width: 2.4;
+      }
+      .plist li.now {
+        background: var(--spark-soft);
+        box-shadow: inset 0 0 0 2px var(--primary);
+      }
+      .plist li.now .ic {
+        background: var(--primary);
+        color: var(--on-primary);
+      }
+      .plist .txt {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .plist .txt small {
+        font: 500 12px/16px var(--font-sans);
+        color: var(--ink-muted);
+      }
+      .plist .txt b {
+        font: 600 16px/22px var(--font-sans);
+      }
+      .plist .txt span {
+        font-size: 13.5px;
+        line-height: 19px;
+        color: var(--ink-muted);
+      }
+      .plist em {
+        font: 600 13px/18px var(--font-sans);
+        font-style: normal;
+        color: var(--ink-muted);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .plist li.done em {
+        color: var(--success);
+      }
+      .plist li.now em {
+        color: var(--ink);
+      }
+
       @media (prefers-reduced-motion: reduce) {
         *,
         *::before,
@@ -2327,6 +2665,11 @@
           <path d="M4 8h3.2l1.6-2.5h6.4L16.8 8H20v11H4z" />
           <circle cx="12" cy="13.3" r="3.2" />
         </symbol>
+        <symbol id="i-eye" viewBox="0 0 24 24">
+          <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+          <circle cx="12" cy="12" r="3" />
+        </symbol>
+        <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></symbol>
       </defs>
     </svg>
 
@@ -2397,13 +2740,13 @@
         <h2>Phone, 375 px</h2>
         <p>
           The owner runs the store from the phone. These nine screens cover the first day and every
-          day after: meet it, watch it sell, step in, get called, teach it, rehearse it, check it,
-          see what it earned, set it up.
+          day after: finish meeting it, watch it sell, step in, get called, teach it, rehearse it,
+          check it, see what it earned, set it up.
         </p>
       </section>
 
       <section class="board">
-        <!-- 1. First use -->
+        <!-- 1. Resume map (before it's on) -->
         <figure class="shot">
           <div class="phone">
             <div class="sb">
@@ -2420,67 +2763,60 @@
                 >
               </div>
 
-              <div class="insight">
-                <div class="status">
-                  <div class="avatar lg persona" aria-hidden="true">A</div>
-                  <span class="t-moment">Conheça a Ana</span>
-                </div>
-                <span class="t-caption"
-                  >A assistente virtual da Forno da Vila, no WhatsApp da loja. Ela atende, monta a
-                  sacola, fecha o pedido e chama você quando precisa.</span
-                >
+              <div class="guide">
+                <div class="avatar lg persona" aria-hidden="true">A</div>
+                <p>Que bom te ver de novo! Guardei tudo o que você já me ensinou. Falta pouco.</p>
               </div>
 
-              <div class="card">
-                <div class="sec">
-                  <b class="t-label">Antes de ligar</b
-                  ><span class="t-caption tnum">2 de 4 prontos</span>
-                </div>
-                <div>
-                  <div class="todo done">
-                    <span class="ic"
-                      ><svg class="i"><use href="#i-check" /></svg
-                    ></span>
-                    <div class="txt">
-                      <b>WhatsApp da loja conectado</b
-                      ><span>O mesmo número que já avisa os pedidos.</span>
-                    </div>
+              <ol class="plist" aria-label="Treinar a Ana">
+                <li class="done">
+                  <span class="ic"
+                    ><svg class="i"><use href="#i-check" /></svg
+                  ></span>
+                  <div class="txt">
+                    <small>Parte 1</small><b>Conhecer</b
+                    ><span>Nome, jeito de falar e o WhatsApp da loja</span>
                   </div>
-                  <div class="todo">
-                    <span class="ic">2</span>
-                    <div class="txt">
-                      <b>O que a Ana sabe</b
-                      ><span
-                        >Cardápio com 48 itens · horário · 6 bairros · Pix, cartão e dinheiro</span
-                      >
-                      <button class="btn secondary sm" type="button">revisar</button>
-                    </div>
+                  <em>pronto</em>
+                </li>
+                <li class="now" aria-current="step">
+                  <span class="ic"
+                    ><svg class="i"><use href="#i-book" /></svg
+                  ></span>
+                  <div class="txt">
+                    <small>Parte 2 · agora</small><b>Ensinar</b
+                    ><span>Li sua loja ✓ · falta a entrevista</span>
                   </div>
-                  <div class="todo done">
-                    <span class="ic"
-                      ><svg class="i"><use href="#i-check" /></svg
-                    ></span>
-                    <div class="txt">
-                      <b>Cliente oculto: 19 de 20 certos</b
-                      ><span>Um ajuste no cardápio: o tamanho da broto.</span>
-                    </div>
+                  <em>3 de 7</em>
+                </li>
+                <li>
+                  <span class="ic"
+                    ><svg class="i"><use href="#i-chat" /></svg
+                  ></span>
+                  <div class="txt">
+                    <small>Parte 3</small><b>Testar</b><span>Peça para mim e cliente oculto</span>
                   </div>
-                  <div class="todo">
-                    <span class="ic">4</span>
-                    <div class="txt">
-                      <div class="sec"><b>Ensaio</b><span class="chip quiet">opcional</span></div>
-                      <span>Ela escreve sem mandar por alguns dias, você compara.</span>
-                      <button class="btn secondary sm" type="button">começar</button>
-                    </div>
+                  <em>a fazer</em>
+                </li>
+                <li>
+                  <span class="ic"
+                    ><svg class="i"><use href="#i-bolt" /></svg
+                  ></span>
+                  <div class="txt">
+                    <small>Parte 4</small><b>Começar</b><span>Quando ela atende e como começa</span>
                   </div>
-                </div>
-              </div>
+                  <em>a fazer</em>
+                </li>
+              </ol>
 
-              <button class="btn spark block" type="button">
+              <button class="btn primary lg block" type="button">
+                continuar: a entrevista <svg class="i sm"><use href="#i-arrow" /></svg>
+              </button>
+              <button class="btn secondary block" type="button">
                 <svg class="i sm"><use href="#i-bolt" /></svg>ligar a Ana
               </button>
               <span class="t-caption" style="text-align: center"
-                >Você pode desligar quando quiser.</span
+                >Dá para ligar agora e terminar de ensinar depois.</span
               >
             </div>
             <nav class="tabbar" aria-label="Navegação">
@@ -2513,12 +2849,14 @@
           </div>
           <figcaption>
             <span class="route">/admin/vendedor · before it's on</span>
-            <b>Meet it on the page</b>
+            <b>Pick up where you stopped</b>
             <span
-              >Not a tour: the first visit is the page itself, a checklist of what is already true.
-              The WhatsApp is the one that already sends order updates, and Cliente oculto has run
-              on the real menu, so two steps arrive done. Knowledge is one review, Ensaio is
-              optional, and "ligar a Ana" sits in the thumb zone, never gated. Her ring starts
+              >Before Ana is on, Vendedor opens her onboarding (below), or this map when it was left
+              halfway. Core keeps the place, so another device resumes at the same question, and
+              each part reads done, in progress or to do in colour, icon and word. The next question
+              is named on the button; "ligar a Ana" stays one tap away, never gated, since what's
+              left can be taught later. After the store's own onboarding, Início shows one card,
+              once: "Conheça a Ana · sua vendedora no WhatsApp · cerca de 5 min". Her ring starts
               breathing only once she's on.</span
             >
           </figcaption>
@@ -3664,6 +4002,804 @@
       </section>
 
       <section class="section-title">
+        <h2>Onboarding da Ana, 375 px</h2>
+        <p>
+          Ana's own onboarding, separate from the store's (/bem-vindo, where Duá builds the store in
+          Cadastro · Sua loja · No ar). Same feel, its own journey: Conhecer · Ensinar · Testar ·
+          Começar, one question per screen, 56 px answers, presets instead of blank fields, a quiet
+          "pular" on optional steps and "continuar depois" in the header. Ana is the guide herself,
+          in first person, and a live WhatsApp preview shows her learning from each answer.
+        </p>
+      </section>
+
+      <section class="board" id="onb">
+        <!-- O1. Conhecer -->
+        <figure class="shot">
+          <div class="phone" id="o-know">
+            <div class="sb">
+              <span>16:02</span><span class="dots" aria-hidden="true"><i></i><i></i></span>
+            </div>
+            <header class="jbar">
+              <div class="jtop">
+                <b
+                  ><span class="mini" data-o-initial>A</span
+                  ><span>Treinar <span data-o-who>a Ana</span></span></b
+                >
+                <button class="btn quiet sm" type="button">
+                  <svg class="i sm"><use href="#i-x" /></svg>continuar depois
+                </button>
+              </div>
+              <ol aria-label="Andamento: Conhecer, 1 de 2">
+                <li class="now" aria-current="step">
+                  <i><b style="width: 25%"></b></i><span>Conhecer</span>
+                </li>
+                <li><i></i><span>Ensinar</span></li>
+                <li><i></i><span>Testar</span></li>
+                <li><i></i><span>Começar</span></li>
+              </ol>
+            </header>
+            <div class="screen">
+              <div class="preview" aria-live="polite">
+                <span class="sig left" style="margin: 0"
+                  ><span class="mini" data-o-initial>A</span>prévia no WhatsApp</span
+                >
+                <div class="b in"><p>oi, vocês entregam?</p></div>
+                <div class="b seller">
+                  <p id="o-prev">
+                    Oi, boa tarde! Sou a Ana, assistente virtual da Forno da Vila. Entregamos sim,
+                    em 6 bairros. Qual é o seu?
+                  </p>
+                </div>
+              </div>
+
+              <div class="guide">
+                <div class="avatar lg persona" aria-hidden="true" data-o-initial>A</div>
+                <p>Oi! Eu vou atender seus clientes no WhatsApp. Como você quer me chamar?</p>
+              </div>
+
+              <div class="pagehead">
+                <div>
+                  <span class="eb">Conhecer · 1 de 2</span>
+                  <h4>Nome e jeito de falar</h4>
+                </div>
+              </div>
+
+              <div class="presets" role="group" aria-label="Nome">
+                <button type="button" data-o-name="Ana" data-o-art="a" aria-pressed="true">
+                  <svg class="i"><use href="#i-check" /></svg>Ana
+                </button>
+                <button type="button" data-o-name="Bia" data-o-art="a" aria-pressed="false">
+                  <svg class="i"><use href="#i-check" /></svg>Bia
+                </button>
+                <button type="button" data-o-name="Léo" data-o-art="o" aria-pressed="false">
+                  <svg class="i"><use href="#i-check" /></svg>Léo
+                </button>
+                <button type="button" data-o-name="" data-o-art="" aria-pressed="false">
+                  <svg class="i"><use href="#i-check" /></svg>outro
+                </button>
+              </div>
+              <div class="answer" id="o-other-wrap" style="margin-top: 0" hidden>
+                <input
+                  type="text"
+                  id="o-other"
+                  maxlength="20"
+                  placeholder="Qual nome?"
+                  aria-label="Outro nome"
+                />
+              </div>
+
+              <div class="card">
+                <div class="tg">
+                  <div>
+                    <b id="o-disc-l">Dizer que é assistente virtual</b
+                    ><span
+                      >Desligado, ela não se anuncia, mas nunca diz que é uma pessoa e conta a
+                      verdade se perguntarem.</span
+                    >
+                  </div>
+                  <button
+                    type="button"
+                    class="switch on"
+                    role="switch"
+                    aria-checked="true"
+                    aria-labelledby="o-disc-l"
+                    id="o-disc"
+                  ></button>
+                </div>
+                <div class="field">
+                  <span class="lbl" id="o-tone-l">Jeito de falar</span>
+                  <div class="seg" role="group" aria-labelledby="o-tone-l">
+                    <button type="button" data-o-tone="0" aria-pressed="false">descontraído</button>
+                    <button type="button" data-o-tone="1" aria-pressed="true">equilibrado</button>
+                    <button type="button" data-o-tone="2" aria-pressed="false">formal</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="floor">
+              <button class="btn primary lg block" type="button">
+                continuar <svg class="i sm"><use href="#i-arrow" /></svg>
+              </button>
+            </div>
+          </div>
+          <figcaption>
+            <span class="route">/admin/vendedor/comecar · Conhecer</span>
+            <b>O1 · Name her, hear her</b>
+            <span
+              >Ana guides her own onboarding in first person: her avatar beside a speech bubble, as
+              Duá does in the store's. The journey bar names the four parts and keeps "continuar
+              depois" in reach; the line over the title says where you are. Names are 56 px presets
+              ("outro" opens a field), with the disclosure switch and the tone right below. The
+              preview opens at the top on this step only, because every answer here changes how she
+              greets a shopper (try them). The second Conhecer step checks that the store's WhatsApp
+              is linked and that the WhatsApp Business app's own AI is off: two AIs answering
+              confuse the shopper.</span
+            >
+          </figcaption>
+        </figure>
+
+        <!-- O2. Li sua loja -->
+        <figure class="shot">
+          <div class="phone">
+            <div class="sb">
+              <span>16:04</span><span class="dots" aria-hidden="true"><i></i><i></i></span>
+            </div>
+            <header class="jbar">
+              <div class="jtop">
+                <b><span class="mini">A</span>Treinar a Ana</b>
+                <button class="btn quiet sm" type="button">
+                  <svg class="i sm"><use href="#i-x" /></svg>continuar depois
+                </button>
+              </div>
+              <ol aria-label="Andamento: Ensinar, começo">
+                <li class="done">
+                  <i></i
+                  ><span
+                    ><svg class="i"><use href="#i-check" /></svg>Conhecer</span
+                  >
+                </li>
+                <li class="now" aria-current="step">
+                  <i><b style="width: 8%"></b></i><span>Ensinar</span>
+                </li>
+                <li><i></i><span>Testar</span></li>
+                <li><i></i><span>Começar</span></li>
+              </ol>
+            </header>
+            <div class="screen">
+              <div class="guide">
+                <div class="avatar lg persona" aria-hidden="true">A</div>
+                <p>Li sua loja. Quase tudo claro, só 3 coisas:</p>
+              </div>
+
+              <div class="pagehead">
+                <div>
+                  <span class="eb">Ensinar · o que eu li</span>
+                  <h4>O que a Ana já sabe</h4>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="actions">
+                  <span class="chip ok"
+                    ><svg class="i"><use href="#i-check" /></svg>cardápio · 48 itens</span
+                  ><span class="chip ok"
+                    ><svg class="i"><use href="#i-check" /></svg>horário</span
+                  ><span class="chip ok"
+                    ><svg class="i"><use href="#i-check" /></svg>6 bairros</span
+                  ><span class="chip ok"
+                    ><svg class="i"><use href="#i-check" /></svg>Pix, cartão e dinheiro</span
+                  >
+                </div>
+                <span class="t-caption"
+                  >Isso ela lê da loja na hora. Se você mudar, ela já sabe.</span
+                >
+              </div>
+
+              <div class="sec">
+                <h5 class="t-title-2">Não ficou claro</h5>
+                <span class="count">3</span>
+              </div>
+              <div class="card">
+                <div>
+                  <div class="todo warn">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-alert" /></svg
+                    ></span>
+                    <div class="txt">
+                      <b>A pizza broto não diz o tamanho</b
+                      ><span>Quem pede não sabe quantos pedaços vêm.</span>
+                      <div class="actions">
+                        <button class="btn secondary sm" type="button">
+                          arrumar <svg class="i sm"><use href="#i-chev" /></svg>
+                        </button>
+                        <button class="btn quiet sm" type="button">deixa assim</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="todo warn">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-alert" /></svg
+                    ></span>
+                    <div class="txt">
+                      <b>Borda recheada não tem preço na pizza P</b
+                      ><span>Na M e na G tem. Na P, a Ana não teria como cobrar.</span>
+                      <div class="actions">
+                        <button class="btn secondary sm" type="button">
+                          arrumar <svg class="i sm"><use href="#i-chev" /></svg>
+                        </button>
+                        <button class="btn quiet sm" type="button">deixa assim</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="todo warn">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-alert" /></svg
+                    ></span>
+                    <div class="txt">
+                      <b>Nenhum produto diz se tem glúten ou lactose</b
+                      ><span>Se perguntarem, a Ana passa para você.</span>
+                      <div class="actions">
+                        <button class="btn secondary sm" type="button">
+                          arrumar <svg class="i sm"><use href="#i-chev" /></svg>
+                        </button>
+                        <button class="btn quiet sm" type="button">deixa assim</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                class="btn secondary block"
+                type="button"
+                data-peek
+                aria-expanded="false"
+                aria-controls="o-peek-2"
+              >
+                <svg class="i sm"><use href="#i-eye" /></svg><span>espiar a Ana</span>
+              </button>
+              <div class="preview" id="o-peek-2" hidden>
+                <span class="sig left" style="margin: 0"
+                  ><span class="mini">A</span>prévia no WhatsApp</span
+                >
+                <div class="b in"><p>oi, vocês entregam?</p></div>
+                <div class="b seller">
+                  <p>
+                    Oi, boa tarde! Sou a Ana, assistente virtual da Forno da Vila. Entregamos sim,
+                    em 6 bairros. Qual é o seu?
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div class="floor">
+              <button class="btn primary lg block" type="button">
+                continuar <svg class="i sm"><use href="#i-arrow" /></svg>
+              </button>
+            </div>
+          </div>
+          <figcaption>
+            <span class="route">/admin/vendedor/comecar · Ensinar</span>
+            <b>O2 · She reads the store first</b>
+            <span
+              >Before asking anything, Ana says what she already read from the store, live facts
+              nobody has to teach. Core then flags what a shopper could ask that the menu doesn't
+              answer: "arrumar" opens that product and comes back here, "deixa assim" leaves it, and
+              she hands that question to the owner when it comes up. From this step on, the preview
+              sits behind "espiar a Ana", like "Espiar minha loja" (try it).</span
+            >
+          </figcaption>
+        </figure>
+
+        <!-- O3. A entrevista -->
+        <figure class="shot">
+          <div class="phone">
+            <div class="sb">
+              <span>16:06</span><span class="dots" aria-hidden="true"><i></i><i></i></span>
+            </div>
+            <header class="jbar">
+              <div class="jtop">
+                <b><span class="mini">A</span>Treinar a Ana</b>
+                <button class="btn quiet sm" type="button">
+                  <svg class="i sm"><use href="#i-x" /></svg>continuar depois
+                </button>
+              </div>
+              <ol aria-label="Andamento: Ensinar, 3 de 7">
+                <li class="done">
+                  <i></i
+                  ><span
+                    ><svg class="i"><use href="#i-check" /></svg>Conhecer</span
+                  >
+                </li>
+                <li class="now" aria-current="step">
+                  <i><b style="width: 30%"></b></i><span>Ensinar</span>
+                </li>
+                <li><i></i><span>Testar</span></li>
+                <li><i></i><span>Começar</span></li>
+              </ol>
+            </header>
+            <div class="screen">
+              <div class="guide">
+                <div class="avatar lg persona" aria-hidden="true">A</div>
+                <p><b>Anotado!</b> Agora: dá pra pedir pizza com 3 sabores?</p>
+              </div>
+
+              <div class="pagehead">
+                <div>
+                  <span class="eb">Ensinar · 3 de 7</span>
+                  <h4>A entrevista</h4>
+                  <p>O que só você sabe. Toque, escreva ou mande um áudio.</p>
+                </div>
+              </div>
+
+              <div class="presets three" role="group" aria-label="Resposta">
+                <button type="button" aria-pressed="false">
+                  <svg class="i"><use href="#i-check" /></svg>sim
+                </button>
+                <button type="button" aria-pressed="false">
+                  <svg class="i"><use href="#i-check" /></svg>não
+                </button>
+                <button type="button" aria-pressed="false">
+                  <svg class="i"><use href="#i-check" /></svg>só na G
+                </button>
+              </div>
+              <div class="answer" style="margin-top: 0">
+                <input
+                  type="text"
+                  maxlength="280"
+                  placeholder="ou escreva do seu jeito"
+                  aria-label="Sua resposta"
+                /><button class="btn secondary mic" type="button" aria-label="responder com áudio">
+                  <svg class="i"><use href="#i-mic" /></svg>
+                </button>
+              </div>
+
+              <div class="proposal">
+                <div class="sec">
+                  <span class="t-caption">Da sua resposta anterior</span
+                  ><span class="chip quiet"
+                    ><svg class="i"><use href="#i-chat" /></svg>resposta</span
+                  >
+                </div>
+                <b>Tem estacionamento?</b>
+                <p>Tem, na rua lateral, de graça.</p>
+                <small>Só vale depois do seu ok.</small>
+                <div class="actions">
+                  <button class="btn primary sm" type="button">
+                    <svg class="i sm"><use href="#i-check" /></svg>está certo
+                  </button>
+                  <button class="btn secondary sm" type="button">editar</button>
+                </div>
+              </div>
+
+              <button
+                class="btn secondary block"
+                type="button"
+                data-peek
+                aria-expanded="false"
+                aria-controls="o-peek-3"
+              >
+                <svg class="i sm"><use href="#i-eye" /></svg><span>espiar a Ana</span>
+              </button>
+              <div class="preview" id="o-peek-3" hidden>
+                <span class="sig left" style="margin: 0"
+                  ><span class="mini">A</span>prévia com a sua resposta</span
+                >
+                <div class="b in"><p>tem onde estacionar aí?</p></div>
+                <div class="b seller">
+                  <p>Tem sim, na rua lateral, e é de graça.</p>
+                </div>
+              </div>
+            </div>
+            <div class="floor">
+              <button class="btn primary lg block" type="button">
+                continuar <svg class="i sm"><use href="#i-arrow" /></svg>
+              </button>
+              <div class="qnav">
+                <button class="btn quiet" type="button">
+                  <svg class="i sm"><use href="#i-back" /></svg>voltar
+                </button>
+                <button class="btn quiet" type="button">pular</button>
+              </div>
+            </div>
+          </div>
+          <figcaption>
+            <span class="route">/admin/vendedor/comecar · Ensinar</span>
+            <b>O3 · The interview</b>
+            <span
+              >Five to eight questions only the owner can answer, tuned to the segment (a pizzaria
+              gets sabores, encomendas, parking, "o que eu nunca devo prometer"). Answer with a
+              preset, in words or by voice note, or skip it. Each answer comes back as a card she
+              proposes, a Resposta or a Regra (a Regra carries its "sempre cumprida" or "a Ana segue
+              como orientação" chip), and nothing is kept until "está certo". Ensinar ends with
+              "Quando passar para você": the handoff switches, complaints and allergies already
+              on.</span
+            >
+          </figcaption>
+        </figure>
+
+        <!-- O4. Peça para mim -->
+        <figure class="shot">
+          <div class="phone">
+            <div class="sb">
+              <span>16:08</span><span class="dots" aria-hidden="true"><i></i><i></i></span>
+            </div>
+            <header class="jbar">
+              <div class="jtop">
+                <b><span class="mini">A</span>Treinar a Ana</b>
+                <button class="btn quiet sm" type="button">
+                  <svg class="i sm"><use href="#i-x" /></svg>continuar depois
+                </button>
+              </div>
+              <ol aria-label="Andamento: Testar, 1 de 2">
+                <li class="done">
+                  <i></i
+                  ><span
+                    ><svg class="i"><use href="#i-check" /></svg>Conhecer</span
+                  >
+                </li>
+                <li class="done">
+                  <i></i
+                  ><span
+                    ><svg class="i"><use href="#i-check" /></svg>Ensinar</span
+                  >
+                </li>
+                <li class="now" aria-current="step">
+                  <i><b style="width: 25%"></b></i><span>Testar</span>
+                </li>
+                <li><i></i><span>Começar</span></li>
+              </ol>
+            </header>
+            <div class="screen">
+              <div class="guide">
+                <div class="avatar lg persona" aria-hidden="true">A</div>
+                <p>Agora me teste: peça como se fosse um cliente. Nada vai para a cozinha.</p>
+              </div>
+
+              <div class="pagehead">
+                <div>
+                  <span class="eb">Testar · 1 de 2</span>
+                  <h4>Peça para mim</h4>
+                </div>
+              </div>
+
+              <div class="preview test" aria-label="Conversa de teste">
+                <span class="day">teste · só você vê</span>
+                <div class="b you">
+                  <p>oi, entregam no Centro?</p>
+                  <span class="meta">16:07</span>
+                </div>
+                <span class="sig left"><span class="mini">A</span>Ana · Vendedor</span>
+                <div class="b seller">
+                  <p>
+                    Oi, boa tarde! Sou a Ana, assistente virtual da Forno da Vila. Entregamos no
+                    Centro, sim. O que vai ser?
+                  </p>
+                  <span class="meta">16:07</span>
+                </div>
+                <div class="b you">
+                  <p>uma G de calabresa e uma coca 2 L, no pix. rua XV, 210</p>
+                  <span class="meta">16:08</span>
+                </div>
+                <div class="act">
+                  <svg class="i"><use href="#i-check" /></svg><span>anotou 2 itens na sacola</span
+                  ><button type="button">por quê</button>
+                </div>
+                <div class="receipt" aria-label="Resumo de teste calculado pela loja">
+                  <div class="rh">
+                    Seu pedido
+                    <span
+                      ><svg class="i sm"><use href="#i-shield" /></svg>calculado pela loja</span
+                    >
+                  </div>
+                  <span class="tst"
+                    ><svg class="i"><use href="#i-info" /></svg>pedido de teste · não vai para a
+                    cozinha</span
+                  >
+                  <div class="ln"><span>1× Pizza G Calabresa</span><em>R$ 58,00</em></div>
+                  <div class="ln"><span>1× Coca-Cola 2 L</span><em>R$ 14,00</em></div>
+                  <div class="ln"><span>Entrega · Rua XV, 210</span><em>R$ 7,00</em></div>
+                  <div class="ln tot"><span>Total</span><em>R$ 79,00</em></div>
+                  <span class="eta">chegaria em ~40 min · nada foi cobrado</span>
+                </div>
+                <div class="composer">
+                  <span class="input">Escreva como cliente…</span
+                  ><button class="btn secondary mic" type="button" aria-label="mandar áudio">
+                    <svg class="i"><use href="#i-mic" /></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="floor">
+              <button class="btn primary lg block" type="button">
+                continuar <svg class="i sm"><use href="#i-arrow" /></svg>
+              </button>
+              <div class="qnav">
+                <button class="btn quiet" type="button">pedir de novo</button>
+                <button class="btn quiet" type="button">pular</button>
+              </div>
+            </div>
+          </div>
+          <figcaption>
+            <span class="route">/admin/vendedor/comecar · Testar</span>
+            <b>O4 · Order as a customer</b>
+            <span
+              >The owner orders the way a shopper would, typing or by voice, and sees Ana the way a
+              shopper will: the owner keeps the forest bubbles on the right, Ana answers on the
+              left. The order runs through Core like any other, so the receipt is the real one,
+              marked as a test: it never reaches the kitchen and charges nothing.</span
+            >
+          </figcaption>
+        </figure>
+
+        <!-- O5. Cliente oculto rodando -->
+        <figure class="shot">
+          <div class="phone">
+            <div class="sb">
+              <span>16:10</span><span class="dots" aria-hidden="true"><i></i><i></i></span>
+            </div>
+            <header class="jbar">
+              <div class="jtop">
+                <b><span class="mini">A</span>Treinar a Ana</b>
+                <button class="btn quiet sm" type="button">
+                  <svg class="i sm"><use href="#i-x" /></svg>continuar depois
+                </button>
+              </div>
+              <ol aria-label="Andamento: Testar, 2 de 2">
+                <li class="done">
+                  <i></i
+                  ><span
+                    ><svg class="i"><use href="#i-check" /></svg>Conhecer</span
+                  >
+                </li>
+                <li class="done">
+                  <i></i
+                  ><span
+                    ><svg class="i"><use href="#i-check" /></svg>Ensinar</span
+                  >
+                </li>
+                <li class="now" aria-current="step">
+                  <i><b style="width: 75%"></b></i><span>Testar</span>
+                </li>
+                <li><i></i><span>Começar</span></li>
+              </ol>
+            </header>
+            <div class="screen">
+              <div class="guide">
+                <div class="avatar lg persona" aria-hidden="true">A</div>
+                <p>
+                  Agora 20 clientes de teste pedem no seu cardápio. Pode seguir: eu termino enquanto
+                  você escolhe quando eu atendo.
+                </p>
+              </div>
+
+              <div class="pagehead">
+                <div>
+                  <span class="eb">Testar · 2 de 2</span>
+                  <h4>Cliente oculto</h4>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="score">
+                  <div class="ring" role="img" aria-label="12 de 20 clientes de teste atendidos">
+                    <svg viewBox="0 0 112 112" aria-hidden="true">
+                      <circle
+                        cx="56"
+                        cy="56"
+                        r="48"
+                        fill="none"
+                        stroke="var(--sunken)"
+                        stroke-width="10"
+                      />
+                      <circle
+                        cx="56"
+                        cy="56"
+                        r="48"
+                        fill="none"
+                        stroke="var(--primary)"
+                        stroke-width="10"
+                        stroke-linecap="round"
+                        stroke-dasharray="181 301.6"
+                      />
+                    </svg>
+                    <div class="n">12<small>de 20</small></div>
+                  </div>
+                  <div>
+                    <span class="chip live"><span class="dot pulse"></span>rodando</span>
+                    <p class="t-label tnum" style="margin: 8px 0 4px">testando 12 de 20…</p>
+                    <span class="t-caption"
+                      >Cada um tem um pedido escondido. Comparamos item por item com o que a Ana
+                      fechar.</span
+                    >
+                  </div>
+                </div>
+              </div>
+
+              <div class="sec">
+                <h5 class="t-title-2">Até agora</h5>
+                <span class="t-caption tnum">12 certos</span>
+              </div>
+              <div class="card">
+                <div class="checks" aria-live="polite">
+                  <div class="ck">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-check" /></svg></span
+                    ><span>Pediu meia a meia com borda</span><em>certo</em>
+                  </div>
+                  <div class="ck">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-check" /></svg></span
+                    ><span>Pediu por áudio</span><em>certo</em>
+                  </div>
+                  <div class="ck">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-check" /></svg></span
+                    ><span>Pediu entrega fora da área</span><em>explicou</em>
+                  </div>
+                  <div class="ck">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-check" /></svg></span
+                    ><span>Perguntou se a massa tem lactose</span><em>chamou você</em>
+                  </div>
+                  <div class="ck">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-check" /></svg></span
+                    ><span>Pediu 3 sabores na G</span><em>certo</em>
+                  </div>
+                  <div class="ck">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-check" /></svg></span
+                    ><span>Mudou de ideia no meio</span><em>certo</em>
+                  </div>
+                  <div class="ck run">
+                    <span class="ic"><span class="dot pulse"></span></span
+                    ><span>Pagando em dinheiro, com troco</span><em>agora</em>
+                  </div>
+                </div>
+                <span class="t-caption">E mais 6 certos · faltam 8.</span>
+              </div>
+            </div>
+            <div class="floor">
+              <button class="btn primary lg block" type="button">
+                continuar <svg class="i sm"><use href="#i-arrow" /></svg>
+              </button>
+            </div>
+          </div>
+          <figcaption>
+            <span class="route">/admin/vendedor/comecar · Testar</span>
+            <b>O5 · Twenty test customers</b>
+            <span
+              >Then Cliente oculto: twenty synthetic shoppers order on the real menu, each with a
+              hidden target cart, and the list fills in as they finish, each result in colour, icon
+              and word. One of them tries the 3 sabores the owner just taught. Nobody waits for it:
+              the run goes on while Começar asks when she answers, and the score lands in the
+              finale.</span
+            >
+          </figcaption>
+        </figure>
+
+        <!-- O6. A Ana está pronta -->
+        <figure class="shot">
+          <div class="phone">
+            <div class="sb">
+              <span>16:12</span><span class="dots" aria-hidden="true"><i></i><i></i></span>
+            </div>
+            <header class="jbar">
+              <div class="jtop">
+                <b><span class="mini">A</span>Treinar a Ana</b>
+                <button class="btn quiet sm" type="button">
+                  <svg class="i sm"><use href="#i-x" /></svg>ir ao painel
+                </button>
+              </div>
+              <ol aria-label="Andamento: pronto">
+                <li class="done">
+                  <i></i
+                  ><span
+                    ><svg class="i"><use href="#i-check" /></svg>Conhecer</span
+                  >
+                </li>
+                <li class="done">
+                  <i></i
+                  ><span
+                    ><svg class="i"><use href="#i-check" /></svg>Ensinar</span
+                  >
+                </li>
+                <li class="done">
+                  <i></i
+                  ><span
+                    ><svg class="i"><use href="#i-check" /></svg>Testar</span
+                  >
+                </li>
+                <li class="done">
+                  <i></i
+                  ><span
+                    ><svg class="i"><use href="#i-check" /></svg>Começar</span
+                  >
+                </li>
+              </ol>
+            </header>
+            <div class="screen">
+              <div class="finale">
+                <span class="eb">Começar · pronto!</span>
+                <div class="avatar persona" aria-hidden="true">A</div>
+                <span class="t-moment">A Ana está pronta</span>
+                <span class="t-caption"
+                  >Ela já sabe atender a Forno da Vila. Você escolhe como ela começa.</span
+                >
+              </div>
+
+              <div class="card">
+                <b class="t-label">O que ela sabe</b>
+                <div class="checks">
+                  <div class="ck">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-check" /></svg></span
+                    ><span>Sabe o cardápio, o horário e os bairros</span><em>48 itens</em>
+                  </div>
+                  <div class="ck">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-check" /></svg></span
+                    ><span>Aprendeu respostas com você</span><em>6</em>
+                  </div>
+                  <div class="ck">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-check" /></svg></span
+                    ><span>Segue as suas regras</span><em>2</em>
+                  </div>
+                  <div class="ck">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-check" /></svg></span
+                    ><span>Acertou no cliente oculto</span><em>19 de 20</em>
+                  </div>
+                  <div class="ck">
+                    <span class="ic"
+                      ><svg class="i"><use href="#i-check" /></svg></span
+                    ><span>Atende quando você demorar</span><em>2 min</em>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="sec">
+                  <b class="t-label">Ficou para depois</b
+                  ><span class="t-caption">1 pergunta da entrevista</span>
+                </div>
+                <div>
+                  <div class="tg">
+                    <div>
+                      <b>Vocês têm opção vegana?</b
+                      ><span>Se perguntarem, a Ana passa para você.</span>
+                    </div>
+                    <button class="btn secondary sm" type="button">responder</button>
+                  </div>
+                </div>
+              </div>
+
+              <button class="btn spark lg block" type="button">começar em ensaio</button>
+              <span class="t-caption" style="text-align: center; margin-top: -6px"
+                >Recomendado: por alguns dias ela escreve sem mandar, e você compara.</span
+              >
+              <button class="btn secondary lg block" type="button">
+                <svg class="i sm"><use href="#i-bolt" /></svg>ligar agora
+              </button>
+            </div>
+          </div>
+          <figcaption>
+            <span class="route">/admin/vendedor/comecar · Começar</span>
+            <b>O6 · Ready, and how to start</b>
+            <span
+              >Começar first asks when she answers (the four modes, "quando eu demorar · 2 min"
+              recommended) and suggests a few days of Ensaio. Then the journey's one Instrument
+              Serif moment: what she knows, in counts the owner can check, with the Cliente oculto
+              score in. "começar em ensaio" is the recommended path and "ligar agora" sits right
+              under it, never gated. What was skipped stays listed, each a detour back to its
+              question.</span
+            >
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="section-title">
         <h2>Desktop, 1240 px</h2>
         <p>
           Conversas as a three-pane inbox: who needs you, the thread with its live sacola, and the
@@ -4088,6 +5224,87 @@
               o.setAttribute('aria-pressed', String(o === b));
             });
             waitText.textContent = b.dataset.wait;
+          });
+        });
+
+        // Ana's onboarding, O1: the name, the disclosure switch and the tone change the preview
+        var oPrev = document.getElementById('o-prev');
+        var oName = 'Ana';
+        var oArt = 'a';
+        var oTone = 1;
+        var oDisc = true;
+        function oRender() {
+          var who = (oArt ? oArt + ' ' : '') + oName;
+          var from = oDisc ? ', assistente virtual da Forno da Vila' : ', da Forno da Vila';
+          oPrev.textContent = [
+            'Oi! Aqui é ' + who + from + ' 😊 Entregamos sim, em 6 bairros. Qual é o seu?',
+            'Oi, boa tarde! Sou ' + who + from + '. Entregamos sim, em 6 bairros. Qual é o seu?',
+            'Boa tarde. Sou ' +
+              who +
+              from +
+              '. Fazemos entregas em 6 bairros. Qual é o seu bairro?',
+          ][oTone];
+          document.querySelectorAll('[data-o-initial]').forEach(function (el) {
+            el.textContent = oName.charAt(0).toUpperCase();
+          });
+          document.querySelector('[data-o-who]').textContent = who;
+        }
+        var oOtherWrap = document.getElementById('o-other-wrap');
+        var oOther = document.getElementById('o-other');
+        var oNames = document.querySelectorAll('[data-o-name]');
+        oNames.forEach(function (b) {
+          b.addEventListener('click', function () {
+            oNames.forEach(function (o) {
+              o.setAttribute('aria-pressed', String(o === b));
+            });
+            var other = b.dataset.oName === '';
+            oOtherWrap.hidden = !other;
+            if (other) {
+              oOther.focus();
+              if (oOther.value.trim()) {
+                oName = oOther.value.trim();
+                oArt = '';
+              }
+            } else {
+              oName = b.dataset.oName;
+              oArt = b.dataset.oArt;
+            }
+            oRender();
+          });
+        });
+        oOther.addEventListener('input', function () {
+          if (!oOther.value.trim()) return;
+          oName = oOther.value.trim();
+          oArt = '';
+          oRender();
+        });
+        var oDiscBtn = document.getElementById('o-disc');
+        oDiscBtn.addEventListener('click', function () {
+          oDisc = !oDisc;
+          oDiscBtn.setAttribute('aria-checked', String(oDisc));
+          oDiscBtn.classList.toggle('on', oDisc);
+          oRender();
+        });
+        var oTones = document.querySelectorAll('[data-o-tone]');
+        oTones.forEach(function (b) {
+          b.addEventListener('click', function () {
+            oTones.forEach(function (o) {
+              o.setAttribute('aria-pressed', String(o === b));
+            });
+            oTone = Number(b.dataset.oTone);
+            oRender();
+          });
+        });
+
+        // "espiar a Ana": on phones the live preview sits behind a button
+        document.querySelectorAll('[data-peek]').forEach(function (b) {
+          var target = document.getElementById(b.getAttribute('aria-controls'));
+          var label = b.querySelector('span');
+          b.addEventListener('click', function () {
+            var open = target.hidden;
+            target.hidden = !open;
+            b.setAttribute('aria-expanded', String(open));
+            label.textContent = open ? 'fechar a prévia' : 'espiar a Ana';
           });
         });
       })();
