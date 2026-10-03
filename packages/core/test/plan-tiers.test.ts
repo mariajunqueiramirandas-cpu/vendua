@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { createSession, membershipsFor } from '../src/admin/auth.ts';
+import { pushExhausted } from '../src/admin/workers.ts';
 import { aiAllowanceTx, claimAiConversationTx } from '../src/modules/billing/ai-allowance.ts';
 import { planHas, requireFeature } from '../src/modules/billing/plans.ts';
 import { billingStaff } from '../src/modules/billing/subscriptions.ts';
@@ -504,7 +505,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
     const allowance = (tenantId: string) =>
       withTenant(appSql, tenantId, (tx) => aiAllowanceTx(tx, tenantId));
     /** a paid pack's conversations, as the settled invoice would add them */
-    const credit = async (tenantId: string, conversations: number) => {
+    const credit = async (tenantId: string, conversations: number, days = 30) => {
       const inv = (
         await sql<{ id: string }[]>`
           insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end,
@@ -517,7 +518,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
           returning id
         `
       )[0]!.id;
-      await sql`insert into ai_credits (tenant_id, invoice_id, conversations) values (${tenantId}, ${inv}, ${conversations})`;
+      return (
+        await sql<{ id: string }[]>`
+          insert into ai_credits (tenant_id, invoice_id, conversations, expires_at)
+          values (${tenantId}, ${inv}, ${conversations}, now() + make_interval(days => ${days}))
+          returning id`
+      )[0]!.id;
     };
     const sources = async (tenantId: string) =>
       (
@@ -572,6 +578,49 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       expect(new Date(acct.body.ai.resetsAt).getTime()).toBeGreaterThan(Date.now());
       await expect(claim(s.id, '')).rejects.toThrow(RangeError);
       await expect(claim(s.id, 'x'.repeat(201))).rejects.toThrow(RangeError);
+    });
+
+    test('packs last 30 days: the one that lapses first is spent first, a lapsed one is gone', async () => {
+      const s = await store('ai-lapse', aiPlan, 'active');
+      // the month's allowance is spent, so every new conversation comes from a pack
+      await sql`
+        insert into ai_conversations (tenant_id, subject_key, source, started_at)
+        select ${s.id}, 'used-' || g, 'plan', now() from generate_series(1, 2) g`;
+      const late = await credit(s.id, 2, 20);
+      const soon = await credit(s.id, 1, 3);
+      await credit(s.id, 5, -1); // lapsed yesterday
+      const a = await allowance(s.id);
+      expect(a).toMatchObject({ packRemaining: 3, remaining: 3 });
+      expect(a.packExpiresAt!.getTime()).toBeLessThan(Date.now() + 4 * 86_400_000);
+      expect((await claim(s.id, 'x1')).ok).toBe(true);
+      expect((await claim(s.id, 'x2')).ok).toBe(true);
+      const used = await sql`
+        select credit_id from ai_conversations where tenant_id = ${s.id} and source = 'pack'
+        order by started_at, id`;
+      expect(used.map((r) => r.credit_id).sort()).toEqual([late, soon].sort());
+      expect(
+        (await sql`select count(*)::int as n from ai_conversations where credit_id = ${soon}`)[0]!
+          .n,
+      ).toBe(1);
+      // the soon pack is used up; one conversation is left in the late one
+      expect((await allowance(s.id)).packRemaining).toBe(1);
+      expect((await claim(s.id, 'x3')).ok).toBe(true);
+      const out = await claim(s.id, 'x4');
+      expect(out).toMatchObject({ ok: false, reason: 'exhausted' });
+      // nothing left in any pack: no lapse date to show
+      expect((await allowance(s.id)).packExpiresAt).toBeNull();
+      // Duá's home says it ran out; the owner's push goes once per period
+      const home = await s.owner('GET', '/vendedor');
+      expect(home.body.allowance).toMatchObject({ period: 'month', limit: 2, remaining: 0 });
+      const period = (await allowance(s.id)).resetsAt!.toISOString();
+      await pushExhausted(appSql, s.id, period);
+      await pushExhausted(appSql, s.id, period);
+      expect(
+        (
+          await sql`select count(*)::int as n from push_deliveries
+                    where tenant_id = ${s.id} and key = ${`vendedor.exhausted:${period}`}`
+        )[0]!.n,
+      ).toBe(1);
     });
 
     test('a subject counts again once its day is over', async () => {
@@ -1008,8 +1057,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       expect(open).toHaveLength(1);
 
       expect((await payInvoice(buy.body.invoiceId)).status).toBe(200);
-      const credits = await sql`select conversations from ai_credits where tenant_id = ${s.id}`;
+      const credits = await sql`
+        select conversations, extract(epoch from expires_at - created_at)::int as secs
+        from ai_credits where tenant_id = ${s.id}`;
       expect(credits.map((c) => c.conversations)).toEqual([100]);
+      // 30 days from the payment
+      expect(credits[0]!.secs).toBe(30 * 86_400);
       const acct = await s.owner('GET', '/account');
       expect(acct.body.ai).toMatchObject({ packRemaining: 100, remaining: 350 });
       expect(acct.body.invoices.find((i: any) => i.id === buy.body.invoiceId).status).toBe('paid');

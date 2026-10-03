@@ -31,6 +31,7 @@ import {
   queueOwners,
 } from './notices.ts';
 import { formatBRL, planRow, tenantPlan, type PlanRow } from './plans.ts';
+import { PACK_DAYS } from './ai-allowance.ts';
 
 // The plan's state machine (docs/roadmap.md, Phase 3). One subscriptions row per store:
 //   pending ─(first invoice paid / first card charge)→ active ─(period ended unpaid)→ past_due
@@ -733,11 +734,13 @@ async function voidOpenPack(ctx: BillingCtx, tx: Sql, inv: InvoiceRow) {
   `;
 }
 
-/** A pack invoice was paid: what it promised when bought joins the store's, once per invoice. */
+/** A pack invoice was paid: what it promised when bought joins the store's for PACK_DAYS, once
+ *  per invoice. */
 async function creditAiPack(tx: Sql, tenantId: string, inv: InvoiceRow) {
   await tx`
-    insert into ai_credits (tenant_id, invoice_id, conversations)
-    values (${tenantId}, ${inv.id}, ${inv.ai_conversations!})
+    insert into ai_credits (tenant_id, invoice_id, conversations, expires_at)
+    values (${tenantId}, ${inv.id}, ${inv.ai_conversations!},
+            now() + make_interval(days => ${PACK_DAYS}))
     on conflict (invoice_id) do nothing
   `;
 }

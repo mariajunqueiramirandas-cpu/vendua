@@ -127,7 +127,7 @@ export function AiPacksPanel() {
     <Panel
       flush
       title="pacotes do Duá"
-      aside={mobile ? undefined : 'conversas extras que a loja compra no admin · não vencem'}
+      aside={mobile ? undefined : 'conversas extras que a loja compra no admin · valem 30 dias'}
       className="overflow-hidden"
     >
       {query.isError && !query.data ? (

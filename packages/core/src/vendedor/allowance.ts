@@ -26,6 +26,14 @@ export async function claimForTurnTx(
     o.now ?? new Date(),
   );
   if (claim.ok) return true;
+  // the owner hears it (a push, once in a while) and sees it on Duá's home and in Conta
+  if (claim.reason === 'exhausted')
+    await emitAdminTx(
+      tx,
+      thread.tenantId,
+      'vendedor.exhausted',
+      claim.allowance.resetsAt?.toISOString() ?? 'trial',
+    );
   if (floor !== 'agent') return false;
   if (thread.owner !== 'human')
     await sendDirectTx(tx, thread, {

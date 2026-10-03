@@ -1078,14 +1078,16 @@ export interface Account {
     trialEndsAt: string | null;
   } | null;
   billing: { available: boolean };
-  /** the Vendedor's conversations: this month's (or the trial's) allowance, plus packs bought */
+  /** Duá's conversations: this month's (or the trial's) allowance, plus packs bought */
   ai: {
     included: boolean;
     period: 'month' | 'trial' | null;
     limit: number;
     used: number;
-    /** bought in packs, left over (they don't expire) */
+    /** bought in packs and left over: each pack lasts 30 days from its payment */
     packRemaining: number;
+    /** when the first of those packs lapses */
+    packExpiresAt: string | null;
     remaining: number;
     resetsAt: string | null;
   };
@@ -1326,6 +1328,14 @@ export interface VendedorHome {
     firstSaleAt: string | null;
   };
   presence: VendedorPresence;
+  /** what Duá can still take this period: 0 left means new shoppers go to the store */
+  allowance: {
+    period: 'month' | 'trial' | null;
+    limit: number;
+    used: number;
+    remaining: number;
+    resetsAt: string | null;
+  };
   whatsapp: { state: string | null; linked: boolean };
   active: number;
   replyP50Sec: number | null;

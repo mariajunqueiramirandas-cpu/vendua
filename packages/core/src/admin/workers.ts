@@ -57,6 +57,10 @@ export async function startPushNotifier(sql: Sql, hub: AdminHub): Promise<() => 
       void pushWaiting(sql, tenantId, e.id).catch((err) =>
         workLog.warn({ err }, 'vendedor push failed'),
       );
+    else if (e.topic === 'vendedor.exhausted')
+      void pushExhausted(sql, tenantId, e.id).catch((err) =>
+        workLog.warn({ err }, 'vendedor exhausted push failed'),
+      );
     else if (e.topic === 'whatsapp' && (e.id === 'logged_out' || e.id === 'banned'))
       void pushWhatsappLost(sql, tenantId).catch((err) =>
         workLog.warn({ err }, 'whatsapp push failed'),
@@ -104,6 +108,43 @@ export async function pushWhatsappLost(sql: Sql, tenantId: string) {
     },
     'whatsapp.lost',
     job.state,
+  );
+}
+
+/** Duá ran out of conversations (ADR 0032): the shoppers go to the store's inbox, so the owner
+ *  and managers hear it. push_deliveries dedupes it, so a store that stays out hears it again
+ *  once that row is swept (two days), not on every shopper. */
+export async function pushExhausted(sql: Sql, tenantId: string, period: string) {
+  const job = await withTenant(sql, tenantId, async (tx) => {
+    const won = await tx`
+      insert into push_deliveries (tenant_id, key)
+      values (${tenantId}, ${`vendedor.exhausted:${period}`})
+      on conflict do nothing returning key
+    `;
+    if (!won[0]) return null;
+    return tx<Sub[]>`
+      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
+        join merchant_users u on u.id = s.user_id
+      where s.tenant_id = ${tenantId} and u.status = 'active' and u.role in ('owner', 'manager')
+        and coalesce((u.prefs ->> 'push')::boolean, true)
+    `;
+  });
+  if (!job) return;
+  const resets = period === 'trial' ? null : new Date(period);
+  await fanOut(
+    sql,
+    tenantId,
+    job,
+    {
+      title: 'O Duá ficou sem conversas',
+      body: resets
+        ? `Os clientes novos vão para você até ${resets.toLocaleDateString('pt-BR', { day: 'numeric', month: 'short', timeZone: 'America/Sao_Paulo' })}. Para o Duá voltar antes, compre mais conversas.`
+        : 'As conversas do teste grátis acabaram. Os clientes novos vão para você.',
+      tag: 'vendedor-exhausted',
+      url: '/admin/conta#vendedor',
+    },
+    'vendedor.exhausted',
+    period,
   );
 }
 

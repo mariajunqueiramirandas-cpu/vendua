@@ -1,12 +1,15 @@
 import type { Sql } from '../../platform/db.ts';
 import { planHas, tenantPlan } from './plans.ts';
 
-// The Vendedor's conversations (ADR 0032). A plan includes so many a month (calendar month, São
-// Paulo time), a trial so many for its whole length, and paid packs add more that don't expire.
-// The month's allowance is spent first, then packs. One shopper's conversation counts once per
-// CONVERSATION_WINDOW_MS from when it started, however many messages it has.
+// Duá's conversations (ADR 0032). A plan includes so many a month (calendar month, São Paulo
+// time), a trial so many for its whole length, and paid packs add more for PACK_DAYS from their
+// payment. The month's allowance is spent first, then the pack that lapses soonest. One shopper's
+// conversation counts once per CONVERSATION_WINDOW_MS from when it started, however many
+// messages it has.
 
 export const CONVERSATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** how long a paid pack's conversations count (ai_credits.expires_at) */
+export const PACK_DAYS = 30;
 const ZONE = 'America/Sao_Paulo';
 
 export interface AiAllowance {
@@ -17,8 +20,10 @@ export interface AiAllowance {
   /** conversations the period includes */
   limit: number;
   used: number;
-  /** pack conversations left (they carry over months) */
+  /** pack conversations left and not lapsed (they carry over months) */
   packRemaining: number;
+  /** when the soonest of the packs with conversations left lapses (null without one) */
+  packExpiresAt: Date | null;
   /** what the Vendedor can still take: the period's left + packs */
   remaining: number;
   /** when the month's allowance starts over (null in a trial) */
@@ -49,8 +54,8 @@ export async function aiAllowanceTx(
         next_month: Date;
         used_month: number;
         used_trial: number;
-        used_pack: number;
-        credits: number;
+        pack_left: number;
+        pack_expires: Date | null;
       }[]
     >`
       with m as (
@@ -63,14 +68,19 @@ export async function aiAllowanceTx(
              (select count(*)::int from ai_conversations
                where tenant_id = ${tenantId} and source = 'trial'
                  and started_at >= ${trial ?? now}) as used_trial,
-             (select count(*)::int from ai_conversations
-               where tenant_id = ${tenantId} and source = 'pack') as used_pack,
-             (select coalesce(sum(conversations), 0)::int from ai_credits
-               where tenant_id = ${tenantId}) as credits
-      from m
+             coalesce(p.remain, 0)::int as pack_left, p.expires as pack_expires
+      from m left join lateral (
+        select sum(c.remain) as remain, min(c.expires_at) as expires from (
+          select c.expires_at, c.conversations - (
+            select count(*) from ai_conversations a where a.credit_id = c.id) as remain
+          from ai_credits c
+          where c.tenant_id = ${tenantId} and c.expires_at > ${now}
+        ) c where c.remain > 0
+      ) p on true
     `
   )[0]!;
-  const packRemaining = Math.max(0, row.credits - row.used_pack);
+  const packRemaining = Math.max(0, row.pack_left);
+  const packExpiresAt = packRemaining > 0 ? row.pack_expires : null;
   if (!included)
     return {
       included,
@@ -78,6 +88,7 @@ export async function aiAllowanceTx(
       limit: 0,
       used: 0,
       packRemaining,
+      packExpiresAt,
       remaining: 0,
       resetsAt: null,
     };
@@ -91,6 +102,7 @@ export async function aiAllowanceTx(
     limit,
     used,
     packRemaining,
+    packExpiresAt,
     remaining: left,
     resetsAt: trial ? null : row.next_month,
   };
@@ -137,10 +149,23 @@ export async function claimAiConversationTx(
   const source =
     a.used < a.limit ? (a.period === 'trial' ? 'trial' : 'plan') : a.remaining > 0 ? 'pack' : null;
   if (!source) return { ok: false, reason: 'exhausted', allowance: a };
+  // a pack conversation comes out of the pack that lapses first (the per-store lock holds)
+  const credit =
+    source === 'pack'
+      ? (
+          await tx<{ id: string }[]>`
+            select c.id from ai_credits c
+            where c.tenant_id = ${tenantId} and c.expires_at > ${now}
+              and c.conversations > (select count(*) from ai_conversations a where a.credit_id = c.id)
+            order by c.expires_at, c.id limit 1
+          `
+        )[0]?.id
+      : null;
+  if (source === 'pack' && !credit) return { ok: false, reason: 'exhausted', allowance: a };
   const id = (
     await tx<{ id: string }[]>`
-      insert into ai_conversations (tenant_id, subject_key, source, started_at)
-      values (${tenantId}, ${subjectKey}, ${source}, ${now})
+      insert into ai_conversations (tenant_id, subject_key, source, started_at, credit_id)
+      values (${tenantId}, ${subjectKey}, ${source}, ${now}, ${credit ?? null})
       returning id
     `
   )[0]!.id;

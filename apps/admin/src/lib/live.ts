@@ -27,7 +27,8 @@ type Topic =
   | 'printers'
   | 'kitchen'
   | 'vendedor'
-  | 'vendedor.waiting';
+  | 'vendedor.waiting'
+  | 'vendedor.exhausted';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity],
@@ -51,6 +52,7 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   // a conversation counted moves Conta's usage meter too
   vendedor: [['vendedor'], qk.session, qk.account],
   'vendedor.waiting': [['vendedor'], qk.session],
+  'vendedor.exhausted': [['vendedor'], qk.account],
 };
 
 // ── connection + alert state (a tiny external store) ───────────────────────

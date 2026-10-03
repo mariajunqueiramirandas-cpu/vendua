@@ -859,8 +859,11 @@ function Vendedor({ a, onInvoice }: { a: AccountData; onInvoice: (id: string) =>
                 <li className="flex items-center gap-2">
                   <Gift className="size-5 shrink-0 text-muted" aria-hidden />
                   <span>
-                    <strong className="tnum">{n(ai.packRemaining)}</strong> de pacotes, que não
-                    vencem.
+                    <strong className="tnum">{n(ai.packRemaining)}</strong> de pacotes
+                    {ai.packExpiresAt
+                      ? `, ${ai.packRemaining === 1 ? 'que vence' : 'as primeiras vencem'} em ${dateShort(ai.packExpiresAt)}`
+                      : ''}
+                    .
                   </span>
                 </li>
               ) : null}
@@ -890,8 +893,8 @@ function Vendedor({ a, onInvoice }: { a: AccountData; onInvoice: (id: string) =>
           >
             <p className="t-body min-w-0 flex-1">
               <strong>Precisa de mais?</strong> {n(p.conversations)} conversas por{' '}
-              <strong className="tnum">{money(p.priceCents)}</strong>, pagas uma vez com Pix. Elas
-              não vencem.
+              <strong className="tnum">{money(p.priceCents)}</strong>, pagas uma vez com Pix. Valem
+              por 30 dias depois do pagamento.
               {why ? <span className="t-caption mt-1 block text-muted">{why}</span> : null}
             </p>
             <Button
@@ -1379,7 +1382,7 @@ function InvoiceSheet({
           : inv.kind === 'upgrade'
             ? `A diferença até ${dateShort(inv.periodEnd)} · nº ${inv.number}`
             : inv.kind === 'ai_pack'
-              ? `Conversas do Duá, que não vencem · nº ${inv.number}`
+              ? `Conversas do Duá, por 30 dias · nº ${inv.number}`
               : `${inv.planName} · nº ${inv.number}`
       }
     >

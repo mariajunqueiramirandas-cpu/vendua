@@ -18,12 +18,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { usePreload } from '../../app/routes.ts';
 import { api, type VendedorHome as Data, type WaitingRow } from '../../lib/api.ts';
-import { clock, minutesSince, money, num, plural } from '../../lib/format.ts';
+import { clock, dateShort, minutesSince, money, num, plural } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
+import { Notice } from '../../ui/Notice.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, messageOf } from '../../ui/feedback.tsx';
 import { Odometer } from '../../ui/Odometer.tsx';
@@ -90,6 +91,7 @@ function Running({ data }: { data: Data }) {
       <p aria-live="polite" className="sr-only">
         {announce}
       </p>
+      <OutOfConversations data={data} owner={session.user.role === 'owner'} />
       <div className="grid gap-4 md:grid-cols-2 [&>*]:min-w-0">
         <Presence data={data} manager={manager} owner={session.user.role === 'owner'} />
         <Today data={data} />
@@ -118,6 +120,32 @@ function Running({ data }: { data: Data }) {
       ) : null}
       <Shortcuts data={data} manager={manager} />
     </div>
+  );
+}
+
+/** Duá's conversations ran out (ADR 0032): new shoppers wait in the inbox until the month turns
+ *  or a pack is bought. Core pushes the owner too. */
+function OutOfConversations({ data, owner }: { data: Data; owner: boolean }) {
+  const a = data.allowance;
+  if (!data.agent.enabled || !a.period || a.remaining > 0) return null;
+  const month = a.period === 'month';
+  return (
+    <Notice
+      tone="warning"
+      title="O Duá ficou sem conversas"
+      action={
+        owner ? (
+          <ButtonLink to={month ? '/conta#vendedor' : '/conta'} size="sm">
+            {month ? 'comprar mais conversas' : 'ver os planos'}
+          </ButtonLink>
+        ) : null
+      }
+    >
+      {month
+        ? `Usou as ${num(a.limit)} do mês. Os clientes novos vão para Conversas e esperam por você${a.resetsAt ? ` até ${dateShort(a.resetsAt)}` : ''}.`
+        : `Usou as ${num(a.limit)} do teste grátis. Os clientes novos vão para Conversas e esperam por você.`}
+      {owner ? null : ' Para o Duá voltar antes, peça ao dono da loja.'}
+    </Notice>
   );
 }
 

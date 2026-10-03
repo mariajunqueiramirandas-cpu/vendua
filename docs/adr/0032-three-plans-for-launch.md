@@ -32,11 +32,14 @@ The owner decided (2026-10-03):
 - **No founder's price.**
 - **No grandfathering.** Nobody pays for Basic or PRO+, so the catalog is replaced in place.
 
-Later the same day the owner added three decisions:
+Later the same day the owner added these decisions:
 
 - **The top plan is spelled "Pangolim"** (id `pangolim`).
 - **Pangolim launches closed.** Venduá can't offer own domains yet. The plan stays listed as the
   top anchor, but no store can pick it until staff open it.
+- **Pack conversations last 30 days** from the pack's payment.
+- **Owners hear when Duá runs out** of conversations.
+- **Pangolim opens when own domains are built.** Staff open it in the CRM then.
 - **The AI seller is Duá**, Venduá's mascot, on every store. Stores no longer name it, the
   mascot is its face, and copy says "o Duá" and "ele". "Vendedor" stays the code name (routes,
   tables, the `vendedor` feature key).
@@ -105,8 +108,15 @@ the team runs by hand, and the Vendedor's pilots among them.
 - **The allowance.** A paid plan gets `ai_conversations` per calendar month (São Paulo time). A
   trial gets `ai_trial_conversations` for its whole length and can't use packs. Pangolim has 50
   too, because a Bandeira trial can switch to it and stays a trial.
-- **Order of spending.** The month's allowance goes first, then packs. Pack conversations don't
-  expire.
+- **Order of spending.** The month's allowance goes first, then packs, the one that lapses
+  soonest first (migration 0084). A pack's conversations count for `PACK_DAYS` (30) from its
+  payment (`ai_credits.expires_at`). Each pack conversation records the credit that paid for it
+  (`ai_conversations.credit_id`), so what is left of each pack is exact.
+- **When it runs out,** `claimForTurnTx` emits `vendedor.exhausted` with the period (its month's
+  reset date, or `trial`). The push worker sends owners and managers "O Duá ficou sem conversas"
+  once per `push_deliveries` row: a store that stays out hears it again about every two days,
+  never once per shopper. Duá's home shows it too (`allowance` in `GET /vendedor`), with "comprar
+  mais conversas" for the owner.
 - **The Vendedor's only entry point** is `claimAiConversationTx(tx, tenantId, subjectKey)`, called
   in the transaction that starts its turn.
   - A new conversation takes a per-store lock, and records one `ai_conversations` row with what
@@ -160,10 +170,6 @@ the team runs by hand, and the Vendedor's pilots among them.
   a trial or a limit in the CRM, the site copy must change with it.
 - **The margin depends on conversation cost,** which is still unmeasured. The limits are data, and
   the pilots will set them.
-- **Still open, for the owner:**
-  - Whether pack conversations should expire.
-  - Telling owners when Duá runs out of conversations (the Vendedor's admin screens).
-  - When Pangolim opens, which waits on own domains being offered.
 
 ## Alternatives considered
 
