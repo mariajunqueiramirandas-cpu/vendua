@@ -1,6 +1,6 @@
 # ADR 0021: Self-serve signup and plan billing
 
-- Status: Accepted (implemented 2026-09-30, Core migration 0054, Phase 3)
+- Status: Accepted (implemented 2026-09-30, Core migration 0054, Phase 3); plans and prices superseded by [ADR 0032](0032-three-plans-for-launch.md)
 - Date: 2026-09-30
 
 ## Context

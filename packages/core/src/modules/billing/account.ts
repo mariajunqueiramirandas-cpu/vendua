@@ -4,10 +4,12 @@ import type { Tenant } from '../../platform/tenancy.ts';
 import type { PaymentProvider } from '../payments/provider.ts';
 import { cnameTarget, txtName, txtValue, type CustomDomainRow } from './domains.ts';
 import { invoiceView, type InvoiceRow } from './invoices.ts';
+import { aiAllowanceTx } from './ai-allowance.ts';
 import { publicPlans, tenantPlan } from './plans.ts';
-import { upgradeLive, type SubRow } from './subscriptions.ts';
+import { publicAiPacks, upgradeLive, type SubRow } from './subscriptions.ts';
 
-/** GET /account — the store's plan, subscription, invoices, domains and PRO+ site request. */
+/** GET /account — the store's plan, subscription, Vendedor conversations, invoices, domains and
+ *  the Pangolin site request. */
 export async function accountView(
   tx: Sql,
   t: Pick<Tenant, 'id' | 'slug'>,
@@ -24,8 +26,10 @@ export async function accountView(
       where s.tenant_id = ${t.id}
     `
   )[0];
-  const invoices = await tx<(InvoiceRow & { plan_name: string })[]>`
-    select i.*, p.name as plan_name from invoices i join plans p on p.id = i.plan_id
+  const invoices = await tx<(InvoiceRow & { plan_name: string; ai_pack_name: string | null })[]>`
+    select i.*, p.name as plan_name, a.name as ai_pack_name from invoices i
+      join plans p on p.id = i.plan_id
+      left join ai_packs a on a.id = i.ai_pack_id
     where i.tenant_id = ${t.id}
     order by i.number desc limit 12
   `;
@@ -80,6 +84,9 @@ export async function accountView(
   return {
     plan: { ...(await tenantPlan(tx, t.id)), since: sub?.created_at ?? tenant.created_at },
     plans: await publicPlans(tx),
+    // the Vendedor's conversations this month (or trial), and the packs that add to them
+    ai: await aiAllowanceTx(tx, t.id, now),
+    aiPacks: await publicAiPacks(tx),
     subscription: sub
       ? {
           status: sub.status,

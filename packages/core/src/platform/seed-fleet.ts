@@ -89,7 +89,7 @@ for (const [i, [slug, name, owner]] of stores.entries()) {
     ...(lead ? { leadId: lead.id } : {}),
     slug,
     storeName: name,
-    planId: i % 2 ? 'pro_plus' : 'basic',
+    planId: (['mirim', 'bandeira', 'pangolin'] as const)[i % 3],
     ownerName: owner,
     ownerPhone: `1199${String(1000000 + i * 7919).slice(0, 7)}`,
     ownerEmail: `${slug}@exemplo.com.br`,

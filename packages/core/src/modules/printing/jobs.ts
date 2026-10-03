@@ -1,6 +1,7 @@
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
+import { planHas } from '../billing/plans.ts';
 import { loadOrderView } from '../orders.ts';
 import type { CodePage, Paper } from './escpos.ts';
 import { renderOrderTicket, renderTestTicket } from './ticket.ts';
@@ -186,7 +187,7 @@ export async function enqueueOrderPrintTx(
         left join store_settings s on s.tenant_id = p.tenant_id
         where p.tenant_id = ${tenantId} and p.auto and p.present
           and (${trigger} = 'confirmed' or coalesce(s.print_on, 'confirmed') = 'placed')`;
-      if (printers.length === 0) return 0;
+      if (printers.length === 0 || !(await planHas(sp, tenantId, 'printing'))) return 0;
       const ids = await queueJobsTx(
         sp,
         tenantId,

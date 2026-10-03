@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { planHas } from './billing/plans.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { couponLabel, type CouponRow } from './coupons.ts';
@@ -289,7 +290,7 @@ export async function loyaltyCard(
   opts: { withRewards?: boolean } = {},
 ): Promise<LoyaltyCard> {
   const program = parseLoyalty(settings?.loyalty);
-  if (!program)
+  if (!program || !(await planHas(tx, tenantId, 'loyalty')))
     return {
       enabled: false,
       stampsRequired: 0,
@@ -354,7 +355,8 @@ export async function mintLoyaltyRewards(
   )[0];
   // a reward the merchant didn't name stays unnamed: couponLabel names it from the coupon itself
   const program = readLoyalty(settings?.loyalty);
-  if (!program) return [];
+  // a plan without loyalty keeps the program for later but stamps and mints nothing now
+  if (!program || !(await planHas(tx, tenantId, 'loyalty'))) return [];
   // serialize per phone — two deliveries landing together must not double-mint
   await tx`select pg_advisory_xact_lock(hashtextextended(${`loyalty|${tenantId}|${phone}`}, 0))`;
   const { earned, minted } = await stampCounts(tx, tenantId, phone, program);

@@ -423,7 +423,7 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'normal',
     severity: 'info',
     label: 'pedido de uma loja',
-    hint: 'site PRO+ e outros pedidos que a equipe atende',
+    hint: 'site sob medida e outros pedidos que a equipe atende',
   },
   'billing.manual': {
     category: 'atendimento',

@@ -106,6 +106,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0029](adr/0029-kitchen-display.md)                    | Kitchen display (Cozinha) and the customers' pickup screen     |
 | [0030](adr/0030-agent-runtime-v3.md)                   | Agent Runtime v3: durable actors on Postgres (accepted, built) |
 | [0031](adr/0031-vendedor.md)                           | The Vendedor, an AI seller on the store's WhatsApp (proposed)  |
+| [0032](adr/0032-three-plans-for-launch.md)             | Three plans for the launch, the middle one recommended         |
 
 ## Conventions
 

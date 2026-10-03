@@ -1,4 +1,5 @@
 import type { Context, Hono } from 'hono';
+import { planAccess } from '../modules/billing/plans.ts';
 import { getCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
 import { withTenant, type Sql } from '../platform/db.ts';
@@ -253,8 +254,10 @@ export function mountAdmin(o: MountAdminOpts) {
     const tenant = c.get('tenant');
     const m = c.get('merchant');
     const { stores } = await sessionStores(sql, tenant.id, m.sessionId, currentMembership(c));
-    const { settings, url } = await withTenant(sql, tenant.id, async (tx) => ({
+    const { settings, url, plan } = await withTenant(sql, tenant.id, async (tx) => ({
       url: await storeOrigin(tx, tenant, o.storeDomain),
+      // which screens open and which show the plan that has them (ADR 0032)
+      plan: await planAccess(tx, tenant.id),
       settings: (
         await tx<
           { logo_url: string | null; prefs: Record<string, unknown>; email: string | null }[]
@@ -281,6 +284,7 @@ export function mountAdmin(o: MountAdminOpts) {
         logoUrl: settings?.logo_url ?? null,
         url,
       },
+      plan,
       stores: stores.map(publicStore),
       push: { publicKey: vapidPublicKey() },
       // "falar com a Venduá" (Ajuda); unset = the page offers the in-app message only

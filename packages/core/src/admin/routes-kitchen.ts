@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE, bodyJson, uuidParam } from '../platform/http.ts';
 import { transitionOrder, type OrderState } from '../modules/orders.ts';
+import { requireFeature } from '../modules/billing/plans.ts';
 import { audit } from './audit.ts';
 import { bool, isObj, text, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
@@ -349,6 +350,7 @@ export function mountKitchen(d: AdminDeps) {
   admin.get(
     '/kitchen',
     read('attendant', async (tx, t) => {
+      await requireFeature(tx, t.id, 'kds');
       const tz = await storeTz(tx, t.id);
       const s = await settingsTx(tx, t.id);
       const categories = await categoriesTx(tx, t.id);
@@ -368,6 +370,7 @@ export function mountKitchen(d: AdminDeps) {
   admin.post(
     '/kitchen/orders/:id/items',
     write('attendant', async (tx, t, m, c) => {
+      await requireFeature(tx, t.id, 'kds');
       const id = uuidParam(c, 'id');
       const body = await bodyJson(c, 8 * 1024);
       const items = itemIds(body.items);
@@ -426,6 +429,7 @@ export function mountKitchen(d: AdminDeps) {
   admin.post(
     '/kitchen/orders/:id/rush',
     write('attendant', async (tx, t, m, c) => {
+      await requireFeature(tx, t.id, 'kds');
       const id = uuidParam(c, 'id');
       const body = await bodyJson(c, 1024);
       const rush = bool(body.rush, 'rush');
@@ -454,6 +458,7 @@ export function mountKitchen(d: AdminDeps) {
   admin.put(
     '/kitchen/stations',
     write('manager', async (tx, t, m, c) => {
+      await requireFeature(tx, t.id, 'kds');
       const body = await bodyJson(c, 128 * 1024);
       const live = new Set((await categoriesTx(tx, t.id)).map((x) => x.id));
       const stations = stationsInput(body.stations, live);

@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { planHas } from './modules/billing/plans.ts';
 import { agentSettingTx, automationAllowedTx, explainAutonomyTx } from './agent/policy.ts';
 import { JOB_KINDS, type JobKind } from './agent/tool-meta.ts';
 import { requestAgentTx } from './agent/dispatch.ts';
@@ -552,18 +553,23 @@ export function createApp({
 
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
-    const { settings, online, publicUrl } = await withTenant(sql, tenant.id, async (tx) => {
-      const settings = await loadSettings(tx, tenant.id);
-      const online = await storePaymentsPublic(
-        tx,
-        tenant.id,
-        provider,
-        settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
-        readPaymentAdjustments(settings?.payment_adjustments),
-      );
-      const publicUrl = await storeOrigin(tx, tenant, publicStoreDomain);
-      return { settings, online, publicUrl };
-    });
+    const { settings, online, publicUrl, loyaltyOn } = await withTenant(
+      sql,
+      tenant.id,
+      async (tx) => {
+        const settings = await loadSettings(tx, tenant.id);
+        const online = await storePaymentsPublic(
+          tx,
+          tenant.id,
+          provider,
+          settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
+          readPaymentAdjustments(settings?.payment_adjustments),
+        );
+        const publicUrl = await storeOrigin(tx, tenant, publicStoreDomain);
+        const loyaltyOn = !!settings?.loyalty && (await planHas(tx, tenant.id, 'loyalty'));
+        return { settings, online, publicUrl, loyaltyOn };
+      },
+    );
     const now = new Date();
     const status = currentStatus(settings, now);
     const hours = settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] };
@@ -608,7 +614,7 @@ export function createApp({
       vocabulary: settings?.vocabulary ?? {},
       pix: pixProfile(settings),
       loyalty: (() => {
-        const l = parseLoyalty(settings?.loyalty);
+        const l = loyaltyOn ? parseLoyalty(settings?.loyalty) : null;
         return l
           ? {
               stampsRequired: l.stampsRequired,

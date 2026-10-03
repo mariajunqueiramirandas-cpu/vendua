@@ -7,7 +7,14 @@ import { storeOrigin } from '../platform/store-origin.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { billingLog, supersedePix } from './billing/invoices.ts';
 import { syncPlanPrices } from './billing/jobs.ts';
-import { planView, type PlanRow } from './billing/plans.ts';
+import {
+  PLAN_FEATURES,
+  planView,
+  type PlanFeature,
+  type PlanFeatures,
+  type PlanRow,
+} from './billing/plans.ts';
+import type { AiPackRow } from './billing/subscriptions.ts';
 import { dropPix, lockSub, markInvoicePaid, type BillingCtx } from './billing/subscriptions.ts';
 import { claimControl, controlTx } from './control.ts';
 import type { PaymentProvider } from './payments/provider.ts';
@@ -15,7 +22,32 @@ import type { PaymentProvider } from './payments/provider.ts';
 const SITE_STATUSES = ['requested', 'in_progress', 'delivered', 'cancelled'] as const;
 
 // /control/v1 (CRM "Lojas"): every store's plan and billing health, the plan catalog, custom
-// domains the team turns on, and PRO+ site requests. Cross-store reads run under controlTx.
+// domains the team turns on, and Pangolin site requests. Cross-store reads run under controlTx.
+
+/** an optional whole count 0–100000 (conversations); undefined when absent */
+function optCount(v: unknown, field: string): number | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 100_000)
+    throw new HttpError(422, 'BAD_REQUEST', `${field} must be an integer 0–100000`, { field });
+  return v;
+}
+
+/** `{ kds: true, … }`: only the known features, each a boolean; merged into the plan's */
+function optFeatures(v: unknown): Partial<PlanFeatures> | undefined {
+  if (v === undefined) return undefined;
+  const bad = () =>
+    new HttpError(422, 'BAD_REQUEST', `features takes ${PLAN_FEATURES.join(', ')} as booleans`, {
+      field: 'features',
+    });
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw bad();
+  const out: Partial<PlanFeatures> = {};
+  for (const [k, b] of Object.entries(v)) {
+    if (!PLAN_FEATURES.includes(k as PlanFeature) || typeof b !== 'boolean') throw bad();
+    out[k as PlanFeature] = b;
+  }
+  return out;
+}
+
 export function mountControlBilling(o: {
   app: Hono<{ Variables: { tenant: Tenant } }>;
   sql: Sql;
@@ -187,7 +219,18 @@ export function mountControlBilling(o: {
       throw new HttpError(422, 'BAD_REQUEST', 'trialDays must be an integer 0–60', {
         field: 'trialDays',
       });
+    // the Vendedor's conversations a paid month and a trial include (ADR 0032)
+    const aiMonth = optCount(body.aiConversations, 'aiConversations');
+    const aiTrial = optCount(body.aiTrialConversations, 'aiTrialConversations');
+    if (body.recommended !== undefined && typeof body.recommended !== 'boolean')
+      throw new HttpError(422, 'BAD_REQUEST', 'recommended must be true or false', {
+        field: 'recommended',
+      });
+    const features = optFeatures(body.features);
     const res = await claimControl(sql, idemKey(c), async (tx) => {
+      // at most one plan leads: recommending this one takes it off the other
+      if (body.recommended === true)
+        await tx`update plans set recommended = false, updated_at = now() where recommended and id <> ${id}`;
       const row = (
         await tx<PlanRow[]>`
           update plans set
@@ -195,6 +238,10 @@ export function mountControlBilling(o: {
             price_cents = ${typeof price === 'number' ? price : tx`price_cents`},
             public = ${typeof body.public === 'boolean' ? body.public : tx`public`},
             trial_days = ${typeof trial === 'number' ? trial : tx`trial_days`},
+            recommended = ${typeof body.recommended === 'boolean' ? body.recommended : tx`recommended`},
+            ai_conversations = ${aiMonth ?? tx`ai_conversations`},
+            ai_trial_conversations = ${aiTrial ?? tx`ai_trial_conversations`},
+            features = ${features ? tx`features || ${tx.json(features as never)}` : tx`features`},
             updated_at = now()
           where id = ${id}
           returning *
@@ -205,6 +252,70 @@ export function mountControlBilling(o: {
     });
     // a new price applies to future charges; the billing job repeats this every tick
     if (typeof price === 'number' && !res.replayed) setTimeout(() => void syncPrices(), 0);
+    return c.json(res.body, res.status as 200);
+  });
+
+  const controlPack = (r: AiPackRow) => ({
+    id: r.id,
+    name: r.name,
+    priceCents: r.price_cents,
+    conversations: r.conversations,
+    public: r.public,
+    sort: r.sort,
+  });
+
+  app.get('/control/v1/ai-packs', async (c) => {
+    controlGate(c);
+    const rows = await controlTx(
+      sql,
+      (tx) => tx<AiPackRow[]>`select * from ai_packs order by sort, price_cents`,
+    );
+    return c.json({ packs: rows.map(controlPack) });
+  });
+
+  // a pack's price applies to packs bought afterwards; an open pack invoice keeps its amount
+  app.patch('/control/v1/ai-packs/:id', async (c) => {
+    controlGate(c);
+    const id = c.req.param('id');
+    if (!/^[a-z0-9_]{2,30}$/.test(id)) throw new HttpError(404, 'NOT_FOUND', 'pack not found');
+    const body = await bodyJson(c);
+    const name = body.name;
+    if (
+      name !== undefined &&
+      (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 40)
+    )
+      throw new HttpError(422, 'BAD_REQUEST', 'name must have 2–40 characters', { field: 'name' });
+    const price = body.priceCents;
+    if (
+      price !== undefined &&
+      (typeof price !== 'number' || !Number.isInteger(price) || price < 100 || price > 10_000_000)
+    )
+      throw new HttpError(422, 'BAD_REQUEST', 'priceCents must be an integer 100–10000000', {
+        field: 'priceCents',
+      });
+    const n = optCount(body.conversations, 'conversations');
+    if (n === 0)
+      throw new HttpError(422, 'BAD_REQUEST', 'conversations must be 1–100000', {
+        field: 'conversations',
+      });
+    if (body.public !== undefined && typeof body.public !== 'boolean')
+      throw new HttpError(422, 'BAD_REQUEST', 'public must be true or false', { field: 'public' });
+    const res = await claimControl(sql, idemKey(c), async (tx) => {
+      const row = (
+        await tx<AiPackRow[]>`
+          update ai_packs set
+            name = ${typeof name === 'string' ? name.trim() : tx`name`},
+            price_cents = ${typeof price === 'number' ? price : tx`price_cents`},
+            conversations = ${n ?? tx`conversations`},
+            public = ${typeof body.public === 'boolean' ? body.public : tx`public`},
+            updated_at = now()
+          where id = ${id}
+          returning *
+        `
+      )[0];
+      if (!row) throw new HttpError(404, 'NOT_FOUND', 'pack not found');
+      return { status: 200, body: { pack: controlPack(row) } };
+    });
     return c.json(res.body, res.status as 200);
   });
 
