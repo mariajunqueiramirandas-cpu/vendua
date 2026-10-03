@@ -947,7 +947,7 @@ function VendedorReference() {
   return (
     <>
       <Block title="Duá: as três vozes">
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
           <div className="flex flex-col gap-1.5 rounded-lg bg-bg p-3 ring-1 ring-line">
             <SacolaBar
               count={2}
@@ -1025,8 +1025,8 @@ function VendedorReference() {
               <GuaranteeChip guaranteed={false} />
               <GuaranteeChip guaranteed={false} short />
             </div>
-            <div className="flex items-center gap-4">
-              <PersonaAvatar size="lg" answering label="Duá está atendendo" />
+            <div className="flex flex-wrap items-center gap-4">
+              <PersonaAvatar size="lg" answering label="O Duá está atendendo" />
               <PersonaAvatar size="md" />
               <PersonaAvatar size="md" pose="avatar-feliz" />
               <PersonaAvatar size="md" pose="avatar-ajuda" />
