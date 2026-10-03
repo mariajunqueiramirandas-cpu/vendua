@@ -177,13 +177,20 @@ export function prevOf(plans: Plan[], plan: Plan) {
   const list = publicPlans(plans);
   const i = list.findIndex((p) => p.id === plan.id);
   const prev = i > 0 ? list[i - 1] : undefined;
-  if (!prev) return undefined;
-  const keeps =
-    (Object.keys(prev.features) as PlanFeature[]).every(
-      (f) => !prev.features[f] || plan.features[f],
-    ) && plan.aiConversations >= prev.aiConversations;
-  return keeps ? prev : undefined;
+  return prev && keepsAll(plan, prev) ? prev : undefined;
 }
+
+/** `plan` has every feature of `base` and at least its conversations: "tudo do <base>" is true. */
+export const keepsAll = (plan: Plan, base: Plan) =>
+  (Object.keys(base.features) as PlanFeature[]).every(
+    (f) => !base.features[f] || plan.features[f],
+  ) && plan.aiConversations >= base.aiConversations;
+
+/** What `base` has that `plan` doesn't. */
+export const featuresLost = (plan: Plan, base: Plan) =>
+  (Object.keys(base.features) as PlanFeature[]).filter(
+    (f) => base.features[f] && !plan.features[f],
+  );
 
 /** The first plan up from `current` that adds something to it. */
 export function nextUp(plans: Plan[], current: Plan) {

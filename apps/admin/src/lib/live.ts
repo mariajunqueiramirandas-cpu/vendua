@@ -48,7 +48,8 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   printers: [['printers']],
   kitchen: [qk.kitchen],
   // the session carries the Vendedor's tab and its "precisa de você" badge
-  vendedor: [['vendedor'], qk.session],
+  // a conversation counted moves Conta's usage meter too
+  vendedor: [['vendedor'], qk.session, qk.account],
   'vendedor.waiting': [['vendedor'], qk.session],
 };
 

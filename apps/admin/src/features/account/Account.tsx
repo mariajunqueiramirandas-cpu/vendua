@@ -44,6 +44,8 @@ import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { PixCode } from '../../ui/PixCode.tsx';
 import {
+  featuresLost,
+  keepsAll,
   nextUp,
   perksAdded,
   perMonth,
@@ -690,8 +692,17 @@ function Upsell({ next, a, onGo }: { next: Plan; a: AccountData; onGo: (() => vo
           {promiseOf(next)}
         </h2>
         <p className="t-body mt-2 text-muted">
-          O <strong className="text-ink">{next.name}</strong> tem tudo do{' '}
-          {a.plan.priceCents === null ? 'seu plano' : shortName(a.plan)}, e mais:
+          {/* staff toggle features one by one: say "tudo do" only when it's true */}
+          {keepsAll(next, a.plan) ? (
+            <>
+              O <strong className="text-ink">{next.name}</strong> tem tudo do{' '}
+              {a.plan.priceCents === null ? 'seu plano' : shortName(a.plan)}, e mais:
+            </>
+          ) : (
+            <>
+              O <strong className="text-ink">{next.name}</strong> traz:
+            </>
+          )}
         </p>
         <ul className={cn('mt-4 grid gap-3', adds.length > 1 && 'md:grid-cols-2')}>
           {adds.map((p) => (
@@ -708,6 +719,15 @@ function Upsell({ next, a, onGo }: { next: Plan; a: AccountData; onGo: (() => vo
             </li>
           ))}
         </ul>
+        {featuresLost(next, a.plan).length ? (
+          <p className="t-caption mt-3 text-muted">
+            Não inclui{' '}
+            {featuresLost(next, a.plan)
+              .map((f) => FEATURE_LABEL[f])
+              .join(', ')}
+            , que o seu plano tem.
+          </p>
+        ) : null}
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
           {next.priceCents !== null ? (
             <p className="tnum font-display text-[1.75rem] font-semibold leading-9 tracking-tight">
