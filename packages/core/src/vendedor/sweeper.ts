@@ -339,6 +339,8 @@ export async function menuChangePass(
 ): Promise<boolean> {
   if (!hasModel) return false;
   return withTenant(sql, tenantId, async (tx) => {
+    // switched off, or a plan without the Vendedor: no model runs on its own (ADR 0032)
+    if (!(await loadAgent(tx, tenantId)).enabled) return false;
     const [r] = await tx<{ changed: boolean }[]>`
       select exists (select 1 from audit_log where tenant_id = ${tenantId} and entity in ('product', 'category', 'modifier', 'catalog')
           and at > coalesce((select max(created_at) from vendedor_runs where tenant_id = ${tenantId}), 'epoch'::timestamptz))

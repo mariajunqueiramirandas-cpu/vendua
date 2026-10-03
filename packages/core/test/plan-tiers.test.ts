@@ -10,6 +10,10 @@ import { handleBillingWebhook } from '../src/modules/billing/webhook.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { enqueueOrderPrintTx } from '../src/modules/printing/jobs.ts';
 import { migrate, withTenant } from '../src/platform/db.ts';
+import { vendedor } from '../src/agent-host/agents/vendedor/index.ts';
+import { agentEnabled } from '../src/store-whatsapp/chat.ts';
+import { ingestPass } from '../src/vendedor/ingest.ts';
+import { SUBJECT_KIND } from '../src/vendedor/threads.ts';
 
 // ADR 0032: what each plan includes (KDS, printing, loyalty, the Vendedor, domain and site), the
 // Vendedor's conversation allowance and the packs that add to it.
@@ -577,6 +581,319 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       expect(res.filter((r) => r.ok)).toHaveLength(1);
       expect(res.filter((r) => !r.ok)).toMatchObject([{ reason: 'exhausted' }]);
       expect(await sources(s.id)).toEqual(['plan', 'plan']);
+    });
+
+    describe('the Vendedor follows the plan', () => {
+      /** the merchant's switch on, answering at any hour, the store always open */
+      const switchOn = async (tenantId: string, coverage = 'always') => {
+        await sql`
+          update store_settings set hours = ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '00:00' }] })}
+          where tenant_id = ${tenantId}
+        `;
+        await sql`
+          insert into store_agent (tenant_id, enabled, settings)
+          values (${tenantId}, true, ${sql.json({ coverage })})
+          on conflict (tenant_id) do update set enabled = true, settings = excluded.settings
+        `;
+      };
+      const thread = async (tenantId: string, phone: string) =>
+        (
+          await sql<{ id: string }[]>`
+            insert into shopper_threads (tenant_id, channel, address, phone, class)
+            values (${tenantId}, 'whatsapp', ${`55${phone}@s.whatsapp.net`}, ${phone}, 'shopper')
+            returning id
+          `
+        )[0]!.id;
+      const ingested = async (messageId: string) => {
+        for (let i = 0; i < 20; i++) {
+          const [m] = await sql<
+            { ingest: string }[]
+          >`select ingest from shopper_messages where id = ${messageId}`;
+          if (m!.ingest !== 'pending') return m!.ingest;
+          await ingestPass({ sql: appSql, media: null, gateway: null });
+        }
+        throw new Error(`message ${messageId} was never ingested`);
+      };
+      let wa = 0;
+      /** what the gateway writes for a shopper's message, then the ingest */
+      const inbound = async (tenantId: string, threadId: string, body: string) => {
+        const id = (
+          await sql<{ id: string }[]>`
+            insert into shopper_messages (tenant_id, thread_id, author, kind, body, wa_id, ingest)
+            values (${tenantId}, ${threadId}, 'shopper', 'text', ${body}, ${`WA${nonce}${++wa}`},
+                    'pending')
+            returning id
+          `
+        )[0]!.id;
+        await sql`update shopper_threads set last_in_at = now(), pending_since = coalesce(pending_since, now()) where id = ${threadId}`;
+        return { id, state: await ingested(id) };
+      };
+      const mailbox = async (tenantId: string) => [
+        ...(await sql<{ kind: string; dedupe_key: string }[]>`
+          select kind, dedupe_key from agent_mailbox where tenant_id = ${tenantId} order by created_at
+        `),
+      ];
+      const heardOf = async (tenantId: string, messageId: string) =>
+        (await mailbox(tenantId)).filter(
+          (r) => r.kind === 'message.inbound' && r.dedupe_key === `in:${messageId}`,
+        );
+      const coreSaid = async (threadId: string) =>
+        (
+          await sql`select body from shopper_messages where thread_id = ${threadId} and author = 'core'`
+        ).map((r) => r.body as string);
+      const conversations = async (tenantId: string) =>
+        (
+          await sql<
+            { n: number }[]
+          >`select count(*)::int as n from ai_conversations where tenant_id = ${tenantId}`
+        )[0]!.n;
+
+      test('Mirim: turning it on, the test chat, Cliente oculto and the interview answer 403', async () => {
+        const s = await store('vd-gate', 'mirim', 'active');
+        const on = await s.owner('PATCH', '/vendedor/settings', { enabled: true });
+        expect(on.status).toBe(403);
+        expect(on.body.error).toMatchObject({
+          code: 'PLAN_REQUIRED',
+          details: { feature: 'vendedor' },
+        });
+        expect(
+          await sql`select 1 from store_agent where tenant_id = ${s.id} and enabled`,
+        ).toHaveLength(0);
+        // switching it off is never gated
+        const off = await s.owner('PATCH', '/vendedor/settings', { enabled: false });
+        expect(off.status).toBe(200);
+        expect(off.body.enabled).toBe(false);
+
+        for (const [path, body] of [
+          ['/vendedor/test-chat', { text: 'oi' }],
+          ['/vendedor/cliente-oculto', {}],
+          ['/vendedor/onboarding/interview', { text: 'vendemos pudim' }],
+        ] as const) {
+          const r = await s.owner('POST', path, body);
+          expect(r.status).toBe(403);
+          expect(r.body.error).toMatchObject({
+            code: 'PLAN_REQUIRED',
+            details: { feature: 'vendedor' },
+          });
+        }
+        expect(await sql`select 1 from vendedor_runs where tenant_id = ${s.id}`).toHaveLength(0);
+        expect(await sql`select 1 from shopper_messages where tenant_id = ${s.id}`).toHaveLength(0);
+        expect(await mailbox(s.id)).toEqual([]);
+      });
+
+      test('switched on but on Mirim it stays quiet; back on Bandeira it answers, still switched on', async () => {
+        const s = await store('vd-mirim', 'mirim', 'active');
+        await switchOn(s.id);
+        const th = await thread(s.id, '11987650001');
+        const m = await inbound(s.id, th, 'oi, tem pudim hoje?');
+        expect(m.state).toBe('skipped');
+        expect(await mailbox(s.id)).toEqual([]);
+        expect(await conversations(s.id)).toBe(0);
+        expect(await coreSaid(th)).toEqual([]);
+        expect((await s.owner('GET', '/vendedor/settings')).body.enabled).toBe(false);
+        expect(await agentEnabled(appSql, s.id)).toBe(false);
+
+        // adjusting a setting on Mirim keeps the merchant's switch as it was
+        const named = await s.owner('PATCH', '/vendedor/settings', { name: 'Bia' });
+        expect(named.status).toBe(200);
+        expect(named.body.enabled).toBe(false);
+        expect(
+          (await sql`select enabled from store_agent where tenant_id = ${s.id}`)[0]!.enabled,
+        ).toBe(true);
+
+        // the upgrade: nobody switches it on again
+        await sql`update tenants set plan = 'bandeira' where id = ${s.id}`;
+        await sql`update subscriptions set plan_id = 'bandeira' where tenant_id = ${s.id}`;
+        expect(await agentEnabled(appSql, s.id)).toBe(true);
+        expect((await s.owner('GET', '/vendedor/settings')).body.enabled).toBe(true);
+        const again = await inbound(s.id, th, 'e agora?');
+        expect(again.state).toBe('done');
+        expect(await heardOf(s.id, again.id)).toHaveLength(1);
+        expect(await sources(s.id)).toEqual(['plan']);
+      });
+
+      test('the month spent: Core hands the shopper to the store once; a pack brings it back', async () => {
+        const s = await store('vd-out', aiPlan, 'active');
+        await switchOn(s.id);
+        for (const k of ['thread:earlier-a', 'thread:earlier-b'])
+          expect((await claim(s.id, k)).ok).toBe(true);
+
+        const th = await thread(s.id, '11987650002');
+        const first = await inbound(s.id, th, 'oi, tem pudim?');
+        expect(first.state).toBe('skipped');
+        const t = (
+          await sql<{ owner: string; owner_reason: string; waiting_since: Date | null }[]>`
+            select owner, owner_reason, waiting_since from shopper_threads where id = ${th}
+          `
+        )[0]!;
+        expect(t).toMatchObject({ owner: 'human', owner_reason: 'conversas do mês esgotadas' });
+        expect(t.waiting_since).not.toBeNull();
+        const said = await coreSaid(th);
+        expect(said).toHaveLength(1);
+        expect(said[0]).toContain('Vou chamar alguém da loja');
+        // no turn and no handback timer: the next message asks the allowance again
+        expect(await mailbox(s.id)).toEqual([]);
+        expect(await sources(s.id)).toEqual(['plan', 'plan']);
+
+        // the store holds the thread now: no second notice
+        await inbound(s.id, th, 'alô?');
+        expect(await coreSaid(th)).toHaveLength(1);
+        // its window lapsed, still nothing left: still skipped, still one notice
+        await sql`update shopper_threads set human_until = now() - interval '1 minute' where id = ${th}`;
+        const third = await inbound(s.id, th, 'tem alguém aí?');
+        expect(third.state).toBe('skipped');
+        expect(await heardOf(s.id, third.id)).toEqual([]);
+        expect(await coreSaid(th)).toHaveLength(1);
+        expect(await sources(s.id)).toEqual(['plan', 'plan']);
+
+        // a paid pack: the next shopper gets the Vendedor
+        await credit(s.id, 1);
+        const th2 = await thread(s.id, '11987650003');
+        const next = await inbound(s.id, th2, 'boa noite');
+        expect(next.state).toBe('done');
+        expect(await heardOf(s.id, next.id)).toHaveLength(1);
+        expect(await coreSaid(th2)).toEqual([]);
+        expect((await sql`select owner from shopper_threads where id = ${th2}`)[0]!.owner).not.toBe(
+          'human',
+        );
+        expect(await sources(s.id)).toEqual(['plan', 'plan', 'pack']);
+      });
+
+      test('Ensaio with the month spent: skipped quietly, nothing handed over', async () => {
+        const s = await store('vd-ens', aiPlan, 'active');
+        await switchOn(s.id, 'rehearsal');
+        for (const k of ['thread:earlier-a', 'thread:earlier-b'])
+          expect((await claim(s.id, k)).ok).toBe(true);
+        const th = await thread(s.id, '11987650004');
+        const m = await inbound(s.id, th, 'oi');
+        expect(m.state).toBe('skipped');
+        expect(await coreSaid(th)).toEqual([]);
+        expect(await mailbox(s.id)).toEqual([]);
+        const t = (
+          await sql`select owner, owner_reason, waiting_since from shopper_threads where id = ${th}`
+        )[0]!;
+        expect(t).toMatchObject({ owner: 'open', owner_reason: null, waiting_since: null });
+      });
+
+      test('Bandeira: a conversation counts once, however many messages it has that day', async () => {
+        const s = await store('vd-band', 'bandeira', 'active');
+        await switchOn(s.id);
+        const th = await thread(s.id, '11987650005');
+        const a = await inbound(s.id, th, 'oi, tem pudim?');
+        expect(a.state).toBe('done');
+        expect(await heardOf(s.id, a.id)).toHaveLength(1);
+        expect(await sources(s.id)).toEqual(['plan']);
+        const key = (
+          await sql`select subject_key from ai_conversations where tenant_id = ${s.id}`
+        )[0]!.subject_key;
+        expect(key).toBe(`thread:${th}`);
+
+        const b = await inbound(s.id, th, 'quero dois');
+        expect(b.state).toBe('done');
+        expect(await heardOf(s.id, b.id)).toHaveLength(1);
+        expect(await sources(s.id)).toEqual(['plan']);
+      });
+
+      /** what a turn reads before the model runs: its floor, after the turn's own claim */
+      const turnFloor = async (tenantId: string, threadId: string) =>
+        withTenant(appSql, tenantId, async (tx) => {
+          const ctx = (await vendedor.def.load!.subject!({
+            tx,
+            tenantId,
+            subject: { kind: SUBJECT_KIND, id: threadId },
+          } as never)) as { floor: string };
+          return ctx.floor;
+        });
+
+      test('quando eu demorar: the turn claims when it answers; the month spent, it hands over', async () => {
+        const room = await store('vd-slow', 'bandeira', 'active');
+        await switchOn(room.id, 'when_slow');
+        const th0 = await thread(room.id, '11987650006');
+        const w = await inbound(room.id, th0, 'boa noite');
+        expect(w.state).toBe('done');
+        // the store has its minutes: nothing counted yet
+        expect((await mailbox(room.id)).map((r) => r.kind).sort()).toEqual([
+          'message.inbound',
+          'timer.slow',
+        ]);
+        expect(await conversations(room.id)).toBe(0);
+        await sql`update shopper_threads set pending_since = now() - interval '10 minutes' where id = ${th0}`;
+        expect(await turnFloor(room.id, th0)).toBe('agent');
+        expect(await sources(room.id)).toEqual(['plan']);
+        // the next turn of the same conversation spends nothing more
+        expect(await turnFloor(room.id, th0)).toBe('agent');
+        expect(await sources(room.id)).toEqual(['plan']);
+
+        const s = await store('vd-slow-out', aiPlan, 'active');
+        await switchOn(s.id, 'when_slow');
+        for (const k of ['thread:earlier-a', 'thread:earlier-b'])
+          expect((await claim(s.id, k)).ok).toBe(true);
+        const th = await thread(s.id, '11987650007');
+        expect((await inbound(s.id, th, 'boa noite')).state).toBe('done');
+        expect(await coreSaid(th)).toEqual([]);
+        // timer.slow wakes the turn: no room, so the store gets it and no model runs
+        await sql`update shopper_threads set pending_since = now() - interval '10 minutes' where id = ${th}`;
+        expect(await turnFloor(s.id, th)).toBe('store');
+        const t = (
+          await sql<{ owner: string; owner_reason: string; waiting_since: Date | null }[]>`
+            select owner, owner_reason, waiting_since from shopper_threads where id = ${th}
+          `
+        )[0]!;
+        expect(t).toMatchObject({ owner: 'human', owner_reason: 'conversas do mês esgotadas' });
+        expect(t.waiting_since).not.toBeNull();
+        const said = await coreSaid(th);
+        expect(said).toHaveLength(1);
+        expect(said[0]).toContain('Vou chamar alguém da loja');
+        expect((await mailbox(s.id)).filter((r) => r.kind === 'timer.handback')).toEqual([]);
+        // another turn on it: the store holds it, no second notice
+        expect(await turnFloor(s.id, th)).toBe('store');
+        // and once its window lapsed with still nothing left: still one notice
+        await sql`update shopper_threads set human_until = now() - interval '1 minute' where id = ${th}`;
+        expect(await turnFloor(s.id, th)).toBe('store');
+        expect(await coreSaid(th)).toHaveLength(1);
+        expect(await sources(s.id)).toEqual(['plan', 'plan']);
+      });
+
+      test('the site’s chat with the month spent points the shopper at the menu', async () => {
+        const s = await store('vd-web', aiPlan, 'active');
+        await switchOn(s.id);
+        for (const k of ['thread:earlier-a', 'thread:earlier-b'])
+          expect((await claim(s.id, k)).ok).toBe(true);
+        const th = (
+          await sql<{ id: string }[]>`
+            insert into shopper_threads (tenant_id, channel, address, class)
+            values (${s.id}, 'web', ${`web:${crypto.randomUUID()}`}, 'shopper')
+            returning id
+          `
+        )[0]!.id;
+        const m = await inbound(s.id, th, 'tem pudim?');
+        expect(m.state).toBe('skipped');
+        expect(await coreSaid(th)).toEqual([
+          'No momento não consigo continuar por aqui, mas você pode fazer o seu pedido pelo cardápio desta página.',
+        ]);
+        expect(
+          (await sql`select owner_reason from shopper_threads where id = ${th}`)[0]!.owner_reason,
+        ).toBe('conversas do mês esgotadas');
+        expect(await heardOf(s.id, m.id)).toEqual([]);
+        // nothing goes out on WhatsApp for a web thread
+        expect(await sql`select 1 from store_wa_messages where tenant_id = ${s.id}`).toHaveLength(
+          0,
+        );
+      });
+
+      test('the owner’s test chat reaches the Vendedor and never spends a conversation', async () => {
+        const s = await store('vd-test', 'bandeira', 'active');
+        await switchOn(s.id);
+        const r = await s.owner('POST', '/vendedor/test-chat', { text: 'oi, tem pudim?' });
+        expect(r.status).toBe(201);
+        const [msg] = await sql<{ id: string }[]>`
+          select m.id from shopper_messages m join shopper_threads t on t.id = m.thread_id
+          where m.tenant_id = ${s.id} and t.channel = 'test' and m.author = 'shopper'
+        `;
+        expect(await ingested(msg!.id)).toBe('done');
+        expect(await heardOf(s.id, msg!.id)).toHaveLength(1);
+        expect(await conversations(s.id)).toBe(0);
+      });
     });
   });
 
