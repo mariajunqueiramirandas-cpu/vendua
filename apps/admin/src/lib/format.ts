@@ -62,6 +62,16 @@ export function when(iso: string, tz?: string) {
   return `${dateShort(d, tz)} às ${t}`;
 }
 
+/** A deadline: "hoje às 16h12" · "amanhã às 9h" · "seg, 6 out às 16h12" */
+export function until(iso: string, tz?: string, now = new Date()) {
+  const d = new Date(iso);
+  const k = dayKey(d, tz);
+  const t = time(d, tz).replace(/h00$/, 'h');
+  if (k === dayKey(now, tz)) return `hoje às ${t}`;
+  if (k === dayKey(new Date(now.getTime() + 86_400_000), tz)) return `amanhã às ${t}`;
+  return `${dateShort(d, tz)} às ${t}`;
+}
+
 /** "agora" · "há 3 min" · "há 2 h" · "há 3 dias" */
 export function ago(iso: string, now = Date.now()) {
   const s = Math.max(0, (now - new Date(iso).getTime()) / 1000);

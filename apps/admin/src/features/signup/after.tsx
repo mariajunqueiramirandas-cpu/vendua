@@ -15,7 +15,7 @@ import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Confetti } from '../../ui/Celebration.tsx';
 import { ErrorState, messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
-import { PixCode } from '../../ui/PixCode.tsx';
+import { PixCode, useIssuePix } from '../../ui/PixCode.tsx';
 import { ChapterList } from '../onboarding/Overview.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import type { Draft } from './progress.ts';
@@ -264,14 +264,12 @@ export function PixPay({
     mutationFn: (id: string) => api.invoicePix(id),
     onSuccess: (n) => qc.setQueryData(qk.account, n),
   });
-  // an invoice without its Pix yet (or a stale one): ask for it once, then the merchant decides
-  const asked = useRef(false);
-  useEffect(() => {
-    if (inv && (inv.status === 'open' || inv.status === 'failed') && !inv.pix && !asked.current) {
-      asked.current = true;
-      issue.mutate(inv.id);
-    }
-  }, [inv, issue]);
+  // an invoice without its Pix yet (or one whose Pix expired): ask for it, once per code
+  useIssuePix(
+    inv,
+    (inv?.status === 'open' || inv?.status === 'failed') && !issue.isPending,
+    issue.mutate,
+  );
   const toCard = useMutation({
     mutationFn: () => api.updateSubscription({ method: 'card' }),
     onSuccess: (n) => {

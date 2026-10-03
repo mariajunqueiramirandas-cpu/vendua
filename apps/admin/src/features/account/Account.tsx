@@ -42,7 +42,7 @@ import { CommitInput, Field, Segmented, TextArea, TextInput } from '../../ui/fie
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
-import { PixCode } from '../../ui/PixCode.tsx';
+import { PixCode, useIssuePix } from '../../ui/PixCode.tsx';
 import {
   featuresLost,
   keepsAll,
@@ -1360,14 +1360,15 @@ function InvoiceSheet({
     mutationFn: (x: string) => api.invoicePix(x),
     onSuccess: (n) => qc.setQueryData(qk.account, n),
   });
-  const asked = useRef<string | null>(null);
-  useEffect(() => {
-    if (!inv || inv.status === 'paid' || inv.status === 'void' || inv.pix) return;
-    if (inv.method === 'pix' && asked.current !== inv.id) {
-      asked.current = inv.id;
-      issue.mutate(inv.id);
-    }
-  }, [inv, issue]);
+  useIssuePix(
+    inv,
+    !!inv &&
+      inv.method === 'pix' &&
+      inv.status !== 'paid' &&
+      inv.status !== 'void' &&
+      !issue.isPending,
+    issue.mutate,
+  );
   return (
     <Sheet
       open={!!inv}
