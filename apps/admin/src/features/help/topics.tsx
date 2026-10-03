@@ -326,7 +326,7 @@ export const TOPICS: Record<TopicId, Topic> = {
     items: [
       {
         q: 'Como mudo um texto ou uma foto?',
-        a: 'Toque na parte da página que quer mudar. Ela abre para editar, e a prévia muda na hora.',
+        a: 'Toque na parte da página que quer mudar. No celular, o nome dela aparece embaixo (as setas passam para a vizinha): toque nele para editar. A prévia muda na hora.',
       },
       {
         q: 'Quando os clientes veem a mudança?',
@@ -339,11 +339,15 @@ export const TOPICS: Record<TopicId, Topic> = {
       },
       {
         q: 'Como mudo as cores?',
-        a: 'Toque em “cores”. Se uma combinação ficar difícil de ler, o painel avisa antes de publicar.',
+        a: 'Toque em “Cores e cantos”, no alto da lista. Se uma combinação ficar difícil de ler, o painel avisa antes de publicar.',
       },
       {
         q: 'Mudar a ordem ou esconder uma parte',
-        a: 'Em “partes da página”, suba, desça ou esconda cada parte, ou adicione uma nova.',
+        a: 'Na lista, suba, desça ou esconda cada parte, ou adicione uma nova. O topo e o rodapé aparecem em todas as páginas.',
+      },
+      {
+        q: 'Errei. Como volto atrás?',
+        a: 'Toque em desfazer (a seta para trás), ou em “descartar” para voltar ao que está no ar. Se sair da tela antes de publicar, as mudanças continuam guardadas neste aparelho.',
       },
     ],
   },

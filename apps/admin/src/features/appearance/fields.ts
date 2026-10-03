@@ -34,6 +34,10 @@ const STORE_SECTION_NAMES: Record<string, string> = {
   'store:footer': 'Rodapé',
   'store:catalog': 'Cardápio',
   'store:qr-menu': 'Cardápio do QR code',
+  'store:faq': 'Perguntas frequentes',
+  'store:catalog-browser': 'Cardápio',
+  'store:product-figure': 'Foto do produto',
+  'store:product-perks': 'Vantagens do produto',
 };
 
 export const sectionName = (type: string) =>
@@ -43,6 +47,24 @@ export const sectionName = (type: string) =>
 
 /** SDK sections a merchant can add to a page (the schemas' `addable`). */
 export const ADDABLE: ComponentType[] = SDK_SECTIONS.filter((s) => s.addable).map((s) => s.type);
+
+/** One line on what an addable section is for, in the add sheet. */
+export const ADD_HINT: Record<string, string> = {
+  'sdk:announcement-bar': 'Uma faixa no alto para um recado: promoção, feriado, novidade.',
+  'sdk:catalog-grid': 'Seus produtos em grade, com foto e preço.',
+  'sdk:product-list': 'Uma seleção de produtos lado a lado.',
+  'sdk:store-status': 'Se a loja está aberta, os horários e o endereço.',
+  'sdk:rich-text': 'Um título e um texto seu, como um recado ou a sua história.',
+};
+
+/** The words a merchant recognises a section by: its own title or first line of copy. */
+export function sectionSummary(settings: Record<string, unknown> | undefined): string | null {
+  for (const k of ['title', 'eyebrow', 'brand', 'text', 'body', 'note', 'label']) {
+    const v = settings?.[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return null;
+}
 
 /** Whether the storefront keeps a link: the Kernel drops an unsafe one silently when it renders
  *  (`resolveSettings`), so the editor says so first. */
@@ -99,6 +121,7 @@ const KEY_NAMES: Record<string, string> = {
   figTitle: 'Legenda da foto',
   figSub: 'Sublegenda da foto',
   anchor: 'Âncora',
+  proof: 'Selos (separe cada um com |)',
 };
 
 const OPTION_NAMES: Record<string, string> = {
@@ -274,6 +297,30 @@ const rank = (k: string) => {
   const i = READING.indexOf(k);
   return i < 0 ? READING.length : i;
 };
+
+export type FieldGroup = { label: string | null; fields: FieldSpec[] };
+
+const GROUPS: [string, (f: FieldSpec) => boolean][] = [
+  ['Fotos', (f) => f.kind === 'image' || /^(image|logo|fig)/i.test(f.key)],
+  ['Botões e links', (f) => f.kind === 'url' || /^(cta|secondary|link|cardCta)/i.test(f.key)],
+  ['Opções', (f) => f.kind === 'boolean' || f.kind === 'select' || f.kind === 'number'],
+];
+
+/** Long forms read in chunks (textos, fotos, botões, opções); a short one stays one list. */
+export function groupFields(fields: FieldSpec[]): FieldGroup[] {
+  const shown = fields.filter((f) => f.kind !== 'skip');
+  const out: FieldGroup[] = [{ label: 'Textos', fields: [] }];
+  for (const f of shown) {
+    // a list is a group of its own, titled by its field
+    const name = f.kind === 'list' ? null : (GROUPS.find(([, test]) => test(f))?.[0] ?? 'Textos');
+    const g = name === null ? undefined : out.find((x) => x.label === name);
+    if (g) g.fields.push(f);
+    else out.push({ label: name, fields: [f] });
+  }
+  const groups = out.filter((g) => g.fields.length);
+  if (shown.length <= 3 || groups.length < 2) return [{ label: null, fields: shown }];
+  return groups;
+}
 
 export function fieldsFor(
   type: string,

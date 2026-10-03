@@ -383,26 +383,29 @@ export function ProductSkeleton() {
   );
 }
 
-/** Aparência: the section list, the storefront preview, the settings panel. */
+/** Aparência: the list of what's on the page, the storefront preview, the settings panel. */
 export function AppearanceSkeleton() {
   return (
     <SkeletonGroup>
       <div className="mb-4 flex gap-2">
-        <Skeleton className="h-12 flex-1 rounded-full md:max-w-xl" delay={0} />
-        <Skeleton className="hidden h-12 w-28 rounded-full md:block" />
+        <Skeleton className="h-12 flex-1 rounded-full md:max-w-md" delay={0} />
+        <Skeleton className="hidden h-12 w-24 rounded-full md:block" />
       </div>
-      <div className="grid gap-5 xl:grid-cols-[280px_1fr_380px]">
-        <Card className="space-y-2 p-3 max-xl:hidden">
-          {Array.from({ length: 6 }, (_, i) => (
-            <Skeleton key={i} className="h-11 rounded-md" />
+      <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] min-[1400px]:grid-cols-[320px_minmax(0,1fr)_380px]">
+        <div className="space-y-2 max-[1399px]:hidden">
+          {Array.from({ length: 7 }, (_, i) => (
+            <Skeleton key={i} className="h-14 rounded-md" />
+          ))}
+        </div>
+        <Skeleton
+          className="mx-auto h-[56dvh] w-full rounded-lg md:aspect-[9/19] md:h-auto md:max-w-[340px] md:rounded-[44px]"
+          delay={0}
+        />
+        <Card className="space-y-2 p-4 md:p-5">
+          {Array.from({ length: 5 }, (_, i) => (
+            <Skeleton key={i} className="h-14 rounded-md" />
           ))}
         </Card>
-        <div className="mx-auto w-full max-w-[400px]">
-          <Skeleton className="aspect-[9/16] rounded-[28px]" delay={0} />
-        </div>
-        <div className="max-xl:hidden">
-          <FormSectionSkeleton fields={3} />
-        </div>
       </div>
     </SkeletonGroup>
   );

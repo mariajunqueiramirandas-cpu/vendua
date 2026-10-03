@@ -10,7 +10,6 @@ import {
 } from '@vendua/templates';
 import { useEffect, useState } from 'react';
 import type { StoreTokens } from '../../lib/api.ts';
-import { cn } from '../../ui/cn.ts';
 import { Chips, Field } from '../../ui/fields.tsx';
 
 // Colours for people, not designers (§6.7): pick a palette (some from the store's
@@ -99,10 +98,13 @@ export function Colors({
   value,
   onChange,
   logoUrl,
+  sample,
 }: {
   value: StoreTokens;
   onChange: (t: StoreTokens) => void;
   logoUrl: string | null;
+  /** a small "como fica" card, for when the live preview isn't on screen */
+  sample?: boolean;
 }) {
   const [fromLogo, setFromLogo] = useState<string[]>([]);
   useEffect(() => {
@@ -157,7 +159,7 @@ export function Colors({
               type="color"
               value={value.color[e.key].slice(0, 7)}
               onChange={(ev) => set(e.key, ev.target.value)}
-              className="size-10 shrink-0 cursor-pointer rounded-full border-0 bg-transparent p-0"
+              className="size-10 shrink-0 cursor-pointer rounded-full border-0 bg-transparent p-0 ring-1 ring-line-strong"
               aria-label={e.label}
             />
             <span className="min-w-0 flex-1">
@@ -168,27 +170,7 @@ export function Colors({
         ))}
       </div>
 
-      <ul className="space-y-1.5" aria-label="leitura">
-        {CHECKS.map((c) => {
-          const ok = c.pairs.every(
-            ([fg, bg]) => (contrastRatio(value.color[fg], value.color[bg]) ?? 0) >= 4.5,
-          );
-          return (
-            <li
-              key={c.label}
-              className={cn('t-body flex items-center gap-2', ok ? 'text-success' : 'text-danger')}
-            >
-              {ok ? (
-                <CheckCircle weight="fill" className="size-5" />
-              ) : (
-                <WarningCircle weight="fill" className="size-5" />
-              )}
-              <span className="text-ink">{c.label}:</span>{' '}
-              {ok ? 'fácil de ler ✓' : 'difícil de ler — ajuste a cor'}
-            </li>
-          );
-        })}
-      </ul>
+      <Readability value={value} />
 
       <Field label="Cantos">
         <Chips
@@ -199,33 +181,69 @@ export function Colors({
         />
       </Field>
 
-      <div>
-        <p className="t-caption mb-2 font-semibold text-muted">Como fica</p>
-        <div className="rounded-lg p-4" style={{ background: value.color.bg }}>
-          <div
-            className="p-4"
-            style={{ background: value.color.surface, borderRadius: value.radius.lg }}
+      {sample ? <Sample value={value} /> : null}
+    </div>
+  );
+}
+
+/** One friendly line when everything reads well; the rows that don't, when something doesn't. */
+function Readability({ value }: { value: StoreTokens }) {
+  const rows = CHECKS.map((c) => ({
+    label: c.label,
+    ok: c.pairs.every(([fg, bg]) => (contrastRatio(value.color[fg], value.color[bg]) ?? 0) >= 4.5),
+  }));
+  if (rows.every((r) => r.ok))
+    return (
+      <p className="t-body flex items-center gap-2 rounded-md bg-success-soft px-3 py-2.5 text-success">
+        <CheckCircle weight="fill" className="size-5 shrink-0" />
+        <span className="text-ink">Tudo fácil de ler ✓</span>
+      </p>
+    );
+  return (
+    <div className="space-y-2 rounded-md bg-danger-soft p-3" role="status">
+      <p className="t-label text-ink">Algumas cores estão difíceis de ler. Ajuste para publicar:</p>
+      <ul className="space-y-1.5" aria-label="leitura">
+        {rows
+          .filter((r) => !r.ok)
+          .map((r) => (
+            <li key={r.label} className="t-body flex items-center gap-2 text-danger">
+              <WarningCircle weight="fill" className="size-5 shrink-0" />
+              <span className="text-ink">{r.label}</span>
+            </li>
+          ))}
+      </ul>
+    </div>
+  );
+}
+
+function Sample({ value }: { value: StoreTokens }) {
+  return (
+    <div>
+      <p className="t-caption mb-2 font-semibold text-muted">Como fica</p>
+      <div className="rounded-lg p-4" style={{ background: value.color.bg }}>
+        <div
+          className="p-4"
+          style={{ background: value.color.surface, borderRadius: value.radius.lg }}
+        >
+          <p
+            className="font-semibold"
+            style={{ color: value.color.text, fontFamily: value.font.display }}
           >
-            <p
-              className="font-semibold"
-              style={{ color: value.color.text, fontFamily: value.font.display }}
-            >
-              Pudim de leite
-            </p>
-            <p className="t-caption" style={{ color: value.color.muted }}>
-              Lisinho, sem furinho, calda no ponto.
-            </p>
-            <span
-              className="t-label mt-3 inline-flex h-10 items-center px-4"
-              style={{
-                background: value.color.accent,
-                color: value.color.onAccent,
-                borderRadius: value.radius.md,
-              }}
-            >
-              Adicionar à sacola
-            </span>
-          </div>
+            Pudim de leite
+          </p>
+          <p className="t-caption" style={{ color: value.color.muted }}>
+            Lisinho, sem furinho, calda no ponto.
+          </p>
+          <span
+            className="t-label mt-3 inline-flex h-10 items-center px-4"
+            style={{
+              background: value.color.accent,
+              color: value.color.onAccent,
+              borderRadius: value.radius.md,
+            }}
+          >
+            Adicionar à sacola
+          </span>
         </div>
       </div>
     </div>
