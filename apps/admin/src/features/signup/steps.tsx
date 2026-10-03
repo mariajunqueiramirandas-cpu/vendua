@@ -695,6 +695,8 @@ function stepFor(e: unknown): { step: StepId; notice: string } | null {
 const CREATE_ERR: Record<string, string> = {
   SIGNUP_LIMIT: 'Esse WhatsApp já abriu lojas demais hoje. Tente de novo amanhã.',
   BILLING_UNAVAILABLE: 'O cadastro pela internet ainda não abriu. Tente de novo em breve.',
+  BILLING_PROVIDER_ERROR:
+    'O Mercado Pago não gerou a cobrança agora. A equipe da Venduá já foi avisada. Tente de novo em alguns minutos.',
   SIGNUP_CLOSED: 'O cadastro pela internet está fechado agora. Tente de novo mais tarde.',
   INVALID_ACCESS_CODE: 'Esse código não confere. Confira e tente de novo.',
 };

@@ -210,6 +210,8 @@ export interface PaymentProvider {
   verifyWebhook(headers: Headers, rawBody: string, url: URL): WebhookEvent | null;
 
   // the plan, on Venduá's account
+  /** whose account the platform token is; `live` false for a test token (CRM signup panel) */
+  platformAccount(): Promise<{ id: string; name: string | null; live: boolean }>;
   platformPix(req: PixRequest): Promise<ProviderPayment>;
   platformGetPayment(id: string): Promise<ProviderPayment>;
   platformCancelPayment(id: string): Promise<ProviderPayment>;

@@ -921,6 +921,12 @@ export interface SignupReadiness {
   email: boolean;
   billing: boolean;
   open: boolean;
+  /** Core asked MP whether it takes Venduá's token; off = no token set */
+  mercadoPago?: {
+    state: 'off' | 'ok' | 'test' | 'failed';
+    account: string | null;
+    detail: string | null;
+  };
 }
 export interface AiPack {
   id: string;

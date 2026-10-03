@@ -47,13 +47,17 @@ export async function viaProvider<T>(work: () => Promise<T>): Promise<T> {
   } catch (err) {
     if (err instanceof ProviderError) {
       billingLog.warn({ code: err.code, err: err.message }, 'billing provider call failed');
-      throw new HttpError(
-        503,
-        'BILLING_UNAVAILABLE',
-        'the payment provider did not answer — try again',
-        {
-          provider: err.code,
-        },
+      // not BILLING_UNAVAILABLE (no way to pay on this install): billing is set up, this call failed
+      throw Object.assign(
+        new HttpError(
+          503,
+          'BILLING_PROVIDER_ERROR',
+          'the payment provider did not answer — try again',
+          {
+            provider: err.code,
+          },
+        ),
+        { cause: err },
       );
     }
     throw err;
