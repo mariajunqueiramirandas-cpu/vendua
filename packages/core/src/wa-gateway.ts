@@ -29,6 +29,8 @@ const gateway = new Gateway({
   maxSessions: num(process.env.WA_MAX_SESSIONS, 300),
   minSendGapMs: num(process.env.WA_MIN_SEND_GAP_MS, 1_500),
   maxPerHour: num(process.env.WA_MAX_PER_HOUR, 200),
+  chatGapMs: num(process.env.WA_CHAT_GAP_MS, 1_500),
+  conversationGapMs: num(process.env.WA_CONVERSATION_GAP_MS, 250),
   log: gwLog,
 });
 

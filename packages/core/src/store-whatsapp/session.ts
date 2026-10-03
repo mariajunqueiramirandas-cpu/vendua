@@ -1,6 +1,7 @@
 import type { Logger } from 'pino';
 import { LeaseLost, type AuthStore, type BufferCodec } from './auth-store.ts';
-import { jidForPhone, phoneForJid, phoneVariants, reconnectDelayMs } from './text.ts';
+import { parseContent, type ChatContent } from './content.ts';
+import { jidForPhone, phoneVariants, reconnectDelayMs, userJid } from './text.ts';
 
 // One store's linked WhatsApp device. The gateway owns the lifecycle (start, pair, stop,
 // logout); this class owns the socket and turns its events into store states. Everything the
@@ -26,6 +27,28 @@ export interface Inbound {
   id: string;
 }
 
+/** One 1:1 message as the socket delivered it, the shopper's or typed on the store's phone. The
+ *  gateway decides, per store, what to do with it; lookups that need the socket come as calls. */
+export interface WaInbound {
+  id: string;
+  fromMe: boolean;
+  /** the chat as delivered, device part dropped: a PN or a LID user jid */
+  jid: string;
+  /** its PN/LID counterpart when WhatsApp sent one */
+  alt: string | null;
+  pushName: string | null;
+  /** plain text, what SAIR/VOLTAR reads (captions don't count) */
+  text: string | null;
+  content: ChatContent | null;
+  /** the PN jid behind a LID, from the device's own mapping */
+  pnForLid(lid: string): Promise<string | null>;
+  /** the media bytes (audio, image), bounded */
+  download(): Promise<Uint8Array>;
+}
+
+export type OutContent =
+  { text: string } | { audio: Uint8Array; ptt: true; mimetype: string; seconds?: number };
+
 export interface Receipt {
   waId: string;
   status: 'delivered' | 'read';
@@ -43,13 +66,14 @@ export interface WaSocket {
   ev: {
     on(event: 'connection.update', cb: (u: ConnectionUpdate) => void): void;
     on(event: 'creds.update', cb: () => void): void;
-    on(
-      event: 'messages.upsert',
-      cb: (m: { type: string; messages: { key?: WaKey; message?: unknown }[] }) => void,
-    ): void;
+    on(event: 'messages.upsert', cb: (m: { type: string; messages: WaMessage[] }) => void): void;
     on(
       event: 'messages.update',
       cb: (u: { key?: WaKey; update?: { status?: number | null } }[]) => void,
+    ): void;
+    on(
+      event: 'presence.update',
+      cb: (p: { id: string; presences: Record<string, { lastKnownPresence?: string }> }) => void,
     ): void;
   };
   user?: { id?: string; phoneNumber?: string; name?: string } | undefined;
@@ -58,11 +82,22 @@ export interface WaSocket {
   onWhatsApp(...jids: string[]): Promise<{ jid: string; exists: boolean }[] | undefined>;
   sendMessage(
     jid: string,
-    content: { text: string },
+    content: OutContent,
     opts?: { messageId?: string },
   ): Promise<{ key?: { id?: string | null } } | undefined>;
+  /** asks the phone that sent a media message to upload it again (expired links) */
+  updateMediaMessage(message: WaMessage): Promise<WaMessage>;
+  presenceSubscribe(jid: string): Promise<void>;
+  /** never 'available': an online linked device silences the merchant's phone */
+  sendPresenceUpdate(type: 'composing' | 'recording' | 'paused', jid: string): Promise<void>;
   logout(): Promise<unknown>;
   end(err?: Error): void;
+}
+
+export interface WaMessage {
+  key?: WaKey;
+  message?: unknown;
+  pushName?: string | null;
 }
 
 export interface ConnectionUpdate {
@@ -95,11 +130,15 @@ export interface WaRuntime {
     getMessage: (key: WaKey) => Promise<{ conversation: string } | undefined>;
   }): Promise<WaSocket>;
   normalize(message: unknown): unknown;
+  /** a media message's bytes (baileys `downloadMediaMessage`, re-upload on expired links) */
+  download(message: WaMessage, sock: WaSocket, logger: Logger): Promise<Uint8Array>;
 }
 
 export interface SessionHooks {
   onState(u: StateUpdate): void;
-  onInbound(m: Inbound): void;
+  onMessage(m: WaInbound): void;
+  /** someone in a 1:1 chat is typing or recording (the chat's jid as WhatsApp sent it) */
+  onTyping(jid: string): void;
   onReceipts(r: Receipt[]): void;
   /** the fence failed: another gateway owns this store now */
   onLeaseLost(): void;
@@ -130,6 +169,10 @@ export const PAIR_WINDOW_MS = 200_000;
 /** consecutive failed connections before the state says error (it keeps retrying) */
 const ERROR_AFTER_FAILURES = 6;
 const JID_CACHE_MAX = 2_000;
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+const PRESENCE_TIMEOUT_MS = 5_000;
+/** WhatsApp forgets a presence subscription after a while; renewing more often is noise */
+const PRESENCE_EVERY_MS = 10 * 60_000;
 
 async function bounded<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -168,6 +211,7 @@ export class StoreSession {
   private pairing: { phone: string; issued: boolean } | null = null;
   private credsTail: Promise<void> = Promise.resolve();
   private jids = new Map<string, string | null>();
+  private subscribed = new Map<string, number>();
 
   constructor(
     readonly tenantId: string,
@@ -314,6 +358,15 @@ export class StoreSession {
         this.log.warn({ err: e }, 'inbound processing failed'),
       );
     });
+    sock.ev.on('presence.update', ({ id, presences }) => {
+      if (this.sock !== sock) return;
+      const jid = userJid(id);
+      if (!jid) return;
+      const typing = Object.values(presences ?? {}).some(
+        (p) => p?.lastKnownPresence === 'composing' || p?.lastKnownPresence === 'recording',
+      );
+      if (typing) this.hooks.onTyping(jid);
+    });
     sock.ev.on('messages.update', (updates) => {
       if (this.sock !== sock) return;
       const out: Receipt[] = [];
@@ -443,21 +496,27 @@ export class StoreSession {
     this.reconnectTimer.unref?.();
   }
 
-  private async onMessages(sock: WaSocket, messages: { key?: WaKey; message?: unknown }[]) {
+  private async onMessages(sock: WaSocket, messages: WaMessage[]) {
     for (const m of messages) {
       const key = m.key;
-      if (!key?.id || key.fromMe) continue;
-      const jid = key.remoteJid ?? '';
+      if (!key?.id) continue;
       // direct chats only — groups and broadcasts are ignored at the socket too
-      if (!jid.endsWith('@s.whatsapp.net') && !jid.endsWith('@lid')) continue;
-      const text = extractText(this.runtime.normalize(m.message) ?? m.message);
-      if (!text) continue;
-      let phone = phoneForJid(jid) ?? phoneForJid(key.remoteJidAlt);
-      if (!phone && jid.endsWith('@lid')) {
-        const pn = await sock.signalRepository?.lidMapping?.getPNForLID(jid).catch(() => null);
-        phone = phoneForJid(pn);
-      }
-      this.hooks.onInbound({ phone, text, id: key.id });
+      const jid = userJid(key.remoteJid);
+      if (!jid) continue;
+      const content = this.runtime.normalize(m.message) ?? m.message;
+      this.hooks.onMessage({
+        id: key.id,
+        fromMe: !!key.fromMe,
+        jid,
+        alt: userJid(key.remoteJidAlt),
+        pushName: typeof m.pushName === 'string' ? m.pushName : null,
+        text: extractText(content),
+        content: parseContent(content),
+        pnForLid: async (lid) =>
+          userJid(await sock.signalRepository?.lidMapping?.getPNForLID(lid).catch(() => null)),
+        download: () =>
+          bounded(this.runtime.download(m, sock, this.log), DOWNLOAD_TIMEOUT_MS, 'media download'),
+      });
     }
   }
 
@@ -466,9 +525,12 @@ export class StoreSession {
     if (this.jids.has(phone)) return this.jids.get(phone)!;
     const sock = this.sock;
     if (!sock || this.stateNow !== 'open') throw new SessionClosed(this.stateNow);
-    const candidates = phoneVariants(phone)
-      .map((p) => jidForPhone(p))
-      .filter((j): j is string => !!j);
+    // a foreign number ('+…', a Vendedor conversation) has one form
+    const candidates = phone.startsWith('+')
+      ? [`${phone.slice(1)}@s.whatsapp.net`]
+      : phoneVariants(phone)
+          .map((p) => jidForPhone(p))
+          .filter((j): j is string => !!j);
     const res = await bounded(sock.onWhatsApp(...candidates), PROBE_TIMEOUT_MS, 'onWhatsApp');
     if (res === undefined) throw new Error('onWhatsApp returned nothing');
     const hit = res.find((r) => r.exists)?.jid ?? null;
@@ -477,18 +539,42 @@ export class StoreSession {
     return hit;
   }
 
-  /** Send one text with a caller-chosen id (resends dedupe on WhatsApp's side). */
-  async send(phone: string, text: string, waId: string): Promise<string> {
-    const jid = await this.resolveJid(phone);
+  /** Send one message with a caller-chosen id (resends dedupe on WhatsApp's side): to the chat's
+   *  own jid when known (LID-only and foreign shoppers have no number we can look up), else to
+   *  the number. */
+  async sendTo(
+    to: { jid?: string | null; phone?: string | null },
+    content: OutContent,
+    waId: string,
+  ): Promise<string> {
+    const jid = to.jid ?? (to.phone ? await this.resolveJid(to.phone) : null);
     if (!jid) throw new NotOnWhatsApp();
     const sock = this.sock;
     if (!sock || this.stateNow !== 'open') throw new SessionClosed(this.stateNow);
     const res = await bounded(
-      sock.sendMessage(jid, { text }, { messageId: waId }),
+      sock.sendMessage(jid, content, { messageId: waId }),
       SEND_TIMEOUT_MS,
       'whatsapp send',
     );
     return res?.key?.id ?? waId;
+  }
+
+  /** Hear when this shopper types (renewed at most every 10 min per chat). */
+  async subscribePresence(jid: string): Promise<void> {
+    const sock = this.sock;
+    if (!sock || this.stateNow !== 'open') return;
+    const now = Date.now();
+    if (now - (this.subscribed.get(jid) ?? 0) < PRESENCE_EVERY_MS) return;
+    if (this.subscribed.size >= JID_CACHE_MAX) this.subscribed.clear();
+    this.subscribed.set(jid, now);
+    await bounded(sock.presenceSubscribe(jid), PRESENCE_TIMEOUT_MS, 'presence subscribe');
+  }
+
+  /** "digitando…" in the shopper's chat while a reply is being written. */
+  async typing(jid: string): Promise<void> {
+    const sock = this.sock;
+    if (!sock || this.stateNow !== 'open') throw new SessionClosed(this.stateNow);
+    await bounded(sock.sendPresenceUpdate('composing', jid), PRESENCE_TIMEOUT_MS, 'presence');
   }
 }
 
