@@ -55,6 +55,8 @@ const MAX_STEPS = 100;
 type Saved = {
   pages: Partial<Record<TplId, { version: number; template: PageTemplate }>>;
   tokens: StoreTokens | null;
+  /** the published colours the draft was made on: newer ones from elsewhere win */
+  tokensVersion?: number | null;
 };
 const storageKey = (storeId: string) => `vendua-aparencia:${storeId}`;
 function readSaved(storeId: string): Saved | null {
@@ -96,8 +98,10 @@ export function useEditor(data: AppearanceData, storeId: string) {
         return [t, base[t].template];
       }),
     ) as Drafts;
-    const tokens = saved?.tokens ?? data.tokens?.tokens ?? null;
-    return { doc: { drafts, tokens }, any: pages.length > 0 || !!saved?.tokens };
+    const savedTokens =
+      saved?.tokens && saved.tokensVersion === (data.tokens?.version ?? null) ? saved.tokens : null;
+    const tokens = savedTokens ?? data.tokens?.tokens ?? null;
+    return { doc: { drafts, tokens }, any: pages.length > 0 || !!savedTokens };
   });
   const [h, setH] = useState<History>({
     doc: restored.doc,
@@ -188,7 +192,11 @@ export function useEditor(data: AppearanceData, storeId: string) {
     const t = setTimeout(() => {
       try {
         if (!dirty) return localStorage.removeItem(storageKey(storeId));
-        const saved: Saved = { pages: {}, tokens: tokensDirty ? tokens : null };
+        const saved: Saved = {
+          pages: {},
+          tokens: tokensDirty ? tokens : null,
+          tokensVersion: data.tokens?.version ?? null,
+        };
         for (const p of dirtyTpls)
           saved.pages[p] = { version: base[p].version, template: drafts[p] };
         localStorage.setItem(storageKey(storeId), JSON.stringify(saved));
@@ -197,7 +205,7 @@ export function useEditor(data: AppearanceData, storeId: string) {
       }
     }, 400);
     return () => clearTimeout(t);
-  }, [h.doc, base, baseTokens, storeId]);
+  }, [h.doc, base, baseTokens, data.tokens?.version, storeId]);
 
   // ── selection ────────────────────────────────────────────────────────────
   const [page, setPageState] = useState<PageId>('home');

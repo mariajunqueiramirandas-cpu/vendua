@@ -164,7 +164,6 @@ export function SettingsEditor({
                         </span>
                         <IconButton
                           label="subir item"
-                          size="sm"
                           disabled={i === 0}
                           onClick={() => set(f.key, swap(items, i, i - 1))}
                         >
@@ -172,7 +171,6 @@ export function SettingsEditor({
                         </IconButton>
                         <IconButton
                           label="descer item"
-                          size="sm"
                           disabled={i === items.length - 1}
                           onClick={() => set(f.key, swap(items, i, i + 1))}
                         >
@@ -180,7 +178,6 @@ export function SettingsEditor({
                         </IconButton>
                         <IconButton
                           label="tirar item"
-                          size="sm"
                           onClick={() =>
                             set(
                               f.key,

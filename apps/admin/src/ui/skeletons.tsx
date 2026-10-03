@@ -391,7 +391,7 @@ export function AppearanceSkeleton() {
         <Skeleton className="h-12 flex-1 rounded-full md:max-w-md" delay={0} />
         <Skeleton className="hidden h-12 w-24 rounded-full md:block" />
       </div>
-      <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] min-[1400px]:grid-cols-[288px_minmax(0,1fr)_380px]">
+      <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] min-[1400px]:grid-cols-[320px_minmax(0,1fr)_380px]">
         <div className="space-y-2 max-[1399px]:hidden">
           {Array.from({ length: 7 }, (_, i) => (
             <Skeleton key={i} className="h-14 rounded-md" />

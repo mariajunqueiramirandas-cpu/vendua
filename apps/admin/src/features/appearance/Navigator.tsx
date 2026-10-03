@@ -163,7 +163,7 @@ function Row({
     <li>
       <div
         className={cn(
-          'flex items-center gap-0.5 rounded-md bg-surface py-1 pl-1 pr-1 ring-1 transition-colors',
+          'flex items-center gap-1 rounded-md bg-surface py-1 pl-1 pr-1 ring-1 transition-colors',
           on ? 'bg-spark-soft ring-2 ring-spark' : 'ring-line',
         )}
       >
@@ -187,13 +187,13 @@ function Row({
             <span className="t-caption block truncate text-muted">{summary}</span>
           ) : null}
         </button>
-        <IconButton label="subir" size="sm" disabled={first} onClick={() => onMove(-1)}>
+        <IconButton label="subir" disabled={first} onClick={() => onMove(-1)}>
           <ArrowUp />
         </IconButton>
-        <IconButton label="descer" size="sm" disabled={last} onClick={() => onMove(1)}>
+        <IconButton label="descer" disabled={last} onClick={() => onMove(1)}>
           <ArrowDown />
         </IconButton>
-        <IconButton label={sec.disabled ? 'mostrar' : 'esconder'} size="sm" onClick={onToggle}>
+        <IconButton label={sec.disabled ? 'mostrar' : 'esconder'} onClick={onToggle}>
           {sec.disabled ? <EyeSlash /> : <Eye />}
         </IconButton>
       </div>

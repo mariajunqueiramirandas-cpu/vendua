@@ -103,7 +103,6 @@ export function Inspector({
           <h3 className="t-caption font-semibold uppercase tracking-wide text-muted">Na página</h3>
           <div className="flex flex-wrap gap-2">
             <Button
-              size="sm"
               variant="secondary"
               icon={<ArrowUp />}
               disabled={i <= 0}
@@ -112,7 +111,6 @@ export function Inspector({
               subir
             </Button>
             <Button
-              size="sm"
               variant="secondary"
               icon={<ArrowDown />}
               disabled={i < 0 || i >= list.length - 1}
@@ -121,7 +119,6 @@ export function Inspector({
               descer
             </Button>
             <Button
-              size="sm"
               variant="secondary"
               icon={sec.disabled ? <Eye /> : <EyeSlash />}
               onClick={() => ed.toggle(sel.tpl, sec.id)}
@@ -129,7 +126,6 @@ export function Inspector({
               {sec.disabled ? 'mostrar' : 'esconder'}
             </Button>
             <Button
-              size="sm"
               variant="ghost"
               className="text-danger"
               icon={<Trash />}

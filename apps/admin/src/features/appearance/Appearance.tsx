@@ -322,7 +322,7 @@ function Editor({ data }: { data: AppearanceData }) {
           className={cn(
             'grid min-h-0 flex-1 gap-5',
             wide
-              ? 'grid-cols-[288px_minmax(0,1fr)_380px]'
+              ? 'grid-cols-[320px_minmax(0,1fr)_380px]'
               : 'grid-cols-[minmax(0,1fr)_minmax(320px,380px)]',
           )}
         >
