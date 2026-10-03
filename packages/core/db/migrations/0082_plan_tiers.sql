@@ -3,10 +3,11 @@
 -- that add to them.
 --   plans.recommended            — the plan signup and the site lead with (at most one)
 --   plans.ai_conversations       — Vendedor conversations a paid month includes (0 = no Vendedor)
---   plans.ai_trial_conversations — the same for the whole free trial
+--   plans.ai_trial_conversations — the same for the whole free trial (Pangolin has no trial of its
+--     own, but a Bandeira trial can switch to it and keeps trialing)
 --   plans.features               — { customDomain, customSite, kds, printing, loyalty, vendedor }
 --   ai_packs                     — platform catalog: extra conversations sold one-off by Pix
---   invoices.kind 'ai_pack'      — one pack bought; ai_pack_id says which
+--   invoices.kind 'ai_pack'      — one pack bought; ai_pack_id says which, ai_conversations how many
 --   ai_credits                   — conversations a paid pack added to a store (one per invoice)
 --   ai_conversations             — one row per conversation the Vendedor took, and what paid for it
 
@@ -29,7 +30,7 @@ insert into plans (id, name, price_cents, fee_bps, features, public, sort, trial
    true, 2, 14, true, 250, 50),
   ('pangolin', 'Venduá Pangolin', 44900, 0,
    '{"customDomain": true, "customSite": true, "kds": true, "printing": true, "loyalty": true, "vendedor": true}',
-   true, 3, 0, false, 1000, 0)
+   true, 3, 0, false, 1000, 50)
 on conflict (id) do nothing;
 
 -- Before the launch nobody paid for Basic or PRO+: stores on them (dev, staff tests) move to the
@@ -42,6 +43,15 @@ update subscriptions set pending_plan_id = case pending_plan_id when 'basic' the
   where pending_plan_id in ('basic', 'pro_plus');
 update subscriptions set upgrade_plan_id = case upgrade_plan_id when 'basic' then 'mirim' else 'pangolin' end
   where upgrade_plan_id in ('basic', 'pro_plus');
+-- an invoice still open on an old plan is the new plan's, at its price; its Pix (at the old price)
+-- stays matchable, and a payment of it lands short and is flagged
+update invoices set
+  plan_id = case plan_id when 'basic' then 'mirim' else 'pangolin' end,
+  amount_cents = case plan_id when 'basic' then 6990 else 44900 end,
+  pix_superseded = case when provider_payment_id is not null
+    then array_append(pix_superseded, provider_payment_id) else pix_superseded end,
+  provider_payment_id = null, pix_copy_paste = null, pix_expires_at = null
+  where status in ('open', 'failed') and plan_id in ('basic', 'pro_plus');
 update plans set public = false, recommended = false, trial_days = 0, updated_at = now()
   where id in ('basic', 'pro_plus');
 
@@ -74,9 +84,12 @@ alter table invoices drop constraint if exists invoices_kind_check;
 alter table invoices add constraint invoices_kind_check
   check (kind in ('period', 'upgrade', 'ai_pack'));
 alter table invoices add column if not exists ai_pack_id text references ai_packs (id);
+-- what the pack gave when it was bought: a later change to the catalog doesn't touch it
+alter table invoices add column if not exists ai_conversations int
+  check (ai_conversations between 1 and 100000);
 alter table invoices drop constraint if exists invoices_ai_pack_kind;
 alter table invoices add constraint invoices_ai_pack_kind
-  check ((kind = 'ai_pack') = (ai_pack_id is not null));
+  check ((kind = 'ai_pack') = (ai_pack_id is not null and ai_conversations is not null));
 create index if not exists invoices_open_ai_pack on invoices (created_at)
   where status = 'open' and kind = 'ai_pack';
 

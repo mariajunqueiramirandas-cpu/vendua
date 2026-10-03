@@ -34,6 +34,8 @@ export interface InvoiceRow {
    *  'ai_pack': extra Vendedor conversations bought one-off (0082) */
   kind: 'period' | 'upgrade' | 'ai_pack';
   ai_pack_id: string | null;
+  /** the pack's conversations as bought */
+  ai_conversations: number | null;
   short_payments: string[];
   created_at: Date;
 }

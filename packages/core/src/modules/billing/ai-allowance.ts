@@ -103,8 +103,8 @@ export type AiConversationClaim =
 /**
  * May the Vendedor take this conversation? Counts it once per window: a subject that started
  * within CONVERSATION_WINDOW_MS returns the same row and spends nothing. Call it inside the
- * tenant transaction that starts the turn; it serializes per store, so two shoppers arriving
- * together can't both take the last conversation.
+ * tenant transaction that starts the turn, and keep that transaction short: a new conversation
+ * takes a per-store lock until it commits, so two shoppers can't both take the last one.
  */
 export async function claimAiConversationTx(
   tx: Sql,
@@ -114,16 +114,24 @@ export async function claimAiConversationTx(
 ): Promise<AiConversationClaim> {
   if (subjectKey.length < 1 || subjectKey.length > 200)
     throw new RangeError('subjectKey must be 1–200 characters');
-  await tx`select pg_advisory_xact_lock(hashtextextended(${`ai-allowance|${tenantId}`}, 0))`;
   const since = new Date(now.getTime() - CONVERSATION_WINDOW_MS);
-  const open = (
-    await tx<{ id: string }[]>`
-      select id from ai_conversations
-      where tenant_id = ${tenantId} and subject_key = ${subjectKey} and started_at > ${since}
-      order by started_at desc limit 1
-    `
-  )[0];
-  if (open) return { ok: true, conversationId: open.id, counted: false };
+  const openRow = () => tx<{ id: string }[]>`
+    select id from ai_conversations
+    where tenant_id = ${tenantId} and subject_key = ${subjectKey} and started_at > ${since}
+    order by started_at desc limit 1
+  `;
+  // a conversation already counted needs no lock: every later message of it lands here
+  let open = (await openRow())[0];
+  if (!open) {
+    await tx`select pg_advisory_xact_lock(hashtextextended(${`ai-allowance|${tenantId}`}, 0))`;
+    open = (await openRow())[0];
+  }
+  if (open) {
+    // counted earlier, but the plan may have lost the Vendedor since (a trial ended, a downgrade)
+    if (!(await planHas(tx, tenantId, 'vendedor')))
+      return { ok: false, reason: 'plan', allowance: await aiAllowanceTx(tx, tenantId, now) };
+    return { ok: true, conversationId: open.id, counted: false };
+  }
   const a = await aiAllowanceTx(tx, tenantId, now);
   if (!a.included) return { ok: false, reason: 'plan', allowance: a };
   const source =

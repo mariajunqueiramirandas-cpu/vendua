@@ -85,12 +85,14 @@ the team runs by hand, and the Vendedor's pilots among them.
 - **What counts as a conversation.** One shopper's conversation counts once per 24 hours from
   when it started, however many messages it has.
 - **The allowance.** A paid plan gets `ai_conversations` per calendar month (São Paulo time). A
-  trial gets `ai_trial_conversations` for its whole length and can't use packs.
+  trial gets `ai_trial_conversations` for its whole length and can't use packs. Pangolin has 50
+  too, because a Bandeira trial can switch to it and stays a trial.
 - **Order of spending.** The month's allowance goes first, then packs. Pack conversations don't
   expire.
 - **The Vendedor's only entry point** is `claimAiConversationTx(tx, tenantId, subjectKey)`, called
   in the transaction that starts its turn.
-  - It serializes per store and records one `ai_conversations` row with what paid for it:
+  - A new conversation takes a per-store lock, and records one `ai_conversations` row with what
+    paid for it:
     `plan`, `trial` or `pack`.
   - It answers `{ ok: false, reason: 'plan' | 'exhausted' }` when it can't.
   - What the Vendedor does then (hand off to the merchant, send a link) is ADR 0031's call.
@@ -99,7 +101,9 @@ the team runs by hand, and the Vendedor's pilots among them.
 **Packs are one-off Pix invoices.**
 
 - `POST /admin/v1/account/ai-packs { packId }` (owner, idempotent) opens an `invoices` row of
-  kind `ai_pack`. It is priced from `ai_packs`, a platform catalog staff edit in the CRM.
+  kind `ai_pack`. It is priced from `ai_packs`, a platform catalog staff edit in the CRM, and
+  keeps the pack's conversations as bought, so a later catalog change doesn't alter what it
+  credits.
 - **Who can buy.** Packs are only for a paid plan that includes the Vendedor. During a trial the
   route answers 409 `AI_PACK_NEEDS_PAID_PLAN`.
 - **One open pack invoice at a time.** Asking again returns it, with a new Pix if the old one

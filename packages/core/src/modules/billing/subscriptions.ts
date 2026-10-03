@@ -30,7 +30,7 @@ import {
   dayMonth,
   queueOwners,
 } from './notices.ts';
-import { formatBRL, planRow, type PlanRow } from './plans.ts';
+import { formatBRL, planRow, tenantPlan, type PlanRow } from './plans.ts';
 
 // The plan's state machine (docs/roadmap.md, Phase 3). One subscriptions row per store:
 //   pending ─(first invoice paid / first card charge)→ active ─(period ended unpaid)→ past_due
@@ -662,12 +662,11 @@ export async function buyAiPack(
     throw new HttpError(422, 'UNKNOWN_AI_PACK', 'pick one of the packs offered', {
       field: 'packId',
     });
-  const plan = sub ? await planRow(tx, sub.plan_id) : null;
-  if (!sub || !plan?.features?.vendedor)
+  if (!(await tenantPlan(tx, tenantId)).features.vendedor)
     throw new HttpError(403, 'PLAN_REQUIRED', "the store's plan does not include the Vendedor", {
       feature: 'vendedor',
     });
-  if (sub.status !== 'active' && sub.status !== 'past_due')
+  if (!sub || (sub.status !== 'active' && sub.status !== 'past_due'))
     throw new HttpError(409, 'AI_PACK_NEEDS_PAID_PLAN', 'packs are sold once the plan is paid');
   const open = (
     await tx<InvoiceRow[]>`
@@ -675,18 +674,23 @@ export async function buyAiPack(
       order by created_at desc limit 1
     `
   )[0];
-  if (open && open.ai_pack_id === pack.id && open.amount_cents === pack.price_cents)
+  if (
+    open &&
+    open.ai_pack_id === pack.id &&
+    open.amount_cents === pack.price_cents &&
+    open.ai_conversations === pack.conversations
+  )
     return pixIsLive(open, now) ? open : await packPix(ctx, tx, sub, open, pack, now);
   // another pack (or an old price) waiting: it gives way to this one
   if (open) await voidOpenPack(ctx, tx, open);
   const inv = (
     await tx<InvoiceRow[]>`
       insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end,
-                            method, status, provider, due_at, kind, ai_pack_id)
+                            method, status, provider, due_at, kind, ai_pack_id, ai_conversations)
       values (${tenantId},
               (select coalesce(max(number), 0) + 1 from invoices where tenant_id = ${tenantId}),
               ${sub.plan_id}, ${pack.price_cents}, ${now}, ${now}, 'pix', 'open',
-              ${ctx.provider.name}, ${now}, 'ai_pack', ${pack.id})
+              ${ctx.provider.name}, ${now}, 'ai_pack', ${pack.id}, ${pack.conversations})
       returning *
     `
   )[0]!;
@@ -725,13 +729,11 @@ async function voidOpenPack(ctx: BillingCtx, tx: Sql, inv: InvoiceRow) {
   `;
 }
 
-/** A pack invoice was paid: its conversations join the store's, once per invoice. */
+/** A pack invoice was paid: what it promised when bought joins the store's, once per invoice. */
 async function creditAiPack(tx: Sql, tenantId: string, inv: InvoiceRow) {
-  const pack = await aiPackRow(tx, inv.ai_pack_id!);
-  if (!pack) throw new Error(`ai pack ${inv.ai_pack_id} is gone`);
   await tx`
     insert into ai_credits (tenant_id, invoice_id, conversations)
-    values (${tenantId}, ${inv.id}, ${pack.conversations})
+    values (${tenantId}, ${inv.id}, ${inv.ai_conversations!})
     on conflict (invoice_id) do nothing
   `;
 }

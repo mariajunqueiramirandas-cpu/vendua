@@ -132,7 +132,7 @@ export function mountControlBilling(o: {
           -- the oldest plan invoice still to pay: the one "marcar como pago" settles next
           left join lateral (
             select id, number, amount_cents, kind, period_start, due_at from invoices
-            where tenant_id = t.id and status in ('open', 'failed')
+            where tenant_id = t.id and status in ('open', 'failed') and kind <> 'ai_pack'
             order by period_start, number limit 1
           ) inv on true
         order by t.created_at desc
@@ -228,9 +228,12 @@ export function mountControlBilling(o: {
       });
     const features = optFeatures(body.features);
     const res = await claimControl(sql, idemKey(c), async (tx) => {
-      // at most one plan leads: recommending this one takes it off the other
-      if (body.recommended === true)
+      // at most one plan leads: recommending this one takes it off the other (one at a time, so
+      // two staff picking different plans can't trip the unique index)
+      if (body.recommended === true) {
+        await tx`select pg_advisory_xact_lock(hashtextextended('plans:recommended', 0))`;
         await tx`update plans set recommended = false, updated_at = now() where recommended and id <> ${id}`;
+      }
       const row = (
         await tx<PlanRow[]>`
           update plans set
