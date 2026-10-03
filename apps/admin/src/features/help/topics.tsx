@@ -31,7 +31,8 @@ export type TopicId =
   | 'relatorios'
   | 'equipe'
   | 'conta'
-  | 'perfil';
+  | 'perfil'
+  | 'vendedor';
 
 export const TOPICS: Record<TopicId, Topic> = {
   inicio: {
@@ -431,6 +432,43 @@ export const TOPICS: Record<TopicId, Topic> = {
       },
     ],
   },
+  vendedor: {
+    title: 'Vendedor',
+    intro: 'Quem atende e vende no WhatsApp da loja, e como você entra na conversa.',
+    items: [
+      {
+        q: 'Como assumo uma conversa?',
+        a: (
+          <>
+            Toque em <strong>assumir</strong> na conversa, ou no aviso do celular. Responder pelo
+            WhatsApp da loja também vale: ela pausa sozinha naquela conversa. Para devolver, toque
+            em <strong>devolver</strong>.
+          </>
+        ),
+      },
+      {
+        q: 'Quando ela me chama?',
+        a: 'Quando o cliente pede uma pessoa e nos casos que você escolheu em Configurar, como reclamação ou alergia. A conversa aparece em “Precisa de você” e o celular avisa.',
+      },
+      {
+        q: 'Os preços que ela manda estão certos?',
+        a: 'O resumo do pedido, a entrega e o Pix são calculados pela loja, como no site, e vêm com “calculado pela loja”. Quando ela cita um preço na conversa, é o do seu cardápio.',
+      },
+      {
+        q: 'O que é o ensaio?',
+        a: 'Ela escreve o que responderia, mas não manda nada. Você continua atendendo e compara as respostas antes de ligar.',
+      },
+      {
+        q: 'Como ensino algo que só eu sei?',
+        a: (
+          <>
+            Em <L to="/vendedor/ensinar">Ensinar</L>: responda às perguntas que ela não soube ou
+            escreva uma regra. Horário, taxas, preços e estoque ela já lê da loja.
+          </>
+        ),
+      },
+    ],
+  },
 };
 
 const BY_ROUTE: Partial<Record<RouteId, TopicId>> = {
@@ -453,6 +491,16 @@ const BY_ROUTE: Partial<Record<RouteId, TopicId>> = {
   team: 'equipe',
   account: 'conta',
   profile: 'perfil',
+  vendedorHome: 'vendedor',
+  vendedorTrain: 'vendedor',
+  vendedorConversations: 'vendedor',
+  vendedorConversation: 'vendedor',
+  vendedorTeach: 'vendedor',
+  vendedorEnsaio: 'vendedor',
+  vendedorClienteOculto: 'vendedor',
+  vendedorResults: 'vendedor',
+  vendedorSettings: 'vendedor',
+  vendedorTest: 'vendedor',
 };
 
 export const topicFor = (route: RouteId | undefined): TopicId | null =>

@@ -9,6 +9,7 @@ import {
   PaintBrush,
   Printer,
   Receipt,
+  Sparkle,
   Storefront,
   Users,
   UsersThree,
@@ -32,6 +33,8 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { to: '/', label: 'Início', Icon: House, min: 'attendant', primary: true },
   { to: '/pedidos', label: 'Pedidos', Icon: Receipt, min: 'attendant', primary: true },
+  // in the bar while it's on, in "Mais" before (navFor)
+  { to: '/vendedor', label: 'Vendedor', Icon: Sparkle, min: 'attendant' },
   { to: '/cozinha', label: 'Cozinha', Icon: CookingPot, min: 'attendant' },
   { to: '/cardapio', label: 'Cardápio', Icon: ForkKnife, min: 'manager', primary: true },
   { to: '/loja', label: 'Loja', Icon: Storefront, min: 'manager', primary: true },
@@ -49,6 +52,29 @@ export const NAV: NavItem[] = [
 
 // Phones stack screens left to right (§3.3): tab and "Mais" roots are depth 0, a drill-down
 // is depth 1 with the root it belongs to. `title` names the screen in the next one's back button.
+/**
+ * The nav for this store: once the Vendedor is on, the phone bar is Início · Pedidos · Vendedor
+ * · Cardápio · Mais and Loja heads "Mais" (sales-agent-ux §2); before, the Vendedor waits in Mais.
+ */
+export function navFor(vendedorOn: boolean): NavItem[] {
+  if (!vendedorOn) return NAV;
+  return NAV.map((n) =>
+    n.to === '/vendedor'
+      ? { ...n, primary: true }
+      : n.to === '/loja'
+        ? { ...n, primary: false }
+        : n,
+  );
+}
+
+/** What "Mais" holds, in order: Loja first when the Vendedor took its place in the bar. */
+export function moreOf(items: NavItem[], vendedorOn: boolean): NavItem[] {
+  const more = items.filter((n) => !n.primary);
+  const loja = more.findIndex((n) => n.to === '/loja');
+  if (vendedorOn && loja > 0) more.unshift(...more.splice(loja, 1));
+  return more;
+}
+
 const DEEP: { match: RegExp; parent: string; title: string }[] = [
   { match: /^\/pedidos\/historico$/, parent: '/pedidos', title: 'Histórico' },
   { match: /^\/pedidos\/agendados$/, parent: '/pedidos', title: 'Encomendas' },
@@ -57,6 +83,15 @@ const DEEP: { match: RegExp; parent: string; title: string }[] = [
   { match: /^\/cardapio\/importar$/, parent: '/cardapio', title: 'Importar' },
   { match: /^\/cardapio\/estoque$/, parent: '/cardapio', title: 'Estoque' },
   { match: /^\/clientes\/[^/]+$/, parent: '/clientes', title: 'Cliente' },
+  { match: /^\/vendedor\/conversas\/[^/]+$/, parent: '/vendedor/conversas', title: 'Conversa' },
+  { match: /^\/vendedor\/conversas$/, parent: '/vendedor', title: 'Conversas' },
+  { match: /^\/vendedor\/comecar$/, parent: '/vendedor', title: 'Treinar' },
+  { match: /^\/vendedor\/ensinar$/, parent: '/vendedor', title: 'Ensinar' },
+  { match: /^\/vendedor\/ensaio$/, parent: '/vendedor', title: 'Ensaio' },
+  { match: /^\/vendedor\/cliente-oculto$/, parent: '/vendedor', title: 'Cliente oculto' },
+  { match: /^\/vendedor\/resultados$/, parent: '/vendedor', title: 'Resultados' },
+  { match: /^\/vendedor\/configurar$/, parent: '/vendedor', title: 'Configurar' },
+  { match: /^\/vendedor\/testar$/, parent: '/vendedor', title: 'Testar' },
 ];
 
 export interface Place {
@@ -73,4 +108,6 @@ export function placeOf(pathname: string): Place | null {
   return top ? { depth: 0, root: top.to, title: top.label } : null;
 }
 
-export const rootLabel = (root: string) => NAV.find((n) => n.to === root)?.label ?? 'Voltar';
+// a drill-down's parent is a tab or "Mais" root, or another drill-down (a conversation's list)
+export const rootLabel = (root: string) =>
+  NAV.find((n) => n.to === root)?.label ?? DEEP.find((d) => d.match.test(root))?.title ?? 'Voltar';

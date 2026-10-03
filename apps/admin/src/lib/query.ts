@@ -41,6 +41,22 @@ export const qk = {
   signupPlans: ['signup', 'plans'] as const,
   imports: ['imports'] as const,
   importOf: (id: string) => ['imports', id] as const,
+  // every Vendedor screen under one root: the live topic `vendedor` refreshes them all
+  vendedor: {
+    home: ['vendedor', 'home'] as const,
+    threads: (filter: string, q: string) => ['vendedor', 'threads', filter, q] as const,
+    thread: (id: string) => ['vendedor', 'thread', id] as const,
+    why: (id: string, messageId: string) => ['vendedor', 'why', id, messageId] as const,
+    suggestions: (id: string) => ['vendedor', 'suggestions', id] as const,
+    settings: ['vendedor', 'settings'] as const,
+    knowledge: ['vendedor', 'knowledge'] as const,
+    ensaio: ['vendedor', 'ensaio'] as const,
+    clienteOculto: ['vendedor', 'cliente-oculto'] as const,
+    results: (period: string) => ['vendedor', 'results', period] as const,
+    testChat: ['vendedor', 'test-chat'] as const,
+    onboarding: ['vendedor', 'onboarding'] as const,
+  },
+  customerFacts: (phone: string) => ['customers', 'facts', phone] as const,
 };
 
 // 408 and 429 pass with time; other 4xx won't change by asking again
