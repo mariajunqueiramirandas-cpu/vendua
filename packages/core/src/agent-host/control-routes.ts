@@ -22,7 +22,8 @@ function idemKey(c: Context): string {
 
 async function body(c: Context): Promise<Record<string, unknown>> {
   const raw = await c.req.text();
-  if (raw.length > 200_000) throw new HttpError(413, 'TOO_LARGE', 'body too large');
+  // under the 200 kB the evals_report column allows once Postgres re-renders the JSON
+  if (Buffer.byteLength(raw) > 150_000) throw new HttpError(413, 'TOO_LARGE', 'body too large');
   try {
     const v = JSON.parse(raw || '{}') as unknown;
     if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error();
@@ -117,19 +118,30 @@ export function mountAgentRuntimeControl(o: {
     const version = b.version;
     if (version !== null && (typeof version !== 'string' || !VERSION.test(version)))
       throw new HttpError(400, 'BAD_VERSION', 'version is a version id or null');
-    await controlTx(sql, async (tx) => {
-      if (version === null)
-        await tx`delete from agent_version_pins where tenant_id = ${tenantId} and agent_id = ${agentId}`;
-      else {
+    const res = await claimControl<Record<string, unknown>>(
+      sql,
+      `agent-runtime:pin:${idemKey(c)}`,
+      async (tx) => {
+        const [store] = await tx`select 1 from tenants where id = ${tenantId}`;
+        if (!store) return { status: 404, body: { error: 'NOT_FOUND', message: 'no such store' } };
+        if (version === null) {
+          await tx`delete from agent_version_pins where tenant_id = ${tenantId} and agent_id = ${agentId}`;
+          return { status: 200, body: { tenantId, agentId, version } };
+        }
         const known =
           await tx`select 1 from agent_versions where version = ${version} and agent_id = ${agentId}`;
-        if (!known[0]) throw new HttpError(404, 'NOT_FOUND', 'unknown version for this agent');
+        if (!known[0])
+          return {
+            status: 404,
+            body: { error: 'NOT_FOUND', message: 'unknown version for this agent' },
+          };
         await tx`
           insert into agent_version_pins (tenant_id, agent_id, version) values (${tenantId}, ${agentId}, ${version})
           on conflict (tenant_id, agent_id) do update set version = excluded.version, pinned_at = now()`;
-      }
-    });
-    return c.json({ tenantId, agentId, version });
+        return { status: 200, body: { tenantId, agentId, version } };
+      },
+    );
+    return c.json(res.body, res.status as 200);
   });
 
   app.get('/control/v1/agent-runtime/actors', async (c) => {
@@ -156,7 +168,7 @@ export function mountAgentRuntimeControl(o: {
     const turn = c.req.query('turn');
     const turnId = turn === undefined ? null : uuid(turn, 'turn');
     const before = Number(c.req.query('before') ?? 0);
-    if (!Number.isInteger(before) || before < 0)
+    if (!Number.isSafeInteger(before) || before < 0)
       throw new HttpError(400, 'BAD_CURSOR', 'before is a seq');
     const out = await controlTx(sql, async (tx) => {
       const [actor] = await tx`

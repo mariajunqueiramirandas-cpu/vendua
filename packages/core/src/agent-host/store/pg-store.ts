@@ -131,22 +131,29 @@ export class PgActorStore implements ActorStore<Sql> {
           select tenant_id, count(*)::int as n from agent_actors
           where lane = $1 and lease_until > now() group by tenant_id
         ),
-        due as (
-          select a.id, a.tenant_id, a.next_wake_at,
-                 row_number() over (partition by a.tenant_id order by a.next_wake_at, a.id) as rn,
-                 coalesce(h.n, 0) as held
-          from agent_actors a left join held h using (tenant_id)
-          where a.lane = $1 and a.agent_id = any($2::text[])
-            and a.next_wake_at <= now()
-            and (a.lease_until is null or a.lease_until <= now())
-          order by a.next_wake_at
-          limit 500
+        ready as (
+          select distinct tenant_id from agent_actors
+          where lane = $1 and agent_id = any($2::text[]) and next_wake_at <= now()
+            and (lease_until is null or lease_until <= now())
         ),
-        -- round robin: every tenant's first actor, then every tenant's second, under the cap
+        -- each store's own earliest, up to what its cap leaves: one store's backlog can't crowd out the rest
+        due as (
+          select d.id, d.next_wake_at, d.rn
+          from ready r
+          left join held h using (tenant_id)
+          cross join lateral (
+            select a.id, a.next_wake_at, row_number() over (order by a.next_wake_at, a.id) as rn
+            from agent_actors a
+            where a.tenant_id = r.tenant_id and a.lane = $1 and a.agent_id = any($2::text[])
+              and a.next_wake_at <= now()
+              and (a.lease_until is null or a.lease_until <= now())
+            order by a.next_wake_at, a.id
+            limit greatest($3 - coalesce(h.n, 0), 0)
+          ) d
+        ),
+        -- round robin: every store's first actor, then every store's second
         pick as (
-          select id from due where held + rn <= $3
-          order by rn, next_wake_at
-          limit $4
+          select id from due order by rn, next_wake_at limit $4
         ),
         locked as (
           select a.id from agent_actors a

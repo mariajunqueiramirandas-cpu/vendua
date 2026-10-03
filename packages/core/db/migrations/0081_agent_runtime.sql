@@ -102,14 +102,20 @@ create or replace function agent_events_partition(month date) returns text
 language plpgsql security definer set search_path = public as $$
 declare
   start date := date_trunc('month', month)::date;
+  stop date := (date_trunc('month', month) + interval '1 month')::date;
   name text := format('agent_events_y%sm%s', to_char(start, 'YYYY'), to_char(start, 'MM'));
 begin
-  if to_regclass(name) is null then
-    execute format(
-      'create table %I partition of agent_events for values from (%L) to (%L)',
-      name, start, (start + interval '1 month')::date
-    );
+  if to_regclass(name) is not null then
+    return name;
   end if;
+  -- rows that landed in the default partition for this month move first, or attaching fails
+  execute format('create table %I (like agent_events including defaults including constraints)', name);
+  execute format(
+    'with moved as (delete from agent_events_default where at >= %L and at < %L returning *)
+     insert into %I select * from moved',
+    start, stop, name
+  );
+  execute format('alter table agent_events attach partition %I for values from (%L) to (%L)', name, start, stop);
   return name;
 end
 $$;

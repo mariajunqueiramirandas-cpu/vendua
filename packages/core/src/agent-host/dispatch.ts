@@ -3,6 +3,7 @@ import type { Sql } from '../platform/db.ts';
 import { laneOf } from './registry.ts';
 
 const KIND = /^[a-z][a-z0-9_]*\.[a-z0-9_.]+$/;
+const SUBJECT_KIND = /^[a-z][a-z0-9_]{0,40}$/;
 const MAX_PAYLOAD = 32_000;
 
 /**
@@ -20,11 +21,18 @@ export async function dispatchTx(tx: Sql, input: DispatchInput): Promise<Dispatc
   if (!input.source || input.source.length > 120) throw new Error('mailbox source is 1–120 chars');
   if (!input.dedupeKey || input.dedupeKey.length > 200)
     throw new Error('dedupe key is 1–200 chars');
+  if (!SUBJECT_KIND.test(actor.subject.kind))
+    throw new Error(`bad subject kind ${actor.subject.kind}`);
+  if (!actor.subject.id || actor.subject.id.length > 200)
+    throw new Error('subject id is 1–200 chars');
   const payload = input.payload ?? null;
-  if (JSON.stringify(payload).length > MAX_PAYLOAD) throw new Error('mailbox payload too large');
+  // Postgres bounds the payload in bytes, not characters
+  if (Buffer.byteLength(JSON.stringify(payload)) > MAX_PAYLOAD)
+    throw new Error('mailbox payload too large');
   const lane = laneOf(actor.agentId);
 
-  // do nothing on conflict: an upsert would lock the actor row and queue behind a running step
+  // do nothing on conflict rather than upsert: no row lock taken here (the wake trigger's update
+  // still waits for a step holding the fence, for the length of that step)
   let rows = await tx<{ id: string }[]>`
     insert into agent_actors (tenant_id, agent_id, subject_kind, subject_id, lane)
     values (${actor.tenantId}, ${actor.agentId}, ${actor.subject.kind}, ${actor.subject.id}, ${lane})

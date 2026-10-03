@@ -113,11 +113,17 @@ export async function setStage(
   tx: Sql,
   version: string,
   stage: Stage,
-  o: { sharePct?: number | null; reason?: string | null; by: 'staff' | 'rings' },
+  o: {
+    sharePct?: number | null;
+    reason?: string | null;
+    by: 'staff' | 'rings';
+    /** The stage the caller decided from; a version that moved since is left alone. */
+    from?: Stage;
+  },
 ): Promise<boolean> {
   const [row] = await tx<{ agent_id: string; stage: Stage }[]>`
     select agent_id, stage from agent_versions where version = ${version} for update`;
-  if (!row) return false;
+  if (!row || (o.from !== undefined && row.stage !== o.from)) return false;
   if (stage === 'all')
     await tx`update agent_versions set stage = 'retired', stage_since = now()
              where agent_id = ${row.agent_id} and stage = 'all' and version <> ${version}`;
@@ -205,7 +211,7 @@ export async function ringPass(
     await controlTx(sql, async (tx) => {
       if (v.stage === 'candidate') {
         if (v.evals_passed_at) {
-          await setStage(tx, v.version, 'canary', { by: 'rings' });
+          await setStage(tx, v.version, 'canary', { by: 'rings', from: 'candidate' });
           out.push({ version: v.version, decision: 'promote', reasons: ['evals passed'] });
         }
         return;
@@ -234,10 +240,14 @@ export async function ringPass(
       const { decision, reasons } = evaluateCandidate(cand, baseline, o.thresholds);
       out.push({ version: v.version, decision, reasons });
       if (decision === 'rollback')
-        await setStage(tx, v.version, 'rolled_back', { reason: reasons.join('\n'), by: 'rings' });
+        await setStage(tx, v.version, 'rolled_back', {
+          reason: reasons.join('\n'),
+          by: 'rings',
+          from: v.stage,
+        });
       else if (decision === 'promote') {
         const next = nextStage(v.stage as RingStage);
-        if (next) await setStage(tx, v.version, next as Stage, { by: 'rings' });
+        if (next) await setStage(tx, v.version, next as Stage, { by: 'rings', from: v.stage });
       }
     });
   }

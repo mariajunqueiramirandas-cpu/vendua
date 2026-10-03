@@ -430,6 +430,64 @@ describe.skipIf(!OWNER_URL)('agent runtime v3 on Postgres', () => {
     await sql`delete from staff_events where kind = 'agent.qa_alert' and tenant_id = ${tenantId}`;
   });
 
+  test('review fixes: stray rows leave the default partition; stale stages, unknown stores and byte limits are refused', async () => {
+    const { actorId } = await say('oi', 'stray');
+    await sql`insert into agent_events (tenant_id, actor_id, seq, type, payload, version, at)
+              values (${tenantId}, ${actorId}, 999, 'test.stray', '{}'::jsonb, 'v', '2031-05-10')`;
+    await sql`select agent_events_partition('2031-05-01')`;
+    const [moved] = await sql<
+      { n: number }[]
+    >`select count(*)::int as n from agent_events_y2031m05`;
+    expect(moved!.n).toBe(1);
+    await sql`delete from agent_events where actor_id = ${actorId} and seq = 999`;
+
+    const v = defineAgent(def({ id: 'rt_stale' }));
+    await deployVersions(app, [v]);
+    // the controller decided from 'canary', but staff moved it meanwhile
+    expect(
+      await controlTx(app, (tx) =>
+        setStage(tx, v.version, 'early', { by: 'rings', from: 'canary' }),
+      ),
+    ).toBe(false);
+    const [still] = await sql<
+      { stage: string }[]
+    >`select stage from agent_versions where version = ${v.version}`;
+    expect(still!.stage).toBe('all');
+
+    const http = createApp({
+      sql: app,
+      sessionSecret: 's',
+      controlSecret: 'ctl',
+      autoDrain: false,
+    });
+    const pin = await http.request(
+      `/control/v1/agent-runtime/stores/00000000-0000-4000-8000-000000000000/pins/rt_stale`,
+      {
+        method: 'PUT',
+        headers: {
+          'x-vendua-control': 'ctl',
+          'idempotency-key': `pin-${Math.random()}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ version: v.version }),
+      },
+    );
+    expect(pin.status).toBe(404);
+
+    const big = 'é'.repeat(20_000); // 20k chars, 40 kB
+    await expect(
+      withTenant(app, tenantId, (tx) =>
+        dispatchTx(tx, {
+          actor: { tenantId, agentId: 'rt_test', subject: { kind: 'thread', id: 'big' } },
+          kind: 'message.inbound',
+          source: 'test',
+          dedupeKey: `big:${Math.random()}`,
+          payload: { text: big },
+        }),
+      ),
+    ).rejects.toThrow('too large');
+  });
+
   test('the turn inspector reads the log; bad ids are 4xx', async () => {
     const [actor] = await sql<
       { id: string }[]

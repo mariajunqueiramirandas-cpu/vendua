@@ -195,14 +195,17 @@ export function startAgentRuntime(sql: Sql, o: AgentRuntimeOpts = {}): AgentRunt
   const reconcile = setInterval(() => poke(), RECONCILE_MS);
   reconcile.unref?.();
 
+  // each step on its own: a failing one never stops the others (rollbacks above all)
   const maintenance = async () => {
-    try {
-      await ensurePartitions(sql);
-      await pruneMailbox(sql);
-      if (o.rings !== false && agents.length) await ringPass(sql);
-    } catch (err) {
-      rtLog.warn({ err }, 'agent runtime maintenance failed');
-    }
+    const steps: [string, () => Promise<unknown>][] = [
+      ['partitions', () => ensurePartitions(sql)],
+      ['mailbox prune', () => pruneMailbox(sql)],
+    ];
+    if (o.rings !== false && agents.length) steps.push(['rings', () => ringPass(sql)]);
+    for (const [name, run] of steps)
+      await run().catch((err) =>
+        rtLog.warn({ err, step: name }, 'agent runtime maintenance failed'),
+      );
   };
   const maintain = setInterval(() => void maintenance(), MAINTENANCE_MS);
   maintain.unref?.();
