@@ -39,7 +39,10 @@ Later the same day the owner added these decisions:
   top anchor, but no store can pick it until staff open it.
 - **Pack conversations last 30 days** from the pack's payment.
 - **Owners hear when Duá runs out** of conversations.
-- **Pangolim opens when own domains are built.** Staff open it in the CRM then.
+- **Pangolim opens when own domains are built.** Staff open it in the CRM then. That work
+  includes what happens to a live custom domain when a store loses the feature (a downgrade, an
+  unpaid plan, a CRM toggle). Today host resolution doesn't check the plan; only activating a
+  domain does (403 `PLAN_REQUIRED`).
 - **The AI seller is Duá**, Venduá's mascot, on every store. Stores no longer name it, the
   mascot is its face, and copy says "o Duá" and "ele". "Vendedor" stays the code name (routes,
   tables, the `vendedor` feature key).

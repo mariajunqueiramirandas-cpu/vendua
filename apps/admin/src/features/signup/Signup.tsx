@@ -176,7 +176,12 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
       patch({ planId: site });
       if (window.location.search.includes('plano='))
         window.history.replaceState(null, '', '/admin/comecar');
-    } else if (!open.some((p) => p.id === cur.current.planId)) {
+    } else if (
+      !list.some((p) => p.id === cur.current.planId) ||
+      // a closed plan is swapped only before the owner moves on: further along (a signup that
+      // created its store and is resuming) Core decides whether the store still holds it
+      (cur.current.step === 'plano' && !open.some((p) => p.id === cur.current.planId))
+    ) {
       const trial = plans.data?.billing.available
         ? open.find((p) => p.trialDays > 0 && p.priceCents !== null)
         : undefined;

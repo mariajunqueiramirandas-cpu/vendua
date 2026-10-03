@@ -9,6 +9,7 @@ import { billingLog, supersedePix } from './billing/invoices.ts';
 import { syncPlanPrices } from './billing/jobs.ts';
 import {
   PLAN_FEATURES,
+  planHas,
   planView,
   type PlanFeature,
   type PlanFeatures,
@@ -410,6 +411,11 @@ export function mountControlBilling(o: {
       )[0];
       if (owner && owner.tenant_id !== row.tenant_id)
         throw new HttpError(409, 'DOMAIN_TAKEN', 'another store already serves this host');
+      // a store whose plan dropped the domain (or never paid for it) doesn't get it switched on
+      if (!(await planHas(tx, row.tenant_id, 'customDomain')))
+        throw new HttpError(403, 'PLAN_REQUIRED', "the store's plan does not include a domain", {
+          feature: 'customDomain',
+        });
       await tx`select activate_custom_domain(${row.tenant_id}, ${row.host})`;
       await emitAdminTx(tx, row.tenant_id, 'billing');
       await emitAdminTx(tx, row.tenant_id, 'store');

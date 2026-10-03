@@ -856,6 +856,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(third.body.error.code).toBe('DOMAIN_TAKEN');
 
     expect((await call('POST', `/control/v1/custom-domains/${cd.id}/activate`)).status).toBe(404);
+    // a store whose plan lost the domain doesn't get it switched on
+    await sql`update tenants set plan = 'mirim' where id = ${s.id}`;
+    const refused = await control('POST', `/control/v1/custom-domains/${cd.id}/activate`);
+    expect(refused.body.error).toMatchObject({
+      code: 'PLAN_REQUIRED',
+      details: { feature: 'customDomain' },
+    });
+    await sql`update tenants set plan = 'pangolim' where id = ${s.id}`;
     const act = await control('POST', `/control/v1/custom-domains/${cd.id}/activate`);
     expect(act.status).toBe(200);
     expect(act.body).toEqual({ ok: true });
