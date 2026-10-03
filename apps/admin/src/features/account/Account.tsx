@@ -756,13 +756,17 @@ function Vendedor({ a, onInvoice }: { a: AccountData; onInvoice: (id: string) =>
   const [needsPaid, setNeedsPaid] = useState(false);
   const qc = useQueryClient();
   const buy = useMutation({
-    mutationFn: (pack: AiPack) => api.buyAiPack(pack.id),
+    mutationFn: (pack: AiPack) => api.buyAiPack(pack),
     onSuccess: (r) => {
       qc.setQueryData(qk.account, r);
       onInvoice(r.invoiceId);
     },
     onError: (e) => {
       if (e instanceof ApiError && e.code === 'AI_PACK_NEEDS_PAID_PLAN') setNeedsPaid(true);
+      if (e instanceof ApiError && e.code === 'AI_PACK_CHANGED') {
+        void qc.invalidateQueries({ queryKey: qk.account });
+        return void toast.error('O pacote mudou. Confira o novo preço antes de comprar.');
+      }
       toast.error(messageOf(e));
     },
   });

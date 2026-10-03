@@ -175,7 +175,10 @@ export function mountAccount(d: AdminDeps) {
     write('owner', async (tx, t, m, c) => {
       billingOn();
       const body = await bodyJson(c, 1024);
-      const inv = await buyAiPack(ctxFor(c), tx, t.id, body.packId, new Date());
+      const inv = await buyAiPack(ctxFor(c), tx, t.id, body.packId, new Date(), {
+        priceCents: body.priceCents,
+        conversations: body.conversations,
+      });
       await audit(tx, t.id, m, {
         action: 'ai_pack.buy',
         entity: 'invoice',

@@ -11,7 +11,7 @@ import { text, type AdminApp, type AdminDeps, type Merchant } from '../../admin/
 import { withTenant, type Sql } from '../../platform/db.ts';
 import { HttpError, bodyJson, clientIp, windowCounter } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
-import { platformHost } from '../../platform/store-origin.ts';
+import { platformHost, storeOrigin } from '../../platform/store-origin.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { mountBillingDev } from './dev-routes.ts';
 import { validEmail } from './input.ts';
@@ -172,9 +172,8 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       owned ? await withTenant(sql, owned.tenant_id, (tx) => heldPlans(tx, owned!.tenant_id)) : [],
     );
     // a replay of a store already made goes through even if signup closed since
-    if (!owned) await signupOpenOr503(d);
+    if (!owned) await signupOpenOr503(d, 'create');
     if (!owned && trial && (await phoneHadTrial(sql, phone))) throw trialUsed();
-    let createdNow = false;
     if (!owned) {
       if ((await slugStatus(sql, slug, d.storeDomain)).reason === 'taken')
         throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
@@ -258,22 +257,31 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       owned = await ownedStore(sql, phone, slug);
       if (!owned)
         throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
-      createdNow = true;
     }
 
     const next = await ensureFirstCharge(d, c, owned, { plan, method, email, ownerName, manual });
-    if (createdNow) {
-      // after the commit and never in the way of the answer: a failed email is logged, not fatal
-      const store = owned;
+    // once per new store, durably: a retry after a failed first charge still welcomes the owner
+    const store = owned;
+    const welcome = await withTenant(sql, store.tenant_id, async (tx) => {
+      const won = await tx`
+        insert into push_deliveries (tenant_id, key)
+        select id, 'signup.welcome' from tenants
+        where id = ${store.tenant_id} and created_at > now() - interval '1 day'
+        on conflict do nothing returning key
+      `;
+      return won[0] ? storeOrigin(tx, { id: store.tenant_id, slug }, d.storeDomain) : null;
+    });
+    // after the commit and never in the way of the answer: a failed email is logged, not fatal
+    if (welcome)
       void sendWelcome(d, c, {
         email,
         ownerName,
         storeName,
         slug,
+        storeUrl: welcome,
         planName: plan.name,
         next,
       }).catch((err) => signupLog.warn({ err, tenantId: store.tenant_id }, 'welcome email failed'));
-    }
     setAdminCookie(
       c,
       await createSession(sql, owned, c.req.header('user-agent'), {
@@ -289,8 +297,11 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     mountBillingDev(admin, d, d.provider);
 }
 
-async function signupOpenOr503(d: Omit<AdminDeps, 'admin'>) {
-  if (!(await d.signupReady()).open)
+/** Closed: no phone code, no new store. Creating one doesn't recheck the WhatsApp, which only
+ *  sends the code (already delivered), so a reconnect blip can't fail a verified owner. */
+async function signupOpenOr503(d: Omit<AdminDeps, 'admin'>, step: 'code' | 'create' = 'code') {
+  const r = await d.signupReady();
+  if (!(step === 'create' ? r.on && r.email && r.billing : r.open))
     throw new HttpError(503, 'SIGNUP_CLOSED', 'self-serve signup is not open right now');
 }
 
@@ -303,13 +314,13 @@ async function sendWelcome(
     ownerName: string;
     storeName: string;
     slug: string;
+    storeUrl: string;
     planName: string;
     next: PayNext;
   },
 ) {
   const first = o.ownerName.trim().split(/\s+/)[0] ?? o.ownerName;
   const panel = `${d.publicOrigin(c)}/admin/`;
-  const store = `https://${platformHost(o.slug, d.storeDomain)}`;
   const next =
     o.next.kind === 'trial'
       ? `Seu teste grátis vai até ${new Date(o.next.endsAt).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', timeZone: 'America/Sao_Paulo' })}. A loja já pode receber pedidos.`
@@ -324,7 +335,7 @@ async function sendWelcome(
       `A ${o.storeName} foi criada no plano ${o.planName}.`,
       next,
       `Painel da loja: ${panel}`,
-      `Endereço da loja: ${store}`,
+      `Endereço da loja: ${o.storeUrl}`,
       'Para entrar no painel, use o número de WhatsApp que você confirmou no cadastro.',
       'Se precisar de ajuda, toque em Ajuda no painel.',
     ].join('\n\n'),

@@ -328,7 +328,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     const r = await signup(token, `signup-${nonce}-shut`, {}, closed);
     expect(r.status).toBe(503);
     expect(r.body.error.code).toBe('SIGNUP_CLOSED');
-    gate = { ...gate, on: true, open: true };
+    // a WhatsApp reconnecting doesn't fail an owner whose code already came: only the code needs it
+    gate = { on: true, whatsapp: false, email: true, billing: true, open: false };
+    expect((await call('POST', '/admin/v1/signup/otp/start', { phone }, {}, closed)).status).toBe(
+      503,
+    );
     expect((await signup(token, `signup-${nonce}-shut`, {}, closed)).status).toBe(201);
   });
 

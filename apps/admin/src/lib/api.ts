@@ -1976,9 +1976,14 @@ export const api = {
   cancelSubscription: () => send<Account>('POST', '/account/subscription/cancel'),
   resumeSubscription: () => send<Account>('POST', '/account/subscription/resume'),
   invoicePix: (id: string) => send<Account>('POST', `/account/invoices/${id}/pix`),
-  /** a one-off Pix invoice for the pack (an open one is reused) */
-  buyAiPack: (packId: string) =>
-    send<Account & { invoiceId: string }>('POST', '/account/ai-packs', { packId }),
+  /** a one-off Pix invoice for the pack (an open one is reused); the terms shown go along, so a
+   *  pack repriced meanwhile answers AI_PACK_CHANGED instead of charging something else */
+  buyAiPack: (pack: Pick<AiPack, 'id' | 'priceCents' | 'conversations'>) =>
+    send<Account & { invoiceId: string }>('POST', '/account/ai-packs', {
+      packId: pack.id,
+      priceCents: pack.priceCents,
+      conversations: pack.conversations,
+    }),
   addDomain: (host: string) => send<Account>('POST', '/account/domains', { host }),
   checkDomain: (id: string) => send<Account>('POST', `/account/domains/${id}/check`),
   removeDomain: (id: string) => send<Account>('DELETE', `/account/domains/${id}`),

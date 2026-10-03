@@ -660,11 +660,20 @@ export async function buyAiPack(
   tenantId: string,
   packId: unknown,
   now: Date,
+  /** what the owner saw on the offer: a pack staff repriced since answers 409, not a surprise */
+  seen?: { priceCents?: unknown; conversations?: unknown },
 ): Promise<InvoiceRow> {
   const sub = await lockSub(tx, tenantId);
   const pack = typeof packId === 'string' ? await aiPackRow(tx, packId) : null;
   if (!pack || !pack.public)
     throw new HttpError(422, 'UNKNOWN_AI_PACK', 'pick one of the packs offered', {
+      field: 'packId',
+    });
+  if (
+    (seen?.priceCents !== undefined && seen.priceCents !== pack.price_cents) ||
+    (seen?.conversations !== undefined && seen.conversations !== pack.conversations)
+  )
+    throw new HttpError(409, 'AI_PACK_CHANGED', 'the pack changed since it was shown', {
       field: 'packId',
     });
   if (!(await tenantPlan(tx, tenantId)).features.vendedor)
@@ -964,7 +973,28 @@ export async function markInvoicePaid(
   )[0];
   if (!inv || !sub) return false;
   if (inv.kind === 'ai_pack') {
-    await creditAiPack(tx, tenantId, inv, paidAt);
+    // the Pix was asked for while the plan had Duá; paid after it lost Duá (a cancel, a
+    // downgrade, a CRM toggle) it could never be spent: no credit, and the team refunds it
+    const usable =
+      (await tenantPlan(tx, tenantId)).features.vendedor &&
+      (sub.status === 'active' || sub.status === 'past_due');
+    if (usable) await creditAiPack(tx, tenantId, inv, paidAt);
+    else {
+      const t = (
+        await tx<
+          { name: string; slug: string }[]
+        >`select name, slug from tenants where id = ${tenantId}`
+      )[0];
+      const body = `A fatura ${inv.number} (pacote de conversas do Duá, ${formatBRL(inv.amount_cents)}) da loja ${t?.name} (${t?.slug}) foi paga quando o plano já não tinha o Duá. As conversas não entraram: devolva pelo Mercado Pago.`;
+      ctx.later(() =>
+        billingStaff.notify(ctx.sql, {
+          subject: `Pacote do Duá pago sem o Duá: ${t?.name ?? tenantId}`,
+          body,
+          idemKey: `invoice-pack-unusable:${inv.id}`,
+        }),
+      );
+      await recordBillingProblem(tx, tenantId, 'pix_mismatch', body, `pack-unusable:${inv.id}`);
+    }
   } else if (inv.kind === 'upgrade') {
     if (upgradeLive(sub, { ...inv, status: 'open' }, paidAt))
       await applyUpgrade(ctx, tx, sub, inv, now);

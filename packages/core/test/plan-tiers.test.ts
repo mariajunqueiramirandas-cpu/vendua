@@ -1039,7 +1039,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
         (await s.owner('POST', '/account/ai-packs', { packId: tempPack })).body.error.code,
       ).toBe('UNKNOWN_AI_PACK');
 
-      const buy = await s.owner('POST', '/account/ai-packs', { packId: 'ai_100' });
+      // the terms the owner saw go along: a pack repriced meanwhile is refused, not charged
+      const stale = await s.owner('POST', '/account/ai-packs', {
+        packId: 'ai_100',
+        priceCents: 2990,
+        conversations: 100,
+      });
+      expect(stale.status).toBe(409);
+      expect(stale.body.error.code).toBe('AI_PACK_CHANGED');
+      const buy = await s.owner('POST', '/account/ai-packs', {
+        packId: 'ai_100',
+        priceCents: 3990,
+        conversations: 100,
+      });
       expect(buy.status).toBe(200);
       const inv = buy.body.invoices.find((i: any) => i.id === buy.body.invoiceId);
       expect(inv).toMatchObject({
@@ -1162,6 +1174,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       } finally {
         await sql`update ai_packs set public = false, conversations = 10 where id = ${tempPack}`;
       }
+    });
+
+    test('a pack paid after the plan lost Duá is not credited: the team refunds it', async () => {
+      const s = await store('pack-lost', 'bandeira', 'active');
+      const buy = await s.owner('POST', '/account/ai-packs', { packId: 'ai_100' });
+      expect(buy.status).toBe(200);
+      await sql`update tenants set plan = 'mirim' where id = ${s.id}`;
+      expect((await payInvoice(buy.body.invoiceId)).status).toBe(200);
+      expect((await sql`select 1 from ai_credits where tenant_id = ${s.id}`).length).toBe(0);
+      expect(
+        (await sql`select status from invoices where id = ${buy.body.invoiceId}`)[0]!.status,
+      ).toBe('paid');
+      const problem = await sql`
+        select data ->> 'detail' as detail from staff_events
+        where tenant_id = ${s.id} and kind = 'billing.problem'`;
+      expect(problem.map((p) => p.detail as string).join()).toContain('devolva pelo Mercado Pago');
     });
 
     test('a trial or a plan without the Vendedor can not buy one', async () => {
