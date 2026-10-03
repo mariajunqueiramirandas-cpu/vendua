@@ -470,7 +470,7 @@ export function mountCommerce(d: Deps) {
 
   // The card the shopper typed into Mercado Pago's fields on the order page, as MP's single-use
   // token — the card itself never reaches us. Same order as /pay: MP before the recorded tx.
-  checkout.use('/orders/:id/card', limiter(20));
+  checkout.use('/orders/:id/card', limiter(30));
   checkout.post('/orders/:id/card', async (c) => {
     const tenant = c.get('tenant') as Tenant;
     const cartId = await sessionCartId(c, sessionSecret);

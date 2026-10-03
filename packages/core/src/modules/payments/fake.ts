@@ -226,6 +226,14 @@ export class FakeProvider implements PaymentProvider {
     return hits.length ? strip(hits[hits.length - 1]!) : null;
   }
 
+  async findPayments(token: string, externalReference: string) {
+    this.guard(token);
+    return [...this.payments.values()]
+      .filter((p) => p.externalReference === externalReference && p.token !== 'platform')
+      .reverse()
+      .map(strip);
+  }
+
   /** move a payment the way MP would; tests then post webhook() */
   settle(id: string, status: ProviderPaymentStatus) {
     const p = this.payments.get(id);

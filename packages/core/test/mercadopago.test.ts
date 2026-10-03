@@ -347,7 +347,7 @@ describe('mercado pago adapter', () => {
     expect(seen[0]!.url).toBe('https://api.mercadopago.com/v1/payments/1234567890');
     expect((await p.findPayment('tok', 'ref-1'))!.id).toBe('1234567890');
     expect(seen[1]!.url).toBe(
-      'https://api.mercadopago.com/v1/payments/search?external_reference=ref-1&sort=date_created&criteria=desc',
+      'https://api.mercadopago.com/v1/payments/search?external_reference=ref-1&sort=date_created&criteria=desc&limit=30',
     );
     const r = await p.refund('tok', '1234567890', 1000, 'refund:x:1');
     expect(r).toEqual({ id: '99', amountCents: 1000, status: 'approved' });

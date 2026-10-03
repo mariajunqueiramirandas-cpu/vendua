@@ -27,8 +27,9 @@ shopper → Kernel-owned checkout → Core /checkout/v1 →
   creates the payment (`POST /v1/payments` on the merchant's token, 3-D Secure `optional`).
   Core charges the order total, never an amount from the page.
   - `/pay` with `{"card":"form"}` answers `{kind:'card', publicKey, amountCents, declined}` —
-    showing the form reserves nothing. The key is `MP_PUBLIC_KEY` (Venduá's application, MP's
-    current marketplace guidance) or, unset, the store's own `public_key` from OAuth.
+    showing the form reserves nothing. The key is the store's own `public_key` from OAuth (its
+    tokens are redeemable on the store's token, which charges them); `MP_PUBLIC_KEY` only fills
+    in for a store whose OAuth answer carried none.
   - One card at a time: a submit reserves a `creating` attempt (MP key `${orderId}:${attempt}`);
     while it is in flight or in review at MP, another submit gets `409 PAYMENT_IN_PROGRESS` —
     a second token would be a second charge. A submit MP never answered is retried after 2

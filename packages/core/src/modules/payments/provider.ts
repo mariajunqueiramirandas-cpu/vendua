@@ -195,6 +195,8 @@ export interface PaymentProvider {
   getPayment(token: string, id: string): Promise<ProviderPayment>;
   /** the latest payment for an external reference (a card checkout before its webhook) */
   findPayment(token: string, externalReference: string): Promise<ProviderPayment | null>;
+  /** every payment for an external reference, newest first (a superseded checkout's late one) */
+  findPayments(token: string, externalReference: string): Promise<ProviderPayment[]>;
   refund(
     token: string,
     paymentId: string,

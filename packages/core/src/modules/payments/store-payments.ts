@@ -36,6 +36,8 @@ export const CARD_TTL_MIN = 120;
 const CARD_SUBMIT_GRACE_MS = 2 * 60_000;
 /** …and the job gives the attempt up after this, having looked it up at MP until then */
 const CARD_FORM_TTL_MS = 30 * 60_000;
+/** a retry reuses an unanswered attempt only this young — never one the job could expire mid-call */
+const CARD_REUSE_MAX_MS = CARD_FORM_TTL_MS - 5 * 60_000;
 /** status_detail of an in-page card attempt before MP answers — tells it from a hosted checkout */
 const CARD_FORM = 'card_form';
 const MAX_ATTEMPTS = 20;
@@ -384,7 +386,7 @@ export interface PayCtx {
   payerEmail?: string;
   /** Kernel 1.19+: a card order gets the in-page form, never a hosted checkout */
   cardForm?: boolean;
-  /** the key MP's card fields run under (MP_PUBLIC_KEY); unset → the store's own, from OAuth */
+  /** MP_PUBLIC_KEY: the card fields' key for a store whose OAuth gave none */
   publicKey?: string;
   /** the page saw the bank's 3DS frame say COMPLETE: a still-pending challenge is MP catching up */
   challengeDone?: boolean;
@@ -543,7 +545,8 @@ async function cardFormPlan(
     await syncOrderPayment(tx, tenantId, order.id);
     return none;
   }
-  const publicKey = ctx.publicKey || conn.public_key;
+  // the seller's own key: its tokens are always redeemable on the seller's token, which charges them
+  const publicKey = conn.public_key || ctx.publicKey;
   if (!publicKey)
     throw new HttpError(503, 'PAYMENT_UNAVAILABLE', 'online payment is unavailable right now', {
       reason: 'no_public_key',
@@ -675,7 +678,9 @@ async function recordAttempt(
       await syncOrderPayment(tx, tenantId, row.order_id);
       return other.order_id === row.order_id ? other : ('conflict' as const);
     }
-    if (cur.status === 'creating') {
+    // `expired`: the job closed an unanswered attempt while MP was still answering it — MP's
+    // answer is the truth, and dropping it would leave a charge nobody tracks
+    if (cur.status === 'creating' || (cur.status === 'expired' && !cur.provider_payment_id)) {
       const bound = await bindsProviderId(
         tx,
         (sp) => sp`
@@ -899,11 +904,15 @@ async function planCard(
       if (age(latest, now) < CARD_SUBMIT_GRACE_MS) throw inProgress('submitting');
       // MP never answered that submit. Retry the same attempt: its idempotency key replays the
       // first payment if MP took it, so the new token is only charged if MP never saw the old one
-      return plan(latest);
+      if (age(latest, now) < CARD_REUSE_MAX_MS) return plan(latest);
+      // older: the job has looked it up for ~25 min and found nothing — it closes, a new one opens
+      // (a payment that still turns up binds to it by its attempt metadata)
+      await tx`update payments set status = 'expired', updated_at = now() where id = ${latest.id}`;
+    } else {
+      // an older Kernel's hosted checkout: the form replaces it (money that lands there still counts)
+      superseded = latest.provider_checkout_id;
+      await tx`update payments set status = 'cancelled', status_detail = 'superseded', updated_at = now() where id = ${latest.id}`;
     }
-    // an older Kernel's hosted checkout: the form replaces it (money that lands there still counts)
-    superseded = latest.provider_checkout_id;
-    await tx`update payments set status = 'cancelled', status_detail = 'superseded', updated_at = now() where id = ${latest.id}`;
   } else if (latest && SETTLED.includes(latest.status)) {
     await syncOrderPayment(tx, tenant.id, orderId);
     throw new HttpError(409, 'PAYMENT_NOT_REQUIRED', 'this order is already paid', {
@@ -1318,7 +1327,7 @@ export async function applyProviderPayment(
         ? await tx<PaymentRow[]>`
             select * from payments where tenant_id = ${tenantId} and order_id = ${orderId}
               and attempt = ${p.attempt} and kind = 'card' and provider_payment_id is null
-              and review is null and status in ('creating', 'pending')
+              and review is null and status in ('creating', 'pending', 'expired')
             for update
           `
         : await tx<PaymentRow[]>`

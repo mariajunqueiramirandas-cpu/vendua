@@ -432,14 +432,18 @@ export class MercadoPagoProvider implements PaymentProvider {
   }
 
   async findPayment(token: string, externalReference: string) {
+    return (await this.findPayments(token, externalReference))[0] ?? null;
+  }
+
+  async findPayments(token: string, externalReference: string) {
     const q = new URLSearchParams({
       external_reference: externalReference,
       sort: 'date_created',
       criteria: 'desc',
+      limit: '30',
     });
     const j = await this.call('GET', `/v1/payments/search?${q}`, token);
-    const first = Array.isArray(j.results) ? (j.results[0] as MpPayment | undefined) : undefined;
-    return first ? mapPayment(first) : null;
+    return Array.isArray(j.results) ? (j.results as MpPayment[]).map(mapPayment) : [];
   }
 
   async refund(

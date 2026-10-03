@@ -16,6 +16,7 @@ export class UnconfiguredProvider implements PaymentProvider {
   createCardPayment = off;
   getPayment = off;
   findPayment = off;
+  findPayments = off;
   refund = off;
   cancelPayment = off;
   verifyWebhook() {

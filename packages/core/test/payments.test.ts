@@ -608,7 +608,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     expect((await attempts(id)).map((a) => [a.attempt, a.status])).toEqual([[1, 'approved']]);
 
     const o2 = await place('card_online');
-    // /card allows 20 submits a minute per shopper IP, and both card tests share one
+    // /card allows 30 submits a minute per shopper IP, and every card test shares one
     for (const body of [
       { token: 'x', installments: 1.5 },
       { token: 'x', payer: { email: 'not-an-email' } },
@@ -673,6 +673,65 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     expect(rows[0]!.provider_payment_id).toBe(hostedId);
     expect(rows[1]).toMatchObject({ attempt: 2, status: 'approved', review: 'paid_twice' });
     expect(rows[1]!.provider_payment_id).not.toBe(hostedId);
+  });
+
+  test('card form: a superseded checkout paid with its webhook lost is found by the job', async () => {
+    const nonce = () => `.${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const card = (id: string, auth: Record<string, string>) =>
+      call(
+        'POST',
+        `/checkout/v1/orders/${id}/card`,
+        {
+          token: `fake-card-approved${nonce()}`,
+          paymentMethodId: 'visa',
+          installments: 1,
+          payer: { email: 'a@b.co' },
+        },
+        auth,
+      );
+    const o = await place('card_online');
+    const id = o.body.order.id;
+    const hosted = await pay(id, o.auth);
+    const pref = new URL(hosted.body.next.url).searchParams.get('fake_checkout')!;
+    expect((await card(id, o.auth)).body.order.payment.status).toBe('paid');
+    // the shopper also finished the old hosted checkout, and MP's webhook never came
+    const late = fake.completeCheckout(pref, 'approved');
+    await reconcilePayments(appSql, jobDeps);
+    const rows = await sql<
+      {
+        attempt: number;
+        provider_payment_id: string | null;
+        status: string;
+        review: string | null;
+      }[]
+    >`
+      select attempt, provider_payment_id, status, review from payments where order_id = ${id} order by attempt
+    `;
+    expect(rows[0]).toMatchObject({
+      attempt: 1,
+      provider_payment_id: late.id,
+      status: 'approved',
+      review: 'paid_twice',
+    });
+    expect(rows[1]).toMatchObject({ attempt: 2, status: 'approved', review: null });
+
+    // an unanswered submit too old to reuse safely closes, and a fresh attempt takes the card
+    const o2 = await place('card_online');
+    const real = fake.createCardPayment.bind(fake);
+    fake.createCardPayment = async () => {
+      throw new ProviderError('unavailable', 'down');
+    };
+    try {
+      expect((await card(o2.body.order.id, o2.auth)).status).toBe(503);
+    } finally {
+      fake.createCardPayment = real;
+    }
+    await sql`update payments set created_at = now() - interval '26 minutes' where order_id = ${o2.body.order.id}`;
+    expect((await card(o2.body.order.id, o2.auth)).body.order.payment.status).toBe('paid');
+    expect((await attempts(o2.body.order.id)).map((a) => [a.attempt, a.status])).toEqual([
+      [1, 'expired'],
+      [2, 'approved'],
+    ]);
   });
 
   test('full refund of a delivered online order → refunded; cancelling a paid order refunds it', async () => {
