@@ -155,6 +155,8 @@ export async function gotoProductPage(
         `a[data-vendua="product-link"][href*="${slug}"], a[href$="/${slug}"], a[href*="/${slug}?"]`,
       )
       .first();
+    // the storefront renders its catalog after load: wait for the link rather than race it
+    await link.waitFor({ state: 'attached', timeout: 5000 }).catch(() => {});
     if ((await link.count()) > 0) {
       await link.click();
       await page.waitForLoadState('networkidle').catch(() => {});
