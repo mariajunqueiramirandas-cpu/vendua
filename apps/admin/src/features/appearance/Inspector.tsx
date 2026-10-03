@@ -29,6 +29,7 @@ export function Inspector({
   logoUrl,
   previewShown,
   onBack,
+  noExit,
   onAdd,
 }: {
   ed: Editor;
@@ -37,6 +38,8 @@ export function Inspector({
   /** with no live preview, the colours show their own sample */
   previewShown: boolean;
   onBack?: () => void;
+  /** phones: the screen's own bar has "pronto", so the panel shows no way out of its own */
+  noExit?: boolean;
   onAdd: () => void;
 }) {
   const close = onBack ?? (() => ed.setSel(null));
@@ -49,6 +52,7 @@ export function Inspector({
           over="Loja toda"
           title="Cores e cantos"
           onBack={onBack}
+          noExit={noExit}
           onClose={close}
           note="Você vê na prévia na hora. Os clientes veem depois de publicar."
         />
@@ -80,6 +84,7 @@ export function Inspector({
           over={sel.tpl === 'layout' ? 'Em todas as páginas' : `Página ${tplLabel(sel.tpl)}`}
           title={sectionName(sec.type)}
           onBack={onBack}
+          noExit={noExit}
           onClose={close}
         />
         {sec.disabled ? (
@@ -176,12 +181,14 @@ function Head({
   title,
   note,
   onBack,
+  noExit,
   onClose,
 }: {
   over: string;
   title: string;
   note?: ReactNode;
   onBack?: (() => void) | undefined;
+  noExit?: boolean | undefined;
   onClose: () => void;
 }) {
   return (
@@ -196,7 +203,7 @@ function Head({
         <h2 className="t-title-2">{title}</h2>
         {note ? <p className="t-caption mt-1 text-muted">{note}</p> : null}
       </div>
-      {!onBack ? (
+      {noExit ? null : !onBack ? (
         <IconButton label="fechar" size="sm" className="-mr-2 -mt-1 shrink-0" onClick={onClose}>
           <X />
         </IconButton>

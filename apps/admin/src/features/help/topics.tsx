@@ -326,7 +326,7 @@ export const TOPICS: Record<TopicId, Topic> = {
     items: [
       {
         q: 'Como mudo um texto ou uma foto?',
-        a: 'Toque na parte da página que quer mudar. Ela abre para editar, e a prévia muda na hora.',
+        a: 'Toque na parte da página que quer mudar. No celular, o nome dela aparece embaixo (as setas passam para a vizinha): toque nele para editar. A prévia muda na hora.',
       },
       {
         q: 'Quando os clientes veem a mudança?',

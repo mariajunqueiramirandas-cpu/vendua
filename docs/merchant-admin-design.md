@@ -594,9 +594,13 @@ column scrolls on its own. Wide screens (1400 px and up) show the outline left,
 preview center, settings right, with a "what do you want to change?" start in
 place of an empty panel. Tablets and laptops show the preview beside one panel:
 the outline, or what was picked from it, with a back arrow. Phones show the
-preview without a device frame and the panel under it; while something is
-selected the preview pins under the top bar, so each change stays in view.
-Publish and undo sit in the action bar.
+editor as one fixed screen (no page scroll to fight the preview's own): the
+store edge to edge at the phone's own width, and a bottom bar with partes (the
+outline, in a sheet), cores and publicar. A tap on the preview only selects:
+the part's name replaces the bar, with ‹ › to step to its neighbours, so a
+mis-tap on a small screen costs nothing. "Editar" splits the screen, preview
+on top and the form under it, with undo and "pronto" in place of the title and
+page tabs; with the keyboard up the preview steps aside for the field.
 
 ### Relatórios
 

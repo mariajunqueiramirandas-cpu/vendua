@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '../../ui/cn.ts';
 
-/** The width a store is laid out at: a real phone's, or a laptop's. A smaller frame scales it. */
-const LAYOUT_WIDTH = { phone: 375, desktop: 1280 } as const;
+/** The width a store is laid out at: a phone's, or a laptop's. A smaller frame scales it.
+ *  `bare` is the phone in hand, edge to edge: it shows the store at its own width. */
+const LAYOUT_WIDTH = { phone: 375, bare: 320, desktop: 1280 } as const;
 
 /**
  * The real storefront in a frame. `phone` and `desktop` draw a device around it (tablet and
@@ -40,7 +41,7 @@ export function Preview({
     return () => ro.disconnect();
   }, []);
   // never narrower than the store was made for: a small frame shows it zoomed out
-  const layoutW = Math.max(size?.w ?? 0, LAYOUT_WIDTH[device === 'desktop' ? 'desktop' : 'phone']);
+  const layoutW = Math.max(size?.w ?? 0, LAYOUT_WIDTH[device]);
   const scale = size ? size.w / layoutW : 1;
   useEffect(() => {
     setLoaded(false);
@@ -56,7 +57,7 @@ export function Preview({
         'relative overflow-hidden bg-surface',
         device === 'phone' && 'aspect-[9/19] rounded-[28px]',
         device === 'desktop' && 'aspect-[16/10] rounded-lg',
-        device === 'bare' && 'h-full rounded-lg ring-1 ring-line depth-1',
+        device === 'bare' && 'h-full',
       )}
     >
       {!loaded && !late ? <div className="skeleton absolute inset-0" /> : null}

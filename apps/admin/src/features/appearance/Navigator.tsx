@@ -28,10 +28,7 @@ export function Navigator({
   onAdd: () => void;
 }) {
   const layout = ed.drafts.layout.sections;
-  const ci = layout.findIndex((x) => x.type === 'sdk:page-content');
-  const top = ci < 0 ? layout : layout.slice(0, ci);
-  const bottom = ci < 0 ? [] : layout.slice(ci + 1);
-  const pageSections = ed.drafts[ed.page].sections;
+  const { top, page: pageSections, bottom } = ed.parts;
   const row = (tpl: TplId, list: TemplateSection[]) => (x: TemplateSection) => {
     const i = list.findIndex((y) => y.id === x.id);
     return (

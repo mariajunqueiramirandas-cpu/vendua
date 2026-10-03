@@ -219,6 +219,28 @@ export function useEditor(data: AppearanceData, storeId: string) {
     sel?.kind === 'section'
       ? (drafts[sel.tpl].sections.find((x) => x.id === sel.id) ?? null)
       : null;
+  // what's on the page, top to bottom as the customer sees it: the shared top, the page's
+  // own parts, the shared footer (the layout's page-content slot is where the page goes)
+  const layoutSecs = drafts.layout.sections;
+  const slot = layoutSecs.findIndex((x) => x.type === 'sdk:page-content');
+  const parts = {
+    top: slot < 0 ? layoutSecs : layoutSecs.slice(0, slot),
+    page: drafts[page].sections,
+    bottom: slot < 0 ? [] : layoutSecs.slice(slot + 1),
+  };
+  const order: { tpl: TplId; sec: TemplateSection }[] = [
+    ...parts.top.map((sec) => ({ tpl: 'layout' as const, sec })),
+    ...parts.page.map((sec) => ({ tpl: page, sec })),
+    ...parts.bottom.map((sec) => ({ tpl: 'layout' as const, sec })),
+  ];
+  /** the part before or after the selected one, in reading order */
+  const neighbour = (d: -1 | 1): Selection => {
+    if (sel?.kind !== 'section') return null;
+    const i = order.findIndex((x) => x.tpl === sel.tpl && x.sec.id === sel.id);
+    const n = i < 0 ? undefined : order[i + d];
+    return n ? { kind: 'section', tpl: n.tpl, id: n.sec.id } : null;
+  };
+
   /** a section id from the frame: this page's own first, else the shared layout */
   const locate = (id: string): Selection => {
     if (drafts[page].sections.some((x) => x.id === id)) return { kind: 'section', tpl: page, id };
@@ -337,6 +359,8 @@ export function useEditor(data: AppearanceData, storeId: string) {
     setSel,
     selected,
     locate,
+    parts,
+    neighbour,
     move,
     toggle,
     remove,
