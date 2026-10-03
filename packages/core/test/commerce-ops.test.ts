@@ -526,6 +526,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce ops (db)', () => {
     });
   });
 
+  test('searchCatalog: a dietary restriction filters on what the store stated', async () => {
+    const names = async (q: string) =>
+      (await tx((t) => searchCatalog(t, tenantId, q))).map((h) => h.product.name);
+    await sql`update products set dietary = '{sem_lactose}' where id = ${ids['pudim-coco']!}`;
+    // says "lactose" in its text and is tagged as containing it: never a "sem lactose" answer
+    await sql`update products set dietary = '{contem_lactose}', description = 'Leva lactose'
+      where id = ${ids['pudim-leite']!}`;
+    expect(await names('pudim sem lactose')).toEqual(['Pudim de Coco']);
+    expect(await names('tem algo sem lactose?')).toEqual(['Pudim de Coco']);
+    expect(await names('Vegana')).toEqual(['Bolo de limão']);
+    expect(await names('bolo vegetariano')).toEqual(['Bolo de limão']);
+    expect(await names('sem glúten')).toEqual([]);
+  });
+
   test('a sacola link opens once; a share link keeps working', async () => {
     const cartId = await newCart([['brigadeiro', 2]]);
     const thread = (

@@ -84,7 +84,8 @@ async function view(tx: Sql, tenantId: string, cartId: string): Promise<WebChatV
       at: m.created_at.toISOString(),
       card: m.meta?.card ?? null,
     })),
-    pending: !!t?.pending_since,
+    // a reply that hasn't come in two minutes isn't coming soon: the store took over, or muted
+    pending: !!t?.pending_since && Date.now() - t.pending_since.getTime() < 120_000,
   };
 }
 

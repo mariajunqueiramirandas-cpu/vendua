@@ -194,8 +194,11 @@ export async function voicePass(sql: Sql, media: MediaProviders | null): Promise
   const due = await controlTx(
     sql,
     (tx) => tx<{ id: string; tenant_id: string; thread_id: string; body: string }[]>`
-      update shopper_messages set meta = meta || '{"voice":"working"}'::jsonb
-      where id in (select id from shopper_messages where meta ->> 'voice' = 'pending'
+      update shopper_messages set meta = meta || jsonb_build_object('voice', 'working', 'voiceAt', now())
+      where id in (select id from shopper_messages
+                   where meta ->> 'voice' = 'pending'
+                      -- a claim whose worker died: the reply still goes, as voice or as text
+                      or (meta ->> 'voice' = 'working' and (meta ->> 'voiceAt')::timestamptz < now() - interval '2 minutes')
                    order by created_at limit 5 for update skip locked)
       returning id, tenant_id, thread_id, body`,
   );
@@ -221,7 +224,9 @@ export async function voicePass(sql: Sql, media: MediaProviders | null): Promise
         on conflict (shopper_message_id) where shopper_message_id is not null do nothing`;
       await tx`update shopper_messages set kind = ${spoken ? 'audio' : 'text'}, meta = meta || ${tx.json({ voice: spoken ? 'sent' : 'fallback' })}
         where id = ${m.id}`;
-    });
+    }).catch((err) =>
+      sweepLog.error({ err, messageId: m.id }, 'voice reply failed; retried later'),
+    );
   }
   return due.length;
 }

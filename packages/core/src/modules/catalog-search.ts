@@ -6,7 +6,8 @@ import { getCatalogView, type ProductSummary } from './catalog.ts';
 // case and the common Portuguese plurals fold away; the store's vocabulary ("doces") matches
 // everything weakly, so a generic question still lists the menu.
 
-export type CatalogMatch = 'name' | 'description' | 'category' | 'modifier' | 'vocabulary';
+export type CatalogMatch =
+  'name' | 'description' | 'category' | 'modifier' | 'vocabulary' | 'dietary';
 
 export interface CatalogHit {
   product: ProductSummary;
@@ -47,6 +48,15 @@ const STOPWORDS = new Set([
   'quero',
   'voce',
   'voces',
+  'algo',
+  'algum',
+  'alguma',
+  'alguns',
+  'algumas',
+  'coisa',
+  'coisas',
+  'opcao',
+  'opcoes',
 ]);
 
 /** lowercase, accents off, anything but letters and digits a space */
@@ -119,7 +129,7 @@ export interface SearchFields {
   modifiers?: readonly string[] | undefined;
 }
 
-const WEIGHT: Record<Exclude<CatalogMatch, 'vocabulary'>, number> = {
+const WEIGHT: Record<Exclude<CatalogMatch, 'vocabulary' | 'dietary'>, number> = {
   name: 40,
   category: 30,
   modifier: 25,
@@ -176,6 +186,36 @@ export function scoreProduct(
   return generic === query.length ? { score: 5, matched: 'vocabulary' } : null;
 }
 
+// "sem lactose" is a restriction, not the word "lactose": it filters on what the store stated
+// (products.dietary), never on a description that may say the opposite
+const DIET_PHRASES: [RegExp, string, string | null][] = [
+  [/\b(sem|zero|livre de) glut[ea][nm]\b/, 'sem_gluten', 'contem_gluten'],
+  [/\b(sem|zero|livre de) lactose\b/, 'sem_lactose', 'contem_lactose'],
+  [/\bvegan[oa]s?\b/, 'vegano', null],
+  [/\bvegetarian[oa]s?\b/, 'vegetariano', null],
+];
+
+/** the dietary tags a query asks for, and the query without those phrases */
+export function dietaryQuery(query: string): { tags: string[]; rest: string } {
+  let rest = foldText(query);
+  const tags: string[] = [];
+  for (const [re, tag] of DIET_PHRASES)
+    if (re.test(rest)) {
+      tags.push(tag);
+      rest = rest.replace(new RegExp(re.source, 'g'), ' ');
+    }
+  return { tags, rest };
+}
+
+function meetsDiet(dietary: readonly string[], tags: readonly string[]): boolean {
+  return tags.every((tag) => {
+    const contra = DIET_PHRASES.find(([, t]) => t === tag)?.[2];
+    if (contra && dietary.includes(contra)) return false;
+    // a vegan product is vegetarian too
+    return dietary.includes(tag) || (tag === 'vegetariano' && dietary.includes('vegano'));
+  });
+}
+
 /** available now (not sold out, not outside its hours) */
 const available = (p: ProductSummary) => p.status === 'active';
 
@@ -192,8 +232,9 @@ export async function searchCatalog(
       field: 'query',
     });
   const limit = Math.min(SEARCH_MAX_LIMIT, Math.max(1, Math.trunc(opts.limit ?? 10)));
-  const tokens = searchTokens(query);
-  if (!tokens.length) return [];
+  const diet = dietaryQuery(query);
+  const tokens = searchTokens(diet.rest);
+  if (!tokens.length && !diet.tags.length) return [];
   const now = opts.now ?? new Date();
   const [view, modifiers, sales, settings] = await Promise.all([
     getCatalogView(tx, tenantId, now),
@@ -229,6 +270,12 @@ export async function searchCatalog(
   const hits: (CatalogHit & { sold: number })[] = [];
   for (const cat of view.categories)
     for (const product of cat.products) {
+      if (diet.tags.length && !meetsDiet(product.dietary ?? [], diet.tags)) continue;
+      // only the restriction asked ("algo sem glúten"): every product that meets it
+      if (!tokens.length) {
+        hits.push({ product, score: 50, matched: 'dietary', sold: sold.get(product.id) ?? 0 });
+        continue;
+      }
       const s = scoreProduct(
         tokens,
         {

@@ -154,7 +154,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('vendedor admin API (db)', () =>
           { kind: string }[]
         >`select kind from agent_mailbox where tenant_id = ${tenantId} order by created_at`
       ).map((r) => r.kind);
-    expect(await kinds()).toEqual(['merchant.message', 'timer.handback']);
+    // one tx writes both, so created_at ties: compare as a set
+    expect((await kinds()).sort()).toEqual(['merchant.message', 'timer.handback']);
     const back = await attendant('POST', `/vendedor/threads/${threadId}/release`, {});
     expect(back.body.thread.owner).toBe('agent');
     expect((await kinds()).filter((k) => k === 'timer.handback')).toHaveLength(2);

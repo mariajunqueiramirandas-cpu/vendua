@@ -91,6 +91,8 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     body: string,
     author: 'shopper' | 'merchant' = 'shopper',
   ) {
+    // the gateway delivered what was queued before the shopper wrote back
+    await sql`update shopper_messages set status = 'sent' where thread_id = ${threadId} and status = 'queued'`;
     await sql`insert into shopper_messages (tenant_id, thread_id, author, kind, body, wa_id, ingest)
       values (${tenantId}, ${threadId}, ${author}, 'text', ${body}, ${`WA${++n}${Math.random().toString(36).slice(2, 8)}`}, 'pending')`;
     await sql`update shopper_threads set last_in_at = now(), pending_since = coalesce(pending_since, now()) where id = ${threadId}`;
@@ -255,6 +257,22 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     expect((await sql`select 1 from orders where tenant_id = ${tenantId}`).length).toBe(0);
     const lastTool = adapter.requests.at(-1)!.messages.at(-1)!;
     expect(JSON.stringify(lastTool)).toContain('não é um sim claro');
+  });
+
+  test('a yes to a card WhatsApp never delivered places nothing', async () => {
+    const tenantId = await store();
+    const threadId = await thread(tenantId, '11977778888');
+    const { rt, adapter } = await toSummary(tenantId, threadId, [
+      tools(call('place_order')),
+      reply('Vou reenviar o resumo.'),
+    ]);
+    await sql`update shopper_messages set status = 'failed' where thread_id = ${threadId} and author = 'core'`;
+    await sql`insert into shopper_messages (tenant_id, thread_id, author, kind, body, wa_id, ingest)
+      values (${tenantId}, ${threadId}, 'shopper', 'text', 'sim', ${`WA-undelivered-${threadId}`}, 'pending')`;
+    await sql`update shopper_threads set last_in_at = now(), pending_since = now() where id = ${threadId}`;
+    await settle(rt, tenantId);
+    expect(await sql`select 1 from orders where tenant_id = ${tenantId}`).toHaveLength(0);
+    expect(JSON.stringify(adapter.requests.at(-1)!.messages.at(-1))).toContain('não chegou');
   });
 
   test('a cart changed after the card is refused: a new card, a new yes', async () => {

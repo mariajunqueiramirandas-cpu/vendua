@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { STORE, flush, mockCore, mount, type Mounted } from './harness.tsx';
 import { useCart } from '../src/index.ts';
-import { CHAT_POLL_MS } from '../src/chat.ts';
+import { CHAT_POLL_MS, chatLink } from '../src/chat.ts';
 
 // Kernel 1.18 — the store's assistant (the Vendedor) on the site: a system surface over the
 // cart session, polled while a reply is on its way, rereading the cart when its turn lands.
@@ -352,5 +352,28 @@ describe('store chat (Kernel 1.18)', () => {
     await submit();
     await flush();
     expect($('[data-vendua="chat"]')).toBeNull();
+  });
+
+  test('a link never leaves the page origin, however its path is written', () => {
+    const here = location.origin;
+    for (const evil of [`${here}//evil.com/x`, `${here}/\\evil.com`, '/.//evil.com']) {
+      const href = chatLink(evil);
+      expect(href).not.toBeNull();
+      expect(new URL(href!, location.href).origin).toBe(here);
+    }
+    expect(chatLink('https://evil.com/sacola')).toBeNull();
+  });
+
+  test('a reply that never comes stops the fast poll', async () => {
+    CHAT_POLL_MS.pendingMax = 120;
+    const f = fakeCore({ pending: true, reply: null });
+    m = await mount({ path: '/', session: 'tok' });
+    const reads = () =>
+      f.calls.filter((c) => c.method === 'GET' && c.path.endsWith('/chat')).length;
+    await act(() => new Promise((r) => setTimeout(r, 300)));
+    const settled = reads();
+    expect(settled).toBeGreaterThan(1);
+    await act(() => new Promise((r) => setTimeout(r, 200)));
+    expect(reads()).toBe(settled);
   });
 });

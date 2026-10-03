@@ -1,6 +1,6 @@
 import { defineTool, s, ToolError, type Json } from '@vendua/agent-runtime';
 import { loadCartView, repriceLines, type CartView } from '../../../modules/cart.ts';
-import { getProductsById } from '../../../modules/catalog.ts';
+import { getProductById, getProductsById } from '../../../modules/catalog.ts';
 import { createSacolaLinkTx } from '../../../modules/cart-share.ts';
 import type { CheckoutInput } from '../../../modules/checkout.ts';
 import { ordersByPhone } from '../../../modules/customer.ts';
@@ -147,20 +147,24 @@ export const sendSummaryTool = defineTool<Record<string, never>, Sql>({
         'Esta loja fecha o pedido pelo site: use send_link para mandar a sacola pronta.',
       );
 
-    // the real checkout, rolled back: closed hours, zones, minimum, stock, schedule, payment
-    const input = checkoutInput(t, cart);
-    try {
-      await (ctx.tx as unknown as Savepointable).savepoint(async (tx) => {
-        await placeOrderTx(tx, ctx.tenantId, cartId, input, ctx.now, vendedorDeps().provider, {
-          provenPhone:
-            t.channel === 'whatsapp' && t.phone && !t.phone.startsWith('+') ? t.phone : null,
-          source: 'whatsapp_agent',
-          threadId: t.id,
+    // the real checkout, rolled back: closed hours, zones, minimum, stock, schedule, payment.
+    // After a repricing it runs again: new prices can break the minimum, a coupon or the change.
+    for (let attempt = 0; ; attempt++) {
+      const input = checkoutInput(t, cart);
+      try {
+        await (ctx.tx as unknown as Savepointable).savepoint(async (tx) => {
+          await placeOrderTx(tx, ctx.tenantId, cartId, input, ctx.now, vendedorDeps().provider, {
+            provenPhone:
+              t.channel === 'whatsapp' && t.phone && !t.phone.startsWith('+') ? t.phone : null,
+            source: 'whatsapp_agent',
+            threadId: t.id,
+          });
+          throw new DryRun(null);
         });
-        throw new DryRun(null);
-      });
-    } catch (e) {
-      if (e instanceof HttpError && e.code === 'PRICES_CHANGED') {
+      } catch (e) {
+        if (e instanceof DryRun) break;
+        if (!(e instanceof HttpError && e.code === 'PRICES_CHANGED') || attempt > 0)
+          return core(() => Promise.reject(e));
         const products = await getProductsById(
           ctx.tx,
           ctx.tenantId,
@@ -168,7 +172,7 @@ export const sendSummaryTool = defineTool<Record<string, never>, Sql>({
         );
         await repriceLines(ctx.tx, ctx.tenantId, cart.items, products);
         cart = (await viewCart(ctx, { ...t, cartId }))!;
-      } else if (!(e instanceof DryRun)) return core(() => Promise.reject(e));
+      }
     }
 
     const agent = await loadAgent(ctx.tx, ctx.tenantId);
@@ -261,6 +265,13 @@ export const placeOrderTool = defineTool<Record<string, never>, Sql>({
       select status from shopper_messages where tenant_id = ${ctx.tenantId} and id = ${summary.messageId}`;
     if (msg?.status === 'draft')
       throw new ToolError('Ensaio: nenhum pedido é feito, só rascunhos.');
+    // a yes only counts for a card WhatsApp delivered: queued or failed, the shopper never saw the total
+    if (msg?.status === 'failed')
+      throw new ToolError('O resumo não chegou ao cliente: mande outro com send_summary.');
+    if (!msg || !['sent', 'delivered', 'read'].includes(msg.status))
+      throw new ToolError(
+        'O resumo ainda não chegou ao cliente. Diga que vai mandar o resumo e espere ele confirmar.',
+      );
     // the shopper's answer: the latest message after the card, read deterministically
     const [answer] = await ctx.tx<{ id: string; body: string | null; transcript: string | null }[]>`
       select id, body, transcript from shopper_messages
@@ -682,16 +693,14 @@ export const sendCardTool = defineTool<{ product: string }, Sql>({
   input: s.object({ product: s.string({ min: 1, max: 80 }) }),
   run: async (ctx: Ctx, input) => {
     const id = await productIdOf(ctx, input.product);
-    const [p] = await ctx.tx<
-      { name: string; base_price_cents: number; description: string | null; status: string }[]
-    >`
-      select name, base_price_cents, description, status from products where tenant_id = ${ctx.tenantId} and id = ${id}`;
+    // the live projection get_product uses: promotions, schedules and stock already applied
+    const p = await getProductById(ctx.tx, ctx.tenantId, id);
     if (!p) throw new ToolError('Produto não encontrado.');
     ctx.card(
       productCard({
         name: p.name,
-        priceCents: p.base_price_cents,
-        fromPriceCents: null,
+        priceCents: p.basePriceCents,
+        fromPriceCents: p.fromPriceCents,
         description: p.description,
         status: p.status,
       }),

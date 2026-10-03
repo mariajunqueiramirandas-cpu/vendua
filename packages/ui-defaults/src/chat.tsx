@@ -209,8 +209,10 @@ export function StoreChat({
           </span>
         ) : null}
       </button>
-      <p className="v-sr" aria-live="polite" data-part="announce">
-        {announce}
+      {/* showModal() makes everything outside the dialog inert, so while it is open the
+          announcement is spoken from inside it */}
+      <p className="v-sr" aria-live="polite" data-part={open ? undefined : 'announce'}>
+        {open ? '' : announce}
       </p>
       <dialog
         ref={dialogRef}
@@ -235,6 +237,9 @@ export function StoreChat({
           if (e.target === e.currentTarget) onClose();
         }}
       >
+        <p className="v-sr" aria-live="polite" data-part={open ? 'announce' : undefined}>
+          {open ? announce : ''}
+        </p>
         <section className="v-chat-panel" data-part="panel">
           <header className="v-chat-head" data-part="head">
             <span className="v-chat-avatar" data-part="avatar" aria-hidden="true">

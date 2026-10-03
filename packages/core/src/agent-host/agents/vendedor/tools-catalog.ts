@@ -2,9 +2,10 @@ import { defineTool, s, ToolError } from '@vendua/agent-runtime';
 import { getProductById } from '../../../modules/catalog.ts';
 import { searchCatalog } from '../../../modules/catalog-search.ts';
 import { quoteDeliveryTx } from '../../../modules/cart-ops.ts';
-import { normalizeCep } from '../../../modules/geo.ts';
+import { normalizeCep, viaCep } from '../../../modules/geo.ts';
 import type { Sql } from '../../../platform/db.ts';
 import { brl } from '../../../vendedor/cards.ts';
+import { vendedorDeps } from '../../../vendedor/deps.ts';
 import { findAnswers, fold, queueQuestion } from '../../../vendedor/knowledge.ts';
 import { loadStoreSettings, storeStatus } from '../../../vendedor/threads.ts';
 import { core, pack, productIdOf, thread, type Ctx } from './shared.ts';
@@ -223,20 +224,33 @@ export const quoteDeliveryTool = defineTool<
     const cep = input.cep ? normalizeCep(input.cep) : null;
     if (!input.neighborhood && !cep && lat === undefined)
       throw new ToolError('Informe bairro, CEP ou use_pin.');
+    if (input.cep && !cep)
+      throw new ToolError('CEP inválido: são 8 números. Confirme com o cliente.');
+    // zones are priced by bairro or by a pin: a CEP becomes its bairro first
+    let neighborhood = input.neighborhood ?? null;
+    if (!neighborhood && cep && lat === undefined) {
+      const found = await (vendedorDeps().cepLookup ?? viaCep)(cep).catch(() => undefined);
+      if (found === undefined)
+        throw new ToolError('Não consegui consultar o CEP agora. Pergunte o bairro.');
+      if (!found?.neighborhood)
+        throw new ToolError(
+          'CEP não encontrado ou sem bairro. Confirme o CEP ou pergunte o bairro.',
+        );
+      neighborhood = found.neighborhood;
+    }
     const q = await core(() =>
       quoteDeliveryTx(
         ctx.tx,
         ctx.tenantId,
         {
-          ...(input.neighborhood ? { neighborhood: input.neighborhood } : {}),
-          ...(cep ? { cep } : {}),
+          ...(neighborhood ? { neighborhood } : {}),
           ...(lat !== undefined ? { lat, lng: lng! } : {}),
         },
         { ...(t.cartId ? { cartId: t.cartId } : {}), route: null },
       ),
     );
     if (!q.eligible) {
-      const where = fold(input.neighborhood ?? cep ?? 'localização');
+      const where = fold(neighborhood ?? cep ?? 'localização');
       return {
         data: { demand: { kind: 'out_of_zone', term: where.slice(0, 80) } },
         content: `A loja não entrega aí. ${pack(ctx).fulfilment.pickup ? 'Ofereça retirada na loja (store_info diz onde).' : 'A loja não tem retirada; explique com calma.'}`,

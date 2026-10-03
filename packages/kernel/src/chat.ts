@@ -11,7 +11,8 @@ import { errorCopy } from './rules/errors.ts';
 // shared by every reader.
 
 /** milliseconds between reads: a reply on its way / the chat open with nothing pending */
-export const CHAT_POLL_MS = { pending: 2000, open: 12000 };
+/** pendingMax: a reply that hasn't come by then won't come soon (the store took over, or muted) */
+export const CHAT_POLL_MS = { pending: 2000, open: 12000, pendingMax: 120_000 };
 /** Core's bound on a message */
 export const CHAT_MAX_LENGTH = 1000;
 
@@ -49,7 +50,7 @@ class ChatFeed {
   private wasPending = false;
   private retry: { text: string; key: string } | null = null;
   private onVisible = () => {
-    if (!hidden() && this.wants()) void this.refresh();
+    if (!hidden() && this.holders > 0 && (this.live > 0 || this.waiting())) void this.refresh();
   };
 
   constructor(private api: VenduaApi) {}
@@ -65,15 +66,23 @@ class ChatFeed {
     for (const l of this.listeners) l();
   }
 
-  private wants() {
-    return this.holders > 0 && (this.live > 0 || !!this.state.view?.pending);
+  private pendingFrom: number | null = null;
+
+  private waiting() {
+    if (!this.state.view?.pending) {
+      this.pendingFrom = null;
+      return false;
+    }
+    this.pendingFrom ??= Date.now();
+    return Date.now() - this.pendingFrom < CHAT_POLL_MS.pendingMax;
   }
 
   private schedule() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    if (!this.wants() || hidden()) return;
-    const ms = this.state.view?.pending ? CHAT_POLL_MS.pending : CHAT_POLL_MS.open;
+    const waiting = this.waiting();
+    if (this.holders === 0 || !(this.live > 0 || waiting) || hidden()) return;
+    const ms = waiting ? CHAT_POLL_MS.pending : CHAT_POLL_MS.open;
     this.timer = setTimeout(() => void this.refresh(), ms);
   }
 
@@ -263,7 +272,8 @@ export function chatLink(raw: string, publicUrl?: string): string | null {
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
     const own = new Set([new URL(here).origin]);
     if (publicUrl) own.add(new URL(publicUrl).origin);
-    return own.has(u.origin) ? `${u.pathname}${u.search}${u.hash}` : null;
+    // one leading slash: "//evil.com" would be protocol-relative, off this origin
+    return own.has(u.origin) ? `/${u.pathname.replace(/^\/+/, '')}${u.search}${u.hash}` : null;
   } catch {
     return null;
   }
