@@ -1,8 +1,8 @@
 # Vendedor: the merchant's AI sales agent (P-017)
 
-> Status: Proposed, not planned · Started 2026-10-02 · Gap: [P-017](../competitor-parity.md)
+> Status: Proposed, not planned · Decision: [ADR 0031](../adr/0031-vendedor.md) · Started 2026-10-02 · Gap: [P-017](../competitor-parity.md)
 > (also P-001 abandoned cart, P-018 campaigns, P-020 descriptions) · Builds on: ADRs
-> [0014](../adr/0014-crm-agent-v2.md)–[0017](../adr/0017-due-time-scheduler.md),
+> [0030](../adr/0030-agent-runtime-v3.md),
 > [0019](../adr/0019-customer-identity-without-accounts.md),
 > [0024](../adr/0024-distance-based-delivery-pricing.md),
 > [0026](../adr/0026-store-whatsapp-gateway.md) · Benchmark:
@@ -59,9 +59,12 @@ is the first agent on a new runtime that will replace that agent's engine. Paths
   ([§8](#8-phases)). V2 reaches order-taking parity with Domínio plus the trust layer; V3 is
   where it sells more than anyone; V4 adds Instagram, a storefront chat that shares the page's
   cart, and the official API for opted-in outreach.
-- **Owner decisions** are listed in [§10](#10-open-decisions): transport risk for replies,
-  model providers under LGPD, how AI is charged, retention, and the AI-disclosure stance. No
-  prices or plans here.
+- **Owner decisions** are in [§10](#10-open-decisions).
+  - **Decided:** no reply limits, providers only under zero data retention, disclosure as a
+    switch, allergies remembered with consent and confirmed, the phone bar and the push.
+  - **Open:** how AI is charged (deferred), retention, defaults and the product's name.
+
+  No prices or plans here.
 
 ## 1. The bar
 
@@ -204,9 +207,14 @@ The thread is now the merchant's until they hand it back.
 
 ### Merchants
 
-- **Setup in minutes.** The WhatsApp is already linked for order updates (ADR 0026). Turning the
-  Vendedor on shows what it will know (menu, hours, zones, payment methods, knowledge) and a
-  test chat where the merchant orders from their own agent before any shopper does.
+- **Its own onboarding** (owner decision, 2026-10-03). "Treinar a Ana" (`/vendedor/comecar`)
+  is separate from the store's onboarding and runs after it.
+  - Ana herself guides it, with a WhatsApp preview that improves at each answer.
+  - She reads the store and points out what's unclear in the menu.
+  - She interviews the owner about what only they know, turning answers into answers and
+    rules the owner confirms.
+  - The owner orders from her as a test customer, Cliente oculto runs, and she starts in
+    Ensaio or live. The WhatsApp is usually already linked for order updates (ADR 0026).
 - **Ensaio.** In the `rehearsal` coverage mode it drafts a reply to every real conversation
   while the merchant answers as always. The inbox shows the unsent drafts, and the Ensaio report
   says how often the merchant would have sent the same thing. The merchant picks another mode
@@ -250,9 +258,9 @@ Ten rules. The first nine are enforced in code, not only asked of the model in t
    text or photo can't widen that.
 7. **A person can always take over, and the agent notices.** A message typed on the merchant's
    phone silences it for that thread; "Assumir" and "Devolver" are one tap.
-8. **Honest about itself.** It says it is the store's assistant when asked and offers a
-   person; the verifier blocks a reply that claims to be human. (The greeting wording is an
-   owner decision, [§10](#10-open-decisions).)
+8. **Honest about itself.** Whether it announces itself as "assistente virtual" is the
+   merchant's switch. Either way it says it is the store's assistant when asked and offers a
+   person, and the verifier blocks a reply that claims to be human.
 9. **Degrade, never go dark.** Over budget, provider down or verifier stuck, the shopper gets a
    Core-rendered message with the storefront link and the thread goes to the merchant.
 10. **Measured before and after it ships.** Simulations score order accuracy exactly; pilot
@@ -311,10 +319,12 @@ on (`store_agent.enabled`), and the setup says so in plain words:
   `store_wa_optouts.phone`) becomes nullable for chat rows and its CHECK widens to
   international numbers, so a reply to a LID-only or foreign sender is a valid row, not a 500.
   The gateway shows "digitando…" while a run is in flight, as the platform socket already does.
-- **Pacing.** ADR 0026 caps a store at 200 messages an hour with 1.5 s between sends. A busy
-  Friday with 40 live conversations needs more. Replies inside a conversation the shopper
-  started get their own, higher ceiling; anything the store starts keeps today's. The number
-  is an owner decision with the ban risk in view ([§10](#10-open-decisions)).
+- **Pacing.** ADR 0026 caps a store at 200 messages an hour with 1.5 s between sends. Decided
+  (owner, 2026-10-03): **replies inside a conversation the shopper started have no ceiling.**
+  The 200-an-hour ceiling stays for messages the store starts (order updates, recovery, an
+  expired Pix, the waitlist). The gap between sends applies per conversation instead of per
+  store, so a Friday with 40 live conversations is answered in parallel while each chat still
+  reads like someone typing. The ban risk ADR 0026 accepted grows with the volume.
 - **Scope of the transport.** On this unofficial client the Vendedor only answers, and only
   writes first inside a conversation the shopper opened in the last 24 hours (recovery, an
   expired Pix, a waitlist item they asked for). ADR 0026 rules out broadcasts and campaigns
@@ -579,8 +589,15 @@ this is the code version, and the sales agent can adopt it later.
   and leaves the rest to `search_catalog`.
 - **Two model tiers.** A fast one for ordinary turns; a stronger one when the turn has many
   modifier choices, a verifier block, a complaint or a confused shopper, or a low-confidence
-  transcript. Both come from the providers `llm.ts` already drives; which providers may see
-  store and shopper data is an owner decision under LGPD.
+  transcript. Both come from the providers `llm.ts` already drives.
+- **Zero data retention** (owner, 2026-10-03). Any provider may serve the Vendedor, as long as
+  requests go through that provider's zero-data-retention arrangement. Transcription, vision and
+  voice providers are included.
+  - The gateway keeps a `zdr` flag per provider and route. Staff set it only after the
+    arrangement is confirmed, and the gateway refuses to send store or shopper data anywhere
+    else.
+  - Provider features that keep data on their side (stored conversations, server-side memory,
+    uploaded files, batch jobs) stay off.
 - **Latency targets** (proposed): from the shopper's last keystroke to the reply in the send
   queue, p50 ≤ 6 s and p95 ≤ 15 s, measured per store.
 
@@ -591,8 +608,20 @@ this is the code version, and the sales agent can adopt it later.
   repeated basket, computed), saved addresses with confirmed pins, preferred payment, language
   and `customer_facts`.
 - **`remember`** writes only allowlisted keys: name, language, preferences about how they order
-  ("sem cebola no X-Salada"), address notes. Health data such as allergies stays in that
-  order's notes and is not kept, unless the owner and a legal read decide otherwise.
+  ("sem cebola no X-Salada"), address notes.
+- **Allergies and dietary restrictions are remembered, always confirmed** (owner,
+  2026-10-03). They are sensitive data under LGPD (art. 11), so they follow three rules in
+  code:
+  - **Asked before kept.** "Quer que eu lembre disso nos próximos pedidos?" The shopper's yes is
+    recorded as an event, which is the specific consent the law asks for.
+  - **Confirmed on every use.** The next order asks before relying on it: "Da última vez você
+    falou de alergia a amendoim. Continua valendo?"
+  - **Never used to sell.** Suggestions ignore it. The merchant sees it marked as sensitive, and
+    the shopper ("esquece minha alergia") or the merchant can erase it.
+
+  Claims about what a product contains still need a product attribute
+  ([§4.8](#48-the-verifier)); a legal read of the consent wording is still worth having.
+
 - **The merchant sees it** on the existing customer page ("o que o Vendedor sabe"), can edit
   or delete any fact, and the LGPD forget erases it with the rest.
 - **Store learnings** are `store_knowledge` and the weekly review's notes, in the shape of
@@ -712,6 +741,34 @@ that fits ADR 0026's scope is part of decision 1 ([§10](#10-open-decisions)).
 - **Cost.** Step budget per run, message ceiling per thread per day, monthly cap per store, all
   in code, all ending in the degrade path.
 
+### 4.15 The onboarding interviewer
+
+"Treinar a Ana" ([UX §3.12](sales-agent-ux.md#312-treinar-a-ana-vendedorcomecar-new)) runs a
+second agent on the runtime, `vendedor-onboarding`, with the store as its subject.
+
+- **The menu gaps come from Core.** A deterministic `menuGaps(tenant)` lists:
+  - products whose size isn't stated;
+  - options without a price on some size;
+  - categories where no product states gluten or lactose;
+  - duplicate names;
+  - combos with empty slots.
+
+  The agent only phrases them.
+
+- **Its questions** come from the gaps, the store's segment and what the store already
+  answers (hours, zones, payment methods are never asked).
+- **Proposes, never writes.**
+  - Its tools read the catalog, hours, zones and payment methods.
+  - It proposes answers, rules and menu fixes; it writes nothing.
+  - Each "está certo" is the owner's own admin request, idempotent and audited like any
+    other admin write.
+  - A proposed rule goes through the same compiler that decides "sempre cumprida" or
+    "orientação".
+- **Voice answers** are transcribed by a zero-data-retention provider, like shoppers' audio.
+- **The test order** in "Peça para mim" is the real Vendedor on the real menu. In a test
+  conversation, `place_order` validates the cart the way checkout does and stops before
+  creating the order, so nothing reaches the kitchen, stock or loyalty.
+
 ## 5. Merchant controls
 
 `store_agent`, validated like other admin writes (`src/admin/context.ts` helpers), audited, and
@@ -722,7 +779,8 @@ proposals.
 type StoreAgent = {
   // Bounded like every admin write: unknown category, product or coupon ids → 422, out-of-range → 422.
   enabled: boolean; // "Ana ligada" (owner)
-  name: string; // ≤ 30; the shopper always sees "<name>, assistente virtual da <loja>"
+  name: string; // ≤ 30
+  disclose: boolean; // owner; on: "<name>, assistente virtual da <loja>"; off: "<name>, da <loja>"; never claims to be a person
   tone: 'relaxed' | 'balanced' | 'formal'; // descontraído · equilibrado · formal
   voice: string; // ≤ 1000, extra tone notes in the merchant's words
   // When it answers (the board's coverage modes; replaces a single autonomy mode).
@@ -805,7 +863,7 @@ the owner.
 | Phase                     | Ships                                                                                                                                                                                                                                                                                                                                                     | Exit gate                                                                                                                                                           |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **V0 Foundations**        | `orders.source`; inbound, merchant-typed and media storage in the gateway; the new tables; Agent Runtime v3 with its interactive lane; the Core changes of [§4.3](#43-data) (cart and quote functions, in-process idempotency claim, cash change, catalog search, coupon minting); jid addressing; `store_agent`; a read-only inbox; the admin test chat. | Runtime ports pass their contract tests in memory and on Postgres; lead agent untouched; inbound stored and deduped under reconnects; RLS tests on every new table. |
-| **V1 Attendant + shadow** | Grounded answers (menu, hours, zones, payment, knowledge), links to the storefront, handoff and takeover, unanswered → knowledge, shadow drafts, audio transcription.                                                                                                                                                                                     | No ungrounded figure in the suite; three pilot stores in shadow for a week with agreement reported.                                                                 |
+| **V1 Attendant + shadow** | Treinar a Ana (the onboarding, its interview and menu check), grounded answers (menu, hours, zones, payment, knowledge), links to the storefront, handoff and takeover, unanswered → knowledge, shadow drafts, audio transcription.                                                                                                                       | No ungrounded figure in the suite; three pilot stores in shadow for a week with agreement reported.                                                                 |
 | **V2 Seller**             | Cart, quote, summary card, confirmation gate, `place_order`, Pix, cash and card on delivery, order status, encomenda when closed, pickup when out of zone, substitutes and waitlist, location pins, the full verifier.                                                                                                                                    | Order accuracy ≥ 98% on the suite, 0 ungrounded figures, p50 reply ≤ 6 s; pilots leave Ensaio.                                                                      |
 | **V3 Sells more**         | Customer card and reorder, suggestions, recovery and incentives, Resultados, daily line and weekly review, photo understanding, voice replies.                                                                                                                                                                                                            | Pilots' agent ticket and conversion measured against their storefront; incentive spend within budgets.                                                              |
 | **V4 Everywhere**         | Instagram DM; a storefront chat that edits the page's own cart (a server-driven system surface; its Kernel export follows the additive rules: `API.md`, the api-surface test, a version bump, `CHANGELOG.md`, `bun.lock`); the official Cloud API as a per-store transport option with templates for opted-in recovery and re-engagement (P-018).         | Same gates per channel.                                                                                                                                             |
@@ -846,26 +904,58 @@ both.
 
 For the owner. Nothing here is decided by this document.
 
-1. **Replies on the unofficial transport.** ADR 0026 accepted the ban risk for order notices.
-   An agent answering shoppers sends far more; the per-store ceiling for in-conversation
-   replies, and whether some stores should wait for the official API, are a risk call.
-2. **Model providers** that may see store and shopper data under LGPD, and whether their terms
-   exclude training (Domínio §4.6.3).
-3. **How AI is charged**: included, metered per conversation, per order or per interaction
-   (Domínio's unit), and on which plans. No prices here.
-4. **Retention**: message bodies and media for 30 days like ADR 0026, or 90 like Lis;
-   merchant-typed messages are stored only while the Vendedor is on.
-5. **AI disclosure**: always say it's an assistant in the first message, or only when asked.
-   This design never lets it claim to be human either way.
-6. **Health data**: whether allergies may be remembered per customer, after a legal read.
-7. **Defaults**: recovery on or off and its delay, upsell on or off, unknown numbers answered or
-   held.
-8. **The product's name** in the admin and in marketing ("Vendedor" is a working name).
-9. **The official API's economics for V4.** Since 2026-10-01 Meta charges service messages,
+Decided (owner, 2026-10-03), recorded in [ADR 0031](../adr/0031-vendedor.md):
+
+- **Disclosure** (was 5) is a merchant switch, `disclose`; it never claims to be a person either
+  way, and says it is the store's assistant when asked.
+- **The phone bar and the push** for a waiting shopper: yes
+  ([UX §10](sales-agent-ux.md#10-open-decisions)).
+- **How AI is charged** (3): deferred; it will be decided later, with no prices in these docs
+  meanwhile.
+
+Also decided (owner, 2026-10-03):
+
+- **No reply limits** (was 1): replies in shopper-started conversations are uncapped
+  ([§4.2](#42-transport-and-inbound)).
+- **Providers** (was 2): any, under zero data retention ([§4.9](#49-context-caching-and-models)).
+- **Allergies** (was 6): remembered with consent, confirmed on every use
+  ([§4.10](#410-memory)).
+
+Still open:
+
+1. **How AI is charged** (deferred by the owner): included, metered per conversation, per order
+   or per interaction (Domínio's unit), and on which plans. No prices here.
+2. **Retention:** how long Venduá keeps each kind of conversation data in its own database. It
+   is separate from the AI providers, which keep nothing. Recommended:
+
+   | Data                                                     | Kept                       |
+   | -------------------------------------------------------- | -------------------------- |
+   | Message text, in and out, merchant-typed included        | 90 days                    |
+   | Voice notes and photos (their transcripts stay as text)  | 30 days                    |
+   | The model's inputs and outputs, for debugging and replay | 30 days                    |
+   | What happened, without content (events, timings, cost)   | the life of the store      |
+   | Customer facts, allergies included                       | until changed or forgotten |
+
+   An LGPD forget erases all of it at once.
+
+3. **Defaults:** what each setting is when a merchant first turns the Vendedor on. Recommended:
+   - **Coverage:** quando eu demorar, 2 min. It never takes a chat the merchant is answering and
+     covers nights on its own.
+   - **Disclosure:** on.
+   - **Capabilities:** closing the order, sending the Pix and suggesting all on; coupons off.
+   - **Handoff:** complaints on, allergies on, the amount threshold off, new cash customers off.
+   - **Taking back:** after 30 min.
+   - **Recovery:** on, after 15 min, with no incentive.
+   - **Unknown numbers:** answered only when they read as shoppers.
+   - **Voice replies:** off.
+4. **The product's name:** what the feature is called in the admin menu, on the marketing site
+   and on plan pages. The merchant still names their own agent ("Ana"). "Vendedor" is the
+   working name.
+5. **The official API's economics for V4.** Since 2026-10-01 Meta charges service messages,
    third-party AI replies included, at the utility rate; whether a store on the Cloud API pays
    that, and how it compares with the ban risk of the current transport.
-10. **Real conversations in evals**: whether anonymized real threads, with the merchant's
-    consent, may join the regression suite.
+6. **Real conversations in evals**: whether anonymized real threads, with the merchant's
+   consent, may join the regression suite.
 
 ## 11. Risks
 

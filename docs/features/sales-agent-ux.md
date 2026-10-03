@@ -55,28 +55,29 @@ Deliberately absent (the board's four, plus two):
 
 ## 2. Where it lives
 
-| Route                         | Screen                                        | Who                                 | Phase |
-| ----------------------------- | --------------------------------------------- | ----------------------------------- | ----- |
-| `/vendedor`                   | Início do Vendedor (first use until it's on)  | attendant and up                    | V1    |
-| `/vendedor/conversas`         | Conversas (list; on desktop, list + thread)   | attendant and up                    | V1    |
-| `/vendedor/conversas/:id`     | Conversa                                      | attendant and up                    | V1    |
-| `/vendedor/ensinar`           | Ensinar: unanswered questions, answers, rules | manager and up                      | V1    |
-| `/vendedor/ensaio`            | Ensaio: the agreement report                  | manager and up                      | V1    |
-| `/vendedor/cliente-oculto`    | Cliente oculto                                | manager and up                      | V1    |
-| `/vendedor/resultados`        | Resultados                                    | manager and up                      | V3    |
-| `/vendedor/configurar`        | Configurar                                    | manager; owner for money and on/off | V1    |
-| `/clientes/:phone` (existing) | Gains "o que a Ana sabe"                      | manager and up                      | V3    |
+| Route                         | Screen                                                                                         | Who                                 | Phase |
+| ----------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------- | ----- |
+| `/vendedor`                   | Início do Vendedor (the onboarding's resume map until it's on)                                 | attendant and up                    | V1    |
+| `/vendedor/comecar`           | Treinar a Ana: the Vendedor's own onboarding ([§3.12](#312-treinar-a-ana-vendedorcomecar-new)) | owner                               | V1    |
+| `/vendedor/conversas`         | Conversas (list; on desktop, list + thread)                                                    | attendant and up                    | V1    |
+| `/vendedor/conversas/:id`     | Conversa                                                                                       | attendant and up                    | V1    |
+| `/vendedor/ensinar`           | Ensinar: unanswered questions, answers, rules                                                  | manager and up                      | V1    |
+| `/vendedor/ensaio`            | Ensaio: the agreement report                                                                   | manager and up                      | V1    |
+| `/vendedor/cliente-oculto`    | Cliente oculto                                                                                 | manager and up                      | V1    |
+| `/vendedor/resultados`        | Resultados                                                                                     | manager and up                      | V3    |
+| `/vendedor/configurar`        | Configurar                                                                                     | manager; owner for money and on/off | V1    |
+| `/clientes/:phone` (existing) | Gains "o que a Ana sabe"                                                                       | manager and up                      | V3    |
 
 Routes are under `/admin/` like every admin screen, and each needs its chunk, `ROUTES` entry and
 skeleton (`apps/admin/CLAUDE.md`). Drill-downs stack with a back gesture (admin §3.3); the
 conversation list and thread are one route each on phones, a split on desktop.
 
 **Navigation.** The phone bar is Início · Pedidos · Cardápio · Loja · Mais today
-(`apps/admin/src/app/nav.ts`). Recommendation: once the Vendedor is on, it takes Loja's slot,
-with the "precisa de você" count as its badge. Loja moves to Mais; its everyday tasks (pause,
-today's hours) stay one tap away in the status pill, which is always present (admin §3.2).
-Before it's on, the Vendedor lives in Mais with a hint ("conheça a Ana"), and Início shows one
-card inviting setup. The board draws the "on" bar. This is an owner decision ([§10](#10-open-decisions)).
+(`apps/admin/src/app/nav.ts`). Decided (owner, 2026-10-03): once the Vendedor is on, the bar is
+Início · Pedidos · Vendedor · Cardápio · Mais, as the board draws it, with the "precisa de você"
+count as the Vendedor's badge. Loja moves to Mais; its everyday tasks (pause, today's hours) stay
+one tap away in the status pill, which is always present (admin §3.2). Before it's on, the
+Vendedor lives in Mais with a hint ("conheça a Ana"), and Início shows one card inviting setup.
 
 ## 3. Screens
 
@@ -85,25 +86,24 @@ states it must draw. "Board" marks what the first board had; "new" what this pas
 
 ### 3.1 Primeiro uso (`/vendedor` before it's on): new
 
-**Job.** Get from "connected" to "selling" with proof, without a tour (admin law 12).
+**Job.** Get from "connected" to "selling" with proof. The work happens in the Vendedor's own
+onboarding ([§3.12](#312-treinar-a-ana-vendedorcomecar-new)); this page is its door and its
+resume map.
 
 **Content.**
 
-1. "Conheça a Ana" with her avatar, not yet breathing.
-2. A checklist on the page:
-   - **WhatsApp da loja conectado** ✓ (from ADR 0026; links to `/whatsapp` if not).
-   - **O que a Ana sabe:** "Cardápio 48 itens · horário · 6 bairros · Pix, cartão e dinheiro".
-     "Revisar" opens a sheet listing each source with a link to fix it there.
-   - **Cliente oculto:** "19 de 20 certos" ✓ once run.
-   - **Ensaio** (opcional): "ela escreve sem mandar por alguns dias, você compara". "Começar"
-     sets coverage to Ensaio.
-3. "Você pode desligar quando quiser."
+1. "Conheça a Ana" with her avatar, not yet breathing, and one line on what she does.
+2. Before the onboarding starts: "treinar a Ana · cerca de 5 min", which opens `/vendedor/comecar`.
+3. Midway, the resume map: the four parts (Conhecer ✓ · Ensinar · Testar · Começar) with where
+   the owner stopped ("continuar: a entrevista, 3 de 7").
+4. "Você pode desligar quando quiser."
 
-**Primary action.** "ligar a Ana", in the thumb zone. It is never disabled: scores inform, the
-merchant decides.
+**Primary action.** "treinar a Ana" or "continuar". "Ligar a Ana" stays available as a
+secondary action and is never disabled: the onboarding informs, the merchant decides.
 
-**States.** WhatsApp not connected (the first row is the call to action); Cliente oculto
-running ("testando 20 clientes…" with progress).
+**States.** WhatsApp not connected (the onboarding's first part handles it); the onboarding
+finished but the Vendedor is off (the finale's two actions return: "começar em ensaio", "ligar
+agora").
 
 ### 3.2 Início do Vendedor (`/vendedor`): board, extended
 
@@ -294,8 +294,11 @@ audio, one request for a person. They are the design's simulations with a hidden
 **Content.**
 
 1. **Ana ligada** (new): one switch (owner).
-2. **Nome** with the fixed suffix "assistente virtual", and **jeito de falar** (descontraído ·
-   equilibrado · formal) with the live preview bubble (board).
+2. **Nome**, **dizer que é assistente virtual** (a switch, on by default; owner), and **jeito
+   de falar** (descontraído · equilibrado · formal) with the live preview bubble (board). With
+   the switch on, the name shows the suffix "assistente virtual" and the greeting says it. Off,
+   it introduces itself by name only; it still never claims to be a person, and says it is the
+   store's assistant when asked.
 3. **Quando a Ana atende** (board):
    - **Ensaio:** "ela escreve o que diria, mas não manda nada".
    - **Quando eu demorar:** new, the wait is a choice, 1 · 2 · 5 min. It also covers the store
@@ -336,32 +339,112 @@ New:
 trabalho às sextas"), each with a source ("ela anotou em 12 set") and an "esquecer" button. The
 existing LGPD forget clears these with everything else.
 
+### 3.12 Treinar a Ana (`/vendedor/comecar`): new
+
+**Job.** The Vendedor's own onboarding (owner decision, 2026-10-03), separate from the store's
+(`/bem-vindo`, admin §6.8). The store's journey ends with the store on the air; this one starts
+when the merchant chooses to hire a seller for it. They share a feel, not a flow:
+
+| Aspect  | The store's onboarding              | Treinar a Ana                                            |
+| ------- | ----------------------------------- | -------------------------------------------------------- |
+| Parts   | Cadastro · Sua loja · No ar         | Conhecer · Ensinar · Testar · Começar                    |
+| Guide   | Duá, the mascot, in a speech bubble | Ana herself, in first person, with her persona avatar    |
+| Preview | The storefront assembling itself    | A WhatsApp chat in which Ana answers better at each step |
+| Ends    | "sua loja está no ar"               | "A Ana está pronta": start in Ensaio, or turn her on     |
+
+**When it is offered.** It is never part of the store's journey. Once that journey's finale is
+behind the merchant, Início shows one card, once (admin law 12): "Conheça a Ana · sua vendedora
+no WhatsApp · cerca de 5 min". It also opens from the Vendedor's entry and from `/vendedor`
+before she's on. It needs a live store (menu, hours, delivery); if one is missing, the first
+screen says which and links to that question of the store's onboarding.
+
+**How it behaves.** The same rules as the store's journey:
+
+- one question per screen, presets instead of blank fields, 56 px buttons;
+- a quiet "pular" on anything optional, and "continuar depois" in the header;
+- progress kept by Core, so another device opens the resume map;
+- on phones, the WhatsApp preview sits behind "espiar a Ana", like "Espiar minha loja".
+
+Owner only (turning her on is the owner's).
+
+**The four parts.**
+
+1. **Conhecer** (2 screens):
+   - Her name (presets Ana · Bia · Léo · outro), "dizer que é assistente virtual" and the tone.
+     The preview greeting changes as they choose.
+   - The store's WhatsApp: linked (ADR 0026), or the pairing code right here. It also asks
+     that the WhatsApp Business app's own AI be turned off ("duas IAs respondendo confunde o
+     cliente").
+2. **Ensinar**:
+   - **"Li sua loja"**: what she read (menu size, hours, zones, payment methods) and what
+     wasn't clear in the menu. The gaps come from Core, not from the model:
+     - a size-less "broto";
+     - an option with no price on one size;
+     - no product saying whether it has gluten or lactose;
+     - two products with the same name;
+     - a combo with no slots.
+
+     Each has "arrumar" (opens the product and comes back) or "deixa assim".
+
+   - **A entrevista**: 5 to 8 questions about what only the owner knows, tuned to the segment
+     and to the gaps above. For a pizzaria: three flavours? encomendas para festa? parking? what
+     she must never promise? The owner answers with a preset, by typing or with a voice note.
+     She turns each answer into a proposed **Resposta** or **Regra**, with its guarantee chip
+     ("sempre cumprida" or "a Ana segue como orientação"). The owner taps "está certo" or
+     "editar"; nothing is saved without that tap.
+   - **Quando passar para você**: the handoff switches, at their defaults.
+3. **Testar**:
+   - **"Peça para mim"**: the owner orders as a customer. It is the real Vendedor on the real
+     menu, and the order is checked the way checkout checks it, but it stops before it exists.
+     Its receipt says "pedido de teste · não vai para a cozinha".
+   - **Cliente oculto** then runs: 20 test customers, a live list ("pediu meia a meia com borda
+     ✓"), the score and its fixes ([§3.7](#37-cliente-oculto-vendedorcliente-oculto-board-extended)).
+4. **Começar**:
+   - When she answers, with the recommended default (quando eu demorar, 2 min).
+   - The finale: "A Ana está pronta" in Instrument Serif, what she knows ("sabe o cardápio ·
+     aprendeu 6 respostas · 2 regras · 19 de 20 no cliente oculto") and what was left for later,
+     each item a detour back.
+   - Two actions: **"começar em ensaio"** (primary, recommended for the first days) and "ligar
+     agora".
+
+**Time budget.** About 5 minutes without the interview, under 12 with it, measured in
+usability sessions like the admin's everyday tasks.
+
+**States.** WhatsApp not linked; the Business app's AI possibly on (asked, not detected);
+Cliente oculto running; the interview skipped (the finale lists it); a store not yet live
+(links back to `/bem-vindo`).
+
 ## 4. Components
 
 New components go in `apps/admin/src/ui/` and on the `/_ui` reference route.
 
-| Component     | From  | Notes                                                                                                        |
-| ------------- | ----- | ------------------------------------------------------------------------------------------------------------ |
-| PersonaAvatar | board | Spark disc with the initial; a breathing ring only while it is answering; static otherwise.                  |
-| Bubble        | board | Three voices: `in` (paper), `seller` (spark-soft + edge, signed), `you` (forest). Optional tag ("sugestão"). |
-| VoiceNote     | board | Play, waveform, duration, transcript; the transcript is the accessible name.                                 |
-| ActionReceipt | board | One line: icon, what happened, "por quê".                                                                    |
-| CoreReceipt   | board | Paper with a dashed tear, line items, total, ETA, "calculado pela loja" with a shield. Table semantics.      |
-| SacolaBar     | board | Count, total, five-step stepper; opens the sacola sheet.                                                     |
-| Floor         | board | Who's answering, the action, the hint; the owner variant has suggestion chips and the composer.              |
-| ReasonChip    | board | Warning chip with icon and word (alergia, reclamação, pedido grande, pediu uma pessoa).                      |
-| ScoreRing     | board | "19 de 20"; the number is the accessible label.                                                              |
-| GuaranteeChip | new   | "sempre cumprida" (shield, success) or "orientação" (quiet).                                                 |
-| ChecklistRow  | new   | Step, state (done, to do, optional), action.                                                                 |
-| Discordance   | new   | Shopper message, her draft (dashed), your reply, two actions.                                                |
-| Funnel        | new   | Horizontal bars with counts; a text summary for screen readers.                                              |
+| Component     | From  | Notes                                                                                                            |
+| ------------- | ----- | ---------------------------------------------------------------------------------------------------------------- |
+| PersonaAvatar | board | Spark disc with the initial; a breathing ring only while it is answering; static otherwise.                      |
+| Bubble        | board | Three voices: `in` (paper), `seller` (spark-soft + edge, signed), `you` (forest). Optional tag ("sugestão").     |
+| VoiceNote     | board | Play, waveform, duration, transcript; the transcript is the accessible name.                                     |
+| ActionReceipt | board | One line: icon, what happened, "por quê".                                                                        |
+| CoreReceipt   | board | Paper with a dashed tear, line items, total, ETA, "calculado pela loja" with a shield. Table semantics.          |
+| SacolaBar     | board | Count, total, five-step stepper; opens the sacola sheet.                                                         |
+| Floor         | board | Who's answering, the action, the hint; the owner variant has suggestion chips and the composer.                  |
+| ReasonChip    | board | Warning chip with icon and word (alergia, reclamação, pedido grande, pediu uma pessoa).                          |
+| ScoreRing     | board | "19 de 20"; the number is the accessible label.                                                                  |
+| GuaranteeChip | new   | "sempre cumprida" (shield, success) or "orientação" (quiet).                                                     |
+| ChecklistRow  | new   | Step, state (done, to do, optional), action.                                                                     |
+| Discordance   | new   | Shopper message, her draft (dashed), your reply, two actions.                                                    |
+| Funnel        | new   | Horizontal bars with counts; a text summary for screen readers.                                                  |
+| AgentJourney  | new   | The onboarding's journey bar (Conhecer · Ensinar · Testar · Começar): the store's `JourneyBar` with other parts. |
+| AgentGuide    | new   | Ana's avatar beside a speech bubble: the store onboarding's `Guide` pattern with the persona instead of Duá.     |
+| MiniChat      | new   | The onboarding's live WhatsApp preview, the counterpart of `MiniStore`.                                          |
+| ProposalCard  | new   | A Resposta or Regra Ana proposes, with its guarantee chip and "está certo" / "editar".                           |
 
 ## 5. Copy
 
 The admin's voice (admin §9): warm, direct, brief; "você"; lowercase-first buttons.
 
 - **Naming.** To the merchant it is "a Ana" (whatever they named it) or "o Vendedor". To the
-  shopper it is "Ana, assistente virtual da Forno da Vila". Never "IA", "robô", "bot", "modelo",
+  shopper it is "Ana, assistente virtual da Forno da Vila", or "Ana, da Forno da Vila" with the
+  disclosure switch off. Never "IA", "robô", "bot", "modelo",
   "prompt", "token" or "agente" in the admin.
 - **Its actions** are past-tense receipts: "anotou", "calculou a entrega", "mandou o Pix",
   "passou para você".
@@ -398,37 +481,44 @@ Everything in admin §10, plus:
 
 The controls write the `store_agent` setting ([sales-agent §5](sales-agent.md#5-merchant-controls)):
 
-| Control                | Field                                                                          | Role                   |
-| ---------------------- | ------------------------------------------------------------------------------ | ---------------------- |
-| Ana ligada             | `enabled`                                                                      | owner                  |
-| Nome, jeito de falar   | `name`, `tone`, `voice`                                                        | manager                |
-| Quando a Ana atende    | `coverage`, `slowAfterMin`                                                     | manager                |
-| O que a Ana pode fazer | `capabilities.{closeOrder, sendPix, suggest, coupons}`                         | manager; coupons owner |
-| Cupons e limite        | `incentives`                                                                   | owner                  |
-| Passe para mim quando  | `handoff.{complaint, allergy, aboveCents, newCashCustomer}`, `humanSilenceMin` | manager                |
-| Regras, respostas      | `store_knowledge`, compiled rules                                              | manager                |
-| Não é cliente          | a muted contact                                                                | attendant              |
+| Control                        | Field                                                                          | Role                   |
+| ------------------------------ | ------------------------------------------------------------------------------ | ---------------------- |
+| Ana ligada                     | `enabled`                                                                      | owner                  |
+| Nome, jeito de falar           | `name`, `tone`, `voice`                                                        | manager                |
+| Dizer que é assistente virtual | `disclose`                                                                     | owner                  |
+| Quando a Ana atende            | `coverage`, `slowAfterMin`                                                     | manager                |
+| O que a Ana pode fazer         | `capabilities.{closeOrder, sendPix, suggest, coupons}`                         | manager; coupons owner |
+| Cupons e limite                | `incentives`                                                                   | owner                  |
+| Passe para mim quando          | `handoff.{complaint, allergy, aboveCents, newCashCustomer}`, `humanSilenceMin` | manager                |
+| Regras, respostas              | `store_knowledge`, compiled rules                                              | manager                |
+| Não é cliente                  | a muted contact                                                                | attendant              |
 
 ## 9. Changes to the admin design spec
 
-If this is accepted, `merchant-admin-design.md` changes in three places:
+Decided (owner, 2026-10-03) and applied to `merchant-admin-design.md`:
 
 1. **Law 13 (respect attention)** adds "a shopper waiting for you in a Vendedor conversation" to
    the events that may push. A waiting shopper is as time-sensitive as a new order.
-2. **§3.1 navigation** gives the Vendedor the phone bar's fourth slot while it is on, with Loja
-   moving to Mais (see [§2](#2-where-it-lives)).
-3. **§7 components** gains the components of [§4](#4-components).
+2. **§3.1 navigation** puts the Vendedor in the phone bar while it is on, with Loja moving to
+   Mais (see [§2](#2-where-it-lives)).
+
+Still to do when the screens are built: **§7 components** gains the components of
+[§4](#4-components).
 
 ## 10. Open decisions
 
-1. **The phone bar slot:** the Vendedor replaces Loja while on (recommended), or stays in Mais.
-2. **Disclosure wording:** the board makes "assistente virtual" fixed in the name and the
-   greeting; that is the recommendation for the design's open decision 5.
-3. **The push** for a waiting shopper (law 13).
-4. **Who pays for Cliente oculto runs**, which spend AI on every re-run (part of the design's
-   decision 3, how AI is charged).
-5. **Ensaio's length:** a suggestion of three days, or until a number of conversations.
-6. **Tone presets alone, or presets plus free text** for the voice.
+Decided (owner, 2026-10-03):
+
+- **The phone bar:** yes, the Vendedor is in it while on ([§2](#2-where-it-lives)).
+- **The push** for a waiting shopper: yes ([§3.4](#34-aviso-the-push-new)).
+- **Disclosure:** a switch, not fixed ([§3.9](#39-configurar-vendedorconfigurar-board-extended)).
+- **Who pays for Cliente oculto runs:** deferred, with how AI is charged.
+
+Open:
+
+1. **Ensaio's length:** a suggestion of three days, or until a number of conversations.
+2. **Tone presets alone, or presets plus free text** for the voice.
+3. **The disclosure switch's default:** on is the recommendation.
 
 ## 11. Definition of done
 
@@ -443,3 +533,6 @@ and the wow test. Two Vendedor-specific tasks join the admin's usability set:
 ## Change log
 
 - 2026-10-03: first spec, from the team's board plus this pass's additions.
+- 2026-10-03: owner decisions: the phone bar, the push, disclosure as a switch; AI charging
+  deferred.
+- 2026-10-03: the Vendedor's own onboarding, separate from the store's (owner decision), §3.12.

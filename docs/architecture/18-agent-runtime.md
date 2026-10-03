@@ -1,6 +1,6 @@
 # 18 — Agent Runtime v3
 
-> Status: Proposed · Last reviewed: 2026-10-02 · Supersedes on acceptance: the run machinery of
+> Status: Proposed · Last reviewed: 2026-10-03 · Decision: [ADR 0030](../adr/0030-agent-runtime-v3.md) · Supersedes when the migration ends: the run machinery of
 > ADRs [0014](../adr/0014-crm-agent-v2.md)–[0017](../adr/0017-due-time-scheduler.md) · First
 > user: the [Vendedor](../features/sales-agent.md) · Later: the CRM sales agent
 
@@ -343,7 +343,9 @@ A **model gateway** sits between the engine and the providers.
 - **Adapters** normalize each provider to one message model (parts, tool calls, reasoning,
   cache markers, usage). The drivers in `src/agent/llm.ts` are the starting point.
 - **Routing** by policy: a fast tier and a strong tier per agent, mapped per tenant to the
-  providers the owner allows under LGPD; escalation rules in the definition.
+  providers reached only through a zero-data-retention arrangement (owner, 2026-10-03; a
+  `zdr` flag per provider route, set by staff, enforced here); escalation rules in the
+  definition.
 - **Resilience.** A circuit breaker per provider, a fallback chain, and for the interactive lane
   a hedged second request when the first passes the p95 latency, cancelled when either answers.
   Hedging only repeats a model call (never a tool), and a hedge usually misses the prompt cache,
@@ -386,7 +388,8 @@ A **model gateway** sits between the engine and the providers.
 | Procedural | Skills, and per-store examples the merchant approved in shadow mode | Code, and `agent_memory` (`example.*`) |
 
 - **Writes are proposals.** A turn emits `memory.proposed`; a policy (allowlisted keys,
-  confidence, no health data unless decided otherwise) accepts it into `agent_memory`.
+  confidence, health data only with recorded consent and a confirmation on every use)
+  accepts it into `agent_memory`.
 - **Consolidation after the conversation** ("sleep-time"): a background turn reads a finished
   conversation and proposes facts, knowledge gaps and examples, so the interactive turn never
   pays for it.
@@ -467,7 +470,7 @@ transport; the owner declined external assistant integrations on 2026-10-01.
 4. **Delete** `runner.ts`, `tools.ts` and the rest of `src/agent/`, archive and drop
    `agent_runs`, `agent_inbox`, `agent_wakeups` and `agent_run_steps`, and the agent columns on
    `leads`.
-5. **An ADR** records the runtime and supersedes the run machinery of ADRs 0014–0017.
+5. **[ADR 0030](../adr/0030-agent-runtime-v3.md)** records the runtime and supersedes the run machinery of ADRs 0014–0017 once this step lands.
 
 The agent invariant in `CLAUDE.md` changes twice. At step 1, when the first mailbox row is
 written, it names two producers: `requestAgentTx` for the old runtime and `dispatchTx` for v3,
