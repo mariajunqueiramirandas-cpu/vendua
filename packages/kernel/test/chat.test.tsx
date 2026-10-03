@@ -140,7 +140,7 @@ async function click(el: Element | null) {
 }
 async function submit() {
   await act(async () => {
-    $<HTMLFormElement>('[data-part="composer"]')!.dispatchEvent(
+    $<HTMLFormElement>('[data-vendua="chat"] [data-part="composer"]')!.dispatchEvent(
       new Event('submit', { bubbles: true, cancelable: true }),
     );
   });
@@ -180,11 +180,11 @@ describe('store chat (Kernel 1.18)', () => {
     expect(dialog.open).toBe(true);
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     expect(launcher.getAttribute('aria-expanded')).toBe('true');
-    expect($('[data-part="title"]')!.textContent).toBe('Bia');
-    expect($('[data-part="intro"]')!.textContent).toContain(
+    expect($('[data-vendua="chat"] [data-part="title"]')!.textContent).toBe('Bia');
+    expect($('[data-vendua="chat"] [data-part="intro"]')!.textContent).toContain(
       'Bia, assistente virtual da Loja Teste',
     );
-    expect($('[data-part="note"]')!.textContent).toContain('sua sacola');
+    expect($('[data-vendua="chat"] [data-part="note"]')!.textContent).toContain('sua sacola');
     await act(async () => {
       $('textarea[name="chat-message"]')!.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
@@ -199,7 +199,7 @@ describe('store chat (Kernel 1.18)', () => {
     CHAT_POLL_MS.pending = 150;
     const f = fakeCore();
     m = await mount({ path: '/' });
-    await click($('[data-part="launcher"]'));
+    await click($('[data-vendua="chat"] [data-part="launcher"]'));
     const box = $<HTMLTextAreaElement>('textarea[name="chat-message"]')!;
     await type(box, '  quero um pudim  ');
     await submit();
@@ -213,27 +213,29 @@ describe('store chat (Kernel 1.18)', () => {
       f.calls.indexOf(post),
     );
     expect(box.value).toBe('');
-    expect($('[data-part="message"][data-author="shopper"]')!.textContent).toContain(
-      'quero um pudim',
-    );
-    expect($('[data-part="typing"]')!.textContent).toContain('digitando');
-    await until(() => !$('[data-part="typing"]'));
-    expect($('[data-part="typing"]')).toBeNull();
-    const reply = $('[data-part="message"][data-author="agent"]')!;
+    expect(
+      $('[data-vendua="chat"] [data-part="message"][data-author="shopper"]')!.textContent,
+    ).toContain('quero um pudim');
+    expect($('[data-vendua="chat"] [data-part="typing"]')!.textContent).toContain('digitando');
+    await until(() => !$('[data-vendua="chat"] [data-part="typing"]'));
+    expect($('[data-vendua="chat"] [data-part="typing"]')).toBeNull();
+    const reply = $('[data-vendua="chat"] [data-part="message"][data-author="agent"]')!;
     expect(reply.textContent).toContain('Coloquei 1 Pudim.');
     expect(reply.querySelector('[data-part="author"]')!.textContent).toContain('Bia');
-    expect($('[data-part="announce"]')!.textContent).toBe('Bia: Coloquei 1 Pudim.');
+    expect($('[data-vendua="chat"] [data-part="announce"]')!.textContent).toBe(
+      'Bia: Coloquei 1 Pudim.',
+    );
   });
 
   test('rereads the cart when the Vendedor’s turn lands', async () => {
     const f = fakeCore({ items: 0 });
     m = await mount({ path: '/', session: 'tok', children: <Count /> });
     expect($('#count')!.textContent).toBe('0');
-    await click($('[data-part="launcher"]'));
+    await click($('[data-vendua="chat"] [data-part="launcher"]'));
     await type($<HTMLTextAreaElement>('textarea[name="chat-message"]')!, 'põe um pudim');
     await submit();
     await until(() => $('#count')!.textContent === '1');
-    expect($('[data-part="message"][data-author="agent"]')).not.toBeNull();
+    expect($('[data-vendua="chat"] [data-part="message"][data-author="agent"]')).not.toBeNull();
     expect($('#count')!.textContent).toBe('1');
     // and polls slowly once nothing is pending
     const reads = chatReads(f);
@@ -245,19 +247,23 @@ describe('store chat (Kernel 1.18)', () => {
     CHAT_POLL_MS.pending = 150;
     fakeCore();
     m = await mount({ path: '/', session: 'tok' });
-    await click($('[data-part="launcher"]'));
+    await click($('[data-vendua="chat"] [data-part="launcher"]'));
     await type($<HTMLTextAreaElement>('textarea[name="chat-message"]')!, 'oi');
     await submit();
     await act(async () => {
-      ($('[data-part="close"]') as HTMLElement).click();
+      ($('[data-vendua="chat"] [data-part="close"]') as HTMLElement).click();
     });
-    expect($('[data-part="unread"]')).toBeNull();
-    await until(() => !!$('[data-part="unread"]'));
-    expect($('[data-part="unread"]')!.textContent).toBe('1');
-    expect($('[data-part="launcher"]')!.getAttribute('aria-label')).toContain('1 nova mensagem');
-    expect($('[data-part="announce"]')!.textContent).toBe('Nova mensagem de Bia.');
-    await click($('[data-part="launcher"]'));
-    expect($('[data-part="unread"]')).toBeNull();
+    expect($('[data-vendua="chat"] [data-part="unread"]')).toBeNull();
+    await until(() => !!$('[data-vendua="chat"] [data-part="unread"]'));
+    expect($('[data-vendua="chat"] [data-part="unread"]')!.textContent).toBe('1');
+    expect($('[data-vendua="chat"] [data-part="launcher"]')!.getAttribute('aria-label')).toContain(
+      '1 nova mensagem',
+    );
+    expect($('[data-vendua="chat"] [data-part="announce"]')!.textContent).toBe(
+      'Nova mensagem de Bia.',
+    );
+    await click($('[data-vendua="chat"] [data-part="launcher"]'));
+    expect($('[data-vendua="chat"] [data-part="unread"]')).toBeNull();
   });
 
   test('only same-origin links are tappable', async () => {
@@ -280,13 +286,15 @@ describe('store chat (Kernel 1.18)', () => {
       ],
     });
     m = await mount({ path: '/', session: 'tok' });
-    await click($('[data-part="launcher"]'));
-    const links = [...document.querySelectorAll<HTMLAnchorElement>('[data-part="link"]')];
+    await click($('[data-vendua="chat"] [data-part="launcher"]'));
+    const links = [
+      ...document.querySelectorAll<HTMLAnchorElement>('[data-vendua="chat"] [data-part="link"]'),
+    ];
     expect(links.map((a) => a.getAttribute('href'))).toEqual(['/sacola']);
     expect($('[data-card="link"]')!.textContent).toContain('shop.test/sacola.');
-    expect($('[data-part="message"][data-author="agent"]')!.textContent).toContain(
-      'https://evil.example/sacola',
-    );
+    expect(
+      $('[data-vendua="chat"] [data-part="message"][data-author="agent"]')!.textContent,
+    ).toContain('https://evil.example/sacola');
   });
 
   test('errors show in the panel; the message stays in the box', async () => {
@@ -294,15 +302,15 @@ describe('store chat (Kernel 1.18)', () => {
       post: () => json(429, { error: { code: 'RATE_LIMITED', message: 'too many' } }),
     });
     m = await mount({ path: '/', session: 'tok' });
-    await click($('[data-part="launcher"]'));
+    await click($('[data-vendua="chat"] [data-part="launcher"]'));
     const box = $<HTMLTextAreaElement>('textarea[name="chat-message"]')!;
     await type(box, 'oi');
     await submit();
     await flush();
-    expect($('[data-part="error"]')!.textContent).toBe(
+    expect($('[data-vendua="chat"] [data-part="error"]')!.textContent).toBe(
       'Muitas tentativas seguidas. Espere alguns segundos.',
     );
-    expect($('[data-part="error"]')!.getAttribute('role')).toBe('alert');
+    expect($('[data-vendua="chat"] [data-part="error"]')!.getAttribute('role')).toBe('alert');
     expect(box.value).toBe('oi');
     // a refusal is final: the next try is a new request
     f.post = () => null;
@@ -313,7 +321,7 @@ describe('store chat (Kernel 1.18)', () => {
       .map((c) => c.headers['idempotency-key']);
     expect(keys).toHaveLength(2);
     expect(keys[0]).not.toBe(keys[1]);
-    expect($('[data-part="error"]')).toBeNull();
+    expect($('[data-vendua="chat"] [data-part="error"]')).toBeNull();
   });
 
   test('a send that may have landed retries with the same Idempotency-Key', async () => {
@@ -326,11 +334,13 @@ describe('store chat (Kernel 1.18)', () => {
       },
     });
     m = await mount({ path: '/', session: 'tok' });
-    await click($('[data-part="launcher"]'));
+    await click($('[data-vendua="chat"] [data-part="launcher"]'));
     await type($<HTMLTextAreaElement>('textarea[name="chat-message"]')!, 'oi');
     await submit();
     await flush();
-    expect($('[data-part="error"]')!.textContent).toContain('Sem conexão com a loja');
+    expect($('[data-vendua="chat"] [data-part="error"]')!.textContent).toContain(
+      'Sem conexão com a loja',
+    );
     await submit();
     await flush();
     const keys = f.calls
@@ -347,7 +357,7 @@ describe('store chat (Kernel 1.18)', () => {
       return json(404, { error: { code: 'CHAT_UNAVAILABLE', message: 'off' } });
     };
     m = await mount({ path: '/', session: 'tok' });
-    await click($('[data-part="launcher"]'));
+    await click($('[data-vendua="chat"] [data-part="launcher"]'));
     await type($<HTMLTextAreaElement>('textarea[name="chat-message"]')!, 'oi');
     await submit();
     await flush();
