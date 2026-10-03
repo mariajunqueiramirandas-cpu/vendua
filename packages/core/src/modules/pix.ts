@@ -1,6 +1,8 @@
 // Pix "copia e cola" (BR Code, EMV QRCPS-MPM) built by Core from the store's key.
 // Static by design: no PSP involved, so it works before payment capture (Phase 3).
-// With an amount + txid the customer pays the exact order total, labelled by number.
+// With an amount the customer pays the exact order total. The txid stays "***" and there is no
+// single-use flag (01=12), as in the BCB's static examples: a receiving PSP that finds a txid it
+// never issued may refuse or time out the transfer, so the order number never goes in the code.
 
 export type PixKeyType = 'cpf' | 'cnpj' | 'email' | 'phone' | 'random';
 
@@ -63,15 +65,10 @@ export function normalizePixKey(key: string, type: PixKeyType): string | null {
   }
 }
 
-export function pixPayload(
-  profile: PixProfile,
-  opts: { amountCents?: number; txid?: string } = {},
-): string {
+export function pixPayload(profile: PixProfile, opts: { amountCents?: number } = {}): string {
   const account = field('00', 'br.gov.bcb.pix') + field('01', profile.key);
-  const txid = (opts.txid ?? '').replace(/[^A-Za-z0-9]/g, '').slice(0, 25) || '***';
   let out =
     field('00', '01') +
-    (opts.amountCents ? field('01', '12') : '') +
     field('26', account) +
     field('52', '0000') +
     field('53', '986') +
@@ -79,7 +76,7 @@ export function pixPayload(
     field('58', 'BR') +
     field('59', ascii(profile.beneficiary, 25) || 'LOJA') +
     field('60', ascii(profile.city, 15) || 'BRASIL') +
-    field('62', field('05', txid));
+    field('62', field('05', '***'));
   out += '6304';
   return out + crc16(out);
 }
