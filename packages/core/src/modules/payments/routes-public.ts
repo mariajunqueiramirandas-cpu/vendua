@@ -18,8 +18,18 @@ export function mountPaymentsPublic(admin: AdminApp, d: Omit<AdminDeps, 'admin'>
   // apply writes only what moved). 200 for anything we can't use, or MP retries it for days.
   admin.post('/hooks/mercadopago', async (c) => {
     const raw = await boundedText(c, 16 * 1024);
-    const event = d.provider.verifyWebhook(c.req.raw.headers, raw, new URL(c.req.url));
-    if (!event) throw new HttpError(401, 'INVALID_SIGNATURE', 'signature does not verify');
+    const url = new URL(c.req.url);
+    const event = d.provider.verifyWebhook(c.req.raw.headers, raw, url);
+    if (!event) {
+      // MP also posts each event in its legacy IPN form (?id=…&topic=…), which has no data.id
+      // for a signature to cover; the signed webhook beside it is the one acted on. Anything
+      // carrying a data.id that fails stays a 401, so MP keeps retrying a real event.
+      if (url.searchParams.has('topic') && !url.searchParams.has('data.id') && !bodyDataId(raw)) {
+        hookLog.info({ topic: url.searchParams.get('topic')?.slice(0, 40) }, 'ipn ignored');
+        return c.json({ ok: true });
+      }
+      throw new HttpError(401, 'INVALID_SIGNATURE', 'signature does not verify');
+    }
     const t = c.req.query('t') ?? '';
     try {
       if (t === 'platform') {
@@ -39,4 +49,13 @@ export function mountPaymentsPublic(admin: AdminApp, d: Omit<AdminDeps, 'admin'>
 
   if (d.provider.name === 'fake' && process.env.NODE_ENV !== 'production')
     mountPaymentsDev(admin, d);
+}
+
+function bodyDataId(raw: string) {
+  try {
+    const b = JSON.parse(raw || '{}') as { data?: { id?: unknown } } | null;
+    return b?.data?.id !== undefined && b?.data?.id !== null;
+  } catch {
+    return false;
+  }
 }

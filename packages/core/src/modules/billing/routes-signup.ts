@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Context, Hono } from 'hono';
 import { audit } from '../../admin/audit.ts';
 import {
@@ -287,6 +288,9 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       ownerName,
       manual,
     }).catch(async (err: unknown) => {
+      // signup's email is the payer's: the owner fixes it there and resumes this store
+      if (err instanceof HttpError && err.code === 'PAYER_EMAIL_REJECTED')
+        throw new HttpError(422, err.code, err.message, { field: 'email' });
       // the store exists but its first charge didn't go out: the team hears MP's own reason
       // (the owner only sees "try again"), once per store and kind — the owner's retries add nothing
       if (err instanceof HttpError && err.code === 'BILLING_PROVIDER_ERROR') {
@@ -323,6 +327,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
         // a slow provider doesn't hold the owner's answer: no marker, the next try sends it
         await within(
           sendWelcome(d, c, {
+            tenantId: store.tenant_id,
             email,
             ownerName,
             storeName,
@@ -397,6 +402,7 @@ async function sendWelcome(
   d: Omit<AdminDeps, 'admin'>,
   c: Context,
   o: {
+    tenantId: string;
     email: string;
     ownerName: string;
     storeName: string;
@@ -426,7 +432,9 @@ async function sendWelcome(
       'Para entrar no painel, use o número de WhatsApp que você confirmou no cadastro.',
       'Se precisar de ajuda, toque em Ajuda no painel.',
     ].join('\n\n'),
-    `signup-welcome:${o.slug}`,
+    // per store, not per address: a slug freed and taken again within Resend's 24 h window
+    // would replay the old key with a new body, which Resend refuses (409)
+    `signup-welcome:${o.tenantId}`,
   );
 }
 
@@ -465,11 +473,21 @@ async function ensureFirstCharge(
             field: 'planId',
           });
         openOr409(plan, await heldPlans(tx, owner.tenant_id));
+        // an email MP refused before is replaced on the owner and the store too, not only the charge
+        await tx`
+          update merchant_users set email = ${o.email}
+          where tenant_id = ${owner.tenant_id} and id = ${owner.user_id} and email is distinct from ${o.email}
+        `;
+        await tx`
+          update store_settings set email = ${o.email}
+          where tenant_id = ${owner.tenant_id} and email is distinct from ${o.email}
+        `;
         const next = await startSubscription(ctx, tx, owner.tenant_id, {
           plan,
           method: o.method,
           payerEmail: o.email,
-          key: `signup:${owner.tenant_id}`,
+          // with the email: a retry after MP refused one isn't answered from the refused key
+          key: `signup:${owner.tenant_id}:${createHash('sha256').update(o.email).digest('hex').slice(0, 12)}`,
           now,
           manual: o.manual,
         });

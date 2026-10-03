@@ -47,6 +47,14 @@ export async function viaProvider<T>(work: () => Promise<T>): Promise<T> {
   } catch (err) {
     if (err instanceof ProviderError) {
       billingLog.warn({ code: err.code, err: err.message }, 'billing provider call failed');
+      // MP refuses some addresses our check lets through; another try with it fails the same way
+      if (err.code === 'invalid' && /payer\.email/i.test(err.message))
+        throw Object.assign(
+          new HttpError(422, 'PAYER_EMAIL_REJECTED', 'Mercado Pago refused this email', {
+            field: 'payerEmail',
+          }),
+          { cause: err },
+        );
       // not BILLING_UNAVAILABLE (no way to pay on this install): billing is set up, this call failed
       throw Object.assign(
         new HttpError(

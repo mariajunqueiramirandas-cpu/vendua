@@ -312,6 +312,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     expect(badSig.status).toBe(401);
 
     fake.settle(providerId, 'approved');
+    // MP's legacy IPN copy of the same event: unsigned, so answered (or MP retries it for days)
+    // and never acted on — the signed webhook settles it
+    const ipn = await call(
+      'POST',
+      `/admin/v1/hooks/mercadopago?t=${tenantId}&id=${providerId}&topic=payment`,
+      JSON.stringify({ resource: providerId, topic: 'payment' }),
+    );
+    expect(ipn.status).toBe(200);
+    // a data.id in the body is a webhook that must verify: no silent ack for a bad signature
+    const bodyId = await call(
+      'POST',
+      `/admin/v1/hooks/mercadopago?t=${tenantId}&topic=payment`,
+      JSON.stringify({ data: { id: providerId } }),
+    );
+    expect(bodyId.status).toBe(401);
+    expect((await getOrder(order.id, o.auth)).payment.status).not.toBe('paid');
     const h = await hook(providerId);
     expect(h.status).toBe(200);
     const paid = await getOrder(order.id, o.auth);

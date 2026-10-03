@@ -157,6 +157,7 @@ export function messageOf(err: unknown): string {
 
 const FRIENDLY: Record<string, string> = {
   INVALID_CODE: 'Código errado ou vencido. Confira ou peça outro.',
+  PAYER_EMAIL_REJECTED: 'O Mercado Pago não aceitou esse e-mail. Use outro.',
   INVALID_PHONE: 'Digite o celular com DDD, como (22) 99999-0000.',
   REASON_REQUIRED: 'Escolha um motivo para avisar o cliente.',
   IDEMPOTENCY_IN_PROGRESS: 'Ainda estamos salvando isso. Espere um instante.',

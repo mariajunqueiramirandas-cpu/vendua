@@ -13,6 +13,7 @@ import {
 } from '../src/modules/billing/signup.ts';
 import { billingStaff } from '../src/modules/billing/subscriptions.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
+import { ProviderError } from '../src/modules/payments/provider.ts';
 import { migrate } from '../src/platform/db.ts';
 
 describe('signup units', () => {
@@ -260,7 +261,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(r.body.store).toMatchObject({ slug: pixSlug, name: 'Doces da Praia', role: 'owner' });
     expect(r.body.next.kind).toBe('pix');
     // the owner's welcome: where the store is, how to get in, what happens next
-    const welcome = mails.filter((m) => m.key === `signup-welcome:${pixSlug}`);
+    const welcome = mails.filter((m) => m.key === `signup-welcome:${r.body.store.id}`);
     expect(welcome).toHaveLength(1);
     expect(welcome[0]).toMatchObject({
       to: 'ana@example.com',
@@ -325,7 +326,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(again.status).toBe(201);
     expect(again.body.store.id).toBe(pixStore);
     // a replay finds the store: no second welcome
-    expect(mails.filter((m) => m.key === `signup-welcome:${pixSlug}`)).toHaveLength(1);
+    expect(mails.filter((m) => m.key === `signup-welcome:${pixStore}`)).toHaveLength(1);
     expect(again.body.next).toEqual({ kind: 'pix', invoiceId: expect.any(String) });
     expect((await sql`select 1 from tenants where slug = ${pixSlug}`).length).toBe(1);
     expect((await sql`select 1 from invoices where tenant_id = ${pixStore}`).length).toBe(1);
@@ -445,7 +446,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     fail = false;
     expect((await signup(token, slug, {}, flaky)).status).toBe(201);
     await until(() => sent.length === 1);
-    expect(sent).toEqual([`signup-welcome:${slug}`]);
+    expect(sent).toEqual([`signup-welcome:${r.body.store.id}`]);
     expect((await marker()).length).toBe(1);
   });
 
@@ -652,6 +653,41 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     } finally {
       fake.platformConfigured = true;
     }
+  });
+
+  test('an email Mercado Pago refuses sends the owner back to it; the store resumes with another', async () => {
+    const other = createApp(deps);
+    const token = (await verified(mkPhone(15), other)).signupToken;
+    const slug = `signup-${nonce}-mail`;
+    const pix = fake.platformPix.bind(fake);
+    fake.platformPix = async () => {
+      throw new ProviderError(
+        'invalid',
+        'payer.email must be a valid email — 0 payer.email must be a valid email',
+        400,
+      );
+    };
+    try {
+      const refused = await signup(token, slug, {}, other);
+      expect(refused.status).toBe(422);
+      expect(refused.body.error).toMatchObject({
+        code: 'PAYER_EMAIL_REJECTED',
+        details: { field: 'email' },
+      });
+    } finally {
+      fake.platformPix = pix;
+    }
+    const r = await signup(token, slug, { email: 'outra@example.com' }, other);
+    expect(r.status).toBe(201);
+    expect(r.body.next.kind).toBe('pix');
+    const sub = await sql<{ payer_email: string }[]>`
+      select payer_email from subscriptions where tenant_id = ${r.body.store.id}
+    `;
+    expect(sub[0]?.payer_email).toBe('outra@example.com');
+    const owner = await sql<{ email: string }[]>`
+      select email from merchant_users where tenant_id = ${r.body.store.id} and role = 'owner'
+    `;
+    expect(owner[0]?.email).toBe('outra@example.com');
   });
 
   test('access code: no Mercado Pago, the store waits on its invoice until the team marks it paid', async () => {

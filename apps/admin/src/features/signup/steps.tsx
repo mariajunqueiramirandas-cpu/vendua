@@ -686,7 +686,12 @@ function stepFor(e: unknown): { step: StepId; notice: string } | null {
   if (field === 'ownerName' || field === 'email')
     return {
       step: 'voce',
-      notice: field === 'email' ? 'Confira o e-mail, como maria@gmail.com.' : 'Confira o seu nome.',
+      notice:
+        e.code === 'PAYER_EMAIL_REJECTED'
+          ? 'O Mercado Pago não aceitou esse e-mail para a cobrança. Use outro.'
+          : field === 'email'
+            ? 'Confira o e-mail, como maria@gmail.com.'
+            : 'Confira o seu nome.',
     };
   if (field === 'segment') return { step: 'tipo', notice: 'Escolha de novo o que a loja vende.' };
   if (e.code === 'PLAN_UNAVAILABLE')
