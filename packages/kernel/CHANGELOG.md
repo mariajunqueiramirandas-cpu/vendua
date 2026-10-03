@@ -3,6 +3,19 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.17.0
+
+Cash change ("troco para") — additive; no storefront edit.
+
+- `CheckoutInput.payment.changeForCents` (cash only, cents) and `Order.payment.changeForCents`;
+  Core refuses change below the total with `INVALID_CHANGE` (`details.minCents`), now in
+  `ERROR_CODES`.
+- `checkout.PaymentMethods` gains optional `changeForCents`, `onChangeFor` and `changeForError`;
+  the default asks "Precisa de troco?" while cash is chosen (`[data-part="change"]`,
+  `no-change`), and Core's refusal shows at the field.
+- New rule `changeMessage(details, currency)`. The order page's default shows "Troco para R$ …"
+  for cash orders (`[data-part="change-for"]`).
+
 ## 1.16.0
 
 Closed hours take only encomendas — additive; no storefront edit.

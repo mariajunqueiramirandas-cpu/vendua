@@ -45,6 +45,8 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
   PAYMENT_NOT_REQUIRED: { title: 'Esse pedido não precisa de pagamento online' },
   PAYMENT_ONLINE: { title: 'Esse pagamento é confirmado pelo Mercado Pago' },
   PAYMENT_NOT_ALLOWED: { title: 'Encomendas aceitam outra forma de pagamento' },
+  // Kernel 1.17 — the checkout shows `changeMessage` at the change field
+  INVALID_CHANGE: { title: 'Confira o valor do troco' },
   // coupons — the one table (`couponMessage`, `COUPON_REASON` read it)
   COUPON_NOT_FOUND: { title: 'Cupom não encontrado' },
   INVALID_COUPON: { title: 'Cupom inválido' },
@@ -103,4 +105,13 @@ export function couponMessage(
   if (code === 'COUPON_MIN_SUBTOTAL' && typeof remaining === 'number' && remaining > 0)
     return `Faltam ${formatCents(remaining, currency)} para usar este cupom.`;
   return ERROR_COPY[code]?.title ?? 'Este cupom não vale agora.';
+}
+
+/** Kernel 1.17 — why Core refused the cash change (`INVALID_CHANGE`), with the least it takes
+ *  when Core sent `details.minCents`. */
+export function changeMessage(details?: Record<string, unknown> | null, currency = 'BRL'): string {
+  const min = details?.minCents;
+  return typeof min === 'number' && min > 0
+    ? `O troco precisa ser para um valor igual ou maior que o total, ${formatCents(min, currency)}.`
+    : 'O troco precisa ser para um valor igual ou maior que o total.';
 }

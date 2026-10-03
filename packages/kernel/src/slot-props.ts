@@ -181,6 +181,14 @@ export interface SlotProps {
     methods: PaymentMethod[];
     selected: PaymentMethod['id'];
     onSelect: (id: PaymentMethod['id']) => void;
+    /** Kernel 1.17 — cash change ("troco para"), in cents; null = no change. Present with
+     *  `onChangeFor` when the store takes cash; show it while `selected` is `'cash'`. */
+    changeForCents?: number | null;
+    /** Kernel 1.17 — the shopper typed an amount (cents) or said no change is needed (null).
+     *  Core decides whether it covers the total. */
+    onChangeFor?: (cents: number | null) => void;
+    /** Kernel 1.17 — Core refused the change (`INVALID_CHANGE`), in words */
+    changeForError?: string;
   } & StoreMoney;
   'checkout.SuccessPage': { order: Order; currency: string } & StoreTime;
   'checkout.EmptyCart': { onBrowse: () => void } & StoreWords;

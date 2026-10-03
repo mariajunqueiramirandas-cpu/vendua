@@ -168,6 +168,8 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
     ],
     selected: 'pix',
     onSelect: noop,
+    changeForCents: null,
+    onChangeFor: noop,
   },
   'checkout.SuccessPage': { order, currency: 'BRL', timeZone },
   'checkout.EmptyCart': { onBrowse: noop },

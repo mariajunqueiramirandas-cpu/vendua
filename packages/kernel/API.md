@@ -274,6 +274,25 @@ lets encomendas in while closed.
   (`[data-part="closed-note"]`) and hold the confirm button. A `STORE_CLOSED` or `STORE_PAUSED`
   answer to checkout rereads the store.
 
+### Cash change (Kernel 1.17)
+
+Additive — no storefront edit. Core decides whether the change covers the total; the Kernel
+sends what the shopper typed and compares nothing.
+
+- `CheckoutInput.payment.changeForCents` (optional, cash only, integer cents): the note the
+  shopper pays with. Core answers `INVALID_CHANGE` (422, `details.minCents` — the least it
+  takes, the order's total) when it's below the total or above Core's cap; `ERROR_CODES` adds
+  `INVALID_CHANGE`. `Order.payment.changeForCents` (optional, null = no change) comes back.
+- `checkout.PaymentMethods` gains three optional props: `changeForCents` (cents, or null for
+  no change), `onChangeFor` (called with the typed cents, or null) and `changeForError` (Core's
+  refusal in words). The Kernel passes the first two when the store takes cash and sends
+  `changeForCents` only with `method: 'cash'` and a positive whole number of cents. The default
+  shows "Precisa de troco?" under the options while cash is chosen: a "Troco para" money field
+  in the store's currency and "Não preciso de troco".
+- `changeMessage(details?, currency?)` (rules) is the refusal in words, e.g. "O troco precisa
+  ser para um valor igual ou maior que o total, R$ 47,00."
+- `order.StatusPage`'s default shows "Troco para R$ 100,00" under a cash order's payment.
+
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's.
@@ -416,6 +435,7 @@ separate function a store may skip for its own voice. Additive — no storefront
 - `ERROR_COPY` / `errorCopy` `(code)` — default pt-BR `{ title, body? }` per Core error code.
 - `couponMessage` `(code, details?, currency?)` — a coupon's refusal in words (`Faltam R$ 12,00 para usar este cupom.`).
 - `COUPON_REASON` — coupon code → message (ui-defaults' name); `isCouponError` `(code)` — the code is about the coupon.
+- `changeMessage` `(details?, currency?)` — Kernel 1.17: Core's `INVALID_CHANGE` in words, with `details.minCents` (`O troco precisa ser para um valor igual ou maior que o total, R$ 47,00.`).
 
 **Options and kits** (`rules/modifiers.ts`) — Core counts a group's min/max in units and
 refuses an add that breaks them; these say the same before the add.
@@ -560,6 +580,11 @@ Parts added in Kernel 1.12: `compare-at` (the struck "de" price, in the product 
 `option-qty` (a `modifier` with units is `data-kind="qty"`); in the checkout
 `[data-part="adjustment"]` (a payment option's rule, `data-kind` discount | surcharge | mixed)
 and `payment-adjustment` (the summary line; also in `[data-vendua="order-items"]`), and `pricing-note` (the "calculando o total" line under the confirm button while Core prices a method with a rule; confirm stays disabled until it answers).
+
+Parts added in Kernel 1.17: in the checkout's payment options `[data-part="change"]` (the
+"Precisa de troco?" group shown while cash is chosen; its field is `input[name="change-for"]`)
+and `no-change` (the "Não preciso de troco" checkbox), and in `[data-vendua="order-status"]`
+`change-for` (the "Troco para R$ …" line under a cash order's payment).
 
 `vendua check` (`no-v-namespace`) allows exactly those; any other `.v-*` or
 `[data-vendua]` selector in store CSS fails. Slot overrides stay available but are

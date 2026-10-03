@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import type { SlotProps } from '@vendua/kernel';
 import {
   adjustmentKind,
   DEFAULT_VOCABULARY,
   digitsOf,
   formatCents,
+  formatCentsParts,
   isValidCep,
   lineSummary,
   maskCep,
@@ -404,6 +406,10 @@ export function PaymentMethods({
   methods,
   selected,
   onSelect,
+  changeForCents,
+  onChangeFor,
+  changeForError,
+  currency = 'BRL',
 }: SlotProps['checkout.PaymentMethods']) {
   return (
     <fieldset className="v-fieldset" data-part="root">
@@ -446,7 +452,105 @@ export function PaymentMethods({
           </label>
         ))}
       </div>
+      {selected === 'cash' && onChangeFor ? (
+        <CashChange
+          cents={changeForCents ?? null}
+          onChange={onChangeFor}
+          error={changeForError}
+          currency={currency}
+        />
+      ) : null}
     </fieldset>
+  );
+}
+
+/** "50", "50,5", "1.000,00", "R$ 120" → cents; null when there's no number. A separator
+ *  followed by one or two digits is the decimal one, any other groups thousands. */
+function amountCents(text: string): number | null {
+  const t = text.replace(/[^\d.,]/g, '');
+  if (!/\d/.test(t)) return null;
+  const sep = Math.max(t.lastIndexOf(','), t.lastIndexOf('.'));
+  const decimal = sep >= 0 && t.length - sep - 1 <= 2;
+  const whole = (decimal ? t.slice(0, sep) : t).replace(/\D/g, '') || '0';
+  const frac = decimal ? t.slice(sep + 1).padEnd(2, '0') : '00';
+  const cents = Number(whole) * 100 + Number(frac);
+  return Number.isSafeInteger(cents) ? cents : null;
+}
+
+// Kernel 1.17 — whether it covers the total is Core's call (INVALID_CHANGE comes back as `error`)
+function CashChange({
+  cents,
+  onChange,
+  error,
+  currency,
+}: {
+  cents: number | null;
+  onChange: (cents: number | null) => void;
+  error: string | undefined;
+  currency: string;
+}) {
+  const [text, setText] = useState(() => (cents ? formatCentsParts(cents, currency).amount : ''));
+  const [none, setNone] = useState(false);
+  const { symbol, symbolFirst } = formatCentsParts(0, currency);
+  const invalid = !!error && !none;
+  return (
+    <div className="v-change" data-part="change" role="group" aria-labelledby="v-change-title">
+      <p className="v-change-title" id="v-change-title">
+        Precisa de troco?
+      </p>
+      <div className="v-field" data-invalid={invalid || undefined}>
+        <label className="v-label" htmlFor="v-change-for">
+          Troco para
+        </label>
+        <div className="v-money" data-symbol={symbolFirst ? 'before' : 'after'}>
+          <span className="v-money-symbol" aria-hidden="true">
+            {symbol}
+          </span>
+          <input
+            id="v-change-for"
+            name="change-for"
+            className="v-input v-num"
+            inputMode="decimal"
+            autoComplete="off"
+            placeholder="0,00"
+            maxLength={12}
+            value={text}
+            disabled={none}
+            aria-invalid={invalid || undefined}
+            aria-describedby={invalid ? 'v-change-error' : undefined}
+            onChange={(e) => {
+              const t = e.target.value.replace(/[^\d.,]/g, '');
+              setText(t);
+              onChange(amountCents(t));
+            }}
+            onBlur={() => {
+              const c = amountCents(text);
+              if (c !== null) setText(formatCentsParts(c, currency).amount);
+            }}
+          />
+        </div>
+        {invalid ? (
+          <p className="v-field-error" id="v-change-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </div>
+      <label className="v-check" data-part="no-change">
+        <input
+          type="checkbox"
+          name="no-change"
+          checked={none}
+          onChange={(e) => {
+            setNone(e.target.checked);
+            if (e.target.checked) {
+              setText('');
+              onChange(null);
+            }
+          }}
+        />
+        Não preciso de troco
+      </label>
+    </div>
   );
 }
 

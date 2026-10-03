@@ -410,7 +410,12 @@ export interface CheckoutInput {
   customer: { name: string; phone: string };
   delivery: { mode: 'pickup' | 'delivery' } & DeliveryAddress;
   /** Kernel 1.7 adds 'card_online' (Mercado Pago's hosted checkout), 1.11 'meal_voucher' */
-  payment: { method: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher' };
+  payment: {
+    method: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher';
+    /** Kernel 1.17 — cash only: the note the shopper pays with ("troco para R$ 100,00"),
+     *  integer cents. Core answers `INVALID_CHANGE` (`details.minCents`) below the total. */
+    changeForCents?: number;
+  };
   /** Kernel 1.2 — "Alguma observação?" (≤500) */
   notes?: string;
   /** Kernel 1.2 — encomenda date, YYYY-MM-DD */
@@ -560,6 +565,8 @@ export interface Order {
     refundedCents?: number;
     /** Kernel 1.7 — the hosted card checkout of the current attempt */
     redirectUrl?: string | null;
+    /** Kernel 1.17 — cash: the amount the shopper asked change for (null = no change) */
+    changeForCents?: number | null;
   };
   subtotalCents: number;
   deliveryFeeCents: number;
@@ -1172,6 +1179,8 @@ export const ERROR_CODES = [
   'INVALID_DELIVERY',
   'INVALID_CUSTOMER',
   'INVALID_PAYMENT',
+  // Kernel 1.17 — cash change below the total (`details.minCents`) or above Core's cap
+  'INVALID_CHANGE',
   'ORDER_NOT_FOUND',
   'PAYLOAD_TOO_LARGE',
   'INVALID_ORDER_TRANSITION',

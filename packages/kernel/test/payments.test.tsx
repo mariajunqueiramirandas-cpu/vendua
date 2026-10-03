@@ -424,6 +424,129 @@ describe('order page — online payments', () => {
   });
 });
 
+describe('cash change (Kernel 1.17)', () => {
+  const CASH_STORE = { ...STORE, paymentMethods: ['pix', 'cash'] };
+  /** dados → retirada → pagamento, with Core answering checkout through `checkout` */
+  async function toPayment(checkout: (body: unknown) => Response) {
+    const c = core((url, init) => {
+      if (url.pathname === '/storefront/v1/store') return json(200, CASH_STORE);
+      if (url.pathname === '/checkout/v1/cart') return json(200, { cart: cartWithItem() });
+      if (url.pathname === '/checkout/v1/cart/delivery')
+        return json(200, { cart: { ...cartWithItem(), delivery: { mode: 'pickup' } } });
+      if (url.pathname === '/checkout/v1/checkout')
+        return checkout(typeof init?.body === 'string' ? JSON.parse(init.body) : undefined);
+      return null;
+    });
+    m = await mount({ path: '/checkout', session: 'tok' });
+    await act(async () => {
+      setValue('#checkout-name', 'Ana');
+      setValue('#checkout-phone', '(22) 99999-0001');
+    });
+    await submitForm();
+    await click($('input[value="pickup"]'));
+    await submitForm();
+    await flush();
+    return c;
+  }
+  const placed = (payment: Pay) =>
+    json(201, { order: order(1, { status: 'pending', provider: 'sandbox', ...payment }) });
+  const checkoutBody = (c: ReturnType<typeof core>) =>
+    c.calls.filter((x) => x.path === '/checkout/v1/checkout').map((x) => x.body);
+
+  test('asked only for cash, sent as cents, and dropped when the shopper switches method', async () => {
+    const c = await toPayment(() => placed({ method: 'cash', changeForCents: 10000 }));
+    expect($('[data-part="change"]')).toBeNull();
+    await click($('input[value="cash"]'));
+    expect(text('[data-part="change"]')).toContain('Precisa de troco?');
+    expect($('label[for="v-change-for"]')?.textContent).toBe('Troco para');
+    await act(async () => setValue('#v-change-for', '100'));
+    // Pix: the typed change stays behind, never sent
+    await click($('input[value="pix"]'));
+    expect($('[data-part="change"]')).toBeNull();
+    await submitForm();
+    await flush(10);
+    expect(checkoutBody(c)[0]).toMatchObject({ payment: { method: 'pix' } });
+    expect((checkoutBody(c)[0] as { payment: object }).payment).not.toHaveProperty(
+      'changeForCents',
+    );
+  });
+
+  test('cash sends changeForCents; after "não preciso de troco" it sends none', async () => {
+    let n = 0;
+    const c = await toPayment(() =>
+      n++ === 0
+        ? json(422, {
+            error: { code: 'INVALID_CHANGE', message: 'x', details: { minCents: 4700 } },
+          })
+        : placed({ method: 'cash', changeForCents: null }),
+    );
+    await click($('input[value="cash"]'));
+    await act(async () => setValue('#v-change-for', '1.000,50'));
+    await submitForm();
+    await flush(10);
+    expect((checkoutBody(c)[0] as { payment: unknown }).payment).toEqual({
+      method: 'cash',
+      changeForCents: 100050,
+    });
+    await click($('input[name="no-change"]'));
+    expect(($('#v-change-for') as HTMLInputElement).disabled).toBe(true);
+    await submitForm();
+    await flush(10);
+    expect((checkoutBody(c)[1] as { payment: unknown }).payment).toEqual({ method: 'cash' });
+  });
+
+  test("Core's INVALID_CHANGE shows at the field with the total, and clears on edit", async () => {
+    const c = await toPayment(() =>
+      json(422, {
+        error: {
+          code: 'INVALID_CHANGE',
+          message: 'change below total',
+          details: { field: 'payment.changeForCents', minCents: 4700 },
+        },
+      }),
+    );
+    await click($('input[value="cash"]'));
+    await act(async () => setValue('#v-change-for', '20'));
+    await submitForm();
+    await flush(10);
+    expect((checkoutBody(c)[0] as { payment: unknown }).payment).toEqual({
+      method: 'cash',
+      changeForCents: 2000,
+    });
+    expect(text('#v-change-error')).toMatch(
+      /^O troco precisa ser para um valor igual ou maior que o total, R\$\s47,00\.$/,
+    );
+    const input = $('#v-change-for') as HTMLInputElement;
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(input.getAttribute('aria-describedby')).toBe('v-change-error');
+    await act(async () => setValue('#v-change-for', '50'));
+    expect($('#v-change-error')).toBeNull();
+  });
+
+  test('the order page says what the change is for, only for cash', async () => {
+    const offline = { status: 'pending', provider: 'sandbox', online: false };
+    core((url) =>
+      url.pathname === `/checkout/v1/orders/${ORDER_ID}`
+        ? json(200, { order: order(1, { ...offline, method: 'cash', changeForCents: 10000 }) })
+        : null,
+    );
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(8);
+    expect(text('[data-part="change-for"]')).toMatch(/^Troco para R\$\s100,00$/);
+    m.unmount();
+
+    core((url) =>
+      url.pathname === `/checkout/v1/orders/${ORDER_ID}`
+        ? json(200, { order: order(1, { ...offline, method: 'cash', changeForCents: null }) })
+        : null,
+    );
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(8);
+    expect($('[data-vendua="order-status"]')).not.toBeNull();
+    expect($('[data-part="change-for"]')).toBeNull();
+  });
+});
+
 describe('catalog — scheduled products', () => {
   const scheduled = {
     ...PRODUCT,

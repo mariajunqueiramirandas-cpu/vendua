@@ -27,6 +27,7 @@ const RULES_V1 = [
   'arrangeMenu',
   'cardState',
   'catalogHref',
+  'changeMessage',
   'contactLinks',
   'countdown',
   'couponMessage',

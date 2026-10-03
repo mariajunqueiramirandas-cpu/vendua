@@ -32,7 +32,7 @@ import type {
 type SlotPropsOf<K extends keyof SlotProps> = SlotProps[K];
 import type { CartTotals, GeoPoint, LatLng, PaymentAdjustment, QuoteResult } from '../api.ts';
 import { deliveryWords } from '../rules/delivery.ts';
-import { couponMessage, isCouponError } from '../rules/errors.ts';
+import { changeMessage, couponMessage, isCouponError } from '../rules/errors.ts';
 import { formatCents, LOCALE } from '../rules/format.ts';
 import {
   adjustmentKind,
@@ -185,6 +185,9 @@ export function CheckoutPage() {
   );
   const [mode, setMode] = useState<'pickup' | 'delivery'>(deliveryOk ? 'delivery' : 'pickup');
   const [pay, setPay] = useState<PaymentMethod['id']>('pix');
+  // Kernel 1.17 — cash change in cents (null = none); Core checks it covers the total
+  const [changeFor, setChangeFor] = useState<number | null>(null);
+  const [changeError, setChangeError] = useState<string | undefined>();
   const [errors, setErrors] = useState<Partial<Record<keyof CustomerDraft, string>>>({});
   const [deliveryIssue, setDeliveryIssue] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -611,7 +614,15 @@ export function CheckoutPage() {
       const order = await submit({
         customer: { name: draft.name.trim(), phone: digitsOf(draft.phone) },
         delivery: deliveryPayload(),
-        payment: { method: pay },
+        payment: {
+          method: pay,
+          ...(pay === 'cash' &&
+          changeFor !== null &&
+          Number.isSafeInteger(changeFor) &&
+          changeFor > 0
+            ? { changeForCents: changeFor }
+            : {}),
+        },
         ...(notes.trim() ? { notes: notes.trim().slice(0, NOTES_MAX) } : {}),
         ...(scheduledFor ? { scheduledFor } : {}),
       });
@@ -652,6 +663,10 @@ export function CheckoutPage() {
       const code = errorCode(err);
       if (code === 'SCHEDULE_REQUIRED' || code === 'INVALID_SCHEDULE')
         setScheduleError(errorCopy(code).title);
+      if (code === 'INVALID_CHANGE')
+        setChangeError(
+          changeMessage((err as { details?: Record<string, unknown> }).details, currency),
+        );
       if (isCouponError(code))
         setCouponError(
           couponMessage(code, (err as { details?: Record<string, unknown> }).details, currency),
@@ -767,8 +782,21 @@ export function CheckoutPage() {
                   name="checkout.PaymentMethods"
                   methods={methods}
                   selected={pay}
-                  onSelect={setPay}
+                  onSelect={(id) => {
+                    setPay(id);
+                    setChangeError(undefined);
+                  }}
                   currency={currency}
+                  {...(methods.some((m) => m.id === 'cash')
+                    ? {
+                        changeForCents: changeFor,
+                        onChangeFor: (cents: number | null) => {
+                          setChangeFor(cents);
+                          setChangeError(undefined);
+                        },
+                        ...(changeError ? { changeForError: changeError } : {}),
+                      }
+                    : {})}
                 />
                 {encomenda && methods.length < byStore.length ? (
                   <p className="v-muted" data-part="payment-note">
