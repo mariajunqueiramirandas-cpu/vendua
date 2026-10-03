@@ -1662,6 +1662,8 @@ export const api = {
       get<{
         plans: Plan[];
         billing: { available: boolean; accessCode: boolean };
+        /** the team turned signup on and its WhatsApp, email and billing are set up */
+        signup: { open: boolean };
         storeDomain: string;
       }>('/signup/plans'),
     slug: (slug: string) =>

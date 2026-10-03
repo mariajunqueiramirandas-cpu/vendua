@@ -914,6 +914,14 @@ export interface PlanPatch {
   /** merged into the plan's features by Core */
   features?: Partial<PlanFeatures>;
 }
+/** GET /control/v1/signup: the CRM switch and what self-serve signup waits on */
+export interface SignupReadiness {
+  on: boolean;
+  whatsapp: boolean;
+  email: boolean;
+  billing: boolean;
+  open: boolean;
+}
 export interface AiPack {
   id: string;
   name: string;
@@ -947,6 +955,8 @@ const fleet = {
       body: JSON.stringify(patch),
     }),
   listAiPacks: () => req<{ packs: AiPack[] }>('/ai-packs'),
+  /** may a visitor sign up now, and if not, what is missing (Core decides) */
+  signupReadiness: () => req<SignupReadiness>('/signup'),
   patchAiPack: (id: string, patch: AiPackPatch) =>
     req<{ pack: AiPack }>(`/ai-packs/${encodeURIComponent(id)}`, {
       method: 'PATCH',

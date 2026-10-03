@@ -44,6 +44,7 @@ export const qk = {
   billingStores: () => ['billing-stores'] as const,
   controlPlans: () => ['control-plans'] as const,
   aiPacks: () => ['ai-packs'] as const,
+  signupReadiness: () => ['signup-readiness'] as const,
   incidents: () => ['incidents'] as const,
   fleetStatus: () => ['fleet-status'] as const,
   fleetStorefronts: () => ['fleet-storefronts'] as const,

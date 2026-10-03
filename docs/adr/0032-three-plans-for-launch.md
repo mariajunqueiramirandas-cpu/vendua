@@ -43,6 +43,9 @@ Later the same day the owner added these decisions:
   includes what happens to a live custom domain when a store loses the feature (a downgrade, an
   unpaid plan, a CRM toggle). Today host resolution doesn't check the plan; only activating a
   domain does (403 `PLAN_REQUIRED`).
+- **Self-serve signup opens only when it is ready:** the team turned it on in the CRM, and the
+  platform WhatsApp, email and billing are set up. A new owner gets a welcome email. An
+  unfinished signup is kept for 30 minutes.
 - **The AI seller is Duá**, Venduá's mascot, on every store. Stores no longer name it, the
   mascot is its face, and copy says "o Duá" and "ele". "Vendedor" stays the code name (routes,
   tables, the `vendedor` feature key).
@@ -64,6 +67,27 @@ perks, and with "Ainda não está aberto para assinatura." where its button woul
 preselect it, and Conta's upgrade offer skips it. Staff open or close a plan in the CRM ("aberto
 para assinatura"). The recommended plan must stay open: closing it, or recommending a closed
 plan, answers 409 `RECOMMENDED_PLAN_CLOSED`.
+
+**Signup has a gate** (`modules/billing/signup-gate.ts`, `signupReadiness`). It is open when
+all four hold:
+
+- the CRM switch is on (`control_settings` key `signup`, `{ enabled }`, in Lojas → Planos);
+- an enabled `whatsapp` integration is connected, because it sends the phone code;
+- an enabled `email` integration has its secret, because it sends the welcome and the invoices;
+- Mercado Pago or the access code is configured.
+
+A `log` driver counts only outside production. While the gate is closed:
+
+- `GET /signup/plans` says `signup.open: false`;
+- `POST /signup/otp/start` and a new `POST /signup` answer 503 `SIGNUP_CLOSED`. A replay of a
+  store already made still goes through;
+- the CRM shows what is missing (`GET /control/v1/signup`).
+
+After a new store is created and its first charge is set, the owner gets "<loja> está criada
+na Venduá" through the platform email (idempotency key `signup-welcome:<slug>`). It says where
+the store and the panel are and what happens next. Sending it never fails the signup. The
+admin keeps an unfinished signup on the device for 30 minutes from the last answer, as long as
+Core's signup token lasts.
 
 **Basic and PRO+ retire.** Stores on them move to Mirim and Pangolim, and so do subscriptions
 and pending changes. The old rows stay, not public, only for the invoices that name them.

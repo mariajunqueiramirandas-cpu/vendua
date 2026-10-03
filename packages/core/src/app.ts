@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { planHas } from './modules/billing/plans.ts';
+import { signupReadiness, type SignupReadiness } from './modules/billing/signup-gate.ts';
 import { agentSettingTx, automationAllowedTx, explainAutonomyTx } from './agent/policy.ts';
 import { JOB_KINDS, type JobKind } from './agent/tool-meta.ts';
 import { requestAgentTx } from './agent/dispatch.ts';
@@ -256,6 +257,8 @@ export interface AppDeps {
   paymentProvider?: PaymentProvider | undefined;
   /** WhatsApp/email to store people (default: the platform's integrations); tests capture */
   notify?: MerchantNotify | undefined;
+  /** may a visitor sign up now (default: the CRM switch + WhatsApp + email + billing) */
+  signupReady?: (() => Promise<SignupReadiness>) | undefined;
   /** the Control Plane's network, clock and probe switch (default: from env); tests swap them */
   fleet?: FleetDeps | undefined;
   /** the edge's key for /edge/v1 (default VENDUA_EDGE_SECRET) */
@@ -456,6 +459,7 @@ export function createApp({
   adminHost,
   paymentProvider,
   notify,
+  signupReady,
   fleet,
   edgeSecret,
   discordFetch,
@@ -2802,6 +2806,7 @@ export function createApp({
     provider,
     notify: merchantNotify,
     storeDomain: publicStoreDomain,
+    signupReady: signupReady ?? (() => signupReadiness(sql, provider)),
   });
   mountIncidentsControl({ app, sql, controlGate });
   mountAgentRuntimeControl({ app, sql, controlGate });
@@ -2955,6 +2960,7 @@ export function createApp({
     storeDomain: publicStoreDomain,
     provider,
     notify: merchantNotify,
+    signupReady: signupReady ?? (() => signupReadiness(sql, provider)),
     publicOrigin: adminOrigin,
     geocode,
   });

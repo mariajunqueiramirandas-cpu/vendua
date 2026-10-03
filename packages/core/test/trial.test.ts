@@ -32,6 +32,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     paymentProvider: fake,
+    // signup's gate (the CRM switch, WhatsApp, email, billing) is open here; signup.test checks it
+    signupReady: async () => ({ on: true, whatsapp: true, email: true, billing: true, open: true }),
     notify,
   };
   // signup's per-IP limits live in each app: every test gets its own budget

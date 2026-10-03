@@ -10,6 +10,7 @@ import {
 import { text, type AdminApp, type AdminDeps, type Merchant } from '../../admin/context.ts';
 import { withTenant, type Sql } from '../../platform/db.ts';
 import { HttpError, bodyJson, clientIp, windowCounter } from '../../platform/http.ts';
+import { log } from '../../platform/log.ts';
 import { platformHost } from '../../platform/store-origin.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { mountBillingDev } from './dev-routes.ts';
@@ -37,6 +38,8 @@ import {
   type PayNext,
 } from './subscriptions.ts';
 import { FakeProvider } from '../payments/fake.ts';
+
+const signupLog = log.child({ mod: 'signup' });
 
 /** stores one phone may open per rolling day */
 const STORES_PER_PHONE_PER_DAY = 3;
@@ -78,6 +81,8 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     return c.json({
       plans: await publicPlans(sql),
       billing: { available: d.provider.platformConfigured, accessCode: !!signupAccessCode() },
+      // the CRM switch and what signup relies on; which part is missing is for the team (CRM)
+      signup: { open: (await d.signupReady()).open },
       storeDomain: d.storeDomain,
     });
   });
@@ -92,6 +97,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     const phone = validAdminPhone(body.phone);
     if (!phone)
       throw new HttpError(422, 'INVALID_PHONE', 'type the phone with DDD', { field: 'phone' });
+    await signupOpenOr503(d);
     const ip = clientIp(c, ipFlags());
     // 'local' = no trusted edge (dev): every client looks the same, so no per-IP day cap
     return c.json(await startSignupOtp(sql, phone, d.notify, ip === 'local' ? {} : { ip }));
@@ -165,7 +171,10 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       plan,
       owned ? await withTenant(sql, owned.tenant_id, (tx) => heldPlans(tx, owned!.tenant_id)) : [],
     );
+    // a replay of a store already made goes through even if signup closed since
+    if (!owned) await signupOpenOr503(d);
     if (!owned && trial && (await phoneHadTrial(sql, phone))) throw trialUsed();
+    let createdNow = false;
     if (!owned) {
       if ((await slugStatus(sql, slug, d.storeDomain)).reason === 'taken')
         throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
@@ -249,9 +258,22 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       owned = await ownedStore(sql, phone, slug);
       if (!owned)
         throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
+      createdNow = true;
     }
 
     const next = await ensureFirstCharge(d, c, owned, { plan, method, email, ownerName, manual });
+    if (createdNow) {
+      // after the commit and never in the way of the answer: a failed email is logged, not fatal
+      const store = owned;
+      void sendWelcome(d, c, {
+        email,
+        ownerName,
+        storeName,
+        slug,
+        planName: plan.name,
+        next,
+      }).catch((err) => signupLog.warn({ err, tenantId: store.tenant_id }, 'welcome email failed'));
+    }
     setAdminCookie(
       c,
       await createSession(sql, owned, c.req.header('user-agent'), {
@@ -265,6 +287,49 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
 
   if (d.provider instanceof FakeProvider && process.env.NODE_ENV !== 'production')
     mountBillingDev(admin, d, d.provider);
+}
+
+async function signupOpenOr503(d: Omit<AdminDeps, 'admin'>) {
+  if (!(await d.signupReady()).open)
+    throw new HttpError(503, 'SIGNUP_CLOSED', 'self-serve signup is not open right now');
+}
+
+/** The owner's welcome (ADR 0032): where the store is, how to get in, and what happens next. */
+async function sendWelcome(
+  d: Omit<AdminDeps, 'admin'>,
+  c: Context,
+  o: {
+    email: string;
+    ownerName: string;
+    storeName: string;
+    slug: string;
+    planName: string;
+    next: PayNext;
+  },
+) {
+  const first = o.ownerName.trim().split(/\s+/)[0] ?? o.ownerName;
+  const panel = `${d.publicOrigin(c)}/admin/`;
+  const store = `https://${platformHost(o.slug, d.storeDomain)}`;
+  const next =
+    o.next.kind === 'trial'
+      ? `Seu teste grátis vai até ${new Date(o.next.endsAt).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', timeZone: 'America/Sao_Paulo' })}. A loja já pode receber pedidos.`
+      : o.next.kind === 'manual'
+        ? 'A loja abre para pedidos assim que a equipe da Venduá confirmar o pagamento do plano.'
+        : 'A loja abre para pedidos assim que o primeiro pagamento do plano for confirmado. O Pix e a fatura ficam em Conta e plano, no painel.';
+  await d.notify.email(
+    o.email,
+    `${o.storeName} está criada na Venduá`,
+    [
+      `Oi, ${first}!`,
+      `A ${o.storeName} foi criada no plano ${o.planName}.`,
+      next,
+      `Painel da loja: ${panel}`,
+      `Endereço da loja: ${store}`,
+      'Para entrar no painel, use o número de WhatsApp que você confirmou no cadastro.',
+      'Se precisar de ajuda, toque em Ajuda no painel.',
+    ].join('\n\n'),
+    `signup-welcome:${o.slug}`,
+  );
 }
 
 async function ownedStore(sql: Sql, phone: string, slug: string) {

@@ -57,7 +57,8 @@ export function PlanStep({
   /** known once the phone is confirmed (a return to this step): one trial per owner */
   trialEligible?: boolean | undefined;
 }) {
-  const open = plans.billing.available || plans.billing.accessCode;
+  // the CRM's switch plus the platform's WhatsApp, email and a way to pay (Core decides)
+  const open = plans.signup.open;
   // the trial is for a new owner paying the Venduá: not with an access code
   const trial = plans.billing.available && !d.byCode && trialEligible !== false;
   const trialPlan = trial ? plans.plans.find((p) => p.trialDays > 0 && p.available) : undefined;
@@ -390,7 +391,12 @@ export function WhatsappStep({
       patch({ phone: p, codeSentAt: Date.now(), codeExpiresAt: expiry(r.expiresAt) });
       go('codigo');
     },
-    onError: (e) => setErr(messageOf(e)),
+    onError: (e) =>
+      setErr(
+        e instanceof ApiError && e.code === 'SIGNUP_CLOSED'
+          ? CREATE_ERR.SIGNUP_CLOSED!
+          : messageOf(e),
+      ),
   });
   return (
     <StepFrame
@@ -689,6 +695,7 @@ function stepFor(e: unknown): { step: StepId; notice: string } | null {
 const CREATE_ERR: Record<string, string> = {
   SIGNUP_LIMIT: 'Esse WhatsApp já abriu lojas demais hoje. Tente de novo amanhã.',
   BILLING_UNAVAILABLE: 'O cadastro pela internet ainda não abriu. Tente de novo em breve.',
+  SIGNUP_CLOSED: 'O cadastro pela internet está fechado agora. Tente de novo mais tarde.',
   INVALID_ACCESS_CODE: 'Esse código não confere. Confira e tente de novo.',
 };
 

@@ -17,6 +17,7 @@ import {
 } from './billing/plans.ts';
 import type { AiPackRow } from './billing/subscriptions.ts';
 import { dropPix, lockSub, markInvoicePaid, type BillingCtx } from './billing/subscriptions.ts';
+import type { SignupReadiness } from './billing/signup-gate.ts';
 import { claimControl, controlTx } from './control.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 
@@ -57,6 +58,7 @@ export function mountControlBilling(o: {
   notify?: MerchantNotify;
   /** `<slug>.<storeDomain>` fallback for a store's address (default VENDUA_STORE_DOMAIN) */
   storeDomain?: string;
+  signupReady: () => Promise<SignupReadiness>;
 }) {
   const { app, sql, controlGate } = o;
   const storeDomain = o.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br';
@@ -179,6 +181,13 @@ export function mountControlBilling(o: {
   });
 
   const controlPlan = (r: PlanRow) => ({ ...planView(r), public: r.public, sort: r.sort });
+
+  // the CRM's "Cadastro de lojas": the switch (PUT /control/v1/settings/signup) and what else
+  // signup waits on, so the team sees why it is closed
+  app.get('/control/v1/signup', async (c) => {
+    controlGate(c);
+    return c.json(await o.signupReady());
+  });
 
   app.get('/control/v1/plans', async (c) => {
     controlGate(c);

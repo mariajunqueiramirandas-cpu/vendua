@@ -44,6 +44,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     paymentProvider: fake,
+    // signup's gate (the CRM switch, WhatsApp, email, billing) is open here; signup.test checks it
+    signupReady: async () => ({ on: true, whatsapp: true, email: true, billing: true, open: true }),
     notify,
   };
   const app = createApp(deps);

@@ -29,6 +29,12 @@ CHROMIUM=/opt/pw-browsers/chromium bun scripts/shots.ts /pipeline /inbox   # 375
 - Merchant admin: start Core with `VENDUA_ADMIN_DEV_OTP=1` added (the sign-in code comes back
   in the response), then `cd apps/admin && (nohup bun run dev > /tmp/admin.log 2>&1 &)`
   (:5196). Sign in as the seed owner, phone 22999990001.
+- Self-serve signup (`/admin/comecar`) is closed until the CRM switch, WhatsApp, email and billing
+  are set (ADR 0032). In dev, `log` drivers count: `psql -h localhost -p 5433 -U vendua -d vendua -c
+  "insert into control_integrations (kind, driver, enabled) values ('whatsapp','log',true),
+  ('email','log',true) on conflict do nothing; insert into control_settings (key, value) values
+  ('signup', '{\"enabled\": true}') on conflict (key) do update set value = excluded.value"`,
+  and start Core with `VENDUA_SIGNUP_ACCESS_CODE` (12+ characters) when there's no Mercado Pago.
 
 ## Storefronts through the edge (Phase 4)
 

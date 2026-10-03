@@ -14,6 +14,7 @@ import { Panel } from '@/components/ui/card.tsx';
 import { Switch } from '@/components/ui/controls.tsx';
 import { ResponsiveSheet } from '@/components/ui/overlay.tsx';
 import { AiPacksPanel } from './AiPacksPanel.tsx';
+import { SignupPanel } from './SignupPanel.tsx';
 import { PlanChangeDialog } from './PlanChangeDialog.tsx';
 import { FEATURES, trialLabel, usePlanEditors, type Change } from './planEdit.tsx';
 import { useControlPlans } from './queries.ts';
@@ -231,6 +232,7 @@ export default function PlansPage() {
         <ErrorState error={query.error} onRetry={() => void query.refetch()} />
       ) : (
         <div className="flex flex-col gap-4">
+          <SignupPanel />
           <div className="flex flex-col gap-2">
             <Panel
               flush

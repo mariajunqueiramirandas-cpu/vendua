@@ -58,6 +58,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   // provider ids are process-local counters; start past anything another run left behind
   (fake as unknown as { seq: number }).seq = Math.floor(Math.random() * 1e9);
   const wa: { phone: string; text: string }[] = [];
+  const mails: { to: string; subject: string; text: string; key: string }[] = [];
   const staff: { subject: string; body: string }[] = [];
   const deps = {
     sql: appSql,
@@ -67,9 +68,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     paymentProvider: fake,
+    // signup's gate (the CRM switch, WhatsApp, email, billing) is open here; signup.test checks it
+    signupReady: async () => ({ on: true, whatsapp: true, email: true, billing: true, open: true }),
     notify: {
       whatsapp: async (phone: string, text: string) => void wa.push({ phone, text }),
-      email: async () => {},
+      email: async (to: string, subject: string, text: string, key: string) =>
+        void mails.push({ to, subject, text, key }),
     },
   };
   const app = createApp(deps);
@@ -234,6 +238,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(r.body.signedIn).toBe(true);
     expect(r.body.store).toMatchObject({ slug: pixSlug, name: 'Doces da Praia', role: 'owner' });
     expect(r.body.next.kind).toBe('pix');
+    // the owner's welcome: where the store is, how to get in, what happens next
+    const welcome = mails.filter((m) => m.key === `signup-welcome:${pixSlug}`);
+    expect(welcome).toHaveLength(1);
+    expect(welcome[0]).toMatchObject({
+      to: 'ana@example.com',
+      subject: 'Doces da Praia está criada na Venduá',
+    });
+    expect(welcome[0]!.text).toContain('Oi, Ana!');
+    expect(welcome[0]!.text).toContain(`https://${pixSlug}.vendua.test`);
+    expect(welcome[0]!.text).toContain('primeiro pagamento');
     pixStore = r.body.store.id;
     pixCookie = r.cookie;
     expect(pixCookie).toContain('vendua_admin=');
@@ -289,9 +303,73 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     const again = await signup(pixToken, pixSlug);
     expect(again.status).toBe(201);
     expect(again.body.store.id).toBe(pixStore);
+    // a replay finds the store: no second welcome
+    expect(mails.filter((m) => m.key === `signup-welcome:${pixSlug}`)).toHaveLength(1);
     expect(again.body.next).toEqual({ kind: 'pix', invoiceId: expect.any(String) });
     expect((await sql`select 1 from tenants where slug = ${pixSlug}`).length).toBe(1);
     expect((await sql`select 1 from invoices where tenant_id = ${pixStore}`).length).toBe(1);
+  });
+
+  test('closed until the CRM switch, WhatsApp, email and billing are all there', async () => {
+    let gate = { on: false, whatsapp: true, email: true, billing: true, open: false };
+    const closed = createApp({ ...deps, signupReady: async () => gate });
+    const phone = mkPhone(12);
+    expect(
+      (await call('GET', '/admin/v1/signup/plans', undefined, {}, closed)).body.signup,
+    ).toEqual({
+      open: false,
+    });
+    const otp = await call('POST', '/admin/v1/signup/otp/start', { phone }, {}, closed);
+    expect(otp.status).toBe(503);
+    expect(otp.body.error.code).toBe('SIGNUP_CLOSED');
+    expect(wa.some((m) => m.phone === phone)).toBe(false);
+    // a token from when it was open can't create a store once it closed
+    const token = (await verified(phone, createApp(deps))).signupToken;
+    const r = await signup(token, `signup-${nonce}-shut`, {}, closed);
+    expect(r.status).toBe(503);
+    expect(r.body.error.code).toBe('SIGNUP_CLOSED');
+    gate = { ...gate, on: true, open: true };
+    expect((await signup(token, `signup-${nonce}-shut`, {}, closed)).status).toBe(201);
+  });
+
+  test('readiness: the switch, a WhatsApp and an email integration, and billing', async () => {
+    const { signupReadiness } = await import('../src/modules/billing/signup-gate.ts');
+    const ready = () => signupReadiness(appSql, { platformConfigured: true });
+    const put = (enabled: boolean) =>
+      call(
+        'PUT',
+        '/control/v1/settings/signup',
+        { value: { enabled } },
+        { 'x-vendua-control': 'ctl' },
+      );
+    const before = (await sql`select value from control_settings where key = 'signup'`)[0]?.value;
+    const added: string[] = [];
+    try {
+      expect((await put('yes' as never)).status).toBe(422);
+      expect((await put(false)).status).toBe(200);
+      expect(await ready()).toMatchObject({ on: false, open: false, billing: true });
+      expect((await put(true)).status).toBe(200);
+      for (const kind of ['whatsapp', 'email'])
+        added.push(
+          ...(
+            await sql<{ id: string }[]>`
+              insert into control_integrations (kind, driver, enabled, updated_at)
+              values (${kind}, 'log', true, now() + interval '1 minute')
+              on conflict do nothing returning id`
+          ).map((r) => r.id),
+        );
+      expect(await ready()).toMatchObject({ on: true, whatsapp: true, email: true, open: true });
+      expect((await signupReadiness(appSql, { platformConfigured: false })).open).toBe(
+        !!process.env.VENDUA_SIGNUP_ACCESS_CODE,
+      );
+      const crm = await call('GET', '/control/v1/signup', undefined, { 'x-vendua-control': 'ctl' });
+      expect(crm.body).toMatchObject({ on: true, billing: true });
+    } finally {
+      if (added.length) await sql`delete from control_integrations where id = any(${added})`;
+      if (before === undefined) await sql`delete from control_settings where key = 'signup'`;
+      else
+        await sql`update control_settings set value = ${sql.json(before as never)} where key = 'signup'`;
+    }
   });
 
   test('a plan that is listed but closed is refused before anything is created', async () => {
