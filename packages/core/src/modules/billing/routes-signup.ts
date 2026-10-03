@@ -46,6 +46,7 @@ import {
   type PayNext,
 } from './subscriptions.ts';
 import { FakeProvider } from '../payments/fake.ts';
+import { ProviderError } from '../payments/provider.ts';
 
 const signupLog = log.child({ mod: 'signup' });
 
@@ -287,9 +288,11 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       manual,
     }).catch(async (err: unknown) => {
       // the store exists but its first charge didn't go out: the team hears MP's own reason
-      // (the owner only sees "try again"), once per store — the owner's retries add nothing
+      // (the owner only sees "try again"), once per store and kind — the owner's retries add nothing
       if (err instanceof HttpError && err.code === 'BILLING_PROVIDER_ERROR') {
         const why = err.cause instanceof Error ? err.cause.message : err.message;
+        // keyed by MP's kind of failure: a passing outage first doesn't hide a refused token
+        const kind = err.cause instanceof ProviderError ? err.cause.code : 'other';
         const how = method === 'card' ? 'cartão' : 'Pix';
         await withTenant(sql, store.tenant_id, (tx) =>
           recordBillingProblem(
@@ -297,7 +300,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
             store.tenant_id,
             'other',
             `a primeira cobrança (${how}) não saiu no Mercado Pago: ${why}`,
-            'signup',
+            `signup:${kind}`,
           ),
         ).catch((e) => signupLog.warn({ err: e }, 'signup charge problem not recorded'));
       }
