@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { plans } from '$lib/content';
+  import { plans } from './live.svelte';
 
   const { mirim, bandeira, pangolim } = plans;
   const cols = [mirim, bandeira, pangolim];
@@ -11,7 +11,7 @@
   const up: [Cell, Cell, Cell] = [false, true, true];
   const top: [Cell, Cell, Cell] = [false, false, true];
 
-  const groups: { name: string; rows: Row[] }[] = [
+  const groups: { name: string; rows: Row[] }[] = $derived([
     {
       name: 'Loja e pedidos',
       rows: [
@@ -38,8 +38,13 @@
       rows: [
         {
           name: 'Conversas por mês',
-          cells: [false, bandeira.conversations, pangolim.conversations],
-          note: [undefined, `${bandeira.trialConversations} no teste`],
+          cells: [false, bandeira.conversations ?? false, pangolim.conversations ?? false],
+          note: [
+            undefined,
+            bandeira.trial && bandeira.trialConversations
+              ? `${bandeira.trialConversations} no teste`
+              : undefined,
+          ],
         },
       ],
     },
@@ -54,10 +59,17 @@
       name: 'Para começar',
       rows: [
         { name: 'Taxa da Venduá por pedido', cells: ['nenhuma', 'nenhuma', 'nenhuma'] },
-        { name: 'Teste antes de pagar', cells: [false, `${bandeira.trial}, sem cartão`, false] },
+        {
+          name: 'Teste antes de pagar',
+          cells: cols.map((p) => (p.trial ? `${p.trial}, sem cartão` : false)) as [
+            Cell,
+            Cell,
+            Cell,
+          ],
+        },
       ],
     },
-  ];
+  ]);
 </script>
 
 <details class="compare">

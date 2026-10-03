@@ -1,4 +1,4 @@
-import type { Context } from 'hono';
+import type { Context, Hono } from 'hono';
 import { audit } from '../../admin/audit.ts';
 import {
   createSession,
@@ -299,6 +299,22 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
 
 /** Closed: no phone code, no new store. Creating one doesn't recheck the WhatsApp, which only
  *  sends the code (already delivered), so a reconnect blip can't fail a verified owner. */
+/**
+ * The marketing site's prices (site/src/lib/plans/live.svelte.ts): the public catalog, read by
+ * the visitor's browser through the site's own nginx (/precos.json), so a price changed in the
+ * CRM shows without a new build. Outside /admin, which only the admin host serves.
+ */
+export function mountSiteCatalog(app: Hono<any>, sql: Sql) {
+  const allow = windowCounter({ windowMs: 60_000, max: 120 });
+  const flags = ipFlags();
+  app.get('/site/v1/plans', async (c) => {
+    if (!allow(clientIp(c, flags)))
+      throw new HttpError(429, 'RATE_LIMITED', 'too many requests — wait a minute');
+    c.header('cache-control', 'public, max-age=60');
+    return c.json({ plans: await publicPlans(sql) });
+  });
+}
+
 async function signupOpenOr503(d: Omit<AdminDeps, 'admin'>, step: 'code' | 'create' = 'code') {
   const r = await d.signupReady();
   if (!(step === 'create' ? r.on && r.email && r.billing : r.open))

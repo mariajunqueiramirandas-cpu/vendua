@@ -56,6 +56,20 @@ Other pages: `/privacidade/` and the 404.
   beyond the three plans (the +100-conversation pack is sold in the admin, not quoted here), and no
   date for the custom site. Plan names, prices, conversations and the trial live in `plans` in
   `src/lib/content.ts`.
+- **Prices follow the CRM by themselves.** On the home page, `src/lib/plans/live.svelte.ts` reads
+  `/precos.json` once. In production the site's nginx answers it from Core's public catalog
+  (`/site/v1/plans`, a minute of cache), and the plan cards, the comparison table, the calculator,
+  the trial strip, the FAQ and the closing line update in place.
+  - It covers the price, the trial, Duá's conversations, `available` and the name.
+  - The request is first-party, like the visit counter, so the privacy page's "seu navegador não
+    conversa com nenhum outro serviço" stays true.
+  - The built page carries `content.ts`'s values, which crawlers, readers without JavaScript and a
+    Core that's down get. The build prerenders the same values as `/precos.json`, for the preview
+    and the tests.
+  - Keep `content.ts` close to the CRM, and update it when a decision changes. The SEO description
+    ("A partir de R$ 69,90") and the copy check read the build, not the CRM.
+  - A trial set to 0 in the CRM removes the trial line, the strip and the FAQ's mention. A closed
+    plan loses its button.
 - Every planned feature (`docs/merchant-admin.md` scope) is presented as available at launch.
   Nothing beyond that list.
 - **The plans pitch** (owner, 2026-10-03): the trial up front ("Comece pelo Venduá Bandeira: 14 dias

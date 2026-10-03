@@ -18,8 +18,11 @@ if (admin.protocol !== 'https:' && admin.hostname !== '127.0.0.1' && admin.hostn
   throw new Error('PUBLIC_ADMIN_URL must be https');
 
 /**
- * The three plans exactly as decided (owner, 2026-10-03); prices are display strings, the admin
- * charges from Core. Bandeira is the recommended one: the site's sign-up links preselect it.
+ * The three plans as decided (owner, 2026-10-03): what the built page says, and the fallback
+ * when Core's catalog can't be read. In the browser the plan components read
+ * `plans/live.svelte.ts`, which updates these from the CRM (prices, trial, Duá's conversations,
+ * `available`), so a price changed in the CRM shows without a new build. The admin charges
+ * from Core. Bandeira is the recommended one: the site's sign-up links preselect it.
  * `trial` is the only free offer (Bandeira, no card) and the only "grátis" postbuild.ts lets through.
  * `available` follows the CRM's flag of the same name (Core answers 409 PLAN_UNAVAILABLE for a closed
  * plan): a closed plan keeps its price and perks but gets no sign-up link.
@@ -58,12 +61,21 @@ export const plans = {
 export const recommended = plans.bandeira;
 export type PlanId = keyof typeof plans;
 
-export const signup = (plano?: PlanId) => {
-  if (plano && !plans[plano].available) throw new Error(`${plano} is not open for sign-up`);
+/** A sign-up link, unchecked: the live catalog (plans/live.svelte.ts) decides what is open. */
+export const signupUrl = (plano?: string) => {
   const url = new URL('/admin/comecar', admin);
   if (plano) url.searchParams.set('plano', plano);
   return url.href;
 };
+
+export const signup = (plano?: PlanId) => {
+  if (plano && !plans[plano].available) throw new Error(`${plano} is not open for sign-up`);
+  return signupUrl(plano);
+};
+
+/** The CRM's prices, trials, Duá's conversations and what is open: Core's catalog through this
+ *  site's own nginx (nginx.conf), so the visitor's browser talks only to vendua.com.br */
+export const catalogUrl = '/precos.json';
 
 /**
  * The fictional store in every screenshot. The numbers come from `screens.facts.json`, which

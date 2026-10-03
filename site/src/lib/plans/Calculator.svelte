@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { plans } from '$lib/content';
+  import { plans } from './live.svelte';
   import {
     APP_DELIVERY_BPS,
     APP_OWN_DELIVERY_BPS,
@@ -14,7 +14,7 @@
   // Without JavaScript (and before hydration) it shows the R$ 8.000 example, still.
   const PRESETS = [3000, 8000, 20000];
   const { bandeira } = plans;
-  const plan = cents(bandeira.price);
+  const plan = $derived(cents(bandeira.price));
 
   let live = $state(false);
   let digits = $state('8000');

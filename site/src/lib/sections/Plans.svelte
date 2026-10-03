@@ -1,12 +1,15 @@
 <script lang="ts">
   import Section from '$lib/components/Section.svelte';
   import Start from '$lib/components/Start.svelte';
-  import { plans } from '$lib/content';
+  import { onMount } from 'svelte';
+  import { loadLivePlans, plans } from '$lib/plans/live.svelte';
   import Calculator from '$lib/plans/Calculator.svelte';
   import Cards from '$lib/plans/Cards.svelte';
   import Compare from '$lib/plans/Compare.svelte';
 
   const { bandeira } = plans;
+  // the CRM's prices replace the built ones in place (cards, table, calculator, the night's FAQ)
+  onMount(() => void loadLivePlans());
 </script>
 
 <Section id="preco" sky="linear-gradient(var(--sky-3), var(--sky-4))" labelledby="preco-t">
@@ -18,10 +21,12 @@
       </p>
     </header>
 
-    <div class="trial">
-      <p class="trial-t">Comece pelo {bandeira.name}: {bandeira.trial}, sem cartão.</p>
-      <Start plano={bandeira.id} label="Criar loja no {bandeira.short}" />
-    </div>
+    {#if bandeira.trial && bandeira.available}
+      <div class="trial">
+        <p class="trial-t">Comece pelo {bandeira.name}: {bandeira.trial}, sem cartão.</p>
+        <Start plano={bandeira.id} label="Criar loja no {bandeira.short}" />
+      </div>
+    {/if}
   </div>
 
   <Cards />

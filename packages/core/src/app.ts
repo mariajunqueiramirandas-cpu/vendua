@@ -222,6 +222,7 @@ import { mountControlBilling } from './modules/control-billing.ts';
 import { mountAgentRuntimeControl } from './agent-host/control-routes.ts';
 import { mountIncidentsControl } from './modules/incidents.ts';
 import { mountWebAnalytics } from './modules/web-analytics.ts';
+import { mountSiteCatalog } from './modules/billing/routes-signup.ts';
 import { mountDiscord } from './modules/discord/routes.ts';
 import { recordStaffEventTx } from './modules/staff-events.ts';
 import type { DiscordFetch } from './modules/discord/rest.ts';
@@ -2810,6 +2811,7 @@ export function createApp({
   });
   mountIncidentsControl({ app, sql, controlGate });
   mountAgentRuntimeControl({ app, sql, controlGate });
+  mountSiteCatalog(app, sql);
   mountWebAnalytics({
     app,
     sql,

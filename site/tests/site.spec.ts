@@ -394,6 +394,76 @@ test.describe('conteúdo', () => {
     });
 });
 
+test.describe('preços ao vivo', () => {
+  const catalog = (over: Record<string, object>) => ({
+    plans: [
+      {
+        id: 'mirim',
+        name: 'Venduá Mirim',
+        priceCents: 6990,
+        trialDays: 0,
+        available: true,
+        aiConversations: 0,
+        aiTrialConversations: 0,
+        features: { vendedor: false },
+      },
+      {
+        id: 'bandeira',
+        name: 'Venduá Bandeira',
+        priceCents: 16900,
+        trialDays: 14,
+        available: true,
+        aiConversations: 250,
+        aiTrialConversations: 50,
+        features: { vendedor: true },
+      },
+      {
+        id: 'pangolim',
+        name: 'Venduá Pangolim',
+        priceCents: 44900,
+        trialDays: 0,
+        available: false,
+        aiConversations: 1000,
+        aiTrialConversations: 50,
+        features: { vendedor: true },
+      },
+    ].map((p) => ({ ...p, ...(over[p.id] ?? {}) })),
+  });
+
+  test('o que o CRM muda aparece na página, sem build novo', async ({ page }) => {
+    await page.route('**/precos.json', (r) =>
+      r.fulfill({
+        json: catalog({
+          bandeira: { priceCents: 19900, trialDays: 7, aiConversations: 300 },
+          pangolim: { available: true },
+        }),
+      }),
+    );
+    await page.goto(HOME);
+    const preco = page.locator('#preco');
+    const bandeira = preco.locator('li.plan', { hasText: 'Venduá Bandeira' });
+    await expect(bandeira).toContainText('R$ 199/mês');
+    await expect(bandeira).toContainText('começa com 7 dias grátis, sem cartão');
+    await expect(bandeira).toContainText('300 conversas por mês');
+    await expect(preco).toContainText('Comece pelo Venduá Bandeira: 7 dias grátis, sem cartão.');
+    // Pangolim opened in the CRM: its button comes back
+    const pangolim = preco.locator('li.plan', { hasText: 'Venduá Pangolim' });
+    await expect(pangolim.locator(`a[href="${SIGNUP}?plano=pangolim"]`)).toHaveCount(1);
+    await expect(pangolim).not.toContainText('Ainda não está aberto');
+    // the calculator and the night's closing line follow too
+    await expect(preco.locator('.calc, [class*="calc"]').first()).toContainText('R$ 199');
+    await expect(page.locator('#perguntas, #comecar').first()).toContainText('R$ 199');
+  });
+
+  test('sem o catálogo, a página fica com os preços do build', async ({ page }) => {
+    await page.route('**/precos.json', (r) => r.abort());
+    await page.goto(HOME);
+    const bandeira = page.locator('#preco li.plan', { hasText: 'Venduá Bandeira' });
+    await expect(bandeira).toContainText('R$ 169/mês');
+    await expect(bandeira).toContainText('começa com 14 dias grátis, sem cartão');
+  });
+});
+
 test.describe('imagens', () => {
   for (const colorScheme of THEMES)
     for (const width of [375, 1440])

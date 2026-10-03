@@ -200,6 +200,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
     ]);
   });
 
+  test('the site reads the live catalog: public, cacheable for a minute', async () => {
+    // through the site's nginx (/precos.json → /site/v1/plans), on the site's own host
+    const r = await app.request('http://vendua.com.br/site/v1/plans', {
+      headers: { host: 'vendua.com.br' },
+    });
+    expect(r.status).toBe(200);
+    expect(r.headers.get('cache-control')).toBe('public, max-age=60');
+    const body = (await r.json()) as { plans: any[] };
+    expect(body.plans.map((p) => p.id)).toEqual(['mirim', 'bandeira', 'pangolim']);
+    expect(body.plans[1]).toMatchObject({ priceCents: 16900, trialDays: 14, aiConversations: 250 });
+    // only what a visitor may see: no signup state, nothing about the store asking
+    expect(Object.keys(body)).toEqual(['plans']);
+  });
+
   test('Pangolim launches closed: listed, not pickable, and staff open it', async () => {
     await sql`update plans set available = false where id = 'pangolim'`;
     const listed = (await call('GET', '/admin/v1/signup/plans')).body.plans as any[];

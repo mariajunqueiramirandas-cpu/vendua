@@ -1,12 +1,17 @@
 <script lang="ts">
   import Dua from '$lib/components/Dua.svelte';
-  import { plans, signup } from '$lib/content';
+  import { plans, signupFor } from './live.svelte';
 
+  // live: the CRM's prices, trial and Duá's conversations replace the built ones (live.svelte.ts)
   const { mirim, bandeira, pangolim } = plans;
+  const duaLine = (p: typeof bandeira, lead: string) =>
+    p.conversations
+      ? `${lead} ${p.conversations} conversas por mês${p.trialConversations && p.trial ? ` (${p.trialConversations} no teste)` : ''}`
+      : null;
 
   // a perk with a live demo links to it in the hub (`#demo-<id>`, Demos.svelte)
   type Perk = { text: string; demo?: 'vendedor' | 'pedido' | 'cozinha' | 'loja'; see?: string };
-  const perks: Record<'mirim' | 'bandeira' | 'pangolim', Perk[]> = {
+  const perks: Record<'mirim' | 'bandeira' | 'pangolim', Perk[]> = $derived({
     mirim: [
       { text: 'A loja com o seu nome', demo: 'loja', see: 'a loja' },
       { text: 'Pedidos no celular', demo: 'pedido', see: 'um pedido chegando' },
@@ -16,23 +21,36 @@
       { text: 'Tela da cozinha', demo: 'cozinha', see: 'a tela da cozinha' },
       { text: 'Impressão automática da comanda' },
       { text: 'Cartão fidelidade' },
-      {
-        text: `Duá, vendedor com IA no WhatsApp da loja: ${bandeira.conversations} conversas por mês (${bandeira.trialConversations} no teste)`,
-        demo: 'vendedor',
-        see: 'o Duá',
-      },
+      ...(duaLine(bandeira, 'Duá, vendedor com IA no WhatsApp da loja:')
+        ? [
+            {
+              text: duaLine(bandeira, 'Duá, vendedor com IA no WhatsApp da loja:')!,
+              demo: 'vendedor' as const,
+              see: 'o Duá',
+            },
+          ]
+        : []),
     ],
     pangolim: [
       { text: 'Domínio próprio' },
       { text: 'Um site feito pelo nosso agente de IA' },
-      {
-        text: `Duá com ${pangolim.conversations} conversas por mês`,
-        demo: 'vendedor',
-        see: 'o Duá',
-      },
+      ...(duaLine(pangolim, 'Duá com')
+        ? [{ text: duaLine(pangolim, 'Duá com')!, demo: 'vendedor' as const, see: 'o Duá' }]
+        : []),
     ],
-  };
+  });
 </script>
+
+{#snippet take(p: typeof bandeira, main = false)}
+  {@const href = signupFor(p)}
+  {#if href}
+    <a class="take" class:main {href}
+      >Criar loja no {p.short}<i class="go" aria-hidden="true"></i></a
+    >
+  {:else}
+    <p class="closed">Ainda não está aberto para assinatura.</p>
+  {/if}
+{/snippet}
 
 {#snippet list(items: Perk[])}
   <ul class="perks" role="list">
@@ -57,9 +75,7 @@
     <p class="addr"><span class="lock" aria-hidden="true"></span>seunome.vendua.com.br</p>
     {@render list(perks.mirim)}
     <p class="lacks">Sem a tela da cozinha, a impressão, o cartão fidelidade e o Duá.</p>
-    <a class="take" href={signup(mirim.id)}
-      >Criar loja no {mirim.short}<i class="go" aria-hidden="true"></i></a
-    >
+    {@render take(mirim)}
   </li>
 
   <li class="plan bandeira">
@@ -69,13 +85,11 @@
     <p class="promise">Do WhatsApp à cozinha, num plano só.</p>
     <p class="cost tnum">
       <strong>{bandeira.price}<small>/mês</small></strong>
-      <span class="trial">começa com {bandeira.trial}, sem cartão</span>
+      {#if bandeira.trial}<span class="trial">começa com {bandeira.trial}, sem cartão</span>{/if}
     </p>
     <p class="more">Tudo do {mirim.short}, e mais:</p>
     {@render list(perks.bandeira)}
-    <a class="take main" href={signup(bandeira.id)}
-      >Criar loja no {bandeira.short}<i class="go" aria-hidden="true"></i></a
-    >
+    {@render take(bandeira, true)}
   </li>
 
   <li class="plan pangolim">
@@ -86,13 +100,7 @@
     <p class="addr"><span class="lock" aria-hidden="true"></span>bolosdanena.com.br</p>
     <p class="more">Tudo do {bandeira.short}, e mais:</p>
     {@render list(perks.pangolim)}
-    {#if pangolim.available}
-      <a class="take" href={signup(pangolim.id)}
-        >Criar loja no {pangolim.short}<i class="go" aria-hidden="true"></i></a
-      >
-    {:else}
-      <p class="closed">Ainda não está aberto para assinatura.</p>
-    {/if}
+    {@render take(pangolim)}
   </li>
 </ul>
 
@@ -432,14 +440,18 @@
   .pangolim .take:hover {
     background: var(--after-card);
   }
-  /* closed (content.ts `available`): a plain line where the button would be, nothing to press */
+  /* closed (the catalog's `available`): a plain line where the button would be, nothing to press */
   .closed {
     width: 100%;
     margin-top: 8px;
     padding-top: 12px;
-    border-top: 1px solid var(--after-line);
-    color: var(--after-muted);
+    border-top: 1px solid var(--line);
+    color: var(--ink-muted);
     font: 500 0.9375rem/1.4 var(--font-sans);
+  }
+  .pangolim .closed {
+    border-top-color: var(--after-line);
+    color: var(--after-muted);
   }
   @media (min-width: 1024px) {
     .pangolim {

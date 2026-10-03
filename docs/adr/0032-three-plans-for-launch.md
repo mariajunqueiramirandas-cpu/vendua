@@ -193,8 +193,10 @@ the team runs by hand, and the Vendedor's pilots among them.
   - **The conversation screens stay open on every plan,** so threads handed to the store can be
     answered; the Vendedor's other screens show the plan that includes it.
 - **Copy.** The site's pricing and the signup copy name these plans. The site's banned-words check
-  still allows exactly "14 dias grátis", which now belongs to Bandeira. If staff change a price,
-  a trial or a limit in the CRM, the site copy must change with it.
+  still allows exactly "14 dias grátis", which now belongs to Bandeira. The site's prices,
+  trial, Duá's conversations and open plans follow the CRM by themselves. The home page reads
+  Core's public catalog (`GET /site/v1/plans`) through the site's own nginx (`/precos.json`), and
+  the built values from `site/src/lib/content.ts` are the fallback.
 - **The margin depends on conversation cost,** which is still unmeasured. The limits are data, and
   the pilots will set them.
 
