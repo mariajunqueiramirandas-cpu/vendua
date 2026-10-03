@@ -4,6 +4,7 @@ WORKDIR /app
 
 # every workspace package.json required — --frozen-lockfile resolves the full workspace graph
 COPY package.json bun.lock tsconfig.base.json ./
+COPY packages/agent-runtime/package.json packages/agent-runtime/package.json
 COPY packages/cli/package.json packages/cli/package.json
 COPY packages/codemods/package.json packages/codemods/package.json
 COPY packages/conformance/package.json packages/conformance/package.json
