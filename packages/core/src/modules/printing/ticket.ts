@@ -134,6 +134,11 @@ export function renderOrderTicket(
     r.bold(true).pair('TOTAL', brl(order.totalCents)).bold(false);
     const method = METHOD[order.payment.method] ?? order.payment.method;
     r.text(`${method} - ${paymentLine(order, pickup)}`);
+    const change = order.payment.changeForCents;
+    if (order.payment.method === 'cash' && change != null)
+      r.bold(true)
+        .text(`Troco para ${brl(change)}`)
+        .bold(false);
     if (order.payment.instructions) r.text(order.payment.instructions);
   });
 }

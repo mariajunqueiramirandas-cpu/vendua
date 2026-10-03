@@ -45,6 +45,10 @@ export const SLOT_KEYS = [
   'checkout.PaymentStatus',
   // Kernel 1.15 — distance pricing: the shopper confirms the delivery pin on a map
   'checkout.LocationPicker',
+  // Kernel 1.18 — the store's assistant (the Vendedor) chatting on the site
+  'system.Chat',
+  // Kernel 1.19 — the in-page card form (Mercado Pago's Secure Fields) on the order page
+  'checkout.CardPayment',
 ] as const;
 export type SlotKey = (typeof SLOT_KEYS)[number];
 

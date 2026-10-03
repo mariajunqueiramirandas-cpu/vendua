@@ -18,6 +18,25 @@ export function phoneForJid(jid: string | null | undefined): string | null {
   return /^\d{10,11}$/.test(national) ? national : null;
 }
 
+/** A user jid without its device or agent part ('5511…:3@s.whatsapp.net' → '5511…@s.whatsapp.net');
+ *  null for anything that isn't a person (groups, broadcasts, newsletters, status). */
+export function userJid(jid: string | null | undefined): string | null {
+  const m = /^(\d{1,40})(?:_\d+)?(?::\d+)?@(s\.whatsapp\.net|lid)$/.exec(jid ?? '');
+  return m ? `${m[1]}@${m[2]}` : null;
+}
+
+/** A conversation's phone: national digits for Brazil, '+' and the full number for anyone else,
+ *  null for a LID. Unlike `phoneForJid` (opt-outs, order notices: Brazil only) it never drops a
+ *  foreign shopper. */
+export function threadPhoneForJid(jid: string | null | undefined): string | null {
+  const national = phoneForJid(jid);
+  if (national) return national;
+  const u = userJid(jid);
+  if (!u?.endsWith('@s.whatsapp.net')) return null;
+  const d = u.split('@')[0]!;
+  return /^\d{8,15}$/.test(d) ? `+${d}` : null;
+}
+
 /** Brazilian mobiles may be registered with or without the 9th digit; WhatsApp only knows one.
  *  Both forms of a number, the one we were given first — `onWhatsApp` picks the live one. */
 export function phoneVariants(national: string): string[] {

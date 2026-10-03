@@ -25,7 +25,9 @@ type Topic =
   | 'import'
   | 'whatsapp'
   | 'printers'
-  | 'kitchen';
+  | 'kitchen'
+  | 'vendedor'
+  | 'vendedor.waiting';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity],
@@ -45,6 +47,9 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   whatsapp: [qk.whatsapp],
   printers: [['printers']],
   kitchen: [qk.kitchen],
+  // the session carries the Vendedor's tab and its "precisa de você" badge
+  vendedor: [['vendedor'], qk.session],
+  'vendedor.waiting': [['vendedor'], qk.session],
 };
 
 // ── connection + alert state (a tiny external store) ───────────────────────
@@ -143,6 +148,37 @@ async function onPlaced(orderId: string) {
     window.dispatchEvent(new CustomEvent('vendua:new-order', { detail: order }));
   } catch {
     announce('Pedido novo chegou');
+  }
+}
+
+// A shopper waiting for the store in a Vendedor conversation: the one Vendedor event that may
+// make sound (law 13). Once per handoff; Core emits it when a thread starts waiting.
+const rung = new Map<string, number>();
+async function onShopperWaiting(threadId: string) {
+  const last = rung.get(threadId) ?? 0;
+  if (Date.now() - last < 60_000) return;
+  rung.set(threadId, Date.now());
+  // already looking at that conversation: the floor on screen says it, no need to ring
+  const loc = window.location;
+  const here =
+    document.visibilityState === 'visible' &&
+    (loc.pathname.endsWith(`/vendedor/conversas/${threadId}`) ||
+      // the desktop inbox keeps the open conversation in ?c=
+      (loc.pathname.endsWith('/vendedor/conversas') &&
+        new URLSearchParams(loc.search).get('c') === threadId));
+  if (!here) ring();
+  try {
+    const { api } = await import('./api.ts');
+    const { thread } = await api.vendedor.thread(threadId);
+    if (!thread.waitingSince) return;
+    announce(
+      thread.reason
+        ? `${thread.name} precisa de você, ${thread.reason}`
+        : `${thread.name} precisa de você`,
+    );
+    window.dispatchEvent(new CustomEvent('vendua:shopper-waiting', { detail: thread }));
+  } catch {
+    announce('Um cliente precisa de você');
   }
 }
 
@@ -267,6 +303,7 @@ export function useLiveStream(enabled: boolean) {
         if (e.topic === 'order.changed' && e.id && knows(e.id) && !isPaid(e.id))
           paidWatch.add(e.id);
         if (e.topic === 'order.placed' && e.id) void onPlaced(e.id);
+        if (e.topic === 'vendedor.waiting' && e.id) void onShopperWaiting(e.id);
       });
       src.onerror = () => {
         if (es !== src) return;

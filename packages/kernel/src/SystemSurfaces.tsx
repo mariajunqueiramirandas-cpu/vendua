@@ -11,13 +11,14 @@ import { createPortal } from 'react-dom';
 import { useKernel, useQuery } from './provider.tsx';
 import { Slot } from './slot.tsx';
 import { dismissError, useTransientNotices } from './errors.ts';
-import { useConsent, useNotices, useStore } from './hooks.ts';
+import { useConsent, useCopy, useNotices, useStore } from './hooks.ts';
 import { isBlocking, noticeSeverity, visibleNotices } from './rules/notices.ts';
 import { emit } from './telemetry.ts';
 import type { Notice, NoticeAction, SurfacesEnvelope } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
 import { attachToastRegion, subscribeToastHost, toastHost } from './toast-layer.ts';
 import { blockSheet } from './transitions.tsx';
+import { CHAT_MAX_LENGTH, chatLink, useStoreChat } from './chat.ts';
 import { reducedMotion, SPRING, springEasing } from './spring.ts';
 
 // Server-driven surfaces at fixed mount points (05-system-surfaces.md): banner
@@ -100,6 +101,60 @@ function ConsentMount() {
   );
 }
 
+/** Kernel 1.18 — the store's assistant, only when the store turned it on. */
+function ChatMount() {
+  const { store } = useStore();
+  if (!store?.chat) return null;
+  return (
+    <ChatSurface
+      publicUrl={store.publicUrl}
+      storeName={store.name}
+      timeZone={store.hours.timezone}
+    />
+  );
+}
+
+function ChatSurface({
+  publicUrl,
+  storeName,
+  timeZone,
+}: {
+  publicUrl: string | undefined;
+  storeName: string;
+  timeZone: string | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const chat = useStoreChat({ live: open });
+  const { vocabulary } = useCopy();
+  const replies = chat.messages.filter((m) => m.author !== 'shopper').length;
+  // replies the shopper has seen: all of them while open, the count at closing after
+  const [seen, setSeen] = useState<number | null>(null);
+  if (chat.loading === false && seen === null) setSeen(replies);
+  if (open && seen !== replies) setSeen(replies);
+  const [resolveLink] = useState(() => (url: string) => chatLink(url, publicUrl));
+  if (!chat.available || !chat.name || !chat.intro) return null;
+  return (
+    <Slot
+      name="system.Chat"
+      assistant={{ name: chat.name, intro: chat.intro }}
+      messages={chat.messages}
+      pending={chat.pending}
+      open={open}
+      onOpen={() => setOpen(true)}
+      onClose={() => setOpen(false)}
+      onSend={chat.send}
+      sending={chat.sending}
+      {...(chat.message ? { error: chat.message } : {})}
+      unread={open ? 0 : Math.max(0, replies - (seen ?? replies))}
+      maxLength={CHAT_MAX_LENGTH}
+      resolveLink={resolveLink}
+      storeName={storeName}
+      vocabulary={vocabulary}
+      {...(timeZone ? { timeZone } : {})}
+    />
+  );
+}
+
 /** Blocking notices take focus so keyboard/screen-reader users land on them. */
 function BlockingOverlay({ notices }: { notices: Notice[] }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -165,6 +220,8 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
       {blocking.length > 0 ? <BlockingOverlay notices={blocking} /> : null}
       {/* mount point 3 — mount point 4 (emergency) is v.js's */}
       <ConsentMount />
+      {/* Kernel 1.18 — the store's assistant; a blocking notice is above it */}
+      {blocked ? null : <ChatMount />}
     </>
   );
 }

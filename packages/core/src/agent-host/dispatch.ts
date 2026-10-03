@@ -47,7 +47,7 @@ export async function dispatchTx(tx: Sql, input: DispatchInput): Promise<Dispatc
 
   const inserted = await tx<{ id: string }[]>`
     insert into agent_mailbox (tenant_id, actor_id, kind, payload, source, dedupe_key, deliver_at)
-    values (${actor.tenantId}, ${actorId}, ${input.kind}, ${JSON.stringify(payload)}::jsonb,
+    values (${actor.tenantId}, ${actorId}, ${input.kind}, ${payload === null ? tx`'null'::jsonb` : tx.json(payload as never)},
             ${input.source}, ${input.dedupeKey},
             coalesce(${input.deliverAt ?? null}::timestamptz, now()))
     on conflict (tenant_id, dedupe_key) do nothing

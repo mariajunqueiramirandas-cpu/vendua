@@ -1,6 +1,6 @@
 # Vendedor: every feature
 
-> Status: Proposed · Started 2026-10-03 · Catalog for [`sales-agent.md`](sales-agent.md) (the
+> Status: Built 2026-10-03 except I2, I4, I5, H6 (see ADR 0031 "As built") · Started 2026-10-03 · Catalog for [`sales-agent.md`](sales-agent.md) (the
 > design), [`sales-agent-ux.md`](sales-agent-ux.md) (the merchant's screens) and
 > [Agent Runtime v3](../architecture/18-agent-runtime.md)
 

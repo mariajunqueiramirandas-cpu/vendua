@@ -73,6 +73,31 @@ export interface StoreProfile {
   /** Kernel 1.15 — set when the store prices delivery by road distance from a pin the
    *  shopper confirms on a map (ADR 0024); null/absent = zones price every address */
   distancePricing?: DistancePricing | null;
+  /** Kernel 1.18 — the store's own assistant (the Vendedor) chats on the site: its name and how
+   *  it introduces itself, in Core's words. null/absent = the merchant didn't turn it on. */
+  chat?: { name: string; intro: string } | null;
+}
+
+/** Kernel 1.18 — one message of the storefront chat. `core` = a card Core wrote (a summary, a
+ *  link to the sacola: `card` names it); `merchant` = the store's people, by hand. */
+export interface StoreChatMessage {
+  id: string;
+  author: 'shopper' | 'agent' | 'core' | 'merchant';
+  body: string;
+  at: string;
+  card: string | null;
+}
+
+/** Kernel 1.18 — the chat bound to this tab's cart session (`GET /checkout/v1/chat`). */
+export interface StoreChat {
+  /** false = the store turned the chat off since the page loaded */
+  available: boolean;
+  name: string | null;
+  intro: string | null;
+  /** oldest first, the latest 60 */
+  messages: StoreChatMessage[];
+  /** a reply is on its way */
+  pending: boolean;
 }
 
 /** Kernel 1.15 — a point on the map. */
@@ -410,7 +435,12 @@ export interface CheckoutInput {
   customer: { name: string; phone: string };
   delivery: { mode: 'pickup' | 'delivery' } & DeliveryAddress;
   /** Kernel 1.7 adds 'card_online' (Mercado Pago's hosted checkout), 1.11 'meal_voucher' */
-  payment: { method: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher' };
+  payment: {
+    method: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher';
+    /** Kernel 1.17 — cash only: the note the shopper pays with ("troco para R$ 100,00"),
+     *  integer cents. Core answers `INVALID_CHANGE` (`details.minCents`) below the total. */
+    changeForCents?: number;
+  };
   /** Kernel 1.2 — "Alguma observação?" (≤500) */
   notes?: string;
   /** Kernel 1.2 — encomenda date, YYYY-MM-DD */
@@ -560,6 +590,8 @@ export interface Order {
     refundedCents?: number;
     /** Kernel 1.7 — the hosted card checkout of the current attempt */
     redirectUrl?: string | null;
+    /** Kernel 1.17 — cash: the amount the shopper asked change for (null = no change) */
+    changeForCents?: number | null;
   };
   subtotalCents: number;
   deliveryFeeCents: number;
@@ -603,11 +635,50 @@ export interface LinePicks {
   comboSelections?: ComboSelection[];
 }
 
-/** Kernel 1.7 — what `POST /orders/:id/pay` asks the shopper to do next. */
+/** Kernel 1.7 — what `POST /orders/:id/pay` asks the shopper to do next. Kernel 1.19 adds
+ *  the in-page card: `card` (mount the card form), and from `POST /orders/:id/card`
+ *  `challenge` (the bank's 3-D Secure, in an iframe) and `declined`. `redirect` is what a Core
+ *  asked without `{ card: 'form' }` answers. */
 export type PaymentNext =
   | { kind: 'pix'; copyPaste: string; expiresAt: string | null }
   | { kind: 'redirect'; url: string }
-  | { kind: 'none' };
+  | { kind: 'none' }
+  | {
+      kind: 'card';
+      provider: 'mercadopago' | 'fake';
+      publicKey: string;
+      amountCents: number;
+      /** why the last attempt was refused (shown above a fresh form) */
+      declined: DeclineReason | null;
+    }
+  | { kind: 'challenge'; url: string; creq: string }
+  | { kind: 'declined'; reason: DeclineReason };
+
+/** Kernel 1.19 — why the card was refused, in the shopper's terms (Core maps the provider's
+ *  status detail). New reasons may appear: treat an unknown one as `'other'`. */
+export type DeclineReason =
+  | 'card_data'
+  | 'insufficient_funds'
+  | 'call_for_authorize'
+  | 'card_disabled'
+  | 'duplicated'
+  | 'high_risk'
+  | 'max_attempts'
+  | 'installments'
+  | 'challenge_failed'
+  | 'other';
+
+/** Kernel 1.19 — `api.payCard`'s body: the card form's single-use token and choices. Never
+ *  an amount — Core charges the order's total. */
+export interface CardPaymentInput {
+  token: string;
+  paymentMethodId: string;
+  issuerId: string | null;
+  installments: number;
+  payer: { email: string; identification: { type: string; number: string } | null };
+  /** Mercado Pago's device fingerprint (`window.MP_DEVICE_SESSION_ID`), when its SDK set one */
+  deviceId: string | null;
+}
 
 export interface OrderItem {
   productId: string | null;
@@ -721,13 +792,27 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return body;
 }
 
-function idemKey(): string {
+export function idemKey(): string {
   return globalThis.crypto?.randomUUID?.() ?? `k-${Date.now()}-${Math.random()}`;
 }
 
 export function createApi(baseUrl = '') {
   const sf = (path: string) => `${baseUrl}/storefront/v1${path}`;
   const co = (path: string) => `${baseUrl}/checkout/v1${path}`;
+  // the page navigates to a redirect and posts the shopper's bank challenge into a frame:
+  // https only, whatever Core sent; a relative challenge (the dev fake) is Core's own origin
+  const safeNext = (next: PaymentNext): PaymentNext => {
+    if (next.kind === 'redirect' && !isHttps(next.url))
+      throw new ApiError(503, 'PAYMENT_UNAVAILABLE', 'unsafe payment redirect');
+    if (next.kind === 'challenge') {
+      const relative = !/^([a-z][a-z0-9+.-]*:|\/\/)/i.test(next.url);
+      const url = resolveUrl(next.url, baseUrl);
+      if (!url || (!relative && !isHttps(url)))
+        throw new ApiError(503, 'PAYMENT_UNAVAILABLE', 'unsafe payment challenge');
+      return { ...next, url };
+    }
+    return next;
+  };
   let token: string | null = readStoredToken();
   let sessionPromise: Promise<{ cart: Cart }> | null = null;
   // Memory first (survives sessionStorage failures); the persisted copy covers refresh.
@@ -1049,6 +1134,19 @@ export function createApi(baseUrl = '') {
       }
       return r.order;
     },
+    /** Kernel 1.18 — the storefront chat of this cart session (needs one: Bearer, like the
+     *  cart). The Vendedor answers asynchronously and edits this session's cart. */
+    chat: () => apiFetch<StoreChat>(co('/chat'), { headers: auth() }),
+    /** Kernel 1.18 — say something in the chat (1–1000 characters); starts the cart session when
+     *  there is none. Pass the same `idempotencyKey` to retry a send that may have landed. */
+    sendChat: async (text: string, opts: { idempotencyKey?: string } = {}) => {
+      await ensureSessionNow();
+      return apiFetch<StoreChat>(co('/chat'), {
+        method: 'POST',
+        headers: { ...auth(), 'idempotency-key': opts.idempotencyKey ?? idemKey() },
+        body: JSON.stringify({ text }),
+      });
+    },
     order: (id: string) => {
       const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
       return apiFetch<{ order: Order }>(co(`/orders/${id}`), {
@@ -1056,9 +1154,10 @@ export function createApi(baseUrl = '') {
       }).then((r) => r.order);
     },
     /** Kernel 1.7 — start/resume the order's online payment and sync it with the
-     *  provider (a card return lands here before the webhook). Same order credential
-     *  as `order()`; 409 PAYMENT_NOT_REQUIRED, 503 PAYMENT_UNAVAILABLE. */
-    payOrder: (id: string) => {
+     *  provider. Same order credential as `order()`; 409 PAYMENT_NOT_REQUIRED, 503
+     *  PAYMENT_UNAVAILABLE. Kernel 1.19: `cardForm` asks for the in-page card form
+     *  (`next.kind === 'card'`) instead of a hosted checkout. */
+    payOrder: (id: string, opts?: { cardForm?: boolean; challengeDone?: boolean }) => {
       const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
       return apiFetch<{ order: Order; next: PaymentNext }>(co(`/orders/${id}/pay`), {
         method: 'POST',
@@ -1066,12 +1165,29 @@ export function createApi(baseUrl = '') {
           ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
           'idempotency-key': idemKey(),
         },
-      }).then((r) => {
-        // the page navigates to this URL and renders it as a link: https only, whatever Core sent
-        if (r.next.kind === 'redirect' && !isHttps(r.next.url))
-          throw new ApiError(503, 'PAYMENT_UNAVAILABLE', 'unsafe payment redirect');
-        return r;
-      });
+        ...(opts?.cardForm
+          ? {
+              body: JSON.stringify({
+                card: 'form',
+                ...(opts.challengeDone ? { challenge: 'complete' } : {}),
+              }),
+            }
+          : {}),
+      }).then((r) => ({ ...r, next: safeNext(r.next) }));
+    },
+    /** Kernel 1.19 — pay a card_online order with the card form's token. 409
+     *  PAYMENT_IN_PROGRESS (an earlier submit is unresolved), 409 PAYMENT_NOT_REQUIRED, 422
+     *  INVALID_PAYMENT, 503 PAYMENT_UNAVAILABLE. */
+    payCard: (id: string, input: CardPaymentInput) => {
+      const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
+      return apiFetch<{ order: Order; next: PaymentNext }>(co(`/orders/${id}/card`), {
+        method: 'POST',
+        headers: {
+          ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+          'idempotency-key': idemKey(),
+        },
+        body: JSON.stringify(input),
+      }).then((r) => ({ ...r, next: safeNext(r.next) }));
     },
     /** Kernel 1.3 — SSE over fetch (the session token rides as Bearer, which
      *  EventSource can't send). Calls `onOrder` per `order` event; resolves when
@@ -1172,6 +1288,8 @@ export const ERROR_CODES = [
   'INVALID_DELIVERY',
   'INVALID_CUSTOMER',
   'INVALID_PAYMENT',
+  // Kernel 1.17 — cash change below the total (`details.minCents`) or above Core's cap
+  'INVALID_CHANGE',
   'ORDER_NOT_FOUND',
   'PAYLOAD_TOO_LARGE',
   'INVALID_ORDER_TRANSITION',
@@ -1207,6 +1325,8 @@ export const ERROR_CODES = [
   'PAYMENT_NOT_REQUIRED',
   'PAYMENT_UNAVAILABLE',
   'PAYMENT_ONLINE',
+  // Kernel 1.19 — an earlier card submit hasn't resolved yet
+  'PAYMENT_IN_PROGRESS',
   'INVALID_NOTES',
   'INVALID_COUPON',
   'COUPON_NOT_FOUND',
@@ -1266,10 +1386,22 @@ export const ERROR_CODES = [
   'INTERNAL',
   'EMAIL_PROVIDER_UNAVAILABLE',
   'EMAIL_FETCH_FAILED',
+  // Kernel 1.18 — the store has no storefront chat (off, or turned off since the page loaded)
+  'CHAT_UNAVAILABLE',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export type VenduaApi = ReturnType<typeof createApi>;
+
+function resolveUrl(url: string, base: string): string | null {
+  try {
+    // typed without the DOM lib: Core typechecks this file too
+    const here = (globalThis as { location?: { href?: string } }).location?.href;
+    return new URL(url, new URL(base || '/', here)).href;
+  } catch {
+    return null;
+  }
+}
 
 function isHttps(url: string) {
   try {

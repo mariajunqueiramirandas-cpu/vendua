@@ -1,6 +1,6 @@
 # ADR 0032: Three plans for the launch, the middle one recommended
 
-- Status: Accepted (implemented 2026-10-03, Core migration 0082)
+- Status: Accepted (implemented 2026-10-03, Core migration 0083)
 - Date: 2026-10-03
 
 ## Context

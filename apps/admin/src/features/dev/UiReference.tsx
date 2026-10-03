@@ -1,5 +1,8 @@
 import {
   Bell,
+  BookOpen,
+  ChatText,
+  Lightning,
   CaretLeft,
   EnvelopeSimple,
   Moon,
@@ -56,6 +59,29 @@ import { StepFrame } from '../../ui/StepFrame.tsx';
 import { OutcomeList, OutcomeRow } from '../../ui/Outcome.tsx';
 import { HelpButton } from '../../ui/Page.tsx';
 import { PlatformStatus } from '../help/status.tsx';
+import type { SummaryCardData } from '../../lib/api.ts';
+import {
+  ActionReceipt,
+  AgentGuide,
+  AgentJourney,
+  Bubble,
+  ChecklistRow,
+  CoreReceipt,
+  DayMark,
+  Discordance,
+  EventChip,
+  Floor,
+  FloorChip,
+  GuaranteeChip,
+  MiniChat,
+  PersonaAvatar,
+  ProposalCard,
+  ReasonChip,
+  SacolaBar,
+  SalesFunnel,
+  ScoreRing,
+  VoiceNote,
+} from '../../ui/vendedor/index.ts';
 
 const kitchenTicket = (
   n: number,
@@ -789,6 +815,7 @@ export default function UiReference() {
           </div>
         </div>
       </Block>
+      <VendedorReference />
       <Sheet
         open={sheet}
         onOpenChange={setSheet}
@@ -871,5 +898,306 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
     <Section title={title}>
       <div>{children}</div>
     </Section>
+  );
+}
+
+// Forno da Vila, a fictional pizzeria whose owner named her Vendedor "Ana" (sales-agent-ux)
+const ANA = 'Ana';
+const SUMMARY: SummaryCardData = {
+  id: 's1',
+  lines: [
+    { text: '1× Pizza G ½ Calabresa ½ Frango c/ Catupiry', totalCents: 6200 },
+    { text: '1× Coca-Cola 2 L', totalCents: 1400 },
+  ],
+  subtotalCents: 7600,
+  feeCents: 700,
+  discountCents: 0,
+  discountLabel: null,
+  adjustmentCents: 0,
+  totalCents: 8300,
+  mode: 'delivery',
+  address: 'Rua das Acácias, 120',
+  eta: '~40 min',
+  payment: 'Pix',
+  changeForCents: null,
+  scheduledFor: null,
+  unusual: [],
+  test: false,
+};
+const LONG: SummaryCardData = {
+  ...SUMMARY,
+  id: 's2',
+  lines: Array.from({ length: 58 }, (_, i) => ({
+    text: `${(i % 3) + 1}× ${['Pizza G Margherita', 'Esfiha de carne', 'Guaraná lata'][i % 3]}`,
+    totalCents: 1290 * ((i % 3) + 1),
+  })),
+  totalCents: 1_000_000,
+  test: true,
+};
+
+function VendedorReference() {
+  const [owner, setOwner] = useState(false);
+  return (
+    <>
+      <Block title="Vendedor: as três vozes">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="flex flex-col gap-1.5 rounded-lg bg-bg p-3 ring-1 ring-line">
+            <SacolaBar
+              count={2}
+              totalCents={8300}
+              step="confirmar"
+              onOpen={() => toast('a sacola')}
+            />
+            <DayMark>hoje</DayMark>
+            <VoiceNote
+              seconds={9}
+              time="19:42"
+              transcript="Oi, boa noite, queria uma pizza grande metade calabresa metade frango com catupiry e uma coca de dois litros"
+            />
+            <ActionReceipt onWhy={() => toast('por quê')}>anotou 2 itens na sacola</ActionReceipt>
+            <Bubble voice="seller" name={ANA} time="19:42" status="read">
+              Boa noite, Carla! Anotei a pizza G meio calabresa, meio frango com catupiry, e a Coca
+              2 L. Entrego na Rua das Acácias, 120, como da última vez?
+            </Bubble>
+            <Bubble voice="in" author="Carla" time="19:43">
+              isso
+            </Bubble>
+            <ActionReceipt onWhy={() => toast('por quê')}>entrega: R$ 7,00 · ~40 min</ActionReceipt>
+            <Bubble
+              voice="seller"
+              name={ANA}
+              signed={false}
+              tag="sugestão"
+              time="19:43"
+              status="delivered"
+            >
+              Quer borda recheada de catupiry por mais R$ 9,00? É a que mais sai com essa pizza.
+            </Bubble>
+            <Bubble voice="in" author="Carla" time="19:44">
+              não, só isso
+            </Bubble>
+            <CoreReceipt data={SUMMARY} />
+            <Bubble voice="you" author="você" time="19:44" status="sent">
+              Fecho no Pix, como da outra vez?
+            </Bubble>
+            <EventChip to="/pedidos/o1284">
+              Pedido #1284 feito · Pix enviado · aguardando pagamento
+            </EventChip>
+            <Bubble voice="seller" name={ANA} draft time="19:45">
+              Aqui é uma forma de pagamento por pedido. Prefere Pix ou cartão?
+            </Bubble>
+            <Bubble voice="you" status="failed" time="19:46">
+              Já sai!
+            </Bubble>
+          </div>
+          <div className="flex flex-col gap-4">
+            <div className="overflow-hidden rounded-lg ring-1 ring-line">
+              {owner ? (
+                <Floor
+                  variant="owner"
+                  name={ANA}
+                  onRelease={() => setOwner(false)}
+                  suggestions={[
+                    'Já sai em 40 min!',
+                    'Pode ser no cartão também',
+                    'Obrigado, Carla!',
+                  ]}
+                  onSend={(t) => toast(`enviado: ${t}`)}
+                  silenceMin={30}
+                  keys
+                />
+              ) : (
+                <Floor variant="agent" name={ANA} onTake={() => setOwner(true)} keys />
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <ReasonChip reason="alergia" />
+              <ReasonChip reason="reclamação: atraso" />
+              <ReasonChip reason="pedido grande" />
+              <ReasonChip reason="o cliente pediu uma pessoa" />
+              <FloorChip floor="agent" name={ANA} />
+              <FloorChip floor="rehearsal" name={ANA} />
+              <FloorChip floor="store" name={ANA} />
+              <FloorChip floor="agent" waiting name={ANA} />
+              <FloorChip floor="muted" name={ANA} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <GuaranteeChip guaranteed />
+              <GuaranteeChip guaranteed={false} name={ANA} />
+              <GuaranteeChip guaranteed={false} short />
+            </div>
+            <div className="flex items-center gap-4">
+              <PersonaAvatar name={ANA} size="lg" answering label="Ana está atendendo" />
+              <PersonaAvatar name={ANA} size="md" answering />
+              <PersonaAvatar name={ANA} size="md" />
+              <PersonaAvatar name="Léo" size="sm" />
+              <PersonaAvatar name={ANA} size="xs" />
+            </div>
+            <CoreReceipt data={LONG} title="Pedido de teste" align="stretch" />
+          </div>
+        </div>
+      </Block>
+
+      <Block title="Vendedor: provas e resultados">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Card className="p-4">
+            <div className="flex items-center gap-4">
+              <ScoreRing value={19} total={20} />
+              <div className="min-w-0">
+                <p className="font-semibold">pedidos saíram certos</p>
+                <p className="t-caption text-muted">
+                  Cada cliente de teste tinha um pedido escondido. Comparamos item por item com o
+                  que a Ana fechou.
+                </p>
+              </div>
+            </div>
+            <div className="mt-3">
+              <ChecklistRow state="done" title="Preço certo em todos os pedidos" value="20/20" />
+              <ChecklistRow state="done" title="Pedidos por áudio" value="4/4" />
+              <ChecklistRow state="done" title="Chamou você quando pediram" value="3/3" />
+              <ChecklistRow state="miss" title="Pizza broto" value="0/1" />
+              <ChecklistRow state="now" title="Pagando em dinheiro, com troco" value="agora" />
+            </div>
+          </Card>
+          <div className="space-y-2.5">
+            <ChecklistRow
+              card
+              state="done"
+              eyebrow="Parte 1"
+              title="Conhecer"
+              detail="Nome, jeito de falar e o WhatsApp da loja"
+              value="pronto"
+            />
+            <ChecklistRow
+              card
+              state="now"
+              eyebrow="Parte 2 · agora"
+              title="Ensinar"
+              icon={BookOpen}
+              detail="Li sua loja ✓ · falta a entrevista"
+              value="3 de 7"
+            />
+            <ChecklistRow
+              card
+              state="todo"
+              eyebrow="Parte 3"
+              title="Testar"
+              icon={ChatText}
+              detail="Peça para mim e cliente oculto"
+              value="a fazer"
+            />
+            <ChecklistRow
+              card
+              state="optional"
+              eyebrow="Parte 4"
+              title="Começar"
+              icon={Lightning}
+              detail="Quando ela atende e como começa"
+              value="a fazer"
+            />
+          </div>
+          <Card className="p-4">
+            <p className="t-label mb-3">Da conversa ao pedido</p>
+            <SalesFunnel
+              steps={[
+                { label: 'Conversas', value: 268 },
+                { label: 'Montaram sacola', value: 171 },
+                { label: 'Viram o resumo', value: 128 },
+                { label: 'Fecharam', value: 103 },
+              ]}
+            />
+            <div className="mt-5 flex items-center gap-4">
+              <ScoreRing value={12} total={20} size={96} running />
+              <p className="t-caption text-muted">rodando: testando 12 de 20…</p>
+            </div>
+          </Card>
+          <Card className="p-4">
+            <Discordance
+              who="Bruno Lima"
+              when="ontem, 20h14"
+              name={ANA}
+              shopper="dá pra pagar metade no pix e metade no cartão?"
+              draft="Aqui é uma forma de pagamento por pedido. Prefere Pix ou cartão?"
+              merchant="Dá sim! Me fala quanto vai em cada um."
+              onTeach={() => toast('ensinar')}
+              onDismiss={() => toast('ela estava certa')}
+            />
+          </Card>
+        </div>
+      </Block>
+
+      <Block title="Vendedor: treinar a Ana">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="space-y-4 overflow-hidden rounded-lg bg-bg pb-4 ring-1 ring-line">
+            <AgentJourney
+              name={ANA}
+              part="ensinar"
+              progress={3 / 7}
+              status="3 de 7"
+              exit={
+                <Button variant="ghost" size="sm" className="min-h-12 text-muted">
+                  continuar depois
+                </Button>
+              }
+            />
+            <div className="space-y-4 px-4">
+              <AgentGuide name={ANA} turn="entrevista-3">
+                Anotado! Agora: dá pra pedir pizza com 3 sabores?
+              </AgentGuide>
+              <ProposalCard
+                kind="answer"
+                name={ANA}
+                source="Da sua resposta anterior"
+                question="Tem estacionamento?"
+                answer="Tem, na rua lateral, de graça."
+                onAccept={() => toast('ensinado')}
+                onEdit={() => toast('editar')}
+              />
+              <ProposalCard
+                kind="rule"
+                name={ANA}
+                source="Da entrevista"
+                question="Pedidos com mais de 10 pizzas: passe para mim."
+                guaranteed
+                onAccept={() => toast('ensinado')}
+                onEdit={() => toast('editar')}
+              />
+            </div>
+          </div>
+          <div className="space-y-4">
+            <MiniChat
+              name={ANA}
+              label="prévia no WhatsApp"
+              lines={[
+                { voice: 'in', text: 'oi, vocês entregam?' },
+                {
+                  voice: 'seller',
+                  text: 'Oi, boa tarde! Sou a Ana, assistente virtual da Forno da Vila. Entregamos sim, em 6 bairros. Qual é o seu?',
+                },
+              ]}
+            />
+            <MiniChat
+              name={ANA}
+              owner
+              label="teste · só você vê"
+              typing
+              lines={[
+                { voice: 'you', text: 'oi, entregam no Centro?', time: '16:07' },
+                {
+                  voice: 'seller',
+                  text: 'Oi, boa tarde! Sou a Ana, assistente virtual da Forno da Vila. Entregamos no Centro, sim. O que vai ser?',
+                  time: '16:07',
+                },
+                {
+                  voice: 'you',
+                  text: 'uma G de calabresa e uma coca 2 L, no pix. rua XV, 210',
+                  time: '16:08',
+                },
+              ]}
+            />
+          </div>
+        </div>
+      </Block>
+    </>
   );
 }

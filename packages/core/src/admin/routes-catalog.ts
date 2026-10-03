@@ -5,6 +5,7 @@ import {
   liveStatus,
   loadComboSlots,
   parseAvailabilitySchedule,
+  parseDietary,
   parsePromoSchedule,
   scheduleOpen,
   storefrontPreview,
@@ -82,6 +83,8 @@ export interface AdminProductRow {
   /** true while one of its windows holds */
   promoNow: boolean;
   tags: string[];
+  /** allergens and diets the merchant states (DIETARY_TAGS) */
+  dietary: string[];
   imageUrl: string | null;
   dominant: string | null;
   mediaCount: number;
@@ -95,7 +98,7 @@ const productCols = (tx: Sql) => tx`
   p.stock_quantity as "stockQuantity", p.low_stock_threshold as "lowStockThreshold",
   p.requires_preorder as "requiresPreorder", p.preorder_lead_days as "preorderLeadDays", p.sort,
   p.sold_out_until as "soldOutUntil", p.tags, p.availability_schedule as "availabilitySchedule",
-  p.promo_schedule as "promoSchedule",
+  p.promo_schedule as "promoSchedule", p.dietary,
   (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as "imageUrl",
   (select mo.dominant from product_media m join media_objects mo
      on m.url like '/v1/media/%' and mo.id::text = split_part(split_part(m.url, '/', 5), '.', 1)
@@ -445,6 +448,7 @@ export function mountCatalog(d: AdminDeps) {
       const price = int(body.priceCents, 'priceCents', 0, MAX_PRICE);
       const compareAtCents = compareAt(body.compareAtPriceCents, price);
       const description = optText(body.description, 'description', 1000) ?? null;
+      const dietary = body.dietary === undefined ? [] : parseDietary(body.dietary);
       const sort = (
         await tx<{ n: number }[]>`
             select coalesce(max(sort), -1) + 1 as n from products where tenant_id = ${t.id} and category_id = ${categoryId}
@@ -453,9 +457,9 @@ export function mountCatalog(d: AdminDeps) {
       const id = (
         await tx<{ id: string }[]>`
           insert into products (tenant_id, category_id, slug, name, description, base_price_cents,
-                                compare_at_price_cents, sort)
+                                compare_at_price_cents, sort, dietary)
           values (${t.id}, ${categoryId}, ${await uniqueSlug(tx, 'products', t.id, name)}, ${name}, ${description}, ${price},
-                  ${compareAtCents}, ${sort})
+                  ${compareAtCents}, ${sort}, ${tx.array(dietary)})
           returning id
         `
       )[0]!.id;
@@ -540,6 +544,10 @@ export function mountCatalog(d: AdminDeps) {
         set.tags = tx.json(body.tags.map((x, i) => text(x, `tags[${i}]`, 30, 1)));
         changes.push('etiquetas');
       }
+      if (body.dietary !== undefined) {
+        set.dietary = tx.array(parseDietary(body.dietary));
+        changes.push('alergênicos e dietas');
+      }
       if (body.availabilitySchedule !== undefined) {
         const sched = parseAvailabilitySchedule(body.availabilitySchedule);
         set.availability_schedule = sched ? tx.json(sched as never) : null;
@@ -619,10 +627,10 @@ export function mountCatalog(d: AdminDeps) {
         await tx<{ id: string }[]>`
           insert into products (tenant_id, category_id, slug, name, description, base_price_cents,
                                 compare_at_price_cents, promo_schedule, status, figure_variant, tags, kind,
-                                requires_preorder, preorder_lead_days, sort, low_stock_threshold)
+                                requires_preorder, preorder_lead_days, sort, low_stock_threshold, dietary)
           select tenant_id, category_id, ${await uniqueSlug(tx, 'products', t.id, name)}, ${name}, description,
                  base_price_cents, compare_at_price_cents, promo_schedule, 'archived', figure_variant, tags, kind,
-                 requires_preorder, preorder_lead_days, sort + 1, low_stock_threshold
+                 requires_preorder, preorder_lead_days, sort + 1, low_stock_threshold, dietary
           from products where tenant_id = ${t.id} and id = ${id}
           returning id
         `

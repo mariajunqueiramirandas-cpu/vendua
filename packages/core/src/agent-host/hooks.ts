@@ -1,6 +1,7 @@
 import type { HostHooks } from '@vendua/agent-runtime';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import type { Sql } from '../platform/db.ts';
+import { vendedorTurnEnded } from '../vendedor/turn-hook.ts';
 
 export interface HookOpts {
   /** Online QA (§10): dispatch a sampled finished conversation to the QA agent. */
@@ -30,6 +31,9 @@ export function hostHooks(o: HookOpts = {}): HostHooks<Sql> {
         { tenantId: f.tenantId, dedupeKey: `agent.turn_failed:${f.turnId}` },
       );
     },
-    ...(o.qa ? { turnEnded: o.qa } : {}),
+    async turnEnded(tx, end) {
+      await vendedorTurnEnded(tx, end);
+      await o.qa?.(tx, end);
+    },
   };
 }

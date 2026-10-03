@@ -59,6 +59,7 @@ import { mountCatalog } from './routes-catalog.ts';
 import { mountCustomers } from './routes-customers.ts';
 import { mountHome } from './routes-home.ts';
 import { mountKitchen } from './routes-kitchen.ts';
+import { mountVendedor } from './routes-vendedor.ts';
 import { mountMarketing } from './routes-marketing.ts';
 import { mountOnboarding } from './routes-onboarding.ts';
 import { mountOrders } from './routes-orders.ts';
@@ -254,7 +255,7 @@ export function mountAdmin(o: MountAdminOpts) {
     const tenant = c.get('tenant');
     const m = c.get('merchant');
     const { stores } = await sessionStores(sql, tenant.id, m.sessionId, currentMembership(c));
-    const { settings, url, plan } = await withTenant(sql, tenant.id, async (tx) => ({
+    const { settings, url, plan, agent } = await withTenant(sql, tenant.id, async (tx) => ({
       url: await storeOrigin(tx, tenant, o.storeDomain),
       // which screens open and which show the plan that has them (ADR 0032)
       plan: await planAccess(tx, tenant.id),
@@ -265,6 +266,15 @@ export function mountAdmin(o: MountAdminOpts) {
           select s.logo_url, u.prefs, u.email from merchant_users u
             left join store_settings s on s.tenant_id = u.tenant_id
           where u.id = ${m.userId}
+        `
+      )[0],
+      // the nav: the Vendedor's tab and its "precisa de você" badge (sales-agent-ux §2)
+      agent: (
+        await tx<{ enabled: boolean; name: string | null; waiting: number }[]>`
+          select coalesce(a.enabled, false) as enabled, a.settings ->> 'name' as name,
+            (select count(*) from shopper_threads t where t.tenant_id = ${tenant.id}
+               and t.waiting_since is not null and t.owner <> 'muted' and t.channel = 'whatsapp')::int as waiting
+          from (select 1) one left join store_agent a on a.tenant_id = ${tenant.id}
         `
       )[0],
     }));
@@ -289,6 +299,11 @@ export function mountAdmin(o: MountAdminOpts) {
       push: { publicKey: vapidPublicKey() },
       // "falar com a Venduá" (Ajuda); unset = the page offers the in-app message only
       support: { whatsapp: process.env.VENDUA_SUPPORT_WHATSAPP?.replace(/\D/g, '') || null },
+      vendedor: {
+        enabled: agent?.enabled ?? false,
+        name: agent?.name || 'Ana',
+        waiting: agent?.waiting ?? 0,
+      },
     });
   });
 
@@ -768,6 +783,7 @@ export function mountAdmin(o: MountAdminOpts) {
   mountWhatsapp(deps);
   mountPrinting(deps);
   mountKitchen(deps);
+  mountVendedor(deps);
   mountAccount(deps);
   mountAppearance(deps);
   mountImports(deps);

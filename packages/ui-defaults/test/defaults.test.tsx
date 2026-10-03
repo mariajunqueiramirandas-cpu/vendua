@@ -41,6 +41,30 @@ describe('slot defaults', () => {
     expect(r('system.Notice')).toContain('data-vendua="notice"');
   });
 
+  test('the card form renders the Kernel’s fields once; card copy never sends the shopper away', () => {
+    const Card = SLOT_DEFAULTS['checkout.CardPayment'];
+    const fx = SLOT_FIXTURES['checkout.CardPayment'];
+    const html = renderToStaticMarkup(<Card {...fx} />);
+    expect(html.match(/data-part="fixture-fields"/g)).toHaveLength(1);
+    expect(tags(html)).toContain('Saldo ou limite insuficiente');
+    expect(tags(html)).toContain('vão direto para o Mercado Pago');
+    const down = renderToStaticMarkup(
+      <Card {...fx} phase="unavailable" declined={null} onRetry={() => {}} />,
+    );
+    expect(down).toContain('data-part="retry"');
+    expect(down).toContain('data-part="whatsapp"');
+    const Status = SLOT_DEFAULTS['checkout.PaymentStatus'];
+    for (const status of ['confirming', 'processing', 'failed', 'paid', 'due'] as const) {
+      const t = tags(
+        renderToStaticMarkup(
+          <Status status={status} method="card_online" amountCents={4700} currency="BRL" />,
+        ),
+      );
+      expect(t).not.toContain('ambiente do Mercado Pago');
+      expect(t).not.toMatch(/Levando você|no Mercado Pago dá/);
+    }
+  });
+
   test('unknown action types degrade to links; unknown severity to info', () => {
     const C = SLOT_DEFAULTS['system.Notice'];
     const html = renderToStaticMarkup(
@@ -339,5 +363,45 @@ describe('slot defaults', () => {
     expect(long).toContain('data-part="option-search"');
     expect(long).toContain('placeholder="Buscar sabor"');
     expect(html(group(40, 'Adicionais'))).toContain('placeholder="Buscar opção"');
+  });
+
+  test('the store chat names who speaks and links only what the Kernel resolves', () => {
+    const C = SLOT_DEFAULTS['system.Chat'];
+    const fx = SLOT_FIXTURES['system.Chat'];
+    const html = renderToStaticMarkup(
+      <C
+        {...fx}
+        messages={[
+          ...fx.messages,
+          {
+            id: 'x1',
+            author: 'agent',
+            body: 'Veja https://outra.example/sacola.',
+            at: '2026-09-26T21:01:00Z',
+            card: null,
+          },
+          {
+            id: 'x2',
+            author: 'merchant',
+            body: 'Oi, aqui é a Ana.',
+            at: '2026-09-26T21:02:00Z',
+            card: null,
+          },
+        ]}
+        resolveLink={(u) => (u.includes('doces.vendua.test') ? '/sacola' : null)}
+        vocabulary={vocabularyOf({ vocabulary: { bag: 'carrinho' } })}
+      />,
+    );
+    expect(html).toContain('data-vendua="chat"');
+    expect(html).toContain('aria-modal="true"');
+    expect(html).toContain('href="/sacola"');
+    expect(html).not.toContain('href="https://outra.example');
+    expect(tags(html)).toContain('Veja https://outra.example/sacola.');
+    expect(tags(html)).toContain('Oi! Aqui é Bia, assistente virtual da Doces da Ana.');
+    expect(html).toContain('data-author="merchant"');
+    expect(tags(html)).toContain('Doces da Ana');
+    expect(tags(html)).toContain('Bia está digitando…');
+    expect(tags(html)).toContain('Bia pode montar seu carrinho com você.');
+    expect(html).toContain('data-part="unread"');
   });
 });

@@ -28,7 +28,7 @@ import { cn } from '../ui/cn.ts';
 import { Loading } from '../ui/feedback.tsx';
 import { onHelp } from '../ui/help.ts';
 import { toast, Toaster } from '../ui/Toast.tsx';
-import { NAV } from './nav.ts';
+import { moreOf, navFor } from './nav.ts';
 import { chunks, intent, screen, warmUp } from './routes.ts';
 import { useScrollMemory, useTabNav } from './nativeFeel.ts';
 import { useKeyboard } from '../ui/keyboard.ts';
@@ -66,9 +66,11 @@ function usePlacedCount() {
 export function Shell({ children }: { children: ReactNode }) {
   const session = useSession();
   const role = session.user.role;
-  const items = NAV.filter((n) => can(role, n.min));
+  const vendedorOn = !!session.vendedor?.enabled;
+  const waiting = session.vendedor?.waiting ?? 0;
+  const items = navFor(vendedorOn).filter((n) => can(role, n.min));
   const primary = items.filter((n) => n.primary);
-  const more = items.filter((n) => !n.primary);
+  const more = moreOf(items, vendedorOn);
   const [moreOpen, setMoreOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -77,16 +79,19 @@ export function Shell({ children }: { children: ReactNode }) {
   const moreSeen = useSeen(moreOpen);
   const searchSeen = useSeen(searchOpen);
   const placed = usePlacedCount();
-  useEffect(() => setBadge(placed), [placed]);
+  useEffect(() => setBadge(placed + waiting), [placed, waiting]);
   const live = useLiveState();
   const loc = useLocation();
   const nav = useNavigate();
   const liveRegion = useRef<HTMLDivElement>(null);
   // the kitchen screens own the whole display: no rail, bars or pull-to-refresh, their own keys
   // (locked by the plan, the kitchen is an ordinary page: the lock is the upsell)
-  const bare = loc.pathname.startsWith('/cozinha') && featureOpen(session, 'kds');
-  const bareRef = useRef(bare);
-  bareRef.current = bare;
+  const kitchen = loc.pathname.startsWith('/cozinha') && featureOpen(session, 'kds');
+  // the Vendedor's onboarding is a journey with its own header, like /bem-vindo, but it keeps
+  // the live stream (the interviewer's replies arrive on it)
+  const bare = kitchen || loc.pathname === '/vendedor/comecar';
+  const bareRef = useRef(kitchen);
+  bareRef.current = kitchen;
   useEffect(() => {
     if (!bare) return;
     document.documentElement.dataset.bare = '';
@@ -151,7 +156,8 @@ export function Shell({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => setMoreOpen(false), [loc.pathname]);
 
-  const badge = (to: string) => (to === '/pedidos' && placed > 0 ? placed : 0);
+  const badge = (to: string) =>
+    to === '/pedidos' ? placed : to === '/vendedor' && vendedorOn ? waiting : 0;
 
   return (
     <div className="min-h-dvh md:flex">
@@ -215,6 +221,7 @@ export function Shell({ children }: { children: ReactNode }) {
                       {badge(n.to) ? (
                         <NavBadge
                           n={badge(n.to)}
+                          to={n.to}
                           className="absolute right-2 top-1 lg:static lg:ml-auto"
                         />
                       ) : n.feature && !featureOpen(session, n.feature) ? (
@@ -261,7 +268,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </button>
         </header>
 
-        {!live.online && !bare ? (
+        {!live.online && !kitchen ? (
           <div
             role="status"
             className="t-body sticky top-0 z-40 flex items-center justify-center gap-2 bg-warning-soft px-4 py-2 text-warning md:top-0 kb:static"
@@ -325,7 +332,11 @@ export function Shell({ children }: { children: ReactNode }) {
                     </span>
                     <span className={cn('t-caption', isActive && 'font-bold')}>{n.label}</span>
                     {badge(n.to) ? (
-                      <NavBadge n={badge(n.to)} className="absolute left-1/2 top-2 ml-2" />
+                      <NavBadge
+                        n={badge(n.to)}
+                        to={n.to}
+                        className="absolute left-1/2 top-2 ml-2"
+                      />
                     ) : null}
                   </>
                 )}
@@ -408,13 +419,17 @@ function BackButton({ pathname }: { pathname: string }) {
   );
 }
 
-function NavBadge({ n, className }: { n: number; className?: string }) {
+function NavBadge({ n, to, className }: { n: number; to: string; className?: string }) {
   return (
     <span
       key={n}
-      aria-label={`${n} esperando`}
+      aria-label={
+        to === '/vendedor' ? `${n} precisa${n === 1 ? '' : 'm'} de você` : `${n} esperando`
+      }
       className={cn(
-        'animate-pop tnum grid h-5 min-w-5 place-items-center rounded-full bg-spark px-1.5 text-[0.75rem] font-bold text-on-spark ring-2 ring-bg',
+        'animate-pop tnum grid h-5 min-w-5 place-items-center rounded-full px-1.5 text-[0.75rem] font-bold ring-2 ring-bg',
+        // a shopper waiting on a person "needs you"; new orders are alive
+        to === '/vendedor' ? 'bg-warning text-surface' : 'bg-spark text-on-spark',
         className,
       )}
     >

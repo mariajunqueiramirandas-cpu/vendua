@@ -32,7 +32,7 @@ import type {
 type SlotPropsOf<K extends keyof SlotProps> = SlotProps[K];
 import type { CartTotals, GeoPoint, LatLng, PaymentAdjustment, QuoteResult } from '../api.ts';
 import { deliveryWords } from '../rules/delivery.ts';
-import { couponMessage, isCouponError } from '../rules/errors.ts';
+import { changeMessage, couponMessage, isCouponError } from '../rules/errors.ts';
 import { formatCents, LOCALE } from '../rules/format.ts';
 import {
   adjustmentKind,
@@ -72,11 +72,6 @@ function adjustmentLabel(a: PaymentAdjustment, currency: string): PaymentMethod[
   const kind = adjustmentKind(a);
   const label = adjustmentShort(a, currency);
   return kind && label ? { label, kind } : undefined;
-}
-
-/** Full-page hand-off to the provider's hosted checkout (card data never touches us). */
-function leaveTo(url: string) {
-  globalThis.location.assign(url);
 }
 
 type PinStatus = SlotPropsOf<'checkout.LocationPicker'>['status'];
@@ -185,13 +180,14 @@ export function CheckoutPage() {
   );
   const [mode, setMode] = useState<'pickup' | 'delivery'>(deliveryOk ? 'delivery' : 'pickup');
   const [pay, setPay] = useState<PaymentMethod['id']>('pix');
+  // Kernel 1.17 — cash change in cents (null = none); Core checks it covers the total
+  const [changeFor, setChangeFor] = useState<number | null>(null);
+  const [changeError, setChangeError] = useState<string | undefined>();
   const [errors, setErrors] = useState<Partial<Record<keyof CustomerDraft, string>>>({});
   const [deliveryIssue, setDeliveryIssue] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const submitting = useRef(false);
   const stepStarted = useRef(Date.now());
-  // card_online: the order exists and the shopper is on the way to Mercado Pago
-  const [leaving, setLeaving] = useState<{ totalCents: number; url?: string } | null>(null);
 
   useEffect(() => {
     emit('checkout_step', { step, duration_ms: Date.now() - stepStarted.current });
@@ -209,7 +205,7 @@ export function CheckoutPage() {
       navigate(location, { replace: true, state: { vStep: asked, vStepN: ORDER.indexOf(asked) } });
       return;
     }
-    if (submitting.current || leaving || loading) return;
+    if (submitting.current || loading) return;
     const n = ORDER.indexOf(asked);
     const back = closed && n > 0 ? n + 1 : reachable ? 0 : n;
     if (!back) return;
@@ -433,21 +429,6 @@ export function CheckoutPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinWanted, coords, pinHint, pinStatus]);
 
-  if (leaving)
-    return (
-      <main id="main" className="v-page" data-vendua-page="checkout">
-        <h1 className="v-page-title">Pagamento</h1>
-        <Slot
-          name="checkout.PaymentStatus"
-          status="redirecting"
-          method="card_online"
-          amountCents={leaving.totalCents}
-          currency={currency}
-          {...(leaving.url ? { href: leaving.url } : {})}
-        />
-      </main>
-    );
-
   if (loading && !cart)
     return (
       <main
@@ -611,7 +592,15 @@ export function CheckoutPage() {
       const order = await submit({
         customer: { name: draft.name.trim(), phone: digitsOf(draft.phone) },
         delivery: deliveryPayload(),
-        payment: { method: pay },
+        payment: {
+          method: pay,
+          ...(pay === 'cash' &&
+          changeFor !== null &&
+          Number.isSafeInteger(changeFor) &&
+          changeFor > 0
+            ? { changeForCents: changeFor }
+            : {}),
+        },
         ...(notes.trim() ? { notes: notes.trim().slice(0, NOTES_MAX) } : {}),
         ...(scheduledFor ? { scheduledFor } : {}),
       });
@@ -629,29 +618,22 @@ export function CheckoutPage() {
           },
         });
       else forget();
+      // card_online included: the card form is on the order page (Kernel 1.19)
       const orderPath = `${paths.order.replace(':id', order.id)}?novo=1`;
-      if (pay === 'card_online') {
-        // the order is placed; the card is paid on Mercado Pago's page, which returns to
-        // the order page. No redirect (provider down) → the order page offers to retry.
-        setLeaving({ totalCents: order.totalCents });
-        try {
-          const r = await api.payOrder(order.id);
-          if (r.next.kind === 'redirect') {
-            setLeaving({ totalCents: order.totalCents, url: r.next.url });
-            leaveTo(r.next.url);
-            return;
-          }
-        } catch {
-          /* the order page shows why and how to retry */
-        }
-        setLeaving(null);
-      }
       go(orderPath);
     } catch (err) {
       // useCheckout().error carries the typed failure; route the fixable ones to their field
       const code = errorCode(err);
       if (code === 'SCHEDULE_REQUIRED' || code === 'INVALID_SCHEDULE')
         setScheduleError(errorCopy(code).title);
+      if (code === 'INVALID_CHANGE')
+        setChangeError(
+          changeMessage(
+            (err as { details?: Record<string, unknown> }).details,
+            currency,
+            pay === 'cash' ? changeFor : null,
+          ),
+        );
       if (isCouponError(code))
         setCouponError(
           couponMessage(code, (err as { details?: Record<string, unknown> }).details, currency),
@@ -767,8 +749,21 @@ export function CheckoutPage() {
                   name="checkout.PaymentMethods"
                   methods={methods}
                   selected={pay}
-                  onSelect={setPay}
+                  onSelect={(id) => {
+                    setPay(id);
+                    setChangeError(undefined);
+                  }}
                   currency={currency}
+                  {...(methods.some((m) => m.id === 'cash')
+                    ? {
+                        changeForCents: changeFor,
+                        onChangeFor: (cents: number | null) => {
+                          setChangeFor(cents);
+                          setChangeError(undefined);
+                        },
+                        ...(changeError ? { changeForError: changeError } : {}),
+                      }
+                    : {})}
                 />
                 {encomenda && methods.length < byStore.length ? (
                   <p className="v-muted" data-part="payment-note">

@@ -16,6 +16,7 @@ import type {
   GeoPoint,
   LatLng,
   MapTiles,
+  StoreChatMessage,
 } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
 import type { Vocabulary } from './rules/copy.ts';
@@ -52,7 +53,7 @@ export interface DeliveryOption {
 }
 
 export interface PaymentMethod {
-  /** Kernel 1.7 adds 'card_online' — card through Mercado Pago's hosted checkout;
+  /** Kernel 1.7 adds 'card_online' — card through Mercado Pago (in the page since 1.19);
    *  Kernel 1.12 adds 'meal_voucher' ("Vale-refeição", paid on delivery) */
   id: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher';
   label: string;
@@ -63,7 +64,8 @@ export interface PaymentMethod {
 }
 
 /** Kernel 1.7 — what `checkout.PaymentStatus` shows for an online payment:
- *  redirecting — leaving for Mercado Pago's card checkout (`href` = the link to tap)
+ *  redirecting — leaving for Mercado Pago's hosted checkout (`href` = the link to tap); only a
+ *    Core that still answers `redirect` reaches it — Kernel 1.19 takes the card in the page
  *  confirming — the Kernel is asking the provider (card return, a Pix being generated)
  *  due — not paid yet; `action` starts it
  *  paid — confirmed by the provider (`justPaid` = it happened while this page was open)
@@ -122,6 +124,35 @@ export interface SlotProps {
   'system.ErrorFallback': { error: { code: string; message: string }; retry: () => void };
   'system.NotFound': { path: string; homeHref: string };
   'system.EmergencyOverlay': { notice: Notice };
+  /** Kernel 1.18 — the store's assistant (the Vendedor) on the site, working this tab's cart.
+   *  Rendered by `SystemSurfaces` while `StoreProfile.chat` is set: a launcher and, while `open`,
+   *  the conversation as a modal dialog. The Kernel owns the reads, the polling and the cart. */
+  'system.Chat': {
+    /** who answers, in Core's words (`StoreProfile.chat`): "Bia", "Bia, assistente virtual da …" */
+    assistant: { name: string; intro: string };
+    /** oldest first */
+    messages: StoreChatMessage[];
+    /** a reply is on its way ("digitando…") */
+    pending: boolean;
+    open: boolean;
+    onOpen: () => void;
+    /** Escape, the close button, the backdrop; focus goes back to the launcher */
+    onClose: () => void;
+    /** resolves true once Core took the message (clear the composer), false with `error` set */
+    onSend: (text: string) => Promise<boolean>;
+    sending: boolean;
+    /** the last failure, in words */
+    error?: string;
+    /** replies that arrived while the chat was closed */
+    unread?: number;
+    /** the most characters a message takes (Core's bound) */
+    maxLength?: number;
+    /** a URL found in a message → an href on this page's origin, or null: show it as text */
+    resolveLink?: (url: string) => string | null;
+    /** the store's name, for its people's own messages (`author: 'merchant'`) */
+    storeName?: string;
+  } & StoreTime &
+    StoreWords;
   'checkout.Layout': {
     steps: CheckoutStep[];
     current: CheckoutStep['id'];
@@ -181,6 +212,14 @@ export interface SlotProps {
     methods: PaymentMethod[];
     selected: PaymentMethod['id'];
     onSelect: (id: PaymentMethod['id']) => void;
+    /** Kernel 1.17 — cash change ("troco para"), in cents; null = no change. Present with
+     *  `onChangeFor` when the store takes cash; show it while `selected` is `'cash'`. */
+    changeForCents?: number | null;
+    /** Kernel 1.17 — the shopper typed an amount (cents) or said no change is needed (null).
+     *  Core decides whether it covers the total. */
+    onChangeFor?: (cents: number | null) => void;
+    /** Kernel 1.17 — Core refused the change (`INVALID_CHANGE`), in words */
+    changeForError?: string;
   } & StoreMoney;
   'checkout.SuccessPage': { order: Order; currency: string } & StoreTime;
   'checkout.EmptyCart': { onBrowse: () => void } & StoreWords;
@@ -283,6 +322,23 @@ export interface SlotProps {
     whatsappHref?: string;
     /** one line of context, e.g. why the provider call failed */
     detail?: string;
+  };
+  /** Kernel 1.19 — the card form on the order page: the chrome around the Kernel-owned card
+   *  fields (Mercado Pago's Secure Fields, or the bank's 3-D Secure challenge) */
+  'checkout.CardPayment': {
+    amountCents: number;
+    currency: string;
+    /** loading — the fields are on their way; ready — fill and pay; challenge — the bank's
+     *  verification is in `fields`; unavailable — the fields didn't load */
+    phase: 'loading' | 'ready' | 'challenge' | 'unavailable';
+    /** why the last attempt was refused, in the shopper's words (a fresh form follows) */
+    declined: { title: string; body?: string } | null;
+    /** Kernel-owned card fields or challenge frame: render it exactly once and never inspect
+     *  or restyle its insides */
+    fields: ReactNode;
+    whatsappHref?: string;
+    /** while unavailable: load the fields again */
+    onRetry?: () => void;
   };
   'order.Items': {
     items: OrderItem[];

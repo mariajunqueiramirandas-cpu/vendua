@@ -246,6 +246,19 @@ describe('durability', () => {
     expect(store.actor(actorId)!.attempts).toBe(0);
   });
 
+  test('a turn that runs out of steps without answering sends the safe line once', async () => {
+    const blocked = { toolCalls: [{ name: 'reply', args: { text: 'Custa R$ 12,00.' } }] };
+    const { store, runtime, clock, say } = setup([blocked, blocked, blocked, blocked], {
+      budgets: { stepsPerTurn: 2 },
+      degrade: async () => ({ text: 'Vou chamar a loja para te responder.' }),
+    });
+    const { actorId } = await say('quanto custa?');
+    await drive(runtime, clock, { horizonMs: 60_000 });
+    expect(types(store, actorId)).toContain('turn.step_limit');
+    expect(store.outbox.map((m) => m.text)).toEqual(['Vou chamar a loja para te responder.']);
+    expect(types(store, actorId)).toContain('turn.ended');
+  });
+
   test('a worker that lost its lease cannot write', async () => {
     const { store, clock, say, agent } = setup([]);
     await say('oi');

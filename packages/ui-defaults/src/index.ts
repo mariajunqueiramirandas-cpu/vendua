@@ -29,7 +29,7 @@ import {
   PixPayment,
   SchedulePicker,
 } from './growth.tsx';
-import { PaymentStatus } from './payment.tsx';
+import { CardPayment, PaymentStatus } from './payment.tsx';
 import {
   ConsentBanner,
   EmergencyOverlay,
@@ -41,6 +41,7 @@ import {
   StoreClosedNotice,
 } from './system.tsx';
 import { LocationPicker } from './location.tsx';
+import { StoreChat } from './chat.tsx';
 
 // @vendua/ui-defaults — the token-driven default for EVERY registered slot
 // (02-kernel.md#packages). Presentational only: the Kernel owns data + behavior
@@ -82,6 +83,8 @@ export const SLOT_DEFAULTS: SlotDefaults = {
   'customer.PhoneVerify': PhoneVerify,
   'checkout.LocationPicker': LocationPicker,
   'checkout.PaymentStatus': PaymentStatus,
+  'system.Chat': StoreChat,
+  'checkout.CardPayment': CardPayment,
 };
 
 export { noticeSeverity, noticeLinks, NoticeCard } from './system.tsx';

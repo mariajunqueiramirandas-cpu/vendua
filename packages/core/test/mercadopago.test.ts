@@ -262,6 +262,79 @@ describe('mercado pago adapter', () => {
     });
   });
 
+  test('card: a Brick token becomes a payment with 3DS on, the challenge mapped', async () => {
+    const { p, seen } = mp(() => ({
+      status: 201,
+      body: {
+        ...PAYMENT,
+        id: 777,
+        status: 'pending',
+        status_detail: 'pending_challenge',
+        payment_type_id: 'credit_card',
+        payment_method_id: 'master',
+        fee_details: [],
+        three_ds_info: { external_resource_url: 'https://acs.example/challenge', creq: 'eyJ0' },
+        metadata: { vendua_attempt: 2 },
+      },
+    }));
+    const out = await p.createCardPayment('seller-tok', {
+      amountCents: 4590,
+      description: 'Pedido #12 — Doces',
+      cardToken: 'card-tok',
+      paymentMethodId: 'master',
+      issuerId: '24',
+      installments: 3,
+      payer: {
+        email: 'ana@example.com',
+        identification: { type: 'CPF', number: '12345678909' },
+        firstName: 'Ana',
+      },
+      externalReference: 'order-1',
+      attempt: 2,
+      idempotencyKey: 'order-1:2',
+      notificationUrl: 'https://painel.x/hook',
+      applicationFeeCents: 50,
+      deviceId: 'dev-123',
+    });
+    expect(out).toMatchObject({
+      id: '777',
+      status: 'pending',
+      kind: 'card',
+      challenge: { url: 'https://acs.example/challenge', creq: 'eyJ0' },
+      attempt: 2,
+    });
+    const s = seen[0]!;
+    expect(s.url).toBe('https://api.mercadopago.com/v1/payments');
+    expect(s.headers['x-idempotency-key']).toBe('order-1:2');
+    expect(s.headers['x-meli-session-id']).toBe('dev-123');
+    expect(s.headers.authorization).toBe('Bearer seller-tok');
+    expect(s.body).toEqual({
+      transaction_amount: 45.9,
+      token: 'card-tok',
+      description: 'Pedido #12 — Doces',
+      installments: 3,
+      payment_method_id: 'master',
+      issuer_id: 24,
+      payer: {
+        email: 'ana@example.com',
+        identification: { type: 'CPF', number: '12345678909' },
+        first_name: 'Ana',
+      },
+      external_reference: 'order-1',
+      metadata: { vendua_attempt: 2 },
+      notification_url: 'https://painel.x/hook',
+      application_fee: 0.5,
+      capture: true,
+      binary_mode: false,
+      three_d_secure_mode: 'optional',
+    });
+    // no challenge once it's decided
+    expect(
+      mapPayment({ ...PAYMENT, three_ds_info: { external_resource_url: 'x', creq: 'y' } })
+        .challenge,
+    ).toBeNull();
+  });
+
   test('get, search, refund', async () => {
     const { p, seen } = mp((s) =>
       s.url.includes('/search')
@@ -274,7 +347,7 @@ describe('mercado pago adapter', () => {
     expect(seen[0]!.url).toBe('https://api.mercadopago.com/v1/payments/1234567890');
     expect((await p.findPayment('tok', 'ref-1'))!.id).toBe('1234567890');
     expect(seen[1]!.url).toBe(
-      'https://api.mercadopago.com/v1/payments/search?external_reference=ref-1&sort=date_created&criteria=desc',
+      'https://api.mercadopago.com/v1/payments/search?external_reference=ref-1&sort=date_created&criteria=desc&limit=30',
     );
     const r = await p.refund('tok', '1234567890', 1000, 'refund:x:1');
     expect(r).toEqual({ id: '99', amountCents: 1000, status: 'approved' });

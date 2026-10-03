@@ -202,6 +202,8 @@ export interface Session {
   support: { whatsapp: string | null };
   /** `features` is what's open right now: in the plan AND paid for (or in its trial) */
   plan: { id: string; name: string; features: PlanFeatures };
+  /** the nav: Vendedor in the phone bar once on, its "precisa de você" count as the badge */
+  vendedor?: { enabled: boolean; name: string; waiting: number };
 }
 
 export interface Order {
@@ -933,10 +935,12 @@ export interface Payments {
 }
 
 /** unverified (no usable token to confirm it) · amount_mismatch (paid ≠ order) ·
+ *  paid_twice (a second payment landed on a paid order) ·
  *  refund_duplicate / refund_amount_mismatch / refund_failed (a refund MP didn't settle as asked) */
 export type PaymentReview =
   | 'unverified'
   | 'amount_mismatch'
+  | 'paid_twice'
   | 'refund_duplicate'
   | 'refund_amount_mismatch'
   | 'refund_failed';
@@ -1260,6 +1264,367 @@ export interface MenuImport {
     sections: ImportSection[];
   } | null;
   images: { total: number; done: number; failed: number; finished: boolean };
+}
+
+// ── Vendedor (ADR 0031; Core: src/vendedor/views.ts, results.ts, settings.ts, pack.ts, gaps.ts,
+// cards.ts and the inline shapes of src/admin/routes-vendedor.ts) ─────────────────────────────
+
+export type VendedorPresence =
+  'off' | 'answering' | 'rehearsal' | 'covering' | 'disconnected' | 'budget' | 'trouble';
+export type Coverage = 'rehearsal' | 'when_slow' | 'after_hours' | 'always';
+export type AgentTone = 'relaxed' | 'balanced' | 'formal';
+export type IncentiveReason = 'recovery' | 'first_order' | 'hesitation';
+
+export interface StoreAgentSettings {
+  name: string;
+  disclose: boolean;
+  tone: AgentTone;
+  voice: string;
+  coverage: Coverage;
+  slowAfterMin: 1 | 2 | 5;
+  capabilities: { closeOrder: boolean; sendPix: boolean; suggest: boolean; coupons: boolean };
+  pinnedPairings: { whenCategoryId: string; suggestProductId: string }[];
+  handoff: {
+    complaint: boolean;
+    allergy: boolean;
+    aboveCents: number | null;
+    newCashCustomer: boolean;
+  };
+  humanSilenceMin: number;
+  unknownNumbers: 'shoppers_only' | 'all';
+  recovery: { enabled: boolean; delayMin: number };
+  incentives: null | {
+    couponIds: string[];
+    reasons: IncentiveReason[];
+    minOrderCents: number;
+    monthlyBudgetCents: number;
+    perCustomerDays: number;
+  };
+  pixOnlyAfterCancels: number | null;
+  voiceReplies: boolean;
+}
+
+export interface WaitingRow {
+  threadId: string;
+  name: string;
+  preview: string | null;
+  reason: string | null;
+  since: string;
+}
+
+export interface VendedorHome {
+  agent: {
+    enabled: boolean;
+    name: string;
+    disclose: boolean;
+    intro: string;
+    coverage: Coverage;
+    slowAfterMin: number;
+    enabledAt: string | null;
+    firstSaleAt: string | null;
+  };
+  presence: VendedorPresence;
+  whatsapp: { state: string | null; linked: boolean };
+  active: number;
+  replyP50Sec: number | null;
+  today: {
+    closedCents: number;
+    orders: number;
+    averageCents: number | null;
+    conversations: number;
+    conversion: number | null;
+    suggestionsOffered: number;
+    suggestionsTaken: number;
+    drafts: number;
+  };
+  waiting: WaitingRow[];
+  whileAway: {
+    orderId: string;
+    number: number;
+    totalCents: number;
+    placedAt: string;
+    scheduledFor: string | null;
+  }[];
+  demand: {
+    unmet: { term: string; count: number }[];
+    outOfZone: { term: string; count: number }[];
+  };
+  onboarding: { started: boolean; finished: boolean; part: string | null };
+}
+
+export type ThreadFilter = 'all' | 'waiting' | 'orders' | 'agent' | 'others';
+/** who answers now: Ana, Ensaio, the store, the store's grace minutes, muted, nobody */
+export type ThreadFloor = 'agent' | 'rehearsal' | 'store' | 'wait' | 'muted' | 'off';
+export type ThreadOwner = 'open' | 'agent' | 'human' | 'muted';
+export type ThreadStage =
+  'browsing' | 'building' | 'checkout' | 'confirming' | 'paying' | 'ordered' | 'after';
+export type ThreadChannel = 'whatsapp' | 'test' | 'web' | 'instagram';
+
+export interface ThreadRow {
+  id: string;
+  name: string;
+  /** masked by Core */
+  phone: string | null;
+  owner: ThreadOwner;
+  floor: ThreadFloor;
+  reason: string | null;
+  waitingSince: string | null;
+  stage: ThreadStage;
+  class: 'unknown' | 'shopper' | 'other';
+  preview: string | null;
+  previewAuthor: string | null;
+  lastAt: string;
+  orderNumber: number | null;
+  unread: boolean;
+}
+
+export type MessageAuthor = 'shopper' | 'agent' | 'merchant' | 'core';
+
+export interface ThreadMessage {
+  id: string;
+  author: MessageAuthor;
+  kind: string;
+  body: string | null;
+  transcript: string | null;
+  /** 'draft' = Ensaio: written, never sent */
+  status: string;
+  at: string;
+  /** Core's cards: summary | pix | order | link | product */
+  card: string | null;
+  /** SummaryCardData for card 'summary', OrderCardData for 'order' */
+  data: unknown;
+  hasMedia: boolean;
+  seconds: number | null;
+  verdict: string | null;
+  turnId: string | null;
+  suggestion: boolean;
+}
+
+export type SacolaStep = 'montar' | 'endereco' | 'pagamento' | 'confirmar' | 'feito';
+
+export interface Sacola {
+  count: number;
+  totalCents: number;
+  lines: { text: string; totalCents: number }[];
+  step: SacolaStep;
+}
+
+export interface CustomerCard {
+  firstName: string | null;
+  orders: number;
+  lastOrder: { number: number; placedAt: string; items: string; state: string } | null;
+  usual: string | null;
+  addresses: { label: string; hasPin: boolean }[];
+  preferredPayment: string | null;
+  cancelledRecently: number;
+}
+
+export interface ThreadDetail {
+  thread: ThreadRow & {
+    humanUntil: string | null;
+    profileName: string | null;
+    test: boolean;
+    channel: ThreadChannel;
+  };
+  messages: ThreadMessage[];
+  sacola: Sacola | null;
+  customer: (CustomerCard & { phone: string | null; firstSeen: string | null }) | null;
+  order: {
+    id: string;
+    number: number;
+    state: string;
+    totalCents: number;
+    paymentStatus: string;
+  } | null;
+  humanSilenceMin: number;
+}
+
+/** Core's receipt: every figure here is Core's ("calculado pela loja") */
+/** Core's order card (src/vendedor/cards.ts) */
+export interface OrderCardData {
+  number: number;
+  state: string;
+  totalCents: number;
+  payment: string | null;
+  paymentUrl: string | null;
+}
+
+export interface SummaryCardData {
+  id: string;
+  lines: { text: string; totalCents: number }[];
+  subtotalCents: number;
+  feeCents: number;
+  discountCents: number;
+  discountLabel: string | null;
+  adjustmentCents: number;
+  totalCents: number;
+  mode: 'pickup' | 'delivery';
+  address: string | null;
+  eta: string | null;
+  payment: string | null;
+  changeForCents: number | null;
+  scheduledFor: string | null;
+  unusual: string[];
+  test: boolean;
+}
+
+export interface WhyView {
+  asked: string | null;
+  steps: { kind: 'lookup' | 'figure' | 'rule' | 'action' | 'blocked'; text: string }[];
+}
+
+export interface KnowledgeItem {
+  id: string;
+  kind: 'answer' | 'rule' | 'question';
+  status: string;
+  source: string;
+  question: string | null;
+  answer: string | null;
+  /** the system enforces it ("sempre cumprida"); otherwise "orientação" */
+  guaranteed: boolean;
+  guarantee: string | null;
+  askedCount: number;
+  usedCount: number;
+  at: string;
+}
+
+export interface Knowledge {
+  questions: KnowledgeItem[];
+  learned: KnowledgeItem[];
+  answers: KnowledgeItem[];
+  rules: KnowledgeItem[];
+}
+
+export interface EnsaioView {
+  drafts: number;
+  compared: number;
+  agreed: number;
+  disagreements: {
+    threadId: string;
+    draftId: string;
+    shopper: string | null;
+    draft: string;
+    merchant: string | null;
+    at: string;
+  }[];
+}
+
+export interface ClienteOcultoResult {
+  name: string;
+  check: string;
+  passed: boolean;
+  why: string;
+  turns: number;
+  threadId: string | null;
+}
+
+export interface ClienteOculto {
+  latest: {
+    id: string;
+    trigger: string;
+    status: string;
+    passed: number | null;
+    total: number | null;
+    results: ClienteOcultoResult[] | null;
+    error: string | null;
+    at: string;
+    finishedAt: string | null;
+  } | null;
+  history: {
+    id: string;
+    passed: number | null;
+    total: number | null;
+    status: string;
+    at: string;
+  }[];
+}
+
+export type ResultsPeriod = 'today' | '7d' | '30d';
+
+export interface VendedorResults {
+  period: ResultsPeriod;
+  since: string;
+  closed: { cents: number; orders: number; averageCents: number | null };
+  assisted: { cents: number; orders: number; windowHours: number };
+  siteAverageCents: number | null;
+  funnel: { conversations: number; carts: number; summaries: number; orders: number };
+  suggestions: { offered: number; taken: number; revenueCents: number };
+  recovered: { orders: number; cents: number };
+  replySec: { p50: number | null; p95: number | null };
+  handoffs: { reason: string; count: number }[];
+  proposals: {
+    kind: 'answer' | 'retire_suggestion' | 'recovery_delay';
+    text: string;
+    evidence: string;
+    ref: string | null;
+  }[];
+  enoughData: boolean;
+}
+
+export interface VendedorSettings {
+  enabled: boolean;
+  settings: StoreAgentSettings;
+  /** how she introduces herself to a shopper, from the settings */
+  intro: string;
+  coupons: { id: string; code: string; label: string | null; kind: string; value: number }[];
+  incentivesUsedCents: number;
+}
+
+/** partial settings; nested groups merge field by field in Core */
+export type VendedorSettingsPatch = Partial<
+  Omit<StoreAgentSettings, 'capabilities' | 'handoff' | 'recovery'>
+> & {
+  enabled?: boolean;
+  capabilities?: Partial<StoreAgentSettings['capabilities']>;
+  handoff?: Partial<StoreAgentSettings['handoff']>;
+  recovery?: Partial<StoreAgentSettings['recovery']>;
+};
+
+export type GapKind =
+  'size_unstated' | 'unpriced_option' | 'no_allergen_info' | 'duplicate_name' | 'empty_combo_slot';
+
+export interface MenuGap {
+  kind: GapKind;
+  productId: string | null;
+  categoryId: string | null;
+  title: string;
+  detail: string;
+}
+
+export interface VendedorOnboardingProgress {
+  started?: boolean;
+  finished?: boolean;
+  part?: string;
+  step?: string;
+  skipped?: string[];
+  interviewDone?: boolean;
+  tested?: boolean;
+}
+
+export interface VendedorOnboarding {
+  progress: VendedorOnboardingProgress;
+  enabled: boolean;
+  settings: StoreAgentSettings;
+  readiness: {
+    menu: boolean;
+    hours: boolean;
+    fulfilment: boolean;
+    whatsapp: boolean;
+    whatsappState: string | null;
+  };
+  read: { products: number; zones: number };
+  gaps: MenuGap[];
+  interview: { threadId: string; messages: ThreadMessage[] };
+  proposals: KnowledgeItem[];
+  taught: { answers: number; rules: number };
+}
+
+export interface CustomerFact {
+  key: string;
+  label: string;
+  value: unknown;
+  sensitive: boolean;
+  at: string;
 }
 
 export const api = {
@@ -1637,4 +2002,98 @@ export const api = {
 
   help: (message: string, topic?: string) =>
     send<{ sent: true }>('POST', '/help', { message, topic }),
+
+  vendedor: {
+    home: () => get<VendedorHome>('/vendedor'),
+    threads: (p: { filter?: ThreadFilter; q?: string; before?: string; limit?: number } = {}) => {
+      const s = new URLSearchParams();
+      if (p.filter && p.filter !== 'all') s.set('filter', p.filter);
+      if (p.q) s.set('q', p.q);
+      if (p.before) s.set('before', p.before);
+      if (p.limit) s.set('limit', String(p.limit));
+      const qs = s.toString();
+      return get<{ threads: ThreadRow[]; next: string | null }>(
+        `/vendedor/threads${qs ? `?${qs}` : ''}`,
+      );
+    },
+    thread: (id: string) => get<ThreadDetail>(`/vendedor/threads/${encodeURIComponent(id)}`),
+    why: (threadId: string, messageId: string) =>
+      get<WhyView>(
+        `/vendedor/threads/${encodeURIComponent(threadId)}/why/${encodeURIComponent(messageId)}`,
+      ),
+    suggestions: (threadId: string) =>
+      get<{ replies: string[] }>(`/vendedor/threads/${encodeURIComponent(threadId)}/suggestions`),
+    take: (threadId: string) =>
+      send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/take`, {}),
+    release: (threadId: string) =>
+      send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/release`, {}),
+    reply: (threadId: string, text: string) =>
+      send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/reply`, {
+        text,
+      }),
+    /** "não é cliente" */
+    mute: (threadId: string) =>
+      send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/mute`, {}),
+    unmute: (threadId: string) =>
+      send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/unmute`, {}),
+
+    settings: () => get<VendedorSettings>('/vendedor/settings'),
+    updateSettings: (patch: VendedorSettingsPatch) =>
+      send<VendedorSettings>('PATCH', '/vendedor/settings', patch),
+
+    knowledge: () => get<Knowledge>('/vendedor/knowledge'),
+    previewRule: (text: string) =>
+      get<{ guaranteed: boolean; guarantee: string | null }>(
+        `/vendedor/knowledge/preview?text=${encodeURIComponent(text)}`,
+      ),
+    teach: (
+      item: { kind: 'answer'; question: string; answer: string } | { kind: 'rule'; text: string },
+    ) => send<Knowledge>('POST', '/vendedor/knowledge', item),
+    updateKnowledge: (
+      id: string,
+      patch: {
+        question?: string;
+        answer?: string;
+        status?: 'live' | 'dismissed';
+        replyWaiting?: boolean;
+      },
+    ) => send<Knowledge>('PATCH', `/vendedor/knowledge/${encodeURIComponent(id)}`, patch),
+    deleteKnowledge: (id: string) =>
+      send<Knowledge>('DELETE', `/vendedor/knowledge/${encodeURIComponent(id)}`),
+
+    ensaio: () => get<EnsaioView>('/vendedor/ensaio'),
+    verdict: (
+      draftId: string,
+      v: {
+        verdict: 'same' | 'different' | 'dismissed';
+        teach?: true;
+        question?: string;
+        answer?: string;
+      },
+    ) => send<EnsaioView>('POST', `/vendedor/drafts/${encodeURIComponent(draftId)}/verdict`, v),
+
+    clienteOculto: () => get<ClienteOculto>('/vendedor/cliente-oculto'),
+    runClienteOculto: () => send<ClienteOculto>('POST', '/vendedor/cliente-oculto', {}),
+
+    results: (period: ResultsPeriod) =>
+      get<VendedorResults>(`/vendedor/resultados?period=${period}`),
+
+    testChat: () => get<ThreadDetail>('/vendedor/test-chat'),
+    sendTest: (text: string) => send<ThreadDetail>('POST', '/vendedor/test-chat', { text }),
+    resetTest: () => send<ThreadDetail>('DELETE', '/vendedor/test-chat'),
+
+    onboarding: () => get<VendedorOnboarding>('/vendedor/onboarding'),
+    updateOnboarding: (p: VendedorOnboardingProgress) =>
+      send<VendedorOnboarding>('PATCH', '/vendedor/onboarding', p),
+    interview: (text: string) =>
+      send<VendedorOnboarding>('POST', '/vendedor/onboarding/interview', { text }),
+
+    customerFacts: (phone: string) =>
+      get<{ facts: CustomerFact[] }>(`/customers/${encodeURIComponent(phone)}/vendedor`),
+    forgetFact: (phone: string, key: string) =>
+      send<{ facts: CustomerFact[] }>(
+        'DELETE',
+        `/customers/${encodeURIComponent(phone)}/vendedor/facts/${encodeURIComponent(key)}`,
+      ),
+  },
 };

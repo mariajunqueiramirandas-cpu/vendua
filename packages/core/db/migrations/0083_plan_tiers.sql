@@ -1,4 +1,4 @@
--- 0082_plan_tiers.sql — the launch catalog (ADR 0032): three plans, the middle one recommended and
+-- 0083_plan_tiers.sql — the launch catalog (ADR 0032): three plans, the middle one recommended and
 -- the only one with a trial; what each plan includes; the Vendedor's conversations and the packs
 -- that add to them.
 --   plans.recommended            — the plan signup and the site lead with (at most one)

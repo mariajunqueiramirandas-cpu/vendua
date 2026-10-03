@@ -31,7 +31,7 @@ export interface InvoiceRow {
   pix_attempt: number;
   pix_superseded: string[];
   /** 'upgrade': the one-off difference for the rest of a paid period (0062);
-   *  'ai_pack': extra Vendedor conversations bought one-off (0082) */
+   *  'ai_pack': extra Vendedor conversations bought one-off (0083) */
   kind: 'period' | 'upgrade' | 'ai_pack';
   ai_pack_id: string | null;
   /** the pack's conversations as bought */

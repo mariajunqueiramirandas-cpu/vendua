@@ -21,7 +21,14 @@ function MoreSheet({
 }) {
   const qc = useQueryClient();
   const session = useSession();
+  const { vendedor } = session;
   const hint = (to: string): string | null => {
+    if (to === '/vendedor')
+      return !vendedor?.enabled
+        ? `conheça a ${vendedor?.name ?? 'Ana'}`
+        : vendedor.waiting
+          ? `${vendedor.waiting} ${vendedor.waiting === 1 ? 'precisa' : 'precisam'} de você`
+          : 'vendas no WhatsApp';
     const mk = qc.getQueryData<{ coupons: { active: boolean }[] }>(qk.marketing);
     const pay = qc.getQueryData<{ pix: unknown }>(qk.payments);
     if (to === '/marketing' && mk) {
@@ -75,6 +82,7 @@ function MoreSheet({
 }
 
 const HINTS: Record<string, string> = {
+  '/loja': 'horários, entrega e pausa',
   '/cozinha': 'tela da cozinha',
   '/clientes': 'quem compra de você',
   '/whatsapp': 'avisos aos clientes',

@@ -1200,6 +1200,51 @@
   .v-option-adjust[data-kind='discount'] {
     background: color-mix(in srgb, var(--v-color-success, #3d7a4f) 16%, transparent);
   }
+  /* Kernel 1.17 — cash change, under the payment options while cash is chosen */
+  .v-change {
+    display: grid;
+    margin-top: 12px;
+    padding: 14px;
+    border-radius: var(--v-radius-md, 8px);
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 4%, var(--v-color-surface, #fff));
+  }
+  .v-change-title {
+    margin: 0 0 10px;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    line-height: 1.3;
+  }
+  .v-change .v-field {
+    margin-bottom: 4px;
+  }
+  .v-change .v-check {
+    min-height: 44px;
+  }
+  .v-money {
+    position: relative;
+    max-width: 240px;
+  }
+  .v-money-symbol {
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    transform: translateY(-50%);
+    color: var(--v-color-muted, #6e6a64);
+    pointer-events: none;
+  }
+  .v-money[data-symbol='before'] .v-input {
+    padding-left: 44px;
+  }
+  .v-money[data-symbol='after'] .v-money-symbol {
+    right: 12px;
+    left: auto;
+  }
+  .v-money[data-symbol='after'] .v-input {
+    padding-right: 52px;
+  }
+  .v-money:has(input:disabled) {
+    opacity: 0.55;
+  }
 
   /* ── checkout ───────────────────────────────────────────────────────────── */
   /* a segmented track: every step keeps one column, so the row never wraps */
@@ -3101,6 +3146,133 @@
     }
   }
 
+  /* checkout.CardPayment — head (eyebrow, amount, the "goes straight to Mercado Pago" line),
+     a refusal note, then the Kernel's card fields or the bank's challenge frame. The fields'
+     insides are Mercado Pago's (styled through the Brick's own variables), never ours. */
+  .v-cardpay {
+    display: grid;
+    gap: 20px;
+    margin-bottom: 16px;
+  }
+  .v-cardpay-head {
+    display: grid;
+    gap: 2px;
+  }
+  .v-cardpay-head .v-eyebrow {
+    margin: 0;
+  }
+  .v-cardpay-amount {
+    margin: 0;
+    font-family: var(--v-font-display, var(--v-font-body, serif));
+    font-size: clamp(2rem, 1.6rem + 1.6vw, 2.5rem);
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+  .v-cardpay-secure {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 6px 0 0;
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+  .v-cardpay-secure svg {
+    flex: none;
+    margin-top: 0.15em;
+    color: var(--v-color-success, #3d7a4f);
+  }
+  .v-cardpay-declined {
+    padding: 12px 14px;
+    border-radius: var(--v-radius-md, 8px);
+    border-left: 3px solid var(--v-color-danger, #a33b32);
+    background: color-mix(in srgb, var(--v-color-danger, #a33b32) 8%, var(--v-color-surface, #fff));
+    animation: v-fade var(--v-motion-duration, 160ms) var(--v-motion-easing, ease) both;
+  }
+  .v-cardpay-declined-title {
+    margin: 0;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--v-color-text, #1c1b1a);
+  }
+  .v-cardpay-declined-body {
+    margin: 2px 0 0;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+    color: var(--v-color-text, #1c1b1a);
+  }
+  .v-cardpay-down .v-panel-title {
+    margin-bottom: 4px;
+  }
+  .v-cardpay-down .v-muted {
+    margin: 0;
+  }
+  .v-cardpay-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 20px;
+    margin-top: 16px;
+  }
+  .v-cardpay-actions .v-btn {
+    min-width: 200px;
+  }
+  .v-cardpay-fields {
+    min-width: 0;
+  }
+  /* while the Brick loads: a quiet placeholder about the form's height */
+  .v-cardpay[data-phase='loading'] .v-cardpay-fields {
+    min-height: 320px;
+    border-radius: var(--v-radius-md, 8px);
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--v-color-surface, #fff) 70%, transparent) 50%,
+        transparent 100%
+      )
+      color-mix(in srgb, var(--v-color-text, #1c1b1a) 6%, var(--v-color-surface, #fff));
+    background-size: 200% 100%;
+    background-repeat: no-repeat;
+    animation: v-shimmer 1.4s ease-in-out infinite;
+  }
+  .v-cardpay[data-phase='unavailable'] .v-cardpay-fields:empty {
+    display: none;
+  }
+  .v-cardpay-fake {
+    display: grid;
+    gap: 8px;
+  }
+  /* the bank's 3-D Secure frame: 500×600, full width and 440 tall on smaller screens */
+  .v-cardpay-challenge {
+    display: grid;
+    justify-items: center;
+  }
+  .v-cardpay-challenge iframe {
+    display: block;
+    width: 100%;
+    max-width: 500px;
+    height: 600px;
+    border: 0;
+    border-radius: var(--v-radius-md, 8px);
+    background: #fff;
+  }
+  @media (max-width: 979px) {
+    .v-cardpay-challenge iframe {
+      max-width: none;
+      height: 440px;
+    }
+  }
+  @media (max-width: 479px) {
+    .v-cardpay-actions {
+      flex-direction: column;
+      align-items: stretch;
+      text-align: center;
+    }
+    .v-cardpay-actions .v-link-btn {
+      padding: 10px 0;
+    }
+  }
+
   .v-option-note {
     grid-column: 2;
     margin-top: 6px;
@@ -3348,7 +3520,9 @@
     .v-pix-wait-dot,
     .v-paystat-rail,
     .v-paystat[data-just-paid] .v-paystat-icon,
-    .v-paystat[data-just-paid] .v-paystat-icon::after {
+    .v-paystat[data-just-paid] .v-paystat-icon::after,
+    .v-cardpay[data-phase='loading'] .v-cardpay-fields,
+    .v-cardpay-declined {
       animation: none;
     }
     .v-paystat-rail {
@@ -3464,7 +3638,8 @@
         border-top: 0;
       }
       & .v-bag-bar,
-      & .v-consent {
+      & .v-consent,
+      & .v-chat-launcher {
         display: none;
       }
     }

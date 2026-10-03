@@ -50,6 +50,16 @@ export const chunks = {
   profile: once(() => import('../features/account/Profile.tsx')),
   help: once(() => import('../features/help/Help.tsx')),
   onboarding: once(() => import('../features/onboarding/Onboarding.tsx')),
+  vendedorHome: once(() => import('../features/vendedor/Home.tsx')),
+  vendedorTrain: once(() => import('../features/vendedor/Train.tsx')),
+  vendedorConversations: once(() => import('../features/vendedor/Conversations.tsx')),
+  vendedorConversation: once(() => import('../features/vendedor/Conversation.tsx')),
+  vendedorTeach: once(() => import('../features/vendedor/Teach.tsx')),
+  vendedorEnsaio: once(() => import('../features/vendedor/Ensaio.tsx')),
+  vendedorClienteOculto: once(() => import('../features/vendedor/ClienteOculto.tsx')),
+  vendedorResults: once(() => import('../features/vendedor/Results.tsx')),
+  vendedorSettings: once(() => import('../features/vendedor/Settings.tsx')),
+  vendedorTest: once(() => import('../features/vendedor/TestChat.tsx')),
   signup: once(() => import('../features/signup/Signup.tsx')),
   notFound: once(() => import('../features/notfound/NotFound.tsx')),
   sheets: once(() => import('./ShellSheets.tsx')),
@@ -95,7 +105,17 @@ export type RouteId =
   | 'team'
   | 'account'
   | 'profile'
-  | 'help';
+  | 'help'
+  | 'vendedorHome'
+  | 'vendedorTrain'
+  | 'vendedorConversations'
+  | 'vendedorConversation'
+  | 'vendedorTeach'
+  | 'vendedorEnsaio'
+  | 'vendedorClienteOculto'
+  | 'vendedorResults'
+  | 'vendedorSettings'
+  | 'vendedorTest';
 
 interface RouteDef {
   id: RouteId;
@@ -272,6 +292,73 @@ const ROUTES: RouteDef[] = [
     id: 'help',
     match: /^\/ajuda$/,
     chunk: chunks.help,
+  },
+  {
+    id: 'vendedorHome',
+    match: /^\/vendedor$/,
+    chunk: chunks.vendedorHome,
+    data: (qc) => q(qc, qk.vendedor.home, api.vendedor.home),
+  },
+  {
+    id: 'vendedorTrain',
+    match: /^\/vendedor\/comecar$/,
+    chunk: chunks.vendedorTrain,
+    data: (qc) => q(qc, qk.vendedor.onboarding, api.vendedor.onboarding),
+  },
+  {
+    id: 'vendedorConversation',
+    match: /^\/vendedor\/conversas\/([^/]+)$/,
+    chunk: chunks.vendedorConversation,
+    data: (qc, m) => q(qc, qk.vendedor.thread(m[1]!), () => api.vendedor.thread(m[1]!)),
+  },
+  {
+    // pages of the list: the screen reads it with useInfiniteQuery on the same key
+    id: 'vendedorConversations',
+    match: /^\/vendedor\/conversas$/,
+    chunk: chunks.vendedorConversations,
+    data: (qc) =>
+      qc.prefetchInfiniteQuery({
+        queryKey: qk.vendedor.threads('all', ''),
+        queryFn: ({ pageParam }) =>
+          api.vendedor.threads({ filter: 'all', ...(pageParam ? { before: pageParam } : {}) }),
+        initialPageParam: '',
+      }),
+  },
+  {
+    id: 'vendedorTeach',
+    match: /^\/vendedor\/ensinar$/,
+    chunk: chunks.vendedorTeach,
+    data: (qc) => q(qc, qk.vendedor.knowledge, api.vendedor.knowledge),
+  },
+  {
+    id: 'vendedorEnsaio',
+    match: /^\/vendedor\/ensaio$/,
+    chunk: chunks.vendedorEnsaio,
+    data: (qc) => q(qc, qk.vendedor.ensaio, api.vendedor.ensaio),
+  },
+  {
+    id: 'vendedorClienteOculto',
+    match: /^\/vendedor\/cliente-oculto$/,
+    chunk: chunks.vendedorClienteOculto,
+    data: (qc) => q(qc, qk.vendedor.clienteOculto, api.vendedor.clienteOculto),
+  },
+  {
+    id: 'vendedorResults',
+    match: /^\/vendedor\/resultados$/,
+    chunk: chunks.vendedorResults,
+    data: (qc) => q(qc, qk.vendedor.results('7d'), () => api.vendedor.results('7d')),
+  },
+  {
+    id: 'vendedorSettings',
+    match: /^\/vendedor\/configurar$/,
+    chunk: chunks.vendedorSettings,
+    data: (qc) => q(qc, qk.vendedor.settings, api.vendedor.settings),
+  },
+  {
+    id: 'vendedorTest',
+    match: /^\/vendedor\/testar$/,
+    chunk: chunks.vendedorTest,
+    data: (qc) => q(qc, qk.vendedor.testChat, api.vendedor.testChat),
   },
 ];
 

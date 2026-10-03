@@ -328,6 +328,14 @@ export interface StaffEventMap {
     threshold: number;
     window: number;
   };
+  /** The Vendedor (ADR 0031): a store's verifier blocks, handoffs or opt-outs jumped today. */
+  'vendedor.monitor': {
+    storeName: Opt<Name>;
+    metric: 'blocks' | 'handoffs' | 'optouts';
+    today: number;
+    baseline: number;
+    volume: number;
+  };
   /** whatsapp_lojas = the wa-gateway that runs every store's own WhatsApp (ADR 0026) */
   'channel.down': {
     channel: 'whatsapp' | 'instagram' | 'email' | 'whatsapp_lojas';
@@ -628,6 +636,13 @@ export const STAFF_EVENT_KINDS: Catalog = {
     severity: 'warning',
     label: 'nota de qualidade do agente caiu',
     anchor: { role: 'opens', key: (d) => `agent-qa:${d.agentId}:${d.version}` },
+  },
+  'vendedor.monitor': {
+    category: 'agente',
+    level: 'normal',
+    severity: 'warning',
+    label: 'Vendedor de uma loja saiu do normal',
+    hint: 'bloqueios do verificador, passagens para a loja ou pedidos para parar subiram hoje',
   },
   'agent.cost_cap': {
     category: 'agente',

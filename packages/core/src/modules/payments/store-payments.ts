@@ -14,6 +14,7 @@ import {
   loadConnection,
   setConnectionStatus,
   tokenFor,
+  type ConnectionRow,
   type StoreToken,
 } from './connections.ts';
 import {
@@ -31,6 +32,14 @@ const payLog = log.child({ mod: 'store-payments' });
 
 export const PIX_TTL_MIN = 30;
 export const CARD_TTL_MIN = 120;
+/** an in-page card attempt whose create call never answered: another submit waits this long */
+const CARD_SUBMIT_GRACE_MS = 2 * 60_000;
+/** …and the job gives the attempt up after this, having looked it up at MP until then */
+const CARD_FORM_TTL_MS = 30 * 60_000;
+/** a retry reuses an unanswered attempt only this young — never one the job could expire mid-call */
+const CARD_REUSE_MAX_MS = CARD_FORM_TTL_MS - 5 * 60_000;
+/** status_detail of an in-page card attempt before MP answers — tells it from a hosted checkout */
+const CARD_FORM = 'card_form';
 const MAX_ATTEMPTS = 20;
 
 const SETTLED = ['approved', 'partially_refunded', 'refunded', 'charged_back', 'in_mediation'];
@@ -62,10 +71,64 @@ export interface PaymentRow {
   review: string | null;
 }
 
+export type DeclineReason =
+  | 'card_data'
+  | 'insufficient_funds'
+  | 'call_for_authorize'
+  | 'card_disabled'
+  | 'duplicated'
+  | 'high_risk'
+  | 'max_attempts'
+  | 'installments'
+  | 'challenge_failed'
+  | 'other';
+
 export type PayNext =
   | { kind: 'pix'; copyPaste: string; expiresAt: string | null }
+  /** Kernels before 1.19: MP's hosted checkout */
   | { kind: 'redirect'; url: string }
+  /** the Kernel mounts MP's card fields with this key; Core charges the order total */
+  | {
+      kind: 'card';
+      provider: ProviderName;
+      publicKey: string;
+      amountCents: number;
+      declined: DeclineReason | null;
+    }
+  | { kind: 'challenge'; url: string; creq: string }
+  | { kind: 'declined'; reason: DeclineReason }
   | { kind: 'none' };
+
+/** MP's status_detail of a refused card (collection-results) → what the shopper is told. */
+export function declineReason(detail: string | null): DeclineReason {
+  switch (detail) {
+    case 'cc_rejected_bad_filled_card_number':
+    case 'cc_rejected_bad_filled_date':
+    case 'cc_rejected_bad_filled_other':
+    case 'cc_rejected_bad_filled_security_code':
+    case 'create_invalid':
+      return 'card_data';
+    case 'cc_rejected_insufficient_amount':
+      return 'insufficient_funds';
+    case 'cc_rejected_call_for_authorize':
+      return 'call_for_authorize';
+    case 'cc_rejected_card_disabled':
+      return 'card_disabled';
+    case 'cc_rejected_duplicated_payment':
+      return 'duplicated';
+    case 'cc_rejected_high_risk':
+    case 'cc_rejected_blacklist':
+      return 'high_risk';
+    case 'cc_rejected_max_attempts':
+      return 'max_attempts';
+    case 'cc_rejected_invalid_installments':
+      return 'installments';
+    case 'cc_rejected_3ds_challenge':
+      return 'challenge_failed';
+    default:
+      return 'other';
+  }
+}
 
 export interface PayDeps {
   sql: Sql;
@@ -171,7 +234,7 @@ export function onlinePayment(
     instructions:
       method === 'pix'
         ? `Pague ${brl(total)} com Pix pelo código desta página — o pedido é confirmado quando o pagamento cai.`
-        : `Pague ${brl(total)} com cartão no Mercado Pago — depois você volta para esta página.`,
+        : `Pague ${brl(total)} com cartão nesta página — o pedido é confirmado quando o pagamento é aprovado.`,
     pix: null,
     redirectUrl: null,
   };
@@ -206,10 +269,18 @@ const pixLive = (row: PaymentRow, now: Date) =>
 const cardLive = (row: PaymentRow, now: Date) =>
   new Date(row.created_at).getTime() + CARD_TTL_MIN * 60_000 > now.getTime();
 
-/** An open attempt nobody can pay any more: Pix past its expiry, a hosted checkout past its TTL. */
+const formAttempt = (row: PaymentRow) =>
+  row.kind === 'card' && !row.provider_payment_id && row.status_detail === CARD_FORM;
+const age = (row: PaymentRow, now: Date) => now.getTime() - new Date(row.created_at).getTime();
+
+/**
+ * An open attempt nobody can pay any more: Pix past its expiry, a hosted checkout past its TTL,
+ * an in-page card submit MP never answered.
+ */
 export function attemptExpired(row: PaymentRow, now = new Date()) {
   if (!OPEN.includes(row.status)) return false;
   if (row.kind === 'pix') return !pixLive(row, now);
+  if (formAttempt(row)) return age(row, now) > CARD_FORM_TTL_MS;
   return !row.provider_payment_id && !cardLive(row, now);
 }
 
@@ -309,12 +380,24 @@ const PAYABLE = ['pending', 'failed', 'expired'];
  * and a `creating` row is retried with its own attempt number — a request that died after MP
  * answered gets the same payment back, never a second charge.
  */
+export interface PayCtx {
+  publicOrigin: string;
+  storeDomain: string;
+  payerEmail?: string;
+  /** Kernel 1.19+: a card order gets the in-page form, never a hosted checkout */
+  cardForm?: boolean;
+  /** MP_PUBLIC_KEY: the card fields' key for a store whose OAuth gave none */
+  publicKey?: string;
+  /** the page saw the bank's 3DS frame say COMPLETE: a still-pending challenge is MP catching up */
+  challengeDone?: boolean;
+}
+
 export async function preparePayment(
   d: PayDeps,
   tenant: { id: string; slug: string; name: string },
   orderId: string,
   cartId: string,
-  ctx: { publicOrigin: string; storeDomain: string; payerEmail?: string },
+  ctx: PayCtx,
   now = new Date(),
 ): Promise<PayNext> {
   let synced = false;
@@ -341,7 +424,7 @@ async function planPayment(
   tenant: { id: string; slug: string; name: string },
   orderId: string,
   cartId: string,
-  ctx: { storeDomain: string },
+  ctx: PayCtx,
   synced: boolean,
   now: Date,
 ): Promise<Plan> {
@@ -395,8 +478,12 @@ async function planPayment(
         ? `${await storeOrigin(tx, tenant, ctx.storeDomain)}/pedido/${orderId}?pagamento=retorno`
         : null,
   });
+  if (method === 'card_online' && ctx.cardForm)
+    return cardFormPlan(tx, d, tenant.id, order, conn!, tok, latest, ctx, synced, now);
   if (latest && OPEN.includes(latest.status)) {
-    if (latest.status === 'creating' && !attemptExpired(latest, now)) return create(latest);
+    if (latest.status === 'creating' && !attemptExpired(latest, now))
+      // an in-page submit is in flight; an older Kernel's page doesn't get a checkout beside it
+      return formAttempt(latest) ? { do: 'done', next: { kind: 'none' } } : create(latest);
     if (latest.status === 'pending' && !synced) return { do: 'sync', row: latest, tok };
     if (!attemptExpired(latest, now)) return { do: 'done', next: nextFor(latest, now) };
     await tx`update payments set status = 'expired', updated_at = now() where id = ${latest.id}`;
@@ -433,19 +520,68 @@ async function planPayment(
   return create(row);
 }
 
+/** The in-page card form (Kernel 1.19+): show it, or say a payment is already on its way. */
+async function cardFormPlan(
+  tx: Sql,
+  d: PayDeps,
+  tenantId: string,
+  order: OrderLock,
+  conn: ConnectionRow,
+  tok: StoreToken,
+  latest: PaymentRow | null,
+  ctx: PayCtx,
+  synced: boolean,
+  now: Date,
+): Promise<Plan> {
+  const none: Plan = { do: 'done', next: { kind: 'none' } };
+  if (latest?.kind === 'card' && OPEN.includes(latest.status)) {
+    if (latest.provider_payment_id) {
+      if (!synced) return { do: 'sync', row: latest, tok };
+      // in review at MP: wait for it. An unanswered 3DS challenge can be replaced by a new card —
+      // unless the shopper just answered it and MP hasn't settled it yet
+      if (latest.status_detail !== 'pending_challenge' || ctx.challengeDone) return none;
+    } else if (formAttempt(latest) && age(latest, now) < CARD_SUBMIT_GRACE_MS) return none;
+  } else if (latest && SETTLED.includes(latest.status)) {
+    await syncOrderPayment(tx, tenantId, order.id);
+    return none;
+  }
+  // the seller's own key: its tokens are always redeemable on the seller's token, which charges them
+  const publicKey = conn.public_key || ctx.publicKey;
+  if (!publicKey)
+    throw new HttpError(503, 'PAYMENT_UNAVAILABLE', 'online payment is unavailable right now', {
+      reason: 'no_public_key',
+    });
+  return {
+    do: 'done',
+    next: {
+      kind: 'card',
+      provider: d.provider.name,
+      publicKey,
+      amountCents: order.total_cents,
+      declined:
+        latest?.kind === 'card' && latest.status === 'rejected'
+          ? declineReason(latest.status_detail)
+          : null,
+    },
+  };
+}
+
+const notificationUrlFor = (ctx: PayCtx, tenantId: string) =>
+  // MP only posts to public https endpoints; dev/test origins rely on sync + reconciliation
+  ctx.publicOrigin.startsWith('https://')
+    ? `${ctx.publicOrigin}/admin/v1/hooks/mercadopago?t=${tenantId}`
+    : null;
+
 async function createAttempt(
   d: PayDeps,
   tenantId: string,
   plan: Extract<Plan, { do: 'create' }>,
-  ctx: { publicOrigin: string; storeDomain: string; payerEmail?: string },
+  ctx: PayCtx,
   now: Date,
 ): Promise<PayNext> {
   const { row, tok } = plan;
   const idempotencyKey = `${row.order_id}:${row.attempt}`;
-  // MP only posts to public https endpoints; dev/test origins rely on sync + reconciliation
-  const notificationUrl = ctx.publicOrigin.startsWith('https://')
-    ? `${ctx.publicOrigin}/admin/v1/hooks/mercadopago?t=${tenantId}`
-    : null;
+  const notificationUrl = notificationUrlFor(ctx, tenantId);
   let patch: Partial<PaymentRow>;
   try {
     if (row.kind === 'pix') {
@@ -510,6 +646,19 @@ async function createAttempt(
       reason: code,
     });
   }
+  return nextFor(await recordAttempt(d, tenantId, row, patch), now);
+}
+
+/**
+ * The provider answered an attempt: record it on its `creating` row, in a short tx of its own.
+ * Answers the row that now holds the payment (a webhook may have recorded it first).
+ */
+async function recordAttempt(
+  d: PayDeps,
+  tenantId: string,
+  row: PaymentRow,
+  patch: Partial<PaymentRow>,
+): Promise<PaymentRow> {
   const out = await withTenant(d.sql, tenantId, async (tx) => {
     await tx`select id from orders where tenant_id = ${tenantId} and id = ${row.order_id} for update`;
     const cur = (
@@ -527,9 +676,11 @@ async function createAttempt(
     if (other) {
       await tx`update payments set status = 'cancelled', status_detail = 'superseded', updated_at = now() where id = ${row.id} and status = 'creating'`;
       await syncOrderPayment(tx, tenantId, row.order_id);
-      return other.order_id === row.order_id ? nextFor(other, now) : ('conflict' as const);
+      return other.order_id === row.order_id ? other : ('conflict' as const);
     }
-    if (cur.status === 'creating') {
+    // `expired`: the job closed an unanswered attempt while MP was still answering it — MP's
+    // answer is the truth, and dropping it would leave a charge nobody tracks
+    if (cur.status === 'creating' || (cur.status === 'expired' && !cur.provider_payment_id)) {
       const bound = await bindsProviderId(
         tx,
         (sp) => sp`
@@ -546,9 +697,11 @@ async function createAttempt(
         await tx`update payments set status = 'cancelled', status_detail = 'provider_id_conflict', updated_at = now() where id = ${row.id}`;
         return 'conflict' as const;
       }
+      if (SETTLED.includes(patch.status ?? ''))
+        await flagIfPaidTwice(tx, tenantId, { ...cur, review: null });
     }
     await syncOrderPayment(tx, tenantId, row.order_id);
-    return nextFor((await tx<PaymentRow[]>`select * from payments where id = ${row.id}`)[0]!, now);
+    return (await tx<PaymentRow[]>`select * from payments where id = ${row.id}`)[0]!;
   });
   if (out === 'conflict')
     throw new HttpError(503, 'PAYMENT_UNAVAILABLE', 'online payment is unavailable — try again', {
@@ -557,7 +710,302 @@ async function createAttempt(
   return out;
 }
 
-/** Refetch an open attempt from the provider (outside any tx) and apply it. Down → keep ours. */
+export interface CardInput {
+  token: string;
+  paymentMethodId: string;
+  issuerId: string | null;
+  installments: number;
+  payer: { email: string; identification: { type: string; number: string } | null };
+  deviceId: string | null;
+}
+
+const bad = (message: string) => new HttpError(422, 'INVALID_PAYMENT', message);
+const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,63}$/;
+
+/** POST /orders/:id/card's body: what MP's card fields hand the Kernel, bounded. Never an amount. */
+export function parseCardInput(b: Record<string, unknown>): CardInput {
+  const token = b.token;
+  if (typeof token !== 'string' || !/^[A-Za-z0-9_.-]{1,200}$/.test(token))
+    throw bad('token is required');
+  const method = b.paymentMethodId;
+  if (typeof method !== 'string' || !/^[a-z0-9_]{1,40}$/.test(method))
+    throw bad('paymentMethodId is required');
+  const issuer = typeof b.issuerId === 'number' ? String(b.issuerId) : b.issuerId;
+  if (issuer != null && (typeof issuer !== 'string' || !/^[A-Za-z0-9_-]{1,20}$/.test(issuer)))
+    throw bad('issuerId is invalid');
+  const installments = b.installments;
+  if (typeof installments !== 'number' || !Number.isInteger(installments))
+    throw bad('installments must be an integer');
+  if (installments < 1 || installments > 24) throw bad('installments must be 1-24');
+  const payer = (b.payer ?? {}) as Record<string, unknown>;
+  const email = typeof payer.email === 'string' ? payer.email.trim() : '';
+  if (email.length > 254 || !EMAIL_RE.test(email)) throw bad('payer.email is invalid');
+  let identification: CardInput['payer']['identification'] = null;
+  if (payer.identification != null) {
+    const id = payer.identification as Record<string, unknown>;
+    const type = id.type;
+    const number = typeof id.number === 'string' ? id.number.replace(/[^0-9A-Za-z]/g, '') : '';
+    if (
+      typeof type !== 'string' ||
+      !/^[A-Za-z]{2,10}$/.test(type) ||
+      !/^[0-9A-Za-z]{1,20}$/.test(number)
+    )
+      throw bad('payer.identification is invalid');
+    identification = { type: type.toUpperCase(), number };
+  }
+  const device = b.deviceId;
+  if (device != null && (typeof device !== 'string' || !/^[A-Za-z0-9_:.-]{1,200}$/.test(device)))
+    throw bad('deviceId is invalid');
+  return {
+    token,
+    paymentMethodId: method,
+    issuerId: issuer ?? null,
+    installments,
+    payer: { email: email.toLowerCase(), identification },
+    deviceId: device ?? null,
+  };
+}
+
+type CardPlan =
+  | { do: 'sync'; row: PaymentRow; tok: StoreToken }
+  /** an unanswered 3DS challenge this card replaces: cancelled at MP before the new charge */
+  | { do: 'abandon'; row: PaymentRow; tok: StoreToken }
+  | {
+      do: 'create';
+      row: PaymentRow;
+      tok: StoreToken;
+      title: string;
+      firstName: string | null;
+      /** an older Kernel's hosted checkout the form replaces — expired at MP, best effort */
+      supersededCheckout: string | null;
+    };
+
+/**
+ * POST /checkout/v1/orders/:id/card — the shopper typed a card into MP's fields on the order page
+ * (Kernel 1.19+). Same shape as preparePayment: a short tx reserves a `creating` attempt, MP is
+ * called outside any tx with key `${orderId}:${attempt}`, a second tx records the answer. One
+ * card at a time: while an attempt is in flight or in review, another submit gets
+ * PAYMENT_IN_PROGRESS — a second token would be a second charge.
+ */
+export async function payWithCard(
+  d: PayDeps,
+  tenant: { id: string; slug: string; name: string },
+  orderId: string,
+  cartId: string,
+  input: CardInput,
+  ctx: PayCtx,
+  now = new Date(),
+): Promise<PayNext> {
+  const unavailable = (reason: string) =>
+    new HttpError(503, 'PAYMENT_UNAVAILABLE', 'online payment is unavailable right now', {
+      reason,
+    });
+  let synced = false;
+  let abandoning = false;
+  for (let i = 0; i < 4; i++) {
+    const plan = await withTenant(d.sql, tenant.id, (tx) =>
+      planCard(tx, d, tenant, orderId, cartId, synced, now),
+    );
+    if (plan.do === 'sync') {
+      if (!(await syncAttempt(d, tenant.id, plan.tok, plan.row))) throw unavailable('sync');
+      synced = true;
+      continue;
+    }
+    if (plan.do === 'abandon') {
+      // MP must confirm the old payment can't be paid any more, or a late answer is a second charge
+      if (abandoning) throw unavailable('challenge');
+      abandoning = true;
+      try {
+        const p = await d.provider.cancelPayment(plan.tok.token, plan.row.provider_payment_id!);
+        await withTenant(d.sql, tenant.id, (tx) => applyProviderPayment(tx, tenant.id, p));
+      } catch (err) {
+        markConnectionLater(d, tenant.id, err, plan.tok);
+        // `invalid`: it already moved at MP (paid or refused) — read what it became
+        if (!(err instanceof ProviderError && err.code === 'invalid'))
+          throw unavailable('challenge');
+        if (!(await syncAttempt(d, tenant.id, plan.tok, plan.row))) throw unavailable('sync');
+      }
+      continue;
+    }
+    if (plan.supersededCheckout)
+      await (d.provider as unknown as Expirable)
+        .expireCheckout?.(plan.tok.token, plan.supersededCheckout)
+        .catch((err) => payLog.warn({ err, orderId }, 'could not expire the hosted checkout'));
+    return createCardAttempt(d, tenant.id, plan, input, ctx);
+  }
+  throw new HttpError(503, 'PAYMENT_UNAVAILABLE', 'online payment is busy — try again', {
+    reason: 'busy',
+  });
+}
+
+const inProgress = (reason: string) =>
+  new HttpError(409, 'PAYMENT_IN_PROGRESS', 'a card payment for this order is on its way', {
+    reason,
+  });
+
+async function planCard(
+  tx: Sql,
+  d: PayDeps,
+  tenant: { id: string; name: string },
+  orderId: string,
+  cartId: string,
+  synced: boolean,
+  now: Date,
+): Promise<CardPlan> {
+  const order = (
+    await tx<OrderLock[]>`
+      select id, number, state, total_cents, customer, payment from orders
+      where tenant_id = ${tenant.id} and id = ${orderId} and cart_id = ${cartId} for update
+    `
+  )[0];
+  if (!order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+  if (!order.payment.online)
+    throw new HttpError(409, 'PAYMENT_NOT_REQUIRED', 'this order is paid offline', {
+      reason: 'offline',
+    });
+  if (order.payment.method !== 'card_online') throw bad('this order is not paid by card');
+  if (order.state === 'cancelled' || order.state === 'refunded')
+    throw new HttpError(409, 'PAYMENT_NOT_REQUIRED', 'this order is closed', { reason: 'closed' });
+  if (!PAYABLE.includes(String(order.payment.status)))
+    throw new HttpError(409, 'PAYMENT_NOT_REQUIRED', 'this order is already paid', {
+      reason: 'paid',
+    });
+  const conn = await loadConnection(tx, tenant.id);
+  const tok = isOnline(conn, d.provider, now)
+    ? await tokenFor(tx, tenant.id, d.sessionSecret)
+    : null;
+  if (!tok)
+    throw new HttpError(503, 'PAYMENT_UNAVAILABLE', 'online payment is unavailable right now', {
+      reason: 'not_connected',
+    });
+  const latest =
+    (
+      await tx<PaymentRow[]>`
+        select * from payments where tenant_id = ${tenant.id} and order_id = ${orderId} and review is null
+        order by attempt desc limit 1 for update
+      `
+    )[0] ?? null;
+  const plan = (row: PaymentRow, supersededCheckout: string | null = null): CardPlan => ({
+    do: 'create',
+    row,
+    tok,
+    title: `Pedido #${order.number} — ${tenant.name}`.slice(0, 200),
+    firstName: order.customer.name?.trim().split(/\s+/)[0]?.slice(0, 60) || null,
+    supersededCheckout,
+  });
+  let superseded: string | null = null;
+  if (latest && OPEN.includes(latest.status)) {
+    if (latest.kind === 'card' && latest.provider_payment_id) {
+      if (!synced) return { do: 'sync', row: latest, tok };
+      if (latest.status_detail !== 'pending_challenge') throw inProgress('processing');
+      return { do: 'abandon', row: latest, tok };
+    }
+    if (formAttempt(latest)) {
+      if (age(latest, now) < CARD_SUBMIT_GRACE_MS) throw inProgress('submitting');
+      // MP never answered that submit. Retry the same attempt: its idempotency key replays the
+      // first payment if MP took it, so the new token is only charged if MP never saw the old one
+      if (age(latest, now) < CARD_REUSE_MAX_MS) return plan(latest);
+      // older: the job has looked it up for ~25 min and found nothing — it closes, a new one opens
+      // (a payment that still turns up binds to it by its attempt metadata)
+      await tx`update payments set status = 'expired', updated_at = now() where id = ${latest.id}`;
+    } else {
+      // an older Kernel's hosted checkout: the form replaces it (money that lands there still counts)
+      superseded = latest.provider_checkout_id;
+      await tx`update payments set status = 'cancelled', status_detail = 'superseded', updated_at = now() where id = ${latest.id}`;
+    }
+  } else if (latest && SETTLED.includes(latest.status)) {
+    await syncOrderPayment(tx, tenant.id, orderId);
+    throw new HttpError(409, 'PAYMENT_NOT_REQUIRED', 'this order is already paid', {
+      reason: 'paid',
+    });
+  }
+  const attempt =
+    ((
+      await tx<{ n: number | null }[]>`
+        select max(attempt) as n from payments where tenant_id = ${tenant.id} and order_id = ${orderId}
+      `
+    )[0]!.n ?? 0) + 1;
+  if (attempt > MAX_ATTEMPTS)
+    throw new HttpError(503, 'PAYMENT_UNAVAILABLE', 'too many payment attempts', {
+      reason: 'attempts',
+    });
+  const fee = await applicationFee(tx, tenant.id, order.total_cents);
+  const row = (
+    await tx<PaymentRow[]>`
+      insert into payments (tenant_id, order_id, provider, kind, status, status_detail, amount_cents,
+        application_fee_cents, attempt)
+      values (${tenant.id}, ${orderId}, ${d.provider.name}, 'card', 'creating', ${CARD_FORM},
+        ${order.total_cents}, ${fee}, ${attempt})
+      returning *
+    `
+  )[0]!;
+  return plan(row, superseded);
+}
+
+async function createCardAttempt(
+  d: PayDeps,
+  tenantId: string,
+  plan: Extract<CardPlan, { do: 'create' }>,
+  input: CardInput,
+  ctx: PayCtx,
+): Promise<PayNext> {
+  const { row, tok } = plan;
+  let p: ProviderPayment;
+  try {
+    p = await d.provider.createCardPayment(tok.token, {
+      amountCents: row.amount_cents,
+      description: plan.title,
+      cardToken: input.token,
+      paymentMethodId: input.paymentMethodId,
+      issuerId: input.issuerId,
+      installments: input.installments,
+      payer: { ...input.payer, ...(plan.firstName ? { firstName: plan.firstName } : {}) },
+      externalReference: row.order_id,
+      attempt: row.attempt,
+      idempotencyKey: `${row.order_id}:${row.attempt}`,
+      notificationUrl: notificationUrlFor(ctx, tenantId),
+      applicationFeeCents: row.application_fee_cents,
+      deviceId: input.deviceId,
+    });
+  } catch (err) {
+    markConnectionLater(d, tenantId, err, tok);
+    const code = err instanceof ProviderError ? err.code : 'unavailable';
+    payLog.error({ err, orderId: row.order_id, attempt: row.attempt }, 'card payment failed');
+    // unavailable: MP may have taken it — the `creating` row stays for the job to look up, and
+    // the next submit waits out CARD_SUBMIT_GRACE_MS before it may charge another token
+    if (code === 'unavailable')
+      throw new HttpError(503, 'PAYMENT_UNAVAILABLE', 'online payment is unavailable right now', {
+        reason: code,
+      });
+    await withTenant(d.sql, tenantId, async (tx) => {
+      await tx`
+        update payments set status = 'cancelled', status_detail = ${`create_${code}`}, updated_at = now()
+        where id = ${row.id} and status = 'creating'
+      `;
+      await syncOrderPayment(tx, tenantId, row.order_id);
+    });
+    // MP refuses a bad, expired or reused token with a 400: the shopper re-types the card
+    if (code === 'invalid') return { kind: 'declined', reason: 'card_data' };
+    throw new HttpError(503, 'PAYMENT_UNAVAILABLE', 'online payment is unavailable right now', {
+      reason: code,
+    });
+  }
+  const held = await recordAttempt(d, tenantId, row, {
+    provider_payment_id: p.id,
+    status: forward('creating', p.status),
+    status_detail: p.statusDetail,
+  });
+  if (held.status === 'rejected' || held.status === 'cancelled')
+    return { kind: 'declined', reason: declineReason(held.status_detail) };
+  if (held.status === 'pending' && p.id === held.provider_payment_id && p.challenge)
+    return { kind: 'challenge', url: p.challenge.url, creq: p.challenge.creq };
+  return { kind: 'none' };
+}
+
+/**
+ * Refetch an open attempt from the provider (outside any tx) and apply it. Down → keep ours, and
+ * answer false: the caller must not act as if MP had nothing.
+ */
 async function syncAttempt(d: PayDeps, tenantId: string, tok: StoreToken, row: PaymentRow) {
   let p: ProviderPayment | null;
   try {
@@ -565,12 +1013,14 @@ async function syncAttempt(d: PayDeps, tenantId: string, tok: StoreToken, row: P
       ? await d.provider.getPayment(tok.token, row.provider_payment_id)
       : await d.provider.findPayment(tok.token, row.order_id);
   } catch (err) {
-    if (err instanceof ProviderError && err.code === 'not_found') return;
-    markConnectionLater(d, tenantId, err, tok);
-    payLog.warn({ err, paymentId: row.id }, 'payment sync failed');
-    return;
+    if (!(err instanceof ProviderError && err.code === 'not_found')) {
+      markConnectionLater(d, tenantId, err, tok);
+      payLog.warn({ err, paymentId: row.id }, 'payment sync failed');
+    }
+    return false;
   }
   if (p) await withTenant(d.sql, tenantId, (tx) => applyProviderPayment(tx, tenantId, p));
+  return true;
 }
 
 /** The connection is gone: a Pix order becomes today's static Pix (or pay on delivery). */
@@ -760,6 +1210,38 @@ export async function reconcileRefunds(
   }
 }
 
+/**
+ * Money landed on an order that was already paid (a 3DS card finished after its replacement, a
+ * hosted checkout paid while the form replaced it, a Pix paid twice): the merchant refunds one
+ * from the order, the team hears of it. Call when `row` has just become settled.
+ */
+async function flagIfPaidTwice(tx: Sql, tenantId: string, row: PaymentRow) {
+  const paidBefore = await tx`
+    select 1 from payments where tenant_id = ${tenantId} and order_id = ${row.order_id} and id <> ${row.id}
+      and status = any(${SETTLED}) and review is distinct from 'amount_mismatch' limit 1
+  `;
+  if (!paidBefore.length) return;
+  await markReview(tx, tenantId, row, 'paid_twice');
+  const info = (
+    await tx<{ name: string; number: number }[]>`
+      select t.name, o.number from tenants t join orders o on o.tenant_id = t.id
+      where t.id = ${tenantId} and o.id = ${row.order_id}
+    `
+  )[0];
+  await recordStaffEventTx(
+    tx,
+    'payment.problem',
+    {
+      orderId: row.order_id,
+      number: info?.number ?? null,
+      storeName: info?.name ?? '',
+      status: 'paid_twice',
+      amountCents: row.amount_cents,
+    },
+    { tenantId, dedupeKey: `payment:${row.id}:paid_twice` },
+  );
+}
+
 export type ApplyResult =
   | { applied: true; orderId: string; changed: boolean; paymentRowId: string; closed: boolean }
   | { applied: false; reason: 'collector' | 'reference' | 'amount' | 'attempts' | 'conflict' };
@@ -837,13 +1319,24 @@ export async function applyProviderPayment(
   }
 
   if (!row) {
+    // An in-page card payment names its attempt. Anything else (a Pix, a hosted checkout) takes
+    // the latest open attempt that isn't an in-page card submit — or the hosted checkout the form
+    // superseded, which MP can still settle — never a card submit whose own answer is pending.
     row = (
-      await tx<PaymentRow[]>`
-        select * from payments where tenant_id = ${tenantId} and order_id = ${orderId}
-          and kind = ${kind} and provider_payment_id is null and review is null
-          and status in ('creating', 'pending')
-        order by attempt desc limit 1 for update
-      `
+      p.attempt != null
+        ? await tx<PaymentRow[]>`
+            select * from payments where tenant_id = ${tenantId} and order_id = ${orderId}
+              and attempt = ${p.attempt} and kind = 'card' and provider_payment_id is null
+              and review is null and status in ('creating', 'pending', 'expired')
+            for update
+          `
+        : await tx<PaymentRow[]>`
+            select * from payments where tenant_id = ${tenantId} and order_id = ${orderId}
+              and kind = ${kind} and provider_payment_id is null and review is null
+              and status_detail is distinct from ${CARD_FORM}
+              and (status in ('creating', 'pending') or (status = 'cancelled' and status_detail = 'superseded'))
+            order by attempt desc limit 1 for update
+          `
     )[0];
     if (row) {
       const id = row.id;
@@ -908,6 +1401,8 @@ export async function applyProviderPayment(
       where id = ${row.id}
     `;
   await reconcileRefunds(tx, row.id, p.refundedCents, opts.release);
+  if (SETTLED.includes(next.status) && !SETTLED.includes(row.status) && next.review === null)
+    await flagIfPaidTwice(tx, tenantId, { ...row, review: null });
   if (next.status !== row.status && PROBLEMS.includes(next.status)) {
     // a refund the store asked for through us is not a problem; one made at the provider is
     const asked =

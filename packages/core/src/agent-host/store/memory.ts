@@ -21,7 +21,7 @@ export const pgMemory: MemoryPort<Sql> = {
   async accept(tx, fact) {
     await tx.host`
       insert into agent_memory (tenant_id, scope, key, value, confidence, provenance, sensitive)
-      values (${tx.actor.tenantId}, ${fact.scope}, ${fact.key}, ${JSON.stringify(fact.value)}::jsonb,
+      values (${tx.actor.tenantId}, ${fact.scope}, ${fact.key}, ${fact.value === null ? tx.host`'null'::jsonb` : tx.host.json(fact.value as never)},
               ${fact.confidence}, ${fact.provenance}, ${fact.sensitive})
       on conflict (tenant_id, scope, key) do update set
         value = excluded.value, confidence = excluded.confidence, provenance = excluded.provenance,
