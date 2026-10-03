@@ -15,6 +15,7 @@ import {
 import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { assertCartOpen, loadCartView, loadZoneRows } from './cart.ts';
+import { applyCouponTx, clearCouponTx } from './cart-ops.ts';
 import {
   createShare,
   importLines,
@@ -246,28 +247,17 @@ export function mountCommerce(d: Deps) {
       const tenant = c.get('tenant') as Tenant;
       const cartId = await sessionCartId(c, sessionSecret);
       const code = parseCode((await bodyJson(c)).code);
-      await assertCartOpen(tx, tenant.id, cartId);
-      const row = await loadCoupon(tx, tenant.id, code);
-      if (!row) throw new HttpError(422, 'COUPON_NOT_FOUND', 'coupon not found', { field: 'code' });
-      const cart = await loadCartView(tx, tenant.id, cartId);
       const customer = await customerOf(c, tx);
       const phone = customer?.phone ?? null;
-      const out = evaluateCoupon(row, {
-        subtotalCents: cart.totals.subtotalCents,
-        deliveryFeeCents: cart.totals.deliveryFeeCents,
+      const cart = await applyCouponTx(
+        tx,
+        tenant.id,
+        cartId,
+        code,
         phone,
-        provenPhone: customer?.proven ? phone : null,
-        usage: await couponUsage(tx, tenant.id, row.id, phone),
-        now: new Date(),
-      });
-      // "add R$ X more" is kept on the cart (it starts applying as the bag grows); the rest refuse
-      if (!out.ok && out.reason !== 'COUPON_MIN_SUBTOTAL')
-        throw new HttpError(422, out.reason!, 'coupon does not apply', {
-          field: 'code',
-          ...out.details,
-        });
-      await tx`update carts set coupon_code = ${row.code}, updated_at = now() where id = ${cartId}`;
-      return { status: 200, body: { cart: await loadCartView(tx, tenant.id, cartId) } };
+        customer?.proven ? phone : null,
+      );
+      return { status: 200, body: { cart } };
     }),
   );
 
@@ -276,9 +266,7 @@ export function mountCommerce(d: Deps) {
     d.idempotency(sql, async (c, tx) => {
       const tenant = c.get('tenant') as Tenant;
       const cartId = await sessionCartId(c, sessionSecret);
-      await assertCartOpen(tx, tenant.id, cartId);
-      await tx`update carts set coupon_code = null, updated_at = now() where id = ${cartId}`;
-      return { status: 200, body: { cart: await loadCartView(tx, tenant.id, cartId) } };
+      return { status: 200, body: { cart: await clearCouponTx(tx, tenant.id, cartId) } };
     }),
   );
 

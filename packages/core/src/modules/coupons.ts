@@ -6,6 +6,8 @@ import { HttpError } from '../platform/http.ts';
 // expired) reports why and discounts nothing, and checkout re-checks it with the
 // customer's phone (per-phone limits, first order, personal rewards).
 
+export type CouponSource = 'staff' | 'merchant' | 'loyalty' | 'agent';
+
 export interface CouponRow {
   id: string;
   code: string;
@@ -20,7 +22,7 @@ export interface CouponRow {
   per_phone_limit: number | null;
   first_order_only: boolean;
   phone: string | null;
-  source: 'staff' | 'merchant' | 'loyalty';
+  source: CouponSource;
   active: boolean;
 }
 
@@ -153,4 +155,83 @@ export function parseCode(v: unknown): string {
   if (!COUPON_CODE_RE.test(code))
     throw new HttpError(422, 'INVALID_COUPON', 'code has invalid characters', { field: 'code' });
   return code;
+}
+
+export interface MintCouponInput {
+  /** generated (prefix + 6 unambiguous characters) when absent */
+  code?: string | undefined;
+  prefix?: string | undefined;
+  kind: CouponRow['kind'];
+  value: number;
+  label?: string | null | undefined;
+  minSubtotalCents?: number | undefined;
+  maxDiscountCents?: number | null | undefined;
+  startsAt?: Date | string | null | undefined;
+  endsAt?: Date | string | null | undefined;
+  /** ends this many days after the tx's now(); ignored when endsAt is set */
+  validDays?: number | undefined;
+  maxRedemptions?: number | null | undefined;
+  perPhoneLimit?: number | null | undefined;
+  firstOrderOnly?: boolean | undefined;
+  phone?: string | null | undefined;
+}
+
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+export function generateCouponCode(prefix?: string): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  const tail = [...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+  return prefix ? `${prefix}-${tail}` : tail;
+}
+
+/** The one insert into coupons. A taken code → 409 COUPON_EXISTS; a generated one retries. */
+export async function mintCouponTx(
+  tx: Sql,
+  tenantId: string,
+  input: MintCouponInput,
+  source: CouponSource,
+): Promise<CouponRow> {
+  const prefix = input.prefix === undefined ? undefined : normalizeCode(input.prefix);
+  if (prefix !== undefined && !/^[A-Z0-9]{1,12}$/.test(prefix))
+    throw new HttpError(422, 'BAD_REQUEST', 'prefix must be 1–12 letters or numbers', {
+      field: 'prefix',
+    });
+  const given = input.code === undefined ? undefined : normalizeCode(input.code);
+  if (given !== undefined && !COUPON_CODE_RE.test(given))
+    throw new HttpError(422, 'BAD_REQUEST', 'use 3–32 letters, numbers, _ or -', { field: 'code' });
+  const value = input.value;
+  const [lo, hi] = input.kind === 'percent' ? [1, 100] : [0, 10_000_000];
+  if (!Number.isInteger(value) || value < lo || value > hi)
+    throw new HttpError(422, 'BAD_REQUEST', `value must be an integer between ${lo} and ${hi}`, {
+      field: 'value',
+    });
+  const endsAt =
+    input.endsAt != null
+      ? tx`${input.endsAt}::timestamptz`
+      : input.validDays != null
+        ? tx`now() + make_interval(days => ${input.validDays})`
+        : tx`null`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = given ?? generateCouponCode(prefix);
+    // on conflict, not a caught 23505: a failed insert would abort the caller's tx
+    const row = (
+      await tx<CouponRow[]>`
+        insert into coupons (tenant_id, code, kind, value, label, min_subtotal_cents, max_discount_cents,
+                             starts_at, ends_at, max_redemptions, per_phone_limit, first_order_only,
+                             phone, source)
+        values (${tenantId}, ${code}, ${input.kind}, ${value}, ${input.label ?? null},
+                ${input.minSubtotalCents ?? 0}, ${input.maxDiscountCents ?? null},
+                ${input.startsAt ?? null}, ${endsAt}, ${input.maxRedemptions ?? null},
+                ${input.perPhoneLimit ?? null}, ${input.firstOrderOnly === true},
+                ${input.phone ?? null}, ${source})
+        on conflict (tenant_id, code) do nothing
+        returning id, code, kind, value, label, min_subtotal_cents, max_discount_cents, starts_at,
+                  ends_at, max_redemptions, per_phone_limit, first_order_only, phone, source, active
+      `
+    )[0];
+    if (row) return row;
+    if (given !== undefined)
+      throw new HttpError(409, 'COUPON_EXISTS', `${given} already exists`, { field: 'code' });
+  }
+  throw new HttpError(409, 'COUPON_EXISTS', 'could not find a free code — try again');
 }

@@ -136,11 +136,7 @@ function shareCode(): string {
   return [...bytes].map((b) => alphabet[b % alphabet.length]).join('');
 }
 
-export async function createShare(
-  tx: Sql,
-  tenantId: string,
-  cartId: string,
-): Promise<{ code: string; expiresAt: string }> {
+async function snapshotLines(tx: Sql, tenantId: string, cartId: string): Promise<ImportLine[]> {
   const items = await tx<
     {
       product_id: string;
@@ -156,7 +152,7 @@ export async function createShare(
     where ci.tenant_id = ${tenantId} and ci.cart_id = ${cartId} order by ci.created_at
   `;
   if (items.length === 0) throw new HttpError(422, 'EMPTY_CART', 'cart is empty');
-  const lines: ImportLine[] = items.map((i) => ({
+  return items.map((i) => ({
     productId: i.product_id,
     slug: i.slug,
     qty: i.qty,
@@ -164,6 +160,14 @@ export async function createShare(
     ...qtyLines(Object.entries(i.modifier_qty ?? {}).map(([id, qty]) => ({ id, qty }))),
     comboSelections: i.combo_selections,
   }));
+}
+
+export async function createShare(
+  tx: Sql,
+  tenantId: string,
+  cartId: string,
+): Promise<{ code: string; expiresAt: string }> {
+  const lines = await snapshotLines(tx, tenantId, cartId);
   const code = shareCode();
   const rows = await tx<{ expires_at: Date }[]>`
     insert into cart_shares (tenant_id, code, items, expires_at)
@@ -174,14 +178,50 @@ export async function createShare(
   return { code, expiresAt: new Date(rows[0]!.expires_at).toISOString() };
 }
 
+/** A sacola link: the cart a conversation built, opened once on the shopper's own device (the
+ *  storefront's `?cart=CODE`), short-lived, and remembered on the thread that sent it. */
+export async function createSacolaLinkTx(
+  tx: Sql,
+  tenantId: string,
+  cartId: string,
+  threadId: string | null,
+  ttlMinutes = 60,
+): Promise<{ code: string; expiresAt: string }> {
+  if (!Number.isInteger(ttlMinutes) || ttlMinutes < 5 || ttlMinutes > 24 * 60)
+    throw new HttpError(422, 'BAD_REQUEST', 'ttlMinutes must be 5–1440');
+  if (threadId !== null && !UUID_RE.test(threadId))
+    throw new HttpError(400, 'BAD_REQUEST', 'threadId must be a uuid');
+  const lines = await snapshotLines(tx, tenantId, cartId);
+  const code = shareCode();
+  const rows = await tx<{ expires_at: Date }[]>`
+    insert into cart_shares (tenant_id, code, items, expires_at, single_use, thread_id)
+    values (${tenantId}, ${code}, ${tx.json(lines as never)},
+            now() + make_interval(mins => ${ttlMinutes}), true, ${threadId})
+    returning expires_at
+  `;
+  return { code, expiresAt: new Date(rows[0]!.expires_at).toISOString() };
+}
+
+/** A single-use code is spent by the read (the import's claim makes a retry replay, not
+ *  re-read); a spent one reads as not found, as old kernels expect. */
 export async function readShare(tx: Sql, tenantId: string, code: string): Promise<ImportLine[]> {
   if (!/^[A-Za-z0-9]{6,16}$/.test(code))
     throw new HttpError(404, 'SHARE_NOT_FOUND', 'share link not found');
-  const row = (
-    await tx<{ items: ImportLine[] }[]>`
-      select items from cart_shares where tenant_id = ${tenantId} and code = ${code} and expires_at > now()
+  const row =
+    (
+      await tx<{ items: ImportLine[] }[]>`
+      update cart_shares set consumed_at = now()
+      where tenant_id = ${tenantId} and code = ${code} and expires_at > now()
+        and single_use and consumed_at is null
+      returning items
     `
-  )[0];
+    )[0] ??
+    (
+      await tx<{ items: ImportLine[] }[]>`
+        select items from cart_shares
+        where tenant_id = ${tenantId} and code = ${code} and expires_at > now() and not single_use
+      `
+    )[0];
   if (!row) throw new HttpError(404, 'SHARE_NOT_FOUND', 'share link not found or expired');
   return row.items;
 }

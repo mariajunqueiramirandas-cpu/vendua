@@ -1,6 +1,12 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
-import { COUPON_CODE_RE, couponLabel, normalizeCode, type CouponRow } from '../modules/coupons.ts';
+import {
+  COUPON_CODE_RE,
+  couponLabel,
+  mintCouponTx,
+  normalizeCode,
+  type CouponRow,
+} from '../modules/coupons.ts';
 import { readLoyalty, type StoredLoyalty } from '../modules/customer.ts';
 import { audit } from './audit.ts';
 import { bool, int, isObj, oneOf, optInt, optText, text, type AdminDeps } from './context.ts';
@@ -101,33 +107,32 @@ export function mountMarketing(d: AdminDeps) {
       const endsAt = date(body.endsAt, 'endsAt');
       if (startsAt && endsAt && endsAt <= startsAt)
         throw new HttpError(422, 'BAD_REQUEST', 'the end is before the start', { field: 'endsAt' });
-      try {
-        const row = (
-          await tx<{ id: string }[]>`
-            insert into coupons (tenant_id, code, kind, value, label, min_subtotal_cents, max_discount_cents,
-                                 starts_at, ends_at, max_redemptions, per_phone_limit, first_order_only, source)
-            values (${t.id}, ${code}, ${kind}, ${value}, ${optText(body.label, 'label', 120) ?? null},
-                    ${optInt(body.minSubtotalCents, 'minSubtotalCents', 0, 10_000_000) ?? 0},
-                    ${optInt(body.maxDiscountCents, 'maxDiscountCents', 1, 10_000_000) ?? null},
-                    ${startsAt}, ${endsAt},
-                    ${optInt(body.maxRedemptions, 'maxRedemptions', 1, 1_000_000) ?? null},
-                    ${optInt(body.perPhoneLimit, 'perPhoneLimit', 1, 1000) ?? null},
-                    ${body.firstOrderOnly === true}, 'merchant')
-            returning id
-          `
-        )[0]!;
-        await audit(tx, t.id, m, {
-          action: 'coupon.create',
-          entity: 'coupon',
-          entityId: row.id,
-          summary: `criou o cupom ${code}`,
-          after: body,
-        });
-      } catch (err) {
-        if ((err as { code?: string }).code === '23505')
-          throw new HttpError(409, 'COUPON_EXISTS', `${code} already exists`, { field: 'code' });
-        throw err;
-      }
+      const row = await mintCouponTx(
+        tx,
+        t.id,
+        {
+          code,
+          kind,
+          value,
+          label: optText(body.label, 'label', 120) ?? null,
+          minSubtotalCents: optInt(body.minSubtotalCents, 'minSubtotalCents', 0, 10_000_000) ?? 0,
+          maxDiscountCents:
+            optInt(body.maxDiscountCents, 'maxDiscountCents', 1, 10_000_000) ?? null,
+          startsAt,
+          endsAt,
+          maxRedemptions: optInt(body.maxRedemptions, 'maxRedemptions', 1, 1_000_000) ?? null,
+          perPhoneLimit: optInt(body.perPhoneLimit, 'perPhoneLimit', 1, 1000) ?? null,
+          firstOrderOnly: body.firstOrderOnly === true,
+        },
+        'merchant',
+      );
+      await audit(tx, t.id, m, {
+        action: 'coupon.create',
+        entity: 'coupon',
+        entityId: row.id,
+        summary: `criou o cupom ${code}`,
+        after: body,
+      });
       await emitAdminTx(tx, t.id, 'marketing');
       return { status: 201, body: { coupons: await couponsView(tx, t.id) } };
     }),

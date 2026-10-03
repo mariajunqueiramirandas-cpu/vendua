@@ -2,7 +2,9 @@ import { emitAdminTx } from './live.ts';
 import type { Context } from 'hono';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson } from '../platform/http.ts';
+import { forgetSubjectTx } from '../agent-host/forget.ts';
 import { loyaltyCard } from '../modules/customer.ts';
+import { jidForPhone, phoneVariants } from '../store-whatsapp/text.ts';
 import { audit } from './audit.ts';
 import { oneOf, text, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
@@ -181,16 +183,46 @@ export function mountCustomers(d: AdminDeps) {
         throw new HttpError(422, 'CONFIRMATION_MISMATCH', 'type the last 4 digits of the phone', {
           field: 'confirm',
         });
+      const variants = phoneVariants(phone);
+      const jids = variants.flatMap((v) => jidForPhone(v) ?? []);
+      const threads = await tx<{ id: string; cart_id: string | null }[]>`
+        select id, cart_id from shopper_threads
+        where tenant_id = ${t.id} and (phone = any(${variants}::text[]) or address = any(${jids}::text[]))
+      `;
       const s = await summary(tx, t.id, phone);
-      if (!s) throw new HttpError(404, 'CUSTOMER_NOT_FOUND', 'no orders for this phone');
-      const orders = await tx`
+      if (!s && !threads.length)
+        throw new HttpError(404, 'CUSTOMER_NOT_FOUND', 'no orders for this phone');
+      const orders = await tx<{ id: string; cart_id: string | null }[]>`
         update orders set
           customer = ${tx.json({ name: 'Cliente removido', phone: '' })},
           customer_phone = null,
           notes = null,
           delivery = (delivery - 'address' - 'addressParts' - 'lat' - 'lng')
         where tenant_id = ${t.id} and customer_phone = ${phone}
-        returning id
+        returning id, cart_id
+      `;
+      // the address a cart held for those orders and conversations goes with them
+      const carts = [...orders, ...threads].flatMap((r) => r.cart_id ?? []);
+      if (carts.length)
+        await tx`
+          update carts set delivery = null, delivery_route = null
+          where tenant_id = ${t.id} and id = any(${carts}::uuid[])
+        `;
+      // each conversation: its messages and media cascade; its agent actor and memory go too
+      for (const th of threads)
+        await forgetSubjectTx(
+          tx,
+          t.id,
+          { kind: 'shopper_thread', id: th.id },
+          `shopper_thread:${th.id}`,
+        );
+      if (threads.length)
+        await tx`delete from shopper_threads where tenant_id = ${t.id} and id = any(${threads.map((th) => th.id)}::uuid[])`;
+      await tx`update agent_incentives set phone = null where tenant_id = ${t.id} and phone = any(${variants}::text[])`;
+      // the opt-out stays: it is their wish not to be texted
+      await tx`
+        delete from store_wa_messages
+        where tenant_id = ${t.id} and (phone = any(${variants}::text[]) or jid = any(${jids}::text[]))
       `;
       await tx`
         delete from notify_requests
@@ -203,10 +235,10 @@ export function mountCustomers(d: AdminDeps) {
         entity: 'customer',
         // the log must not re-identify them: last digits only
         entityId: `…${phone.slice(-4)}`,
-        summary: `apagou os dados de um cliente a pedido dele (${orders.length} pedidos anonimizados)`,
+        summary: `apagou os dados de um cliente a pedido dele (${orders.length} pedidos anonimizados, ${threads.length} conversas apagadas)`,
       });
       await emitAdminTx(tx, t.id, 'order.changed');
-      return { status: 200, body: { anonymized: orders.length } };
+      return { status: 200, body: { anonymized: orders.length, conversations: threads.length } };
     }),
   );
 }

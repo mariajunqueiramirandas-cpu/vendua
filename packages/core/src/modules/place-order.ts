@@ -17,6 +17,9 @@ import { recordStaffEventTx } from './staff-events.ts';
 import { drawStock, stockDemand } from './stock.ts';
 import { deriveStatus, type StoreSettingsRow } from './store.ts';
 
+/** R$ 10.000: no shopper pays a delivery with more than that in cash */
+export const MAX_CHANGE_CENTS = 1_000_000;
+
 /**
  * The one place an order is born (checkout invariant: at most one order per cart).
  * Everything money-shaped is recomputed here under locks from live rows: zone fee,
@@ -35,6 +38,10 @@ export async function placeOrderTx(
     provenPhone?: string | null;
     /** distance pricing: a road leg fetched for this pin before the tx (when the cart has none) */
     route?: RouteQuote | null;
+    /** where the order came from (orders.source, the placed event's `via`) */
+    source?: string;
+    /** the Vendedor conversation that sold it */
+    threadId?: string | null;
   } = {},
 ): Promise<string> {
   // Lock the cart row first — concurrent checkouts would both see 'open' and mint duplicates.
@@ -171,14 +178,34 @@ export async function placeOrderTx(
     -(subtotal + deliveryFee - discount),
   );
   const total = subtotal + deliveryFee - discount + paymentAdjustment;
+  const changeFor = body.payment.changeForCents ?? null;
+  if (changeFor !== null) {
+    if (
+      body.payment.method !== 'cash' ||
+      !Number.isInteger(changeFor) ||
+      changeFor < total ||
+      changeFor > MAX_CHANGE_CENTS
+    )
+      throw new HttpError(
+        422,
+        'INVALID_CHANGE',
+        body.payment.method !== 'cash'
+          ? 'change is only for cash payments'
+          : `change must be for at least the total and at most ${MAX_CHANGE_CENTS} cents`,
+        { field: 'payment.changeForCents', minCents: total, maxCents: MAX_CHANGE_CENTS },
+      );
+  }
 
   // online: Mercado Pago charges it when the shopper's page asks (POST /orders/:id/pay);
   // a store that isn't connected keeps today's static Pix from its own key
   const method = body.payment.method;
-  const payment =
-    offer.online && offer.provider && (method === 'pix' || method === 'card_online')
+  const payment = {
+    ...(offer.online && offer.provider && (method === 'pix' || method === 'card_online')
       ? onlinePayment(offer.provider, method, total)
-      : offlinePayment(settings, method, total, number);
+      : offlinePayment(settings, method, total, number)),
+    ...(changeFor !== null ? { changeForCents: changeFor } : {}),
+  };
+  const source = opts.source ?? 'storefront';
 
   const prep = settings?.prep_time_minutes ?? 30;
   const at = (min: number) => new Date(now.getTime() + min * 60_000).toISOString();
@@ -216,11 +243,11 @@ export async function placeOrderTx(
   await tx`
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
-                        total_cents, coupon_code, notes, scheduled_for)
+                        total_cents, coupon_code, notes, scheduled_for, source, thread_id)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
-            ${body.notes?.trim() || null}, ${scheduledFor})
+            ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   await Promise.all([
@@ -249,7 +276,7 @@ export async function placeOrderTx(
       `,
     tx`
       insert into order_events (tenant_id, order_id, from_state, to_state, actor, meta)
-      values (${tenantId}, ${orderId}, null, 'placed', 'customer', ${tx.json({ via: 'checkout-sandbox' })})
+      values (${tenantId}, ${orderId}, null, 'placed', 'customer', ${tx.json({ via: source })})
     `,
     tx`
       insert into outbox (tenant_id, topic, payload)

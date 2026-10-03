@@ -113,6 +113,7 @@ const product: ProductDetail = {
   basePriceCents: 1000,
   compareAtPriceCents: null,
   fromPriceCents: null,
+  dietary: [],
   status: 'active',
   figureVariant: 'default',
   tags: [],

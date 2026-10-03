@@ -188,6 +188,8 @@ export interface ProductSummary {
   needsChoices: boolean;
   /** set only while outside its availability schedule (status then reads 'sold_out') */
   availabilityLabel?: string;
+  /** what the merchant states about allergens and diets (DIETARY_TAGS); [] = nothing stated */
+  dietary: string[];
 }
 
 export interface CategoryWithProducts {
@@ -268,6 +270,36 @@ interface ProductRow {
   needs_choices: boolean;
   availability_schedule: AvailabilitySchedule | null;
   promo_schedule: PromoSchedule | null;
+  dietary: string[] | null;
+}
+
+/** the tags products.dietary may hold (migration 0082's CHECK) */
+export const DIETARY_TAGS = [
+  'sem_gluten',
+  'contem_gluten',
+  'sem_lactose',
+  'contem_lactose',
+  'vegano',
+  'vegetariano',
+  'contem_amendoim',
+  'contem_castanhas',
+  'contem_ovo',
+  'contem_frutos_do_mar',
+  'apimentado',
+] as const;
+export type DietaryTag = (typeof DIETARY_TAGS)[number];
+
+/** an admin write's `dietary`: known tags only (422 otherwise), deduplicated, in list order */
+export function parseDietary(v: unknown): DietaryTag[] {
+  if (!Array.isArray(v) || v.length > DIETARY_TAGS.length * 2)
+    throw new HttpError(422, 'BAD_REQUEST', 'dietary must be a list of tags', { field: 'dietary' });
+  for (const tag of v)
+    if (!DIETARY_TAGS.includes(tag as DietaryTag))
+      throw new HttpError(422, 'BAD_REQUEST', `unknown dietary tag`, {
+        field: 'dietary',
+        allowed: DIETARY_TAGS,
+      });
+  return DIETARY_TAGS.filter((t) => v.includes(t));
 }
 
 /** Live availability — stock 0 is sold out without anyone flipping a status. */
@@ -372,6 +404,7 @@ function toSummary(
     preorderLeadDays: row.preorder_lead_days,
     needsChoices: row.needs_choices,
     ...(off && status === 'active' ? { availabilityLabel: off.label } : {}),
+    dietary: row.dietary ?? [],
   };
 }
 
@@ -379,7 +412,7 @@ const productColumns = (tx: Sql) => tx`
   p.id, p.category_id, p.slug, p.name, p.description, p.base_price_cents, p.compare_at_price_cents,
   p.status, p.figure_variant,
   p.tags, p.kind, p.stock_quantity, p.low_stock_threshold, p.requires_preorder, p.preorder_lead_days,
-  p.availability_schedule, p.promo_schedule,
+  p.availability_schedule, p.promo_schedule, p.dietary,
   (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as image_url,
   (p.kind = 'combo' or exists (select 1 from modifier_groups g where g.product_id = p.id)) as needs_choices
 `;

@@ -53,15 +53,21 @@ import { composeNotices, type PageMeta, type SurfacesEnvelope } from './modules/
 import {
   addItem,
   assertCartOpen,
-  assertLineQty,
   loadCartView,
   loadZoneRows,
-  deliveryPricing,
   distancePricingOf,
   priceLine,
   quoteInput,
   storeCoords,
 } from './modules/cart.ts';
+import {
+  createCartTx,
+  parseDeliveryInput,
+  quoteDeliveryTx,
+  removeLineTx,
+  setDeliveryTx,
+  setLineQtyTx,
+} from './modules/cart-ops.ts';
 import { preordersWhileClosed, validateCheckoutShape } from './modules/checkout.ts';
 import { loadOrderView, orderVersion, TERMINAL_STATES } from './modules/orders.ts';
 import { placeOrderTx } from './modules/place-order.ts';
@@ -75,13 +81,10 @@ import {
 } from './modules/customer.ts';
 import {
   distanceFeeCents,
-  normalizeCep,
-  resolveDelivery,
   validCoords,
   viaCep,
   zoneMinFeeCents,
   type CepLookup,
-  type RouteQuote,
 } from './modules/geo.ts';
 import {
   mapTilesFromEnv,
@@ -824,14 +827,10 @@ export function createApp({
         return c.json({ sessionToken: bearer, cart });
       }
     }
-    return idempotency(sql, async (c, tx) => {
-      const cartId = crypto.randomUUID();
-      const token = await mintSessionToken(cartId, tenant.id, sessionSecret);
-      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
-      const hash = Buffer.from(digest).toString('hex');
-      await tx`insert into carts (id, tenant_id, session_hash) values (${cartId}, ${tenant.id}, ${hash})`;
+    return idempotency(sql, async (_c, tx) => {
+      const { cartId, sessionToken } = await createCartTx(tx, tenant.id, sessionSecret);
       const cart = await loadCartView(tx, tenant.id, cartId);
-      return { status: 201, body: { sessionToken: token, cart } };
+      return { status: 201, body: { sessionToken, cart } };
     })(c);
   });
 
@@ -892,20 +891,13 @@ export function createApp({
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
-      const qty = Number(body.qty);
-      if (!Number.isInteger(qty) || qty < 0 || qty > 99) {
-        throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 0 and 99');
-      }
-      await assertCartOpen(tx, tenant.id, cartId);
-      const itemId = uuidParam(c, 'itemId');
-      if (qty === 0) {
-        await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${itemId}`;
-      } else {
-        await assertLineQty(tx, tenant.id, cartId, itemId, qty);
-        await tx`update cart_items set qty = ${qty} where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${itemId}`;
-      }
-      await tx`update carts set updated_at = now() where id = ${cartId}`;
-      const cart = await loadCartView(tx, tenant.id, cartId);
+      const cart = await setLineQtyTx(
+        tx,
+        tenant.id,
+        cartId,
+        c.req.param('itemId') ?? '',
+        Number(body.qty),
+      );
       return { status: 200, body: { cart } };
     })(c);
   });
@@ -914,9 +906,7 @@ export function createApp({
     const tenant = c.get('tenant');
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
-      await assertCartOpen(tx, tenant.id, cartId);
-      await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${uuidParam(c, 'itemId')}`;
-      const cart = await loadCartView(tx, tenant.id, cartId);
+      const cart = await removeLineTx(tx, tenant.id, cartId, c.req.param('itemId') ?? '');
       return { status: 200, body: { cart } };
     })(c);
   });
@@ -928,42 +918,8 @@ export function createApp({
       peek?.mode === 'delivery' ? await routeFor(c, tenant.id, peek.lat, peek.lng) : null;
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
-      const body = await bodyJson(c);
-      const { mode } = body;
-      if (mode !== 'pickup' && mode !== 'delivery') {
-        throw new HttpError(422, 'INVALID_DELIVERY', 'mode must be pickup or delivery');
-      }
-      const opt = (k: string, max: number) =>
-        body[k] === undefined || body[k] === null ? null : str(body[k], k, max);
-      const cepRaw = opt('cep', 12);
-      const cep = cepRaw ? normalizeCep(cepRaw) : null;
-      if (cepRaw && !cep) throw new HttpError(422, 'INVALID_DELIVERY', 'cep must have 8 digits');
-      const hasCoords = body.lat !== undefined && body.lat !== null;
-      const coords = hasCoords ? validCoords(body.lat, body.lng) : null;
-      if (hasCoords && !coords)
-        throw new HttpError(422, 'INVALID_DELIVERY', 'lat/lng must be coordinates');
-      const delivery = {
-        mode,
-        neighborhood: opt('neighborhood', 200),
-        address: opt('address', 500),
-        street: opt('street', 120),
-        number: opt('number', 10),
-        complement: opt('complement', 80),
-        reference: opt('reference', 120),
-        cep,
-        lat: coords?.lat ?? null,
-        lng: coords?.lng ?? null,
-      };
-      await assertCartOpen(tx, tenant.id, cartId);
-      // the leg is kept only for the pin it was fetched for (loadCartView re-checks the store's)
-      const leg =
-        route && coords && route.to[0] === coords.lat && route.to[1] === coords.lng ? route : null;
-      await tx`
-        update carts set delivery = ${tx.json(delivery)},
-          delivery_route = ${leg ? tx.json({ ...leg }) : null}, updated_at = now()
-        where tenant_id = ${tenant.id} and id = ${cartId}
-      `;
-      const cart = await loadCartView(tx, tenant.id, cartId);
+      const delivery = parseDeliveryInput(await bodyJson(c));
+      const cart = await setDeliveryTx(tx, tenant.id, cartId, delivery, route);
       return { status: 200, body: { cart } };
     })(c);
   });
@@ -983,74 +939,14 @@ export function createApp({
       if (hasCoords && !coords)
         throw new HttpError(422, 'INVALID_DELIVERY', 'lat/lng must be coordinates');
       const paymentMethod = paymentMethodParam(body.paymentMethod);
-      const zones = await loadZones(tx, tenant.id);
-      const settings = await loadSettings(tx, tenant.id);
       const cartId = await sessionCartId(c, sessionSecret).catch(() => null);
-      // one leg prices the whole answer: the fresh one, else the one the cart holds for this pin
-      const stored = cartId
-        ? ((
-            await tx<{ delivery_route: RouteQuote | null }[]>`
-              select delivery_route from carts where tenant_id = ${tenant.id} and id = ${cartId}
-            `
-          )[0]?.delivery_route ?? null)
-        : null;
-      const leg = route ?? stored;
-      const match = resolveDelivery(
-        zones,
-        { neighborhood, coords },
-        storeCoords(settings),
-        deliveryPricing(settings, leg),
+      const quote = await quoteDeliveryTx(
+        tx,
+        tenant.id,
+        { neighborhood, lat: coords?.lat ?? null, lng: coords?.lng ?? null },
+        { cartId, route, paymentMethod },
       );
-      // Relatórios' zone conversion: who asked for delivery where (server-side, like order_placed);
-      // a quote without a cart session still answers, it just isn't counted
-      if (cartId)
-        await tx`
-          insert into analytics_events (tenant_id, name, at, session_id, props)
-          values (${tenant.id}, 'delivery_quoted', now(), ${cartId}, ${tx.json({
-            zone: match?.zone.name ?? null,
-            neighborhood: neighborhood.trim().slice(0, 80) || null,
-            eligible: !!match,
-          })})
-        `;
-      if (!match) {
-        return { status: 200, body: { eligible: false, reason: 'OUT_OF_ZONE' } };
-      }
-      // with a cart: its totals delivered here and paid this way (Core's numbers, never the client's)
-      const totals = cartId
-        ? await loadCartView(tx, tenant.id, cartId, new Date(), {
-            paymentMethod,
-            delivery: {
-              mode: 'delivery',
-              neighborhood,
-              lat: coords?.lat ?? null,
-              lng: coords?.lng ?? null,
-            },
-            route: leg,
-          }).then(
-            (v) => v.totals,
-            (err) => {
-              if (err instanceof HttpError && err.code === 'CART_NOT_FOUND') return null;
-              throw err;
-            },
-          )
-        : null;
-      return {
-        status: 200,
-        body: {
-          eligible: true,
-          zoneId: match.zone.id,
-          zoneName: match.zone.name,
-          zoneKind: match.zone.kind,
-          feeCents: match.feeCents,
-          etaMin: match.zone.eta_min_minutes,
-          etaMax: match.zone.eta_max_minutes,
-          distanceKm: match.distanceKm,
-          distanceSource: match.distanceSource ?? null,
-          minOrderCents: Math.max(settings?.min_order_cents ?? 0, match.zone.min_order_cents),
-          freeDeliveryOverCents: match.zone.free_delivery_over_cents,
-          ...(totals ? { totals } : {}),
-        },
-      };
+      return { status: 200, body: quote };
     })(c);
   });
 
