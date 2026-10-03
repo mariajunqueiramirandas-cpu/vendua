@@ -14,7 +14,7 @@ import { platformHost } from '../../platform/store-origin.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { mountBillingDev } from './dev-routes.ts';
 import { validEmail } from './input.ts';
-import { openOr409, publicPlanOr422, publicPlans, type PlanRow } from './plans.ts';
+import { heldPlans, openOr409, publicPlanOr422, publicPlans, type PlanRow } from './plans.ts';
 import {
   accessCodeMatches,
   normalizeSlug,
@@ -160,7 +160,11 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     // one trial per owner phone; a replay of this very signup finds its store first
     const trialUsed = () =>
       new HttpError(409, 'TRIAL_USED', 'this phone already had its free trial', { field: 'trial' });
-    if (!owned) openOr409(plan);
+    // a replay or a resumed signup may only ask again for the plan the store already holds
+    openOr409(
+      plan,
+      owned ? await withTenant(sql, owned.tenant_id, (tx) => heldPlans(tx, owned!.tenant_id)) : [],
+    );
     if (!owned && trial && (await phoneHadTrial(sql, phone))) throw trialUsed();
     if (!owned) {
       if ((await slugStatus(sql, slug, d.storeDomain)).reason === 'taken')

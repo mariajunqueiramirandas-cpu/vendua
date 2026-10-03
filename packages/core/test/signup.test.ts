@@ -308,6 +308,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       expect(
         (await sql`select 1 from tenants where slug = ${`signup-${nonce}-closed`}`).length,
       ).toBe(0);
+      // a store that went through on Mirim can't come back for the closed plan
+      const made = await signup(token, `signup-${nonce}-resume`, {}, other);
+      expect(made.status).toBe(201);
+      const again = await signup(token, `signup-${nonce}-resume`, { planId: 'pangolim' }, other);
+      expect(again.body.error?.code).toBe('PLAN_UNAVAILABLE');
+      expect(
+        (await sql`select plan from tenants where slug = ${`signup-${nonce}-resume`}`)[0]!.plan,
+      ).toBe('mirim');
+      // …while the same request again still finds its store
+      expect((await signup(token, `signup-${nonce}-resume`, {}, other)).status).toBe(201);
     } finally {
       await sql`update plans set available = true where id = 'pangolim'`;
     }
