@@ -514,6 +514,22 @@ over realistic data. No screen uses a raw element where a component exists.
 | `Celebration`                             | the milestone overlay (6.4); rate-limited to one per session                                                                 |
 | `DevicePreview`                           | framed live storefront for Aparência and onboarding                                                                          |
 | `Chart` family                            | sparkline, bars, funnel; follows the repo's dataviz rules; tabular labels; every chart has a text summary for screen readers |
+| `PersonaAvatar`                           | the Vendedor's spark disc with its initial; the ring breathes (3.2 s) only while it answers                                  |
+| `Bubble`                                  | three voices: `in` paper, `seller` spark-soft signed "Ana · Vendedor", `you` forest; "sugestão" tag; Ensaio draft dashed     |
+| `VoiceNote`                               | play, waveform, duration, transcript in italics; the transcript is its accessible name                                       |
+| `ActionReceipt`                           | one past-tense line of what she did ("anotou 2 itens na sacola") with "por quê"                                              |
+| `CoreReceipt`                             | Core's receipt paper: dashed tear, lines, fee, total, ETA, "calculado pela loja" shield; a table to screen readers           |
+| `SacolaBar`                               | the pinned sacola: count, Core's total, the five-step stepper (a list, current step marked); opens its sheet                 |
+| `Floor`                                   | who answers: "Ana está atendendo" + assumir + phone hint; the owner's with "devolver", suggestions, composer                 |
+| `ReasonChip`, `FloorChip`                 | warning chip with icon and word (alergia, reclamação…); who holds the conversation ("Ana atendendo", "você")                 |
+| `ScoreRing`                               | "19 de 20" in display numerals around a ring; the number is the accessible label; a running state                            |
+| `GuaranteeChip`                           | "sempre cumprida" (shield, success) for enforced rules, "orientação" (quiet) for the rest                                    |
+| `ChecklistRow`                            | step or check with state in colour, icon and word (done, now, to do, optional, miss), a figure or an action                  |
+| `Discordance`                             | an Ensaio disagreement: the shopper, her dashed draft, your reply, "ensinar como eu fiz" / "estava certa"                    |
+| `SalesFunnel`                             | conversas → sacola → resumo → fecharam as centred bars with counts; one sentence for screen readers                          |
+| `AgentJourney`, `AgentGuide`              | the Vendedor onboarding's journey bar (Conhecer · Ensinar · Testar · Começar) and her speech bubble                          |
+| `MiniChat`                                | the onboarding's live WhatsApp preview (`MiniStore`'s counterpart) and the frame of the owner's test chat                    |
+| `ProposalCard`                            | a Resposta or Regra she proposes, with its guarantee chip; nothing kept until "está certo"                                   |
 
 States every interactive component ships with: rest, hover (pointer only),
 pressed, focus-visible (2 px lime ring + 2 px offset forest ring, visible on
