@@ -1,8 +1,8 @@
 # Vendedor: the merchant's AI sales agent (P-017)
 
-> Status: Proposed, not planned · Started 2026-10-02 · Gap: [P-017](../competitor-parity.md)
+> Status: Proposed, not planned · Decision: [ADR 0031](../adr/0031-vendedor.md) · Started 2026-10-02 · Gap: [P-017](../competitor-parity.md)
 > (also P-001 abandoned cart, P-018 campaigns, P-020 descriptions) · Builds on: ADRs
-> [0014](../adr/0014-crm-agent-v2.md)–[0017](../adr/0017-due-time-scheduler.md),
+> [0030](../adr/0030-agent-runtime-v3.md),
 > [0019](../adr/0019-customer-identity-without-accounts.md),
 > [0024](../adr/0024-distance-based-delivery-pricing.md),
 > [0026](../adr/0026-store-whatsapp-gateway.md) · Benchmark:

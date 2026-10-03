@@ -1,6 +1,6 @@
 # 18 — Agent Runtime v3
 
-> Status: Proposed · Last reviewed: 2026-10-02 · Supersedes on acceptance: the run machinery of
+> Status: Proposed · Last reviewed: 2026-10-03 · Decision: [ADR 0030](../adr/0030-agent-runtime-v3.md) · Supersedes when the migration ends: the run machinery of
 > ADRs [0014](../adr/0014-crm-agent-v2.md)–[0017](../adr/0017-due-time-scheduler.md) · First
 > user: the [Vendedor](../features/sales-agent.md) · Later: the CRM sales agent
 
@@ -467,7 +467,7 @@ transport; the owner declined external assistant integrations on 2026-10-01.
 4. **Delete** `runner.ts`, `tools.ts` and the rest of `src/agent/`, archive and drop
    `agent_runs`, `agent_inbox`, `agent_wakeups` and `agent_run_steps`, and the agent columns on
    `leads`.
-5. **An ADR** records the runtime and supersedes the run machinery of ADRs 0014–0017.
+5. **[ADR 0030](../adr/0030-agent-runtime-v3.md)** records the runtime and supersedes the run machinery of ADRs 0014–0017 once this step lands.
 
 The agent invariant in `CLAUDE.md` changes twice. At step 1, when the first mailbox row is
 written, it names two producers: `requestAgentTx` for the old runtime and `dispatchTx` for v3,
