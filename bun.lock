@@ -93,6 +93,14 @@
         "typescript": "6.0.3",
       },
     },
+    "packages/agent-runtime": {
+      "name": "@vendua/agent-runtime",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/bun": "1.4.2",
+        "typescript": "6.0.3",
+      },
+    },
     "packages/cli": {
       "name": "@vendua/cli",
       "version": "0.0.0",
@@ -759,6 +767,8 @@
     "@types/ws": ["@types/ws@8.18.1", "", { "dependencies": { "@types/node": "*" } }, "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg=="],
 
     "@vendua/admin": ["@vendua/admin@workspace:apps/admin"],
+
+    "@vendua/agent-runtime": ["@vendua/agent-runtime@workspace:packages/agent-runtime"],
 
     "@vendua/cli": ["@vendua/cli@workspace:packages/cli"],
 
