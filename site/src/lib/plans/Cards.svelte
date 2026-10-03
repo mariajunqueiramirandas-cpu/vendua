@@ -2,11 +2,11 @@
   import Dua from '$lib/components/Dua.svelte';
   import { plans, signup } from '$lib/content';
 
-  const { mirim, bandeira, pangolin } = plans;
+  const { mirim, bandeira, pangolim } = plans;
 
   // a perk with a live demo links to it in the hub (`#demo-<id>`, Demos.svelte)
   type Perk = { text: string; demo?: 'vendedor' | 'pedido' | 'cozinha' | 'loja'; see?: string };
-  const perks: Record<'mirim' | 'bandeira' | 'pangolin', Perk[]> = {
+  const perks: Record<'mirim' | 'bandeira' | 'pangolim', Perk[]> = {
     mirim: [
       { text: 'A loja com o seu nome', demo: 'loja', see: 'a loja' },
       { text: 'Pedidos no celular', demo: 'pedido', see: 'um pedido chegando' },
@@ -17,18 +17,18 @@
       { text: 'Impressão automática da comanda' },
       { text: 'Cartão fidelidade' },
       {
-        text: `Vendedor com IA no WhatsApp da loja: ${bandeira.conversations} conversas por mês (${bandeira.trialConversations} no teste)`,
+        text: `Duá, vendedor com IA no WhatsApp da loja: ${bandeira.conversations} conversas por mês (${bandeira.trialConversations} no teste)`,
         demo: 'vendedor',
-        see: 'o Vendedor',
+        see: 'o Duá',
       },
     ],
-    pangolin: [
+    pangolim: [
       { text: 'Domínio próprio' },
       { text: 'Um site feito pelo nosso agente de IA' },
       {
-        text: `Vendedor com ${pangolin.conversations} conversas por mês`,
+        text: `Duá com ${pangolim.conversations} conversas por mês`,
         demo: 'vendedor',
-        see: 'o Vendedor',
+        see: 'o Duá',
       },
     ],
   };
@@ -47,7 +47,7 @@
   </ul>
 {/snippet}
 
-<!-- Mirim plain on the sky, Bandeira raised in the middle with Duá's flag, Pangolin on the night sky -->
+<!-- Mirim plain on the sky, Bandeira raised in the middle with Duá's flag, Pangolim on the night sky -->
 <ul class="plans" role="list">
   <li class="plan mirim">
     <div class="row">
@@ -56,7 +56,7 @@
     </div>
     <p class="addr"><span class="lock" aria-hidden="true"></span>seunome.vendua.com.br</p>
     {@render list(perks.mirim)}
-    <p class="lacks">Sem a tela da cozinha, a impressão, o cartão fidelidade e o Vendedor.</p>
+    <p class="lacks">Sem a tela da cozinha, a impressão, o cartão fidelidade e o Duá.</p>
     <a class="take" href={signup(mirim.id)}
       >Criar loja no {mirim.short}<i class="go" aria-hidden="true"></i></a
     >
@@ -78,17 +78,21 @@
     >
   </li>
 
-  <li class="plan pangolin">
+  <li class="plan pangolim">
     <div class="row">
-      <h3 class="name">{pangolin.name}</h3>
-      <p class="cost tnum">{pangolin.price}<small>/mês</small></p>
+      <h3 class="name">{pangolim.name}</h3>
+      <p class="cost tnum">{pangolim.price}<small>/mês</small></p>
     </div>
     <p class="addr"><span class="lock" aria-hidden="true"></span>bolosdanena.com.br</p>
     <p class="more">Tudo do {bandeira.short}, e mais:</p>
-    {@render list(perks.pangolin)}
-    <a class="take" href={signup(pangolin.id)}
-      >Criar loja no {pangolin.short}<i class="go" aria-hidden="true"></i></a
-    >
+    {@render list(perks.pangolim)}
+    {#if pangolim.available}
+      <a class="take" href={signup(pangolim.id)}
+        >Criar loja no {pangolim.short}<i class="go" aria-hidden="true"></i></a
+      >
+    {:else}
+      <p class="closed">Ainda não está aberto para assinatura.</p>
+    {/if}
   </li>
 </ul>
 
@@ -119,7 +123,7 @@
     min-width: 0;
     padding: 22px 20px;
   }
-  /* Mirim and Pangolin: name and price on one line, so Bandeira's price is the one that stands out */
+  /* Mirim and Pangolim: name and price on one line, so Bandeira's price is the one that stands out */
   .row {
     display: flex;
     flex-wrap: wrap;
@@ -157,7 +161,7 @@
     font-weight: 600;
   }
 
-  /* the address: Mirim's on vendua.com.br, Pangolin's on its own domain */
+  /* the address: Mirim's on vendua.com.br, Pangolim's on its own domain */
   .addr {
     display: inline-flex;
     align-items: center;
@@ -405,31 +409,40 @@
     background: var(--primary-hover);
   }
 
-  /* Pangolin: the top of the line, under the night sky in both themes */
-  .pangolin {
+  /* Pangolim: the top of the line, under the night sky in both themes */
+  .pangolim {
     --tick: var(--spark);
     border-radius: var(--radius-lg);
     background: var(--sky-5);
     color: var(--after-ink);
     box-shadow: 0 0 0 1px var(--after-line);
   }
-  .pangolin .addr {
+  .pangolim .addr {
     background: var(--spark);
     color: var(--on-spark);
   }
-  .pangolin .see {
+  .pangolim .see {
     background: var(--after-card);
     box-shadow: inset 0 0 0 1px var(--after-line);
   }
-  .pangolin .see:hover {
+  .pangolim .see:hover {
     background: var(--spark);
     color: var(--on-spark);
   }
-  .pangolin .take:hover {
+  .pangolim .take:hover {
     background: var(--after-card);
   }
+  /* closed (content.ts `available`): a plain line where the button would be, nothing to press */
+  .closed {
+    width: 100%;
+    margin-top: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--after-line);
+    color: var(--after-muted);
+    font: 500 0.9375rem/1.4 var(--font-sans);
+  }
   @media (min-width: 1024px) {
-    .pangolin {
+    .pangolim {
       margin: 44px 0 0 20px;
       padding: 26px 24px;
     }

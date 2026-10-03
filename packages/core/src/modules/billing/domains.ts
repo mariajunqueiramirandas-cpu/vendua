@@ -9,7 +9,7 @@ import { recordStaffEventTx } from '../staff-events.ts';
 import { DAY_MS } from './invoices.ts';
 import { billingStaff } from './subscriptions.ts';
 
-// Pangolin's own domain: the owner points a CNAME (or A records) at `<slug>.<storeDomain>` and adds
+// Pangolim's own domain: the owner points a CNAME (or A records) at `<slug>.<storeDomain>` and adds
 // TXT `_vendua.<host>` = `vendua-verify=<token>`. Core checks (pending_dns → dns_ok); the team
 // turns TLS on and activates it in the CRM (activate_custom_domain) — only then it serves.
 

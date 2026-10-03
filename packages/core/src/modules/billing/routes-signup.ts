@@ -14,7 +14,7 @@ import { platformHost } from '../../platform/store-origin.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { mountBillingDev } from './dev-routes.ts';
 import { validEmail } from './input.ts';
-import { publicPlanOr422, publicPlans, type PlanRow } from './plans.ts';
+import { openOr409, publicPlanOr422, publicPlans, type PlanRow } from './plans.ts';
 import {
   accessCodeMatches,
   normalizeSlug,
@@ -127,7 +127,8 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       throw new HttpError(422, 'INVALID_ACCESS_CODE', 'wrong access code', { field: 'accessCode' });
     if (!manual && !d.provider.platformConfigured)
       throw new HttpError(503, 'BILLING_UNAVAILABLE', 'plan billing is not set up on this install');
-    const plan = await publicPlanOr422(sql, body.planId);
+    // open or not is checked once we know this isn't a replay of a signup that went through
+    const plan = await publicPlanOr422(sql, body.planId, null);
     // `trial: true` starts a plan's free trial (ADR 0025): no payment method asked
     if (body.trial !== undefined && typeof body.trial !== 'boolean')
       throw new HttpError(422, 'BAD_REQUEST', 'trial must be true or false', { field: 'trial' });
@@ -159,6 +160,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     // one trial per owner phone; a replay of this very signup finds its store first
     const trialUsed = () =>
       new HttpError(409, 'TRIAL_USED', 'this phone already had its free trial', { field: 'trial' });
+    if (!owned) openOr409(plan);
     if (!owned && trial && (await phoneHadTrial(sql, phone))) throw trialUsed();
     if (!owned) {
       if ((await slugStatus(sql, slug, d.storeDomain)).reason === 'taken')

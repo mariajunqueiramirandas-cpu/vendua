@@ -39,6 +39,8 @@ export interface Plan {
   aiConversations: number;
   /** Vendedor conversations the whole trial includes */
   aiTrialConversations: number;
+  /** a store can pick it now; one that isn't is shown, closed (Pangolim waits on own domains) */
+  available: boolean;
 }
 
 export interface PlanRow {
@@ -53,6 +55,7 @@ export interface PlanRow {
   recommended: boolean;
   ai_conversations: number;
   ai_trial_conversations: number;
+  available: boolean;
 }
 
 /** stores from before the catalog (tenants.plan 'spike', 'starter', …) */
@@ -73,6 +76,7 @@ export function planView(row: PlanRow): Plan {
     recommended: row.recommended === true,
     aiConversations: row.ai_conversations ?? 0,
     aiTrialConversations: row.ai_trial_conversations ?? 0,
+    available: row.available !== false,
   };
 }
 
@@ -95,6 +99,7 @@ export function legacyPlan(id: string): Plan {
     recommended: false,
     aiConversations: LEGACY_AI_CONVERSATIONS,
     aiTrialConversations: 0,
+    available: false,
   };
 }
 
@@ -116,12 +121,40 @@ export async function tenantPlan(tx: Sql, tenantId: string): Promise<Plan> {
   return row ? planView(row) : legacyPlan(id);
 }
 
-/** A plan the store can pick itself (signup, "trocar de plano"): in the catalog and public. */
-export async function publicPlanOr422(tx: Sql, id: unknown): Promise<PlanRow> {
+/**
+ * A plan the store can pick itself (signup, "trocar de plano"): in the catalog, public and open.
+ * `held` are the plans the store already has or was promised (heldPlans): those stay pickable
+ * when they close, so it can still pay for them. `null` leaves the open check to the caller.
+ */
+export async function publicPlanOr422(
+  tx: Sql,
+  id: unknown,
+  held: readonly string[] | null = [],
+): Promise<PlanRow> {
   const row = typeof id === 'string' ? await planRow(tx, id) : null;
   if (!row || !row.public)
     throw new HttpError(422, 'UNKNOWN_PLAN', 'pick one of the plans offered', { field: 'planId' });
+  if (held) openOr409(row, held);
   return row;
+}
+
+export function openOr409(row: PlanRow, held: readonly string[] = []) {
+  if (row.available === false && !held.includes(row.id))
+    throw new HttpError(409, 'PLAN_UNAVAILABLE', 'this plan is not open to new subscriptions yet', {
+      field: 'planId',
+    });
+}
+
+/** The store's plan, and the ones its subscription runs on, waits for or is paying an upgrade to. */
+export async function heldPlans(tx: Sql, tenantId: string): Promise<string[]> {
+  const r = (
+    await tx<{ plans: (string | null)[] }[]>`
+      select array[t.plan, s.plan_id, s.pending_plan_id, s.upgrade_plan_id] as plans
+      from tenants t left join subscriptions s on s.tenant_id = t.id
+      where t.id = ${tenantId}
+    `
+  )[0];
+  return (r?.plans ?? []).filter((p): p is string => !!p);
 }
 
 /** Where the store's plan stands for its features: on it and paid for, or in its trial. */

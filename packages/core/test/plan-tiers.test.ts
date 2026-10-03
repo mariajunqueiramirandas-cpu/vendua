@@ -176,7 +176,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
     const r = await call('GET', '/admin/v1/signup/plans');
     expect(r.status).toBe(200);
     const plans = r.body.plans as any[];
-    expect(plans.map((p) => p.id)).toEqual(['mirim', 'bandeira', 'pangolin']);
+    expect(plans.map((p) => p.id)).toEqual(['mirim', 'bandeira', 'pangolim']);
     expect(plans.filter((p) => p.recommended).map((p) => p.id)).toEqual(['bandeira']);
     expect(plans.map((p) => [p.priceCents, p.trialDays, p.feeBps])).toEqual([
       [6990, 0, 0],
@@ -197,6 +197,61 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       [250, 50],
       [1000, 50],
     ]);
+  });
+
+  test('Pangolim launches closed: listed, not pickable, and staff open it', async () => {
+    await sql`update plans set available = false where id = 'pangolim'`;
+    const listed = (await call('GET', '/admin/v1/signup/plans')).body.plans as any[];
+    expect(listed.map((p) => [p.id, p.available])).toEqual([
+      ['mirim', true],
+      ['bandeira', true],
+      ['pangolim', false],
+    ]);
+    const s = await store('closed', 'bandeira', 'active');
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
+    expect(up.status).toBe(409);
+    expect(up.body.error).toMatchObject({ code: 'PLAN_UNAVAILABLE', details: { field: 'planId' } });
+    expect(
+      (
+        await sql`select plan_id, pending_plan_id, upgrade_plan_id from subscriptions where tenant_id = ${s.id}`
+      )[0],
+    ).toMatchObject({ plan_id: 'bandeira', pending_plan_id: null, upgrade_plan_id: null });
+    // a store already on it (moved from PRO+) can still pay for its own plan
+    const own = await store('closed-own', 'pangolim');
+    const st = await own.owner('POST', '/account/subscription', {
+      planId: 'pangolim',
+      method: 'pix',
+      payerEmail: 'bia@example.com',
+    });
+    expect(st.status).toBe(200);
+
+    // the recommended plan can't close, and a closed plan can't be recommended
+    expect(
+      (await control('PATCH', '/control/v1/plans/bandeira', { available: false })).body.error.code,
+    ).toBe('RECOMMENDED_PLAN_CLOSED');
+    expect(
+      (await control('PATCH', '/control/v1/plans/pangolim', { recommended: true })).status,
+    ).toBe(409);
+    expect((await sql`select id from plans where recommended`).map((r) => r.id)).toEqual([
+      'bandeira',
+    ]);
+    expect(
+      (await control('PATCH', '/control/v1/plans/pangolim', { available: 'yes' })).status,
+    ).toBe(422);
+    const open = await control('PATCH', '/control/v1/plans/pangolim', { available: true });
+    expect(open.body.plan).toMatchObject({ id: 'pangolim', available: true });
+    expect((await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' })).status).toBe(
+      200,
+    );
+    // an upgrade asked while it was open can still get its Pix after it closes
+    await sql`update plans set available = false where id = 'pangolim'`;
+    expect(
+      (await sql`select upgrade_plan_id from subscriptions where tenant_id = ${s.id}`)[0]!
+        .upgrade_plan_id,
+    ).toBe('pangolim');
+    expect((await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' })).status).toBe(
+      200,
+    );
   });
 
   test('Mirim: KDS, printing and turning loyalty on answer 403 PLAN_REQUIRED', async () => {
@@ -256,7 +311,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       expect(await has(trial.id, f)).toBe(true);
 
     // ADR 0025: during a trial, only the domain and the site stay locked until the first payment
-    const pang = await store('pangtrial', 'pangolin', 'trialing');
+    const pang = await store('pangtrial', 'pangolim', 'trialing');
     expect((await pang.owner('GET', '/kitchen')).status).toBe(200);
     expect(await gate(pang.id, 'customDomain')).toMatchObject({
       status: 403,
@@ -293,13 +348,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
     expect(r.status).toBe(200);
     expect(r.body.plan).toEqual({ id: 'mirim', name: 'Venduá Mirim', features: NONE });
 
-    const trial = await store('sess-t', 'pangolin', 'trialing');
+    const trial = await store('sess-t', 'pangolim', 'trialing');
     expect((await trial.owner('GET', '/session')).body.plan).toEqual({
-      id: 'pangolin',
-      name: 'Venduá Pangolin',
+      id: 'pangolim',
+      name: 'Venduá Pangolim',
       features: { ...NONE, kds: true, printing: true, loyalty: true, vendedor: true },
     });
-    const paid = await store('sess-p', 'pangolin', 'active');
+    const paid = await store('sess-p', 'pangolim', 'active');
     expect((await paid.owner('GET', '/session')).body.plan.features).toEqual({
       customDomain: true,
       customSite: true,
@@ -694,7 +749,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
         expect(await agentEnabled(appSql, s.id)).toBe(false);
 
         // adjusting a setting on Mirim keeps the merchant's switch as it was
-        const named = await s.owner('PATCH', '/vendedor/settings', { name: 'Bia' });
+        const named = await s.owner('PATCH', '/vendedor/settings', { tone: 'relaxed' });
         expect(named.status).toBe(200);
         expect(named.body.enabled).toBe(false);
         expect(

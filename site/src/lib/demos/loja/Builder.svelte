@@ -215,6 +215,12 @@
   .disc :global(.dua) {
     width: 50px;
   }
+  /* forest green on a lit disc: cream at night, like the chat demo and the admin */
+  @media (prefers-color-scheme: dark) {
+    .disc {
+      background: var(--after-ink);
+    }
+  }
   .said {
     min-width: 0;
     flex: 1;

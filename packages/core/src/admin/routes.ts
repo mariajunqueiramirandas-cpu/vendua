@@ -60,6 +60,7 @@ import { mountCustomers } from './routes-customers.ts';
 import { mountHome } from './routes-home.ts';
 import { mountKitchen } from './routes-kitchen.ts';
 import { mountVendedor } from './routes-vendedor.ts';
+import { AGENT_NAME } from '../vendedor/settings.ts';
 import { mountMarketing } from './routes-marketing.ts';
 import { mountOnboarding } from './routes-onboarding.ts';
 import { mountOrders } from './routes-orders.ts';
@@ -268,10 +269,10 @@ export function mountAdmin(o: MountAdminOpts) {
           where u.id = ${m.userId}
         `
       )[0],
-      // the nav: the Vendedor's tab and its "precisa de você" badge (sales-agent-ux §2)
+      // the nav: Duá's tab and its "precisa de você" badge (sales-agent-ux §2)
       agent: (
-        await tx<{ enabled: boolean; name: string | null; waiting: number }[]>`
-          select coalesce(a.enabled, false) as enabled, a.settings ->> 'name' as name,
+        await tx<{ enabled: boolean; waiting: number }[]>`
+          select coalesce(a.enabled, false) as enabled,
             (select count(*) from shopper_threads t where t.tenant_id = ${tenant.id}
                and t.waiting_since is not null and t.owner <> 'muted' and t.channel = 'whatsapp')::int as waiting
           from (select 1) one left join store_agent a on a.tenant_id = ${tenant.id}
@@ -302,7 +303,7 @@ export function mountAdmin(o: MountAdminOpts) {
       vendedor: {
         // on in the bar only while the plan opens it too (ADR 0032)
         enabled: (agent?.enabled ?? false) && plan.features.vendedor,
-        name: agent?.name || 'Ana',
+        name: AGENT_NAME,
         waiting: agent?.waiting ?? 0,
       },
     });

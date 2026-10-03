@@ -487,7 +487,7 @@ describe('mercado pago adapter', () => {
       status: 'pending',
     });
     await p.createSubscription({
-      reason: 'Venduá Pangolin',
+      reason: 'Venduá Pangolim',
       amountCents: 44900,
       payerEmail: 'dona@loja.com',
       externalReference: 'tenant-1',

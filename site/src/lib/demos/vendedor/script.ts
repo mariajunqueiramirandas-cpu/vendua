@@ -1,4 +1,4 @@
-// The Vendedor demo's fixed script: Bolos da Nena's real menu and prices, integer cents, and the
+// The Duá (Vendedor) demo's fixed script: Bolos da Nena's real menu and prices, integer cents, and the
 // cards in Core's own fields and words (packages/core/src/vendedor/cards.ts).
 
 export interface Line {
@@ -8,7 +8,7 @@ export interface Line {
 
 export type Msg = { time: string } & (
   | { kind: 'me'; text: string }
-  | { kind: 'ana'; text: string }
+  | { kind: 'dua'; text: string }
   | {
       kind: 'summary';
       lines: Line[];
@@ -65,7 +65,7 @@ export function brl(cents: number): string {
 
 const clock = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
 
-// the add-on she offers: one suggestion, never the same thing they already took
+// the add-on Duá offers: one suggestion, never the same thing they already took
 const sliceFor = (cake: Item): Item & { pitch: string } =>
   cake.name === CAKES.cenoura!.name
     ? {
@@ -100,13 +100,13 @@ export function start(): State {
   };
 }
 
-/** Her first words, before the customer says anything. */
+/** Duá's first words, before the customer says anything. */
 export function greeting(): { replies: Draft[]; chips: Chip[] } {
   return {
     replies: [
       {
-        kind: 'ana',
-        text: 'Oi! Eu sou a Ana, assistente virtual da Bolos da Nena. Quer ver o que tem hoje ou já sabe o que vai pedir?',
+        kind: 'dua',
+        text: 'Oi! Sou o Duá, assistente virtual da Bolos da Nena. Quer ver o que tem hoje ou já sabe o que vai pedir?',
       },
     ],
     chips: [
@@ -137,7 +137,7 @@ function summary(s: State): Draft {
 const totalOf = (s: State) =>
   (s.cake?.cents ?? 0) + (s.slice?.cents ?? 0) + (s.mode === 'delivery' ? FEE : 0);
 
-/** What the customer's tap says, and what she answers: a pure step, so the finished state is a fold. */
+/** What the customer's tap says, and what Duá answers: a pure step, so the finished state is a fold. */
 export function answer(
   s: State,
   chip: string,
@@ -153,8 +153,8 @@ export function answer(
       return {
         said: 'Tem bolo de cenoura?',
         replies: [
-          { kind: 'ana', text: 'Tem sim! O bolo de cenoura com brigadeiro inteiro sai R$ 45,00.' },
-          { kind: 'ana', text: add.pitch },
+          { kind: 'dua', text: 'Tem sim! O bolo de cenoura com brigadeiro inteiro sai R$ 45,00.' },
+          { kind: 'dua', text: add.pitch },
         ],
         chips: ADDON,
       };
@@ -164,7 +164,7 @@ export function answer(
         said: 'O que tem hoje?',
         replies: [
           {
-            kind: 'ana',
+            kind: 'dua',
             text: `Hoje tem:\n${['cenoura', 'chocolate', 'fuba'].map((k) => `${CAKES[k]!.name}, ${brl(CAKES[k]!.cents)}`).join('\n')}\nQual vai ser?`,
           },
         ],
@@ -183,8 +183,8 @@ export function answer(
       return {
         said: `Quero o de ${word}`,
         replies: [
-          { kind: 'ana', text: `Anotei: ${s.cake!.name.toLowerCase()}, ${brl(s.cake!.cents)}.` },
-          { kind: 'ana', text: add.pitch },
+          { kind: 'dua', text: `Anotei: ${s.cake!.name.toLowerCase()}, ${brl(s.cake!.cents)}.` },
+          { kind: 'dua', text: add.pitch },
         ],
         chips: ADDON,
       };
@@ -197,7 +197,7 @@ export function answer(
         said: chip === 'com-fatia' ? 'Quero a fatia também' : 'Só o bolo mesmo',
         replies: [
           {
-            kind: 'ana',
+            kind: 'dua',
             text: `${s.slice ? 'Anotei a fatia também.' : 'Combinado.'} É para entregar ou você vem buscar?`,
           },
         ],
@@ -211,14 +211,14 @@ export function answer(
         said: chip === 'entrega' ? `Entrega, na ${ADDRESS}` : 'Vou buscar aí',
         replies: [
           {
-            kind: 'ana',
+            kind: 'dua',
             text:
               s.mode === 'delivery'
                 ? 'A entrega aí fica R$ 8,00. Confere o resumo:'
                 : 'Fica pronto para você retirar na loja. Confere o resumo:',
           },
           summary(s),
-          { kind: 'ana', text: 'O pagamento é por Pix. Posso fechar?' },
+          { kind: 'dua', text: 'O pagamento é por Pix. Posso fechar?' },
         ],
         chips: [
           { id: 'fechar', label: 'Pode fechar' },
@@ -230,14 +230,14 @@ export function answer(
       s.mode = null;
       return {
         said: 'Quero mudar uma coisa',
-        replies: [{ kind: 'ana', text: 'Claro. Vai só o bolo ou com a fatia?' }],
+        replies: [{ kind: 'dua', text: 'Claro. Vai só o bolo ou com a fatia?' }],
         chips: ADDON,
       };
     case 'fechar':
       return {
         said: 'Pode fechar',
         replies: [
-          { kind: 'ana', text: 'Pedido feito! Aqui está o Pix:' },
+          { kind: 'dua', text: 'Pedido feito! Aqui está o Pix:' },
           {
             kind: 'pix',
             orderNumber: ORDER,
@@ -252,7 +252,7 @@ export function answer(
       return {
         said: 'Já paguei',
         replies: [
-          { kind: 'ana', text: 'Pagamento confirmado! Seu pedido já foi para a cozinha.' },
+          { kind: 'dua', text: 'Pagamento confirmado! Seu pedido já foi para a cozinha.' },
           {
             kind: 'order',
             number: ORDER,

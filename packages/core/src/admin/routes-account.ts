@@ -10,7 +10,7 @@ import {
   normalizeHost,
 } from '../modules/billing/domains.ts';
 import { validEmail } from '../modules/billing/input.ts';
-import { publicPlanOr422, requireFeature } from '../modules/billing/plans.ts';
+import { heldPlans, publicPlanOr422, requireFeature } from '../modules/billing/plans.ts';
 import {
   afterResponse,
   buyAiPack,
@@ -33,7 +33,7 @@ const METHODS = ['card', 'pix'] as const;
 const validPayerEmail = (v: unknown) => validEmail(v, 'payerEmail');
 
 // Conta e plano: the plan and its subscription (card assinatura or monthly Pix), invoices,
-// the Pangolin own domain and site request. Owner only; every write is idempotent (handlers.write).
+// the Pangolim own domain and site request. Owner only; every write is idempotent (handlers.write).
 export function mountAccount(d: AdminDeps) {
   const { admin } = d;
   const { read, write } = handlers(d);
@@ -65,7 +65,7 @@ export function mountAccount(d: AdminDeps) {
     write('owner', async (tx, t, m, c) => {
       billingOn();
       const body = await bodyJson(c);
-      const plan = await publicPlanOr422(tx, body.planId);
+      const plan = await publicPlanOr422(tx, body.planId, await heldPlans(tx, t.id));
       const method = oneOf(body.method, 'method', METHODS);
       const payerEmail = validPayerEmail(body.payerEmail);
       await startSubscription(ctxFor(c), tx, t.id, {
@@ -88,7 +88,10 @@ export function mountAccount(d: AdminDeps) {
     write('owner', async (tx, t, m, c) => {
       billingOn();
       const body = await bodyJson(c);
-      const plan = body.planId === undefined ? undefined : await publicPlanOr422(tx, body.planId);
+      const plan =
+        body.planId === undefined
+          ? undefined
+          : await publicPlanOr422(tx, body.planId, await heldPlans(tx, t.id));
       const method = body.method === undefined ? undefined : oneOf(body.method, 'method', METHODS);
       const payerEmail =
         body.payerEmail === undefined ? undefined : validPayerEmail(body.payerEmail);
@@ -177,14 +180,14 @@ export function mountAccount(d: AdminDeps) {
         action: 'ai_pack.buy',
         entity: 'invoice',
         entityId: inv.id,
-        summary: `pediu um pacote de conversas do Vendedor (fatura ${inv.number})`,
+        summary: `pediu um pacote de conversas do Duá (fatura ${inv.number})`,
         after: { packId: inv.ai_pack_id, amountCents: inv.amount_cents },
       });
       return { status: 200, body: { invoiceId: inv.id, ...(await view(tx, t)) } };
     }),
   );
 
-  // ── Pangolin: own domain ─────────────────────────────────────────────────
+  // ── Pangolim: own domain ─────────────────────────────────────────────────
   admin.post(
     '/account/domains',
     write('owner', async (tx, t, m, c) => {
@@ -297,7 +300,7 @@ export function mountAccount(d: AdminDeps) {
     }),
   );
 
-  // ── Pangolin: a site made by our agent ───────────────────────────────────
+  // ── Pangolim: a site made by our agent ───────────────────────────────────
   admin.post(
     '/account/site-request',
     write('owner', async (tx, t, m, c) => {

@@ -22,15 +22,15 @@
     },
   ];
 
-  const { mirim, bandeira, pangolin } = plans;
+  const { mirim, bandeira, pangolim } = plans;
   const faq: { q: string; a: string }[] = [
     {
       q: 'Já posso criar a minha loja?',
-      a: `Pode, o cadastro está aberto. Você escolhe o plano, dá o nome da loja e confirma o seu WhatsApp. No ${bandeira.short}, você começa com ${bandeira.trial}, sem cartão; no ${mirim.short} e no ${pangolin.short}, paga o primeiro mês.`,
+      a: `Pode, o cadastro está aberto. Você escolhe o plano, dá o nome da loja e confirma o seu WhatsApp. No ${bandeira.short}, você começa com ${bandeira.trial}, sem cartão; no ${mirim.short}${pangolim.available ? ` e no ${pangolim.short}` : ''}, paga o primeiro mês.${pangolim.available ? '' : ` O ${pangolim.short} ainda não está aberto para assinatura.`}`,
     },
     {
-      q: 'O que é o Vendedor?',
-      a: `Uma IA que atende os seus clientes no WhatsApp da loja e fecha o pedido com eles, com os preços e os horários da sua loja. Você dá o nome que quiser pra ela. Vem no ${bandeira.short}, com ${bandeira.conversations} conversas por mês (${bandeira.trialConversations} durante o teste), e no ${pangolin.short}, com ${pangolin.conversations}. Cada cliente que fala com o Vendedor conta uma conversa a cada 24 horas.`,
+      q: 'O que é o Duá?',
+      a: `É o vendedor com IA no WhatsApp da sua loja: atende os seus clientes e fecha o pedido com eles, sempre com os preços e os horários da loja. É o mesmo Duá que monta a loja com você e que você encontra no app. Para o cliente, ele se apresenta como assistente virtual da sua loja, nunca como uma pessoa. Vem no ${bandeira.short}, com ${bandeira.conversations} conversas por mês (${bandeira.trialConversations} durante o teste), e no ${pangolim.short}, com ${pangolim.conversations}. Cada cliente que fala com o Duá conta uma conversa a cada 24 horas.`,
     },
     {
       q: 'Preciso entender de tecnologia?',
@@ -117,7 +117,7 @@
       <Start tone="after" />
       <p class="plans tnum">
         {bandeira.short} por {bandeira.price}/mês, com {bandeira.trial}. Também tem o {mirim.short},
-        por {mirim.price}/mês, e o {pangolin.short}, por {pangolin.price}/mês.
+        por {mirim.price}/mês{#if pangolim.available}, e o {pangolim.short}, por {pangolim.price}/mês{/if}.
       </p>
       <p class="follow">
         Acompanhe no Instagram:

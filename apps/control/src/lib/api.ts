@@ -893,10 +893,12 @@ export interface ControlPlan {
   trialDays: number;
   /** the one plan signup and the site preselect */
   recommended: boolean;
-  /** Vendedor conversations a paid month includes */
+  /** Duá conversations a paid month includes */
   aiConversations: number;
-  /** Vendedor conversations the free trial includes */
+  /** Duá conversations the free trial includes */
   aiTrialConversations: number;
+  /** stores can pick it; a closed plan shows on the site and in signup but can't be chosen */
+  available: boolean;
 }
 export interface PlanPatch {
   name?: string;
@@ -907,6 +909,8 @@ export interface PlanPatch {
   recommended?: boolean;
   aiConversations?: number;
   aiTrialConversations?: number;
+  /** false closes it to new subscriptions (the recommended plan must stay open) */
+  available?: boolean;
   /** merged into the plan's features by Core */
   features?: Partial<PlanFeatures>;
 }

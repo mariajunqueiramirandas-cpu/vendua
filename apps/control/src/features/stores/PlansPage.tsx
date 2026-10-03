@@ -129,6 +129,7 @@ export default function PlansPage() {
               <RecommendedBadge />
             </span>
           )}
+          {!p.available && <span className="shrink-0 text-xs text-muted-foreground">fechado</span>}
         </div>
       ),
     },
@@ -138,7 +139,7 @@ export default function PlansPage() {
       key: 'ai',
       header: (
         <>
-          Vendedor<span className="@max-5xl:hidden">/mês</span>
+          Duá<span className="@max-5xl:hidden">/mês</span>
         </>
       ),
       className: 'whitespace-nowrap @max-3xl:hidden',
@@ -206,12 +207,16 @@ export default function PlansPage() {
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
           <span className="truncate">
             {p.features?.vendedor
-              ? `Vendedor ${p.aiConversations.toLocaleString('pt-BR')}/mês`
-              : 'sem Vendedor'}
+              ? `Duá ${p.aiConversations.toLocaleString('pt-BR')}/mês`
+              : 'sem Duá'}
             {` · ${n} ${n === 1 ? 'recurso' : 'recursos'}`}
           </span>
           <span className="ml-auto shrink-0">
-            {[p.trialDays > 0 && trialLabel(p.trialDays), !p.public && 'oculto']
+            {[
+              p.trialDays > 0 && trialLabel(p.trialDays),
+              !p.available && 'fechado',
+              !p.public && 'oculto',
+            ]
               .filter(Boolean)
               .join(' · ')}
           </span>
@@ -258,8 +263,8 @@ export default function PlansPage() {
               </div>
             </Panel>
             <p className="px-0.5 text-xs text-muted-foreground max-md:hidden">
-              clique num valor para editar · recursos e limites do Vendedor mudam na hora para as
-              lojas do plano · planos ocultos não aparecem no cadastro nem em “trocar de plano”
+              clique num valor para editar · recursos e limites do Duá mudam na hora para as lojas
+              do plano · planos ocultos não aparecem no cadastro nem em “trocar de plano”
             </p>
           </div>
           <AiPacksPanel />
@@ -286,15 +291,25 @@ export default function PlansPage() {
               <SwitchRow label="no cadastro" hint={open.public ? 'visível' : 'oculto'}>
                 {ed.public(open)}
               </SwitchRow>
+              <SwitchRow
+                label="aberto para assinatura"
+                hint={
+                  open.available
+                    ? 'as lojas podem escolher'
+                    : 'aparece no site e no cadastro, mas ninguém escolhe'
+                }
+              >
+                {ed.available(open)}
+              </SwitchRow>
             </div>
-            <SheetSection title="Vendedor">
+            <SheetSection title="Duá">
               <div className="grid grid-cols-2 gap-3 py-1">
                 <Fact label="conversas por mês">{ed.ai(open, 'aiConversations')}</Fact>
                 <Fact label="no teste grátis">{ed.ai(open, 'aiTrialConversations')}</Fact>
               </div>
               {!open.features?.vendedor && (
                 <p className="text-xs text-muted-foreground">
-                  o plano não inclui o Vendedor — os limites só valem com ele ligado
+                  o plano não inclui o Duá — os limites só valem com ele ligado
                 </p>
               )}
             </SheetSection>

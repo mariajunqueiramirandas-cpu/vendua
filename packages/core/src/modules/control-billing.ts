@@ -22,7 +22,7 @@ import type { PaymentProvider } from './payments/provider.ts';
 const SITE_STATUSES = ['requested', 'in_progress', 'delivered', 'cancelled'] as const;
 
 // /control/v1 (CRM "Lojas"): every store's plan and billing health, the plan catalog, custom
-// domains the team turns on, and Pangolin site requests. Cross-store reads run under controlTx.
+// domains the team turns on, and Pangolim site requests. Cross-store reads run under controlTx.
 
 /** an optional whole count 0–100000 (conversations); undefined when absent */
 function optCount(v: unknown, field: string): number | undefined {
@@ -226,6 +226,11 @@ export function mountControlBilling(o: {
       throw new HttpError(422, 'BAD_REQUEST', 'recommended must be true or false', {
         field: 'recommended',
       });
+    // shown but closed: stores can't pick it until staff open it (Pangolim waits on own domains)
+    if (body.available !== undefined && typeof body.available !== 'boolean')
+      throw new HttpError(422, 'BAD_REQUEST', 'available must be true or false', {
+        field: 'available',
+      });
     const features = optFeatures(body.features);
     const res = await claimControl(sql, idemKey(c), async (tx) => {
       // at most one plan leads: recommending this one takes it off the other (one at a time, so
@@ -244,6 +249,7 @@ export function mountControlBilling(o: {
             recommended = ${typeof body.recommended === 'boolean' ? body.recommended : tx`recommended`},
             ai_conversations = ${aiMonth ?? tx`ai_conversations`},
             ai_trial_conversations = ${aiTrial ?? tx`ai_trial_conversations`},
+            available = ${typeof body.available === 'boolean' ? body.available : tx`available`},
             features = ${features ? tx`features || ${tx.json(features as never)}` : tx`features`},
             updated_at = now()
           where id = ${id}
@@ -251,8 +257,18 @@ export function mountControlBilling(o: {
         `
       )[0];
       if (!row) throw new HttpError(404, 'NOT_FOUND', 'plan not found');
+      // signup preselects the recommended plan, so it must be one a store can pick
+      if (row.recommended && !row.available)
+        throw new HttpError(409, 'RECOMMENDED_PLAN_CLOSED', 'the recommended plan must stay open', {
+          field: body.available === false ? 'available' : 'recommended',
+        });
       // stores on it see what is open and their Vendedor limits change: their admins refetch
-      if (features || aiMonth !== undefined || aiTrial !== undefined) {
+      if (
+        features ||
+        aiMonth !== undefined ||
+        aiTrial !== undefined ||
+        body.available !== undefined
+      ) {
         const stores = await tx<{ id: string }[]>`select id from tenants where plan = ${id}`;
         for (const s of stores) await emitAdminTx(tx, s.id, 'billing', 'plan');
       }

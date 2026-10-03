@@ -24,8 +24,8 @@ export const FEATURES: { key: PlanFeature; label: string; short: string; hint: s
   },
   {
     key: 'vendedor',
-    label: 'Vendedor',
-    short: 'Vendedor',
+    label: 'Duá (vendedor com IA)',
+    short: 'Duá',
     hint: 'IA que vende no WhatsApp da loja',
   },
   {
@@ -184,8 +184,8 @@ export function usePlanEditors(ask: (c: Change) => void, onHide: () => void) {
         value={p[field] ?? 0}
         label={
           field === 'aiConversations'
-            ? `conversas do Vendedor por mês no plano ${p.name}`
-            : `conversas do Vendedor no teste grátis do plano ${p.name}`
+            ? `conversas do Duá por mês no plano ${p.name}`
+            : `conversas do Duá no teste grátis do plano ${p.name}`
         }
         unit="conversas"
         max={AI_MAX}
@@ -213,6 +213,18 @@ export function usePlanEditors(ask: (c: Change) => void, onHide: () => void) {
             ? patch.mutate({ id: p.id, recommended: true })
             : // one plan always leads: the mark only moves
               toast('ligue o recomendado em outro plano para mover')
+        }
+      />
+    ),
+    available: (p: ControlPlan) => (
+      <Switch
+        checked={p.available}
+        aria-label={`plano ${p.name} aberto para assinatura`}
+        disabled={patch.isPending}
+        onCheckedChange={(v) =>
+          !v && p.recommended
+            ? toast('o plano recomendado fica aberto: mova o recomendado antes')
+            : patch.mutate({ id: p.id, available: v })
         }
       />
     ),

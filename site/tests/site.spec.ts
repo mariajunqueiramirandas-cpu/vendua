@@ -187,6 +187,10 @@ test.describe('conteúdo', () => {
       await expect(demo, `demo ${id}`).toBeVisible();
       expect((await demo.innerText()).trim().length, `demo ${id} sem conteúdo`).toBeGreaterThan(80);
     }
+    // the AI seller is Duá, and says it's the store's virtual assistant
+    await expect(page.locator('#demo-vendedor')).toContainText(
+      'Oi! Sou o Duá, assistente virtual da Bolos da Nena.',
+    );
     // the calculator shows its R$ 8.000 example as text
     await expect(page.locator('#preco')).toContainText('R$ 960');
 
@@ -280,10 +284,10 @@ test.describe('conteúdo', () => {
         );
         const url = new URL(l.href);
         if (url.origin === ADMIN.origin) {
-          // the admin only at its sign-up, with no plan or one of the three
+          // the admin only at its sign-up, with no plan or an open one (Pangolim is closed)
           expect(url.pathname, `${path}: ${l.text}`).toBe('/admin/comecar');
           expect([...url.searchParams.keys()].filter((k) => k !== 'plano')).toEqual([]);
-          expect([null, 'mirim', 'bandeira', 'pangolin']).toContain(url.searchParams.get('plano'));
+          expect([null, 'mirim', 'bandeira']).toContain(url.searchParams.get('plano'));
         } else if (url.origin !== new URL(page.url()).origin)
           // besides sign-up, Instagram is the only site linked (the profile, and its privacy policy on /privacidade/)
           expect(url.hostname, `${path}: link externo "${l.text}"`).toMatch(
@@ -315,7 +319,7 @@ test.describe('conteúdo', () => {
     const preco = page.locator('#preco');
     const text = (await preco.innerText()).replace(/\s+/g, ' ');
     expect(text).toContain('Venduá Mirim R$ 69,90/mês');
-    expect(text).toContain('Venduá Pangolin R$ 449/mês');
+    expect(text).toContain('Venduá Pangolim R$ 449/mês');
     // Bandeira is the recommended plan: the trial leads the section and sits by its price; the others have none
     expect(text).toContain('Comece pelo Venduá Bandeira: 14 dias grátis, sem cartão.');
     expect(text).toMatch(
@@ -326,16 +330,21 @@ test.describe('conteúdo', () => {
     expect(text).toContain('seunome.vendua.com.br');
     expect(text).toContain('250 conversas por mês');
     expect(text).toMatch(
-      /Pangolin.*Domínio próprio.*site feito pelo nosso agente de IA.*1\.000 conversas por mês/,
+      /Pangolim.*Domínio próprio.*site feito pelo nosso agente de IA.*1\.000 conversas por mês/,
     );
     // the comparison opens without a script, and every plan has no per-order fee
     await preco.locator('details summary').first().click();
     expect((await preco.innerText()).replace(/\s+/g, ' ')).toMatch(/Taxa da Venduá por pedido/);
     // the calculator cites iFood's own published rates
     expect(text).toContain('blog-parceiros.ifood.com.br/taxas-ifood');
-    for (const plano of ['mirim', 'pangolin'])
-      await expect(preco.locator(`a[href="${SIGNUP}?plano=${plano}"]`)).toHaveCount(1);
+    await expect(preco.locator(`a[href="${SIGNUP}?plano=mirim"]`)).toHaveCount(1);
     await expect(preco.locator(`a[href="${SIGNUP}?plano=bandeira"]`)).toHaveCount(2);
+    // Pangolim is shown but closed: price and perks, a plain line instead of its button
+    const pangolim = preco.locator('li.plan', { hasText: 'Venduá Pangolim' });
+    await expect(pangolim).toContainText('R$ 449/mês');
+    await expect(pangolim).toContainText('Ainda não está aberto para assinatura.');
+    await expect(pangolim.locator('a[href*="/admin/comecar"]')).toHaveCount(0);
+    await expect(page.locator('a[href*="plano=pangolim"]')).toHaveCount(0);
     // perks open their demo
     for (const id of ['vendedor', 'pedido', 'cozinha', 'loja'])
       expect(await preco.locator(`a[href="#demo-${id}"]`).count(), id).toBeGreaterThan(0);
@@ -346,7 +355,7 @@ test.describe('conteúdo', () => {
         .evaluateAll((els) =>
           els.map((a) => new URL((a as HTMLAnchorElement).href).searchParams.get('plano')),
         ),
-    ).toEqual(['bandeira', 'mirim', 'bandeira', 'pangolin']);
+    ).toEqual(['bandeira', 'mirim', 'bandeira']);
     // no other price anywhere on the page
     const prices = (await page.locator('main').innerText()).match(/R\$\s?\d+(,\d{2})?\/mês/g) ?? [];
     expect([...new Set(prices)].sort()).toEqual(['R$ 169/mês', 'R$ 449/mês', 'R$ 69,90/mês']);

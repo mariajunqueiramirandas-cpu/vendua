@@ -4,8 +4,8 @@
 </script>
 
 <DemoFrame
-  label="Conversa de exemplo com a Ana, a vendedora da Bolos da Nena no WhatsApp"
-  note="Simulação: na sua loja, a Ana responde com o seu cardápio e os seus preços."
+  label="Conversa de exemplo no WhatsApp da Bolos da Nena, atendida pelo Duá"
+  note="Simulação: na sua loja, o Duá responde com o seu cardápio e os seus preços."
 >
   {#snippet children({ live, reduced })}
     <!-- the {#if} remounts on hydration, so the live chat starts from its first message -->

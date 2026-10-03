@@ -1,10 +1,21 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import Dua, { type Pose } from '$lib/components/Dua.svelte';
   import Phone from '$lib/components/Phone.svelte';
   import { clock } from '../clock';
-  import { answer, brl, finished, greeting, stamp, start, type Chip, type State } from './script';
+  import {
+    answer,
+    brl,
+    finished,
+    greeting,
+    stamp,
+    start,
+    type Chip,
+    type Msg,
+    type State,
+  } from './script';
 
-  // The customer's side of the store's WhatsApp: the visitor taps a reply, Ana answers after a
+  // The customer's side of the store's WhatsApp: the visitor taps a reply, Duá answers after a
   // short "escrevendo". Without `live` it is the finished conversation, still.
   let { live, reduced }: { live: boolean; reduced: boolean } = $props();
   // Vendedor.svelte remounts this when it goes live: `live` never changes in one instance
@@ -25,14 +36,22 @@
 
   const now = $derived(s.msgs.at(-1)?.time ?? '9:41');
 
-  // she types roughly as long as she writes, within the 600–1400 ms the demos keep to
+  // Duá's face sits by the last message of each of its runs, as WhatsApp does in a group; the
+  // newest one thinks while it types and smiles once the order is done
+  const theirs = (m: Msg | undefined) => !!m && m.kind !== 'me';
+  const tail = (i: number) =>
+    theirs(s.msgs[i]) && !theirs(s.msgs[i + 1]) && !(typing && i === s.msgs.length - 1);
+  const poseAt = (i: number): Pose =>
+    done && i === s.msgs.length - 1 ? 'avatar-feliz' : 'avatar-ola';
+
+  // Duá types roughly as long as it writes, within the 600–1400 ms the demos keep to
   const typeFor = (text: string) => Math.min(1400, 600 + text.length * 9);
 
   async function say(replies: ReturnType<typeof greeting>['replies'], chips: Chip[]) {
     for (const r of replies) {
-      const text = r.kind === 'ana' ? r.text : '';
+      const text = r.kind === 'dua' ? r.text : '';
       typing = true;
-      await t.wait(r.kind === 'ana' ? typeFor(text) : 700);
+      await t.wait(r.kind === 'dua' ? typeFor(text) : 700);
       typing = false;
       s.msgs.push(stamp(s, r));
     }
@@ -67,6 +86,10 @@
   });
 </script>
 
+{#snippet face(pose: Pose)}
+  <span class="face" aria-hidden="true"><Dua {pose} size={40} /></span>
+{/snippet}
+
 {#snippet mark()}
   <span class="mark">
     <svg viewBox="0 0 16 16" aria-hidden="true"
@@ -88,7 +111,7 @@
             <span class="avatar" aria-hidden="true">B</span>
             <span class="who">
               <strong>Bolos da Nena</strong>
-              <span>assistente virtual</span>
+              <span>Duá, assistente virtual</span>
             </span>
           </header>
 
@@ -108,11 +131,12 @@
                     <p>{m.text}</p>
                     <time>{m.time}</time>
                   </div>
-                {:else if m.kind === 'ana'}
-                  <div class="msg ana">
-                    <span class="sr-only">Ana:</span>
+                {:else if m.kind === 'dua'}
+                  <div class="msg dua">
+                    <span class="sr-only">Duá:</span>
                     <p>{m.text}</p>
                     <time>{m.time}</time>
+                    {#if tail(i)}{@render face(poseAt(i))}{/if}
                   </div>
                 {:else if m.kind === 'summary'}
                   <figure class="msg paper receipt">
@@ -142,6 +166,7 @@
                         `pagamento: ${m.payment}`,
                       ].join(' · ')}
                     </p>
+                    {#if tail(i)}{@render face(poseAt(i))}{/if}
                   </figure>
                 {:else if m.kind === 'pix'}
                   <figure class="msg paper">
@@ -160,6 +185,7 @@
                         {copied ? 'copiado' : 'copiar código'}
                       </button>
                     {/if}
+                    {#if tail(i)}{@render face(poseAt(i))}{/if}
                   </figure>
                 {:else if m.kind === 'order'}
                   <figure class="msg paper">
@@ -168,14 +194,16 @@
                     <p class="hint">
                       Total <strong class="num">{brl(m.totalCents)}</strong> · {m.payment}
                     </p>
+                    {#if tail(i)}{@render face(poseAt(i))}{/if}
                   </figure>
                 {/if}
               {/each}
               {#if typing}
-                <div class="msg ana typing">
-                  <span class="sr-only">Ana está escrevendo</span>
+                <div class="msg dua typing">
+                  <span class="sr-only">Duá está escrevendo</span>
                   <span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"
                   ></span><span class="dot" aria-hidden="true"></span>
+                  {@render face('avatar-pensando')}
                 </div>
               {/if}
             </div>
@@ -279,14 +307,14 @@
     font-size: 4.5cqw;
     line-height: 1.38;
     /* the two voices, from the admin's Vendedor tones (ui/vendedor/tones.ts) */
-    --ana-bg: var(--spark-soft);
-    --ana-edge: color-mix(in srgb, var(--spark) 88%, var(--ink-muted));
+    --dua-bg: var(--spark-soft);
+    --dua-edge: color-mix(in srgb, var(--spark) 88%, var(--ink-muted));
     --me-bg: var(--primary);
     --me-ink: var(--on-primary);
   }
   @media (prefers-color-scheme: dark) {
     .app {
-      --ana-edge: color-mix(in srgb, var(--spark) 30%, transparent);
+      --dua-edge: color-mix(in srgb, var(--spark) 30%, transparent);
       --me-bg: color-mix(in srgb, var(--success) 24%, var(--surface));
       --me-ink: var(--ink);
     }
@@ -345,6 +373,8 @@
     flex-direction: column-reverse;
   }
   .log {
+    /* the gutter Duá's face sits in */
+    --gut: 13cqw;
     display: flex;
     flex-direction: column;
     gap: 1.8cqw;
@@ -365,22 +395,46 @@
     margin: 0;
     overflow-wrap: anywhere;
   }
+  .msg:not(.me) {
+    position: relative;
+    margin-left: var(--gut);
+  }
+  /* the mascot is forest green: always on a lit disc, cream at night like the admin's .dua-disc */
+  .face {
+    position: absolute;
+    left: calc(-1 * var(--gut));
+    bottom: 0;
+    width: 11cqw;
+    height: 11cqw;
+    border-radius: 50%;
+    background: var(--spark-soft);
+    overflow: hidden;
+  }
+  .face :global(.dua) {
+    display: block;
+    width: 100%;
+  }
+  @media (prefers-color-scheme: dark) {
+    .face {
+      background: var(--after-ink);
+    }
+  }
   .msg p {
     margin: 0;
     white-space: pre-line;
   }
-  .ana,
+  .dua,
   .me {
     display: grid;
     gap: 0.4cqw;
     padding: 2cqw 3.4cqw 1.4cqw;
     border-radius: 6cqw;
   }
-  .ana {
+  .dua {
     align-self: flex-start;
     border-bottom-left-radius: 2cqw;
-    background: var(--ana-bg);
-    box-shadow: inset 0 0 0 1px var(--ana-edge);
+    background: var(--dua-bg);
+    box-shadow: inset 0 0 0 1px var(--dua-edge);
   }
   .me {
     align-self: flex-end;
@@ -432,7 +486,7 @@
   /* Core's paper: its figures, never a bubble (ui/vendedor/receipts.tsx) */
   .paper {
     position: relative;
-    width: 88%;
+    width: 84%;
     max-width: none;
     align-self: flex-start;
     padding: 2.8cqw 3.6cqw 2.4cqw;

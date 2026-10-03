@@ -466,7 +466,7 @@ export async function reissuePix(
   // a pack's Pix keeps the pack's description, not the plan's month
   const label =
     inv.kind === 'ai_pack'
-      ? `Vendedor ${(await aiPackRow(tx, inv.ai_pack_id!))?.name ?? inv.ai_pack_id}`
+      ? `Duá ${(await aiPackRow(tx, inv.ai_pack_id!))?.name ?? inv.ai_pack_id}`
       : (await planOrThrow(tx, inv.plan_id)).name;
   const out = await viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
@@ -717,7 +717,7 @@ async function packPix(
   return viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
       payerEmail,
-      planName: `Vendedor ${pack.name}`,
+      planName: `Duá ${pack.name}`,
       origin: ctx.origin,
       now,
       drop: dropPix(ctx),
@@ -1023,7 +1023,7 @@ async function recordPaid(tx: Sql, tenantId: string, inv: InvoiceRow, method: st
       method,
       plan:
         inv.kind === 'ai_pack'
-          ? `${(await aiPackRow(tx, inv.ai_pack_id!))?.name ?? inv.ai_pack_id} (Vendedor)`
+          ? `${(await aiPackRow(tx, inv.ai_pack_id!))?.name ?? inv.ai_pack_id} (Duá)`
           : ((await planRow(tx, inv.plan_id))?.name ?? inv.plan_id),
     },
     { tenantId, dedupeKey: `billing.paid:${inv.id}` },
@@ -1110,7 +1110,7 @@ export async function applyPendingPlan(ctx: BillingCtx, tx: Sql, tenantId: strin
     await openSiteRequest(ctx, tx, tenantId);
 }
 
-/** Pangolin comes with a site made by our agent: one open request per store, and the team hears. */
+/** Pangolim comes with a site made by our agent: one open request per store, and the team hears. */
 export async function openSiteRequest(
   ctx: BillingCtx,
   tx: Sql,

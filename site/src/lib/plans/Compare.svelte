@@ -1,8 +1,8 @@
 <script lang="ts">
   import { plans } from '$lib/content';
 
-  const { mirim, bandeira, pangolin } = plans;
-  const cols = [mirim, bandeira, pangolin];
+  const { mirim, bandeira, pangolim } = plans;
+  const cols = [mirim, bandeira, pangolim];
 
   // true = included, false = not in that plan, a string = the value itself
   type Cell = boolean | string;
@@ -34,11 +34,11 @@
     },
     { name: 'Clientes', rows: [{ name: 'Cartão fidelidade', cells: up }] },
     {
-      name: 'Vendedor com IA no WhatsApp',
+      name: 'Duá, vendedor com IA no WhatsApp',
       rows: [
         {
           name: 'Conversas por mês',
-          cells: [false, bandeira.conversations, pangolin.conversations],
+          cells: [false, bandeira.conversations, pangolim.conversations],
           note: [undefined, `${bandeira.trialConversations} no teste`],
         },
       ],

@@ -11,13 +11,13 @@
   const TABS = [
     {
       id: 'vendedor',
-      tab: 'Vendedor',
-      title: 'Uma vendedora que nunca larga o WhatsApp.',
-      lead: 'A Ana atende os seus clientes no WhatsApp da loja e no site: tira dúvidas, monta o pedido e manda o Pix. Quando precisa de você, ela chama.',
+      tab: 'Duá',
+      title: 'Um vendedor que nunca larga o WhatsApp.',
+      lead: 'O Duá, o vendedor com IA no WhatsApp da loja, atende os seus clientes ali e no site: tira dúvidas, monta o pedido e manda o Pix. Quando precisa de você, ele chama.',
       points: [
         'Preços, taxas e horários vêm sempre da sua loja, nunca inventados',
-        'Você escolhe quando ela responde e assume a conversa quando quiser',
-        `No Venduá Bandeira e no Pangolin`,
+        'Você escolhe quando ele responde e assume a conversa quando quiser',
+        `No Venduá Bandeira e no Pangolim`,
       ],
       Demo: Vendedor,
     },
@@ -41,7 +41,7 @@
       points: [
         'Cada estação vê só o que é dela',
         'A comanda sai impressa sozinha, se você quiser',
-        'No Venduá Bandeira e no Pangolin',
+        'No Venduá Bandeira e no Pangolim',
       ],
       Demo: Cozinha,
     },
@@ -49,7 +49,7 @@
       id: 'loja',
       tab: 'Sua loja',
       title: 'A loja é sua, com a sua cara.',
-      lead: 'Você responde umas perguntas do Duá e a loja vai se montando do lado, do jeito que o cliente vai ver. Em cerca de uma hora ela está no ar.',
+      lead: 'O Duá monta a loja com você: você responde umas perguntas e ela vai se montando do lado, do jeito que o cliente vai ver. Em cerca de uma hora está no ar.',
       points: [
         'O seu nome, as suas cores e o seu cardápio',
         'Endereço próprio: seunome.vendua.com.br',

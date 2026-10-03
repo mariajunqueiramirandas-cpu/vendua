@@ -115,7 +115,7 @@ export async function grantIncentiveTx(
     tx,
     tenantId,
     {
-      prefix: 'ANA',
+      prefix: 'DUA',
       kind: t.kind,
       value: t.value,
       label: t.label ?? undefined,

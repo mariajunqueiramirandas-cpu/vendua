@@ -127,6 +127,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
 
   beforeAll(async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    // these run billing on the top plan, which launches closed to new stores (ADR 0032)
+    await sql`update plans set available = true where id = 'pangolim'`;
     billingStaff.notify = async () => {};
   });
 
@@ -141,11 +143,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
     await sql.end();
   });
 
-  test('the catalog: Bandeira trials 14 days, Mirim and Pangolin none; a new phone is eligible', async () => {
+  test('the catalog: Bandeira trials 14 days, Mirim and Pangolim none; a new phone is eligible', async () => {
     const plans = await call('GET', '/admin/v1/signup/plans');
     const by = Object.fromEntries(plans.body.plans.map((p: any) => [p.id, p]));
     expect(by.bandeira.trialDays).toBe(14);
-    expect(by.pangolin.trialDays).toBe(0);
+    expect(by.pangolim.trialDays).toBe(0);
     expect(by.mirim.trialDays).toBe(0);
     expect((await verified(mkPhone())).trialEligible).toBe(true);
   });
@@ -218,7 +220,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
 
   test('a plan without a trial refuses one; a bad flag is a 422', async () => {
     const { signupToken } = await verified(mkPhone());
-    const pro = await signup(signupToken, `trial-${nonce}-pro`, { planId: 'pangolin' });
+    const pro = await signup(signupToken, `trial-${nonce}-pro`, { planId: 'pangolim' });
     expect(pro.status).toBe(422);
     expect(pro.body.error.code).toBe('TRIAL_UNAVAILABLE');
     const bad = await signup(signupToken, `trial-${nonce}-bad`, { trial: 'yes' });
@@ -337,9 +339,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
     expect(open.length).toBe(1);
   });
 
-  test('Pangolin chosen and paid during the trial: its site request opens with the first payment', async () => {
+  test('Pangolim chosen and paid during the trial: its site request opens with the first payment', async () => {
     const t = await trialStore('prosite');
-    expect((await t.owner('PATCH', '/account/subscription', { planId: 'pangolin' })).status).toBe(
+    expect((await t.owner('PATCH', '/account/subscription', { planId: 'pangolim' })).status).toBe(
       200,
     );
     await endAt(t.id, new Date(Date.now() + 3 * DAY));
@@ -363,9 +365,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
 
   test('another plan during the trial: it swaps, the trial goes on, no prorated invoice', async () => {
     const t = await trialStore('swap');
-    const r = await t.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+    const r = await t.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     expect(r.status).toBe(200);
-    expect(await sub(t.id)).toMatchObject({ status: 'trialing', plan_id: 'pangolin' });
+    expect(await sub(t.id)).toMatchObject({ status: 'trialing', plan_id: 'pangolim' });
     expect((await sql`select 1 from invoices where tenant_id = ${t.id}`).length).toBe(0);
   });
 

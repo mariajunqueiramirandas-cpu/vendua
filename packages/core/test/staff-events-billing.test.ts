@@ -99,7 +99,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     (await events(tenantId, 'billing.problem')).filter((e) => e.data.problem === problem);
 
   /** a store from provision_store with its owner signed in (the store's first sign-in) */
-  const store = async (name: string, plan: 'mirim' | 'pangolin', email: string | null = null) => {
+  const store = async (name: string, plan: 'mirim' | 'pangolim', email: string | null = null) => {
     const slug = `sev-${nonce}-${name}`;
     const phone = mkPhone();
     const id = (
@@ -119,7 +119,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     return { id, slug, phone, owner };
   };
   const payInvoice = (id: string) => call('POST', `/admin/v1/dev/billing/invoices/${id}/pay`, {});
-  const paidStore = async (name: string, plan: 'mirim' | 'pangolin') => {
+  const paidStore = async (name: string, plan: 'mirim' | 'pangolim') => {
     const s = await store(name, plan, 'bia@example.com');
     const st = await s.owner('POST', '/account/subscription', {
       planId: plan,
@@ -152,6 +152,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
 
   beforeAll(async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    // these run billing on the top plan, which launches closed to new stores (ADR 0032)
+    await sql`update plans set available = true where id = 'pangolim'`;
     billingStaff.notify = async (_sql, n) => void staff.push(n.subject);
   });
 
@@ -464,7 +466,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       await sql`select provider_payment_id from invoices where tenant_id = ${o.id}`
     )[0]!.provider_payment_id as string;
     fake.settle(oldPix, 'approved');
-    await o.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+    await o.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     await hook('payment', oldPix);
     await hook('payment', oldPix);
     // the reconcile sweep finds the same approved Pix again
@@ -492,8 +494,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     expect(staff.some((x) => x.startsWith('Fatura paga duas vezes'))).toBe(true);
   });
 
-  test('Pangolin: the site request and the verified custom domain reach the team once', async () => {
-    const s = await paidStore('pro', 'pangolin');
+  test('Pangolim: the site request and the verified custom domain reach the team once', async () => {
+    const s = await paidStore('pro', 'pangolim');
     const sr = (await sql`select id from site_requests where tenant_id = ${s.id}`)[0]!.id as string;
     let req = await events(s.id, 'store.request');
     expect(req).toHaveLength(1);

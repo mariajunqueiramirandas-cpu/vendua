@@ -64,7 +64,7 @@ function usePackEditors() {
   };
 }
 
-/** The Vendedor's extra-conversation packs stores buy in the admin. */
+/** Duá's extra-conversation packs stores buy in the admin. */
 export function AiPacksPanel() {
   const query = useAiPacks();
   const ed = usePackEditors();
@@ -126,7 +126,7 @@ export function AiPacksPanel() {
   return (
     <Panel
       flush
-      title="pacotes do Vendedor"
+      title="pacotes do Duá"
       aside={mobile ? undefined : 'conversas extras que a loja compra no admin · não vencem'}
       className="overflow-hidden"
     >

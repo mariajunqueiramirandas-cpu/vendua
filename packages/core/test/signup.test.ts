@@ -149,6 +149,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
 
   beforeAll(async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    // these run billing on the top plan, which launches closed to new stores (ADR 0032)
+    await sql`update plans set available = true where id = 'pangolim'`;
     billingStaff.notify = async (_sql, n) => void staff.push({ subject: n.subject, body: n.body });
   });
 
@@ -164,7 +166,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(plans.status).toBe(200);
     expect(plans.body.storeDomain).toBe('vendua.test');
     expect(plans.body.billing.available).toBe(true);
-    expect(plans.body.plans.map((p: any) => p.id)).toEqual(['mirim', 'bandeira', 'pangolin']);
+    expect(plans.body.plans.map((p: any) => p.id)).toEqual(['mirim', 'bandeira', 'pangolim']);
     const mirim = plans.body.plans.find((p: any) => p.id === 'mirim');
     expect(mirim).toEqual({
       id: 'mirim',
@@ -183,6 +185,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       recommended: false,
       aiConversations: 0,
       aiTrialConversations: 0,
+      available: true,
     });
     expect(plans.body.plans.find((p: any) => p.id === 'bandeira')).toMatchObject({
       priceCents: 16900,
@@ -191,7 +194,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       aiConversations: 250,
       aiTrialConversations: 50,
     });
-    expect(plans.body.plans.find((p: any) => p.id === 'pangolin').priceCents).toBe(44900);
+    expect(plans.body.plans.find((p: any) => p.id === 'pangolim').priceCents).toBe(44900);
 
     const reserved = await call('GET', '/admin/v1/signup/slug?slug=Admin');
     expect(reserved.body).toMatchObject({ slug: 'admin', available: false, reason: 'reserved' });
@@ -291,6 +294,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect((await sql`select 1 from invoices where tenant_id = ${pixStore}`).length).toBe(1);
   });
 
+  test('a plan that is listed but closed is refused before anything is created', async () => {
+    const other = createApp(deps);
+    const token = (await verified(mkPhone(11), other)).signupToken;
+    await sql`update plans set available = false where id = 'pangolim'`;
+    try {
+      const r = await signup(token, `signup-${nonce}-closed`, { planId: 'pangolim' }, other);
+      expect(r.status).toBe(409);
+      expect(r.body.error).toMatchObject({
+        code: 'PLAN_UNAVAILABLE',
+        details: { field: 'planId' },
+      });
+      expect(
+        (await sql`select 1 from tenants where slug = ${`signup-${nonce}-closed`}`).length,
+      ).toBe(0);
+    } finally {
+      await sql`update plans set available = true where id = 'pangolim'`;
+    }
+  });
+
   test('segment: kept with the store, onboarding marked from signup; a replay changes neither', async () => {
     // its own app: the shared one's per-IP signup budget belongs to the tests below
     const other = createApp(deps);
@@ -382,9 +404,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(st.billing_hold).toBe(false);
   });
 
-  test('Pangolin signup opens a site request for the team once paid', async () => {
+  test('Pangolim signup opens a site request for the team once paid', async () => {
     const token = (await verified(mkPhone(5))).signupToken;
-    const r = await signup(token, `signup-${nonce}-pro`, { planId: 'pangolin' });
+    const r = await signup(token, `signup-${nonce}-pro`, { planId: 'pangolim' });
     expect(r.status).toBe(201);
     const tenant = r.body.store.id;
     await call('POST', `/admin/v1/dev/billing/invoices/${r.body.next.invoiceId}/pay`, {});

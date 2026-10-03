@@ -1,6 +1,7 @@
 # Venduá — mascote (tamanduá) — o nome é Duá
 
-Na cópia, Duá é neutro: sem artigo "o/a" (ex.: "Meu nome é Duá").
+Na cópia, Duá é masculino: "o Duá", "ele", "ligado" (decisão do dono, 2026-10-03). Duá é também o
+vendedor com IA da loja (ADR 0031/0032): o mesmo nome em todas as lojas, e esta arte é o rosto dele.
 
 Kit recebido em set/2026 (LEIA-ME original: 20 artes). Aqui estão as **20 poses já entregues**, em WebP
 com alfa, 640×640 (recortadas e centralizadas; os PNG originais 1254×1254 ficam com o design).

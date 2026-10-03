@@ -641,7 +641,7 @@ export const STAFF_EVENT_KINDS: Catalog = {
     category: 'agente',
     level: 'normal',
     severity: 'warning',
-    label: 'Vendedor de uma loja saiu do normal',
+    label: 'O Duá de uma loja saiu do normal',
     hint: 'bloqueios do verificador, passagens para a loja ou pedidos para parar subiram hoje',
   },
   'agent.cost_cap': {

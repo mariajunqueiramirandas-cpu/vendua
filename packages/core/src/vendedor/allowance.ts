@@ -37,7 +37,7 @@ export async function claimForTurnTx(
           ? `Vou chamar alguém da loja para te ajudar.${o.note ?? ''}`
           : 'No momento não consigo continuar por aqui, mas você pode fazer o seu pedido pelo cardápio desta página.',
     });
-  const reason = claim.reason === 'plan' ? 'plano sem Vendedor' : 'conversas do mês esgotadas';
+  const reason = claim.reason === 'plan' ? 'plano sem o Duá' : 'conversas do mês esgotadas';
   await tx`update shopper_threads set owner = 'human', owner_reason = ${reason},
     human_until = now() + make_interval(mins => ${o.silenceMin}),
     waiting_since = coalesce(waiting_since, now()), updated_at = now() where id = ${thread.id}`;

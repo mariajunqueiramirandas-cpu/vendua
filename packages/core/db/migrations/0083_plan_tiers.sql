@@ -3,9 +3,11 @@
 -- that add to them.
 --   plans.recommended            — the plan signup and the site lead with (at most one)
 --   plans.ai_conversations       — Vendedor conversations a paid month includes (0 = no Vendedor)
---   plans.ai_trial_conversations — the same for the whole free trial (Pangolin has no trial of its
+--   plans.ai_trial_conversations — the same for the whole free trial (Pangolim has no trial of its
 --     own, but a Bandeira trial can switch to it and keeps trialing)
 --   plans.features               — { customDomain, customSite, kds, printing, loyalty, vendedor }
+--   plans.available              — a store can pick it now; a public plan that isn't is shown but
+--     closed (Pangolim waits on own domains)
 --   ai_packs                     — platform catalog: extra conversations sold one-off by Pix
 --   invoices.kind 'ai_pack'      — one pack bought; ai_pack_id says which, ai_conversations how many
 --   ai_credits                   — conversations a paid pack added to a store (one per invoice)
@@ -16,37 +18,38 @@ alter table plans
   add column if not exists ai_conversations int not null default 0
     check (ai_conversations between 0 and 100000),
   add column if not exists ai_trial_conversations int not null default 0
-    check (ai_trial_conversations between 0 and 100000);
+    check (ai_trial_conversations between 0 and 100000),
+  add column if not exists available boolean not null default true;
 create unique index if not exists plans_one_recommended on plans ((true)) where recommended;
 
 -- the owner's decision (2026-10-03)
 insert into plans (id, name, price_cents, fee_bps, features, public, sort, trial_days,
-                   recommended, ai_conversations, ai_trial_conversations) values
+                   recommended, ai_conversations, ai_trial_conversations, available) values
   ('mirim', 'Venduá Mirim', 6990, 0,
    '{"customDomain": false, "customSite": false, "kds": false, "printing": false, "loyalty": false, "vendedor": false}',
-   true, 1, 0, false, 0, 0),
+   true, 1, 0, false, 0, 0, true),
   ('bandeira', 'Venduá Bandeira', 16900, 0,
    '{"customDomain": false, "customSite": false, "kds": true, "printing": true, "loyalty": true, "vendedor": true}',
-   true, 2, 14, true, 250, 50),
-  ('pangolin', 'Venduá Pangolin', 44900, 0,
+   true, 2, 14, true, 250, 50, true),
+  ('pangolim', 'Venduá Pangolim', 44900, 0,
    '{"customDomain": true, "customSite": true, "kds": true, "printing": true, "loyalty": true, "vendedor": true}',
-   true, 3, 0, false, 1000, 50)
+   true, 3, 0, false, 1000, 50, false)
 on conflict (id) do nothing;
 
 -- Before the launch nobody paid for Basic or PRO+: stores on them (dev, staff tests) move to the
 -- plan that replaces each, and the old rows stay only for the invoices that name them.
 update tenants set plan = 'mirim' where plan = 'basic';
-update tenants set plan = 'pangolin' where plan = 'pro_plus';
-update subscriptions set plan_id = case plan_id when 'basic' then 'mirim' else 'pangolin' end
+update tenants set plan = 'pangolim' where plan = 'pro_plus';
+update subscriptions set plan_id = case plan_id when 'basic' then 'mirim' else 'pangolim' end
   where plan_id in ('basic', 'pro_plus');
-update subscriptions set pending_plan_id = case pending_plan_id when 'basic' then 'mirim' else 'pangolin' end
+update subscriptions set pending_plan_id = case pending_plan_id when 'basic' then 'mirim' else 'pangolim' end
   where pending_plan_id in ('basic', 'pro_plus');
-update subscriptions set upgrade_plan_id = case upgrade_plan_id when 'basic' then 'mirim' else 'pangolin' end
+update subscriptions set upgrade_plan_id = case upgrade_plan_id when 'basic' then 'mirim' else 'pangolim' end
   where upgrade_plan_id in ('basic', 'pro_plus');
 -- an invoice still open on an old plan is the new plan's, at its price; its Pix (at the old price)
 -- stays matchable, and a payment of it lands short and is flagged
 update invoices set
-  plan_id = case plan_id when 'basic' then 'mirim' else 'pangolin' end,
+  plan_id = case plan_id when 'basic' then 'mirim' else 'pangolim' end,
   amount_cents = case plan_id when 'basic' then 6990 else 44900 end,
   pix_superseded = case when provider_payment_id is not null
     then array_append(pix_superseded, provider_payment_id) else pix_superseded end,

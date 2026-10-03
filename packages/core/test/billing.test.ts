@@ -106,7 +106,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     call(method, path, body, { 'x-vendua-control': 'ctl' });
 
   /** a self-serve store (provision_store, paused behind billing_hold) with a signed-in owner */
-  const store = async (name: string, plan: 'mirim' | 'pangolin', email: string | null = null) => {
+  const store = async (name: string, plan: 'mirim' | 'pangolim', email: string | null = null) => {
     const slug = `bill-${nonce}-${name}`;
     const phone = `219${String(Date.now() + created.length * 13).slice(-8)}`;
     const id = (
@@ -133,7 +133,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     )[0]!;
   const payInvoice = (id: string) => call('POST', `/admin/v1/dev/billing/invoices/${id}/pay`, {});
   /** a store whose plan is paid (pix, first invoice settled) */
-  const paidStore = async (name: string, plan: 'mirim' | 'pangolin') => {
+  const paidStore = async (name: string, plan: 'mirim' | 'pangolim') => {
     const s = await store(name, plan, 'bia@example.com');
     const st = await s.owner('POST', '/account/subscription', {
       planId: plan,
@@ -148,6 +148,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
 
   beforeAll(async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    // these run billing on the top plan, which launches closed to new stores (ADR 0032)
+    await sql`update plans set available = true where id = 'pangolim'`;
     billingStaff.notify = async (_sql, n) => void staff.push({ subject: n.subject });
   });
 
@@ -226,7 +228,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     });
     await payInvoice(st.body.invoices[0].id);
 
-    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     expect(up.status).toBe(200);
     // nothing changes until the difference is paid
     expect(up.body.plan.id).toBe('mirim');
@@ -235,23 +237,23 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(up.body.siteRequest).toBeNull();
     const pu = up.body.subscription.pendingUpgrade;
     // (44900 − 6990) × almost the whole month
-    expect(pu).toMatchObject({ planId: 'pangolin', planName: 'Venduá Pangolin' });
+    expect(pu).toMatchObject({ planId: 'pangolim', planName: 'Venduá Pangolim' });
     expect(pu.amountCents).toBeGreaterThan(37810);
     expect(pu.amountCents).toBeLessThanOrEqual(37910);
     expect(pu.invoice).toMatchObject({ kind: 'upgrade', status: 'open', method: 'pix' });
     expect(pu.invoice.amountCents).toBe(pu.amountCents);
     expect(pu.invoice.pix.copyPaste).toContain('FAKEPIX');
     // asking again returns the same invoice
-    const again = await s.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+    const again = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     expect(again.body.subscription.pendingUpgrade.invoice.id).toBe(pu.invoice.id);
     expect(await invoices(s.id)).toHaveLength(2);
 
     await payInvoice(pu.invoice.id);
     const paid = await s.owner('GET', '/account');
-    expect(paid.body.plan.id).toBe('pangolin');
-    expect(paid.body.subscription).toMatchObject({ planId: 'pangolin', pendingUpgrade: null });
-    expect(await planOf(s.id)).toBe('pangolin');
-    // Pangolin comes with the site request, once paid
+    expect(paid.body.plan.id).toBe('pangolim');
+    expect(paid.body.subscription).toMatchObject({ planId: 'pangolim', pendingUpgrade: null });
+    expect(await planOf(s.id)).toBe('pangolim');
+    // Pangolim comes with the site request, once paid
     expect(paid.body.siteRequest.status).toBe('requested');
     await Bun.sleep(20);
     expect(staff.some((n) => n.subject.includes('Site sob medida'))).toBe(true);
@@ -264,10 +266,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     const end = new Date(Date.now() + 4 * DAY);
     await sql`update subscriptions set current_period_end = ${end} where tenant_id = ${s.id}`;
     const down = await s.owner('PATCH', '/account/subscription', { planId: 'mirim' });
-    expect(down.body.plan.id).toBe('pangolin');
+    expect(down.body.plan.id).toBe('pangolim');
     expect(down.body.subscription.pendingPlan).toEqual({ id: 'mirim', name: 'Venduá Mirim' });
     await tick();
-    expect((await sub(s.id)).plan_id).toBe('pangolin');
+    expect((await sub(s.id)).plan_id).toBe('pangolim');
     await tick();
     await tick();
     const invs = (await invoices(s.id)).filter((i) => i.kind === 'period');
@@ -279,7 +281,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       status: 'open',
     });
     expect(invs[1]!.pix_copy_paste).toContain('FAKEPIX');
-    // paid early: the new period hasn't begun, Pangolin stays until it does
+    // paid early: the new period hasn't begun, Pangolim stays until it does
     await payInvoice(invs[1]!.id);
     let row = await sub(s.id);
     expect(row.current_period_start.getTime()).toBe(end.getTime());
@@ -325,12 +327,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(await invoices(s.id)).toHaveLength(1);
 
     // a card store pays the difference by Pix too; the assinatura moves once it's paid
-    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     expect(fs.amountCents).toBe(6990);
     expect(up.body.subscription.pendingUpgrade.invoice).toMatchObject({ method: 'pix' });
     await payInvoice(up.body.subscription.pendingUpgrade.invoice.id);
     expect(fs.amountCents).toBe(44900);
-    expect((await sub(s.id)).plan_id).toBe('pangolin');
+    expect((await sub(s.id)).plan_id).toBe('pangolim');
 
     // a monthly charge renews the period
     const before = (await sub(s.id)).current_period_end as Date;
@@ -347,7 +349,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     });
     const invs = (await invoices(s.id)).filter((i) => i.kind === 'period');
     expect(invs).toHaveLength(2);
-    expect(invs[1]).toMatchObject({ status: 'paid', amount_cents: 44900, plan_id: 'pangolin' });
+    expect(invs[1]).toMatchObject({ status: 'paid', amount_cents: 44900, plan_id: 'pangolim' });
     expect(invs[1]!.period_start.getTime()).toBe(before.getTime());
     expect(((await sub(s.id)).current_period_end as Date).getTime()).toBe(
       invs[1]!.period_end.getTime(),
@@ -429,7 +431,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     });
     const oldPix = (await invoices(s.id))[0]!.provider_payment_id;
     // upgrading before paying reprices the invoice and reissues its Pix
-    await s.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+    await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     await Bun.sleep(30);
     const inv = (await invoices(s.id))[0]!;
     expect(inv).toMatchObject({ amount_cents: 44900, pix_superseded: [oldPix] });
@@ -451,7 +453,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     const oldPix = (await invoices(s.id))[0]!.provider_payment_id;
     // the owner scanned the old QR; MP's webhook hasn't arrived when the price changes
     fake.settle(oldPix, 'approved');
-    await s.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+    await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     await Bun.sleep(30);
     expect(fake.payments.get(oldPix)!.status).toBe('approved');
     const staffBefore = staff.length;
@@ -479,7 +481,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
 
   test('upgrade then downgrade before paying: Mirim, the invoice void, no site request', async () => {
     const s = await paidStore('updown2', 'mirim');
-    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     const inv = up.body.subscription.pendingUpgrade.invoice;
     const pix = (await sql`select provider_payment_id from invoices where id = ${inv.id}`)[0]!
       .provider_payment_id;
@@ -510,7 +512,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     const s = await paidStore('late-up', 'mirim');
     const soon = new Date(Date.now() + 4 * DAY);
     await sql`update subscriptions set current_period_end = ${soon} where tenant_id = ${s.id}`;
-    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     const inv = up.body.subscription.pendingUpgrade.invoice;
     const pix = (await sql`select provider_payment_id from invoices where id = ${inv.id}`)[0]!
       .provider_payment_id;
@@ -530,10 +532,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     );
   });
 
-  test('the old exploit (Mirim → Pangolin → Mirim, repeated) never yields Pangolin', async () => {
+  test('the old exploit (Mirim → Pangolim → Mirim, repeated) never yields Pangolim', async () => {
     const s = await paidStore('exploit', 'mirim');
     for (let i = 0; i < 3; i++) {
-      await s.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+      await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
       expect(await planOf(s.id)).toBe('mirim');
       const site = await s.owner('POST', '/account/site-request', { brief: 'Um site bonito' });
       expect(site.body.error.code).toBe('PLAN_REQUIRED');
@@ -554,7 +556,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
 
   test('an unpaid upgrade expires with the period; a tiny one waits for the renewal', async () => {
     const s = await paidStore('expire', 'mirim');
-    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     const inv = up.body.subscription.pendingUpgrade.invoice;
     // the period ends unpaid (the store renews): the upgrade never applies
     const past = new Date(Date.now() - 60_000);
@@ -570,18 +572,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       'INVOICE_NOT_OPEN',
     );
 
-    // under R$ 1 left to charge: no invoice, Pangolin from the next (Pangolin-priced) period
+    // under R$ 1 left to charge: no invoice, Pangolim from the next (Pangolim-priced) period
     const end = new Date(Date.now() + 60 * 60_000);
     await sql`
       update subscriptions set current_period_start = ${new Date(end.getTime() - 30 * DAY)},
         current_period_end = ${end}
       where tenant_id = ${s.id}
     `;
-    const tiny = await s.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
+    const tiny = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     expect(tiny.body.plan.id).toBe('mirim');
     expect(tiny.body.subscription).toMatchObject({
       pendingUpgrade: null,
-      pendingPlan: { id: 'pangolin', name: 'Venduá Pangolin' },
+      pendingPlan: { id: 'pangolim', name: 'Venduá Pangolim' },
     });
     expect(
       (
@@ -590,7 +592,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     ).toBe(0);
     await tick();
     const renewal = (await invoices(s.id)).filter((r) => r.kind === 'period').at(-1)!;
-    expect(renewal).toMatchObject({ plan_id: 'pangolin', amount_cents: 44900 });
+    expect(renewal).toMatchObject({ plan_id: 'pangolim', amount_cents: 44900 });
     await payInvoice(renewal.id);
     await sql`update invoices set period_start = ${past} where id = ${renewal.id}`;
     await sql`
@@ -598,7 +600,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       where tenant_id = ${s.id}
     `;
     await tick();
-    expect(await planOf(s.id)).toBe('pangolin');
+    expect(await planOf(s.id)).toBe('pangolim');
     expect((await siteRequests(s.id)).map((r) => r.status)).toEqual(['requested']);
   });
 
@@ -611,8 +613,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(fake.subscriptions.get(pre)!.req.startDate?.getTime()).toBe(end.getTime());
   });
 
-  test('features need a paid plan: a pending Pangolin store gets PLAN_REQUIRED', async () => {
-    const s = await store('unpaid', 'pangolin', 'bia@example.com');
+  test('features need a paid plan: a pending Pangolim store gets PLAN_REQUIRED', async () => {
+    const s = await store('unpaid', 'pangolim', 'bia@example.com');
     const noSub = await s.owner('POST', '/account/domains', {
       host: `unpaid-${nonce}.example.com`,
     });
@@ -621,7 +623,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       details: { reason: 'unpaid' },
     });
     await s.owner('POST', '/account/subscription', {
-      planId: 'pangolin',
+      planId: 'pangolim',
       method: 'pix',
       payerEmail: 'bia@example.com',
     });
@@ -790,9 +792,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(fake.payments.get(row.provider_payment_id)!.status).toBe('pending');
   });
 
-  test('Pangolin domain: add → DNS check → dns_ok (team told once) → CRM activates', async () => {
-    const s = await paidStore('dom', 'pangolin');
-    const other = await paidStore('dom2', 'pangolin');
+  test('Pangolim domain: add → DNS check → dns_ok (team told once) → CRM activates', async () => {
+    const s = await paidStore('dom', 'pangolim');
+    const other = await paidStore('dom2', 'pangolim');
     const host = `loja-${nonce}.example.com`;
     const bad = await s.owner('POST', '/account/domains', { host: `x.vendua.test` });
     expect(bad.body.error.code).toBe('INVALID_DOMAIN');
@@ -847,7 +849,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(lost.body.customDomain).toMatchObject({ host, status: 'failed' });
     expect(lost.body.customDomain.lastError).toContain('Outra loja');
     const third = await (
-      await paidStore('dom3', 'pangolin')
+      await paidStore('dom3', 'pangolim')
     ).owner('POST', '/account/domains', {
       host,
     });
@@ -884,7 +886,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect((await other.owner('GET', '/account')).body.customDomain).toBeNull();
 
     // the CRM won't activate a host another store already serves
-    const x = await paidStore('dom4', 'pangolin');
+    const x = await paidStore('dom4', 'pangolim');
     const xh = `clash-${nonce}.example.com`;
     const xa = await x.owner('POST', '/account/domains', { host: xh });
     await sql`update custom_domains set status = 'dns_ok' where id = ${xa.body.customDomain.id}`;
@@ -897,12 +899,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(clash.body.error.code).toBe('DOMAIN_TAKEN');
   });
 
-  test('site request (Pangolin) and the CRM', async () => {
-    const s = await paidStore('site', 'pangolin');
+  test('site request (Pangolim) and the CRM', async () => {
+    const s = await paidStore('site', 'pangolim');
     const r = await s.owner('POST', '/account/site-request', {
       brief: 'Loja de doces, tons pastel',
     });
-    // paying Pangolin already opened the request; the brief fills it in
+    // paying Pangolim already opened the request; the brief fills it in
     expect(r.status).toBe(200);
     expect(r.body.siteRequest).toMatchObject({
       status: 'requested',
@@ -920,7 +922,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(row).toMatchObject({
       slug: s.slug,
       url: `https://${s.slug}.vendua.test`,
-      plan: { id: 'pangolin', name: 'Venduá Pangolin' },
+      plan: { id: 'pangolim', name: 'Venduá Pangolim' },
       subscription: { status: 'active', method: 'pix' },
       siteRequest: { status: 'requested', brief: 'Tons pastel e fotos grandes', staffNote: null },
     });

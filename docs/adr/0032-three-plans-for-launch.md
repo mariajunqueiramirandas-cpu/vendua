@@ -23,14 +23,23 @@ The owner decided (2026-10-03):
     and coupons.
   - **Venduá Bandeira, R$ 169/mês, recommended:** everything in Mirim, plus the kitchen display,
     automatic printing, the loyalty card and the Vendedor with 250 conversations a month.
-  - **Venduá Pangolin, R$ 449/mês:** everything in Bandeira, plus a custom domain, a site made
+  - **Venduá Pangolim, R$ 449/mês:** everything in Bandeira, plus a custom domain, a site made
     by our agent and 1.000 conversations a month.
-- **The 14-day trial with no card moves to Bandeira.** Mirim and Pangolin have no trial. A trial
+- **The 14-day trial with no card moves to Bandeira.** Mirim and Pangolim have no trial. A trial
   includes 50 Vendedor conversations.
 - **Extra conversations are sold in packs:** +100 conversations for R$ 39,90.
 - **No fee per order on any plan.**
 - **No founder's price.**
 - **No grandfathering.** Nobody pays for Basic or PRO+, so the catalog is replaced in place.
+
+Later the same day the owner added three decisions:
+
+- **The top plan is spelled "Pangolim"** (id `pangolim`).
+- **Pangolim launches closed.** Venduá can't offer own domains yet. The plan stays listed as the
+  top anchor, but no store can pick it until staff open it.
+- **The AI seller is Duá**, Venduá's mascot, on every store. Stores no longer name it, the
+  mascot is its face, and copy says "o Duá" and "ele". "Vendedor" stays the code name (routes,
+  tables, the `vendedor` feature key).
 
 ## Decision
 
@@ -41,7 +50,16 @@ a partial unique index) marks the plan the signup preselects and the site leads 
 of these in the CRM (`PATCH /control/v1/plans/:id`). Recommending one plan takes the flag off the
 other, and features merge key by key.
 
-**Basic and PRO+ retire.** Stores on them move to Mirim and Pangolin, and so do subscriptions
+**A plan can be listed but closed.** `plans.available` (default true) says whether a store may
+pick the plan. Pangolim starts with `false`. Signup, starting a subscription and changing plans
+answer 409 `PLAN_UNAVAILABLE` for a closed plan, except the store's own current plan, so a
+store already on it can still pay. The admin and the site show a closed plan with its price and
+perks, and with "Ainda não está aberto para assinatura." where its button would be. They never
+preselect it, and Conta's upgrade offer skips it. Staff open or close a plan in the CRM ("aberto
+para assinatura"). The recommended plan must stay open: closing it, or recommending a closed
+plan, answers 409 `RECOMMENDED_PLAN_CLOSED`.
+
+**Basic and PRO+ retire.** Stores on them move to Mirim and Pangolim, and so do subscriptions
 and pending changes. The old rows stay, not public, only for the invoices that name them.
 
 **Stores from before the catalog** (`spike` and other legacy ids, "Plano piloto") keep every
@@ -85,7 +103,7 @@ the team runs by hand, and the Vendedor's pilots among them.
 - **What counts as a conversation.** One shopper's conversation counts once per 24 hours from
   when it started, however many messages it has.
 - **The allowance.** A paid plan gets `ai_conversations` per calendar month (São Paulo time). A
-  trial gets `ai_trial_conversations` for its whole length and can't use packs. Pangolin has 50
+  trial gets `ai_trial_conversations` for its whole length and can't use packs. Pangolim has 50
   too, because a Bandeira trial can switch to it and stays a trial.
 - **Order of spending.** The month's allowance goes first, then packs. Pack conversations don't
   expire.
@@ -122,11 +140,15 @@ the team runs by hand, and the Vendedor's pilots among them.
   - **A plan without it is the switch off.** `loadAgent().enabled` is the merchant's switch and
     the plan; `switchedOn` keeps the switch, so an upgrade brings it back unchanged. The same
     rule covers the WhatsApp gateway, the web chat and the proactive turns.
+  - **Its name is not a setting.** Every payload names it Duá, a stored name from before reads as
+    Duá, and `PATCH /vendedor/settings` with `name` answers 422. It introduces itself as "o Duá,
+    assistente virtual da <loja>", or "o Duá, da <loja>" with disclosure off. Its coupons start
+    `DUA-`.
   - **Turning it on needs the plan,** and so do the test chat, Cliente oculto and the onboarding
     interviewer. Those three are the owner's own tools and don't count conversations.
   - **Ingest claims a conversation** (`thread:<id>`) before it dispatches a shopper's message to
     an agent or Ensaio floor. When it can't, the thread goes to the store: "Vou chamar alguém da
-    loja" once, `owner_reason` "conversas do mês esgotadas" (or "plano sem Vendedor"), waiting in
+    loja" once, `owner_reason` "conversas do mês esgotadas" (or "plano sem o Duá"), waiting in
     the inbox, and no handback timer. The next message asks again.
   - **The conversation screens stay open on every plan,** so threads handed to the store can be
     answered; the Vendedor's other screens show the plan that includes it.
@@ -137,8 +159,10 @@ the team runs by hand, and the Vendedor's pilots among them.
   the pilots will set them.
 - **Still open, for the owner:**
   - Whether pack conversations should expire.
-  - Telling owners when Ana runs out of conversations (the Vendedor's admin screens).
-  - The final spelling of "Pangolin" (Portuguese: "Pangolim").
+  - Telling owners when Duá runs out of conversations (the Vendedor's admin screens).
+  - When Pangolim opens, which waits on own domains being offered.
+  - The storefront web chat still shows Duá's initial, not the mascot. The mascot there needs an
+    additive Kernel field (an avatar URL) and a release.
 
 ## Alternatives considered
 

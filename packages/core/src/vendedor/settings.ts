@@ -40,8 +40,11 @@ export interface StoreAgentSettings {
   webChat: boolean;
 }
 
+/** The seller is Duá, Venduá's mascot, on every store: the name is not a setting any more. */
+export const AGENT_NAME = 'Duá';
+
 export const DEFAULT_SETTINGS: StoreAgentSettings = {
-  name: 'Ana',
+  name: AGENT_NAME,
   disclose: true,
   tone: 'balanced',
   voice: '',
@@ -83,6 +86,8 @@ export function withDefaults(stored: unknown): StoreAgentSettings {
   return {
     ...d,
     ...(s as Partial<StoreAgentSettings>),
+    // a row from when stores named their seller still reads as Duá
+    name: AGENT_NAME,
     capabilities: sub('capabilities', d.capabilities),
     handoff: sub('handoff', d.handoff),
     recovery: sub('recovery', d.recovery),
@@ -194,14 +199,6 @@ export function parseSettingsPatch(
         mark(k);
         enabled = bool(v, k);
         break;
-      case 'name': {
-        if (typeof v !== 'string' || !v.trim() || v.trim().length > 30)
-          bad(k, 'name must be 1–30 characters');
-        if (/[\n\r{}<>]/.test(v)) bad(k, 'name has characters that are not allowed');
-        mark(k);
-        next.name = v.trim();
-        break;
-      }
       case 'disclose':
         mark(k);
         next.disclose = bool(v, k);
@@ -338,6 +335,6 @@ export function parseSettingsPatch(
 /** The greeting the merchant previews and the shopper reads first. */
 export function introduction(s: StoreAgentSettings, storeName: string): string {
   return s.disclose
-    ? `${s.name}, assistente virtual da ${storeName}`
-    : `${s.name}, da ${storeName}`;
+    ? `o ${s.name}, assistente virtual da ${storeName}`
+    : `o ${s.name}, da ${storeName}`;
 }

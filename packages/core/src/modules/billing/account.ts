@@ -9,7 +9,7 @@ import { publicPlans, tenantPlan } from './plans.ts';
 import { publicAiPacks, upgradeLive, type SubRow } from './subscriptions.ts';
 
 /** GET /account — the store's plan, subscription, Vendedor conversations, invoices, domains and
- *  the Pangolin site request. */
+ *  the Pangolim site request. */
 export async function accountView(
   tx: Sql,
   t: Pick<Tenant, 'id' | 'slug'>,

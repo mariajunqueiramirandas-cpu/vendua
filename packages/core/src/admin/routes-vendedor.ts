@@ -136,7 +136,7 @@ export function mountVendedor(d: AdminDeps) {
         action: 'vendedor.release',
         entity: 'thread',
         entityId: id,
-        summary: 'Devolveu a conversa ao Vendedor',
+        summary: 'Devolveu a conversa ao Duá',
       });
       await emitAdminTx(tx, t.id, 'vendedor', id);
       return { status: 200, body: await threadDetail(tx, t.id, id) };
@@ -357,10 +357,10 @@ export function mountVendedor(d: AdminDeps) {
         entityId: t.id,
         summary:
           patch.enabled === undefined
-            ? `Ajustou o Vendedor (${patch.changed.join(', ')})`
+            ? `Ajustou o Duá (${patch.changed.join(', ')})`
             : patch.enabled
-              ? 'Ligou o Vendedor'
-              : 'Desligou o Vendedor',
+              ? 'Ligou o Duá'
+              : 'Desligou o Duá',
         before: { enabled: agent.enabled, settings: agent.settings },
         after: { enabled, settings: patch.settings },
       });
@@ -460,7 +460,7 @@ export function mountVendedor(d: AdminDeps) {
         action: 'vendedor.knowledge',
         entity: 'store_knowledge',
         entityId: id,
-        summary: status === 'dismissed' ? 'Ignorou uma proposta' : 'Ensinou o Vendedor',
+        summary: status === 'dismissed' ? 'Ignorou uma proposta' : 'Ensinou o Duá',
       });
       await emitAdminTx(tx, t.id, 'vendedor', 'knowledge');
       return { status: 200, body: await knowledgeView(tx, t.id) };
@@ -753,7 +753,7 @@ export function mountVendedor(d: AdminDeps) {
         action: 'vendedor.forget_fact',
         entity: 'customer',
         entityId: phone.slice(-4),
-        summary: 'Apagou algo que o Vendedor sabia do cliente',
+        summary: 'Apagou algo que o Duá sabia do cliente',
       });
       return {
         status: 200,

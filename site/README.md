@@ -21,7 +21,8 @@ Other pages: `/privacidade/` and the 404.
 - Sign-up is open. The only call to action is `<Start/>` ("Criar minha loja"), a plain link to
   `<PUBLIC_ADMIN_URL>/admin/comecar?plano=bandeira` (works without JS): in the header, and in the
   closing. Not in the hero, where it would sit right under the header's. The price block links each
-  plan to the same page with `?plano=mirim`, `?plano=bandeira` or `?plano=pangolin`. No form, contact
+  open plan to the same page with `?plano=mirim` or `?plano=bandeira` (and `?plano=pangolim` once it
+  opens, see below). No form, contact
   or WhatsApp CTA on the site; Instagram only in the footer (and at most one line near the closing
   CTA).
 - Three plans, the owner's decision (2026-10-03), shown exactly and cheapest first, with Bandeira in
@@ -29,16 +30,28 @@ Other pages: `/privacidade/` and the 404.
   `<Start/>` preselects):
   - **Venduá Mirim, R$ 69,90/mês**: the store at `seunome.vendua.com.br`, the standard Venduá look,
     and everything on the receipt (menu, orders, Pix, coupons...). Copy says plainly what it leaves
-    out: the kitchen screen, automatic printing, the loyalty card and the Vendedor.
+    out: the kitchen screen, automatic printing, the loyalty card and Duá.
   - **Venduá Bandeira, R$ 169/mês**: everything in Mirim plus the kitchen screen (KDS), automatic
-    printing of the comanda, the loyalty card and the **Vendedor** (an AI that answers the store's
-    customers on its WhatsApp), with 250 conversations a month (50 during the trial).
-  - **Venduá Pangolin, R$ 449/mês**: everything in Bandeira plus own domain, a site made by our AI
-    agent, and 1.000 Vendedor conversations a month.
-  - A conversation is one customer talking to the Vendedor, counted once every 24 hours (FAQ).
+    printing of the comanda, the loyalty card and **Duá**, the AI seller (code name Vendedor, ADR 0031) that answers the store's customers on its WhatsApp, with 250 conversations a month (50
+    during the trial).
+  - **Venduá Pangolim, R$ 449/mês**: everything in Bandeira plus own domain, a site made by our AI
+    agent, and 1.000 Duá conversations a month. **Shown but closed** (owner, 2026-10-03: Venduá
+    can't offer own domains yet): the card keeps its price and perks, and its button is replaced by
+    the quiet line "Ainda não está aberto para assinatura." (no date, never "em breve"); nothing
+    links to `?plano=pangolim`, and the FAQ and closing don't offer it. Open/closed follows the CRM's
+    `available` flag (Core answers 409 `PLAN_UNAVAILABLE`), mirrored in `available` in `plans`
+    like the prices; `signup()` throws on a closed plan, so the prerender fails before a link ships.
+  - Duá is the AI seller's only name, the same on every store (stores don't name it), and the
+    grammar is masculine: o Duá, do Duá, ele. First mention: "o Duá, o vendedor com IA no WhatsApp
+    da loja"; never "o Vendedor" as a product name. It tells shoppers it's the store's virtual
+    assistant ("Oi! Sou o Duá, assistente virtual da Bolos da Nena."), never a person; in the chat
+    demo the mascot is its face (`avatar-ola`, `avatar-pensando` while typing, `avatar-feliz` when the
+    order is done) on a lit disc, while the header stays the store's WhatsApp.
+  - A conversation is one customer talking to Duá, counted once every 24 hours (FAQ).
   - The plan is paid by Pix every month or by recurring card, through Mercado Pago. Venduá takes no
     per-order fee on any plan, but Mercado Pago keeps its own on each payment, so never "sem taxas".
-- Bandeira starts with a **14-day free trial, no card**; Mirim and Pangolin pay the first month.
+- Bandeira starts with a **14-day free trial, no card**; Mirim (and Pangolim, once open) pays the
+  first month.
   "14 dias grátis" is the only "grátis" the site says: no other free offer, no discount, no price
   beyond the three plans (the +100-conversation pack is sold in the admin, not quoted here), and no
   date for the custom site. Plan names, prices, conversations and the trial live in `plans` in
@@ -124,7 +137,7 @@ Images are committed; `scripts/assets.ts` rebuilds them (no argument = all three
 - `src/routes/`: home, `/privacidade/`, 404.
 - `src/lib/sections/`: the five moments (`Hero`, `WhoFor`, `Demos`, `Plans`, `Night`).
 - `src/lib/demos/`: `DemoFrame` (example note, recomeçar, reduced motion, hydration) and the four
-  demos (`Vendedor`, `Pedido`, `Cozinha`, `Loja`, each with its parts in a folder). `Demos.svelte`
+  demos (`Vendedor` (Duá's chat, tab "Duá"), `Pedido`, `Cozinha`, `Loja`, each with its parts in a folder). `Demos.svelte`
   opens one from `?demo=<id>` or `#demo-<id>`.
 - `src/lib/plans/`: the cards, the comparison table, the calculator and its cents math.
 - `src/lib/components/`: `Section`, device frames, `Screen`, `Notification`, `LockScreen`, `Dua`,
