@@ -96,6 +96,7 @@ import { orsRouter, routeQuoter, type Router } from './modules/routing.ts';
 import { OrderHub } from './modules/order-live.ts';
 import { pixPayload, type PixKeyType } from './modules/pix.ts';
 import { bookableDates } from './modules/preorder.ts';
+import { mountWebChat, webChatProfile } from './vendedor/web-chat.ts';
 import { mountCommerce } from './modules/commerce-routes.ts';
 import {
   agentGoal,
@@ -555,7 +556,7 @@ export function createApp({
 
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
-    const { settings, online, publicUrl } = await withTenant(sql, tenant.id, async (tx) => {
+    const { settings, online, publicUrl, chat } = await withTenant(sql, tenant.id, async (tx) => {
       const settings = await loadSettings(tx, tenant.id);
       const online = await storePaymentsPublic(
         tx,
@@ -565,7 +566,7 @@ export function createApp({
         readPaymentAdjustments(settings?.payment_adjustments),
       );
       const publicUrl = await storeOrigin(tx, tenant, publicStoreDomain);
-      return { settings, online, publicUrl };
+      return { settings, online, publicUrl, chat: await webChatProfile(tx, tenant.id) };
     });
     const now = new Date();
     const status = currentStatus(settings, now);
@@ -631,6 +632,8 @@ export function createApp({
         instructions: settings?.pickup_instructions ?? null,
       },
       logoUrl: settings?.logo_url ?? null,
+      // Kernel 1.18: the Vendedor's chat on the site, when the merchant turned it on
+      chat,
     });
   });
 
@@ -2778,6 +2781,7 @@ export function createApp({
     publicOrigin: (c) => adminOrigin(c),
     storeDomain: publicStoreDomain,
   });
+  mountWebChat({ checkout, sql, sessionSecret, idempotency });
 
   mountControlBilling({
     app,

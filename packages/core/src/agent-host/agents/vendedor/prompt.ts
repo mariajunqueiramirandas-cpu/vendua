@@ -142,6 +142,10 @@ export function volatile(ctx: BlockCtx): string {
   } else lines.push('CARRINHO: vazio');
   if (c.suggestion.offered) lines.push('SUGESTÃO: já oferecida neste pedido (não ofereça outra).');
   if (c.order) lines.push(`PEDIDO DESTA CONVERSA: #${c.order.number} (${c.order.state})`);
+  if (sj?.channel === 'web')
+    lines.push(
+      'CANAL: chat no site da loja. A sacola é a da página que o cliente vê; para fechar, ele toca em Finalizar (send_link).',
+    );
   if (sj?.floor === 'rehearsal')
     lines.push('ENSAIO: escreva o que mandaria; nada é enviado e nenhum pedido é feito.');
   if (c.proactive)

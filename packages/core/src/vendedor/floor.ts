@@ -48,6 +48,11 @@ export function floorOf(
   if (t.class === 'other') return { floor: 'off', until: null };
   const s = agent.settings;
   if (s.coverage === 'rehearsal') return { floor: 'rehearsal', until: null };
+  // the site's chat answers at once: the merchant turned it on for that
+  if (t.channel === 'web')
+    return t.owner === 'human' && t.humanUntil && t.humanUntil > now
+      ? { floor: 'store', until: t.humanUntil }
+      : { floor: 'agent', until: null };
   if (t.owner === 'human') {
     if (t.humanUntil && t.humanUntil > now) return { floor: 'store', until: t.humanUntil };
     // the window lapsed: it takes back

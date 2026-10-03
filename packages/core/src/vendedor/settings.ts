@@ -35,6 +35,8 @@ export interface StoreAgentSettings {
   };
   pixOnlyAfterCancels: number | null;
   voiceReplies: boolean;
+  /** the chat on the store's own site (V4); off until the merchant turns it on */
+  webChat: boolean;
 }
 
 export const DEFAULT_SETTINGS: StoreAgentSettings = {
@@ -53,6 +55,7 @@ export const DEFAULT_SETTINGS: StoreAgentSettings = {
   incentives: null,
   pixOnlyAfterCancels: null,
   voiceReplies: false,
+  webChat: false,
 };
 
 export interface StoreAgentRow {
@@ -314,6 +317,10 @@ export function parseSettingsPatch(
       case 'voiceReplies':
         mark(k);
         next.voiceReplies = bool(v, k);
+        break;
+      case 'webChat':
+        mark(k);
+        next.webChat = bool(v, k);
         break;
       default:
         bad(k, `unknown setting ${k}`);

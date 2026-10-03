@@ -291,7 +291,7 @@ export async function threadList(
     left join lateral (
       select coalesce(m.transcript, m.body) as body, m.author from shopper_messages m
       where m.thread_id = t.id order by m.created_at desc limit 1) last on true
-    where t.tenant_id = ${tenantId} and t.channel = 'whatsapp'
+    where t.tenant_id = ${tenantId} and t.channel in ('whatsapp', 'web')
       and (${o.before}::timestamptz is null or t.updated_at < ${o.before}::timestamptz)
       and ${
         o.filter === 'waiting'

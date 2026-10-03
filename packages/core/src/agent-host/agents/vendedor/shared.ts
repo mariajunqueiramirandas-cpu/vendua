@@ -31,6 +31,11 @@ export async function ensureCart(ctx: Ctx, t: Thread): Promise<string> {
       select status from carts where tenant_id = ${ctx.tenantId} and id = ${t.cartId} for update`;
     if (c?.status === 'open') return t.cartId;
   }
+  // on the site the cart is the page's own: a finished one means the shopper starts over there
+  if (t.channel === 'web')
+    throw new ToolError(
+      'O carrinho do site já foi finalizado. Peça para o cliente recarregar a página.',
+    );
   const { cartId } = await createCartTx(ctx.tx, ctx.tenantId, vendedorDeps().sessionSecret);
   await ctx.tx`update shopper_threads set cart_id = ${cartId}, summary = null, updated_at = now()
     where id = ${t.id}`;

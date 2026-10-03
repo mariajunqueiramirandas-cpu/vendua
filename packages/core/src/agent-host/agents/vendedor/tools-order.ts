@@ -128,6 +128,10 @@ export const sendSummaryTool = defineTool<Record<string, never>, Sql>({
   input: s.object({}),
   run: async (ctx: Ctx) => {
     const t = await thread(ctx, { forUpdate: true });
+    if (t.channel === 'web')
+      throw new ToolError(
+        'No site o cliente fecha pela própria sacola da página: use send_link e diga para tocar em Finalizar.',
+      );
     if (!t.cartId) throw new ToolError('A sacola está vazia.');
     const cartId = await ensureCart(ctx, t);
     await bestOwnCoupon(ctx, t, cartId);
@@ -653,6 +657,10 @@ export const sendLinkTool = defineTool<Record<string, never>, Sql>({
   run: async (ctx: Ctx) => {
     const t = await thread(ctx, { forUpdate: true });
     const p = pack(ctx);
+    if (t.channel === 'web') {
+      ctx.card(linkCard({ url: `${p.url}/sacola`, label: 'Sua sacola, é só finalizar:' }));
+      return { content: 'O link da sacola desta página vai junto com a sua resposta.' };
+    }
     if (!t.cartId) {
       ctx.card(linkCard({ url: p.url, label: `Cardápio da ${p.storeName}:` }));
       return { content: 'Link do cardápio vai junto com a sua resposta.' };
