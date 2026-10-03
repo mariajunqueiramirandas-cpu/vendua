@@ -736,11 +736,12 @@ async function voidOpenPack(ctx: BillingCtx, tx: Sql, inv: InvoiceRow) {
 
 /** A pack invoice was paid: what it promised when bought joins the store's for PACK_DAYS, once
  *  per invoice. */
-async function creditAiPack(tx: Sql, tenantId: string, inv: InvoiceRow) {
+async function creditAiPack(tx: Sql, tenantId: string, inv: InvoiceRow, paidAt: Date) {
+  // from the payment itself, not when Core learned of it (a late webhook, a CRM "pago")
   await tx`
     insert into ai_credits (tenant_id, invoice_id, conversations, expires_at)
     values (${tenantId}, ${inv.id}, ${inv.ai_conversations!},
-            now() + make_interval(days => ${PACK_DAYS}))
+            ${paidAt}::timestamptz + make_interval(days => ${PACK_DAYS}))
     on conflict (invoice_id) do nothing
   `;
 }
@@ -963,7 +964,7 @@ export async function markInvoicePaid(
   )[0];
   if (!inv || !sub) return false;
   if (inv.kind === 'ai_pack') {
-    await creditAiPack(tx, tenantId, inv);
+    await creditAiPack(tx, tenantId, inv, paidAt);
   } else if (inv.kind === 'upgrade') {
     if (upgradeLive(sub, { ...inv, status: 'open' }, paidAt))
       await applyUpgrade(ctx, tx, sub, inv, now);
