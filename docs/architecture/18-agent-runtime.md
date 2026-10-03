@@ -147,7 +147,7 @@ definitions, which are platform data under the control policy like today's agent
 | Table           | Holds                                                                                                                                                                                                                        |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent_actors`  | One row per (agent, subject): the version pin, the lease (`owner`, `epoch`, `until`), `next_wake_at`, and a cached projection of the actor's state with the log sequence it reflects.                                        |
-| `agent_mailbox` | What wakes an actor: inbound messages, timers, webhooks, merchant actions. `kind`, bounded `payload`, `source`, `deliver_at`, a unique `dedupe_key`, `consumed_by_turn`.                                                     |
+| `agent_mailbox` | What wakes an actor: inbound messages, timers, webhooks, merchant actions. `kind`, bounded `payload`, `source`, `deliver_at`, `dedupe_key` unique per `(tenant_id, dedupe_key)`, `consumed_by_turn`.                         |
 | `agent_events`  | The log: `(actor_id, seq)` unique, `turn_id`, `step`, `type`, `payload`, `version`, `at`. Partitioned by month; bodies of model I/O kept for the retention the owner sets, everything else for the life of the conversation. |
 
 Event types are namespaced strings validated by the definition that emits them, not a CHECK
@@ -163,9 +163,16 @@ updated in the same transaction as the events that change them, and rebuildable.
 - **Waking.** A trigger on `agent_mailbox` sets `next_wake_at` and `pg_notify`s, the pattern of
   migration 0048 and ADR 0017: the scheduler sleeps until the next due time or a notification.
 - **Claiming.** `FOR UPDATE SKIP LOCKED` on actors that are due and unleased; the lease bumps
-  `epoch`. Every write in the turn checks `owner + epoch`, the fencing the WhatsApp gateway
-  already uses (`src/store-whatsapp/auth-store.ts:73`). A process that lost its lease can't
-  write.
+  `epoch`. The claim and the watchdog run as control, because they span stores, and they only
+  touch the lease columns.
+- **Tenant scope.** Everything else in a turn runs in `withTenant(actor.tenant_id)`
+  transactions, so RLS applies to every read and write the model can cause. A step's fence
+  check, tool write, events, mailbox update, projection and outbox row are one such
+  transaction.
+- **Fencing.** That transaction first reads the actor row with
+  `owner = me and epoch = mine and lease_until > now() … FOR SHARE`, which holds off a lease
+  steal until it commits. It is the fencing the WhatsApp gateway uses
+  (`src/store-whatsapp/auth-store.ts:73`). A process that lost its lease can't write.
 - **Lanes.** Each agent declares a lane: `interactive` (a person is waiting), `followup`,
   `background`. Lanes have their own worker pools, so a 30-step research turn never delays a
   shopper's reply.
@@ -191,13 +198,14 @@ activate(actor)
       guards.output(reply) → block (feedback to the model) | render + log message.sent + outbox
     state ← fold(new events)
     until agent.finish(state)
-  log: turn.ended {usage, cost}; release lease
+  log: turn.ended {usage, cost}
+  release: lock the actor row FOR UPDATE, set next_wake_at from unconsumed mailbox rows, clear the lease
 ```
 
 - **Step memoization.** `step(id, fn)` returns the recorded result if the log has one for this
   turn and step; otherwise it runs `fn` and records it. A crashed turn is re-run from the top and
   fast-forwards through what already happened: the same model output, the same tool results, no
-  second charge, no second message. Because results are loaded from the log rather than
+  second charge, and no second outbox row. Because results are loaded from the log rather than
   recomputed, the turn code needn't be deterministic (Temporal's constraint); this is the
   Postgres-only model of DBOS and of Absurd, in our own tables.
 - **Watchdog.** A lease that lapses (a dead worker) is reclaimed with backoff; the epoch fence
@@ -208,16 +216,32 @@ activate(actor)
   transaction that appends its `tool.returned` event, under the epoch fence. Either both commit
   or neither does. Outbound messages are outbox rows in that same transaction
   (`store_wa_messages`), so a message exists only if its turn step does, the rule ADR 0026 set
-  for order updates. External calls (Mercado Pago, a transcription API) get the step id as their
-  idempotency key and their result is recorded.
+  for order updates. That is exactly-once into the outbox. Delivery stays at-least-once: the
+  gateway re-sends a row whose send lease lapsed (`src/store-whatsapp/gateway.ts:465`), and
+  WhatsApp shows it once because the message id derives from the row id. The outbox needs the
+  chat-row changes listed in [sales-agent §4.2](../features/sales-agent.md#42-transport-and-inbound).
+- **External calls** (Mercado Pago, a transcription API) are keyed by the business object, not
+  the step: `order:{id}:pix`, `media:{id}:transcript`. A superseded turn's successor has new
+  step ids but finds the same charge. Their results are recorded like any step.
 - **Preemption.** If the shopper writes again mid-turn, the engine stops at the next step
-  boundary, marks the turn superseded and starts a new one with the new input. A running
+  boundary, marks the turn superseded and starts a new one with the new input. The
+  `turn.superseded` transaction releases the old turn's batch (clears `consumed_by_turn`), so
+  the next turn answers everything the shopper sent. A running
   side-effecting tool is never aborted; read results already recorded are reused. Sending is the
   commit point: the transaction that writes the outbox row first checks the mailbox for newer
   input and, if there is any, supersedes instead of sending. No stale answers, no half
   replies.
+- **One producer.** Everything that wakes an actor (an inbound message, a webhook, a merchant
+  action, a timer) is a mailbox row written by `dispatchTx(tx, { actor, kind, source,
+dedupeKey, deliverAt })` inside the transaction that caused it. Nothing else inserts mailbox
+  rows or starts turns.
 - **Timers are messages.** "Nudge in 15 minutes", "Pix expires at 21:16", "hand back in 30
-  minutes" are mailbox rows with a `deliver_at`. There is no separate wakeup machinery.
+  minutes" are mailbox rows with a `deliver_at`, written through `dispatchTx` like the rest.
+  There is no separate wakeup machinery.
+- **What the team hears.** A failed turn, an automatic rollback and an online-QA alert are staff
+  events: `recordStaffEventTx` inside the transaction that commits them, never in a
+  `Promise.all` with that transaction's other statements, with no shopper names or phones in
+  the payload (ADR 0023).
 - **Human in the loop.** An approval (a draft in `shadow` mode, a merchant's "Devolver") is a
   mailbox message; the actor waits for it like any other input. Draft, approve, edit and reject
   are events, not statuses on a message row.
@@ -443,10 +467,14 @@ transport; the owner declined external assistant integrations on 2026-10-01.
 4. **Delete** `runner.ts`, `tools.ts` and the rest of `src/agent/`, archive and drop
    `agent_runs`, `agent_inbox`, `agent_wakeups` and `agent_run_steps`, and the agent columns on
    `leads`.
-5. **An ADR** records the runtime and supersedes the run machinery of ADRs 0014–0017. The
-   invariant in `CLAUDE.md` changes from `requestAgentTx` to its successor: agent work starts
-   only as a mailbox message with a `source`, through the host's `dispatch`; nothing else
-   creates turns, and future touches are timer messages.
+5. **An ADR** records the runtime and supersedes the run machinery of ADRs 0014–0017.
+
+The agent invariant in `CLAUDE.md` changes twice. At step 1, when the first mailbox row is
+written, it names two producers: `requestAgentTx` for the old runtime and `dispatchTx` for v3,
+each the only way to start work on its side, with timers as rows of the same producer. At step
+4 it drops `requestAgentTx` and reads: agent work starts only as a mailbox message with a
+`source`, written by `dispatchTx` inside the transaction that caused it; nothing else creates
+turns; future touches are timer messages.
 
 CRM data is platform data with no `tenant_id` today. Before step 2 the owner picks between a
 reserved platform tenant (one RLS model everywhere) and a control-scoped variant of the three
