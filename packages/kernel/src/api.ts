@@ -1112,7 +1112,7 @@ export function createApi(baseUrl = '') {
      *  provider. Same order credential as `order()`; 409 PAYMENT_NOT_REQUIRED, 503
      *  PAYMENT_UNAVAILABLE. Kernel 1.17: `cardForm` asks for the in-page card form
      *  (`next.kind === 'card'`) instead of a hosted checkout. */
-    payOrder: (id: string, opts?: { cardForm?: boolean }) => {
+    payOrder: (id: string, opts?: { cardForm?: boolean; challengeDone?: boolean }) => {
       const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
       return apiFetch<{ order: Order; next: PaymentNext }>(co(`/orders/${id}/pay`), {
         method: 'POST',
@@ -1120,7 +1120,14 @@ export function createApi(baseUrl = '') {
           ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
           'idempotency-key': idemKey(),
         },
-        ...(opts?.cardForm ? { body: JSON.stringify({ card: 'form' }) } : {}),
+        ...(opts?.cardForm
+          ? {
+              body: JSON.stringify({
+                card: 'form',
+                ...(opts.challengeDone ? { challenge: 'complete' } : {}),
+              }),
+            }
+          : {}),
       }).then((r) => ({ ...r, next: safeNext(r.next) }));
     },
     /** Kernel 1.17 — pay a card_online order with the card form's token. 409

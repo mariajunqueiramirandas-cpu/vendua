@@ -457,7 +457,11 @@ describe('order page — the card in the page (Kernel 1.17)', () => {
       }
       if (url.pathname === `/checkout/v1/orders/${ORDER_ID}/pay`) {
         last = order(4, { method: 'card_online', status: paid ? 'paid' : 'pending' });
-        return json(200, { order: last, next: paid ? { kind: 'none' } : next });
+        // like Core: an answered challenge MP hasn't settled yet is processing, not a new form
+        const answered =
+          (JSON.parse(String(init?.body ?? '{}')) as { challenge?: string }).challenge ===
+          'complete';
+        return json(200, { order: last, next: paid || answered ? { kind: 'none' } : next });
       }
       if (url.pathname === `/checkout/v1/orders/${ORDER_ID}`) return json(200, { order: last });
       return null;
@@ -565,7 +569,6 @@ describe('order page — the card in the page (Kernel 1.17)', () => {
       );
       await flush(4);
       expect(c.calls.filter((x) => x.path.endsWith('/pay'))).toHaveLength(1);
-      c.pay();
       await act(async () =>
         window.dispatchEvent(
           new MessageEvent('message', {
@@ -574,12 +577,15 @@ describe('order page — the card in the page (Kernel 1.17)', () => {
           }),
         ),
       );
+      await act(() => new Promise((r) => setTimeout(r, 20)));
       await flush(8);
+      // MP hasn't settled it yet: processing, never a fresh card form
       const pays = c.calls.filter((x) => x.path.endsWith('/pay'));
       expect(pays).toHaveLength(2);
-      expect(pays[1]?.body).toEqual({ card: 'form' });
-      expect($('[data-vendua="payment-status"]')?.getAttribute('data-status')).toBe('paid');
+      expect(pays[1]?.body).toEqual({ card: 'form', challenge: 'complete' });
       expect($('[data-vendua="card-challenge"]')).toBeNull();
+      expect($('[data-vendua="card-fields"]')).toBeNull();
+      expect($('[data-vendua="payment-status"]')?.getAttribute('data-status')).toBe('processing');
     } finally {
       HTMLFormElement.prototype.submit = realSubmit;
     }

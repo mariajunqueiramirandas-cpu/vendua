@@ -47,6 +47,8 @@ export interface ProviderPayment {
   pix: { copyPaste: string; expiresAt: string | null } | null;
   /** a card payment waiting on the issuer's 3-D Secure challenge (MP `pending_challenge`) */
   challenge?: { url: string; creq: string } | null;
+  /** the in-page card attempt this payment was made for (our metadata); null for anything else */
+  attempt?: number | null;
 }
 
 export interface PixRequest {
@@ -91,6 +93,8 @@ export interface CardPaymentRequest {
     firstName?: string;
   };
   externalReference: string;
+  /** our attempt number — comes back on the payment, so it binds only to its own attempt */
+  attempt: number;
   idempotencyKey: string;
   notificationUrl: string | null;
   applicationFeeCents: number;

@@ -424,11 +424,12 @@ export function mountCommerce(d: Deps) {
 
   // ── online payment (Mercado Pago) ──────────────────────────────────────────
 
-  const payCtx = (c: Context, cardForm: boolean): PayCtx => ({
+  const payCtx = (c: Context, cardForm: boolean, challengeDone = false): PayCtx => ({
     publicOrigin: d.publicOrigin(c),
     storeDomain: d.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
     ...(process.env.MP_PAYER_EMAIL ? { payerEmail: process.env.MP_PAYER_EMAIL } : {}),
     cardForm,
+    challengeDone,
     ...(d.provider.name === 'mercadopago' && process.env.MP_PUBLIC_KEY
       ? { publicKey: process.env.MP_PUBLIC_KEY }
       : {}),
@@ -459,7 +460,8 @@ export function mountCommerce(d: Deps) {
     const orderId = uuidParam(c, 'id');
     const key = requireIdemKey(c);
     const raw = await boundedText(c, 1_000);
-    const cardForm = raw.trim() !== '' && parseJsonObject(raw).card === 'form';
+    const body = raw.trim() !== '' ? parseJsonObject(raw) : {};
+    const cardForm = body.card === 'form';
     const next = (await answered(tenant.id, key))
       ? null
       : await preparePayment(
@@ -467,7 +469,7 @@ export function mountCommerce(d: Deps) {
           tenant,
           orderId,
           cartId,
-          payCtx(c, cardForm),
+          payCtx(c, cardForm, cardForm && body.challenge === 'complete'),
         );
     return d.idempotency(sql, async (_c, tx) => ({
       status: 200,

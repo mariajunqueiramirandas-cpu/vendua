@@ -527,6 +527,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     const id4 = o4.body.order.id;
     const c1 = await card(id4, o4.auth, `fake-card-challenge${nonce()}`);
     expect(c1.body.next).toMatchObject({ kind: 'challenge', url: fake.challengeUrl });
+    // the bank's frame said COMPLETE but MP hasn't settled it: processing, not a new card form
+    const catchingUp = await call(
+      'POST',
+      `/checkout/v1/orders/${id4}/pay`,
+      { card: 'form', challenge: 'complete' },
+      o4.auth,
+    );
+    expect(catchingUp.body.next).toEqual({ kind: 'none' });
     fake.completeChallenge(c1.body.next.creq, true);
     const synced = await form(id4, o4.auth);
     expect(synced.body.next).toEqual({ kind: 'none' });
@@ -615,6 +623,56 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     const notCard = await card(pix.body.order.id, pix.auth, { token: 'abc' });
     expect(notCard.status).toBe(422);
     expect((await card(crypto.randomUUID(), o2.auth, { token: 'abc' })).status).toBe(404);
+  });
+
+  test('card form: a hosted checkout paid while the form replaces it keeps its own attempt', async () => {
+    const o = await place('card_online');
+    const id = o.body.order.id;
+    // an older Kernel opened the hosted checkout first
+    const hosted = await pay(id, o.auth);
+    const pref = new URL(hosted.body.next.url).searchParams.get('fake_checkout')!;
+    const real = fake.createCardPayment.bind(fake);
+    let hostedId = '';
+    // …and it is paid, its webhook landing while the new card is still with MP
+    fake.createCardPayment = async (token, req) => {
+      hostedId = fake.completeCheckout(pref, 'approved').id;
+      expect((await hook(hostedId)).status).toBe(200);
+      return real(token, req);
+    };
+    try {
+      const r = await call(
+        'POST',
+        `/checkout/v1/orders/${id}/card`,
+        {
+          token: `fake-card-approved.${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`,
+          paymentMethodId: 'visa',
+          installments: 1,
+          payer: { email: 'a@b.co' },
+        },
+        o.auth,
+      );
+      expect(r.body.next).toEqual({ kind: 'none' });
+    } finally {
+      fake.createCardPayment = real;
+    }
+    const rows = await sql<
+      {
+        attempt: number;
+        provider_payment_id: string;
+        provider_checkout_id: string | null;
+        status: string;
+        review: string | null;
+      }[]
+    >`
+      select attempt, provider_payment_id, provider_checkout_id, status, review from payments
+      where order_id = ${id} order by attempt
+    `;
+    // each payment on its own attempt: nothing untracked, and the second charge is flagged
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ attempt: 1, provider_checkout_id: pref, status: 'approved' });
+    expect(rows[0]!.provider_payment_id).toBe(hostedId);
+    expect(rows[1]).toMatchObject({ attempt: 2, status: 'approved', review: 'paid_twice' });
+    expect(rows[1]!.provider_payment_id).not.toBe(hostedId);
   });
 
   test('full refund of a delivered online order → refunded; cancelling a paid order refunds it', async () => {

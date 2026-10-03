@@ -274,6 +274,7 @@ describe('mercado pago adapter', () => {
         payment_method_id: 'master',
         fee_details: [],
         three_ds_info: { external_resource_url: 'https://acs.example/challenge', creq: 'eyJ0' },
+        metadata: { vendua_attempt: 2 },
       },
     }));
     const out = await p.createCardPayment('seller-tok', {
@@ -289,6 +290,7 @@ describe('mercado pago adapter', () => {
         firstName: 'Ana',
       },
       externalReference: 'order-1',
+      attempt: 2,
       idempotencyKey: 'order-1:2',
       notificationUrl: 'https://painel.x/hook',
       applicationFeeCents: 50,
@@ -299,6 +301,7 @@ describe('mercado pago adapter', () => {
       status: 'pending',
       kind: 'card',
       challenge: { url: 'https://acs.example/challenge', creq: 'eyJ0' },
+      attempt: 2,
     });
     const s = seen[0]!;
     expect(s.url).toBe('https://api.mercadopago.com/v1/payments');
@@ -318,6 +321,7 @@ describe('mercado pago adapter', () => {
         first_name: 'Ana',
       },
       external_reference: 'order-1',
+      metadata: { vendua_attempt: 2 },
       notification_url: 'https://painel.x/hook',
       application_fee: 0.5,
       capture: true,

@@ -76,6 +76,8 @@ function whatsappHref(store: StoreProfile | undefined, order: Order): string | n
 }
 
 type CardConfig = Extract<PaymentNext, { kind: 'card' }>;
+/** when the order page asks again after a 3DS COMPLETE (MP takes a few moments to settle it) */
+const CHALLENGE_POLL_MS = [0, 1500, 3000, 5000, 8000, 15000, 30000];
 /** what the card form shows: the fields (with why the last try was refused) or the bank's
  *  challenge */
 type CardView =
@@ -151,6 +153,30 @@ function useOnlinePayment(
       else setFailure(code);
     }
     setWork(null);
+  };
+
+  // MP settles a finished 3DS challenge a few moments after the bank's COMPLETE: show
+  // "processing" and ask again, telling Core the challenge was answered so a still-pending one
+  // doesn't come back as a fresh card form. Still pending after ~a minute → an ordinary sync.
+  const afterChallenge = (i = 0): void => {
+    if (!order) return;
+    if (i === 0) {
+      clearTimeout(later.current);
+      setCardView(null);
+      setNext({ kind: 'none' });
+    }
+    if (i >= CHALLENGE_POLL_MS.length) return void run('sync');
+    later.current = setTimeout(async () => {
+      try {
+        const r = await api.payOrder(order.id, { cardForm: true, challengeDone: true });
+        invalidateQuery(`order:${order.id}`, r.order);
+        if (r.order.payment?.status !== 'pending' || r.next.kind !== 'none')
+          return apply(r.next, null);
+      } catch (err) {
+        if (errorCode(err) === 'PAYMENT_NOT_REQUIRED') return invalidateQuery(`order:${order.id}`);
+      }
+      afterChallenge(i + 1);
+    }, CHALLENGE_POLL_MS[i]);
   };
 
   // the Brick's spinner runs until this settles; every outcome is the page's to show
@@ -274,7 +300,7 @@ function useOnlinePayment(
             key={cardView.creq}
             url={cardView.url}
             creq={cardView.creq}
-            onComplete={() => void run('sync')}
+            onComplete={() => afterChallenge()}
           />
         ) : (
           <CardFields

@@ -287,8 +287,11 @@ only on an order page that shows the form (a store's CSP needs `sdk.mercadopago.
 Pago's frame origins).
 
 - A `card_online` checkout goes straight to `/pedido/:id`, which asks Core for the form:
-  `api.payOrder(id, opts?)` — new optional `{ cardForm?: boolean }` sends `{ "card": "form" }`, and
-  Core answers `next.kind === 'card'` instead of a hosted checkout. A Core that still answers
+  `api.payOrder(id, opts?)` — new optional `{ cardForm?: boolean; challengeDone?: boolean }` sends
+  `{ "card": "form" }`, and Core answers `next.kind === 'card'` instead of a hosted checkout.
+  After the bank's 3DS frame says COMPLETE the page shows `processing` and asks again with
+  `challengeDone` (`{ "challenge": "complete" }`) for about a minute: MP settles a finished
+  challenge a few moments later, and a still-pending one must not come back as a new form. A Core that still answers
   `redirect` is honoured (`checkout.PaymentStatus` `due` → the hosted page).
 - New `api.payCard(id, input: CardPaymentInput)` → `POST /checkout/v1/orders/:id/card` (fresh
   Idempotency-Key, the order's credential): `{ token, paymentMethodId, issuerId, installments,

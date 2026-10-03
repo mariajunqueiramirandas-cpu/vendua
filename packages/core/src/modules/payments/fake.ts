@@ -165,6 +165,7 @@ export class FakeProvider implements PaymentProvider {
       },
       'card',
     );
+    p.attempt = req.attempt;
     const outcome = m[1]!;
     if (outcome === 'approved') this.settle(p.id, 'approved');
     else if (outcome.startsWith('rejected')) {

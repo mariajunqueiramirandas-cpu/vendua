@@ -386,6 +386,8 @@ export interface PayCtx {
   cardForm?: boolean;
   /** the key MP's card fields run under (MP_PUBLIC_KEY); unset → the store's own, from OAuth */
   publicKey?: string;
+  /** the page saw the bank's 3DS frame say COMPLETE: a still-pending challenge is MP catching up */
+  challengeDone?: boolean;
 }
 
 export async function preparePayment(
@@ -533,8 +535,9 @@ async function cardFormPlan(
   if (latest?.kind === 'card' && OPEN.includes(latest.status)) {
     if (latest.provider_payment_id) {
       if (!synced) return { do: 'sync', row: latest, tok };
-      // in review at MP: wait for it. An unanswered 3DS challenge can be replaced by a new card.
-      if (latest.status_detail !== 'pending_challenge') return none;
+      // in review at MP: wait for it. An unanswered 3DS challenge can be replaced by a new card —
+      // unless the shopper just answered it and MP hasn't settled it yet
+      if (latest.status_detail !== 'pending_challenge' || ctx.challengeDone) return none;
     } else if (formAttempt(latest) && age(latest, now) < CARD_SUBMIT_GRACE_MS) return none;
   } else if (latest && SETTLED.includes(latest.status)) {
     await syncOrderPayment(tx, tenantId, order.id);
@@ -689,6 +692,8 @@ async function recordAttempt(
         await tx`update payments set status = 'cancelled', status_detail = 'provider_id_conflict', updated_at = now() where id = ${row.id}`;
         return 'conflict' as const;
       }
+      if (SETTLED.includes(patch.status ?? ''))
+        await flagIfPaidTwice(tx, tenantId, { ...cur, review: null });
     }
     await syncOrderPayment(tx, tenantId, row.order_id);
     return (await tx<PaymentRow[]>`select * from payments where id = ${row.id}`)[0]!;
@@ -947,6 +952,7 @@ async function createCardAttempt(
       installments: input.installments,
       payer: { ...input.payer, ...(plan.firstName ? { firstName: plan.firstName } : {}) },
       externalReference: row.order_id,
+      attempt: row.attempt,
       idempotencyKey: `${row.order_id}:${row.attempt}`,
       notificationUrl: notificationUrlFor(ctx, tenantId),
       applicationFeeCents: row.application_fee_cents,
@@ -1195,6 +1201,38 @@ export async function reconcileRefunds(
   }
 }
 
+/**
+ * Money landed on an order that was already paid (a 3DS card finished after its replacement, a
+ * hosted checkout paid while the form replaced it, a Pix paid twice): the merchant refunds one
+ * from the order, the team hears of it. Call when `row` has just become settled.
+ */
+async function flagIfPaidTwice(tx: Sql, tenantId: string, row: PaymentRow) {
+  const paidBefore = await tx`
+    select 1 from payments where tenant_id = ${tenantId} and order_id = ${row.order_id} and id <> ${row.id}
+      and status = any(${SETTLED}) and review is distinct from 'amount_mismatch' limit 1
+  `;
+  if (!paidBefore.length) return;
+  await markReview(tx, tenantId, row, 'paid_twice');
+  const info = (
+    await tx<{ name: string; number: number }[]>`
+      select t.name, o.number from tenants t join orders o on o.tenant_id = t.id
+      where t.id = ${tenantId} and o.id = ${row.order_id}
+    `
+  )[0];
+  await recordStaffEventTx(
+    tx,
+    'payment.problem',
+    {
+      orderId: row.order_id,
+      number: info?.number ?? null,
+      storeName: info?.name ?? '',
+      status: 'paid_twice',
+      amountCents: row.amount_cents,
+    },
+    { tenantId, dedupeKey: `payment:${row.id}:paid_twice` },
+  );
+}
+
 export type ApplyResult =
   | { applied: true; orderId: string; changed: boolean; paymentRowId: string; closed: boolean }
   | { applied: false; reason: 'collector' | 'reference' | 'amount' | 'attempts' | 'conflict' };
@@ -1272,13 +1310,24 @@ export async function applyProviderPayment(
   }
 
   if (!row) {
+    // An in-page card payment names its attempt. Anything else (a Pix, a hosted checkout) takes
+    // the latest open attempt that isn't an in-page card submit — or the hosted checkout the form
+    // superseded, which MP can still settle — never a card submit whose own answer is pending.
     row = (
-      await tx<PaymentRow[]>`
-        select * from payments where tenant_id = ${tenantId} and order_id = ${orderId}
-          and kind = ${kind} and provider_payment_id is null and review is null
-          and status in ('creating', 'pending')
-        order by attempt desc limit 1 for update
-      `
+      p.attempt != null
+        ? await tx<PaymentRow[]>`
+            select * from payments where tenant_id = ${tenantId} and order_id = ${orderId}
+              and attempt = ${p.attempt} and kind = 'card' and provider_payment_id is null
+              and review is null and status in ('creating', 'pending')
+            for update
+          `
+        : await tx<PaymentRow[]>`
+            select * from payments where tenant_id = ${tenantId} and order_id = ${orderId}
+              and kind = ${kind} and provider_payment_id is null and review is null
+              and status_detail is distinct from ${CARD_FORM}
+              and (status in ('creating', 'pending') or (status = 'cancelled' and status_detail = 'superseded'))
+            order by attempt desc limit 1 for update
+          `
     )[0];
     if (row) {
       const id = row.id;
@@ -1343,32 +1392,8 @@ export async function applyProviderPayment(
       where id = ${row.id}
     `;
   await reconcileRefunds(tx, row.id, p.refundedCents, opts.release);
-  if (SETTLED.includes(next.status) && !SETTLED.includes(row.status) && next.review === null) {
-    // money landed on an order that was already paid (a 3DS card finished after its replacement,
-    // a Pix paid twice): the merchant refunds one from the order, the team hears of it
-    const paidBefore = await tx`
-      select 1 from payments where tenant_id = ${tenantId} and order_id = ${orderId} and id <> ${row.id}
-        and status = any(${SETTLED}) and review is distinct from 'amount_mismatch' limit 1
-    `;
-    if (paidBefore.length) {
-      await markReview(tx, tenantId, { ...row, review: null }, 'paid_twice');
-      const store = (
-        await tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`
-      )[0];
-      await recordStaffEventTx(
-        tx,
-        'payment.problem',
-        {
-          orderId,
-          number: order.number,
-          storeName: store?.name ?? '',
-          status: 'paid_twice',
-          amountCents: row.amount_cents,
-        },
-        { tenantId, dedupeKey: `payment:${row.id}:paid_twice` },
-      );
-    }
-  }
+  if (SETTLED.includes(next.status) && !SETTLED.includes(row.status) && next.review === null)
+    await flagIfPaidTwice(tx, tenantId, { ...row, review: null });
   if (next.status !== row.status && PROBLEMS.includes(next.status)) {
     // a refund the store asked for through us is not a problem; one made at the provider is
     const asked =

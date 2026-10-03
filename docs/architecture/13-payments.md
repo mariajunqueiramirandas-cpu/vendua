@@ -36,8 +36,11 @@ shopper → Kernel-owned checkout → Core /checkout/v1 →
     failed lookup at MP answers `503`, never "MP has nothing". A decline answers
     `{kind:'declined', reason}` and the shopper types another card (attempt + 1).
   - 3-D Secure: a `pending_challenge` answer comes back as `{kind:'challenge', url, creq}`; the
-    Kernel posts `creq` into an iframe on the same page and, on MP's `COMPLETE` message, calls
-    `/pay` to sync (the webhook settles it too). An unanswered challenge can be replaced by a
+    Kernel posts `creq` into an iframe on the same page and, on MP's `COMPLETE` message, shows
+    "processing" and polls `/pay` with `{"challenge":"complete"}` — MP settles the challenge a
+    few moments later, and meanwhile Core answers `none`, not a new form (the webhook settles
+    it too). An in-page card payment carries its attempt in MP `metadata`, so it binds only to
+    that attempt; a hosted payment never claims an in-page attempt. An unanswered challenge can be replaced by a
     new card once MP confirms the old payment is cancelled.
   - Money that lands on an order already paid (a replaced card MP settled anyway, a Pix paid
     twice) is flagged `paid_twice` in Pagamentos and posted to the team; the job re-reads

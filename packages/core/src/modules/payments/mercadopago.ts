@@ -62,6 +62,7 @@ interface MpPayment {
   date_of_expiration?: string | null;
   point_of_interaction?: { transaction_data?: { qr_code?: string | null } | null } | null;
   three_ds_info?: { external_resource_url?: string | null; creq?: string | null } | null;
+  metadata?: { vendua_attempt?: unknown } | null;
 }
 
 function paymentStatus(status: string | undefined, detail: string | null | undefined) {
@@ -139,6 +140,9 @@ export function mapPayment(p: MpPayment): ProviderPayment {
       p.three_ds_info.creq
         ? { url: p.three_ds_info.external_resource_url, creq: p.three_ds_info.creq }
         : null,
+    attempt: Number.isInteger(Number(p.metadata?.vendua_attempt))
+      ? Number(p.metadata!.vendua_attempt)
+      : null,
   };
 }
 
@@ -348,6 +352,7 @@ export class MercadoPagoProvider implements PaymentProvider {
         ...(req.payer.firstName ? { first_name: req.payer.firstName.slice(0, 60) } : {}),
       },
       external_reference: req.externalReference,
+      metadata: { vendua_attempt: req.attempt },
       ...(req.notificationUrl ? { notification_url: req.notificationUrl } : {}),
       ...(req.applicationFeeCents > 0 ? { application_fee: toReais(req.applicationFeeCents) } : {}),
       // 3DS 2.0 needs capture and a non-binary payment; the challenge renders in our page
