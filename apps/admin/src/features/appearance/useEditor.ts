@@ -53,7 +53,18 @@ const COALESCE_MS = 1200;
 const MAX_STEPS = 100;
 
 type Saved = {
-  pages: Partial<Record<TplId, { version: number; template: PageTemplate }>>;
+  pages: Partial<
+    Record<
+      TplId,
+      {
+        version: number;
+        template: PageTemplate;
+        /** a page never published has version 0 whatever the Kernel's default is: the
+         *  default the draft was made on, so a newer one isn't overwritten */
+        base?: PageTemplate;
+      }
+    >
+  >;
   tokens: StoreTokens | null;
   /** the published colours the draft was made on: newer ones from elsewhere win */
   tokensVersion?: number | null;
@@ -91,7 +102,9 @@ export function useEditor(data: AppearanceData, storeId: string) {
     const drafts = Object.fromEntries(
       TPLS.map((t) => {
         const s = saved?.pages[t];
-        if (s && s.version === base[t].version && !same(s.template, base[t].template)) {
+        const current =
+          s && s.version === base[t].version && (s.version !== 0 || same(s.base, base[t].template));
+        if (current && !same(s.template, base[t].template)) {
           pages.push(t);
           return [t, s.template];
         }
@@ -187,9 +200,12 @@ export function useEditor(data: AppearanceData, storeId: string) {
       base[t].template.sections.find((x) => x.id === s.id),
     );
 
-  // keep unpublished work in this browser; a clean editor leaves nothing behind
+  // keep unpublished work in this browser; a clean editor leaves nothing behind. Writes wait
+  // for a pause in typing, and one still waiting is flushed when the screen or the tab goes.
+  const pending = useRef<(() => void) | null>(null);
   useEffect(() => {
-    const t = setTimeout(() => {
+    const write = () => {
+      pending.current = null;
       try {
         if (!dirty) return localStorage.removeItem(storageKey(storeId));
         const saved: Saved = {
@@ -198,27 +214,43 @@ export function useEditor(data: AppearanceData, storeId: string) {
           tokensVersion: data.tokens?.version ?? null,
         };
         for (const p of dirtyTpls)
-          saved.pages[p] = { version: base[p].version, template: drafts[p] };
+          saved.pages[p] = {
+            version: base[p].version,
+            template: drafts[p],
+            ...(base[p].version === 0 ? { base: base[p].template } : {}),
+          };
         localStorage.setItem(storageKey(storeId), JSON.stringify(saved));
       } catch {
         // storage full or blocked: the draft still lives in this tab
       }
-    }, 400);
+    };
+    pending.current = write;
+    const t = setTimeout(write, 400);
     return () => clearTimeout(t);
   }, [h.doc, base, baseTokens, data.tokens?.version, storeId]);
+  useEffect(() => {
+    const flush = () => pending.current?.();
+    addEventListener('pagehide', flush);
+    return () => {
+      removeEventListener('pagehide', flush);
+      flush();
+    };
+  }, []);
 
   // ── selection ────────────────────────────────────────────────────────────
   const [page, setPageState] = useState<PageId>('home');
-  const [sel, setSel] = useState<Selection>(null);
+  const [picked, setSel] = useState<Selection>(null);
   const setPage = (p: PageId) => {
     setPageState(p);
     // a layout part (topo, rodapé) is on every page and stays selected
     setSel((s) => (s?.kind === 'section' && s.tpl !== 'layout' ? null : s));
   };
   const selected =
-    sel?.kind === 'section'
-      ? (drafts[sel.tpl].sections.find((x) => x.id === sel.id) ?? null)
+    picked?.kind === 'section'
+      ? (drafts[picked.tpl].sections.find((x) => x.id === picked.id) ?? null)
       : null;
+  // a part that undo (or another device's version) took away is no longer selected
+  const sel: Selection = picked?.kind === 'section' && !selected ? null : picked;
   // what's on the page, top to bottom as the customer sees it: the shared top, the page's
   // own parts, the shared footer (the layout's page-content slot is where the page goes)
   const layoutSecs = drafts.layout.sections;
