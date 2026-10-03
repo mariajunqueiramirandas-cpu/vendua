@@ -122,7 +122,8 @@ export function cartBrief(ctx: Ctx, cart: CartView | null, t: Thread): CartBrief
   else if (d.mode === 'delivery' && !d.zoneId) missing.push('endereço de entrega dentro da área');
   if (!t.checkout.payment) missing.push('forma de pagamento');
   if (!t.checkout.name) missing.push('nome para o pedido');
-  if (!t.phone && !t.checkout.phone) missing.push('telefone (o WhatsApp não mostrou o número)');
+  if (!t.phone && !t.checkout.phone && t.channel !== 'test')
+    missing.push('telefone (o WhatsApp não mostrou o número)');
   if (cart.schedule.required && !t.checkout.scheduledFor)
     missing.push(`data da encomenda (a partir de ${cart.schedule.dates[0] ?? '—'})`);
   if (tt.belowMinOrder) {

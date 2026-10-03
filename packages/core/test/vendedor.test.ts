@@ -194,7 +194,6 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
       customer_phone: '11987654321',
     });
     const last = (await outbox(tenantId)).map((m) => m.body);
-    if (process.env.VD_DEBUG) console.log(last.join('\n---\n'));
     expect(last.some((b) => b.includes(`Pedido #${orders[0]!.number} feito`))).toBe(true);
     const [t] = await sql<
       { stage: string; order_id: string | null }[]
@@ -522,15 +521,14 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
       { source: string; outcome: string }[]
     >`select source, outcome from suggestion_events where tenant_id = ${tenantId}`;
     expect(ev).toEqual({ source: 'pinned', outcome: 'offered' });
-    if (process.env.VD_DEBUG)
-      console.log(
-        JSON.stringify(adapter.requests[0]!.messages[0]),
-        JSON.stringify(
-          (
-            await sql`select payload from agent_mailbox where tenant_id = ${tenantId} and kind = 'message.inbound'`
-          )[0],
-        ),
-      );
+    console.log(
+      JSON.stringify(adapter.requests[0]!.messages[0]),
+      JSON.stringify(
+        (
+          await sql`select payload from agent_mailbox where tenant_id = ${tenantId} and kind = 'message.inbound'`
+        )[0],
+      ),
+    );
     expect(adapter.requests.at(-1)!.volatile).toContain('a loja pediu para sugerir junto');
   });
 

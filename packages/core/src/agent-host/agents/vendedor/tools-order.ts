@@ -67,7 +67,8 @@ function checkoutInput(t: Thread, cart: CartView): CheckoutInput {
   return {
     customer: {
       name: c.name ?? 'Cliente',
-      phone: t.phone && !t.phone.startsWith('+') ? t.phone : (c.phone ?? ''),
+      // a test thread's dry run never creates an order; a foreign number keeps its '+'
+      phone: t.phone ?? c.phone ?? (t.channel === 'test' ? '11900000000' : ''),
     },
     delivery,
     payment: {
