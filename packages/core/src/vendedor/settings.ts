@@ -1,4 +1,5 @@
 import { HttpError } from '../platform/http.ts';
+import { planHas } from '../modules/billing/plans.ts';
 import type { Sql } from '../platform/db.ts';
 
 // The merchant's controls (sales-agent.md §5). Defaults are the design's recommendations
@@ -59,7 +60,10 @@ export const DEFAULT_SETTINGS: StoreAgentSettings = {
 };
 
 export interface StoreAgentRow {
+  /** switched on by the merchant AND open on the store's plan (ADR 0032) */
   enabled: boolean;
+  /** the merchant's switch alone: a plan that lost the Vendedor keeps it for when it's back */
+  switchedOn: boolean;
   settings: StoreAgentSettings;
   onboarding: Record<string, unknown>;
   packVersion: number;
@@ -101,8 +105,10 @@ export async function loadAgent(tx: Sql, tenantId: string): Promise<StoreAgentRo
     }[]
   >`select enabled, settings, onboarding, pack_version, enabled_at, first_sale_at
     from store_agent where tenant_id = ${tenantId}`;
+  const switchedOn = row?.enabled ?? false;
   return {
-    enabled: row?.enabled ?? false,
+    enabled: switchedOn && (await planHas(tx, tenantId, 'vendedor')),
+    switchedOn,
     settings: withDefaults(row?.settings),
     onboarding: row?.onboarding ?? {},
     packVersion: Number(row?.pack_version ?? 1),

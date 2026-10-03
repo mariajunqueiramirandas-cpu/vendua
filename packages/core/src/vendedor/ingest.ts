@@ -1,6 +1,7 @@
 import type { Json, ModelGateway } from '@vendua/agent-runtime';
 import { dispatchTx } from '../agent-host/dispatch.ts';
 import { emitAdminTx } from '../admin/live.ts';
+import { claimAiConversationTx } from '../modules/billing/ai-allowance.ts';
 import { searchCatalog } from '../modules/catalog-search.ts';
 import { controlTx } from '../modules/control.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
@@ -238,6 +239,36 @@ export async function ingestOne(d: IngestDeps, r: Row): Promise<void> {
         dedupeKey: `handback:${thread.id}:${r.id}`,
         deliverAt: new Date(now.getTime() + agent.settings.humanSilenceMin * 60_000 + 5_000),
       });
+    }
+
+    // the plan's conversations (ADR 0032): a shopper's conversation counts once a day, before any
+    // model call; the owner's own test and Cliente oculto threads are gated where they start
+    if (
+      !trigger &&
+      (floor.floor === 'agent' || floor.floor === 'rehearsal') &&
+      thread.channel !== 'test'
+    ) {
+      const claim = await claimAiConversationTx(tx, r.tenant_id, `thread:${thread.id}`, now);
+      if (!claim.ok) {
+        // Ensaio only drafts: nothing to hand over, the store is answering anyway
+        if (floor.floor === 'agent') {
+          const reason =
+            claim.reason === 'plan' ? 'plano sem Vendedor' : 'conversas do mês esgotadas';
+          // the shopper hears it once per handover, not on every message
+          if (thread.owner !== 'human')
+            await sendDirectTx(tx, thread, {
+              author: 'core',
+              key: `allowance:${r.id}`,
+              text: `Vou chamar alguém da loja para te ajudar.${closedNotice(status, settings?.hours?.timezone ?? 'America/Sao_Paulo')}`,
+            });
+          // no handback timer: the next message asks again, and gets the Vendedor once there's room
+          await tx`update shopper_threads set owner = 'human', owner_reason = ${reason},
+            human_until = now() + make_interval(mins => ${agent.settings.humanSilenceMin}),
+            waiting_since = coalesce(waiting_since, now()), updated_at = now() where id = ${thread.id}`;
+          await emitAdminTx(tx, r.tenant_id, 'vendedor.waiting', thread.id);
+        }
+        return done('skipped');
+      }
     }
 
     const meta = r.meta ?? {};

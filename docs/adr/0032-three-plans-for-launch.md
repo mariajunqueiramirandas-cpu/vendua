@@ -118,8 +118,18 @@ the team runs by hand, and the Vendedor's pilots among them.
 - **Superseded decisions.** ADR 0021's two plans and prices, and ADR 0025's trial on Basic. The
   trial's mechanics are unchanged; it now belongs to Bandeira. ADR 0031's open decision "how AI is
   charged" is answered here.
-- **The Vendedor.** Its work in progress must call `claimAiConversationTx` before it answers a
-  new conversation, and check `planHas(tx, tenantId, 'vendedor')` where it is switched on.
+- **The Vendedor** (merged from ADR 0031's work):
+  - **A plan without it is the switch off.** `loadAgent().enabled` is the merchant's switch and
+    the plan; `switchedOn` keeps the switch, so an upgrade brings it back unchanged. The same
+    rule covers the WhatsApp gateway, the web chat and the proactive turns.
+  - **Turning it on needs the plan,** and so do the test chat, Cliente oculto and the onboarding
+    interviewer. Those three are the owner's own tools and don't count conversations.
+  - **Ingest claims a conversation** (`thread:<id>`) before it dispatches a shopper's message to
+    an agent or Ensaio floor. When it can't, the thread goes to the store: "Vou chamar alguém da
+    loja" once, `owner_reason` "conversas do mês esgotadas" (or "plano sem Vendedor"), waiting in
+    the inbox, and no handback timer. The next message asks again.
+  - **The conversation screens stay open on every plan,** so threads handed to the store can be
+    answered; the Vendedor's other screens show the plan that includes it.
 - **Copy.** The site's pricing and the signup copy name these plans. The site's banned-words check
   still allows exactly "14 dias grátis", which now belongs to Bandeira. If staff change a price,
   a trial or a limit in the CRM, the site copy must change with it.
