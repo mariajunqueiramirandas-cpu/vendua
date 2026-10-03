@@ -59,9 +59,12 @@ is the first agent on a new runtime that will replace that agent's engine. Paths
   ([§8](#8-phases)). V2 reaches order-taking parity with Domínio plus the trust layer; V3 is
   where it sells more than anyone; V4 adds Instagram, a storefront chat that shares the page's
   cart, and the official API for opted-in outreach.
-- **Owner decisions** are listed in [§10](#10-open-decisions): transport risk for replies,
-  model providers under LGPD, how AI is charged, retention, and the AI-disclosure stance. No
-  prices or plans here.
+- **Owner decisions** are in [§10](#10-open-decisions).
+  - **Decided:** no reply limits, providers only under zero data retention, disclosure as a
+    switch, allergies remembered with consent and confirmed, the phone bar and the push.
+  - **Open:** how AI is charged (deferred), retention, defaults and the product's name.
+
+  No prices or plans here.
 
 ## 1. The bar
 
@@ -311,10 +314,12 @@ on (`store_agent.enabled`), and the setup says so in plain words:
   `store_wa_optouts.phone`) becomes nullable for chat rows and its CHECK widens to
   international numbers, so a reply to a LID-only or foreign sender is a valid row, not a 500.
   The gateway shows "digitando…" while a run is in flight, as the platform socket already does.
-- **Pacing.** ADR 0026 caps a store at 200 messages an hour with 1.5 s between sends. A busy
-  Friday with 40 live conversations needs more. Replies inside a conversation the shopper
-  started get their own, higher ceiling; anything the store starts keeps today's. The number
-  is an owner decision with the ban risk in view ([§10](#10-open-decisions)).
+- **Pacing.** ADR 0026 caps a store at 200 messages an hour with 1.5 s between sends. Decided
+  (owner, 2026-10-03): **replies inside a conversation the shopper started have no ceiling.**
+  The 200-an-hour ceiling stays for messages the store starts (order updates, recovery, an
+  expired Pix, the waitlist). The gap between sends applies per conversation instead of per
+  store, so a Friday with 40 live conversations is answered in parallel while each chat still
+  reads like someone typing. The ban risk ADR 0026 accepted grows with the volume.
 - **Scope of the transport.** On this unofficial client the Vendedor only answers, and only
   writes first inside a conversation the shopper opened in the last 24 hours (recovery, an
   expired Pix, a waitlist item they asked for). ADR 0026 rules out broadcasts and campaigns
@@ -579,8 +584,15 @@ this is the code version, and the sales agent can adopt it later.
   and leaves the rest to `search_catalog`.
 - **Two model tiers.** A fast one for ordinary turns; a stronger one when the turn has many
   modifier choices, a verifier block, a complaint or a confused shopper, or a low-confidence
-  transcript. Both come from the providers `llm.ts` already drives; which providers may see
-  store and shopper data is an owner decision under LGPD.
+  transcript. Both come from the providers `llm.ts` already drives.
+- **Zero data retention** (owner, 2026-10-03). Any provider may serve the Vendedor, as long as
+  requests go through that provider's zero-data-retention arrangement. Transcription, vision and
+  voice providers are included.
+  - The gateway keeps a `zdr` flag per provider and route. Staff set it only after the
+    arrangement is confirmed, and the gateway refuses to send store or shopper data anywhere
+    else.
+  - Provider features that keep data on their side (stored conversations, server-side memory,
+    uploaded files, batch jobs) stay off.
 - **Latency targets** (proposed): from the shopper's last keystroke to the reply in the send
   queue, p50 ≤ 6 s and p95 ≤ 15 s, measured per store.
 
@@ -591,8 +603,20 @@ this is the code version, and the sales agent can adopt it later.
   repeated basket, computed), saved addresses with confirmed pins, preferred payment, language
   and `customer_facts`.
 - **`remember`** writes only allowlisted keys: name, language, preferences about how they order
-  ("sem cebola no X-Salada"), address notes. Health data such as allergies stays in that
-  order's notes and is not kept, unless the owner and a legal read decide otherwise.
+  ("sem cebola no X-Salada"), address notes.
+- **Allergies and dietary restrictions are remembered, always confirmed** (owner,
+  2026-10-03). They are sensitive data under LGPD (art. 11), so they follow three rules in
+  code:
+  - **Asked before kept.** "Quer que eu lembre disso nos próximos pedidos?" The shopper's yes is
+    recorded as an event, which is the specific consent the law asks for.
+  - **Confirmed on every use.** The next order asks before relying on it: "Da última vez você
+    falou de alergia a amendoim. Continua valendo?"
+  - **Never used to sell.** Suggestions ignore it. The merchant sees it marked as sensitive, and
+    the shopper ("esquece minha alergia") or the merchant can erase it.
+
+  Claims about what a product contains still need a product attribute
+  ([§4.8](#48-the-verifier)); a legal read of the consent wording is still worth having.
+
 - **The merchant sees it** on the existing customer page ("o que o Vendedor sabe"), can edit
   or delete any fact, and the LGPD forget erases it with the rest.
 - **Store learnings** are `store_knowledge` and the weekly review's notes, in the shape of
@@ -856,27 +880,49 @@ Decided (owner, 2026-10-03), recorded in [ADR 0031](../adr/0031-vendedor.md):
 - **How AI is charged** (3): deferred; it will be decided later, with no prices in these docs
   meanwhile.
 
+Also decided (owner, 2026-10-03):
+
+- **No reply limits** (was 1): replies in shopper-started conversations are uncapped
+  ([§4.2](#42-transport-and-inbound)).
+- **Providers** (was 2): any, under zero data retention ([§4.9](#49-context-caching-and-models)).
+- **Allergies** (was 6): remembered with consent, confirmed on every use
+  ([§4.10](#410-memory)).
+
 Still open:
 
-1. **Replies on the unofficial transport.** ADR 0026 accepted the ban risk for order notices.
-   An agent answering shoppers sends far more; the per-store ceiling for in-conversation
-   replies, and whether some stores should wait for the official API, are a risk call.
-2. **Model providers** that may see store and shopper data under LGPD, and whether their terms
-   exclude training (Domínio §4.6.3).
-3. **How AI is charged** (deferred by the owner): included, metered per conversation, per order
+1. **How AI is charged** (deferred by the owner): included, metered per conversation, per order
    or per interaction (Domínio's unit), and on which plans. No prices here.
-4. **Retention**: message bodies and media for 30 days like ADR 0026, or 90 like Lis;
-   merchant-typed messages are stored only while the Vendedor is on.
-5. ~~**AI disclosure**~~: decided, a merchant switch (above).
-6. **Health data**: whether allergies may be remembered per customer, after a legal read.
-7. **Defaults**: recovery on or off and its delay, upsell on or off, unknown numbers answered or
-   held.
-8. **The product's name** in the admin and in marketing ("Vendedor" is a working name).
-9. **The official API's economics for V4.** Since 2026-10-01 Meta charges service messages,
+2. **Retention:** how long Venduá keeps each kind of conversation data in its own database. It
+   is separate from the AI providers, which keep nothing. Recommended:
+
+   | Data                                                     | Kept                       |
+   | -------------------------------------------------------- | -------------------------- |
+   | Message text, in and out, merchant-typed included        | 90 days                    |
+   | Voice notes and photos (their transcripts stay as text)  | 30 days                    |
+   | The model's inputs and outputs, for debugging and replay | 30 days                    |
+   | What happened, without content (events, timings, cost)   | the life of the store      |
+   | Customer facts, allergies included                       | until changed or forgotten |
+
+   An LGPD forget erases all of it at once.
+
+3. **Defaults:** what each setting is when a merchant first turns the Vendedor on. Recommended:
+   - **Coverage:** quando eu demorar, 2 min. It never takes a chat the merchant is answering and
+     covers nights on its own.
+   - **Disclosure:** on.
+   - **Capabilities:** closing the order, sending the Pix and suggesting all on; coupons off.
+   - **Handoff:** complaints on, allergies on, the amount threshold off, new cash customers off.
+   - **Taking back:** after 30 min.
+   - **Recovery:** on, after 15 min, with no incentive.
+   - **Unknown numbers:** answered only when they read as shoppers.
+   - **Voice replies:** off.
+4. **The product's name:** what the feature is called in the admin menu, on the marketing site
+   and on plan pages. The merchant still names their own agent ("Ana"). "Vendedor" is the
+   working name.
+5. **The official API's economics for V4.** Since 2026-10-01 Meta charges service messages,
    third-party AI replies included, at the utility rate; whether a store on the Cloud API pays
    that, and how it compares with the ban risk of the current transport.
-10. **Real conversations in evals**: whether anonymized real threads, with the merchant's
-    consent, may join the regression suite.
+6. **Real conversations in evals**: whether anonymized real threads, with the merchant's
+   consent, may join the regression suite.
 
 ## 11. Risks
 

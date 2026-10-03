@@ -68,7 +68,7 @@ What the design has that the board didn't show, now drawn on the board:
 
 | #   | Feature                          | What it does                                                                                                                                               | Phase | From |
 | --- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ---- |
-| A1  | The store's own number           | Answers on the WhatsApp the store already uses (ADR 0026); the merchant keeps the app on the phone.                                                        | V1    | D    |
+| A1  | The store's own number           | Answers on the WhatsApp the store already uses (ADR 0026), with no ceiling on replies (decided 2026-10-03); the merchant keeps the app on the phone.       | V1    | D    |
 | A2  | Waits for the whole thought      | Collects a burst of messages, an audio and a pin into one turn; waits while the shopper is typing or recording.                                            | V1    | D    |
 | A3  | Never answers a stale question ★ | A message that arrives mid-reply interrupts it; the next reply answers everything.                                                                         | V1    | D    |
 | A4  | Understands audio                | Transcribes pt-BR voice notes; when unsure, reads back what it understood before acting.                                                                   | V1    | D+B  |
@@ -125,14 +125,14 @@ What the design has that the board didn't show, now drawn on the board:
 
 ## D. Knowing the customer
 
-| #   | Feature                   | What it does                                                                                                    | Phase | From |
-| --- | ------------------------- | --------------------------------------------------------------------------------------------------------------- | ----- | ---- |
-| D1  | Customer card             | Name, orders, usual basket, addresses with pins, payment preference, assembled by Core.                         | V3    | D+B  |
-| D2  | WhatsApp proves the phone | Can recall that phone's addresses; always asks before using one.                                                | V3    | D    |
-| D3  | Remembered preferences    | "Massa bem assada", "sem cebola": allowlisted facts the merchant sees and can forget with one tap.              | V3    | D+B  |
-| D4  | No health data kept       | Allergies stay in that order's notes only, unless the owner decides otherwise after a legal read.               | V3    | D    |
-| D5  | Masked phone              | Staff views show `(11) 9••••-4821`.                                                                             | V1    | B    |
-| D6  | Forget means forget       | The LGPD forget erases conversations, media and facts, and fixes today's gaps (cart addresses, message bodies). | V0    | D    |
+| #   | Feature                                | What it does                                                                                                                                  | Phase | From |
+| --- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ---- |
+| D1  | Customer card                          | Name, orders, usual basket, addresses with pins, payment preference, assembled by Core.                                                       | V3    | D+B  |
+| D2  | WhatsApp proves the phone              | Can recall that phone's addresses; always asks before using one.                                                                              | V3    | D    |
+| D3  | Remembered preferences                 | "Massa bem assada", "sem cebola": allowlisted facts the merchant sees and can forget with one tap.                                            | V3    | D+B  |
+| D4  | Allergies remembered, always confirmed | Kept only after the shopper agrees, confirmed on every later order, never used to sell, erasable by shopper or merchant (decided 2026-10-03). | V3    | N    |
+| D5  | Masked phone                           | Staff views show `(11) 9••••-4821`.                                                                                                           | V1    | B    |
+| D6  | Forget means forget                    | The LGPD forget erases conversations, media and facts, and fixes today's gaps (cart addresses, message bodies).                               | V0    | D    |
 
 ## E. The merchant's controls
 
@@ -205,16 +205,16 @@ What the design has that the board didn't show, now drawn on the board:
 
 ## J. Safety and guarantees
 
-| #   | Feature                          | What it does                                                                                                     | Phase | From |
-| --- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----- | ---- |
-| J1  | Numbers it can't invent ★        | It cites figures by reference and Core writes them; a checker blocks any other amount, time, product or promise. | V1    | D    |
-| J2  | Shopper tools only               | Bound to this conversation; no menu, price or order changes; no other customer's data.                           | V1    | D    |
-| J3  | Prompt-injection proof by design | Shopper text and images are data; money and orders pass code gates, not the model's goodwill.                    | V1    | D    |
-| J4  | Pranks and fraud                 | Rate limits, flags for large or first cash orders, Pix only after repeated cancellations.                        | V2    | D    |
-| J5  | Personal data minimized          | No phone numbers to model providers; first names only; addresses only at checkout.                               | V1    | D    |
-| J6  | No training on conversations     | Conversations improve answers and prompts, never a model's weights.                                              | V1    | D    |
-| J7  | Never goes dark                  | Over budget, provider down or stuck: the store link and a handoff, never silence.                                | V1    | D    |
-| J8  | "Pare de me responder"           | Mutes it for that shopper; SAIR still stops order notices.                                                       | V1    | D    |
+| #   | Feature                             | What it does                                                                                                                                                    | Phase | From |
+| --- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ---- |
+| J1  | Numbers it can't invent ★           | It cites figures by reference and Core writes them; a checker blocks any other amount, time, product or promise.                                                | V1    | D    |
+| J2  | Shopper tools only                  | Bound to this conversation; no menu, price or order changes; no other customer's data.                                                                          | V1    | D    |
+| J3  | Prompt-injection proof by design    | Shopper text and images are data; money and orders pass code gates, not the model's goodwill.                                                                   | V1    | D    |
+| J4  | Pranks and fraud                    | Rate limits, flags for large or first cash orders, Pix only after repeated cancellations.                                                                       | V2    | D    |
+| J5  | Personal data minimized             | No phone numbers to model providers; first names only; addresses only at checkout.                                                                              | V1    | D    |
+| J6  | Zero data retention at AI providers | Every model, transcription and voice call goes through a zero-data-retention arrangement; nothing is stored or trained on at the provider (decided 2026-10-03). | V1    | N    |
+| J7  | Never goes dark                     | Over budget, provider down or stuck: the store link and a handoff, never silence.                                                                               | V1    | D    |
+| J8  | "Pare de me responder"              | Mutes it for that shopper; SAIR still stops order notices.                                                                                                      | V1    | D    |
 
 ## K. Under the hood
 
@@ -232,3 +232,4 @@ What the design has that the board didn't show, now drawn on the board:
 
 - 2026-10-03: first catalog, merging the design, the runtime and the team's board.
 - 2026-10-03: owner decisions: disclosure switch (E11), the push (F3), the phone bar.
+- 2026-10-03: owner decisions: no reply limits (A1), zero data retention (J6), allergies remembered and confirmed (D4).

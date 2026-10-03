@@ -66,7 +66,8 @@ first agent; the CRM agent moves to it afterwards.
    them. A verifier blocks any literal amount, time, product or promise that didn't come
    through a reference.
 9. **A model gateway.**
-   - Fast and strong tiers mapped per tenant to the providers the owner allows.
+   - Fast and strong tiers mapped per tenant to providers reached only through a
+     zero-data-retention arrangement (the owner's rule, 2026-10-03).
    - Fallback, and hedged requests for the slowest calls.
    - Strict schemas, re-validated by the runtime.
    - Budgets per turn, subject and tenant, checked before and after every call.

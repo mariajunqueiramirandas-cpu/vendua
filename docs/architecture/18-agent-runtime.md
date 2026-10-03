@@ -343,7 +343,9 @@ A **model gateway** sits between the engine and the providers.
 - **Adapters** normalize each provider to one message model (parts, tool calls, reasoning,
   cache markers, usage). The drivers in `src/agent/llm.ts` are the starting point.
 - **Routing** by policy: a fast tier and a strong tier per agent, mapped per tenant to the
-  providers the owner allows under LGPD; escalation rules in the definition.
+  providers reached only through a zero-data-retention arrangement (owner, 2026-10-03; a
+  `zdr` flag per provider route, set by staff, enforced here); escalation rules in the
+  definition.
 - **Resilience.** A circuit breaker per provider, a fallback chain, and for the interactive lane
   a hedged second request when the first passes the p95 latency, cancelled when either answers.
   Hedging only repeats a model call (never a tool), and a hedge usually misses the prompt cache,
@@ -386,7 +388,8 @@ A **model gateway** sits between the engine and the providers.
 | Procedural | Skills, and per-store examples the merchant approved in shadow mode | Code, and `agent_memory` (`example.*`) |
 
 - **Writes are proposals.** A turn emits `memory.proposed`; a policy (allowlisted keys,
-  confidence, no health data unless decided otherwise) accepts it into `agent_memory`.
+  confidence, health data only with recorded consent and a confirmation on every use)
+  accepts it into `agent_memory`.
 - **Consolidation after the conversation** ("sleep-time"): a background turn reads a finished
   conversation and proposes facts, knowledge gaps and examples, so the interactive turn never
   pays for it.

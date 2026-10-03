@@ -53,6 +53,9 @@ listed in [`features/sales-agent-features.md`](../features/sales-agent-features.
      phone, only while the Vendedor is on, and the setup says so.
    - **The outbox.** Chat rows carry a `jid` and a widened phone check, so senders whose number
      WhatsApp hides, and foreign numbers, can be answered.
+   - **Pacing.** Replies inside a conversation the shopper started have no ceiling (owner,
+     2026-10-03). ADR 0026's 200-an-hour ceiling stays for messages the store starts, and the
+     gap between sends applies per conversation.
    - Broadcasts and re-engagement wait for the official API (phase V4).
 6. **The merchant's controls are plain questions** (the team's board):
    - **Coverage, when it answers:** Ensaio (writes, never sends), quando eu demorar (1, 2 or 5
@@ -74,8 +77,13 @@ listed in [`features/sales-agent-features.md`](../features/sales-agent-features.
    - **Orders** gain `source` and `thread_id`, shared with the iFood work.
    - **LGPD forget** covers conversations, media and facts, and closes today's gaps (cart
      addresses, message bodies).
-   - **Memory:** no health data is kept by default.
-   - **Providers:** no training on conversations; no phone numbers sent to model providers.
+   - **Allergies and dietary restrictions** may be remembered (owner, 2026-10-03). They are
+     kept only after the shopper agrees, confirmed on every later use, never used to sell, and
+     erasable by the shopper or the merchant.
+   - **Providers:** any provider, but only through its zero-data-retention arrangement, which
+     the gateway enforces per route (owner, 2026-10-03). Transcription, vision and voice
+     providers are included. No training on conversations, and no phone numbers sent to model
+     providers.
 9. **The admin design spec changes** (decided by the owner on 2026-10-03; the first two are
    already applied to [`merchant-admin-design.md`](../merchant-admin-design.md)):
    - a shopper waiting for the merchant may push (law 13);
@@ -108,8 +116,11 @@ listed in [`features/sales-agent-features.md`](../features/sales-agent-features.
 - The cash-change field and the sacola link are additive Kernel changes with the usual
   `API.md`, api-surface test, version bump, `CHANGELOG.md` and `bun.lock` steps.
 - Replying to shoppers sends far more on the unofficial client than order updates do, which
-  raises the ban risk ADR 0026 accepted. Pacing, the reply-only scope and the V4 official API
+  raises the ban risk ADR 0026 accepted. With no ceiling on replies (the owner's call), that
+  risk grows with volume. The reply-only scope, per-conversation pacing and the V4 official API
   reduce it; they don't remove it.
+- Zero data retention narrows the provider list to those that offer it, and turns off any
+  provider feature that stores data on their side.
 - The store's WhatsApp gateway stops being "order updates only" while the Vendedor is on. It
   stores conversations for the retention the owner sets.
 
@@ -134,19 +145,20 @@ Decided by the owner on 2026-10-03:
 - **Disclosure:** a merchant switch (decision 10).
 - **How AI is charged:** deferred. It includes Cliente oculto runs, and no prices go in these
   docs until it is decided.
+- **No reply limits** (decision 5).
+- **Providers:** any, under zero data retention (decision 8).
+- **Allergies:** remembered with consent and always confirmed (decision 8).
 
 Still open, for the owner (the full lists are in
 [`sales-agent.md` §10](../features/sales-agent.md#10-open-decisions) and
 [`sales-agent-ux.md` §10](../features/sales-agent-ux.md#10-open-decisions)):
 
-1. The per-store ceiling for replies on the unofficial client, and which stores should wait for
-   the official API.
-2. Model providers that may see store and shopper data under LGPD.
-3. Retention of conversations and media.
-4. Whether allergies may be remembered, after a legal read.
-5. Defaults for recovery, suggestions, unknown numbers and the disclosure switch (on is
-   recommended).
-6. The product's name.
+1. **Retention.** How long Venduá keeps message text, media, model inputs and outputs, and event
+   metadata in its own database. The recommendation is in `sales-agent.md` §10.
+2. **Defaults.** Every setting's value when a merchant first turns it on. The recommendation is
+   in `sales-agent.md` §10.
+3. **The product's name** in the admin, on the site and on plan pages ("Vendedor" is the working
+   name; each merchant names their own agent).
 
 ## Links
 
