@@ -323,6 +323,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
         // a slow provider doesn't hold the owner's answer: no marker, the next try sends it
         await within(
           sendWelcome(d, c, {
+            tenantId: store.tenant_id,
             email,
             ownerName,
             storeName,
@@ -397,6 +398,7 @@ async function sendWelcome(
   d: Omit<AdminDeps, 'admin'>,
   c: Context,
   o: {
+    tenantId: string;
     email: string;
     ownerName: string;
     storeName: string;
@@ -426,7 +428,9 @@ async function sendWelcome(
       'Para entrar no painel, use o número de WhatsApp que você confirmou no cadastro.',
       'Se precisar de ajuda, toque em Ajuda no painel.',
     ].join('\n\n'),
-    `signup-welcome:${o.slug}`,
+    // per store, not per slug: a slug freed and taken again within the provider's 24h dedupe
+    // window would replay the old store's key with a new body, and the send is refused
+    `signup-welcome:${o.tenantId}`,
   );
 }
 

@@ -260,7 +260,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(r.body.store).toMatchObject({ slug: pixSlug, name: 'Doces da Praia', role: 'owner' });
     expect(r.body.next.kind).toBe('pix');
     // the owner's welcome: where the store is, how to get in, what happens next
-    const welcome = mails.filter((m) => m.key === `signup-welcome:${pixSlug}`);
+    const welcome = mails.filter((m) => m.key === `signup-welcome:${r.body.store.id}`);
     expect(welcome).toHaveLength(1);
     expect(welcome[0]).toMatchObject({
       to: 'ana@example.com',
@@ -325,7 +325,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(again.status).toBe(201);
     expect(again.body.store.id).toBe(pixStore);
     // a replay finds the store: no second welcome
-    expect(mails.filter((m) => m.key === `signup-welcome:${pixSlug}`)).toHaveLength(1);
+    expect(mails.filter((m) => m.key === `signup-welcome:${pixStore}`)).toHaveLength(1);
     expect(again.body.next).toEqual({ kind: 'pix', invoiceId: expect.any(String) });
     expect((await sql`select 1 from tenants where slug = ${pixSlug}`).length).toBe(1);
     expect((await sql`select 1 from invoices where tenant_id = ${pixStore}`).length).toBe(1);
@@ -445,7 +445,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     fail = false;
     expect((await signup(token, slug, {}, flaky)).status).toBe(201);
     await until(() => sent.length === 1);
-    expect(sent).toEqual([`signup-welcome:${slug}`]);
+    expect(sent).toEqual([`signup-welcome:${r.body.store.id}`]);
     expect((await marker()).length).toBe(1);
   });
 
