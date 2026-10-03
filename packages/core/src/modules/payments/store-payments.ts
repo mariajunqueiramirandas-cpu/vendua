@@ -215,7 +215,7 @@ export function offlinePayment(
           key: profile.key,
           keyType: profile.keyType,
           beneficiary: profile.beneficiary,
-          copyPaste: pixPayload(profile, { amountCents: totalCents, txid: `PEDIDO${number}` }),
+          copyPaste: pixPayload(profile, { amountCents: totalCents }),
         }
       : null,
   };

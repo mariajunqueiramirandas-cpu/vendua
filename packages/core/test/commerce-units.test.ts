@@ -30,7 +30,7 @@ describe('pix BR Code', () => {
   test('CRC16-CCITT-FALSE check value', () => {
     expect(crc16('123456789')).toBe('29B1');
   });
-  test('payload is TLV with amount, txid and a valid trailing CRC', () => {
+  test('payload is TLV with amount, a *** txid and a valid trailing CRC', () => {
     const p = pixPayload(
       {
         key: 'loja@exemplo.com',
@@ -38,13 +38,14 @@ describe('pix BR Code', () => {
         beneficiary: 'Doçaria São João',
         city: 'Saquarema',
       },
-      { amountCents: 4590, txid: 'PEDIDO-12' },
+      { amountCents: 4590 },
     );
-    expect(p.startsWith('000201010212')).toBe(true);
+    // no single-use flag (01=12): a static code from the store's key, like the BCB's examples
+    expect(p.startsWith('00020126380014br.gov.bcb.pix')).toBe(true);
     expect(p).toContain('0014br.gov.bcb.pix0116loja@exemplo.com');
     expect(p).toContain('540545.90');
     expect(p).toContain('5916DOCARIA SAO JOAO');
-    expect(p).toContain('62120508PEDIDO12');
+    expect(p).toContain('62070503***');
     expect(p.slice(-4)).toBe(crc16(p.slice(0, -4)));
   });
   test('static payload omits amount and uses *** txid', () => {
