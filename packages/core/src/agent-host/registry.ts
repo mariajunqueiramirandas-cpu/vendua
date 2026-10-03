@@ -1,6 +1,7 @@
 import type { Agent, Lane } from '@vendua/agent-runtime';
 import type { Sql } from '../platform/db.ts';
-import { AGENTS, ONLINE_QA } from './agents/index.ts';
+import { AGENTS } from './agents/index.ts';
+import { hostOnlineQa } from './qa.ts';
 
 // Which agents this Core runs, by id: dispatchTx needs an agent's lane to create its actor, and
 // the runtime needs every version it may route to.
@@ -11,6 +12,9 @@ export function registerAgent(agent: Agent<Sql>, opts: { current?: boolean } = {
   versions.set(agent.version, agent);
   if (opts.current !== false) current.set(agent.def.id, agent);
 }
+
+/** Scores a sample of every agent's conversations once there is an agent to score. */
+export const ONLINE_QA = AGENTS.length ? hostOnlineQa() : null;
 
 for (const a of AGENTS) registerAgent(a);
 if (ONLINE_QA) registerAgent(ONLINE_QA.agent);
