@@ -27,8 +27,14 @@ the store. The user asked for a new design rather than the CRM's.
    shopper's burst to settle, makes one model call with parallel read tools, and ends on exactly
    one terminal action (`reply`, `react`, `handoff`, `stay_silent`). It has a latency budget in
    seconds, and it restarts when the shopper writes again before the reply goes out. Nothing is
-   replayed after a crash: every side effect is keyed (cart lines by `lineKey`, orders by quote,
-   messages by `turnId + part`), so a turn just runs again.
+   replayed after a crash, because every side effect is keyed:
+   - cart lines by a new `cart_items.line_key`, with set-quantity writes rather than
+     `insertLine`'s add-to-quantity merge
+   - orders by quote
+   - outbound rows by a unique `(turn_id, part_index)`; a turn whose reply exists is done
+
+   So a turn just runs again.
+
 3. **One entry point.** Turns start only through `requestSellerTurnTx` (`seller/dispatch.ts`) with
    a `source`. When this ships, `CLAUDE.md` adds the invariant beside `requestAgentTx`.
 4. **A `seller-worker` process** from Core's image, like `wa-gateway`. It claims conversations
@@ -41,12 +47,16 @@ the store. The user asked for a new design rather than the CRM's.
    (`{{total}}`, `{{price:<id>}}`, …) that Core fills in. Summaries, Pix codes and product captions
    are Core-rendered parts. A guard rejects raw figures. "Money is computed only in Core" now
    covers prose too.
-7. **A commit gate in code.** `place_order` requires all four of these:
+7. **A commit gate in code.** `place_order` requires all of these:
    - the last agent message was a `confirm` for this quote, with no other question in that turn
-   - the cart and quote hash are unchanged
-   - a yes from the shopper arrived after it
-   - the order goes through `placeOrderTx` with the key `seller:<thread>:<hash>`, using the
-     existing claim pattern
+   - the quote hash is unchanged (lines with unit prices, fees, discounts, payment and address)
+   - a shopper message arrived after the confirm; the model judges whether it is a yes
+   - the thread has a mapped phone
+   - the order goes through `placeOrderTx` under the key `seller:<thread>:<hash>`. The claim logic
+     of `idempotency()` moves into a shared `claimOnce` helper, which the worker calls with a
+     fixed fingerprint
+   - the order's `total_cents` equals the confirmed total, checked in the same transaction
+     (else `QUOTE_CHANGED`)
 8. **Coverage modes instead of autonomy levels.** The modes are Ensaio (shadow drafts with an
    agreement score), Quando eu demorar, Fora do horário and Sempre. On top of them are
    per-skill permissions in plain words. There are no approval drafts, because a shopper can't
@@ -73,8 +83,18 @@ the store. The user asked for a new design rather than the CRM's.
 
 - New tables, all with `tenant_id`, RLS and `control_access`: `seller_settings`,
   `shopper_threads`, `shopper_messages`, `seller_turns`, `seller_knowledge`, `shopper_prefs`,
-  `seller_signals` and `seller_evals`. Also new: `orders.source` (shared with the iFood work), and
-  `store_wa_messages` gains the `reply` kind, `parts` and `thread_id`.
+  `seller_signals` and `seller_evals`. Also new:
+  - `orders.source`, shared with the iFood work
+  - `cart_items.line_key`
+  - on `store_wa_messages`: the `reply` kind, `parts`, a nullable `body` for replies, `jid`,
+    `thread_id`, and `(turn_id, part_index)`
+- `placeOrderTx` gains `source`, `actor` and `notifyPlaced` options, so the Vendedor's receipt
+  replaces the `placed` notice. `/checkout` keeps its behaviour through `idempotency()` over the
+  extracted `claimOnce`.
+- SAIR is recognised in any thread with the agent on. It stops proactive messages, never replies
+  to a shopper who writes in.
+- Sandbox threads (Testar como cliente, Cliente oculto) stop at the confirmed quote and never call
+  `placeOrderTx`.
 - The `LlmProvider` seam gains structured output, image input, and cached-token accounting kept
   apart from fresh tokens. A `stt` driver joins the integrations.
 - New admin surfaces (Vendedor, Conversas, Ensinar, Cliente oculto, Configurar) follow the admin's

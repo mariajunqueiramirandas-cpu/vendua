@@ -184,10 +184,18 @@ it feeds the funnel in §8.5.
    the tool calls, the latency of each phase, and the outcome.
 
 **Restartable by construction.** A turn has no journal to replay. Every side effect is keyed so
-that running it twice changes nothing. Cart lines are keyed by a `lineKey` the agent chooses
-(`upsert_line` and `remove_line`, never "add one more"). Orders are keyed by the quote (§4.6).
-Outbound messages get WhatsApp ids derived from `turnId + partIndex` (`messageIdFor`, as today).
-A crashed turn simply runs again.
+that running it twice changes nothing:
+
+- **Cart lines** are keyed by a `lineKey` the agent chooses. This needs a new
+  `cart_items.line_key` column (unique per cart) and a **set-quantity** path. Today's
+  `insertLine` merges equal lines with `qty = cart_items.qty + excluded.qty`, which is exactly the
+  "add one more" a re-run must not do. Storefront carts keep `insertLine` as it is.
+- **Orders** are keyed by the quote (§4.6).
+- **Outbound rows** carry `(turn_id, part_index)`, unique. A turn whose reply rows exist is done
+  and is not regenerated, so a crash after the model answered never sends a second, different
+  text. (`messageIdFor` keeps deriving the WhatsApp id from the row id, as today.)
+
+A crashed turn that hasn't written its reply simply runs again.
 
 ### 4.4 The cart is the state
 
@@ -206,9 +214,13 @@ cart gets too:
 - the `PRICES_CHANGED` 409
 
 Every turn's prompt carries the cart as Core renders it, so the model reads the truth instead of
-remembering it. The same cart can be opened on the web: a `?cart=CODE` share link (Kernel 1.2,
-`cart-share.ts`) gives the shopper the exact sacola. That is how card-online payment and "quero ver
-as fotos" work before the web chat ships.
+remembering it.
+
+The lines can also move to the web. A `?cart=CODE` share link (Kernel 1.2, `cart-share.ts`)
+**copies** the lines into the browser's own cart. It doesn't carry the address or the coupon, and
+it doesn't move the chat cart. So when the Vendedor sends that link, it **closes the chat cart**
+and says so ("finalize por aqui: …"). Otherwise one purchase could become two orders. This is how
+card-online payment and "quero ver as fotos" work before the web chat ships.
 
 ### 4.5 Structured replies; money only by reference
 
@@ -243,43 +255,70 @@ type ReplyPart =
 
 `place_order` is the only tool with an irreversible effect. Code, not the prompt, enforces:
 
-1. The **last** agent message in the thread was a `confirm` part for `quoteId`, and no upsell or
-   other question shared that turn.
-2. The cart and the quote are unchanged since: same cart version and the same `hash` over lines,
-   fees, discounts, payment method and address.
-3. A shopper message arrived **after** that confirm, and the turn classified it as a yes ("sim",
-   "pode", "fecha", "isso", 👍). A yes that is an answer to something else does not count because
-   of rule 1.
-4. The order goes through `placeOrderTx` with the idempotency key `seller:<threadId>:<hash>`,
-   through the same claim table and fingerprint as `POST /checkout`. "Sim" sent twice is one order.
-   One cart is one order.
+1. The **last** agent message in the thread was a `confirm` part for `quoteId`. The confirm is
+   that turn's only question: it may restate the quoted payment method or address ("fecho no
+   Pix?"), but no upsell or other question shares the turn.
+2. The quote's `hash` still matches. It covers the lines with their unit prices, fees, discounts,
+   the payment adjustment, the payment method, the address and the total. `carts` has no version
+   column, so the hash is the check.
+3. A shopper message arrived **after** that confirm. **Code** checks the order of messages. **The
+   model** judges whether the message is a yes ("sim", "pode", "fecha", "isso", 👍). A yes to
+   something else can't count, because of rule 1.
+4. `placeOrderTx` runs under the key `seller:<threadId>:<hash>` and is claimed once.
+   - `idempotency()` in `platform/http.ts` is an HTTP middleware. Its fingerprint hashes the
+     request's method, path and credentials, so an in-process caller can't use it as it stands.
+   - Its claim logic moves into a shared helper, `claimOnce(sql, tenantId, key, fingerprint, run)`,
+     on the same `idempotency_keys` table. The worker calls it with a fixed `seller-worker`
+     fingerprint. `POST /checkout` keeps calling it through `idempotency()`.
+   - "Sim" sent twice is one order. One cart is still one order: the cart row lock and the
+     `CART_NOT_OPEN` check in `placeOrderTx` hold as today.
+5. Inside the same transaction, the new order's `total_cents` must equal the armed quote's total.
+   `placeOrderTx` refuses only when a line price changed (`PRICES_CHANGED`). It recomputes fees,
+   coupon and payment adjustment under its own locks, so without this check an order could go
+   through at a total nobody confirmed. A mismatch rolls back with `QUOTE_CHANGED`.
+6. The thread has a **mapped phone**. `placeOrderTx` requires `customer.phone`, so a thread known
+   only by a WhatsApp LID can chat and build a cart, but can't order until the number is known.
 
-Placing the order disarms the quote. A `PRICES_CHANGED` from Core re-renders the summary and asks
-again. The model can't skip this, because the tool refuses with a reason it can act on.
+`placeOrderTx` gains options for this caller:
+
+- `source`, written to `orders.source`
+- `actor: 'seller'` on `order_events`, instead of today's hardcoded `customer` and
+  `via: 'checkout-sandbox'`
+- `notifyPlaced: false`, because the Vendedor's receipt replaces the `placed` notice
+
+Placing the order disarms the quote. `PRICES_CHANGED` and `QUOTE_CHANGED` re-render the summary
+and ask again. A changed price makes a new hash and so a new key, so the stored 409 under the old
+key is never replayed to a fresh confirm. The model can't skip any of this, because the tool
+refuses with a reason it can act on.
 
 ### 4.7 Tools
 
-Each tool wraps an existing Core function. A tool can only reach this thread's cart and this
-thread's shopper: the phone comes from the thread, never from arguments.
+Each tool wraps a Core function, existing unless the row says new. A tool can only reach this
+thread's cart and this thread's shopper: the phone comes from the thread, never from arguments.
 
-| Tool                                       | Wraps (today's code)                                              | Notes                                                                                       |
-| ------------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `search_menu(query)`                       | `getCatalogView`, a Postgres `unaccent` + trigram index           | Synonyms per store ("coca" → Coca-Cola, "refri"), availability **right now**                |
-| `get_product(id)`                          | `getProductById`, `combos.ts`                                     | Modifier groups with min/max and pricing rule; combo slots                                  |
-| `store_status()`                           | `deriveStatus`, settings                                          | Open, closed or paused, `resumesAt`, prep time, minimum order, payment methods              |
-| `shopper()`                                | `ordersByPhone`, `loyaltyCard`, `/customers/:phone` aggregation   | Last address, favourites, usual payment, loyalty, stored preferences                        |
-| `suggest()`                                | new `seller/suggest.ts`: attach rates from `order_lines`, nightly | What goes with this cart, a combo that comes out cheaper (Core computes the saving)         |
-| `upsert_line` / `remove_line`              | `insertLine`, cart PATCH/DELETE                                   | Keyed by `lineKey`; a validation error comes back as a reason the model can use             |
-| `reorder(orderId?)`                        | `/cart/reorder`, `orderLines`                                     | "O de sempre"; lines that can't be added come back named                                    |
-| `set_delivery({pin}\|{address}\|pickup)`   | `resolveDelivery`, `/cep`, `/geocode`, `deliveryPricing`          | A WhatsApp location is a confirmed pin (ADR 0024); a typed address is answered with a `pin` |
-| `set_payment(method)` / `apply_coupon`     | quote, `evaluateCoupon`                                           | Only coupons the merchant lets the Vendedor offer, plus the shopper's own loyalty coupons   |
-| `place_order(quoteId)`                     | `placeOrderTx` + `idempotency()`                                  | §4.6. `orders.source = 'seller_whatsapp'`                                                   |
-| `request_pix(orderId)`                     | `preparePayment`, `offlinePayment`                                | Online Pix (30 min) or the store's static key                                               |
-| `order_status(number?)`                    | orders by this shopper                                            | "Cadê meu pedido?" answered from the real state and ETA                                     |
-| `waitlist(productId)`                      | `notify_requests`                                                 | Sold out: alternatives first, then "aviso quando voltar"                                    |
-| `knowledge(query)`                         | `seller_knowledge`                                                | Only active, merchant-approved cards                                                        |
-| `remember(pref)` / `unmet(what)`           | `shopper_prefs`, `seller_signals`                                 | Non-sensitive preferences only (§7.4); demand for things the store doesn't sell             |
-| `reply`, `react`, `handoff`, `stay_silent` | terminal (§4.5, §5.3)                                             | Exactly one per turn                                                                        |
+**Bad arguments are reasons, not crashes.** Every id is checked against `UUID_RE` in the tool layer
+before it reaches SQL (`getProductById` doesn't check, and a made-up id would fail in Postgres
+and poison the transaction). Each tool runs in a savepoint, so a failed write is reported to the
+model and the turn goes on.
+
+| Tool                                       | Wraps (today's code)                                              | Notes                                                                                            |
+| ------------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `search_menu(query)`                       | `getCatalogView`; **new**: a Postgres `unaccent` + trigram index  | Synonyms per store ("coca" → Coca-Cola, "refri"), availability **right now**                     |
+| `get_product(id)`                          | `getProductById`, `combos.ts`                                     | Modifier groups with min/max and pricing rule; combo slots                                       |
+| `store_status()`                           | `deriveStatus`, settings                                          | Open, closed or paused, `resumesAt`, prep time, minimum order, payment methods                   |
+| `shopper()`                                | `ordersByPhone`, `loyaltyCard`, `/customers/:phone` aggregation   | Last address, favourites, usual payment, loyalty, stored preferences                             |
+| `suggest()`                                | new `seller/suggest.ts`: attach rates from `order_lines`, nightly | What goes with this cart, a combo that comes out cheaper (Core computes the saving)              |
+| `upsert_line` / `remove_line`              | `insertLine`'s validation; **new**: set-quantity by `line_key`    | Keyed by `lineKey`; a validation error comes back as a reason the model can use                  |
+| `reorder(orderId?)`                        | `/cart/reorder`, `orderLines`                                     | "O de sempre"; lines that can't be added come back named                                         |
+| `set_delivery({pin}\|{address}\|pickup)`   | `resolveDelivery`, `/cep`, `/geocode`, `deliveryPricing`          | A WhatsApp location is a confirmed pin (ADR 0024); a typed address is answered with a `pin`      |
+| `set_payment(method)` / `apply_coupon`     | quote, `evaluateCoupon`                                           | Only coupons the merchant lets the Vendedor offer, plus the shopper's own loyalty coupons (§7.5) |
+| `place_order(quoteId)`                     | `placeOrderTx` + **new** `claimOnce`                              | §4.6. `orders.source = 'seller_whatsapp'`                                                        |
+| `request_pix(orderId)`                     | `preparePayment`, `offlinePayment`                                | Online Pix (30 min) or the store's static key                                                    |
+| `order_status(number?)`                    | orders by this shopper                                            | "Cadê meu pedido?" answered from the real state and ETA                                          |
+| `waitlist(productId)`                      | `notify_requests`                                                 | Sold out: alternatives first, then "aviso quando voltar"                                         |
+| `knowledge(query)`                         | `seller_knowledge`                                                | Only active, merchant-approved cards                                                             |
+| `remember(pref)` / `unmet(what)`           | `shopper_prefs`, `seller_signals`                                 | Non-sensitive preferences only (§7.4); demand for things the store doesn't sell                  |
+| `reply`, `react`, `handoff`, `stay_silent` | terminal (§4.5, §5.3)                                             | Exactly one per turn                                                                             |
 
 The merchant's permissions (§5.2) decide which tools a turn is offered. Code checks them again
 when a tool runs.
@@ -290,7 +329,8 @@ The prompt is ordered from most to least stable, so caching does most of the wor
 
 1. **Seller core** (static, in code): who it is and isn't, how to sell, how to write for WhatsApp,
    the money rule, the commit rule, when to hand off.
-2. **Store pack** (cached per store and keyed by `catalogVersion + settingsVersion + knowledgeVersion`):
+2. **Store pack** (cached per store and keyed by `catalogVersion + settingsVersion + knowledgeVersion`,
+   new counters bumped by the admin's writes):
    persona, policies, active knowledge cards, and a menu digest with one line per product: id,
    name, short description, a price reference, tags, availability windows. Menus up to ~300
    products fit. Bigger menus get categories and best sellers, and the model uses `search_menu`
@@ -358,8 +398,13 @@ that rule:
 | After delivery                 | One question about the order, 45 min after `delivered`                                                                             | off     |
 | Win-back, campaigns, birthdays | **Not on this transport.** They wait for a per-store move to the Cloud API and approved templates (P-018)                          | n/a     |
 
-All of them respect SAIR, quiet hours (22h–8h in the store's timezone), and the shopper's last
-reply.
+All of them respect quiet hours (22h–8h in the store's timezone) and the shopper's last reply.
+
+**SAIR stops proactive messages, never replies.** Today a SAIR counts only from a number the store
+texted an order notice in the last 90 days, so a shopper who only chatted couldn't opt out of a
+nudge. With the Vendedor on, a bare SAIR is recognised in any thread. It stops every message in
+the table above. It never mutes the Vendedor's answer to a shopper who writes in to buy; writing
+in is the shopper's own request.
 
 ### 4.12 Web chat (later)
 
@@ -435,8 +480,10 @@ still on the merchant's phone.
   diferente**, which drafts a card from the correction.
 - **Tell it in words.** A short list of rules in natural language, shown as cards. A cap of 40
   keeps the prompt and the merchant's mental model small.
-- **Testar como cliente**: a chat in the admin against the live store, on a sandbox thread that
-  never places real orders.
+- **Testar como cliente**: a chat in the admin against the live store, on a sandbox thread.
+  Sandbox threads stop at the armed quote. Their `place_order` reports the order that would be
+  placed and never calls `placeOrderTx`, which would take stock, use up an order number, record
+  staff events, and queue WhatsApp messages and print jobs.
 
 ### 5.5 When something breaks
 
@@ -541,7 +588,14 @@ the store's static key, the receipt goes to the merchant as "comprovante recebid
 - Sending shoppers' messages to an LLM provider needs that provider's data-processing terms and a
   line in the store's privacy notice. The design keeps the provider swappable for this reason.
 
-### 7.5 Ban risk on the unofficial transport
+### 7.5 Identity and loyalty
+
+A WhatsApp sender's number is verified by WhatsApp, which is stronger proof than a phone typed into
+checkout. The proposal is that a mapped WhatsApp number counts as `provenPhone`, so the shopper's
+own loyalty coupons (`FIEL-…`) apply in chat. This extends ADR 0019's rule, which today treats a
+phone as proven only by a delivered order. A thread known only by a LID is not proven.
+
+### 7.6 Ban risk on the unofficial transport
 
 Replies to messages the shopper just sent are the safest traffic a number can have. But today's
 pacing (1.5 s between any two messages of a store, 200 per hour) would make a Friday rush wait in
@@ -561,6 +615,10 @@ The scripted-provider pattern, on a `log` driver. Golden cases:
 - A confirm followed by an upsell can't commit.
 - "Sim" sent twice is one order.
 - A `PRICES_CHANGED` re-confirms.
+- A delivery fee that changes after the confirm rolls back with `QUOTE_CHANGED`.
+- A re-run `upsert_line` leaves the quantity unchanged.
+- A LID-only thread can build a cart but can't place an order.
+- Sandbox threads never call `placeOrderTx`.
 - A merchant `fromMe` message pauses the turn already in flight.
 - SAIR is honoured mid-order.
 - A closed store offers scheduling.
@@ -576,8 +634,9 @@ Before a store goes live, after a big menu change, and on request, the worker ru
 shoppers against **this store's** menu in a sandbox. Each persona has a hidden **target cart**
 built from the real menu: a simple order, required modifiers, half-and-half, a combo, an address
 outside the zone, a voice-note order, haggling, an allergy question, a sold-out item, a complaint.
-The run is scored **objectively**: the placed cart is compared with the target, line by line. A
-judge model on the strong tier scores tone and handoffs.
+The run is scored **objectively**: the cart the persona confirmed (the armed quote it said yes
+to) is compared with the target, line by line. Like every sandbox thread, it never reaches
+`placeOrderTx`. A judge model on the strong tier scores tone and handoffs.
 
 The merchant sees something like "acertou 19 de 20 pedidos". Each miss comes with the fix that
 helps most, usually in the menu itself: "a pizza broto não diz o tamanho; o Vendedor confundiu com
@@ -644,18 +703,20 @@ Bottom bar: whether **Vendedor** takes a bottom-bar slot once it's on, and which
 All tables have `tenant_id`, `tenant_isolation` and `control_access` policies. The package wins
 once it exists.
 
-| Table                         | Holds                                                                                                                                                                      |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `seller_settings`             | One row per store: enabled, coverage mode and delay, persona (name, tone, emoji level), permissions, allowed coupons, proactive toggles, handoff threshold, monthly budget |
-| `shopper_threads`             | §4.2, plus a lease (`owner`, `lease_epoch`, `lease_until`). Unique `(tenant_id, channel, shopper_key)`                                                                     |
-| `shopper_messages`            | Direction, author (`shopper`, `seller`, `merchant_phone`, `merchant_admin`, `system`), parts, transcript, media ref, WhatsApp id, status. Retention per §7.4               |
-| `seller_turns`                | Trigger message ids, source, tier, tokens (fresh, cached in, out), cost, spans, tool calls (names, outcomes), terminal, quote hash, error                                  |
-| `seller_knowledge`            | Card kind (`qa`, `rule`), text, source (`merchant`, `learned`, `onboarding`), status (`proposed`, `active`, `archived`), uses                                              |
-| `shopper_prefs`               | `(tenant_id, phone, key)`, value, source turn                                                                                                                              |
-| `seller_signals`              | Unmet demand and no-order reasons, for the weekly insights                                                                                                                 |
-| `seller_evals`                | Cliente oculto runs: personas, target and placed carts, scores, fixes                                                                                                      |
-| `orders.source`               | `storefront`, `seller_whatsapp`, `seller_web`, `admin`, and later `ifood`, shared with the iFood work                                                                      |
-| `store_wa_messages` (changed) | New kind `reply`, `parts` (text, image, location, reaction), `thread_id`. The opt-out check covers `reply`                                                                 |
+| Table                         | Holds                                                                                                                                                                                                                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `seller_settings`             | One row per store: enabled, coverage mode and delay, persona (name, tone, emoji level), permissions, allowed coupons, proactive toggles, handoff threshold, monthly budget                                                         |
+| `shopper_threads`             | §4.2, plus a lease (`owner`, `lease_epoch`, `lease_until`). Unique `(tenant_id, channel, shopper_key)`                                                                                                                             |
+| `shopper_messages`            | Direction, author (`shopper`, `seller`, `merchant_phone`, `merchant_admin`, `system`), parts, transcript, media ref, WhatsApp id, status. Retention per §7.4                                                                       |
+| `seller_turns`                | Trigger message ids, source, tier, tokens (fresh, cached in, out), cost, spans, tool calls (names, outcomes), terminal, quote hash, error                                                                                          |
+| `seller_knowledge`            | Card kind (`qa`, `rule`), text, source (`merchant`, `learned`, `onboarding`), status (`proposed`, `active`, `archived`), uses                                                                                                      |
+| `shopper_prefs`               | `(tenant_id, phone, key)`, value, source turn                                                                                                                                                                                      |
+| `seller_signals`              | Unmet demand and no-order reasons, for the weekly insights                                                                                                                                                                         |
+| `seller_evals`                | Cliente oculto runs: personas, target and placed carts, scores, fixes                                                                                                                                                              |
+| `orders.source`               | `storefront`, `seller_whatsapp`, `seller_web`, `admin`, and later `ifood`, shared with the iFood work                                                                                                                              |
+| `store_wa_messages` (changed) | New kind `reply`; `parts` (text, image, location, reaction) with `body` nullable for it; `jid`, so a LID-only thread can be answered; `thread_id`; `(turn_id, part_index)` unique. Opt-out covers the proactive kinds only (§4.11) |
+| `cart_items.line_key`         | Unique per cart when set, with a set-quantity write path for the worker (§4.3). Storefront lines leave it null                                                                                                                     |
+| `idempotency_keys` (reused)   | The worker claims `seller:<thread>:<hash>` through the extracted `claimOnce` helper (§4.6)                                                                                                                                         |
 
 Media (voice notes, shopper photos) go to the same media store as uploads (`/v1/media/…`), under
 the same retention as their messages.
@@ -679,7 +740,7 @@ Each milestone ships to stores on its own and is useful by itself.
    oculto runs are counted. This doc states none of them on purpose. The research found
    competitors charging per conversation, per outcome, flat, and as a share of revenue. "Billing
    surprises" is a top merchant complaint, and Domínio limits its agent to its top tier.
-2. **Reply lane pacing** on the unofficial transport (§7.5): the speed against ban-risk trade.
+2. **Reply lane pacing** on the unofficial transport (§7.6): the speed against ban-risk trade.
 3. **Push for handoffs**: adding "um cliente quer falar com você" to what may interrupt.
 4. **Retention** of shopper conversations: 30 days (like order notices) or 90 days (useful for
    regressions and insights).
