@@ -175,8 +175,10 @@ function Editor({ data }: { data: AppearanceData }) {
       const sel = ed.locate(d.id);
       if (!sel) return;
       // a tap only selects: on a small screen it's easy to hit the wrong part, so the name
-      // shows first (and ‹ › walk to the neighbours) before anything opens
+      // shows first (and ‹ › walk to the neighbours) before anything opens. While the form is
+      // open, a tap switches it to the tapped part.
       ed.setSel(sel);
+      if (!editing) setEditing(false);
       if (!tapped) {
         setTapped(true);
         try {
@@ -257,7 +259,10 @@ function Editor({ data }: { data: AppearanceData }) {
   );
   // phones: editing is a layer over the selection, and "pronto" lifts it (the colours have no
   // place in the preview to stay selected on)
-  const done = () => (ed.sel?.kind === 'style' ? ed.setSel(null) : setEditing(false));
+  const done = () => {
+    setEditing(false);
+    if (ed.sel?.kind === 'style') ed.setSel(null);
+  };
   // tablets: one panel, the list or what was picked from it
   const single = ed.sel ? inspector('back') : navigator;
   const preview = (

@@ -171,16 +171,35 @@ export function useEditor(data: AppearanceData, storeId: string) {
     [],
   );
 
-  // a newer version (another device, a restore, our own publish) replaces only untouched pages
+  // a newer version (another device, a restore, our own publish) replaces only untouched pages,
+  // in the undo history too: undo must never bring back a copy of a page someone else has
+  // since published. A step that holds an edit made on the old version can't be rebased, so
+  // then the history starts over from here.
   const prevBase = useRef(base);
   useEffect(() => {
     const was = prevBase.current;
     prevBase.current = base;
     if (was === base) return;
+    const changed = TPLS.filter((t) => !same(was[t].template, base[t].template));
+    if (!changed.length) return;
+    const rebase = (d: Doc): Doc => {
+      const drafts = { ...d.drafts };
+      for (const t of changed) if (same(drafts[t], was[t].template)) drafts[t] = base[t].template;
+      return { ...d, drafts };
+    };
+    const stale = (d: Doc) =>
+      changed.some(
+        (t) => !same(d.drafts[t], was[t].template) && !same(d.drafts[t], base[t].template),
+      );
     setH((h) => {
-      const d = { ...h.doc.drafts };
-      for (const t of TPLS) if (same(d[t], was[t].template)) d[t] = base[t].template;
-      return { ...h, doc: { ...h.doc, drafts: d } };
+      const keep = !h.past.some(stale) && !h.future.some(stale);
+      return {
+        doc: rebase(h.doc),
+        past: keep ? h.past.map(rebase) : [],
+        future: keep ? h.future.map(rebase) : [],
+        key: null,
+        at: 0,
+      };
     });
   }, [base]);
   // the frame reports the colours in force when Core has none of its own yet
