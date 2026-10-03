@@ -365,7 +365,7 @@ describe('mercado pago adapter', () => {
               id: 7,
               preapproval_id: 'pre-1',
               status: 'processed',
-              transaction_amount: 39.9,
+              transaction_amount: 69.9,
               payment: { id: 555, status: 'approved' },
               debit_date: '2026-10-01T00:00:00.000-03:00',
             },
@@ -376,14 +376,14 @@ describe('mercado pago adapter', () => {
               status: 'pending',
               external_reference: 'tenant-1',
               init_point: 'https://mp/subscribe',
-              auto_recurring: { transaction_amount: 39.9 },
+              auto_recurring: { transaction_amount: 69.9 },
               next_payment_date: null,
             },
           },
     );
     const sub = await p.createSubscription({
-      reason: 'Venduá Basic',
-      amountCents: 3990,
+      reason: 'Venduá Mirim',
+      amountCents: 6990,
       payerEmail: 'dona@loja.com',
       externalReference: 'tenant-1',
       backUrl: 'https://painel.x/admin/?assinatura=retorno',
@@ -394,28 +394,28 @@ describe('mercado pago adapter', () => {
       id: 'pre-1',
       status: 'pending',
       externalReference: 'tenant-1',
-      amountCents: 3990,
+      amountCents: 6990,
       nextPaymentDate: null,
       redirectUrl: 'https://mp/subscribe',
     });
     expect(seen[0]!.url).toBe('https://api.mercadopago.com/preapproval');
     expect(seen[0]!.headers.authorization).toBe('Bearer platform-token');
     expect(seen[0]!.body).toEqual({
-      reason: 'Venduá Basic',
+      reason: 'Venduá Mirim',
       external_reference: 'tenant-1',
       payer_email: 'dona@loja.com',
       auto_recurring: {
         frequency: 1,
         frequency_type: 'months',
-        transaction_amount: 39.9,
+        transaction_amount: 69.9,
         currency_id: 'BRL',
       },
       back_url: 'https://painel.x/admin/?assinatura=retorno',
       status: 'pending',
     });
     await p.createSubscription({
-      reason: 'Venduá PRO+',
-      amountCents: 9900,
+      reason: 'Venduá Pangolin',
+      amountCents: 44900,
       payerEmail: 'dona@loja.com',
       externalReference: 'tenant-1',
       backUrl: 'https://painel.x/admin/?assinatura=retorno',
@@ -425,10 +425,10 @@ describe('mercado pago adapter', () => {
     });
     expect(seen.at(-1)!.body.auto_recurring.start_date).toBe('2026-10-30T12:00:00.000Z');
     seen.pop();
-    await p.updateSubscription('pre-1', { amountCents: 9900 });
+    await p.updateSubscription('pre-1', { amountCents: 44900 });
     expect(seen[1]!.method).toBe('PUT');
     expect(seen[1]!.body).toEqual({
-      auto_recurring: { transaction_amount: 99, currency_id: 'BRL' },
+      auto_recurring: { transaction_amount: 449, currency_id: 'BRL' },
     });
     await p.getSubscription('pre-1');
     expect(seen[2]!.url).toBe('https://api.mercadopago.com/preapproval/pre-1');
@@ -437,7 +437,7 @@ describe('mercado pago adapter', () => {
       id: '7',
       subscriptionId: 'pre-1',
       status: 'approved',
-      amountCents: 3990,
+      amountCents: 6990,
       paymentId: '555',
     });
     await p.platformGetPayment('9');

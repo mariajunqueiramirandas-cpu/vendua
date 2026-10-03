@@ -524,7 +524,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
       leadId: lead,
       slug,
       storeName: 'Doces da Ana',
-      planId: 'basic',
+      planId: 'mirim',
       ownerName: 'Ana Souza',
       ownerPhone: `(${phone.slice(0, 2)}) ${phone.slice(2)}`,
       ownerEmail: `ana@${nonce}.test`,
@@ -587,7 +587,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
       leadId: lead,
       slug: `fj-${nonce}`,
       storeName: 'Outra',
-      planId: 'basic',
+      planId: 'mirim',
       ownerName: 'Ana Souza',
       ownerPhone: phone,
       ownerEmail: `ana@${nonce}.test`,
@@ -595,7 +595,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
     expect(again.status).toBe(409);
     const base = {
       storeName: 'Outra',
-      planId: 'basic',
+      planId: 'mirim',
       ownerName: 'Ana',
       ownerPhone: phone,
       ownerEmail: `x@${nonce}.test`,
@@ -636,7 +636,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
     const slug = `fs-${nonce}`;
     const tenantId = (
       await sql<{ id: string }[]>`
-        select provision_store(${slug}, 'Bar do Beto', 'basic', ${`${slug}.${storeDomain}`},
+        select provision_store(${slug}, 'Bar do Beto', 'mirim', ${`${slug}.${storeDomain}`},
                                'Beto', ${phone}, ${`beto@${nonce}.test`}) as id
       `
     )[0]!.id;
@@ -665,7 +665,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
 
     // the 10-argument form is staff-only
     const denied = await sql`
-      select provision_store('x-denied', 'X', 'basic', 'x-denied.test', 'X', '11999990000',
+      select provision_store('x-denied', 'X', 'mirim', 'x-denied.test', 'X', '11999990000',
                              'x@x.test', 'invite')
     `
       .then(() => 'ok')

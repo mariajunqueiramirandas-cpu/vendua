@@ -85,7 +85,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('onboarding (db)', () => {
     const v = await call('POST', '/admin/v1/signup/otp/verify', { phone, code });
     const r = await call('POST', '/admin/v1/signup', {
       signupToken: v.body.signupToken,
-      planId: 'basic',
+      planId: 'mirim',
       method: 'pix',
       storeName: 'Açaí da Onda',
       slug: `onb-${nonce}`,

@@ -99,7 +99,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     (await events(tenantId, 'billing.problem')).filter((e) => e.data.problem === problem);
 
   /** a store from provision_store with its owner signed in (the store's first sign-in) */
-  const store = async (name: string, plan: 'basic' | 'pro_plus', email: string | null = null) => {
+  const store = async (name: string, plan: 'mirim' | 'pangolin', email: string | null = null) => {
     const slug = `sev-${nonce}-${name}`;
     const phone = mkPhone();
     const id = (
@@ -119,7 +119,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     return { id, slug, phone, owner };
   };
   const payInvoice = (id: string) => call('POST', `/admin/v1/dev/billing/invoices/${id}/pay`, {});
-  const paidStore = async (name: string, plan: 'basic' | 'pro_plus') => {
+  const paidStore = async (name: string, plan: 'mirim' | 'pangolin') => {
     const s = await store(name, plan, 'bia@example.com');
     const st = await s.owner('POST', '/account/subscription', {
       planId: plan,
@@ -168,7 +168,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     const slug = `sev-${nonce}-signup`;
     const body = {
       signupToken: await verified(mkPhone(), via),
-      planId: 'basic',
+      planId: 'mirim',
       method: 'pix',
       storeName: 'Doces da Praia',
       slug,
@@ -192,7 +192,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
         source: 'signup',
         owner: 'Ana Lima',
         leadId: null,
-        plan: 'Venduá Basic',
+        plan: 'Venduá Mirim',
       },
     });
     expect(rows[1]).toMatchObject({
@@ -226,10 +226,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       data: {
         storeName: 'Doces da Praia',
         invoiceId: inv,
-        amountCents: 3990,
+        amountCents: 6990,
         first: true,
         method: 'pix',
-        plan: 'Venduá Basic',
+        plan: 'Venduá Mirim',
       },
     });
     expect(rows[3]).toMatchObject({
@@ -248,7 +248,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     const paid = await events(id, 'billing.paid');
     expect(paid.map((e) => e.data)).toMatchObject([
       { invoiceId: inv, first: true },
-      { invoiceId: renewal, first: false, method: 'pix', amountCents: 3990 },
+      { invoiceId: renewal, first: false, method: 'pix', amountCents: 6990 },
     ]);
     expect(await events(id, 'store.onboarding')).toHaveLength(2);
   });
@@ -262,7 +262,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       process.env.VENDUA_SIGNUP_ACCESS_CODE = 'abre-sem-mp-1234';
       const body = {
         signupToken: await verified(mkPhone(), via),
-        planId: 'basic',
+        planId: 'mirim',
         storeName: 'Bolo da Vó',
         slug,
         ownerName: 'Rita Souza',
@@ -284,13 +284,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
         storeName: 'Bolo da Vó',
         source: 'access_code',
         owner: 'Rita Souza',
-        plan: 'Venduá Basic',
+        plan: 'Venduá Mirim',
       });
       expect((await events(id, 'billing.manual'))[0]).toMatchObject({
         tenant_id: id,
         anchor: null,
         dedupe_key: `billing.manual:${inv}`,
-        data: { storeName: 'Bolo da Vó', invoiceId: inv, amountCents: 3990, plan: 'Venduá Basic' },
+        data: { storeName: 'Bolo da Vó', invoiceId: inv, amountCents: 6990, plan: 'Venduá Mirim' },
       });
       // a replay finds the same invoice: still one of each
       expect((await call('POST', '/admin/v1/signup', body, {}, via)).status).toBe(201);
@@ -305,7 +305,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       expect(paid).toHaveLength(1);
       expect(paid[0]).toMatchObject({
         tenant_id: id,
-        data: { invoiceId: inv, amountCents: 3990, first: true, method: 'manual' },
+        data: { invoiceId: inv, amountCents: 6990, first: true, method: 'manual' },
       });
       expect((await events(id, 'store.onboarding')).map((e) => e.data.step)).toEqual([
         'first_login',
@@ -331,9 +331,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
   });
 
   test('card: a rejected month, the owner cancelling and the period ending — one billing.problem each', async () => {
-    const s = await store('card', 'basic', 'bia@example.com');
+    const s = await store('card', 'mirim', 'bia@example.com');
     const st = await s.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'card',
       payerEmail: 'bia@example.com',
     });
@@ -343,7 +343,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     expect((await events(s.id, 'billing.paid'))[0]!.data).toMatchObject({
       first: true,
       method: 'card',
-      amountCents: 3990,
+      amountCents: 6990,
     });
 
     // a rejected charge, its webhook twice, then MP's retry for the same month
@@ -367,7 +367,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       dedupe_key: `billing.problem:${s.id}:card_rejected:${failed}`,
       data: { storeName: 'Loja card', problem: 'card_rejected' },
     });
-    expect(rejected[0]!.data.detail).toContain('R$ 39,90');
+    expect(rejected[0]!.data.detail).toContain('R$ 69,90');
 
     // cancel, undo, cancel again: one event for the period
     expect((await s.owner('POST', '/account/subscription/cancel', {})).status).toBe(200);
@@ -376,7 +376,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     let cancelled = await problems(s.id, 'cancelled');
     expect(cancelled).toHaveLength(1);
     expect(cancelled[0]!.data.detail).toMatch(
-      /^O lojista cancelou o plano Venduá Basic; vale até \d\d\/\d\d, depois a loja fecha\.$/,
+      /^O lojista cancelou o plano Venduá Mirim; vale até \d\d\/\d\d, depois a loja fecha\.$/,
     );
 
     // the period ends and the store closes: one more, and the next sweep adds nothing
@@ -389,15 +389,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     cancelled = await problems(s.id, 'cancelled');
     expect(cancelled.map((e) => e.data.detail)).toEqual([
       expect.stringContaining('O lojista cancelou'),
-      'O plano Venduá Basic terminou e a loja está fechada.',
+      'O plano Venduá Mirim terminou e a loja está fechada.',
     ]);
     expect(cancelled[1]!.dedupe_key).toStartWith(`billing.problem:${s.id}:cancelled:ended:`);
   });
 
   test('cancelled before the first payment: by Mercado Pago (hook replayed) and by the owner', async () => {
-    const s = await store('mpcancel', 'basic', 'bia@example.com');
+    const s = await store('mpcancel', 'mirim', 'bia@example.com');
     await s.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'card',
       payerEmail: 'bia@example.com',
     });
@@ -411,24 +411,24 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       storeName: 'Loja mpcancel',
       problem: 'cancelled',
       detail:
-        'A assinatura do plano Venduá Basic foi cancelada no Mercado Pago antes do primeiro pagamento.',
+        'A assinatura do plano Venduá Mirim foi cancelada no Mercado Pago antes do primeiro pagamento.',
     });
     expect(byMp[0]!.dedupe_key).toStartWith(`billing.problem:${s.id}:cancelled:pending:`);
 
-    const o = await store('ownercancel', 'basic', 'bia@example.com');
+    const o = await store('ownercancel', 'mirim', 'bia@example.com');
     await o.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
     });
     expect((await o.owner('POST', '/account/subscription/cancel', {})).status).toBe(200);
     expect((await events(o.id, 'billing.problem')).map((e) => e.data.detail)).toEqual([
-      'O lojista cancelou o plano Venduá Basic antes do primeiro pagamento.',
+      'O lojista cancelou o plano Venduá Mirim antes do primeiro pagamento.',
     ]);
   });
 
   test('pix: past due once per period; an odd Pix is pix_mismatch once however often it is seen', async () => {
-    const s = await paidStore('late', 'basic');
+    const s = await paidStore('late', 'mirim');
     const ended = new Date(Date.now() - 3_600_000);
     await sql`update subscriptions set current_period_end = ${ended} where tenant_id = ${s.id}`;
     await tick();
@@ -441,7 +441,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       data: { storeName: 'Loja late' },
     });
     expect(late[0]!.data.detail).toMatch(
-      /^O período do plano Venduá Basic terminou em \d\d\/\d\d sem pagamento\.$/,
+      /^O período do plano Venduá Mirim terminou em \d\d\/\d\d sem pagamento\.$/,
     );
     // paid, then late again in a later period: a new event
     const renewal = (
@@ -454,9 +454,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     expect(late).toHaveLength(2);
 
     // the owner scanned the old QR; MP's webhook lands after a price change
-    const o = await store('odd', 'basic', 'bia@example.com');
+    const o = await store('odd', 'mirim', 'bia@example.com');
     await o.owner('POST', '/account/subscription', {
-      planId: 'basic',
+      planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
     });
@@ -464,7 +464,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       await sql`select provider_payment_id from invoices where tenant_id = ${o.id}`
     )[0]!.provider_payment_id as string;
     fake.settle(oldPix, 'approved');
-    await o.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
+    await o.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
     await hook('payment', oldPix);
     await hook('payment', oldPix);
     // the reconcile sweep finds the same approved Pix again
@@ -476,7 +476,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       dedupe_key: `billing.problem:${o.id}:pix_mismatch:invoice-amount:${oldPix}`,
       data: { storeName: 'Loja odd', problem: 'pix_mismatch' },
     });
-    expect(odd[0]!.data.detail).toContain('R$ 39,90');
+    expect(odd[0]!.data.detail).toContain('R$ 69,90');
     // the right Pix pays it; the old one landing again is a double payment — also once
     const inv = (await sql`select id from invoices where tenant_id = ${o.id}`)[0]!.id as string;
     expect((await payInvoice(inv)).status).toBe(200);
@@ -492,8 +492,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     expect(staff.some((x) => x.startsWith('Fatura paga duas vezes'))).toBe(true);
   });
 
-  test('PRO+: the site request and the verified custom domain reach the team once', async () => {
-    const s = await paidStore('pro', 'pro_plus');
+  test('Pangolin: the site request and the verified custom domain reach the team once', async () => {
+    const s = await paidStore('pro', 'pangolin');
     const sr = (await sql`select id from site_requests where tenant_id = ${s.id}`)[0]!.id as string;
     let req = await events(s.id, 'store.request');
     expect(req).toHaveLength(1);
@@ -501,7 +501,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       tenant_id: s.id,
       anchor: null,
       dedupe_key: `store.request:site:${sr}`,
-      data: { storeName: 'Loja pro', title: 'site PRO+', detail: null },
+      data: { storeName: 'Loja pro', title: 'site sob medida', detail: null },
     });
     // delivered; the owner asks for another one, in their own words
     expect(
@@ -545,7 +545,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
   });
 
   test('merchant help and the first sign-in: one event each, replays add nothing', async () => {
-    const s = await store('help', 'basic');
+    const s = await store('help', 'mirim');
     const steps = await events(s.id, 'store.onboarding');
     expect(steps).toHaveLength(1);
     expect(steps[0]).toMatchObject({

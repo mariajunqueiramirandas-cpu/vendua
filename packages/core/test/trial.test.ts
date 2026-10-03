@@ -7,7 +7,7 @@ import { billingStaff } from '../src/modules/billing/subscriptions.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { migrate } from '../src/platform/db.ts';
 
-// ADR 0025: Venduá Basic starts with a free trial (no card); one per owner phone; an unpaid end
+// ADR 0025: Venduá Bandeira starts with a free trial (no card); one per owner phone; an unpaid end
 // pauses the store until the first payment.
 
 const DAY = 86_400_000;
@@ -89,7 +89,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
   const signup = async (token: string, slug: string, extra: Record<string, unknown> = {}) => {
     const r = await call('POST', '/admin/v1/signup', {
       signupToken: token,
-      planId: 'basic',
+      planId: 'bandeira',
       trial: true,
       storeName: 'Doces da Lia',
       slug,
@@ -141,11 +141,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
     await sql.end();
   });
 
-  test('the catalog: Basic trials 14 days, PRO+ none; a new phone is eligible', async () => {
+  test('the catalog: Bandeira trials 14 days, Mirim and Pangolin none; a new phone is eligible', async () => {
     const plans = await call('GET', '/admin/v1/signup/plans');
     const by = Object.fromEntries(plans.body.plans.map((p: any) => [p.id, p]));
-    expect(by.basic.trialDays).toBe(14);
-    expect(by.pro_plus.trialDays).toBe(0);
+    expect(by.bandeira.trialDays).toBe(14);
+    expect(by.pangolin.trialDays).toBe(0);
+    expect(by.mirim.trialDays).toBe(0);
     expect((await verified(mkPhone())).trialEligible).toBe(true);
   });
 
@@ -217,7 +218,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
 
   test('a plan without a trial refuses one; a bad flag is a 422', async () => {
     const { signupToken } = await verified(mkPhone());
-    const pro = await signup(signupToken, `trial-${nonce}-pro`, { planId: 'pro_plus' });
+    const pro = await signup(signupToken, `trial-${nonce}-pro`, { planId: 'pangolin' });
     expect(pro.status).toBe(422);
     expect(pro.body.error.code).toBe('TRIAL_UNAVAILABLE');
     const bad = await signup(signupToken, `trial-${nonce}-bad`, { trial: 'yes' });
@@ -236,7 +237,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
     expect(inv.period_start.getTime()).toBe((await sub(t.id)).trial_ends_at.getTime());
     expect(inv.pix_copy_paste).toBeTruthy();
     expect(sent().length).toBe(1);
-    expect(sent()[0]!.text).toContain('pague a primeira mensalidade do Venduá Basic');
+    expect(sent()[0]!.text).toContain('pague a primeira mensalidade do Venduá Bandeira');
     // no generic "fatura vence" on top of it
     expect(wa.filter((m) => m.phone === t.phone && m.text.includes('fatura')).length).toBe(0);
 
@@ -336,15 +337,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
     expect(open.length).toBe(1);
   });
 
-  test('PRO+ chosen and paid during the trial: its site request opens with the first payment', async () => {
+  test('Pangolin chosen and paid during the trial: its site request opens with the first payment', async () => {
     const t = await trialStore('prosite');
-    expect((await t.owner('PATCH', '/account/subscription', { planId: 'pro_plus' })).status).toBe(
+    expect((await t.owner('PATCH', '/account/subscription', { planId: 'pangolin' })).status).toBe(
       200,
     );
     await endAt(t.id, new Date(Date.now() + 3 * DAY));
     await tick();
     const inv = (await sql`select id, amount_cents from invoices where tenant_id = ${t.id}`)[0]!;
-    expect(inv.amount_cents).toBe(9900);
+    expect(inv.amount_cents).toBe(44900);
     await call('POST', `/admin/v1/dev/billing/invoices/${inv.id}/pay`, {});
     expect((await sub(t.id)).status).toBe('active');
     expect((await sql`select 1 from site_requests where tenant_id = ${t.id}`).length).toBe(1);
@@ -362,19 +363,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
 
   test('another plan during the trial: it swaps, the trial goes on, no prorated invoice', async () => {
     const t = await trialStore('swap');
-    const r = await t.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
+    const r = await t.owner('PATCH', '/account/subscription', { planId: 'pangolin' });
     expect(r.status).toBe(200);
-    expect(await sub(t.id)).toMatchObject({ status: 'trialing', plan_id: 'pro_plus' });
+    expect(await sub(t.id)).toMatchObject({ status: 'trialing', plan_id: 'pangolin' });
     expect((await sql`select 1 from invoices where tenant_id = ${t.id}`).length).toBe(0);
   });
 
   test('staff: the trial length is plan data; stores show their trial', async () => {
     const plans = await control('GET', '/control/v1/plans');
-    expect(plans.body.plans.find((p: any) => p.id === 'basic').trialDays).toBe(14);
-    const bad = await control('PATCH', '/control/v1/plans/basic', { trialDays: 61 });
+    expect(plans.body.plans.find((p: any) => p.id === 'bandeira').trialDays).toBe(14);
+    const bad = await control('PATCH', '/control/v1/plans/bandeira', { trialDays: 61 });
     expect(bad.status).toBe(422);
     expect(bad.body.error.details.field).toBe('trialDays');
-    const ok = await control('PATCH', '/control/v1/plans/basic', { trialDays: 14 });
+    const ok = await control('PATCH', '/control/v1/plans/bandeira', { trialDays: 14 });
     expect(ok.body.plan.trialDays).toBe(14);
     const t = await trialStore('staff');
     const stores = await control('GET', '/control/v1/billing/stores');

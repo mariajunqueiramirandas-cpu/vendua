@@ -126,7 +126,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       '/admin/v1/signup',
       {
         signupToken: token,
-        planId: 'basic',
+        planId: 'mirim',
         method: 'pix',
         storeName: 'Doces da Praia',
         slug,
@@ -164,16 +164,34 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(plans.status).toBe(200);
     expect(plans.body.storeDomain).toBe('vendua.test');
     expect(plans.body.billing.available).toBe(true);
-    const basic = plans.body.plans.find((p: any) => p.id === 'basic');
-    expect(basic).toEqual({
-      id: 'basic',
-      name: 'Venduá Basic',
-      priceCents: 3990,
+    expect(plans.body.plans.map((p: any) => p.id)).toEqual(['mirim', 'bandeira', 'pangolin']);
+    const mirim = plans.body.plans.find((p: any) => p.id === 'mirim');
+    expect(mirim).toEqual({
+      id: 'mirim',
+      name: 'Venduá Mirim',
+      priceCents: 6990,
       feeBps: 0,
-      features: { customDomain: false, customSite: false },
-      trialDays: 14,
+      features: {
+        customDomain: false,
+        customSite: false,
+        kds: false,
+        printing: false,
+        loyalty: false,
+        vendedor: false,
+      },
+      trialDays: 0,
+      recommended: false,
+      aiConversations: 0,
+      aiTrialConversations: 0,
     });
-    expect(plans.body.plans.find((p: any) => p.id === 'pro_plus').priceCents).toBe(9900);
+    expect(plans.body.plans.find((p: any) => p.id === 'bandeira')).toMatchObject({
+      priceCents: 16900,
+      trialDays: 14,
+      recommended: true,
+      aiConversations: 250,
+      aiTrialConversations: 50,
+    });
+    expect(plans.body.plans.find((p: any) => p.id === 'pangolin').priceCents).toBe(44900);
 
     const reserved = await call('GET', '/admin/v1/signup/slug?slug=Admin');
     expect(reserved.body).toMatchObject({ slug: 'admin', available: false, reason: 'reserved' });
@@ -224,16 +242,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     const owner = session(pixCookie);
     const acct = await owner('GET', '/account');
     expect(acct.status).toBe(200);
-    expect(acct.body.plan).toMatchObject({ id: 'basic', priceCents: 3990 });
+    expect(acct.body.plan).toMatchObject({ id: 'mirim', priceCents: 6990 });
     expect(acct.body.subscription).toMatchObject({
       status: 'pending',
       method: 'pix',
-      planId: 'basic',
+      planId: 'mirim',
       payerEmail: 'ana@example.com',
     });
     expect(acct.body.invoices).toHaveLength(1);
     const inv = acct.body.invoices[0];
-    expect(inv).toMatchObject({ id: r.body.next.invoiceId, number: 1, amountCents: 3990 });
+    expect(inv).toMatchObject({ id: r.body.next.invoiceId, number: 1, amountCents: 6990 });
     expect(inv.pix.copyPaste).toContain('FAKEPIX');
     expect(acct.body.address).toBe(`https://${pixSlug}.vendua.test`);
     const audit =
@@ -341,7 +359,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       await sql`select provider_subscription_id, status from subscriptions where tenant_id = ${tenant}`
     )[0]!;
     expect(sub.status).toBe('pending');
-    expect(fake.subscriptions.get(sub.provider_subscription_id)!.amountCents).toBe(3990);
+    expect(fake.subscriptions.get(sub.provider_subscription_id)!.amountCents).toBe(6990);
     expect(fake.subscriptions.get(sub.provider_subscription_id)!.externalReference).toBe(tenant);
     const s = await call(
       'POST',
@@ -358,23 +376,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(acct.body.invoices[0]).toMatchObject({
       method: 'card',
       status: 'paid',
-      amountCents: 3990,
+      amountCents: 6990,
     });
     const st = (await sql`select billing_hold from store_settings where tenant_id = ${tenant}`)[0]!;
     expect(st.billing_hold).toBe(false);
   });
 
-  test('PRO+ signup opens a site request for the team once paid', async () => {
+  test('Pangolin signup opens a site request for the team once paid', async () => {
     const token = (await verified(mkPhone(5))).signupToken;
-    const r = await signup(token, `signup-${nonce}-pro`, { planId: 'pro_plus' });
+    const r = await signup(token, `signup-${nonce}-pro`, { planId: 'pangolin' });
     expect(r.status).toBe(201);
     const tenant = r.body.store.id;
     await call('POST', `/admin/v1/dev/billing/invoices/${r.body.next.invoiceId}/pay`, {});
     const reqs = await sql`select status from site_requests where tenant_id = ${tenant}`;
     expect([...reqs]).toEqual([{ status: 'requested' }]);
-    expect(staff.some((n) => n.subject.includes('Site PRO+'))).toBe(true);
+    expect(staff.some((n) => n.subject.includes('Site sob medida'))).toBe(true);
     const acct = await session(r.cookie)('GET', '/account');
-    expect(acct.body.plan.features).toEqual({ customDomain: true, customSite: true });
+    expect(acct.body.plan.features).toEqual({
+      customDomain: true,
+      customSite: true,
+      kds: true,
+      printing: true,
+      loyalty: true,
+      vendedor: true,
+    });
     expect(acct.body.siteRequest.status).toBe('requested');
   });
 
@@ -465,7 +490,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       expect(inv).toMatchObject({
         id: invoiceId,
         status: 'open',
-        amount_cents: 3990,
+        amount_cents: 6990,
         pix_copy_paste: null,
         provider_payment_id: null,
       });
@@ -487,7 +512,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       const list = await control('GET', '/control/v1/billing/stores');
       const row = list.body.stores.find((st: { tenantId: string }) => st.tenantId === id);
       expect(row.subscription.status).toBe('pending');
-      expect(row.openInvoice).toMatchObject({ id: invoiceId, number: 1, amountCents: 3990 });
+      expect(row.openInvoice).toMatchObject({ id: invoiceId, number: 1, amountCents: 6990 });
       expect(
         (await call('POST', `/control/v1/billing/invoices/${invoiceId}/mark-paid`, {})).status,
       ).toBe(404);
@@ -568,7 +593,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       await sql`
         insert into invoices (tenant_id, number, plan_id, amount_cents, method, status, provider,
                               period_start, period_end, due_at)
-        values (${card.body.store.id}, 1, 'basic', 3990, 'card', 'open', 'fake',
+        values (${card.body.store.id}, 1, 'mirim', 6990, 'card', 'open', 'fake',
                 now(), now() + interval '1 month', now())
         returning id
       `
