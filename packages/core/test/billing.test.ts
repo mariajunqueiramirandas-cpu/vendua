@@ -12,7 +12,7 @@ import {
 } from '../src/modules/billing/subscriptions.ts';
 import { handleBillingWebhook } from '../src/modules/billing/webhook.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
-import { ProviderError } from '../src/modules/payments/provider.ts';
+import { ProviderError, type PixRequest } from '../src/modules/payments/provider.ts';
 import { migrate } from '../src/platform/db.ts';
 
 const DAY = 86_400_000;
@@ -212,6 +212,33 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect((await sub(s.id)).status).toBe('active');
     const audit = await sql`select action from audit_log where tenant_id = ${s.id}`;
     expect(audit.map((a) => a.action)).toContain('subscription.start');
+  });
+
+  test('a plan Pix carries the owner as its payer and the plan as its item', async () => {
+    const s = await store('payer', 'mirim', 'bia@example.com');
+    const seen: PixRequest[] = [];
+    const realPix = fake.platformPix.bind(fake);
+    fake.platformPix = async (req) => {
+      seen.push(req);
+      return realPix(req);
+    };
+    try {
+      const started = await s.owner('POST', '/account/subscription', {
+        planId: 'mirim',
+        method: 'pix',
+        payerEmail: 'bia@example.com',
+      });
+      expect(started.status).toBe(200);
+    } finally {
+      fake.platformPix = realPix;
+    }
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      payerEmail: 'bia@example.com',
+      payerName: 'Bia Dona',
+      payerPhone: s.phone,
+      items: [{ id: 'mirim', title: 'Venduá Mirim', quantity: 1, unitPriceCents: 6990 }],
+    });
   });
 
   const planOf = async (tenant: string) =>

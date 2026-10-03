@@ -14,7 +14,7 @@ import {
   DAY_MS,
   hookUrl,
   issuePix,
-  payerEmailFor,
+  payerFor,
   pixIsLive,
   supersedePix,
   upsertInvoice,
@@ -271,8 +271,8 @@ export async function beginPayment(
   o: { manual?: boolean | undefined } = {},
 ): Promise<PayNext> {
   const plan = await planOrThrow(tx, sub.plan_id);
-  const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
-  if (!payerEmail)
+  const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
+  if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
@@ -302,7 +302,7 @@ export async function beginPayment(
     if (!pixIsLive(inv, now))
       inv = await viaProvider(() =>
         issuePix(tx, ctx.provider, inv, {
-          payerEmail,
+          payer,
           planName: plan.name,
           origin: ctx.origin,
           now,
@@ -313,7 +313,7 @@ export async function beginPayment(
   }
   if (sub.checkout_url && sub.provider_subscription_id)
     return { kind: 'card', url: sub.checkout_url };
-  const url = await createPreapproval(ctx, tx, sub, plan, payerEmail, key);
+  const url = await createPreapproval(ctx, tx, sub, plan, payer.email, key);
   return { kind: 'card', url };
 }
 
@@ -424,10 +424,10 @@ export async function ensureRenewal(
     dueAt: sub.current_period_end,
   });
   if (o.issue !== false && inv.status === 'open' && !pixIsLive(inv, now)) {
-    const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
-    if (payerEmail)
+    const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
+    if (payer)
       inv = await issuePix(tx, ctx.provider, inv, {
-        payerEmail,
+        payer,
         planName: plan.name,
         origin: ctx.origin,
         now,
@@ -459,8 +459,8 @@ export async function reissuePix(
   )
     throw new HttpError(409, 'INVOICE_NOT_OPEN', 'only an open Pix invoice gets a new Pix');
   if (pixIsLive(inv, now)) return inv;
-  const payerEmail = await payerEmailFor(tx, tenantId, sub?.payer_email);
-  if (!payerEmail)
+  const payer = await payerFor(tx, tenantId, sub?.payer_email);
+  if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
@@ -471,7 +471,7 @@ export async function reissuePix(
       : (await planOrThrow(tx, inv.plan_id)).name;
   const out = await viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
-      payerEmail,
+      payer,
       planName: label,
       origin: ctx.origin,
       now,
@@ -511,11 +511,11 @@ async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow
       reuse: inv,
     });
     if (hadPix && next.method === 'pix') {
-      const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
-      if (payerEmail)
+      const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
+      if (payer)
         next = await viaProvider(() =>
           issuePix(tx, ctx.provider, next, {
-            payerEmail,
+            payer,
             planName: plan.name,
             origin: ctx.origin,
             now,
@@ -569,15 +569,15 @@ export async function cancelPendingUpgrade(ctx: BillingCtx, tx: Sql, sub: SubRow
 }
 
 async function upgradePix(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceRow, now: Date) {
-  const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
-  if (!payerEmail)
+  const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
+  if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
   const plan = await planOrThrow(tx, inv.plan_id);
   return viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
-      payerEmail,
+      payer,
       planName: plan.name,
       origin: ctx.origin,
       now,
@@ -721,14 +721,14 @@ async function packPix(
   pack: AiPackRow,
   now: Date,
 ) {
-  const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
-  if (!payerEmail)
+  const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
+  if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
   return viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
-      payerEmail,
+      payer,
       planName: `Duá ${pack.name}`,
       origin: ctx.origin,
       now,
@@ -890,12 +890,12 @@ export async function changeSubscription(
         `;
       }
       const plan = await planOrThrow(tx, chargePlanId(sub));
-      const payerEmail = await payerEmailFor(tx, tenantId, sub.payer_email);
-      if (!payerEmail)
+      const payer = await payerFor(tx, tenantId, sub.payer_email);
+      if (!payer)
         throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
           field: 'payerEmail',
         });
-      await createPreapproval(ctx, tx, sub, plan, payerEmail, o.key);
+      await createPreapproval(ctx, tx, sub, plan, payer.email, o.key);
     }
   }
   await emitAdminTx(tx, tenantId, 'billing');

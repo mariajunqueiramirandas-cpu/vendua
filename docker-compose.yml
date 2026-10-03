@@ -60,8 +60,6 @@ services:
       MP_PLATFORM_ACCESS_TOKEN: ${MP_PLATFORM_ACCESS_TOKEN:-}
       # signup with this code skips Mercado Pago; the team marks its invoices paid in the CRM
       VENDUA_SIGNUP_ACCESS_CODE: ${VENDUA_SIGNUP_ACCESS_CODE:-}
-      # the payer email MP requires on Pix (shoppers don't give one); unset = pagador@<store domain>
-      MP_PAYER_EMAIL: ${MP_PAYER_EMAIL:-}
       # card-form key for a store whose OAuth answer carried none (the app's production public key)
       MP_PUBLIC_KEY: ${MP_PUBLIC_KEY:-}
       # Seals stores' MP tokens at rest (optional); unset = derived from SESSION_SECRET (warns at

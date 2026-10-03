@@ -53,7 +53,6 @@ Copy `.env.example` into the service's environment and fill it in:
 | `VENDUA_SECRETS_KEY`                       | seals stores' MP tokens at rest (falls back to SESSION_SECRET)    |
 | `WA_MAX_SESSIONS`                          | stores' WhatsApp sockets one `wa-gateway` holds (default 300)     |
 | `WA_MIN_SEND_GAP_MS` / `WA_MAX_PER_HOUR`   | per-store pacing of shopper messages (1500 ms, 200/h)             |
-| `MP_PAYER_EMAIL`                           | payer email MP requires on Pix (default `pagador@<store domain>`) |
 
 Generate secrets with `openssl rand -hex 32`.
 

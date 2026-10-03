@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { emitAdminTx } from '../../admin/live.ts';
 import { withTenant, type Sql } from '../../platform/db.ts';
 import { HttpError, UUID_RE } from '../../platform/http.ts';
@@ -20,6 +21,7 @@ import {
 import {
   ProviderError,
   type PaymentProvider,
+  type PixItem,
   type ProviderName,
   type ProviderPayment,
 } from './provider.ts';
@@ -354,8 +356,18 @@ interface OrderLock {
   number: number;
   state: string;
   total_cents: number;
+  delivery_fee_cents: number;
   customer: { name?: string };
+  customer_phone: string | null;
   payment: Record<string, unknown> & { online?: boolean; method?: string; status?: string };
+}
+
+/** Who pays a Pix, as MP's anti-fraud scores it. */
+interface PixBuyer {
+  email: string;
+  name: string | null;
+  phone: string | null;
+  items: PixItem[];
 }
 
 type Plan =
@@ -366,7 +378,7 @@ type Plan =
       row: PaymentRow;
       tok: StoreToken;
       title: string;
-      firstName: string | null;
+      buyer: PixBuyer | null;
       backUrl: string | null;
     };
 
@@ -383,7 +395,6 @@ const PAYABLE = ['pending', 'failed', 'expired'];
 export interface PayCtx {
   publicOrigin: string;
   storeDomain: string;
-  payerEmail?: string;
   /** Kernel 1.19+: a card order gets the in-page form, never a hosted checkout */
   cardForm?: boolean;
   /** MP_PUBLIC_KEY: the card fields' key for a store whose OAuth gave none */
@@ -418,6 +429,68 @@ export async function preparePayment(
   });
 }
 
+/**
+ * MP requires a payer email and shoppers give none. Each shopper gets one stable address from
+ * their phone — never one address for everyone, which MP's anti-fraud reads as a single payer
+ * paying every store, and refuses. Keyed so the address doesn't spell the phone out.
+ */
+export function shopperPayerEmail(
+  secret: string,
+  phone: string | null,
+  orderId: string,
+  storeDomain: string,
+) {
+  const who = phone?.replace(/\D/g, '') || `order:${orderId}`;
+  const tag = createHmac('sha256', secret).update(`mp-payer:${who}`).digest('hex').slice(0, 20);
+  return `cliente.${tag}@${storeDomain}`;
+}
+
+async function pixBuyer(
+  tx: Sql,
+  tenantId: string,
+  order: OrderLock,
+  storeDomain: string,
+  secret: string,
+): Promise<PixBuyer> {
+  const lines = await tx<
+    {
+      product_id: string | null;
+      slug: string;
+      name: string;
+      qty: number;
+      line_total_cents: number;
+    }[]
+  >`
+    select product_id, slug, name, qty, line_total_cents from order_items
+    where tenant_id = ${tenantId} and order_id = ${order.id}
+    order by sort limit 50
+  `;
+  return {
+    email: shopperPayerEmail(secret, order.customer_phone, order.id, storeDomain),
+    name: order.customer.name?.trim() || null,
+    phone: order.customer_phone,
+    // a line's total as one unit: modifiers make line / qty inexact
+    items: [
+      ...lines.map((l) => ({
+        id: l.product_id ?? l.slug,
+        title: l.qty > 1 ? `${l.qty}× ${l.name}` : l.name,
+        quantity: 1,
+        unitPriceCents: l.line_total_cents,
+      })),
+      ...(order.delivery_fee_cents > 0
+        ? [
+            {
+              id: 'entrega',
+              title: 'Entrega',
+              quantity: 1,
+              unitPriceCents: order.delivery_fee_cents,
+            },
+          ]
+        : []),
+    ],
+  };
+}
+
 async function planPayment(
   tx: Sql,
   d: PayDeps,
@@ -430,7 +503,8 @@ async function planPayment(
 ): Promise<Plan> {
   const order = (
     await tx<OrderLock[]>`
-      select id, number, state, total_cents, customer, payment from orders
+      select id, number, state, total_cents, delivery_fee_cents, customer, customer_phone, payment
+      from orders
       where tenant_id = ${tenant.id} and id = ${orderId} and cart_id = ${cartId} for update
     `
   )[0];
@@ -472,7 +546,10 @@ async function planPayment(
     row,
     tok,
     title: `Pedido #${order.number} — ${tenant.name}`.slice(0, 200),
-    firstName: order.customer.name?.trim().split(/\s+/)[0]?.slice(0, 60) || null,
+    buyer:
+      row.kind === 'pix'
+        ? await pixBuyer(tx, tenant.id, order, ctx.storeDomain, d.sessionSecret)
+        : null,
     backUrl:
       row.kind === 'card'
         ? `${await storeOrigin(tx, tenant, ctx.storeDomain)}/pedido/${orderId}?pagamento=retorno`
@@ -585,14 +662,18 @@ async function createAttempt(
   let patch: Partial<PaymentRow>;
   try {
     if (row.kind === 'pix') {
+      // planPayment's create() sets one on every Pix attempt
+      const buyer = plan.buyer!;
       const expiresAt = row.pix_expires_at
         ? new Date(row.pix_expires_at)
         : new Date(now.getTime() + PIX_TTL_MIN * 60_000);
       const p = await d.provider.createPix(tok.token, {
         amountCents: row.amount_cents,
         description: plan.title,
-        payerEmail: ctx.payerEmail ?? `pagador@${ctx.storeDomain}`,
-        ...(plan.firstName ? { payerName: plan.firstName } : {}),
+        payerEmail: buyer.email,
+        ...(buyer.name ? { payerName: buyer.name } : {}),
+        ...(buyer.phone ? { payerPhone: buyer.phone } : {}),
+        items: buyer.items,
         externalReference: row.order_id,
         idempotencyKey,
         notificationUrl,
@@ -854,7 +935,8 @@ async function planCard(
 ): Promise<CardPlan> {
   const order = (
     await tx<OrderLock[]>`
-      select id, number, state, total_cents, customer, payment from orders
+      select id, number, state, total_cents, delivery_fee_cents, customer, customer_phone, payment
+      from orders
       where tenant_id = ${tenant.id} and id = ${orderId} and cart_id = ${cartId} for update
     `
   )[0];

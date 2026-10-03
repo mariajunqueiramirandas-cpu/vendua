@@ -4,6 +4,8 @@ import {
   MercadoPagoProvider,
   mapPayment,
   mpDate,
+  mpPhone,
+  splitName,
   toCents,
   toReais,
 } from '../src/modules/payments/mercadopago.ts';
@@ -142,8 +144,13 @@ describe('mercado pago adapter', () => {
     const pay = await p.createPix('merchant-token', {
       amountCents: 13860,
       description: 'Pedido #12 — Doces',
-      payerEmail: 'pagador@vendua.com.br',
-      payerName: 'Joana',
+      payerEmail: 'cliente.3f9a@vendua.com.br',
+      payerName: '  Joana   da Silva ',
+      payerPhone: '11987654321',
+      items: [
+        { id: 'p-1', title: '2× Brigadeiro', quantity: 1, unitPriceCents: 1260 },
+        { id: 'p-2', title: 'Bolo de pote', quantity: 1, unitPriceCents: 12600 },
+      ],
       externalReference: PAYMENT.external_reference,
       idempotencyKey: 'order:1',
       notificationUrl: 'https://painel.x/admin/v1/hooks/mercadopago?t=abc',
@@ -158,7 +165,18 @@ describe('mercado pago adapter', () => {
       transaction_amount: 138.6,
       description: 'Pedido #12 — Doces',
       payment_method_id: 'pix',
-      payer: { email: 'pagador@vendua.com.br', first_name: 'Joana' },
+      payer: { email: 'cliente.3f9a@vendua.com.br', first_name: 'Joana', last_name: 'da Silva' },
+      additional_info: {
+        items: [
+          { id: 'p-1', title: '2× Brigadeiro', quantity: 1, unit_price: 12.6 },
+          { id: 'p-2', title: 'Bolo de pote', quantity: 1, unit_price: 126 },
+        ],
+        payer: {
+          first_name: 'Joana',
+          last_name: 'da Silva',
+          phone: { area_code: '11', number: '987654321' },
+        },
+      },
       external_reference: PAYMENT.external_reference,
       notification_url: 'https://painel.x/admin/v1/hooks/mercadopago?t=abc',
       date_of_expiration: '2026-09-30T12:30:00.000-03:00',
@@ -179,6 +197,22 @@ describe('mercado pago adapter', () => {
     });
     expect(seen[1]!.body.application_fee).toBe(1.5);
     expect(seen[1]!.body.notification_url).toBeUndefined();
+    expect(seen[1]!.body.payer).toEqual({ email: 'a@b.co' });
+    expect(seen[1]!.body.additional_info).toBeUndefined();
+  });
+
+  test('payer name and phone in the shape MP wants', () => {
+    expect(splitName('Ana')).toEqual({ first_name: 'Ana' });
+    expect(splitName(' Ana  Maria Souza ')).toEqual({
+      first_name: 'Ana',
+      last_name: 'Maria Souza',
+    });
+    expect(splitName('   ')).toBeNull();
+    expect(splitName(undefined)).toBeNull();
+    expect(mpPhone('1133334444')).toEqual({ area_code: '11', number: '33334444' });
+    expect(mpPhone('+55 (21) 98765-4321')).toEqual({ area_code: '21', number: '987654321' });
+    expect(mpPhone('987654321')).toBeNull();
+    expect(mpPhone(undefined)).toBeNull();
   });
 
   test('payment mapping: fees, net, refunds, statuses', () => {
