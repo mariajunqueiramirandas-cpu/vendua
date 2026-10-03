@@ -27,7 +27,8 @@ import { KLink } from '../sdk/sections.tsx';
 import { KERNEL_PATHS } from '../config.ts';
 import { errorCode, errorCopy, showError, showInfo } from '../errors.ts';
 import { useNavigateTo } from '../primitives.tsx';
-import type { ImportReport, Order, PaymentNext, StoreProfile } from '../api.ts';
+import type { CardPaymentInput, ImportReport, Order, PaymentNext, StoreProfile } from '../api.ts';
+import { CardFields, ChallengeFrame, declineCopy } from '../card-payment.tsx';
 import type { PaymentStatusKind, SlotProps } from '../slot-props.ts';
 import { useKernel, invalidateQuery } from '../provider.tsx';
 
@@ -74,9 +75,16 @@ function whatsappHref(store: StoreProfile | undefined, order: Order): string | n
   return whatsappUrl(store?.whatsapp, `Oi! Quero combinar o pagamento do pedido #${order.number}.`);
 }
 
-/** Kernel 1.7 — the order's online payment (Mercado Pago card checkout, online Pix):
- *  asks Core for the Pix when there's none yet, syncs a card return, and turns the
- *  payment's state into what `checkout.PaymentStatus` shows. Offline orders: no panel. */
+type CardConfig = Extract<PaymentNext, { kind: 'card' }>;
+/** what the card form shows: the fields (with why the last try was refused) or the bank's
+ *  challenge */
+type CardView =
+  | { kind: 'form'; cfg: CardConfig; declined: { title: string; body?: string } | null }
+  | { kind: 'challenge'; cfg: CardConfig; url: string; creq: string };
+
+/** Kernel 1.7 — the order's online payment (card, online Pix): asks Core for the Pix or, since
+ *  1.17, the in-page card form; takes the card's token to Core; and turns the payment's state
+ *  into what `checkout.PaymentStatus` / `checkout.CardPayment` show. Offline orders: none. */
 function useOnlinePayment(
   order: Order | undefined,
   store: StoreProfile | undefined,
@@ -86,33 +94,52 @@ function useOnlinePayment(
   const [work, setWork] = useState<'sync' | 'redirect' | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [next, setNext] = useState<PaymentNext | null>(null);
-  const [returned, setReturned] = useState(false);
+  const [cardView, setCardView] = useState<CardView | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [fields, setFields] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   const [justPaid, setJustPaid] = useState(false);
   const started = useRef<string | null>(null);
   const lastStatus = useRef<string | undefined>(undefined);
+  const later = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(later.current), []);
 
   const pay = order?.payment;
   const card = pay?.method === 'card_online';
   const isOnline = !!order && (pay?.online === true || card);
   const method: 'pix' | 'card_online' = card ? 'card_online' : 'pix';
   const status = pay?.status;
+  const currency = store?.currency ?? 'BRL';
   const nextPix = next?.kind === 'pix' ? next : null;
   const pixCode = pay?.pix?.copyPaste || nextPix?.copyPaste;
   const pixExpiresAt = pay?.pix?.expiresAt ?? nextPix?.expiresAt ?? null;
   // the Pix expires on the shopper's clock too, not only when Core says so
   const pixTimedOut = usePixTimer(status === 'pending' ? pixExpiresAt : null).expired;
   const retorno = params.get('pagamento') === 'retorno';
-  // MP appends its own outcome to the back_url — a hint for the copy only; Core's sync is the truth
-  const mpHint = params.get('collection_status') ?? params.get('status');
+
+  const showForm = (cfg: CardConfig, declined: string | null) => {
+    setCardView({ kind: 'form', cfg, declined: declined ? declineCopy(declined) : null });
+    setFields('loading');
+    setAttempt((a) => a + 1);
+  };
+
+  const apply = (n: PaymentNext, cfg: CardConfig | null) => {
+    if (n.kind === 'card') return showForm(n, n.declined);
+    if (n.kind === 'challenge' && cfg)
+      return setCardView({ kind: 'challenge', cfg, url: n.url, creq: n.creq });
+    if (n.kind === 'declined' && cfg) return showForm(cfg, n.reason);
+    setCardView(null);
+    setNext(n);
+  };
 
   const run = async (mode: 'sync' | 'redirect') => {
     if (!order) return;
+    clearTimeout(later.current);
     setWork(mode);
     setFailure(null);
     try {
-      const r = await api.payOrder(order.id);
+      const r = await api.payOrder(order.id, { cardForm: true });
       invalidateQuery(`order:${order.id}`, r.order);
-      setNext(r.next);
+      apply(r.next, null);
       if (mode === 'redirect' && r.next.kind === 'redirect') {
         globalThis.location.assign(r.next.url);
         return; // stays "redirecting" until the browser leaves
@@ -126,22 +153,43 @@ function useOnlinePayment(
     setWork(null);
   };
 
-  // one automatic call per order: generate the missing Pix, or sync a card return
+  // the Brick's spinner runs until this settles; every outcome is the page's to show
+  const submitCard = async (cfg: CardConfig, input: CardPaymentInput) => {
+    if (!order) return;
+    try {
+      const r = await api.payCard(order.id, input);
+      invalidateQuery(`order:${order.id}`, r.order);
+      apply(r.next, cfg);
+    } catch (err) {
+      const code = errorCode(err);
+      if (code === 'INVALID_PAYMENT') return showForm(cfg, 'card_data');
+      setCardView(null);
+      if (code === 'PAYMENT_IN_PROGRESS') {
+        // an earlier submit is still with the bank: wait for it, then ask again
+        setNext({ kind: 'none' });
+        later.current = setTimeout(() => void run('sync'), 5000);
+      } else if (code === 'PAYMENT_NOT_REQUIRED') {
+        setNext({ kind: 'none' });
+        invalidateQuery(`order:${order.id}`);
+      } else setFailure(code);
+    }
+  };
+
+  // one automatic call per order: generate the missing Pix, or open the card form
   const id = order?.id;
-  const autoPix =
-    isOnline && !card && status === 'pending' && !pixCode && order?.state !== 'cancelled';
-  const autoReturn = isOnline && card && retorno && (status === 'pending' || status === 'failed');
+  const cancelled = order?.state === 'cancelled';
+  const autoPix = isOnline && !card && status === 'pending' && !pixCode && !cancelled;
+  const autoCard = isOnline && card && (status === 'pending' || status === 'failed') && !cancelled;
   useEffect(() => {
-    if (!id || started.current === id || !(autoPix || autoReturn)) return;
+    if (!id || started.current === id || !(autoPix || autoCard)) return;
     started.current = id;
-    if (autoReturn) setReturned(true);
     void run('sync');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, autoPix, autoReturn]);
+  }, [id, autoPix, autoCard]);
 
-  // paid while this page was open (live stream, sync) — the default celebrates it
+  // paid while this page was open (live stream, card answer) — the default celebrates it
   useEffect(() => {
-    // …or the shopper just came back from Mercado Pago to a confirmed payment
+    // …or the shopper came back from an older hosted checkout to a confirmed payment
     const arrived = lastStatus.current === undefined && retorno;
     if (status === 'paid' && (arrived || (lastStatus.current && lastStatus.current !== 'paid')))
       setJustPaid(true);
@@ -155,28 +203,27 @@ function useOnlinePayment(
     onClick: () => void run(mode),
     pending: work !== null,
   });
+  let showCard = false;
   if (!order || !isOnline) kind = null;
   else if (work === 'redirect') kind = 'redirecting';
   else if (status === 'paid') kind = 'paid';
   else if (status && REFUNDED_PAYMENT_STATUSES.has(status)) kind = 'refunded';
-  else if (order.state === 'cancelled') kind = null;
+  else if (cancelled) kind = null;
   else if (work === 'sync') kind = 'confirming';
   else if (failure) {
     kind = 'unavailable';
-    action = again('Tentar de novo', card ? 'redirect' : 'sync');
+    action = again('Tentar de novo', 'sync');
   } else if (card) {
-    if (status === 'pending' && returned) {
-      // back from MP with nothing approved: processing only when MP says so, else not done
-      const processing = mpHint === 'pending' || mpHint === 'in_process';
-      const reopened = next?.kind === 'redirect';
-      kind = processing || !reopened ? 'processing' : 'failed';
-      if (kind === 'failed') action = again('Tentar de novo', 'redirect');
-    } else if (status === 'pending') {
-      kind = 'due';
-      action = again('Pagar com cartão', 'redirect');
-    } else if (status === 'failed' || status === 'expired') {
+    if (cardView) showCard = true;
+    else if (next?.kind === 'redirect') {
+      // a Core that still sends shoppers to the hosted checkout
+      kind = status === 'pending' ? 'due' : 'failed';
+      action = again(status === 'pending' ? 'Pagar com cartão' : 'Tentar de novo', 'redirect');
+    } else if (status === 'pending' && next?.kind === 'none') kind = 'processing';
+    else if (status === 'pending' || (status === 'failed' && !next)) kind = 'confirming';
+    else if (status === 'failed' || status === 'expired') {
       kind = 'failed';
-      action = again('Tentar de novo', 'redirect');
+      action = again('Tentar de novo', 'sync');
     }
   } else if (status === 'expired' || (status === 'pending' && pixTimedOut)) {
     kind = 'expired';
@@ -189,13 +236,14 @@ function useOnlinePayment(
     action = again('Gerar Pix', 'sync');
   }
 
+  const whatsapp = order ? whatsappHref(store, order) : null;
   const panel: SlotProps['checkout.PaymentStatus'] | null =
     kind && order
       ? {
           status: kind,
           method,
           amountCents: order.totalCents,
-          currency: store?.currency ?? 'BRL',
+          currency,
           ...(kind === 'refunded' && pay?.refundedCents
             ? { refundedCents: pay.refundedCents }
             : {}),
@@ -206,16 +254,50 @@ function useOnlinePayment(
                 ...(failure === 'PAYMENT_UNAVAILABLE'
                   ? {}
                   : { detail: errorCopy(failure ?? '').title }),
-                ...(whatsappHref(store, order)
-                  ? { whatsappHref: whatsappHref(store, order)! }
-                  : {}),
+                ...(whatsapp ? { whatsappHref: whatsapp } : {}),
               }
             : {}),
         }
       : null;
 
+  let cardPanel: SlotProps['checkout.CardPayment'] | null = null;
+  if (showCard && cardView) {
+    const { cfg } = cardView;
+    cardPanel = {
+      amountCents: cfg.amountCents,
+      currency,
+      phase: cardView.kind === 'challenge' ? 'challenge' : fields,
+      declined: cardView.kind === 'form' ? cardView.declined : null,
+      fields:
+        cardView.kind === 'challenge' ? (
+          <ChallengeFrame
+            key={cardView.creq}
+            url={cardView.url}
+            creq={cardView.creq}
+            onComplete={() => void run('sync')}
+          />
+        ) : (
+          <CardFields
+            key={attempt}
+            provider={cfg.provider}
+            publicKey={cfg.publicKey}
+            amountCents={cfg.amountCents}
+            submitLabel={`Pagar ${formatCents(cfg.amountCents, currency)}`}
+            onReady={() => setFields('ready')}
+            onError={() => setFields('unavailable')}
+            onSubmit={(input) => submitCard(cfg, input)}
+          />
+        ),
+      ...(whatsapp ? { whatsappHref: whatsapp } : {}),
+      ...(fields === 'unavailable' && cardView.kind === 'form'
+        ? { onRetry: () => showForm(cfg, null) }
+        : {}),
+    };
+  }
+
   return {
     panel,
+    cardPanel,
     pix:
       isOnline && pixCode
         ? ({ ...(pay?.pix ?? { key: '', beneficiary: '' }), copyPaste: pixCode } as NonNullable<
@@ -272,6 +354,7 @@ export function OrderPage() {
             <Slot name="checkout.SuccessPage" order={order} currency={currency} {...time} />
           ) : null}
           {online.panel ? <Slot name="checkout.PaymentStatus" {...online.panel} /> : null}
+          {online.cardPanel ? <Slot name="checkout.CardPayment" {...online.cardPanel} /> : null}
           {payPix ? (
             <Slot
               name="checkout.PixPayment"

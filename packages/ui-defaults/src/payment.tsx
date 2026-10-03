@@ -2,9 +2,10 @@ import type { ReactNode } from 'react';
 import type { PaymentStatusKind, SlotProps } from '@vendua/kernel';
 import { formatCents, PAYMENT_METHOD_LABEL } from '@vendua/kernel/rules';
 
-// checkout.PaymentStatus — one card for every state of an online payment (Mercado
-// Pago card checkout, online Pix). The Kernel decides the state and the next step;
-// this only says it. Busy states carry a progress rail + copy, never a bare spinner.
+// checkout.PaymentStatus — one card for every state of an online payment (card, online
+// Pix). The Kernel decides the state and the next step; this only says it. Busy states carry
+// a progress rail + copy, never a bare spinner. Since Kernel 1.17 the card is paid in the page;
+// only `redirecting` (an older Core's hosted checkout) talks about leaving it.
 
 type Tone = 'success' | 'info' | 'warning' | 'neutral';
 
@@ -34,14 +35,14 @@ function copy(p: SlotProps['checkout.PaymentStatus']): { title: string; body?: R
         ? { title: 'Gerando seu Pix…', body: 'O código aparece aqui em instantes.' }
         : {
             title: 'Confirmando seu pagamento…',
-            body: 'Estamos conferindo com o Mercado Pago.',
+            body: 'Só um instante — estamos conferindo com o banco.',
           };
     case 'due':
       return pix
         ? { title: 'Falta pagar o Pix', body: `Gere o código para pagar ${amount}.` }
         : {
             title: 'Falta pagar com cartão',
-            body: 'Conclua o pagamento no ambiente do Mercado Pago.',
+            body: `Pague ${amount} para a loja receber seu pedido.`,
           };
     case 'paid':
       return {
@@ -51,14 +52,14 @@ function copy(p: SlotProps['checkout.PaymentStatus']): { title: string; body?: R
     case 'processing':
       return {
         title: 'Pagamento em análise',
-        body: 'O Mercado Pago está conferindo o pagamento. Esta página atualiza sozinha quando sair a resposta.',
+        body: 'Estamos confirmando com o banco. Esta página atualiza sozinha quando sair a resposta.',
       };
     case 'failed':
       return pix
         ? { title: 'O Pix não foi concluído', body: 'Gere um novo código para pagar.' }
         : {
             title: 'O pagamento não foi aprovado',
-            body: 'Você pode tentar de novo — no Mercado Pago dá para usar outro cartão.',
+            body: 'Você pode tentar de novo, com o mesmo ou com outro cartão.',
           };
     case 'expired':
       return {
@@ -207,4 +208,99 @@ function Icon({ status }: { status: PaymentStatusKind }) {
         </svg>
       );
   }
+}
+
+// checkout.CardPayment — the chrome around the Kernel's card fields (Mercado Pago's Secure
+// Fields) or the bank's challenge. `fields` is rendered once, as is; nothing here reads it.
+
+export function CardPayment({
+  amountCents,
+  currency,
+  phase,
+  declined,
+  fields,
+  whatsappHref,
+  onRetry,
+}: SlotProps['checkout.CardPayment']) {
+  const challenge = phase === 'challenge';
+  return (
+    <section
+      className="v-panel v-cardpay"
+      data-vendua="card-payment"
+      data-part="root"
+      data-phase={phase}
+      aria-labelledby="v-cardpay-title"
+    >
+      <header className="v-cardpay-head" data-part="head">
+        <h2 className="v-eyebrow" id="v-cardpay-title">
+          {challenge ? 'Verificação do banco' : 'Pagar com cartão'}
+        </h2>
+        <p className="v-cardpay-amount v-num" data-part="amount">
+          {formatCents(amountCents, currency)}
+        </p>
+        <p className="v-cardpay-secure v-muted" data-part="secure">
+          <svg
+            viewBox="0 0 24 24"
+            width="14"
+            height="14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="5" y="10.5" width="14" height="9.5" rx="2" />
+            <path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3" />
+          </svg>
+          {challenge
+            ? 'Seu banco pediu uma confirmação. Siga os passos abaixo sem sair desta página.'
+            : 'Seus dados do cartão vão direto para o Mercado Pago'}
+        </p>
+      </header>
+      {declined && !challenge ? (
+        <div className="v-cardpay-declined" data-part="declined" role="alert">
+          <p className="v-cardpay-declined-title">{declined.title}</p>
+          {declined.body ? <p className="v-cardpay-declined-body">{declined.body}</p> : null}
+        </div>
+      ) : null}
+      {phase === 'unavailable' ? (
+        <div className="v-cardpay-down" data-part="unavailable" role="alert">
+          <p className="v-panel-title">O formulário do cartão não carregou</p>
+          <p className="v-muted">Confira sua internet e tente de novo. Seu pedido está guardado.</p>
+          <div className="v-cardpay-actions" data-part="actions">
+            {onRetry ? (
+              <button
+                type="button"
+                className="v-btn v-btn-accent"
+                data-part="retry"
+                onClick={onRetry}
+              >
+                Tentar de novo
+              </button>
+            ) : null}
+            {whatsappHref ? (
+              <a
+                className="v-link-btn"
+                data-part="whatsapp"
+                href={whatsappHref}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                ou combine com a loja pelo WhatsApp
+              </a>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+      <div
+        className="v-cardpay-fields"
+        data-part="fields"
+        aria-busy={phase === 'loading' || undefined}
+        aria-label={phase === 'loading' ? 'Carregando o formulário do cartão' : undefined}
+      >
+        {fields}
+      </div>
+    </section>
+  );
 }

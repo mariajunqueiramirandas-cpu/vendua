@@ -377,6 +377,14 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
     currency: 'BRL',
     action: { label: 'Tentar de novo', onClick: noop },
   },
+  'checkout.CardPayment': {
+    amountCents: 4700,
+    currency: 'BRL',
+    phase: 'ready',
+    declined: { title: 'Saldo ou limite insuficiente', body: 'Tente outro cartão.' },
+    fields: <div data-part="fixture-fields" style={{ minHeight: 120 }} />,
+    whatsappHref: 'https://wa.me/5522999990000',
+  },
   'checkout.LocationPicker': {
     center: { lat: -22.9301, lng: -42.4801 },
     precision: 'street',

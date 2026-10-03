@@ -180,6 +180,9 @@ export type {
   PixInfo,
   // Kernel 1.7
   PaymentNext,
+  // Kernel 1.17
+  CardPaymentInput,
+  DeclineReason,
   // Kernel 1.12
   ModifierPricingRule,
   PaymentAdjustment,
