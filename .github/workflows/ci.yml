@@ -120,6 +120,8 @@ jobs:
           done
       - name: Isolation tools tests
         run: bun test tools/
+      - name: Agent runtime boundary (ADR 0030)
+        run: bun tools/check-agent-runtime-boundary.mjs
       - name: Builds
         env:
           EVENT_NAME: ${{ github.event_name }}

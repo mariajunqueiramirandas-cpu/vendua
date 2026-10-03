@@ -28,6 +28,21 @@ Local — the same check on an explicit file list:
 bun tools/check-storefront-paths.mjs --slug demo --files storefronts/demo/src/App.tsx
 ```
 
+## check-agent-runtime-boundary.mjs
+
+`packages/agent-runtime` imports nothing from Core (ADR 0030 decision 11): no
+other `@vendua/*` package, no relative path leaving the package, no npm
+dependency — only `node:` / `bun:` builtins. Fails with one
+`file:line specifier` per offence; exit 0 pass / 1 failure.
+
+```sh
+bun tools/check-agent-runtime-boundary.mjs [--root <dir>]   # default: packages/agent-runtime
+```
+
+CI: the `check` job's "Agent runtime boundary" step. A change to
+`packages/agent-runtime` also runs Core's tests, conformance, the admin gate
+and the edge smoke (Core depends on it).
+
 ## affected.mjs
 
 Prints the affected graph for a diff as JSON
