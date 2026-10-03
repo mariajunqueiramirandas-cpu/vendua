@@ -19,7 +19,7 @@ import type { AiPackRow } from './billing/subscriptions.ts';
 import { dropPix, lockSub, markInvoicePaid, type BillingCtx } from './billing/subscriptions.ts';
 import type { SignupReadiness } from './billing/signup-gate.ts';
 import { claimControl, controlTx } from './control.ts';
-import type { PaymentProvider } from './payments/provider.ts';
+import { ProviderError, type PaymentProvider } from './payments/provider.ts';
 
 const SITE_STATUSES = ['requested', 'in_progress', 'delivered', 'cancelled'] as const;
 
@@ -48,6 +48,27 @@ function optFeatures(v: unknown): Partial<PlanFeatures> | undefined {
     out[k as PlanFeature] = b;
   }
   return out;
+}
+
+export interface MercadoPagoProbe {
+  /** off: no platform token; test: MP's test credentials, so no charge is real */
+  state: 'off' | 'ok' | 'test' | 'failed';
+  account: string | null;
+  /** MP's reason when it refused */
+  detail: string | null;
+}
+
+async function probeMercadoPago(provider: PaymentProvider): Promise<MercadoPagoProbe> {
+  if (!provider.platformConfigured) return { state: 'off', account: null, detail: null };
+  try {
+    const a = await provider.platformAccount();
+    return { state: a.live ? 'ok' : 'test', account: a.name ?? a.id, detail: null };
+  } catch (err) {
+    billingLog.warn({ err }, 'mercado pago platform token check failed');
+    const detail =
+      err instanceof ProviderError ? `${err.code}: ${err.message}` : 'unexpected error';
+    return { state: 'failed', account: null, detail: detail.slice(0, 300) };
+  }
 }
 
 export function mountControlBilling(o: {
@@ -182,11 +203,23 @@ export function mountControlBilling(o: {
 
   const controlPlan = (r: PlanRow) => ({ ...planView(r), public: r.public, sort: r.sort });
 
+  // Whether Mercado Pago takes Venduá's token: signup's gate only knows one is set, so a
+  // revoked or test token passes it and every first charge fails. Only this panel asks MP,
+  // at most once a minute.
+  let probe: { at: number; result: Promise<MercadoPagoProbe> } | null = null;
+  const mercadoPago = () => {
+    if (probe && Date.now() - probe.at < 60_000) return probe.result;
+    const result = probeMercadoPago(o.provider);
+    probe = { at: Date.now(), result };
+    return result;
+  };
+
   // the CRM's "Cadastro de lojas": the switch (PUT /control/v1/settings/signup) and what else
   // signup waits on, so the team sees why it is closed
   app.get('/control/v1/signup', async (c) => {
     controlGate(c);
-    return c.json(await o.signupReady());
+    const [ready, mp] = await Promise.all([o.signupReady(), mercadoPago()]);
+    return c.json({ ...ready, mercadoPago: mp });
   });
 
   app.get('/control/v1/plans', async (c) => {

@@ -39,12 +39,14 @@ import {
 import {
   beginPayment,
   lockSub,
+  recordBillingProblem,
   startSubscription,
   startTrial,
   withEffects,
   type PayNext,
 } from './subscriptions.ts';
 import { FakeProvider } from '../payments/fake.ts';
+import { ProviderError } from '../payments/provider.ts';
 
 const signupLog = log.child({ mod: 'signup' });
 
@@ -277,11 +279,36 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
         throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
     }
 
-    const next = await ensureFirstCharge(d, c, owned, { plan, method, email, ownerName, manual });
+    const store = owned;
+    const next = await ensureFirstCharge(d, c, store, {
+      plan,
+      method,
+      email,
+      ownerName,
+      manual,
+    }).catch(async (err: unknown) => {
+      // the store exists but its first charge didn't go out: the team hears MP's own reason
+      // (the owner only sees "try again"), once per store and kind — the owner's retries add nothing
+      if (err instanceof HttpError && err.code === 'BILLING_PROVIDER_ERROR') {
+        const why = err.cause instanceof Error ? err.cause.message : err.message;
+        // keyed by MP's kind of failure: a passing outage first doesn't hide a refused token
+        const kind = err.cause instanceof ProviderError ? err.cause.code : 'other';
+        const how = method === 'card' ? 'cartão' : 'Pix';
+        await withTenant(sql, store.tenant_id, (tx) =>
+          recordBillingProblem(
+            tx,
+            store.tenant_id,
+            'other',
+            `a primeira cobrança (${how}) não saiu no Mercado Pago: ${why}`,
+            `signup:${kind}`,
+          ),
+        ).catch((e) => signupLog.warn({ err: e }, 'signup charge problem not recorded'));
+      }
+      throw err;
+    });
     // once per new store, and only once it went out: the send finishes before the answer, and
     // the marker is written after it, so a failed send or a restart mid-send leaves no marker
     // and the owner's next try sends it (the provider dedupes on the key if both went out)
-    const store = owned;
     const welcome = await withTenant(sql, store.tenant_id, async (tx) => {
       const due = await tx`
         select 1 from tenants t where t.id = ${store.tenant_id}

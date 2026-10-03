@@ -22,6 +22,7 @@ export class UnconfiguredProvider implements PaymentProvider {
   verifyWebhook() {
     return null;
   }
+  platformAccount = off;
   platformPix = off;
   platformGetPayment = off;
   platformCancelPayment = off;

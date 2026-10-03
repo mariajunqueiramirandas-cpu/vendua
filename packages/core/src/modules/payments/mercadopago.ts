@@ -529,6 +529,17 @@ export class MercadoPagoProvider implements PaymentProvider {
 
   // ── the plan, on Venduá's account ───────────────────────────────────────
 
+  async platformAccount() {
+    const token = this.platform();
+    const j = await this.call('GET', '/users/me', token);
+    return {
+      id: String(j.id ?? ''),
+      name: typeof j.nickname === 'string' ? j.nickname.slice(0, 80) : null,
+      // MP's test credentials are the only ones prefixed so; their charges are never real
+      live: !token.startsWith('TEST-'),
+    };
+  }
+
   async platformPix(req: PixRequest) {
     return this.createPix(this.platform(), req);
   }

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { foldSlug, slugify } from '../src/admin/context.ts';
 import { createApp } from '../src/app.ts';
+import { validEmail } from '../src/modules/billing/input.ts';
 import { runBillingTick } from '../src/modules/billing/jobs.ts';
 import {
   normalizeSlug,
@@ -15,6 +16,26 @@ import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { migrate } from '../src/platform/db.ts';
 
 describe('signup units', () => {
+  test('only an email Mercado Pago takes as the payer passes', () => {
+    expect(validEmail('  Ana.Lima+doces@Gmail.com ', 'email')).toBe('ana.lima+doces@gmail.com');
+    expect(validEmail('ana_lima@doces-da-ana.com.br', 'email')).toBe(
+      'ana_lima@doces-da-ana.com.br',
+    );
+    for (const bad of [
+      'niná@gmail.com',
+      'ana@gmail.com.',
+      'ana..lima@gmail.com',
+      '.ana@gmail.com',
+      'ana.@gmail.com',
+      'ana@gmail,com.br',
+      'ana@gmail',
+      'ana@-gmail.com',
+      'ana@gmail.c',
+      'ana lima@gmail.com',
+    ])
+      expect(() => validEmail(bad, 'email')).toThrow('email looks wrong');
+  });
+
   test('slugs normalize like slugify, capped at 40', () => {
     expect(normalizeSlug('Açaí da Praia!!')).toBe('acai-da-praia');
     expect(normalizeSlug('  --Doces   da Maria-- ')).toBe('doces-da-maria');
@@ -368,6 +389,26 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       );
       const crm = await call('GET', '/control/v1/signup', undefined, { 'x-vendua-control': 'ctl' });
       expect(crm.body).toMatchObject({ on: true, billing: true });
+      // the panel asks MP whether it takes the token: the fake's is a test one
+      expect(crm.body.mercadoPago).toEqual({ state: 'test', account: 'VENDUA_FAKE', detail: null });
+      fake.revoked.add('platform');
+      try {
+        const refused = await call(
+          'GET',
+          '/control/v1/signup',
+          undefined,
+          { 'x-vendua-control': 'ctl' },
+          createApp(deps),
+        );
+        expect(refused.body.open).toBe(true);
+        expect(refused.body.mercadoPago).toEqual({
+          state: 'failed',
+          account: null,
+          detail: 'unauthorized: token revoked',
+        });
+      } finally {
+        fake.revoked.delete('platform');
+      }
     } finally {
       if (added.length) await sql`delete from control_integrations where id = any(${added})`;
       if (before === undefined) await sql`delete from control_settings where key = 'signup'`;
@@ -406,6 +447,34 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     await until(() => sent.length === 1);
     expect(sent).toEqual([`signup-welcome:${slug}`]);
     expect((await marker()).length).toBe(1);
+  });
+
+  test('a first charge MP refuses: its own code, the team hears why once, a retry goes through', async () => {
+    const own = createApp(deps);
+    const token = (await verified(mkPhone(14), own)).signupToken;
+    const slug = `signup-${nonce}-mprefused`;
+    fake.revoked.add('platform');
+    try {
+      const r = await signup(token, slug, {}, own);
+      expect(r.status).toBe(503);
+      expect(r.body.error).toMatchObject({
+        code: 'BILLING_PROVIDER_ERROR',
+        details: { provider: 'unauthorized' },
+      });
+      // MP's own words are for the team, not the visitor
+      expect(JSON.stringify(r.body)).not.toContain('token revoked');
+      expect((await signup(token, slug, {}, own)).status).toBe(503);
+    } finally {
+      fake.revoked.delete('platform');
+    }
+    const ok = await signup(token, slug, {}, own);
+    expect(ok.status).toBe(201);
+    expect(ok.body.next).toEqual({ kind: 'pix', invoiceId: expect.any(String) });
+    const events = await sql<{ data: { problem: string; detail: string } }[]>`
+      select data from staff_events where tenant_id = ${ok.body.store.id} and kind = 'billing.problem'`;
+    expect(events).toHaveLength(1);
+    expect(events[0]!.data).toMatchObject({ problem: 'other' });
+    expect(events[0]!.data.detail).toContain('token revoked');
   });
 
   test('a plan that is listed but closed is refused before anything is created', async () => {

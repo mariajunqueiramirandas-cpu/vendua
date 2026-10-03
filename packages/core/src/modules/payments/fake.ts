@@ -322,7 +322,13 @@ export class FakeProvider implements PaymentProvider {
     };
   }
 
+  async platformAccount() {
+    this.guard('platform');
+    return { id: 'fake-platform', name: 'VENDUA_FAKE', live: false };
+  }
+
   async platformPix(req: PixRequest) {
+    this.guard('platform');
     return strip(this.pay('platform', req, 'pix'));
   }
 

@@ -34,6 +34,20 @@ const NEEDS: { key: 'whatsapp' | 'email' | 'billing'; label: string; fix: string
   },
 ];
 
+// Core's gate only knows a token is set; this is what MP said when the panel asked
+function mercadoPagoNote(mp: SignupReadiness['mercadoPago']) {
+  if (mp?.state === 'failed')
+    return { bad: true, text: `o Mercado Pago recusou o token: ${mp.detail ?? 'sem detalhe'}` };
+  if (mp?.state === 'test')
+    return { bad: true, text: 'token de teste do Mercado Pago: nenhuma cobrança é de verdade' };
+  if (mp?.state === 'ok')
+    return {
+      bad: false,
+      text: `Mercado Pago respondeu${mp.account ? ` · conta ${mp.account}` : ''}`,
+    };
+  return null;
+}
+
 export function SignupPanel() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: qk.signupReadiness(), queryFn: api.signupReadiness });
@@ -45,6 +59,7 @@ export function SignupPanel() {
   });
   const r: SignupReadiness | undefined = q.data;
   const missing = r ? NEEDS.filter((n) => !r[n.key]) : [];
+  const mp = mercadoPagoNote(r?.mercadoPago);
   const mobile = useIsMobile();
   const status = r
     ? r.open
@@ -73,7 +88,8 @@ export function SignupPanel() {
       ) : (
         <ul className="grid gap-2 sm:grid-cols-3">
           {NEEDS.map((n) => {
-            const ok = !!r?.[n.key];
+            const note = n.key === 'billing' ? mp : null;
+            const ok = !!r?.[n.key] && !note?.bad;
             return (
               <li key={n.key} className="flex min-w-0 items-start gap-2 text-sm">
                 {ok ? (
@@ -101,12 +117,29 @@ export function SignupPanel() {
                     {!ok && n.to ? ' · ' : null}
                     {n.fix}
                   </span>
+                  {note ? (
+                    <span
+                      className={cn(
+                        'block break-words text-xs',
+                        note.bad ? 'text-warning' : 'text-muted-foreground',
+                      )}
+                    >
+                      {note.text}
+                    </span>
+                  ) : null}
                 </span>
               </li>
             );
           })}
         </ul>
       )}
+      {r?.open && mp?.bad ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {r.mercadoPago?.state === 'failed'
+            ? 'O cadastro está aberto e cria a loja, mas a primeira cobrança falha até o token do Mercado Pago ser corrigido no servidor. A equipe recebe um aviso a cada loja assim.'
+            : 'O cadastro está aberto, mas as cobranças são de teste: nenhuma loja paga o plano de verdade até trocar pelo token de produção.'}
+        </p>
+      ) : null}
       {r?.on && missing.length ? (
         <p className="mt-3 text-xs text-muted-foreground">
           O site e o painel mostram “o cadastro pela internet ainda não abriu” até tudo ficar
