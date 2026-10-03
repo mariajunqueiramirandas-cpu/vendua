@@ -94,7 +94,14 @@ listed in [`features/sales-agent-features.md`](../features/sales-agent-features.
     introduces itself as "<name>, assistente virtual da <loja>"; off, by name only. Either way
     it never claims to be a person, says it is the store's assistant when asked, and the
     verifier blocks a reply that claims otherwise.
-11. **Phases V0 to V4**, each with exit gates measured by order-accuracy simulations and pilot
+11. **Its own onboarding, separate from the store's** (owner decision, 2026-10-03).
+    - "Treinar a Ana" (`/vendedor/comecar`, [UX §3.12](../features/sales-agent-ux.md#312-treinar-a-ana-vendedorcomecar-new))
+      runs after the store's journey, never inside it: Conhecer · Ensinar · Testar · Começar.
+    - Ana guides it herself, reads the store, flags menu gaps that Core computes, interviews
+      the owner and tests herself.
+    - Its interviewer is a second agent on the runtime that only proposes. Every answer, rule
+      or fix lands only when the owner confirms it.
+12. **Phases V0 to V4**, each with exit gates measured by order-accuracy simulations and pilot
     stores ([`sales-agent.md` §8](../features/sales-agent.md#8-phases)).
 
 ## Consequences
@@ -148,6 +155,7 @@ Decided by the owner on 2026-10-03:
 - **No reply limits** (decision 5).
 - **Providers:** any, under zero data retention (decision 8).
 - **Allergies:** remembered with consent and always confirmed (decision 8).
+- **Its own onboarding**, separate from the store's (decision 11).
 
 Still open, for the owner (the full lists are in
 [`sales-agent.md` §10](../features/sales-agent.md#10-open-decisions) and

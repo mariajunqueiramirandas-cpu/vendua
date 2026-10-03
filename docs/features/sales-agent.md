@@ -207,9 +207,14 @@ The thread is now the merchant's until they hand it back.
 
 ### Merchants
 
-- **Setup in minutes.** The WhatsApp is already linked for order updates (ADR 0026). Turning the
-  Vendedor on shows what it will know (menu, hours, zones, payment methods, knowledge) and a
-  test chat where the merchant orders from their own agent before any shopper does.
+- **Its own onboarding** (owner decision, 2026-10-03). "Treinar a Ana" (`/vendedor/comecar`)
+  is separate from the store's onboarding and runs after it.
+  - Ana herself guides it, with a WhatsApp preview that improves at each answer.
+  - She reads the store and points out what's unclear in the menu.
+  - She interviews the owner about what only they know, turning answers into answers and
+    rules the owner confirms.
+  - The owner orders from her as a test customer, Cliente oculto runs, and she starts in
+    Ensaio or live. The WhatsApp is usually already linked for order updates (ADR 0026).
 - **Ensaio.** In the `rehearsal` coverage mode it drafts a reply to every real conversation
   while the merchant answers as always. The inbox shows the unsent drafts, and the Ensaio report
   says how often the merchant would have sent the same thing. The merchant picks another mode
@@ -736,6 +741,34 @@ that fits ADR 0026's scope is part of decision 1 ([§10](#10-open-decisions)).
 - **Cost.** Step budget per run, message ceiling per thread per day, monthly cap per store, all
   in code, all ending in the degrade path.
 
+### 4.15 The onboarding interviewer
+
+"Treinar a Ana" ([UX §3.12](sales-agent-ux.md#312-treinar-a-ana-vendedorcomecar-new)) runs a
+second agent on the runtime, `vendedor-onboarding`, with the store as its subject.
+
+- **The menu gaps come from Core.** A deterministic `menuGaps(tenant)` lists:
+  - products whose size isn't stated;
+  - options without a price on some size;
+  - categories where no product states gluten or lactose;
+  - duplicate names;
+  - combos with empty slots.
+
+  The agent only phrases them.
+
+- **Its questions** come from the gaps, the store's segment and what the store already
+  answers (hours, zones, payment methods are never asked).
+- **Proposes, never writes.**
+  - Its tools read the catalog, hours, zones and payment methods.
+  - It proposes answers, rules and menu fixes; it writes nothing.
+  - Each "está certo" is the owner's own admin request, idempotent and audited like any
+    other admin write.
+  - A proposed rule goes through the same compiler that decides "sempre cumprida" or
+    "orientação".
+- **Voice answers** are transcribed by a zero-data-retention provider, like shoppers' audio.
+- **The test order** in "Peça para mim" is the real Vendedor on the real menu. In a test
+  conversation, `place_order` validates the cart the way checkout does and stops before
+  creating the order, so nothing reaches the kitchen, stock or loyalty.
+
 ## 5. Merchant controls
 
 `store_agent`, validated like other admin writes (`src/admin/context.ts` helpers), audited, and
@@ -830,7 +863,7 @@ the owner.
 | Phase                     | Ships                                                                                                                                                                                                                                                                                                                                                     | Exit gate                                                                                                                                                           |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **V0 Foundations**        | `orders.source`; inbound, merchant-typed and media storage in the gateway; the new tables; Agent Runtime v3 with its interactive lane; the Core changes of [§4.3](#43-data) (cart and quote functions, in-process idempotency claim, cash change, catalog search, coupon minting); jid addressing; `store_agent`; a read-only inbox; the admin test chat. | Runtime ports pass their contract tests in memory and on Postgres; lead agent untouched; inbound stored and deduped under reconnects; RLS tests on every new table. |
-| **V1 Attendant + shadow** | Grounded answers (menu, hours, zones, payment, knowledge), links to the storefront, handoff and takeover, unanswered → knowledge, shadow drafts, audio transcription.                                                                                                                                                                                     | No ungrounded figure in the suite; three pilot stores in shadow for a week with agreement reported.                                                                 |
+| **V1 Attendant + shadow** | Treinar a Ana (the onboarding, its interview and menu check), grounded answers (menu, hours, zones, payment, knowledge), links to the storefront, handoff and takeover, unanswered → knowledge, shadow drafts, audio transcription.                                                                                                                       | No ungrounded figure in the suite; three pilot stores in shadow for a week with agreement reported.                                                                 |
 | **V2 Seller**             | Cart, quote, summary card, confirmation gate, `place_order`, Pix, cash and card on delivery, order status, encomenda when closed, pickup when out of zone, substitutes and waitlist, location pins, the full verifier.                                                                                                                                    | Order accuracy ≥ 98% on the suite, 0 ungrounded figures, p50 reply ≤ 6 s; pilots leave Ensaio.                                                                      |
 | **V3 Sells more**         | Customer card and reorder, suggestions, recovery and incentives, Resultados, daily line and weekly review, photo understanding, voice replies.                                                                                                                                                                                                            | Pilots' agent ticket and conversion measured against their storefront; incentive spend within budgets.                                                              |
 | **V4 Everywhere**         | Instagram DM; a storefront chat that edits the page's own cart (a server-driven system surface; its Kernel export follows the additive rules: `API.md`, the api-surface test, a version bump, `CHANGELOG.md`, `bun.lock`); the official Cloud API as a per-store transport option with templates for opted-in recovery and re-engagement (P-018).         | Same gates per channel.                                                                                                                                             |

@@ -170,17 +170,22 @@ What the design has that the board didn't show, now drawn on the board:
 
 ## G. Teaching it and trusting it
 
-| #   | Feature                         | What it does                                                                                                       | Phase | From  |
-| --- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----- | ----- |
-| G1  | First use, not a tour           | A checklist on its home: WhatsApp connected, review what it knows, Cliente oculto, optional Ensaio, "ligar a Ana". | V1    | N     |
-| G2  | Test as a customer              | Chat with it from the admin, on the real menu, before any shopper does.                                            | V0    | D+B   |
-| G3  | Cliente oculto ★                | Twenty synthetic shoppers with hidden orders on this store's menu; a line-by-line score; misses become menu fixes. | V1    | B+D   |
-| G4  | Re-checked after menu changes ★ | Cliente oculto re-runs on its own after the menu changes and speaks up only if the score drops.                    | V2    | N     |
-| G5  | Ensaio with a score ★           | Days of silent drafting; "você mandaria 41 de 46 iguais"; disagreements to teach from or to dismiss.               | V1    | D+B+N |
-| G6  | "Aprendi com você" ★            | When the merchant answers a shopper, the answer comes back as a proposed answer: ensinar, editar or ignorar.       | V1    | B     |
-| G7  | Unanswered questions            | Questions it couldn't answer, with how often they were asked and an inline answer field.                           | V1    | D+N   |
-| G8  | Weekly proposals                | Up to three one-tap changes a week (an answer to write, a suggestion to retire, a recovery delay to try).          | V3    | D+N   |
-| G9  | Live is the merchant's call     | Scores inform; nothing blocks "ligar a Ana".                                                                       | V1    | B     |
+| #   | Feature                         | What it does                                                                                                                                             | Phase | From  |
+| --- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ----- |
+| G1  | First use, not a tour           | Its home before it's on opens its onboarding and, midway, shows where the owner stopped.                                                                 | V1    | N     |
+| G2  | Test as a customer              | Chat with it from the admin, on the real menu, before any shopper does.                                                                                  | V0    | D+B   |
+| G3  | Cliente oculto ★                | Twenty synthetic shoppers with hidden orders on this store's menu; a line-by-line score; misses become menu fixes.                                       | V1    | B+D   |
+| G4  | Re-checked after menu changes ★ | Cliente oculto re-runs on its own after the menu changes and speaks up only if the score drops.                                                          | V2    | N     |
+| G5  | Ensaio with a score ★           | Days of silent drafting; "você mandaria 41 de 46 iguais"; disagreements to teach from or to dismiss.                                                     | V1    | D+B+N |
+| G6  | "Aprendi com você" ★            | When the merchant answers a shopper, the answer comes back as a proposed answer: ensinar, editar or ignorar.                                             | V1    | B     |
+| G7  | Unanswered questions            | Questions it couldn't answer, with how often they were asked and an inline answer field.                                                                 | V1    | D+N   |
+| G8  | Weekly proposals                | Up to three one-tap changes a week (an answer to write, a suggestion to retire, a recovery delay to try).                                                | V3    | D+N   |
+| G9  | Live is the merchant's call     | Scores inform; nothing blocks "ligar a Ana".                                                                                                             | V1    | B     |
+| G10 | Treinar a Ana ★                 | Its own onboarding, separate from the store's (decided 2026-10-03): Conhecer · Ensinar · Testar · Começar, guided by Ana herself.                        | V1    | N     |
+| G11 | Learning, visibly               | A WhatsApp preview in the onboarding where Ana answers better after each step.                                                                           | V1    | N     |
+| G12 | Menu check ★                    | Before she sells, she lists what's unclear in the menu (a size-less broto, an unpriced option, no allergen info), computed by Core, each one tap to fix. | V1    | N     |
+| G13 | A entrevista ★                  | 5–8 questions about what only the owner knows, answered by tap, text or voice; each answer comes back as a Resposta or Regra to confirm.                 | V1    | N     |
+| G14 | A test order that stays a test  | The owner orders from her as a customer; it's validated like checkout and never reaches the kitchen.                                                     | V1    | N     |
 
 ## H. Results
 
@@ -233,3 +238,4 @@ What the design has that the board didn't show, now drawn on the board:
 - 2026-10-03: first catalog, merging the design, the runtime and the team's board.
 - 2026-10-03: owner decisions: disclosure switch (E11), the push (F3), the phone bar.
 - 2026-10-03: owner decisions: no reply limits (A1), zero data retention (J6), allergies remembered and confirmed (D4).
+- 2026-10-03: its own onboarding, separate from the store's (G10–G14; owner decision).

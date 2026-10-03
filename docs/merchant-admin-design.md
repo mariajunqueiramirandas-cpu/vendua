@@ -478,6 +478,11 @@ no ar" — or "sua loja está pronta", with the payment that opens it right ther
 a QR code to print, "avisar no WhatsApp", the Instagram bio text and what was left for later,
 each item a short detour back into its question.
 
+The Vendedor, the store's AI seller, has **its own onboarding**, separate from this journey and
+never folded into it ([ADR 0031](adr/0031-vendedor.md),
+[sales-agent-ux §3.12](features/sales-agent-ux.md#312-treinar-a-ana-vendedorcomecar-new)). Once
+this journey's finale is behind the merchant, Início offers it once.
+
 ---
 
 ## 7. Components
