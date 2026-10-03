@@ -1,7 +1,6 @@
 import {
   ChatCircleDots,
   CheckCircle,
-  Circle,
   CookingPot,
   Gift,
   Globe,
@@ -16,7 +15,6 @@ import {
 } from '@phosphor-icons/react';
 import type { Plan, PlanFeature } from '../lib/api.ts';
 import { money } from '../lib/format.ts';
-import { haptic } from '../lib/haptics.ts';
 import { cn } from './cn.ts';
 import { Skeleton } from './feedback.tsx';
 
@@ -26,7 +24,7 @@ import { Skeleton } from './feedback.tsx';
 export const perMonth = (p: Pick<Plan, 'priceCents'>) =>
   p.priceCents === null ? null : `${money(p.priceCents)}/mês`;
 
-/** "Venduá Bandeira" → "Bandeira", for "tudo do Bandeira, mais:" */
+/** "Venduá Bandeira" → "Bandeira", for "tudo do Bandeira, e mais:" */
 export const shortName = (p: Pick<Plan, 'name'>) => p.name.replace(/^Venduá\s+/i, '');
 
 const count = (n: number) => n.toLocaleString('pt-BR');
@@ -173,7 +171,7 @@ export const publicPlans = (plans: Plan[]) => plans.filter((p) => p.priceCents !
 
 /**
  * The plan before `plan` in that order, when `plan` keeps all of it: its card then says "tudo do
- * <it>, mais:". Staff toggle features one by one, so a plan that drops one lists all its own.
+ * <it>, e mais:". Staff toggle features one by one, so a plan that drops one lists all its own.
  */
 export function prevOf(plans: Plan[], plan: Plan) {
   const list = publicPlans(plans);
@@ -213,7 +211,7 @@ export function PlanPerks({
   plan: Plan;
   /** "sualoja.vendua.com.br", or the store's real one */
   address: string;
-  /** the plan below: only what this one adds is listed, after "tudo do <prev>, mais:" */
+  /** the plan below: only what this one adds is listed, after "tudo do <prev>, e mais:" */
   prev?: Plan | undefined;
   trial?: boolean | undefined;
   className?: string;
@@ -224,7 +222,7 @@ export function PlanPerks({
   return (
     <div className={className}>
       {prev ? (
-        <p className="t-label mb-2.5 font-semibold">Tudo do {shortName(prev)}, mais:</p>
+        <p className="t-label mb-2.5 font-semibold">Tudo do {shortName(prev)}, e mais:</p>
       ) : null}
       <ul className="space-y-2.5">
         {list.map((p) => (
@@ -271,89 +269,6 @@ export function PlanBadge({ children, strong }: { children: string; strong?: boo
       {strong ? <Sparkle weight="fill" className="size-3.5" aria-hidden /> : null}
       {children}
     </span>
-  );
-}
-
-/** A plan as a radio card: name, monthly price, what it includes. */
-export function PlanOption({
-  plan,
-  selected,
-  onSelect,
-  address,
-  badge,
-  disabled,
-  trial,
-  prev,
-  className,
-}: {
-  plan: Plan;
-  selected: boolean;
-  onSelect: () => void;
-  address: string;
-  badge?: string | undefined;
-  disabled?: boolean;
-  /** a new store: the plan's free days show (a running subscription never trials again) */
-  trial?: boolean;
-  /** the plan below in the list: the card then lists only what this one adds */
-  prev?: Plan | undefined;
-  className?: string | undefined;
-}) {
-  const price = perMonth(plan);
-  const rec = plan.recommended;
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      aria-label={`${plan.name}${price ? `, ${price}` : ''}${rec ? ', recomendado' : ''}`}
-      aria-describedby={`plan-${plan.id}-perks`}
-      disabled={disabled}
-      onClick={() => {
-        haptic.tick();
-        onSelect();
-      }}
-      className={cn(
-        'relative flex w-full flex-col gap-4 rounded-lg p-5 text-left transition-[box-shadow,background-color] duration-(--duration-quick)',
-        'hover:bg-hover disabled:pointer-events-none disabled:opacity-60',
-        rec
-          ? 'bg-surface bg-linear-to-b from-spark-soft to-surface to-40% depth-2'
-          : 'bg-surface depth-1',
-        selected ? 'ring-2 ring-primary' : rec ? 'ring-2 ring-spark' : 'ring-1 ring-line',
-        className,
-      )}
-    >
-      <span className="flex items-start gap-3">
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-2">
-            <span className="t-title-2">{plan.name}</span>
-            {rec ? <PlanBadge strong>Recomendado</PlanBadge> : null}
-            {badge ? <PlanBadge>{badge}</PlanBadge> : null}
-          </span>
-          {price ? (
-            <span className="mt-1 block">
-              <span className="tnum font-display text-[1.75rem] font-semibold leading-8">
-                {money(plan.priceCents!)}
-              </span>
-              <span className="t-body text-muted">/mês</span>
-            </span>
-          ) : null}
-          {trial && plan.trialDays > 0 ? (
-            <span className="t-label mt-2 inline-flex items-center gap-1.5 rounded-full bg-success-soft px-2.5 py-1 text-success">
-              <Gift weight="fill" className="size-4" aria-hidden /> {plan.trialDays} dias grátis,
-              sem cartão
-            </span>
-          ) : null}
-        </span>
-        {selected ? (
-          <CheckCircle weight="fill" className="size-7 shrink-0 text-primary" aria-hidden />
-        ) : (
-          <Circle className="size-7 shrink-0 text-faint" aria-hidden />
-        )}
-      </span>
-      <span id={`plan-${plan.id}-perks`} className="block">
-        <PlanPerks plan={plan} address={address} prev={prev} trial={trial} />
-      </span>
-    </button>
   );
 }
 

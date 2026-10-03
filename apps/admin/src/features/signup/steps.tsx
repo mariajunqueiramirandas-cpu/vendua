@@ -21,7 +21,8 @@ import { cn } from '../../ui/cn.ts';
 import { CodeInput, type CodeInputHandle } from '../../ui/CodeInput.tsx';
 import { DuaNote, messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
-import { perMonth, PlanOption, prevOf } from '../../ui/PlanCard.tsx';
+import { perMonth, shortName } from '../../ui/PlanCard.tsx';
+import { PlanCards, PlanCompare, PlanTrialStrip } from '../../ui/PlanPicker.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { StepFrame } from '../../ui/StepFrame.tsx';
 import { EMAIL_RE, expiry, savePending } from '../auth/pending.ts';
@@ -45,14 +46,34 @@ export const addressOf = (slug: string, domain: string) => `${slug || 'sualoja'}
 
 // ── 1 · plano ────────────────────────────────────────────────────────────
 
-export function PlanStep({ d, patch, go, plans, notice }: FlowProps) {
+export function PlanStep({
+  d,
+  patch,
+  go,
+  plans,
+  notice,
+  trialEligible,
+}: FlowProps & {
+  /** known once the phone is confirmed (a return to this step): one trial per owner */
+  trialEligible?: boolean | undefined;
+}) {
   const open = plans.billing.available || plans.billing.accessCode;
+  // the trial is for a new owner paying the Venduá: not with an access code
+  const trial = plans.billing.available && !d.byCode && trialEligible !== false;
+  const trialPlan = trial ? plans.plans.find((p) => p.trialDays > 0) : undefined;
+  const chosen = plans.plans.find((p) => p.id === d.planId);
   return (
     <StepFrame
       title="Escolha o seu plano"
-      hint="Dá para trocar depois, quando quiser. Você paga por mês, com Pix ou cartão."
+      hint={
+        plans.plans.every((p) => p.feeBps === 0)
+          ? 'Um preço por mês, com Pix ou cartão, e nenhuma taxa por pedido. Dá para trocar quando quiser.'
+          : 'Um preço por mês, com Pix ou cartão. Dá para trocar quando quiser.'
+      }
+      label={chosen ? `Continuar com o ${shortName(chosen)}` : 'Continuar'}
       disabled={!open || !d.planId}
       onSubmit={() => go('loja')}
+      solidBar
     >
       {notice ? (
         <p className="t-body rounded-md bg-warning-soft px-4 py-3 text-warning" role="status">
@@ -76,25 +97,23 @@ export function PlanStep({ d, patch, go, plans, notice }: FlowProps) {
           Recebeu um código da Venduá? Pode seguir: ele vai na última pergunta.
         </DuaNote>
       ) : null}
-      <div
-        role="radiogroup"
-        aria-label="planos"
-        className={cn('grid gap-3', plans.plans.length >= 3 && 'lg:grid-cols-3 lg:gap-4 lg:py-3')}
-      >
-        {plans.plans.map((p) => (
-          <PlanOption
-            key={p.id}
-            plan={p}
-            selected={d.planId === p.id}
-            onSelect={() => patch({ planId: p.id })}
-            address={addressOf(d.slug, plans.storeDomain)}
-            trial={plans.billing.available}
-            prev={prevOf(plans.plans, p)}
-            // side by side, the recommended card stands a little taller than its neighbours
-            className={p.recommended ? 'lg:-my-3' : undefined}
-          />
-        ))}
-      </div>
+      {trialPlan ? (
+        <PlanTrialStrip
+          plan={trialPlan}
+          selected={d.planId === trialPlan.id}
+          onPick={() => patch({ planId: trialPlan.id })}
+        />
+      ) : null}
+      <PlanCards
+        plans={plans.plans}
+        selected={d.planId}
+        onSelect={(planId) => patch({ planId })}
+        address={addressOf(d.slug, plans.storeDomain)}
+        trial={trial}
+        wide
+        className="pt-2"
+      />
+      <PlanCompare plans={plans.plans} trial={trial} />
     </StepFrame>
   );
 }
@@ -104,11 +123,17 @@ export function PlanStepSkeleton() {
     <div className="space-y-6" role="status" aria-label="carregando os planos">
       <Skeleton className="h-9 w-64" />
       <Skeleton className="h-6 w-full max-w-md" />
-      <div className="grid gap-3 lg:grid-cols-3 lg:gap-4">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)] lg:items-start lg:gap-5">
         {[0, 1, 2].map((i) => (
-          <div key={i} className="space-y-3 rounded-lg bg-surface p-5 depth-1">
+          <div
+            key={i}
+            className={cn(
+              'space-y-3 rounded-lg bg-surface p-5 depth-1',
+              i === 1 ? 'rounded-xl pt-8 depth-3' : 'lg:mt-8',
+            )}
+          >
             <Skeleton className="h-7 w-40" />
-            <Skeleton className="h-8 w-32" />
+            <Skeleton className={cn('w-32', i === 1 ? 'h-11' : 'h-8')} />
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
           </div>

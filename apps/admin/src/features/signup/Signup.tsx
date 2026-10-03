@@ -162,7 +162,8 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
       window.history.replaceState(null, '', '/admin/comecar');
   }, []);
 
-  // the plan chosen on the site (?plano=) wins; otherwise the recommended one, one less tap
+  // the plan chosen on the site (?plano=) wins; otherwise the one with the trial (said above the
+  // cards), then the recommended one: one less tap
   const fromSite = useRef(new URLSearchParams(window.location.search).get('plano'));
   useEffect(() => {
     const list = plans.data?.plans;
@@ -173,8 +174,12 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
       patch({ planId: site });
       if (window.location.search.includes('plano='))
         window.history.replaceState(null, '', '/admin/comecar');
-    } else if (!list.some((p) => p.id === cur.current.planId))
-      patch({ planId: (list.find((p) => p.recommended) ?? list[0]!).id });
+    } else if (!list.some((p) => p.id === cur.current.planId)) {
+      const trial = plans.data?.billing.available
+        ? list.find((p) => p.trialDays > 0 && p.priceCents !== null)
+        : undefined;
+      patch({ planId: (trial ?? list.find((p) => p.recommended) ?? list[0]!).id });
+    }
   }, [plans.data, patch]);
 
   const finish = useCallback(() => {
@@ -251,7 +256,8 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
     ) : (
       <PlanStepSkeleton />
     );
-  else if (step === 'plano') body = <PlanStep {...props} />;
+  else if (step === 'plano')
+    body = <PlanStep {...props} trialEligible={verified ? verified.trialEligible : undefined} />;
   else if (step === 'loja') body = <StoreStep {...props} />;
   else if (step === 'tipo') body = <TipoStep {...props} />;
   else if (step === 'voce') body = <YouStep {...props} />;

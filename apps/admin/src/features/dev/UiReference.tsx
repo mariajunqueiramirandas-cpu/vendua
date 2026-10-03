@@ -52,7 +52,8 @@ import { CodeInput } from '../../ui/CodeInput.tsx';
 import { CopyValue } from '../../ui/CopyValue.tsx';
 import { PaymentChip } from '../../ui/PaymentChip.tsx';
 import { PixCode } from '../../ui/PixCode.tsx';
-import { PlanCardSkeleton, PlanOption, prevOf } from '../../ui/PlanCard.tsx';
+import { PlanCardSkeleton } from '../../ui/PlanCard.tsx';
+import { PlanCards, PlanCompare, PlanTrialStrip } from '../../ui/PlanPicker.tsx';
 import { PlanLocked } from '../../ui/PlanLocked.tsx';
 import { SessionCtx } from '../../lib/session.ts';
 import { StepFrame } from '../../ui/StepFrame.tsx';
@@ -710,19 +711,23 @@ export default function UiReference() {
             </Card>
           </div>
         </div>
-        <div role="radiogroup" aria-label="planos" className="mt-4 grid gap-3 lg:grid-cols-3">
-          {SAMPLE_PLANS.map((p) => (
-            <PlanOption
-              key={p.id}
-              plan={p}
-              selected={plan === p.id}
-              onSelect={() => setPlan(p.id)}
-              address="sualoja.vendua.com.br"
-              prev={prevOf(SAMPLE_PLANS, p)}
-              badge={p.id === 'mirim' ? 'seu plano' : undefined}
-              trial
-            />
-          ))}
+        <div className="mt-6 space-y-6">
+          <PlanTrialStrip
+            plan={SAMPLE_PLANS[1]!}
+            selected={plan === 'bandeira'}
+            onPick={() => setPlan('bandeira')}
+          />
+          <PlanCards
+            plans={SAMPLE_PLANS}
+            selected={plan}
+            onSelect={setPlan}
+            address="sualoja.vendua.com.br"
+            badge={(p) => (p.id === 'mirim' ? 'seu plano' : undefined)}
+            trial
+            wide
+            className="pt-2"
+          />
+          <PlanCompare plans={SAMPLE_PLANS} trial current="mirim" />
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           <SessionCtx.Provider value={SAMPLE_SESSION}>

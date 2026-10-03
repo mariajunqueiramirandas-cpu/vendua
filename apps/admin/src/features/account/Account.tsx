@@ -48,14 +48,12 @@ import {
   perksAdded,
   perMonth,
   PerkText,
-  PlanBadge,
   PlanCardSkeleton,
-  PlanOption,
   PlanPerks,
-  prevOf,
   publicPlans,
   shortName,
 } from '../../ui/PlanCard.tsx';
+import { FEATURE_LABEL, PlanCards, PlanCompare, promiseOf } from '../../ui/PlanPicker.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { EMAIL_RE } from '../auth/pending.ts';
@@ -670,41 +668,59 @@ function Upsell({ next, a, onGo }: { next: Plan; a: AccountData; onGo: (() => vo
   return (
     <section
       aria-labelledby="upsell-t"
-      className="relative overflow-hidden rounded-lg bg-surface p-5 ring-2 ring-spark depth-2 md:p-6"
+      className="relative overflow-hidden rounded-xl bg-raised bg-linear-to-b from-spark-soft to-raised to-55% p-5 ring-2 ring-spark depth-3 md:p-7"
     >
-      <div
-        aria-hidden
-        className="absolute -bottom-16 -left-10 size-48 rounded-full bg-spark opacity-15 blur-3xl"
+      <Mascote
+        pose="publicar"
+        size={128}
+        className="absolute -bottom-2 right-3 hidden size-32 md:block"
       />
-      <div className="relative">
+      <div className="relative md:pr-36">
         <p className="t-caption flex flex-wrap items-center gap-2 font-semibold text-muted">
           <span className="inline-flex items-center gap-1.5">
-            <Sparkle weight="fill" className="size-4" aria-hidden /> o que o {next.name} adiciona
+            <Sparkle weight="fill" className="size-4" aria-hidden /> o próximo passo da loja
           </span>
-          {next.recommended ? <PlanBadge strong>Recomendado</PlanBadge> : null}
+          {next.recommended ? (
+            <span className="t-caption inline-flex -rotate-2 items-center rounded-full bg-spark px-2.5 py-0.5 font-display font-bold text-on-spark">
+              Recomendado
+            </span>
+          ) : null}
         </p>
-        <h2 id="upsell-t" className="t-title-2 mt-1">
-          Tudo do {a.plan.priceCents === null ? 'seu plano' : shortName(a.plan)}, mais:
+        <h2 id="upsell-t" className="t-title-1 mt-2 max-w-[28ch] text-balance">
+          {promiseOf(next)}
         </h2>
-        <p className="tnum t-body mt-1 font-semibold">{perMonth(next)}</p>
+        <p className="t-body mt-2 text-muted">
+          O <strong className="text-ink">{next.name}</strong> tem tudo do{' '}
+          {a.plan.priceCents === null ? 'seu plano' : shortName(a.plan)}, e mais:
+        </p>
         <ul className={cn('mt-4 grid gap-3', adds.length > 1 && 'md:grid-cols-2')}>
           {adds.map((p) => (
             <li key={p.key} className="flex gap-3">
-              <p.Icon weight="duotone" className="mt-0.5 size-6 shrink-0" aria-hidden />
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-surface ring-1 ring-line">
+                <p.Icon weight="duotone" className="size-5" aria-hidden />
+              </span>
               <span className="min-w-0">
                 <span className="block break-words font-medium">
                   <PerkText p={p} />
                 </span>
-                <span className="t-body block text-muted">{p.sub}</span>
+                <span className="t-caption block text-muted">{p.sub}</span>
               </span>
             </li>
           ))}
         </ul>
-        {onGo ? (
-          <Button variant="spark" className="mt-5 max-sm:w-full" onClick={onGo}>
-            mudar para o {next.name}
-          </Button>
-        ) : null}
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+          {next.priceCents !== null ? (
+            <p className="tnum font-display text-[1.75rem] font-semibold leading-9 tracking-tight">
+              {money(next.priceCents)}
+              <span className="t-body font-sans font-medium text-muted">/mês</span>
+            </p>
+          ) : null}
+          {onGo ? (
+            <Button variant="primary" size="lg" className="max-sm:w-full" onClick={onGo}>
+              mudar para o {shortName(next)}
+            </Button>
+          ) : null}
+        </div>
       </div>
     </section>
   );
@@ -969,6 +985,12 @@ function PlanSheet({
       );
   }
 
+  // a move up: what it opens, under the explanation
+  const gains =
+    mode === 'change' && plan && !same && (upgrade || current.priceCents === null)
+      ? perksAdded(plan, current, hostOf(a.address))
+      : [];
+
   const busy = change.isPending || start.isPending;
   const footer =
     mode === 'change' ? (
@@ -1016,28 +1038,45 @@ function PlanSheet({
       footer={
         <div className="space-y-3">
           {explain ? (
-            <p className="t-body rounded-md bg-sunken px-4 py-3" aria-live="polite">
-              {explain}
-            </p>
+            <div className="t-body rounded-md bg-sunken px-4 py-3" aria-live="polite">
+              <p>{explain}</p>
+              {gains.length ? (
+                <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="o que você ganha">
+                  {gains.map((p) => (
+                    <li
+                      key={p.key}
+                      className="t-caption inline-flex max-w-full items-start gap-1 rounded-md bg-surface px-2 py-1 font-semibold ring-1 ring-line"
+                    >
+                      <CheckCircle
+                        weight="fill"
+                        className="mt-px size-4 shrink-0 text-success"
+                        aria-hidden
+                      />
+                      <span className="min-w-0">
+                        <PerkText p={p} />
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
           ) : null}
           {footer}
         </div>
       }
     >
       <div className="space-y-5 pt-1">
-        <div role="radiogroup" aria-label="planos" className="space-y-3">
-          {offered.map((p) => (
-            <PlanOption
-              key={p.id}
-              plan={p}
-              selected={sel === p.id}
-              onSelect={() => setSel(p.id)}
-              address={hostOf(a.address)}
-              prev={prevOf(offered, p)}
-              badge={p.id === current.id && s?.status !== 'cancelled' ? 'seu plano' : undefined}
-            />
-          ))}
-        </div>
+        <PlanCards
+          plans={offered}
+          selected={sel}
+          onSelect={setSel}
+          address={hostOf(a.address)}
+          badge={(p) =>
+            p.id === current.id && s?.status !== 'cancelled' ? 'seu plano' : undefined
+          }
+          className="pt-4"
+        />
+        <PlanCompare plans={offered} current={s?.status !== 'cancelled' ? current.id : undefined} />
         {mode === 'start' ? (
           <>
             <Field label="Como pagar">
@@ -1080,14 +1119,6 @@ function PlanSheet({
   );
 }
 
-const FEATURE_LABEL: Record<PlanFeature, string> = {
-  kds: 'a Cozinha (KDS)',
-  printing: 'a impressão automática',
-  loyalty: 'o cartão fidelidade',
-  vendedor: 'o Vendedor',
-  customDomain: 'o domínio próprio',
-  customSite: 'o site personalizado',
-};
 const listPt = (xs: string[]) =>
   new Intl.ListFormat('pt-BR', { style: 'long', type: 'conjunction' }).format(xs);
 
