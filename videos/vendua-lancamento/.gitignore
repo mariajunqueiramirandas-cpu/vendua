@@ -1,0 +1,7 @@
+# raw ElevenLabs takes (eleven_v4; lines.tsv holds the prompts)
+audio/takes/
+# generated per run
+.hyperframes/frame-packets/
+snapshots/
+renders/*
+!renders/vendua-lancamento.mp4
