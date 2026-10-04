@@ -63,3 +63,21 @@ export function mpDeviceId(): string | null {
   const v = (globalThis as { MP_DEVICE_SESSION_ID?: unknown }).MP_DEVICE_SESSION_ID;
   return typeof v === 'string' && DEVICE_RE.test(v) ? v : null;
 }
+
+// the Kernel's MP_DEVICE_WAIT_MS: a phone loads the script in time, and a blocked one costs a beat
+const WAIT_MS = 1500;
+// a screen starts the SDK in an effect, which can run after the one that asks for its Pix
+const START_GRACE_MS = 150;
+
+/** For a request that issues a Pix: the fingerprint, waiting briefly while Mercado Pago's script
+ *  loads (a Pix that goes out without it stays without it). Null when nothing is loading it. */
+export async function mpDeviceReady(ms = WAIT_MS): Promise<string | null> {
+  const t0 = Date.now();
+  for (;;) {
+    const id = mpDeviceId();
+    if (id) return id;
+    const waited = Date.now() - t0;
+    if (waited >= ms || (loaded === null && waited >= START_GRACE_MS)) return null;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}

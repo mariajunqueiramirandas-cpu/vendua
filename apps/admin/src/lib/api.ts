@@ -1,5 +1,5 @@
 import type { PageTemplate, SectionInstance, StorefrontTokens } from '@vendua/templates';
-import { mpDeviceId } from './mercadopago.ts';
+import { mpDeviceId, mpDeviceReady } from './mercadopago.ts';
 
 // Typed client for /admin/v1 — cookie session, x-vendua-admin CSRF marker, and an
 // Idempotency-Key minted per call (a retried mutation reuses its own key).
@@ -18,7 +18,13 @@ export class ApiError extends Error {
   }
 }
 
-type Init = RequestInit & { idem?: string; raw?: boolean; timeoutMs?: number };
+type Init = RequestInit & {
+  idem?: string;
+  raw?: boolean;
+  timeoutMs?: number;
+  /** may issue a plan Pix: waits briefly for Mercado Pago's fingerprint */
+  pix?: boolean;
+};
 
 // A dropped connection or a timeout leaves a write's outcome unknown: Core may have applied it.
 // Inside one mutation (lib/query.ts `useMutation`), its retries resend the same request with the
@@ -40,7 +46,7 @@ export function withRetryScope<T>(owner: object, run: () => T): T {
 const timeoutFor = (mutating: boolean, raw: boolean) => (raw ? 60_000 : mutating ? 30_000 : 20_000);
 
 async function req<T>(path: string, init: Init = {}): Promise<T> {
-  const { idem, raw, timeoutMs, ...rest } = init;
+  const { idem, raw, timeoutMs, pix, ...rest } = init;
   const method = rest.method ?? 'GET';
   const mutating = method !== 'GET';
   // read before the first await: the scope is only set while the mutationFn starts
@@ -53,7 +59,7 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
     keys?.set(print, key);
   }
 
-  const device = mpDeviceId();
+  const device = pix ? await mpDeviceReady() : mpDeviceId();
   const ctl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(
@@ -119,6 +125,8 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
 const get = <T>(p: string) => req<T>(p);
 const send = <T>(method: string, p: string, body?: unknown) =>
   req<T>(p, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+const sendPix = <T>(method: string, p: string, body?: unknown) =>
+  req<T>(p, { method, pix: true, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
 
 // ── types ───────────────────────────────────────────────────────────────────
 
@@ -1705,7 +1713,7 @@ export const api = {
       document: string;
       segment?: string;
       accessCode?: string;
-    }) => send<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
+    }) => sendPix<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
   },
   session: () => get<Session>('/session'),
   switchStore: (storeId: string) =>
@@ -1984,20 +1992,20 @@ export const api = {
     method: 'card' | 'pix';
     payerEmail: string;
     payerDocument: string;
-  }) => send<Account>('POST', '/account/subscription', p),
+  }) => sendPix<Account>('POST', '/account/subscription', p),
   updateSubscription: (p: {
     planId?: string;
     method?: 'card' | 'pix';
     payerEmail?: string;
     payerDocument?: string;
-  }) => send<Account>('PATCH', '/account/subscription', p),
+  }) => sendPix<Account>('PATCH', '/account/subscription', p),
   cancelSubscription: () => send<Account>('POST', '/account/subscription/cancel'),
-  resumeSubscription: () => send<Account>('POST', '/account/subscription/resume'),
-  invoicePix: (id: string) => send<Account>('POST', `/account/invoices/${id}/pix`),
+  resumeSubscription: () => sendPix<Account>('POST', '/account/subscription/resume'),
+  invoicePix: (id: string) => sendPix<Account>('POST', `/account/invoices/${id}/pix`),
   /** a one-off Pix invoice for the pack (an open one is reused); the terms shown go along, so a
    *  pack repriced meanwhile answers AI_PACK_CHANGED instead of charging something else */
   buyAiPack: (pack: Pick<AiPack, 'id' | 'priceCents' | 'conversations'>) =>
-    send<Account & { invoiceId: string }>('POST', '/account/ai-packs', {
+    sendPix<Account & { invoiceId: string }>('POST', '/account/ai-packs', {
       packId: pack.id,
       priceCents: pack.priceCents,
       conversations: pack.conversations,
