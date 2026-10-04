@@ -14,7 +14,9 @@ spring up, the accent and the dot land, Duá climbs out and waves, the paragraph
 the two phones come up one after the other and the order push drops onto the front one; scrolling
 plays it back (Duá ducks, the letters sink) while the header's logo takes over. All CSS (`linear()`
 springs, scroll-driven animations); without support or with reduced motion it's the finished poster.
-Other pages: `/privacidade/` and the 404.
+Other pages: one per kind of shop (`/para/doceiras/`, `/para/marmitarias/`,
+`/para/hamburguerias/`, `/para/padarias/`), the guides (`/guias/` and four articles), `/sobre/`,
+`/privacidade/` and the 404. See "Search" below for why they exist and the rules they follow.
 
 ## Launch decisions the copy encodes
 
@@ -56,10 +58,11 @@ Other pages: `/privacidade/` and the 404.
   beyond the three plans (the +100-conversation pack is sold in the admin, not quoted here), and no
   date for the custom site. Plan names, prices, conversations and the trial live in `plans` in
   `src/lib/content.ts`.
-- **Prices follow the CRM by themselves.** On the home page, `src/lib/plans/live.svelte.ts` reads
-  `/precos.json` once. In production the site's nginx answers it from Core's public catalog
-  (`/site/v1/plans`, a minute of cache), and the plan cards, the comparison table, the calculator,
-  the trial strip, the FAQ and the closing line update in place.
+- **Prices follow the CRM by themselves.** On the home page (and in the closing of every inner
+  page), `src/lib/plans/live.svelte.ts` reads `/precos.json` once. In production the site's nginx
+  answers it from Core's public catalog (`/site/v1/plans`, a minute of cache), and the plan cards,
+  the comparison table, the calculator, the trial strip, the FAQ and the closing line update in
+  place.
   - It covers the price (any the CRM takes), the trial, Duá's conversations, `available`, the
     name and the features. The cards' perks, the "Sem …" line, the "Tudo do …" lines and the
     comparison table come from the feature flags, so a feature switched on or off in the CRM
@@ -117,6 +120,31 @@ Other pages: `/privacidade/` and the 404.
   italic or highlighted word in a headline, no identical card grids. Instrument Serif appears only
   inside the admin screens (the greeting), not in site copy. See `.claude/skills/frontend-design/`.
 
+## Search
+
+The site is found two ways: by the name, and by what a shop owner types ("cardápio digital para
+marmitaria", "como vender pelo WhatsApp"). Both have rules.
+
+- **The name without the accent.** People type "vendua", as in the address, and Google used to
+  correct it to another brand. Every indexable page carries JSON-LD (`src/lib/seo.ts`, rendered by
+  `Seo`): an `Organization` and a `WebSite` named Venduá with `alternateName` Vendua, plus what the
+  page is (`SoftwareApplication` with the open plans on the home, `Article` on guides, `FAQPage`
+  on the pages per kind of shop, `BreadcrumbList` on every inner page). `/sobre/` says it in words:
+  "Venduá, ou vendua". noindex pages carry none.
+- **Pages that answer a search.** `/para/<kind>/` (layout `NichePage`, each page only its words)
+  and `/guias/<slug>/` (layout `Article`, text styled by `Prose`). `src/lib/pages.ts` lists them:
+  the home's "para quem" tiles, the footer, `/guias/` and each page's closing read it, so a page
+  added there is linked from everywhere.
+- Their copy follows the launch decisions above, and states only what the admin does (its help
+  topics in `apps/admin/src/features/help/topics.tsx` are the source). Prices appear only in
+  `Closing`, which reads the live catalog like the home; the body names plans, never prices or
+  dates. A screen shows Bolos da Nena, so on the pages for other kitchens its `alt` says so.
+- `postbuild.ts` builds `sitemap.xml` from the build (every page without noindex) and fails the
+  build when an indexable page has a canonical that isn't its own URL, JSON-LD that doesn't parse,
+  or a title or description another page already uses.
+- Outside the repo, and the owner's to do: the domain verified in Google Search Console with the
+  sitemap submitted, and the Instagram profile linking to vendua.com.br.
+
 ## Settings
 
 - `PUBLIC_ADMIN_URL` (build time, default `https://painel.vendua.com.br`): the merchant admin the
@@ -151,14 +179,17 @@ Images are committed; `scripts/assets.ts` rebuilds them (no argument = all three
 
 ## Structure
 
-- `src/routes/`: home, `/privacidade/`, 404.
+- `src/routes/`: home, `para/<kind>/`, `guias/` and its articles, `/sobre/`, `/privacidade/`, 404.
 - `src/lib/sections/`: the five moments (`Hero`, `WhoFor`, `Demos`, `Plans`, `Night`).
 - `src/lib/demos/`: `DemoFrame` (example note, recomeçar, reduced motion, hydration) and the four
   demos (`Vendedor` (Duá's chat, tab "Duá"), `Pedido`, `Cozinha`, `Loja`, each with its parts in a folder). `Demos.svelte`
   opens one from `?demo=<id>` or `#demo-<id>`.
 - `src/lib/plans/`: the cards, the comparison table, the calculator and its cents math.
 - `src/lib/components/`: `Section`, device frames, `Screen`, `Notification`, `LockScreen`, `Dua`,
-  `Start` (the sign-up link), header, footer, SEO, 404.
+  `Start` (the sign-up link), header, footer, SEO, 404; for inner pages `Band` (the dawn intro),
+  `Closing` (the sunset call to action), `NextReads`, `KindArt` (the four shop drawings),
+  `NichePage`, `Article` and `Prose`.
+- `src/lib/pages.ts`: the inner pages; `src/lib/seo.ts`: the JSON-LD.
 - `src/lib/content.ts`: site facts and the store's numbers; `src/lib/screens.ts`: screen registry.
 - `src/lib/styles/`: `theme.css` (tokens) and `base.css` (layout and type classes).
 - `static/`: `screens/`, `dua/`, `assets/brand/`, `og.png`.
