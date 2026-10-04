@@ -67,8 +67,8 @@ Other pages: one per kind of shop (`/para/doceiras/`, `/para/marmitarias/`,
     name and the features. The cards' perks, the "Sem …" line, the "Tudo do …" lines and the
     comparison table come from the feature flags, so a feature switched on or off in the CRM
     shows.
-  - The request is first-party, like the visit counter, so the privacy page's "seu navegador não
-    conversa com nenhum outro serviço" stays true.
+  - The request is first-party, like the visit counter (the privacy page's "Tudo vem daqui
+    mesmo" names Google Analytics as the only other service, in a build that has it).
   - The built page carries `content.ts`'s values, which crawlers, readers without JavaScript and a
     Core that's down get. The build prerenders the same values as `/precos.json`, for the preview
     and the tests.
@@ -115,6 +115,14 @@ Other pages: one per kind of shop (`/para/doceiras/`, `/para/marmitarias/`,
 - Page views are counted first-party and cookieless (`src/lib/analytics.ts` → nginx
   `/analytics/v1/collect` → Core, ADR 0028); `/privacidade/` describes exactly what is kept, so
   keep the two in step.
+- **Google Analytics, for Google Ads** (owner, 2026-10-04: Google Ads' credit needs it, with the
+  sign-up confirmed on this domain). Only in a build with a Google tag id (see Settings), and only
+  for a visit the counter would count (no automation, no Do Not Track / GPC, not localhost).
+  `/loja-criada/` is the confirmation page: when a sign-up ends, the admin (in production, on
+  `painel.<storeDomain>`) sends the owner there instead of straight to its `/bem-vindo`; the page
+  sends GA4's `sign_up`, then forwards to `<PUBLIC_ADMIN_URL>/admin/bem-vindo` (2,5 s at most;
+  without JS, a meta refresh). noindex and linked from nowhere. Deploy the site before an admin
+  carrying that redirect, or new stores land on the 404.
 - No generic template chrome: no eyebrow labels above headings, no all-caps labels, no `A · B`
   meta strings, no numbers on lists that aren't steps, no sparkle bullets, no pulsing dots, no single
   italic or highlighted word in a headline, no identical card grids. Instrument Serif appears only
@@ -150,6 +158,9 @@ marmitaria", "como vender pelo WhatsApp"). Both have rules.
 - `PUBLIC_ADMIN_URL` (build time, default `https://painel.vendua.com.br`): the merchant admin the
   sign-up links point to. `vite.config.ts` bakes it into the build; the Playwright suite reads the
   same variable, so set it for both.
+- `PUBLIC_GA_ID` (`G-…`) and `PUBLIC_GOOGLE_ADS_ID` (`AW-…`), build time, both optional: the Google
+  tag (`src/lib/gtag.ts`). Unset, the site loads nothing from Google; set (Dokploy build args on the
+  site app), it loads gtag.js and `/privacidade/` switches to the copy that names Google Analytics.
 
 ## Run
 

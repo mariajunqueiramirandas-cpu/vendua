@@ -4,21 +4,25 @@
   import Header from '$lib/components/Header.svelte';
   import Seo from '$lib/components/Seo.svelte';
   import { site } from '$lib/content';
+  import { googleTag } from '$lib/gtag';
 
   // What the site keeps about a visitor, as a receipt (the same device the price block uses).
+  // A build with a Google tag (gtag.ts) says so everywhere below.
   const receipt = [
     { item: 'Dados pessoais', value: 'nenhum' },
     { item: 'Formulários', value: 'nenhum' },
-    { item: 'Cookies', value: 'nenhum' },
-    { item: 'Rastreadores', value: 'nenhum' },
+    { item: 'Cookies', value: googleTag ? 'do Google Analytics' : 'nenhum' },
+    { item: 'Rastreadores', value: googleTag ? 'Google Analytics' : 'nenhum' },
     { item: 'Contagem de visitas', value: 'anônima' },
-    { item: 'Serviços de terceiros', value: 'nenhum' },
+    { item: 'Serviços de terceiros', value: googleTag ? 'Google' : 'nenhum' },
   ];
 </script>
 
 <Seo
   title="Privacidade · Venduá"
-  description="O site da Venduá não pede dados, não usa cookies e não tem rastreadores. Tudo o que acontece quando você passa por aqui, em palavras simples."
+  description={googleTag
+    ? 'O site da Venduá não pede dados e usa o Google Analytics para medir visitas e anúncios. Tudo o que acontece quando você passa por aqui, em palavras simples.'
+    : 'O site da Venduá não pede dados, não usa cookies e não tem rastreadores. Tudo o que acontece quando você passa por aqui, em palavras simples.'}
   path="/privacidade/"
   noindex
 />
@@ -29,11 +33,20 @@
     <div class="wrap band-row">
       <div class="intro">
         <p class="t-label kicker">Privacidade</p>
-        <h1 class="t-display">Sua visita fica só com você.</h1>
-        <p class="t-lede">
-          Este site não pede nada, não usa cookies e não segue ninguém. Aqui está, em palavras
-          simples, tudo o que acontece quando você passa por aqui.
-        </p>
+        {#if googleTag}
+          <h1 class="t-display">Sua visita, explicada.</h1>
+          <p class="t-lede">
+            Este site não pede nada e não sabe quem você é. Ele usa o Google Analytics para medir as
+            visitas e os nossos anúncios. Aqui está, em palavras simples, tudo o que acontece quando
+            você passa por aqui.
+          </p>
+        {:else}
+          <h1 class="t-display">Sua visita fica só com você.</h1>
+          <p class="t-lede">
+            Este site não pede nada, não usa cookies e não segue ninguém. Aqui está, em palavras
+            simples, tudo o que acontece quando você passa por aqui.
+          </p>
+        {/if}
       </div>
       <div class="guard" aria-hidden="true">
         <span class="halo"></span>
@@ -54,7 +67,7 @@
         {/each}
         <div class="line total">
           <dt>Total</dt>
-          <dd><span class="chip">nada seu</span></dd>
+          <dd><span class="chip">{googleTag ? 'nada que diga quem você é' : 'nada seu'}</span></dd>
         </div>
       </dl>
       <p class="receipt-note">
@@ -71,13 +84,33 @@
         </p>
       </section>
 
-      <section aria-labelledby="cookies">
-        <h2 id="cookies" class="t-title-2">Sem cookies, sem rastreadores</h2>
-        <p>
-          Não usamos cookies. Também não há pixel de anúncio, mapa de cliques ou qualquer outro
-          rastreador. O site não grava nada no seu navegador.
-        </p>
-      </section>
+      {#if googleTag}
+        <section aria-labelledby="cookies">
+          <h2 id="cookies" class="t-title-2">Google Analytics</h2>
+          <p>
+            Usamos o Google Analytics, do Google, para saber como as pessoas chegam até aqui e
+            quantas criam uma loja depois de ver um anúncio nosso. Ele grava cookies no seu
+            navegador e manda para o Google as páginas que você abre, o site de onde você veio, o
+            tipo de aparelho e a sua região aproximada. Não mandamos o seu nome, o seu e-mail nem o
+            seu telefone.
+          </p>
+          <p>
+            Se o seu navegador pede para não ser rastreado, o Google Analytics nem é carregado. O
+            que o Google faz com esses dados segue a
+            <a href="https://policies.google.com/privacy" rel="noopener"
+              >política de privacidade do Google</a
+            >.
+          </p>
+        </section>
+      {:else}
+        <section aria-labelledby="cookies">
+          <h2 id="cookies" class="t-title-2">Sem cookies, sem rastreadores</h2>
+          <p>
+            Não usamos cookies. Também não há pixel de anúncio, mapa de cliques ou qualquer outro
+            rastreador. O site não grava nada no seu navegador.
+          </p>
+        </section>
+      {/if}
 
       <section aria-labelledby="contagem">
         <h2 id="contagem" class="t-title-2">Contamos visitas, não pessoas</h2>
@@ -102,10 +135,18 @@
 
       <section aria-labelledby="daqui">
         <h2 id="daqui" class="t-title-2">Tudo vem daqui mesmo</h2>
-        <p>
-          As letras, as imagens do app e o Duá são servidos pelo próprio vendua.com.br. Enquanto
-          você está aqui, seu navegador não conversa com nenhum outro serviço.
-        </p>
+        {#if googleTag}
+          <p>
+            As letras, as imagens do app e o Duá são servidos pelo próprio vendua.com.br. Enquanto
+            você está aqui, o único outro serviço com que seu navegador conversa é o Google
+            Analytics.
+          </p>
+        {:else}
+          <p>
+            As letras, as imagens do app e o Duá são servidos pelo próprio vendua.com.br. Enquanto
+            você está aqui, seu navegador não conversa com nenhum outro serviço.
+          </p>
+        {/if}
       </section>
 
       <section aria-labelledby="erros">
@@ -141,6 +182,12 @@
           nome, o seu e-mail e o seu WhatsApp. Esta página fala só do site. Dúvidas sobre os dados
           da sua loja chegam pelos endereços abaixo.
         </p>
+        {#if googleTag}
+          <p>
+            Quando o cadastro termina, o painel passa por uma página deste site por um instante,
+            para o Google Analytics contar a loja nova. Nenhum dado do cadastro vai junto.
+          </p>
+        {/if}
       </section>
 
       <section class="contact" aria-labelledby="contato">

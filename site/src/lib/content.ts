@@ -92,6 +92,9 @@ export const signupUrl = (plano?: string) => {
   return url.href;
 };
 
+/** Where /loja-criada/ sends a new store on: the admin's first steps. */
+export const welcomeUrl = new URL('/admin/bem-vindo', admin).href;
+
 export const signup = (plano?: PlanId) => {
   if (plano && !plans[plano].available) throw new Error(`${plano} is not open for sign-up`);
   return signupUrl(plano);
