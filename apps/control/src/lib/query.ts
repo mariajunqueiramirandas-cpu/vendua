@@ -54,6 +54,11 @@ export const qk = {
   menuImport: (id: string) => ['menu-import', id] as const,
   fleetIncidents: () => ['fleet-incidents'] as const,
   fleetSlug: (slug: string) => ['fleet-slug', slug] as const,
+  customers: () => ['customers'] as const,
+  customersOverview: () => ['customers', 'overview'] as const,
+  customer: (id: string) => ['customers', 'one', id] as const,
+  aiModels: () => ['ai-models'] as const,
+  aiUsage: (days: number) => ['ai-usage', days] as const,
 };
 
 type AuthListener = () => void;

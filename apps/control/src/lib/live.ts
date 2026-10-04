@@ -40,6 +40,8 @@ const REFRESH: Record<Exclude<ControlEventType, 'sync'>, string[]> = {
     'fleet-provisionings',
     'fleet-incidents',
     'lead',
+    // a store's row carries its probe and open incidents
+    'customers',
   ],
 };
 

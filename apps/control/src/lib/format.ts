@@ -5,7 +5,13 @@ export const fmtMoney = (cents: number | null | undefined) =>
   cents == null ? '—' : formatCents(cents);
 
 /** Agent spend is metered in USD (model/tool pricing), unlike BRL deal values — don't use fmtMoney. */
-export const fmtUsd = (usd: number) => `US$ ${usd.toFixed(2)}`;
+const usdFmt = (max: number) =>
+  new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: max });
+const usd2 = usdFmt(2);
+const usd4 = usdFmt(4);
+/** model spend is often under a cent per call, so sums below US$ 1 keep up to 4 decimals */
+export const fmtUsd = (usd: number) =>
+  `US$ ${(Math.abs(usd) > 0 && Math.abs(usd) < 1 ? usd4 : usd2).format(usd)}`;
 
 export const fmtUsdCents = (cents: number | null | undefined) =>
   cents == null ? '—' : fmtUsd(cents / 100);

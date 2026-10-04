@@ -1,10 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, SearchX } from 'lucide-react';
+import { LayoutDashboard, SearchX } from 'lucide-react';
 import { EmptyState } from '@/components/common.tsx';
 import { Page } from '@/components/Page.tsx';
 import { buttonVariants } from '@/components/ui/button.tsx';
 
-/** Unknown CRM route — named, with a way back, instead of a silent redirect to Início. */
+/** Unknown CRM route — named, with a way back, instead of a silent redirect to Visão. */
 export default function NotFoundPage() {
   const { pathname } = useLocation();
   return (
@@ -21,10 +21,10 @@ export default function NotFoundPage() {
         action={
           <>
             <Link to="/" className={buttonVariants({ variant: 'default', size: 'sm' })}>
-              <Home /> Início
+              <LayoutDashboard /> Visão
             </Link>
-            <Link to="/pipeline" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-              Pipeline
+            <Link to="/vendas" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+              Vendas
             </Link>
           </>
         }

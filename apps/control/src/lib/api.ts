@@ -1278,4 +1278,227 @@ const menuImports = {
     req<MenuImport>(`/imports/${encodeURIComponent(id)}/discard`, { method: 'POST' }),
 };
 
-export const api = Object.assign(apiBase, agentV2, fleet, { ...controlPlane, ...menuImports });
+// ── fleet console: the stores we serve, their revenue, activity and Duá ─────────
+
+export type CustomerRisk =
+  | 'cancelled'
+  | 'suspended'
+  | 'past_due'
+  | 'payment_pending'
+  | 'probe_failing'
+  | 'incident_open'
+  | 'whatsapp_down'
+  | 'ai_exhausted'
+  | 'trial_ending'
+  | 'no_orders_14d'
+  | 'admin_idle_14d';
+export type StoreWhatsappState =
+  'off' | 'connecting' | 'pairing' | 'open' | 'logged_out' | 'banned' | 'error';
+
+export interface CustomerRow {
+  id: string;
+  slug: string;
+  name: string;
+  createdAt: string;
+  status: 'active' | 'suspended';
+  /** the store's public address */
+  url: string;
+  plan: { id: string; name: string; priceCents: number };
+  subscription: {
+    status: SubscriptionStatus;
+    method: string | null;
+    currentPeriodEnd: string | null;
+    trialEndsAt: string | null;
+  } | null;
+  /** the plan's monthly price when the subscription is active or past due, else 0 */
+  mrrCents: number;
+  /** the oldest open invoice */
+  openInvoice: {
+    id: string;
+    number: number;
+    amountCents: number;
+    kind: string;
+    dueAt: string | null;
+  } | null;
+  /** orders not cancelled or refunded */
+  orders: { count30d: number; gmv30dCents: number; lastAt: string | null };
+  /** latest merchant_users.last_seen_at */
+  adminLastSeenAt: string | null;
+  ai: {
+    /** the plan has the Vendedor and is paid for or trialing */
+    included: boolean;
+    period: 'month' | 'trial' | null;
+    limit: number;
+    used: number;
+    packRemaining: number;
+    remaining: number;
+    /** USD, model.responded costs over 30 days */
+    spend30dUsd: number;
+  };
+  whatsapp: { state: StoreWhatsappState; stateChangedAt: string } | null;
+  printing: { devices: number; lastSeenAt: string | null } | null;
+  storefront: { probe: 'ok' | 'failing' | 'unknown'; openIncidents: number };
+  /** most severe first */
+  risk: CustomerRisk[];
+}
+
+export interface CustomersOverview {
+  asOf: string;
+  revenue: {
+    mrrCents: number;
+    byPlan: { planId: string; name: string; stores: number; mrrCents: number }[];
+    payingStores: number;
+    trialing: number;
+    pastDue: number;
+    openInvoices: { count: number; amountCents: number };
+    trialsEndingSoon: {
+      id: string;
+      slug: string;
+      name: string;
+      plan: string;
+      trialEndsAt: string;
+    }[];
+    newStores30d: number;
+    cancelled30d: number;
+  };
+  activity: {
+    orders30d: number;
+    gmv30dCents: number;
+    /** stores with at least one order in 30 days */
+    activeStores30d: number;
+    /** oldest first, one entry per São Paulo day, 30 entries */
+    daily: { day: string; orders: number; gmvCents: number }[];
+  };
+  ai: {
+    conversationsThisMonth: number;
+    spend30dUsd: number;
+    byModel: { provider: string; model: string; calls: number; usd: number }[];
+    exhaustedStores: number;
+    top: {
+      id: string;
+      slug: string;
+      name: string;
+      used: number;
+      limit: number;
+      spend30dUsd: number;
+    }[];
+  };
+  /** up to 20, most severe first */
+  atRisk: { id: string; slug: string; name: string; risk: CustomerRisk[] }[];
+  totals: { stores: number; active: number; suspended: number };
+}
+
+export interface CustomerDetail {
+  store: CustomerRow;
+  ai: {
+    included: boolean;
+    period: 'month' | 'trial' | null;
+    limit: number;
+    used: number;
+    packRemaining: number;
+    packExpiresAt: string | null;
+    remaining: number;
+    resetsAt: string | null;
+  };
+  /** oldest first, 30 São Paulo days */
+  daily: { day: string; orders: number; gmvCents: number; aiUsd: number; conversations: number }[];
+  /** latest 12 */
+  invoices: {
+    id: string;
+    number: number;
+    kind: string;
+    status: 'open' | 'paid' | 'failed' | 'void';
+    amountCents: number;
+    createdAt: string;
+    dueAt: string | null;
+    paidAt: string | null;
+  }[];
+  users: { id: string; name: string | null; role: string; lastSeenAt: string | null }[];
+  printers: { id: string; name: string; lastSeenAt: string | null }[];
+  whatsapp: {
+    state: StoreWhatsappState;
+    connectedAt: string | null;
+    stateChangedAt: string;
+  } | null;
+  storefront: {
+    probe: 'ok' | 'failing' | 'unknown';
+    lastProbeAt: string | null;
+    openIncidents: number;
+    kernel: string | null;
+  };
+}
+
+export type ModelTier = 'fast' | 'strong';
+export type ModelProviderId = 'anthropic' | 'openrouter' | 'openai' | 'gemini';
+export interface ModelRouteSetting {
+  provider: ModelProviderId;
+  model: string;
+  /** must be true: the gateway refuses routes without zero data retention */
+  zdr: boolean;
+  pricing?: {
+    inputPerMTok: number;
+    outputPerMTok: number;
+    cacheReadPerMTok?: number;
+    cacheWritePerMTok?: number;
+  };
+  timeoutMs?: number;
+}
+export type TierRoutesSetting = Partial<Record<ModelTier, ModelRouteSetting[]>>;
+/** control_settings `agent_runtime.routes` */
+export interface ModelRoutesSetting {
+  default?: TierRoutesSetting;
+  agents?: Record<string, TierRoutesSetting>;
+  tenants?: Record<string, TierRoutesSetting>;
+}
+/** control_settings `agent_runtime.budgets`: USD per day per budget key */
+export interface AiBudgetsSetting {
+  [budgetKey: string]: number | Record<string, Record<string, number>> | undefined;
+  tenants?: Record<string, Record<string, number>>;
+}
+export interface AiModelsView {
+  routes: ModelRoutesSetting;
+  /** settings: control_settings row; env: AGENT_MODEL_ROUTES fallback; none: Duá can't answer */
+  routesSource: 'settings' | 'env' | 'none';
+  budgets: AiBudgetsSetting;
+  providers: { id: ModelProviderId; configured: boolean; secretName: string }[];
+  agents: { id: string; label: string; budgetKey: string | null; defaultTier: ModelTier }[];
+}
+export interface AiUsageView {
+  days: 7 | 30;
+  totals: {
+    calls: number;
+    usd: number;
+    conversations: number;
+    inputTokens: number;
+    outputTokens: number;
+  };
+  byModel: { provider: string; model: string; calls: number; usd: number }[];
+  byStore: {
+    id: string;
+    slug: string;
+    name: string;
+    calls: number;
+    usd: number;
+    conversations: number;
+    /** the allowance right now (not over the period) */
+    used: number;
+    limit: number;
+    remaining: number;
+    /** the store's daily USD limit for the Vendedor budget key, null = no cap */
+    dailyLimitUsd: number | null;
+  }[];
+}
+
+const fleetConsole = {
+  customers: () => req<{ asOf: string; stores: CustomerRow[] }>('/customers'),
+  customersOverview: () => req<CustomersOverview>('/customers/overview'),
+  customer: (id: string) => req<CustomerDetail>(`/customers/${encodeURIComponent(id)}`),
+  aiModels: () => req<AiModelsView>('/ai/models'),
+  aiUsage: (days: 7 | 30) => req<AiUsageView>(`/ai/usage?days=${days}`),
+};
+
+export const api = Object.assign(apiBase, agentV2, fleet, {
+  ...controlPlane,
+  ...menuImports,
+  ...fleetConsole,
+});

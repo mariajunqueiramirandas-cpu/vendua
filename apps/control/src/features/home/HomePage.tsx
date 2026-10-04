@@ -23,7 +23,7 @@ function kpis(s: Stats): Kpi[] {
     {
       label: 'tarefas atrasadas',
       value: s.overdueTasks,
-      to: '/?t=tarefas',
+      to: '/vendas?t=tarefas',
       tone: s.overdueTasks ? 'bad' : undefined,
       hint: `${s.openTasks} abertas`,
     },
@@ -42,7 +42,7 @@ function kpis(s: Stats): Kpi[] {
   ];
 }
 
-/** Hoje: "what do I do now?" — `?t=tarefas` swaps the body for the full task list. */
+/** Vendas (the sales hub's Hoje): "what do I do now?" — `?t=tarefas` swaps the body for the full task list. */
 export default function HomePage() {
   const [sp, setSp] = useSearchParams();
   const tab = sp.get('t') === 'tarefas' ? 'tarefas' : 'hoje';
@@ -59,14 +59,14 @@ export default function HomePage() {
 
   return (
     <Page
-      title="Hoje"
+      title="Vendas"
       actions={
         <Segmented
           size="sm"
           value={tab}
           onChange={(v) => setSp(v === 'tarefas' ? { t: 'tarefas' } : {})}
           options={[
-            ['hoje', 'visão geral'],
+            ['hoje', 'hoje'],
             [
               'tarefas',
               <>

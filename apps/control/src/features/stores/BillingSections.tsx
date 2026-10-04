@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Globe, SearchX } from 'lucide-react';
+import { Globe } from 'lucide-react';
 import type { BillingStore, SiteRequestStatus } from '@/lib/api.ts';
 import { fmtDate, fmtDay, fmtMoney } from '@/lib/format.ts';
-import { EmptyState, Fact, LoadingRows } from '@/components/common.tsx';
+import { Fact } from '@/components/common.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Checkbox } from '@/components/ui/controls.tsx';
 import { Field, Select, Textarea } from '@/components/ui/input.tsx';
-import { ResponsiveSheet } from '@/components/ui/overlay.tsx';
 import {
   DOMAIN_STATUS,
   METHOD_LABEL,
@@ -14,7 +13,6 @@ import {
   SheetSection,
   SITE_STATUS,
   SITE_STATUSES,
-  StoreLink,
   SUB_STATUS,
   Tag,
 } from './bits.tsx';
@@ -82,8 +80,8 @@ function OpenInvoice({
         {first
           ? 'A loja está fechada até o primeiro pagamento. Confirmar abre a loja e inicia o mês do plano.'
           : trial
-            ? `O teste grátis vai até ${fmtDay(sub.trialEndsAt ?? sub.currentPeriodEnd)}. Confirmar dá como pago o primeiro mês, que começa quando o teste acaba.`
-            : `Em aberto desde ${fmtDay(inv.dueAt)}. Confirmar dá o mês seguinte como pago.`}
+            ? `Confirmar dá como pago o primeiro mês, que começa quando o teste acaba (${fmtDay(sub.trialEndsAt ?? sub.currentPeriodEnd)}).`
+            : `Confirmar dá o mês seguinte como pago. Em aberto desde ${fmtDay(inv.dueAt)}`}
       </p>
       <label className="flex cursor-pointer items-start gap-2.5 text-sm">
         <Checkbox
@@ -256,36 +254,13 @@ function SiteRequest({ s }: { s: BillingStore }) {
   );
 }
 
-export function StoreSheet({
-  store,
-  open,
-  loading,
-  onClose,
-}: {
-  store: BillingStore | null;
-  open: boolean;
-  loading: boolean;
-  onClose: () => void;
-}) {
+/** Subscription, custom domain and site request of one store, with the staff actions on each. */
+export function BillingSections({ store }: { store: BillingStore }) {
   return (
-    <ResponsiveSheet
-      open={open}
-      onOpenChange={(o) => !o && onClose()}
-      title={store?.name ?? (loading ? 'carregando…' : 'loja')}
-      description={store ? <StoreLink store={store} /> : undefined}
-      width="max-w-lg"
-    >
-      {store ? (
-        <div className="flex flex-col gap-4 pt-1">
-          <Billing s={store} />
-          <Domain s={store} />
-          <SiteRequest s={store} />
-        </div>
-      ) : loading ? (
-        <LoadingRows rows={5} />
-      ) : (
-        <EmptyState icon={SearchX} title="loja não encontrada" hint="ela pode ter saído da lista" />
-      )}
-    </ResponsiveSheet>
+    <div className="flex flex-col gap-4">
+      <Billing s={store} />
+      <Domain s={store} />
+      <SiteRequest s={store} />
+    </div>
   );
 }

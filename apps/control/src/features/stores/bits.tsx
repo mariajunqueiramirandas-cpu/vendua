@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type {
-  BillingStore,
   CustomDomainStatus,
   IncidentSeverity,
   MpStatus,
@@ -86,7 +85,13 @@ export function Tag<K extends string>({
 }
 
 /** Slug that opens the live store in a new tab — never swallows the row click on its own. */
-export function StoreLink({ store, className }: { store: BillingStore; className?: string }) {
+export function StoreLink({
+  store,
+  className,
+}: {
+  store: { url: string; slug: string };
+  className?: string | undefined;
+}) {
   return (
     <a
       href={store.url}

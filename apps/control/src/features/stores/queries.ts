@@ -12,6 +12,28 @@ import { errorMessage, qk } from '@/lib/query.ts';
 export const useBillingStores = () =>
   useQuery({ queryKey: qk.billingStores(), queryFn: api.billingStores, select: (r) => r.stores });
 
+export const useCustomers = () =>
+  useQuery({ queryKey: qk.customers(), queryFn: api.customers, select: (r) => r.stores });
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isStoreId = (id: string) => UUID.test(id);
+
+/** A malformed id never reaches Core — the page shows "não encontrada" for it directly. */
+export const useCustomer = (id: string) =>
+  useQuery({
+    queryKey: qk.customer(id),
+    queryFn: () => api.customer(id),
+    enabled: isStoreId(id),
+  });
+
+/** One store's billing row (domain, site request, open invoice) out of the shared list. */
+export const useBillingStore = (id: string) =>
+  useQuery({
+    queryKey: qk.billingStores(),
+    queryFn: api.billingStores,
+    select: (r) => r.stores.find((s) => s.tenantId === id) ?? null,
+  });
+
 export const useControlPlans = () =>
   useQuery({ queryKey: qk.controlPlans(), queryFn: api.controlPlans, select: (r) => r.plans });
 
@@ -37,7 +59,10 @@ export function useMarkInvoicePaid() {
     mutationFn: (id: string) => api.markInvoicePaid(id),
     onSuccess: () => toast.success('pagamento confirmado'),
     onError: (e) => toast.error(`não confirmou: ${errorMessage(e)}`),
-    onSettled: () => void qc.invalidateQueries({ queryKey: qk.billingStores() }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.billingStores() });
+      void qc.invalidateQueries({ queryKey: qk.customers() });
+    },
   });
 }
 
@@ -81,6 +106,7 @@ export function usePatchPlan() {
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.controlPlans() });
       void qc.invalidateQueries({ queryKey: qk.billingStores() });
+      void qc.invalidateQueries({ queryKey: qk.customers() });
     },
   });
 }
