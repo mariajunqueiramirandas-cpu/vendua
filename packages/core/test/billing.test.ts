@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
@@ -787,9 +788,41 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     } finally {
       fake.platformPix = realPix;
     }
-    // the held invoice gets its Pix, carrying the document
+    // the held invoice gets its Pix, carrying the document — in its key too, so a retry after a
+    // rollback that changed the document can't get the old Pix back
     expect(seen.map((r) => r.payerDocument)).toEqual(['39053344705']);
+    const digest = createHash('sha256').update('39053344705').digest('hex').slice(0, 12);
+    expect(seen[0]!.idempotencyKey).toBe(`invoice:${held.id}:1:${digest}`);
     expect((await invoices(s.id))[1]!.pix_copy_paste).toEqual(expect.any(String));
+  });
+
+  test('saving the CPF/CNPJ never fails on a held renewal that has no email to bill', async () => {
+    const s = await store('mudo', 'mirim', 'mudo@example.com');
+    await sql`update merchant_users set prefs = '{"emailInvoices": false}' where tenant_id = ${s.id}`;
+    const st = await s.owner('POST', '/account/subscription', {
+      planId: 'mirim',
+      method: 'pix',
+      payerEmail: 'mudo@example.com',
+      payerDocument: '529.982.247-25',
+    });
+    await payInvoice(st.body.invoices[0].id);
+    await sql`update subscriptions set payer_document = null where tenant_id = ${s.id}`;
+    await sql`update subscriptions set current_period_end = ${new Date(Date.now() + 2 * DAY)} where tenant_id = ${s.id}`;
+    await tick();
+    expect((await invoices(s.id))[1]).toMatchObject({ status: 'open', pix_copy_paste: null });
+    await sql`update subscriptions set payer_email = null where tenant_id = ${s.id}`;
+    await sql`update merchant_users set email = null where tenant_id = ${s.id}`;
+    await sql`update store_settings set email = null where tenant_id = ${s.id}`;
+
+    const saved = await s.owner('PATCH', '/account/subscription', {
+      payerDocument: '390.533.447-05',
+    });
+    expect(saved.status).toBe(200);
+    expect(
+      (await sql`select payer_document from subscriptions where tenant_id = ${s.id}`)[0]!
+        .payer_document,
+    ).toBe('39053344705');
+    expect((await invoices(s.id))[1]!.pix_copy_paste).toBeNull();
   });
 
   test('pix renewal: reminders once each, past_due, paid again → active', async () => {

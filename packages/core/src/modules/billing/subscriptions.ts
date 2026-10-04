@@ -509,22 +509,28 @@ export async function reissuePix(
 }
 
 /**
- * The payer's CPF/CNPJ just changed: each open Pix invoice gets a Pix that carries it — one held
- * for want of a document is issued, a live one is replaced (MP scores the payer's document when
- * the money arrives). MP down keeps what there was; the next Pix carries it.
+ * The payer's CPF/CNPJ just changed: a renewal held for want of one gets its Pix, and a live Pix
+ * is replaced (MP scores the payer's document when the money arrives). MP down keeps what there
+ * was; the next Pix carries it.
  */
 export async function reissueOpenPix(ctx: BillingCtx, tx: Sql, tenantId: string, now: Date) {
   const open = await tx<{ id: string }[]>`
-    select id from invoices where tenant_id = ${tenantId} and status = 'open' and method = 'pix'
-      -- a pack left unpaid stays as it was: nobody asked for its Pix again
-      and (kind <> 'ai_pack' or (pix_copy_paste is not null and pix_expires_at > ${now}))
+    select i.id from invoices i join subscriptions s on s.tenant_id = i.tenant_id
+    where i.tenant_id = ${tenantId} and i.status = 'open' and i.method = 'pix'
+      and ((i.pix_copy_paste is not null and i.pix_expires_at > ${now})
+        -- a renewal held for want of one; a first charge (an access code's is the team's) and an
+        -- unpaid pack stay as they were: nobody asked for their Pix
+        or (i.kind = 'period' and s.status in ('active', 'past_due', 'trialing')))
   `;
   for (const { id } of open)
     await reissuePix(ctx, tx, tenantId, id, now, { force: true }).catch((err: unknown) => {
-      // both throw before anything is written: the transaction goes on
+      // all three throw before anything is written: the transaction goes on, and the saved
+      // document reaches the next Pix
       if (
         err instanceof HttpError &&
-        (err.code === 'BILLING_PROVIDER_ERROR' || err.code === 'INVOICE_NOT_OPEN')
+        (err.code === 'BILLING_PROVIDER_ERROR' ||
+          err.code === 'INVOICE_NOT_OPEN' ||
+          err.code === 'PAYER_EMAIL_REQUIRED')
       )
         return;
       throw err;

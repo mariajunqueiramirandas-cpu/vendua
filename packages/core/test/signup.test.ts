@@ -820,6 +820,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         await sql`select action from audit_log where tenant_id = ${id} and action = 'store.signup'`;
       expect(audit).toHaveLength(1);
 
+      // a replay from before signup asked for the CPF/CNPJ fills it in; its invoice is still the
+      // team's, so nothing is asked of MP even once the platform can take a Pix
+      await sql`update subscriptions set payer_document = null where tenant_id = ${id}`;
+      fake.platformConfigured = true;
+      const resumed = await signup(token, slug, { accessCode: 'abre-sem-mp-1234' }, other);
+      fake.platformConfigured = false;
+      expect(resumed.body.next).toEqual({ kind: 'manual', invoiceId });
+      expect(
+        (await sql`select payer_document from subscriptions where tenant_id = ${id}`)[0]!
+          .payer_document,
+      ).toEqual(expect.any(String));
+      expect(
+        (await sql`select pix_copy_paste from invoices where id = ${invoiceId}`)[0]!.pix_copy_paste,
+      ).toBeNull();
+
       // the CRM sees the invoice, and marking it paid activates the plan and opens the store
       const control = (method: string, path: string, key = crypto.randomUUID()) =>
         call(method, path, method === 'GET' ? undefined : {}, {

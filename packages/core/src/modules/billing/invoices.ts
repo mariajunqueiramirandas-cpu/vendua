@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
@@ -224,8 +225,12 @@ export async function requestPix(
     statementDescriptor: 'Venduá',
     deviceId: o.deviceId ?? null,
     externalReference: inv.id,
-    // a retried request (its tx rolled back) repeats the attempt number → the same Pix
-    idempotencyKey: `invoice:${inv.id}:${attempt}`,
+    // a retried request (its tx rolled back) repeats the attempt number → the same Pix, unless the
+    // retry carries another CPF/CNPJ: that one needs a Pix of its own
+    idempotencyKey: `invoice:${inv.id}:${attempt}:${createHash('sha256')
+      .update(o.payer.document ?? '')
+      .digest('hex')
+      .slice(0, 12)}`,
     notificationUrl: hookUrl(o.origin),
     applicationFeeCents: 0,
     expiresAt,
