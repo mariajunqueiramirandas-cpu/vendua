@@ -159,8 +159,8 @@ marmitaria", "como vender pelo WhatsApp"). Both have rules.
   sign-up links point to. `vite.config.ts` bakes it into the build; the Playwright suite reads the
   same variable, so set it for both.
 - `PUBLIC_GA_ID` (`G-…`) and `PUBLIC_GOOGLE_ADS_ID` (`AW-…`), build time, both optional: the Google
-  tag (`src/lib/gtag.ts`). Unset, the site loads nothing from Google; set (Dokploy build args on the
-  site app), it loads gtag.js and `/privacidade/` switches to the copy that names Google Analytics.
+  tag (`src/lib/gtag.ts`). Unset, the site loads nothing from Google; set (in the Dokploy `.env`,
+  which `docker-compose.yml` passes to the site's build), it loads gtag.js and `/privacidade/` switches to the copy that names Google Analytics.
 
 ## Run
 
