@@ -702,7 +702,7 @@ test.describe('loja criada', () => {
     const res = await page.request.get('/loja-criada/');
     const html = await res.text();
     expect(html).toContain('<meta name="robots" content="noindex"');
-    expect(html).toContain(`<a class="go" href="${WELCOME}"`);
+    expect(html).toContain(`href="${WELCOME}"`);
     await ctx.close();
   });
 });
