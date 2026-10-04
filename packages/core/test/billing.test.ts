@@ -460,6 +460,32 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(fake.subscriptions.size - before).toBe(1);
   });
 
+  test('a pending card plan with no CPF/CNPJ is refused Pix before MP drops the card', async () => {
+    const s = await store('troca', 'mirim', 'bia@example.com');
+    await s.owner('POST', '/account/subscription', {
+      planId: 'mirim',
+      method: 'card',
+      payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
+    });
+    const pre = (await sub(s.id)).provider_subscription_id;
+    await sql`update subscriptions set payer_document = null where tenant_id = ${s.id}`;
+    const r = await s.owner('PATCH', '/account/subscription', { method: 'pix' });
+    expect(r.status).toBe(422);
+    expect(r.body.error.code).toBe('PAYER_DOCUMENT_REQUIRED');
+    expect(fake.subscriptions.get(pre)!.status).not.toBe('cancelled');
+    expect(await sub(s.id)).toMatchObject({ method: 'card', provider_subscription_id: pre });
+
+    // the document in the same request lets the switch through
+    const ok = await s.owner('PATCH', '/account/subscription', {
+      method: 'pix',
+      payerDocument: '390.533.447-05',
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body.subscription).toMatchObject({ method: 'pix', status: 'pending' });
+    expect(fake.subscriptions.get(pre)!.status).toBe('cancelled');
+  });
+
   const hook = (id: string) =>
     handleBillingWebhook({ sql: appSql, provider: fake, notify } as never, {
       kind: 'payment',

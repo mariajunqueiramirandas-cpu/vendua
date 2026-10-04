@@ -929,6 +929,14 @@ export async function changeSubscription(
   }
 
   if (o.method && o.method !== sub.method) {
+    // a pending plan's first Pix goes out with this switch: refuse it before MP drops the card,
+    // which no rollback brings back
+    if (
+      o.method === 'pix' &&
+      sub.status === 'pending' &&
+      !(await payerFor(tx, tenantId, sub.payer_email))?.document
+    )
+      throw documentRequired();
     const oldPreapproval = sub.method === 'card' ? sub.provider_subscription_id : null;
     await tx`
       update subscriptions set method = ${o.method}, provider_subscription_id = null,
