@@ -43,8 +43,11 @@ const themeSwitch: PostcssPlugin = {
 export default defineConfig({
   plugins: [sveltekit()],
   css: { postcss: { plugins: [themeSwitch] } },
-  // the sign-up link target (src/lib/content.ts); set PUBLIC_ADMIN_URL at build time to change it
+  // the sign-up link target (src/lib/content.ts); set PUBLIC_ADMIN_URL at build time to change it.
+  // PUBLIC_GA_ID / PUBLIC_GOOGLE_ADS_ID switch Google Analytics on (src/lib/gtag.ts); unset = off
   define: {
     'import.meta.env.PUBLIC_ADMIN_URL': JSON.stringify(process.env.PUBLIC_ADMIN_URL ?? ''),
+    'import.meta.env.PUBLIC_GA_ID': JSON.stringify(process.env.PUBLIC_GA_ID ?? ''),
+    'import.meta.env.PUBLIC_GOOGLE_ADS_ID': JSON.stringify(process.env.PUBLIC_GOOGLE_ADS_ID ?? ''),
   },
 });

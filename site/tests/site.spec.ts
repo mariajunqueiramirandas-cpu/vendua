@@ -682,3 +682,27 @@ test.describe('rede', () => {
     expect(fontBytes, report).toBeLessThanOrEqual(78_000);
   });
 });
+
+test.describe('loja criada', () => {
+  const WELCOME = new URL('/admin/bem-vindo', ADMIN).href;
+
+  test('a confirmação do cadastro segue para os primeiros passos no painel', async ({ page }) => {
+    await page.route(WELCOME, (r) => r.fulfill({ contentType: 'text/html', body: 'painel' }));
+    // automation never loads the Google tag (gtag.ts), so the page goes on at once
+    await page.goto('/loja-criada/');
+    await page.waitForURL(WELCOME);
+  });
+
+  test('sem JavaScript, segue do mesmo jeito; e fica fora da busca', async ({ browser }) => {
+    const ctx = await browser.newContext({ javaScriptEnabled: false });
+    const page = await ctx.newPage();
+    await page.route(WELCOME, (r) => r.fulfill({ contentType: 'text/html', body: 'painel' }));
+    await page.goto('/loja-criada/', { waitUntil: 'commit' });
+    await page.waitForURL(WELCOME);
+    const res = await page.request.get('/loja-criada/');
+    const html = await res.text();
+    expect(html).toContain('<meta name="robots" content="noindex"');
+    expect(html).toContain(`href="${WELCOME}"`);
+    await ctx.close();
+  });
+});

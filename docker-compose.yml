@@ -313,6 +313,9 @@ services:
       args:
         # where "Criar minha loja" goes: the admin's own domain (VENDUA_ADMIN_HOST), https
         PUBLIC_ADMIN_URL: ${PUBLIC_ADMIN_URL:-https://painel.vendua.com.br}
+        # Google Analytics (G-…) / Google Ads (AW-…) tag ids (site/src/lib/gtag.ts); empty = no Google tag
+        PUBLIC_GA_ID: ${PUBLIC_GA_ID:-}
+        PUBLIC_GOOGLE_ADS_ID: ${PUBLIC_GOOGLE_ADS_ID:-}
     restart: unless-stopped
     logging:
       driver: json-file

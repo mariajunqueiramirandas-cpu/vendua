@@ -192,10 +192,15 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
     }
   }, [plans.data, patch]);
 
+  const storeDomain = plans.data?.storeDomain;
   const finish = useCallback(() => {
     clearDraft();
-    nav('/bem-vindo', { replace: true });
-  }, [nav]);
+    // in production (the admin on painel.<storeDomain>) the way to the first steps passes the site's
+    // /loja-criada/: Google Ads counts sign-ups on the site's own domain (site/src/lib/gtag.ts)
+    if (storeDomain && window.location.hostname.endsWith(`.${storeDomain}`))
+      window.location.replace(`https://${storeDomain}/loja-criada/`);
+    else nav('/bem-vindo', { replace: true });
+  }, [nav, storeDomain]);
   const toPronto = useCallback(() => go('pronto'), [go]);
 
   const step = d.step;

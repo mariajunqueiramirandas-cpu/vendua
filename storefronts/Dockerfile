@@ -37,6 +37,9 @@ COPY site site
 COPY storefronts storefronts
 # the site's sign-up links point at the merchant admin (site/README.md); unset = its default
 ARG PUBLIC_ADMIN_URL
+# Google Analytics (G-…) and Google Ads (AW-…) tag ids for the site (site/src/lib/gtag.ts); unset = no Google tag
+ARG PUBLIC_GA_ID
+ARG PUBLIC_GOOGLE_ADS_ID
 RUN bun --filter @vendua/site build \
     && bun --filter './storefronts/*' build
 
