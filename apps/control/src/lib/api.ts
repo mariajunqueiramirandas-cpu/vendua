@@ -954,6 +954,8 @@ export interface Incident {
 
 const fleet = {
   billingStores: () => req<{ stores: BillingStore[] }>('/billing/stores'),
+  billingStore: (tenantId: string) =>
+    req<{ stores: BillingStore[] }>(`/billing/stores?tenant=${encodeURIComponent(tenantId)}`),
   controlPlans: () => req<{ plans: ControlPlan[] }>('/plans'),
   patchPlan: (id: string, patch: PlanPatch) =>
     req<{ plan: ControlPlan }>(`/plans/${encodeURIComponent(id)}`, {

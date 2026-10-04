@@ -313,6 +313,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     await responded(A.id, 'anthropic', `claude-cc-${nonce}`, 0.01, ago(3600_000));
     await responded(A.id, 'openrouter', `or-cc-${nonce}`, 0.02, ago(2 * DAY));
     await responded(A.id, 'openrouter', `or-cc-${nonce}`, 0.5, ago(10 * DAY));
+    // inside a rolling 30 days, but on the São Paulo day before the charts' first bar
+    await responded(A.id, 'openrouter', `or-cc-${nonce}`, 0.004, ago(30 * DAY - 60_000));
     await sql`
       insert into store_whatsapp (tenant_id, wanted, state, detail, state_changed_at)
       values (${A.id}, true, 'error', 'socket_closed', now() - interval '2 hours')
@@ -450,6 +452,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     }
   });
 
+  test('billing/stores?tenant= reads one store, whatever the list cap', async () => {
+    const one = await call('GET', `/control/v1/billing/stores?tenant=${A.id.toUpperCase()}`);
+    expect(one.status).toBe(200);
+    expect(one.body.stores).toHaveLength(1);
+    expect(one.body.stores[0]).toMatchObject({ tenantId: A.id });
+    expect(one.body.stores[0].openInvoice).toMatchObject({ id: openInvoiceId });
+    expect((await call('GET', '/control/v1/billing/stores?tenant=nope')).status).toBe(400);
+  });
+
   test('the detail: daily series, invoices, admins, printers, WhatsApp and storefront', async () => {
     const res = await call('GET', `/control/v1/customers/${A.id.toUpperCase()}`);
     expect(res.status).toBe(200);
@@ -460,6 +471,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     expect(d.daily.reduce((n: number, x: any) => n + x.gmvCents, 0)).toBe(7500);
     expect(d.daily.reduce((n: number, x: any) => n + x.conversations, 0)).toBe(3);
     expect(d.daily.reduce((n: number, x: any) => n + x.aiUsd, 0)).toBeCloseTo(0.53, 6);
+    // the KPI is the sum of its bars
+    expect(d.store.ai.spend30dUsd).toBeCloseTo(0.53, 6);
     expect(d.daily[0].day < d.daily[29].day).toBe(true);
     expect(d.daily[29].day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(d.ai.packExpiresAt).not.toBeNull();

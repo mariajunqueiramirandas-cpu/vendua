@@ -172,10 +172,12 @@ export async function customerRowsTx(
       ) c where c.remain > 0
       group by c.tenant_id
     ),
+    -- the window the daily charts plot (São Paulo days), so a KPI equals the sum of its bars
     spend as (
       select e.tenant_id, sum((e.payload -> 'usage' ->> 'costUsd')::float8) as usd
       from agent_events e
-      where e.type = 'model.responded' and e.at >= ${now}::timestamptz - interval '30 days'
+      where e.type = 'model.responded'
+        and e.at >= (${from30(tx, now)})::timestamp at time zone ${ZONE}
         and (${only}::uuid is null or e.tenant_id = ${only})
       group by e.tenant_id
     ),
@@ -357,7 +359,8 @@ async function overviewTx(tx: Sql, storeDomain: string, now: Date) {
              coalesce(e.payload ->> 'model', '?') as model, count(*)::int as calls,
              coalesce(sum((e.payload -> 'usage' ->> 'costUsd')::float8), 0)::float8 as usd
       from agent_events e
-      where e.type = 'model.responded' and e.at >= ${now}::timestamptz - interval '30 days'
+      where e.type = 'model.responded'
+        and e.at >= (${from30(tx, now)})::timestamp at time zone ${ZONE}
       group by 1, 2 order by usd desc, calls desc
     `,
     tx<

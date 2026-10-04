@@ -26,12 +26,13 @@ export const useCustomer = (id: string) =>
     enabled: isStoreId(id),
   });
 
-/** One store's billing row (domain, site request, open invoice) out of the shared list. */
+/** One store's billing row (domain, site request, open invoice), read on its own. */
 export const useBillingStore = (id: string) =>
   useQuery({
-    queryKey: qk.billingStores(),
-    queryFn: api.billingStores,
-    select: (r) => r.stores.find((s) => s.tenantId === id) ?? null,
+    queryKey: qk.billingStore(id),
+    queryFn: () => api.billingStore(id),
+    select: (r) => r.stores[0] ?? null,
+    enabled: isStoreId(id),
   });
 
 export const useControlPlans = () =>

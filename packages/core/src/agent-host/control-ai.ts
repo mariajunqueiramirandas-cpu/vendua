@@ -91,7 +91,12 @@ export function mountAgentRuntimeAi(o: {
       AGENTS.find((a) => a.def.id === 'vendedor')?.def.budgets?.tenantDaily ?? 'vendedor';
     const out = await controlTx(sql, async (tx) => {
       const now = new Date();
-      const since = new Date(now.getTime() - days * 86_400_000);
+      // whole São Paulo days, the window the Visão and store charts use
+      const since = (
+        await tx<{ since: Date }[]>`
+          select (((${now}::timestamptz at time zone 'America/Sao_Paulo')::date - ${days - 1}::int)::timestamp
+                  at time zone 'America/Sao_Paulo') as since`
+      )[0]!.since;
       const [calls, convs, set, stores] = await Promise.all([
         tx<
           {
