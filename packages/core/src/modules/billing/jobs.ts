@@ -497,7 +497,9 @@ const issueRenewals: Step = async (sql, base, now) => {
         and not s.cancel_at_period_end and s.current_period_end <= ${horizon}
         and not exists (select 1 from invoices i where i.tenant_id = s.tenant_id
                           and i.period_start = s.current_period_end and i.status <> 'void'
-                          and (${!pix} or i.status <> 'open' or i.pix_copy_paste is not null))
+                          and (${!pix} or i.status <> 'open' or i.pix_copy_paste is not null
+                               -- held for want of a CPF/CNPJ: saving one issues it
+                               or s.payer_document is null))
       -- a renewal not yet issued goes before a retry of one MP refused, so retries can't crowd it out
       order by exists (select 1 from invoices i where i.tenant_id = s.tenant_id
                          and i.period_start = s.current_period_end and i.status <> 'void'),
@@ -518,7 +520,8 @@ const issueRenewals: Step = async (sql, base, now) => {
         if (!pix || inv.status !== 'open' || pixIsLive(inv, now)) return null;
         const payer = await payerFor(tx, tenant_id, sub.payer_email);
         const plan = payer ? await planRow(tx, inv.plan_id) : null;
-        return payer && plan ? reservePix(tx, tenant_id, inv, payer, plan.name) : null;
+        // no CPF/CNPJ yet: the invoice waits, without its Pix, and the reminders say why
+        return payer?.document && plan ? reservePix(tx, tenant_id, inv, payer, plan.name) : null;
       }),
     );
     if (need) await issueReserved(sql, base, need, now);
@@ -567,14 +570,14 @@ const sendReminders: Step = async (sql, base, now) => {
         )[0];
         if (!cur || cur.reminded.includes(stage) || pixIsLive(cur, now)) return null;
         const payer = await payerFor(tx, inv.tenant_id, sub?.payer_email);
-        return payer ? reservePix(tx, inv.tenant_id, cur, payer, inv.plan_name) : null;
+        return payer?.document ? reservePix(tx, inv.tenant_id, cur, payer, inv.plan_name) : null;
       });
       if (need) pix = { need, charge: await askPix(base, need, now) };
     }
     // claim first: a failed send is logged, never repeated into a second message
     const claimed = await withEffects(base, (ctx) =>
       withTenant(sql, inv.tenant_id, async (tx) => {
-        await lockSub(tx, inv.tenant_id);
+        const sub = await lockSub(tx, inv.tenant_id);
         const cur = (
           await tx<InvoiceRow[]>`select * from invoices where id = ${inv.id} and status = 'open'`
         )[0];
@@ -598,14 +601,14 @@ const sendReminders: Step = async (sql, base, now) => {
           `
         )[0];
         if (row) await emitAdminTx(tx, inv.tenant_id, 'billing', inv.id);
-        return row ?? null;
+        return row ? { row, held: !sub?.payer_document } : null;
       }),
     );
     if (!claimed) return;
     await messageOwners(
       base,
       inv.tenant_id,
-      reminderMessage(stage, claimed, inv.plan_name, base.origin),
+      reminderMessage(stage, claimed.row, inv.plan_name, base.origin, claimed.held),
       `invoice-reminder:${inv.id}:${stage}`,
     );
   });
@@ -761,7 +764,7 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
         const payer = got.inv.pix_copy_paste
           ? await payerFor(tx, tenant_id, got.sub.payer_email)
           : null;
-        if (!payer) {
+        if (!payer?.document) {
           const next = await reprice(ctx, tx, got.inv, got.plan.price_cents);
           await emitAdminTx(tx, tenant_id, 'billing', next.id);
           return null;

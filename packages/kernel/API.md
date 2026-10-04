@@ -351,6 +351,15 @@ Pago's frame origins).
   `challengeDone` (`{ "challenge": "complete" }`) for about a minute: MP settles a finished
   challenge a few moments later, and a still-pending one must not come back as a new form. A Core that still answers
   `redirect` is honoured (`checkout.PaymentStatus` `due` → the hosted page).
+- Kernel 1.20 — `payOrder`'s opts also take `deviceId?: string | null`: Mercado Pago's device
+  fingerprint, sent as `{ "deviceId": "…" }` (beside `card`/`challenge`) only when it matches
+  `[A-Za-z0-9_:.-]{1,200}`; Core passes it to Mercado Pago with the Pix it creates in that call.
+  The order page sends it for an online Pix: it loads Mercado Pago's keyless
+  `https://www.mercadopago.com/v2/security.js` (`view="checkout"`) once and waits up to 1.5 s
+  for `MP_DEVICE_SESSION_ID` (the card form's, when MercadoPago.js already set it); no id in
+  time, or a blocked script, and the Pix is asked for without one. Card orders don't wait — the
+  card's own `deviceId` rides on `payCard`. A store with its own CSP must allow
+  `https://www.mercadopago.com` in `script-src`, as it already must allow `sdk.mercadopago.com`.
 - New `api.payCard(id, input: CardPaymentInput)` → `POST /checkout/v1/orders/:id/card` (fresh
   Idempotency-Key, the order's credential): `{ token, paymentMethodId, issuerId, installments,
 payer: { email, identification }, deviceId }`. 409 `PAYMENT_IN_PROGRESS`, 409

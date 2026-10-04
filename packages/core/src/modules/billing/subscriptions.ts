@@ -13,6 +13,7 @@ import {
   billingLog,
   DAY_MS,
   hookUrl,
+  documentRequired,
   issuePix,
   payerFor,
   pixIsLive,
@@ -71,6 +72,8 @@ export interface SubRow {
   provider_subscription_id: string | null;
   checkout_url: string | null;
   payer_email: string | null;
+  /** CPF (11 digits) or CNPJ (14), normalized */
+  payer_document: string | null;
   current_period_start: Date | null;
   current_period_end: Date | null;
   cancel_at_period_end: boolean;
@@ -92,6 +95,8 @@ export interface BillingCtx {
   origin: string | null;
   /** side effects that must not run inside the tx (staff messages) */
   later: (fn: () => Promise<unknown>) => void;
+  /** the owner's MP device id (the admin's x-vendua-device); none in jobs, webhooks and the CRM */
+  deviceId?: string | null;
 }
 
 /** Tests swap this to see staff notices; production goes through notifyStaff. */
@@ -202,6 +207,7 @@ export async function startSubscription(
     plan: PlanRow;
     method: BillingMethod;
     payerEmail: string | null;
+    payerDocument?: string | null | undefined;
     key: string;
     now: Date;
     manual?: boolean;
@@ -213,12 +219,16 @@ export async function startSubscription(
   // a restart never carries the old preapproval, period or pending downgrade
   const sub = (
     await tx<SubRow[]>`
-      insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email)
-      values (${tenantId}, ${o.plan.id}, ${o.method}, 'pending', ${ctx.provider.name}, ${o.payerEmail})
+      insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email,
+                                 payer_document)
+      values (${tenantId}, ${o.plan.id}, ${o.method}, 'pending', ${ctx.provider.name}, ${o.payerEmail},
+              ${o.payerDocument ?? null})
       on conflict (tenant_id) do update set
         plan_id = excluded.plan_id, pending_plan_id = null, method = excluded.method,
         status = 'pending', provider = excluded.provider, provider_subscription_id = null,
-        checkout_url = null, payer_email = excluded.payer_email, current_period_start = null,
+        checkout_url = null, payer_email = excluded.payer_email,
+        payer_document = coalesce(excluded.payer_document, subscriptions.payer_document),
+        current_period_start = null,
         current_period_end = null, cancel_at_period_end = false, upgrade_plan_id = null,
         upgrade_invoice_id = null, updated_at = now(), status_changed_at = now()
       returning *
@@ -240,15 +250,23 @@ export async function startSubscription(
 export async function startTrial(
   tx: Sql,
   tenantId: string,
-  o: { plan: PlanRow; payerEmail: string | null; provider: string; now: Date; phone: string },
+  o: {
+    plan: PlanRow;
+    payerEmail: string | null;
+    payerDocument: string | null;
+    provider: string;
+    now: Date;
+    phone: string;
+  },
 ): Promise<PayNext> {
   const endsAt = new Date(o.now.getTime() + o.plan.trial_days * DAY_MS);
   // trial_phone: the phone that took it keeps it taken, whatever its role in the store becomes
   await tx`
     insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email,
-                               current_period_start, current_period_end, trial_ends_at, trial_phone)
+                               payer_document, current_period_start, current_period_end,
+                               trial_ends_at, trial_phone)
     values (${tenantId}, ${o.plan.id}, 'pix', 'trialing', ${o.provider}, ${o.payerEmail},
-            ${o.now}, ${endsAt}, ${endsAt}, ${o.phone})
+            ${o.payerDocument}, ${o.now}, ${endsAt}, ${endsAt}, ${o.phone})
   `;
   await setTenantPlan(tx, tenantId, o.plan.id);
   await releaseHold(tx, tenantId);
@@ -299,16 +317,19 @@ export async function beginPayment(
       await recordManualInvoice(tx, inv, plan.name);
       return { kind: 'manual', invoiceId: inv.id };
     }
-    if (!pixIsLive(inv, now))
+    if (!pixIsLive(inv, now)) {
+      if (!payer.document) throw documentRequired();
       inv = await viaProvider(() =>
         issuePix(tx, ctx.provider, inv, {
           payer,
           planName: plan.name,
           origin: ctx.origin,
+          deviceId: ctx.deviceId ?? null,
           now,
           drop: dropPix(ctx),
         }),
       );
+    }
     return { kind: 'pix', invoiceId: inv.id };
   }
   if (sub.checkout_url && sub.provider_subscription_id)
@@ -425,11 +446,13 @@ export async function ensureRenewal(
   });
   if (o.issue !== false && inv.status === 'open' && !pixIsLive(inv, now)) {
     const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
-    if (payer)
+    // no CPF/CNPJ yet: the invoice waits open, without its Pix, until the owner adds one
+    if (payer?.document)
       inv = await issuePix(tx, ctx.provider, inv, {
         payer,
         planName: plan.name,
         origin: ctx.origin,
+        deviceId: ctx.deviceId ?? null,
         now,
         drop: dropPix(ctx),
       });
@@ -444,6 +467,7 @@ export async function reissuePix(
   tenantId: string,
   invoiceId: string,
   now: Date,
+  o: { force?: boolean } = {},
 ) {
   const sub = await lockSub(tx, tenantId);
   const inv = (
@@ -458,12 +482,13 @@ export async function reissuePix(
     (inv.kind === 'upgrade' && (!sub || !upgradeLive(sub, inv, now)))
   )
     throw new HttpError(409, 'INVOICE_NOT_OPEN', 'only an open Pix invoice gets a new Pix');
-  if (pixIsLive(inv, now)) return inv;
+  if (pixIsLive(inv, now) && !o.force) return inv;
   const payer = await payerFor(tx, tenantId, sub?.payer_email);
   if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
+  if (!payer.document) throw documentRequired();
   // a pack's Pix keeps the pack's description, not the plan's month
   const label =
     inv.kind === 'ai_pack'
@@ -474,12 +499,42 @@ export async function reissuePix(
       payer,
       planName: label,
       origin: ctx.origin,
+      deviceId: ctx.deviceId ?? null,
       now,
       drop: dropPix(ctx),
     }),
   );
   await emitAdminTx(tx, tenantId, 'billing');
   return out;
+}
+
+/**
+ * The payer's CPF/CNPJ just changed: a renewal held for want of one gets its Pix, and a live Pix
+ * is replaced (MP scores the payer's document when the money arrives). MP down keeps what there
+ * was; the next Pix carries it.
+ */
+export async function reissueOpenPix(ctx: BillingCtx, tx: Sql, tenantId: string, now: Date) {
+  const open = await tx<{ id: string }[]>`
+    select i.id from invoices i join subscriptions s on s.tenant_id = i.tenant_id
+    where i.tenant_id = ${tenantId} and i.status = 'open' and i.method = 'pix'
+      and ((i.pix_copy_paste is not null and i.pix_expires_at > ${now})
+        -- a renewal held for want of one; a first charge (an access code's is the team's) and an
+        -- unpaid pack stay as they were: nobody asked for their Pix
+        or (i.kind = 'period' and s.status in ('active', 'past_due', 'trialing')))
+  `;
+  for (const { id } of open)
+    await reissuePix(ctx, tx, tenantId, id, now, { force: true }).catch((err: unknown) => {
+      // all three throw before anything is written: the transaction goes on, and the saved
+      // document reaches the next Pix
+      if (
+        err instanceof HttpError &&
+        (err.code === 'BILLING_PROVIDER_ERROR' ||
+          err.code === 'INVOICE_NOT_OPEN' ||
+          err.code === 'PAYER_EMAIL_REQUIRED')
+      )
+        return;
+      throw err;
+    });
 }
 
 // ── changing ────────────────────────────────────────────────────────────────
@@ -512,12 +567,13 @@ async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow
     });
     if (hadPix && next.method === 'pix') {
       const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
-      if (payer)
+      if (payer?.document)
         next = await viaProvider(() =>
           issuePix(tx, ctx.provider, next, {
             payer,
             planName: plan.name,
             origin: ctx.origin,
+            deviceId: ctx.deviceId ?? null,
             now,
             drop: dropPix(ctx),
           }),
@@ -574,12 +630,14 @@ async function upgradePix(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceRow
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
+  if (!payer.document) throw documentRequired();
   const plan = await planOrThrow(tx, inv.plan_id);
   return viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
       payer,
       planName: plan.name,
       origin: ctx.origin,
+      deviceId: ctx.deviceId ?? null,
       now,
       drop: dropPix(ctx),
     }),
@@ -726,11 +784,13 @@ async function packPix(
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
+  if (!payer.document) throw documentRequired();
   return viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
       payer,
       planName: `Duá ${pack.name}`,
       origin: ctx.origin,
+      deviceId: ctx.deviceId ?? null,
       now,
       drop: dropPix(ctx),
     }),
@@ -790,6 +850,7 @@ export async function changeSubscription(
     plan?: PlanRow | undefined;
     method?: BillingMethod | undefined;
     payerEmail?: string | undefined;
+    payerDocument?: string | undefined;
     key: string;
     now: Date;
   },
@@ -802,6 +863,11 @@ export async function changeSubscription(
 
   if (o.payerEmail !== undefined && o.payerEmail !== sub.payer_email) {
     await tx`update subscriptions set payer_email = ${o.payerEmail}, updated_at = now() where tenant_id = ${tenantId}`;
+    await reload();
+  }
+  if (o.payerDocument !== undefined && o.payerDocument !== sub.payer_document) {
+    await tx`update subscriptions set payer_document = ${o.payerDocument}, updated_at = now() where tenant_id = ${tenantId}`;
+    await reissueOpenPix(ctx, tx, tenantId, o.now);
     await reload();
   }
 
@@ -863,6 +929,14 @@ export async function changeSubscription(
   }
 
   if (o.method && o.method !== sub.method) {
+    // a pending plan's first Pix goes out with this switch: refuse it before MP drops the card,
+    // which no rollback brings back
+    if (
+      o.method === 'pix' &&
+      sub.status === 'pending' &&
+      !(await payerFor(tx, tenantId, sub.payer_email))?.document
+    )
+      throw documentRequired();
     const oldPreapproval = sub.method === 'card' ? sub.provider_subscription_id : null;
     await tx`
       update subscriptions set method = ${o.method}, provider_subscription_id = null,

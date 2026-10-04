@@ -352,10 +352,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
       const joana = await place('pix');
       const joanaAgain = await place('pix');
       const bruno = await place('pix', { name: 'Bruno Souza Reis', phone: '(21) 97777-6666' });
-      for (const o of [joana, joanaAgain, bruno])
-        expect((await pay(o.body.order.id, o.auth)).body.next.kind).toBe('pix');
+      // Kernel 1.20 sends the shopper's MP device id with the Pix /pay; a malformed one is dropped
+      const payWith = (o: typeof joana, body: unknown) =>
+        call('POST', `/checkout/v1/orders/${o.body.order.id}/pay`, body, o.auth);
+      expect(
+        (await payWith(joana, { card: 'form', deviceId: 'armor.d3v1c3' })).body.next.kind,
+      ).toBe('pix');
+      expect((await payWith(joanaAgain, { deviceId: 'not a device id!' })).body.next.kind).toBe(
+        'pix',
+      );
+      expect((await pay(bruno.body.order.id, bruno.auth)).body.next.kind).toBe('pix');
       expect(seen).toHaveLength(3);
       const [a, again, b] = seen as [PixRequest, PixRequest, PixRequest];
+      expect([a.deviceId, again.deviceId, b.deviceId]).toEqual(['armor.d3v1c3', null, null]);
 
       expect(a.payerEmail).toBe(
         shopperPayerEmail('s', '22988887777', joana.body.order.id, 'vendua.test'),
@@ -375,10 +384,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
         {
           id: productId,
           title: expect.stringMatching(/^2× /),
+          description: expect.any(String),
+          categoryId: 'others',
           quantity: 1,
           unitPriceCents: line!.line_total_cents,
         },
       ]);
+      expect(a.statementDescriptor).toBe(b.statementDescriptor);
+      expect(a.statementDescriptor).toEqual(expect.any(String));
     } finally {
       fake.createPix = createPix;
     }

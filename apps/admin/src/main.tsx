@@ -7,12 +7,14 @@ import '@fontsource/instrument-serif/latin-400-italic.css';
 import './ui/theme.css';
 import App from './app/App.tsx';
 import { Router } from './app/Router.tsx';
+import { dropStaleDraft } from './features/signup/progress.ts';
 import { queryClient } from './lib/query.ts';
 import { persistCache, restoreCache } from './lib/persist.ts';
 import { startPwa } from './lib/pwa.ts';
 import { applyTheme } from './lib/theme.ts';
 
 applyTheme();
+dropStaleDraft();
 
 // the service worker is prod-only: in dev a cache would fight vite HMR
 startPwa();

@@ -3,9 +3,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { api, type Account } from '../../lib/api.ts';
 import { qk, useMutation } from '../../lib/query.ts';
+import { useMercadoPago } from '../../lib/mercadopago.ts';
 import { Button } from '../../ui/Button.tsx';
 import { messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { PixCode, useIssuePix } from '../../ui/PixCode.tsx';
+import { DocumentGate, needsDocument } from '../account/DocumentGate.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -41,6 +43,7 @@ export function usePlan(owner: boolean, hold: boolean) {
     refetchInterval: (x) => (x.state.data?.subscription?.status === 'pending' ? 15_000 : false),
     refetchIntervalInBackground: false,
   });
+  useMercadoPago(q.data?.billing);
   const was = useRef<string | null>(null);
   const status = q.data?.subscription?.status ?? null;
   useEffect(() => {
@@ -62,7 +65,9 @@ export function PlanPix({ a, invoiceId }: { a: Account; invoiceId: string | null
     mutationFn: (id: string) => api.invoicePix(id),
     onSuccess: (n) => qc.setQueryData(qk.account, n),
   });
-  useIssuePix(inv, inv?.status !== 'paid' && !issue.isPending, issue.mutate);
+  const gate = needsDocument(a);
+  useIssuePix(inv, inv?.status !== 'paid' && !issue.isPending && !gate, issue.mutate);
+  if (gate && inv?.status !== 'paid') return <DocumentGate />;
   if (!inv)
     return (
       <p className="t-body text-muted">

@@ -97,6 +97,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
       slug,
       ownerName: 'Lia Souza',
       email: 'lia@example.com',
+      document: '529.982.247-25',
       ...extra,
     });
     if (r.body?.store?.id && !created.includes(r.body.store.id)) created.push(r.body.store.id);

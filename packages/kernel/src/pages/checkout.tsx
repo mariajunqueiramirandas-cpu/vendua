@@ -43,6 +43,7 @@ import {
 } from '../rules/orders.ts';
 import { digitsOf, isValidCep, isValidPhone } from '../rules/phone.ts';
 import { usePageTitle } from '../head.ts';
+import { preloadMpDevice } from '../mp-device.ts';
 
 // /checkout — the Kernel-owned checkout (ADR 0004): a three-step machine
 // (dados → entrega → pagamento). Validation here is shape-only; every business
@@ -278,6 +279,10 @@ export function CheckoutPage() {
     () => (allowed ? byStore.filter((m) => allowed.split(',').includes(m.id)) : byStore),
     [allowed, byStore],
   );
+  // the online Pix's device fingerprint starts loading here, so the order page rarely waits
+  useEffect(() => {
+    if (step === 'pagamento' && pay === 'pix' && pixOnline) preloadMpDevice();
+  }, [step, pay, pixOnline]);
   // an encomenda narrows payment (Pix-only in the reference) — keep the choice valid
   useEffect(() => {
     if (methods.length && !methods.some((m) => m.id === pay)) setPay(methods[0]!.id);

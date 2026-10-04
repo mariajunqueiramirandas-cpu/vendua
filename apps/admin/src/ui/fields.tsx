@@ -15,7 +15,15 @@ import {
 } from 'react';
 import { money } from '../lib/format.ts';
 import { haptic } from '../lib/haptics.ts';
-import { maskPhone, moneyInput, parseMoney, parsePhone, parseTime } from '../lib/parse.ts';
+import {
+  maskDocument,
+  maskPhone,
+  moneyInput,
+  parseDocument,
+  parseMoney,
+  parsePhone,
+  parseTime,
+} from '../lib/parse.ts';
 import { cn } from './cn.ts';
 import { Spinner } from './Spinner.tsx';
 
@@ -344,6 +352,41 @@ export function PhoneInput({
       onChange={(e) => {
         const m = maskPhone(e.target.value);
         onChange(m, parsePhone(m));
+      }}
+      className="tnum"
+    />
+  );
+}
+
+/** CPF or CNPJ, masked as it's typed; a CNPJ may carry letters, so the keyboard stays full. */
+export function DocumentInput({
+  value,
+  onChange,
+  onBlur,
+  id,
+  invalid,
+}: {
+  value: string;
+  onChange: (v: string, doc: string | null) => void;
+  onBlur?: () => void;
+  id?: string;
+  invalid?: boolean;
+}) {
+  return (
+    <TextInput
+      id={id}
+      autoComplete="off"
+      autoCapitalize="characters"
+      autoCorrect="off"
+      spellCheck={false}
+      maxLength={18}
+      placeholder="000.000.000-00"
+      value={value}
+      aria-invalid={invalid || undefined}
+      onBlur={onBlur}
+      onChange={(e) => {
+        const m = maskDocument(e.target.value);
+        onChange(m, parseDocument(m));
       }}
       className="tnum"
     />

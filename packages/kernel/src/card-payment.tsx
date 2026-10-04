@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from 'react';
 import type { CardPaymentInput, DeclineReason } from './api.ts';
+import { readMpDeviceId } from './mp-device.ts';
 
 // Kernel 1.19 — the in-page card. Card number, expiry and CVV live in Mercado Pago's own
 // iframes (the Card Payment Brick's Secure Fields); the Kernel only ever sees the single-use
@@ -42,12 +43,11 @@ interface MercadoPagoSdk {
   };
 }
 type MercadoPagoCtor = new (publicKey: string, opts: { locale: string }) => MercadoPagoSdk;
-type MpGlobals = { MercadoPago?: MercadoPagoCtor; MP_DEVICE_SESSION_ID?: unknown };
+type MpGlobals = { MercadoPago?: MercadoPagoCtor };
 
 let sdk: Promise<MercadoPagoCtor> | null = null;
 
-/** The one script the Kernel injects: Mercado Pago's SDK, once per page; a failure clears the
- *  cache so a retry loads it again. */
+/** Mercado Pago's SDK, once per page; a failure clears the cache so a retry loads it again. */
 export function loadMercadoPago(): Promise<MercadoPagoCtor> {
   const w = globalThis as MpGlobals;
   if (w.MercadoPago) return Promise.resolve(w.MercadoPago);
@@ -67,11 +67,6 @@ export function loadMercadoPago(): Promise<MercadoPagoCtor> {
   });
   return sdk;
 }
-
-const deviceId = () => {
-  const id = (globalThis as MpGlobals).MP_DEVICE_SESSION_ID;
-  return typeof id === 'string' && id ? id : null;
-};
 
 function luminance(color: string): number | null {
   const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color)?.[1];
@@ -196,7 +191,7 @@ function fromBrick(d: BrickCardData): CardPaymentInput {
       identification:
         ident?.type && ident.number ? { type: ident.type, number: ident.number } : null,
     },
-    deviceId: deviceId(),
+    deviceId: readMpDeviceId(),
   };
 }
 

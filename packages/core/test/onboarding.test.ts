@@ -93,6 +93,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('onboarding (db)', () => {
       slug: `onb-${nonce}`,
       ownerName: 'Bia Costa',
       email: 'bia@example.com',
+      document: '529.982.247-25',
       segment: 'acai',
     });
     expect(r.status).toBe(201);

@@ -1,6 +1,7 @@
 import type { Sql } from '../../platform/db.ts';
 import { isPublicHost, storeOrigin } from '../../platform/store-origin.ts';
 import type { Tenant } from '../../platform/tenancy.ts';
+import { platformPublicKey } from '../payments/index.ts';
 import type { PaymentProvider } from '../payments/provider.ts';
 import { cnameTarget, txtName, txtValue, type CustomDomainRow } from './domains.ts';
 import { invoiceView, type InvoiceRow } from './invoices.ts';
@@ -118,11 +119,15 @@ export async function accountView(
           checkoutUrl:
             sub.method === 'card' && sub.status !== 'cancelled' ? sub.checkout_url : null,
           payerEmail: sub.payer_email,
+          payerDocument: sub.payer_document,
           // the free trial's end (ADR 0025): the store's first charge, kept after it converts
           trialEndsAt: sub.trial_ends_at,
         }
       : null,
-    billing: { available: o.provider.platformConfigured },
+    billing: {
+      available: o.provider.platformConfigured,
+      publicKey: platformPublicKey(o.provider),
+    },
     invoices: invoices.map((i) => invoiceView(i, now)),
     address: await storeOrigin(tx, t, o.storeDomain),
     domains,

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
@@ -152,13 +153,28 @@ export function pixIsLive(inv: InvoiceRow, now: Date) {
   );
 }
 
+/** No plan Pix goes out without the payer's CPF/CNPJ (the user's decision, 2026-10-03): MP
+ *  refuses it. A store from before signup asked for one is held until the owner adds it. */
+export const documentRequired = () =>
+  new HttpError(422, 'PAYER_DOCUMENT_REQUIRED', 'add the CPF or CNPJ the plan is billed to', {
+    field: 'payerDocument',
+  });
+
 /** Issue (or re-issue) the Pix of an open invoice on Venduá's own account. */
 export async function issuePix(
   tx: Sql,
   provider: PaymentProvider,
   inv: InvoiceRow,
-  o: { payer: BillingPayer; planName: string; origin: string | null; now: Date; drop?: DropPix },
+  o: {
+    payer: BillingPayer;
+    planName: string;
+    origin: string | null;
+    now: Date;
+    drop?: DropPix;
+    deviceId?: string | null;
+  },
 ): Promise<InvoiceRow> {
+  if (!o.payer.document) throw documentRequired();
   return storePix(
     tx,
     provider,
@@ -180,7 +196,13 @@ export async function requestPix(
   provider: PaymentProvider,
   inv: InvoiceRow,
   attempt: number,
-  o: { payer: BillingPayer; planName: string; origin: string | null; now: Date },
+  o: {
+    payer: BillingPayer;
+    planName: string;
+    origin: string | null;
+    now: Date;
+    deviceId?: string | null;
+  },
 ): Promise<PixCharge> {
   const expiresAt = new Date(o.now.getTime() + PIX_TTL_MS);
   const payment = await provider.platformPix({
@@ -189,17 +211,26 @@ export async function requestPix(
     payerEmail: o.payer.email,
     ...(o.payer.name ? { payerName: o.payer.name } : {}),
     ...(o.payer.phone ? { payerPhone: o.payer.phone } : {}),
+    ...(o.payer.document ? { payerDocument: o.payer.document } : {}),
     items: [
       {
         id: inv.ai_pack_id ?? inv.plan_id,
         title: o.planName,
+        description: `${o.planName} — fatura ${inv.number}`,
+        categoryId: 'services',
         quantity: 1,
         unitPriceCents: inv.amount_cents,
       },
     ],
+    statementDescriptor: 'Venduá',
+    deviceId: o.deviceId ?? null,
     externalReference: inv.id,
-    // a retried request (its tx rolled back) repeats the attempt number → the same Pix
-    idempotencyKey: `invoice:${inv.id}:${attempt}`,
+    // a retried request (its tx rolled back) repeats the attempt number → the same Pix, unless the
+    // retry carries another CPF/CNPJ: that one needs a Pix of its own
+    idempotencyKey: `invoice:${inv.id}:${attempt}:${createHash('sha256')
+      .update(o.payer.document ?? '')
+      .digest('hex')
+      .slice(0, 12)}`,
     notificationUrl: hookUrl(o.origin),
     applicationFeeCents: 0,
     expiresAt,
@@ -238,24 +269,29 @@ export interface BillingPayer {
   name: string | null;
   /** national digits (DDD + number) */
   phone: string | null;
+  /** the subscription's CPF (11 digits) or CNPJ (14) */
+  document: string | null;
 }
 
 /** The plan Pix/assinatura's payer: the subscription's email, else the owner's, else the store's;
- *  the name and phone of that owner (the first one with an email). */
+ *  the name and phone of that owner (the first one with an email); the subscription's CPF/CNPJ. */
 export async function payerFor(
   tx: Sql,
   tenantId: string,
   payerEmail: string | null | undefined,
 ): Promise<BillingPayer | null> {
   const row = (
-    await tx<{ email: string | null; name: string | null; phone: string | null }[]>`
+    await tx<
+      { email: string | null; name: string | null; phone: string | null; document: string | null }[]
+    >`
       select
         coalesce(
           ${payerEmail || null}::text,
           o.email,
           (select email from store_settings where tenant_id = ${tenantId})
         ) as email,
-        o.name, o.phone
+        o.name, o.phone,
+        (select payer_document from subscriptions where tenant_id = ${tenantId}) as document
       from (select 1) one
       left join lateral (
         select email, name, phone from merchant_users where tenant_id = ${tenantId}
@@ -264,7 +300,9 @@ export async function payerFor(
       ) o on true
     `
   )[0];
-  return row?.email ? { email: row.email, name: row.name, phone: row.phone } : null;
+  return row?.email
+    ? { email: row.email, name: row.name, phone: row.phone, document: row.document }
+    : null;
 }
 
 export function invoiceView(

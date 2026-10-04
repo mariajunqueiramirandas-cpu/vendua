@@ -29,6 +29,7 @@ import { errorCode, errorCopy, showError, showInfo } from '../errors.ts';
 import { useNavigateTo } from '../primitives.tsx';
 import type { CardPaymentInput, ImportReport, Order, PaymentNext, StoreProfile } from '../api.ts';
 import { CardFields, ChallengeFrame, declineCopy } from '../card-payment.tsx';
+import { mpDeviceId } from '../mp-device.ts';
 import type { PaymentStatusKind, SlotProps } from '../slot-props.ts';
 import { useKernel, invalidateQuery } from '../provider.tsx';
 
@@ -139,7 +140,10 @@ function useOnlinePayment(
     setWork(mode);
     setFailure(null);
     try {
-      const r = await api.payOrder(order.id, { cardForm: true });
+      // the Pix Core creates here carries Mercado Pago's device fingerprint (anti-fraud), waited
+      // for briefly; the card sends its own with the token
+      const deviceId = card ? null : await mpDeviceId();
+      const r = await api.payOrder(order.id, { cardForm: true, deviceId });
       invalidateQuery(`order:${order.id}`, r.order);
       apply(r.next, null);
       if (mode === 'redirect' && r.next.kind === 'redirect') {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
@@ -120,7 +121,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     const cookie = `vendua_admin=${await createSession(appSql, m, 'test')}`;
     const owner = (method: string, path: string, body?: unknown) =>
       call(method, `/admin/v1${path}`, body, { cookie });
-    return { id, slug, phone, owner };
+    return { id, slug, phone, owner, cookie };
   };
 
   const sub = async (tenant: string) =>
@@ -139,6 +140,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       planId: plan,
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     expect(st.status).toBe(200);
     await payInvoice(st.body.invoices[0].id);
@@ -168,7 +170,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(acct.status).toBe(200);
     expect(acct.body.plan).toMatchObject({ id: 'mirim', name: 'Venduá Mirim', priceCents: 6990 });
     expect(acct.body.subscription).toBeNull();
-    expect(acct.body.billing).toEqual({ available: true });
+    expect(acct.body.billing).toEqual({ available: true, publicKey: null });
     expect(acct.body.domains).toEqual([
       { host: `${s.slug}.vendua.test`, kind: 'store', status: 'active', primary: true },
     ]);
@@ -182,12 +184,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       planId: 'mirim',
       method: 'boleto',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     expect(bad.status).toBe(422);
     const started = await s.owner('POST', '/account/subscription', {
       planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     expect(started.status).toBe(200);
     expect(started.body.subscription).toMatchObject({ status: 'pending', method: 'pix' });
@@ -197,6 +201,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     expect(again.body.error.code).toBe('SUBSCRIPTION_EXISTS');
     // the Pix request carried the webhook URL and the invoice as its reference
@@ -227,6 +232,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
         planId: 'mirim',
         method: 'pix',
         payerEmail: 'bia@example.com',
+        payerDocument: '529.982.247-25',
       });
       expect(started.status).toBe(200);
     } finally {
@@ -237,7 +243,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       payerEmail: 'bia@example.com',
       payerName: 'Bia Dona',
       payerPhone: s.phone,
-      items: [{ id: 'mirim', title: 'Venduá Mirim', quantity: 1, unitPriceCents: 6990 }],
+      items: [
+        {
+          id: 'mirim',
+          title: 'Venduá Mirim',
+          description: expect.stringMatching(/^Venduá Mirim — fatura \d+$/),
+          categoryId: 'services',
+          quantity: 1,
+          unitPriceCents: 6990,
+        },
+      ],
+      statementDescriptor: 'Venduá',
     });
   });
 
@@ -252,6 +268,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     await payInvoice(st.body.invoices[0].id);
 
@@ -332,6 +349,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       planId: 'mirim',
       method: 'card',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     expect(st.body.subscription.checkoutUrl).toContain('/admin/?assinatura=retorno');
     const pre = (await sub(s.id)).provider_subscription_id;
@@ -434,11 +452,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
           planId: 'mirim',
           method: 'card',
           payerEmail: 'bia@example.com',
+          payerDocument: '529.982.247-25',
         }),
       ),
     );
     expect(res.map((r) => r.status).sort()).toEqual([200, 409, 409]);
     expect(fake.subscriptions.size - before).toBe(1);
+  });
+
+  test('a pending card plan with no CPF/CNPJ is refused Pix before MP drops the card', async () => {
+    const s = await store('troca', 'mirim', 'bia@example.com');
+    await s.owner('POST', '/account/subscription', {
+      planId: 'mirim',
+      method: 'card',
+      payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
+    });
+    const pre = (await sub(s.id)).provider_subscription_id;
+    await sql`update subscriptions set payer_document = null where tenant_id = ${s.id}`;
+    const r = await s.owner('PATCH', '/account/subscription', { method: 'pix' });
+    expect(r.status).toBe(422);
+    expect(r.body.error.code).toBe('PAYER_DOCUMENT_REQUIRED');
+    expect(fake.subscriptions.get(pre)!.status).not.toBe('cancelled');
+    expect(await sub(s.id)).toMatchObject({ method: 'card', provider_subscription_id: pre });
+
+    // the document in the same request lets the switch through
+    const ok = await s.owner('PATCH', '/account/subscription', {
+      method: 'pix',
+      payerDocument: '390.533.447-05',
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body.subscription).toMatchObject({ method: 'pix', status: 'pending' });
+    expect(fake.subscriptions.get(pre)!.status).toBe('cancelled');
   });
 
   const hook = (id: string) =>
@@ -455,6 +500,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     const oldPix = (await invoices(s.id))[0]!.provider_payment_id;
     // upgrading before paying reprices the invoice and reissues its Pix
@@ -470,12 +516,77 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect((await invoices(s.id))[0]).toMatchObject({ status: 'paid', amount_cents: 44900 });
   });
 
+  test('starting a plan needs the CPF/CNPJ; changing it replaces the live Pix with one that carries it', async () => {
+    const s = await store('doc', 'mirim', 'bia@example.com');
+    const none = await s.owner('POST', '/account/subscription', {
+      planId: 'mirim',
+      method: 'pix',
+      payerEmail: 'bia@example.com',
+    });
+    expect(none.status).toBe(422);
+    expect(none.body.error.details).toEqual({ field: 'payerDocument' });
+    expect(await sql`select 1 from subscriptions where tenant_id = ${s.id}`).toHaveLength(0);
+
+    const started: PixRequest[] = [];
+    const realStart = fake.platformPix.bind(fake);
+    fake.platformPix = async (req) => {
+      started.push(req);
+      return realStart(req);
+    };
+    try {
+      // the admin's MercadoPago.js device id rides on the request that issues the Pix
+      await call(
+        'POST',
+        '/admin/v1/account/subscription',
+        {
+          planId: 'mirim',
+          method: 'pix',
+          payerEmail: 'bia@example.com',
+          payerDocument: '529.982.247-25',
+        },
+        { cookie: s.cookie, 'x-vendua-device': 'armor.0wn3r' },
+      );
+    } finally {
+      fake.platformPix = realStart;
+    }
+    expect(started.map((r) => r.deviceId)).toEqual(['armor.0wn3r']);
+    expect((await s.owner('GET', '/account')).body.billing).toEqual({
+      available: true,
+      publicKey: null,
+    });
+    const oldPix = (await invoices(s.id))[0]!.provider_payment_id;
+    const seen: PixRequest[] = [];
+    const realPix = fake.platformPix.bind(fake);
+    fake.platformPix = async (req) => {
+      seen.push(req);
+      return realPix(req);
+    };
+    try {
+      // the same document again changes nothing; a new one reissues the live Pix
+      await s.owner('PATCH', '/account/subscription', { payerDocument: '52998224725' });
+      expect(seen).toHaveLength(0);
+      const changed = await s.owner('PATCH', '/account/subscription', {
+        payerDocument: '11.222.333/0001-81',
+      });
+      expect(changed.status).toBe(200);
+    } finally {
+      fake.platformPix = realPix;
+    }
+    expect(seen.map((r) => r.payerDocument)).toEqual(['11222333000181']);
+    await Bun.sleep(30);
+    const inv = (await invoices(s.id))[0]!;
+    expect(inv.provider_payment_id).not.toBe(oldPix);
+    expect(inv.pix_superseded).toEqual([oldPix]);
+    expect(fake.payments.get(oldPix)!.status).toBe('cancelled');
+  });
+
   test('an old Pix for a lower price leaves the invoice open; odd amounts and double pays reach the team', async () => {
     const s = await store('super', 'mirim', 'bia@example.com');
     await s.owner('POST', '/account/subscription', {
       planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     const oldPix = (await invoices(s.id))[0]!.provider_payment_id;
     // the owner scanned the old QR; MP's webhook hasn't arrived when the price changes
@@ -653,9 +764,91 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       planId: 'pangolim',
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     const site = await s.owner('POST', '/account/site-request', { brief: 'Um site bonito' });
     expect(site.body.error).toMatchObject({ code: 'PLAN_REQUIRED', details: { reason: 'unpaid' } });
+  });
+
+  test('no CPF/CNPJ on file: the renewal waits without its Pix, says why, and saving it issues the Pix', async () => {
+    const s = await store('held', 'mirim', 'bia@example.com');
+    await sql`update merchant_users set prefs = '{"emailInvoices": false}' where tenant_id = ${s.id}`;
+    const st = await s.owner('POST', '/account/subscription', {
+      planId: 'mirim',
+      method: 'pix',
+      payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
+    });
+    await payInvoice(st.body.invoices[0].id);
+    // a store from before signup asked for one
+    await sql`update subscriptions set payer_document = null where tenant_id = ${s.id}`;
+    const mine = () => wa.filter((m) => m.phone === s.phone && m.text.startsWith('Venduá: '));
+
+    await sql`update subscriptions set current_period_end = ${new Date(Date.now() + 2 * DAY)} where tenant_id = ${s.id}`;
+    await tick();
+    await tick();
+    const held = (await invoices(s.id))[1]!;
+    expect(held).toMatchObject({ status: 'open', pix_copy_paste: null, provider_payment_id: null });
+    expect(mine()).toHaveLength(1);
+    expect(mine()[0]!.text).toContain('Para gerar o Pix, informe o CPF ou o CNPJ da cobrança');
+
+    // the owner asks for the Pix: told what is missing, nothing goes to MP
+    const asked = await s.owner('POST', `/account/invoices/${held.id}/pix`, {});
+    expect(asked.status).toBe(422);
+    expect(asked.body.error).toMatchObject({
+      code: 'PAYER_DOCUMENT_REQUIRED',
+      details: { field: 'payerDocument' },
+    });
+
+    const seen: PixRequest[] = [];
+    const realPix = fake.platformPix.bind(fake);
+    fake.platformPix = async (req) => {
+      seen.push(req);
+      return realPix(req);
+    };
+    try {
+      const saved = await s.owner('PATCH', '/account/subscription', {
+        payerDocument: '390.533.447-05',
+      });
+      expect(saved.status).toBe(200);
+    } finally {
+      fake.platformPix = realPix;
+    }
+    // the held invoice gets its Pix, carrying the document — in its key too, so a retry after a
+    // rollback that changed the document can't get the old Pix back
+    expect(seen.map((r) => r.payerDocument)).toEqual(['39053344705']);
+    const digest = createHash('sha256').update('39053344705').digest('hex').slice(0, 12);
+    expect(seen[0]!.idempotencyKey).toBe(`invoice:${held.id}:1:${digest}`);
+    expect((await invoices(s.id))[1]!.pix_copy_paste).toEqual(expect.any(String));
+  });
+
+  test('saving the CPF/CNPJ never fails on a held renewal that has no email to bill', async () => {
+    const s = await store('mudo', 'mirim', 'mudo@example.com');
+    await sql`update merchant_users set prefs = '{"emailInvoices": false}' where tenant_id = ${s.id}`;
+    const st = await s.owner('POST', '/account/subscription', {
+      planId: 'mirim',
+      method: 'pix',
+      payerEmail: 'mudo@example.com',
+      payerDocument: '529.982.247-25',
+    });
+    await payInvoice(st.body.invoices[0].id);
+    await sql`update subscriptions set payer_document = null where tenant_id = ${s.id}`;
+    await sql`update subscriptions set current_period_end = ${new Date(Date.now() + 2 * DAY)} where tenant_id = ${s.id}`;
+    await tick();
+    expect((await invoices(s.id))[1]).toMatchObject({ status: 'open', pix_copy_paste: null });
+    await sql`update subscriptions set payer_email = null where tenant_id = ${s.id}`;
+    await sql`update merchant_users set email = null where tenant_id = ${s.id}`;
+    await sql`update store_settings set email = null where tenant_id = ${s.id}`;
+
+    const saved = await s.owner('PATCH', '/account/subscription', {
+      payerDocument: '390.533.447-05',
+    });
+    expect(saved.status).toBe(200);
+    expect(
+      (await sql`select payer_document from subscriptions where tenant_id = ${s.id}`)[0]!
+        .payer_document,
+    ).toBe('39053344705');
+    expect((await invoices(s.id))[1]!.pix_copy_paste).toBeNull();
   });
 
   test('pix renewal: reminders once each, past_due, paid again → active', async () => {
@@ -665,6 +858,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       planId: 'mirim',
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     await payInvoice(st.body.invoices[0].id);
     const mine = () => wa.filter((m) => m.phone === s.phone && m.text.startsWith('Venduá: '));
@@ -1010,7 +1204,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       values (${a.id}, ${planId}, 'card', 'active', 'fake', ${ps.id}, 5000, now(), now() + interval '10 days')
     `;
     const b = await store('price-pix', 'mirim', 'bia@example.com');
-    await sql`insert into subscriptions (tenant_id, plan_id, method, status, provider) values (${b.id}, ${planId}, 'pix', 'pending', 'fake')`;
+    await sql`insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_document) values (${b.id}, ${planId}, 'pix', 'pending', 'fake', '52998224725')`;
     await sql`
       insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end, method, provider, due_at)
       values (${b.id}, 1, ${planId}, 5000, now(), now() + interval '1 month', 'pix', 'fake', now())
@@ -1030,7 +1224,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       values (${planId}, 'Plano vivo', 5000, '{}', false, 99)
     `;
     const s = await store('price-live', 'mirim', 'bia@example.com');
-    await sql`insert into subscriptions (tenant_id, plan_id, method, status, provider) values (${s.id}, ${planId}, 'pix', 'pending', 'fake')`;
+    await sql`insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_document) values (${s.id}, ${planId}, 'pix', 'pending', 'fake', '52998224725')`;
     const inv = (
       await sql`
         insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end, method, provider, due_at)
@@ -1124,6 +1318,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
         planId: 'mirim',
         method: 'pix',
         payerEmail: 'bia@example.com',
+        payerDocument: '529.982.247-25',
       });
       expect(off.body.error.code).toBe('BILLING_UNAVAILABLE');
     } finally {

@@ -1,4 +1,5 @@
-import { dehydrate, hydrate, type QueryClient } from '@tanstack/react-query';
+import { dehydrate, hydrate, type DehydratedState, type QueryClient } from '@tanstack/react-query';
+import type { Account } from './api.ts';
 
 // The last-known data survives a restart (IndexedDB): the app opens straight to the
 // board, even offline, then refreshes. Signing out or switching stores wipes it.
@@ -44,6 +45,8 @@ export async function restoreCache(qc: QueryClient) {
     ]);
     if (saved?.schema === SCHEMA && Date.now() - saved.at < MAX_AGE)
       hydrate(qc, saved.state as Parameters<typeof hydrate>[1]);
+    // what can't be restored isn't kept: a shared device holds nothing past its day
+    else if (saved) void clearPersisted();
   } catch {
     /* private mode, no IndexedDB: start cold */
   }
@@ -59,13 +62,30 @@ export async function resetClient(qc: QueryClient) {
   await clearPersisted();
 }
 
+// the plan payer's CPF/CNPJ never reaches the disk: the cached account only keeps that one is on
+// file (Conta's notices read that), and restores stale so the first screen fetches the number
+const ON_FILE = '•';
+function redact(state: DehydratedState): DehydratedState {
+  return {
+    ...state,
+    queries: state.queries.map((q) => {
+      const a = q.queryKey[0] === 'account' ? (q.state.data as Account | undefined) : undefined;
+      if (!a?.subscription?.payerDocument) return q;
+      const data: Account = { ...a, subscription: { ...a.subscription, payerDocument: ON_FILE } };
+      return { ...q, state: { ...q.state, data, dataUpdatedAt: 0 } };
+    }),
+  };
+}
+
 export function persistCache(qc: QueryClient) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const save = () => {
     timer = null;
-    const state = dehydrate(qc, {
-      shouldDehydrateQuery: (q) => q.state.status === 'success',
-    });
+    const state = redact(
+      dehydrate(qc, {
+        shouldDehydrateQuery: (q) => q.state.status === 'success',
+      }),
+    );
     if (!state.queries.some((q) => q.queryKey[0] === 'session')) return void clearPersisted();
     void run('readwrite', (s) => s.put({ schema: SCHEMA, at: Date.now(), state }, KEY)).catch(
       () => undefined,
