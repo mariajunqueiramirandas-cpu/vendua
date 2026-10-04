@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #000;
+      }
+      #root {
+        position: relative;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #f7f4ea;
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="29.062"
+      data-width="1080"
+      data-height="1920"
+    >
+      <div
+        id="el-01-dua"
+        class="scene"
+        data-composition-id="01-dua"
+        data-composition-src="compositions/frames/01-dua.html"
+        data-start="0"
+        data-duration="9.609"
+        data-track-index="1"
+      ></div>
+      <audio
+        id="el-01-dua-voice"
+        src="audio/frames/f01-voice.mp3"
+        data-start="0"
+        data-duration="9.609"
+        data-track-index="10"
+        data-volume="1"
+      ></audio>
+
+      <div
+        id="el-02-dua-vende"
+        class="scene"
+        data-composition-id="02-dua-vende"
+        data-composition-src="compositions/frames/02-dua-vende.html"
+        data-start="9.609"
+        data-duration="8.672"
+        data-track-index="1"
+      ></div>
+      <audio
+        id="el-02-dua-vende-voice"
+        src="audio/frames/f02-voice.mp3"
+        data-start="9.609"
+        data-duration="8.672"
+        data-track-index="10"
+        data-volume="1"
+      ></audio>
+
+      <div
+        id="el-03-assumir"
+        class="scene"
+        data-composition-id="03-assumir"
+        data-composition-src="compositions/frames/03-assumir.html"
+        data-start="18.281"
+        data-duration="3.75"
+        data-track-index="1"
+      ></div>
+      <audio
+        id="el-03-assumir-voice"
+        src="audio/frames/f03-voice.mp3"
+        data-start="18.281"
+        data-duration="3.75"
+        data-track-index="10"
+        data-volume="1"
+      ></audio>
+
+      <div
+        id="el-04-bandeira"
+        class="scene"
+        data-composition-id="04-bandeira"
+        data-composition-src="compositions/frames/04-bandeira.html"
+        data-start="22.031"
+        data-duration="7.031"
+        data-track-index="1"
+      ></div>
+      <audio
+        id="el-04-bandeira-voice"
+        src="audio/frames/f04-voice.mp3"
+        data-start="22.031"
+        data-duration="7.031"
+        data-track-index="10"
+        data-volume="1"
+      ></audio>
+
+      <!-- BGM -->
+      <audio
+        id="el-bgm"
+        src="audio/music-bed.mp3"
+        data-start="0"
+        data-duration="29.062"
+        data-track-index="11"
+        data-volume="1"
+      ></audio>
+
+      <!-- captions -->
+      <div
+        id="el-captions"
+        class="scene"
+        data-composition-id="captions"
+        data-composition-src="compositions/captions.html"
+        data-start="0"
+        data-duration="29.062"
+        data-track-index="2"
+      ></div>
+
+      <!-- SFX -->
+      <audio
+        id="el-sfx-0"
+        src="audio/sfx/accent.mp3"
+        data-start="0"
+        data-duration="0.73"
+        data-track-index="20"
+        data-volume="0.4"
+      ></audio>
+      <audio
+        id="el-sfx-1"
+        src="audio/sfx/pop-1.mp3"
+        data-start="0.72"
+        data-duration="0.34"
+        data-track-index="21"
+        data-volume="0.28"
+      ></audio>
+      <audio
+        id="el-sfx-2"
+        src="audio/sfx/pop-2.mp3"
+        data-start="2.02"
+        data-duration="0.34"
+        data-track-index="22"
+        data-volume="0.28"
+      ></audio>
+      <audio
+        id="el-sfx-3"
+        src="audio/sfx/pop-4.mp3"
+        data-start="4.28"
+        data-duration="0.34"
+        data-track-index="23"
+        data-volume="0.28"
+      ></audio>
+      <audio
+        id="el-sfx-4"
+        src="audio/sfx/tap.mp3"
+        data-start="5.696"
+        data-duration="0.24"
+        data-track-index="24"
+        data-volume="0.4"
+      ></audio>
+      <audio
+        id="el-sfx-5"
+        src="audio/sfx/pop-2.mp3"
+        data-start="10.769"
+        data-duration="0.34"
+        data-track-index="25"
+        data-volume="0.28"
+      ></audio>
+      <audio
+        id="el-sfx-6"
+        src="audio/sfx/pop-3.mp3"
+        data-start="14.914"
+        data-duration="0.34"
+        data-track-index="26"
+        data-volume="0.28"
+      ></audio>
+      <audio
+        id="el-sfx-7"
+        src="audio/sfx/pago.mp3"
+        data-start="17.334"
+        data-duration="0.78"
+        data-track-index="27"
+        data-volume="0.4"
+      ></audio>
+      <audio
+        id="el-sfx-8"
+        src="audio/sfx/tap.mp3"
+        data-start="19.661"
+        data-duration="0.24"
+        data-track-index="28"
+        data-volume="0.42"
+      ></audio>
+      <audio
+        id="el-sfx-9"
+        src="audio/sfx/accent.mp3"
+        data-start="22.031"
+        data-duration="0.73"
+        data-track-index="29"
+        data-volume="0.42"
+      ></audio>
+      <audio
+        id="el-sfx-10"
+        src="audio/sfx/swipe.mp3"
+        data-start="24.171"
+        data-duration="0.37"
+        data-track-index="30"
+        data-volume="0.28"
+      ></audio>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,739 @@
+<template id="07-cozinha-template">
+  <style>
+    @font-face {
+      font-family: 'Space Grotesk Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 700;
+      src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2')
+        format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Figtree Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 900;
+      src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: normal;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: italic;
+      font-display: block;
+      font-weight: 400;
+      src: url('assets/fonts/captured-instrument-serif-latin-400-italic.woff2') format('woff2');
+    }
+
+    #root {
+      --canvas: #f7f4ea;
+      --surface: #fffdf8;
+      --ink: #123c32;
+      --ink-muted: #4f6a5e;
+      --spark: #d9f875;
+      --e1: 0 1px 2px rgb(18 60 50 / 0.06), 0 4px 16px rgb(18 60 50 / 0.05);
+      --e2: 0 2px 4px rgb(18 60 50 / 0.08), 0 12px 32px rgb(18 60 50 / 0.1);
+      --e3: 0 8px 16px rgb(18 60 50 / 0.1), 0 24px 64px rgb(18 60 50 / 0.16);
+      position: relative;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+    }
+
+    .\30 7-cozinha-layer {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+    }
+    .\30 7-cozinha-ground {
+      background: var(--canvas);
+      container-type: size;
+      overflow: hidden;
+    }
+    .\30 7-cozinha-grain {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+      display: block;
+    }
+
+    /* feature header: native size is the brief's header (the handoff to frame 8); the big
+       title state is the same elements scaled up, so the compacted end state is exact */
+    .\30 7-cozinha-discpos {
+      position: absolute;
+      left: 72px;
+      top: 250px;
+      width: 92px;
+      height: 92px;
+      transform-origin: 0 0;
+    }
+    .\30 7-cozinha-disc {
+      width: 92px;
+      height: 92px;
+      border-radius: 999px;
+      background: var(--spark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Space Grotesk Variable', sans-serif;
+      font-weight: 600;
+      font-size: 58px;
+      line-height: 1;
+      color: var(--ink);
+    }
+    .\30 7-cozinha-name {
+      position: absolute;
+      left: 188px;
+      top: 250px;
+      height: 92px;
+      display: flex;
+      align-items: center;
+      font-family: 'Space Grotesk Variable', sans-serif;
+      font-weight: 600;
+      font-size: 60px;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      color: var(--ink);
+      white-space: nowrap;
+      transform-origin: 0 50%;
+    }
+    .\30 7-cozinha-word {
+      display: inline-block;
+    }
+
+    .\30 7-cozinha-chip {
+      display: inline-block;
+      font-family: 'Figtree Variable', sans-serif;
+      font-weight: 650;
+      font-size: 38px;
+      line-height: 1.2;
+      color: var(--ink);
+      background: var(--spark);
+      padding: 14px 28px;
+      border-radius: 999px;
+      box-shadow: var(--e1);
+      white-space: nowrap;
+    }
+    .\30 7-cozinha-chip1 {
+      position: absolute;
+      left: 72px;
+      top: 790px;
+      transform-origin: 0 50%;
+    }
+    /* centred on x 640 without a CSS transform: the slot centres, the chip animates */
+    .\30 7-cozinha-chipslot {
+      position: absolute;
+      left: 340px;
+      top: 943px;
+      width: 600px;
+      display: flex;
+      justify-content: center;
+    }
+
+    /* PHONE box: x 289, y 372, 434 × 908 */
+    .\30 7-cozinha-devwrap {
+      position: absolute;
+      left: 289px;
+      top: 372px;
+      width: 434px;
+      height: 908px;
+      /* grows upward so the bezel never crosses y 1280 */
+      transform-origin: 50% 100%;
+    }
+    .\30 7-cozinha-phone {
+      width: 434px;
+      height: 908px;
+      box-sizing: border-box;
+      padding: 13.9px;
+      border-radius: 69px;
+      background: linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%);
+      box-shadow:
+        inset 0 0 0 1.5px rgb(255 255 255 / 0.08),
+        0 8px 16px rgb(18 60 50 / 0.12),
+        0 30px 70px rgb(18 60 50 / 0.22);
+    }
+    .\30 7-cozinha-screen {
+      position: relative;
+      width: 406.2px;
+      height: 879.6px;
+      border-radius: 56px;
+      overflow: hidden;
+      background: var(--canvas);
+    }
+    .\30 7-cozinha-cam {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 406.2px;
+      height: 879.6px;
+      transform-origin: 0 0;
+    }
+    .\30 7-cozinha-shot {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 406.2px;
+      height: 879.6px;
+    }
+    .\30 7-cozinha-shot img {
+      display: block;
+      width: 406.2px;
+      height: 879.6px;
+    }
+    /* the real "aceitar · 30 min" button lifted from the same screenshot so it can press;
+       the patch behind it is the card's own colour (button 64,1028 → 686,1140 at 0.5416) */
+    .\30 7-cozinha-btnbase {
+      position: absolute;
+      left: 33.66px;
+      top: 555.76px;
+      width: 338.88px;
+      height: 62.66px;
+      border-radius: 18px;
+      background: #fefdf9;
+    }
+    .\30 7-cozinha-btn {
+      position: absolute;
+      left: 34.66px;
+      top: 556.76px;
+      width: 336.88px;
+      height: 60.66px;
+      border-radius: 17px;
+      background-image: url('assets/screens/pedidos-novo-30.webp');
+      background-size: 406.2px 879.6px;
+      background-position: -34.66px -556.76px;
+      transform-origin: 50% 50%;
+    }
+    .\30 7-cozinha-island {
+      position: absolute;
+      top: 14px;
+      left: 138.1px;
+      width: 130px;
+      height: 34px;
+      border-radius: 999px;
+      background: #0b100d;
+    }
+    /* tap ring: 72 px at the button label centre (376,1084) under the 1.5× camera */
+    .\30 7-cozinha-tap {
+      position: absolute;
+      left: 228.84px;
+      top: 618.27px;
+      width: 72px;
+      height: 72px;
+      box-sizing: border-box;
+      border-radius: 999px;
+      border: 6px solid var(--spark);
+      box-shadow: 0 0 0 2px var(--ink);
+      transform-origin: 50% 50%;
+    }
+    /* lime ring: "automática" (512,726 → 686,778) under the 1.25× camera, +10 px a side */
+    .\30 7-cozinha-ring {
+      position: absolute;
+      left: 262.15px;
+      top: 412.2px;
+      width: 137.8px;
+      height: 55.21px;
+      box-sizing: border-box;
+      border-radius: 27.6px;
+      border: 6px solid var(--spark);
+      box-shadow: 0 0 0 2px var(--ink);
+      transform-origin: 50% 50%;
+    }
+
+    /* push: system UI carrying Core's real payload, 880 × 168 at x 100, y 370 */
+    .\30 7-cozinha-push {
+      position: absolute;
+      left: 100px;
+      top: 370px;
+      width: 880px;
+      height: 168px;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 0 28px 0 26px;
+      border-radius: 36px;
+      background: rgb(255 253 248 / 0.9);
+      -webkit-backdrop-filter: blur(24px);
+      backdrop-filter: blur(24px);
+      box-shadow: var(--e3);
+      transform-origin: 50% 50%;
+    }
+    .\30 7-cozinha-sh2,
+    .\30 7-cozinha-sh1,
+    .\30 7-cozinha-edge {
+      position: absolute;
+      inset: 0;
+      border-radius: 36px;
+      pointer-events: none;
+    }
+    .\30 7-cozinha-sh2 {
+      box-shadow: var(--e2);
+    }
+    .\30 7-cozinha-sh1 {
+      box-shadow: var(--e1);
+    }
+    .\30 7-cozinha-edge {
+      box-shadow: 0 0 0 6px var(--spark);
+    }
+    .\30 7-cozinha-ic {
+      position: relative;
+      flex: none;
+      width: 92px;
+      height: 92px;
+      border-radius: 24px;
+      background: var(--ink);
+      display: grid;
+      place-items: center;
+    }
+    .\30 7-cozinha-ic svg {
+      display: block;
+      width: 58px;
+      height: 58px;
+    }
+    .\30 7-cozinha-tx {
+      position: relative;
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-family: 'Figtree Variable', sans-serif;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+    .\30 7-cozinha-app {
+      font-size: 30px;
+      font-weight: 500;
+      line-height: 1.2;
+      color: var(--ink-muted);
+    }
+    .\30 7-cozinha-title {
+      font-size: 44px;
+      font-weight: 750;
+      line-height: 1.1;
+      letter-spacing: -0.01em;
+    }
+    .\30 7-cozinha-body {
+      font-size: 36px;
+      font-weight: 500;
+      line-height: 1.2;
+      font-variant-numeric: tabular-nums;
+    }
+    .\30 7-cozinha-act {
+      position: relative;
+      flex: none;
+      font-family: 'Figtree Variable', sans-serif;
+      font-size: 36px;
+      font-weight: 650;
+      line-height: 1.2;
+      color: var(--surface);
+      background: var(--ink);
+      padding: 14px 28px;
+      border-radius: 16px;
+    }
+  </style>
+
+  <div
+    id="root"
+    data-composition-id="07-cozinha"
+    data-start="0"
+    data-duration="7.96875"
+    data-fps="30"
+    data-width="1080"
+    data-height="1920"
+  >
+    <div
+      id="07-cozinha-ground"
+      class="clip 07-cozinha-layer 07-cozinha-ground"
+      data-start="0"
+      data-duration="7.96875"
+      data-track-index="0"
+    >
+      <svg
+        class="07-cozinha-grain"
+        viewBox="0 0 1080 1920"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <filter id="07-cozinha-noise" x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.85"
+            numOctaves="2"
+            seed="7"
+            stitchTiles="stitch"
+          />
+          <feColorMatrix
+            type="matrix"
+            values="0.33 0.33 0.33 0 0  0.33 0.33 0.33 0 0  0.33 0.33 0.33 0 0  0 0 0 0 1"
+          />
+        </filter>
+        <rect width="1080" height="1920" filter="url(#07-cozinha-noise)" opacity="0.025" />
+      </svg>
+    </div>
+
+    <div
+      id="07-cozinha-device"
+      class="clip 07-cozinha-layer"
+      data-start="0"
+      data-duration="7.96875"
+      data-track-index="1"
+    >
+      <div id="07-cozinha-devwrap" class="07-cozinha-devwrap">
+        <div id="07-cozinha-phone" class="07-cozinha-phone">
+          <div class="07-cozinha-screen">
+            <div id="07-cozinha-cam" class="07-cozinha-cam">
+              <div id="07-cozinha-shota" class="07-cozinha-shot">
+                <img
+                  src="assets/screens/pedidos-novo-30.webp"
+                  alt="Pedidos, Novos: #30 Caio, R$ 62,50, aceitar · 30 min"
+                />
+                <span class="07-cozinha-btnbase"></span>
+                <span id="07-cozinha-btn" class="07-cozinha-btn"></span>
+              </div>
+              <div id="07-cozinha-shotb" class="07-cozinha-shot">
+                <img src="assets/screens/pedido-30-aceitar.webp" alt="Pedido #30 aceito" />
+              </div>
+              <div id="07-cozinha-shotc" class="07-cozinha-shot">
+                <img
+                  src="assets/screens/impressoras.webp"
+                  alt="Impressoras: EPSON TM-T20X automática, imprime ao aceitar o pedido"
+                />
+              </div>
+            </div>
+            <span id="07-cozinha-tap" class="07-cozinha-tap"></span>
+            <span id="07-cozinha-ring" class="07-cozinha-ring"></span>
+            <span class="07-cozinha-island"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="07-cozinha-notice"
+      class="clip 07-cozinha-layer"
+      data-start="0"
+      data-duration="7.96875"
+      data-track-index="2"
+    >
+      <div id="07-cozinha-push" class="07-cozinha-push">
+        <span id="07-cozinha-sh2" class="07-cozinha-sh2"></span>
+        <span id="07-cozinha-sh1" class="07-cozinha-sh1"></span>
+        <span id="07-cozinha-edge" class="07-cozinha-edge"></span>
+        <span class="07-cozinha-ic">
+          <svg viewBox="0 0 128 128" aria-hidden="true">
+            <path
+              d="M32 48 L61 88 L98 34"
+              fill="none"
+              stroke="#d9f875"
+              stroke-width="17"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </span>
+        <span class="07-cozinha-tx">
+          <span class="07-cozinha-app">Minha loja</span>
+          <b class="07-cozinha-title">Pedido #30 chegou</b>
+          <span class="07-cozinha-body">Caio · R$ 62,50 · entrega</span>
+        </span>
+        <span class="07-cozinha-act">aceitar</span>
+      </div>
+    </div>
+
+    <div
+      id="07-cozinha-header"
+      class="clip 07-cozinha-layer"
+      data-start="0"
+      data-duration="7.96875"
+      data-track-index="3"
+    >
+      <div id="07-cozinha-discpos" class="07-cozinha-discpos">
+        <div id="07-cozinha-disc" class="07-cozinha-disc">3</div>
+      </div>
+      <div id="07-cozinha-name" class="07-cozinha-name">
+        <span
+          ><span id="07-cozinha-w1" class="07-cozinha-word">A cozinha</span>
+          <span id="07-cozinha-w2" class="07-cozinha-word">vê</span></span
+        >
+      </div>
+      <span id="07-cozinha-chip1" class="07-cozinha-chip 07-cozinha-chip1">na hora</span>
+    </div>
+
+    <div
+      id="07-cozinha-callout"
+      class="clip 07-cozinha-layer"
+      data-start="0"
+      data-duration="7.96875"
+      data-track-index="4"
+    >
+      <div class="07-cozinha-chipslot">
+        <span id="07-cozinha-chip2" class="07-cozinha-chip">imprime ao aceitar</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/vendor/gsap.min.js"></script>
+  <script>
+    (function () {
+      var byId = function (name) {
+        return document.getElementById('07-cozinha-' + name);
+      };
+      var discpos = byId('discpos');
+      var disc = byId('disc');
+      var name = byId('name');
+      var w1 = byId('w1');
+      var w2 = byId('w2');
+      var chip1 = byId('chip1');
+      var chip2 = byId('chip2');
+      var devwrap = byId('devwrap');
+      var phone = byId('phone');
+      var cam = byId('cam');
+      var shota = byId('shota');
+      var shotb = byId('shotb');
+      var shotc = byId('shotc');
+      var btn = byId('btn');
+      var tap = byId('tap');
+      var ring = byId('ring');
+      var push = byId('push');
+      var sh2 = byId('sh2');
+      var sh1 = byId('sh1');
+      var edge = byId('edge');
+
+      var DURATION = 7.96875;
+      var SCREEN_W = 406.2;
+      var SCREEN_H = 879.6;
+      var PX = SCREEN_W / 750; // 1 screenshot px in css px
+
+      // camera that lands screenshot point (cx, cy) at the screen centre at scale s
+      function camAt(s, cx, cy) {
+        return { scale: s, x: SCREEN_W / 2 - s * cx * PX, y: SCREEN_H / 2 - s * cy * PX };
+      }
+      var CAM_ID = { scale: 1, x: 0, y: 0 };
+      // #30's card from its "#30" to the "aceitar · 30 min" button (64,1028 → 686,1140)
+      var CAM_ACEITAR = camAt(1.5, 300, 820);
+      // the EPSON TM-T20X row (32,666 → 718,838) with "automática" (512,726 → 686,778) inside the
+      // screen; the row is wider than the screen above 1.25×, so the punch stops there
+      var CAM_EPSON = camAt(1.25, 410, 752);
+
+      // big title state: disc 300 px at (72, 300); name at 104 px, x 72, centre y 692
+      var DISC_BIG = { scale: 300 / 92, y: 50 };
+      var NAME_BIG = { scale: 104 / 60, x: -116, y: 396 };
+
+      function c(o) {
+        return Object.assign({}, o);
+      }
+      function shake(target, at, amp) {
+        tl.to(
+          target,
+          {
+            keyframes: {
+              x: [0, amp, -amp * 0.75, amp * 0.5, -amp * 0.25, 0],
+              easeEach: 'sine.inOut',
+            },
+            duration: 0.25,
+            ease: 'none',
+          },
+          at,
+        );
+      }
+      function punch(target, at, s) {
+        tl.fromTo(
+          target,
+          { scale: 1 },
+          { scale: s, duration: 0.1, ease: 'power2.out', immediateRender: false },
+          at,
+        );
+        tl.fromTo(
+          target,
+          { scale: s },
+          { scale: 1, duration: 0.25, ease: 'power2.out', immediateRender: false },
+          at + 0.1,
+        );
+      }
+
+      var tl = gsap.timeline({ paused: true });
+
+      // Scene 1 (0–2.7): "Três:" slams the disc in big; the title lands word by word.
+      tl.fromTo(discpos, c(DISC_BIG), { scale: DISC_BIG.scale, y: DISC_BIG.y, duration: 0.01 }, 0);
+      tl.fromTo(name, c(NAME_BIG), { scale: NAME_BIG.scale, x: NAME_BIG.x, y: NAME_BIG.y, duration: 0.01 }, 0);
+      tl.fromTo(
+        disc,
+        { scale: 1.6, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.22, ease: 'expo.out' },
+        0.05,
+      );
+      shake(discpos, 0.24, 10);
+      // "cozinha" snaps in from the side, "vê" rises with a small turn
+      tl.fromTo(
+        w1,
+        { x: -70, opacity: 0 },
+        { x: 0, opacity: 1, duration: 0.22, ease: 'expo.out' },
+        0.85,
+      );
+      tl.fromTo(
+        w2,
+        { y: 46, rotation: 8, opacity: 0 },
+        { y: 0, rotation: 0, opacity: 1, duration: 0.24, ease: 'power4.out' },
+        1.29,
+      );
+      punch(disc, 1.56, 1.06);
+      // "hora." shoots the chip out under the title
+      tl.fromTo(
+        chip1,
+        { y: -60, scale: 0.6, opacity: 0 },
+        { y: 0, scale: 1, opacity: 1, duration: 0.22, ease: 'expo.out' },
+        2.09,
+      );
+
+      // Scene 2 (2.7–2.95): the title compacts into the header; the phone slams into its box.
+      tl.fromTo(
+        discpos,
+        { scale: DISC_BIG.scale, y: DISC_BIG.y },
+        { scale: 1, y: 0, duration: 0.25, ease: 'power4.out', immediateRender: false },
+        2.7,
+      );
+      tl.fromTo(
+        name,
+        { scale: NAME_BIG.scale, x: NAME_BIG.x, y: NAME_BIG.y },
+        { scale: 1, x: 0, y: 0, duration: 0.25, ease: 'power4.out', immediateRender: false },
+        2.7,
+      );
+      tl.fromTo(
+        chip1,
+        { scale: 1, opacity: 1 },
+        { scale: 0.7, opacity: 0, duration: 0.14, ease: 'power2.in', immediateRender: false },
+        2.7,
+      );
+      tl.fromTo(
+        devwrap,
+        { y: 160, scale: 1.08, opacity: 0 },
+        { y: 0, scale: 1, opacity: 1, duration: 0.25, ease: 'expo.out' },
+        2.7,
+      );
+
+      // Scene 3 (2.964–4.5): on "pedido" the push slams down from above with its lime edge.
+      tl.fromTo(
+        push,
+        { y: -220, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.24, ease: 'expo.out' },
+        2.93,
+      );
+      tl.fromTo(sh2, { opacity: 1 }, { opacity: 0, duration: 0.24, ease: 'power2.out' }, 2.93);
+      tl.fromTo(sh1, { opacity: 0 }, { opacity: 1, duration: 0.24, ease: 'power2.out' }, 2.93);
+      tl.fromTo(edge, { opacity: 1 }, { opacity: 0, duration: 0.9, ease: 'power1.in' }, 3.2);
+      // double buzz on the phone, ±5 px
+      [3.0, 3.15].forEach(function (at) {
+        tl.to(
+          phone,
+          {
+            keyframes: { x: [0, -5, 5, -3, 2, 0], easeEach: 'sine.inOut' },
+            duration: 0.14,
+            ease: 'none',
+          },
+          at,
+        );
+      });
+      punch(push, 3.84, 1.05);
+
+      // Scene 4 (4.5–5.8): the push leaves upward; the camera punches onto #30 and its button.
+      tl.fromTo(
+        push,
+        { y: 0, opacity: 1 },
+        { y: -260, opacity: 0, duration: 0.22, ease: 'power3.in', immediateRender: false },
+        4.5,
+      );
+      tl.fromTo(
+        cam,
+        c(CAM_ID),
+        Object.assign({ duration: 0.28, ease: 'expo.out', immediateRender: false }, CAM_ACEITAR),
+        4.56,
+      );
+      // "toque,": tap ring + the real button presses
+      tl.fromTo(tap, { scale: 0.4, opacity: 0 }, { opacity: 1, duration: 0.01 }, 5.24);
+      tl.to(tap, { scale: 1.5, opacity: 0, duration: 0.35, ease: 'power2.out' }, 5.25);
+      tl.fromTo(
+        btn,
+        { scale: 1 },
+        { scale: 0.94, duration: 0.08, ease: 'power2.out', immediateRender: false },
+        5.25,
+      );
+      tl.fromTo(
+        btn,
+        { scale: 0.94 },
+        { scale: 1, duration: 0.14, ease: 'power2.out', immediateRender: false },
+        5.33,
+      );
+      // 5.40: the board swaps to the accepted state ("Pedido #30 aceito"), camera back to 1×
+      tl.fromTo(
+        shota,
+        { opacity: 1 },
+        { opacity: 0, duration: 0.12, ease: 'power1.out', immediateRender: false },
+        5.4,
+      );
+      tl.fromTo(
+        shotb,
+        { y: 24, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.2, ease: 'expo.out' },
+        5.4,
+      );
+      tl.fromTo(
+        cam,
+        c(CAM_ACEITAR),
+        Object.assign({ duration: 0.25, ease: 'power3.inOut', immediateRender: false }, CAM_ID),
+        5.4,
+      );
+
+      // Scene 5 (5.82–end): "a comanda" push-slides to Impressoras.
+      tl.fromTo(
+        shotb,
+        { x: 0 },
+        { x: -SCREEN_W, duration: 0.28, ease: 'power4.out', immediateRender: false },
+        6.06,
+      );
+      tl.fromTo(shotc, { x: SCREEN_W }, { x: 0, duration: 0.28, ease: 'power4.out' }, 6.06);
+      // "imprime": camera onto the EPSON row, lime ring snaps around "automática" + device shake
+      tl.fromTo(
+        cam,
+        c(CAM_ID),
+        Object.assign({ duration: 0.26, ease: 'expo.out', immediateRender: false }, CAM_EPSON),
+        6.58,
+      );
+      tl.fromTo(
+        ring,
+        { scale: 1.15, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.15, ease: 'power4.out' },
+        6.68,
+      );
+      shake(phone, 6.68, 8);
+      // "sozinha.": the spark-chip pops at the phone's right edge
+      tl.fromTo(
+        chip2,
+        { y: 24, scale: 0.7, opacity: 0 },
+        { y: 0, scale: 1, opacity: 1, duration: 0.22, ease: 'expo.out' },
+        6.93,
+      );
+      // a slow push on the device keeps the last second alive; the header stays still
+      tl.fromTo(
+        devwrap,
+        { scale: 1 },
+        { scale: 1.02, duration: DURATION - 7.1, ease: 'power1.inOut', immediateRender: false },
+        7.1,
+      );
+
+      tl.set({}, {}, DURATION);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['07-cozinha'] = tl;
+    })();
+  </script>
+</template>

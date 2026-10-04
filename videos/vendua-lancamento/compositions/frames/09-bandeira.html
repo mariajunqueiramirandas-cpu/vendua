@@ -1,0 +1,323 @@
+<template
+  id="09-bandeira-template"
+  data-composition-id="09-bandeira"
+  data-width="1080"
+  data-height="1920"
+>
+  <script src="assets/vendor/gsap.min.js"></script>
+
+  <style>
+    @font-face {
+      font-family: 'Space Grotesk Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 700;
+      src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2')
+        format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Figtree Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 900;
+      src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2-variations');
+    }
+
+    #root {
+      --night: #0a100d;
+      --night-ink: #f7f4ea;
+      --night-muted: #9dafa4;
+      --spark: #d9f875;
+      --on-spark: #123c32;
+      position: absolute;
+      inset: 0;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+    }
+
+    /* full-bleed Noite ground (no paper grain on night) */
+    [id='09-bandeira-ground'] {
+      position: absolute;
+      inset: 0;
+      background: var(--night);
+      container-type: size;
+    }
+
+    [id='09-bandeira-card'] {
+      position: absolute;
+      inset: 0;
+    }
+    /* the end card itself — the one element the final fade takes to night */
+    [id='09-bandeira-stack'] {
+      position: absolute;
+      inset: 0;
+    }
+    [id='09-bandeira-stack'] > * {
+      position: absolute;
+      left: 72px;
+      margin: 0;
+    }
+
+    /* logo: the check mark (132 px box at x 72, y 330) + "venduá." — mark and dot in spark */
+    [id='09-bandeira-logo'] {
+      top: 330px;
+      height: 132px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      font:
+        700 96px/1 'Space Grotesk Variable',
+        sans-serif;
+      letter-spacing: -0.035em;
+      color: var(--night-ink);
+    }
+    [id='09-bandeira-mark'] {
+      display: block;
+      width: 132px;
+      height: 132px;
+      overflow: visible;
+    }
+    [id='09-bandeira-mark-path'] {
+      fill: none;
+      stroke: var(--spark);
+      stroke-width: 17;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    [id='09-bandeira-wordmark'] {
+      display: block;
+      white-space: nowrap;
+      transform-origin: 0% 50%;
+    }
+    [class~='09-bandeira-dot'] {
+      color: var(--spark);
+    }
+
+    /* title: "Comece pelo / Venduá Bandeira" */
+    [id='09-bandeira-title'] {
+      top: 560px;
+      font:
+        600 112px/1.02 'Space Grotesk Variable',
+        sans-serif;
+      letter-spacing: -0.035em;
+      color: var(--night-ink);
+      transform-origin: 0% 50%;
+    }
+    [class~='09-bandeira-line'] {
+      display: block;
+      white-space: nowrap;
+    }
+    [class~='09-bandeira-word'] {
+      display: inline-block;
+    }
+
+    /* the trial line: lime chip, forest text */
+    [id='09-bandeira-chip'] {
+      top: 880px;
+      white-space: nowrap;
+      font:
+        750 56px/1.2 'Figtree Variable',
+        sans-serif;
+      letter-spacing: -0.01em;
+      background: var(--spark);
+      color: var(--on-spark);
+      padding: 20px 36px 22px;
+      border-radius: 999px;
+      transform-origin: 0% 50%;
+    }
+
+    [id='09-bandeira-link'] {
+      top: 1046px;
+      white-space: nowrap;
+      font:
+        650 46px/1.2 'Figtree Variable',
+        sans-serif;
+      color: var(--night-muted);
+    }
+    [class~='09-bandeira-handle'] {
+      color: var(--night-ink);
+    }
+  </style>
+
+  <div
+    id="root"
+    data-composition-id="09-bandeira"
+    data-start="0"
+    data-duration="7.03125"
+    data-width="1080"
+    data-height="1920"
+  >
+    <div
+      id="09-bandeira-ground"
+      class="clip"
+      data-start="0"
+      data-duration="7.03125"
+      data-track-index="0"
+    ></div>
+
+    <div
+      id="09-bandeira-card"
+      class="clip"
+      data-start="0"
+      data-duration="7.03125"
+      data-track-index="1"
+    >
+      <div id="09-bandeira-stack">
+        <div id="09-bandeira-logo">
+          <svg id="09-bandeira-mark" viewBox="0 0 128 128" aria-hidden="true">
+            <path id="09-bandeira-mark-path" d="M32 48 L61 88 L98 34" />
+          </svg>
+          <span id="09-bandeira-wordmark">venduá<span class="09-bandeira-dot">.</span></span>
+        </div>
+
+        <h1 id="09-bandeira-title">
+          <span class="09-bandeira-line"
+            ><span class="09-bandeira-word" data-layout-allow-overlap data-cue="0.94">Comece</span>
+            <span class="09-bandeira-word" data-layout-allow-overlap data-cue="1.40"
+              >pelo</span
+            ></span
+          >
+          <span class="09-bandeira-line"
+            ><span class="09-bandeira-word" data-layout-allow-overlap data-cue="1.62">Venduá</span>
+            <span class="09-bandeira-word" data-layout-allow-overlap data-cue="2.14"
+              >Bandeira</span
+            ></span
+          >
+        </h1>
+
+        <div id="09-bandeira-chip">14 dias grátis, sem cartão.</div>
+
+        <div id="09-bandeira-link">
+          Link na bio · <span class="09-bandeira-handle">@vendua.digital</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const ID = '09-bandeira';
+      const DURATION = 7.03125;
+      const el = (name) => document.getElementById(`${ID}-${name}`);
+
+      const card = el('card');
+      const stack = el('stack');
+      const logo = el('logo');
+      const mark = el('mark');
+      const path = el('mark-path');
+      const wordmark = el('wordmark');
+      const title = el('title');
+      const chip = el('chip');
+      const link = el('link');
+
+      // Spoken-word cues (audio/cues.json, frame 9), read from the markup.
+      const WORD_DUR = 0.2;
+      const WORD_RISE = 60;
+      const WORD_SCALE = 1.08;
+      const REVEALS = Array.from(card.querySelectorAll('[data-cue]')).map((node) => ({
+        node,
+        start: parseFloat(node.dataset.cue),
+      }));
+
+      const HIT = 0;
+      const VENDUA = 0.12 - 0.04; // lands on "Venduá."
+      const BANDEIRA = 2.14;
+      const CATORZE = 2.86;
+      const GRATIS = 3.6;
+      const CARTAO = 4.54;
+      const LINK_AT = 4.9;
+      const FADE = 0.3;
+
+      // Fixed, decaying shake for the accent on the cut.
+      const SHAKE_X = [10, -8, 5, -3, 0];
+      const SHAKE_R = [0.6, -0.4, 0.2, -0.1, 0];
+      const SHAKE_DUR = 0.25;
+
+      // Gap of twice the length so no zero-length dash (a round-cap dot) shows before the draw.
+      const measured = typeof path.getTotalLength === 'function' ? path.getTotalLength() : 0;
+      const LEN = measured > 0 ? measured : Math.hypot(29, 40) + Math.hypot(37, 54);
+      path.style.strokeDasharray = `${LEN} ${LEN * 2}`;
+
+      const tl = gsap.timeline({ paused: true });
+
+      // Plain tl.to so a punch never clobbers an entrance's from-state at build time.
+      const punch = (target, peak, at) => {
+        tl.to(target, { scale: peak, duration: 0.1, ease: 'power3.out' }, at);
+        tl.to(target, { scale: 1, duration: 0.25, ease: 'power2.out' }, at + 0.1);
+      };
+
+      // Scene 1 — the check slams in and draws; "venduá." pops beside it on the word.
+      tl.fromTo(mark, { scale: 1.3 }, { scale: 1, duration: 0.2, ease: 'expo.out' }, HIT);
+      tl.fromTo(
+        path,
+        { strokeDashoffset: LEN + 1 },
+        { strokeDashoffset: 0, duration: 0.25, ease: 'power2.out' },
+        HIT,
+      );
+      tl.fromTo(
+        wordmark,
+        { opacity: 0, scale: 1.12 },
+        { opacity: 1, scale: 1, duration: 0.18, ease: 'expo.out' },
+        VENDUA,
+      );
+      const step = SHAKE_DUR / SHAKE_X.length;
+      tl.fromTo(
+        logo,
+        { x: 0, rotation: 0 },
+        { x: SHAKE_X[0], rotation: SHAKE_R[0], duration: step, ease: 'power1.out' },
+        HIT,
+      );
+      for (let i = 1; i < SHAKE_X.length; i++) {
+        tl.to(
+          logo,
+          { x: SHAKE_X[i], rotation: SHAKE_R[i], duration: step, ease: 'sine.inOut' },
+          HIT + step * i,
+        );
+      }
+
+      // Scene 2 — "Comece pelo / Venduá Bandeira" slams in word by word; punch on "Bandeira".
+      REVEALS.forEach(({ node, start }) => {
+        tl.fromTo(
+          node,
+          { opacity: 0, y: WORD_RISE, scale: WORD_SCALE },
+          { opacity: 1, y: 0, scale: 1, duration: WORD_DUR, ease: 'expo.out' },
+          start,
+        );
+      });
+      gsap.set(title, { scale: 1 });
+      punch(title, 1.03, BANDEIRA);
+
+      // Scene 3 — on "catorze" the lime chip shoots out from its left edge; it punches on
+      // "grátis," (light) and "cartão." so the stretch before "Link" never sits still.
+      tl.fromTo(
+        chip,
+        { opacity: 0, scale: 0 },
+        { opacity: 1, scale: 1, duration: 0.22, ease: 'expo.out' },
+        CATORZE,
+      );
+      punch(chip, 1.03, GRATIS);
+      punch(chip, 1.05, CARTAO);
+
+      // Scene 4 — the handle line slams up.
+      tl.fromTo(
+        link,
+        { opacity: 0, y: WORD_RISE },
+        { opacity: 1, y: 0, duration: 0.2, ease: 'expo.out' },
+        LINK_AT,
+      );
+
+      // Scene 5 — held still; the film's only exit: the card fades to night.
+      tl.fromTo(
+        stack,
+        { opacity: 1 },
+        { opacity: 0, duration: FADE, ease: 'power1.inOut' },
+        DURATION - FADE,
+      );
+      tl.set({}, {}, DURATION);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['09-bandeira'] = tl;
+    })();
+  </script>
+</template>
