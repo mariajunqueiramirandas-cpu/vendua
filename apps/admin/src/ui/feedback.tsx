@@ -156,6 +156,8 @@ export function messageOf(err: unknown): string {
 }
 
 const FRIENDLY: Record<string, string> = {
+  PAYER_DOCUMENT_REQUIRED:
+    'Antes, informe o CPF ou o CNPJ da cobrança em Conta e plano, em Pagamento do plano.',
   INVALID_CODE: 'Código errado ou vencido. Confira ou peça outro.',
   INVALID_PHONE: 'Digite o celular com DDD, como (22) 99999-0000.',
   REASON_REQUIRED: 'Escolha um motivo para avisar o cliente.',

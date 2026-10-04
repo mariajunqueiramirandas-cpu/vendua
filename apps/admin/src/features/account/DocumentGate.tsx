@@ -8,10 +8,10 @@ import { messageOf } from '../../ui/feedback.tsx';
 import { DocumentInput, Field } from '../../ui/fields.tsx';
 import { DOCUMENT_ERR } from '../auth/pending.ts';
 
-/** A plan from before signup asked for the CPF/CNPJ: its Pix waits for one, since MP refuses
- *  the Pix that goes without it. Saving it makes Core reissue the live Pix with it. */
+/** A plan from before signup asked for the CPF/CNPJ: Core issues no plan Pix without one (MP
+ *  refuses it) — renewals, upgrades and packs wait. Saving it makes Core issue them. */
 export const needsDocument = (a: Account | undefined) =>
-  !!a?.subscription && a.subscription.method === 'pix' && !a.subscription.payerDocument;
+  !!a?.subscription && !a.subscription.payerDocument;
 
 export function DocumentGate() {
   const qc = useQueryClient();

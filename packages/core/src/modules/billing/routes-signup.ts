@@ -40,7 +40,7 @@ import {
   beginPayment,
   lockSub,
   recordBillingProblem,
-  reissueLivePix,
+  reissueOpenPix,
   startSubscription,
   startTrial,
   withEffects,
@@ -516,7 +516,7 @@ async function ensureFirstCharge(
           where tenant_id = ${owner.tenant_id} and payer_document is null
         `;
           // its first Pix went out without one: the owner gets a new Pix that carries it
-          if (sub.status === 'pending') await reissueLivePix(ctx, tx, owner.tenant_id, now);
+          if (sub.status === 'pending') await reissueOpenPix(ctx, tx, owner.tenant_id, now);
         }
         if (sub.status === 'trialing' && sub.trial_ends_at)
           return { kind: 'trial', endsAt: sub.trial_ends_at.toISOString() };

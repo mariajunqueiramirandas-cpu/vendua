@@ -152,6 +152,13 @@ export function pixIsLive(inv: InvoiceRow, now: Date) {
   );
 }
 
+/** No plan Pix goes out without the payer's CPF/CNPJ (the user's decision, 2026-10-03): MP
+ *  refuses it. A store from before signup asked for one is held until the owner adds it. */
+export const documentRequired = () =>
+  new HttpError(422, 'PAYER_DOCUMENT_REQUIRED', 'add the CPF or CNPJ the plan is billed to', {
+    field: 'payerDocument',
+  });
+
 /** Issue (or re-issue) the Pix of an open invoice on Venduá's own account. */
 export async function issuePix(
   tx: Sql,
@@ -166,6 +173,7 @@ export async function issuePix(
     deviceId?: string | null;
   },
 ): Promise<InvoiceRow> {
+  if (!o.payer.document) throw documentRequired();
   return storePix(
     tx,
     provider,

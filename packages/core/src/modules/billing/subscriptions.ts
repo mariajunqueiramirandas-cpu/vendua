@@ -13,6 +13,7 @@ import {
   billingLog,
   DAY_MS,
   hookUrl,
+  documentRequired,
   issuePix,
   payerFor,
   pixIsLive,
@@ -316,7 +317,8 @@ export async function beginPayment(
       await recordManualInvoice(tx, inv, plan.name);
       return { kind: 'manual', invoiceId: inv.id };
     }
-    if (!pixIsLive(inv, now))
+    if (!pixIsLive(inv, now)) {
+      if (!payer.document) throw documentRequired();
       inv = await viaProvider(() =>
         issuePix(tx, ctx.provider, inv, {
           payer,
@@ -327,6 +329,7 @@ export async function beginPayment(
           drop: dropPix(ctx),
         }),
       );
+    }
     return { kind: 'pix', invoiceId: inv.id };
   }
   if (sub.checkout_url && sub.provider_subscription_id)
@@ -443,7 +446,8 @@ export async function ensureRenewal(
   });
   if (o.issue !== false && inv.status === 'open' && !pixIsLive(inv, now)) {
     const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
-    if (payer)
+    // no CPF/CNPJ yet: the invoice waits open, without its Pix, until the owner adds one
+    if (payer?.document)
       inv = await issuePix(tx, ctx.provider, inv, {
         payer,
         planName: plan.name,
@@ -484,6 +488,7 @@ export async function reissuePix(
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
+  if (!payer.document) throw documentRequired();
   // a pack's Pix keeps the pack's description, not the plan's month
   const label =
     inv.kind === 'ai_pack'
@@ -504,15 +509,17 @@ export async function reissuePix(
 }
 
 /**
- * The payer's CPF/CNPJ just changed: a live Pix issued without it is replaced, since MP scores
- * the payer's document when the money arrives. MP down keeps the old one; the next Pix carries it.
+ * The payer's CPF/CNPJ just changed: each open Pix invoice gets a Pix that carries it — one held
+ * for want of a document is issued, a live one is replaced (MP scores the payer's document when
+ * the money arrives). MP down keeps what there was; the next Pix carries it.
  */
-export async function reissueLivePix(ctx: BillingCtx, tx: Sql, tenantId: string, now: Date) {
-  const live = await tx<{ id: string }[]>`
+export async function reissueOpenPix(ctx: BillingCtx, tx: Sql, tenantId: string, now: Date) {
+  const open = await tx<{ id: string }[]>`
     select id from invoices where tenant_id = ${tenantId} and status = 'open' and method = 'pix'
-      and pix_copy_paste is not null and pix_expires_at > ${now}
+      -- a pack left unpaid stays as it was: nobody asked for its Pix again
+      and (kind <> 'ai_pack' or (pix_copy_paste is not null and pix_expires_at > ${now}))
   `;
-  for (const { id } of live)
+  for (const { id } of open)
     await reissuePix(ctx, tx, tenantId, id, now, { force: true }).catch((err: unknown) => {
       // both throw before anything is written: the transaction goes on
       if (
@@ -554,7 +561,7 @@ async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow
     });
     if (hadPix && next.method === 'pix') {
       const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
-      if (payer)
+      if (payer?.document)
         next = await viaProvider(() =>
           issuePix(tx, ctx.provider, next, {
             payer,
@@ -617,6 +624,7 @@ async function upgradePix(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceRow
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
+  if (!payer.document) throw documentRequired();
   const plan = await planOrThrow(tx, inv.plan_id);
   return viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
@@ -770,6 +778,7 @@ async function packPix(
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
+  if (!payer.document) throw documentRequired();
   return viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
       payer,
@@ -852,7 +861,7 @@ export async function changeSubscription(
   }
   if (o.payerDocument !== undefined && o.payerDocument !== sub.payer_document) {
     await tx`update subscriptions set payer_document = ${o.payerDocument}, updated_at = now() where tenant_id = ${tenantId}`;
-    await reissueLivePix(ctx, tx, tenantId, o.now);
+    await reissueOpenPix(ctx, tx, tenantId, o.now);
     await reload();
   }
 

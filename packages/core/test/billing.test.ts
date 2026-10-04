@@ -743,6 +743,55 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(site.body.error).toMatchObject({ code: 'PLAN_REQUIRED', details: { reason: 'unpaid' } });
   });
 
+  test('no CPF/CNPJ on file: the renewal waits without its Pix, says why, and saving it issues the Pix', async () => {
+    const s = await store('held', 'mirim', 'bia@example.com');
+    await sql`update merchant_users set prefs = '{"emailInvoices": false}' where tenant_id = ${s.id}`;
+    const st = await s.owner('POST', '/account/subscription', {
+      planId: 'mirim',
+      method: 'pix',
+      payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
+    });
+    await payInvoice(st.body.invoices[0].id);
+    // a store from before signup asked for one
+    await sql`update subscriptions set payer_document = null where tenant_id = ${s.id}`;
+    const mine = () => wa.filter((m) => m.phone === s.phone && m.text.startsWith('Venduá: '));
+
+    await sql`update subscriptions set current_period_end = ${new Date(Date.now() + 2 * DAY)} where tenant_id = ${s.id}`;
+    await tick();
+    await tick();
+    const held = (await invoices(s.id))[1]!;
+    expect(held).toMatchObject({ status: 'open', pix_copy_paste: null, provider_payment_id: null });
+    expect(mine()).toHaveLength(1);
+    expect(mine()[0]!.text).toContain('Para gerar o Pix, informe o CPF ou o CNPJ da cobrança');
+
+    // the owner asks for the Pix: told what is missing, nothing goes to MP
+    const asked = await s.owner('POST', `/account/invoices/${held.id}/pix`, {});
+    expect(asked.status).toBe(422);
+    expect(asked.body.error).toMatchObject({
+      code: 'PAYER_DOCUMENT_REQUIRED',
+      details: { field: 'payerDocument' },
+    });
+
+    const seen: PixRequest[] = [];
+    const realPix = fake.platformPix.bind(fake);
+    fake.platformPix = async (req) => {
+      seen.push(req);
+      return realPix(req);
+    };
+    try {
+      const saved = await s.owner('PATCH', '/account/subscription', {
+        payerDocument: '390.533.447-05',
+      });
+      expect(saved.status).toBe(200);
+    } finally {
+      fake.platformPix = realPix;
+    }
+    // the held invoice gets its Pix, carrying the document
+    expect(seen.map((r) => r.payerDocument)).toEqual(['39053344705']);
+    expect((await invoices(s.id))[1]!.pix_copy_paste).toEqual(expect.any(String));
+  });
+
   test('pix renewal: reminders once each, past_due, paid again → active', async () => {
     const s = await store('late', 'mirim', 'bia@example.com');
     await sql`update merchant_users set prefs = '{"emailInvoices": false}' where tenant_id = ${s.id}`;
@@ -1096,7 +1145,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       values (${a.id}, ${planId}, 'card', 'active', 'fake', ${ps.id}, 5000, now(), now() + interval '10 days')
     `;
     const b = await store('price-pix', 'mirim', 'bia@example.com');
-    await sql`insert into subscriptions (tenant_id, plan_id, method, status, provider) values (${b.id}, ${planId}, 'pix', 'pending', 'fake')`;
+    await sql`insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_document) values (${b.id}, ${planId}, 'pix', 'pending', 'fake', '52998224725')`;
     await sql`
       insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end, method, provider, due_at)
       values (${b.id}, 1, ${planId}, 5000, now(), now() + interval '1 month', 'pix', 'fake', now())
@@ -1116,7 +1165,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       values (${planId}, 'Plano vivo', 5000, '{}', false, 99)
     `;
     const s = await store('price-live', 'mirim', 'bia@example.com');
-    await sql`insert into subscriptions (tenant_id, plan_id, method, status, provider) values (${s.id}, ${planId}, 'pix', 'pending', 'fake')`;
+    await sql`insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_document) values (${s.id}, ${planId}, 'pix', 'pending', 'fake', '52998224725')`;
     const inv = (
       await sql`
         insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end, method, provider, due_at)

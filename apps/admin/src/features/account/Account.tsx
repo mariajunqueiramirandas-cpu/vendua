@@ -8,6 +8,7 @@ import {
   CreditCard,
   Gift,
   Globe,
+  IdentificationCard,
   type Icon,
   Info,
   MagicWand,
@@ -68,6 +69,7 @@ import { FEATURE_LABEL, PlanCards, PlanCompare, promiseOf } from '../../ui/PlanP
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { DOCUMENT_ERR, PAYER_EMAIL_RE } from '../auth/pending.ts';
+import { DocumentGate, needsDocument } from './DocumentGate.tsx';
 
 type Sub = NonNullable<AccountData['subscription']>;
 type Method = 'card' | 'pix';
@@ -359,6 +361,27 @@ function AccountView({ a }: { a: AccountData }) {
 
   return (
     <div className="space-y-8">
+      {a.billing.available && needsDocument(a) ? (
+        <Callout
+          tone="warning"
+          icon={IdentificationCard}
+          title="Falta o CPF ou o CNPJ da cobrança"
+          action={
+            <Button
+              size="sm"
+              onClick={() => {
+                const field = document.getElementById('payer-doc');
+                field?.scrollIntoView({ block: 'center' });
+                field?.focus();
+              }}
+            >
+              informar agora
+            </Button>
+          }
+        >
+          Sem ele, o Pix do plano não é gerado. Informe em Pagamento do plano.
+        </Callout>
+      ) : null}
       {!a.billing.available && s?.status === 'pending' ? (
         <Callout tone="warning" icon={Clock} title="Falta o primeiro pagamento">
           A equipe da Venduá confirma o pagamento do plano e a loja abre para pedidos.
@@ -1303,7 +1326,7 @@ function MethodSection({ a, s }: { a: AccountData; s: Sub }) {
           helper={
             s.payerDocument
               ? 'Vai na cobrança do plano: o seu CPF ou o CNPJ da loja.'
-              : 'Falta preencher. Sem o seu CPF ou o CNPJ da loja, o Mercado Pago pode recusar o Pix do plano.'
+              : 'Falta preencher. Sem o seu CPF ou o CNPJ da loja, o Pix do plano não é gerado.'
           }
           state={doc.isPending ? 'saving' : doc.isSuccess ? 'saved' : 'idle'}
         >
@@ -1423,12 +1446,16 @@ function InvoiceSheet({
     mutationFn: (x: string) => api.invoicePix(x),
     onSuccess: (n) => qc.setQueryData(qk.account, n),
   });
+  // no CPF/CNPJ yet: Core holds the Pix until the owner gives one, here
+  const gate =
+    needsDocument(a) && inv?.method === 'pix' && inv.status !== 'paid' && inv.status !== 'void';
   useIssuePix(
     inv,
     !!inv &&
       inv.method === 'pix' &&
       inv.status !== 'paid' &&
       inv.status !== 'void' &&
+      !gate &&
       !issue.isPending,
     issue.mutate,
   );
@@ -1455,7 +1482,9 @@ function InvoiceSheet({
               : `${inv.planName} · nº ${inv.number}`
       }
     >
-      {!inv ? null : inv.status === 'paid' ? (
+      {!inv ? null : gate ? (
+        <DocumentGate />
+      ) : inv.status === 'paid' ? (
         <div className="animate-fade-up flex flex-col items-center py-6 text-center" role="status">
           <span className="dua-disc grid size-32 place-items-center">
             <Mascote pose="sucesso" size={120} className="w-28" />
