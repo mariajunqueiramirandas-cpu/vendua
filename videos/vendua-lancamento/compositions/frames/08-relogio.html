@@ -1,0 +1,534 @@
+<template id="08-relogio-template">
+  <style>
+    @font-face {
+      font-family: 'Space Grotesk Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 700;
+      src: url('assets/fonts/captured-space-grotesk-latin-wght-normal.woff2')
+        format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Figtree Variable';
+      font-style: normal;
+      font-display: block;
+      font-weight: 300 900;
+      src: url('assets/fonts/captured-figtree-latin-wght-normal.woff2') format('woff2-variations');
+    }
+
+    #root {
+      --canvas: #f7f4ea;
+      --surface: #fffdf8;
+      --ink: #123c32;
+      --spark: #d9f875;
+      --e1: 0 1px 2px rgb(18 60 50 / 0.06), 0 4px 16px rgb(18 60 50 / 0.05);
+      --device: inset 0 0 0 1.5px rgb(255 255 255 / 0.08), 0 8px 16px rgb(18 60 50 / 0.12),
+        0 30px 70px rgb(18 60 50 / 0.22);
+      --bezel: linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%);
+      position: relative;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+    }
+
+    .\30 8-relogio-layer {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+    }
+    .\30 8-relogio-ground {
+      background: var(--canvas);
+      container-type: size;
+      overflow: hidden;
+    }
+    .\30 8-relogio-grain {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1080px;
+      height: 1920px;
+      display: block;
+    }
+
+    /* feature header — shared geometry, still (handoff from frame 07) */
+    .\30 8-relogio-disc {
+      position: absolute;
+      left: 72px;
+      top: 250px;
+      width: 92px;
+      height: 92px;
+      border-radius: 999px;
+      background: var(--spark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Space Grotesk Variable', sans-serif;
+      font-weight: 600;
+      font-size: 58px;
+      line-height: 1;
+      color: var(--ink);
+    }
+    .\30 8-relogio-name {
+      position: absolute;
+      left: 188px;
+      top: 250px;
+      height: 92px;
+      display: flex;
+      align-items: center;
+      font-family: 'Space Grotesk Variable', sans-serif;
+      font-weight: 600;
+      font-size: 60px;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+
+    /* tablet — frame.md `tablet` at the brief's geometry */
+    .\30 8-relogio-tablet {
+      position: absolute;
+      left: 72px;
+      top: 380px;
+      width: 868px;
+      height: 558.1px;
+      box-sizing: border-box;
+      padding: 20.8px;
+      border-radius: 43px;
+      background: var(--bezel);
+      box-shadow: var(--device);
+    }
+    .\30 8-relogio-tscreen {
+      position: relative;
+      width: 826.4px;
+      height: 516.5px;
+      border-radius: 31px;
+      overflow: hidden;
+      background: var(--canvas);
+    }
+    .\30 8-relogio-cam {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 826.4px;
+      height: 516.5px;
+      transform-origin: 0 0;
+    }
+    .\30 8-relogio-kds {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 826.4px;
+      height: 516.5px;
+      display: block;
+    }
+    /* the real "pronto" button of #30 (cozinha-itens), lifted so it can press */
+    .\30 8-relogio-btn {
+      position: absolute;
+      left: 42.61px;
+      top: 396.42px;
+      width: 213.7px;
+      height: 37.45px;
+      border-radius: 7px;
+      background-image: url('assets/screens/cozinha-itens.webp');
+      background-size: 826.4px 516.5px;
+      background-position: -42.61px -396.42px;
+      background-repeat: no-repeat;
+    }
+    .\30 8-relogio-tap {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 72px;
+      height: 72px;
+      box-sizing: border-box;
+      border-radius: 999px;
+      border: 6px solid var(--spark);
+      box-shadow:
+        0 0 0 2px var(--ink),
+        inset 0 0 0 2px var(--ink);
+    }
+
+    /* chip under the tablet, naming the ticket the camera reads */
+    .\30 8-relogio-chip {
+      position: absolute;
+      left: 72px;
+      top: 984px;
+      box-sizing: border-box;
+      padding: 14px 28px;
+      border-radius: 999px;
+      background: var(--surface);
+      box-shadow:
+        inset 6px 0 0 var(--spark),
+        var(--e1);
+      font-family: 'Figtree Variable', sans-serif;
+      font-weight: 650;
+      font-size: 38px;
+      line-height: 1.2;
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .\30 8-relogio-chip.\30 8-relogio-spark {
+      background: var(--spark);
+      box-shadow: var(--e1);
+    }
+
+    /* Caio's phone — frame.md `device` at 560 px tall */
+    .\30 8-relogio-phone {
+      position: absolute;
+      left: 560px;
+      top: 700px;
+      width: 267.67px;
+      height: 560px;
+      box-sizing: border-box;
+      padding: 8.565px;
+      border-radius: 42.83px;
+      background: var(--bezel);
+      box-shadow: var(--device);
+    }
+    .\30 8-relogio-pscreen {
+      position: relative;
+      width: 250.54px;
+      height: 542.87px;
+      border-radius: 34.54px;
+      overflow: hidden;
+      background: var(--canvas);
+    }
+    .\30 8-relogio-pshot {
+      display: block;
+      width: 250.54px;
+      height: 542.5px;
+    }
+    .\30 8-relogio-island {
+      position: absolute;
+      top: 8.63px;
+      left: 85.2px;
+      width: 80.17px;
+      height: 20.97px;
+      border-radius: 999px;
+      background: #0b100d;
+    }
+    /* lime ring around "Pronto" (750 px shot: x 36–221, y 123–166; 1 px = 0.33405 css) */
+    .\30 8-relogio-ring {
+      position: absolute;
+      left: 10.6px;
+      top: 39.65px;
+      width: 82.2px;
+      height: 35.4px;
+      box-sizing: border-box;
+      border-radius: 12px;
+      border: 6px solid var(--spark);
+      box-shadow:
+        0 0 0 2px var(--ink),
+        inset 0 0 0 2px var(--ink);
+    }
+  </style>
+
+  <div
+    id="root"
+    data-composition-id="08-relogio"
+    data-start="0"
+    data-duration="7.96875"
+    data-fps="30"
+    data-width="1080"
+    data-height="1920"
+  >
+    <div
+      id="08-relogio-ground"
+      class="clip 08-relogio-layer 08-relogio-ground"
+      data-start="0"
+      data-duration="7.96875"
+      data-track-index="0"
+    >
+      <svg
+        class="08-relogio-grain"
+        viewBox="0 0 1080 1920"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <filter id="08-relogio-noise" x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.85"
+            numOctaves="2"
+            seed="8"
+            stitchTiles="stitch"
+          />
+          <feColorMatrix
+            type="matrix"
+            values="0.33 0.33 0.33 0 0  0.33 0.33 0.33 0 0  0.33 0.33 0.33 0 0  0 0 0 0 1"
+          />
+        </filter>
+        <rect width="1080" height="1920" filter="url(#08-relogio-noise)" opacity="0.025" />
+      </svg>
+    </div>
+
+    <div
+      id="08-relogio-header"
+      class="clip 08-relogio-layer"
+      data-start="0"
+      data-duration="7.96875"
+      data-track-index="1"
+    >
+      <span class="08-relogio-disc">3</span>
+      <span class="08-relogio-name">A cozinha vê</span>
+    </div>
+
+    <div
+      id="08-relogio-kitchen"
+      class="clip 08-relogio-layer"
+      data-start="0"
+      data-duration="7.96875"
+      data-track-index="2"
+    >
+      <div id="08-relogio-tablet" class="08-relogio-tablet">
+        <div class="08-relogio-tscreen">
+          <div id="08-relogio-cam" class="08-relogio-cam">
+            <img
+              id="08-relogio-kds0"
+              class="08-relogio-kds"
+              src="assets/screens/cozinha.webp"
+              alt="Cozinha: #27 atrasado 10 min, #28 faltam 8 min, #30 faltam 15 min"
+            />
+            <img
+              id="08-relogio-kds1"
+              class="08-relogio-kds"
+              src="assets/screens/cozinha-itens.webp"
+              alt="Cozinha: #30 com o bolo de cenoura marcado, 1/2"
+            />
+            <span id="08-relogio-btn" class="08-relogio-btn"></span>
+            <img
+              id="08-relogio-kds2"
+              class="08-relogio-kds"
+              src="assets/screens/cozinha-pronto.webp"
+              alt="Cozinha: #30 pronto"
+            />
+          </div>
+          <span id="08-relogio-tap" class="08-relogio-tap"></span>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="08-relogio-chips"
+      class="clip 08-relogio-layer"
+      data-start="0"
+      data-duration="7.96875"
+      data-track-index="3"
+    >
+      <span id="08-relogio-c1" class="08-relogio-chip">#30 · faltam 15 min</span>
+      <span id="08-relogio-c2" class="08-relogio-chip">#28 · faltam 8 min</span>
+      <span id="08-relogio-c3" class="08-relogio-chip">#27 · atrasado 10 min</span>
+      <span id="08-relogio-c4" class="08-relogio-chip">#30 · faltam 15 min</span>
+      <span id="08-relogio-c5" class="08-relogio-chip 08-relogio-spark">#30 pronto</span>
+    </div>
+
+    <div
+      id="08-relogio-customer"
+      class="clip 08-relogio-layer"
+      data-start="0"
+      data-duration="7.96875"
+      data-track-index="4"
+    >
+      <div id="08-relogio-phone" class="08-relogio-phone">
+        <div class="08-relogio-pscreen">
+          <img
+            class="08-relogio-pshot"
+            src="assets/screens/vitrine-pedido-pronto.webp"
+            alt="Pedido #30 · Pronto · Chega entre 19:05 e 19:35"
+          />
+          <span class="08-relogio-island"></span>
+        </div>
+        <span id="08-relogio-ring" class="08-relogio-ring"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/vendor/gsap.min.js"></script>
+  <script>
+    (function () {
+      var byId = function (name) {
+        return document.getElementById('08-relogio-' + name);
+      };
+      var tablet = byId('tablet');
+      var cam = byId('cam');
+      var kds1 = byId('kds1');
+      var kds2 = byId('kds2');
+      var btn = byId('btn');
+      var tap = byId('tap');
+      var phone = byId('phone');
+      var ring = byId('ring');
+      var chips = [byId('c1'), byId('c2'), byId('c3'), byId('c4'), byId('c5')];
+
+      var DURATION = 7.96875;
+      var SW = 826.4;
+      var SH = 516.5;
+      var K = SW / 2560; // 1 screenshot px = 0.3228 css px
+
+      // camera state that centres screenshot point (px, py) at scale s, clamped to the shot
+      function view(px, py, s) {
+        var x = SW / 2 - s * px * K;
+        var y = SH / 2 - s * py * K;
+        x = Math.min(0, Math.max(SW * (1 - s), x));
+        y = Math.min(0, Math.max(SH * (1 - s), y));
+        return { x: x, y: y, scale: s };
+      }
+      // measured centres (2560×1600 shots)
+      var HOME = { x: 0, y: 0, scale: 1 };
+      var DRIFT = view(832.5, 872.5, 1.06);
+      var C30 = view(832.5, 872.5, 2.2); // "14:37 faltam 15 min" x 755–910, y 830–915
+      var C30b = view(832.5, 872.5, 2.27);
+      var C28 = view(1779, 256.5, 2.2); // "21:37 faltam 8 min" x 1704–1854, y 214–299
+      var C27 = view(818, 256.5, 2.2); // "39:37 atrasado 10 min" x 726–910, y 214–299 + stripes
+      var BTN = { x: 462.5, y: 1285.5 }; // #30 "pronto" button x 132–793, y 1228–1343
+      var T30 = view(BTN.x, BTN.y, 1.3);
+      var T30b = view(BTN.x, BTN.y, 1.38);
+      var T30c = view(BTN.x, BTN.y, 1.45);
+
+      function camMove(from, to, at, dur, ease) {
+        tl.fromTo(
+          cam,
+          { x: from.x, y: from.y, scale: from.scale },
+          {
+            x: to.x,
+            y: to.y,
+            scale: to.scale,
+            duration: dur,
+            ease: ease,
+            immediateRender: false,
+          },
+          at,
+        );
+      }
+      function punch(el, at, amt) {
+        tl.fromTo(
+          el,
+          { scale: 1 },
+          { scale: amt, duration: 0.1, ease: 'power2.out', immediateRender: false },
+          at,
+        );
+        tl.fromTo(
+          el,
+          { scale: amt },
+          { scale: 1, duration: 0.25, ease: 'power2.out', immediateRender: false },
+          at + 0.1,
+        );
+      }
+      function chipIn(el, at) {
+        tl.fromTo(
+          el,
+          { y: 60, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.22, ease: 'expo.out', immediateRender: false },
+          at,
+        );
+      }
+      function chipOut(el, at) {
+        tl.fromTo(
+          el,
+          { y: 0, opacity: 1 },
+          { y: -28, opacity: 0, duration: 0.14, ease: 'power2.in', immediateRender: false },
+          at,
+        );
+      }
+
+      var tl = gsap.timeline({ paused: true });
+
+      tl.set(cam, { x: 0, y: 0, scale: 1, transformOrigin: '0 0' }, 0);
+      tl.set([kds1, kds2, btn], { opacity: 0 }, 0);
+      tl.set(tap, { opacity: 0 }, 0);
+      tl.set(chips, { opacity: 0 }, 0);
+      tl.set(ring, { opacity: 0 }, 0);
+      tl.set(phone, { opacity: 0, rotation: 4 }, 0);
+
+      // Scene 1 (0–1.2): the tablet slams up on the kitchen display; punch on "cozinha,"
+      tl.fromTo(tablet, { y: 110, scale: 1.06 }, { y: 0, scale: 1, duration: 0.26, ease: 'expo.out' }, 0);
+      tl.fromTo(tablet, { opacity: 0 }, { opacity: 1, duration: 0.08, ease: 'power2.out' }, 0);
+      punch(tablet, 0.6, 1.05);
+
+      // Scene 2 (1.30–4.0): the camera reads the clocks
+      camMove(HOME, DRIFT, 1.3, 0.9, 'sine.inOut');
+      camMove(DRIFT, C30, 2.22, 0.28, 'expo.out'); // "relógio"
+      chipIn(chips[0], 2.24);
+      camMove(C30, C30b, 2.5, 0.78, 'sine.inOut');
+      camMove(C30b, C28, 3.28, 0.24, 'expo.out'); // "antes"
+      chipOut(chips[0], 3.26);
+      chipIn(chips[1], 3.32);
+      camMove(C28, C27, 3.78, 0.24, 'expo.out'); // "atrasar."
+      chipOut(chips[1], 3.76);
+      chipIn(chips[2], 3.82);
+      tl.to(
+        tablet,
+        {
+          keyframes: { x: [0, 10, -8, 5, -3, 0], rotation: [0, 0.6, -0.4, 0.2, 0, 0] },
+          duration: 0.25,
+          ease: 'none',
+        },
+        3.86,
+      );
+
+      // Scene 3 (4.38–6.0): back to 1.3× on #30; items ticked; one tap → pronto
+      camMove(C27, T30, 4.38, 0.25, 'power3.inOut');
+      chipOut(chips[2], 4.4);
+      chipIn(chips[3], 4.48);
+      tl.fromTo(
+        [kds1, btn],
+        { opacity: 0 },
+        { opacity: 1, duration: 0.12, ease: 'power1.out', immediateRender: false },
+        4.62,
+      ); // "Ficou"
+      camMove(T30, T30b, 4.76, 0.96, 'sine.inOut');
+
+      // tap ring at the button's centre in screen space (camera at T30b from 5.72)
+      var tx = T30b.x + T30b.scale * BTN.x * K;
+      var ty = T30b.y + T30b.scale * BTN.y * K;
+      tap.style.left = (tx - 36).toFixed(2) + 'px';
+      tap.style.top = (ty - 36).toFixed(2) + 'px';
+      tl.fromTo(
+        tap,
+        { scale: 0.4, opacity: 1 },
+        { scale: 1.5, opacity: 0, duration: 0.35, ease: 'power2.out', immediateRender: false },
+        5.755,
+      );
+      tl.fromTo(btn, { scale: 1 }, { scale: 0.94, duration: 0.08, ease: 'power2.out', immediateRender: false }, 5.755);
+      tl.fromTo(btn, { scale: 0.94 }, { scale: 1, duration: 0.14, ease: 'power2.out', immediateRender: false }, 5.835);
+      tl.fromTo(
+        kds2,
+        { opacity: 0 },
+        { opacity: 1, duration: 0.12, ease: 'power1.out', immediateRender: false },
+        5.84,
+      );
+      chipOut(chips[3], 5.82);
+      chipIn(chips[4], 5.88);
+      camMove(T30b, T30c, 5.98, 1.98, 'sine.inOut');
+
+      // Scene 4 (6.17–end): Caio's phone slams up over the tablet; lime ring on "Pronto"
+      tl.fromTo(
+        phone,
+        { y: 120, scale: 1.12, rotation: 4 },
+        { y: 0, scale: 1, rotation: 4, duration: 0.24, ease: 'expo.out', immediateRender: false },
+        6.15,
+      );
+      tl.fromTo(
+        phone,
+        { opacity: 0 },
+        { opacity: 1, duration: 0.06, ease: 'power2.out', immediateRender: false },
+        6.15,
+      );
+      tl.fromTo(
+        ring,
+        { scale: 1.15, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.15, ease: 'expo.out', immediateRender: false },
+        6.54,
+      );
+      tl.to(phone, { keyframes: { x: [0, 8, -6, 4, -2, 0] }, duration: 0.22, ease: 'none' }, 6.6);
+      punch(phone, 7.05, 1.05); // "sabendo."
+
+      tl.set({}, {}, DURATION);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['08-relogio'] = tl;
+    })();
+  </script>
+</template>

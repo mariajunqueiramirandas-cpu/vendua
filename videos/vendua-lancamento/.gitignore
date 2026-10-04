@@ -5,3 +5,6 @@ audio/takes/
 snapshots/
 renders/*
 !renders/vendua-lancamento.mp4
+# assemble-index.mjs stages flat copies of the frames' images here; the frames use assets/screens/
+/assets/*.webp
+/assets/*.svg

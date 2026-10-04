@@ -59,7 +59,7 @@ components, the cue table). Every Scene time below is a word start from `audio/c
 - voiceover: "Chegou o Venduá! A sua loja online, com um vendedor que nunca larga o WhatsApp e uma cozinha que vê tudo na hora."
 - duration: 7.500s
 - transition_in: cut
-- status: outline
+- status: animated
 - src: compositions/frames/01-chegou.html
 - type: hook
 - persuasion: Launch novelty + the promise in one breath
@@ -85,7 +85,7 @@ Scene 4 (6.8–7.5s): a slow push-in on the whole fan (1→1.04), still moving i
 - voiceover: "Um: a sua loja no ar em cerca de uma hora. Você conversa com o Duá, e ele monta tudo: nome, cores, cardápio."
 - duration: 8.203s
 - transition_in: zoom-through 0.25s
-- status: outline
+- status: animated
 - src: compositions/frames/02-loja-no-ar.html
 - type: feature_showcase
 - persuasion: Effort reduction (an hour, in a conversation)
@@ -113,7 +113,7 @@ Scene 5 (7.6–8.203s): settled on the grid, a small continuous drift (≤20 px)
 - voiceover: "O cliente pede pelo link, sem cadastro, e paga no Pix, direto na sua conta do Mercado Pago."
 - duration: 6.094s
 - transition_in: cut
-- status: outline
+- status: animated
 - src: compositions/frames/03-pix.html
 - type: feature_showcase
 - persuasion: Friction removal for the customer + money where it belongs
@@ -141,7 +141,7 @@ Scene 5 (4.76–6.0s): camera back to 1×; on "Mercado" 4.76 a surface chip with
 - voiceover: "Dois: o Duá vende por você no WhatsApp. — Oi, tudo bem? Tem bolo de cenoura com brigadeiro pra hoje?"
 - duration: 6.797s
 - transition_in: zoom-through 0.25s
-- status: outline
+- status: animated
 - src: compositions/frames/04-dua-whatsapp.html
 - type: feature_showcase
 - persuasion: Recognition (the voice note every seller gets) → relief (someone answers it)
@@ -168,7 +168,7 @@ Scene 4 (6.5–6.797s): the camera returns to 1× (0.25 s) to the handoff state.
 - voiceover: "Ele ouve o áudio e responde na hora, com o preço do seu cardápio, sem chute. Oferece uma fatia a mais, fecha o pedido e manda o Pix."
 - duration: 8.672s
 - transition_in: cut
-- status: outline
+- status: animated
 - src: compositions/frames/05-dua-vende.html
 - type: feature_showcase
 - persuasion: Proof by demonstration (the whole sale, real figures)
@@ -198,7 +198,7 @@ Scene 5 (7.725–8.672s): on "Pix." 7.725 → dua-conversa-5-pix; a lime ring sn
 - voiceover: "Precisou de você? Um toque, e você assume a conversa."
 - duration: 3.750s
 - transition_in: cut
-- status: outline
+- status: animated
 - src: compositions/frames/06-assumir.html
 - type: feature_showcase
 - persuasion: Control (the owner is never locked out)
@@ -224,7 +224,7 @@ Scene 3 (1.6–3.75s): at 1.6 the screen swaps to dua-conversa-7-assumido (the c
 - voiceover: "Três: a cozinha vê o pedido na hora. O pedido cai no seu celular, você aceita num toque, e a comanda imprime sozinha."
 - duration: 7.969s
 - transition_in: zoom-through 0.25s
-- status: outline
+- status: animated
 - src: compositions/frames/07-cozinha.html
 - type: feature_showcase
 - persuasion: Speed + zero manual steps
@@ -252,7 +252,7 @@ Scene 5 (5.82–7.969s): on "e a comanda" 6.08 the screen push-slides left to im
 - voiceover: "Na tela da cozinha, cada pedido tem um relógio que avisa antes de atrasar. Ficou pronto? Um toque, e o cliente fica sabendo."
 - duration: 7.969s
 - transition_in: cut
-- status: outline
+- status: animated
 - src: compositions/frames/08-relogio.html
 - type: feature_showcase
 - persuasion: Control under pressure (nothing slips)
@@ -279,7 +279,7 @@ Scene 4 (6.17–7.969s): on "e o cliente" 6.17 Caio's phone (device, 560 px tall
 - voiceover: "Venduá. Comece pelo Venduá Bandeira: catorze dias grátis, sem cartão."
 - duration: 7.031s
 - transition_in: cut
-- status: outline
+- status: animated
 - src: compositions/frames/09-bandeira.html
 - type: cta
 - persuasion: Risk reversal (free, no card)

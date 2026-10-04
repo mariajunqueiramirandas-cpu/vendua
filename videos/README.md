@@ -167,3 +167,16 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
   frame-relative.
 - Final cut (v3): 27.42 s, six frames (7.03 / 5.86 / 3.05 / 2.58 / 2.34 / 6.56 s), 23 SFX,
   captions in 28 groups, −14 LUFS.
+
+## Findings from vendua-lancamento (the ~64 s launch Reel)
+
+- `eleven_v4` takes the same `[energetic, fast]` tags as v3 and doesn't speak them; `Vendu-á` and
+  `Du-á` still land the stress. Pass `--model eleven_v4` to `elevenlabs.py tts`.
+- When a new project copies the reference's fonts, copy `capture/extracted/page.html` too:
+  `captions.mjs` reads the `@font-face` rules there, and without it `hyperframes check` fails
+  with `font_family_without_font_face` on `compositions/captions.html`.
+- For a story told on real screens, seed one order through the real flow and shoot every screen
+  from it (`vendua-lancamento/scripts/capture-shots.mjs`). Then the price, the order number and the
+  total match on every screen.
+- In-frame screen swaps between two text-heavy screenshots must be near-cuts (opacity over ≤0.06 s,
+  with the slide on `y`): a 0.2 s dissolve reads as two chats printed on top of each other.
