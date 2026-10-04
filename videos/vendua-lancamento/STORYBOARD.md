@@ -296,10 +296,10 @@ Left-aligned at x 72, clear of the action column. No captions on this frame.
 - blueprint: titlecard-reveal (Adapt)
 - focal: "Comece pelo Venduá Bandeira"
 - roles: mark-lime.svg = the logo mark
-- sfx: accent (0.0, the cut), swipe (2.04 "Bandeira")
+- sfx: accent (0.0, the cut), swipe (2.14 "Bandeira")
 
 Scene 1 (0.0–0.5s): night ground; the lime check slams in (scale 1.3→1, 0.2 s, 132 px box at x 72, y 330) and draws (0.25 s); on "Venduá." 0.12 "venduá." (Space Grotesk 700, 96 px, night-ink, lime final dot) pops beside it.
-Scene 2 (0.84–2.3s): "Comece pelo / Venduá Bandeira" (Space Grotesk 600, 124 px, night-ink, two lines, y ~560) slams in word by word on "Comece" 0.84, "pelo" 1.32, "Venduá" 1.54, "Bandeira:" 2.04 (each 0.2 s from 60 px below at scale 1.08, `expo.out`); the stack punches to 1.03 on "Bandeira".
-Scene 3 (2.74–4.6s): on "catorze" 2.74 the lime chip "14 dias grátis, sem cartão." (Figtree 750, 56 px, forest on lime) shoots out from its left edge (0.22 s); punch on "cartão." 4.48.
+Scene 2 (0.84–2.3s): "Comece pelo / Venduá Bandeira" (Space Grotesk 600, 124 px, night-ink, two lines, y ~560) slams in word by word on "Comece" 0.94, "pelo" 1.40, "Venduá" 1.62, "Bandeira:" 2.14 (each 0.2 s from 60 px below at scale 1.08, `expo.out`); the stack punches to 1.03 on "Bandeira".
+Scene 3 (2.86–4.7s): on "catorze" 2.86 the lime chip "14 dias grátis, sem cartão." (Figtree 750, 56 px, forest on lime) shoots out from its left edge (0.22 s); punch on "cartão." 4.54.
 Scene 4 (4.9s): "Link na bio · @vendua.digital" (Figtree 650, 46 px, night-muted with the handle in night-ink) slams up.
 Scene 5 (5.2–7.031s): the held frame — nothing moves; the last 0.3 s fade the card to night, the film's only exit.

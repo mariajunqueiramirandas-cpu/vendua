@@ -15,7 +15,7 @@
         },
         "L02": {
           "start": 1.566,
-          "end": 7.287,
+          "end": 7.078,
           "text": "A sua loja online, com um vendedor que nunca larga o WhatsApp e uma cozinha que vê tudo na hora."
         }
       },
@@ -1329,7 +1329,7 @@
       "lines": {
         "L14": {
           "start": 0.12,
-          "end": 5.109,
+          "end": 5.162,
           "text": "Venduá. Comece pelo Venduá Bandeira: catorze dias grátis, sem cartão."
         }
       },
@@ -1338,70 +1338,70 @@
           "id": "w9-0",
           "text": "Venduá.",
           "start": 0.12,
-          "end": 0.68,
+          "end": 0.72,
           "line": "L14"
         },
         {
           "id": "w9-1",
           "text": "Comece",
-          "start": 0.84,
-          "end": 1.32,
+          "start": 0.94,
+          "end": 1.4,
           "line": "L14"
         },
         {
           "id": "w9-2",
           "text": "pelo",
-          "start": 1.32,
-          "end": 1.54,
+          "start": 1.4,
+          "end": 1.62,
           "line": "L14"
         },
         {
           "id": "w9-3",
           "text": "Venduá",
-          "start": 1.54,
-          "end": 2.04,
+          "start": 1.62,
+          "end": 2.14,
           "line": "L14"
         },
         {
           "id": "w9-4",
           "text": "Bandeira:",
-          "start": 2.04,
-          "end": 2.54,
+          "start": 2.14,
+          "end": 2.64,
           "line": "L14"
         },
         {
           "id": "w9-5",
           "text": "catorze",
-          "start": 2.74,
-          "end": 3.18,
+          "start": 2.86,
+          "end": 3.28,
           "line": "L14"
         },
         {
           "id": "w9-6",
           "text": "dias",
-          "start": 3.18,
-          "end": 3.52,
+          "start": 3.28,
+          "end": 3.6,
           "line": "L14"
         },
         {
           "id": "w9-7",
           "text": "grátis,",
-          "start": 3.52,
-          "end": 4.22,
+          "start": 3.6,
+          "end": 4.24,
           "line": "L14"
         },
         {
           "id": "w9-8",
           "text": "sem",
-          "start": 4.3,
-          "end": 4.48,
+          "start": 4.36,
+          "end": 4.54,
           "line": "L14"
         },
         {
           "id": "w9-9",
           "text": "cartão.",
-          "start": 4.48,
-          "end": 4.94,
+          "start": 4.54,
+          "end": 4.98,
           "line": "L14"
         }
       ]
@@ -1579,8 +1579,8 @@
     {
       "frame": 9,
       "name": "swipe",
-      "offset_s": 2.04,
-      "abs_s": 58.993
+      "offset_s": 2.14,
+      "abs_s": 59.093
     }
   ],
   "total_s": 63.984375

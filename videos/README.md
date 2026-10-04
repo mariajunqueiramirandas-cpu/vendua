@@ -170,8 +170,15 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
 
 ## Findings from vendua-lancamento (the ~64 s launch Reel)
 
-- `eleven_v4` takes the same `[energetic, fast]` tags as v3 and doesn't speak them; `Vendu-á` and
-  `Du-á` still land the stress. Pass `--model eleven_v4` to `elevenlabs.py tts`.
+- `eleven_v4` takes the same `[energetic, fast]` tags as v3 and doesn't speak them. Pass
+  `--model eleven_v4` to `elevenlabs.py tts`.
+- With `eleven_v4`, `Vendu-á` is only safe after an article ("Chegou o Vendu-á!"). At a sentence
+  start or before "Bandeira" it came out "Van-duá" in every take, and the author rejected it. Spell
+  it `Ven-du-á` there. Whisper hears the right one as "Vendo A" and the wrong one as "Vandoa" /
+  "Vanduá", so screen takes on that before asking for an ear.
+- Cutting the tail off a take (`CUT` in `build-audio.py`): measure the gap on the processed
+  `audio/vo/` file at 0.02 s windows and cut inside it. Whisper's word times are ~0.2 s early, and
+  a cut placed from them left the "O" of the next word audible right on a frame cut.
 - When a new project copies the reference's fonts, copy `capture/extracted/page.html` too:
   `captions.mjs` reads the `@font-face` rules there, and without it `hyperframes check` fails
   with `font_family_without_font_face` on `compositions/captions.html`.

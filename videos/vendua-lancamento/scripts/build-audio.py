@@ -30,7 +30,7 @@ GAP = 0.14  # between two lines of one frame
 TAIL = 0.12
 # frame: (name, lead, [lines], captions, hold) — hold is extra time after the last word
 FRAMES = {
-    1: ("chegou", 0.12, ["L01", "L02"], True, 0.0),
+    1: ("chegou", 0.12, ["L01", "L02"], True, 0.2),  # keeps its 32 eighths after the L02 cut moved
     2: ("loja-no-ar", 0.08, ["L03", "L04"], True, 0.0),
     3: ("pix", 0.08, ["L05"], True, 0.0),
     4: ("dua-whatsapp", 0.08, ["L06", "C01"], True, 0.0),
@@ -47,11 +47,12 @@ TRIM = (
 PAUSE = "silenceremove=stop_periods=-1:stop_duration=0.2:stop_threshold=-40dB:stop_silence=0.14"
 PHONE = "highpass=f=300,lowpass=f=4200,acompressor=threshold=-20dB:ratio=2.5:attack=8:release=120"
 # the chosen take of each line (two per line, picked on Whisper wording and length; L04-d and
-# L14-d are the "Du-á" / "Vendu-á!" retakes). C01 is Caio's voice note: Talis, phone band.
+# v2/V3-b are retakes: "Du-á", and the closing line spelled "Ven-du-á" — with "Vendu-á" eleven_v4
+# said "Van-duá" at a sentence start and before "Bandeira"; V3-b says it like the approved L01). C01 is Caio's voice note: Talis, phone band.
 TAKES = {
     "L01": "L01-a", "L02": "L02-a", "L03": "L03-a", "L04": "L04-d", "L05": "L05-a",
     "L06": "L06-a", "C01": "C01-b", "L07": "L07-b", "L08": "L08-b", "L09": "L09-a",
-    "L10": "L10-b", "L11": "L11-a", "L12": "L12-b", "L13": "L13-a", "L14": "L14-d",
+    "L10": "L10-b", "L11": "L11-a", "L12": "L12-b", "L13": "L13-a", "L14": "v2/V3-b",
 }
 WHOOSH_PEAK = 0.15  # the whoosh swells to its peak 0.15 s in: it starts that much before its cut
 # (frame, sfx, at, volume): `at` is seconds into the frame, or (line, i) for word i of that line.
@@ -84,8 +85,9 @@ SFX_TAKES = [
     ("print", "print-a", 200, 9000, 0.9, 0.25, 1.15, 4),
     ("pronto", "pronto-b", 200, 11000, 0.8, 0.25, 1.05, 0),
 ]
-# a line cut short at the silence before its last words (L02 loses "Olha só!": 65 s → ~63 s)
-CUT = {"L02": 5.68}
+# a line cut short at the silence before its last words (L02 loses "Olha só!": 65 s → ~64 s).
+# 5.47 is inside the 0.1 s gap after "hora."; at 5.68 the "O" of "Olha" leaked into the cut to frame 2
+CUT = {"L02": 5.47}
 # what each line says, spelled the way the captions show it
 SCRIPT = {
     "L01": "Chegou o Venduá!",
