@@ -353,10 +353,12 @@ test.describe('conteúdo', () => {
         const legal = path === PRIVACY && /^mailto:[^@]+@vendua\.com\.br$/.test(l.raw);
         if (legal) continue;
         expect(l.raw, `${path}: ${l.text}`).not.toMatch(/^(mailto|tel|sms|whatsapp):/i);
-        expect(l.href, `${path}: ${l.text}`).not.toMatch(
-          /wa\.me|whatsapp|ig\.me|forms?\.|typeform/i,
-        );
         const url = new URL(l.href);
+        // a chat or form elsewhere; the site's own pages may say WhatsApp (a guide's address)
+        if (url.origin !== new URL(page.url()).origin)
+          expect(l.href, `${path}: ${l.text}`).not.toMatch(
+            /wa\.me|whatsapp|ig\.me|forms?\.|typeform/i,
+          );
         if (url.origin === ADMIN.origin) {
           // the admin only at its sign-up, with no plan or an open one (Pangolim is closed)
           expect(url.pathname, `${path}: ${l.text}`).toBe('/admin/comecar');
