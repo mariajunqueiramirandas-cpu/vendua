@@ -7,6 +7,7 @@ import { useMercadoPago } from '../../lib/mercadopago.ts';
 import { Button } from '../../ui/Button.tsx';
 import { messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { PixCode, useIssuePix } from '../../ui/PixCode.tsx';
+import { DocumentGate, needsDocument } from '../account/DocumentGate.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -64,7 +65,9 @@ export function PlanPix({ a, invoiceId }: { a: Account; invoiceId: string | null
     mutationFn: (id: string) => api.invoicePix(id),
     onSuccess: (n) => qc.setQueryData(qk.account, n),
   });
-  useIssuePix(inv, inv?.status !== 'paid' && !issue.isPending, issue.mutate);
+  const gate = needsDocument(a);
+  useIssuePix(inv, inv?.status !== 'paid' && !issue.isPending && !gate, issue.mutate);
+  if (gate && inv?.status !== 'paid') return <DocumentGate />;
   if (!inv)
     return (
       <p className="t-body text-muted">
