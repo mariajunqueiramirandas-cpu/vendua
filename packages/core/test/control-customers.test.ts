@@ -340,6 +340,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     // E: Mirim, paying but suspended
     E = await store('e', 'mirim', { status: 'active' });
     await sql`update tenants set status = 'suspended' where id = ${E.id}`;
+    await order(E.id, 1500, ago(DAY));
   });
 
   afterAll(async () => {
@@ -537,7 +538,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     expect(o.activity.daily.reduce((n: number, d: any) => n + d.gmvCents, 0)).toBe(
       o.activity.gmv30dCents,
     );
-    expect(o.activity.activeStores30d).toBe(stores.filter((s) => s.orders.count30d > 0).length);
+    // a suspended store that sold isn't counted, so "x de y ativas" never exceeds y
+    expect(o.activity.activeStores30d).toBe(
+      stores.filter((s) => s.status === 'active' && s.orders.count30d > 0).length,
+    );
+    expect(o.activity.activeStores30d).toBeLessThanOrEqual(o.totals.active);
     expect(o.ai.conversationsThisMonth).toBeGreaterThanOrEqual(53);
     expect(o.ai.byModel).toContainEqual({
       provider: 'openrouter',
@@ -547,6 +552,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     });
     expect(o.ai.exhaustedStores).toBeGreaterThanOrEqual(1);
     expect(o.ai.top.find((t: any) => t.id === A.id)).toMatchObject({ used: 2, limit: 250 });
+    // "lojas que mais conversam": ranked by conversations, spend only breaks ties
+    const used = o.ai.top.map((t: any) => t.used);
+    expect(used).toEqual([...used].sort((a, b) => b - a));
     expect(o.atRisk.length).toBeLessThanOrEqual(20);
     expect(o.atRisk.every((r: any) => r.risk.length > 0 && r.risk[0] !== 'cancelled')).toBe(true);
     expect(o.totals.stores).toBe(stores.length);

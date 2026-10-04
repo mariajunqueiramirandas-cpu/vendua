@@ -430,7 +430,8 @@ async function overviewTx(tx: Sql, storeDomain: string, now: Date) {
     activity: {
       orders30d: sum((r) => r.orders.count30d),
       gmv30dCents: sum((r) => r.orders.gmv30dCents),
-      activeStores30d: rows.filter((r) => r.orders.count30d > 0).length,
+      // over totals.active, so a suspended store's orders don't count
+      activeStores30d: rows.filter((r) => r.status === 'active' && r.orders.count30d > 0).length,
       daily: daily.map((d) => ({ day: d.day, orders: d.orders, gmvCents: Number(d.gmv) })),
     },
     ai: {
@@ -440,7 +441,7 @@ async function overviewTx(tx: Sql, storeDomain: string, now: Date) {
       exhaustedStores: rows.filter((r) => r.risk.includes('ai_exhausted')).length,
       top: rows
         .filter((r) => r.ai.used > 0 || r.ai.spend30dUsd > 0)
-        .sort((a, b) => b.ai.spend30dUsd - a.ai.spend30dUsd || b.ai.used - a.ai.used)
+        .sort((a, b) => b.ai.used - a.ai.used || b.ai.spend30dUsd - a.ai.spend30dUsd)
         .slice(0, 10)
         .map((r) => ({
           id: r.id,

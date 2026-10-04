@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { CustomersOverview } from '@/lib/api.ts';
-import { fmtUsd } from '@/lib/format.ts';
+import { fmtUsd, fmtUsdAmount } from '@/lib/format.ts';
 import { Panel } from '@/components/ui/card.tsx';
 import { Allowance, fmtN, RankBars, Stat, SubHead } from './bits.tsx';
 
@@ -41,7 +41,7 @@ export function AiPanel({ ai }: { ai: CustomersOverview['ai'] }) {
                 </span>
               ),
               value: m.usd,
-              cells: [fmtN(m.calls), m.usd.toFixed(2)],
+              cells: [fmtN(m.calls), fmtUsdAmount(m.usd)],
             }))}
           />
         ) : (
@@ -62,7 +62,7 @@ export function AiPanel({ ai }: { ai: CustomersOverview['ai'] }) {
                   <span className="min-w-0 flex-1 truncate">{s.name}</span>
                   <Allowance used={s.used} limit={s.limit} />
                   <span className="w-14 shrink-0 text-right text-[13px] tnum">
-                    {s.spend30dUsd.toFixed(2)}
+                    {fmtUsdAmount(s.spend30dUsd)}
                   </span>
                 </Link>
               </li>
