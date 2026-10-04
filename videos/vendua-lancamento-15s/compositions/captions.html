@@ -1,0 +1,243 @@
+<template id="captions-template" data-composition-id="captions" data-width="1080" data-height="1920">
+<script src="assets/vendor/gsap.min.js"></script>
+
+
+<style data-brand-tokens>
+@font-face{
+        font-family: 'Space Grotesk Variable';
+        font-style: normal;
+        font-display: block;
+        font-weight: 300 700;
+        src: url("assets/fonts/captured-space-grotesk-latin-wght-normal.woff2") format('woff2-variations');
+      }
+@font-face{
+        font-family: 'Figtree Variable';
+        font-style: normal;
+        font-display: block;
+        font-weight: 300 900;
+        src: url("assets/fonts/captured-figtree-latin-wght-normal.woff2") format('woff2-variations');
+      }
+      :root {
+      --canvas: #f7f4ea;
+      --ink: #123c32;
+      --surface: #fffdf8;
+      --surface-sunken: #efe9d8;
+      --ink-muted: #4f6a5e;
+      --line: rgba(18, 60, 50, 0.12);
+      --line-strong: rgba(18, 60, 50, 0.2);
+      --spark: #d9f875;
+      --spark-soft: #f0fcc9;
+      --on-spark: #123c32;
+      --novo-ink: #2f4a00;
+      --night: #0a100d;
+      --night-surface: #131d18;
+      --night-ink: #f7f4ea;
+      --night-muted: #9dafa4;
+      --success: #1f7a4d;
+      --cap-ink: #123c32;
+      --cap-canvas: #f7f4ea;
+      --cap-accent: #d9f875;
+      --cap-accent-2: #2f4a00;
+      --font-display: "Space Grotesk Variable", system-ui, serif;
+      --font-body: "Figtree Variable", system-ui, sans-serif;
+      --cap-band-top: 1600px;
+      --cap-band-height: 320px;
+      }
+    </style>
+
+<style>
+  #captions-root {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .caption-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    pointer-events: none;
+  }
+  /* Reels caption band: y 1300-1520, above the bottom 20% (y >= 1536) and clear of the
+     right action column (140px). captionBand(H) would put it at y 1600-1920, under the
+     Reels UI, so the injected --cap-band-* vars are deliberately not used here. Frame
+     content stays above y 1280. */
+  .caption-stage {
+    position: absolute;
+    left: 72px;
+    right: 140px;
+    top: 1300px;
+    height: 220px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .caption-group {
+    /* every group is absolutely stacked over the SAME band — exactly one shown at a
+       time via opacity. Must be absolute: in-flow groups would lay out side-by-side. */
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+  }
+
+  /* paper pill: surface + Venduá's forest-tinted e2 shadow, radius lg, no outline */
+  .caption-pill {
+    max-width: 100%;
+    padding: 18px 30px 22px;
+    background: var(--surface, #fffdf8);
+    box-shadow:
+      0 2px 4px rgb(18 60 50 / 0.08),
+      0 12px 32px rgb(18 60 50 / 0.1);
+    border-radius: 24px;
+  }
+  /* spacing sized so the widest group ("você responde com um", 839px) stays on one line */
+  .caption-line {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.1em 0.28em;
+    font-family: "Figtree Variable", system-ui, sans-serif;
+    font-weight: 750;
+    font-size: 66px;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+  }
+
+  /* upcoming — muted forest, no chip */
+  .caption-word {
+    display: inline-block;
+    padding: 0 0.14em;
+    border-radius: 0.32em;
+    color: color-mix(in srgb, var(--cap-ink, #123c32) 52%, var(--cap-canvas, #f7f4ea));
+  }
+  /* current word — the lime chip behind forest text (frame.md: lime is always a fill
+     behind forest, never text on cream; 10.3:1) */
+  .caption-word.is-active {
+    color: var(--cap-ink, #123c32);
+    background: var(--cap-accent, #d9f875);
+    box-shadow: none;
+  }
+  /* already spoken — solid forest, chip cleared */
+  .caption-word.is-spoken {
+    color: var(--cap-ink, #123c32);
+    background: transparent;
+    box-shadow: none;
+  }
+
+  /* optional per-word accents (dormant until a word-classer tags them) */
+  /* brand / key term — forest (lime never carries text) */
+  .caption-word.cap-brand {
+    color: var(--cap-ink, #123c32);
+  }
+  /* numerals / data — Space Grotesk 700, the figure voice */
+  .caption-word.cap-num {
+    font-family: "Space Grotesk Variable", system-ui, sans-serif;
+    font-weight: 700;
+    color: var(--cap-ink, #123c32);
+  }
+  /* emphasis — a hairline underline in the second accent (inline only, never a fill) */
+  .caption-word.cap-cta {
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--cap-accent-2, #2f4a00);
+    text-underline-offset: 0.1em;
+  }
+
+</style>
+
+<div
+  id="captions-root"
+  data-composition-id="captions"
+  data-timeline-locked
+  data-start="0"
+  data-duration="14.531"
+  data-fps="30"
+  data-width="1080"
+  data-height="1920"
+>
+  <div class="caption-layer" aria-hidden="true">
+    <div id="caption-stage" class="caption-stage"></div>
+  </div>
+</div>
+
+<script>
+  // captions.mjs injects the engine's scene-aware groups + real duration here.
+  var GROUPS = [{"id":"caption-group-0","frame":1,"start":0.12,"end":1.28,"text":"Chegou o Venduá!","words":[{"id":"caption-word-0-0","text":"Chegou","start":0.12,"end":0.58},{"id":"caption-word-0-1","text":"o","start":0.58,"end":0.7},{"id":"caption-word-0-2","text":"Venduá!","start":0.7,"end":1.16}]},{"id":"caption-group-1","frame":1,"start":1.57,"end":1.87,"text":"A sua","words":[{"id":"caption-word-1-0","text":"A","start":1.57,"end":1.67},{"id":"caption-word-1-1","text":"sua","start":1.67,"end":1.87}]},{"id":"caption-group-2","frame":1,"start":1.87,"end":2.65,"text":"loja online,","words":[{"id":"caption-word-2-0","text":"loja","start":1.87,"end":2.15},{"id":"caption-word-2-1","text":"online,","start":2.15,"end":2.53}]},{"id":"caption-group-3","frame":1,"start":2.73,"end":2.99,"text":"com um","words":[{"id":"caption-word-3-0","text":"com","start":2.73,"end":2.87},{"id":"caption-word-3-1","text":"um","start":2.87,"end":2.99}]},{"id":"caption-group-4","frame":1,"start":2.99,"end":3.55,"text":"vendedor que","words":[{"id":"caption-word-4-0","text":"vendedor","start":2.99,"end":3.39},{"id":"caption-word-4-1","text":"que","start":3.39,"end":3.55}]},{"id":"caption-group-5","frame":1,"start":3.55,"end":4.39,"text":"nunca larga","words":[{"id":"caption-word-5-0","text":"nunca","start":3.55,"end":3.89},{"id":"caption-word-5-1","text":"larga","start":3.89,"end":4.39}]},{"id":"caption-group-6","frame":1,"start":4.39,"end":4.83,"text":"o WhatsApp","words":[{"id":"caption-word-6-0","text":"o","start":4.39,"end":4.45},{"id":"caption-word-6-1","text":"WhatsApp","start":4.45,"end":4.83}]},{"id":"caption-group-7","frame":1,"start":4.83,"end":5.25,"text":"e uma","words":[{"id":"caption-word-7-0","text":"e","start":4.83,"end":5.13},{"id":"caption-word-7-1","text":"uma","start":5.13,"end":5.25}]},{"id":"caption-group-8","frame":1,"start":5.25,"end":5.81,"text":"cozinha que","words":[{"id":"caption-word-8-0","text":"cozinha","start":5.25,"end":5.67},{"id":"caption-word-8-1","text":"que","start":5.67,"end":5.81}]},{"id":"caption-group-9","frame":1,"start":5.81,"end":6.31,"text":"vê tudo","words":[{"id":"caption-word-9-0","text":"vê","start":5.81,"end":5.95},{"id":"caption-word-9-1","text":"tudo","start":5.95,"end":6.31}]},{"id":"caption-group-10","frame":1,"start":6.31,"end":6.93,"text":"na hora.","words":[{"id":"caption-word-10-0","text":"na","start":6.31,"end":6.55},{"id":"caption-word-10-1","text":"hora.","start":6.55,"end":6.81}]}];
+  var DURATION = 14.531;
+
+  (function () {
+    var stage = document.getElementById("caption-stage");
+
+    // build DOM: one .caption-group per group, .caption-word per word
+    GROUPS.forEach(function (group, g) {
+      var groupEl = document.createElement("div");
+      groupEl.className = "caption-group";
+      groupEl.id = "caption-group-" + g;
+      var pill = document.createElement("div");
+      pill.className = "caption-pill";
+      var line = document.createElement("div");
+      line.className = "caption-line";
+      (group.words || []).forEach(function (w, i) {
+        var span = document.createElement("span");
+        span.className = "caption-word";
+        span.id = "caption-word-" + g + "-" + i;
+        span.textContent = String(w.text);
+        line.appendChild(span);
+      });
+      pill.appendChild(line);
+      groupEl.appendChild(pill);
+      stage.appendChild(groupEl);
+    });
+
+    window.__timelines = window.__timelines || {};
+    var tl = gsap.timeline({ paused: true });
+
+    GROUPS.forEach(function (group, g) {
+      var groupEl = document.getElementById("caption-group-" + g);
+      var words = group.words || [];
+      var next = GROUPS[g + 1];
+      var isLast = g === GROUPS.length - 1;
+      var start = Math.max(0, Number(group.start));
+      // the last group ends with its own words (no 0.3 s tail: that would cross the cut into the
+      // caption-free end card)
+      var end = isLast
+        ? Math.min(DURATION, Number(group.end))
+        : Math.min(Number(next.start), Number(group.end) + 0.3);
+      if (end <= start) end = start + 0.01;
+
+      // group on/off — exactly one group visible at a time
+      tl.set(groupEl, { opacity: 1 }, start);
+      tl.set(groupEl, { opacity: 0 }, end);
+
+      // 3-state karaoke via className SETS — seek-safe (gsap.set applies on the
+      // engine's frame-by-frame seek; .call callbacks would NOT fire).
+      words.forEach(function (w, i) {
+        var el = document.getElementById("caption-word-" + g + "-" + i);
+        var at = Math.max(start, Number(w.start));
+        tl.set(el, { className: "caption-word" }, start); // upcoming (also resets on reverse-seek)
+        tl.set(el, { className: "caption-word is-active" }, at); // current
+        tl.fromTo(el, { scale: 0.985 }, { scale: 1, duration: 0.18, ease: "power1.out" }, at);
+        if (i + 1 < words.length) {
+          var nextAt = Math.max(start, Number(words[i + 1].start));
+          tl.set(el, { className: "caption-word is-spoken" }, nextAt); // demote when next activates
+        }
+      });
+      if (words.length) {
+        var lastEl = document.getElementById("caption-word-" + g + "-" + (words.length - 1));
+        var lastSpoken = Math.min(end, Number(words[words.length - 1].end) + 0.1);
+        tl.set(lastEl, { className: "caption-word is-spoken" }, lastSpoken);
+      }
+    });
+
+    // full-span anchor so the sub-comp timeline spans the whole video
+    tl.to({}, { duration: DURATION }, 0);
+    window.__timelines["captions"] = tl;
+  })();
+</script>
+
+<style>
+  .caption-line { line-height: 1.1 !important; }
+</style>
+</template>
