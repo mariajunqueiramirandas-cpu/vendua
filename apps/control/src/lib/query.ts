@@ -42,6 +42,8 @@ export const qk = {
   duplicates: () => ['duplicates'] as const,
   snapshots: () => ['snapshots'] as const,
   billingStores: () => ['billing-stores'] as const,
+  // under billingStores, so invalidating the list refreshes it too
+  billingStore: (tenantId: string) => ['billing-stores', tenantId] as const,
   controlPlans: () => ['control-plans'] as const,
   aiPacks: () => ['ai-packs'] as const,
   signupReadiness: () => ['signup-readiness'] as const,
@@ -54,6 +56,11 @@ export const qk = {
   menuImport: (id: string) => ['menu-import', id] as const,
   fleetIncidents: () => ['fleet-incidents'] as const,
   fleetSlug: (slug: string) => ['fleet-slug', slug] as const,
+  customers: () => ['customers'] as const,
+  customersOverview: () => ['customers', 'overview'] as const,
+  customer: (id: string) => ['customers', 'one', id] as const,
+  aiModels: () => ['ai-models'] as const,
+  aiUsage: (days: number) => ['ai-usage', days] as const,
 };
 
 type AuthListener = () => void;

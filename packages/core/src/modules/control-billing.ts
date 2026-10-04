@@ -104,6 +104,13 @@ export function mountControlBilling(o: {
 
   app.get('/control/v1/billing/stores', async (c) => {
     controlGate(c);
+    // ?tenant=<uuid>: one store, for its detail page (the list stops at its cap)
+    const only = c.req.query('tenant') ?? null;
+    if (
+      only !== null &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(only)
+    )
+      throw new HttpError(400, 'BAD_REQUEST', 'tenant must be a store id', { field: 'tenant' });
     const stores = await controlTx(sql, async (tx) => {
       const rows = await tx<
         {
@@ -159,8 +166,9 @@ export function mountControlBilling(o: {
             where tenant_id = t.id and status in ('open', 'failed') and kind <> 'ai_pack'
             order by period_start, number limit 1
           ) inv on true
+        where ${only}::uuid is null or t.id = ${only}
         order by t.created_at desc
-        limit 500
+        limit 2000
       `;
       const out = [];
       for (const r of rows)

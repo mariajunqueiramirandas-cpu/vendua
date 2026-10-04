@@ -220,6 +220,8 @@ import {
 } from './modules/payment-adjustments.ts';
 import { mountControlBilling } from './modules/control-billing.ts';
 import { mountAgentRuntimeControl } from './agent-host/control-routes.ts';
+import { mountAgentRuntimeAi } from './agent-host/control-ai.ts';
+import { mountControlCustomers } from './modules/control-customers.ts';
 import { mountIncidentsControl } from './modules/incidents.ts';
 import { mountWebAnalytics } from './modules/web-analytics.ts';
 import { mountSiteCatalog } from './modules/billing/routes-signup.ts';
@@ -2809,8 +2811,10 @@ export function createApp({
     storeDomain: publicStoreDomain,
     signupReady: signupReady ?? (() => signupReadiness(sql, provider)),
   });
+  mountControlCustomers({ app, sql, controlGate, storeDomain: publicStoreDomain });
   mountIncidentsControl({ app, sql, controlGate });
   mountAgentRuntimeControl({ app, sql, controlGate });
+  mountAgentRuntimeAi({ app, sql, controlGate, storeDomain: publicStoreDomain });
   mountSiteCatalog(app, sql);
   mountWebAnalytics({
     app,
