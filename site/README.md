@@ -123,6 +123,9 @@ Other pages: one per kind of shop (`/para/doceiras/`, `/para/marmitarias/`,
   sends GA4's `sign_up`, then forwards to `<PUBLIC_ADMIN_URL>/admin/bem-vindo` (2,5 s at most;
   without JS, a meta refresh). noindex and linked from nowhere. Deploy the site before an admin
   carrying that redirect, or new stores land on the 404.
+  In Google Ads the conversion is the page itself (a URL conversion on `vendua.com.br/loja-criada/`,
+  which the Google tag's page view satisfies), or GA4's `sign_up` imported as a key event; the site
+  sends no Ads `conversion` event with a label.
 - No generic template chrome: no eyebrow labels above headings, no all-caps labels, no `A · B`
   meta strings, no numbers on lists that aren't steps, no sparkle bullets, no pulsing dots, no single
   italic or highlighted word in a headline, no identical card grids. Instrument Serif appears only
