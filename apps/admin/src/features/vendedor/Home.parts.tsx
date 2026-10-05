@@ -39,7 +39,7 @@ export function useAgentSwitch() {
 }
 
 const PART_DETAIL: Record<string, string> = {
-  conhecer: 'Jeito de falar e o WhatsApp da loja',
+  conhecer: 'O WhatsApp, quem ele atende e o jeito de falar',
   ensinar: 'O que ele leu da loja e a entrevista',
   testar: 'Peça para mim e cliente oculto',
   comecar: 'Quando ele atende e como começa',
@@ -60,14 +60,18 @@ function Hero({ pose }: { pose: Pose }) {
   );
 }
 
+/** The wizard's first step: connecting the store's WhatsApp, back to Treinar after. */
+const CONNECT = '/vendedor/comecar?passo=whatsapp';
+
 /**
  * `/vendedor` before Duá is on (sales-agent-ux §3.1): the door to "Treinar o Duá", its resume map
- * midway, and the finale's two actions once it's done. "Ligar" is never gated: the onboarding
- * informs, the owner decides.
+ * midway, and the finale's two actions once it's done. The training never gates "ligar"; the
+ * store's WhatsApp does (Core answers WHATSAPP_REQUIRED), so without it the way is "conectar".
  */
 export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }) {
   const on = useAgentSwitch();
   const { started, finished, part } = data.onboarding;
+  const linked = data.whatsapp.linked;
   const at = Math.max(
     0,
     AGENT_PARTS.findIndex((p) => p.id === part),
@@ -80,6 +84,27 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
       Quando ele estiver atendendo, as conversas e quem precisa de você aparecem aqui.
     </Notice>
   );
+
+  if (finished && !linked)
+    return (
+      <div className="mx-auto max-w-lg space-y-5">
+        <Card className="flex flex-col items-center px-5 py-8 text-center">
+          <Hero pose="avatar-ola" />
+          <h2 className="t-title-1 mt-4">Falta só o WhatsApp</h2>
+          <p className="t-body mt-2 max-w-sm text-muted">
+            O Duá já sabe atender a loja. Ele atende pelo WhatsApp dela: conecte com um código, sem
+            sair daqui, e ele começa.
+          </p>
+        </Card>
+        {owner ? (
+          <ButtonLink to={CONNECT} size="lg" block icon={<WhatsappLogo weight="fill" />}>
+            conectar o WhatsApp
+          </ButtonLink>
+        ) : (
+          notOwner
+        )}
+      </div>
+    );
 
   if (finished)
     return (
@@ -156,13 +181,24 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
         </ol>
       ) : null}
 
-      {!data.whatsapp.linked && !started ? (
+      {!linked ? (
         <Notice icon={<WhatsappLogo weight="fill" />} title="O WhatsApp da loja não está conectado">
-          A primeira parte do treino conecta, com um código, sem sair daqui.
+          {started
+            ? 'O Duá atende por ele: sem o WhatsApp conectado, ele não tem como começar.'
+            : 'É por ele que o Duá atende, então o treino começa conectando, com um código, sem sair daqui.'}
         </Notice>
       ) : null}
 
-      {owner ? (
+      {owner && !linked && !started ? (
+        <div className="space-y-3">
+          <ButtonLink to={CONNECT} size="lg" block icon={<WhatsappLogo weight="fill" />}>
+            conectar o WhatsApp
+          </ButtonLink>
+          <p className="t-caption text-center text-muted">
+            É o primeiro passo do treino. Leva cerca de 5 min ao todo.
+          </p>
+        </div>
+      ) : owner ? (
         <div className="space-y-3">
           <ButtonLink
             to="/vendedor/comecar"
@@ -182,20 +218,33 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
               </>
             )}
           </ButtonLink>
-          <Button
-            variant="secondary"
-            block
-            icon={<Lightning weight="bold" />}
-            loading={on.isPending}
-            onClick={() => turnOn({ enabled: true }, 'O Duá está ligado')}
-          >
-            ligar o Duá
-          </Button>
-          <p className="t-caption text-center text-muted">
-            {started
-              ? 'Dá para ligar agora e terminar de ensinar depois.'
-              : 'Você pode desligar quando quiser.'}
-          </p>
+          {linked ? (
+            <>
+              <Button
+                variant="secondary"
+                block
+                icon={<Lightning weight="bold" />}
+                loading={on.isPending}
+                onClick={() => turnOn({ enabled: true }, 'O Duá está ligado')}
+              >
+                ligar o Duá
+              </Button>
+              <p className="t-caption text-center text-muted">
+                {started
+                  ? 'Dá para ligar agora e terminar de ensinar depois.'
+                  : 'Você pode desligar quando quiser.'}
+              </p>
+            </>
+          ) : (
+            <ButtonLink
+              to={CONNECT}
+              variant="secondary"
+              block
+              icon={<WhatsappLogo weight="fill" />}
+            >
+              conectar o WhatsApp
+            </ButtonLink>
+          )}
         </div>
       ) : (
         notOwner

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import type { AiModelsView } from '@/lib/api.ts';
 import { ApiError } from '@/lib/api.ts';
@@ -67,37 +68,53 @@ const SOURCE: Record<
   AiModelsView['routesSource'],
   { label: string; variant: 'solid' | 'default' | 'bad' }
 > = {
-  settings: { label: 'Config', variant: 'solid' },
-  env: { label: 'variável de ambiente', variant: 'default' },
-  none: { label: 'não configurado', variant: 'bad' },
+  settings: { label: 'salvas aqui', variant: 'solid' },
+  env: { label: 'da variável do servidor', variant: 'default' },
+  none: { label: 'nenhuma', variant: 'bad' },
 };
 
-function StatusPanel({ view }: { view: AiModelsView }) {
+function IntroPanel({ view }: { view: AiModelsView }) {
   const src = SOURCE[view.routesSource];
   return (
-    <Panel title="situação">
+    <Panel title="como funciona">
       <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span>rotas vêm de</span>
-          <Badge variant={src.variant}>{src.label}</Badge>
-        </div>
+        <p className="max-w-prose text-[13px] leading-relaxed">
+          Aqui você escolhe em quais modelos de IA o Duá roda. Cada nível tem uma lista de rotas
+          (provedor e modelo), tentadas em ordem: se uma falha, o Duá passa para a seguinte. As
+          mudanças valem em até um minuto depois de salvar.
+        </p>
+        <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
+          Só entram provedores com retenção zero de dados: nada do que o Duá envia fica guardado com
+          eles. Pela OpenRouter isso vale em toda chamada; num provedor direto, você confirma que a
+          conta tem esse contrato.
+        </p>
         {view.routesSource === 'none' && (
           <Notice tone="bad">
-            Nenhuma rota configurada: o Duá não responde até haver uma rota. Adicione uma rota
-            rápida no padrão e salve.
+            Nenhuma rota configurada: o Duá não responde até haver uma. Adicione uma rota no nível
+            rápido e salve.
           </Notice>
         )}
         {view.routesSource === 'env' && (
-          <p className="text-xs text-muted-foreground">
-            As rotas abaixo vêm da variável AGENT_MODEL_ROUTES do servidor. Ao salvar aqui, a Config
-            passa a valer no lugar dela.
-          </p>
+          <Notice>
+            As rotas abaixo vêm da variável AGENT_MODEL_ROUTES do servidor. Ao salvar aqui, esta
+            tela passa a valer no lugar dela.
+          </Notice>
         )}
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium text-foreground/80">chaves dos provedores</span>
-          <ul className="grid gap-1.5 sm:grid-cols-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t pt-3 text-[13px]">
+          <span className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">rotas</span>
+            <Badge variant={src.variant}>{src.label}</Badge>
+          </span>
+          <ul
+            className="flex flex-wrap items-center gap-x-3 gap-y-1.5"
+            aria-label="chaves dos provedores"
+          >
             {view.providers.map((p) => (
-              <li key={p.id} className="flex min-w-0 items-center gap-2 text-[13px]">
+              <li
+                key={p.id}
+                className="flex min-w-0 items-center gap-1.5"
+                title={p.configured ? 'chave presente' : `sem chave (${p.secretName})`}
+              >
                 <span
                   aria-hidden
                   className={cn(
@@ -105,20 +122,75 @@ function StatusPanel({ view }: { view: AiModelsView }) {
                     p.configured ? 'bg-success' : 'bg-border-strong',
                   )}
                 />
-                <span className="font-medium">{providerLabel(p.id)}</span>
-                <span className="min-w-0 truncate text-xs text-muted-foreground">
-                  {p.configured ? 'chave presente' : `sem chave (${p.secretName})`}
+                <span className={cn(!p.configured && 'text-muted-foreground')}>
+                  {providerLabel(p.id)}
                 </span>
+                <span className="sr-only">{p.configured ? 'chave presente' : 'sem chave'}</span>
               </li>
             ))}
           </ul>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Toda rota precisa de retenção zero: o provedor não guarda nada do que o Duá envia. Depois
-          de salvar, as mudanças valem em até um minuto.
-        </p>
       </div>
     </Panel>
+  );
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** What's inside Avançado, so a closed section never hides an exception. */
+function advancedSummary(routes: RoutesDraft, budgets: BudgetsDraft) {
+  const parts: string[] = [];
+  const agents = routes.agents.length;
+  const stores = routes.tenants.length;
+  if (agents) parts.push(plural(agents, 'agente com modelo próprio', 'agentes com modelo próprio'));
+  if (stores) parts.push(plural(stores, 'loja com modelo próprio', 'lojas com modelo próprio'));
+  const caps = Object.values(budgets.defaults).filter((v) => v.trim());
+  parts.push(caps.length ? `teto diário US$ ${caps.join(' / ')}` : 'sem teto diário');
+  if (budgets.tenants.length)
+    parts.push(plural(budgets.tenants.length, 'loja com teto próprio', 'lojas com teto próprio'));
+  return parts.join(', ');
+}
+
+function Advanced({
+  summary,
+  forceOpen,
+  children,
+}: {
+  summary: string;
+  forceOpen: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const shown = open || forceOpen;
+  return (
+    <section className="flex flex-col gap-3">
+      <button
+        type="button"
+        aria-expanded={shown}
+        aria-controls="ai-advanced"
+        onClick={() => setOpen(!shown)}
+        className="flex w-full min-w-0 items-start gap-2 rounded-lg border bg-card px-3 py-2.5 text-left shadow-card hover:bg-hover"
+      >
+        <ChevronRight
+          className={cn(
+            'mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform',
+            shown && 'rotate-90',
+          )}
+        />
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-[13px] font-semibold">avançado</span>
+          <span className="text-xs text-muted-foreground">
+            modelos por agente e por loja, orçamento diário
+          </span>
+          {!shown && <span className="text-xs text-foreground/80 tnum">{summary}</span>}
+        </span>
+      </button>
+      {shown && (
+        <div id="ai-advanced" className="flex flex-col gap-4">
+          {children}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -165,6 +237,9 @@ export default function ModelsPage() {
   };
 
   const dirty = routes.dirty || budgets.dirty;
+  const advancedErrors =
+    Object.keys(shown.budgets).length > 0 ||
+    Object.keys(shown.routes).some((k) => k.startsWith('agents') || k.startsWith('tenants'));
 
   async function onSave() {
     if (!routes.draft || !budgets.draft) return;
@@ -235,8 +310,11 @@ export default function ModelsPage() {
       ) : (
         <ErrorsCtx.Provider value={shown}>
           <div className="mx-auto flex max-w-4xl flex-col gap-4">
-            <StatusPanel view={view} />
-            <HintPanel title="padrão" hint="vale para todos os agentes e lojas sem exceção">
+            <IntroPanel view={view} />
+            <HintPanel
+              title="modelos do Duá"
+              hint="valem em todas as lojas, salvo exceções em avançado"
+            >
               <TiersEditor
                 scope="default"
                 value={routes.draft.default}
@@ -244,25 +322,30 @@ export default function ModelsPage() {
                 onChange={(v) => edit.routes({ ...routes.draft!, default: v })}
                 emptyHint={(tier) =>
                   tier === 'fast'
-                    ? 'Sem rota rápida: o Duá não responde onde não houver exceção.'
-                    : 'Sem rota forte: quando uma trava bloqueia, o Duá não refaz a resposta.'
+                    ? 'Sem rota rápida, o Duá não responde (salvo exceções em avançado).'
+                    : 'Sem rota forte, quando uma trava bloqueia uma resposta o Duá não refaz.'
                 }
               />
               <FieldMsg>{shown.routes.default}</FieldMsg>
             </HintPanel>
-            <AgentOverrides
-              agents={view.agents}
-              draft={routes.draft}
-              onChange={edit.routes}
-              keys={keys}
-            />
-            <StoreOverrides draft={routes.draft} onChange={edit.routes} keys={keys} />
-            <BudgetsPanel
-              keys={bKeys}
-              agents={view.agents}
-              draft={budgets.draft}
-              onChange={edit.budgets}
-            />
+            <Advanced
+              summary={advancedSummary(routes.draft, budgets.draft)}
+              forceOpen={advancedErrors}
+            >
+              <AgentOverrides
+                agents={view.agents}
+                draft={routes.draft}
+                onChange={edit.routes}
+                keys={keys}
+              />
+              <StoreOverrides draft={routes.draft} onChange={edit.routes} keys={keys} />
+              <BudgetsPanel
+                keys={bKeys}
+                agents={view.agents}
+                draft={budgets.draft}
+                onChange={edit.budgets}
+              />
+            </Advanced>
             <div className="h-14" aria-hidden />
           </div>
           {(dirty || general) && (

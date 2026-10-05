@@ -219,6 +219,16 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
       break;
     default:
       title = 'O Duá está pausado';
+      // switching him back on needs the store's WhatsApp (Core answers WHATSAPP_REQUIRED)
+      if (!data.whatsapp.linked) {
+        detail = 'Conecte o WhatsApp da loja para ligar de novo.';
+        action = owner ? (
+          <ButtonLink to="/whatsapp?de=dua" variant="primary" size="sm" className="h-12">
+            conectar o WhatsApp
+          </ButtonLink>
+        ) : null;
+        break;
+      }
       detail = 'As conversas ficam com você.';
       action = owner ? (
         <Button

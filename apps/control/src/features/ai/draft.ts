@@ -1,5 +1,6 @@
 import type {
   AiBudgetsSetting,
+  AiCatalogModel,
   AiModelsView,
   ModelProviderId,
   ModelRouteSetting,
@@ -67,11 +68,17 @@ const parse = (s: string) => {
 };
 const filled = (s: string) => s.trim() !== '';
 
+/**
+ * Core asks OpenRouter for zero-data-retention endpoints on every call (models.ts), so those
+ * routes are ZDR by construction. For a direct provider it depends on that account's contract:
+ * staff attest it per route.
+ */
+export const zdrImplied = (provider: string) => provider === 'openrouter';
+
 export const emptyRoute = (): RouteDraft => ({
   uid: uid(),
   provider: '',
   model: '',
-  // an attestation, not a default: staff turn it on knowing the endpoint retains nothing
   zdr: false,
   inputPerMTok: '',
   outputPerMTok: '',
@@ -109,7 +116,7 @@ function routeOut(d: RouteDraft): ModelRouteSetting {
   const out: ModelRouteSetting = {
     provider: d.provider as ModelProviderId,
     model: d.model.trim(),
-    zdr: d.zdr,
+    zdr: d.zdr || zdrImplied(d.provider),
   };
   if (PRICE_FIELDS.some((f) => filled(d[f]))) {
     out.pricing = { inputPerMTok: parse(d.inputPerMTok), outputPerMTok: parse(d.outputPerMTok) };
@@ -146,6 +153,29 @@ export function routesOut(d: RoutesDraft): ModelRoutesSetting {
   if (tenants) out.tenants = tenants;
   return out;
 }
+
+/** a different provider is a different account: its attestation starts over */
+export const withProvider = (r: RouteDraft, provider: string): RouteDraft => ({
+  ...r,
+  provider,
+  zdr: zdrImplied(provider),
+});
+
+/** an OpenRouter catalog pick: model id and prices together, so the budget estimate matches */
+export const withCatalogModel = (r: RouteDraft, m: AiCatalogModel): RouteDraft => ({
+  ...r,
+  model: m.id,
+  zdr: true,
+  inputPerMTok: str(m.pricing.inputPerMTok),
+  outputPerMTok: str(m.pricing.outputPerMTok),
+  cacheReadPerMTok: str(m.pricing.cacheReadPerMTok),
+  cacheWritePerMTok: str(m.pricing.cacheWritePerMTok),
+});
+
+/** the draft's input/output price differs from what the catalog says now */
+export const priceDrifted = (r: RouteDraft, m: AiCatalogModel) =>
+  parse(r.inputPerMTok) !== m.pricing.inputPerMTok ||
+  parse(r.outputPerMTok) !== m.pricing.outputPerMTok;
 
 export const scopePath = (kind: 'default' | 'agents' | 'tenants', id?: string) =>
   kind === 'default' ? 'default' : `${kind}.${id}`;
@@ -184,7 +214,8 @@ export function validateRoutes(d: RoutesDraft): Errors {
         if (!m) errs[`${p}.model`] = 'informe o modelo';
         else if (m.length > 200) errs[`${p}.model`] = 'até 200 caracteres';
         else if (!MODEL_RE.test(m)) errs[`${p}.model`] = 'só letras, números e . _ / : @ -';
-        if (!r.zdr) errs[`${p}.zdr`] = 'rotas sem retenção zero são recusadas';
+        if (!r.zdr && !zdrImplied(r.provider))
+          errs[`${p}.zdr`] = 'confirme a retenção zero para salvar';
         const anyPrice = PRICE_FIELDS.some((f) => filled(r[f]));
         for (const f of PRICE_FIELDS) {
           const required = f === 'inputPerMTok' || f === 'outputPerMTok';

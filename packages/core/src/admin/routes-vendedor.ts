@@ -357,6 +357,18 @@ export function mountVendedor(d: AdminDeps) {
       const patch = parseSettingsPatch(body, agent.settings, m.role);
       // the plan opens it (ADR 0032); switching it off is always allowed
       if (patch.enabled) await requireFeature(tx, t.id, 'vendedor');
+      // he answers on the store's WhatsApp: switching him on (Ensaio too) needs it linked. A store
+      // already on whose number drops stays on, and Início says "O Duá parou".
+      if (patch.enabled && !agent.switchedOn) {
+        const [wa] = await tx<{ state: string }[]>`
+          select state from store_whatsapp where tenant_id = ${t.id}`;
+        if (wa?.state !== 'open')
+          throw new HttpError(
+            409,
+            'WHATSAPP_REQUIRED',
+            'Conecte o WhatsApp da loja antes de ligar o Duá.',
+          );
+      }
       const { categoryIds, productIds, couponIds } = patch.refs;
       if (categoryIds.length) {
         const n =

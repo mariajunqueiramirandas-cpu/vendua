@@ -40,7 +40,13 @@ export function AgentOverrides({
     ...agents,
     ...draft.agents
       .filter((o) => !agents.some((a) => a.id === o.id))
-      .map((o) => ({ id: o.id, label: o.id, budgetKey: null, defaultTier: 'fast' as const })),
+      .map((o) => ({
+        id: o.id,
+        label: o.id,
+        hint: null,
+        budgetKey: null,
+        defaultTier: 'fast' as const,
+      })),
   ];
   const set = (agents: Scoped<TierDraft>[]) => onChange({ ...draft, agents });
   return (
@@ -52,17 +58,18 @@ export function AgentOverrides({
             const path = scopePath('agents', a.id);
             return (
               <li key={a.id} className="flex flex-col gap-3 p-3">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="text-sm font-medium">{a.label}</span>
-                  {a.label !== a.id && (
-                    <span className="text-xs text-muted-foreground">{a.id}</span>
-                  )}
-                  {a.defaultTier === 'strong' && (
-                    <span className="text-xs text-muted-foreground">
-                      começa no {TIER_LABEL.strong}
-                    </span>
-                  )}
-                  <div className="ml-auto">
+                <div className="flex items-start gap-2">
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="text-sm font-medium">{a.label}</span>
+                    {(a.hint || a.defaultTier === 'strong') && (
+                      <span className="text-xs text-muted-foreground">
+                        {[a.hint, a.defaultTier === 'strong' && `começa no ${TIER_LABEL.strong}`]
+                          .filter(Boolean)
+                          .join('; ')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="shrink-0">
                     {o ? (
                       <Button
                         size="sm"

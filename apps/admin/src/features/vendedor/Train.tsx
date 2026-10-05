@@ -1,9 +1,11 @@
-import { Eye, EyeSlash } from '@phosphor-icons/react';
+import { Eye, EyeSlash, HandPalm } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   api,
+  ApiError,
+  type AnswerWho,
   type Coverage,
   type MenuGap,
   type VendedorOnboarding,
@@ -17,9 +19,16 @@ import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { AgentGuide, AgentJourney, MiniChat, type ChatLine } from '../../ui/vendedor/index.ts';
+import {
+  ActionReceipt,
+  AgentGuide,
+  AgentJourney,
+  Bubble,
+  MiniChat,
+  type ChatLine,
+} from '../../ui/vendedor/index.ts';
 import { Finale, WhenStep } from './Train.comecar.tsx';
-import { VoiceStep, WhatsappStep } from './Train.conhecer.tsx';
+import { NumberStep, VoiceStep, WhatsappStep } from './Train.conhecer.tsx';
 import { HandoffStep, InterviewStep, ReadStep, useSaveSettings } from './Train.ensinar.tsx';
 import {
   gapKey,
@@ -29,6 +38,7 @@ import {
   journeyAt,
   ORDER,
   PART_OF,
+  resumeAt,
   withSkipped,
   type Persona,
   type StepId,
@@ -39,7 +49,7 @@ import { OcultoStep, OrderStep } from './Train.testar.tsx';
 // Treinar o Duá (sales-agent-ux §3.12): the AI seller's own onboarding, owner only, in the Shell's
 // bare mode. He guides it in first person, and a WhatsApp preview shows him answering better
 // as the owner chooses. Nothing he proposes is kept without "está certo"; turning him on is the
-// owner's last tap, never gated by what was skipped.
+// owner's last tap, gated only by the store's WhatsApp (Core: WHATSAPP_REQUIRED).
 
 export default function Train() {
   const session = useSession();
@@ -84,8 +94,7 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
     const passo = params.get('passo');
     if (isStep(passo)) return passo;
     if (ob.progress.finished) return 'pronto';
-    if (isStep(ob.progress.step)) return ob.progress.step;
-    return 'nome';
+    return resumeAt(ob.progress.step, ob.readiness.whatsapp);
   });
   const [peek, setPeek] = useState(false);
   const [draft, setDraftState] = useState<Persona>(() => ({
@@ -93,6 +102,7 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
     tone: ob.settings.tone,
   }));
   const setDraft = useCallback((p: Partial<Persona>) => setDraftState((d) => ({ ...d, ...p })), []);
+  const [who, setWho] = useState<AnswerWho>(ob.settings.answerWho);
 
   const progress = useMutation({
     mutationFn: (p: VendedorOnboardingProgress) => api.vendedor.updateOnboarding(p),
@@ -146,40 +156,58 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
       haptic.commit();
       toast(how === 'ensaio' ? 'O Duá começou em ensaio' : 'O Duá está atendendo');
       nav('/vendedor');
-    } catch {
+    } catch (e) {
       setStarting(null);
+      // the number dropped since this screen loaded: the finale turns into "conectar"
+      if (e instanceof ApiError && e.code === 'WHATSAPP_REQUIRED')
+        void qc.invalidateQueries({ queryKey: qk.vendedor.onboarding });
     }
   };
 
   let guide: ReactNode = null;
   let body: ReactNode;
   switch (step) {
+    case 'whatsapp':
+      guide = linked
+        ? 'Oi! Eu sou o Duá, o vendedor com IA da sua loja. Já estou no WhatsApp dela, só um cuidado antes de seguir:'
+        : 'Oi! Eu sou o Duá, o vendedor com IA da sua loja. Eu atendo pelo WhatsApp dela, então começamos por ele.';
+      body = <WhatsappStep ob={ob} eyebrow={eyebrow('1 de 3')} onNext={() => next('numero')} />;
+      break;
+    case 'numero':
+      guide = 'Antes de falar com alguém, preciso saber de quem é esse número.';
+      body = (
+        <NumberStep
+          value={who}
+          onChange={setWho}
+          eyebrow={eyebrow('2 de 3')}
+          back={back!}
+          busy={settings.isPending}
+          onNext={() => {
+            if (who === ob.settings.answerWho) return next('nome');
+            settings.mutate({ answerWho: who }, { onSuccess: () => next('nome') });
+          }}
+        />
+      );
+      break;
     case 'nome':
-      guide =
-        'Oi! Eu sou o Duá, o vendedor com IA no WhatsApp da sua loja. Antes de atender seus clientes, me diga como eu falo com eles.';
+      guide = 'Agora me diga como eu falo com os seus clientes.';
       body = (
         <VoiceStep
-          ob={ob}
           draft={draft}
           setDraft={setDraft}
-          eyebrow={eyebrow('1 de 2')}
+          eyebrow={eyebrow('3 de 3')}
+          back={back!}
           busy={settings.isPending}
           onNext={() => {
             const patch = {
               ...(draft.disclose !== ob.settings.disclose ? { disclose: draft.disclose } : {}),
               ...(draft.tone !== ob.settings.tone ? { tone: draft.tone } : {}),
             };
-            if (!Object.keys(patch).length) return next('whatsapp');
-            settings.mutate(patch, { onSuccess: () => next('whatsapp') });
+            if (!Object.keys(patch).length) return next('li');
+            settings.mutate(patch, { onSuccess: () => next('li') });
           }}
         />
       );
-      break;
-    case 'whatsapp':
-      guide = linked
-        ? 'Já estou no WhatsApp da loja. Só um cuidado antes de seguir:'
-        : 'Eu atendo pelo WhatsApp da loja. Vamos conectar?';
-      body = <WhatsappStep eyebrow={eyebrow('2 de 2')} back={back!} onNext={() => next('li')} />;
       break;
     case 'li':
       guide = left.length
@@ -279,7 +307,9 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
   // the preview shows him getting better: the greeting as chosen, then what he just learned
   const lines = previewLines(step, ob, step === 'nome' ? draft : { ...ob.settings }, store);
   const preview =
-    step === 'peca' || step === 'pronto' ? null : (
+    step === 'peca' || step === 'pronto' ? null : step === 'numero' ? (
+      <NumberPreview who={who} greeting={greetingPreview(ob.settings, store, ob.read.zones > 0)} />
+    ) : (
       <MiniChat
         label={
           step === 'entrevista' && ob.proposals.length
@@ -372,6 +402,30 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
         {side}
       </div>
     </div>
+  );
+}
+
+/** Whose number it is, shown: a personal chat left alone, a new number answered (or held). */
+function NumberPreview({ who, greeting }: { who: AnswerWho; greeting: string }) {
+  return (
+    <MiniChat label="prévia no WhatsApp">
+      {who === 'everyone' ? null : (
+        <>
+          <Bubble voice="in" author="sua irmã">
+            chego domingo pro almoço, tá? 😘
+          </Bubble>
+          <ActionReceipt icon={HandPalm}>pessoal: o Duá deixou com você</ActionReceipt>
+        </>
+      )}
+      <Bubble voice="in" author="número novo">
+        oi, vocês entregam?
+      </Bubble>
+      {who === 'known_only' ? (
+        <ActionReceipt icon={HandPalm}>número novo: esperando você decidir</ActionReceipt>
+      ) : (
+        <Bubble voice="seller">{greeting}</Bubble>
+      )}
+    </MiniChat>
   );
 }
 

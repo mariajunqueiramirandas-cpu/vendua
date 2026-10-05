@@ -1,3 +1,4 @@
+import { CaretRight, WhatsappLogo } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -69,6 +70,11 @@ function Editor({ v, owner }: { v: VendedorSettings; owner: boolean }) {
 function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
   const { run, state, retry } = useSettingsPatch();
   const live = v.enabled && v.settings.coverage !== 'rehearsal';
+  // he answers on the store's WhatsApp: switching on waits for it (Core: WHATSAPP_REQUIRED, on
+  // the same `linked` as Início's). Unknown yet counts as linked, so the switch doesn't flash.
+  const home = useQuery({ queryKey: qk.vendedor.home, queryFn: api.vendedor.home });
+  const linked = home.data?.whatsapp.linked ?? true;
+  const blocked = !v.enabled && !linked;
   return (
     <Group
       title={
@@ -81,14 +87,18 @@ function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
     >
       <Toggle
         checked={v.enabled}
-        disabled={!owner}
+        disabled={!owner || blocked}
         onChange={(enabled) => void run({ enabled })}
         label={v.enabled ? 'Ligado' : 'Desligado'}
         description={
           <>
-            {v.enabled
-              ? 'Atendendo no WhatsApp da loja. Desligue e as conversas ficam com você.'
-              : 'As conversas ficam com você até você ligar.'}
+            {!v.enabled
+              ? 'As conversas ficam com você até você ligar.'
+              : linked
+                ? v.settings.coverage === 'rehearsal'
+                  ? 'Em ensaio no WhatsApp da loja: escreve, mas não manda. Desligue e as conversas ficam com você.'
+                  : 'Atendendo no WhatsApp da loja. Desligue e as conversas ficam com você.'
+                : 'O WhatsApp da loja está sem conexão: ele volta a atender quando conectar. Desligue e as conversas ficam com você.'}
             {owner ? null : (
               <>
                 {' '}
@@ -98,6 +108,16 @@ function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
           </>
         }
       />
+      {blocked ? (
+        <Link
+          to={owner ? '/vendedor/comecar?passo=whatsapp' : '/whatsapp'}
+          className="t-label -mx-4 -mb-3 flex min-h-13 items-center gap-3 rounded-b-lg border-t border-line px-4 hover:bg-hover"
+        >
+          <WhatsappLogo weight="fill" className="size-5 shrink-0 text-whatsapp" aria-hidden />
+          <span className="min-w-0 flex-1">Conecte o WhatsApp da loja primeiro</span>
+          <CaretRight weight="bold" className="size-4 shrink-0 text-muted" aria-hidden />
+        </Link>
+      ) : null}
     </Group>
   );
 }

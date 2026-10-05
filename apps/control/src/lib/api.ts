@@ -1463,7 +1463,34 @@ export interface AiModelsView {
   routesSource: 'settings' | 'env' | 'none';
   budgets: AiBudgetsSetting;
   providers: { id: ModelProviderId; configured: boolean; secretName: string }[];
-  agents: { id: string; label: string; budgetKey: string | null; defaultTier: ModelTier }[];
+  agents: {
+    id: string;
+    label: string;
+    /** what the agent does, one plain line */
+    hint: string | null;
+    budgetKey: string | null;
+    defaultTier: ModelTier;
+  }[];
+}
+/** GET /ai/catalog: OpenRouter models with a zero-data-retention endpoint that takes tool calls */
+export interface AiCatalogModel {
+  id: string;
+  name: string;
+  contextLength: number | null;
+  /** ZDR endpoints serving it */
+  providers: number;
+  /** USD per 1M tokens, the dearest of its ZDR endpoints */
+  pricing: {
+    inputPerMTok: number;
+    outputPerMTok: number;
+    cacheReadPerMTok?: number;
+    cacheWritePerMTok?: number;
+  };
+}
+export interface AiCatalogView {
+  fetchedAt: string;
+  source: 'openrouter';
+  models: AiCatalogModel[];
 }
 export interface AiUsageView {
   days: 7 | 30;
@@ -1496,6 +1523,7 @@ const fleetConsole = {
   customersOverview: () => req<CustomersOverview>('/customers/overview'),
   customer: (id: string) => req<CustomerDetail>(`/customers/${encodeURIComponent(id)}`),
   aiModels: () => req<AiModelsView>('/ai/models'),
+  aiCatalog: () => req<AiCatalogView>('/ai/catalog'),
   aiUsage: (days: 7 | 30) => req<AiUsageView>(`/ai/usage?days=${days}`),
 };
 

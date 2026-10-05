@@ -166,6 +166,7 @@ const FRIENDLY: Record<string, string> = {
   CATEGORY_NOT_EMPTY: 'Essa categoria ainda tem produtos. Mova ou esconda eles antes.',
   COUPON_EXISTS: 'Já existe um cupom com esse código.',
   LAST_OWNER: 'A loja precisa ter pelo menos um dono.',
+  WHATSAPP_REQUIRED: 'Conecte o WhatsApp da loja antes de ligar o Duá.',
   MEMBER_EXISTS: 'Esse celular já faz parte da equipe. Toque na pessoa para mudar o papel.',
   AI_PACK_NEEDS_PAID_PLAN:
     'Os pacotes de conversas ficam disponíveis depois do primeiro pagamento do plano.',

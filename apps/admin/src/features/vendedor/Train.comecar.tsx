@@ -1,13 +1,12 @@
-import { ArrowRight, Lightning } from '@phosphor-icons/react';
+import { ArrowRight, Lightning, WhatsappLogo } from '@phosphor-icons/react';
 import { useState } from 'react';
-import type { Coverage, StoreAgentSettings, VendedorOnboarding } from '../../lib/api.ts';
+import type { AnswerWho, Coverage, StoreAgentSettings, VendedorOnboarding } from '../../lib/api.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { plural } from '../../lib/format.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Segmented } from '../../ui/fields.tsx';
-import { Notice } from '../../ui/Notice.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { ChecklistRow } from '../../ui/vendedor/index.ts';
 import { COVERAGE, coverageShort, gapKey, type StepId } from './Train.model.ts';
@@ -111,6 +110,12 @@ export function WhenStep({
 
 // ── O Duá está pronto ─────────────────────────────────────────────────────
 
+const WHO_DONE: Record<AnswerWho, string> = {
+  known_and_new: 'Atende clientes e números novos',
+  known_only: 'Atende só quem já é cliente',
+  everyone: 'Atende todo mundo: o número é só da loja',
+};
+
 export function Finale({
   ob,
   store,
@@ -134,15 +139,9 @@ export function Finale({
   const done = latest?.results?.length ?? 0;
   const gapsLeft = ob.gaps.filter((g) => !skipped.includes(gapKey(g))).length;
 
+  // he can't be switched on without the store's WhatsApp: that's the one thing left
+  const blocked = !linked && !ob.enabled;
   const later: { id: string; title: string; detail: string; to: StepId; label: string }[] = [];
-  if (!linked)
-    later.push({
-      id: 'wa',
-      title: 'Conectar o WhatsApp da loja',
-      detail: 'Sem ele, o Duá não tem onde atender.',
-      to: 'whatsapp',
-      label: 'conectar',
-    });
   if (!ob.progress.interviewDone && ob.interview.messages.length === 0)
     later.push({
       id: 'entrevista',
@@ -192,14 +191,43 @@ export function Finale({
           <Mascote pose="avatar-feliz" size={120} className="size-[120px]" />
         </span>
         <h1 className="t-moment text-[2.5rem] leading-[2.75rem] md:text-[3rem] md:leading-[3.25rem]">
-          O Duá está pronto
+          {blocked ? 'Falta só o WhatsApp' : 'O Duá está pronto'}
         </h1>
         <p className="t-body-lg max-w-md text-muted">
           {ob.enabled
             ? `Ele já está atendendo a ${store}, ${coverageShort(s.coverage, s.slowAfterMin)}.`
-            : `Ele já sabe atender a ${store}. Você escolhe como começa.`}
+            : blocked
+              ? `Ele já sabe atender a ${store}. Conecte o WhatsApp da loja e ele começa.`
+              : `Ele já sabe atender a ${store}. Você escolhe como começa.`}
         </p>
       </section>
+
+      {blocked ? (
+        <Card as="section" aria-labelledby="tr-wa" className="p-4">
+          <div className="flex items-center gap-3">
+            <span className="grid size-12 shrink-0 place-items-center rounded-full bg-whatsapp text-on-whatsapp">
+              <WhatsappLogo weight="fill" className="size-7" aria-hidden />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 id="tr-wa" className="font-semibold">
+                WhatsApp da loja
+              </h2>
+              <p className="t-caption text-muted">
+                É por ele que o Duá atende. Conecta em um minuto, com um código.
+              </p>
+            </div>
+          </div>
+          <Button
+            size="lg"
+            block
+            className="mt-4"
+            icon={<WhatsappLogo weight="fill" />}
+            onClick={() => go('whatsapp')}
+          >
+            conectar o WhatsApp
+          </Button>
+        </Card>
+      ) : null}
 
       <Card as="section" aria-labelledby="tr-knows" className="px-4 pb-1.5 pt-4">
         <h2 id="tr-knows" className="t-label mb-1">
@@ -212,6 +240,15 @@ export function Finale({
         />
         <ChecklistRow state="done" title="Aprendeu respostas com você" value={ob.taught.answers} />
         <ChecklistRow state="done" title="Segue as suas regras" value={ob.taught.rules} />
+        <ChecklistRow
+          state="done"
+          title={WHO_DONE[s.answerWho]}
+          action={
+            <Button variant="ghost" size="sm" onClick={() => go('numero')}>
+              trocar
+            </Button>
+          }
+        />
         {latest && latest.total ? (
           live ? (
             <ChecklistRow
@@ -272,13 +309,12 @@ export function Finale({
         <ButtonLink to="/vendedor" size="lg" block>
           ir para o Duá <ArrowRight />
         </ButtonLink>
+      ) : blocked ? (
+        <p className="t-caption text-center text-muted">
+          Com o WhatsApp conectado, você escolhe: começar em ensaio ou ligar de vez.
+        </p>
       ) : (
         <div className="space-y-3">
-          {!linked ? (
-            <Notice tone="warning" title="O WhatsApp da loja ainda não está conectado">
-              Dá para ligar agora: o Duá começa a atender assim que o WhatsApp conectar.
-            </Notice>
-          ) : null}
           <Button
             variant="spark"
             size="lg"

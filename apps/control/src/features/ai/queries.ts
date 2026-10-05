@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type CustomerRow } from '@/lib/api.ts';
+import { api, ApiError, type CustomerRow } from '@/lib/api.ts';
 import { qk } from '@/lib/query.ts';
 
 export type AiDays = 7 | 30;
@@ -13,6 +13,16 @@ export const useAiUsage = (days: AiDays) =>
   });
 
 export const useAiModels = () => useQuery({ queryKey: qk.aiModels(), queryFn: api.aiModels });
+
+/** OpenRouter's ZDR models; Core caches them an hour, so no poll and one quick retry. */
+export const useAiCatalog = () =>
+  useQuery({
+    queryKey: qk.aiCatalog(),
+    queryFn: api.aiCatalog,
+    staleTime: 30 * 60_000,
+    refetchInterval: false,
+    retry: (n, err) => !(err instanceof ApiError && err.status < 500) && n < 1,
+  });
 
 export type StoreRef = Pick<CustomerRow, 'id' | 'slug' | 'name'>;
 const toRefs = (r: { stores: CustomerRow[] }): StoreRef[] =>
