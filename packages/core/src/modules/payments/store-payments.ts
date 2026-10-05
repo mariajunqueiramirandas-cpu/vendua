@@ -138,20 +138,20 @@ export interface PayDeps {
   sessionSecret: string;
 }
 
-/** What the storefront may offer online right now (GET /storefront/v1/store). */
-export async function storePaymentsPublic(
-  tx: Sql,
-  tenantId: string,
+/** What the storefront may offer online right now (GET /storefront/v1/store), from the
+ *  store's payment_connections row. */
+export function storePaymentsPublic(
+  conn: ConnectionRow | null,
   provider: PaymentProvider,
   methods: string[],
   adjustments: PaymentAdjustments = {},
-): Promise<{
+): {
   onlinePayments: { pix: boolean; card: boolean };
   paymentMethods: string[];
   /** offered methods with a discount/surcharge only — labels; Core computes the cents */
   paymentAdjustments: Record<string, PaymentAdjustment>;
-}> {
-  const online = isOnline(await loadConnection(tx, tenantId), provider);
+} {
+  const online = isOnline(conn, provider);
   const paymentMethods = online ? methods : methods.filter((m) => m !== 'card_online');
   return {
     onlinePayments: {

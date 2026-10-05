@@ -32,6 +32,7 @@ import { startMenuImportJobs } from './modules/menu-import/jobs.ts';
 import { startWebAnalyticsJobs } from './modules/web-analytics.ts';
 import { startStoreWhatsappWatch } from './store-whatsapp/watch.ts';
 import { onUnhandledError } from './platform/http.ts';
+import { StoreReadCache } from './platform/read-cache.ts';
 import { recordBoot, unhandledErrorReporter } from './modules/system-events.ts';
 
 const databaseUrl =
@@ -79,6 +80,8 @@ const adminHub = new AdminHub(sql);
 // one provider for the API and the jobs: the fake driver keeps its state in memory
 const paymentProvider = createPaymentProvider();
 const notify = platformNotify(sql);
+// storefront reads served from memory, dropped by the notify a committed write sends
+const readCache = new StoreReadCache(sql);
 const app = createApp({
   sql,
   sessionSecret,
@@ -86,6 +89,7 @@ const app = createApp({
   adminHub,
   paymentProvider,
   notify,
+  readCache,
 });
 const adminHost = process.env.VENDUA_ADMIN_HOST?.trim().toLowerCase();
 const adminOrigin = adminHost ? `https://${adminHost}` : null;
@@ -204,6 +208,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     stopWebAnalyticsJobs();
     stopStoreWhatsappWatch();
     stopInstagramReconcile();
+    readCache.stop();
     void stopPushNotifier.then((stop) => stop()).catch(() => undefined);
     // event streams never finish on their own: requests get a few seconds, then the rest close
     const drained = Promise.race([
