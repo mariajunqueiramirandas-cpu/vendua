@@ -289,6 +289,36 @@ describe.skipIf(!OWNER_URL)('agent runtime v3 on Postgres', () => {
     await sql`update agent_actors set next_wake_at = null where agent_id = 'rt_test'`;
   });
 
+  test('a store whose Cliente oculto run is playing gets five turns at once, then two again', async () => {
+    await sql`update agent_actors set next_wake_at = null where agent_id = 'rt_test'`;
+    const prefix = `cap${n}-`;
+    for (let i = 0; i < 7; i++) await say('oi', `${prefix}${i}`);
+    const store = new PgActorStore(app);
+    const claim = () =>
+      store.claim({
+        lane: 'interactive',
+        owner: 'cap',
+        leaseMs: 60_000,
+        limit: 10,
+        agentIds: ['rt_test'],
+        perTenantCap: 2,
+        backoffMs: () => 0,
+      });
+    const [run] = await sql<{ id: string }[]>`
+      insert into vendedor_runs (tenant_id, trigger, status, lease_until)
+      values (${tenantId}, 'manual', 'running', now() + interval '1 hour') returning id`;
+    const during = await claim();
+    expect(during).toHaveLength(5);
+    for (const c of during) await store.release(c.lease, { clean: true });
+    await sql`update agent_actors set next_wake_at = now() where agent_id = 'rt_test' and subject_id like ${`${prefix}%`}`;
+    await sql`update vendedor_runs set status = 'done' where id = ${run!.id}`;
+    const after = await claim();
+    expect(after).toHaveLength(2);
+    for (const c of after) await store.release(c.lease, { clean: true });
+    await sql`delete from vendedor_runs where id = ${run!.id}`;
+    await sql`update agent_actors set next_wake_at = null where agent_id = 'rt_test'`;
+  });
+
   test('within a store, a real shopper is claimed before test chats and Cliente oculto', async () => {
     await sql`update agent_actors set next_wake_at = null where agent_id = 'rt_test'`;
     const thread = async (channel: string, address: string, testKind: string | null) => {

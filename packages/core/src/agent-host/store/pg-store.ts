@@ -35,6 +35,9 @@ interface ActorDb {
   lease_until: Date | null;
 }
 
+// a store's turns at once while its Cliente oculto run plays: its test shoppers all write together
+const TEST_RUN_TENANT_CAP = 5;
+
 const ACTOR_COLS = `id, tenant_id, agent_id, subject_kind, subject_id, lane, version_pin, seq::int as seq,
   projection, projection_seq::int as projection_seq, next_wake_at, attempts, owner,
   lease_epoch::float8 as lease_epoch, lease_until`;
@@ -143,6 +146,12 @@ export class PgActorStore implements ActorStore<Sql> {
           select d.id, d.next_wake_at, d.rn
           from ready r
           left join held h using (tenant_id)
+          -- a store whose Cliente oculto run is playing gets more turns at once (its real shoppers still go first)
+          cross join lateral (
+            select case when exists (select 1 from vendedor_runs v where v.tenant_id = r.tenant_id
+                                       and v.status = 'running' and v.lease_until > now())
+              then greatest($3::int, $7::int) else $3::int end as n
+          ) cap
           cross join lateral (
             select a.id, a.next_wake_at, row_number() over (order by p.rank, a.next_wake_at, a.id) as rn
             from agent_actors a
@@ -158,7 +167,7 @@ export class PgActorStore implements ActorStore<Sql> {
               and a.next_wake_at <= now()
               and (a.lease_until is null or a.lease_until <= now())
             order by p.rank, a.next_wake_at, a.id
-            limit greatest($3 - coalesce(h.n, 0), 0)
+            limit greatest(cap.n - coalesce(h.n, 0), 0)
           ) d
         ),
         -- round robin: every store's first actor, then every store's second
@@ -184,7 +193,15 @@ export class PgActorStore implements ActorStore<Sql> {
         where a.id = locked.id
         returning ${ACTOR_COLS_A}
         `,
-        [q.lane, q.agentIds as string[], q.perTenantCap, q.limit, q.owner, leaseSecs],
+        [
+          q.lane,
+          q.agentIds as string[],
+          q.perTenantCap,
+          q.limit,
+          q.owner,
+          leaseSecs,
+          TEST_RUN_TENANT_CAP,
+        ],
       ),
     );
     return rows.map((a) => ({
