@@ -1,6 +1,13 @@
 import type { Logger } from 'pino';
 import type { BufferCodec } from './auth-store.ts';
-import type { Creds, SocketKeys, WaMessage, WaRuntime, WaSocket } from './session.ts';
+import {
+  ON_DEMAND_SYNC,
+  type Creds,
+  type SocketKeys,
+  type WaMessage,
+  type WaRuntime,
+  type WaSocket,
+} from './session.ts';
 
 // The real baileys behind WaRuntime. Loaded once per process; tests use a fake runtime.
 
@@ -49,9 +56,11 @@ export async function baileysRuntime(log: Logger): Promise<WaRuntime> {
   };
   const level = process.env.BAILEYS_LOG_LEVEL ?? 'warn';
   // the first sync after linking carries the LID↔number map baileys needs to address chats; the
-  // store's message history (recent, full, on demand) is none of our business and costs memory
+  // store's message history (recent, full) is none of our business and costs memory. On demand
+  // only while a new contact's check waits for its own chat's answer
   const T = b.proto.HistorySync.HistorySyncType;
-  const skipped = new Set([T.RECENT, T.FULL, T.ON_DEMAND]);
+  if (T.ON_DEMAND !== ON_DEMAND_SYNC) throw new Error('baileys ON_DEMAND sync type moved');
+  const skipped = new Set([T.RECENT, T.FULL]);
   return {
     codec: b.BufferJSON,
     initCreds: () => b.initAuthCreds(),
@@ -63,7 +72,7 @@ export async function baileysRuntime(log: Logger): Promise<WaRuntime> {
         {},
         { reuploadRequest: (m) => sock.updateMediaMessage(m), logger },
       ),
-    connect: async ({ creds, keys, logger, getMessage }) => {
+    connect: async ({ creds, keys, logger, getMessage, wantsOnDemand }) => {
       const v = await currentVersion();
       const socketLog = logger.child({ mod: 'baileys' }, { level });
       return b.default({
@@ -76,7 +85,7 @@ export async function baileysRuntime(log: Logger): Promise<WaRuntime> {
         markOnlineOnConnect: false,
         syncFullHistory: false,
         shouldSyncHistoryMessage: ({ syncType }: { syncType?: number | null }) =>
-          !skipped.has(syncType ?? -1),
+          syncType === T.ON_DEMAND ? !!wantsOnDemand?.() : !skipped.has(syncType ?? -1),
         // groups, broadcasts and channels are never decrypted
         shouldIgnoreJid: (jid: string) =>
           !!(b.isJidGroup(jid) || b.isJidBroadcast(jid) || b.isJidNewsletter(jid)),

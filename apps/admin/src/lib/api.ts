@@ -1294,6 +1294,8 @@ export type VendedorPresence =
 export type Coverage = 'rehearsal' | 'when_slow' | 'after_hours' | 'always';
 export type AgentTone = 'relaxed' | 'balanced' | 'formal';
 export type IncentiveReason = 'recovery' | 'first_order' | 'hesitation';
+/** whose WhatsApp messages Duá answers: the store's number is often the owner's own */
+export type AnswerWho = 'known_and_new' | 'known_only' | 'everyone';
 
 export interface StoreAgentSettings {
   name: string;
@@ -1311,7 +1313,7 @@ export interface StoreAgentSettings {
     newCashCustomer: boolean;
   };
   humanSilenceMin: number;
-  unknownNumbers: 'shoppers_only' | 'all';
+  answerWho: AnswerWho;
   recovery: { enabled: boolean; delayMin: number };
   incentives: null | {
     couponIds: string[];
@@ -1380,13 +1382,29 @@ export interface VendedorHome {
   onboarding: { started: boolean; finished: boolean; part: string | null };
 }
 
-export type ThreadFilter = 'all' | 'waiting' | 'orders' | 'agent' | 'others';
+export type ThreadFilter = 'all' | 'waiting' | 'ask' | 'orders' | 'agent' | 'personal' | 'others';
 /** who answers now: Ana, Ensaio, the store, the store's grace minutes, muted, nobody */
 export type ThreadFloor = 'agent' | 'rehearsal' | 'store' | 'wait' | 'muted' | 'off';
 export type ThreadOwner = 'open' | 'agent' | 'human' | 'muted';
 export type ThreadStage =
   'browsing' | 'building' | 'checkout' | 'confirming' | 'paying' | 'ordered' | 'after';
 export type ThreadChannel = 'whatsapp' | 'test' | 'web' | 'instagram';
+/** checking: Duá is reading the chat's last messages; ask: the owner decides; personal: never answered */
+export type ThreadClass = 'unknown' | 'checking' | 'ask' | 'shopper' | 'personal' | 'other';
+export type ClassSource =
+  'orders' | 'owner' | 'command' | 'history' | 'new_contact' | 'message' | 'setting' | 'content';
+/** Core's code for why a thread has its class, never the model's words */
+export type ClassReason =
+  | 'ordered_before'
+  | 'owner_marked'
+  | 'no_prior_chat'
+  | 'looks_personal'
+  | 'looks_customer'
+  | 'unclear'
+  | 'history_unavailable'
+  | 'known_only'
+  | 'everyone'
+  | 'not_a_shopper';
 
 export interface ThreadRow {
   id: string;
@@ -1398,12 +1416,22 @@ export interface ThreadRow {
   reason: string | null;
   waitingSince: string | null;
   stage: ThreadStage;
-  class: 'unknown' | 'shopper' | 'other';
+  class: ThreadClass;
+  /** null for threads classified before Core kept the reason */
+  classReason: ClassReason | null;
+  classSource: ClassSource | null;
   preview: string | null;
   previewAuthor: string | null;
   lastAt: string;
   orderNumber: number | null;
   unread: boolean;
+}
+
+export interface ThreadList {
+  threads: ThreadRow[];
+  next: string | null;
+  /** per filter, when Core sends it ("para decidir · 3") */
+  counts?: Partial<Record<ThreadFilter, number>> | undefined;
 }
 
 export type MessageAuthor = 'shopper' | 'agent' | 'merchant' | 'core';
@@ -2057,9 +2085,7 @@ export const api = {
       if (p.before) s.set('before', p.before);
       if (p.limit) s.set('limit', String(p.limit));
       const qs = s.toString();
-      return get<{ threads: ThreadRow[]; next: string | null }>(
-        `/vendedor/threads${qs ? `?${qs}` : ''}`,
-      );
+      return get<ThreadList>(`/vendedor/threads${qs ? `?${qs}` : ''}`);
     },
     thread: (id: string) => get<ThreadDetail>(`/vendedor/threads/${encodeURIComponent(id)}`),
     why: (threadId: string, messageId: string) =>
@@ -2081,6 +2107,11 @@ export const api = {
       send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/mute`, {}),
     unmute: (threadId: string) =>
       send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/unmute`, {}),
+    /** the owner decides who a contact is: sticky, and releases what Duá was holding */
+    classify: (threadId: string, as: 'shopper' | 'personal') =>
+      send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/classify`, {
+        as,
+      }),
 
     settings: () => get<VendedorSettings>('/vendedor/settings'),
     updateSettings: (patch: VendedorSettingsPatch) =>

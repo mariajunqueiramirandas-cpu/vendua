@@ -15,14 +15,14 @@ export type Floor =
   | 'wait'
   /** "não é cliente", "pare de me responder" */
   | 'muted'
-  /** the Vendedor is off, or this number doesn't read as a shopper */
+  /** the Vendedor is off, or this number isn't (or isn't yet) a shopper's */
   | 'off';
 
 export interface FloorThread {
   owner: 'open' | 'agent' | 'human' | 'muted';
   humanUntil: Date | null;
   pendingSince: Date | null;
-  class: 'unknown' | 'shopper' | 'other';
+  class: 'unknown' | 'shopper' | 'other' | 'checking' | 'personal' | 'ask';
   channel: 'whatsapp' | 'test' | 'web' | 'instagram';
 }
 
@@ -45,7 +45,8 @@ export function floorOf(
       ? { floor: 'store', until: t.humanUntil }
       : { floor: 'agent', until: null };
   if (!agent.enabled) return { floor: 'off', until: null };
-  if (t.class === 'other') return { floor: 'off', until: null };
+  // not a shopper, a friend, or still waiting for a verdict or the owner (ADR 0033)
+  if (t.class !== 'shopper' && t.class !== 'unknown') return { floor: 'off', until: null };
   const s = agent.settings;
   if (s.coverage === 'rehearsal') return { floor: 'rehearsal', until: null };
   // the site's chat answers at once: the merchant turned it on for that

@@ -39,7 +39,7 @@ export interface ChatMessage {
 
 export type ChatStored =
   | { stored: true; threadId: string; messageId: string; address: string }
-  | { stored: false; reason: 'duplicate' | 'ours' };
+  | { stored: false; reason: 'duplicate' | 'ours' | 'personal' };
 
 const addressesOf = (m: ChatMessage) => [m.pn, m.lid].filter((a): a is string => !!a);
 
@@ -64,6 +64,13 @@ export async function storeChatMessage(
         select 1 from store_wa_messages where tenant_id = ${tenantId} and wa_id = ${m.id} limit 1`;
       if (ours.length) return 'ours' as const;
     }
+    // a contact the owner keeps personal: nothing of theirs is stored (a phone command still is)
+    if (m.content.kind !== 'command') {
+      const personal = await tx`
+        select 1 from shopper_threads where tenant_id = ${tenantId} and channel = 'whatsapp'
+          and address = any(${addrs}) and class = 'personal' limit 1`;
+      if (personal.length) return 'personal' as const;
+    }
     if (media?.type !== 'image') return null;
     const recent = await tx<{ n: number }[]>`
       select count(*)::int as n from shopper_media d
@@ -73,7 +80,8 @@ export async function storeChatMessage(
         and msg.kind = 'image' and d.created_at > now() - interval '1 minute'`;
     return recent[0]!.n >= IMAGES_PER_MINUTE ? ('rate' as const) : null;
   });
-  if (pre === 'duplicate' || pre === 'ours') return { stored: false, reason: pre };
+  if (pre === 'duplicate' || pre === 'ours' || pre === 'personal')
+    return { stored: false, reason: pre };
 
   const meta: Record<string, unknown> = { ...m.content.meta };
   let bytes: Buffer | null = null;
@@ -98,6 +106,8 @@ export async function storeChatMessage(
   }
 
   const shopper = !m.fromMe;
+  // the owner deciding who Duá answers isn't the owner answering: the thread's clocks stay put
+  const command = m.content.kind === 'command';
   const name = shopper ? (m.pushName?.trim().slice(0, MAX_PROFILE_NAME) ?? null) || null : null;
   const phone = threadPhoneForJid(m.pn);
   const want = m.pn ?? m.lid!;
@@ -105,13 +115,16 @@ export async function storeChatMessage(
     await heldTx(tx, tenantId, fence);
     // one conversation per shopper: a LID thread becomes the number's once WhatsApp tells us it
     const found = (
-      await tx<{ id: string; address: string }[]>`
-        select id, address from shopper_threads
+      await tx<{ id: string; address: string; class: string }[]>`
+        select id, address, class from shopper_threads
         where tenant_id = ${tenantId} and channel = 'whatsapp' and address = any(${addrs})
         order by (address = ${want}) desc
         limit 1
         for update`
     )[0];
+    // marked personal while this message was downloading
+    if (found?.class === 'personal' && !command)
+      return { stored: false, reason: 'personal' } as const;
     if (found && found.address !== want)
       await tx`update shopper_threads set address = ${want} where id = ${found.id}`;
     const thread = (
@@ -119,7 +132,8 @@ export async function storeChatMessage(
         insert into shopper_threads (tenant_id, channel, address, phone, profile_name,
                                      last_in_at, last_merchant_at, pending_since)
         values (${tenantId}, 'whatsapp', ${want}, ${phone}, ${name},
-                case when ${shopper}::boolean then now() end, case when ${shopper}::boolean then null else now() end,
+                case when ${shopper}::boolean then now() end,
+                case when ${shopper}::boolean or ${command}::boolean then null else now() end,
                 case when ${shopper}::boolean then now() end)
         on conflict (tenant_id, channel, address) do update set
           phone = coalesce(excluded.phone, shopper_threads.phone),
@@ -127,8 +141,9 @@ export async function storeChatMessage(
           last_in_at = coalesce(excluded.last_in_at, shopper_threads.last_in_at),
           last_merchant_at = coalesce(excluded.last_merchant_at, shopper_threads.last_merchant_at),
           -- the store answering by hand answers whatever was waiting
-          pending_since = case when ${shopper}::boolean
-            then coalesce(shopper_threads.pending_since, excluded.pending_since) end,
+          pending_since = case
+            when ${shopper}::boolean then coalesce(shopper_threads.pending_since, excluded.pending_since)
+            when ${command}::boolean then shopper_threads.pending_since end,
           updated_at = now()
         returning id`
     )[0]!;

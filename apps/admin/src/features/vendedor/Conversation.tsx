@@ -28,7 +28,15 @@ import { Notice } from '../../ui/Notice.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { Bone } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { FloorChip, Floor, ReasonChip, SACOLA_STEPS, SacolaBar } from '../../ui/vendedor/index.ts';
+import {
+  ClassChip,
+  FloorChip,
+  Floor,
+  ReasonChip,
+  SACOLA_STEPS,
+  SacolaBar,
+  triaged,
+} from '../../ui/vendedor/index.ts';
 import { money } from '../../lib/format.ts';
 import {
   CustomerFacts,
@@ -42,6 +50,7 @@ import {
   whyTitle,
   type Outgoing,
 } from './Conversation.parts.tsx';
+import { TriageFloor, WhyShopper, type ClassifyAs } from './Conversation.triage.tsx';
 
 const DESKTOP = '(min-width: 1200px)';
 
@@ -135,6 +144,22 @@ export function ConversationPane({
     },
     onError: fail,
   });
+  const classify = useMutation({
+    mutationFn: (as: ClassifyAs) => api.vendedor.classify(id, as),
+    onSuccess: (r, as) => {
+      if (r && 'thread' in r) put(r);
+      else {
+        void qc.invalidateQueries({ queryKey: qk.vendedor.thread(id) });
+        void qc.invalidateQueries({ queryKey: ['vendedor', 'threads'] });
+      }
+      toast(
+        as === 'shopper'
+          ? 'Marcado como cliente. O Duá atende este contato.'
+          : 'Marcado como pessoal. O Duá não responde este contato.',
+      );
+    },
+    onError: fail,
+  });
   const reply = useMutation({ mutationFn: (text: string) => api.vendedor.reply(id, text) });
   const send = (text: string, key = `${Date.now()}-${Math.random()}`) => {
     setOutgoing((o) => [...o.filter((x) => x.key !== key), { key, text, failed: false }]);
@@ -205,7 +230,9 @@ export function ConversationPane({
               <FloorChip floor={t.floor} waiting />
               {t.reason ? <ReasonChip reason={t.reason} /> : null}
             </span>
-          ) : t.test ? null : (
+          ) : t.test ? null : triaged(t.class) ? (
+            <ClassChip cls={t.class} />
+          ) : (
             <FloorChip floor={t.floor} />
           )
         ) : null
@@ -245,6 +272,13 @@ export function ConversationPane({
             Um cliente de teste falando com o Duá. Nada daqui foi para a cozinha.
           </Notice>
         ) : null}
+        {d.thread.test ? null : (
+          <WhyShopper
+            t={d.thread}
+            onPersonal={() => classify.mutate('personal')}
+            busy={classify.isPending && classify.variables === 'personal'}
+          />
+        )}
         {d.messages.length ? (
           <ThreadMessages
             detail={d}
@@ -271,6 +305,8 @@ export function ConversationPane({
         sending={reply.isPending}
         onUnmute={() => unmute.mutate()}
         unmuting={unmute.isPending}
+        onClassify={(as) => classify.mutate(as)}
+        classifying={classify.isPending ? (classify.variables ?? null) : null}
         keys={keys}
       />
     ) : null;
@@ -456,6 +492,8 @@ function FloorFor({
   sending,
   onUnmute,
   unmuting,
+  onClassify,
+  classifying,
   keys,
 }: {
   d: ThreadDetail;
@@ -466,11 +504,14 @@ function FloorFor({
   sending: boolean;
   onUnmute: () => void;
   unmuting: boolean;
+  onClassify: (as: ClassifyAs) => void;
+  classifying: ClassifyAs | null;
   keys?: boolean | undefined;
 }) {
   const qc = useQueryClient();
   const t = d.thread;
-  const owner = t.floor !== 'agent' && t.floor !== 'muted';
+  // a contact Duá stays out of gets no suggested replies: each ask is a model call
+  const owner = t.floor !== 'agent' && t.floor !== 'muted' && !triaged(t.class);
   const suggestions = useSuggestions(d, owner);
   if (t.floor === 'muted')
     return (
@@ -485,6 +526,8 @@ function FloorFor({
         </Button>
       </section>
     );
+  if (triaged(t.class) && t.channel === 'whatsapp')
+    return <TriageFloor t={t} onClassify={onClassify} busy={classifying} />;
   if (t.floor === 'agent') return <Floor variant="agent" onTake={onTake} busy={busy} keys={keys} />;
   const slow = qc.getQueryData<VendedorHome>(qk.vendedor.home)?.agent.slowAfterMin;
   const hint =

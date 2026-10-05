@@ -35,6 +35,8 @@ export type AdminTopic =
   | 'vendedor'
   // a shopper is waiting for the store in a Vendedor conversation (id = thread id): may push (law 13)
   | 'vendedor.waiting'
+  // a WhatsApp number Duá can't tell is a customer (id = thread id): may push, once a day per thread
+  | 'vendedor.ask'
   // Duá ran out of conversations (id = the period: its month's reset date, or 'trial'): may push
   | 'vendedor.exhausted';
 

@@ -13,8 +13,18 @@ import {
   threadForJid,
   voiceNote,
 } from './chat.ts';
+import { commandContent, phoneCommand } from './content.ts';
+import {
+  claimRequest,
+  finishRequest,
+  HISTORY_TIMEOUT_MS,
+  pendingRequest,
+  sweepRequests,
+  type HistoryOutcome,
+} from './history.ts';
 import { contactedTx, OPT_OUT_FOOTER, optedOutTx } from './messages.ts';
 import {
+  HistoryTimeout,
   NotOnWhatsApp,
   SessionClosed,
   StoreSession,
@@ -68,6 +78,8 @@ export interface GatewayOptions {
   listen?: boolean;
   /** only ever claim these stores (a canary gateway, tests); default: any */
   tenants?: string[] | null;
+  /** how long a chat's on-demand history may take to arrive */
+  historyTimeoutMs?: number;
   /** tests shorten the reconnect backoff */
   reconnectDelay?: (failures: number) => number;
   log?: Logger;
@@ -94,6 +106,10 @@ interface Owned {
   /** chat jid → thread, for presence updates */
   threads: Map<string, string>;
   typedAt: Map<string, number>;
+  /** inbound message id → the chat as WhatsApp delivered it, for a history request anchored on it */
+  delivered: Map<string, { jid: string; alt: string | null }>;
+  /** history requests being answered here */
+  fetching: Set<string>;
 }
 
 type Lane = 'chat' | 'other';
@@ -156,6 +172,7 @@ export class Gateway {
       chatGapMs: opts.chatGapMs ?? 1_500,
       conversationGapMs: opts.conversationGapMs ?? 250,
       agentGateMs: opts.agentGateMs ?? 30_000,
+      historyTimeoutMs: opts.historyTimeoutMs ?? HISTORY_TIMEOUT_MS,
       maxAttempts: opts.maxAttempts ?? 5,
       listen: opts.listen ?? true,
       tenants: opts.tenants ?? null,
@@ -205,6 +222,10 @@ export class Gateway {
       if (arg) this.typing(tenantId, arg);
       return;
     }
+    if (kind === 'history') {
+      if (arg) this.history(tenantId, arg);
+      return;
+    }
     // a wish changed (pair, disconnect) — reconcile now rather than at the next tick
     void this.tick().catch((e) => this.log.error({ err: e }, 'tick failed'));
   }
@@ -244,6 +265,14 @@ export class Gateway {
     for (const row of rows) this.reconcile(row);
     await this.heartbeat();
     for (const tenantId of this.owned.keys()) this.pump(tenantId);
+    // history requests a notification missed, and those of stores nobody holds
+    const missed = await sweepRequests(this.o.sql, [...this.owned.keys()], this.o.tenants).catch(
+      (e) => {
+        this.log.warn({ err: e }, 'history sweep failed');
+        return [];
+      },
+    );
+    for (const r of missed) this.history(r.tenant_id, r.id);
     if (Date.now() - this.lastHousekeeping > HOUSEKEEPING_MS) {
       this.lastHousekeeping = Date.now();
       const r = await housekeeping(this.o.sql).catch((e) => {
@@ -321,6 +350,8 @@ export class Gateway {
       lastLane: 'other',
       threads: new Map(),
       typedAt: new Map(),
+      delivered: new Map(),
+      fetching: new Set(),
       session: null as unknown as StoreSession,
     };
     const lost = () => {
@@ -404,17 +435,28 @@ export class Gateway {
       this.pump(tenantId);
       return;
     }
+    if (!m.fromMe) {
+      if (o.delivered.size >= THREAD_CACHE_MAX) o.delivered.clear();
+      o.delivered.set(m.id, { jid: m.jid, alt: m.alt });
+    }
     const pn = isPn(m.jid) ? m.jid : isPn(m.alt) ? m.alt : await m.pnForLid(m.jid);
     const lid = m.jid.endsWith('@lid') ? m.jid : m.alt?.endsWith('@lid') ? m.alt : null;
-    if (m.content) {
+    const command = m.fromMe ? phoneCommand(m.text) : null;
+    const content = command ? commandContent(command) : m.content;
+    if (content) {
       try {
         const r = await storeChatMessage(
           sql,
           tenantId,
           o.fence,
-          { id: m.id, fromMe: m.fromMe, pn, lid, pushName: m.pushName, content: m.content },
+          { id: m.id, fromMe: m.fromMe, pn, lid, pushName: m.pushName, content },
           m.download,
         );
+        // the owner's command is for us, not for the contact: gone from the chat at once
+        if (r.stored && command)
+          void o.session
+            .revoke(m.jid, m.id)
+            .catch((e) => this.log.warn({ err: e, tenantId }, 'command not revoked'));
         if (r.stored) {
           if (o.threads.size >= THREAD_CACHE_MAX) o.threads.clear();
           for (const j of [m.jid, m.alt, pn, lid]) if (j) o.threads.set(j, r.threadId);
@@ -431,6 +473,59 @@ export class Gateway {
     if (m.fromMe || !m.text) return;
     await handleInbound(sql, tenantId, { phone: phoneForJid(pn), text: m.text, id: m.id });
     this.pump(tenantId);
+  }
+
+  /** Core asks for one chat's latest messages (a new contact's check): answer it if this
+   *  gateway holds the store. */
+  private history(tenantId: string, requestId: string) {
+    const o = this.owned.get(tenantId);
+    if (!o || !UUID.test(requestId) || o.fetching.has(requestId)) return;
+    o.fetching.add(requestId);
+    void this.answerHistory(tenantId, o, requestId)
+      .catch((e) => {
+        if (e instanceof LeaseLost) {
+          if (this.owned.get(tenantId) === o) this.drop(tenantId, o);
+        } else this.log.warn({ err: e, tenantId }, 'history request not answered');
+      })
+      .finally(() => o.fetching.delete(requestId));
+  }
+
+  private async answerHistory(tenantId: string, o: Owned, requestId: string): Promise<void> {
+    const { sql } = this.o;
+    const req = await pendingRequest(sql, tenantId, requestId);
+    if (!req || this.owned.get(tenantId) !== o) return;
+    const finish = (out: HistoryOutcome) => finishRequest(sql, tenantId, o.fence, requestId, out);
+    if (o.session.state !== 'open') {
+      // a socket coming back gets a moment; the tick asks again
+      const young = Date.now() - req.createdAt.getTime() < this.o.historyTimeoutMs;
+      if (young && ['connecting', 'error'].includes(o.session.state) && o.session.running) return;
+      await finish({ status: 'failed', failure: 'offline' });
+      return;
+    }
+    if (!(await claimRequest(sql, tenantId, o.fence, requestId))) return;
+    const seen = o.delivered.get(req.anchorWaId);
+    let out: HistoryOutcome;
+    try {
+      const messages = await o.session.fetchHistory(
+        {
+          // the anchor's chat as WhatsApp delivered it is the form the phone files it under
+          chatJid: seen?.jid ?? req.address,
+          jids: [req.address, ...(seen?.alt ? [seen.alt] : [])],
+          anchorId: req.anchorWaId,
+          anchorAt: req.anchorAt,
+        },
+        this.o.historyTimeoutMs,
+      );
+      out = messages.length ? { status: 'done', messages } : { status: 'empty' };
+    } catch (e) {
+      if (e instanceof HistoryTimeout) out = { status: 'failed', failure: 'timeout' };
+      else if (e instanceof SessionClosed) out = { status: 'failed', failure: 'offline' };
+      else {
+        this.log.warn({ err: e, tenantId }, 'history fetch failed');
+        out = { status: 'failed', failure: 'error' };
+      }
+    }
+    await finish(out);
   }
 
   private async shopperTyping(tenantId: string, o: Owned, jid: string): Promise<void> {

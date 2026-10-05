@@ -812,8 +812,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
   test('a code nobody typed expires; disconnect unlinks and forgets the login', async () => {
     const r = await owner('POST', '/whatsapp/pair', { phone: ownerPhone });
     expect(r.status).toBe(200);
-    await gw.tick();
+    // counted before the tick: it may open the socket before it returns
     const before = world.sockets.length;
+    await gw.tick();
     await until(() => world.sockets.length === before + 1);
     world.last.connection({ qr: 'ref' });
     await until(async () => (await waRow())?.state === 'pairing');

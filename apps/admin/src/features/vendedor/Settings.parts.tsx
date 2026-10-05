@@ -4,6 +4,7 @@ import { useId, useRef, useState, type ReactNode } from 'react';
 import {
   api,
   type AgentTone,
+  type AnswerWho,
   type Coverage,
   type VendedorSettings,
   type VendedorSettingsPatch,
@@ -204,10 +205,110 @@ export function CoverageField({
   onChange: (c: Coverage) => void;
   onWait: (m: 1 | 2 | 5) => void;
 }) {
+  return (
+    <ChoiceRows
+      label="Quando o Duá atende"
+      value={value}
+      onChange={onChange}
+      options={COVERAGE.map((o) => ({ ...o, detail: o.detail(slowAfterMin) }))}
+      under={(v) =>
+        v === 'when_slow' ? (
+          <div className="space-y-2 px-4 pb-4 pl-13">
+            <p className="t-caption text-muted">Quanto esperar antes de o Duá responder</p>
+            <Segmented
+              label="Quanto esperar antes de o Duá responder"
+              value={String(slowAfterMin) as '1' | '2' | '5'}
+              onChange={(m) => onWait(Number(m) as 1 | 2 | 5)}
+              options={[...WAITS]}
+            />
+          </div>
+        ) : null
+      }
+    />
+  );
+}
+
+const ANSWER_WHO: { value: AnswerWho; title: string; detail: string }[] = [
+  {
+    value: 'known_and_new',
+    title: 'Clientes e números novos',
+    detail:
+      'Quem já pediu na loja e quem nunca conversou com você. Nas conversas que você já tem, o Duá lê as últimas mensagens e deixa as pessoais com você.',
+  },
+  {
+    value: 'known_only',
+    title: 'Só quem já é cliente',
+    detail: 'Quem já pediu na loja ou você marcou como cliente. Os outros esperam você decidir.',
+  },
+  {
+    value: 'everyone',
+    title: 'Todo mundo',
+    detail: 'Para quando o número é só da loja.',
+  },
+];
+
+/** The store's number is often the owner's own: whose messages Duá may answer. */
+export function AnswerWhoField({
+  value,
+  onChange,
+}: {
+  value: AnswerWho;
+  onChange: (v: AnswerWho) => void;
+}) {
+  return (
+    <ChoiceRows label="Quem o Duá atende" value={value} onChange={onChange} options={ANSWER_WHO} />
+  );
+}
+
+const COMMANDS: { word: string; does: string }[] = [
+  { word: '#cliente', does: 'o Duá passa a atender esse contato.' },
+  { word: '#pessoal', does: 'o Duá não responde mais esse contato.' },
+  { word: '#dua', does: 'o Duá volta a responder agora, mesmo se você estava atendendo.' },
+];
+
+/** The owner decides from the phone, inside the chat itself; Core never shows the contact. */
+export function PhoneCommands() {
+  return (
+    <div className="mt-1 rounded-md bg-sunken p-3.5">
+      <p className="font-semibold">Pelo seu WhatsApp</p>
+      <p className="t-caption text-muted">
+        Na conversa com a pessoa, mande só a palavra. A mensagem some na hora, para você e para ela.
+      </p>
+      <dl className="mt-3 space-y-2">
+        {COMMANDS.map((c) => (
+          <div key={c.word} className="flex items-baseline gap-2.5">
+            <dt className="shrink-0">
+              <code className="rounded-sm bg-surface px-1.5 py-0.5 font-sans text-[0.875rem] font-bold text-ink ring-1 ring-inset ring-line-strong">
+                {c.word}
+              </code>
+            </dt>
+            <dd className="t-body min-w-0">{c.does}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+/** One choice of a few, each with what it means: a radio list that fills its card edge to edge. */
+function ChoiceRows<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+  under,
+}: {
+  label: string;
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; title: string; detail: string }[];
+  /** what opens under the chosen row (coverage's "quanto esperar") */
+  under?: ((v: T) => ReactNode) | undefined;
+}) {
   const group = useId();
   return (
-    <div role="radiogroup" aria-label="Quando o Duá atende" className="-mx-4">
-      {COVERAGE.map((o) => {
+    <div role="radiogroup" aria-label={label} className="-mx-4">
+      {options.map((o) => {
         const on = o.value === value;
         return (
           <div key={o.value} className="border-t border-line first:border-t-0">
@@ -239,20 +340,10 @@ export function CoverageField({
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block font-semibold">{o.title}</span>
-                <span className="t-caption block text-muted">{o.detail(slowAfterMin)}</span>
+                <span className="t-caption block text-muted">{o.detail}</span>
               </span>
             </label>
-            {on && o.value === 'when_slow' ? (
-              <div className="space-y-2 px-4 pb-4 pl-13">
-                <p className="t-caption text-muted">Quanto esperar antes de o Duá responder</p>
-                <Segmented
-                  label="Quanto esperar antes de o Duá responder"
-                  value={String(slowAfterMin) as '1' | '2' | '5'}
-                  onChange={(v) => onWait(Number(v) as 1 | 2 | 5)}
-                  options={[...WAITS]}
-                />
-              </div>
-            ) : null}
+            {on && under ? under(o.value) : null}
           </div>
         );
       })}

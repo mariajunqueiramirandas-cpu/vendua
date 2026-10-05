@@ -1,6 +1,7 @@
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { setStock } from '../modules/stock.ts';
+import { maskPhone } from '../vendedor/threads.ts';
 import type { MerchantNotify } from './context.ts';
 import { emitAdminTx, type AdminHub } from './live.ts';
 import { sendPushResult, vapidPublicKey, type PushResult } from './webpush.ts';
@@ -56,6 +57,10 @@ export async function startPushNotifier(sql: Sql, hub: AdminHub): Promise<() => 
     else if (e.topic === 'vendedor.waiting')
       void pushWaiting(sql, tenantId, e.id).catch((err) =>
         workLog.warn({ err }, 'vendedor push failed'),
+      );
+    else if (e.topic === 'vendedor.ask')
+      void pushAsk(sql, tenantId, e.id).catch((err) =>
+        workLog.warn({ err }, 'vendedor ask push failed'),
       );
     else if (e.topic === 'vendedor.exhausted')
       void pushExhausted(sql, tenantId, e.id).catch((err) =>
@@ -232,6 +237,50 @@ export async function pushWaiting(sql: Sql, tenantId: string, threadId: string) 
       actions: [{ action: 'take', title: 'assumir' }],
     },
     'vendedor.waiting',
+    threadId,
+  );
+}
+
+/** A new number Duá can't tell is a customer (ADR 0033): "é cliente?", once per thread per
+ *  `asked_at` (the ingest and the triage set it at most once a day). Never for personal ones. */
+export async function pushAsk(sql: Sql, tenantId: string, threadId: string) {
+  const job = await withTenant(sql, tenantId, async (tx) => {
+    const t = (
+      await tx<{ asked: Date; name: string | null; phone: string | null }[]>`
+        select asked_at as asked, profile_name as name, phone from shopper_threads
+        where tenant_id = ${tenantId} and id = ${threadId} and class = 'ask'
+          and asked_at is not null and channel = 'whatsapp' and owner <> 'muted'`
+    )[0];
+    if (!t) return null;
+    const won = await tx`
+      insert into push_deliveries (tenant_id, key)
+      values (${tenantId}, ${`vendedor.ask:${threadId}:${t.asked.toISOString()}`})
+      on conflict do nothing returning key
+    `;
+    if (!won[0]) return null;
+    const subs = await tx<Sub[]>`
+      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
+        join merchant_users u on u.id = s.user_id
+      where s.tenant_id = ${tenantId} and u.status = 'active' and coalesce((u.prefs ->> 'push')::boolean, true)
+    `;
+    return { t, subs };
+  });
+  if (!job) return;
+  const who = job.t.name?.trim() || maskPhone(job.t.phone) || 'Um contato';
+  await fanOut(
+    sql,
+    tenantId,
+    job.subs,
+    {
+      title: 'Novo contato no WhatsApp',
+      body: `${who} — é cliente?`,
+      tag: `vendedor-ask-${threadId}`,
+      url: `/admin/vendedor/conversas/${threadId}`,
+      threadId,
+      // the decision is made in the conversation; "assumir" (the default for a thread) isn't it
+      actions: [{ action: 'open', title: 'abrir' }],
+    },
+    'vendedor.ask',
     threadId,
   );
 }

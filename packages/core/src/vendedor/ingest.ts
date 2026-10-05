@@ -9,7 +9,7 @@ import { claimForTurnTx } from './allowance.ts';
 import { readPhoto, type MediaProviders } from './media.ts';
 import { sendDirectTx, typingTx } from './outbound.ts';
 import { loadAgent } from './settings.ts';
-import { readsAsShopper, triggerOf } from './signals.ts';
+import { triggerOf } from './signals.ts';
 import {
   AGENT_ID,
   SUBJECT_KIND,
@@ -19,6 +19,7 @@ import {
   threadFloor,
   type Thread,
 } from './threads.ts';
+import { askOwnerTx, firstLookTx, requestHistoryTx, setClassTx } from './triage.ts';
 
 // The ingest (sales-agent.md §4.5): each message the gateway stored becomes text — a voice
 // note is transcribed, a photo described and matched against the menu — and then, in one
@@ -44,6 +45,7 @@ interface Row {
   body: string | null;
   meta: Record<string, unknown>;
   quoted_wa_id: string | null;
+  wa_id: string | null;
   created_at: Date;
   ingest_attempts: number;
 }
@@ -59,7 +61,7 @@ export async function claimPending(sql: Sql, limit = 10): Promise<Row[]> {
         where ingest = 'pending' and (ingest_lease_until is null or ingest_lease_until < now())
         order by created_at limit ${limit} for update skip locked)
       returning m.id, m.tenant_id, m.thread_id, m.author, m.kind, m.body, m.meta, m.quoted_wa_id,
-        m.created_at, m.ingest_attempts`,
+        m.wa_id, m.created_at, m.ingest_attempts`,
   );
 }
 
@@ -157,7 +159,13 @@ export async function ingestOne(d: IngestDeps, r: Row): Promise<void> {
       subject: { kind: SUBJECT_KIND, id: thread.id },
     };
     const at = new Date(r.created_at).toISOString();
-    const done = async (state: 'done' | 'skipped') => {
+    const done = async (state: 'done' | 'skipped' | 'held') => {
+      // marked personal while this message was being transcribed: what was derived stays unwritten
+      if (thread.class === 'personal') {
+        await tx`update shopper_messages set ingest = ${state}, ingest_lease_until = null
+          where id = ${r.id}`;
+        return emitAdminTx(tx, r.tenant_id, 'vendedor', thread.id);
+      }
       await tx`update shopper_messages set ingest = ${state}, ingest_lease_until = null,
         transcript = coalesce(${derived.transcript}, transcript),
         meta = meta || ${tx.json({
@@ -170,7 +178,24 @@ export async function ingestOne(d: IngestDeps, r: Row): Promise<void> {
       await emitAdminTx(tx, r.tenant_id, 'vendedor', thread.id);
     };
 
+    // the owner's phone command (ADR 0033): a decision, never a takeover, never learned from
+    if (r.kind === 'command') {
+      if (r.author === 'merchant' && thread.channel === 'whatsapp')
+        await commandTx(tx, thread, (r.body ?? '').trim().toLowerCase(), r.id);
+      return done('done');
+    }
+
     if (r.author === 'merchant') {
+      // the owner's own chats (a friend, a number still being checked) are not Duá's to follow;
+      // but on a number still undecided the owner answering by hand holds the floor, so a later
+      // "cliente" doesn't send Duá after questions the owner already answered
+      if (thread.channel === 'whatsapp' && !['shopper', 'unknown'].includes(thread.class)) {
+        if ((thread.class === 'checking' || thread.class === 'ask') && thread.owner !== 'muted')
+          await tx`update shopper_threads set owner = 'human', owner_reason = coalesce(owner_reason, 'a loja respondeu'),
+            human_until = now() + make_interval(mins => ${agent.settings.humanSilenceMin}),
+            waiting_since = null, pending_since = null, updated_at = now() where id = ${thread.id}`;
+        return done('done');
+      }
       // the store answered: it holds the floor for its window, and the shopper isn't waiting anymore
       if (thread.owner !== 'muted')
         await tx`update shopper_threads set owner = 'human', owner_reason = coalesce(owner_reason, 'a loja respondeu'),
@@ -199,19 +224,26 @@ export async function ingestOne(d: IngestDeps, r: Row): Promise<void> {
 
     if (thread.owner === 'muted' || (!agent.enabled && thread.channel !== 'test'))
       return done('skipped');
+    // who Duá answers (ADR 0033): a number is classified once, before anything is dispatched
     let cls = thread.class;
-    if (cls === 'unknown' && thread.channel === 'whatsapp') {
-      const [o] = thread.phone
-        ? await tx<{ n: number }[]>`select count(*)::int as n from orders
-            where tenant_id = ${r.tenant_id} and customer_phone = ${thread.phone}`
-        : [{ n: 0 }];
-      cls =
-        (o?.n ?? 0) > 0 || agent.settings.unknownNumbers === 'all' || readsAsShopper(r.body)
-          ? 'shopper'
-          : 'other';
-      await tx`update shopper_threads set class = ${cls} where id = ${thread.id}`;
+    if (thread.channel === 'whatsapp') {
+      if (cls === 'checking') return done('held');
+      if (cls === 'ask') {
+        await askOwnerTx(tx, thread, now);
+        return done('held');
+      }
+      if (cls === 'unknown') {
+        const look = await firstLookTx(tx, thread, agent.settings.answerWho, r.body);
+        if (look.kind === 'checking') {
+          await requestHistoryTx(tx, thread, { waId: r.wa_id, at: new Date(r.created_at) });
+          return done('held');
+        }
+        await setClassTx(tx, thread, look.decision, now);
+        if (look.kind === 'ask') return done('held');
+        cls = look.decision.cls;
+      }
     }
-    if (cls === 'other') return done('skipped');
+    if (cls !== 'shopper' && cls !== 'unknown') return done('skipped');
 
     const floor = threadFloor({ ...thread, class: cls }, agent, status, now);
     const text = derived.transcript ?? r.body;
@@ -294,6 +326,45 @@ export async function ingestOne(d: IngestDeps, r: Row): Promise<void> {
       await typingTx(tx, r.tenant_id, thread.id);
     return done('done');
   });
+}
+
+/**
+ * `#pessoal`, `#cliente`, `#dua` typed on the store's phone (the gateway revoked it already):
+ * pessoal → never answered; cliente → a shopper; dua → a shopper and Duá takes the floor now.
+ */
+async function commandTx(tx: Sql, thread: Thread, word: string, messageId: string) {
+  if (word !== 'pessoal' && word !== 'cliente' && word !== 'dua') return;
+  const decision = {
+    cls: word === 'pessoal' ? ('personal' as const) : ('shopper' as const),
+    source: 'command' as const,
+    reason: 'owner_marked' as const,
+  };
+  if (word !== 'dua' || thread.class !== 'shopper') await setClassTx(tx, thread, decision);
+  if (word === 'pessoal') return;
+  // "não é cliente" was the old way to say it: the owner's word now says otherwise
+  if (word === 'cliente') {
+    await tx`update shopper_threads set owner = 'open', owner_reason = null
+      where id = ${thread.id} and owner = 'muted'`;
+    return;
+  }
+  await tx`update shopper_threads set owner = 'agent', owner_reason = null, human_until = null,
+    waiting_since = null, updated_at = now() where id = ${thread.id}`;
+  const [held] = await tx<{ n: number }[]>`
+    select count(*)::int as n from shopper_messages
+    where tenant_id = ${thread.tenantId} and thread_id = ${thread.id} and ingest = 'pending'
+      and author = 'shopper'`;
+  // released messages reach Duá through the ingest; otherwise the last one gets its answer now
+  if (!held?.n)
+    await dispatchTx(tx, {
+      actor: {
+        tenantId: thread.tenantId,
+        agentId: AGENT_ID,
+        subject: { kind: SUBJECT_KIND, id: thread.id },
+      },
+      kind: 'timer.handback',
+      source: 'whatsapp:command',
+      dedupeKey: `handback:${thread.id}:command:${messageId}`,
+    });
 }
 
 /**

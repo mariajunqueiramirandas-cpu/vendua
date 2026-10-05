@@ -73,6 +73,7 @@ import {
   Discordance,
   EventChip,
   Floor,
+  ClassChip,
   FloorChip,
   GuaranteeChip,
   MiniChat,
@@ -1032,6 +1033,9 @@ function VendedorReference() {
               <FloorChip floor="store" />
               <FloorChip floor="agent" waiting />
               <FloorChip floor="muted" />
+              <ClassChip cls="checking" />
+              <ClassChip cls="ask" />
+              <ClassChip cls="personal" />
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <GuaranteeChip guaranteed />
