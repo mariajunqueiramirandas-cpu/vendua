@@ -1,0 +1,50 @@
+diff --git a/src/index.js b/src/index.js
+index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..9c050b0497ee78998289851b296172562642d28c 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -238,17 +238,26 @@ function Postgres(a, b) {
+       , connection
+       , prepare = null
+ 
++    // venduá patch: the transaction's queries are pipelined behind BEGIN instead of waiting
++    // a round trip for its reply; BEGIN's own result is still checked before COMMIT
++    let assigned
++    const reserving = new Promise(r => assigned = r)
++    const began = sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
++    began.catch(() => { /* awaited in scope */ })
+     try {
+-      await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
++      await Promise.race([reserving, began])
++      // onexecute leaves the connection in `full`, where scope would queue queries one per
++      // ReadyForQuery; it is ours alone from here, so let scope write to it directly
++      connection.queue === full && move(connection, reserved)
+       return await Promise.race([
+-        scope(connection, fn),
++        scope(connection, fn, undefined, began),
+         new Promise((_, reject) => connection.onclose = reject)
+       ])
+     } catch (error) {
+       throw error
+     }
+ 
+-    async function scope(c, fn, name) {
++    async function scope(c, fn, name, began) {
+       const sql = Sql(handler)
+       sql.savepoint = savepoint
+       sql.prepare = x => prepare = x.replace(/[^a-z0-9$-_. ]/gi)
+@@ -264,6 +273,7 @@ function Postgres(a, b) {
+ 
+         if (uncaughtError)
+           throw uncaughtError
++        began && await began
+       } catch (e) {
+         await (name
+           ? sql`rollback to ${ sql(name) }`
+@@ -302,6 +312,7 @@ function Postgres(a, b) {
+       c.reserved = () => queries.length
+         ? c.execute(queries.shift())
+         : move(c, reserved)
++      assigned()
+     }
+   }
+ 
