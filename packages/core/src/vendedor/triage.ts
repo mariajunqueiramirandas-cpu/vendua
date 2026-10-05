@@ -346,8 +346,11 @@ function priorOf(raw: unknown): PriorMessage[] | null {
 
 export async function triageOne(d: TriageDeps, req: RequestRow): Promise<void> {
   const ctx = await withTenant(d.sql, req.tenant_id, async (tx) => {
-    const [t] = await tx<{ class: ThreadClass; profile_name: string | null }[]>`
-      select class, profile_name from shopper_threads where tenant_id = ${req.tenant_id} and id = ${req.thread_id}`;
+    const [t] = await tx<
+      { class: ThreadClass; profile_name: string | null; phone: string | null }[]
+    >`
+      select class, profile_name, phone from shopper_threads
+      where tenant_id = ${req.tenant_id} and id = ${req.thread_id}`;
     const held = await tx<{ body: string | null; transcript: string | null; kind: string }[]>`
       select body, transcript, kind from shopper_messages
       where tenant_id = ${req.tenant_id} and thread_id = ${req.thread_id} and ingest = 'held'
@@ -368,8 +371,12 @@ export async function triageOne(d: TriageDeps, req: RequestRow): Promise<void> {
   let decision: Decision | null = null;
   if (ctx.thread?.class === 'checking') {
     const prior = req.status === 'done' ? priorOf(req.messages) : null;
-    // "done" with nothing readable left is judged like a failed fetch
-    const status = req.status === 'done' && !prior ? 'failed' : req.status;
+    // "done" with nothing readable left is judged like a failed fetch; so is "no prior chat" on a
+    // thread known only by its LID: the contact's chat may be filed under the number, out of reach
+    const status =
+      (req.status === 'done' && !prior) || (req.status === 'empty' && !ctx.thread.phone)
+        ? 'failed'
+        : req.status;
     const fresh = ctx.held.map((m) => m.transcript ?? m.body ?? `[${m.kind}]`);
     const verdict = await classify(
       d.gateway,

@@ -102,6 +102,9 @@ export function mountVendedor(d: AdminDeps) {
       const id = idParam(c, 'id');
       const th = await storeThread(tx, t.id, id);
       if (th.owner === 'muted') throw new HttpError(409, 'THREAD_MUTED', 'this number is muted');
+      // a personal contact is the owner's own: the store doesn't take, hand back or write to it here
+      if (th.class === 'personal')
+        throw new HttpError(409, 'THREAD_PERSONAL', 'this number is a personal contact');
       const agent = await loadAgent(tx, t.id);
       await tx`update shopper_threads set owner = 'human', owner_reason = coalesce(owner_reason, 'a loja assumiu'),
         human_until = now() + make_interval(mins => ${agent.settings.humanSilenceMin}), waiting_since = null,
@@ -123,6 +126,9 @@ export function mountVendedor(d: AdminDeps) {
       const id = idParam(c, 'id');
       const th = await storeThread(tx, t.id, id);
       if (th.owner === 'muted') throw new HttpError(409, 'THREAD_MUTED', 'this number is muted');
+      // a personal contact is the owner's own: the store doesn't take, hand back or write to it here
+      if (th.class === 'personal')
+        throw new HttpError(409, 'THREAD_PERSONAL', 'this number is a personal contact');
       await tx`update shopper_threads set owner = 'agent', owner_reason = null, human_until = null,
         waiting_since = null, updated_at = now() where id = ${id}`;
       // the shopper's last message, if still unanswered, gets one answer now
@@ -151,6 +157,9 @@ export function mountVendedor(d: AdminDeps) {
       if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
       const msg = text(body.text, 'text', 2000, 1);
       const th = await storeThread(tx, t.id, id);
+      // a personal contact is the owner's own: the store doesn't take, hand back or write to it here
+      if (th.class === 'personal')
+        throw new HttpError(409, 'THREAD_PERSONAL', 'this number is a personal contact');
       const agent = await loadAgent(tx, t.id);
       const key = c.req.header('idempotency-key') ?? crypto.randomUUID();
       const messageId = await sendDirectTx(tx, th, {

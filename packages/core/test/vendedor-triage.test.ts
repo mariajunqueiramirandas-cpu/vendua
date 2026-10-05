@@ -398,6 +398,20 @@ describe.skipIf(!OWNER_URL)('who Duá answers on Postgres', () => {
     expect(admin[tenantId]).toEqual([threadId]);
   });
 
+  test('no prior chat on a thread known only by its LID: not proof of a stranger', async () => {
+    const tenantId = await store();
+    const { threadId, requestId } = await checking(tenantId, 'oi');
+    await sql`update shopper_threads set phone = null where id = ${threadId}`;
+    next = [{ text: '{"verdict":"unsure"}' }];
+    await answer(requestId, 'empty');
+    await triage();
+    expect(said().user).toContain('<situacao>historico_indisponivel</situacao>');
+    expect(await threadRow(threadId)).toMatchObject({
+      class: 'ask',
+      class_reason: 'history_unavailable',
+    });
+  });
+
   test('history unavailable, a message that picks up an old conversation: personal', async () => {
     const tenantId = await store();
     const { threadId, requestId } = await checking(tenantId, 'então, sobre aquilo de sábado…');
@@ -748,6 +762,26 @@ describe.skipIf(!OWNER_URL)('who Duá answers on Postgres', () => {
       expect(out!.status).toBe('skipped');
       expect(
         await sql`select 1 from agent_actors where tenant_id = ${tenantId} and subject_id = ${t}`,
+      ).toHaveLength(0);
+    });
+
+    test('a personal contact: no take, hand back or reply from the admin', async () => {
+      const t = await newThread(tenantId, { cls: 'personal' });
+      for (const [path, body] of [
+        ['take', {}],
+        ['release', {}],
+        ['reply', { text: 'oi!' }],
+      ] as const) {
+        const r = await manager('POST', `/vendedor/threads/${t}/${path}`, body);
+        expect({ path, status: r.status, code: r.body.error?.code }).toEqual({
+          path,
+          status: 409,
+          code: 'THREAD_PERSONAL',
+        });
+      }
+      expect(
+        await sql`select 1 from store_wa_messages where tenant_id = ${tenantId} and jid in (
+          select address from shopper_threads where id = ${t})`,
       ).toHaveLength(0);
     });
 
