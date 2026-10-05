@@ -1,6 +1,7 @@
 import type {
   AiBudgetsSetting,
   AiCatalogModel,
+  AiEndpoint,
   AiModelsView,
   AiPricing,
   DirectProviderId,
@@ -32,6 +33,8 @@ export interface RouteDraft {
   provider: string;
   model: string;
   zdr: boolean;
+  /** OpenRouter endpoint tag; '' = OpenRouter's own routing */
+  endpoint: string;
   inputPerMTok: string;
   outputPerMTok: string;
   cacheReadPerMTok: string;
@@ -78,6 +81,7 @@ export const emptyRoute = (): RouteDraft => ({
   provider: '',
   model: '',
   zdr: true,
+  endpoint: '',
   inputPerMTok: '',
   outputPerMTok: '',
   cacheReadPerMTok: '',
@@ -91,6 +95,7 @@ const routeFrom = (r: ModelRouteSetting): RouteDraft => ({
   provider: r.provider,
   model: r.model,
   zdr: r.zdr === true,
+  endpoint: r.endpoint ?? '',
   inputPerMTok: str(r.pricing?.inputPerMTok),
   outputPerMTok: str(r.pricing?.outputPerMTok),
   cacheReadPerMTok: str(r.pricing?.cacheReadPerMTok),
@@ -116,6 +121,7 @@ function routeOut(d: RouteDraft): ModelRouteSetting {
     model: d.model.trim(),
     zdr: d.zdr,
   };
+  if (filled(d.endpoint)) out.endpoint = d.endpoint.trim();
   if (PRICE_FIELDS.some((f) => filled(d[f]))) {
     out.pricing = { inputPerMTok: parse(d.inputPerMTok), outputPerMTok: parse(d.outputPerMTok) };
     if (filled(d.cacheReadPerMTok)) out.pricing.cacheReadPerMTok = parse(d.cacheReadPerMTok);
@@ -217,7 +223,7 @@ export function catalogOptions(
   return [...out.values()];
 }
 
-const withPricing = (r: RouteDraft, p: AiPricing): RouteDraft => ({
+export const withPricing = (r: RouteDraft, p: AiPricing): RouteDraft => ({
   ...r,
   inputPerMTok: str(p.inputPerMTok),
   outputPerMTok: str(p.outputPerMTok),
@@ -225,14 +231,16 @@ const withPricing = (r: RouteDraft, p: AiPricing): RouteDraft => ({
   cacheWritePerMTok: str(p.cacheWritePerMTok),
 });
 
-/** a catalog pick: model id and prices together, so the budget estimate matches */
+/** a catalog pick: model id and prices together, so the budget estimate matches; an endpoint
+ *  belongs to the model it served */
 export const withOption = (r: RouteDraft, o: ModelOption): RouteDraft =>
-  withPricing({ ...r, model: o.model }, o.pricing);
+  withPricing({ ...r, model: o.model, endpoint: '' }, o.pricing);
 
 /** a typed id: the old prices belonged to another model */
 export const withCustomModel = (r: RouteDraft, model: string): RouteDraft => ({
   ...r,
   model,
+  endpoint: '',
   inputPerMTok: '',
   outputPerMTok: '',
   cacheReadPerMTok: '',
@@ -247,12 +255,85 @@ export const priceDrifted = (r: RouteDraft, p: AiPricing) =>
  * On OpenRouter the switch changes which endpoints serve the model, so its price: follow the
  * new source unless the staff set their own price.
  */
-export function withZdr(r: RouteDraft, zdr: boolean, models: AiCatalogModel[] | undefined) {
+export function withZdr(
+  r: RouteDraft,
+  zdr: boolean,
+  models: AiCatalogModel[] | undefined,
+  endpoints?: AiEndpoint[],
+) {
   const next = { ...r, zdr };
+  if (r.provider === 'openrouter' && filled(r.endpoint)) {
+    // a pin that keeps data would fail every call under ZDR (no OpenRouter fallbacks)
+    const pinned = endpoints?.find((e) => e.tag === r.endpoint);
+    return zdr && pinned && !pinned.zdr ? { ...next, endpoint: '' } : next;
+  }
   const m = r.provider === 'openrouter' ? models?.find((x) => x.id === r.model.trim()) : undefined;
   const from = m && sourcePricing(m, r.provider, r.zdr);
   const to = m && sourcePricing(m, r.provider, zdr);
   return from && to && !priceDrifted(r, from) ? withPricing(next, to) : next;
+}
+
+/** what the route's price follows: the pinned endpoint's, or OpenRouter's routing for its ZDR choice */
+export function routeSourcePricing(
+  r: RouteDraft,
+  endpoints: AiEndpoint[] | undefined,
+  models: AiCatalogModel[] | undefined,
+): AiPricing | undefined {
+  if (r.provider !== 'openrouter') return undefined;
+  const tag = r.endpoint.trim();
+  if (tag) return endpoints?.find((e) => e.tag === tag)?.pricing;
+  const m = models?.find((x) => x.id === r.model.trim());
+  return m ? (sourcePricing(m, r.provider, r.zdr) ?? undefined) : undefined;
+}
+
+/** pin an endpoint ('' = back to OpenRouter's routing); prices follow unless staff set their own */
+export function withEndpoint(
+  r: RouteDraft,
+  tag: string,
+  endpoints: AiEndpoint[] | undefined,
+  models: AiCatalogModel[] | undefined,
+): RouteDraft {
+  const next = { ...r, endpoint: tag };
+  const from = routeSourcePricing(r, endpoints, models);
+  const to = routeSourcePricing(next, endpoints, models);
+  return from && to && !priceDrifted(r, from) ? withPricing(next, to) : next;
+}
+
+// Duá's calls are prompt-heavy (system prompt, tools and history in, a short reply out), so input
+// tokens dominate the bill: weigh them 3:1 rather than averaging the two prices.
+export const blendedPrice = (p: AiPricing) => 0.75 * p.inputPerMTok + 0.25 * p.outputPerMTok;
+/** US$/1M floor so a free endpoint scores high but finite (ranks by its speed among free ones) */
+const PRICE_FLOOR = 0.01;
+
+/** tokens/s per US$ of blended price per 1M tokens; null when OpenRouter has no speed sample */
+export const valueScore = (e: Pick<AiEndpoint, 'tps' | 'pricing'>): number | null =>
+  e.tps == null || !(e.tps > 0) ? null : e.tps / Math.max(blendedPrice(e.pricing), PRICE_FLOOR);
+
+/** an endpoint a route can pin: with ZDR on, only zero-retention ones (others fail the call) */
+export const endpointAllowed = (e: Pick<AiEndpoint, 'zdr'>, zdr: boolean) => !zdr || e.zdr;
+
+/** best value first, unmeasured after (cheapest first), then by tag for a stable order */
+export function rankEndpoints<E extends Pick<AiEndpoint, 'tag' | 'tps' | 'pricing'>>(
+  list: E[],
+): E[] {
+  return list
+    .map((e) => ({ e, s: valueScore(e) }))
+    .sort(
+      (a, b) =>
+        (b.s ?? -1) - (a.s ?? -1) ||
+        blendedPrice(a.e.pricing) - blendedPrice(b.e.pricing) ||
+        a.e.tag.localeCompare(b.e.tag),
+    )
+    .map((x) => x.e);
+}
+
+/** the measured endpoint with the most tokens/s per dollar the route may use; null if none */
+export function bestValueEndpoint<E extends Pick<AiEndpoint, 'tag' | 'tps' | 'pricing' | 'zdr'>>(
+  list: E[],
+  zdr: boolean,
+): E | null {
+  const top = rankEndpoints(list.filter((e) => endpointAllowed(e, zdr)))[0];
+  return top && valueScore(top) != null ? top : null;
 }
 
 export const scopePath = (kind: 'default' | 'agents' | 'tenants', id?: string) =>
@@ -268,7 +349,8 @@ export function routePaths(d: RoutesDraft): Set<string> {
       t[tier].forEach((_, i) => {
         const p = `${scope}.${tier}.${i}`;
         out.add(p);
-        for (const f of ['provider', 'model', 'zdr', 'pricing', 'timeoutMs']) out.add(`${p}.${f}`);
+        for (const f of ['provider', 'model', 'zdr', 'endpoint', 'pricing', 'timeoutMs'])
+          out.add(`${p}.${f}`);
         for (const f of PRICE_FIELDS) out.add(`${p}.pricing.${f}`);
       });
     }
@@ -292,6 +374,11 @@ export function validateRoutes(d: RoutesDraft): Errors {
         if (!m) errs[`${p}.model`] = 'informe o modelo';
         else if (m.length > 200) errs[`${p}.model`] = 'até 200 caracteres';
         else if (!MODEL_RE.test(m)) errs[`${p}.model`] = 'só letras, números e . _ / : @ -';
+        const ep = r.endpoint.trim();
+        if (ep) {
+          if (r.provider !== 'openrouter') errs[`${p}.endpoint`] = 'só em rotas da OpenRouter';
+          else if (!validModelId(ep)) errs[`${p}.endpoint`] = 'provedor inválido';
+        }
         const anyPrice = PRICE_FIELDS.some((f) => filled(r[f]));
         for (const f of PRICE_FIELDS) {
           const required = f === 'inputPerMTok' || f === 'outputPerMTok';

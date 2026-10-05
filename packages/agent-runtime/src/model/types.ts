@@ -19,6 +19,8 @@ export interface ModelRoute {
   provider: string;
   model: string;
   zdr: boolean;
+  /** OpenRouter only: pin the call to this endpoint (its `tag`, e.g. `deepinfra/turbo`). */
+  endpoint?: string;
   pricing?: Pricing;
   timeoutMs?: number;
 }
@@ -28,6 +30,8 @@ export interface ProviderRequest extends Omit<ModelRequest, 'meta' | 'tier'> {
   model: string;
   /** The route's `zdr`; an adapter that can enforce it per request does. */
   zdr?: boolean;
+  /** The route's `endpoint`; an adapter that can pin one does. */
+  endpoint?: string;
 }
 
 export interface ProviderAdapter {

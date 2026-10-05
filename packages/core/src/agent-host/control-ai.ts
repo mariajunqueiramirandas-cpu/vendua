@@ -103,6 +103,26 @@ export function mountAgentRuntimeAi(o: {
     return c.json(view);
   });
 
+  // One OpenRouter model's providers (endpoints): price, tokens/s, latency, uptime, ZDR. The model
+  // id has slashes, so it rides in the query.
+  app.get('/control/v1/ai/endpoints', async (c) => {
+    controlGate(c);
+    const model = c.req.query('model') ?? '';
+    // `..` survives encodeURIComponent and would walk out of /models/ on OpenRouter's side
+    if (
+      !/^[A-Za-z0-9._/:@-]{1,200}$/.test(model) ||
+      model.split('/').some((seg) => !seg || seg === '.' || seg === '..')
+    )
+      throw new HttpError(422, 'BAD_REQUEST', 'model must be an OpenRouter model id', {
+        field: 'model',
+      });
+    const view = await catalog.endpoints(model).catch(() => {
+      throw new HttpError(503, 'CATALOG_UNAVAILABLE', 'OpenRouter endpoint list is unavailable');
+    });
+    if (!view) throw new HttpError(404, 'NOT_FOUND', 'OpenRouter does not list this model');
+    return c.json(view);
+  });
+
   app.get('/control/v1/ai/usage', async (c) => {
     controlGate(c);
     const raw = c.req.query('days') ?? '30';

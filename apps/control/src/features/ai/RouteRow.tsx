@@ -1,19 +1,25 @@
 import { useId, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ShieldAlert, Trash2 } from 'lucide-react';
-import type { DirectProviderId, ModelProviderId } from '@/lib/api.ts';
+import { ApiError, type DirectProviderId, type ModelProviderId } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { rel } from '@/lib/format.ts';
 import { Button } from '@/components/ui/button.tsx';
 import { Switch } from '@/components/ui/controls.tsx';
 import { Input, Select } from '@/components/ui/input.tsx';
 import {
+  bestValueEndpoint,
   catalogOptions,
   DIRECT,
+  endpointAllowed,
   PRICE_FIELDS,
   priceDrifted,
   PROVIDERS,
+  routeSourcePricing,
+  validModelId,
   withCustomModel,
+  withEndpoint,
   withOption,
+  withPricing,
   withProvider,
   withZdr,
   type ModelOption,
@@ -22,8 +28,9 @@ import {
 } from './draft.ts';
 import { FieldMsg, Notice, NumField, useFieldError } from './bits.tsx';
 import { fmtContext, fmtPricePair, PROVIDER_LABEL, providerLabel } from './format.ts';
+import { BestValueButton, EndpointPicker } from './EndpointPicker.tsx';
 import { ModelPicker, UnverifiedMark } from './ModelPicker.tsx';
-import { useAiCatalog } from './queries.ts';
+import { useAiCatalog, useAiEndpoints } from './queries.ts';
 
 const PRICE_LABEL: Record<PriceField, string> = {
   inputPerMTok: 'entrada',
@@ -110,6 +117,7 @@ export function RouteRow({
     provider: useFieldError('routes', `${path}.provider`),
     model: useFieldError('routes', `${path}.model`),
     zdr: useFieldError('routes', `${path}.zdr`),
+    endpoint: useFieldError('routes', `${path}.endpoint`),
     pricing: useFieldError('routes', `${path}.pricing`),
     timeout: useFieldError('routes', `${path}.timeoutMs`),
     inputPerMTok: useFieldError('routes', `${path}.pricing.inputPerMTok`),
@@ -120,6 +128,7 @@ export function RouteRow({
   const extrasErr = err.pricing || err.timeout || PRICE_FIELDS.some((f) => err[f]) ? true : false;
   const [open, setOpen] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [pickingEndpoint, setPickingEndpoint] = useState(false);
   const showExtras = open || extrasErr;
   const set = (patch: Partial<RouteDraft>) => onChange({ ...r, ...patch });
   const known = PROVIDERS.includes(r.provider as ModelProviderId);
@@ -135,6 +144,20 @@ export function RouteRow({
   const listed = viaOpenRouter ? catalog?.models.find((m) => m.id === model) : undefined;
   const noZdr = r.zdr && listed?.zdr === null;
   const gone = viaOpenRouter && !!catalog && !!model && !listed;
+  const endpointsQ = useAiEndpoints(viaOpenRouter && validModelId(model) && !gone ? model : null);
+  // 404: OpenRouter doesn't know the id, which the `gone` notice or the model field already says
+  const endpointsMissing = endpointsQ.error instanceof ApiError && endpointsQ.error.status === 404;
+  const endpoints = endpointsQ.data?.endpoints;
+  const tag = r.endpoint.trim();
+  const pinned = tag ? endpoints?.find((e) => e.tag === tag) : undefined;
+  const endpointGone = !!tag && !!endpoints && !pinned;
+  const pinnedNoZdr = !!pinned && !endpointAllowed(pinned, r.zdr);
+  const best = endpoints ? bestValueEndpoint(endpoints, r.zdr) : null;
+  const pickEndpoint = (t: string) => onChange(withEndpoint(r, t, endpoints, catalog?.models));
+  // the price the route should carry now: the pinned endpoint's, else the catalog pick's
+  const source = viaOpenRouter
+    ? routeSourcePricing(r, endpoints, catalog?.models)
+    : picked?.pricing;
   const priced = r.inputPerMTok.trim() || r.outputPerMTok.trim();
   const timeout = r.timeoutS.trim() ? `tempo limite ${r.timeoutS} s` : 'tempo limite padrão';
   // with a catalog pick the price line sits under the model; the toggle only says what's inside
@@ -258,10 +281,62 @@ export function RouteRow({
             {!picked.verified && <UnverifiedMark />}
           </p>
         )}
+        {viaOpenRouter && model && !gone && !endpointsMissing && (
+          <div className="flex flex-col gap-1">
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <EndpointPicker
+                value={tag}
+                zdr={r.zdr}
+                endpoints={endpoints}
+                best={best}
+                loading={endpointsQ.isLoading}
+                failed={endpointsQ.isError}
+                onRetry={() => void endpointsQ.refetch()}
+                invalid={!!err.endpoint}
+                open={pickingEndpoint}
+                onOpenChange={setPickingEndpoint}
+                onPick={pickEndpoint}
+              />
+              <BestValueButton
+                best={best}
+                current={tag}
+                measured={!!endpoints?.length}
+                onPick={pickEndpoint}
+              />
+            </div>
+            <FieldMsg>{err.endpoint}</FieldMsg>
+          </div>
+        )}
+        {endpointGone && (
+          <Notice>
+            O provedor fixo ({tag}) não serve mais este modelo na OpenRouter: as chamadas vão falhar
+            e o Duá passa para a rota seguinte.{' '}
+            <button
+              type="button"
+              className="font-medium underline underline-offset-2"
+              onClick={() => pickEndpoint('')}
+            >
+              voltar para automático
+            </button>
+          </Notice>
+        )}
+        {pinnedNoZdr && (
+          <Notice>
+            {pinned.provider} não tem retenção zero: com ela ligada, a chamada vai falhar e o Duá
+            passa para a rota seguinte.{' '}
+            <button
+              type="button"
+              className="font-medium underline underline-offset-2"
+              onClick={() => pickEndpoint('')}
+            >
+              voltar para automático
+            </button>
+          </Notice>
+        )}
         <ZdrSwitch
           provider={r.provider}
           checked={r.zdr}
-          onChange={(v) => onChange(withZdr(r, v, catalog?.models))}
+          onChange={(v) => onChange(withZdr(r, v, catalog?.models, endpoints))}
         />
         <FieldMsg>{err.zdr}</FieldMsg>
         {noZdr && (
@@ -277,16 +352,18 @@ export function RouteRow({
             </button>
           </Notice>
         )}
-        {picked && priced && priceDrifted(r, picked.pricing) && (
+        {picked && source && priced && priceDrifted(r, source) && (
           <Notice>
-            {viaOpenRouter
-              ? 'A OpenRouter cobra agora'
-              : `O preço de tabela da ${providerLabel(r.provider)} agora é`}{' '}
-            {fmtPricePair(picked.pricing.inputPerMTok, picked.pricing.outputPerMTok)}.{' '}
+            {pinned
+              ? `${pinned.provider} cobra agora`
+              : viaOpenRouter
+                ? 'A OpenRouter cobra agora'
+                : `O preço de tabela da ${providerLabel(r.provider)} agora é`}{' '}
+            {fmtPricePair(source.inputPerMTok, source.outputPerMTok)}.{' '}
             <button
               type="button"
               className="font-medium underline underline-offset-2"
-              onClick={() => onChange(withOption(r, picked))}
+              onClick={() => onChange(withPricing(r, source))}
             >
               usar o preço atual
             </button>

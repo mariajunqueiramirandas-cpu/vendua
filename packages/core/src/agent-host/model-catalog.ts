@@ -48,6 +48,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_ENDPOINTS = 10_000;
 const MAX_MODELS = 2_000;
+const ENDPOINTS_TTL_MS = 10 * 60_000;
 // validateSetting's bounds for a route's model id and pricing
 const MODEL_RE = /^[A-Za-z0-9._/:@-]+$/;
 const MODEL_MAX = 200;
@@ -84,6 +85,27 @@ export interface ModelCatalogView {
   fetchedAt: string;
   source: 'openrouter';
   models: CatalogModel[];
+}
+
+/** One provider's endpoint for a model, as the picker's provider chooser lists it. */
+export interface CatalogEndpoint {
+  /** OpenRouter's endpoint tag (`deepinfra/turbo`): what a pinned route stores */
+  tag: string;
+  provider: string;
+  pricing: CatalogPricing;
+  /** median output tokens/s over the last 30 minutes; null when OpenRouter has no sample */
+  tps: number | null;
+  /** median time to first token in ms; null likewise */
+  latencyMs: number | null;
+  /** 0–100, last 30 minutes */
+  uptime: number | null;
+  /** zero data retention */
+  zdr: boolean;
+}
+export interface ModelEndpointsView {
+  model: string;
+  fetchedAt: string;
+  endpoints: CatalogEndpoint[];
 }
 
 /** each provider's model ids, for the providers whose list loaded */
@@ -166,6 +188,18 @@ function zdrOf(t: ZdrTally | undefined, normal: CatalogPricing): CatalogZdr | nu
   return { providers: t.providers, pricing };
 }
 
+function zdrTagsFrom(body: unknown): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  const data = isObject(body) && Array.isArray(body.data) ? body.data : [];
+  for (const e of data.slice(0, MAX_ENDPOINTS))
+    if (isObject(e) && validId(e.model_id) && validId(e.tag)) {
+      const set = out.get(e.model_id) ?? new Set<string>();
+      set.add(e.tag);
+      out.set(e.model_id, set);
+    }
+  return out;
+}
+
 /** The dearer of two prices, field by field. */
 export function maxPricing(a: CatalogPricing | null, b: CatalogPricing): CatalogPricing {
   if (!a) return { ...b };
@@ -243,6 +277,38 @@ export function catalogFrom(
   );
 }
 
+/** A stat that is a number, or `{ p50 }` once OpenRouter has samples; null otherwise. */
+function statOf(v: unknown): number | null {
+  const n = isObject(v) ? v.p50 : v;
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** OpenRouter's /models/{id}/endpoints body → the tool-capable endpoints, with a price and the
+ *  ZDR flag (`zdrTags`: the tags /endpoints/zdr lists for the model). */
+export function endpointsFrom(body: unknown, zdrTags: ReadonlySet<string>): CatalogEndpoint[] {
+  const list =
+    isObject(body) && isObject(body.data) && Array.isArray(body.data.endpoints)
+      ? body.data.endpoints
+      : [];
+  const out: CatalogEndpoint[] = [];
+  for (const e of list.slice(0, 200)) {
+    if (!isObject(e) || !validId(e.tag) || !takesTools(e.supported_parameters)) continue;
+    const pricing = pricingOf(e.pricing);
+    if (!pricing) continue;
+    const up = e.uptime_last_30m;
+    out.push({
+      tag: e.tag,
+      provider: typeof e.provider_name === 'string' ? e.provider_name.slice(0, 100) : e.tag,
+      pricing,
+      tps: statOf(e.throughput_last_30m),
+      latencyMs: statOf(e.latency_last_30m),
+      uptime: typeof up === 'number' && Number.isFinite(up) ? up : null,
+      zdr: zdrTags.has(e.tag),
+    });
+  }
+  return out;
+}
+
 /** A provider's own list body → its model ids (Gemini's come as `models/<id>`). */
 export function providerIds(provider: DirectProvider, body: unknown): Set<string> {
   const rows = isObject(body)
@@ -268,6 +334,8 @@ export function providerIds(provider: DirectProvider, body: unknown): Set<string
 export interface ModelCatalog {
   /** the cached catalog (refreshed in the background past an hour); null if never fetched */
   get(): Promise<ModelCatalogView | null>;
+  /** one model's endpoints (cached ten minutes); null for an id OpenRouter doesn't know */
+  endpoints(model: string): Promise<ModelEndpointsView | null>;
 }
 
 export function createModelCatalog(
@@ -286,6 +354,9 @@ export function createModelCatalog(
   let inflight: Promise<void> | null = null;
   // the last list each provider answered with, so one failed refresh doesn't unverify its models
   const lists: ProviderLists = {};
+  // per model, the ZDR endpoint tags of the last good refresh
+  let zdrTags = new Map<string, Set<string>>();
+  const endpointCache = new Map<string, { at: number; view: ModelEndpointsView }>();
 
   async function getJson(url: string, headers: Record<string, string>, label: string) {
     const res = await doFetch(url, {
@@ -330,6 +401,7 @@ export function createModelCatalog(
       const models = catalogFrom(modelsBody, zdrBody, lists);
       // an empty list is a broken upstream, not "no models": keep the last good copy
       if (!models.length) throw new Error('openrouter catalog empty');
+      zdrTags = zdrTagsFrom(zdrBody);
       const at = now();
       good = { at, view: { fetchedAt: new Date(at).toISOString(), source: 'openrouter', models } };
     } catch (e) {
@@ -338,7 +410,35 @@ export function createModelCatalog(
     }
   }
 
+  async function endpoints(model: string): Promise<ModelEndpointsView | null> {
+    const t = now();
+    const hit = endpointCache.get(model);
+    if (hit && t - hit.at < ENDPOINTS_TTL_MS) return hit.view;
+    // the key (when Core has one) is what unlocks OpenRouter's throughput samples
+    const key = env.OPENROUTER_API_KEY;
+    let body: unknown;
+    try {
+      body = await getJson(
+        `${MODELS_URL}/${model.split('/').map(encodeURIComponent).join('/')}/endpoints`,
+        key ? { authorization: `Bearer ${key}` } : {},
+        'openrouter endpoints',
+      );
+    } catch (e) {
+      if (e instanceof Error && /\b404$/.test(e.message)) return null;
+      throw e;
+    }
+    const view = {
+      model,
+      fetchedAt: new Date(t).toISOString(),
+      endpoints: endpointsFrom(body, zdrTags.get(model) ?? new Set()),
+    };
+    if (endpointCache.size >= MAX_MODELS) endpointCache.delete(endpointCache.keys().next().value!);
+    endpointCache.set(model, { at: t, view });
+    return view;
+  }
+
   return {
+    endpoints,
     async get() {
       const t = now();
       const fresh = good && t - good.at < TTL_MS;

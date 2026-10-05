@@ -357,7 +357,12 @@ export function createGateway(opts: GatewayOpts): ModelGateway {
             const { out, hedged } = await call(
               adapter,
               route,
-              { ...base, model: route.model, zdr: route.zdr === true },
+              {
+                ...base,
+                model: route.model,
+                zdr: route.zdr === true,
+                ...(route.endpoint ? { endpoint: route.endpoint } : {}),
+              },
               gen,
             );
             breaker.success(route.provider);

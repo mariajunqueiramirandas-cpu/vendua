@@ -1437,6 +1437,9 @@ export interface ModelRouteSetting {
   model: string;
   /** OpenRouter: only zero-retention providers; direct: staff's word on the account's contract */
   zdr: boolean;
+  /** OpenRouter only: pin this endpoint's tag (`deepinfra/turbo`), no OpenRouter fallbacks;
+   *  absent = OpenRouter's own routing */
+  endpoint?: string;
   pricing?: {
     inputPerMTok: number;
     outputPerMTok: number;
@@ -1498,6 +1501,25 @@ export interface AiCatalogView {
   source: 'openrouter';
   models: AiCatalogModel[];
 }
+/** GET /ai/endpoints?model=: the providers (endpoints) that serve one OpenRouter model */
+export interface AiEndpoint {
+  /** what a pinned route stores as `endpoint` */
+  tag: string;
+  /** display name */
+  provider: string;
+  pricing: AiPricing;
+  /** median output tokens/s, last 30 min; null = no samples */
+  tps: number | null;
+  latencyMs: number | null;
+  /** 0–100 */
+  uptime: number | null;
+  zdr: boolean;
+}
+export interface AiEndpointsView {
+  model: string;
+  fetchedAt: string;
+  endpoints: AiEndpoint[];
+}
 export interface AiUsageView {
   days: 7 | 30;
   totals: {
@@ -1530,6 +1552,8 @@ const fleetConsole = {
   customer: (id: string) => req<CustomerDetail>(`/customers/${encodeURIComponent(id)}`),
   aiModels: () => req<AiModelsView>('/ai/models'),
   aiCatalog: () => req<AiCatalogView>('/ai/catalog'),
+  aiEndpoints: (model: string) =>
+    req<AiEndpointsView>(`/ai/endpoints?model=${encodeURIComponent(model)}`),
   aiUsage: (days: 7 | 30) => req<AiUsageView>(`/ai/usage?days=${days}`),
 };
 
