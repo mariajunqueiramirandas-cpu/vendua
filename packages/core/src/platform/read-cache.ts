@@ -112,6 +112,12 @@ export class StoreReadCache {
       if (k.startsWith(`${tenantId}\u0000`)) this.inflight.delete(k);
   }
 
+  /** subscribes now rather than on the first read; true once reads are being kept */
+  async ready(): Promise<boolean> {
+    await this.start();
+    return this.listening;
+  }
+
   /** shutdown: no more heartbeats or re-subscribes (sql.end() closes the listener) */
   stop() {
     this.stopped = true;

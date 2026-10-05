@@ -78,6 +78,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront read cache (db)', ()
         insert into products (tenant_id, category_id, slug, name, base_price_cents)
         values (${tenantId}, ${categoryId}, 'pudim', 'Pudim', 1000) returning id`
     )[0]!.id;
+    // nothing is kept until the LISTEN is up
+    expect(await cache.ready()).toBe(true);
   });
   afterAll(async () => {
     cache.stop();

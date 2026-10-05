@@ -82,6 +82,7 @@ const paymentProvider = createPaymentProvider();
 const notify = platformNotify(sql);
 // storefront reads served from memory, dropped by the notify a committed write sends
 const readCache = new StoreReadCache(sql);
+void readCache.ready();
 const app = createApp({
   sql,
   sessionSecret,
