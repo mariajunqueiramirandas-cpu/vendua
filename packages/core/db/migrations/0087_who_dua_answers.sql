@@ -72,3 +72,14 @@ create policy control_access on store_wa_history_requests for all
   using (current_setting('vendua.control', true) = '1')
   with check (current_setting('vendua.control', true) = '1');
 grant select, insert, update, delete on store_wa_history_requests to vendua_app;
+
+-- Before this, any first message that didn't read as a supplier made a number a shopper, the
+-- owner's friends included. A WhatsApp shopper with no order goes through the check again at
+-- its next message; numbers that ordered keep their class (and say why).
+update shopper_threads t set class = 'shopper', class_source = 'orders',
+    class_reason = 'ordered_before', class_at = now()
+  where t.channel = 'whatsapp' and t.class = 'shopper' and t.class_source is null
+    and t.phone is not null
+    and exists (select 1 from orders o where o.tenant_id = t.tenant_id and o.customer_phone = t.phone);
+update shopper_threads t set class = 'unknown'
+  where t.channel = 'whatsapp' and t.class = 'shopper' and t.class_source is null;

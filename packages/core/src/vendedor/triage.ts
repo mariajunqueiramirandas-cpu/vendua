@@ -5,7 +5,14 @@ import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import type { AnswerWho } from './settings.ts';
 import { readsAsShopper } from './signals.ts';
-import type { ClassReason, ClassSource, Thread, ThreadClass } from './threads.ts';
+import { forgetSubjectTx } from '../agent-host/forget.ts';
+import {
+  SUBJECT_KIND,
+  type ClassReason,
+  type ClassSource,
+  type Thread,
+  type ThreadClass,
+} from './threads.ts';
 
 // Who Duá answers (ADR 0033). A new WhatsApp number is classified before Duá says anything:
 // deterministic signals first (an order, the merchant's setting), then — for the default setting —
@@ -71,6 +78,18 @@ export async function setClassTx(
     // the owner's friends aren't the store's business: nothing they said stays for staff to read
     // (the gateway stops storing this thread's messages from here on)
     if (d.cls === 'personal') {
+      // a reply Duá queued before the decision never reaches the contact
+      await tx`update store_wa_messages set status = 'skipped'
+        where tenant_id = ${t.tenantId} and status = 'pending'
+          and shopper_message_id in (select id from shopper_messages
+                                     where tenant_id = ${t.tenantId} and thread_id = ${t.id})`;
+      // and Duá's own copy of the conversation (its log, mailbox and memory of it) goes too
+      await forgetSubjectTx(
+        tx,
+        t.tenantId,
+        { kind: SUBJECT_KIND, id: t.id },
+        `${SUBJECT_KIND}:${t.id}`,
+      );
       await tx`delete from shopper_media where tenant_id = ${t.tenantId}
         and message_id in (select id from shopper_messages
                            where tenant_id = ${t.tenantId} and thread_id = ${t.id})`;

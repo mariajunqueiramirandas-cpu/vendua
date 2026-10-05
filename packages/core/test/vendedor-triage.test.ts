@@ -10,6 +10,7 @@ import { migrate, type Sql } from '../src/platform/db.ts';
 import { configureVendedor } from '../src/vendedor/deps.ts';
 import { ingestPass } from '../src/vendedor/ingest.ts';
 import { withDefaults } from '../src/vendedor/settings.ts';
+import { SUBJECT_KIND } from '../src/vendedor/threads.ts';
 import { decide, parseVerdict, triagePass, triageSweep } from '../src/vendedor/triage.ts';
 
 // ADR 0033: who Duá answers on a number that is also the owner's own. The gateway's side is
@@ -677,6 +678,29 @@ describe.skipIf(!OWNER_URL)('who Duá answers on Postgres', () => {
           })
         ).status,
       ).toBe(404);
+    });
+
+    test('pessoal after Duá spoke: the queued reply is dropped and Duá forgets the chat', async () => {
+      const t = await newThread(tenantId, { cls: 'shopper' });
+      const { address } = (
+        await sql<{ address: string }[]>`select address from shopper_threads where id = ${t}`
+      )[0]!;
+      const [reply] = await sql<{ id: string }[]>`
+        insert into shopper_messages (tenant_id, thread_id, author, kind, body, status)
+        values (${tenantId}, ${t}, 'agent', 'text', 'Oi! Quer ver o cardápio?', 'queued') returning id`;
+      await sql`insert into store_wa_messages (tenant_id, kind, jid, body, shopper_message_id, expires_at)
+        values (${tenantId}, 'chat', ${address}, 'Oi! Quer ver o cardápio?', ${reply!.id},
+                now() + interval '30 minutes')`;
+      await sql`insert into agent_actors (tenant_id, agent_id, subject_kind, subject_id, lane)
+        values (${tenantId}, 'vendedor', ${SUBJECT_KIND}, ${t}, 'interactive')`;
+      const p = await manager('POST', `/vendedor/threads/${t}/classify`, { as: 'personal' });
+      expect(p.status).toBe(200);
+      const [out] = await sql<{ status: string }[]>`
+        select status from store_wa_messages where shopper_message_id = ${reply!.id}`;
+      expect(out!.status).toBe('skipped');
+      expect(
+        await sql`select 1 from agent_actors where tenant_id = ${tenantId} and subject_id = ${t}`,
+      ).toHaveLength(0);
     });
 
     test('the owner answered by hand while undecided: Duá skips what was answered', async () => {

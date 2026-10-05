@@ -1,4 +1,5 @@
 import { Question, User } from '@phosphor-icons/react';
+import { useCan } from '../../lib/session.ts';
 import type { ReactNode } from 'react';
 import type { ClassReason, ClassSource, ThreadRow } from '../../lib/api.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -69,6 +70,8 @@ export function TriageFloor({
   let title: string;
   let hint: string | null;
   let actions: ClassifyAs[];
+  // "é pessoal" erases the contact's messages: Core takes it from managers and up only
+  const canPersonal = useCan('manager');
   if (t.class === 'checking') {
     icon = <span aria-hidden className="animate-pulse-dot size-2 rounded-full bg-ink" />;
     title = 'O Duá está vendo se é cliente…';
@@ -100,19 +103,21 @@ export function TriageFloor({
         </div>
       </div>
       <div className="flex gap-2">
-        {actions.map((as) => (
-          <Button
-            key={as}
-            // the open question gets the weight; while Duá is still reading, deciding is optional
-            variant={t.class === 'ask' && as === 'shopper' ? 'primary' : 'secondary'}
-            className="min-w-0 flex-1 md:flex-none"
-            loading={busy === as}
-            disabled={!!busy && busy !== as}
-            onClick={() => onClassify(as)}
-          >
-            {as === 'shopper' ? 'é cliente' : 'é pessoal'}
-          </Button>
-        ))}
+        {actions
+          .filter((as) => as !== 'personal' || canPersonal)
+          .map((as) => (
+            <Button
+              key={as}
+              // the open question gets the weight; while Duá is still reading, deciding is optional
+              variant={t.class === 'ask' && as === 'shopper' ? 'primary' : 'secondary'}
+              className="min-w-0 flex-1 md:flex-none"
+              loading={busy === as}
+              disabled={!!busy && busy !== as}
+              onClick={() => onClassify(as)}
+            >
+              {as === 'shopper' ? 'é cliente' : 'é pessoal'}
+            </Button>
+          ))}
       </div>
     </section>
   );
@@ -131,6 +136,7 @@ export function WhyShopper({
   onPersonal: () => void;
   busy: boolean;
 }) {
+  const canPersonal = useCan('manager');
   const judged =
     t.class === 'shopper' &&
     (t.classSource === 'history' || t.classSource === 'new_contact' || t.classSource === 'message');
@@ -142,15 +148,17 @@ export function WhyShopper({
         <span className="font-semibold text-ink">Por que o Duá atende: </span>
         {why}
       </p>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-11 px-2 underline underline-offset-2"
-        loading={busy}
-        onClick={onPersonal}
-      >
-        é pessoal
-      </Button>
+      {canPersonal ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-11 px-2 underline underline-offset-2"
+          loading={busy}
+          onClick={onPersonal}
+        >
+          é pessoal
+        </Button>
+      ) : null}
     </div>
   );
 }
