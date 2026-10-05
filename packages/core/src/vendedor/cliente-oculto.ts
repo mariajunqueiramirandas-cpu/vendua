@@ -1,4 +1,9 @@
-import type { ModelGateway } from '@vendua/agent-runtime';
+import {
+  AllRoutesFailedError,
+  isRetryableStatus,
+  type ModelGateway,
+  type ModelRequest,
+} from '@vendua/agent-runtime';
 import { getProductsById } from '../modules/catalog.ts';
 import { loadZoneRows } from '../modules/cart.ts';
 import { controlTx } from '../modules/control.ts';
@@ -9,9 +14,11 @@ import { fold } from './knowledge.ts';
 import { loadStoreSettings } from './threads.ts';
 
 // Cliente oculto (UX §3.7, sales-agent.md §7): synthetic shoppers, each with a hidden target
-// order built from this store's own menu, talk to the real Vendedor in test threads. Every
-// order is scored in code against its target, line by line; place_order in a test thread
-// validates like checkout and stops before the order exists.
+// order built from this store's own menu, talk to the real Vendedor in test threads, all at
+// once. Every order is scored in code against its target, line by line; place_order in a test
+// thread validates like checkout and stops before the order exists. A conversation the model
+// couldn't carry (a provider down or throttled) is skipped, not scored: it says nothing about
+// the menu.
 
 const coLog = log.child({ mod: 'cliente-oculto' });
 
@@ -40,9 +47,11 @@ export interface ScenarioResult {
   name: string;
   check: string;
   passed: boolean;
+  /** not scored: the model failed one side of the conversation */
+  skipped?: true;
   why: string;
   turns: number;
-  threadId: string;
+  threadId: string | null;
 }
 
 const STREETS = [
@@ -153,8 +162,26 @@ function personaPrompt(sc: Scenario, address: string): string {
 Regras: escreva como cliente real, curto, em português. Nunca diga que é um teste. Quando receberem um resumo do pedido: se estiver igual ao seu pedido, responda só "sim"; se não, corrija. Quando o pedido estiver feito, ou se disserem que alguém da loja vai responder, responda exatamente FIM.`;
 }
 
-/** The order the test thread validated, against the hidden one. */
+const NO_MODEL = 'o Duá ficou sem resposta da IA';
+const NO_SHOPPER = 'o cliente de teste ficou sem resposta da IA';
+
+/**
+ * The order the test thread validated, against the hidden one. `outage`: the Vendedor's own
+ * turn failed and it sent its degrade line ("já avisei a loja"), which reads as a handoff.
+ */
 export function score(
+  sc: Scenario,
+  testOrder: unknown,
+  handedOff: boolean,
+  outage = false,
+): { passed: boolean; why: string; skipped?: true } {
+  const s = scoreOrder(sc, testOrder, handedOff);
+  if (outage && !(sc.expect === 'order' && s.passed))
+    return { passed: false, skipped: true, why: NO_MODEL };
+  return s;
+}
+
+function scoreOrder(
   sc: Scenario,
   testOrder: unknown,
   handedOff: boolean,
@@ -194,9 +221,16 @@ export function score(
 }
 
 const TURN_WAIT_MS = 60_000;
+// shoppers run at once and the store's turns are capped per tenant: a message can queue
+const ANSWER_CEILING_MS = 5 * 60_000;
 const MAX_TURNS = 10;
+const SHOPPER_RETRY_MS = [5_000, 15_000, 30_000, 60_000];
+const LEASE_RENEW_MS = 60_000;
 
-/** The Vendedor's whole answer: what it sent once its actor has nothing left to do. */
+/**
+ * The Vendedor's whole answer: what it sent once its actor has nothing left to do. `waitMs` is
+ * how long it may stay silent with nothing queued or running for the thread.
+ */
 async function waitForAnswer(
   sql: Sql,
   tenantId: string,
@@ -204,8 +238,9 @@ async function waitForAnswer(
   after: Date,
   waitMs: number,
 ): Promise<string | null> {
-  const deadline = Date.now() + waitMs;
-  while (Date.now() < deadline) {
+  const ceiling = Date.now() + Math.max(waitMs, ANSWER_CEILING_MS);
+  let deadline = Date.now() + waitMs;
+  while (Date.now() < deadline && Date.now() < ceiling) {
     const [r] = await withTenant(
       sql,
       tenantId,
@@ -232,12 +267,40 @@ async function waitForAnswer(
       );
       return all.map((x) => x.body ?? '').join('\n');
     }
+    if (r?.busy) deadline = Date.now() + waitMs;
     await new Promise((res) => setTimeout(res, 700));
   }
   return null;
 }
 
-/** One scenario, end to end through the real ingest, runtime and tools. */
+/** Throttled or down: worth another try later. A 4xx is our request, and no adapter is config. */
+function transient(err: unknown): boolean {
+  return (
+    err instanceof AllRoutesFailedError &&
+    err.failures.some((f) =>
+      f.status === undefined ? f.error !== 'no adapter' : isRetryableStatus(f.status),
+    )
+  );
+}
+
+/** The shopper's next line, with spaced tries while the provider is throttled or down. */
+async function shopperSays(gateway: ModelGateway, req: ModelRequest): Promise<string> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return (await gateway.generate(req)).text;
+    } catch (err) {
+      const wait = SHOPPER_RETRY_MS[attempt];
+      if (wait === undefined || !transient(err)) throw err;
+      // jitter, so shoppers throttled together don't all come back in the same second
+      await new Promise((res) => setTimeout(res, wait + Math.random() * 3_000));
+    }
+  }
+}
+
+/**
+ * One scenario, end to end through the real ingest, runtime and tools. A shopper the model
+ * can't voice even after retries is skipped; any other model error (no route, a budget) throws.
+ */
 export async function runScenario(
   sql: Sql,
   gateway: ModelGateway,
@@ -258,31 +321,40 @@ export async function runScenario(
   });
   const history: { role: 'user' | 'assistant'; text: string }[] = [];
   let turns = 0;
+  let mute = false;
   for (; turns < MAX_TURNS; turns++) {
-    const res = await gateway.generate({
-      tier: 'fast',
-      system: [{ id: 'persona', tier: 'static', cache: true, text: personaPrompt(sc, address) }],
-      messages: [
-        { role: 'user', parts: [{ type: 'text', text: '(comece a conversa com a loja)' }] },
-        ...history.map((h) =>
-          h.role === 'user'
-            ? { role: 'user' as const, parts: [{ type: 'text' as const, text: h.text }] }
-            : { role: 'assistant' as const, text: h.text, toolCalls: [] },
-        ),
-      ],
-      volatile: null,
-      tools: [],
-      maxTokens: 150,
-      temperature: 0.7,
-      meta: {
-        tenantId,
-        agentId: 'cliente_oculto',
-        actorId: threadId,
-        turnId: `${runId}:${i}:${turns}`,
-        lane: 'background',
-      },
-    });
-    const said = res.text.trim().slice(0, 500);
+    let text: string;
+    try {
+      text = await shopperSays(gateway, {
+        tier: 'fast',
+        system: [{ id: 'persona', tier: 'static', cache: true, text: personaPrompt(sc, address) }],
+        messages: [
+          { role: 'user', parts: [{ type: 'text', text: '(comece a conversa com a loja)' }] },
+          ...history.map((h) =>
+            h.role === 'user'
+              ? { role: 'user' as const, parts: [{ type: 'text' as const, text: h.text }] }
+              : { role: 'assistant' as const, text: h.text, toolCalls: [] },
+          ),
+        ],
+        volatile: null,
+        tools: [],
+        maxTokens: 150,
+        temperature: 0.7,
+        meta: {
+          tenantId,
+          agentId: 'cliente_oculto',
+          actorId: threadId,
+          turnId: `${runId}:${i}:${turns}`,
+          lane: 'background',
+        },
+      });
+    } catch (err) {
+      if (!transient(err)) throw err;
+      coLog.warn({ err, runId, scenario: i }, 'cliente oculto shopper got no model answer');
+      mute = true;
+      break;
+    }
+    const said = text.trim().slice(0, 500);
     if (!said || /^FIM\b/i.test(said)) break;
     history.push({ role: 'assistant', text: said });
     const sentAt = new Date();
@@ -313,11 +385,19 @@ export async function runScenario(
     sql,
     tenantId,
     (tx) =>
-      tx<{ test_order: unknown; waiting_since: Date | null; owner: string }[]>`
-      select test_order, waiting_since, owner from shopper_threads where id = ${threadId}`,
+      tx<{ test_order: unknown; waiting_since: Date | null; owner_reason: string | null }[]>`
+      select test_order, waiting_since, owner_reason from shopper_threads where id = ${threadId}`,
   );
-  const s = score(sc, t?.test_order ?? null, !!t?.waiting_since);
-  return { name: sc.name, check: sc.check, passed: s.passed, why: s.why, turns, threadId };
+  const s = mute
+    ? { passed: false, skipped: true as const, why: NO_SHOPPER }
+    : score(
+        sc,
+        t?.test_order ?? null,
+        !!t?.waiting_since,
+        // the Vendedor definition's degrade line marks the thread this way
+        t?.owner_reason === 'instabilidade',
+      );
+  return { name: sc.name, check: sc.check, ...s, turns, threadId };
 }
 
 /** Claims one queued run and plays it; a run needs a model route, or it fails with that reason. */
@@ -349,16 +429,62 @@ export async function clienteOcultoPass(sql: Sql, gateway: ModelGateway | null):
       (tx) =>
         tx`update vendedor_runs set scenarios = ${tx.json(scenarios as never)}, total = ${scenarios.length} where id = ${run.id}`,
     );
-    const results: ScenarioResult[] = [];
-    for (const [i, sc] of scenarios.entries()) {
-      results.push(await runScenario(sql, gateway, run.tenant_id, run.id, i, sc));
-      await withTenant(
+    // every shopper at once; results land in menu order as each one finishes
+    const done: (ScenarioResult | undefined)[] = [];
+    const results = () => done.filter((r): r is ScenarioResult => !!r);
+    let failure: unknown = null;
+    let saving = Promise.resolve();
+    const save = () =>
+      (saving = saving
+        .then(() =>
+          withTenant(
+            sql,
+            run.tenant_id,
+            (tx) =>
+              tx`update vendedor_runs set results = ${tx.json(results() as never)}, passed = ${results().filter((r) => r.passed).length}
+              where id = ${run.id}`,
+          ),
+        )
+        .then(
+          () => undefined,
+          (err) => coLog.warn({ err, runId: run.id }, 'cliente oculto results not saved'),
+        ));
+    // a scenario can outlast the lease while its messages queue behind the store's turn cap
+    const renew = setInterval(() => {
+      void controlTx(
         sql,
-        run.tenant_id,
         (tx) =>
-          tx`update vendedor_runs set results = ${tx.json(results as never)}, passed = ${results.filter((r) => r.passed).length},
-          lease_until = now() + interval '30 minutes' where id = ${run.id}`,
+          tx`update vendedor_runs set lease_until = now() + interval '30 minutes' where id = ${run.id} and status = 'running'`,
+      ).catch((err) => coLog.warn({ err, runId: run.id }, 'cliente oculto lease not renewed'));
+    }, LEASE_RENEW_MS);
+    try {
+      await Promise.all(
+        scenarios.map(async (sc, i) => {
+          done[i] = await runScenario(sql, gateway, run.tenant_id, run.id, i, sc).catch(
+            (err: unknown): ScenarioResult => {
+              failure ??= err;
+              return {
+                name: sc.name,
+                check: sc.check,
+                passed: false,
+                skipped: true,
+                why: NO_MODEL,
+                turns: 0,
+                threadId: null,
+              };
+            },
+          );
+          await save();
+        }),
       );
+      await saving;
+    } finally {
+      clearInterval(renew);
+    }
+    const all = results();
+    if (all.length && all.every((r) => r.skipped)) {
+      if (failure) throw failure;
+      throw new Error('no scenario could be scored: the model gave no answer');
     }
     await withTenant(
       sql,
@@ -366,6 +492,7 @@ export async function clienteOcultoPass(sql: Sql, gateway: ModelGateway | null):
       (tx) =>
         tx`update vendedor_runs set status = 'done', finished_at = now() where id = ${run.id}`,
     );
+    if (failure) coLog.warn({ err: failure, runId: run.id }, 'cliente oculto scenarios skipped');
   } catch (err) {
     coLog.warn({ err, runId: run.id }, 'cliente oculto run failed');
     await controlTx(

@@ -1569,6 +1569,8 @@ export interface ClienteOcultoResult {
   name: string;
   check: string;
   passed: boolean;
+  /** not scored: the AI failed one side of the conversation */
+  skipped?: boolean;
   why: string;
   turns: number;
   threadId: string | null;
@@ -1581,6 +1583,7 @@ export interface ClienteOculto {
     status: string;
     passed: number | null;
     total: number | null;
+    skipped: number;
     results: ClienteOcultoResult[] | null;
     error: string | null;
     at: string;
@@ -1590,6 +1593,7 @@ export interface ClienteOculto {
     id: string;
     passed: number | null;
     total: number | null;
+    skipped: number;
     status: string;
     at: string;
   }[];

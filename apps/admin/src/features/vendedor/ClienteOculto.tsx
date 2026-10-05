@@ -24,6 +24,7 @@ const RESULT_WORD: Record<string, [ok: string, miss: string]> = {
   'fora da área, explicou com calma': ['explicou', 'não explicou'],
 };
 const word = (r: ClienteOcultoResult) => {
+  if (r.skipped) return 'não testado';
   const w = RESULT_WORD[r.check] ?? ['certo', 'errou'];
   return r.passed ? w[0] : w[1];
 };
@@ -127,8 +128,12 @@ export default function ClienteOculto() {
     );
 
   const results = latest.results ?? [];
-  const misses = results.filter((r) => !r.passed);
-  const orders = results.filter((r) => ORDER_CHECKS.includes(r.check)).length;
+  // a skipped conversation (the AI didn't answer) has no grade and stays out of the score
+  const scored = results.filter((r) => !r.skipped);
+  const skipped = results.filter((r) => r.skipped);
+  const misses = scored.filter((r) => !r.passed);
+  const orders = scored.filter((r) => ORDER_CHECKS.includes(r.check)).length;
+  const graded = (total ?? results.length) - skipped.length;
   const earlier = data.history.filter((h) => h.id !== latest.id);
 
   return (
@@ -152,9 +157,11 @@ export default function ClienteOculto() {
               </Button>
             }
           >
-            {results.length
-              ? `Parou depois de ${results.length} ${results.length === 1 ? 'cliente' : 'clientes'} de teste. Tente de novo em instantes.`
-              : 'Tente de novo em instantes. Se continuar, fale com a Venduá em Ajuda.'}
+            {results.length && !scored.length
+              ? 'A IA do Duá não respondeu durante o teste. Tente de novo em instantes.'
+              : results.length
+                ? `Parou depois de ${results.length} ${results.length === 1 ? 'cliente' : 'clientes'} de teste. Tente de novo em instantes.`
+                : 'Tente de novo em instantes. Se continuar, fale com a Venduá em Ajuda.'}
           </Notice>
         ) : total === 0 ? (
           <Card>
@@ -174,8 +181,8 @@ export default function ClienteOculto() {
             <div className="flex items-center gap-4">
               <ScoreRing
                 value={latest.passed ?? 0}
-                total={total ?? results.length}
-                label={`${latest.passed ?? 0} de ${total ?? results.length} pedidos certos`}
+                total={graded}
+                label={`${latest.passed ?? 0} de ${graded} pedidos certos`}
               />
               <div className="min-w-0">
                 <p className="t-body-lg font-semibold leading-6">
@@ -197,7 +204,7 @@ export default function ClienteOculto() {
                   value={`${orders}/${orders}`}
                 />
               ) : null}
-              {checks(results).map(([check, c]) => (
+              {checks(scored).map(([check, c]) => (
                 <ChecklistRow
                   key={check}
                   state={c.passed === c.total ? 'done' : 'miss'}
@@ -219,6 +226,28 @@ export default function ClienteOculto() {
                 <MissCard key={`${r.name}-${i}`} r={r} />
               ))}
             </div>
+          </Section>
+        ) : null}
+
+        {!running && skipped.length ? (
+          <Section
+            title={
+              skipped.length === 1
+                ? 'Não deu para testar 1 cliente'
+                : `Não deu para testar ${skipped.length} clientes`
+            }
+            hint="A IA do Duá ficou sem responder nessas conversas. Elas não contam na nota; rode de novo mais tarde."
+          >
+            <Card className="px-4 py-1">
+              {skipped.map((r, i) => (
+                <ChecklistRow
+                  key={`${r.name}-${i}`}
+                  state="todo"
+                  title={r.name}
+                  value="não testado"
+                />
+              ))}
+            </Card>
           </Section>
         ) : null}
 
@@ -267,13 +296,13 @@ export default function ClienteOculto() {
                   <span
                     className={cn(
                       'tnum t-label',
-                      h.status === 'done' && h.total && h.passed === h.total
+                      h.status === 'done' && h.total && h.passed === h.total - h.skipped
                         ? 'text-success'
                         : 'text-muted',
                     )}
                   >
                     {h.status === 'done'
-                      ? `${h.passed ?? 0} de ${h.total ?? 0} certos`
+                      ? `${h.passed ?? 0} de ${(h.total ?? 0) - h.skipped} certos`
                       : h.status === 'failed'
                         ? 'não terminou'
                         : 'rodando'}
@@ -316,9 +345,11 @@ function RunningCard({ latest }: { latest: Run }) {
             rodando
           </span>
           <p className="t-label tnum mt-2">
-            {total
-              ? `testando ${Math.min(done + 1, total)} de ${total}…`
-              : 'preparando os clientes de teste…'}
+            {!total
+              ? 'preparando os clientes de teste…'
+              : done
+                ? `${done} de ${total} prontos…`
+                : `${total} clientes pedindo ao mesmo tempo…`}
           </p>
           <p className="t-caption mt-1 text-muted">
             Cada um tem um pedido escondido. Comparamos item por item com o que o Duá fechar. Pode
@@ -345,13 +376,21 @@ function SoFar({ results, total }: { results: ClienteOcultoResult[]; total: numb
         {results.map((r, i) => (
           <ChecklistRow
             key={`${r.name}-${i}`}
-            state={r.passed ? 'done' : 'miss'}
+            state={r.skipped ? 'todo' : r.passed ? 'done' : 'miss'}
             title={r.name}
             value={word(r)}
           />
         ))}
         {total && results.length < total ? (
-          <ChecklistRow state="now" title="O próximo cliente está pedindo" value="agora" />
+          <ChecklistRow
+            state="now"
+            title={
+              total - results.length === 1
+                ? 'O último cliente está pedindo'
+                : `Os outros ${total - results.length} estão pedindo`
+            }
+            value="agora"
+          />
         ) : null}
       </Card>
     </Section>

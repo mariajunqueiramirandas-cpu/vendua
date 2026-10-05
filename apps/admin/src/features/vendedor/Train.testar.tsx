@@ -206,10 +206,16 @@ export function OcultoStep({
   const results = latest?.results ?? [];
   const total = latest?.total ?? 20;
   const passed = latest?.passed ?? results.filter((r) => r.passed).length;
+  // a skipped conversation (the AI didn't answer) has no grade and stays out of the score
+  const graded = total - results.filter((r) => r.skipped).length;
   // while it runs the newest come first; once done, what went wrong leads
   const shown = live
     ? results.slice(-SHOWN).reverse()
-    : [...results.filter((r) => !r.passed), ...results.filter((r) => r.passed)].slice(0, SHOWN);
+    : [
+        ...results.filter((r) => !r.passed && !r.skipped),
+        ...results.filter((r) => r.skipped),
+        ...results.filter((r) => r.passed),
+      ].slice(0, SHOWN);
   const more = results.length - shown.length;
   return (
     <TrainFrame eyebrow={eyebrow} title="Cliente oculto" next={onNext} back={back}>
@@ -217,13 +223,13 @@ export function OcultoStep({
         {latest ? (
           <ScoreRing
             value={live ? results.length : passed}
-            total={total}
+            total={live ? total : graded}
             running={live}
             size={104}
             label={
               live
                 ? `${results.length} de ${total} clientes de teste atendidos, ainda rodando`
-                : `${passed} de ${total} pedidos saíram certos`
+                : `${passed} de ${graded} pedidos saíram certos`
             }
           />
         ) : (
@@ -240,10 +246,12 @@ export function OcultoStep({
             {!latest
               ? 'Preparando os clientes de teste…'
               : live
-                ? `testando ${Math.min(results.length + 1, total)} de ${total}…`
+                ? results.length
+                  ? `${results.length} de ${total} prontos…`
+                  : `${total} clientes pedindo ao mesmo tempo…`
                 : latest.status === 'failed'
                   ? 'O teste não terminou'
-                  : `${passed} de ${total} pedidos saíram certos`}
+                  : `${passed} de ${graded} pedidos saíram certos`}
           </p>
           <p className="t-caption text-muted">
             Cada um tem um pedido escondido. Comparamos item por item com o que o Duá fechar.
@@ -277,15 +285,15 @@ export function OcultoStep({
           <Card className="px-4 py-1.5">
             <div aria-live="polite">
               {live ? (
-                <ChecklistRow state="now" title="Próximo cliente de teste" value="agora" />
+                <ChecklistRow state="now" title="Clientes de teste pedindo" value="agora" />
               ) : null}
               {shown.map((r, i) => (
                 <ChecklistRow
                   key={`${r.name}-${i}`}
-                  state={r.passed ? 'done' : 'miss'}
+                  state={r.skipped ? 'todo' : r.passed ? 'done' : 'miss'}
                   title={r.name}
                   detail={r.passed ? r.check : r.why}
-                  value={r.passed ? 'certo' : 'errou'}
+                  value={r.skipped ? 'não testado' : r.passed ? 'certo' : 'errou'}
                 />
               ))}
             </div>
