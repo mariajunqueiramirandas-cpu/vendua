@@ -11,8 +11,13 @@ import {
   useStoreLookup,
 } from './bits.tsx';
 
+const keyUsers = (key: string, agents: AiModelsView['agents']) =>
+  agents.filter((a) => a.budgetKey === key).map((a) => a.label);
+
+/** one agent: its name; several Duás sharing a cap: just "Duá" (the note says what it sums) */
 function keyLabel(key: string, agents: AiModelsView['agents']) {
-  const users = agents.filter((a) => a.budgetKey === key).map((a) => a.label);
+  const users = keyUsers(key, agents);
+  if (users.length > 1 && users.every((l) => l.startsWith('Duá'))) return 'Duá';
   return users.length ? users.join(', ') : key;
 }
 
@@ -87,9 +92,14 @@ export function BudgetsPanel({
         ) : (
           <p className="text-xs text-muted-foreground">nenhum agente tem orçamento</p>
         )}
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs leading-relaxed text-muted-foreground">
           Vazio é sem teto. No limite, o Duá para de responder naquela loja até a meia-noite
           (horário de Brasília).
+          {keys
+            .map((k) => ({ k, users: keyUsers(k, agents) }))
+            .filter((x) => x.users.length > 1)
+            .map((x) => ` Vale um teto só para “${x.users.join('” e “')}”.`)
+            .join('')}
         </p>
       </section>
 

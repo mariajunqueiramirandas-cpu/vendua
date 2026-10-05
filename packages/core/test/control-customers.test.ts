@@ -644,13 +644,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     ]);
     expect(fromEnv.agents).toContainEqual({
       id: 'vendedor',
-      label: 'Duá (vendedor)',
+      label: 'Duá com os clientes',
+      hint: 'responde os clientes no WhatsApp da loja',
       budgetKey: 'vendedor',
       defaultTier: 'fast',
     });
     expect(fromEnv.agents).toContainEqual({
       id: 'vendedor-onboarding',
-      label: 'Duá (configuração inicial)',
+      label: 'Duá na entrevista com o dono',
+      hint: 'conversa com o dono da loja no treino inicial',
       budgetKey: 'vendedor',
       defaultTier: 'fast',
     });

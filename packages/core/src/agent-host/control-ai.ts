@@ -4,6 +4,7 @@ import { controlTx } from '../modules/control.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { AGENTS } from './agents/index.ts';
+import { createModelCatalog, type ModelCatalog } from './model-catalog.ts';
 
 // /control/v1/ai (CRM "IA"): which models Duá runs on and what it costs. Routes and budgets are
 // written through PUT /control/v1/settings/agent_runtime.{routes,budgets} (validateSetting).
@@ -16,9 +17,16 @@ const PROVIDERS = [
   { id: 'gemini', secretName: 'GEMINI_API_KEY' },
 ] as const;
 
-const LABELS: Record<string, string> = {
-  vendedor: 'Duá (vendedor)',
-  'vendedor-onboarding': 'Duá (configuração inicial)',
+/** what each agent is, in the words the CRM shows */
+const AGENT_COPY: Record<string, { label: string; hint: string }> = {
+  vendedor: {
+    label: 'Duá com os clientes',
+    hint: 'responde os clientes no WhatsApp da loja',
+  },
+  'vendedor-onboarding': {
+    label: 'Duá na entrevista com o dono',
+    hint: 'conversa com o dono da loja no treino inicial',
+  },
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -49,9 +57,12 @@ export function mountAgentRuntimeAi(o: {
   storeDomain?: string;
   /** where provider keys and AGENT_MODEL_ROUTES are read (default process.env) */
   env?: Record<string, string | undefined>;
+  /** OpenRouter's ZDR model list (default: fetched from openrouter.ai, cached an hour) */
+  catalog?: ModelCatalog;
 }) {
   const { app, sql, controlGate } = o;
   const env = o.env ?? process.env;
+  const catalog = o.catalog ?? createModelCatalog();
   const storeDomain = o.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br';
   const settings = (tx: Sql) => tx<{ key: string; value: Record<string, unknown> }[]>`
     select key, value from control_settings
@@ -74,11 +85,22 @@ export function mountAgentRuntimeAi(o: {
       })),
       agents: AGENTS.map(({ def }) => ({
         id: def.id,
-        label: LABELS[def.id] ?? def.id,
+        label: AGENT_COPY[def.id]?.label ?? def.id,
+        hint: AGENT_COPY[def.id]?.hint ?? null,
         budgetKey: def.budgets?.tenantDaily ?? null,
         defaultTier: def.models.default,
       })),
     });
+  });
+
+  // The CRM's model picker for OpenRouter routes: models with a zero-data-retention endpoint that
+  // takes tool calls, priced at their dearest such endpoint.
+  app.get('/control/v1/ai/catalog', async (c) => {
+    controlGate(c);
+    const view = await catalog.get();
+    if (!view)
+      throw new HttpError(503, 'CATALOG_UNAVAILABLE', 'OpenRouter model list is unavailable');
+    return c.json(view);
   });
 
   app.get('/control/v1/ai/usage', async (c) => {

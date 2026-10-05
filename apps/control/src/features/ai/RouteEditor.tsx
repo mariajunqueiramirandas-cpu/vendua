@@ -3,19 +3,32 @@ import { ArrowDown, ArrowUp, ChevronDown, Plus, Trash2 } from 'lucide-react';
 import type { ModelProviderId, ModelTier } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { Button } from '@/components/ui/button.tsx';
-import { Switch } from '@/components/ui/controls.tsx';
+import { Checkbox } from '@/components/ui/controls.tsx';
 import { Input, Select } from '@/components/ui/input.tsx';
 import {
   emptyRoute,
   MAX_ROUTES,
   PRICE_FIELDS,
+  priceDrifted,
   PROVIDERS,
+  withCatalogModel,
+  withProvider,
+  zdrImplied,
   type PriceField,
   type RouteDraft,
   type TierDraft,
 } from './draft.ts';
 import { FieldMsg, Notice, NumField, useFieldError } from './bits.tsx';
-import { PROVIDER_LABEL, providerLabel, TIER_HINT, TIER_LABEL } from './format.ts';
+import {
+  fmtContext,
+  fmtPricePair,
+  PROVIDER_LABEL,
+  providerLabel,
+  TIER_HINT,
+  TIER_LABEL,
+} from './format.ts';
+import { ModelPicker } from './ModelPicker.tsx';
+import { useAiCatalog } from './queries.ts';
 
 export type KeyStatus = Partial<Record<string, boolean>>;
 
@@ -124,6 +137,12 @@ function TierList({
   );
 }
 
+/** OpenRouter routes pick from the ZDR catalog; direct providers take a typed id. */
+function useCatalogFor(provider: string) {
+  const q = useAiCatalog();
+  return zdrImplied(provider) ? q : null;
+}
+
 function RouteRow({
   path,
   index,
@@ -160,13 +179,16 @@ function RouteRow({
   const showExtras = open || extrasErr;
   const set = (patch: Partial<RouteDraft>) => onChange({ ...r, ...patch });
   const known = PROVIDERS.includes(r.provider as ModelProviderId);
+  const viaOpenRouter = zdrImplied(r.provider);
+  const catalogQ = useCatalogFor(r.provider);
+  const catalog = catalogQ?.data;
+  const picked = catalog?.models.find((m) => m.id === r.model.trim());
   const priced = r.inputPerMTok.trim() || r.outputPerMTok.trim();
-  const summary = [
-    priced ? `US$ ${r.inputPerMTok || '?'} / ${r.outputPerMTok || '?'} por 1M tokens` : 'sem preço',
-    r.timeoutS.trim() ? `tempo limite ${r.timeoutS} s` : null,
-  ]
-    .filter(Boolean)
-    .join(', ');
+  const timeout = r.timeoutS.trim() ? `tempo limite ${r.timeoutS} s` : 'tempo limite padrão';
+  // with a catalog pick the price line sits under the model; the toggle only says what's inside
+  const summary = picked
+    ? timeout
+    : [priced ? fmtPricePair(r.inputPerMTok, r.outputPerMTok) : 'sem preço', timeout].join(', ');
 
   return (
     <li
@@ -175,7 +197,7 @@ function RouteRow({
         (err.row || Object.values(err).some(Boolean)) && 'border-destructive/40',
       )}
     >
-      <div className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-start gap-2 md:grid-cols-[1.25rem_9.5rem_minmax(0,1fr)_auto_auto]">
+      <div className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-start gap-2 md:grid-cols-[1.25rem_9.5rem_minmax(0,1fr)_auto]">
         <span
           className="flex h-10 items-center justify-center text-xs font-medium text-muted-foreground tnum md:h-8"
           aria-label={`tentativa ${index + 1}`}
@@ -187,7 +209,7 @@ function RouteRow({
             value={r.provider}
             aria-label="provedor"
             aria-invalid={!!err.provider}
-            onChange={(e) => set({ provider: e.target.value })}
+            onChange={(e) => onChange(withProvider(r, e.target.value))}
           >
             <option value="" disabled>
               provedor
@@ -203,7 +225,7 @@ function RouteRow({
           </Select>
           <FieldMsg>{err.provider}</FieldMsg>
         </div>
-        <div className="col-start-3 row-start-1 flex items-center md:col-start-5">
+        <div className="col-start-3 row-start-1 flex items-center md:col-start-4">
           <Button
             size="icon-sm"
             variant="ghost"
@@ -227,32 +249,88 @@ function RouteRow({
           </Button>
         </div>
         <div className="col-span-2 col-start-2 flex min-w-0 flex-col gap-1 md:col-span-1 md:col-start-3 md:row-start-1">
-          <Input
-            value={r.model}
-            maxLength={200}
-            spellCheck={false}
-            autoCapitalize="off"
-            autoComplete="off"
-            aria-label="modelo"
-            aria-invalid={!!err.model}
-            placeholder={r.provider === 'openrouter' ? 'provedor/modelo' : 'id do modelo'}
-            onChange={(e) => set({ model: e.target.value })}
-            className={cn(err.model && 'border-destructive/60')}
-          />
+          {catalog ? (
+            <ModelPicker
+              models={catalog.models}
+              fetchedAt={catalog.fetchedAt}
+              value={r.model.trim()}
+              invalid={!!err.model}
+              onPick={(m) => onChange(withCatalogModel(r, m))}
+            />
+          ) : catalogQ?.isPending ? (
+            <div className="flex h-10 items-center rounded-md border border-dashed px-2.5 text-xs text-muted-foreground md:h-8">
+              carregando modelos da OpenRouter…
+            </div>
+          ) : (
+            <Input
+              value={r.model}
+              maxLength={200}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoComplete="off"
+              aria-label="modelo"
+              aria-invalid={!!err.model}
+              placeholder={viaOpenRouter ? 'provedor/modelo' : 'id do modelo'}
+              onChange={(e) => set({ model: e.target.value })}
+              className={cn(err.model && 'border-destructive/60')}
+            />
+          )}
           <FieldMsg>{err.model}</FieldMsg>
         </div>
-        <label className="col-span-2 col-start-2 flex h-10 items-center gap-2 text-xs md:col-span-1 md:col-start-4 md:row-start-1 md:h-8">
-          <Switch checked={r.zdr} onCheckedChange={(v) => set({ zdr: v })} />
-          <span className={cn(!r.zdr && 'text-warning-foreground')}>retenção zero</span>
-        </label>
       </div>
 
       <div className="flex flex-col gap-2 pl-7">
-        {!r.zdr && (
+        {picked && (
+          <p className="text-xs text-muted-foreground tnum">
+            {fmtPricePair(r.inputPerMTok, r.outputPerMTok)}
+            {picked.contextLength ? ` · ${fmtContext(picked.contextLength)} de contexto` : ''}
+          </p>
+        )}
+        {picked && priced && priceDrifted(r, picked) && (
           <Notice>
-            {err.zdr ? `${err.zdr}. ` : ''}Ligue só se este provedor não guarda nada do que o Duá
-            envia nesta conta. Sem retenção zero o servidor recusa salvar.
+            A OpenRouter cobra agora{' '}
+            {fmtPricePair(picked.pricing.inputPerMTok, picked.pricing.outputPerMTok)}.{' '}
+            <button
+              type="button"
+              className="font-medium underline underline-offset-2"
+              onClick={() => onChange(withCatalogModel(r, picked))}
+            >
+              usar o preço atual
+            </button>
           </Notice>
+        )}
+        {catalog && r.model.trim() && !picked && (
+          <Notice>
+            Este modelo não está na lista da OpenRouter com retenção zero e ferramentas: as chamadas
+            vão falhar e o Duá passa para a rota seguinte. Escolha outro.
+          </Notice>
+        )}
+        {!catalog && catalogQ?.isError && (
+          <p className="text-xs text-muted-foreground">
+            A lista de modelos da OpenRouter não carregou agora. Digite o id do modelo (como aparece
+            no site da OpenRouter) e o preço abaixo.{' '}
+            <button
+              type="button"
+              className="font-medium text-foreground underline underline-offset-2"
+              onClick={() => void catalogQ.refetch()}
+            >
+              tentar de novo
+            </button>
+          </p>
+        )}
+        {known && !viaOpenRouter && (
+          <div className="flex flex-col gap-1">
+            <label className="flex w-fit items-start gap-2 text-xs leading-relaxed pointer-coarse:py-1">
+              <Checkbox
+                checked={r.zdr}
+                onCheckedChange={(v) => set({ zdr: v === true })}
+                aria-invalid={!!err.zdr}
+                className="mt-0.5"
+              />
+              <span>Confirmo que esta conta tem retenção zero de dados</span>
+            </label>
+            <FieldMsg>{err.zdr}</FieldMsg>
+          </div>
         )}
         {known && keyPresent === false && (
           <Notice>
@@ -296,10 +374,11 @@ function RouteRow({
             </div>
             <FieldMsg>{err.pricing}</FieldMsg>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Preço em US$ por 1 milhão de tokens, opcional. Vale quando o provedor não informa o
-              custo e para estimar o gasto antes de cada chamada; sem preço, essas chamadas contam
-              zero no orçamento. Cache vazio usa 10% (leitura) e 125% (escrita) do preço de entrada.
-              Tempo limite vazio usa o padrão do servidor.
+              {viaOpenRouter
+                ? 'Preço em US$ por 1 milhão de tokens, preenchido ao escolher o modelo. O gasto registrado é o que a OpenRouter informa em cada chamada; este preço serve para estimar o gasto antes da chamada e caso ela não informe.'
+                : 'Preço em US$ por 1 milhão de tokens, opcional. Vale quando o provedor não informa o custo e para estimar o gasto antes de cada chamada; sem preço, essas chamadas contam zero no orçamento.'}{' '}
+              Cache vazio usa 10% (leitura) e 125% (escrita) do preço de entrada. Tempo limite vazio
+              usa o padrão do servidor.
             </p>
           </div>
         )}

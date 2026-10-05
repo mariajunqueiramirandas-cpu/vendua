@@ -20,6 +20,27 @@ export const providerLabel = (id: string) => PROVIDER_LABEL[id as ModelProviderI
 
 export const TIER_LABEL: Record<ModelTier, string> = { fast: 'rápido', strong: 'forte' };
 export const TIER_HINT: Record<ModelTier, string> = {
-  fast: 'o padrão: atende toda resposta',
-  strong: 'entra quando uma trava bloqueia a resposta e o Duá refaz',
+  fast: 'responde as mensagens',
+  strong: 'entra quando uma trava de segurança bloqueia uma resposta e o Duá refaz',
 };
+
+/** a per-1M-token price: 0,08 · 1,10 · 15 (cheap models need the 3rd and 4th decimals) */
+export const fmtPrice = (n: number) =>
+  n.toLocaleString('pt-BR', {
+    minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
+    maximumFractionDigits: 4,
+  });
+
+/** "US$ 1,10 / 1M entrada · 5,50 saída" */
+export const fmtPricePair = (input: number | string, output: number | string) => {
+  const f = (v: number | string) => {
+    const n = typeof v === 'number' ? v : Number(v.trim().replace(',', '.'));
+    return v === '' || !Number.isFinite(n) ? '?' : fmtPrice(n);
+  };
+  return `US$ ${f(input)} / 1M entrada · ${f(output)} saída`;
+};
+
+/** context window: "262 mil", "1 mi" (the decimal is noise here) */
+export const fmtContextShort = (n: number) =>
+  new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 0 }).format(n);
+export const fmtContext = (n: number) => `${fmtContextShort(n)} tokens`;
