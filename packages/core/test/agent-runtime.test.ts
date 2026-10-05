@@ -289,6 +289,73 @@ describe.skipIf(!OWNER_URL)('agent runtime v3 on Postgres', () => {
     await sql`update agent_actors set next_wake_at = null where agent_id = 'rt_test'`;
   });
 
+  test('within a store, a real shopper is claimed before test chats and Cliente oculto', async () => {
+    await sql`update agent_actors set next_wake_at = null where agent_id = 'rt_test'`;
+    const thread = async (channel: string, address: string, testKind: string | null) => {
+      const [t] = await sql<{ id: string }[]>`
+        insert into shopper_threads (tenant_id, channel, address, test_kind, class)
+        values (${tenantId}, ${channel}, ${address}, ${testKind}, 'shopper') returning id`;
+      const { actorId } = await withTenant(app, tenantId, (tx) =>
+        dispatchTx(tx, {
+          actor: { tenantId, agentId: 'rt_test', subject: { kind: 'shopper_thread', id: t!.id } },
+          kind: 'message.inbound',
+          source: 'whatsapp',
+          dedupeKey: `prio:${t!.id}`,
+          payload: { text: 'oi' },
+        }),
+      );
+      return actorId;
+    };
+    // the test shoppers wrote first
+    const co = await thread('test', `co:prio:${n}`, 'cliente_oculto');
+    const own = await thread('test', `owner:prio:${n}`, 'owner');
+    const real = await thread('whatsapp', `5522900000${n}@s.whatsapp.net`, null);
+    await sql`update agent_actors set next_wake_at = now() - interval '3 seconds' where id = ${co}`;
+    await sql`update agent_actors set next_wake_at = now() - interval '2 seconds' where id = ${own}`;
+    await sql`update agent_actors set next_wake_at = now() - interval '1 second' where id = ${real}`;
+    const store = new PgActorStore(app);
+    const order: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const [c] = await store.claim({
+        lane: 'interactive',
+        owner: 'prio',
+        leaseMs: 60_000,
+        limit: 1,
+        agentIds: ['rt_test'],
+        perTenantCap: 5,
+        backoffMs: () => 0,
+      });
+      order.push(c!.actor.id);
+    }
+    expect(order).toEqual([real, own, co]);
+    // a shopper_thread subject that isn't a uuid (seeds use one) ranks as real, never breaks the claim
+    await sql`update agent_actors set next_wake_at = null, lease_until = null, owner = null where agent_id = 'rt_test'`;
+    const { actorId: odd } = await withTenant(app, tenantId, (tx) =>
+      dispatchTx(tx, {
+        actor: {
+          tenantId,
+          agentId: 'rt_test',
+          subject: { kind: 'shopper_thread', id: `seed-${n}` },
+        },
+        kind: 'message.inbound',
+        source: 'whatsapp',
+        dedupeKey: `prio:seed:${n}`,
+        payload: { text: 'oi' },
+      }),
+    );
+    const [c] = await store.claim({
+      lane: 'interactive',
+      owner: 'prio',
+      leaseMs: 60_000,
+      limit: 1,
+      agentIds: ['rt_test'],
+      perTenantCap: 5,
+      backoffMs: () => 0,
+    });
+    expect(c!.actor.id).toBe(odd);
+    await sql`update agent_actors set next_wake_at = null, lease_until = null, owner = null where agent_id = 'rt_test'`;
+  });
+
   test('a turn that keeps failing ends in turn.failed and a staff event for that store', async () => {
     const failing = defineAgent(def({ id: 'rt_fail', maxAttempts: 1 }));
     registerAgent(failing);

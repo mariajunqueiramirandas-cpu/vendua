@@ -803,12 +803,14 @@ export async function clienteOcultoView(tx: Sql, tenantId: string) {
       passed: number | null;
       total: number | null;
       results: unknown;
+      skipped: number;
       error: string | null;
       created_at: Date;
       finished_at: Date | null;
     }[]
-  >`select id, trigger, status, passed, total, results, error, created_at, finished_at from vendedor_runs
-    where tenant_id = ${tenantId} order by created_at desc limit 10`;
+  >`select id, trigger, status, passed, total, results, error, created_at, finished_at,
+      (select count(*) from jsonb_array_elements(results) e where e ->> 'skipped' = 'true')::int as skipped
+    from vendedor_runs where tenant_id = ${tenantId} order by created_at desc limit 10`;
   return {
     latest: runs[0]
       ? {
@@ -817,6 +819,7 @@ export async function clienteOcultoView(tx: Sql, tenantId: string) {
           status: runs[0].status,
           passed: runs[0].passed,
           total: runs[0].total,
+          skipped: runs[0].skipped,
           results: runs[0].results,
           error: runs[0].error,
           at: runs[0].created_at.toISOString(),
@@ -827,6 +830,7 @@ export async function clienteOcultoView(tx: Sql, tenantId: string) {
       id: r.id,
       passed: r.passed,
       total: r.total,
+      skipped: r.skipped,
       status: r.status,
       at: r.created_at.toISOString(),
     })),

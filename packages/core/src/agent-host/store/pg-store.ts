@@ -136,18 +136,28 @@ export class PgActorStore implements ActorStore<Sql> {
           where lane = $1 and agent_id = any($2::text[]) and next_wake_at <= now()
             and (lease_until is null or lease_until <= now())
         ),
-        -- each store's own earliest, up to what its cap leaves: one store's backlog can't crowd out the rest
+        -- each store's own earliest, up to what its cap leaves: one store's backlog can't crowd out the rest.
+        -- Within a store, real shoppers go first, then the owner's test chat, then Cliente oculto's
+        -- test shoppers, which all arrive at once and would otherwise queue ahead of a customer.
         due as (
           select d.id, d.next_wake_at, d.rn
           from ready r
           left join held h using (tenant_id)
           cross join lateral (
-            select a.id, a.next_wake_at, row_number() over (order by a.next_wake_at, a.id) as rn
+            select a.id, a.next_wake_at, row_number() over (order by p.rank, a.next_wake_at, a.id) as rn
             from agent_actors a
+            cross join lateral (
+              -- the cast only runs on a uuid: seeds and tests use other ids for this kind
+              select case when a.subject_kind = 'shopper_thread' and pg_input_is_valid(a.subject_id, 'uuid')
+                then coalesce(
+                  (select case t.test_kind when 'cliente_oculto' then 2 when 'owner' then 1 else 0 end
+                   from shopper_threads t where t.tenant_id = a.tenant_id and t.id = a.subject_id::uuid), 0)
+                else 0 end as rank
+            ) p
             where a.tenant_id = r.tenant_id and a.lane = $1 and a.agent_id = any($2::text[])
               and a.next_wake_at <= now()
               and (a.lease_until is null or a.lease_until <= now())
-            order by a.next_wake_at, a.id
+            order by p.rank, a.next_wake_at, a.id
             limit greatest($3 - coalesce(h.n, 0), 0)
           ) d
         ),
