@@ -41,7 +41,15 @@ export function routesFrom(
     setting.agents?.[agentId]?.[tier] ??
     setting.default?.[tier] ??
     []
-  ).filter((r) => r && typeof r.provider === 'string' && typeof r.model === 'string');
+  ).filter(
+    (r) =>
+      r &&
+      typeof r.provider === 'string' &&
+      typeof r.model === 'string' &&
+      // AGENT_MODEL_ROUTES never goes through validateSetting: a route that doesn't say whether
+      // it wants zero retention isn't guessed at
+      typeof r.zdr === 'boolean',
+  );
 }
 
 export function settingRoutes(sql: Sql): RouteResolver {
@@ -80,7 +88,9 @@ export function adaptersFromEnv(
         id: 'openrouter',
         baseUrl: 'https://openrouter.ai/api/v1',
         apiKey: env.OPENROUTER_API_KEY,
-        // a `zdr` route: only endpoints with a zero-data-retention policy, never for training
+        // never a provider that trains on what Duá sends; a `zdr` route also only endpoints with a
+        // zero-data-retention policy
+        extraBody: { provider: { data_collection: 'deny' } },
         zdrBody: { provider: { zdr: true, data_collection: 'deny' } },
         cacheMarkers: true,
       }),

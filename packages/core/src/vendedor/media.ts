@@ -101,9 +101,9 @@ export function mediaProviders(
             form.set('file', new Blob([audio], { type: mime.split(';')[0] ?? mime }), 'audio.ogg');
             form.set('model_id', r.model);
             form.set('language_code', 'por');
-            // zero-retention mode: nothing is logged or kept on their side
+            // zero-retention mode (enterprise accounts): nothing is logged or kept on their side
             const j = (await fetchJson(
-              'https://api.elevenlabs.io/v1/speech-to-text?enable_logging=false',
+              `https://api.elevenlabs.io/v1/speech-to-text${r.zdr ? '?enable_logging=false' : ''}`,
               {
                 method: 'POST',
                 headers: { 'xi-api-key': env.ELEVENLABS_API_KEY },
@@ -129,7 +129,7 @@ export function mediaProviders(
         try {
           if (r.provider === 'elevenlabs' && env.ELEVENLABS_API_KEY && r.voice) {
             const res = await fetch(
-              `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(r.voice)}?enable_logging=false&output_format=opus_48000_64`,
+              `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(r.voice)}?output_format=opus_48000_64${r.zdr ? '&enable_logging=false' : ''}`,
               {
                 method: 'POST',
                 headers: {

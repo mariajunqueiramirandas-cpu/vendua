@@ -130,33 +130,53 @@ const maxOpt = (a: number | undefined, b: number | undefined) =>
 
 /** OpenRouter's /endpoints/zdr body → per model id, its tool-capable ZDR endpoints folded; null
  *  for a model with one OpenRouter could route to but that has no usable price. */
-export function zdrFromEndpoints(body: unknown): Map<string, CatalogZdr | null> {
+/** A model's ZDR endpoints: how many, and the dearest price among those that have one.
+ *  `unpriced` when one of them has no usable price (OpenRouter may still route to it). */
+export interface ZdrTally {
+  providers: number;
+  pricing: CatalogPricing | null;
+  unpriced: boolean;
+}
+
+export function zdrFromEndpoints(body: unknown): Map<string, ZdrTally> {
   const data = isObject(body) && Array.isArray(body.data) ? body.data : [];
-  const out = new Map<string, CatalogZdr | null>();
+  const out = new Map<string, ZdrTally>();
   for (const e of data.slice(0, MAX_ENDPOINTS)) {
     if (!isObject(e) || !validId(e.model_id) || !takesTools(e.supported_parameters)) continue;
     const id = e.model_id;
-    const p = pricingOf(e.pricing);
-    const cur = out.get(id);
-    if (cur === null) continue;
-    if (!p) {
-      out.set(id, null);
-      continue;
-    }
+    let cur = out.get(id);
     if (!cur) {
       if (out.size >= MAX_MODELS) continue;
-      out.set(id, { providers: 1, pricing: p });
-      continue;
+      cur = { providers: 0, pricing: null, unpriced: false };
+      out.set(id, cur);
     }
     cur.providers += 1;
-    const pr = cur.pricing;
-    pr.inputPerMTok = Math.max(pr.inputPerMTok, p.inputPerMTok);
-    pr.outputPerMTok = Math.max(pr.outputPerMTok, p.outputPerMTok);
-    const cr = maxOpt(pr.cacheReadPerMTok, p.cacheReadPerMTok);
-    if (cr !== undefined) pr.cacheReadPerMTok = cr;
-    const cw = maxOpt(pr.cacheWritePerMTok, p.cacheWritePerMTok);
-    if (cw !== undefined) pr.cacheWritePerMTok = cw;
+    const p = pricingOf(e.pricing);
+    if (!p) cur.unpriced = true;
+    else cur.pricing = maxPricing(cur.pricing, p);
   }
+  return out;
+}
+
+/** A model's ZDR entry: when some ZDR endpoint can't be priced, the normal price stands in as a
+ *  floor (the budget estimate stays on the safe side); a model with no ZDR endpoint is null. */
+function zdrOf(t: ZdrTally | undefined, normal: CatalogPricing): CatalogZdr | null {
+  if (!t || t.providers === 0) return null;
+  const pricing = t.unpriced || !t.pricing ? maxPricing(t.pricing, normal) : t.pricing;
+  return { providers: t.providers, pricing };
+}
+
+/** The dearer of two prices, field by field. */
+export function maxPricing(a: CatalogPricing | null, b: CatalogPricing): CatalogPricing {
+  if (!a) return { ...b };
+  const out: CatalogPricing = {
+    inputPerMTok: Math.max(a.inputPerMTok, b.inputPerMTok),
+    outputPerMTok: Math.max(a.outputPerMTok, b.outputPerMTok),
+  };
+  const cr = maxOpt(a.cacheReadPerMTok, b.cacheReadPerMTok);
+  if (cr !== undefined) out.cacheReadPerMTok = cr;
+  const cw = maxOpt(a.cacheWritePerMTok, b.cacheWritePerMTok);
+  if (cw !== undefined) out.cacheWritePerMTok = cw;
   return out;
 }
 
@@ -214,7 +234,7 @@ export function catalogFrom(
       name: (rawName || m.id).slice(0, 200),
       contextLength: contextOf(m.context_length),
       pricing,
-      zdr: zdr.get(m.id) ?? null,
+      zdr: zdrOf(zdr.get(m.id), pricing),
       direct: checkDirect(m.id, lists),
     });
   }

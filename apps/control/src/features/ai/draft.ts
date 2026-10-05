@@ -152,12 +152,14 @@ export function routesOut(d: RoutesDraft): ModelRoutesSetting {
   return out;
 }
 
-/** a different provider is a different account and model list; the ZDR choice stays */
+/** a different provider is a different account and model list. OpenRouter enforces zero retention
+ *  itself (on by default); on a direct provider it's a claim about the account's contract, so it
+ *  starts off until someone confirms it */
 export const withProvider = (r: RouteDraft, provider: string): RouteDraft => ({
   ...emptyRoute(),
   uid: r.uid,
   provider,
-  zdr: r.zdr,
+  zdr: provider === 'openrouter' || provider === '' ? r.zdr : false,
   timeoutS: r.timeoutS,
 });
 

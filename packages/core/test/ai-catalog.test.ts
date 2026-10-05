@@ -107,13 +107,26 @@ describe('catalogFrom', () => {
     ]);
   });
 
-  test('zdr is null for a model with an unpriceable ZDR endpoint', () => {
+  test('an unpriceable ZDR endpoint keeps the model ZDR, priced no lower than its normal price', () => {
     const out = catalogFrom(
       body([model()]),
       body([ep(), ep({ provider_name: 'P2', pricing: { prompt: '-1', completion: '-1' } })]),
     );
-    expect(out[0]!.zdr).toBeNull();
     expect(out[0]!.pricing).toEqual({ inputPerMTok: 0.5, outputPerMTok: 1.5 });
+    // the priced ZDR endpoint is dearer here; the normal price is only a floor
+    expect(out[0]!.zdr).toMatchObject({
+      providers: 2,
+      pricing: { inputPerMTok: 0.8, outputPerMTok: 2 },
+    });
+    // no ZDR endpoint with a price at all: the normal price stands in
+    const only = catalogFrom(
+      body([model()]),
+      body([ep({ pricing: { prompt: '-1', completion: '-1' } })]),
+    );
+    expect(only[0]!.zdr).toMatchObject({
+      providers: 1,
+      pricing: { inputPerMTok: 0.5, outputPerMTok: 1.5 },
+    });
   });
 
   test('drops models without tool calls, unusable prices and ids validateSetting refuses', () => {
