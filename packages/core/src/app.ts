@@ -801,7 +801,8 @@ export function createApp({
     // ?design=1 is the edge's read (Kernel 1.10): the page's live templates and tokens ride
     // along in the injected state, so first paint is the store's current look
     const design = c.req.query('design') === '1';
-    const { settings, templates, tokens, publicUrl } = await cache.read(
+    // the design (templates, tokens) is kept as its JSON: only the live parts encode per request
+    const { settings, templatesJson, tokensJson, publicUrl } = await cache.read(
       tenant.id,
       design ? 'surfaces:design' : 'surfaces',
       () =>
@@ -812,7 +813,12 @@ export function createApp({
             design ? currentTokensTx(tx, tenant.id).then((t) => t?.tokens ?? null) : undefined,
             design ? storeOrigin(tx, tenant, publicStoreDomain) : undefined,
           ]);
-          return { settings, templates, tokens, publicUrl };
+          return {
+            settings,
+            templatesJson: design ? JSON.stringify(templates ?? {}) : null,
+            tokensJson: design ? JSON.stringify(tokens ?? null) : null,
+            publicUrl,
+          };
         }),
       { deps: design ? SURFACES_DEPS : SETTINGS_DEPS },
     );
@@ -828,15 +834,15 @@ export function createApp({
         ...(status.closesAt ? { closesAt: status.closesAt } : {}),
       },
       notices,
-      ...(design
-        ? {
-            templates: templates ?? {},
-            tokens: tokens ?? null,
-            meta: pageMeta(tenant.name, settings, publicUrl!),
-          }
-        : {}),
     };
-    return c.json(envelope);
+    if (!design) return c.json(envelope);
+    // SurfacesEnvelope's templates, tokens and meta, spliced in as JSON
+    const meta = JSON.stringify(pageMeta(tenant.name, settings, publicUrl!));
+    return c.body(
+      `${JSON.stringify(envelope).slice(0, -1)},"templates":${templatesJson},"tokens":${tokensJson},"meta":${meta}}`,
+      200,
+      { 'content-type': 'application/json' },
+    );
   });
 
   // Public — storefronts need zones for address/zone UX.
@@ -877,7 +883,7 @@ export function createApp({
   storefront.get('/state', async (c) => {
     const tenant = c.get('tenant');
     const withTemplates = c.req.query('templates') === '1';
-    const { settings, ops, templates } = await cache.read(
+    const { settings, ops, templatesJson } = await cache.read(
       tenant.id,
       withTemplates ? 'state:templates' : 'state',
       () =>
@@ -887,13 +893,14 @@ export function createApp({
             opsTx(tx, tenant.id),
             withTemplates ? currentTemplatesTx(tx, tenant.id) : undefined,
           ]);
-          return { settings, ops, templates };
+          // kept as JSON: v.js polls this, and the composition is most of the bytes
+          return { settings, ops, templatesJson: templates ? JSON.stringify(templates) : null };
         }),
       { deps: STATE_DEPS },
     );
     const status = currentStatus(settings);
     const notices = composeNotices(tenant.slug, settings, status);
-    return c.json({
+    const state = {
       version: 1,
       store: {
         status: status.status,
@@ -902,8 +909,14 @@ export function createApp({
       },
       notices: notices.filter((n) => n.severity === 'blocking' || n.kind === 'emergency'),
       loader: ops.loader,
-      ...(templates ? { templates, adminOrigin: previewParent(c) } : {}),
-    });
+    };
+    if (!templatesJson) return c.json(state);
+    const adminOrigin = JSON.stringify(previewParent(c));
+    return c.body(
+      `${JSON.stringify(state).slice(0, -1)},"templates":${templatesJson},"adminOrigin":${adminOrigin}}`,
+      200,
+      { 'content-type': 'application/json' },
+    );
   });
 
   const checkout = new Hono<{ Variables: { tenant: Tenant } }>();

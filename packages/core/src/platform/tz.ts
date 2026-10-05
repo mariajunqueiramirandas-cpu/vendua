@@ -57,21 +57,33 @@ export function assertTz(tz: string): string {
   return tz;
 }
 
+// formatToParts is most of the cost of status and schedule math, and an instant's wall clock in
+// a zone never changes: the last few thousand (zone, second) answers are kept
+const partsMemo = new Map<string, LocalParts>();
+const PARTS_MEMO_MAX = 4096;
+
 export function localParts(instant: Date, tz: string): LocalParts {
-  const parts = dtf(tz).formatToParts(instant);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-  const hour = Number(get('hour'));
-  const minute = Number(get('minute'));
-  return {
-    year: Number(get('year')),
-    month: Number(get('month')),
-    day: Number(get('day')),
-    weekday: WEEKDAY[get('weekday')] ?? 0,
-    hour,
-    minute,
-    second: Number(get('second')),
-    minutes: hour * 60 + minute,
-  };
+  const key = `${tz}|${Math.floor(instant.getTime() / 1000)}`;
+  let p = partsMemo.get(key);
+  if (!p) {
+    const parts = dtf(tz).formatToParts(instant);
+    const get = (type: string) => parts.find((x) => x.type === type)?.value ?? '';
+    const hour = Number(get('hour'));
+    const minute = Number(get('minute'));
+    p = {
+      year: Number(get('year')),
+      month: Number(get('month')),
+      day: Number(get('day')),
+      weekday: WEEKDAY[get('weekday')] ?? 0,
+      hour,
+      minute,
+      second: Number(get('second')),
+      minutes: hour * 60 + minute,
+    };
+    if (partsMemo.size >= PARTS_MEMO_MAX) partsMemo.clear();
+    partsMemo.set(key, p);
+  }
+  return { ...p };
 }
 
 // ms the zone's wall clock leads UTC at `instant` (seconds resolution is enough)

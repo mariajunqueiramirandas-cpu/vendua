@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { withTenant, type Sql } from './db.ts';
@@ -461,21 +461,9 @@ export function rateLimit(
   };
 }
 
-const encoder = new TextEncoder();
-
-async function hmac(secret: string, msg: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(msg));
-  return btoa(String.fromCharCode(...new Uint8Array(sig)))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replace(/=+$/, '');
+// unpadded base64url HMAC-SHA256 — synchronous: WebCrypto imported the key on every call
+function hmac(secret: string, msg: string): string {
+  return createHmac('sha256', secret).update(msg).digest('base64url');
 }
 
 /** `vst.<cartId>.<hmac>` checkout session token — the HMAC input binds the tenant, so tokens can't cross tenants. */
@@ -484,7 +472,7 @@ export async function mintSessionToken(
   tenantId: string,
   secret: string,
 ): Promise<string> {
-  return `vst.${cartId}.${await hmac(secret, `${tenantId}|${cartId}`)}`;
+  return `vst.${cartId}.${hmac(secret, `${tenantId}|${cartId}`)}`;
 }
 
 export async function verifySessionToken(
@@ -496,7 +484,7 @@ export async function verifySessionToken(
   if (parts.length !== 3 || parts[0] !== 'vst') return null;
   const [, cartId, sig] = parts;
   if (!cartId || !sig) return null;
-  const expected = await hmac(secret, `${tenantId}|${cartId}`);
+  const expected = hmac(secret, `${tenantId}|${cartId}`);
   if (expected.length !== sig.length) return null;
   let diff = 0;
   for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ sig.charCodeAt(i);
