@@ -255,10 +255,18 @@ export const priceDrifted = (r: RouteDraft, p: AiPricing) =>
  * On OpenRouter the switch changes which endpoints serve the model, so its price: follow the
  * new source unless the staff set their own price.
  */
-export function withZdr(r: RouteDraft, zdr: boolean, models: AiCatalogModel[] | undefined) {
+export function withZdr(
+  r: RouteDraft,
+  zdr: boolean,
+  models: AiCatalogModel[] | undefined,
+  endpoints?: AiEndpoint[],
+) {
   const next = { ...r, zdr };
-  // a pinned endpoint keeps its own price either way
-  if (r.provider === 'openrouter' && filled(r.endpoint)) return next;
+  if (r.provider === 'openrouter' && filled(r.endpoint)) {
+    // a pin that keeps data would fail every call under ZDR (no OpenRouter fallbacks)
+    const pinned = endpoints?.find((e) => e.tag === r.endpoint);
+    return zdr && pinned && !pinned.zdr ? { ...next, endpoint: '' } : next;
+  }
   const m = r.provider === 'openrouter' ? models?.find((x) => x.id === r.model.trim()) : undefined;
   const from = m && sourcePricing(m, r.provider, r.zdr);
   const to = m && sourcePricing(m, r.provider, zdr);

@@ -594,6 +594,10 @@ describe('model endpoints', () => {
       catalog: { get: async () => null, endpoints: async () => null },
     });
     expect((await app.request('/control/v1/ai/endpoints?model=a%20b')).status).toBe(422);
+    for (const m of ['../../keys', 'a/../b', 'a//b', '/a', '..'])
+      expect(
+        (await app.request(`/control/v1/ai/endpoints?model=${encodeURIComponent(m)}`)).status,
+      ).toBe(422);
     expect((await app.request('/control/v1/ai/endpoints?model=acme/x')).status).toBe(404);
   });
 });

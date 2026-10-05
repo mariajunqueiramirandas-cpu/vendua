@@ -108,7 +108,11 @@ export function mountAgentRuntimeAi(o: {
   app.get('/control/v1/ai/endpoints', async (c) => {
     controlGate(c);
     const model = c.req.query('model') ?? '';
-    if (!/^[A-Za-z0-9._/:@-]{1,200}$/.test(model))
+    // `..` survives encodeURIComponent and would walk out of /models/ on OpenRouter's side
+    if (
+      !/^[A-Za-z0-9._/:@-]{1,200}$/.test(model) ||
+      model.split('/').some((seg) => !seg || seg === '.' || seg === '..')
+    )
       throw new HttpError(422, 'BAD_REQUEST', 'model must be an OpenRouter model id', {
         field: 'model',
       });

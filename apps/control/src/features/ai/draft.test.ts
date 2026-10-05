@@ -119,6 +119,9 @@ describe('endpoint on a route', () => {
     ).toBe('');
     const off = withZdr(pinned, false, models);
     expect([off.endpoint, off.inputPerMTok]).toEqual(['other', '2']);
+    const keeps = [ep('other', 1, 1, 10, false)];
+    expect(withZdr(pinned, true, models, keeps).endpoint).toBe('');
+    expect(withZdr(pinned, true, models, [ep('other', 1, 1, 10, true)]).endpoint).toBe('other');
   });
 
   test('roundtrip and validation', () => {

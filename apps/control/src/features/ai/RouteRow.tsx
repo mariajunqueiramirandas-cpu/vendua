@@ -336,7 +336,7 @@ export function RouteRow({
         <ZdrSwitch
           provider={r.provider}
           checked={r.zdr}
-          onChange={(v) => onChange(withZdr(r, v, catalog?.models))}
+          onChange={(v) => onChange(withZdr(r, v, catalog?.models, endpoints))}
         />
         <FieldMsg>{err.zdr}</FieldMsg>
         {noZdr && (
