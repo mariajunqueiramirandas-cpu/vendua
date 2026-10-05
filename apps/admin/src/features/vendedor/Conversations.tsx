@@ -8,7 +8,7 @@ import {
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { usePreload } from '../../app/routes.ts';
-import { api, type ThreadFilter, type ThreadRow } from '../../lib/api.ts';
+import { api, type ThreadFilter, type ThreadList, type ThreadRow } from '../../lib/api.ts';
 import { minutesSince } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
 import { useCan, useSession } from '../../lib/session.ts';
@@ -20,11 +20,11 @@ import { Chips, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { HelpButton, PageBody, PageHeader } from '../../ui/Page.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
-import { FloorChip, ReasonChip } from '../../ui/vendedor/index.ts';
+import { ClassChip, FloorChip, ReasonChip, triaged } from '../../ui/vendedor/index.ts';
 import { ConversationPane, useMedia } from './Conversation.tsx';
 import { Initials, dayLabel, msgTime } from './Conversation.parts.tsx';
 
-const FILTERS: ThreadFilter[] = ['all', 'waiting', 'orders', 'agent', 'others'];
+const FILTERS: ThreadFilter[] = ['all', 'waiting', 'ask', 'orders', 'agent', 'personal', 'others'];
 
 /**
  * Conversas (sales-agent-ux §3.3, §3.10): every WhatsApp conversation of the store, who is
@@ -72,6 +72,7 @@ export default function Conversations() {
     placeholderData: keepPreviousData,
   });
   const rows = list.data?.pages.flatMap((p) => p.threads) ?? [];
+  const toDecide = list.data?.pages[0]?.counts?.ask;
   const search = useRef<HTMLInputElement>(null);
 
   const selected = desktop ? (params.get('c') ?? rows[0]?.id ?? null) : null;
@@ -124,6 +125,7 @@ export default function Conversations() {
       onQ={setQ}
       search={search}
       desktop={desktop}
+      toDecide={toDecide}
     />
   );
   const body = (
@@ -191,6 +193,7 @@ function ListTools({
   onQ,
   search,
   desktop,
+  toDecide,
 }: {
   filter: ThreadFilter;
   onFilter: (f: ThreadFilter) => void;
@@ -198,6 +201,8 @@ function ListTools({
   onQ: (q: string) => void;
   search: RefObject<HTMLInputElement>;
   desktop: boolean;
+  /** contacts waiting for the owner to say who they are, when Core counts them */
+  toDecide?: number | undefined;
 }) {
   const waiting = useSession().vendedor?.waiting ?? 0;
   return (
@@ -223,8 +228,10 @@ function ListTools({
             value: 'waiting',
             label: waiting ? `precisa de você · ${waiting}` : 'precisa de você',
           },
+          { value: 'ask', label: toDecide ? `para decidir · ${toDecide}` : 'para decidir' },
           { value: 'orders', label: 'com pedido' },
           { value: 'agent', label: 'Duá atendendo' },
+          { value: 'personal', label: 'pessoais' },
           { value: 'others', label: 'outros' },
         ]}
       />
@@ -232,10 +239,15 @@ function ListTools({
   );
 }
 
-type ListQuery = UseInfiniteQueryResult<
-  InfiniteData<{ threads: ThreadRow[]; next: string | null }>,
-  Error
->;
+type ListQuery = UseInfiniteQueryResult<InfiniteData<ThreadList>, Error>;
+
+/** what each quiet list holds, above its rows */
+const LEAD: Partial<Record<ThreadFilter, string>> = {
+  ask: 'Números que o Duá não sabe se são clientes. Ele não responde até você decidir.',
+  personal: 'Amigos, família e outras conversas suas. O Duá não responde esses números.',
+  others:
+    'Números que não parecem clientes (fornecedores, entregadores, família). Ficam aqui, sem resposta automática.',
+};
 
 function ThreadList({
   list,
@@ -259,12 +271,7 @@ function ThreadList({
   if (!rows.length) return <Empty filter={filter} q={q} />;
   return (
     <>
-      {filter === 'others' ? (
-        <p className="t-caption mb-3 px-1 text-muted">
-          Números que não parecem clientes (fornecedores, entregadores, família). Ficam aqui, sem
-          resposta automática.
-        </p>
-      ) : null}
+      {LEAD[filter] ? <p className="t-caption mb-3 px-1 text-muted">{LEAD[filter]}</p> : null}
       <Card
         as="section"
         aria-busy={list.isPlaceholderData}
@@ -362,8 +369,15 @@ function Row({
           className={cn('t-body block truncate', r.unread ? 'font-medium text-ink' : 'text-muted')}
         >
           {r.unread ? <span className="sr-only">nova mensagem: </span> : null}
-          {by}
-          {r.preview ?? '…'}
+          {r.class === 'personal' ? (
+            // the team shares this list: a friend's words stay in the owner's phone
+            'conversa pessoal'
+          ) : (
+            <>
+              {by}
+              {r.preview ?? '…'}
+            </>
+          )}
         </span>
         <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {r.waitingSince ? (
@@ -383,6 +397,8 @@ function Row({
               <CheckCircle weight="bold" className="size-[15px]" aria-hidden />
               pedido #{r.orderNumber}
             </span>
+          ) : triaged(r.class) ? (
+            <ClassChip cls={r.class} />
           ) : (
             <FloorChip floor={r.floor} />
           )}
@@ -411,6 +427,14 @@ function Empty({ filter, q }: { filter: ThreadFilter; q: string }) {
       title: 'Ninguém esperando por você',
       body: 'Quando um cliente precisar de você, ele aparece aqui e o celular avisa.',
     },
+    ask: {
+      title: 'Nada para decidir',
+      body: 'Quando o Duá não souber se um número é cliente, ele aparece aqui e o celular avisa.',
+    },
+    personal: {
+      title: 'Nenhum contato pessoal',
+      body: 'Quem o Duá ou você marcar como pessoal fica aqui, sem resposta automática.',
+    },
     orders: {
       title: 'Nenhuma conversa virou pedido ainda',
       body: 'Os pedidos que o Duá fechar aparecem aqui.',
@@ -426,7 +450,7 @@ function Empty({ filter, q }: { filter: ThreadFilter; q: string }) {
   };
   return (
     <EmptyState
-      art={<Mascote pose={filter === 'waiting' ? 'sucesso' : 'carinho'} />}
+      art={<Mascote pose={filter === 'waiting' || filter === 'ask' ? 'sucesso' : 'carinho'} />}
       title={copy[filter].title}
       body={copy[filter].body}
       action={

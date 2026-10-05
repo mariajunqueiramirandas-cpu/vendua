@@ -1,6 +1,14 @@
 import type { Logger } from 'pino';
 import { LeaseLost, type AuthStore, type BufferCodec } from './auth-store.ts';
 import { parseContent, type ChatContent } from './content.ts';
+import {
+  answerFor,
+  HISTORY_COUNT,
+  historyLines,
+  type HistoryLine,
+  type HistorySet,
+  type HistoryWait,
+} from './history.ts';
 import { jidForPhone, phoneVariants, reconnectDelayMs, userJid } from './text.ts';
 
 // One store's linked WhatsApp device. The gateway owns the lifecycle (start, pair, stop,
@@ -71,20 +79,33 @@ export interface WaSocket {
       event: 'messages.update',
       cb: (u: { key?: WaKey; update?: { status?: number | null } }[]) => void,
     ): void;
+    on(event: 'messaging-history.set', cb: (h: HistorySet) => void): void;
     on(
       event: 'presence.update',
       cb: (p: { id: string; presences: Record<string, { lastKnownPresence?: string }> }) => void,
     ): void;
   };
   user?: { id?: string; phoneNumber?: string; name?: string } | undefined;
-  signalRepository?: { lidMapping?: { getPNForLID(lid: string): Promise<string | null> } };
+  signalRepository?: {
+    lidMapping?: {
+      getPNForLID(lid: string): Promise<string | null>;
+      getLIDForPN?(pn: string): Promise<string | null>;
+    };
+  };
   requestPairingCode(phone: string): Promise<string>;
   onWhatsApp(...jids: string[]): Promise<{ jid: string; exists: boolean }[] | undefined>;
   sendMessage(
     jid: string,
-    content: OutContent,
+    content: OutContent | { delete: WaKey },
     opts?: { messageId?: string },
   ): Promise<{ key?: { id?: string | null } } | undefined>;
+  /** asks the phone for `count` messages of one chat older than `oldest`; the answer arrives as
+   *  an ON_DEMAND `messaging-history.set`. Resolves to the request message's id. */
+  fetchMessageHistory?(
+    count: number,
+    oldest: { remoteJid: string; id: string; fromMe: boolean },
+    oldestTimestampMs: number,
+  ): Promise<string>;
   /** asks the phone that sent a media message to upload it again (expired links) */
   updateMediaMessage(message: WaMessage): Promise<WaMessage>;
   presenceSubscribe(jid: string): Promise<void>;
@@ -128,6 +149,8 @@ export interface WaRuntime {
     keys: SocketKeys;
     logger: Logger;
     getMessage: (key: WaKey) => Promise<{ conversation: string } | undefined>;
+    /** the store's history stays unsynced, except an on-demand answer someone is waiting for */
+    wantsOnDemand?: () => boolean;
   }): Promise<WaSocket>;
   normalize(message: unknown): unknown;
   /** a media message's bytes (baileys `downloadMediaMessage`, re-upload on expired links) */
@@ -160,6 +183,20 @@ export class SessionClosed extends Error {
   }
 }
 
+export class HistoryTimeout extends Error {
+  constructor(ms: number) {
+    super(`no history answer in ${ms}ms`);
+  }
+}
+
+/** proto.HistorySync.HistorySyncType.ON_DEMAND */
+export const ON_DEMAND_SYNC = 6;
+
+interface PendingHistory extends HistoryWait {
+  settle(messages: WaMessage[]): void;
+  fail(e: Error): void;
+}
+
 const SEND_TIMEOUT_MS = 30_000;
 const PROBE_TIMEOUT_MS = 10_000;
 const LOGOUT_TIMEOUT_MS = 10_000;
@@ -174,13 +211,18 @@ const PRESENCE_TIMEOUT_MS = 5_000;
 /** WhatsApp forgets a presence subscription after a while; renewing more often is noise */
 const PRESENCE_EVERY_MS = 10 * 60_000;
 
-async function bounded<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+async function bounded<T>(
+  p: Promise<T>,
+  ms: number,
+  what: string,
+  timeout = () => new Error(`${what} timed out after ${ms}ms`),
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       p,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms);
+        timer = setTimeout(() => reject(timeout()), ms);
       }),
     ]);
   } finally {
@@ -212,6 +254,7 @@ export class StoreSession {
   private credsTail: Promise<void> = Promise.resolve();
   private jids = new Map<string, string | null>();
   private subscribed = new Map<string, number>();
+  private historyWaits = new Set<PendingHistory>();
 
   constructor(
     readonly tenantId: string,
@@ -266,6 +309,7 @@ export class StoreSession {
     this.reconnectTimer = null;
     const s = this.sock;
     this.sock = null;
+    this.failHistory();
     try {
       s?.end();
     } catch {
@@ -322,6 +366,7 @@ export class StoreSession {
           const text = key.id ? await this.hooks.messageText(key.id) : null;
           return text ? { conversation: text } : undefined;
         },
+        wantsOnDemand: () => this.historyWaits.size > 0,
       });
     } catch (e) {
       this.log.error({ err: e }, 'socket start failed');
@@ -357,6 +402,16 @@ export class StoreSession {
       void this.onMessages(sock, messages).catch((e) =>
         this.log.warn({ err: e }, 'inbound processing failed'),
       );
+    });
+    sock.ev.on('messaging-history.set', (h) => {
+      if (this.sock !== sock || h.syncType !== ON_DEMAND_SYNC) return;
+      for (const w of this.historyWaits) {
+        const got = answerFor(h, w);
+        if (!got) continue;
+        this.historyWaits.delete(w);
+        w.settle(got);
+        return;
+      }
     });
     sock.ev.on('presence.update', ({ id, presences }) => {
       if (this.sock !== sock) return;
@@ -442,6 +497,7 @@ export class StoreSession {
     }
     if (u.connection !== 'close') return;
     this.sock = null;
+    this.failHistory();
     const code = statusOf(u);
     if (this.stopped) return;
     if (!pairingConfirmed(creds)) {
@@ -568,6 +624,76 @@ export class StoreSession {
     if (this.subscribed.size >= JID_CACHE_MAX) this.subscribed.clear();
     this.subscribed.set(jid, now);
     await bounded(sock.presenceSubscribe(jid), PRESENCE_TIMEOUT_MS, 'presence subscribe');
+  }
+
+  private failHistory() {
+    const waits = [...this.historyWaits];
+    this.historyWaits.clear();
+    for (const w of waits) w.fail(new SessionClosed(this.stateNow));
+  }
+
+  /** The chat's latest messages before `anchorId`, fetched from the phone on demand (≤10, oldest
+   *  first); [] when WhatsApp answered with none. Nothing else of the answer is kept. */
+  async fetchHistory(
+    req: { chatJid: string; jids: string[]; anchorId: string; anchorAt: Date },
+    timeoutMs: number,
+  ): Promise<HistoryLine[]> {
+    const sock = this.sock;
+    if (!sock || this.stateNow !== 'open') throw new SessionClosed(this.stateNow);
+    if (!sock.fetchMessageHistory) throw new Error('history fetch unsupported');
+    const fetch = sock.fetchMessageHistory.bind(sock);
+    const jids = new Set(
+      [req.chatJid, ...req.jids].map((j) => userJid(j)).filter((j): j is string => !!j),
+    );
+    // the phone may file the chat under either form
+    const map = sock.signalRepository?.lidMapping;
+    for (const j of [...jids]) {
+      const other = await bounded(
+        j.endsWith('@lid')
+          ? (map?.getPNForLID(j) ?? Promise.resolve(null))
+          : (map?.getLIDForPN?.(j) ?? Promise.resolve(null)),
+        PROBE_TIMEOUT_MS,
+        'lid mapping',
+      ).catch(() => null);
+      const u = userJid(other);
+      if (u) jids.add(u);
+    }
+    let wait!: PendingHistory;
+    const answered = new Promise<WaMessage[]>((settle, fail) => {
+      wait = { jids, sessionId: null, settle, fail };
+    });
+    // a close can fail it before anyone awaits it
+    answered.catch(() => undefined);
+    this.historyWaits.add(wait);
+    try {
+      return await bounded(
+        (async () => {
+          wait.sessionId =
+            (await fetch(
+              HISTORY_COUNT,
+              { remoteJid: req.chatJid, id: req.anchorId, fromMe: false },
+              req.anchorAt.getTime(),
+            )) || null;
+          return historyLines(await answered, (c) => this.runtime.normalize(c), req);
+        })(),
+        timeoutMs,
+        'history fetch',
+        () => new HistoryTimeout(timeoutMs),
+      );
+    } finally {
+      this.historyWaits.delete(wait);
+    }
+  }
+
+  /** Delete one of the store's own messages for everyone (the owner's phone commands). */
+  async revoke(jid: string, id: string): Promise<void> {
+    const sock = this.sock;
+    if (!sock || this.stateNow !== 'open') throw new SessionClosed(this.stateNow);
+    await bounded(
+      sock.sendMessage(jid, { delete: { remoteJid: jid, id, fromMe: true } }),
+      SEND_TIMEOUT_MS,
+      'whatsapp revoke',
+    );
   }
 
   /** "digitando…" in the shopper's chat while a reply is being written. */

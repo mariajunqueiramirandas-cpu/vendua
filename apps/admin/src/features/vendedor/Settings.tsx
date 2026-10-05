@@ -17,10 +17,12 @@ import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { Bubble, PersonaAvatar } from '../../ui/vendedor/index.ts';
 import {
+  AnswerWhoField,
   CoverageField,
   greetingFor,
   Group,
   OwnerOnly,
+  PhoneCommands,
   SaveStatus,
   ToneField,
   useSettingsPatch,
@@ -57,6 +59,7 @@ function Editor({ v, owner }: { v: VendedorSettings; owner: boolean }) {
       <Power v={v} owner={owner} />
       <Persona s={s} intro={v.intro} owner={owner} />
       <When s={s} />
+      <Who s={s} />
       <Can v={v} owner={owner} />
       <Handoff s={s} />
     </div>
@@ -143,6 +146,16 @@ function When({ s }: { s: StoreAgentSettings }) {
         onChange={(coverage) => void run({ coverage })}
         onWait={(slowAfterMin) => void run({ slowAfterMin })}
       />
+    </Group>
+  );
+}
+
+function Who({ s }: { s: StoreAgentSettings }) {
+  const { run, state, retry } = useSettingsPatch();
+  return (
+    <Group title="Quem o Duá atende" status={<SaveStatus state={state} retry={retry} />}>
+      <AnswerWhoField value={s.answerWho} onChange={(answerWho) => void run({ answerWho })} />
+      <PhoneCommands />
     </Group>
   );
 }

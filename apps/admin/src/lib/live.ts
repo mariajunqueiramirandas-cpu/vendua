@@ -28,6 +28,7 @@ type Topic =
   | 'kitchen'
   | 'vendedor'
   | 'vendedor.waiting'
+  | 'vendedor.ask'
   | 'vendedor.exhausted';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
@@ -52,6 +53,8 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   // a conversation counted moves Conta's usage meter too
   vendedor: [['vendedor'], qk.session, qk.account],
   'vendedor.waiting': [['vendedor'], qk.session],
+  // a new contact Duá won't answer until the owner says who it is ("para decidir")
+  'vendedor.ask': [['vendedor']],
   'vendedor.exhausted': [['vendedor'], qk.account],
 };
 

@@ -5,7 +5,7 @@ export { Bubble, DayMark, EventChip, type BubbleStatus, type Voice } from './Bub
 export { ChecklistRow, type CheckState } from './ChecklistRow.tsx';
 export { Discordance } from './Discordance.tsx';
 export { Floor } from './Floor.tsx';
-export { FloorChip, GuaranteeChip, ReasonChip, reasonWord } from './chips.tsx';
+export { ClassChip, FloorChip, GuaranteeChip, ReasonChip, reasonWord, triaged } from './chips.tsx';
 export { MiniChat, type ChatLine } from './MiniChat.tsx';
 export { PersonaAvatar, type AvatarPose } from './PersonaAvatar.tsx';
 export { ProposalCard } from './ProposalCard.tsx';

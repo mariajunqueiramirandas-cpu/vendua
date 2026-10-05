@@ -24,8 +24,10 @@ import {
   threadDetail,
   threadList,
   whyView,
+  THREAD_FILTERS,
   type ThreadFilter,
 } from '../vendedor/views.ts';
+import { setClassTx } from '../vendedor/triage.ts';
 import { audit } from './audit.ts';
 import { isObj, need, oneOf, text, type AdminCtx, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
@@ -64,13 +66,11 @@ export function mountVendedor(d: AdminDeps) {
   admin.get(
     '/vendedor/threads',
     read('attendant', async (tx, t, _m, c) => {
-      const filter = oneOf(c.req.query('filter') ?? 'all', 'filter', [
-        'all',
-        'waiting',
-        'orders',
-        'agent',
-        'others',
-      ] as const) as ThreadFilter;
+      const filter = oneOf(
+        c.req.query('filter') ?? 'all',
+        'filter',
+        THREAD_FILTERS,
+      ) as ThreadFilter;
       const before = c.req.query('before') ?? null;
       if (before && Number.isNaN(Date.parse(before)))
         throw new HttpError(400, 'BAD_REQUEST', 'before must be a date');
@@ -102,6 +102,9 @@ export function mountVendedor(d: AdminDeps) {
       const id = idParam(c, 'id');
       const th = await storeThread(tx, t.id, id);
       if (th.owner === 'muted') throw new HttpError(409, 'THREAD_MUTED', 'this number is muted');
+      // a personal contact is the owner's own: the store doesn't take, hand back or write to it here
+      if (th.class === 'personal')
+        throw new HttpError(409, 'THREAD_PERSONAL', 'this number is a personal contact');
       const agent = await loadAgent(tx, t.id);
       await tx`update shopper_threads set owner = 'human', owner_reason = coalesce(owner_reason, 'a loja assumiu'),
         human_until = now() + make_interval(mins => ${agent.settings.humanSilenceMin}), waiting_since = null,
@@ -123,6 +126,9 @@ export function mountVendedor(d: AdminDeps) {
       const id = idParam(c, 'id');
       const th = await storeThread(tx, t.id, id);
       if (th.owner === 'muted') throw new HttpError(409, 'THREAD_MUTED', 'this number is muted');
+      // a personal contact is the owner's own: the store doesn't take, hand back or write to it here
+      if (th.class === 'personal')
+        throw new HttpError(409, 'THREAD_PERSONAL', 'this number is a personal contact');
       await tx`update shopper_threads set owner = 'agent', owner_reason = null, human_until = null,
         waiting_since = null, updated_at = now() where id = ${id}`;
       // the shopper's last message, if still unanswered, gets one answer now
@@ -151,6 +157,9 @@ export function mountVendedor(d: AdminDeps) {
       if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
       const msg = text(body.text, 'text', 2000, 1);
       const th = await storeThread(tx, t.id, id);
+      // a personal contact is the owner's own: the store doesn't take, hand back or write to it here
+      if (th.class === 'personal')
+        throw new HttpError(409, 'THREAD_PERSONAL', 'this number is a personal contact');
       const agent = await loadAgent(tx, t.id);
       const key = c.req.header('idempotency-key') ?? crypto.randomUUID();
       const messageId = await sendDirectTx(tx, th, {
@@ -212,6 +221,31 @@ export function mountVendedor(d: AdminDeps) {
         summary: 'Desfez "não é cliente"',
       });
       await emitAdminTx(tx, t.id, 'vendedor', id);
+      return { status: 200, body: await threadDetail(tx, t.id, id) };
+    }),
+  );
+
+  /** The owner says who this number is (ADR 0033): sticky, and it moves the held messages. */
+  admin.post(
+    '/vendedor/threads/:id/classify',
+    write('attendant', async (tx, t, m, c) => {
+      const id = idParam(c, 'id');
+      const body = await bodyJson(c);
+      if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
+      const as = oneOf(body.as, 'as', ['shopper', 'personal'] as const);
+      // "pessoal" erases what the contact wrote, for good: a manager's call, not an attendant's
+      if (as === 'personal') need(c, 'manager');
+      const th = await storeThread(tx, t.id, id);
+      if (th.channel !== 'whatsapp')
+        throw new HttpError(409, 'NOT_WHATSAPP', 'only WhatsApp conversations are classified');
+      if (th.owner === 'muted') throw new HttpError(409, 'THREAD_MUTED', 'this number is muted');
+      await setClassTx(tx, th, { cls: as, source: 'owner', reason: 'owner_marked' });
+      await audit(tx, t.id, m, {
+        action: 'vendedor.classify',
+        entity: 'thread',
+        entityId: id,
+        summary: as === 'shopper' ? 'Marcou como cliente' : 'Marcou como contato pessoal',
+      });
       return { status: 200, body: await threadDetail(tx, t.id, id) };
     }),
   );

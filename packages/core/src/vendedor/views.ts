@@ -254,7 +254,17 @@ export async function replyPercentiles(
 
 // ── conversations ────────────────────────────────────────────────────────────
 
-export type ThreadFilter = 'all' | 'waiting' | 'orders' | 'agent' | 'others';
+/** `ask` "para decidir", `personal` "pessoais" (ADR 0033); `others` is class other. */
+export type ThreadFilter = 'all' | 'waiting' | 'orders' | 'agent' | 'others' | 'ask' | 'personal';
+export const THREAD_FILTERS = [
+  'all',
+  'waiting',
+  'orders',
+  'agent',
+  'others',
+  'ask',
+  'personal',
+] as const satisfies readonly ThreadFilter[];
 
 export interface ThreadRow {
   id: string;
@@ -266,6 +276,9 @@ export interface ThreadRow {
   waitingSince: string | null;
   stage: Thread['stage'];
   class: Thread['class'];
+  /** why it has that class: a code (ADR 0033), never text about the person */
+  classReason: Thread['classReason'];
+  classSource: Thread['classSource'];
   preview: string | null;
   previewAuthor: string | null;
   lastAt: string;
@@ -278,7 +291,7 @@ export async function threadList(
   tenantId: string,
   o: { filter: ThreadFilter; q: string; before: string | null; limit: number },
   now = new Date(),
-): Promise<{ threads: ThreadRow[]; next: string | null }> {
+): Promise<{ threads: ThreadRow[]; next: string | null; counts: { ask: number } }> {
   const agent = await loadAgent(tx, tenantId);
   const status = storeStatus(await loadStoreSettings(tx, tenantId), now);
   const q = o.q.trim();
@@ -293,6 +306,8 @@ export async function threadList(
       waiting_since: Date | null;
       stage: Thread['stage'];
       class: Thread['class'];
+      class_reason: Thread['classReason'];
+      class_source: Thread['classSource'];
       updated_at: Date;
       human_until: Date | null;
       pending_since: Date | null;
@@ -316,10 +331,14 @@ export async function threadList(
           : o.filter === 'orders'
             ? tx`t.order_id is not null`
             : o.filter === 'agent'
-              ? tx`t.owner in ('open', 'agent') and t.class <> 'other'`
+              ? tx`t.owner in ('open', 'agent') and t.class in ('shopper', 'unknown')`
               : o.filter === 'others'
                 ? tx`t.class = 'other'`
-                : tx`t.class <> 'other'`
+                : o.filter === 'ask'
+                  ? tx`t.class = 'ask'`
+                  : o.filter === 'personal'
+                    ? tx`t.class = 'personal'`
+                    : tx`t.class not in ('other', 'personal')`
       }
       and (${q} = '' or t.profile_name ilike ${'%' + q + '%'} or t.checkout ->> 'name' ilike ${'%' + q + '%'}
            or t.phone like ${'%' + q.replace(/\D/g, '') + '%'} and ${q.replace(/\D/g, '').length >= 4})
@@ -344,6 +363,8 @@ export async function threadList(
         waitingSince: r.waiting_since?.toISOString() ?? null,
         stage: r.stage,
         class: r.class,
+        classReason: r.class_reason ?? null,
+        classSource: r.class_source ?? null,
         preview: r.preview?.slice(0, 120) ?? null,
         previewAuthor: r.preview_author,
         lastAt: r.updated_at.toISOString(),
@@ -352,7 +373,15 @@ export async function threadList(
       };
     }),
     next: rows.length > o.limit ? page[page.length - 1]!.updated_at.toISOString() : null,
+    counts: { ask: await askCount(tx, tenantId) },
   };
+}
+
+async function askCount(tx: Sql, tenantId: string): Promise<number> {
+  const [r] = await tx<{ n: number }[]>`
+    select count(*)::int as n from shopper_threads
+    where tenant_id = ${tenantId} and class = 'ask' and channel = 'whatsapp' and owner <> 'muted'`;
+  return r?.n ?? 0;
 }
 
 export interface MessageView {
@@ -426,6 +455,8 @@ export async function threadDetail(
       exists (select 1 from shopper_media x where x.message_id = m.id) as has_media,
       (select x.seconds from shopper_media x where x.message_id = m.id limit 1) as seconds
     from shopper_messages m where m.tenant_id = ${tenantId} and m.thread_id = ${id}
+      -- a personal contact's chat is the owner's alone; what remains is erased rows
+      and ${t.class !== 'personal'}
     order by m.created_at desc limit 200`;
   const suggested = new Set(
     (
@@ -492,6 +523,8 @@ export async function threadDetail(
       waitingSince: t.waitingSince?.toISOString() ?? null,
       stage: t.stage,
       class: t.class,
+      classReason: t.classReason,
+      classSource: t.classSource,
       preview: null,
       previewAuthor: null,
       lastAt: t.updatedAt.toISOString(),
