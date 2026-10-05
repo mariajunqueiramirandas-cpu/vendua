@@ -398,6 +398,25 @@ describe.skipIf(!OWNER_URL)('who Duá answers on Postgres', () => {
     expect(admin[tenantId]).toEqual([threadId]);
   });
 
+  test('a chat that ordered with no resolved number is still a customer', async () => {
+    const tenantId = await store();
+    const threadId = await newThread(tenantId);
+    await sql`update shopper_threads set phone = null where id = ${threadId}`;
+    const [cart] = await sql<{ id: string }[]>`
+      insert into carts (tenant_id, session_hash) values (${tenantId}, ${`lid-${threadId}`}) returning id`;
+    await sql`insert into orders (tenant_id, cart_id, number, customer, delivery, payment,
+        subtotal_cents, total_cents, thread_id)
+      values (${tenantId}, ${cart!.id}, 1, '{}', '{}', '{}', 1000, 1000, ${threadId})`;
+    await inbound(tenantId, threadId, 'oi, de novo!');
+    await ingest();
+    expect(await threadRow(threadId)).toMatchObject({
+      class: 'shopper',
+      class_source: 'orders',
+      class_reason: 'ordered_before',
+    });
+    expect(await requests(threadId)).toHaveLength(0);
+  });
+
   test('no prior chat on a thread known only by its LID: not proof of a stranger', async () => {
     const tenantId = await store();
     const { threadId, requestId } = await checking(tenantId, 'oi');
@@ -760,6 +779,8 @@ describe.skipIf(!OWNER_URL)('who Duá answers on Postgres', () => {
       const [out] = await sql<{ status: string }[]>`
         select status from store_wa_messages where shopper_message_id = ${reply!.id}`;
       expect(out!.status).toBe('skipped');
+      // the actor goes in the sweep's own transaction, never under the thread's lock
+      await triageSweep(app);
       expect(
         await sql`select 1 from agent_actors where tenant_id = ${tenantId} and subject_id = ${t}`,
       ).toHaveLength(0);

@@ -83,13 +83,9 @@ export async function setClassTx(
         where tenant_id = ${t.tenantId} and status = 'pending'
           and shopper_message_id in (select id from shopper_messages
                                      where tenant_id = ${t.tenantId} and thread_id = ${t.id})`;
-      // and Duá's own copy of the conversation (its log, mailbox and memory of it) goes too
-      await forgetSubjectTx(
-        tx,
-        t.tenantId,
-        { kind: SUBJECT_KIND, id: t.id },
-        `${SUBJECT_KIND}:${t.id}`,
-      );
+      // Duá's own copy of the chat (its actor: log, mailbox, memory) is forgotten by the sweep,
+      // in a transaction of its own: deleting the actor here, under the thread's lock, would
+      // take the two locks in the reverse order of a turn's send (actor, then thread)
       await tx`delete from shopper_media where tenant_id = ${t.tenantId}
         and message_id in (select id from shopper_messages
                            where tenant_id = ${t.tenantId} and thread_id = ${t.id})`;
@@ -110,14 +106,15 @@ export type FirstLook =
 /** The deterministic signals for a number Core has never classified, in their order. */
 export async function firstLookTx(
   tx: Sql,
-  t: Pick<Thread, 'tenantId' | 'phone'>,
+  t: Pick<Thread, 'tenantId' | 'phone' | 'id'>,
   answerWho: AnswerWho,
   body: string | null,
 ): Promise<FirstLook> {
-  const [o] = t.phone
-    ? await tx<{ n: number }[]>`select count(*)::int as n from orders
-        where tenant_id = ${t.tenantId} and customer_phone = ${t.phone}`
-    : [{ n: 0 }];
+  // by the number, or by the chat itself: an order placed here keeps its thread even when the
+  // number never resolved (a LID-only chat ordering with the checkout's phone)
+  const [o] = await tx<{ n: number }[]>`select count(*)::int as n from orders
+    where tenant_id = ${t.tenantId}
+      and (thread_id = ${t.id} or (${t.phone}::text is not null and customer_phone = ${t.phone}))`;
   if ((o?.n ?? 0) > 0)
     return {
       kind: 'decided',
@@ -449,5 +446,27 @@ export async function triageSweep(sql: Sql): Promise<{ timedOut: number; expired
       where triaged_at < now() - interval '1 day'
          or (status in ('done', 'empty', 'failed') and finished_at < now() - interval '7 days')`;
     return { timedOut: timedOut.length, expired: expired.length };
+  }).then(async (r) => {
+    await forgetPersonalActors(sql);
+    return r;
+  });
+}
+
+/** Duá forgets what it held of each personal contact's chat (ADR 0033). No thread lock is taken. */
+export async function forgetPersonalActors(sql: Sql): Promise<number> {
+  return controlTx(sql, async (tx) => {
+    const rows = await tx<{ tenant_id: string; subject_id: string }[]>`
+      select a.tenant_id, a.subject_id from agent_actors a
+        join shopper_threads t on t.tenant_id = a.tenant_id and t.id::text = a.subject_id
+      where a.subject_kind = ${SUBJECT_KIND} and t.class = 'personal'
+      limit 200`;
+    for (const r of rows)
+      await forgetSubjectTx(
+        tx,
+        r.tenant_id,
+        { kind: SUBJECT_KIND, id: r.subject_id },
+        `${SUBJECT_KIND}:${r.subject_id}`,
+      );
+    return rows.length;
   });
 }
