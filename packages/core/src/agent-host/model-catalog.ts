@@ -57,6 +57,9 @@ const maxOpt = (a: number | undefined, b: number | undefined) =>
 export function catalogFromZdr(body: unknown): CatalogModel[] {
   const data = isObject(body) && Array.isArray(body.data) ? body.data : [];
   const byId = new Map<string, CatalogModel>();
+  // OpenRouter may route a call to any ZDR endpoint of a model: one it can't price makes the
+  // model's "dearest" price unknowable, so the model is left out
+  const unpriced = new Set<string>();
   for (const e of data.slice(0, MAX_ENDPOINTS)) {
     if (!isObject(e)) continue;
     const id = e.model_id;
@@ -68,8 +71,10 @@ export function catalogFromZdr(body: unknown): CatalogModel[] {
     const input = perMTok(p.prompt);
     const output = perMTok(p.completion);
     // negative/variable prices (a router model) or prices validateSetting would refuse
-    if (input === undefined || output === undefined || input > PRICE_MAX || output > PRICE_MAX)
+    if (input === undefined || output === undefined || input > PRICE_MAX || output > PRICE_MAX) {
+      unpriced.add(id);
       continue;
+    }
     const cacheRead = perMTok(p.input_cache_read);
     const cacheWrite = perMTok(p.input_cache_write);
     const ctx =
@@ -103,9 +108,9 @@ export function catalogFromZdr(body: unknown): CatalogModel[] {
     const cw = maxOpt(pr.cacheWritePerMTok, cacheWrite);
     if (cw !== undefined && cw <= PRICE_MAX) pr.cacheWritePerMTok = cw;
   }
-  return [...byId.values()].sort(
-    (a, b) => a.name.localeCompare(b.name, 'en') || a.id.localeCompare(b.id, 'en'),
-  );
+  return [...byId.values()]
+    .filter((m) => !unpriced.has(m.id))
+    .sort((a, b) => a.name.localeCompare(b.name, 'en') || a.id.localeCompare(b.id, 'en'));
 }
 
 export interface ModelCatalog {
@@ -131,13 +136,13 @@ export function createModelCatalog(
     try {
       const res = await doFetch(url, {
         headers: { accept: 'application/json' },
+        redirect: 'error',
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`openrouter ${res.status}`);
       const len = Number(res.headers.get('content-length') ?? 0);
       if (len > MAX_BODY_BYTES) throw new Error('openrouter catalog too large');
-      const text = await res.text();
-      if (text.length > MAX_BODY_BYTES) throw new Error('openrouter catalog too large');
+      const text = await readCapped(res, MAX_BODY_BYTES);
       const models = catalogFromZdr(JSON.parse(text));
       // an empty list is a broken upstream, not "no models": keep the last good copy
       if (!models.length) throw new Error('openrouter catalog empty');
@@ -163,4 +168,24 @@ export function createModelCatalog(
       return good?.view ?? null;
     },
   };
+}
+
+/** The body as text, read in chunks and abandoned past `max` bytes (a missing or wrong
+ *  content-length can't make Core buffer more). */
+async function readCapped(res: Response, max: number): Promise<string> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      throw new Error('openrouter catalog too large');
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
 }

@@ -94,6 +94,12 @@ describe('catalogFromZdr', () => {
     expect(catalogFromZdr(body([ep(), ep({ supported_parameters: [] })]))[0]!.providers).toBe(1);
     expect(catalogFromZdr({})).toEqual([]);
     expect(catalogFromZdr(null)).toEqual([]);
+    // one ZDR endpoint OpenRouter could route to has no usable price: the dearest is unknown
+    expect(
+      catalogFromZdr(
+        body([ep(), ep({ provider_name: 'P2', pricing: { prompt: '-1', completion: '-1' } })]),
+      ),
+    ).toEqual([]);
   });
 
   test('sorted by name', () => {
@@ -178,6 +184,17 @@ describe('createModelCatalog', () => {
     expect(await cat.get()).toBeNull();
     const cat2 = createModelCatalog({ fetch: stub([() => new Response('<html>')]).f });
     expect(await cat2.get()).toBeNull();
+    // no content-length (chunked): the body is still cut off at the cap while it's read
+    const endless = () =>
+      new Response(
+        new ReadableStream({
+          pull(c) {
+            c.enqueue(new Uint8Array(1024 * 1024).fill(32));
+          },
+        }),
+      );
+    const cat3 = createModelCatalog({ fetch: stub([endless]).f, now: () => 0 });
+    expect(await cat3.get()).toBeNull();
   });
 });
 
