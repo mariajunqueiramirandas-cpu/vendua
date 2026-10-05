@@ -147,10 +147,12 @@ export class PgActorStore implements ActorStore<Sql> {
             select a.id, a.next_wake_at, row_number() over (order by p.rank, a.next_wake_at, a.id) as rn
             from agent_actors a
             cross join lateral (
-              select case when a.subject_kind = 'shopper_thread' then coalesce(
-                (select case t.test_kind when 'cliente_oculto' then 2 when 'owner' then 1 else 0 end
-                 from shopper_threads t where t.id = a.subject_id::uuid), 0)
-              else 0 end as rank
+              -- the cast only runs on a uuid: seeds and tests use other ids for this kind
+              select case when a.subject_kind = 'shopper_thread' and pg_input_is_valid(a.subject_id, 'uuid')
+                then coalesce(
+                  (select case t.test_kind when 'cliente_oculto' then 2 when 'owner' then 1 else 0 end
+                   from shopper_threads t where t.tenant_id = a.tenant_id and t.id = a.subject_id::uuid), 0)
+                else 0 end as rank
             ) p
             where a.tenant_id = r.tenant_id and a.lane = $1 and a.agent_id = any($2::text[])
               and a.next_wake_at <= now()

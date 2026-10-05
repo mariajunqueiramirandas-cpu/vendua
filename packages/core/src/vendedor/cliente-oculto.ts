@@ -1,6 +1,8 @@
 import {
   AllRoutesFailedError,
+  BudgetExceededError,
   isRetryableStatus,
+  NoRouteError,
   type ModelGateway,
   type ModelRequest,
 } from '@vendua/agent-runtime';
@@ -433,6 +435,8 @@ export async function clienteOcultoPass(sql: Sql, gateway: ModelGateway | null):
     const done: (ScenarioResult | undefined)[] = [];
     const results = () => done.filter((r): r is ScenarioResult => !!r);
     let failure: unknown = null;
+    // anything but the model (the database, a bug) fails the run once the others are done
+    let fault: unknown = null;
     let saving = Promise.resolve();
     const save = () =>
       (saving = saving
@@ -462,7 +466,13 @@ export async function clienteOcultoPass(sql: Sql, gateway: ModelGateway | null):
         scenarios.map(async (sc, i) => {
           done[i] = await runScenario(sql, gateway, run.tenant_id, run.id, i, sc).catch(
             (err: unknown): ScenarioResult => {
-              failure ??= err;
+              if (
+                err instanceof AllRoutesFailedError ||
+                err instanceof NoRouteError ||
+                err instanceof BudgetExceededError
+              )
+                failure ??= err;
+              else fault ??= err;
               return {
                 name: sc.name,
                 check: sc.check,
@@ -481,6 +491,7 @@ export async function clienteOcultoPass(sql: Sql, gateway: ModelGateway | null):
     } finally {
       clearInterval(renew);
     }
+    if (fault) throw fault;
     const all = results();
     if (all.length && all.every((r) => r.skipped)) {
       if (failure) throw failure;
@@ -490,7 +501,8 @@ export async function clienteOcultoPass(sql: Sql, gateway: ModelGateway | null):
       sql,
       run.tenant_id,
       (tx) =>
-        tx`update vendedor_runs set status = 'done', finished_at = now() where id = ${run.id}`,
+        tx`update vendedor_runs set status = 'done', finished_at = now(), results = ${tx.json(all as never)},
+          passed = ${all.filter((r) => r.passed).length} where id = ${run.id}`,
     );
     if (failure) coLog.warn({ err: failure, runId: run.id }, 'cliente oculto scenarios skipped');
   } catch (err) {

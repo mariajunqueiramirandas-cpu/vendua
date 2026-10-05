@@ -328,6 +328,31 @@ describe.skipIf(!OWNER_URL)('agent runtime v3 on Postgres', () => {
       order.push(c!.actor.id);
     }
     expect(order).toEqual([real, own, co]);
+    // a shopper_thread subject that isn't a uuid (seeds use one) ranks as real, never breaks the claim
+    await sql`update agent_actors set next_wake_at = null, lease_until = null, owner = null where agent_id = 'rt_test'`;
+    const { actorId: odd } = await withTenant(app, tenantId, (tx) =>
+      dispatchTx(tx, {
+        actor: {
+          tenantId,
+          agentId: 'rt_test',
+          subject: { kind: 'shopper_thread', id: `seed-${n}` },
+        },
+        kind: 'message.inbound',
+        source: 'whatsapp',
+        dedupeKey: `prio:seed:${n}`,
+        payload: { text: 'oi' },
+      }),
+    );
+    const [c] = await store.claim({
+      lane: 'interactive',
+      owner: 'prio',
+      leaseMs: 60_000,
+      limit: 1,
+      agentIds: ['rt_test'],
+      perTenantCap: 5,
+      backoffMs: () => 0,
+    });
+    expect(c!.actor.id).toBe(odd);
     await sql`update agent_actors set next_wake_at = null, lease_until = null, owner = null where agent_id = 'rt_test'`;
   });
 
