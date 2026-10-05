@@ -27,6 +27,17 @@ export const useAiCatalog = () =>
     retry: (n, err) => !(err instanceof ApiError && err.status < 500) && n < 1,
   });
 
+/** One OpenRouter model's endpoints, for the route's provider chooser; Core caches ten minutes. */
+export const useAiEndpoints = (model: string | null) =>
+  useQuery({
+    queryKey: qk.aiEndpoints(model ?? ''),
+    queryFn: () => api.aiEndpoints(model ?? ''),
+    enabled: !!model,
+    staleTime: 5 * 60_000,
+    refetchInterval: false,
+    retry: (n, err) => !(err instanceof ApiError && err.status < 500) && n < 1,
+  });
+
 export type StoreRef = Pick<CustomerRow, 'id' | 'slug' | 'name'>;
 const toRefs = (r: { stores: CustomerRow[] }): StoreRef[] =>
   r.stores.map(({ id, slug, name }) => ({ id, slug, name }));

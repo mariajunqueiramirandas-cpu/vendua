@@ -61,6 +61,7 @@ export const qk = {
   customer: (id: string) => ['customers', 'one', id] as const,
   aiModels: () => ['ai-models'] as const,
   aiCatalog: () => ['ai-catalog'] as const,
+  aiEndpoints: (model: string) => ['ai-endpoints', model] as const,
   aiUsage: (days: number) => ['ai-usage', days] as const,
 };
 
