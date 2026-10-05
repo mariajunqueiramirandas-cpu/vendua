@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useId, useRef, useState, type ReactNode } from 'react';
 import {
   api,
+  ApiError,
   type AgentTone,
   type AnswerWho,
   type Coverage,
@@ -66,6 +67,9 @@ export function useSettingsPatch() {
     } catch (e) {
       if (mine === seq) undo.restore();
       else void qc.invalidateQueries({ queryKey: qk.vendedor.settings });
+      // the store's number dropped since the screen loaded: the switch locks with its link
+      if (e instanceof ApiError && e.code === 'WHATSAPP_REQUIRED')
+        void qc.invalidateQueries({ queryKey: qk.vendedor.home });
       failed.current = p;
       setState('error');
       haptic.error();

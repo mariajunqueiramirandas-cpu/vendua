@@ -10,7 +10,7 @@ import {
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   api,
   type WaEvent,
@@ -23,7 +23,7 @@ import { usePollWhenOffline } from '../../lib/live.ts';
 import { maskPhone, parsePhone } from '../../lib/parse.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { useCan } from '../../lib/session.ts';
-import { Button } from '../../ui/Button.tsx';
+import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { copyText } from '../../ui/CopyValue.tsx';
@@ -78,6 +78,9 @@ export default function Whatsapp() {
     refetchInterval: (q) => (settling(q.state.data) ? offlinePoll : false),
   });
   const owner = useCan('owner');
+  // ?de=dua: Duá's onboarding sent the owner here, and the way back resumes it
+  const [params] = useSearchParams();
+  const dua = params.get('de') === 'dua' ? (owner ? '/vendedor/comecar' : '/vendedor') : null;
   if (error && !data)
     return (
       <PageBody>
@@ -89,7 +92,23 @@ export default function Whatsapp() {
       <PageHeader
         title="WhatsApp"
         subtitle="Seus clientes recebem cada passo do pedido pelo número da loja."
+        {...(dua ? { back: dua } : {})}
       />
+      {dua && data?.state === 'open' ? (
+        <Notice
+          tone="success"
+          role="status"
+          className="mb-6"
+          title="Pronto, o WhatsApp da loja está conectado"
+          action={
+            <ButtonLink to={dua}>
+              voltar para o Duá <ArrowRight weight="bold" />
+            </ButtonLink>
+          }
+        >
+          O Duá já pode atender por ele.
+        </Notice>
+      ) : null}
       {!data ? (
         <SectionsSkeleton columns={2} />
       ) : (

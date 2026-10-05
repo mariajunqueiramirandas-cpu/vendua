@@ -6,11 +6,23 @@ import type { AgentPart } from '../../ui/vendedor/index.ts';
 // owner stopped is Core's (`progress.step`), so another device resumes on the same screen.
 
 export type StepId =
-  'nome' | 'whatsapp' | 'li' | 'entrevista' | 'passar' | 'peca' | 'oculto' | 'quando' | 'pronto';
+  | 'whatsapp'
+  | 'numero'
+  | 'nome'
+  | 'li'
+  | 'entrevista'
+  | 'passar'
+  | 'peca'
+  | 'oculto'
+  | 'quando'
+  | 'pronto';
 
+// He answers on the store's WhatsApp, so Conhecer starts there, then whose number it is, then
+// how he talks. Progress saved before `numero` existed keeps its step ids (see `resumeAt`).
 export const ORDER: StepId[] = [
-  'nome',
   'whatsapp',
+  'numero',
+  'nome',
   'li',
   'entrevista',
   'passar',
@@ -21,8 +33,9 @@ export const ORDER: StepId[] = [
 ];
 
 export const PART_OF: Record<StepId, AgentPart> = {
-  nome: 'conhecer',
   whatsapp: 'conhecer',
+  numero: 'conhecer',
+  nome: 'conhecer',
   li: 'ensinar',
   entrevista: 'ensinar',
   passar: 'ensinar',
@@ -34,16 +47,26 @@ export const PART_OF: Record<StepId, AgentPart> = {
 
 export const isStep = (s: unknown): s is StepId => ORDER.includes(s as StepId);
 
+/** Where a saved journey resumes. `nome` was the first screen before the WhatsApp moved ahead of
+ *  it: an owner who stopped there without a linked number starts at the WhatsApp. */
+export function resumeAt(saved: unknown, linked: boolean): StepId {
+  if (!isStep(saved)) return 'whatsapp';
+  if (saved === 'nome' && !linked) return 'whatsapp';
+  return saved;
+}
+
 /** the interview's length, as the interviewer is told (5 to 8 questions) */
 export const INTERVIEW_MAX = 8;
 
 /** where the journey bar stands on each screen, and what it says */
 export function journeyAt(step: StepId, question: number): { progress: number; status: string } {
   switch (step) {
-    case 'nome':
-      return { progress: 0.25, status: '1 de 2' };
     case 'whatsapp':
-      return { progress: 0.75, status: '2 de 2' };
+      return { progress: 0.17, status: '1 de 3' };
+    case 'numero':
+      return { progress: 0.5, status: '2 de 3' };
+    case 'nome':
+      return { progress: 0.83, status: '3 de 3' };
     case 'li':
       return { progress: 0.08, status: 'o que eu li' };
     case 'entrevista':

@@ -133,12 +133,35 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('vendedor admin API (db)', () =>
       },
     });
     expect(bad.status).toBe(422);
+    // he answers on the store's WhatsApp: no linked number, no switching on (Ensaio included)
+    for (const body of [{ enabled: true }, { enabled: true, coverage: 'rehearsal' }]) {
+      const early = await owner('PATCH', '/vendedor/settings', body);
+      expect(early.status).toBe(409);
+      expect(early.body.error.code).toBe('WHATSAPP_REQUIRED');
+    }
+    await sql`insert into store_whatsapp (tenant_id, wanted, state) values (${tenantId}, true, 'pairing')`;
+    expect((await owner('PATCH', '/vendedor/settings', { enabled: true })).status).toBe(409);
+    expect(
+      await sql`select 1 from store_agent where tenant_id = ${tenantId} and enabled`,
+    ).toHaveLength(0);
+    await sql`update store_whatsapp set state = 'open' where tenant_id = ${tenantId}`;
     const on = await owner('PATCH', '/vendedor/settings', { enabled: true });
     expect(on.body.enabled).toBe(true);
     const [row] = await sql<
       { enabled_at: Date | null }[]
     >`select enabled_at from store_agent where tenant_id = ${tenantId}`;
     expect(row!.enabled_at).not.toBeNull();
+    // the number drops: he stays on, settings still save, and switching off is never gated
+    await sql`update store_whatsapp set state = 'error' where tenant_id = ${tenantId}`;
+    const still = await owner('PATCH', '/vendedor/settings', { enabled: true, tone: 'formal' });
+    expect(still.status).toBe(200);
+    expect(still.body.enabled).toBe(true);
+    const off = await owner('PATCH', '/vendedor/settings', { enabled: false });
+    expect(off.status).toBe(200);
+    expect(off.body.enabled).toBe(false);
+    expect((await owner('PATCH', '/vendedor/settings', { enabled: true })).status).toBe(409);
+    await sql`update store_whatsapp set state = 'open' where tenant_id = ${tenantId}`;
+    expect((await owner('PATCH', '/vendedor/settings', { enabled: true })).body.enabled).toBe(true);
   });
 
   test('take, reply, release and mute move the floor and wake the actor', async () => {
