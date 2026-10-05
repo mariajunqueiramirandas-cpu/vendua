@@ -50,8 +50,10 @@ export interface ReadCacheOptions {
  */
 export class StoreReadCache {
   private stores = new Map<string, Store>();
-  private inflight = new Map<string, { gen: string; p: Promise<unknown> }>();
+  private inflight = new Map<string, { store: Store; gen: string; p: Promise<unknown> }>();
   private allGen = 0;
+  /** bumped by each subscribe: callbacks of an abandoned one become no-ops */
+  private epoch = 0;
   private listening = false;
   private starting: Promise<void> | null = null;
   private unlisten: (() => Promise<void>) | null = null;
@@ -105,11 +107,11 @@ export class StoreReadCache {
       this.inflight.clear();
       return;
     }
-    const store = this.stores.get(tenantId);
-    if (!store) return;
-    this.drop(store, table);
+    // a load in flight for an evicted store must not be joined either
     for (const k of this.inflight.keys())
       if (k.startsWith(`${tenantId}\u0000`)) this.inflight.delete(k);
+    const store = this.stores.get(tenantId);
+    if (store) this.drop(store, table);
   }
 
   /** subscribes now rather than on the first read; true once reads are being kept */
@@ -163,8 +165,8 @@ export class StoreReadCache {
     const id = `${tenantId}\u0000${key}`;
     const gen = `${this.allGen}.${store.gen}`;
     const running = this.inflight.get(id);
-    if (running && running.gen === gen) return running.p as Promise<T>;
-    const slot: { gen: string; p: Promise<unknown> } = { gen, p: Promise.resolve() };
+    if (running && running.store === store && running.gen === gen) return running.p as Promise<T>;
+    const slot = { store, gen, p: Promise.resolve() as Promise<unknown> };
     const p = (async () => {
       try {
         const value = await load();
@@ -188,11 +190,14 @@ export class StoreReadCache {
 
   private start(): Promise<void> {
     if (this.stopped) return Promise.resolve();
-    this.starting ??= this.sql
+    if (this.starting) return this.starting;
+    const epoch = ++this.epoch;
+    this.starting = this.sql
       .listen(
         STORE_CACHE_CHANNEL,
-        (payload) => this.onNotify(payload),
+        (payload) => epoch === this.epoch && this.onNotify(payload),
         () => {
+          if (epoch !== this.epoch) return;
           // first subscribe, or a reconnect that may have missed notifies: start clean
           this.invalidate('*');
           this.listening = !this.stopped;
@@ -245,12 +250,13 @@ export class StoreReadCache {
   private async barrier(): Promise<boolean> {
     const nonce = crypto.randomUUID();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const seen = new Promise<boolean>((resolve) => {
-      this.syncs.set(nonce, () => resolve(true));
-      timer = setTimeout(() => resolve(false), 2_000);
-    });
+    let answer!: (seen: boolean) => void;
+    const seen = new Promise<boolean>((resolve) => (answer = resolve));
+    this.syncs.set(nonce, () => answer(true));
     try {
       await this.sql`select pg_notify(${STORE_CACHE_CHANNEL}, ${`sync|${nonce}`})`;
+      // the clock starts once the notify is committed: a saturated pool isn't a dead listener
+      timer = setTimeout(() => answer(false), 2_000);
       return await seen;
     } catch {
       return false;

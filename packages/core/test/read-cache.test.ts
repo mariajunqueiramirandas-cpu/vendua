@@ -204,6 +204,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront read cache (db)', ()
     }).toThrow();
   });
 
+  test('a store evicted mid-load never hands that load to a read after a write', async () => {
+    const small = new StoreReadCache(sql, { maxStores: 1 });
+    expect(await small.ready()).toBe(true);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const first = small.read(
+      tenantId,
+      'k',
+      async () => {
+        await gate;
+        return 'before';
+      },
+      { deps: ['products'] },
+    );
+    // another store takes the only slot, then a write lands for the first one
+    await small.read(otherTenant, 'k', async () => 'other', { deps: ['products'] });
+    small.invalidate(tenantId, 'products');
+    const after = small.read(tenantId, 'k', async () => 'after', { deps: ['products'] });
+    release();
+    expect(await first).toBe('before');
+    expect(await after).toBe('after');
+    small.stop();
+  });
+
   test('the default (strict) cache sees a write on the very next read', async () => {
     const strict = createApp({
       sql,

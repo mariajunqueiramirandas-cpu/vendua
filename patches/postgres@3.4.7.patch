@@ -1,23 +1,29 @@
+diff --git a/node_modules/postgres/.bun-tag-5eb8a27c9173d556 b/.bun-tag-5eb8a27c9173d556
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/node_modules/postgres/.bun-tag-6bdd8c75e763e61a b/.bun-tag-6bdd8c75e763e61a
 new file mode 100644
 index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/src/index.js b/src/index.js
-index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..96820ce12ffac3cf50cc0bb67c024760feceeb5f 100644
+index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..5741e068e8a395b7d6709175e74cead65b54cef3 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -238,24 +238,35 @@ function Postgres(a, b) {
+@@ -238,24 +238,38 @@ function Postgres(a, b) {
        , connection
        , prepare = null
  
 +    // venduá patch: the transaction's queries are pipelined behind BEGIN instead of waiting
-+    // a round trip for its reply; BEGIN's own result is still checked before COMMIT
++    // a round trip for its reply; BEGIN's own result is still checked before COMMIT. Only a
++    // bare BEGIN, which can't fail on a live connection (statements pipelined behind a failed
++    // one would run outside the transaction); with options it is awaited as before.
++    const bare = !options.replace(/[^a-z ]/ig, '').trim()
 +    let assigned
 +    const reserving = new Promise(r => assigned = r)
 +    const began = sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
 +    began.catch(() => { /* awaited in scope */ })
      try {
 -      await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
-+      await Promise.race([reserving, began])
++      await (bare ? Promise.race([reserving, began]) : began)
 +      // onexecute leaves the connection in `full`, where scope would queue queries one per
 +      // ReadyForQuery; it is ours alone from here, so let scope write to it directly
 +      connection.queue === full && move(connection, reserved)
@@ -45,7 +51,7 @@ index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..96820ce12ffac3cf50cc0bb67c024760
        try {
          result = await new Promise((resolve, reject) => {
            const x = fn(sql)
-@@ -264,7 +275,13 @@ function Postgres(a, b) {
+@@ -264,7 +278,13 @@ function Postgres(a, b) {
  
          if (uncaughtError)
            throw uncaughtError
@@ -59,7 +65,7 @@ index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..96820ce12ffac3cf50cc0bb67c024760
          await (name
            ? sql`rollback to ${ sql(name) }`
            : sql`rollback`
-@@ -302,6 +319,7 @@ function Postgres(a, b) {
+@@ -302,6 +322,7 @@ function Postgres(a, b) {
        c.reserved = () => queries.length
          ? c.execute(queries.shift())
          : move(c, reserved)

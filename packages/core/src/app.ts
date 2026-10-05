@@ -296,7 +296,14 @@ const CATALOG_DEPS = [
   'combo_slot_items',
 ];
 const PRODUCT_DEPS = [...CATALOG_DEPS, 'notify_requests'];
-const SURFACES_DEPS = ['store_settings', 'storefront_templates', 'storefront_tokens', 'domains'];
+// publicUrl falls back to the slug when the store has no public domain
+const SURFACES_DEPS = [
+  'store_settings',
+  'storefront_templates',
+  'storefront_tokens',
+  'domains',
+  'tenants',
+];
 const STATE_DEPS = ['store_settings', 'storefront_ops', 'storefront_templates'];
 const ZONES_DEPS = ['delivery_zones'];
 const SETTINGS_DEPS = ['store_settings'];
