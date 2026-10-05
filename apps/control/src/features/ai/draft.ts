@@ -2,6 +2,8 @@ import type {
   AiBudgetsSetting,
   AiCatalogModel,
   AiModelsView,
+  AiPricing,
+  DirectProviderId,
   ModelProviderId,
   ModelRouteSetting,
   ModelRoutesSetting,
@@ -17,6 +19,7 @@ export const PROVIDERS: readonly ModelProviderId[] = [
   'openai',
   'gemini',
 ];
+export const DIRECT: readonly DirectProviderId[] = ['anthropic', 'openai', 'gemini'];
 export const MAX_ROUTES = 5;
 const MODEL_RE = /^[A-Za-z0-9._/:@-]+$/;
 const PRICE_MAX = 1000;
@@ -68,18 +71,13 @@ const parse = (s: string) => {
 };
 const filled = (s: string) => s.trim() !== '';
 
-/**
- * Core asks OpenRouter for zero-data-retention endpoints on every call (models.ts), so those
- * routes are ZDR by construction. For a direct provider it depends on that account's contract:
- * staff attest it per route.
- */
-export const zdrImplied = (provider: string) => provider === 'openrouter';
+export const validModelId = (s: string) => s.length <= 200 && MODEL_RE.test(s);
 
 export const emptyRoute = (): RouteDraft => ({
   uid: uid(),
   provider: '',
   model: '',
-  zdr: false,
+  zdr: true,
   inputPerMTok: '',
   outputPerMTok: '',
   cacheReadPerMTok: '',
@@ -116,7 +114,7 @@ function routeOut(d: RouteDraft): ModelRouteSetting {
   const out: ModelRouteSetting = {
     provider: d.provider as ModelProviderId,
     model: d.model.trim(),
-    zdr: d.zdr || zdrImplied(d.provider),
+    zdr: d.zdr,
   };
   if (PRICE_FIELDS.some((f) => filled(d[f]))) {
     out.pricing = { inputPerMTok: parse(d.inputPerMTok), outputPerMTok: parse(d.outputPerMTok) };
@@ -154,28 +152,108 @@ export function routesOut(d: RoutesDraft): ModelRoutesSetting {
   return out;
 }
 
-/** a different provider is a different account: its attestation starts over */
+/** a different provider is a different account and model list. OpenRouter enforces zero retention
+ *  itself (on by default); on a direct provider it's a claim about the account's contract, so it
+ *  starts off until someone confirms it */
 export const withProvider = (r: RouteDraft, provider: string): RouteDraft => ({
-  ...r,
+  ...emptyRoute(),
+  uid: r.uid,
   provider,
-  zdr: zdrImplied(provider),
+  zdr: provider === 'openrouter' || provider === '' ? r.zdr : false,
+  timeoutS: r.timeoutS,
 });
 
-/** an OpenRouter catalog pick: model id and prices together, so the budget estimate matches */
-export const withCatalogModel = (r: RouteDraft, m: AiCatalogModel): RouteDraft => ({
+/** One pickable model for a route's provider and ZDR choice, priced from the right source. */
+export interface ModelOption {
+  /** what the route stores: the OpenRouter id, or the id on the provider's own API */
+  model: string;
+  name: string;
+  contextLength: number | null;
+  pricing: AiPricing;
+  /** OpenRouter with ZDR on: how many zero-retention providers serve it */
+  zdrProviders?: number | undefined;
+  /** direct: false when the id was derived from OpenRouter's and the server couldn't check it */
+  verified: boolean;
+}
+
+/** OpenRouter: ZDR on prices by its zero-retention providers; direct: first-party list price. */
+export const sourcePricing = (m: AiCatalogModel, provider: string, zdr: boolean) =>
+  provider === 'openrouter' ? (zdr ? m.zdr?.pricing : m.pricing) : m.pricing;
+
+/** null: no list for this provider (unknown or not chosen yet) */
+export function catalogOptions(
+  models: AiCatalogModel[],
+  provider: string,
+  zdr: boolean,
+): ModelOption[] | null {
+  const out = new Map<string, ModelOption>();
+  if (provider === 'openrouter') {
+    for (const m of models) {
+      const pricing = sourcePricing(m, provider, zdr);
+      if (!pricing) continue;
+      out.set(m.id, {
+        model: m.id,
+        name: m.name,
+        contextLength: m.contextLength,
+        pricing,
+        zdrProviders: zdr ? m.zdr?.providers : undefined,
+        verified: true,
+      });
+    }
+  } else if (DIRECT.includes(provider as DirectProviderId)) {
+    for (const m of models) {
+      const d = m.direct;
+      if (d?.provider !== provider || out.has(d.model)) continue;
+      out.set(d.model, {
+        model: d.model,
+        // "Anthropic: Claude Haiku 4.5" under Anthropic already says whose it is
+        name: m.name.replace(/^[^:]{1,40}:\s+/, ''),
+        contextLength: m.contextLength,
+        pricing: m.pricing,
+        verified: d.verified,
+      });
+    }
+  } else return null;
+  return [...out.values()];
+}
+
+const withPricing = (r: RouteDraft, p: AiPricing): RouteDraft => ({
   ...r,
-  model: m.id,
-  zdr: true,
-  inputPerMTok: str(m.pricing.inputPerMTok),
-  outputPerMTok: str(m.pricing.outputPerMTok),
-  cacheReadPerMTok: str(m.pricing.cacheReadPerMTok),
-  cacheWritePerMTok: str(m.pricing.cacheWritePerMTok),
+  inputPerMTok: str(p.inputPerMTok),
+  outputPerMTok: str(p.outputPerMTok),
+  cacheReadPerMTok: str(p.cacheReadPerMTok),
+  cacheWritePerMTok: str(p.cacheWritePerMTok),
 });
 
-/** the draft's input/output price differs from what the catalog says now */
-export const priceDrifted = (r: RouteDraft, m: AiCatalogModel) =>
-  parse(r.inputPerMTok) !== m.pricing.inputPerMTok ||
-  parse(r.outputPerMTok) !== m.pricing.outputPerMTok;
+/** a catalog pick: model id and prices together, so the budget estimate matches */
+export const withOption = (r: RouteDraft, o: ModelOption): RouteDraft =>
+  withPricing({ ...r, model: o.model }, o.pricing);
+
+/** a typed id: the old prices belonged to another model */
+export const withCustomModel = (r: RouteDraft, model: string): RouteDraft => ({
+  ...r,
+  model,
+  inputPerMTok: '',
+  outputPerMTok: '',
+  cacheReadPerMTok: '',
+  cacheWritePerMTok: '',
+});
+
+/** the draft's input/output price differs from `p` */
+export const priceDrifted = (r: RouteDraft, p: AiPricing) =>
+  parse(r.inputPerMTok) !== p.inputPerMTok || parse(r.outputPerMTok) !== p.outputPerMTok;
+
+/**
+ * On OpenRouter the switch changes which endpoints serve the model, so its price: follow the
+ * new source unless the staff set their own price.
+ */
+export function withZdr(r: RouteDraft, zdr: boolean, models: AiCatalogModel[] | undefined) {
+  const next = { ...r, zdr };
+  const m = r.provider === 'openrouter' ? models?.find((x) => x.id === r.model.trim()) : undefined;
+  const from = m && sourcePricing(m, r.provider, r.zdr);
+  const to = m && sourcePricing(m, r.provider, zdr);
+  return from && to && !priceDrifted(r, from) ? withPricing(next, to) : next;
+}
 
 export const scopePath = (kind: 'default' | 'agents' | 'tenants', id?: string) =>
   kind === 'default' ? 'default' : `${kind}.${id}`;
@@ -214,8 +292,6 @@ export function validateRoutes(d: RoutesDraft): Errors {
         if (!m) errs[`${p}.model`] = 'informe o modelo';
         else if (m.length > 200) errs[`${p}.model`] = 'até 200 caracteres';
         else if (!MODEL_RE.test(m)) errs[`${p}.model`] = 'só letras, números e . _ / : @ -';
-        if (!r.zdr && !zdrImplied(r.provider))
-          errs[`${p}.zdr`] = 'confirme a retenção zero para salvar';
         const anyPrice = PRICE_FIELDS.some((f) => filled(r[f]));
         for (const f of PRICE_FIELDS) {
           const required = f === 'inputPerMTok' || f === 'outputPerMTok';

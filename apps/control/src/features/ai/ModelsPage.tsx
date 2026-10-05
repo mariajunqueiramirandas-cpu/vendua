@@ -84,9 +84,9 @@ function IntroPanel({ view }: { view: AiModelsView }) {
           mudanças valem em até um minuto depois de salvar.
         </p>
         <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
-          Só entram provedores com retenção zero de dados: nada do que o Duá envia fica guardado com
-          eles. Pela OpenRouter isso vale em toda chamada; num provedor direto, você confirma que a
-          conta tem esse contrato.
+          Cada rota escolhe se usa retenção zero de dados, e o recomendado é usar: nada do que o Duá
+          envia fica guardado com o provedor. Pela OpenRouter, a chamada só vai a provedores que
+          garantem isso; num provedor direto, vale o que o contrato da conta diz.
         </p>
         {view.routesSource === 'none' && (
           <Notice tone="bad">

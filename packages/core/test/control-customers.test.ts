@@ -101,10 +101,15 @@ describe('validateSetting: agent_runtime.routes and agent_runtime.budgets', () =
       });
   });
 
-  test('routes: a route without zero data retention is refused in words staff read', () => {
-    const err = field('agent_runtime.routes', { default: { fast: [route({ zdr: false })] } });
-    expect(err?.message).toBe('rotas sem retenção zero são recusadas');
-    expect(err?.details?.field).toBe('default.fast.0.zdr');
+  test('routes: zdr is a per-route choice, but must be a boolean', () => {
+    expect(
+      field('agent_runtime.routes', { default: { fast: [route({ zdr: false })] } }),
+    ).toBeNull();
+    const { zdr: _omit, ...noZdr } = route();
+    for (const r of [noZdr, route({ zdr: null }), route({ zdr: 1 }), route({ zdr: 'false' })])
+      expect(field('agent_runtime.routes', { default: { fast: [r] } })?.details?.field).toBe(
+        'default.fast.0.zdr',
+      );
   });
 
   test('budgets: keys with USD a day, per store overrides', () => {
@@ -665,7 +670,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     const saved = await call('PUT', '/control/v1/settings/agent_runtime.routes', { value });
     expect(saved.status).toBe(200);
     const refused = await call('PUT', '/control/v1/settings/agent_runtime.routes', {
-      value: { default: { fast: [route({ zdr: false })] } },
+      value: { default: { fast: [route({ zdr: 'no' })] } },
     });
     expect(refused.status).toBe(422);
     const fromSettings = await get();

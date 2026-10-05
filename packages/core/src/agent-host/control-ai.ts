@@ -57,12 +57,12 @@ export function mountAgentRuntimeAi(o: {
   storeDomain?: string;
   /** where provider keys and AGENT_MODEL_ROUTES are read (default process.env) */
   env?: Record<string, string | undefined>;
-  /** OpenRouter's ZDR model list (default: fetched from openrouter.ai, cached an hour) */
+  /** the model picker's list (default: OpenRouter + keyed providers, cached an hour) */
   catalog?: ModelCatalog;
 }) {
   const { app, sql, controlGate } = o;
   const env = o.env ?? process.env;
-  const catalog = o.catalog ?? createModelCatalog();
+  const catalog = o.catalog ?? createModelCatalog({ env });
   const storeDomain = o.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br';
   const settings = (tx: Sql) => tx<{ key: string; value: Record<string, unknown> }[]>`
     select key, value from control_settings
@@ -93,8 +93,8 @@ export function mountAgentRuntimeAi(o: {
     });
   });
 
-  // The CRM's model picker for OpenRouter routes: models with a zero-data-retention endpoint that
-  // takes tool calls, priced at their dearest such endpoint.
+  // The CRM's model picker: OpenRouter's tool-capable models with their default and ZDR prices,
+  // and each one's id on Anthropic, OpenAI or Gemini directly (model-catalog.ts).
   app.get('/control/v1/ai/catalog', async (c) => {
     controlGate(c);
     const view = await catalog.get();

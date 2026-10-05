@@ -43,15 +43,23 @@ export class ProviderError extends Error {
   }
 }
 
-export class NoZdrRouteError extends Error {
-  override readonly name = 'NoZdrRouteError';
+export class NoRouteError extends Error {
+  override readonly name: string = 'NoRouteError';
   constructor(
     readonly tenantId: string,
     readonly agentId: string,
     readonly tier: string,
   ) {
-    super(`no zero-data-retention route for ${agentId}/${tier} (tenant ${tenantId})`);
+    super(`no model route for ${agentId}/${tier} (tenant ${tenantId})`);
   }
+}
+
+/**
+ * The name from when every route had to be ZDR (until 2026-10-05). The gateway still throws this
+ * subclass when a request has no route at all, so `instanceof` on either name holds.
+ */
+export class NoZdrRouteError extends NoRouteError {
+  override readonly name: string = 'NoZdrRouteError';
 }
 
 export interface RouteFailure {
@@ -325,8 +333,7 @@ export function createGateway(opts: GatewayOpts): ModelGateway {
     async generate(req: ModelRequest, gen: GenerateOpts = {}): Promise<ModelResponse> {
       const started = now();
       const { meta, tier, ...rest } = req;
-      const resolved = await opts.routes.routes(meta.tenantId, meta.agentId, tier);
-      const routes = resolved.filter((r) => r.zdr === true);
+      const routes = await opts.routes.routes(meta.tenantId, meta.agentId, tier);
       if (routes.length === 0) throw new NoZdrRouteError(meta.tenantId, meta.agentId, tier);
 
       const vault = createPiiVault();
@@ -350,7 +357,7 @@ export function createGateway(opts: GatewayOpts): ModelGateway {
             const { out, hedged } = await call(
               adapter,
               route,
-              { ...base, model: route.model },
+              { ...base, model: route.model, zdr: route.zdr === true },
               gen,
             );
             breaker.success(route.provider);

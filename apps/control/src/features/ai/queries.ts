@@ -14,7 +14,10 @@ export const useAiUsage = (days: AiDays) =>
 
 export const useAiModels = () => useQuery({ queryKey: qk.aiModels(), queryFn: api.aiModels });
 
-/** OpenRouter's ZDR models; Core caches them an hour, so no poll and one quick retry. */
+/**
+ * OpenRouter's models, also mapped to the direct providers' ids. Core caches them an hour, so
+ * no poll and one quick retry.
+ */
 export const useAiCatalog = () =>
   useQuery({
     queryKey: qk.aiCatalog(),

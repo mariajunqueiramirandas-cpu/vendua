@@ -434,11 +434,8 @@ function validateRoute(r: unknown, at: string, bad: Bad) {
     throw bad(`${at}.provider`, `must be ${ROUTE_PROVIDERS.join(' | ')}`);
   if (typeof r.model !== 'string' || !ROUTE_MODEL.test(r.model))
     throw bad(`${at}.model`, 'must be 1–200 characters of A–Z a–z 0–9 . _ / : @ -');
-  if (r.zdr === false)
-    throw new HttpError(422, 'BAD_REQUEST', 'rotas sem retenção zero são recusadas', {
-      field: `${at}.zdr`,
-    });
-  if (r.zdr !== true) throw bad(`${at}.zdr`, 'must be true');
+  // a per-route choice since 2026-10-05 (default on in the CRM), but never left implicit
+  if (typeof r.zdr !== 'boolean') throw bad(`${at}.zdr`, 'must be true or false');
   if (r.pricing !== undefined) {
     const p = r.pricing;
     if (!plainObject(p)) throw bad(`${at}.pricing`, 'must be an object');

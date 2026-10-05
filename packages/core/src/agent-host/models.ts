@@ -16,9 +16,10 @@ import type { Sql } from '../platform/db.ts';
  *   { "default": { "fast": [route…], "strong": [route…] },
  *     "agents":  { "<agentId>": { "fast": […] } },
  *     "tenants": { "<tenantId>": { "strong": […] } } }
- * a route is { provider, model, zdr, pricing?, timeoutMs? }. The most specific list wins, and the
- * gateway refuses any route whose `zdr` isn't true (the owner's rule, 2026-10-03). With no
- * setting, `AGENT_MODEL_ROUTES` (same JSON) is the fallback.
+ * a route is { provider, model, zdr, pricing?, timeoutMs? }. The most specific list wins. `zdr`
+ * (zero data retention) is staff's per-route choice since 2026-10-05 (default on in the CRM):
+ * OpenRouter enforces it per request when on; on a direct provider it's the account's contract.
+ * With no setting, `AGENT_MODEL_ROUTES` (same JSON) is the fallback.
  */
 type TierRoutes = Partial<Record<Tier, ModelRoute[]>>;
 interface RoutesSetting {
@@ -40,7 +41,15 @@ export function routesFrom(
     setting.agents?.[agentId]?.[tier] ??
     setting.default?.[tier] ??
     []
-  ).filter((r) => r && typeof r.provider === 'string' && typeof r.model === 'string');
+  ).filter(
+    (r) =>
+      r &&
+      typeof r.provider === 'string' &&
+      typeof r.model === 'string' &&
+      // AGENT_MODEL_ROUTES never goes through validateSetting: a route that doesn't say whether
+      // it wants zero retention isn't guessed at
+      typeof r.zdr === 'boolean',
+  );
 }
 
 export function settingRoutes(sql: Sql): RouteResolver {
@@ -79,8 +88,10 @@ export function adaptersFromEnv(
         id: 'openrouter',
         baseUrl: 'https://openrouter.ai/api/v1',
         apiKey: env.OPENROUTER_API_KEY,
-        // only endpoints with a zero-data-retention policy, and never for training
-        extraBody: { provider: { zdr: true, data_collection: 'deny' } },
+        // never a provider that trains on what Duá sends; a `zdr` route also only endpoints with a
+        // zero-data-retention policy
+        extraBody: { provider: { data_collection: 'deny' } },
+        zdrBody: { provider: { zdr: true, data_collection: 'deny' } },
         cacheMarkers: true,
       }),
     );

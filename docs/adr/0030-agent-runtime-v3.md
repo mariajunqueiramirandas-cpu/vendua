@@ -68,6 +68,8 @@ first agent; the CRM agent moves to it afterwards.
 9. **A model gateway.**
    - Fast and strong tiers mapped per tenant to providers reached only through a
      zero-data-retention arrangement (the owner's rule, 2026-10-03).
+     - Amended 2026-10-05: ZDR is a per-route choice (default on in the CRM); OpenRouter
+       enforces it per request when on; on a direct provider it's the account's contract.
    - Fallback, and hedged requests for the slowest calls.
    - Strict schemas, re-validated by the runtime.
    - Budgets per turn, subject and tenant, checked before and after every call.
@@ -114,7 +116,7 @@ Step 1's runtime and host, before any agent is registered. Each decision lives i
 | 6   | Preemption before each model call and send-effect tool; the reply's transaction checks the mailbox and supersedes instead of sending.                                                                                                                |
 | 7   | `src/define/`: `defineAgent` (version = hash of the manifest, function bodies included), `defineTool`, `defineSkill`, guards, `defineStatechart`.                                                                                                    |
 | 8   | `src/ledger/`: figures, `{{id}}` rendering, the verifier; stock guards in `src/guards/stock.ts`, the supervisor among them.                                                                                                                          |
-| 9   | `src/model/`: ZDR-only routes, fallback, breaker, hedging, budgets via the meter, PII tokens; adapters for Anthropic and OpenAI-compatible APIs (OpenRouter with `zdr`). Routes from `control_settings` `agent_runtime.routes`.                      |
+| 9   | `src/model/`: per-route ZDR, fallback, breaker, hedging, budgets via the meter, PII tokens; adapters for Anthropic and OpenAI-compatible APIs (OpenRouter with `zdr`). Routes from `control_settings` `agent_runtime.routes`.                        |
 | 10  | `src/evals/`: scenarios, personas, assertions, pass^k, cassettes, counterfactual replay, online QA (`agent-host/qa.ts`), rings (`agent-host/versions.ts`: deploy, resolver, ring controller, CI's eval report endpoint).                             |
 | 11  | `tools/check-agent-runtime-boundary.mjs` in CI.                                                                                                                                                                                                      |
 | 12  | The own engine; DBOS stays plan B (open decision 1).                                                                                                                                                                                                 |

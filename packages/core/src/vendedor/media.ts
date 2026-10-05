@@ -3,11 +3,11 @@ import { controlTx } from '../modules/control.ts';
 import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 
-// Voice notes, photos and spoken replies (sales-agent.md §4.5). Every call goes to a provider
-// only through a route staff marked zero-data-retention (the owner's rule, 2026-10-03), set in
-// `control_settings` key `agent_runtime.media_routes`:
+// Voice notes, photos and spoken replies (sales-agent.md §4.5). Calls go to a provider through
+// the routes staff set in `control_settings` key `agent_runtime.media_routes`:
 //   { "transcribe": [route…], "speak": [route…] }   route = { provider, model, zdr, voice? }
-// A route without `zdr: true` is never used. Photos go through the model gateway's own ZDR routes.
+// `zdr` is staff's record of the provider account's retention terms (a per-route choice since
+// 2026-10-05); every route is used either way. Photos go through the model gateway's routes.
 
 const mediaLog = log.child({ mod: 'vendedor-media' });
 
@@ -55,7 +55,7 @@ function confidenceOf(segments: unknown): number | null {
   return Math.max(0, Math.min(1, Math.exp(lp.reduce((a, b) => a + b, 0) / lp.length)));
 }
 
-/** Providers reached with this process's keys, through the staff-set ZDR routes. */
+/** Providers reached with this process's keys, through the staff-set routes. */
 export function mediaProviders(
   sql: Sql,
   env: Record<string, string | undefined> = process.env,
@@ -71,7 +71,7 @@ export function mediaProviders(
       );
       cached = { at: Date.now(), value: rows[0]?.value ?? {} };
     }
-    return (cached.value[kind] ?? []).filter((r) => r && r.zdr === true);
+    return (cached.value[kind] ?? []).filter((r) => r && typeof r.model === 'string');
   };
 
   return {
@@ -101,9 +101,9 @@ export function mediaProviders(
             form.set('file', new Blob([audio], { type: mime.split(';')[0] ?? mime }), 'audio.ogg');
             form.set('model_id', r.model);
             form.set('language_code', 'por');
-            // zero-retention mode: nothing is logged or kept on their side
+            // zero-retention mode (enterprise accounts): nothing is logged or kept on their side
             const j = (await fetchJson(
-              'https://api.elevenlabs.io/v1/speech-to-text?enable_logging=false',
+              `https://api.elevenlabs.io/v1/speech-to-text${r.zdr ? '?enable_logging=false' : ''}`,
               {
                 method: 'POST',
                 headers: { 'xi-api-key': env.ELEVENLABS_API_KEY },
@@ -129,7 +129,7 @@ export function mediaProviders(
         try {
           if (r.provider === 'elevenlabs' && env.ELEVENLABS_API_KEY && r.voice) {
             const res = await fetch(
-              `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(r.voice)}?enable_logging=false&output_format=opus_48000_64`,
+              `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(r.voice)}?output_format=opus_48000_64${r.zdr ? '&enable_logging=false' : ''}`,
               {
                 method: 'POST',
                 headers: {

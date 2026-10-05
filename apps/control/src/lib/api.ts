@@ -1435,7 +1435,7 @@ export type ModelProviderId = 'anthropic' | 'openrouter' | 'openai' | 'gemini';
 export interface ModelRouteSetting {
   provider: ModelProviderId;
   model: string;
-  /** must be true: the gateway refuses routes without zero data retention */
+  /** OpenRouter: only zero-retention providers; direct: staff's word on the account's contract */
   zdr: boolean;
   pricing?: {
     inputPerMTok: number;
@@ -1472,20 +1472,26 @@ export interface AiModelsView {
     defaultTier: ModelTier;
   }[];
 }
-/** GET /ai/catalog: OpenRouter models with a zero-data-retention endpoint that takes tool calls */
+export interface AiPricing {
+  /** USD per 1M tokens */
+  inputPerMTok: number;
+  outputPerMTok: number;
+  cacheReadPerMTok?: number;
+  cacheWritePerMTok?: number;
+}
+export type DirectProviderId = Exclude<ModelProviderId, 'openrouter'>;
+/** GET /ai/catalog: OpenRouter's tool-capable models, also the source for the direct providers */
 export interface AiCatalogModel {
+  /** OpenRouter id, e.g. "anthropic/claude-haiku-4.5" */
   id: string;
   name: string;
   contextLength: number | null;
-  /** ZDR endpoints serving it */
-  providers: number;
-  /** USD per 1M tokens, the dearest of its ZDR endpoints */
-  pricing: {
-    inputPerMTok: number;
-    outputPerMTok: number;
-    cacheReadPerMTok?: number;
-    cacheWritePerMTok?: number;
-  };
+  /** normal routing; for a model with `direct`, also that provider's list price */
+  pricing: AiPricing;
+  /** null: no zero-retention provider serves it on OpenRouter */
+  zdr: null | { providers: number; pricing: AiPricing };
+  /** the id on that provider's own API; `verified: false` = derived, the server couldn't check */
+  direct: null | { provider: DirectProviderId; model: string; verified: boolean };
 }
 export interface AiCatalogView {
   fetchedAt: string;

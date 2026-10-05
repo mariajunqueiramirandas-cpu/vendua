@@ -60,6 +60,9 @@ it.** The owner's decisions of 2026-10-05:
   wrote, once.
 - The model sees the profile name and the messages, never the phone number. It runs through the
   zero-data-retention gateway like every other model call (ADR 0031 decision 8).
+  - Amended 2026-10-05: ZDR is a per-route choice (default on in the CRM), so the history
+    check's chat goes to whatever route is configured. A ZDR route is recommended. OpenRouter
+    enforces ZDR per request when it's on; on a direct provider it's the account's contract.
 
 ## Consequences and known risks
 

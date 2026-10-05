@@ -596,6 +596,9 @@ this is the code version, and the sales agent can adopt it later.
   - The gateway keeps a `zdr` flag per provider and route. Staff set it only after the
     arrangement is confirmed, and the gateway refuses to send store or shopper data anywhere
     else.
+  - Amended 2026-10-05: ZDR is a per-route choice (default on in the CRM), and the gateway
+    uses any route. OpenRouter enforces it per request when on; on a direct provider it's
+    the account's contract.
   - Provider features that keep data on their side (stored conversations, server-side memory,
     uploaded files, batch jobs) stay off.
 - **Latency targets** (proposed): from the shopper's last keystroke to the reply in the send
