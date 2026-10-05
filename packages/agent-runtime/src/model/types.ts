@@ -10,7 +10,11 @@ export interface Pricing {
   cacheWritePerMTok?: number;
 }
 
-/** One way to reach a model. `zdr` is set by staff per route; the gateway refuses any other. */
+/**
+ * One way to reach a model. `zdr` (zero data retention) is staff's per-route choice: the gateway
+ * passes it to the adapter (OpenRouter enforces it per request); on a direct provider it's the
+ * account's contract.
+ */
 export interface ModelRoute {
   provider: string;
   model: string;
@@ -22,6 +26,8 @@ export interface ModelRoute {
 /** A request as one adapter receives it: the routed model, no Venduá metadata. */
 export interface ProviderRequest extends Omit<ModelRequest, 'meta' | 'tier'> {
   model: string;
+  /** The route's `zdr`; an adapter that can enforce it per request does. */
+  zdr?: boolean;
 }
 
 export interface ProviderAdapter {

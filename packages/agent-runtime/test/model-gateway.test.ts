@@ -3,6 +3,7 @@ import type { ModelRequest, ModelResponse } from '../src/types.ts';
 import {
   AllRoutesFailedError,
   BudgetExceededError,
+  NoRouteError,
   NoZdrRouteError,
   anthropicAdapter,
   createGateway,
@@ -43,15 +44,17 @@ function request(over: Partial<ModelRequest> = {}): ModelRequest {
 const fastRetry = { retry: { baseMs: 1, maxMs: 1 } };
 
 describe('routing', () => {
-  test('refuses routes without zero data retention', async () => {
+  test('throws NoRouteError (and the old NoZdrRouteError) when there is no route', async () => {
     const a = scriptedAdapter([{ text: 'x' }], 'a');
-    const gw = createGateway({ adapters: [a], routes: resolver([route('a', { zdr: false })]) });
-    await expect(gw.generate(request())).rejects.toBeInstanceOf(NoZdrRouteError);
+    const gw = createGateway({ adapters: [a], routes: resolver([]) });
+    const err = await gw.generate(request()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NoRouteError);
+    expect(err).toBeInstanceOf(NoZdrRouteError);
     expect(a.requests).toHaveLength(0);
   });
 
-  test('skips a non-zdr route and uses the next', async () => {
-    const a = scriptedAdapter([{ text: 'from a' }], 'a');
+  test("uses a route without zero data retention and passes each route's zdr", async () => {
+    const a = scriptedAdapter(() => ({ error: { status: 400, message: 'bad' } }), 'a');
     const b = scriptedAdapter([{ text: 'from b' }], 'b');
     const gw = createGateway({
       adapters: [a, b],
@@ -60,9 +63,17 @@ describe('routing', () => {
     const res = await gw.generate(request());
     expect(res.text).toBe('from b');
     expect(res.provider).toBe('b');
-    expect(a.requests).toHaveLength(0);
+    expect(a.requests).toHaveLength(1);
+    expect(a.requests[0]!.zdr).toBe(false);
+    expect(b.requests[0]!.zdr).toBe(true);
     expect(b.requests[0]!.model).toBe('b-m');
     expect('meta' in b.requests[0]!).toBe(false);
+  });
+
+  test('a lone non-zdr route answers', async () => {
+    const a = scriptedAdapter([{ text: 'ok' }], 'a');
+    const gw = createGateway({ adapters: [a], routes: resolver([route('a', { zdr: false })]) });
+    expect((await gw.generate(request())).text).toBe('ok');
   });
 
   test('retries a 500 once, then falls back', async () => {
@@ -491,12 +502,13 @@ describe('openai-compatible adapter', () => {
       id: 'openrouter',
       baseUrl: 'https://openrouter.ai/api/v1/',
       apiKey: 'k',
-      extraBody: { provider: { zdr: true, data_collection: 'deny' } },
+      zdrBody: { provider: { zdr: true, data_collection: 'deny' } },
       fetch,
     });
     const res = await adapter.generate(
       {
         model: 'openai/gpt-x',
+        zdr: true,
         system: [
           { id: 'a', tier: 'static', text: 'A', cache: true },
           { id: 'b', tier: 'tenant', text: 'B', cache: true },
@@ -546,6 +558,30 @@ describe('openai-compatible adapter', () => {
       cacheWriteTokens: 0,
       costUsd: 0.00042,
     });
+  });
+
+  test('zdrBody rides only on requests for a zdr route', async () => {
+    const { fetch, calls } = fakeFetch({ choices: [{ message: { content: 'ok' } }] });
+    const adapter = openAiCompatibleAdapter({
+      id: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'k',
+      extraBody: { usage: { include: true } },
+      zdrBody: { provider: { zdr: true, data_collection: 'deny' } },
+      fetch,
+    });
+    const gw = createGateway({
+      adapters: [adapter],
+      routes: { routes: async (_t, agentId) => [route('openrouter', { zdr: agentId === 'zdr' })] },
+    });
+    const meta = request().meta;
+    await gw.generate(request({ meta: { ...meta, agentId: 'zdr' } }));
+    await gw.generate(request({ meta: { ...meta, agentId: 'open' } }));
+    expect(calls[0]!.body.provider).toEqual({ zdr: true, data_collection: 'deny' });
+    expect(calls[1]!.body.provider).toBeUndefined();
+    expect(calls[0]!.body.usage).toEqual({ include: true });
+    expect(calls[1]!.body.usage).toEqual({ include: true });
+    expect('zdr' in calls[1]!.body).toBe(false);
   });
 
   test('replays provider extras (Gemini thought signatures) on the next step', async () => {

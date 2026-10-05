@@ -12,7 +12,7 @@ Core (`tools/check-agent-runtime-boundary.mjs`). Core implements the ports in
 | `src/define/`    | `defineAgent` (content-hashed version), `defineTool`, `defineSkill`, guards, statecharts   |
 | `src/engine/`    | `Runtime`: claim, the turn loop, memoized steps, preemption, budgets, the state fold       |
 | `src/context/`   | The context compiler: tiers in cache order, block budgets, untrusted fencing               |
-| `src/model/`     | The gateway (ZDR routes, fallback, breaker, hedging, PII tokens) and provider adapters     |
+| `src/model/`     | The gateway (per-route ZDR, fallback, breaker, hedging, PII tokens) and provider adapters  |
 | `src/ledger/`    | Figures, `{{id}}` references and the verifier                                              |
 | `src/guards/`    | Stock input, tool and output guards, the supervisor                                        |
 | `src/evals/`     | Scenarios, personas, pass^k, cassettes, counterfactual replay, online QA, rings            |

@@ -65,7 +65,7 @@ if (!process.env.AGENT_MODEL_ROUTES && process.env.GEMINI_API_KEY) {
   process.env.AGENT_MODEL_ROUTES = JSON.stringify({ default: { fast: [route], strong: [route] } });
 }
 if (!adapters.length) {
-  console.error('no provider keys in env: the suite needs a live model (ZDR routes only)');
+  console.error('no provider keys in env: the suite needs a live model');
   process.exit(2);
 }
 const agentGateway = createGateway({ adapters, routes: routesOf(process.env.AGENT_MODEL_ROUTES) });

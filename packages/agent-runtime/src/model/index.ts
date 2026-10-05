@@ -2,6 +2,7 @@ export type * from './types.ts';
 export {
   AllRoutesFailedError,
   BudgetExceededError,
+  NoRouteError,
   NoZdrRouteError,
   ProviderError,
   costUsd,
