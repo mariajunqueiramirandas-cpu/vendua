@@ -44,37 +44,47 @@ export async function placeOrderTx(
     threadId?: string | null;
   } = {},
 ): Promise<string> {
-  // Lock the cart row first — concurrent checkouts would both see 'open' and mint duplicates.
-  const [locked] = await tx<{ delivery_route: RouteQuote | null }[]>`
+  // One pipelined batch. postgres.js sends a query when it is first executed, so the locks are
+  // executed here in their order, ahead of every query the helpers below send: the cart row first
+  // (concurrent checkouts would both see 'open' and mint duplicates), then the advisory lock
+  // before reading eligibility (choke point vs concurrent settings/zone/product writes), then
+  // settings, then zones; the payment connection and the cart view are plain reads after them.
+  const lockCart = tx<{ delivery_route: RouteQuote | null }[]>`
     select delivery_route from carts where tenant_id = ${tenantId} and id = ${cartId} for update
-  `;
-  const cart = await loadCartView(tx, tenantId, cartId, now);
+  `.execute();
+  const choke = tx`select pg_advisory_xact_lock(hashtext(${tenantId}))`.execute();
+  const lockSettings = tx<StoreSettingsRow[]>`
+    select * from store_settings where tenant_id = ${tenantId} for update
+  `.execute();
+  const [[locked], , settingsRows, zones, offer, cart] = await Promise.all([
+    lockCart,
+    choke,
+    lockSettings,
+    loadZoneRows(tx, tenantId, { forUpdate: true }),
+    onlineOffer(tx, tenantId, provider),
+    loadCartView(tx, tenantId, cartId, now),
+  ]);
   // A completed cart must not mint a second order.
   if (cart.status !== 'open') {
     throw new HttpError(409, 'CART_NOT_OPEN', 'cart already checked out', {
       cartStatus: cart.status,
     });
   }
-  // Advisory lock before reading eligibility — choke point vs concurrent settings/zone/product writes.
-  await tx`select pg_advisory_xact_lock(hashtext(${tenantId}))`;
-  const settings =
-    (
-      await tx<
-        StoreSettingsRow[]
-      >`select * from store_settings where tenant_id = ${tenantId} for update`
-    )[0] ?? null;
-  // zones lock after settings, as always; the payment connection is a plain read beside it
-  const [zones, offer] = await Promise.all([
-    loadZoneRows(tx, tenantId, { forUpdate: true }),
-    onlineOffer(tx, tenantId, provider),
+  const settings = settingsRows[0] ?? null;
+  // Re-validate modifier ids / kit picks against current defs — nothing retired slips through
+  // underpriced. The order number rides along: numbering relies on the advisory lock above (else
+  // two checkouts read the same max), and only this function inserts orders.
+  const [found, number] = await Promise.all([
+    getProductsById(
+      tx,
+      tenantId,
+      cart.items.map((i) => i.productId),
+      { forUpdate: true },
+    ),
+    tx<{ n: number }[]>`
+      select coalesce(max(number), 0) + 1 as n from orders where tenant_id = ${tenantId}
+    `.then((rows) => rows[0]!.n),
   ]);
-  // Re-validate modifier ids / kit picks against current defs — nothing retired slips through underpriced.
-  const found = await getProductsById(
-    tx,
-    tenantId,
-    cart.items.map((i) => i.productId),
-    { forUpdate: true },
-  );
   const products = new Map<string, ProductDetail | null>(
     cart.items.map((i) => [i.productId, found.get(i.productId) ?? null]),
   );
@@ -165,12 +175,6 @@ export async function placeOrderTx(
     ),
   );
 
-  // Numbering relies on the advisory lock above — else two checkouts read the same max.
-  const number = (
-    await tx<
-      { n: number }[]
-    >`select coalesce(max(number), 0) + 1 as n from orders where tenant_id = ${tenantId}`
-  )[0]!.n;
   const orderId = crypto.randomUUID();
   // from the locked settings row, before the payment is built: Pix/MP charge the adjusted total
   const paymentAdjustment = Math.max(
@@ -250,7 +254,13 @@ export async function placeOrderTx(
             ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
-  await Promise.all([
+  const [store] = await Promise.all([
+    // the staff events' store name, and whether this is its first order (counts the row above)
+    tx<{ name: string; orders: number }[]>`
+      select name,
+        (select count(*) from (select 1 from orders where tenant_id = ${tenantId} limit 2) o)::int as orders
+      from tenants where id = ${tenantId}
+    `.then((rows) => rows[0]),
     ...cart.items.map(
       (i, sort) => tx`
         insert into order_items (tenant_id, order_id, product_id, slug, name, qty, unit_price_cents,
@@ -295,13 +305,6 @@ export async function placeOrderTx(
 
   // staff events (ADR 0023) after the batch: each one is a savepoint, which must not interleave
   // with other statements of this tx
-  const store = (
-    await tx<{ name: string; orders: number }[]>`
-      select name,
-        (select count(*) from (select 1 from orders where tenant_id = ${tenantId} limit 2) o)::int as orders
-      from tenants where id = ${tenantId}
-    `
-  )[0];
   const storeName = store?.name ?? '';
   await recordStaffEventTx(
     tx,

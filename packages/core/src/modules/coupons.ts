@@ -125,27 +125,26 @@ export async function couponUsage(
   couponId: string,
   phone?: string | null,
 ): Promise<CouponUsage> {
-  const total = (
-    await tx<{ n: number }[]>`
-      select count(*)::int as n from coupon_redemptions r join orders o on o.id = r.order_id
-      where r.tenant_id = ${tenantId} and r.coupon_id = ${couponId} and o.state not in ('cancelled')
-    `
-  )[0]!.n;
-  if (!phone) return { total };
-  const byPhone = (
-    await tx<{ n: number }[]>`
+  const count = (q: Promise<{ n: number }[]>) => q.then((rows) => rows[0]!.n);
+  const total = count(tx<{ n: number }[]>`
+    select count(*)::int as n from coupon_redemptions r join orders o on o.id = r.order_id
+    where r.tenant_id = ${tenantId} and r.coupon_id = ${couponId} and o.state not in ('cancelled')
+  `);
+  if (!phone) return { total: await total };
+  // the three counts go out together
+  const [all, byPhone, priorOrders] = await Promise.all([
+    total,
+    count(tx<{ n: number }[]>`
       select count(*)::int as n from coupon_redemptions r join orders o on o.id = r.order_id
       where r.tenant_id = ${tenantId} and r.coupon_id = ${couponId} and r.phone = ${phone}
         and o.state not in ('cancelled')
-    `
-  )[0]!.n;
-  const priorOrders = (
-    await tx<{ n: number }[]>`
+    `),
+    count(tx<{ n: number }[]>`
       select count(*)::int as n from orders
       where tenant_id = ${tenantId} and customer_phone = ${phone} and state not in ('cancelled')
-    `
-  )[0]!.n;
-  return { total, byPhone, priorOrders };
+    `),
+  ]);
+  return { total: all, byPhone, priorOrders };
 }
 
 export function parseCode(v: unknown): string {

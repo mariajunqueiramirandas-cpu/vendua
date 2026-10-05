@@ -1,8 +1,11 @@
+diff --git a/node_modules/postgres/.bun-tag-6bdd8c75e763e61a b/.bun-tag-6bdd8c75e763e61a
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/src/index.js b/src/index.js
-index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..9c050b0497ee78998289851b296172562642d28c 100644
+index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..96820ce12ffac3cf50cc0bb67c024760feceeb5f 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -238,17 +238,26 @@ function Postgres(a, b) {
+@@ -238,24 +238,35 @@ function Postgres(a, b) {
        , connection
        , prepare = null
  
@@ -32,15 +35,31 @@ index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..9c050b0497ee78998289851b29617256
        const sql = Sql(handler)
        sql.savepoint = savepoint
        sql.prepare = x => prepare = x.replace(/[^a-z0-9$-_. ]/gi)
-@@ -264,6 +273,7 @@ function Postgres(a, b) {
+       let uncaughtError
+         , result
+ 
+-      name && await sql`savepoint ${ sql(name) }`
++      // venduá patch: SAVEPOINT goes out with the block's first queries, like BEGIN above
++      const saved = name ? sql`savepoint ${ sql(name) }`.execute() : null
++      saved && saved.catch(() => { /* awaited below */ })
+       try {
+         result = await new Promise((resolve, reject) => {
+           const x = fn(sql)
+@@ -264,7 +275,13 @@ function Postgres(a, b) {
  
          if (uncaughtError)
            throw uncaughtError
 +        began && await began
++        saved && await saved
        } catch (e) {
++        // a savepoint that never opened has nothing to roll back to: its own error, as before
++        const unsaved = saved && await saved.then(() => null, x => x)
++        if (unsaved)
++          throw unsaved
          await (name
            ? sql`rollback to ${ sql(name) }`
-@@ -302,6 +312,7 @@ function Postgres(a, b) {
+           : sql`rollback`
+@@ -302,6 +319,7 @@ function Postgres(a, b) {
        c.reserved = () => queries.length
          ? c.execute(queries.shift())
          : move(c, reserved)

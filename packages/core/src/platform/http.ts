@@ -223,18 +223,21 @@ export async function claim<T>(
   // null = a row from before fingerprints existed: replayable to anyone, as it was
   const sameCaller = (fp: string | null | undefined) => fp == null || fp === fingerprint;
   const claimed = await withTenant(sql, tenantId, async (tx) => {
-    const rows = await tx<{ key: string }[]>`
-      insert into idempotency_keys (tenant_id, key, owner, fingerprint)
-      values (${tenantId}, ${key}, ${owner}, ${fingerprint})
-      on conflict (tenant_id, key) do update
-        set created_at = now(), owner = excluded.owner, fingerprint = excluded.fingerprint
-        where idempotency_keys.response is null
-          and idempotency_keys.created_at < now() - interval '30 seconds'
-      returning key
-    `;
-    // a sweep on ~1 in 50 claims still bounds the table, without a round trip on every write
-    if (Math.random() < 0.02)
-      await tx`delete from idempotency_keys where created_at < now() - interval '7 days'`;
+    const [rows] = await Promise.all([
+      tx<{ key: string }[]>`
+        insert into idempotency_keys (tenant_id, key, owner, fingerprint)
+        values (${tenantId}, ${key}, ${owner}, ${fingerprint})
+        on conflict (tenant_id, key) do update
+          set created_at = now(), owner = excluded.owner, fingerprint = excluded.fingerprint
+          where idempotency_keys.response is null
+            and idempotency_keys.created_at < now() - interval '30 seconds'
+        returning key
+      `,
+      // a sweep on ~1 in 50 claims still bounds the table, sent with the claim
+      Math.random() < 0.02
+        ? tx`delete from idempotency_keys where created_at < now() - interval '7 days'`
+        : null,
+    ]);
     return rows;
   });
   if (!claimed[0]) {
@@ -261,9 +264,11 @@ export async function claim<T>(
   // so a stale-claim stealer waits for the original's tx then replays its result instead of double-applying
   try {
     return await withTenant(sql, tenantId, async (tx): Promise<Claimed<T>> => {
-      await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`;
-      const cur = (
-        await tx<
+      // sent together, the lock executed first: the connection runs them in order, so the read
+      // waits for the lock
+      const [, rows] = await Promise.all([
+        tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`.execute(),
+        tx<
           {
             owner: string | null;
             response: unknown;
@@ -273,8 +278,9 @@ export async function claim<T>(
         >`
           select owner, response, status_code, fingerprint from idempotency_keys
           where tenant_id = ${tenantId} and key = ${key}
-        `
-      )[0];
+        `,
+      ]);
+      const cur = rows[0];
       if (cur?.response != null && cur.status_code != null) {
         if (!sameCaller(cur.fingerprint)) throw keyReused();
         return { status: cur.status_code, body: cur.response as T, replayed: true };
@@ -320,17 +326,20 @@ export async function claimTx<T>(
   checkKey(key, true);
   fingerprint = fingerprintOf(fingerprint);
   const owner = crypto.randomUUID();
-  // serializes with claim()'s second tx, so a dead-claim steal never runs beside its owner
-  await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`;
-  const claimed = await tx<{ key: string }[]>`
-    insert into idempotency_keys (tenant_id, key, owner, fingerprint)
-    values (${tenantId}, ${key}, ${owner}, ${fingerprint})
-    on conflict (tenant_id, key) do update
-      set created_at = now(), owner = excluded.owner, fingerprint = excluded.fingerprint
-      where idempotency_keys.response is null
-        and idempotency_keys.created_at < now() - interval '30 seconds'
-    returning key
-  `;
+  // serializes with claim()'s second tx, so a dead-claim steal never runs beside its owner;
+  // sent together, the insert still runs once the lock is held
+  const [, claimed] = await Promise.all([
+    tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`.execute(),
+    tx<{ key: string }[]>`
+      insert into idempotency_keys (tenant_id, key, owner, fingerprint)
+      values (${tenantId}, ${key}, ${owner}, ${fingerprint})
+      on conflict (tenant_id, key) do update
+        set created_at = now(), owner = excluded.owner, fingerprint = excluded.fingerprint
+        where idempotency_keys.response is null
+          and idempotency_keys.created_at < now() - interval '30 seconds'
+      returning key
+    `,
+  ]);
   if (!claimed[0]) {
     const hit = (
       await tx<{ response: unknown; status_code: number; fingerprint: string | null }[]>`
