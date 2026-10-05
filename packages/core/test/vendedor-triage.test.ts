@@ -27,6 +27,15 @@ describe('the verdict table', () => {
       source: 'new_contact',
       reason: 'no_prior_chat',
     });
+    // no prior chat: a stranger is answered (even "oi"), one who reads like a friend is asked about
+    expect(decide('empty', 'unsure')).toMatchObject({ cls: 'shopper', reason: 'no_prior_chat' });
+    expect(decide('empty', 'customer')).toMatchObject({ cls: 'shopper', reason: 'no_prior_chat' });
+    expect(decide('empty', 'personal')).toEqual({
+      cls: 'ask',
+      source: 'message',
+      reason: 'looks_personal',
+    });
+    expect(decide('failed', 'personal')).toMatchObject({ cls: 'personal', source: 'message' });
     expect(decide('done', 'personal')).toMatchObject({ cls: 'personal', source: 'history' });
     expect(decide('done', 'customer')).toMatchObject({ cls: 'shopper', reason: 'looks_customer' });
     expect(decide('done', 'unparseable')).toMatchObject({ cls: 'ask', reason: 'unclear' });
@@ -346,13 +355,22 @@ describe.skipIf(!OWNER_URL)('who Duá answers on Postgres', () => {
     expect(await mailbox(threadId)).toEqual([]);
   });
 
-  test('no prior chat: a new contact, its messages go to Duá with no model call', async () => {
+  test('no prior chat: the message is read with what the store sells, a stranger goes to Duá', async () => {
     const tenantId = await store();
-    const { threadId, requestId } = await checking(tenantId);
-    const calls = adapter.requests.length;
+    await sql`insert into categories (tenant_id, slug, name, sort)
+      values (${tenantId}, 'paes', 'Pães', 1), (${tenantId}, 'bolos', 'Bolos', 2)`;
+    const { threadId, requestId } = await checking(
+      tenantId,
+      'oi, vocês fazem bolo de aniversário?',
+    );
+    next = [{ text: '{"verdict":"customer"}' }];
     await answer(requestId, 'empty');
     await triage();
-    expect(adapter.requests.length).toBe(calls);
+    const { system, user } = said();
+    expect(system).toContain('continua uma conversa anterior');
+    expect(user).toContain('<loja>Forno da Vila — vende: Pães, Bolos</loja>');
+    expect(user).toContain('<situacao>sem_historico</situacao>');
+    expect(user).not.toContain('<conversa>');
     expect(await threadRow(threadId)).toMatchObject({
       class: 'shopper',
       class_source: 'new_contact',
@@ -362,6 +380,36 @@ describe.skipIf(!OWNER_URL)('who Duá answers on Postgres', () => {
     await ingest();
     expect(await states(threadId)).toEqual(['done']);
     expect(await mailbox(threadId)).toContain('message.inbound');
+  });
+
+  test('no prior chat but it reads like a friend: held, and the owner is asked', async () => {
+    const tenantId = await store();
+    const { threadId, requestId } = await checking(tenantId, 'e aí, conseguiu falar com a tia?');
+    next = [{ text: '{"verdict":"personal"}' }];
+    await answer(requestId, 'empty');
+    await triage();
+    expect(await threadRow(threadId)).toMatchObject({
+      class: 'ask',
+      class_source: 'message',
+      class_reason: 'looks_personal',
+    });
+    expect(await states(threadId)).toEqual(['held']);
+    await settle();
+    expect(admin[tenantId]).toEqual([threadId]);
+  });
+
+  test('history unavailable, a message that picks up an old conversation: personal', async () => {
+    const tenantId = await store();
+    const { threadId, requestId } = await checking(tenantId, 'então, sobre aquilo de sábado…');
+    next = [{ text: '{"verdict":"personal"}' }];
+    await answer(requestId, 'failed');
+    await triage();
+    expect(said().user).toContain('<situacao>historico_indisponivel</situacao>');
+    expect(await threadRow(threadId)).toMatchObject({
+      class: 'personal',
+      class_source: 'message',
+      class_reason: 'looks_personal',
+    });
   });
 
   test('a friend: personal, skipped, and the fetched chat is gone', async () => {

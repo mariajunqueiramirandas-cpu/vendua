@@ -29,10 +29,17 @@ it.** The owner's decisions of 2026-10-05:
    4. `known_and_new` → `checking`: the gateway fetches **that chat's latest 10 messages, on
       demand, only then** (`store_wa_history_requests`), and a fast model judges them, labelled
       `dono`/`contato` and framed as data, never instructions. Its only output is
-      `{"verdict":"personal"|"customer"|"unsure"}`. No prior chat → a new contact, `shopper`.
-      Personal → `personal`; customer → `shopper`; unsure or unreadable → `ask`. When the fetch
-      fails, the model judges the new message alone. With no model route or a model error, the
-      thread goes to `ask`.
+      `{"verdict":"personal"|"customer"|"unsure"}`. The model also gets the store's name and
+      what it sells (its category names) and the situation (`historico`, `sem_historico`,
+      `historico_indisponivel`), and is told the cues: a customer introduces themselves as one
+      or talks about the store's business; someone personal picks up an earlier conversation as
+      if there were shared context, writes in an intimate or family tone, or talks about
+      something unrelated to the store without asking about it; a bare greeting decides nothing.
+      With history: personal → `personal`; customer → `shopper`; unsure or unreadable → `ask`.
+      No prior chat: the message is still read — a stranger is `shopper` (even a bare "oi"), but
+      one that reads like a friend goes to `ask`, since a customer who cleared the chat can read
+      the same. When the fetch fails, the new message alone decides, mapped like history. With
+      no model route or a model error, the thread goes to `ask` (no prior chat: `shopper`).
 3. **Messages wait as `held`** while a thread is `checking` or `ask`. A `shopper` verdict sends
    them back to the ingest, which dispatches them as always (allowance, floors, handoff). A
    `personal` verdict skips them. The verdict is applied in one transaction that re-checks the
