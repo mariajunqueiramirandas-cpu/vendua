@@ -428,7 +428,7 @@ const plainObject = (v: unknown): v is Record<string, unknown> =>
 function validateRoute(r: unknown, at: string, bad: Bad) {
   if (!plainObject(r)) throw bad(at, 'must be a route object');
   for (const k of Object.keys(r))
-    if (!['provider', 'model', 'zdr', 'pricing', 'timeoutMs'].includes(k))
+    if (!['provider', 'model', 'zdr', 'endpoint', 'pricing', 'timeoutMs'].includes(k))
       throw bad(`${at}.${k}`, 'is not a route field');
   if (!ROUTE_PROVIDERS.includes(r.provider as string))
     throw bad(`${at}.provider`, `must be ${ROUTE_PROVIDERS.join(' | ')}`);
@@ -436,6 +436,12 @@ function validateRoute(r: unknown, at: string, bad: Bad) {
     throw bad(`${at}.model`, 'must be 1–200 characters of A–Z a–z 0–9 . _ / : @ -');
   // a per-route choice since 2026-10-05 (default on in the CRM), but never left implicit
   if (typeof r.zdr !== 'boolean') throw bad(`${at}.zdr`, 'must be true or false');
+  if (r.endpoint !== undefined) {
+    if (r.provider !== 'openrouter')
+      throw bad(`${at}.endpoint`, 'is only for the openrouter provider');
+    if (typeof r.endpoint !== 'string' || !ROUTE_MODEL.test(r.endpoint))
+      throw bad(`${at}.endpoint`, 'must be 1–200 characters of A–Z a–z 0–9 . _ / : @ -');
+  }
   if (r.pricing !== undefined) {
     const p = r.pricing;
     if (!plainObject(p)) throw bad(`${at}.pricing`, 'must be an object');

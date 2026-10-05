@@ -16,7 +16,7 @@ import type { Sql } from '../platform/db.ts';
  *   { "default": { "fast": [route…], "strong": [route…] },
  *     "agents":  { "<agentId>": { "fast": […] } },
  *     "tenants": { "<tenantId>": { "strong": […] } } }
- * a route is { provider, model, zdr, pricing?, timeoutMs? }. The most specific list wins. `zdr`
+ * a route is { provider, model, zdr, endpoint?, pricing?, timeoutMs? }. The most specific list wins. `zdr`
  * (zero data retention) is staff's per-route choice since 2026-10-05 (default on in the CRM):
  * OpenRouter enforces it per request when on; on a direct provider it's the account's contract.
  * With no setting, `AGENT_MODEL_ROUTES` (same JSON) is the fallback.
@@ -48,7 +48,8 @@ export function routesFrom(
       typeof r.model === 'string' &&
       // AGENT_MODEL_ROUTES never goes through validateSetting: a route that doesn't say whether
       // it wants zero retention isn't guessed at
-      typeof r.zdr === 'boolean',
+      typeof r.zdr === 'boolean' &&
+      (r.endpoint === undefined || typeof r.endpoint === 'string'),
   );
 }
 
@@ -92,6 +93,8 @@ export function adaptersFromEnv(
         // zero-data-retention policy
         extraBody: { provider: { data_collection: 'deny' } },
         zdrBody: { provider: { zdr: true, data_collection: 'deny' } },
+        // a pinned route means that endpoint: the route list is the fallback chain, not OpenRouter's
+        endpointBody: (tag) => ({ provider: { order: [tag], allow_fallbacks: false } }),
         cacheMarkers: true,
       }),
     );

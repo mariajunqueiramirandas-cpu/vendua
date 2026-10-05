@@ -5,6 +5,7 @@ import {
   catalogFrom,
   createModelCatalog,
   directFor,
+  endpointsFrom,
   providerIds,
 } from '../src/agent-host/model-catalog.ts';
 import type { Sql } from '../src/platform/db.ts';
@@ -523,5 +524,76 @@ describe('GET /control/v1/ai/catalog', () => {
     } finally {
       globalThis.fetch = realFetch;
     }
+  });
+});
+
+describe('model endpoints', () => {
+  const ENDPOINTS = `${MODELS}/acme/fast-1/endpoints`;
+  const oe = (over: Record<string, unknown> = {}) =>
+    ep({ tag: 'p1/fp8', throughput_last_30m: { p50: 80 }, latency_last_30m: 400, ...over });
+  const withEndpoints = (list: unknown[]) => ({ data: { endpoints: list } });
+
+  test('folds price, tokens/s, latency and the ZDR flag per endpoint; drops no-tools ones', () => {
+    const out = endpointsFrom(
+      withEndpoints([
+        oe({ uptime_last_30m: 99.5 }),
+        oe({ tag: 'p2', provider_name: 'P2', throughput_last_30m: null, latency_last_30m: null }),
+        oe({ tag: 'p3', supported_parameters: ['temperature'] }),
+        oe({ tag: 'p4', pricing: { prompt: '-1', completion: '-1' } }),
+      ]),
+      new Set(['p2']),
+    );
+    expect(out.map((e) => e.tag)).toEqual(['p1/fp8', 'p2']);
+    expect(out[0]).toMatchObject({
+      provider: 'P1',
+      tps: 80,
+      latencyMs: 400,
+      uptime: 99.5,
+      zdr: false,
+      pricing: { inputPerMTok: 0.8, outputPerMTok: 2 },
+    });
+    expect(out[1]).toMatchObject({ tps: null, latencyMs: null, zdr: true });
+  });
+
+  test('GET /control/v1/ai/endpoints marks ZDR tags from /endpoints/zdr and caches ten minutes', async () => {
+    const s = stub({
+      ...openrouter([model()], [ep({ tag: 'p2' })]),
+      [ENDPOINTS]: [ok(withEndpoints([oe(), oe({ tag: 'p2', provider_name: 'P2' })]))],
+    });
+    let t = 0;
+    const catalog = createModelCatalog({ fetch: s.f, env: {}, now: () => t });
+    await catalog.get();
+    const a = await catalog.endpoints('acme/fast-1');
+    expect(a?.endpoints.map((e) => [e.tag, e.zdr])).toEqual([
+      ['p1/fp8', false],
+      ['p2', true],
+    ]);
+    await catalog.endpoints('acme/fast-1');
+    expect(s.urls().filter((u) => u === ENDPOINTS)).toHaveLength(1);
+    t += 11 * 60_000;
+    await catalog.endpoints('acme/fast-1');
+    expect(s.urls().filter((u) => u === ENDPOINTS)).toHaveLength(2);
+  });
+
+  test('an unknown model is null; the key only rides to OpenRouter when Core has one', async () => {
+    const s = stub({ ...openrouter([model()]) });
+    const catalog = createModelCatalog({ fetch: s.f, env: { OPENROUTER_API_KEY: 'sk-or' } });
+    expect(await catalog.endpoints('acme/none')).toBeNull();
+    expect(s.calls.at(-1)!.headers.authorization).toBe('Bearer sk-or');
+  });
+
+  test('the route rejects a bad model id with a 422', async () => {
+    const app = new Hono();
+    app.onError((e, c) =>
+      e instanceof HttpError ? c.json({ code: e.code }, e.status as 422) : c.json({}, 500),
+    );
+    mountAgentRuntimeAi({
+      app,
+      sql: {} as Sql,
+      controlGate: () => {},
+      catalog: { get: async () => null, endpoints: async () => null },
+    });
+    expect((await app.request('/control/v1/ai/endpoints?model=a%20b')).status).toBe(422);
+    expect((await app.request('/control/v1/ai/endpoints?model=acme/x')).status).toBe(404);
   });
 });

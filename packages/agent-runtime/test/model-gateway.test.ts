@@ -584,6 +584,38 @@ describe('openai-compatible adapter', () => {
     expect('zdr' in calls[1]!.body).toBe(false);
   });
 
+  test('a pinned endpoint merges into provider without dropping the retention rules', async () => {
+    const { fetch, calls } = fakeFetch({ choices: [{ message: { content: 'ok' } }] });
+    const adapter = openAiCompatibleAdapter({
+      id: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'k',
+      extraBody: { provider: { data_collection: 'deny' } },
+      zdrBody: { provider: { zdr: true, data_collection: 'deny' } },
+      endpointBody: (tag) => ({ provider: { order: [tag], allow_fallbacks: false } }),
+      fetch,
+    });
+    const gw = createGateway({
+      adapters: [adapter],
+      routes: {
+        routes: async (_t, agentId) => [
+          route('openrouter', {
+            zdr: agentId === 'zdr',
+            ...(agentId === 'plain' ? {} : { endpoint: 'deepinfra/turbo' }),
+          }),
+        ],
+      },
+    });
+    const meta = request().meta;
+    await gw.generate(request({ meta: { ...meta, agentId: 'zdr' } }));
+    await gw.generate(request({ meta: { ...meta, agentId: 'open' } }));
+    await gw.generate(request({ meta: { ...meta, agentId: 'plain' } }));
+    const pin = { order: ['deepinfra/turbo'], allow_fallbacks: false };
+    expect(calls[0]!.body.provider).toEqual({ zdr: true, data_collection: 'deny', ...pin });
+    expect(calls[1]!.body.provider).toEqual({ data_collection: 'deny', ...pin });
+    expect(calls[2]!.body.provider).toEqual({ data_collection: 'deny' });
+  });
+
   test('replays provider extras (Gemini thought signatures) on the next step', async () => {
     const { fetch, calls } = fakeFetch({
       choices: [
