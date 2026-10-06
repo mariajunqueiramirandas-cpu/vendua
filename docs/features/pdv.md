@@ -101,6 +101,49 @@ Receives an order from the storefront at the counter. The order must not be paid
 not paid yet (409 `ALREADY_PAID`, 409 `PAYMENT_ONLINE`), and the payments must add up to its
 total (422 `PAYMENT_MISMATCH`). Needs an open caixa.
 
+### Delivery from the counter (phone orders)
+
+```ts
+interface PdvDeliveryIn {
+  street: string; // 1..120
+  number?: string; // ≤ 10
+  complement?: string; // ≤ 80
+  neighborhood: string; // 1..80 — matches neighborhood zones
+  reference?: string; // ≤ 120
+  cep?: string; // 8 digits
+  lat?: number; // the pin, for distance pricing and polygon zones
+  lng?: number;
+  feeCents?: number; // manager: a fee typed by hand, skips the zones (0..100000)
+}
+
+interface PdvDeliveryQuote {
+  feeCents: number;
+  zoneName: string | null; // null with a hand-typed fee
+  etaMin: number | null;
+  etaMax: number | null;
+  distanceKm: number | null;
+}
+```
+
+- `POST /pdv/quote` also takes `delivery?: PdvDeliveryIn`; the quote then carries
+  `deliveryFeeCents` and `delivery: PdvDeliveryQuote` (both 0 / null without it), and
+  `totalCents = subtotal - discount + deliveryFee`. The fee follows the store's zones (a zone's
+  free-delivery threshold included). 422 `OUT_OF_ZONE` when no zone takes the address (a manager
+  can type the fee). The store's minimum order and its "delivery on/off" switch are the
+  storefront's and don't apply here.
+- `POST /pdv/sales` takes `mode: 'delivery'` with `delivery: PdvDeliveryIn`; then
+  `customer.name` (2..80) and `customer.phone` are required (422 `CUSTOMER_REQUIRED`).
+  `payments` may be `[]` with `payLater: { method: PdvMethod; changeForCents?: number }`: the
+  order goes out unpaid ("cobrar na entrega"; `changeForCents` is cash only, ≥ the total) and is
+  received later through `POST /pdv/orders/:id/payments`. With payments, they add up to the
+  total as for any sale. The order is accepted at once and goes to the kitchen and printers; the
+  customer gets the store's WhatsApp order messages (counter orders without delivery don't).
+- `GET /pdv/customer?phone=` → `{ customer: { name, phone, orders, lastDelivery: PdvDeliveryIn | null } | null }`.
+  The last name and address this phone ordered with, to fill a returning customer's order.
+- `GET /pdv/geocode?street=&number=&neighborhood=&cep=` → `{ point: { lat, lng, precision } | null }`.
+  The admin's geocoder, for attendants: an approximate pin for a typed address (a store that
+  prices by distance needs one).
+
 ## Mesas and comandas
 
 ```ts
@@ -224,13 +267,29 @@ totalCents, differenceCents }[] }` (closed ones, newest first; `differenceCents`
   method's difference).
 - `GET /pdv/caixa/:id` → `{ report: CaixaReport }` (closed) or `{ caixa }` (open).
 
+## Printing
+
+Both need the `printing` plan feature too (403 `PLAN_REQUIRED`). `printerId` picks the printer;
+without it, a store with one connected printer uses it, else 422 `PRINTER_REQUIRED`
+`{ printers: { id, name }[] }` (the screen asks once and remembers per device). 409
+`NO_PRINTERS` when none is connected.
+
+- `POST /pdv/tabs/:id/print` `{ printerId? }` → 202 `{ jobIds }`. The bill ("conferência"):
+  rounds and items, subtotal, discount, service, total, what was paid and what remains, the
+  split when `ways` (2..20) is sent. Marked "não é documento fiscal".
+- `POST /pdv/caixa/:id/print` `{ printerId? }` → 202 `{ jobIds }`. A closed caixa's report (any
+  role), or an open caixa's partial (managers only: it shows the expected amounts).
+
 ## Tables and settings (manager)
 
-- `GET /pdv/tables` → `{ tables }`.
+- `GET /pdv/tables` → `{ tables, archived }`; `archived` lists archived tables
+  (`{ id, label, sort, archivedAt }`, newest first, at most 200).
 - `POST /pdv/tables` `{ labels: string[] }` (1..100 labels, each 1..40) → 201 `{ tables }`.
   A label in use is skipped.
 - `PATCH /pdv/tables/:id` `{ label?, sort? }` → `{ table }`.
-- `DELETE /pdv/tables/:id` → `{ tables }`. 409 `TABLE_BUSY` with an open comanda.
+- `DELETE /pdv/tables/:id` → `{ tables, archived }`. 409 `TABLE_BUSY` with an open comanda.
+- `POST /pdv/tables/:id/restore` → `{ tables, archived }`. Brings an archived table back at the
+  end. 409 `TABLE_LABEL_TAKEN` when an active table has its name, 422 `TOO_MANY_TABLES`.
 - `PATCH /pdv/settings` `{ serviceBps }` (0..2000) → `{ serviceBps }`.
 
 ## Order changes
