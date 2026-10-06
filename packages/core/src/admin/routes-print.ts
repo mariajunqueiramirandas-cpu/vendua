@@ -8,6 +8,7 @@ import {
 } from '../modules/printing/devices.ts';
 import {
   notifyDeviceTx,
+  orderJobsTx,
   printersTx,
   queueJobsTx,
   type PrinterView,
@@ -259,6 +260,17 @@ export function mountPrinting(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'printers', id);
       return { status: 202, body: { jobId } };
+    }),
+  );
+
+  // the order's tickets: "impresso às 12:03 na Cozinha", or why one didn't come out
+  admin.get(
+    '/orders/:id/prints',
+    read('attendant', async (tx, t, _m, c) => {
+      const orderId = uuidParam(c, 'id');
+      const order = await tx`select 1 from orders where tenant_id = ${t.id} and id = ${orderId}`;
+      if (order.length === 0) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+      return { jobs: await orderJobsTx(tx, t.id, orderId) };
     }),
   );
 

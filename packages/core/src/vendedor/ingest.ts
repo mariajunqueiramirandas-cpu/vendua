@@ -322,6 +322,15 @@ export async function ingestOne(d: IngestDeps, r: Row): Promise<void> {
         dedupeKey: `slow:${thread.id}:${(thread.pendingSince ?? new Date(r.created_at)).toISOString()}`,
         deliverAt: floor.until,
       });
+    // paused: once it lapses he takes back, and the turn answers only what is still unanswered
+    if (floor.floor === 'paused' && floor.until)
+      await dispatchTx(tx, {
+        actor,
+        kind: 'timer.handback',
+        source: 'vendedor:pause',
+        dedupeKey: `pause:${thread.id}:${floor.until.toISOString()}`,
+        deliverAt: new Date(floor.until.getTime() + 1_000),
+      });
     if (floor.floor === 'agent' && !trigger && thread.channel === 'whatsapp')
       await typingTx(tx, r.tenant_id, thread.id);
     return done('done');

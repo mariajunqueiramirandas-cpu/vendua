@@ -9,6 +9,7 @@ import { EmptyState, ErrorState, LoadingRows } from '@/components/common.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { useApprovals, useApprove, useTasks, useThreads } from './queries.ts';
+import { TaskMenu } from './taskActions.tsx';
 import { bucket } from './tasks.ts';
 import { TaskCheck, TaskDue, TaskLead } from './TasksView.tsx';
 
@@ -104,7 +105,12 @@ export function NeedsYou() {
             key={`t-${t.id}`}
             icon={<TaskCheck t={t} />}
             lead={<TaskLead t={t} />}
-            aside={<TaskDue t={t} b={bucket(t, now)} />}
+            aside={
+              <>
+                <TaskDue t={t} b={bucket(t, now)} />
+                <TaskMenu t={t} />
+              </>
+            }
           >
             <span className={cn('text-sm', t.doneAt && 'text-muted-foreground line-through')}>
               {t.title}

@@ -48,6 +48,23 @@ export interface CartItemIn {
   /** options with a quantity; an id here without qty, or in modifierIds, is one unit */
   modifiers?: { id: string; qty?: number }[];
   comboSelections?: ComboSelection[];
+  /** "sem cebola" — part of the line's identity ('' = none) */
+  note?: string;
+}
+
+export const ITEM_NOTE_MAX = 140;
+
+/** A line's note as stored: one line of text, trimmed; '' = none. */
+export function parseItemNote(v: unknown): string {
+  if (v === undefined || v === null) return '';
+  if (typeof v !== 'string')
+    throw new HttpError(422, 'INVALID_NOTES', 'note must be text', { field: 'note' });
+  const note = v.replace(/\s+/g, ' ').trim();
+  if (note.length > ITEM_NOTE_MAX)
+    throw new HttpError(422, 'INVALID_NOTES', `note accepts at most ${ITEM_NOTE_MAX} characters`, {
+      field: 'note',
+    });
+  return note;
 }
 
 /** `{ modifierId: qty }`, only for options taken more than once (absent = 1) */
@@ -67,6 +84,7 @@ interface ItemRow {
   qty: number;
   modifier_ids: string[];
   modifier_qty: ModifierQty;
+  note: string;
   /** Price accepted at add time — checkout refreshes it to the live price (repriceLines). */
   unit_price_cents: number;
   /** frozen at add time; status stays live. */
@@ -121,6 +139,8 @@ export interface PricedItem {
   /** kit picks (kind 'combo'); [] otherwise */
   combo: ComboLine[];
   comboSelections: ComboSelection[];
+  /** the shopper's note for this line; null = none */
+  note?: string | null;
   lineTotalCents: number;
   imageUrl: string | null;
   stockQuantity: number | null;
@@ -518,7 +538,7 @@ export function quoteInput(q: {
 
 function loadItemRows(tx: Sql, tenantId: string, cartId: string) {
   return tx<ItemRow[]>`
-    select ci.id, ci.product_id, ci.qty, ci.modifier_ids, ci.modifier_qty, ci.unit_price_cents,
+    select ci.id, ci.product_id, ci.qty, ci.modifier_ids, ci.modifier_qty, ci.note, ci.unit_price_cents,
            ci.modifier_snapshot, ci.combo_selections, ci.combo_snapshot,
            p.name, p.slug, p.status as product_status, p.stock_quantity,
            p.requires_preorder, p.preorder_lead_days, p.availability_schedule,
@@ -600,6 +620,7 @@ async function priceItems(
       stockQuantity: pickStock.get(c.productId) ?? null,
     })),
     comboSelections: item.combo_selections,
+    note: item.note || null,
     lineTotalCents: item.unit_price_cents * item.qty,
     imageUrl: item.image_url,
     stockQuantity: item.stock_quantity,
@@ -872,6 +893,7 @@ export async function insertLine(
   if (!Number.isInteger(input.qty) || input.qty <= 0 || input.qty > 99) {
     throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 1 and 99');
   }
+  const note = parseItemNote(input.note);
   // the cart's lines and their products' stock (for the check below) ride along with the product read
   const [product, existing] = await Promise.all([
     getProductById(tx, tenantId, input.productId),
@@ -897,7 +919,7 @@ export async function insertLine(
     ]),
   );
 
-  // same product + modifier set + kit composition merges into one line; merged
+  // same product + modifier set + kit composition + note merges into one line; merged
   // qty capped by CHECK (qty <= 99) → INVALID_QTY like PATCH
   // `added` reads the row written: a merge keeps the line's frozen price (checkout reprices)
   let written: { id: string; unit_price_cents: number };
@@ -906,10 +928,11 @@ export async function insertLine(
     const rows = await tx<{ id: string; unit_price_cents: number }[]>`
       with touched as (update carts set updated_at = now() where id = ${cartId})
       insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids, modifier_qty, unit_price_cents,
-                              modifier_snapshot, combo_selections, combo_snapshot)
+                              modifier_snapshot, combo_selections, combo_snapshot, note)
       values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)}, ${tx.json(modifierQty)},
-              ${line.unitPriceCents}, ${tx.json(line.snapshot as never)}, ${tx.json(selections as never)}, ${tx.json(picks as never)})
-      on conflict (cart_id, product_id, modifier_ids, modifier_qty, combo_selections)
+              ${line.unitPriceCents}, ${tx.json(line.snapshot as never)}, ${tx.json(selections as never)}, ${tx.json(picks as never)},
+              ${note})
+      on conflict (cart_id, product_id, modifier_ids, modifier_qty, combo_selections, note)
       do update set qty = cart_items.qty + excluded.qty
       returning id, unit_price_cents
     `;

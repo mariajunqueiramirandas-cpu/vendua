@@ -1,15 +1,28 @@
 import { useState } from 'react';
-import { useDeliverySummary, useProduct, useStockLeft, useStore, useWaitlist } from '../hooks.ts';
+import {
+  useCopy,
+  useDeliverySummary,
+  useOrder,
+  useProduct,
+  useStockLeft,
+  useStore,
+  useStoreStatus,
+  useWaitlist,
+} from '../hooks.ts';
 import { PixQr } from '@vendua/ui-defaults';
 import { cardState } from '../rules/card.ts';
 import { deliveryWords } from '../rules/delivery.ts';
-import { plural } from '../rules/format.ts';
-import { PIX_KEY_LABEL } from '../rules/orders.ts';
+import { formatCents, LOCALE, plural } from '../rules/format.ts';
+import { ORDER_STATE_LABEL, PIX_KEY_LABEL, TERMINAL_ORDER_STATES } from '../rules/orders.ts';
 import { isValidPhone } from '../rules/phone.ts';
 import { errorCopy } from '../errors.ts';
 import { NotifyMeButton } from '../primitives.tsx';
 import { usePageContext } from '../composition/runtime.tsx';
 import type { BlockProps } from '../composition/registry.ts';
+import { useKernel } from '../provider.tsx';
+import { KERNEL_PATHS } from '../config.ts';
+import { useReorder } from '../pages/order.tsx';
+import { KLink } from './sections.tsx';
 import type * as S from './schemas.ts';
 
 // SDK blocks: category-typed pieces a template places into section areas.
@@ -48,17 +61,18 @@ export function StockCounter({ settings }: BlockProps<typeof S.stockCounter>) {
   );
 }
 
-/** Shows only when there's something to wait for: a sold-out product or a paused store.
+/** Shows only when there's something to wait for: a sold-out product, or a store that isn't
+ *  open (paused; Kernel 1.21: closed too — Core messages each subscriber once it opens).
  *  Kernel 1.2: a sold-out product joins Core's restock waitlist and shows who else waits. */
 export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
   const product = usePageProduct();
-  const { status } = useStore();
+  const { status, label } = useStoreStatus();
   const [phone, setPhone] = useState('');
   const [done, setDone] = useState(false);
   // Kernel 1.7: outside its schedule (availabilityLabel) a product comes back by itself — no waitlist
   const restock = product?.status === 'sold_out' && !product.availabilityLabel;
   const waitlist = useWaitlist(restock ? product.id : undefined);
-  const subject = restock ? 'product' : status === 'paused' ? 'store' : null;
+  const subject = restock ? 'product' : status === 'paused' || status === 'closed' ? 'store' : null;
   if (!subject) return null;
   if (done || waitlist.joined)
     return (
@@ -118,10 +132,15 @@ export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
     );
   }
   return (
-    <div className="v-notify" data-part="root">
+    <div className="v-notify" data-part="root" data-subject="store">
       <label className="v-label" htmlFor="v-notify-phone">
-        {settings.title}
+        {settings.storeTitle}
       </label>
+      {label ? (
+        <p className="v-muted" data-part="when">
+          {label}.
+        </p>
+      ) : null}
       <div className="v-notify-row">
         <input
           id="v-notify-phone"
@@ -160,7 +179,8 @@ export function PromoBadge({ settings }: BlockProps<typeof S.promoBadge>) {
 }
 
 /** Kernel 1.1: "Entrega a partir de R$ 5,00 · 30–80 min · Retirada em ~40 min" — Core's zones
- *  and prep time, summed up by `deliverySummary` (a per-km zone is never "grátis"). */
+ *  and prep time, summed up by `deliverySummary` (a per-km zone is never "grátis"). Kernel 1.21:
+ *  a second line with the minimum order and the free-delivery threshold, when Core has them. */
 export function DeliveryEta({ settings }: BlockProps<typeof S.deliveryEta>) {
   const { store } = useStore();
   const summary = useDeliverySummary();
@@ -176,9 +196,18 @@ export function DeliveryEta({ settings }: BlockProps<typeof S.deliveryEta>) {
   if (settings.showPickup && summary.pickup)
     parts.push(`Retirada em ~${summary.pickup.prepMinutes} min`);
   if (parts.length === 0) return null;
+  const terms =
+    settings.showMinOrder && words
+      ? [words.minOrder, words.freeOver].filter((t): t is string => !!t).join(' · ')
+      : '';
   return (
     <p className="v-info v-eta" data-part="root">
       {parts.join(' · ')}
+      {terms ? (
+        <span className="v-eta-terms" data-part="terms">
+          {`${terms.charAt(0).toUpperCase()}${terms.slice(1)}`}
+        </span>
+      ) : null}
     </p>
   );
 }
@@ -234,5 +263,77 @@ export function LoyaltyTeaser({ settings }: BlockProps<typeof S.loyaltyTeaser>) 
       {settings.text ||
         `Cartão fidelidade: a cada ${l.stampsRequired} pedidos, ${l.rewardLabel.toLowerCase()}.`}
     </p>
+  );
+}
+
+/** Kernel 1.21 — the device's last order: "Acompanhar" while it runs, "Pedir de novo" once it's
+ *  done. Reads one order, only when this device placed one (its token is kept). */
+export function RecentOrder({ settings }: BlockProps<typeof S.recentOrder>) {
+  const { api } = useKernel();
+  const id = api.orderIds()[0];
+  return id ? <RecentOrderCard id={id} title={settings.title} /> : null;
+}
+
+function RecentOrderCard({ id, title }: { id: string; title: string }) {
+  const { order } = useOrder(id, { live: false });
+  const { store } = useStore();
+  const { vocabulary } = useCopy();
+  const { reorder, pending } = useReorder();
+  if (!order) return null;
+  const timeZone = store?.hours.timezone || undefined;
+  const done = TERMINAL_ORDER_STATES.has(order.state);
+  const items = order.items ?? [];
+  const shown = items
+    .slice(0, 2)
+    .map((i) => `${i.qty}× ${i.name}`)
+    .join(', ');
+  const more = items.length - 2;
+  return (
+    <div className="v-recent-order" data-part="root" data-state={order.state}>
+      <p className="v-recent-order-title" data-part="title">
+        {title}
+      </p>
+      <p className="v-recent-order-summary" data-part="summary">
+        <strong>Pedido #{order.number}</strong>
+        <span className="v-muted">
+          {' · '}
+          {done
+            ? new Date(order.placedAt).toLocaleDateString(LOCALE, {
+                day: '2-digit',
+                month: 'short',
+                ...(timeZone ? { timeZone } : {}),
+              })
+            : (ORDER_STATE_LABEL[order.state] ?? order.state)}
+          {' · '}
+          <span className="v-num">{formatCents(order.totalCents, store?.currency ?? 'BRL')}</span>
+        </span>
+      </p>
+      {shown ? (
+        <p className="v-muted v-recent-order-items" data-part="items">
+          {shown}
+          {more > 0 ? ` e mais ${more}` : ''}
+        </p>
+      ) : null}
+      <div className="v-recent-order-actions" data-part="actions">
+        {!done ? (
+          <KLink href={KERNEL_PATHS.order.replace(':id', order.id)} className="v-btn v-btn-accent">
+            Acompanhar pedido
+          </KLink>
+        ) : items.length ? (
+          <button
+            type="button"
+            className="v-btn v-btn-accent"
+            data-part="reorder"
+            disabled={pending === order.id}
+            onClick={() => void reorder(order.id)}
+          >
+            {pending === order.id ? `Colocando ${vocabulary.inBag}…` : 'Pedir de novo'}
+          </button>
+        ) : null}
+        <KLink href={KERNEL_PATHS.orders} className="v-link-btn" data-part="orders">
+          Meus pedidos
+        </KLink>
+      </div>
+    </div>
   );
 }

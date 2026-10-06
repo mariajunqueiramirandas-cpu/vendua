@@ -1,9 +1,12 @@
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
+import { cartReminderPass } from '../modules/cart-reminder.ts';
 import { setStock } from '../modules/stock.ts';
+import { wakeStoreWaitlist } from '../modules/storefront-platform.ts';
 import { maskPhone } from '../vendedor/threads.ts';
 import type { MerchantNotify } from './context.ts';
 import { emitAdminTx, type AdminHub } from './live.ts';
+import { DEMAND_DEFAULT_MINUTES } from './routes-store.ts';
 import { sendPushResult, vapidPublicKey, type PushResult } from './webpush.ts';
 
 const workLog = log.child({ mod: 'admin-workers' });
@@ -192,8 +195,9 @@ async function fanOut(
 }
 
 /** A shopper waiting for the store in a Vendedor conversation (ADR 0031, law 13): one push per
- *  conversation per handoff; "assumir" opens it on the store's floor. */
-export async function pushWaiting(sql: Sql, tenantId: string, threadId: string) {
+ *  conversation per handoff, and again at each re-ping minute (`ping`); "assumir" opens it on
+ *  the store's floor. Each person can turn these off apart from the other alerts (`pushWaiting`). */
+export async function pushWaiting(sql: Sql, tenantId: string, threadId: string, ping = 0) {
   const job = await withTenant(sql, tenantId, async (tx) => {
     const t = (
       await tx<
@@ -210,7 +214,7 @@ export async function pushWaiting(sql: Sql, tenantId: string, threadId: string) 
     if (!t) return null;
     const won = await tx`
       insert into push_deliveries (tenant_id, key)
-      values (${tenantId}, ${`vendedor.waiting:${threadId}:${t.since.toISOString()}`})
+      values (${tenantId}, ${`vendedor.waiting:${threadId}:${t.since.toISOString()}${ping ? `:${ping}` : ''}`})
       on conflict do nothing returning key
     `;
     if (!won[0]) return null;
@@ -218,6 +222,7 @@ export async function pushWaiting(sql: Sql, tenantId: string, threadId: string) 
       select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
         join merchant_users u on u.id = s.user_id
       where s.tenant_id = ${tenantId} and u.status = 'active' and coalesce((u.prefs ->> 'push')::boolean, true)
+        and coalesce((u.prefs ->> 'pushWaiting')::boolean, true)
     `;
     return { t, subs };
   });
@@ -239,6 +244,94 @@ export async function pushWaiting(sql: Sql, tenantId: string, threadId: string) 
     'vendedor.waiting',
     threadId,
   );
+}
+
+/** Minutes after a handoff at which a still-waiting shopper pings again; then it stops. */
+export const WAITING_REPINGS = [5, 15] as const;
+
+/** Nobody answered the shopper yet: "precisa de você" again at 5 and 15 min, and a WhatsApp to
+ *  the owner and managers once per handoff if no ping reached a device (as orders do). An answer,
+ *  or Duá taking back, clears waiting_since and ends both. */
+export async function vendedorWaitingAlerts(sql: Sql, tenantId: string, opts: AlertOpts = {}) {
+  const due = await withTenant(
+    sql,
+    tenantId,
+    (tx) => tx<{ id: string; since: Date; mins: number; store: string }[]>`
+      select t.id, t.waiting_since as since, s.name as store,
+        floor(extract(epoch from now() - t.waiting_since) / 60)::int as mins
+      from shopper_threads t join tenants s on s.id = t.tenant_id
+      where t.tenant_id = ${tenantId} and t.waiting_since is not null and t.channel = 'whatsapp'
+        and t.owner <> 'muted' and t.class not in ('personal', 'other')
+        and t.waiting_since <= now() - make_interval(mins => ${WAITING_REPINGS[0]})
+        and t.waiting_since > now() - interval '1 hour'
+      order by t.waiting_since limit 20`,
+  );
+  for (const t of due) {
+    const ping = [...WAITING_REPINGS].reverse().find((m) => t.mins >= m)!;
+    if (vapidPublicKey()) await pushWaiting(sql, tenantId, t.id, ping);
+    await waitingWhatsapp(sql, tenantId, t, opts);
+  }
+}
+
+async function waitingWhatsapp(
+  sql: Sql,
+  tenantId: string,
+  t: { id: string; since: Date; mins: number; store: string },
+  opts: AlertOpts,
+) {
+  const notify = opts.notify;
+  if (!notify) return;
+  const people = await withTenant(sql, tenantId, async (tx) => {
+    const reached = await tx`
+      select 1 from push_attempts where tenant_id = ${tenantId} and event = 'vendedor.waiting'
+        and ref = ${t.id} and channel = 'push' and result = 'ok' and at >= ${t.since} limit 1`;
+    if (reached.length) return null;
+    const won = await tx`
+      insert into push_deliveries (tenant_id, key)
+      values (${tenantId}, ${`vendedor.whatsapp:${t.id}:${t.since.toISOString()}`})
+      on conflict do nothing returning key`;
+    if (!won[0]) return null;
+    return tx<{ id: string; phone: string }[]>`
+      select id, phone from merchant_users
+      where tenant_id = ${tenantId} and status = 'active' and role in ('owner', 'manager')
+        and coalesce((prefs ->> 'whatsappAlerts')::boolean, true)
+        and coalesce((prefs ->> 'pushWaiting')::boolean, true)`;
+  });
+  if (!people) return;
+  // the store's own shopper stays out of a message sent from the platform's number
+  const link = opts.adminOrigin
+    ? `Responda em ${opts.adminOrigin}/admin/vendedor/conversas/${t.id}`
+    : 'Abra o painel da Venduá para responder.';
+  const text = `Venduá: um cliente está esperando por você numa conversa do Duá da ${t.store} há ${t.mins} min, e o aviso não chegou em nenhum aparelho. ${link}`;
+  const results: { userId: string | null; r: PushResult }[] = [];
+  for (const p of people) {
+    try {
+      await notify.whatsapp(p.phone, text);
+      results.push({ userId: p.id, r: { result: 'ok', detail: null } });
+    } catch (err) {
+      results.push({
+        userId: p.id,
+        r: { result: 'error', detail: String((err as Error).message ?? err).slice(0, 200) },
+      });
+    }
+  }
+  if (!results.length)
+    results.push({
+      userId: null,
+      r: { result: 'error', detail: 'nobody opted in to WhatsApp alerts' },
+    });
+  await withTenant(sql, tenantId, async (tx) => {
+    for (const { userId, r } of results)
+      await recordPushAttempt(tx, tenantId, {
+        subscriptionId: null,
+        userId,
+        event: 'vendedor.whatsapp',
+        ref: t.id,
+        channel: 'whatsapp',
+        ...r,
+      });
+    await emitAdminTx(tx, tenantId, 'alerts');
+  });
 }
 
 /** A new number Duá can't tell is a customer (ADR 0033): "é cliente?", once per thread per
@@ -450,8 +543,8 @@ async function whatsappFallback(sql: Sql, tenantId: string, opts: AlertOpts) {
   }
 }
 
-/** Once a minute: "esgotado hoje" ends at midnight, a timed pause clears its row,
- *  a missed new-order alert falls back to WhatsApp. */
+/** Once a minute: "esgotado hoje" ends at midnight, a timed pause clears its row, "muitos
+ *  pedidos agora" ends, a missed new-order alert falls back to WhatsApp. */
 export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
   const tenants = await sql<{ id: string }[]>`select id from tenants where status = 'active'`;
   for (const t of tenants) {
@@ -463,6 +556,17 @@ export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
     }
     await whatsappFallback(sql, t.id, opts).catch((err) =>
       workLog.warn({ err, tenantId: t.id }, 'whatsapp alert fallback failed'),
+    );
+    await vendedorWaitingAlerts(sql, t.id, opts).catch((err) =>
+      workLog.warn({ err, tenantId: t.id }, 'vendedor waiting re-ping failed'),
+    );
+    // "avise-me quando abrir": the store opened (hours or a resume) — its subscribers, once
+    await withTenant(sql, t.id, (tx) => wakeStoreWaitlist(tx, t.id)).catch((err) =>
+      workLog.warn({ err, tenantId: t.id }, 'store waitlist wake failed'),
+    );
+    // the bag reminder a shopper asked for at checkout, an hour after they stopped
+    await cartReminderPass(sql, t.id).catch((err) =>
+      workLog.warn({ err, tenantId: t.id }, 'bag reminder pass failed'),
     );
   }
 }
@@ -483,8 +587,20 @@ async function sweepTenant(sql: Sql, tenantId: string) {
         and resumes_at <= now() and not billing_hold
       returning tenant_id
     `;
+    // "muitos pedidos agora" always ends; one turned on with no end (the CRM) gets the default,
+    // and an end left on a store back to normal goes, so turning it on again can't end at once
+    const demand = await tx`
+      update store_settings set
+        demand_level = case when demand_level = 'high' and demand_until is null then 'high' else 'normal' end,
+        demand_until = case when demand_level = 'high' and demand_until is null
+                            then now() + make_interval(mins => ${DEMAND_DEFAULT_MINUTES}) end
+      where tenant_id = ${tenantId} and (
+        (demand_level = 'high' and (demand_until is null or demand_until <= now()))
+        or (demand_level = 'normal' and demand_until is not null))
+      returning tenant_id
+    `;
     if (due.length) await emitAdminTx(tx, tenantId, 'catalog');
-    if (resumed.length) await emitAdminTx(tx, tenantId, 'store');
+    if (resumed.length || demand.length) await emitAdminTx(tx, tenantId, 'store');
     await tx`delete from push_deliveries where tenant_id = ${tenantId} and created_at < now() - interval '2 days'`;
     await tx`delete from push_attempts where tenant_id = ${tenantId} and at < now() - interval '30 days'`;
   });

@@ -79,6 +79,26 @@ function tokensToVars(tokens: StorefrontTokens): Record<string, string> {
 
 const EMPTY_BUNDLE: StorefrontBundle = { sections: {}, snapshot: { templates: {}, tokens: null } };
 
+/** Kernel 1.21 — `/pedido/<id>?t=vot.…`, the link at the end of the store's WhatsApp order
+ *  updates: the status-only credential goes to the api client (and the device's storage, so a
+ *  reload still reads) and leaves the address bar, so a shared screenshot or link doesn't carry it. */
+function takeTrackingLink(api: VenduaApi) {
+  const loc = globalThis.location;
+  if (!loc) return;
+  const params = new URLSearchParams(loc.search);
+  const token = params.get('t');
+  const order = /\/pedido\/([0-9a-f-]{36})\/?$/.exec(loc.pathname)?.[1];
+  if (token === null || !order) return;
+  api.addTrackingToken(order, token);
+  params.delete('t');
+  const rest = params.toString();
+  globalThis.history?.replaceState(
+    globalThis.history.state,
+    '',
+    `${loc.pathname}${rest ? `?${rest}` : ''}${loc.hash}`,
+  );
+}
+
 export function VenduaProvider({
   config,
   storefront = EMPTY_BUNDLE,
@@ -100,6 +120,8 @@ export function VenduaProvider({
     // backend — drop the session and mint a fresh client
     apiRef.current?.api.clearSession();
     apiRef.current = { api: createApi(baseUrl), baseUrl };
+    // before any page's first read: the order page must ask with the link's credential
+    takeTrackingLink(apiRef.current.api);
   }
   const api = apiRef.current.api;
   const listeners = useRef(new Map<string, Set<() => void>>());
@@ -203,6 +225,29 @@ export function VenduaProvider({
       close();
     };
   }, [api, baseUrl]);
+
+  // Kernel 1.21: the cart session is the device's — another tab starting or closing a cart
+  // rereads this one's bag; back online, every read asks Core again (in place, no flash)
+  useEffect(() => {
+    const cache = cacheFor(api);
+    const refresh = (key: string) => {
+      const subs = listeners.current.get(key);
+      if (subs?.size) subs.forEach((fn) => fn());
+      else cache.delete(key);
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === 'vendua.session') refresh('cart');
+    };
+    const onOnline = () => {
+      for (const key of [...cache.keys()]) refresh(key);
+    };
+    globalThis.addEventListener?.('storage', onStorage);
+    globalThis.addEventListener?.('online', onOnline);
+    return () => {
+      globalThis.removeEventListener?.('storage', onStorage);
+      globalThis.removeEventListener?.('online', onOnline);
+    };
+  }, [api]);
 
   // Kernel 1.2 links: `?cart=CODE` restores a shared sacola, `?cupom=CODE` applies a
   // coupon — both land on /sacola with the params stripped (the URL stays shareable once)

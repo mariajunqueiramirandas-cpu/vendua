@@ -182,28 +182,158 @@ export async function completeTask(
   idemKey: string,
   by: string | null = null,
 ): Promise<ClaimResult<{ task: ReturnType<typeof taskJson> }>> {
-  const res = await claimControl(sql, idemKey, async (tx) => {
-    const rows = await tx<TaskRow[]>`
-      update lead_tasks set done_at = ${done ? new Date().toISOString() : null}
-      where id = ${taskId} returning *
-    `;
-    if (!rows[0]) throw new HttpError(404, 'TASK_NOT_FOUND', 'task not found');
-    // only an agent handoff has a card to close — the runner's '[humano]' cost-cap and
-    // failed-run tasks don't; a reopened-and-closed task is still one resolution
-    const handoff =
-      done &&
-      rows[0].title.startsWith('[humano]') &&
-      (await tx`select 1 from staff_events where anchor = ${`handoff:${rows[0].id}`} limit 1`)[0];
-    if (handoff) {
-      await recordStaffEventTx(
-        tx,
-        'handoff.resolved',
-        { taskId: rows[0].id, leadId: rows[0].lead_id, by },
-        { dedupeKey: `handoff:${rows[0].id}:resolved` },
-      );
+  const res = await claimControl(sql, idemKey, async (tx) => ({
+    status: 200,
+    body: { task: taskJson(await completeTaskTx(tx, taskId, done, by)) },
+  }));
+  if (!res.replayed) emitControlEvent('lead.change', res.body.task.leadId);
+  return res;
+}
+
+async function completeTaskTx(
+  tx: Sql,
+  taskId: string,
+  done: boolean,
+  by: string | null,
+): Promise<TaskRow> {
+  const rows = await tx<TaskRow[]>`
+    update lead_tasks set done_at = ${done ? new Date().toISOString() : null}
+    where id = ${taskId} returning *
+  `;
+  if (!rows[0]) throw new HttpError(404, 'TASK_NOT_FOUND', 'task not found');
+  // only an agent handoff has a card to close — the runner's '[humano]' cost-cap and
+  // failed-run tasks don't; a reopened-and-closed task is still one resolution
+  if (done && (await hasHandoffCard(tx, rows[0]))) {
+    await recordStaffEventTx(
+      tx,
+      'handoff.resolved',
+      { taskId: rows[0].id, leadId: rows[0].lead_id, by },
+      { dedupeKey: `handoff:${rows[0].id}:resolved` },
+    );
+  }
+  return rows[0];
+}
+
+const hasHandoffCard = async (tx: Sql, t: Pick<TaskRow, 'id' | 'title'>) =>
+  t.title.startsWith('[humano]') &&
+  !!(await tx`select 1 from staff_events where anchor = ${`handoff:${t.id}`} limit 1`)[0];
+
+export const TASK_SNOOZES = { '1d': '1 day', '1w': '7 days' } as const;
+
+export interface TaskPatch {
+  done?: boolean;
+  title?: string;
+  dueAt?: string | null;
+  /** pushes the due date forward from whichever is later, the due date or now */
+  snooze?: keyof typeof TASK_SNOOZES;
+}
+
+/** PATCH /tasks/:id body. Without title/dueAt/snooze it is the old done toggle (absent = done). */
+export function taskPatch(body: Record<string, unknown>): TaskPatch {
+  const out: TaskPatch = {};
+  if ('title' in body) {
+    const t = str(body.title, 'title', 300).trim();
+    if (!t) throw new HttpError(422, 'BAD_REQUEST', 'title is required', { field: 'title' });
+    out.title = t;
+  }
+  if ('dueAt' in body) out.dueAt = taskDueAt(body.dueAt);
+  if ('snooze' in body) {
+    if (typeof body.snooze !== 'string' || !Object.hasOwn(TASK_SNOOZES, body.snooze)) {
+      throw new HttpError(422, 'BAD_REQUEST', 'snooze must be 1d or 1w', { field: 'snooze' });
     }
-    return { status: 200, body: { task: taskJson(rows[0]!) } };
+    if ('dueAt' in out) {
+      throw new HttpError(422, 'BAD_REQUEST', 'send dueAt or snooze, not both', {
+        field: 'snooze',
+      });
+    }
+    out.snooze = body.snooze as keyof typeof TASK_SNOOZES;
+  }
+  if ('done' in body) {
+    if (typeof body.done !== 'boolean') {
+      throw new HttpError(422, 'BAD_REQUEST', 'done must be a boolean', { field: 'done' });
+    }
+    out.done = body.done;
+  } else if (!Object.keys(out).length) {
+    out.done = true;
+  }
+  return out;
+}
+
+/** ISO-8601 within a sane window, or null to clear. */
+export function taskDueAt(v: unknown): string | null {
+  if (v === null || v === undefined || v === '') return null;
+  const d = new Date(str(v, 'dueAt', 60));
+  const y = d.getUTCFullYear();
+  if (Number.isNaN(d.getTime()) || y < 2000 || y > 2100) {
+    throw new HttpError(422, 'BAD_REQUEST', 'dueAt must be an ISO-8601 timestamp', {
+      field: 'dueAt',
+    });
+  }
+  return d.toISOString();
+}
+
+export async function patchTask(
+  sql: Sql,
+  taskId: string,
+  patch: TaskPatch,
+  idemKey: string,
+  by: string | null = null,
+): Promise<ClaimResult<{ task: ReturnType<typeof taskJson> }>> {
+  const res = await claimControl(sql, idemKey, async (tx) => {
+    const cur = (await tx<TaskRow[]>`select * from lead_tasks where id = ${taskId}`)[0];
+    if (!cur) throw new HttpError(404, 'TASK_NOT_FOUND', 'task not found');
+    // completing a handoff looks for the '[humano]' prefix: its title stays the agent's
+    if (
+      patch.title !== undefined &&
+      patch.title !== cur.title &&
+      cur.title.startsWith('[humano]')
+    ) {
+      throw new HttpError(409, 'TASK_LOCKED', 'tarefas [humano] do agente não mudam de título', {
+        field: 'title',
+      });
+    }
+    let row = cur;
+    if (patch.title !== undefined || patch.dueAt !== undefined || patch.snooze) {
+      const interval = patch.snooze ? TASK_SNOOZES[patch.snooze] : null;
+      row = (
+        await tx<TaskRow[]>`
+          update lead_tasks set
+            title = ${patch.title ?? cur.title},
+            due_at = case
+              when ${interval}::interval is not null
+                then greatest(coalesce(due_at, now()), now()) + ${interval}::interval
+              when ${patch.dueAt !== undefined} then ${patch.dueAt ?? null}::timestamptz
+              else due_at end
+          where id = ${taskId} returning *
+        `
+      )[0]!;
+    }
+    if (patch.done !== undefined) row = await completeTaskTx(tx, taskId, patch.done, by);
+    return { status: 200, body: { task: taskJson(row) } };
   });
   if (!res.replayed) emitControlEvent('lead.change', res.body.task.leadId);
+  return res;
+}
+
+export async function deleteTask(
+  sql: Sql,
+  taskId: string,
+  idemKey: string,
+): Promise<ClaimResult<{ ok: true; leadId: string }>> {
+  const res = await claimControl(sql, idemKey, async (tx) => {
+    const cur = (await tx<TaskRow[]>`select * from lead_tasks where id = ${taskId}`)[0];
+    if (!cur) throw new HttpError(404, 'TASK_NOT_FOUND', 'task not found');
+    // an open handoff's Discord card would wait forever — it closes by completing the task
+    if (!cur.done_at && (await hasHandoffCard(tx, cur))) {
+      throw new HttpError(
+        409,
+        'TASK_LOCKED',
+        'conclua o pedido de ajuda do agente em vez de apagar',
+      );
+    }
+    await tx`delete from lead_tasks where id = ${taskId}`;
+    return { status: 200, body: { ok: true as const, leadId: cur.lead_id } };
+  });
+  if (!res.replayed) emitControlEvent('lead.change', res.body.leadId);
   return res;
 }

@@ -702,13 +702,14 @@ items, delivery polygons and distance pricing, payment-method adjustments (Domí
 
 ### 4.13 Proactive, within the transport's limits
 
-| Touch                            | When                                                         | Limits                                                                                          |
-| -------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| Recovery                         | A thread stops in `building`, `confirming` or `paying`       | One per thread per 24 h, after the merchant's delay, store open, shopper wrote in the last 24 h |
-| Pix expired                      | The code lapsed unpaid                                       | Once                                                                                            |
-| Waitlist                         | An item the shopper asked about is back                      | Once per request                                                                                |
-| Handback                         | The human window lapsed with the shopper's question open     | Once                                                                                            |
-| Re-engagement, web-cart recovery | Only with the official API, templates and opt-in (V4, P-018) | Frequency cap, opt-out                                                                          |
+| Touch                           | When                                                           | Limits                                                                                          |
+| ------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Recovery                        | A thread stops in `building`, `confirming` or `paying`         | One per thread per 24 h, after the merchant's delay, store open, shopper wrote in the last 24 h |
+| Pix expired                     | The code lapsed unpaid                                         | Once                                                                                            |
+| Waitlist                        | An item the shopper asked about is back                        | Once per request                                                                                |
+| Handback                        | The human window lapsed with the shopper's question open       | Once                                                                                            |
+| Web-cart reminder (no Vendedor) | A bag left 1 h with the shopper's checkout opt-in (2026-10-06) | One per bag, one per number a week, 20/h per store, store open, SAIR, off by default            |
+| Re-engagement                   | Only with the official API, templates and opt-in (V4, P-018)   | Frequency cap, opt-out                                                                          |
 
 Recovery copy is model-written and verified; it may carry an incentive only through
 `offer_incentive`. Domínio sends one fixed text with no incentive.

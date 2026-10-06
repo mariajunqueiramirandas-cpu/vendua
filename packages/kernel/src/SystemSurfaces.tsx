@@ -80,6 +80,35 @@ function NoticeView({ notice }: { notice: Notice }) {
   return <NoticeSlot notice={notice} onDismiss={() => setDismissed(true)} />;
 }
 
+// Kernel 1.21 — the device lost its connection: said once, at the top, until it's back
+const OFFLINE: Notice = {
+  id: 'offline',
+  kind: 'offline',
+  severity: 'warning',
+  title: 'Você está sem internet',
+  body: 'Sua sacola continua guardada. Quando a conexão voltar, é só seguir de onde parou.',
+  dismissible: false,
+  priority: 100,
+};
+
+const subscribeOnline = (fn: () => void) => {
+  globalThis.addEventListener?.('online', fn);
+  globalThis.addEventListener?.('offline', fn);
+  return () => {
+    globalThis.removeEventListener?.('online', fn);
+    globalThis.removeEventListener?.('offline', fn);
+  };
+};
+
+function OfflineNotice() {
+  const online = useSyncExternalStore(
+    subscribeOnline,
+    () => globalThis.navigator?.onLine !== false,
+    () => true,
+  );
+  return online ? null : <NoticeSlot notice={OFFLINE} />;
+}
+
 const PURPOSE_LABEL: Record<ConsentPurpose, string> = {
   analytics: 'Métricas de uso',
   marketing: 'Ofertas personalizadas',
@@ -211,6 +240,7 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
     <>
       {/* mount point 1 */}
       <div className="v-banner-stack" data-vendua="banner-stack" aria-live="polite">
+        <OfflineNotice />
         {banners.map((n) => (
           <NoticeView key={n.id} notice={n} />
         ))}

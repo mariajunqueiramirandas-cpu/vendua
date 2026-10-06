@@ -190,7 +190,7 @@ export function storeStatus(settings: StoreSettingsRow | null, now: Date): Deriv
 
 export function threadFloor(
   t: Thread,
-  agent: Pick<StoreAgentRow, 'enabled' | 'settings'>,
+  agent: Pick<StoreAgentRow, 'enabled' | 'settings'> & { pausedUntil?: Date | null },
   status: DerivedStatus,
   now: Date,
 ): FloorResult {

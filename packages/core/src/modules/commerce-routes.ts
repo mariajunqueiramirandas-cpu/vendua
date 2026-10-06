@@ -60,9 +60,12 @@ import {
   canTransition,
   loadOrderView,
   loadOrderViews,
+  readStorefrontOrder,
+  storefrontOrderAccess,
   transitionOrder,
   type DeliveryMode,
   type OrderState,
+  type OrderStatusView,
   type OrderView,
 } from './orders.ts';
 import { normalizePixKey, type PixKeyType } from './pix.ts';
@@ -292,7 +295,7 @@ export function mountCommerce(d: Deps) {
       await assertCartOpen(tx, tenant.id, cartId);
       let lines: ImportLine[];
       if (body.shareCode !== undefined) {
-        lines = await readShare(tx, tenant.id, str(body.shareCode, 'shareCode', 16));
+        lines = await readShare(tx, tenant.id, str(body.shareCode, 'shareCode', 16), cartId);
       } else {
         lines = parseImportLines(body.items);
       }
@@ -356,10 +359,16 @@ export function mountCommerce(d: Deps) {
   // lost while LISTEN reconnects; `Last-Event-ID` skips a version already seen.
   checkout.get('/orders/:id/events', async (c) => {
     const tenant = c.get('tenant');
-    const cartId = await sessionCartId(c, sessionSecret);
+    // a tracking link (vot.…) streams the status-only view
+    const access = await storefrontOrderAccess(
+      c.req.header('authorization'),
+      tenant.id,
+      c.req.param('id'),
+      sessionSecret,
+    );
     const orderId = uuidParam(c, 'id');
     const read = () =>
-      withTenant(sql, tenant.id, (tx) => loadOrderView(tx, tenant.id, orderId, cartId));
+      withTenant(sql, tenant.id, (tx) => readStorefrontOrder(tx, tenant.id, orderId, access));
     // 404 before the stream opens — a stream is only for an order this session owns
     const first = await read();
     const lastId = Number(c.req.header('last-event-id'));
@@ -375,7 +384,7 @@ export function mountCommerce(d: Deps) {
         };
       });
       stream.onAbort(finish);
-      const push = async (o: OrderView) => {
+      const push = async (o: OrderView | OrderStatusView) => {
         if (o.version > sent) {
           sent = o.version;
           await stream.writeSSE({ event: 'order', id: String(o.version), data: JSON.stringify(o) });

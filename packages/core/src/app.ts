@@ -59,20 +59,27 @@ import {
   loadStoreSettings,
   loadZoneRows,
   distancePricingOf,
+  parseItemNote,
   priceLine,
   quoteInput,
   storeCoords,
 } from './modules/cart.ts';
 import {
   createCartTx,
+  editLineTx,
   parseDeliveryInput,
   quoteDeliveryTx,
   removeLineTx,
   setDeliveryTx,
-  setLineQtyTx,
 } from './modules/cart-ops.ts';
 import { preordersWhileClosed, validateCheckoutShape } from './modules/checkout.ts';
-import { loadOrderView, orderVersion, TERMINAL_STATES } from './modules/orders.ts';
+import {
+  loadOrderView,
+  orderVersion,
+  readStorefrontOrder,
+  storefrontOrderAccess,
+  TERMINAL_STATES,
+} from './modules/orders.ts';
 import { placeOrderTx } from './modules/place-order.ts';
 import { parseSelections } from './modules/combos.ts';
 import {
@@ -100,9 +107,12 @@ import { OrderHub } from './modules/order-live.ts';
 import { pixPayload, type PixKeyType } from './modules/pix.ts';
 import { bookableDates } from './modules/preorder.ts';
 import { mountWebChat, webChatProfile } from './vendedor/web-chat.ts';
+import { cartReminderOffered, mountCartReminder } from './modules/cart-reminder.ts';
 import { mountCommerce } from './modules/commerce-routes.ts';
 import {
   agentGoal,
+  bulkLeadPatch,
+  bulkUpdateLeads,
   deleteLead,
   exportLeadsCsv,
   findDuplicates,
@@ -115,6 +125,7 @@ import {
   leadState,
   leadStats,
   listLeads,
+  mountSavedViews,
   parseLeadsCsv,
   segmentStats,
   updateLead,
@@ -124,10 +135,13 @@ import {
 import {
   ACTIVITY_KINDS,
   addActivity,
-  completeTask,
   createTask,
+  deleteTask,
   listActivities,
   listTasks,
+  patchTask,
+  taskDueAt,
+  taskPatch,
   type ActivityKind,
 } from './modules/activities.ts';
 import {
@@ -285,6 +299,7 @@ const STORE_DEPS = [
   'plans',
   'subscriptions',
   'store_agent',
+  'store_whatsapp',
 ];
 const CATALOG_DEPS = [
   'store_settings',
@@ -613,17 +628,18 @@ export function createApp({
 
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
-    const { settings, online, publicUrl, loyaltyOn, chat } = await cache.read(
+    const { settings, online, publicUrl, loyaltyOn, chat, cartReminder } = await cache.read(
       tenant.id,
       'store',
       () =>
         withTenant(sql, tenant.id, async (tx) => {
-          const [settings, conn, publicUrl, loyaltyPlan, chat] = await Promise.all([
+          const [settings, conn, publicUrl, loyaltyPlan, chat, cartReminder] = await Promise.all([
             loadSettings(tx, tenant.id),
             loadConnection(tx, tenant.id),
             storeOrigin(tx, tenant, publicStoreDomain),
             planHas(tx, tenant.id, 'loyalty'),
             webChatProfile(tx, tenant.id),
+            cartReminderOffered(tx, tenant.id),
           ]);
           return {
             settings,
@@ -638,6 +654,7 @@ export function createApp({
             publicUrl,
             loyaltyOn: !!settings?.loyalty && loyaltyPlan,
             chat,
+            cartReminder,
           };
         }),
       { deps: STORE_DEPS, until: (v) => v.onlineUntil },
@@ -708,6 +725,8 @@ export function createApp({
       logoUrl: settings?.logo_url ?? null,
       // Kernel 1.18: the Vendedor's chat on the site, when the merchant turned it on
       chat,
+      // Kernel 1.21: checkout may offer "me lembre pelo WhatsApp" (modules/cart-reminder.ts)
+      cartReminder,
     });
   });
 
@@ -1021,12 +1040,13 @@ export function createApp({
           })
         : [];
       const comboSelections = parseSelections(body.comboSelections);
+      const note = parseItemNote(body.note);
       const tz = settings?.hours?.timezone || 'America/Sao_Paulo';
       const { cart, added } = await addItem(
         tx,
         tenant.id,
         cartId,
-        { productId, qty, modifierIds, modifiers, comboSelections },
+        { productId, qty, modifierIds, modifiers, comboSelections, note },
         (t, tid, id) => getProductById(t, tid, id, { tz }),
         { cart: locked, settings },
       );
@@ -1039,13 +1059,10 @@ export function createApp({
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
-      const cart = await setLineQtyTx(
-        tx,
-        tenant.id,
-        cartId,
-        c.req.param('itemId') ?? '',
-        Number(body.qty),
-      );
+      const cart = await editLineTx(tx, tenant.id, cartId, c.req.param('itemId') ?? '', {
+        ...(body.qty !== undefined ? { qty: Number(body.qty) } : {}),
+        ...(body.note !== undefined ? { note: body.note } : {}),
+      });
       return { status: 200, body: { cart } };
     })(c);
   });
@@ -1154,10 +1171,16 @@ export function createApp({
   // `since` — the Kernel's live useOrder; without `wait` it's a plain read
   checkout.get('/orders/:id', async (c) => {
     const tenant = c.get('tenant');
-    const cartId = await sessionCartId(c, sessionSecret);
+    // the cart session that placed it reads it all; a tracking link (vot.…), only its status
+    const access = await storefrontOrderAccess(
+      c.req.header('authorization'),
+      tenant.id,
+      c.req.param('id'),
+      sessionSecret,
+    );
     const orderId = uuidParam(c, 'id');
     const read = () =>
-      withTenant(sql, tenant.id, (tx) => loadOrderView(tx, tenant.id, orderId, cartId));
+      withTenant(sql, tenant.id, (tx) => readStorefrontOrder(tx, tenant.id, orderId, access));
     const waitRaw = c.req.query('wait');
     const sinceRaw = c.req.query('since');
     if (waitRaw === undefined || sinceRaw === undefined) return c.json({ order: await read() });
@@ -1330,11 +1353,19 @@ export function createApp({
     const q = c.req.query('q');
     const cursor = c.req.query('cursor');
     const sort = c.req.query('sort');
+    const segment = c.req.query('segment');
+    const source = c.req.query('source');
+    const city = c.req.query('city');
     const { leads, nextCursor } = await listLeads(sql, {
       ...(q ? { q } : {}),
       ...(state ? { state: leadState(state) } : {}),
       ...(tag ? { tag: str(tag, 'tag', 60) } : {}),
       ...(archived === 'only' || archived === 'all' ? { archived } : {}),
+      ...(segment ? { segment: str(segment, 'segment', 80) } : {}),
+      ...(source ? { source: str(source, 'source', 100) } : {}),
+      ...(city ? { city: str(city, 'city', 120) } : {}),
+      ...(c.req.query('draft') === '1' ? { hasDraft: true } : {}),
+      ...(c.req.query('overdue') === '1' ? { overdue: true } : {}),
       ...(limit ? { limit: Math.min(Math.max(Number(limit) || 50, 1), 200) } : {}),
       ...(cursor ? { cursor } : {}),
       ...(sort ? { sort: leadSort(sort) } : {}),
@@ -1470,6 +1501,14 @@ export function createApp({
     return c.json(res.body);
   });
 
+  // the pipeline's selection bar: one claim, each lead through the single PATCH's updateLeadTx
+  app.post('/control/v1/leads/bulk', async (c) => {
+    controlGate(c);
+    const res = await bulkUpdateLeads(sql, bulkLeadPatch(await bodyJson(c)), requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
   app.delete('/control/v1/leads/:id', async (c) => {
     controlGate(c);
     const res = await deleteLead(sql, uuidParam(c, 'id'), requireIdemKey(c));
@@ -1565,7 +1604,7 @@ export function createApp({
       uuidParam(c, 'id'),
       {
         title: str(body.title, 'title', 300),
-        dueAt: (body.dueAt as string) ?? null,
+        dueAt: taskDueAt(body.dueAt),
         createdBy: 'staff',
       },
       requireIdemKey(c),
@@ -1591,14 +1630,15 @@ export function createApp({
 
   app.patch('/control/v1/tasks/:id', async (c) => {
     controlGate(c);
-    const body = await bodyJson(c);
-    const res = await completeTask(
-      sql,
-      uuidParam(c, 'id'),
-      body.done !== false,
-      requireIdemKey(c),
-      'staff',
-    );
+    const id = uuidParam(c, 'id');
+    const res = await patchTask(sql, id, taskPatch(await bodyJson(c)), requireIdemKey(c), 'staff');
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.delete('/control/v1/tasks/:id', async (c) => {
+    controlGate(c);
+    const res = await deleteTask(sql, uuidParam(c, 'id'), requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     return c.json(res.body);
   });
@@ -2927,6 +2967,7 @@ export function createApp({
     storeDomain: publicStoreDomain,
   });
   mountWebChat({ checkout, sql, sessionSecret, idempotency });
+  mountCartReminder({ checkout, sql, sessionSecret, idempotency });
 
   mountControlBilling({
     app,
@@ -2938,6 +2979,7 @@ export function createApp({
     signupReady: signupReady ?? (() => signupReadiness(sql, provider)),
   });
   mountControlCustomers({ app, sql, controlGate, storeDomain: publicStoreDomain });
+  mountSavedViews({ app, sql, controlGate, requireIdemKey });
   mountIncidentsControl({ app, sql, controlGate });
   mountAgentRuntimeControl({ app, sql, controlGate });
   mountAgentRuntimeAi({ app, sql, controlGate, storeDomain: publicStoreDomain });

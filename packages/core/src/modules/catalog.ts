@@ -299,8 +299,24 @@ export function parseDietary(v: unknown): DietaryTag[] {
         field: 'dietary',
         allowed: DIETARY_TAGS,
       });
+  // a shopper (and the Vendedor) would read both as true
+  for (const [a, b] of DIETARY_CONFLICTS)
+    if (v.includes(a) && v.includes(b))
+      throw new HttpError(422, 'BAD_REQUEST', `${a} and ${b} contradict each other`, {
+        field: 'dietary',
+      });
   return DIETARY_TAGS.filter((t) => v.includes(t));
 }
+
+/** pairs a product can't state together */
+export const DIETARY_CONFLICTS: readonly (readonly [DietaryTag, DietaryTag])[] = [
+  ['sem_gluten', 'contem_gluten'],
+  ['sem_lactose', 'contem_lactose'],
+  ['vegano', 'contem_lactose'],
+  ['vegano', 'contem_ovo'],
+  ['vegano', 'contem_frutos_do_mar'],
+  ['vegetariano', 'contem_frutos_do_mar'],
+];
 
 /** Live availability — stock 0 is sold out without anyone flipping a status. */
 export const liveStatus = (status: string, stock: number | null) =>

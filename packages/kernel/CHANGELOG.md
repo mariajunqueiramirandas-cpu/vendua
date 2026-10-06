@@ -3,6 +3,49 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.21.0
+
+Shopper conveniences — additive; no storefront edit. Every figure shown is still Core's.
+
+- The bag and past orders outlive the tab: the cart session and the order tokens (the newest 20)
+  move from sessionStorage to localStorage, shared by the device's tabs, so a shopper reopens the
+  full order page of a past order on a later visit. A tab's older sessionStorage copy is still
+  read and moves over; a cart Core no longer knows reads as an empty bag (a fresh one starts on the
+  next add), a refused order token is dropped quietly. Another tab's new cart rereads the bag;
+  coming back online rereads everything in place.
+- Allergen and diet tags: `CatalogProduct.dietary`; rules `DIETARY_LABEL`, `DIETARY_FILTERS`,
+  `dietaryBadges` (`DietaryBadge`); `matchProduct`/`arrangeMenu`/`useMenu` take `dietary`, and a
+  search finds a stated diet. Cards show the diets, the product page every tag (allergens
+  marked), `sdk:catalog-grid` offers diet chips (`showDietFilter`).
+- "Calcular entrega" in the sacola before the delivery step (`[data-vendua="delivery-estimate"]`):
+  the remembered address or a CEP, quoted on the cart — `api.quote`/`useDeliveryQuote().quote`
+  take `withCart` — showing Core's fee, total, minimum and free-delivery gap.
+  `sdk:delivery-eta` adds the minimum order and "grátis acima de" (`showMinOrder`).
+- `sdk:notify-me` also shows while the store is closed (`storeTitle`, when it opens); Core
+  messages each subscriber once when the store opens.
+- The checkout keeps its answers through a reload (this tab, this cart; cleared once the order
+  is placed) and remembers the address's "ponto de referência".
+- Up to three saved addresses on the device: `CustomerProfile.addresses`,
+  `CustomerProfile.address.reference`; `checkout.AddressForm` gains optional `savedAddresses`,
+  `savedAddressId`, `onPickAddress` (the default: radios plus "Outro endereço").
+- New block `sdk:recent-order` (`recentOrder`): "Acompanhar pedido" / "Pedir de novo" for the
+  device's last order; template migration `2026-10-recent-order-on-home`.
+- Order page: "Falar com a loja" (WhatsApp) always there; the state in the tab title.
+- The link in the store's WhatsApp updates (`/pedido/:id?t=…`): the provider keeps the
+  status-only credential and strips it; `useOrder` answers `tracking` (`OrderTracking`) on a device
+  without the order's own token; new slot `order.TrackingPage`; api `addTrackingToken`,
+  `tracksOnly`, `orderStatus`, `orderStatusWait`, `orderStatusStream`.
+- A note per line ("sem cebola", ≤ 140): `CartItem.note`, `OrderItem.note`, `ImportLine.note`;
+  `add`/`addLine`/`AddToCart` take it, `mutations.setNote`; "Alguma observação?" on
+  `sdk:purchase-panel` (`showNote`); `cart.LineItem` `onNote`/`noteMax`, edited in the bag.
+- The bag reminder opt-in at checkout (`StoreProfile.cartReminder`, `api.cartReminder`,
+  `api.cancelCartReminder`); `ERROR_CODES` gain `REMINDER_OFF` and `INVALID_PHONE`.
+- `sdk:catalog-grid` `categoryNav: 'jump'` — sticky category links with scroll-spy (default
+  `filter`; `DEFAULT_TEMPLATES` use `jump`).
+- `sdk:purchase-panel` "Compartilhar" (`showShare`): the share sheet, else the copied link.
+- Focus moves to the new page's heading and its title is announced on route change; an offline
+  banner; bag and order pages load as skeletons.
+
 ## 1.20.0
 
 Mercado Pago's device fingerprint on the online Pix — additive; no storefront edit.

@@ -4,7 +4,7 @@ import { controlTx } from '../modules/control.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import type { MediaProviders } from './media.ts';
-import { loadAgent } from './settings.ts';
+import { loadAgent, pausedNow } from './settings.ts';
 import { AGENT_ID, SUBJECT_KIND, loadStoreSettings, storeStatus } from './threads.ts';
 
 // Proactive touches inside the transport's limits (sales-agent.md §4.13), each a timer row the
@@ -31,6 +31,7 @@ export async function recoveryPass(sql: Sql, tenantId: string, now = new Date())
     const agent = await loadAgent(tx, tenantId);
     if (
       !agent.enabled ||
+      pausedNow(agent, now) ||
       !agent.settings.recovery.enabled ||
       agent.settings.coverage === 'rehearsal'
     )
@@ -63,7 +64,9 @@ export async function recoveryPass(sql: Sql, tenantId: string, now = new Date())
 /** An online Pix that lapsed unpaid: offered once more. */
 export async function pixExpiryPass(sql: Sql, tenantId: string, now = new Date()): Promise<number> {
   return withTenant(sql, tenantId, async (tx) => {
-    if (!(await loadAgent(tx, tenantId)).enabled) return 0;
+    // paused, the lapsed Pix waits: its six-hour window usually outlasts the pause
+    const agent = await loadAgent(tx, tenantId);
+    if (!agent.enabled || pausedNow(agent, now)) return 0;
     const due = await tx<{ thread_id: string; order_id: string; number: number }[]>`
       select distinct on (o.id) t.id as thread_id, o.id as order_id, o.number
       from orders o join shopper_threads t on t.id = o.thread_id

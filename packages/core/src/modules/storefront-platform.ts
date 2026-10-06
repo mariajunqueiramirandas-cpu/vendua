@@ -15,6 +15,16 @@ import {
 import { emitAdminTx } from '../admin/live.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
+import { storeOrigin } from '../platform/store-origin.ts';
+import { optedOutTx } from '../store-whatsapp/messages.ts';
+import {
+  PROACTIVE_TTL,
+  nationalPhone,
+  proactiveRoomTx,
+  storeOpenMessage,
+  storeOpenNowTx,
+  waLinkedTx,
+} from '../store-whatsapp/proactive.ts';
 
 // Phase 1b data plane for storefronts: templates (17), tokens as store data (04),
 // ring + v.js kill switch (05), build manifests, template migrations by ring.
@@ -430,6 +440,59 @@ export async function subscribeNotifyTx(
   `;
   await emitAdminTx(tx, tenantId, 'marketing');
   return { status: 201, body: { subscribed: true } };
+}
+
+/**
+ * "Avise-me quando abrir" (Kernel 1.21): once the store is open — its hours came round, or a
+ * pause or close was lifted — each pending store subscriber gets one message from the store's own
+ * WhatsApp, queued in the transaction that marks the request notified. Without a linked WhatsApp
+ * nothing is consumed: the requests wait (Início lists them) until it is linked. The burst is
+ * held under the store's ceiling for messages it starts; the rest go in the next minutes, while
+ * it's open. A number that asked to stop, or that can't be reached, is consumed unsent. Run
+ * inside the tenant's transaction (the admin sweep, once a minute). Returns how many were queued.
+ */
+export async function wakeStoreWaitlist(tx: Sql, tenantId: string, now = new Date()) {
+  const [pending] = await tx<{ one: number }[]>`
+    select 1 as one from notify_requests
+    where tenant_id = ${tenantId} and subject = 'store' and notified_at is null limit 1
+  `;
+  if (!pending) return 0;
+  if (!(await storeOpenNowTx(tx, tenantId, now))) return 0;
+  if (!(await waLinkedTx(tx, tenantId))) return 0;
+  const room = await proactiveRoomTx(tx, tenantId, 'store_open');
+  if (room <= 0) return 0;
+  // a second sweep running alongside skips the rows this one holds; materialized, so the limit
+  // is taken once and not per row the update visits
+  const woken = await tx<{ contact: string }[]>`
+    with picked as materialized (
+      select id from notify_requests
+      where tenant_id = ${tenantId} and subject = 'store' and notified_at is null
+      order by created_at limit ${room}
+      for update skip locked)
+    update notify_requests n set notified_at = now()
+    from picked where n.id = picked.id
+    returning n.contact
+  `;
+  if (!woken.length) return 0;
+  const [store] = await tx<{ name: string; slug: string }[]>`
+    select name, slug from tenants where id = ${tenantId}`;
+  const url = await storeOrigin(
+    tx,
+    { id: tenantId, slug: store!.slug },
+    process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+  );
+  const body = storeOpenMessage(store!.name, url);
+  let queued = 0;
+  for (const phone of new Set(woken.map((w) => nationalPhone(w.contact)))) {
+    if (!phone || (await optedOutTx(tx, tenantId, phone))) continue;
+    await tx`
+      insert into store_wa_messages (tenant_id, kind, phone, body, expires_at)
+      values (${tenantId}, 'store_open', ${phone}, ${body}, now() + ${PROACTIVE_TTL}::interval)`;
+    queued++;
+  }
+  await emitAdminTx(tx, tenantId, 'marketing');
+  if (queued) await emitAdminTx(tx, tenantId, 'whatsapp', 'message');
+  return queued;
 }
 
 // ── analytics beacon ─────────────────────────────────────────────────────────

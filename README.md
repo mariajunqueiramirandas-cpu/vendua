@@ -40,20 +40,29 @@ Rationale and isolation rules:
 ```sh
 bun install
 bun run dev        # http://127.0.0.1:5173
-bun run check      # svelte-check
+bun run check:site # svelte-check
 bun run build      # static build → site/build/
 bun run test:e2e   # Playwright suite (starts preview automatically)
 ```
 
-All root scripts delegate to `@vendua/site` via `bun --filter`; see
-[`site/README.md`](site/README.md) for the full site documentation.
+`dev`, `build`, `preview`, `format` and `test:e2e` delegate to `@vendua/site` via `bun --filter`
+(`check:site` is its typecheck alone); see [`site/README.md`](site/README.md) for the full site
+documentation. `bun run check` and `bun run test` run every workspace's check and unit tests the
+way CI does (`tools/workspaces.mjs`; Core's database tests stay in `packages/core`).
 
 ## Working on the platform
 
 ```sh
+bun run dev:stack               # Core :8787, merchant admin :5196, CRM :5195 (--seed fills them)
+bun run dev:stop                # stops what dev:stack started
+```
+
+Or Core by hand:
+
+```sh
 cd packages/core
 docker compose up -d            # postgres :5433
-bun run migrate && bun run seed # schema + 3 seeded tenants
+bun run migrate && bun run seed # schema + one blank dev tenant, quero-pudim, with its owner
 bun run dev                     # API on :8787, tenant by Host header
 ```
 

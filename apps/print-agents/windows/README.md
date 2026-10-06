@@ -46,6 +46,9 @@ Local end-to-end run against a dev Core:
   `config.json` (Core URL, store name, last printer set, token: DPAPI-sealed on Windows,
   plain in a 0600 file on Linux), `finished.json` (last 200 job results, so redelivered jobs
   are not printed twice), `agent.log` (rotated at 1 MB, one `agent.log.1` kept).
+  The tray's "Abrir log" opens `agent.log` (Notepad on Windows), and a failed "Imprimir teste"
+  shows an alert with the cause. The status line says why it is offline (no internet, Core down,
+  certificate refused because of the PC's clock, …).
 
 ## Layout
 

@@ -38,7 +38,9 @@ type Status struct {
 	ApproveURL    string
 	Scanning      bool
 	UpdateVersion string
-	Printers      []PrinterStatus
+	// Reason is why the agent is Offline, in a few pt-BR words; empty otherwise.
+	Reason   string
+	Printers []PrinterStatus
 }
 
 // Text is the one-line pt-BR status shown to the merchant.
@@ -61,6 +63,9 @@ func (s Status) Text() string {
 		}
 		return "Conectado a " + s.StoreName
 	default:
+		if s.Reason != "" {
+			return "Sem conexão: " + s.Reason + " — tentando de novo"
+		}
 		return "Sem conexão — tentando de novo"
 	}
 }
@@ -92,6 +97,9 @@ func (a *Agent) Status() Status {
 		ApproveURL:    a.approveURL,
 		Scanning:      a.scanning,
 		UpdateVersion: a.updateVersion,
+	}
+	if a.state == Offline {
+		s.Reason = a.offlineWhy
 	}
 	for _, p := range a.cfg.Printers {
 		ps := PrinterStatus{Printer: p}
@@ -125,6 +133,18 @@ func (a *Agent) setState(s State) {
 	a.mu.Lock()
 	changed := a.state != s
 	a.state = s
+	a.mu.Unlock()
+	if changed {
+		a.notify()
+	}
+}
+
+// setOffline also notifies when only the cause changed (DNS down, then a 503).
+func (a *Agent) setOffline(err error) {
+	why := Explain(err)
+	a.mu.Lock()
+	changed := a.state != Offline || a.offlineWhy != why
+	a.state, a.offlineWhy = Offline, why
 	a.mu.Unlock()
 	if changed {
 		a.notify()

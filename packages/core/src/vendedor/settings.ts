@@ -75,7 +75,13 @@ export interface StoreAgentRow {
   packVersion: number;
   enabledAt: Date | null;
   firstSaleAt: Date | null;
+  /** "pausar 1 h / até amanhã": out of every conversation until then (`pausedNow`) */
+  pausedUntil: Date | null;
 }
+
+/** A pause is read against the clock, so it lapses on its own with nothing to clear. */
+export const pausedNow = (a: Pick<StoreAgentRow, 'pausedUntil'>, now = new Date()) =>
+  !!a.pausedUntil && a.pausedUntil > now;
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -117,8 +123,9 @@ export async function loadAgent(tx: Sql, tenantId: string): Promise<StoreAgentRo
       pack_version: string;
       enabled_at: Date | null;
       first_sale_at: Date | null;
+      paused_until: Date | null;
     }[]
-  >`select enabled, settings, onboarding, pack_version, enabled_at, first_sale_at
+  >`select enabled, settings, onboarding, pack_version, enabled_at, first_sale_at, paused_until
     from store_agent where tenant_id = ${tenantId}`;
   const switchedOn = row?.enabled ?? false;
   return {
@@ -129,6 +136,7 @@ export async function loadAgent(tx: Sql, tenantId: string): Promise<StoreAgentRo
     packVersion: Number(row?.pack_version ?? 1),
     enabledAt: row?.enabled_at ?? null,
     firstSaleAt: row?.first_sale_at ?? null,
+    pausedUntil: row?.paused_until ?? null,
   };
 }
 

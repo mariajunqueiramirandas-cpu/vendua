@@ -4,13 +4,14 @@ import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { LeaseLost, wipeAuth, type Fence } from './auth-store.ts';
 import { enqueueTextTx, optInAck, optOutAck } from './messages.ts';
+import { NOTICE_KINDS } from './proactive.ts';
 import type { Inbound, Receipt, StateUpdate } from './session.ts';
 import { optKeyword, phoneVariants } from './text.ts';
 
 // The gateway's writes. Every one is fenced on the store's lease (owner + epoch) and runs in the
 // store's own tenant transaction, so the side effects (admin stream, staff card) commit with it.
 
-/** a keyword only counts from someone this store texted about an order lately */
+/** a keyword only counts from someone this store texted lately (an order, a reminder, "abrimos") */
 const KEYWORD_WINDOW = '90 days';
 const RETENTION = '30 days';
 const ACK_WINDOW = '10 minutes';
@@ -184,7 +185,8 @@ export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Pro
     const known = (
       await tx<{ phone: string }[]>`
         select phone from store_wa_messages
-        where tenant_id = ${tenantId} and phone = any(${variants}) and kind = 'order'
+        where tenant_id = ${tenantId} and phone = any(${variants})
+          and kind = any(${NOTICE_KINDS as string[]}::text[])
           and created_at > now() - ${KEYWORD_WINDOW}::interval
         order by created_at desc limit 1`
     )[0];
@@ -194,8 +196,8 @@ export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Pro
       on conflict do nothing returning phone`;
     if (!added.length) return;
     await tx`update store_wa_messages set status = 'skipped', error = 'opted_out', lease_until = null
-             where tenant_id = ${tenantId} and phone = any(${variants}) and kind = 'order'
-               and status = 'pending'`;
+             where tenant_id = ${tenantId} and phone = any(${variants})
+               and kind = any(${NOTICE_KINDS as string[]}::text[]) and status = 'pending'`;
     if (!(await ackedLatelyTx(tx, tenantId, variants)))
       await enqueueTextTx(tx, tenantId, 'opt_out', known.phone, optOutAck(name));
     await emitAdminTx(tx, tenantId, 'whatsapp', 'optout');

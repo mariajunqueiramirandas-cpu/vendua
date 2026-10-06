@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Archive, Ban, MoreVertical, PauseCircle } from 'lucide-react';
+import { Archive, ArchiveRestore, Ban, MoreVertical, PauseCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type LeadListItem } from '@/lib/api.ts';
 import { errorMessage } from '@/lib/query.ts';
+import { toastUndo } from '@/lib/undo.ts';
 import { ScoreBar, StateChip } from '@/components/common.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -16,9 +17,9 @@ import {
 } from '@/components/ui/overlay.tsx';
 import { invalidateLead } from './queries.ts';
 
-type Armed = 'unsub' | 'archive' | null;
+type Armed = 'unsub' | null;
 
-/** Header actions: stage/score at a glance + overflow with two-tap destructive items. */
+/** Header actions: stage/score at a glance + overflow (descadastro is two-tap; archiving undoes). */
 export function LeadActions({ lead }: { lead: LeadListItem }) {
   const nav = useNavigate();
   const client = useQueryClient();
@@ -37,11 +38,17 @@ export function LeadActions({ lead }: { lead: LeadListItem }) {
     onSettled: () => invalidateLead(client, lead.id),
   });
   const archive = useMutation({
-    mutationFn: () => api.deleteLead(lead.id),
-    onSuccess: () => {
-      toast.success('lead arquivado');
-      void client.invalidateQueries({ queryKey: ['leads'] });
-      void client.invalidateQueries({ queryKey: ['stats'] });
+    mutationFn: (archived: boolean) => api.patchLead(lead.id, { archived }),
+    onSuccess: (_r, archived) => {
+      invalidateLead(client, lead.id);
+      if (!archived) {
+        toast.success('lead restaurado');
+        return;
+      }
+      toastUndo('lead arquivado', async () => {
+        await api.patchLead(lead.id, { archived: false });
+        invalidateLead(client, lead.id);
+      });
       nav('/pipeline');
     },
     onError: (e) => toast.error(errorMessage(e)),
@@ -74,6 +81,17 @@ export function LeadActions({ lead }: { lead: LeadListItem }) {
           <Ban /> <span className="max-sm:hidden">descadastrado</span>
         </Badge>
       )}
+      {lead.archivedAt && (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={archive.isPending}
+          onClick={() => archive.mutate(false)}
+          title="arquivado — volta para o funil"
+        >
+          <ArchiveRestore /> restaurar
+        </Button>
+      )}
       <DropdownMenu
         open={open}
         onOpenChange={(o) => {
@@ -96,14 +114,19 @@ export function LeadActions({ lead }: { lead: LeadListItem }) {
               <Ban /> {armed === 'unsub' ? 'confirmar descadastro?' : 'descadastrar'}
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem
-            destructive
-            disabled={archive.isPending}
-            onSelect={twoTap('archive', () => archive.mutate())}
-            className={armed === 'archive' ? 'bg-destructive-soft font-medium' : undefined}
-          >
-            <Archive /> {armed === 'archive' ? 'arquivar mesmo?' : 'arquivar'}
-          </DropdownMenuItem>
+          {lead.archivedAt ? (
+            <DropdownMenuItem disabled={archive.isPending} onSelect={() => archive.mutate(false)}>
+              <ArchiveRestore /> restaurar
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              destructive
+              disabled={archive.isPending}
+              onSelect={() => archive.mutate(true)}
+            >
+              <Archive /> arquivar
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </>

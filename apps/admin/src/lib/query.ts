@@ -29,9 +29,11 @@ export const qk = {
   customer: (phone: string) => ['customers', 'one', phone] as const,
   marketing: ['marketing'] as const,
   share: ['share'] as const,
-  reports: (from: string, to: string) => ['reports', from, to] as const,
+  // a preset is one key whatever day it is: Core resolves its days and says which in `range`
+  reports: (period: string, from = '', to = '') => ['reports', period, from, to] as const,
   team: ['team'] as const,
   activity: ['activity'] as const,
+  activityOf: (kind: string) => ['activity', kind] as const,
   account: ['account'] as const,
   appearance: ['appearance'] as const,
   sessions: ['me', 'sessions'] as const,

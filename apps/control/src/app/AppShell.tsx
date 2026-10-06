@@ -36,6 +36,7 @@ import {
   SHORTCUTS,
   type Hub,
 } from './nav.ts';
+import { useAttentionCount } from './attention.ts';
 import { CommandPalette } from './CommandPalette.tsx';
 import { Onboarding } from './Onboarding.tsx';
 import { ShellContext, type ShellApi } from './shell-context.ts';
@@ -51,6 +52,7 @@ export function AppShell({ onLogout, children }: { onLogout: () => void; childre
   const [collapsed, setCollapsed] = useStoredState('vendua-control-rail', false);
   const [installEvt, setInstallEvt] = useState<BeforeInstallPromptEvent | null>(null);
   const badges = useBadges();
+  useAttentionCount(badges.drafts + badges.overdue);
   const llmDriver = useLlmDriver();
   const nav = useNavigate();
 

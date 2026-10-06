@@ -202,6 +202,8 @@ export interface Session {
       push?: boolean;
       /** push when an online payment lands (default on) */
       pushPayments?: boolean;
+      /** push (and its re-pings) when a shopper waits in a Duá conversation (default on) */
+      pushWaiting?: boolean;
       /** WhatsApp when an order waits past the accept target and no alert reached a device */
       whatsappAlerts?: boolean;
       emailInvoices?: boolean;
@@ -236,6 +238,8 @@ export interface Order {
     etaMax?: number | null;
     promisedFrom?: string | null;
     promisedTo?: string | null;
+    /** minutes "atrasou" pushed the promise back, summed */
+    delayMinutes?: number;
     lat?: number;
     lng?: number;
   };
@@ -267,6 +271,8 @@ export interface Order {
     modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
     combo: { slotName: string; name: string; qty: number }[];
     lineTotalCents: number;
+    /** the shopper's note for this line ("sem cebola") */
+    note?: string | null;
   }[];
   notes: string | null;
   scheduledFor: string | null;
@@ -382,6 +388,8 @@ export interface KitchenItem {
   qty: number;
   modifiers: { name: string; qty: number }[];
   combo: { slotName: string; name: string; qty: number }[];
+  /** the shopper's note for this line ("sem cebola") */
+  note?: string | null;
   categoryId: string | null;
   stationId: string | null;
   doneAt: string | null;
@@ -430,12 +438,30 @@ export interface Product {
   /** true while one of the promotion's windows holds */
   promoNow?: boolean;
   tags: string[];
+  /** allergens and diets the merchant states (Core's DIETARY_TAGS) */
+  dietary?: DietaryTag[];
   imageUrl: string | null;
   dominant: string | null;
   mediaCount: number;
   groupCount: number;
   waiting: number;
 }
+
+export type DietaryTag =
+  | 'sem_gluten'
+  | 'contem_gluten'
+  | 'sem_lactose'
+  | 'contem_lactose'
+  | 'vegano'
+  | 'vegetariano'
+  | 'contem_amendoim'
+  | 'contem_castanhas'
+  | 'contem_ovo'
+  | 'contem_frutos_do_mar'
+  | 'apimentado';
+
+/** what a bulk change replaced, per product: `revert` with it is the "desfazer" */
+export type BulkBefore = { id: string } & Record<string, unknown>;
 
 export interface AvailabilitySchedule {
   /** days: 0 = domingo … 6 = sábado; no from/to = the whole day */
@@ -526,6 +552,10 @@ export interface SpecialDay {
   open?: string;
   close?: string;
   label?: string;
+  /** last day of a range, inclusive */
+  until?: string;
+  /** the same days every year */
+  yearly?: boolean;
 }
 export interface Zone {
   id: string;
@@ -543,6 +573,8 @@ export interface Zone {
   feePerKmCents: number;
   freeDeliveryOverCents: number | null;
 }
+
+export type DemandSpan = '30m' | '1h' | '2h' | 'today' | 'off';
 
 export interface StoreView {
   url: string;
@@ -572,6 +604,8 @@ export interface StoreView {
   };
   hours: { timezone: string; windows: Window_[] };
   specialDays: SpecialDay[];
+  /** the single dates they cover from today on (ranges and yearly repeats spelled out) */
+  specialDaysAhead?: SpecialDay[];
   operations: {
     prepTimeMinutes: number;
     acceptTargetMinutes: number;
@@ -581,6 +615,8 @@ export interface StoreView {
     pickupInstructions: string | null;
     deliveryEnabled: boolean;
     demand: 'normal' | 'high';
+    /** "muitos pedidos agora" ends by itself then */
+    demandUntil: string | null;
   };
   location: { latitude: number; longitude: number } | null;
   /** ADR 0024: an address with a pin is priced by road distance from `location` */
@@ -611,6 +647,8 @@ export interface Home {
     changesAt: string | null;
     override: string | null;
   };
+  /** "muitos pedidos agora", and when it ends by itself */
+  demand: { level: 'normal' | 'high'; until: string | null };
   hours: { timezone: string; windows: Window_[] };
   specialDays: SpecialDay[];
   today: {
@@ -625,7 +663,7 @@ export interface Home {
   inProgress: number;
   attention: {
     /** orders_waiting | closed_with_orders | pix_to_confirm | low_stock | waitlist |
-     *  alerts_failing | mp_expiring | mp_disconnected | mp_restricted | billing_pending |
+     *  waitlist_open | alerts_failing | mp_expiring | mp_disconnected | mp_restricted | billing_pending |
      *  billing_past_due | invoice_open | trial_ending | incident */
     kind: string;
     count: number;
@@ -660,10 +698,23 @@ export interface Customer {
   spentCents: number;
   firstAt: string;
   lastAt: string;
+  /** list rows: the store's tags on this customer */
+  tags?: string[];
+}
+
+/** what the store wrote down about a customer; autosaved from the customer page */
+export interface CustomerNotes {
+  note: string;
+  tags: string[];
+  updatedAt: string | null;
+  updatedBy: string | null;
 }
 
 export interface CustomerDetail {
-  customer: Customer & { cancelled: number };
+  customer: Customer & { cancelled: number; avgTicketCents: number };
+  notes: CustomerNotes;
+  /** the store's tags, most used first: suggestions */
+  knownTags: string[];
   orders: OrderRow[];
   favorites: { name: string; qty: number }[];
   loyalty: {
@@ -742,7 +793,15 @@ export interface Kpis {
 }
 
 export interface Reports {
-  range: { from: string; to: string; days: number; prevFrom: string; prevTo: string };
+  /** a preset's days are resolved by Core, in the store's calendar */
+  range: {
+    period: string;
+    from: string;
+    to: string;
+    days: number;
+    prevFrom: string;
+    prevTo: string;
+  };
   current: Kpis;
   previous: Kpis;
   series: { date: string; revenueCents: number; orders: number }[];
@@ -805,6 +864,9 @@ export interface ActivityEntry {
   entityId: string | null;
   summary: string;
   at: string;
+  /** Core's readable diff: ≤ 6 fields, `hidden` when the values aren't shown */
+  changes: { label: string; from: string | null; to: string | null; hidden?: true }[];
+  more: number;
 }
 
 /** Order steps the store's WhatsApp can tell shoppers about (ADR 0026). */
@@ -812,11 +874,13 @@ export type WaEvent =
   | 'placed'
   | 'paid'
   | 'confirmed'
+  | 'delayed'
   | 'preparing'
   | 'ready'
   | 'out_for_delivery'
   | 'delivered'
-  | 'cancelled';
+  | 'cancelled'
+  | 'refunded';
 
 export type PrinterKind = 'spooler' | 'tcp' | 'serial' | 'usb' | 'bluetooth';
 export type CodePage = 'cp850' | 'cp860' | 'ascii';
@@ -868,6 +932,20 @@ export interface Pairing {
   expiresAt: string;
   deviceId: string | null;
 }
+/** one ticket of an order (GET /orders/:id/prints), newest first */
+export interface OrderPrintJob {
+  id: string;
+  status: 'pending' | 'sent' | 'done' | 'failed' | 'expired';
+  trigger: 'placed' | 'confirmed' | 'manual';
+  printerId: string;
+  printer: string;
+  /** the computer or phone that holds the printer */
+  device: string;
+  deviceOnline: boolean;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
 export type PrinterPatch = Partial<
   Pick<Printer, 'label' | 'auto' | 'paper' | 'codepage' | 'copies' | 'cut'>
 >;
@@ -876,7 +954,17 @@ export type WaState = 'off' | 'connecting' | 'pairing' | 'open' | 'logged_out' |
 
 export interface WaMessage {
   id: string;
-  kind: 'order' | 'opt_out' | 'opt_in' | 'test';
+  kind:
+    | 'order'
+    | 'opt_out'
+    | 'opt_in'
+    | 'test'
+    | 'agent'
+    | 'chat'
+    /** "lembrete de sacola", once per bag a shopper asked for at checkout */
+    | 'cart_reminder'
+    /** "avise-me quando abrir" */
+    | 'store_open';
   event: WaEvent | null;
   orderId: string | null;
   orderNumber: number | null;
@@ -909,6 +997,16 @@ export interface Whatsapp {
   /** what the shopper reads at each step (a sample order); null = this step says nothing */
   previews: Record<WaEvent, string | null>;
   stats: { sent: number; failed: number; optouts: number };
+  /** "Lembrete de sacola": one message per bag, to shoppers who asked for it at checkout */
+  cartReminder: {
+    on: boolean;
+    /** the Vendedor is on and follows up open bags itself: this stays off */
+    vendedor: boolean;
+    /** what the shopper reads, in the store's words (a sample bag from its menu) */
+    preview: string;
+    /** reminders queued in the last 7 days, and how many of those bags became orders */
+    week: { sent: number; ordered: number };
+  };
   recent: WaMessage[];
 }
 
@@ -1290,7 +1388,15 @@ export interface MenuImport {
 // cards.ts and the inline shapes of src/admin/routes-vendedor.ts) ─────────────────────────────
 
 export type VendedorPresence =
-  'off' | 'answering' | 'rehearsal' | 'covering' | 'disconnected' | 'budget' | 'trouble';
+  | 'off'
+  /** "pausar 1 h / até amanhã": `agent.pausedUntil` says until when */
+  | 'paused'
+  | 'answering'
+  | 'rehearsal'
+  | 'covering'
+  | 'disconnected'
+  | 'budget'
+  | 'trouble';
 export type Coverage = 'rehearsal' | 'when_slow' | 'after_hours' | 'always';
 export type AgentTone = 'relaxed' | 'balanced' | 'formal';
 export type IncentiveReason = 'recovery' | 'first_order' | 'hesitation';
@@ -1344,6 +1450,8 @@ export interface VendedorHome {
     slowAfterMin: number;
     enabledAt: string | null;
     firstSaleAt: string | null;
+    /** set only while a pause holds; he comes back on his own then */
+    pausedUntil: string | null;
   };
   presence: VendedorPresence;
   /** what Duá can still take this period: 0 left means new shoppers go to the store */
@@ -1383,8 +1491,8 @@ export interface VendedorHome {
 }
 
 export type ThreadFilter = 'all' | 'waiting' | 'ask' | 'orders' | 'agent' | 'personal' | 'others';
-/** who answers now: Ana, Ensaio, the store, the store's grace minutes, muted, nobody */
-export type ThreadFloor = 'agent' | 'rehearsal' | 'store' | 'wait' | 'muted' | 'off';
+/** who answers now: Duá, Ensaio, the store, the store's grace minutes, muted, Duá paused, nobody */
+export type ThreadFloor = 'agent' | 'rehearsal' | 'store' | 'wait' | 'muted' | 'paused' | 'off';
 export type ThreadOwner = 'open' | 'agent' | 'human' | 'muted';
 export type ThreadStage =
   'browsing' | 'building' | 'checkout' | 'confirming' | 'paying' | 'ordered' | 'after';
@@ -1424,7 +1532,10 @@ export interface ThreadRow {
   previewAuthor: string | null;
   lastAt: string;
   orderNumber: number | null;
+  /** the shopper wrote last, after the store last opened it */
   unread: boolean;
+  /** a search that matched a message: the words around the match */
+  match?: string | null | undefined;
 }
 
 export interface ThreadList {
@@ -1493,6 +1604,8 @@ export interface ThreadDetail {
     paymentStatus: string;
   } | null;
   humanSilenceMin: number;
+  /** the store paused Duá until then (null when he isn't) */
+  pausedUntil?: string | null | undefined;
 }
 
 /** Core's receipt: every figure here is Core's ("calculado pela loja") */
@@ -1628,6 +1741,16 @@ export interface VendedorSettings {
   intro: string;
   coupons: { id: string; code: string; label: string | null; kind: string; value: number }[];
   incentivesUsedCents: number;
+  /** "pausar 1 h / até amanhã": set only while the pause holds */
+  pausedUntil?: string | null | undefined;
+}
+
+/** a short reply the store saved, put into the composer with a tap */
+export interface QuickReply {
+  id: string;
+  text: string;
+  position: number;
+  at: string;
 }
 
 /** partial settings; nested groups merge field by field in Core. The name is always Duá. */
@@ -1684,6 +1807,8 @@ export interface CustomerFact {
   label: string;
   value: unknown;
   sensitive: boolean;
+  /** who wrote it: the store by hand, or Duá from the conversation */
+  source?: 'store' | 'agent' | undefined;
   at: string;
 }
 
@@ -1838,6 +1963,10 @@ export const api = {
     from?: string | undefined;
     to?: string | undefined;
     before?: string | undefined;
+    method?: string | undefined;
+    /** delivery | pickup | scheduled */
+    mode?: string | undefined;
+    unpaid?: '1' | undefined;
   }) => {
     const s = new URLSearchParams();
     for (const [k, v] of Object.entries(p)) if (v) s.set(k, v);
@@ -1870,6 +1999,15 @@ export const api = {
     }),
   markPaid: (id: string, status: 'paid' | 'pending') =>
     send<{ order: Order }>('POST', `/orders/${id}/payment`, { status }),
+  /** "atrasou": the promise moves later; the shopper hears the new time on WhatsApp */
+  delay: (id: string, minutes: number, idem: string, opts: { keepalive?: boolean } = {}) =>
+    req<{ order: Order; notified: boolean }>(`/orders/${id}/delay`, {
+      method: 'POST',
+      body: JSON.stringify({ minutes }),
+      idem,
+      ...(opts.keepalive ? { keepalive: true } : {}),
+    }),
+  orderPrints: (id: string) => get<{ jobs: OrderPrintJob[] }>(`/orders/${id}/prints`),
   refund: (id: string, p: { amountCents?: number | null; reason?: string }) =>
     send<{ order: Order; payments: OrderPayment[] }>('POST', `/orders/${id}/refund`, p),
 
@@ -1912,7 +2050,18 @@ export const api = {
       keepalive: true,
     }),
   bulk: (ids: string[], action: string, extra: Record<string, unknown> = {}) =>
-    send<{ updated: number }>('POST', '/products/bulk', { ids, action, ...extra }),
+    send<{ updated: number; before?: BulkBefore[]; waitlistWoken?: number }>(
+      'POST',
+      '/products/bulk',
+      { ids, action, ...extra },
+    ),
+  /** puts back what a bulk change replaced: Core's own `before`, sent back */
+  bulkRevert: (items: BulkBefore[]) =>
+    send<{ updated: number }>('POST', '/products/bulk', { action: 'revert', items }),
+  /** a soft delete: orders keep their lines; restoreProduct undoes it */
+  deleteProduct: (id: string) => send<{ deleted: boolean }>('DELETE', `/products/${id}`),
+  restoreProduct: (id: string) =>
+    send<{ product: ProductDetail }>('POST', `/products/${id}/restore`),
   importPreview: (text: string) =>
     send<{ items: { name: string; priceCents: number }[] }>('POST', '/products/import/preview', {
       text,
@@ -1926,7 +2075,9 @@ export const api = {
     }),
   updateCategory: (id: string, c: { name?: string; description?: string | null }) =>
     send('PATCH', `/categories/${id}`, c),
-  deleteCategory: (id: string) => send('DELETE', `/categories/${id}`),
+  // keepalive: a delete held for "desfazer" is sent as the app closes
+  deleteCategory: (id: string, opts: { keepalive?: boolean } = {}) =>
+    req(`/categories/${id}`, { method: 'DELETE', ...(opts.keepalive ? { keepalive: true } : {}) }),
   orderCategories: (ids: string[]) => send('PUT', '/categories/order', { ids }),
 
   uploadMedia: async (
@@ -1976,9 +2127,15 @@ export const api = {
     message?: string | null;
   }) => send<StoreView>('POST', '/store/pause', p),
   resume: () => send<StoreView>('POST', '/store/resume'),
+  /** "muitos pedidos agora" for a while (it always ends by itself), or off */
+  demand: (span: DemandSpan) => send<StoreView>('POST', '/store/demand', { for: span }),
   createZone: (z: Partial<Zone>) => send<{ zones: Zone[] }>('POST', '/zones', z),
   updateZone: (id: string, z: Partial<Zone>) => send<{ zones: Zone[] }>('PATCH', `/zones/${id}`, z),
-  deleteZone: (id: string) => send<{ zones: Zone[] }>('DELETE', `/zones/${id}`),
+  deleteZone: (id: string, opts: { keepalive?: boolean } = {}) =>
+    req<{ zones: Zone[] }>(`/zones/${id}`, {
+      method: 'DELETE',
+      ...(opts.keepalive ? { keepalive: true } : {}),
+    }),
 
   payments: () => get<Payments>('/payments'),
   updatePayments: (p: {
@@ -1995,6 +2152,8 @@ export const api = {
   whatsapp: () => get<Whatsapp>('/whatsapp'),
   whatsappPair: (phone: string) => send<Whatsapp>('POST', '/whatsapp/pair', { phone }),
   whatsappDisconnect: () => send<Whatsapp>('POST', '/whatsapp/disconnect'),
+  whatsappCartReminder: (on: boolean) =>
+    send<Whatsapp>('PATCH', '/whatsapp/settings', { cartReminder: on }),
   whatsappSettings: (events: Partial<Record<WaEvent, boolean>>) =>
     send<Whatsapp>('PATCH', '/whatsapp/settings', { events }),
   whatsappTest: () => send<Whatsapp>('POST', '/whatsapp/test'),
@@ -2024,18 +2183,23 @@ export const api = {
   testAlert: () => send<{ devices: number; ok: number; failed: number }>('POST', '/alerts/test'),
   helpStatus: () => get<{ incidents: Incident[] }>('/help/status'),
 
-  customers: (p: { q?: string; sort?: string; offset?: number }) => {
+  customers: (p: { q?: string; sort?: string; tag?: string; offset?: number }) => {
     const s = new URLSearchParams();
     if (p.q) s.set('q', p.q);
     if (p.sort) s.set('sort', p.sort);
+    if (p.tag) s.set('tag', p.tag);
     if (p.offset) s.set('offset', String(p.offset));
     return get<{
       customers: Customer[];
       stats: { customers: number; repeat: number; newThisMonth: number };
+      /** the store's tags, most used first */
+      tags: { tag: string; customers: number }[];
       next: number | null;
     }>(`/customers?${s}`);
   },
   customer: (phone: string) => get<CustomerDetail>(`/customers/${phone}`),
+  saveCustomerNotes: (phone: string, p: { note?: string; tags?: string[] }) =>
+    send<{ notes: CustomerNotes; knownTags: string[] }>('PUT', `/customers/${phone}/notes`, p),
   exportCustomer: (phone: string) => get<unknown>(`/customers/${phone}/export`),
   forgetCustomer: (phone: string, confirm: string) =>
     send<{ anonymized: number }>('POST', `/customers/${phone}/forget`, { confirm }),
@@ -2044,6 +2208,14 @@ export const api = {
   createCoupon: (c: Record<string, unknown>) => send<{ coupons: Coupon[] }>('POST', '/coupons', c),
   updateCoupon: (id: string, c: Record<string, unknown>) =>
     send<{ coupons: Coupon[] }>('PATCH', `/coupons/${id}`, c),
+  /** archived: off the list and off carts; updateCoupon({ archived: false }) brings it back */
+  deleteCoupon: (id: string) => send<{ coupons: Coupon[] }>('DELETE', `/coupons/${id}`),
+  cloneCoupon: (id: string, code: string) =>
+    send<{ coupon: { id: string; code: string }; coupons: Coupon[] }>(
+      'POST',
+      `/coupons/${id}/clone`,
+      { code },
+    ),
   setLoyalty: (program: LoyaltyProgram | null) =>
     send<{ program: LoyaltyProgramView | null }>('PUT', '/loyalty', { program }),
   waitlistNotified: (productId: string) =>
@@ -2063,7 +2235,9 @@ export const api = {
       }[];
     }>('/share'),
 
-  reports: (from: string, to: string) => get<Reports>(`/reports?from=${from}&to=${to}`),
+  /** a preset (`period`) or a custom range; Core answers with the days it used */
+  reports: (p: { period: string } | { from: string; to: string }) =>
+    get<Reports>(`/reports?${new URLSearchParams(p)}`),
 
   team: () => get<{ members: Member[] }>('/team'),
   addMember: (m: { name: string; phone: string; role: Role; email?: string | null }) =>
@@ -2073,10 +2247,12 @@ export const api = {
   updateMember: (id: string, m: { role?: Role; name?: string }) =>
     send<{ members: Member[] }>('PATCH', `/team/${id}`, m),
   removeMember: (id: string) => send<{ members: Member[] }>('DELETE', `/team/${id}`),
-  activity: (before?: number) =>
-    get<{ entries: ActivityEntry[]; next: number | null }>(
-      `/activity${before ? `?before=${before}` : ''}`,
-    ),
+  activity: (before?: number, kind?: string) => {
+    const s = new URLSearchParams();
+    if (before) s.set('before', String(before));
+    if (kind) s.set('kind', kind);
+    return get<{ entries: ActivityEntry[]; next: number | null }>(`/activity?${s}`);
+  },
   account: () => get<Account>('/account'),
   startSubscription: (p: {
     planId: string;
@@ -2186,6 +2362,40 @@ export const api = {
       send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/classify`, {
         as,
       }),
+    /** several "para decidir" at once (up to 100); what can't be decided comes back skipped */
+    classifyMany: (ids: string[], as: 'shopper' | 'personal') =>
+      send<{ classified: string[]; skipped: string[] }>('POST', '/vendedor/threads/classify', {
+        ids,
+        as,
+      }),
+    /** the store opened it: no longer bold in the list */
+    seen: (threadId: string) =>
+      send<{ seenAt: string }>(
+        'POST',
+        `/vendedor/threads/${encodeURIComponent(threadId)}/seen`,
+        {},
+      ),
+    pause: (span: '1h' | 'tomorrow') =>
+      send<VendedorSettings>('POST', '/vendedor/pause', { for: span }),
+    resume: () => send<VendedorSettings>('POST', '/vendedor/resume', {}),
+
+    quickReplies: () => get<{ replies: QuickReply[] }>('/vendedor/quick-replies'),
+    addQuickReply: (text: string, position?: number) =>
+      send<{ replies: QuickReply[] }>('POST', '/vendedor/quick-replies', {
+        text,
+        ...(position !== undefined ? { position } : {}),
+      }),
+    updateQuickReply: (id: string, text: string) =>
+      send<{ replies: QuickReply[] }>(
+        'PATCH',
+        `/vendedor/quick-replies/${encodeURIComponent(id)}`,
+        { text },
+      ),
+    deleteQuickReply: (id: string) =>
+      send<{ replies: QuickReply[] }>(
+        'DELETE',
+        `/vendedor/quick-replies/${encodeURIComponent(id)}`,
+      ),
 
     settings: () => get<VendedorSettings>('/vendedor/settings'),
     updateSettings: (patch: VendedorSettingsPatch) =>
@@ -2238,12 +2448,22 @@ export const api = {
     interview: (text: string) =>
       send<VendedorOnboarding>('POST', '/vendedor/onboarding/interview', { text }),
 
+    /** `canNote`: a WhatsApp conversation exists for the store's own notes to live in */
     customerFacts: (phone: string) =>
-      get<{ facts: CustomerFact[] }>(`/customers/${encodeURIComponent(phone)}/vendedor`),
+      get<{ facts: CustomerFact[]; canNote?: boolean }>(
+        `/customers/${encodeURIComponent(phone)}/vendedor`,
+      ),
     forgetFact: (phone: string, key: string) =>
       send<{ facts: CustomerFact[] }>(
         'DELETE',
         `/customers/${encodeURIComponent(phone)}/vendedor/facts/${encodeURIComponent(key)}`,
+      ),
+    /** "sem cebola", "paga no Pix": the store tells Duá something about this customer */
+    addFact: (phone: string, text: string) =>
+      send<{ facts: CustomerFact[] }>(
+        'POST',
+        `/customers/${encodeURIComponent(phone)}/vendedor/facts`,
+        { text },
       ),
   },
 };

@@ -129,7 +129,8 @@ export const Ticket = memo(function Ticket(p: TicketProps) {
   const { mine, others } = itemsFor(t, station);
   const own = progress(mine);
   const action = actionFor(t, station);
-  const allergy = mentionsAllergy(t.notes);
+  const notesAllergy = mentionsAllergy(t.notes);
+  const allergy = notesAllergy || t.items.some((i) => mentionsAllergy(i.note));
   const dimmed = !!p.focusKey && !t.items.some((i) => itemMatches(i, p.focusKey!));
   const waitingOn = [...new Set(others.filter((i) => !i.doneAt).map((i) => i.stationId))];
   const ModeIcon = t.mode === 'delivery' ? Moped : Bag;
@@ -255,12 +256,12 @@ export const Ticket = memo(function Ticket(p: TicketProps) {
         <div
           className={cn(
             'mx-3 mb-1 mt-2 flex gap-2 rounded-md px-3 py-2.5',
-            allergy ? 'bg-danger-soft ring-1 ring-danger' : 'bg-warning-soft',
+            notesAllergy ? 'bg-danger-soft ring-1 ring-danger' : 'bg-warning-soft',
           )}
         >
           <NotePencil
             weight="bold"
-            className={cn('mt-0.5 size-5 shrink-0', allergy ? 'text-danger' : 'text-warning')}
+            className={cn('mt-0.5 size-5 shrink-0', notesAllergy ? 'text-danger' : 'text-warning')}
             aria-hidden
           />
           <p className="t-body min-w-0 whitespace-pre-line break-words font-semibold">
@@ -415,9 +416,43 @@ function ItemRow({
               {c.name}
             </span>
           ))}
+          {i.note ? <ItemNote note={i.note} done={done} /> : null}
         </span>
       </button>
     </li>
+  );
+}
+
+/** The shopper's words on this line ("sem cebola"): left-out and allergy notes read like a
+ *  "sem" option, anything else like the order's note. */
+function ItemNote({ note, done }: { note: string; done: boolean }) {
+  const strong = isWithout(note) || mentionsAllergy(note);
+  const Icon = isWithout(note) ? Prohibit : NotePencil;
+  return (
+    <span
+      className={cn(
+        't-body mt-1 flex items-start gap-1 font-bold',
+        done ? 'text-muted' : strong ? 'text-danger' : 'text-ink',
+      )}
+      data-part="item-note"
+    >
+      <Icon
+        weight="bold"
+        className={cn('mt-0.5 size-4 shrink-0', !done && !strong && 'text-warning')}
+        aria-label="observação"
+      />
+      <span className="min-w-0 break-words">
+        {allergySegments(note).map((s, k) =>
+          s.hit && !done ? (
+            <mark key={k} className="rounded bg-danger px-1 text-surface">
+              {s.text}
+            </mark>
+          ) : (
+            <span key={k}>{s.text}</span>
+          ),
+        )}
+      </span>
+    </span>
   );
 }
 

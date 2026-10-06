@@ -1,19 +1,28 @@
 import {
+  CaretRight,
   Copy,
+  CopySimple,
   Gift,
   Megaphone,
   Plus,
   QrCode,
   ShareNetwork,
   Ticket,
+  Trash,
   UsersThree,
   WhatsappLogo,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { whatsappUrl } from '@vendua/kernel/rules';
-import { api, type Coupon, type LoyaltyProgram, type Marketing as M } from '../../lib/api.ts';
-import { dateShort, money, phone } from '../../lib/format.ts';
+import {
+  api,
+  ApiError,
+  type Coupon,
+  type LoyaltyProgram,
+  type Marketing as M,
+} from '../../lib/api.ts';
+import { dateShort, isoDate, money, phone, plural } from '../../lib/format.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -22,6 +31,7 @@ import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
 import {
   Chips,
+  CommitInput,
   Field,
   MoneyField,
   SaveMark,
@@ -196,6 +206,9 @@ function Share() {
 function Coupons({ coupons }: { coupons: Coupon[] }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const setList = (list: Coupon[]) =>
+    qc.setQueryData(qk.marketing, (m: M | undefined) => (m ? { ...m, coupons: list } : m));
   const toggle = useMutation({
     mutationFn: (c: Coupon) => api.updateCoupon(c.id, { active: !c.active }),
     onMutate: (c) =>
@@ -204,7 +217,7 @@ function Coupons({ coupons }: { coupons: Coupon[] }) {
         coupons: m.coupons.map((x) => (x.id === c.id ? { ...x, active: !c.active } : x)),
       })),
     onSuccess: (r, c) => {
-      qc.setQueryData(qk.marketing, (m: M | undefined) => (m ? { ...m, coupons: r.coupons } : m));
+      setList(r.coupons);
       toast(c.active ? `${c.code} desativado` : `${c.code} ativo de novo`, {
         undo: () => toggle.mutate({ ...c, active: !c.active }),
       });
@@ -214,6 +227,34 @@ function Coupons({ coupons }: { coupons: Coupon[] }) {
       toast.error(messageOf(e));
     },
   });
+  // apagar archives it in Core (its redemptions stay); "desfazer" brings it back as it was
+  const restore = useMutation({
+    mutationFn: (c: Coupon) => api.updateCoupon(c.id, { archived: false, active: c.active }),
+    onSuccess: (r, c) => {
+      setList(r.coupons);
+      toast(`${c.code} voltou`);
+    },
+    onError: (e) => toast.error(messageOf(e)),
+  });
+  const remove = useMutation({
+    mutationFn: (c: Coupon) => api.deleteCoupon(c.id),
+    onMutate: (c) => {
+      setEditing(null);
+      return optimistic<M>(qc, qk.marketing, (m) => ({
+        ...m,
+        coupons: m.coupons.filter((x) => x.id !== c.id),
+      }));
+    },
+    onSuccess: (r, c) => {
+      setList(r.coupons);
+      toast(`Cupom ${c.code} apagado`, { undo: () => restore.mutate(c) });
+    },
+    onError: (e, _c, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
+  });
+  const current = coupons.find((c) => c.id === editing) ?? null;
   return (
     <Section
       title="Cupons"
@@ -224,32 +265,50 @@ function Coupons({ coupons }: { coupons: Coupon[] }) {
       }
     >
       {coupons.length ? (
-        <Card className="divide-y divide-line">
+        <Card className="divide-y divide-line overflow-hidden">
           {coupons.map((c) => {
             const expired = c.endsAt && new Date(c.endsAt) < new Date();
             return (
-              <div
-                key={c.id}
-                className={cn(
-                  'flex items-center gap-3 px-4 py-3',
-                  (!c.active || expired) && 'opacity-60',
-                )}
-              >
-                <Ticket weight="duotone" className="size-8 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="tnum font-display font-semibold tracking-wide">{c.code}</p>
-                  <p className="t-caption text-muted">
-                    {c.displayLabel}
-                    {c.minSubtotalCents ? ` · mínimo ${money(c.minSubtotalCents)}` : ''}
-                    {c.firstOrderOnly ? ' · só no 1º pedido' : ''}
-                    {c.endsAt ? ` · ${expired ? 'venceu' : 'até'} ${dateShort(c.endsAt)}` : ''}
-                  </p>
-                  <p className="t-caption mt-0.5">
-                    <strong>{c.redemptions}</strong> usos
-                    {c.maxRedemptions ? ` de ${c.maxRedemptions}` : ''} ·{' '}
-                    <strong>{money(c.revenueCents)}</strong> em pedidos
-                  </p>
-                </div>
+              <div key={c.id} className="flex items-center gap-1 pr-4">
+                <button
+                  type="button"
+                  aria-label={`editar cupom ${c.code}`}
+                  onClick={() => setEditing(c.id)}
+                  className="press-row flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 pr-2 text-left hover:bg-hover"
+                >
+                  <Ticket
+                    weight="duotone"
+                    className={cn('size-8 shrink-0', (!c.active || expired) && 'text-muted')}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={cn(
+                        'tnum block font-display font-semibold tracking-wide',
+                        (!c.active || expired) && 'text-muted',
+                      )}
+                    >
+                      {c.code}
+                      {!c.active ? (
+                        <span className="t-caption ml-2 font-sans font-semibold tracking-normal">
+                          desativado
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="t-caption block text-muted">
+                      {c.displayLabel}
+                      {c.minSubtotalCents ? ` · mínimo ${money(c.minSubtotalCents)}` : ''}
+                      {c.firstOrderOnly ? ' · só no 1º pedido' : ''}
+                      {c.endsAt ? ` · ${expired ? 'venceu' : 'até'} ${dateShort(c.endsAt)}` : ''}
+                    </span>
+                    <span className="t-caption mt-0.5 block">
+                      <strong>{c.redemptions}</strong> usos
+                      {c.maxRedemptions ? ` de ${c.maxRedemptions}` : ''} ·{' '}
+                      <strong>{money(c.revenueCents)}</strong> em pedidos
+                    </span>
+                  </span>
+                  <CaretRight className="size-5 shrink-0 text-muted" aria-hidden />
+                </button>
                 <Toggle
                   checked={c.active}
                   onChange={() => toggle.mutate(c)}
@@ -270,7 +329,216 @@ function Coupons({ coupons }: { coupons: Coupon[] }) {
         </Card>
       )}
       <CouponSheet open={open} onOpenChange={setOpen} />
+      <CouponEditSheet
+        c={current}
+        onClose={() => setEditing(null)}
+        onSaved={setList}
+        onDelete={(c) => remove.mutate(c)}
+      />
     </Section>
+  );
+}
+
+/** The day a coupon ends, as the date field shows it (the store's day, not UTC's). */
+const endDay = (iso: string | null) => (iso ? isoDate(new Date(iso)) : '');
+const endOf = (day: string) => new Date(`${day}T23:59:59`).toISOString();
+
+const couponError = (e: unknown) =>
+  e instanceof ApiError && e.code === 'COUPON_ARCHIVED'
+    ? 'Esse código é de um cupom apagado. Escolha outro.'
+    : e instanceof ApiError && e.code === 'COUPON_PERSONAL'
+      ? 'Esse cupom é de um cliente só, e não dá para copiar.'
+      : e instanceof ApiError && e.field === 'code' && e.code !== 'COUPON_EXISTS'
+        ? 'Use de 3 a 32 letras ou números.'
+        : messageOf(e);
+
+/** Edit what can change after a coupon is out (its name, end and limit), copy or apagar it. */
+function CouponEditSheet({
+  c,
+  onClose,
+  onSaved,
+  onDelete,
+}: {
+  c: Coupon | null;
+  onClose: () => void;
+  onSaved: (list: Coupon[]) => void;
+  onDelete: (c: Coupon) => void;
+}) {
+  const save = useSaveState();
+  const [copying, setCopying] = useState(false);
+  const [code, setCode] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  // the sheet keeps the last coupon while it slides away
+  const [shown, setShown] = useState<Coupon | null>(c);
+  useEffect(() => {
+    if (c) setShown(c);
+    setCopying(false);
+    setErr(null);
+  }, [c?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (c) setShown(c);
+  }, [c]);
+  const k = shown;
+  const patch = (body: Record<string, unknown>) =>
+    k
+      ? save
+          .track(api.updateCoupon(k.id, body))
+          .then((r) => onSaved(r.coupons))
+          .catch((e) => toast.error(messageOf(e)))
+      : Promise.resolve();
+  const clone = useMutation({
+    mutationFn: () => api.cloneCoupon(k!.id, code),
+    onSuccess: (r) => {
+      onSaved(r.coupons);
+      toast(`Cupom ${r.coupon.code} criado, com as mesmas regras`);
+      onClose();
+    },
+    onError: (e) => setErr(couponError(e)),
+  });
+  if (!k) return null;
+  const rules = [
+    k.minSubtotalCents ? `pedido mínimo de ${money(k.minSubtotalCents)}` : null,
+    k.firstOrderOnly ? 'só no primeiro pedido' : null,
+    k.perPhoneLimit === 1
+      ? 'uma vez por cliente'
+      : k.perPhoneLimit
+        ? `${k.perPhoneLimit} vezes por cliente`
+        : null,
+  ].filter(Boolean);
+  return (
+    <Sheet
+      open={!!c}
+      onOpenChange={(v) => !v && onClose()}
+      title={
+        <span className="inline-flex items-center gap-2">
+          <span className="font-display tracking-wide">{k.code}</span>
+          <SaveMark state={save.state} />
+        </span>
+      }
+      description={[k.displayLabel, ...rules].join(' · ')}
+      footer={
+        copying ? (
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => setCopying(false)}>
+              voltar
+            </Button>
+            <Button
+              block
+              loading={clone.isPending}
+              disabled={code.length < 3}
+              onClick={() => clone.mutate()}
+            >
+              criar cópia
+            </Button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              icon={<Trash />}
+              className="text-danger!"
+              onClick={() => onDelete(k)}
+            >
+              apagar
+            </Button>
+            <Button
+              variant="secondary"
+              block
+              icon={<CopySimple />}
+              onClick={() => {
+                setCode(`${k.code}2`.slice(0, 32));
+                setErr(null);
+                setCopying(true);
+              }}
+            >
+              duplicar
+            </Button>
+          </div>
+        )
+      }
+    >
+      {copying ? (
+        <div className="space-y-4 pt-2">
+          <p className="t-body text-muted">
+            A cópia sai com as mesmas regras e desconto. Só o código muda.
+          </p>
+          <Field label="Código do novo cupom" htmlFor="cp-clone" error={err}>
+            <TextInput
+              id="cp-clone"
+              autoFocus
+              autoCapitalize="characters"
+              maxLength={32}
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ''))}
+              className="font-display tracking-wide"
+            />
+          </Field>
+        </div>
+      ) : (
+        <div className="space-y-5 pt-2">
+          <Field
+            label="Nome que o cliente vê"
+            optional
+            htmlFor="cp-label"
+            helper={
+              k.label
+                ? 'Vazio, a loja mostra só o desconto.'
+                : `Vazio, a loja mostra “${k.displayLabel}”.`
+            }
+          >
+            <CommitInput
+              id="cp-label"
+              maxLength={120}
+              value={k.label ?? ''}
+              placeholder={k.label ? '' : k.displayLabel}
+              onCommit={(v) => void patch({ label: v || null })}
+            />
+          </Field>
+          <Field
+            label="Vale até"
+            optional
+            htmlFor="cp-ends"
+            helper={k.endsAt ? 'Até o fim desse dia.' : 'Sem data, vale até você desligar.'}
+          >
+            <TextInput
+              id="cp-ends"
+              type="date"
+              value={endDay(k.endsAt)}
+              min={isoDate(new Date())}
+              onChange={(e) =>
+                void patch({ endsAt: e.target.value ? endOf(e.target.value) : null })
+              }
+            />
+          </Field>
+          <div>
+            <Toggle
+              checked={k.maxRedemptions !== null}
+              onChange={(v) =>
+                void patch({ maxRedemptions: v ? Math.max(k.redemptions + 10, 50) : null })
+              }
+              label="Limitar o número de usos"
+              description={
+                k.maxRedemptions !== null
+                  ? `${plural(k.redemptions, 'uso', 'usos')} até agora. No limite, ele para sozinho.`
+                  : 'Sem limite: vale para quantos pedidos vierem.'
+              }
+            />
+            {k.maxRedemptions !== null ? (
+              <Field label="Usos no total" className="mt-2">
+                <SavedStepper
+                  label="usos no total"
+                  value={k.maxRedemptions}
+                  min={1}
+                  max={100000}
+                  step={10}
+                  onSave={(v) => patch({ maxRedemptions: v })}
+                />
+              </Field>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </Sheet>
   );
 }
 
@@ -309,7 +577,7 @@ function CouponSheet({
       setCode('');
       setErr(null);
     },
-    onError: (e) => setErr(messageOf(e)),
+    onError: (e) => setErr(couponError(e)),
   });
   return (
     <Sheet

@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
+  sameAddress,
+  savedAddresses,
   useCart,
   useCep,
   useCheckout,
@@ -13,6 +15,7 @@ import {
   useDeliveryZones,
   useStore,
   useStoreStatus,
+  type CustomerProfile,
 } from '../hooks.ts';
 import { useNavigateTo } from '../primitives.tsx';
 import { closedNote } from './closed.ts';
@@ -80,6 +83,105 @@ type PinStatus = SlotPropsOf<'checkout.LocationPicker'>['status'];
 const savedPin = (a: { lat?: number; lng?: number } | undefined): LatLng | null =>
   typeof a?.lat === 'number' && typeof a.lng === 'number' ? { lat: a.lat, lng: a.lng } : null;
 
+// Kernel 1.21 — the answers typed so far survive a reload of this tab (not a new tab, not the
+// next order): sessionStorage, bound to the cart session they were typed for, cleared once the
+// order is placed.
+const DRAFT_KEY = 'vendua.checkoutDraft';
+const METHOD_IDS: readonly string[] = PAYMENT_METHOD_ORDER;
+
+interface SavedDraft {
+  session: string;
+  draft: CustomerDraft;
+  mode: 'pickup' | 'delivery';
+  pay: PaymentMethod['id'];
+  notes: string;
+  scheduledFor: string | null;
+  changeFor: number | null;
+  coords: LatLng | null;
+  done: StepId[];
+  /** Kernel 1.21 — the phone the bag reminder was asked for (null = not asked) */
+  reminder?: string | null;
+}
+
+const text = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
+
+function readDraft(session: string | null): SavedDraft | null {
+  if (!session) return null;
+  try {
+    const d = JSON.parse(globalThis.sessionStorage?.getItem(DRAFT_KEY) ?? 'null') as Partial<
+      Record<keyof SavedDraft, unknown>
+    > | null;
+    if (!d || d.session !== session || !d.draft || typeof d.draft !== 'object') return null;
+    const v = d.draft as Partial<Record<keyof CustomerDraft, unknown>>;
+    return {
+      session,
+      draft: {
+        name: text(v.name, 120),
+        phone: text(v.phone, 20),
+        street: text(v.street, 120),
+        number: text(v.number, 10),
+        neighborhood: text(v.neighborhood, 80),
+        complement: text(v.complement, 80),
+        cep: text(v.cep, 9),
+        reference: text(v.reference, 120),
+        remember: v.remember !== false,
+      },
+      mode: d.mode === 'pickup' ? 'pickup' : 'delivery',
+      pay: (METHOD_IDS.includes(d.pay as string) ? d.pay : 'pix') as PaymentMethod['id'],
+      notes: text(d.notes, NOTES_MAX),
+      scheduledFor:
+        typeof d.scheduledFor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.scheduledFor)
+          ? d.scheduledFor
+          : null,
+      changeFor:
+        typeof d.changeFor === 'number' && Number.isSafeInteger(d.changeFor) && d.changeFor > 0
+          ? d.changeFor
+          : null,
+      coords: savedPin(d.coords as { lat?: number; lng?: number } | undefined),
+      done: Array.isArray(d.done) ? ORDER.filter((s) => (d.done as unknown[]).includes(s)) : [],
+      reminder: typeof d.reminder === 'string' ? text(d.reminder, 20) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(d: SavedDraft) {
+  try {
+    globalThis.sessionStorage?.setItem(DRAFT_KEY, JSON.stringify(d));
+  } catch {
+    /* storage blocked — a reload starts over, as before */
+  }
+}
+
+function clearDraft() {
+  try {
+    globalThis.sessionStorage?.removeItem(DRAFT_KEY);
+  } catch {
+    /* nothing stored */
+  }
+}
+
+type Address = CustomerProfile['address'];
+
+const addressOf = (d: CustomerDraft): Address => ({
+  street: d.street,
+  number: d.number,
+  neighborhood: d.neighborhood,
+  complement: d.complement,
+});
+
+function addressLabel(a: Address): { label: string; detail?: string } {
+  const detail = [a.complement, a.reference]
+    .map((x) => x?.trim())
+    .filter(Boolean)
+    .join(' · ');
+  return {
+    label: `${a.street}${a.number ? `, ${a.number}` : ''}${a.neighborhood ? ` — ${a.neighborhood}` : ''}`,
+    ...(detail ? { detail } : {}),
+  };
+}
+
 function validate(step: StepId, d: CustomerDraft, mode: 'pickup' | 'delivery', located = false) {
   const e: Partial<Record<keyof CustomerDraft, string>> = {};
   if (step === 'dados') {
@@ -122,8 +224,11 @@ export function CheckoutPage() {
   // a state-less entry that only adds a hash (the header's skip link) stays on its step
   const hashOnly = !nav?.vStep && location.hash !== '' && lastStep.current !== null;
   const asked = ORDER.find((s) => s === nav?.vStep) ?? (hashOnly ? lastStep.current! : 'dados');
-  const [done, setDone] = useState<Set<StepId>>(new Set());
-  // a reload keeps the entry but not the answers: start over from the first step
+  const [done, setDone] = useState<Set<StepId>>(
+    () => new Set(readDraft(api.sessionToken)?.done ?? []),
+  );
+  // a reload keeps the entry; without this tab's answers (another tab, an order placed since)
+  // it starts over from the first step
   const reachable = ORDER.slice(0, ORDER.indexOf(asked)).every((s) => done.has(s));
   const step: StepId = reachable ? asked : 'dados';
   lastStep.current = step;
@@ -139,25 +244,35 @@ export function CheckoutPage() {
   }
   const pushedStep = useRef(false);
   const firstStep = useRef(true);
-  const [draft, setDraft] = useState<CustomerDraft>(() => ({
-    name: customer?.name ?? '',
-    phone: customer?.phone ?? '',
-    street: customer?.address.street ?? '',
-    number: customer?.address.number ?? '',
-    neighborhood: customer?.address.neighborhood ?? '',
-    complement: customer?.address.complement ?? '',
-    cep: customer?.address.cep ?? '',
-    reference: '',
-    remember: true,
-  }));
+  // what this tab typed before a reload (the same cart), else the device's remembered profile
+  const [restored] = useState(() => readDraft(api.sessionToken));
+  const placed = useRef(false);
+  const [draft, setDraft] = useState<CustomerDraft>(
+    () =>
+      restored?.draft ?? {
+        name: customer?.name ?? '',
+        phone: customer?.phone ?? '',
+        street: customer?.address.street ?? '',
+        number: customer?.address.number ?? '',
+        neighborhood: customer?.address.neighborhood ?? '',
+        complement: customer?.address.complement ?? '',
+        cep: customer?.address.cep ?? '',
+        reference: customer?.address.reference ?? '',
+        remember: true,
+      },
+  );
   // a pin the shopper confirmed (on this device's remembered address, or on the map)
-  const [coords, setCoords] = useState<LatLng | null>(() => savedPin(customer?.address));
+  const [coords, setCoords] = useState<LatLng | null>(() =>
+    restored ? restored.coords : savedPin(customer?.address),
+  );
   const [locateStatus, setLocateStatus] = useState<
     'idle' | 'pending' | 'located' | 'denied' | 'out_of_zone'
   >('idle');
   const [zoneHint, setZoneHint] = useState<string | undefined>();
-  const [notes, setNotes] = useState('');
-  const [scheduledFor, setScheduledFor] = useState<string | undefined>();
+  const [notes, setNotes] = useState(() => restored?.notes ?? '');
+  const [scheduledFor, setScheduledFor] = useState<string | undefined>(
+    () => restored?.scheduledFor ?? undefined,
+  );
   const [scheduleError, setScheduleError] = useState<string | undefined>();
   // a coupon Core refused at submit (the field shows it like an apply failure)
   const [couponError, setCouponError] = useState<string | undefined>();
@@ -170,7 +285,7 @@ export function CheckoutPage() {
     null,
   );
   const [pinStatus, setPinStatus] = useState<PinStatus>(() =>
-    savedPin(customer?.address) ? 'confirmed' : 'idle',
+    (restored ? restored.coords : savedPin(customer?.address)) ? 'confirmed' : 'idle',
   );
   const [pinHint, setPinHint] = useState<string | undefined>();
   const [pinError, setPinError] = useState<string | undefined>();
@@ -179,21 +294,68 @@ export function CheckoutPage() {
   const [cepPlace, setCepPlace] = useState<{ city: string | null; state: string | null } | null>(
     null,
   );
-  const [mode, setMode] = useState<'pickup' | 'delivery'>(deliveryOk ? 'delivery' : 'pickup');
-  const [pay, setPay] = useState<PaymentMethod['id']>('pix');
+  const [mode, setMode] = useState<'pickup' | 'delivery'>(() =>
+    restored && (restored.mode === 'pickup' || deliveryOk)
+      ? restored.mode
+      : deliveryOk
+        ? 'delivery'
+        : 'pickup',
+  );
+  const [pay, setPay] = useState<PaymentMethod['id']>(() => restored?.pay ?? 'pix');
   // Kernel 1.17 — cash change in cents (null = none); Core checks it covers the total
-  const [changeFor, setChangeFor] = useState<number | null>(null);
+  const [changeFor, setChangeFor] = useState<number | null>(() => restored?.changeFor ?? null);
   const [changeError, setChangeError] = useState<string | undefined>();
   const [errors, setErrors] = useState<Partial<Record<keyof CustomerDraft, string>>>({});
   const [deliveryIssue, setDeliveryIssue] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const submitting = useRef(false);
   const stepStarted = useRef(Date.now());
+  // Kernel 1.21 — "me lembre pelo WhatsApp": the phone Core holds the consent for (null = none)
+  const [reminder, setReminder] = useState<string | null>(() => restored?.reminder ?? null);
+  const reminderOffered = !!store?.cartReminder && isValidPhone(draft.phone);
+  const askReminder = async (on: boolean) => {
+    const phone = draft.phone;
+    setReminder(on ? phone : null);
+    try {
+      const r = on
+        ? await api.cartReminder({ phone, ...(draft.name.trim() ? { name: draft.name } : {}) })
+        : await api.cancelCartReminder();
+      if (!r.on) setReminder(null);
+    } catch {
+      // quiet: the box unticks, the order goes on
+      setReminder(null);
+    }
+  };
+  // the number fixed after ticking: the reminder follows it
+  useEffect(() => {
+    if (!reminder || !reminderOffered || digitsOf(reminder) === digitsOf(draft.phone)) return;
+    const t = setTimeout(() => void askReminder(true), 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.phone, reminder, reminderOffered]);
 
   useEffect(() => {
     emit('checkout_step', { step, duration_ms: Date.now() - stepStarted.current });
     stepStarted.current = Date.now();
   }, [step]);
+
+  // keep the answers for a reload; never once the order is placed (the session moved on)
+  useEffect(() => {
+    const session = api.sessionToken;
+    if (placed.current || !session) return;
+    writeDraft({
+      session,
+      draft,
+      mode,
+      pay,
+      notes,
+      scheduledFor: scheduledFor ?? null,
+      changeFor,
+      coords,
+      done: [...done],
+      reminder,
+    });
+  }, [api, draft, mode, pay, notes, scheduledFor, changeFor, coords, done, reminder]);
 
   // step entries that can't be shown are skipped, never rewritten into copies of the first
   // step: a reload mid-checkout lands on the first step's entry; with the order placed (no
@@ -470,6 +632,35 @@ export function CheckoutPage() {
     });
   };
 
+  // Kernel 1.21 — up to three addresses this device remembers (only when the shopper opted in)
+  const saved = savedAddresses(customer);
+  const typed = addressOf(draft);
+  const savedIndex = saved.findIndex(
+    (a) => sameAddress(a, typed) && a.neighborhood.trim() === typed.neighborhood.trim(),
+  );
+  const pickAddress = (id: string | null) => {
+    const a = id === null ? null : saved[Number(id)];
+    if (id !== null && !a) return;
+    const pin = a ? savedPin(a) : null;
+    setDraft((d) => ({
+      ...d,
+      street: a?.street ?? '',
+      number: a?.number ?? '',
+      neighborhood: a?.neighborhood ?? '',
+      complement: a?.complement ?? '',
+      cep: a?.cep ?? '',
+      reference: a?.reference ?? '',
+    }));
+    setErrors({});
+    setZoneHint(undefined);
+    setCepPlace(null);
+    setLocateStatus('idle');
+    setCoords(pin);
+    setPinHint(undefined);
+    setPinError(undefined);
+    setPinStatus(pin ? 'confirmed' : 'idle');
+  };
+
   const onCep = async (cep: string) => {
     const r = await cepLookup.lookup(cep);
     if (!r) return;
@@ -609,18 +800,25 @@ export function CheckoutPage() {
         ...(notes.trim() ? { notes: notes.trim().slice(0, NOTES_MAX) } : {}),
         ...(scheduledFor ? { scheduledFor } : {}),
       });
+      placed.current = true;
+      clearDraft();
       if (draft.remember)
         remember({
           name: draft.name,
           phone: draft.phone,
-          address: {
-            street: draft.street,
-            number: draft.number,
-            neighborhood: draft.neighborhood,
-            complement: draft.complement,
-            ...(draft.cep ? { cep: draft.cep } : {}),
-            ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
-          },
+          // a pickup doesn't replace the remembered addresses
+          address:
+            mode === 'delivery'
+              ? {
+                  street: draft.street,
+                  number: draft.number,
+                  neighborhood: draft.neighborhood,
+                  complement: draft.complement,
+                  ...(draft.cep ? { cep: draft.cep } : {}),
+                  ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
+                  ...(draft.reference?.trim() ? { reference: draft.reference.trim() } : {}),
+                }
+              : { street: '', number: '', neighborhood: '', complement: '' },
         });
       else forget();
       // card_online included: the card form is on the order page (Kernel 1.19)
@@ -680,6 +878,16 @@ export function CheckoutPage() {
                 neighborhoods={neighborhoods}
               />
             ) : null}
+            {step === 'dados' && reminderOffered ? (
+              <label className="v-check v-reminder" data-vendua="cart-reminder">
+                <input
+                  type="checkbox"
+                  checked={reminder !== null}
+                  onChange={(e) => void askReminder(e.target.checked)}
+                />{' '}
+                Me lembre pelo WhatsApp se eu não terminar o pedido
+              </label>
+            ) : null}
             {step === 'entrega' ? (
               <>
                 <Slot
@@ -711,6 +919,16 @@ export function CheckoutPage() {
                     }
                     {...(canLocate && !byDistance ? { onLocate, locateStatus } : {})}
                     {...(zoneHint && !byDistance ? { zoneHint } : {})}
+                    {...(saved.length
+                      ? {
+                          savedAddresses: saved.map((a, i) => ({
+                            id: String(i),
+                            ...addressLabel(a),
+                          })),
+                          savedAddressId: savedIndex >= 0 ? String(savedIndex) : null,
+                          onPickAddress: pickAddress,
+                        }
+                      : {})}
                   />
                 ) : null}
                 {mode === 'delivery' && byDistance ? (

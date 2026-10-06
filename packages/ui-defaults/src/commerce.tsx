@@ -3,6 +3,7 @@ import type { SlotProps } from '@vendua/kernel';
 import {
   cardState,
   DEFAULT_VOCABULARY,
+  dietaryBadges,
   foldText,
   formatCents,
   formatDateTime,
@@ -147,8 +148,18 @@ export function CartLineItem({
   max,
   onQty,
   onRemove,
+  onNote,
+  noteMax = 140,
 }: SlotProps['cart.LineItem']) {
   const unavailable = item.productStatus !== 'active';
+  // Kernel 1.21 — the line's note, edited in place
+  const [editing, setEditing] = useState(false);
+  const [note, setNote] = useState('');
+  const noteId = useId();
+  const save = () => {
+    setEditing(false);
+    onNote?.(note);
+  };
   return (
     <li
       className="v-line"
@@ -176,6 +187,53 @@ export function CartLineItem({
           <p className="v-muted v-line-mods" data-part="combo">
             {lineSummary({ modifiers: [], combo: item.combo }, currency)}
           </p>
+        ) : null}
+        {item.note && !editing ? (
+          <p className="v-line-note" data-part="note">
+            <span className="v-sr">Observação: </span>
+            {item.note}
+          </p>
+        ) : null}
+        {editing ? (
+          <div className="v-line-note-edit" data-part="note-edit">
+            <label className="v-label" htmlFor={noteId}>
+              Observação
+            </label>
+            <textarea
+              id={noteId}
+              className="v-input v-textarea"
+              rows={2}
+              maxLength={noteMax}
+              placeholder="Ex.: sem cebola"
+              value={note}
+              autoFocus
+              onChange={(e) => setNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setEditing(false);
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  save();
+                }
+              }}
+            />
+            <div className="v-line-note-bar">
+              <span className="v-muted v-num v-counter" aria-hidden="true">
+                {note.length}/{noteMax}
+              </span>
+              <button type="button" className="v-link-btn" onClick={() => setEditing(false)}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="v-btn v-btn-ghost"
+                data-part="note-save"
+                disabled={pending}
+                onClick={save}
+              >
+                Salvar
+              </button>
+            </div>
+          </div>
         ) : null}
         {item.requiresPreorder ? (
           <p className="v-badge" data-part="preorder">
@@ -207,6 +265,21 @@ export function CartLineItem({
           >
             Remover
           </button>
+          {onNote && !editing ? (
+            <button
+              type="button"
+              className="v-link-btn"
+              data-part="note-toggle"
+              aria-label={`${item.note ? 'Editar a observação de' : 'Adicionar observação a'} ${item.name}`}
+              disabled={pending}
+              onClick={() => {
+                setNote(item.note ?? '');
+                setEditing(true);
+              }}
+            >
+              {item.note ? 'Editar observação' : 'Observação'}
+            </button>
+          ) : null}
         </div>
       </div>
       <p className="v-line-total v-num" data-part="total">
@@ -322,6 +395,101 @@ export function OrderStatusPage({
   );
 }
 
+/** Kernel 1.21 — the order through the link in the store's WhatsApp: where it stands and what
+ *  was ordered. Nothing personal reaches this page, and no money. */
+export function OrderTrackingPage({
+  order,
+  timeline,
+  pickup,
+  timeZone,
+}: SlotProps['order.TrackingPage']) {
+  const d = order.delivery;
+  return (
+    <section
+      className="v-order v-tracking"
+      data-vendua="order-tracking"
+      data-part="root"
+      data-state={order.state}
+    >
+      <header className="v-order-head" data-part="head">
+        <p className="v-eyebrow">
+          {order.storeName ? `${order.storeName} · ` : ''}Pedido #{order.number}
+        </p>
+        <h1 className="v-page-title" data-part="state">
+          {ORDER_STATE_LABEL[order.state] ?? order.state}
+        </h1>
+        {order.scheduledFor ? (
+          <p className="v-muted" data-part="scheduled">
+            Encomenda para {formatDay(order.scheduledFor)}
+          </p>
+        ) : d.promisedTo && !TERMINAL_ORDER_STATES.has(order.state) ? (
+          <p className="v-muted" data-part="promise">
+            {d.mode === 'delivery' ? 'Chega' : 'Pronto para retirar'}{' '}
+            {d.promisedFrom && d.promisedFrom !== d.promisedTo
+              ? `entre ${formatTime(d.promisedFrom, timeZone)} e ${formatTime(d.promisedTo, timeZone)}`
+              : `por volta de ${formatTime(d.promisedTo, timeZone)}`}
+          </p>
+        ) : d.etaMin != null && d.etaMax != null && d.mode === 'delivery' ? (
+          <p className="v-muted">
+            Entrega em {d.etaMin}–{d.etaMax} min
+          </p>
+        ) : null}
+      </header>
+      <OrderProgress state={order.state} mode={d.mode} />
+      <div className="v-order-grid">
+        <div data-part="timeline">{timeline}</div>
+        <div className="v-tracking-side">
+          <div className="v-panel v-tracking-items" data-part="items">
+            <h2 className="v-panel-title">Itens</h2>
+            <ul className="v-summary-lines">
+              {order.items.map((i, k) => (
+                <li key={k} className="v-summary-line">
+                  <span>
+                    {i.qty}× {i.name}
+                    {i.modifiers.length || i.combo.length ? (
+                      <span className="v-muted v-line-mods">
+                        {' '}
+                        —{' '}
+                        {lineSummary({
+                          modifiers: i.modifiers.map((m) => ({ ...m, priceDeltaCents: 0 })),
+                          combo: i.combo,
+                        })}
+                      </span>
+                    ) : null}
+                    {i.note ? (
+                      <span className="v-line-note" data-part="item-note">
+                        <span className="v-sr">Observação: </span>
+                        {i.note}
+                      </span>
+                    ) : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <dl className="v-order-facts" data-part="facts">
+            <div>
+              <dt>{d.mode === 'delivery' ? 'Entrega' : 'Retirada'}</dt>
+              <dd>
+                {d.mode === 'delivery' ? 'No endereço do pedido' : (pickup?.address ?? 'Na loja')}
+                {d.mode === 'pickup' && pickup?.instructions ? (
+                  <span className="v-order-fact-note v-muted" data-part="pickup-instructions">
+                    {pickup.instructions}
+                  </span>
+                ) : null}
+              </dd>
+            </div>
+          </dl>
+          <p className="v-muted v-tracking-privacy" data-part="privacy">
+            Este link mostra o andamento do pedido. Endereço e pagamento ficam só no aparelho em que
+            ele foi feito.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /** The happy path as a glanceable track; cancelled/refunded orders skip it. */
 function OrderProgress({ state, mode }: { state: string; mode: 'delivery' | 'pickup' }) {
   const progress = orderProgress({ state, mode });
@@ -395,6 +563,11 @@ export function ProductCard({
   const [imgFailed, setImgFailed] = useState(false);
   const state = cardState(product, stockLeft ?? null);
   const price = priceDisplay(product);
+  // Kernel 1.21 — what the product is (vegano, sem glúten, apimentado); allergen warnings are on
+  // its page, in full
+  const diets = dietaryBadges(product)
+    .filter((b) => b.kind !== 'allergen')
+    .slice(0, 3);
   // sold out says so in the price row instead
   const badge =
     state.badge === 'all-in-bag'
@@ -454,6 +627,15 @@ export function ProductCard({
             <p className="v-card-desc v-muted" data-part="description">
               {product.description}
             </p>
+          ) : null}
+          {diets.length ? (
+            <ul className="v-diet v-card-diet" data-part="dietary">
+              {diets.map((b) => (
+                <li key={b.tag} className="v-diet-badge" data-kind={b.kind} data-tag={b.tag}>
+                  {b.label}
+                </li>
+              ))}
+            </ul>
           ) : null}
           <p
             className="v-card-price v-num"

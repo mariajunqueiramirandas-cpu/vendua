@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"log/slog"
 	"runtime"
+	"sync/atomic"
 
 	"fyne.io/systray"
 
@@ -22,7 +23,9 @@ const maxPrinterLines = 8
 type Options struct {
 	Agent    *agent.Agent
 	AdminURL string
-	Log      *slog.Logger
+	// LogPath is the agent.log the "Abrir log" item opens.
+	LogPath string
+	Log     *slog.Logger
 	// Quit, when it fires, closes the tray as if "Sair" was clicked.
 	Quit <-chan struct{}
 }
@@ -35,8 +38,8 @@ func Run(ctx context.Context, o Options) {
 }
 
 type menu struct {
-	status, connect, test, scan, admin, update, disconnect, quit *systray.MenuItem
-	printers                                                     []*systray.MenuItem
+	status, connect, test, scan, admin, log, update, disconnect, quit *systray.MenuItem
+	printers                                                          []*systray.MenuItem
 }
 
 func onReady(ctx context.Context, o Options) {
@@ -55,11 +58,17 @@ func onReady(ctx context.Context, o Options) {
 	m.test = systray.AddMenuItem("Imprimir teste", "Imprime um ticket de teste em cada impressora")
 	m.scan = systray.AddMenuItem("Procurar impressoras", "Procura impressoras neste computador e na rede")
 	m.admin = systray.AddMenuItem("Abrir painel de impressoras", "")
+	m.log = systray.AddMenuItem("Abrir log", "O registro do que o programa fez, para enviar ao suporte")
+	if o.LogPath == "" {
+		m.log.Hide()
+	}
 	m.update = systray.AddMenuItem("Baixar atualização", "")
 	m.disconnect = systray.AddMenuItem("Desconectar este computador", "")
 	systray.AddSeparator()
 	m.quit = systray.AddMenuItem("Sair", "Fecha o Venduá Impressora até a próxima vez que o Windows iniciar")
 
+	// One test at a time: a second click while the first is still asking Core would only stack alerts.
+	var testBusy atomic.Bool
 	changes := a.Subscribe()
 	m.refresh(a.Status())
 	for {
@@ -74,15 +83,26 @@ func onReady(ctx context.Context, o Options) {
 		case <-m.connect.ClickedCh:
 			a.RequestPairing()
 		case <-m.test.ClickedCh:
-			go func() {
-				if err := a.TestPrinters(ctx); err != nil {
+			if testBusy.CompareAndSwap(false, true) {
+				go func() {
+					err := a.TestPrinters(ctx)
+					testBusy.Store(false)
+					if err == nil || ctx.Err() != nil {
+						return
+					}
 					o.Log.Warn("test print request failed", "err", err)
-				}
-			}()
+					platform.Alert("Venduá Impressora", agent.TestFailure(err))
+				}()
+			}
 		case <-m.scan.ClickedCh:
 			a.Rescan()
 		case <-m.admin.ClickedCh:
 			open(o.Log, o.AdminURL)
+		case <-m.log.ClickedCh:
+			if err := platform.OpenFile(o.LogPath); err != nil {
+				o.Log.Warn("opening log failed", "path", o.LogPath, "err", err)
+				go platform.Alert("Venduá Impressora", "Não foi possível abrir o log. Ele fica em:\n"+o.LogPath)
+			}
 		case <-m.update.ClickedCh:
 			open(o.Log, update.DownloadURL)
 		case <-m.disconnect.ClickedCh:

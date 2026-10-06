@@ -1,6 +1,7 @@
 import {
   BookOpen,
   Camera,
+  ChatCircleDots,
   HandPalm,
   Info,
   Link as LinkIcon,
@@ -409,6 +410,10 @@ const STEP: Record<WhyView['steps'][number]['kind'], { Icon: Icon; tone: string 
   blocked: { Icon: Prohibit, tone: 'text-warning' },
 };
 
+/** The test chat with a question already typed, to see how Duá answers it today. */
+export const testLink = (question: string) =>
+  `/vendedor/testar?pergunta=${encodeURIComponent(question.slice(0, 300))}`;
+
 export const whyTitle = (m: ThreadMessage | null) =>
   m?.suggestion
     ? 'Por que o Duá sugeriu isso'
@@ -474,14 +479,22 @@ export function WhyBody({ threadId, message }: { threadId: string; message: Thre
         <p className="t-body text-muted">Ele só respondeu, sem consultar nada da loja.</p>
       )}
       {teach && w.asked ? (
-        <ButtonLink
-          to={`/vendedor/ensinar?pergunta=${encodeURIComponent(w.asked.slice(0, 200))}`}
-          variant="quiet"
-          icon={<BookOpen weight="bold" />}
-          className="self-start"
-        >
-          ensinar o Duá a responder diferente
-        </ButtonLink>
+        <div className="flex flex-col items-start gap-1">
+          <ButtonLink
+            to={`/vendedor/ensinar?pergunta=${encodeURIComponent(w.asked.slice(0, 200))}`}
+            variant="quiet"
+            icon={<BookOpen weight="bold" />}
+          >
+            ensinar o Duá a responder diferente
+          </ButtonLink>
+          <ButtonLink
+            to={testLink(w.asked)}
+            variant="quiet"
+            icon={<ChatCircleDots weight="bold" />}
+          >
+            testar esta pergunta
+          </ButtonLink>
+        </div>
       ) : null}
     </div>
   );

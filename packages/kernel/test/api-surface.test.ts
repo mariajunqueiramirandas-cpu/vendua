@@ -6,6 +6,9 @@ const RULES_V1 = [
   'COUPON_REASON',
   'DEFAULT_PATHS',
   'DEFAULT_VOCABULARY',
+  // Kernel 1.21 — allergen and diet tags
+  'DIETARY_FILTERS',
+  'DIETARY_LABEL',
   'ERROR_COPY',
   'KERNEL_PATHS',
   'LOCALE',
@@ -33,6 +36,7 @@ const RULES_V1 = [
   'couponMessage',
   'deliverySummary',
   'deliveryWords',
+  'dietaryBadges',
   'digitsOf',
   'errorCopy',
   'foldText',
@@ -114,6 +118,8 @@ const SDK_CATALOG_V1 = [
   'productList',
   'promoBadge',
   'purchasePanel',
+  // Kernel 1.21 — the returning shopper's last order
+  'recentOrder',
   'resolveSettings',
   'richTextSection',
   'stockCounter',

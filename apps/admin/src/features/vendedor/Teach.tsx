@@ -1,7 +1,7 @@
-import { ChatCircleDots, Check, Info, Plus } from '@phosphor-icons/react';
+import { ChatCircleDots, Check, Info, MagnifyingGlass, Plus } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type Knowledge, type KnowledgeItem } from '../../lib/api.ts';
 import { when } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
@@ -15,6 +15,7 @@ import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { FieldSkeleton, RowsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { GuaranteeChip } from '../../ui/vendedor/index.ts';
+import { testLink } from './Conversation.parts.tsx';
 import { TeachSheet, type TeachValues } from './Teach.sheet.tsx';
 
 type SheetState =
@@ -26,6 +27,12 @@ const valuesOf = (k: KnowledgeItem): TeachValues => ({
   question: k.question ?? '',
   answer: k.answer ?? '',
 });
+
+const fold = (s: string) =>
+  s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+/** a search box above the lists once there's enough to look through */
+const SEARCH_FROM = 6;
 
 const timesAsked = (n: number) => (n === 1 ? 'perguntaram 1 vez' : `perguntaram ${n} vezes`);
 const timesUsed = (n: number) =>
@@ -44,6 +51,13 @@ export default function Teach() {
     setOpen(true);
   };
   const put = (k: Knowledge) => qc.setQueryData(qk.vendedor.knowledge, k);
+  const nav = useNavigate();
+  const [find, setFind] = useState('');
+  // after teaching an answer: see it in the test chat, with the question already typed
+  const taught = (text: string, question: string | null | undefined) =>
+    toast(text, {
+      ...(question ? { action: { label: 'testar', run: () => nav(testLink(question)) } } : {}),
+    });
   // "ensinar a responder diferente" from a conversation: the shopper's question, ready to answer
   const [params, setParams] = useSearchParams();
   const asked = params.get('pergunta');
@@ -61,14 +75,19 @@ export default function Teach() {
   }, [asked]);
 
   const answer = useMutation({
-    mutationFn: (v: { id: string; answer: string; replyWaiting: boolean }) =>
-      api.vendedor.updateKnowledge(v.id, { answer: v.answer, replyWaiting: v.replyWaiting }),
+    mutationFn: (v: {
+      id: string;
+      answer: string;
+      replyWaiting: boolean;
+      question: string | null;
+    }) => api.vendedor.updateKnowledge(v.id, { answer: v.answer, replyWaiting: v.replyWaiting }),
     onSuccess: (k, v) => {
       put(k);
-      toast(
+      taught(
         v.replyWaiting
           ? 'O Duá aprendeu, e mandamos a resposta para quem perguntou.'
           : 'O Duá aprendeu. Na próxima vez, ele responde assim.',
+        v.question,
       );
     },
     onError: (e) => toast.error(messageOf(e)),
@@ -96,10 +115,12 @@ export default function Teach() {
         ...(st.mode === 'learned' ? { status: 'live' as const } : {}),
       });
     },
-    onSuccess: (k, { st }) => {
+    onSuccess: (k, { st, v }) => {
       put(k);
       setOpen(false);
-      toast(st.mode === 'edit' ? 'Salvo.' : 'O Duá aprendeu.');
+      const text = st.mode === 'edit' ? 'Salvo.' : 'O Duá aprendeu.';
+      if (v.kind === 'answer') taught(text, v.question);
+      else toast(text);
     },
     onError: (e) => toast.error(messageOf(e)),
   });
@@ -162,6 +183,16 @@ export default function Teach() {
 
   const empty =
     !data.questions.length && !data.learned.length && !data.answers.length && !data.rules.length;
+  const f = fold(find);
+  const hit = (k: KnowledgeItem) => !f || fold(`${k.question ?? ''} ${k.answer ?? ''}`).includes(f);
+  const questions = data.questions.filter(hit);
+  const learned = data.learned.filter(hit);
+  const answers = data.answers.filter(hit);
+  const rules = data.rules.filter(hit);
+  const searchable =
+    data.questions.length + data.learned.length + data.answers.length + data.rules.length >=
+    SEARCH_FROM;
+  const none = !!f && !questions.length && !learned.length && !answers.length && !rules.length;
   const newAnswer = () =>
     show({ mode: 'new', initial: { kind: 'answer', question: '', answer: '' } });
   const newRule = () => show({ mode: 'new', initial: { kind: 'rule', question: '', answer: '' } });
@@ -184,26 +215,45 @@ export default function Teach() {
         </Card>
       ) : null}
 
+      {searchable ? (
+        <div className="mb-6">
+          <TextInput
+            type="search"
+            aria-label="buscar nas perguntas, respostas e regras"
+            placeholder="Buscar nas respostas e regras"
+            lead={<MagnifyingGlass className="size-5" />}
+            value={find}
+            maxLength={60}
+            onChange={(e) => setFind(e.target.value)}
+          />
+        </div>
+      ) : null}
+
       <div className="flex flex-col gap-8">
-        {data.questions.length ? (
+        {none ? (
+          <Card className="t-body p-4 text-muted" role="status">
+            Nada com “{find.trim()}” nas perguntas, respostas e regras. Tente outra palavra.
+          </Card>
+        ) : null}
+        {questions.length ? (
           <Section
             title={
               <span className="inline-flex items-center gap-2">
                 Perguntas sem resposta
-                <Count n={data.questions.length} />
+                <Count n={questions.length} />
               </span>
             }
             hint="O Duá não soube responder. Ensine uma vez e ele responde sozinho daqui pra frente."
           >
             <Card as="div" className="divide-y divide-line">
-              {data.questions.map((q) => (
+              {questions.map((q) => (
                 <QuestionCard
                   key={q.id}
                   item={q}
                   busy={answer.isPending && answer.variables?.id === q.id}
                   dismissing={setStatus.isPending && setStatus.variables?.id === q.id}
                   onAnswer={(text, replyWaiting) =>
-                    answer.mutate({ id: q.id, answer: text, replyWaiting })
+                    answer.mutate({ id: q.id, answer: text, replyWaiting, question: q.question })
                   }
                   onDismiss={() => setStatus.mutate({ id: q.id, status: 'dismissed' })}
                 />
@@ -212,7 +262,7 @@ export default function Teach() {
           </Section>
         ) : null}
 
-        {data.learned.map((k) => (
+        {learned.map((k) => (
           <LearnedCard
             key={k.id}
             item={k}
@@ -223,7 +273,7 @@ export default function Teach() {
           />
         ))}
 
-        {!empty || data.answers.length ? (
+        {(!empty || data.answers.length) && (!f || answers.length) ? (
           <Section
             title="Respostas"
             action={
@@ -232,9 +282,9 @@ export default function Teach() {
               </Button>
             }
           >
-            {data.answers.length ? (
+            {answers.length ? (
               <Card as="div" className="divide-y divide-line overflow-hidden">
-                {data.answers.map((k) => (
+                {answers.map((k) => (
                   <ItemButton
                     key={k.id}
                     label={`editar a resposta: ${k.question ?? ''}`}
@@ -254,7 +304,7 @@ export default function Teach() {
           </Section>
         ) : null}
 
-        {!empty ? (
+        {!empty && (!f || rules.length) ? (
           <Section
             title="Regras"
             hint={
@@ -271,9 +321,9 @@ export default function Teach() {
               </Button>
             }
           >
-            {data.rules.length ? (
+            {rules.length ? (
               <Card as="div" className="divide-y divide-line overflow-hidden">
-                {data.rules.map((k) => (
+                {rules.map((k) => (
                   <ItemButton
                     key={k.id}
                     label={`editar a regra: ${k.answer ?? ''}`}

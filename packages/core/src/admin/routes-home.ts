@@ -1,8 +1,10 @@
+import { printTroubleTx } from '../modules/printing/jobs.ts';
 import type { Sql } from '../platform/db.ts';
+import { waLinkedTx } from '../store-whatsapp/proactive.ts';
 import { roleAtLeast, type AdminDeps, type Role } from './context.ts';
 import { handlers } from './handlers.ts';
 import { onboardingOf, setupChecklist } from './routes-onboarding.ts';
-import { loadSettings, statusOf } from './routes-store.ts';
+import { demandOf, loadSettings, statusOf } from './routes-store.ts';
 
 // Início in one read: the living header, "precisa de você", the setup checklist
 // and the live feed. Everything is scoped to the store's local day.
@@ -33,6 +35,7 @@ export function mountHome(d: AdminDeps) {
         liveRows,
         best,
         [busiestRow],
+        prints,
       ] = await Promise.all([
         tx<
           {
@@ -99,6 +102,7 @@ export function mountHome(d: AdminDeps) {
           ? tx<{ id: string; name: string; n: number }[]>`
               select p.id, p.name, count(*)::int as n from notify_requests n join products p on p.id = n.product_id
               where n.tenant_id = ${t.id} and n.subject = 'product' and n.notified_at is null
+                and p.deleted_at is null
               group by p.id order by n desc limit 3
             `
           : [],
@@ -129,6 +133,7 @@ export function mountHome(d: AdminDeps) {
             and placed_at >= (date_trunc('day', now() at time zone ${tz}) at time zone ${tz})
           group by 1 order by 2 desc limit 1
         `,
+        printTroubleTx(tx, t.id),
       ]);
       const today = todayRow ?? {
         salesCents: 0,
@@ -166,6 +171,22 @@ export function mountHome(d: AdminDeps) {
           href: '/pedidos',
         });
       attention.push(...platform);
+      if (prints.length) {
+        const p = prints[0]!;
+        const orders = new Set(prints.map((x) => x.orderId)).size;
+        attention.push({
+          kind: 'print_failed',
+          count: orders,
+          title:
+            orders === 1
+              ? `A comanda do pedido #${p.number} não imprimiu`
+              : `As comandas de ${orders} pedidos não imprimiram`,
+          detail: p.waiting
+            ? `${p.printer} não respondeu. Confira se o aparelho está ligado.`
+            : `${p.printer}: ${p.error ?? 'falha ao imprimir'}`,
+          href: orders === 1 ? `/pedidos/${p.orderId}` : '/impressoras',
+        });
+      }
       if (manager) {
         const pendingPix = pix[0]!.n;
         if (pendingPix)
@@ -193,6 +214,20 @@ export function mountHome(d: AdminDeps) {
             href: '/marketing',
             productId: w.id,
           });
+        // with WhatsApp linked they hear it on opening; without it only the store can tell them
+        const openWaiters = (
+          await tx<{ n: number }[]>`
+            select count(*)::int as n from notify_requests
+            where tenant_id = ${t.id} and subject = 'store' and notified_at is null`
+        )[0]!.n;
+        if (openWaiters && !(await waLinkedTx(tx, t.id)))
+          attention.push({
+            kind: 'waitlist_open',
+            count: openWaiters,
+            title: `${openWaiters} ${openWaiters === 1 ? 'pessoa quer' : 'pessoas querem'} saber quando abrir`,
+            detail: 'Conecte o WhatsApp para avisar sozinho',
+            href: '/whatsapp',
+          });
       }
 
       const ob = onboardingOf(s);
@@ -206,6 +241,7 @@ export function mountHome(d: AdminDeps) {
           changesAt: st.resumesAt ?? st.closesAt ?? null,
           override: s.status_override,
         },
+        demand: demandOf(s),
         hours: s.hours,
         specialDays: s.special_days ?? [],
         today: {

@@ -10,6 +10,7 @@ import type {
   NoticeAction,
   Order,
   OrderItem,
+  OrderTracking,
   ProductDetail,
   StoreProfile,
   CatalogProduct,
@@ -181,6 +182,14 @@ export interface SlotProps {
     locateStatus?: 'idle' | 'pending' | 'located' | 'denied' | 'out_of_zone';
     /** what Core answered for the address: zone + fee, when known */
     zoneHint?: string;
+    /** Kernel 1.21 — the addresses remembered on this device (at most 3, most recent first;
+     *  `label` "Rua A, 10 — Centro", `detail` the complement/reference). Picking one fills the
+     *  form. Absent = none saved */
+    savedAddresses?: { id: string; label: string; detail?: string }[];
+    /** Kernel 1.21 — the saved address the form holds now; null = another one */
+    savedAddressId?: string | null;
+    /** Kernel 1.21 — pick a saved address, or null to type another (the fields empty) */
+    onPickAddress?: (id: string | null) => void;
   };
   /** Kernel 1.15 — distance pricing (ADR 0024): the shopper confirms where the order goes on a
    *  map; the confirmed point is what Core prices. Rendered under the address form. */
@@ -241,6 +250,10 @@ export interface SlotProps {
     max?: number;
     onQty: (qty: number) => void;
     onRemove: () => void;
+    /** Kernel 1.21 — set the line's note (`item.note`; '' clears it), up to `noteMax`
+     *  characters. Present where the bag can be edited; the line may fold into an identical one */
+    onNote?: (note: string) => void;
+    noteMax?: number;
   } & StoreWords;
   'order.StatusPage': {
     order: Order;
@@ -250,6 +263,17 @@ export interface SlotProps {
     pickup?: { address: string | null; instructions: string | null };
   } & StoreTime;
   'order.Timeline': { events: Order['timeline'] } & StoreTime;
+  /** Kernel 1.21 — the order page opened from the link in the store's WhatsApp updates, on a
+   *  device that didn't place it: where the order stands and what was ordered — nothing about
+   *  the shopper, the address or the payment, and no money */
+  'order.TrackingPage': {
+    order: OrderTracking;
+    /** the `order.Timeline` slot, rendered */
+    timeline: ReactNode;
+    /** the store's pickup address/instructions, for pickup orders */
+    pickup?: { address: string | null; instructions: string | null };
+  } & StoreTime &
+    StoreWords;
   'store.HoursTable': { hours: StoreProfile['hours']; status?: StoreProfile['status'] };
   'catalog.ProductCard': {
     product: CatalogProduct;

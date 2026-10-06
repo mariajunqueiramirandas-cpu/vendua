@@ -487,6 +487,36 @@ export default function UiReference() {
             onOpen={() => undefined}
           />
         </div>
+        <p className="t-caption mb-2 mt-6 text-muted">
+          Numa coluna estreita (o quadro num notebook): situação e tempo numa linha acima do número
+        </p>
+        <div className="grid grid-cols-[repeat(auto-fill,13rem)] items-start gap-3">
+          <OrderCard
+            order={order(10428, 'preparing', 34, {
+              delivery: {
+                mode: 'delivery',
+                neighborhood: 'Itaúna',
+                address: 'Rua das Flores, 120',
+                feeCents: 500,
+                delayMinutes: 15,
+              },
+            })}
+            now={now}
+            acceptTarget={5}
+            onAdvance={() => undefined}
+            onMore={() => undefined}
+            onOpen={() => undefined}
+          />
+          <OrderCard
+            order={order(9999, 'out_for_delivery', 52)}
+            now={now}
+            acceptTarget={5}
+            onAdvance={() => undefined}
+            onMore={() => undefined}
+            onOpen={() => undefined}
+            compact
+          />
+        </div>
       </Block>
 
       <Block title="Cozinha">
@@ -960,8 +990,12 @@ const LONG: SummaryCardData = {
   test: true,
 };
 
+const QUICK_REPLY = 'Seu pedido já saiu para entrega!';
+
 function VendedorReference() {
   const [owner, setOwner] = useState(false);
+  // "respostas prontas" opens a sheet in the app; here a tap drops one into the composer
+  const [quick, setQuick] = useState<{ text: string; n: number }>();
   return (
     <>
       <Block title="Duá: as três vozes">
@@ -1022,10 +1056,30 @@ function VendedorReference() {
                   onSend={(t) => toast(`enviado: ${t}`)}
                   silenceMin={30}
                   keys
+                  onQuick={() => setQuick((q) => ({ text: QUICK_REPLY, n: (q?.n ?? 0) + 1 }))}
+                  prefill={quick}
                 />
               ) : (
                 <Floor variant="agent" onTake={() => setOwner(true)} keys />
               )}
+            </div>
+            <p className="t-caption -mb-2 text-muted">
+              Duá pausado: quem responde é a loja, com as respostas prontas
+            </p>
+            <div className="overflow-hidden rounded-lg ring-1 ring-line">
+              <Floor
+                variant="owner"
+                title={
+                  <>
+                    Você está atendendo
+                    <span className="t-caption block font-normal text-muted">
+                      O Duá está pausado e volta sozinho amanhã às 9h.
+                    </span>
+                  </>
+                }
+                onSend={(t) => toast(`enviado: ${t}`)}
+                onQuick={() => toast('respostas prontas')}
+              />
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <ReasonChip reason="alergia" />
@@ -1036,6 +1090,7 @@ function VendedorReference() {
               <FloorChip floor="rehearsal" />
               <FloorChip floor="store" />
               <FloorChip floor="agent" waiting />
+              <FloorChip floor="paused" />
               <FloorChip floor="muted" />
               <ClassChip cls="checking" />
               <ClassChip cls="ask" />

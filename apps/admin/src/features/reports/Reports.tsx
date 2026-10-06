@@ -1,6 +1,7 @@
 import { DownloadSimple, Info, MapPin } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, type Kpis, type Reports as R } from '../../lib/api.ts';
 import { dateShort, isoDate, money, moneyCompact, num, plural } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
@@ -13,7 +14,7 @@ import { Chips, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { ReportsSkeleton } from '../../ui/skeletons.tsx';
-import { rangeOf, type Period } from './range.ts';
+import { DEFAULT_PERIOD, isPeriod, PERIODS, reportsQuery } from './range.ts';
 
 const METHOD: Record<string, string> = {
   pix: 'Pix',
@@ -22,33 +23,75 @@ const METHOD: Record<string, string> = {
   meal_voucher: 'Vale-refeição',
 };
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const validRange = (r: { from: string; to: string }) =>
+  DAY.test(r.from) && DAY.test(r.to) && r.from >= '2000' && r.from <= r.to;
+// presets that end today: the chart's last column is the day still going
+const ENDS_TODAY = new Set(['hoje', '7d', '30d', 'mes']);
+
+// a chip chosen from the address may sit past the row's edge: bring it into view once, sideways only
+const revealChecked = (row: HTMLElement | null) => {
+  const chip = row?.querySelector<HTMLElement>('[aria-checked="true"]');
+  if (!row || !chip) return;
+  const r = row.getBoundingClientRect();
+  const c = chip.getBoundingClientRect();
+  if (c.left < r.left || c.right > r.right)
+    row.scrollLeft += c.left - r.left - (r.width - c.width) / 2;
+};
+
+/** "sáb, 27 set" or "sáb, 27 set – dom, 5 out" */
+const span = (from: string, to: string) =>
+  from === to ? dateShort(from) : `${dateShort(from)} – ${dateShort(to)}`;
+
 export default function Reports() {
-  const [period, setPeriod] = useState<Period>('7d');
-  const [custom, setCustom] = useState(() => ({
-    from: isoDate(new Date(Date.now() - 13 * 86_400_000)),
-    to: isoDate(new Date()),
-  }));
+  // the period lives in the address (?periodo=ontem, ?periodo=custom&de=…&ate=…): back, a reload
+  // and a shared link land on the same report
+  const [params, setParams] = useSearchParams();
+  const p = params.get('periodo');
+  const period = isPeriod(p) ? p : DEFAULT_PERIOD;
+  const custom = { from: params.get('de') ?? '', to: params.get('ate') ?? '' };
+  const update = (patch: Record<string, string | null>) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        for (const [k, v] of Object.entries(patch)) v === null ? next.delete(k) : next.set(k, v);
+        return next;
+      },
+      { replace: true },
+    );
   // typing a date walks through half-dates (year 0002…): ask once the field settles on a real range
   const [settled, setSettled] = useState(custom);
   useEffect(() => {
-    const t = setTimeout(() => setSettled(custom), 400);
+    const t = setTimeout(() => setSettled({ from: custom.from, to: custom.to }), 400);
     return () => clearTimeout(t);
-  }, [custom]);
-  const { from, to } = rangeOf(period, settled);
+  }, [custom.from, custom.to]);
+  const rq = reportsQuery(period, settled);
   const { data, error, refetch, isFetching } = useQuery({
-    queryKey: qk.reports(from, to),
-    queryFn: () => api.reports(from, to),
-    placeholderData: (p) => p,
-    enabled: from >= '2000' && from <= to,
+    queryKey: rq.key,
+    queryFn: () => api.reports(rq.params),
+    placeholderData: (prev) => prev,
+    enabled: period !== 'custom' || validRange(settled),
   });
+  const shown = data?.range;
+  const choose = (v: (typeof PERIODS)[number]['value']) => {
+    if (v !== 'custom')
+      return update({ periodo: v === DEFAULT_PERIOD ? null : v, de: null, ate: null });
+    // personalizado starts from what's on screen
+    const today = isoDate(new Date());
+    update({
+      periodo: 'custom',
+      de: custom.from || shown?.from || today,
+      ate: custom.to || shown?.to || today,
+    });
+  };
   return (
     <PageBody wide>
       <PageHeader
         title="Relatórios"
-        subtitle={`${dateShort(from)} – ${dateShort(to)}`}
+        subtitle={shown ? span(shown.from, shown.to) : undefined}
         actions={
           <a
-            href={`/admin/v1/reports/orders.csv?from=${from}&to=${to}`}
+            href={`/admin/v1/reports/orders.csv?${new URLSearchParams(rq.params)}`}
             className="t-label inline-flex min-h-12 items-center gap-2 rounded-md px-4 ring-1 ring-line-strong hover:bg-hover"
           >
             <DownloadSimple className="size-5" /> baixar planilha
@@ -56,25 +99,23 @@ export default function Reports() {
         }
       />
       <div className="mb-6 space-y-3">
-        <Chips
-          label="período"
-          value={period}
-          onChange={setPeriod}
-          options={[
-            { value: 'hoje', label: 'hoje' },
-            { value: '7d', label: '7 dias' },
-            { value: '30d', label: '30 dias' },
-            { value: 'custom', label: 'personalizado' },
-          ]}
-        />
+        <div ref={revealChecked} className="scroll-row -mx-4 px-4 md:mx-0 md:px-0">
+          <Chips
+            label="período"
+            value={period}
+            onChange={choose}
+            className="w-max flex-nowrap md:w-auto md:flex-wrap"
+            options={PERIODS.map((o) => ({ value: o.value, label: o.label }))}
+          />
+        </div>
         {period === 'custom' ? (
           <div className="flex flex-wrap items-center gap-2">
             <TextInput
               type="date"
               aria-label="de"
               value={custom.from}
-              max={custom.to}
-              onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))}
+              max={custom.to || undefined}
+              onChange={(e) => update({ de: e.target.value })}
               className="w-44"
             />
             <span className="text-muted">até</span>
@@ -82,8 +123,8 @@ export default function Reports() {
               type="date"
               aria-label="até"
               value={custom.to}
-              min={custom.from}
-              onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))}
+              min={custom.from || undefined}
+              onChange={(e) => update({ ate: e.target.value })}
               className="w-44"
             />
           </div>
@@ -109,7 +150,9 @@ export default function Reports() {
                 summary={`${money(data.current.revenueCents)} em ${num(data.current.orders)} pedidos. Melhor dia: ${best(data)}.`}
                 format={money}
                 formatTick={moneyCompact}
-                highlightLast={to === isoDate(new Date())}
+                highlightLast={
+                  ENDS_TODAY.has(data.range.period) || data.range.to === isoDate(new Date())
+                }
                 data={data.series.map((s) => ({
                   label: dateShort(s.date),
                   short: s.date.slice(8),
@@ -353,7 +396,11 @@ function KpiRow({ d }: { d: R }) {
                 <span className="t-caption text-muted">sem período anterior</span>
               )}
             </button>
-            {open === k.key ? <p className="t-caption mt-2 text-muted">{k.explain}</p> : null}
+            {open === k.key ? (
+              <p className="t-caption mt-2 text-muted">
+                {k.explain} Comparado com {span(d.range.prevFrom, d.range.prevTo)}.
+              </p>
+            ) : null}
           </Card>
         );
       })}

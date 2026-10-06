@@ -1,30 +1,131 @@
-import { ChatsCircle, CheckCircle, MagnifyingGlass } from '@phosphor-icons/react';
+import {
+  ChatsCircle,
+  CheckCircle,
+  CheckSquare,
+  ListChecks,
+  MagnifyingGlass,
+  Square,
+} from '@phosphor-icons/react';
 import {
   keepPreviousData,
   useInfiniteQuery,
+  useQueryClient,
   type InfiniteData,
+  type QueryClient,
   type UseInfiniteQueryResult,
 } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { usePreload } from '../../app/routes.ts';
 import { api, type ThreadFilter, type ThreadList, type ThreadRow } from '../../lib/api.ts';
-import { minutesSince } from '../../lib/format.ts';
+import { minutesSince, plural } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
 import { useCan, useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
+import { EmptyState, ErrorState, messageOf } from '../../ui/feedback.tsx';
 import { Chips, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { HelpButton, PageBody, PageHeader } from '../../ui/Page.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
+import { toast } from '../../ui/Toast.tsx';
 import { ClassChip, FloorChip, ReasonChip, triaged } from '../../ui/vendedor/index.ts';
 import { ConversationPane, useMedia } from './Conversation.tsx';
 import { Initials, dayLabel, msgTime } from './Conversation.parts.tsx';
 
 const FILTERS: ThreadFilter[] = ['all', 'waiting', 'ask', 'orders', 'agent', 'personal', 'others'];
+/** what Core takes in one go */
+const BULK_MAX = 100;
+/** a bulk decision waits this long with "desfazer" before it reaches Core ("pessoal" erases) */
+const HOLD_MS = 6000;
+
+/**
+ * Several "para decidir" at once (undo beats confirm): the rows leave the list now, the decision
+ * goes to Core after the toast's "desfazer" window, and "desfazer" just brings them back.
+ */
+function holdClassify(qc: QueryClient, ids: string[], as: 'shopper' | 'personal') {
+  const drop = new Set(ids);
+  qc.setQueriesData<InfiniteData<ThreadList>>(
+    { queryKey: ['vendedor', 'threads', 'ask'] },
+    (old) =>
+      old
+        ? {
+            ...old,
+            pages: old.pages.map((p, i) => ({
+              ...p,
+              threads: p.threads.filter((t) => !drop.has(t.id)),
+              ...(i === 0 && p.counts?.ask !== undefined
+                ? { counts: { ...p.counts, ask: Math.max(0, p.counts.ask - ids.length) } }
+                : {}),
+            })),
+          }
+        : old,
+  );
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['vendedor'] });
+    void qc.invalidateQueries({ queryKey: qk.session });
+  };
+  const timer = window.setTimeout(() => {
+    api.vendedor.classifyMany(ids, as).then(
+      (r) => {
+        refresh();
+        if (r.skipped.length)
+          toast(
+            `${plural(r.skipped.length, 'contato mudou', 'contatos mudaram')} antes e ficou como estava.`,
+            { tone: 'info' },
+          );
+      },
+      (e) => {
+        refresh();
+        toast.error(messageOf(e));
+      },
+    );
+  }, HOLD_MS);
+  const n = ids.length;
+  toast(
+    as === 'shopper'
+      ? n === 1
+        ? 'Marcado como cliente. O Duá atende este contato.'
+        : `${n} contatos marcados como clientes. O Duá atende todos.`
+      : n === 1
+        ? 'Marcado como pessoal. O Duá não responde este contato.'
+        : `${n} contatos marcados como pessoais. O Duá não responde nenhum.`,
+    {
+      ms: HOLD_MS,
+      undo: () => {
+        window.clearTimeout(timer);
+        refresh();
+      },
+    },
+  );
+}
+
+const fold = (s: string) =>
+  s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+/** The search term marked in the words Core matched (accents ignored, as Core does). */
+function Highlight({ text, q }: { text: string; q: string }) {
+  const needle = fold(q);
+  // per character, so an index here is the same index in `text`
+  const flat = [...text]
+    .map((c) => {
+      const f = c.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+      return f.length === c.length ? f : c;
+    })
+    .join('');
+  const at = needle ? flat.indexOf(needle) : -1;
+  if (at < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, at)}
+      <mark className="rounded-[3px] bg-spark-soft px-0.5 font-semibold text-ink">
+        {text.slice(at, at + needle.length)}
+      </mark>
+      {text.slice(at + needle.length)}
+    </>
+  );
+}
 
 /**
  * Conversas (sales-agent-ux §3.3, §3.10): every WhatsApp conversation of the store, who is
@@ -74,6 +175,44 @@ export default function Conversations() {
   const rows = list.data?.pages.flatMap((p) => p.threads) ?? [];
   const toDecide = list.data?.pages[0]?.counts?.ask;
   const search = useRef<HTMLInputElement>(null);
+
+  // "para decidir": pick several and decide them at once
+  const qc = useQueryClient();
+  const canPersonal = useCan('manager');
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    setSelecting(false);
+    setPicked(new Set());
+  }, [filter, debounced]);
+  const selectable = filter === 'ask' && rows.length > 1;
+  const toggle = (id: string) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (n.has(id)) n.delete(id);
+      else if (n.size < BULK_MAX) n.add(id);
+      return n;
+    });
+  const decide = (as: 'shopper' | 'personal') => {
+    holdClassify(qc, [...picked], as);
+    setSelecting(false);
+    setPicked(new Set());
+  };
+  const bulk =
+    selectable && selecting ? (
+      <BulkBar
+        rows={rows}
+        picked={picked}
+        canPersonal={canPersonal}
+        onAll={(all) => setPicked(new Set(all ? rows.slice(0, BULK_MAX).map((r) => r.id) : []))}
+        onDecide={decide}
+        onCancel={() => {
+          setSelecting(false);
+          setPicked(new Set());
+        }}
+        desktop={desktop}
+      />
+    ) : null;
 
   const selected = desktop ? (params.get('c') ?? rows[0]?.id ?? null) : null;
   const rowsRef = useRef(rows);
@@ -137,6 +276,22 @@ export default function Conversations() {
       selected={selected}
       desktop={desktop}
       onPick={(id) => setParam('c', id)}
+      selecting={selectable && selecting}
+      picked={picked}
+      onToggle={toggle}
+      lead={
+        selectable && !selecting ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<ListChecks weight="bold" />}
+            className="-my-1 h-11 shrink-0"
+            onClick={() => setSelecting(true)}
+          >
+            selecionar
+          </Button>
+        ) : null
+      }
     />
   );
 
@@ -155,6 +310,7 @@ export default function Conversations() {
             {tools}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4">{body}</div>
+          {bulk}
         </section>
         {selected ? (
           <ConversationPane
@@ -182,6 +338,7 @@ export default function Conversations() {
       <PageHeader title="Conversas" back="/vendedor" />
       <div className="mb-4">{tools}</div>
       {body}
+      {bulk}
     </PageBody>
   );
 }
@@ -211,7 +368,9 @@ function ListTools({
         ref={search}
         type="search"
         aria-label="buscar conversa"
-        placeholder={desktop ? 'Nome ou telefone  ( / )' : 'Nome ou telefone'}
+        placeholder={
+          desktop ? 'Nome, pedido ou mensagem  ( / )' : 'Nome, telefone, pedido ou mensagem'
+        }
         lead={<MagnifyingGlass className="size-5" />}
         value={q}
         maxLength={60}
@@ -221,7 +380,7 @@ function ListTools({
         label="mostrar"
         value={filter}
         onChange={onFilter}
-        className="scroll-row -mx-4 flex-nowrap px-4 md:mx-0 md:flex-wrap md:px-0 lg:-mx-5 lg:flex-nowrap lg:px-5 [&>button]:shrink-0"
+        className="scroll-row -mx-4 px-4 max-md:flex-nowrap md:mx-0 md:px-0 lg:-mx-5 lg:flex-nowrap lg:px-5 [&>button]:shrink-0"
         options={[
           { value: 'all', label: 'todas' },
           {
@@ -257,6 +416,10 @@ function ThreadList({
   selected,
   desktop,
   onPick,
+  selecting,
+  picked,
+  onToggle,
+  lead,
 }: {
   list: ListQuery;
   rows: ThreadRow[];
@@ -265,13 +428,25 @@ function ThreadList({
   selected: string | null;
   desktop: boolean;
   onPick: (id: string) => void;
+  selecting: boolean;
+  picked: ReadonlySet<string>;
+  onToggle: (id: string) => void;
+  /** beside the list's lead line ("selecionar") */
+  lead?: ReactNode;
 }) {
   if (list.error) return <ErrorState error={list.error} retry={() => void list.refetch()} />;
   if (list.isPending) return <RowsSkeleton rows={6} />;
   if (!rows.length) return <Empty filter={filter} q={q} />;
   return (
     <>
-      {LEAD[filter] ? <p className="t-caption mb-3 px-1 text-muted">{LEAD[filter]}</p> : null}
+      {LEAD[filter] || lead ? (
+        <div className="mb-3 flex items-start gap-3 px-1">
+          {LEAD[filter] ? (
+            <p className="t-caption min-w-0 flex-1 text-muted">{LEAD[filter]}</p>
+          ) : null}
+          {lead}
+        </div>
+      ) : null}
       <Card
         as="section"
         aria-busy={list.isPlaceholderData}
@@ -284,7 +459,17 @@ function ThreadList({
         <ul className={cn(desktop ? 'flex flex-col gap-0.5' : 'divide-y divide-line')}>
           {rows.map((r) => (
             <li key={r.id}>
-              <Row r={r} selected={selected === r.id} desktop={desktop} onPick={onPick} />
+              {selecting ? (
+                <PickRow
+                  r={r}
+                  q={q}
+                  checked={picked.has(r.id)}
+                  desktop={desktop}
+                  onToggle={onToggle}
+                />
+              ) : (
+                <Row r={r} q={q} selected={selected === r.id} desktop={desktop} onPick={onPick} />
+              )}
             </li>
           ))}
         </ul>
@@ -311,11 +496,13 @@ const rowWhen = (iso: string) => {
 
 function Row({
   r,
+  q,
   selected,
   desktop,
   onPick,
 }: {
   r: ThreadRow;
+  q: string;
   selected: boolean;
   desktop: boolean;
   onPick: (id: string) => void;
@@ -324,15 +511,6 @@ function Row({
   const to = desktop
     ? `/vendedor/conversas?c=${encodeURIComponent(r.id)}`
     : `/vendedor/conversas/${r.id}`;
-  const waited = r.waitingSince ? minutesSince(r.waitingSince) : null;
-  const by =
-    r.previewAuthor === 'agent'
-      ? 'Duá: '
-      : r.previewAuthor === 'merchant'
-        ? 'você: '
-        : r.previewAuthor === 'core'
-          ? 'loja: '
-          : '';
   return (
     <Link
       id={`thread-${r.id}`}
@@ -356,15 +534,75 @@ function Row({
       )}
     >
       <Initials name={r.name} />
-      <span className="min-w-0 flex-1">
-        <span className="flex items-baseline gap-2">
-          <span className={cn('min-w-0 flex-1 truncate', r.unread ? 'font-bold' : 'font-semibold')}>
-            {r.name}
-          </span>
-          <time dateTime={r.lastAt} className="t-caption shrink-0 text-muted">
-            {rowWhen(r.lastAt)}
-          </time>
+      <RowBody r={r} q={q} />
+    </Link>
+  );
+}
+
+/** A row while picking several: the whole row toggles it. */
+function PickRow({
+  r,
+  q,
+  checked,
+  desktop,
+  onToggle,
+}: {
+  r: ThreadRow;
+  q: string;
+  checked: boolean;
+  desktop: boolean;
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      onClick={() => onToggle(r.id)}
+      className={cn(
+        'press-row flex min-h-18 w-full items-start gap-3 px-4 py-3 text-left hover:bg-hover',
+        desktop && 'rounded-md px-3',
+        checked && 'bg-sunken hover:bg-sunken',
+      )}
+    >
+      <span aria-hidden className="grid size-11 shrink-0 place-items-center">
+        {checked ? (
+          <CheckSquare weight="fill" className="size-7 text-ink" />
+        ) : (
+          <Square weight="bold" className="size-7 text-muted" />
+        )}
+      </span>
+      <RowBody r={r} q={q} />
+    </button>
+  );
+}
+
+function RowBody({ r, q }: { r: ThreadRow; q: string }) {
+  const waited = r.waitingSince ? minutesSince(r.waitingSince) : null;
+  const by =
+    r.previewAuthor === 'agent'
+      ? 'Duá: '
+      : r.previewAuthor === 'merchant'
+        ? 'você: '
+        : r.previewAuthor === 'core'
+          ? 'loja: '
+          : '';
+  return (
+    <span className="min-w-0 flex-1">
+      <span className="flex items-baseline gap-2">
+        <span className={cn('min-w-0 flex-1 truncate', r.unread ? 'font-bold' : 'font-semibold')}>
+          {r.name}
         </span>
+        <time dateTime={r.lastAt} className="t-caption shrink-0 text-muted">
+          {rowWhen(r.lastAt)}
+        </time>
+      </span>
+      {r.match && r.class !== 'personal' ? (
+        <span className="t-body block truncate text-muted">
+          <span className="sr-only">trecho da conversa: </span>
+          <Highlight text={r.match} q={q} />
+        </span>
+      ) : (
         <span
           className={cn('t-body block truncate', r.unread ? 'font-medium text-ink' : 'text-muted')}
         >
@@ -379,32 +617,105 @@ function Row({
             </>
           )}
         </span>
-        <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          {r.waitingSince ? (
-            <>
-              {r.reason ? <ReasonChip reason={r.reason} /> : <FloorChip floor={r.floor} waiting />}
-              <span
-                className={cn(
-                  't-caption',
-                  waited != null && waited >= 5 ? 'font-semibold text-warning' : 'text-muted',
-                )}
-              >
-                esperando há {Math.max(1, waited ?? 1)} min
-              </span>
-            </>
-          ) : r.orderNumber ? (
-            <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-success-soft px-2.5 text-[0.8125rem] font-semibold text-success">
-              <CheckCircle weight="bold" className="size-[15px]" aria-hidden />
-              pedido #{r.orderNumber}
+      )}
+      <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        {r.waitingSince ? (
+          <>
+            {r.reason ? <ReasonChip reason={r.reason} /> : <FloorChip floor={r.floor} waiting />}
+            <span
+              className={cn(
+                't-caption',
+                waited != null && waited >= 5 ? 'font-semibold text-warning' : 'text-muted',
+              )}
+            >
+              esperando há {Math.max(1, waited ?? 1)} min
             </span>
-          ) : triaged(r.class) ? (
-            <ClassChip cls={r.class} />
-          ) : (
-            <FloorChip floor={r.floor} />
-          )}
-        </span>
+          </>
+        ) : r.orderNumber ? (
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-success-soft px-2.5 text-[0.8125rem] font-semibold text-success">
+            <CheckCircle weight="bold" className="size-[15px]" aria-hidden />
+            pedido #{r.orderNumber}
+          </span>
+        ) : triaged(r.class) ? (
+          <ClassChip cls={r.class} />
+        ) : (
+          <FloorChip floor={r.floor} />
+        )}
       </span>
-    </Link>
+    </span>
+  );
+}
+
+/** Picking several "para decidir": how many, all, and the two decisions (pessoal: managers). */
+function BulkBar({
+  rows,
+  picked,
+  canPersonal,
+  onAll,
+  onDecide,
+  onCancel,
+  desktop,
+}: {
+  rows: ThreadRow[];
+  picked: ReadonlySet<string>;
+  canPersonal: boolean;
+  onAll: (all: boolean) => void;
+  onDecide: (as: 'shopper' | 'personal') => void;
+  onCancel: () => void;
+  desktop: boolean;
+}) {
+  const n = picked.size;
+  const all = n > 0 && n >= Math.min(rows.length, BULK_MAX);
+  return (
+    <section
+      aria-label="decidir vários contatos"
+      className={cn(
+        'glass z-20 flex flex-col gap-2.5 border-t border-line px-3.5 pb-4 pt-3',
+        desktop
+          ? 'shrink-0'
+          : 'sticky bottom-(--tabbar-h) -mx-4 mt-4 md:bottom-0 md:-mx-8 md:rounded-lg md:border-0 md:depth-2',
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={all ? true : n ? 'mixed' : false}
+          // "selecionar" goes away as this opens: focus lands here, not at the top of the page
+          autoFocus
+          onClick={() => onAll(!all)}
+          className="press -ml-1 inline-flex h-12 items-center gap-2 rounded-md px-1 font-semibold"
+        >
+          {all ? (
+            <CheckSquare weight="fill" className="size-6 text-ink" aria-hidden />
+          ) : (
+            <Square weight="bold" className="size-6 text-muted" aria-hidden />
+          )}
+          todos
+        </button>
+        <p className="t-body min-w-0 flex-1 text-muted" aria-live="polite">
+          {n ? plural(n, 'escolhido', 'escolhidos') : 'toque nos contatos'}
+        </p>
+        <Button variant="ghost" size="sm" className="-mr-2 h-12" onClick={onCancel}>
+          cancelar
+        </Button>
+      </div>
+      <div className="flex gap-2">
+        <Button className="min-w-0 flex-1" disabled={!n} onClick={() => onDecide('shopper')}>
+          {n > 1 ? 'são clientes' : 'é cliente'}
+        </Button>
+        {canPersonal ? (
+          <Button
+            variant="secondary"
+            className="min-w-0 flex-1"
+            disabled={!n}
+            onClick={() => onDecide('personal')}
+          >
+            {n > 1 ? 'são pessoais' : 'é pessoal'}
+          </Button>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -415,7 +726,7 @@ function Empty({ filter, q }: { filter: ThreadFilter; q: string }) {
       <EmptyState
         art={<Mascote pose="sem-resultados" />}
         title={`Nenhuma conversa com "${q}"`}
-        body="Tente parte do nome ou os últimos números do telefone."
+        body="Tente parte do nome, os últimos números do telefone, o número do pedido ou uma palavra que o cliente escreveu."
       />
     );
   const copy: Record<ThreadFilter, { title: string; body: string }> = {

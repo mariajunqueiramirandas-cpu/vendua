@@ -1,6 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE } from '../platform/http.ts';
-import { insertLine } from './cart.ts';
+import { ITEM_NOTE_MAX, insertLine } from './cart.ts';
 import { getProductById } from './catalog.ts';
 import { parseSelections, type ComboSelection } from './combos.ts';
 
@@ -18,6 +18,8 @@ export interface ImportLine {
   /** options taken more than once; ids listed only in modifierIds are one unit */
   modifiers?: { id: string; qty: number }[];
   comboSelections?: ComboSelection[];
+  /** the line's note ("sem cebola") */
+  note?: string;
 }
 
 export interface ImportReport {
@@ -59,6 +61,15 @@ export function parseImportLines(v: unknown): ImportLine[] {
           return [{ id: o.id, qty: n }];
         })
       : [];
+    if (r.note !== undefined && r.note !== null && typeof r.note !== 'string')
+      throw new HttpError(422, 'INVALID_IMPORT', 'note must be text');
+    const note = typeof r.note === 'string' ? r.note.replace(/\s+/g, ' ').trim() : '';
+    if (note.length > ITEM_NOTE_MAX)
+      throw new HttpError(
+        422,
+        'INVALID_IMPORT',
+        `note accepts at most ${ITEM_NOTE_MAX} characters`,
+      );
     return {
       ...(productId ? { productId } : {}),
       ...(slug ? { slug } : {}),
@@ -66,6 +77,7 @@ export function parseImportLines(v: unknown): ImportLine[] {
       modifierIds,
       ...(modifiers.length ? { modifiers } : {}),
       comboSelections: parseSelections(r.comboSelections),
+      ...(note ? { note } : {}),
     };
   });
 }
@@ -111,6 +123,7 @@ export async function importLines(
             modifierIds: line.modifierIds ?? [],
             modifiers: line.modifiers ?? [],
             comboSelections: line.comboSelections ?? [],
+            ...(line.note ? { note: line.note } : {}),
           },
           getProductById,
         ),
@@ -145,9 +158,11 @@ async function snapshotLines(tx: Sql, tenantId: string, cartId: string): Promise
       modifier_ids: string[];
       modifier_qty: Record<string, number>;
       combo_selections: ComboSelection[];
+      note: string;
     }[]
   >`
-    select ci.product_id, p.slug, ci.qty, ci.modifier_ids, ci.modifier_qty, ci.combo_selections
+    select ci.product_id, p.slug, ci.qty, ci.modifier_ids, ci.modifier_qty, ci.combo_selections,
+           ci.note
     from cart_items ci join products p on p.id = ci.product_id
     where ci.tenant_id = ${tenantId} and ci.cart_id = ${cartId} order by ci.created_at
   `;
@@ -159,6 +174,7 @@ async function snapshotLines(tx: Sql, tenantId: string, cartId: string): Promise
     modifierIds: i.modifier_ids,
     ...qtyLines(Object.entries(i.modifier_qty ?? {}).map(([id, qty]) => ({ id, qty }))),
     comboSelections: i.combo_selections,
+    ...(i.note ? { note: i.note } : {}),
   }));
 }
 
@@ -204,26 +220,34 @@ export async function createSacolaLinkTx(
 
 /** A single-use code is spent by the read (the import's claim makes a retry replay, not
  *  re-read); a spent one reads as not found, as old kernels expect. */
-export async function readShare(tx: Sql, tenantId: string, code: string): Promise<ImportLine[]> {
+/** A share's lines. Opened on the device whose bag it was made from (a bag reminder tapped on the
+ *  same phone), there is nothing to import: the bag is already there. */
+export async function readShare(
+  tx: Sql,
+  tenantId: string,
+  code: string,
+  intoCart?: string,
+): Promise<ImportLine[]> {
   if (!/^[A-Za-z0-9]{6,16}$/.test(code))
     throw new HttpError(404, 'SHARE_NOT_FOUND', 'share link not found');
+  type Row = { items: ImportLine[]; source_cart_id: string | null };
   const row =
     (
-      await tx<{ items: ImportLine[] }[]>`
+      await tx<Row[]>`
       update cart_shares set consumed_at = now()
       where tenant_id = ${tenantId} and code = ${code} and expires_at > now()
         and single_use and consumed_at is null
-      returning items
+      returning items, source_cart_id
     `
     )[0] ??
     (
-      await tx<{ items: ImportLine[] }[]>`
-        select items from cart_shares
+      await tx<Row[]>`
+        select items, source_cart_id from cart_shares
         where tenant_id = ${tenantId} and code = ${code} and expires_at > now() and not single_use
       `
     )[0];
   if (!row) throw new HttpError(404, 'SHARE_NOT_FOUND', 'share link not found or expired');
-  return row.items;
+  return intoCart && row.source_cart_id === intoCart ? [] : row.items;
 }
 
 export async function orderLines(
@@ -238,9 +262,10 @@ export async function orderLines(
       qty: number;
       modifiers: { id?: string; qty?: number }[];
       combo: { slotId?: string; productId?: string; qty: number }[];
+      note: string | null;
     }[]
   >`
-    select product_id, slug, qty, modifiers, combo from order_items
+    select product_id, slug, qty, modifiers, combo, note from order_items
     where tenant_id = ${tenantId} and order_id = ${orderId} order by sort
   `;
   return rows.map((r) => ({
@@ -252,6 +277,7 @@ export async function orderLines(
     comboSelections: r.combo.flatMap((c) =>
       c.slotId && c.productId ? [{ slotId: c.slotId, productId: c.productId, qty: c.qty }] : [],
     ),
+    ...(r.note ? { note: r.note } : {}),
   }));
 }
 

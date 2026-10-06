@@ -8,7 +8,7 @@ import {
 } from '../modules/payment-adjustments.ts';
 import { ordersByPhone } from '../modules/customer.ts';
 import { onlineOffer } from '../modules/payments/store-payments.ts';
-import type { StoreHours } from '../modules/store.ts';
+import { upcomingSpecialDays, type StoreHours } from '../modules/store.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 import type { Sql } from '../platform/db.ts';
 import { brl, PAYMENT_LABEL } from './cards.ts';
@@ -142,13 +142,15 @@ export async function buildPack(tx: Sql, tenantId: string, now: Date): Promise<S
   const methods = offeredMethods(settings) as PaymentMethod[];
   const knowledge = await liveRules(tx, tenantId);
   const minOrder = settings?.min_order_cents ? brl(settings.min_order_cents) : null;
-  const special = (settings?.special_days ?? [])
-    .filter((d) => d.date >= now.toISOString().slice(0, 10))
-    .slice(0, 6)
-    .map(
-      (d) =>
-        `${d.date}: ${d.closed ? 'fechado' : `${d.open}–${d.close}`}${d.label ? ` (${d.label})` : ''}`,
-    );
+  const special = upcomingSpecialDays(
+    settings?.special_days,
+    settings?.hours?.timezone ?? 'America/Sao_Paulo',
+    now,
+    6,
+  ).map(
+    (d) =>
+      `${d.date}: ${d.closed ? 'fechado' : `${d.open}–${d.close}`}${d.label ? ` (${d.label})` : ''}`,
+  );
 
   return {
     storeName: tenant!.name,

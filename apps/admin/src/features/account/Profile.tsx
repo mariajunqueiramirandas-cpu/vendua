@@ -1,5 +1,6 @@
 import {
   BellRinging,
+  ChatCircleText,
   CheckCircle,
   CurrencyCircleDollar,
   DeviceMobile,
@@ -218,6 +219,18 @@ export default function Profile() {
               }
               description="Um aviso no celular quando um pagamento online é aprovado."
             />
+            {s.vendedor?.enabled ? (
+              <Toggle
+                checked={prefs.pushWaiting !== false}
+                onChange={(v) => void setPref({ pushWaiting: v })}
+                label={
+                  <span className="inline-flex items-center gap-2">
+                    <ChatCircleText className="size-5" /> Cliente esperando por você
+                  </span>
+                }
+                description="Quando o Duá passa uma conversa para você. Se ninguém responder, avisa de novo em 5 e em 15 minutos."
+              />
+            ) : null}
             {manager ? (
               <Toggle
                 checked={prefs.whatsappAlerts !== false}
@@ -227,7 +240,11 @@ export default function Profile() {
                     <WhatsappLogo className="size-5" /> WhatsApp se o aviso falhar
                   </span>
                 }
-                description="Se um pedido novo passar do tempo de aceite e nenhum aviso tiver chegado, mandamos uma mensagem no seu WhatsApp."
+                description={
+                  s.vendedor?.enabled
+                    ? 'Se um pedido novo passar do tempo de aceite, ou um cliente esperar 5 minutos, e nenhum aviso tiver chegado, mandamos uma mensagem no seu WhatsApp.'
+                    : 'Se um pedido novo passar do tempo de aceite e nenhum aviso tiver chegado, mandamos uma mensagem no seu WhatsApp.'
+                }
               />
             ) : null}
             {owner ? (
@@ -344,6 +361,9 @@ function deviceName(ua: string) {
 const EVENT: Record<string, string> = {
   'order.placed': 'Pedido novo',
   'order.whatsapp': 'Pedido esperando',
+  'vendedor.waiting': 'Cliente esperando',
+  'vendedor.whatsapp': 'Cliente esperando',
+  'vendedor.ask': 'Contato novo',
   'payment.received': 'Pagamento recebido',
   test: 'Aviso de teste',
 };

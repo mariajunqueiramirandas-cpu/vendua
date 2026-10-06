@@ -1,5 +1,7 @@
+import type { Context, Hono } from 'hono';
 import type { Sql } from '../platform/db.ts';
-import { HttpError, str, UUID_RE } from '../platform/http.ts';
+import { bodyJson, HttpError, str, UUID_RE, uuidParam } from '../platform/http.ts';
+import type { Tenant } from '../platform/tenancy.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 import { recordStaffEventTx } from './staff-events.ts';
@@ -108,6 +110,8 @@ export interface Lead {
 export interface LeadListItem extends Lead {
   score: number;
   openTasks: number;
+  /** open tasks whose due date has passed */
+  overdueTasks: number;
   pendingDrafts: number;
   lastActivityAt: string | null;
 }
@@ -355,6 +359,15 @@ export interface ListLeadsQuery {
   tag?: string;
   /** 'exclude' (default) hides archived, 'only' shows just them, 'all' both. */
   archived?: 'exclude' | 'only' | 'all';
+  /** case-insensitive equality — the values the pipeline already holds */
+  segment?: string;
+  source?: string;
+  /** case-insensitive substring */
+  city?: string;
+  /** only leads with a draft waiting for approval */
+  hasDraft?: boolean;
+  /** only leads with an open task past its due date */
+  overdue?: boolean;
   limit?: number;
   cursor?: string;
   /** Keyset order — 'new' (default) walks created_at desc. */
@@ -400,7 +413,8 @@ const LEAD_LIST_FROM = `
     from lead_activities a where a.lead_id = l.id
   ) act on true
   left join lateral (
-    select count(*)::int n from lead_tasks t
+    select count(*)::int n, (count(*) filter (where t.due_at < now()))::int late
+    from lead_tasks t
     where t.lead_id = l.id and t.done_at is null
   ) tk on true
   left join lateral (
@@ -413,6 +427,7 @@ const LEAD_LIST_FROM = `
 interface LeadListRow extends LeadRow {
   score: number;
   open_tasks: number;
+  overdue_tasks: number;
   pending_drafts: number;
   last_activity_at: string | null;
   /** cursor-minting columns — ::text keeps microseconds JS Date would drop. */
@@ -523,10 +538,14 @@ function listItemJson(row: LeadListRow): LeadListItem {
     ...leadJson(row),
     score: Number(row.score),
     openTasks: Number(row.open_tasks),
+    overdueTasks: Number(row.overdue_tasks),
     pendingDrafts: Number(row.pending_drafts),
     lastActivityAt: row.last_activity_at,
   };
 }
+
+// \ is Postgres' default LIKE escape — user % and _ can't widen the match.
+const likeContains = (v: string) => `%${v.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
 
 export async function listLeads(
   sql: Sql,
@@ -535,8 +554,7 @@ export async function listLeads(
   const limit = Math.min(Math.max(query.limit ?? 50, 1), 200);
   const archived = query.archived ?? 'exclude';
   const q = query.q?.trim();
-  // \ is Postgres' default LIKE escape — user % and _ can't widen the match.
-  const qEsc = q ? `%${q.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%` : null;
+  const qEsc = q ? likeContains(q) : null;
   // phone-shaped queries match normalized digits — must be ALL phone chars
   // and ≥4 digits so names can't digit-match strangers' numbers
   const qDigits = q && /^[+\d\s().-]+$/.test(q) ? q.replace(/\D/g, '') : '';
@@ -589,6 +607,11 @@ export async function listLeads(
           : 'l.archived_at is null',
       query.state ? `l.state = ${p(query.state)}` : 'true',
       query.tag ? `l.tags @> array[${p(query.tag)}]::text[]` : 'true',
+      query.segment ? `lower(l.segment) = lower(${p(query.segment)})` : 'true',
+      query.source ? `lower(l.source) = lower(${p(query.source)})` : 'true',
+      query.city ? `l.city ilike ${p(likeContains(query.city))}` : 'true',
+      query.hasDraft ? 'coalesce(dr.n, 0) > 0' : 'true',
+      query.overdue ? 'coalesce(tk.late, 0) > 0' : 'true',
       qEsc
         ? `(l.name ilike ${p(qEsc)} or l.business_name ilike ${p(qEsc)}
            or l.email ilike ${p(qEsc)} or l.phone ilike ${p(qEsc)}
@@ -627,6 +650,7 @@ export async function listLeads(
     return tx.unsafe(
       `select l.*, ${LEAD_SCORE_SQL} as score,
               coalesce(tk.n, 0)::int as open_tasks,
+              coalesce(tk.late, 0)::int as overdue_tasks,
               coalesce(dr.n, 0)::int as pending_drafts,
               act.last_at as last_activity_at,
               l.created_at::text as created_at_ts,
@@ -667,6 +691,7 @@ export async function getLeadDetail(sql: Sql, id: string): Promise<LeadListItem 
       tx.unsafe(
         `select l.*, ${LEAD_SCORE_SQL} as score,
                 coalesce(tk.n, 0)::int as open_tasks,
+                coalesce(tk.late, 0)::int as overdue_tasks,
                 coalesce(dr.n, 0)::int as pending_drafts,
                 act.last_at as last_activity_at
          ${LEAD_LIST_FROM}
@@ -754,53 +779,175 @@ export async function updateLead(
 ): Promise<ClaimResult<{ lead: Lead }>> {
   const res = await claimControl(sql, idemKey, async (tx) => {
     await guard?.(tx);
-    const cur = (await tx<LeadRow[]>`select * from leads where id = ${id}`)[0];
-    if (!cur) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
-    if (actor === 'agent') agentContactGuard(cur, set);
-    // the bounce marker describes the stored address — a different email
-    // must clear it
-    const normEmail = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : null);
-    if ('email' in set && normEmail(set.email) !== normEmail(cur.email)) {
-      set.email_bounced_at = null;
-    }
-    // a next-action date is an agenda entry (ADR 0016) — the column only mirrors it
-    let nextAction: { at: string | null; who: 'staff' | 'agent' | 'requested' } | null = null;
-    if ('next_action_at' in set) {
-      const src = set.next_action_source;
-      nextAction = {
-        at: (set.next_action_at as string | null) ?? null,
-        who: src === 'requested' ? 'requested' : actor === 'agent' ? 'agent' : 'staff',
-      };
-      delete set.next_action_at;
-      delete set.next_action_source;
-      // agenda first: every agenda writer locks wakeup:advisory → wakeup rows → the lead row
-      // (scheduleWakeupTx, the wakeup sweep) — updating the lead first would invert that
-      const { setNextActionTx } = await import('../agent/wakeups.ts');
-      await setNextActionTx(tx, id, nextAction.at, nextAction.who);
-    }
-    const rows = Object.keys(set).length
-      ? await tx<LeadRow[]>`
-          update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
-        `
-      : await tx<LeadRow[]>`update leads set updated_at = now() where id = ${id} returning *`;
-    if (typeof set.state === 'string' && set.state !== cur.state) {
-      // value_cents stamps the post-update deal value at the transition
-      await tx`
-        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
-        values (${id}, ${cur.state}, ${set.state}, ${actor}, ${rows[0]!.deal_value_cents})
-      `;
-      await tx`
-        insert into lead_activities (lead_id, kind, body, meta, created_by)
-        values (${id}, 'state_change', ${`${cur.state} → ${set.state}`},
-                ${tx.json({ from: cur.state, to: set.state })}, ${actor})
-      `;
-      if (set.state === 'invited' || set.state === 'live') {
-        await recordMilestoneTx(tx, rows[0]!, cur.state, set.state, actor);
-      }
-    }
-    return { status: 200, body: { lead: leadJson(rows[0]!) } };
+    return { status: 200, body: { lead: await updateLeadTx(tx, id, set, actor) } };
   });
   if (!res.replayed) emitControlEvent('lead.change', res.body.lead.id);
+  return res;
+}
+
+/** One lead's patch inside the caller's claim — the single PATCH and the bulk endpoint share
+ *  it, so both write the same state history, activities, agenda entries and staff events.
+ *  `set` may be derived from the stored row (bulk tag edits). */
+export async function updateLeadTx(
+  tx: Sql,
+  id: string,
+  patch: Record<string, unknown> | ((cur: LeadRow) => Record<string, unknown>),
+  actor: 'staff' | 'agent' | 'system' = 'staff',
+): Promise<Lead> {
+  const cur = (await tx<LeadRow[]>`select * from leads where id = ${id}`)[0];
+  if (!cur) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+  const set = typeof patch === 'function' ? patch(cur) : patch;
+  if (actor === 'agent') agentContactGuard(cur, set);
+  // the bounce marker describes the stored address — a different email
+  // must clear it
+  const normEmail = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : null);
+  if ('email' in set && normEmail(set.email) !== normEmail(cur.email)) {
+    set.email_bounced_at = null;
+  }
+  // a next-action date is an agenda entry (ADR 0016) — the column only mirrors it
+  let nextAction: { at: string | null; who: 'staff' | 'agent' | 'requested' } | null = null;
+  if ('next_action_at' in set) {
+    const src = set.next_action_source;
+    nextAction = {
+      at: (set.next_action_at as string | null) ?? null,
+      who: src === 'requested' ? 'requested' : actor === 'agent' ? 'agent' : 'staff',
+    };
+    delete set.next_action_at;
+    delete set.next_action_source;
+    // agenda first: every agenda writer locks wakeup:advisory → wakeup rows → the lead row
+    // (scheduleWakeupTx, the wakeup sweep) — updating the lead first would invert that
+    const { setNextActionTx } = await import('../agent/wakeups.ts');
+    await setNextActionTx(tx, id, nextAction.at, nextAction.who);
+  }
+  const rows = Object.keys(set).length
+    ? await tx<LeadRow[]>`
+        update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
+      `
+    : await tx<LeadRow[]>`update leads set updated_at = now() where id = ${id} returning *`;
+  if (typeof set.state === 'string' && set.state !== cur.state) {
+    // value_cents stamps the post-update deal value at the transition
+    await tx`
+      insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+      values (${id}, ${cur.state}, ${set.state}, ${actor}, ${rows[0]!.deal_value_cents})
+    `;
+    await tx`
+      insert into lead_activities (lead_id, kind, body, meta, created_by)
+      values (${id}, 'state_change', ${`${cur.state} → ${set.state}`},
+              ${tx.json({ from: cur.state, to: set.state })}, ${actor})
+    `;
+    if (set.state === 'invited' || set.state === 'live') {
+      await recordMilestoneTx(tx, rows[0]!, cur.state, set.state, actor);
+    }
+  }
+  return leadJson(rows[0]!);
+}
+
+export const BULK_MAX_LEADS = 200;
+const BULK_FIELDS = ['ids', 'state', 'archived', 'addTags', 'removeTags'];
+
+export interface BulkLeadPatch {
+  ids: string[];
+  /** leadPatch of `state` / `archived` — the same validation as the single PATCH */
+  patch: Record<string, unknown>;
+  addTags: string[];
+  removeTags: string[];
+}
+
+const tagList = (v: unknown, field: string): string[] => {
+  try {
+    return [
+      ...new Set(
+        tagsValue(v)
+          .map((t) => t.trim())
+          .filter(Boolean),
+      ),
+    ];
+  } catch (e) {
+    if (e instanceof HttpError) throw new HttpError(e.status, e.code, e.message, { field });
+    throw e;
+  }
+};
+
+/** POST /leads/bulk body: what the pipeline's selection bar does — move, tag, archive. */
+export function bulkLeadPatch(body: Record<string, unknown>): BulkLeadPatch {
+  const extra = Object.keys(body).find((k) => !BULK_FIELDS.includes(k));
+  if (extra) {
+    throw new HttpError(422, 'BAD_REQUEST', `${extra.slice(0, 40)} is not a bulk field`, {
+      field: extra.slice(0, 40),
+    });
+  }
+  const raw = body.ids;
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > BULK_MAX_LEADS) {
+    throw new HttpError(422, 'BAD_REQUEST', `ids must list 1–${BULK_MAX_LEADS} leads`, {
+      field: 'ids',
+    });
+  }
+  if (!raw.every((id) => typeof id === 'string' && UUID_RE.test(id))) {
+    throw new HttpError(422, 'BAD_REQUEST', 'ids must be lead uuids', { field: 'ids' });
+  }
+  const ids = [...new Set(raw.map((id) => (id as string).toLowerCase()))];
+  const fields = Object.fromEntries(
+    (['state', 'archived'] as const).filter((k) => k in body).map((k) => [k, body[k]]),
+  );
+  const patch = Object.keys(fields).length ? leadPatch(fields) : {};
+  const addTags = 'addTags' in body ? tagList(body.addTags, 'addTags') : [];
+  const removeTags = 'removeTags' in body ? tagList(body.removeTags, 'removeTags') : [];
+  if (!Object.keys(patch).length && !addTags.length && !removeTags.length) {
+    throw new HttpError(422, 'BAD_REQUEST', 'no updatable fields in body');
+  }
+  return { ids, patch, addTags, removeTags };
+}
+
+export interface BulkLeadResult {
+  id: string;
+  state: LeadState;
+  archivedAt: string | null;
+  tags: string[];
+}
+
+/** Applies one bulk patch lead by lead through updateLeadTx, all under one claim: every lead
+ *  gets exactly what a single PATCH would write, or none of them does. */
+export async function bulkUpdateLeads(
+  sql: Sql,
+  b: BulkLeadPatch,
+  idemKey: string,
+): Promise<ClaimResult<{ updated: number; leads: BulkLeadResult[] }>> {
+  const res = await claimControl(sql, idemKey, async (tx) => {
+    const found = await tx<{ id: string }[]>`select id from leads where id = any(${b.ids}::uuid[])`;
+    if (found.length !== b.ids.length) {
+      const have = new Set(found.map((r) => r.id));
+      throw new HttpError(404, 'LEAD_NOT_FOUND', 'some leads were not found', {
+        ids: b.ids.filter((id) => !have.has(id)).slice(0, 20),
+      });
+    }
+    const drop = new Set(b.removeTags.map((t) => t.toLowerCase()));
+    const leads: BulkLeadResult[] = [];
+    // one order for every bulk call, so two overlapping selections can't deadlock
+    for (const id of [...b.ids].sort()) {
+      const lead = await updateLeadTx(tx, id, (cur) => {
+        // a fresh copy per lead — updateLeadTx consumes keys of the set it gets
+        const set: Record<string, unknown> = { ...b.patch };
+        if (b.addTags.length || drop.size) {
+          const tags = (cur.tags ?? []).filter((t) => !drop.has(t.toLowerCase()));
+          for (const t of b.addTags) {
+            if (!tags.some((x) => x.toLowerCase() === t.toLowerCase())) tags.push(t);
+          }
+          if (tags.length > MAX_TAGS) {
+            throw new HttpError(422, 'BAD_REQUEST', `${cur.name} já tem ${MAX_TAGS} tags`, {
+              field: 'addTags',
+              leadId: id,
+            });
+          }
+          set.tags = tags;
+        }
+        return set;
+      });
+      leads.push({ id: lead.id, state: lead.state, archivedAt: lead.archivedAt, tags: lead.tags });
+    }
+    return { status: 200, body: { updated: leads.length, leads } };
+  });
+  // one unscoped hint: the CRM refreshes its lead lists either way
+  if (!res.replayed) emitControlEvent('lead.change');
   return res;
 }
 
@@ -1272,4 +1419,203 @@ export async function importLeads(
   });
   if (!res.replayed && res.body.created > 0) emitControlEvent('lead.change');
   return res;
+}
+
+// ── saved views (migration 0094): a staff member's named pipeline filters ───────────────────
+// Staff sign in with one shared key, so `member` names whose views these are (picked per device
+// from Config → Equipe); it organizes, it doesn't authorize.
+
+export const VIEW_PARAM_KEYS = [
+  'v',
+  'q',
+  'state',
+  'tag',
+  'sort',
+  'archived',
+  'segment',
+  'source',
+  'city',
+  'draft',
+  'overdue',
+] as const;
+export const MAX_VIEWS_PER_MEMBER = 50;
+
+export interface SavedView {
+  id: string;
+  member: string;
+  name: string;
+  params: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SavedViewRow {
+  id: string;
+  member: string;
+  name: string;
+  params: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+}
+
+const viewJson = (r: SavedViewRow): SavedView => ({
+  id: r.id,
+  member: r.member,
+  name: r.name,
+  params: r.params ?? {},
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+});
+
+function nonEmpty(v: unknown, field: string, max: number): string {
+  const s = str(v, field, max).trim();
+  if (!s) throw new HttpError(422, 'BAD_REQUEST', `${field} is required`, { field });
+  return s;
+}
+
+export const viewMember = (v: unknown) => nonEmpty(v, 'member', 80);
+
+function viewParams(v: unknown): Record<string, string> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) {
+    throw new HttpError(422, 'BAD_REQUEST', 'params must be an object', { field: 'params' });
+  }
+  const out: Record<string, string> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (!(VIEW_PARAM_KEYS as readonly string[]).includes(k)) {
+      throw new HttpError(422, 'BAD_REQUEST', `${k.slice(0, 40)} is not a pipeline filter`, {
+        field: `params.${k.slice(0, 40)}`,
+      });
+    }
+    if (val === null || val === undefined || val === '') continue;
+    out[k] = str(val, `params.${k}`, 200);
+  }
+  return out;
+}
+
+const isUniqueViolation = (e: unknown) => (e as { code?: string }).code === '23505';
+const viewTaken = () =>
+  new HttpError(409, 'VIEW_EXISTS', 'já existe uma visão com esse nome', { field: 'name' });
+type Savepoint = { savepoint: <T>(fn: (sp: Sql) => Promise<T>) => Promise<T> };
+
+export async function listSavedViews(sql: Sql, member: string): Promise<SavedView[]> {
+  const rows = await controlTx(
+    sql,
+    (tx) => tx<SavedViewRow[]>`
+      select * from control_saved_views where member = ${member}
+      order by lower(name), id limit ${MAX_VIEWS_PER_MEMBER}
+    `,
+  );
+  return rows.map(viewJson);
+}
+
+export async function createSavedView(
+  sql: Sql,
+  body: Record<string, unknown>,
+  idemKey: string,
+): Promise<ClaimResult<{ view: SavedView }>> {
+  const member = viewMember(body.member);
+  const name = nonEmpty(body.name, 'name', 60);
+  const params = viewParams(body.params);
+  return claimControl(sql, idemKey, async (tx) => {
+    const n = (
+      await tx<{ n: number }[]>`
+        select count(*)::int n from control_saved_views where member = ${member}
+      `
+    )[0]!.n;
+    if (n >= MAX_VIEWS_PER_MEMBER) {
+      throw new HttpError(422, 'TOO_MANY_VIEWS', `no máximo ${MAX_VIEWS_PER_MEMBER} visões`);
+    }
+    const rows = await tx<SavedViewRow[]>`
+      insert into control_saved_views (member, name, params)
+      values (${member}, ${name}, ${tx.json(params)})
+      on conflict (member, lower(name)) do nothing
+      returning *
+    `;
+    if (!rows[0]) throw viewTaken();
+    return { status: 201, body: { view: viewJson(rows[0]) } };
+  });
+}
+
+export async function updateSavedView(
+  sql: Sql,
+  id: string,
+  body: Record<string, unknown>,
+  idemKey: string,
+): Promise<ClaimResult<{ view: SavedView }>> {
+  const name = 'name' in body ? nonEmpty(body.name, 'name', 60) : null;
+  const params = 'params' in body ? viewParams(body.params) : null;
+  if (name === null && params === null) {
+    throw new HttpError(422, 'BAD_REQUEST', 'no updatable fields in body');
+  }
+  return claimControl(sql, idemKey, async (tx) => {
+    let rows: SavedViewRow[];
+    try {
+      // a rename onto a taken name must answer 409, not abort the claim's transaction
+      rows = await (tx as unknown as Savepoint).savepoint(
+        (sp) => sp<SavedViewRow[]>`
+          update control_saved_views
+          set name = coalesce(${name}, name),
+              params = coalesce(${params === null ? null : sp.json(params)}::jsonb, params),
+              updated_at = now()
+          where id = ${id} returning *
+        `,
+      );
+    } catch (e) {
+      if (isUniqueViolation(e)) throw viewTaken();
+      throw e;
+    }
+    if (!rows[0]) throw new HttpError(404, 'VIEW_NOT_FOUND', 'view not found');
+    return { status: 200, body: { view: viewJson(rows[0]) } };
+  });
+}
+
+export async function deleteSavedView(
+  sql: Sql,
+  id: string,
+  idemKey: string,
+): Promise<ClaimResult<{ ok: true }>> {
+  return claimControl(sql, idemKey, async (tx) => {
+    const rows = await tx`delete from control_saved_views where id = ${id} returning id`;
+    if (!rows[0]) throw new HttpError(404, 'VIEW_NOT_FOUND', 'view not found');
+    return { status: 200, body: { ok: true as const } };
+  });
+}
+
+export function mountSavedViews(o: {
+  app: Hono<{ Variables: { tenant: Tenant } }>;
+  sql: Sql;
+  controlGate: (c: Context) => void;
+  requireIdemKey: (c: Context) => string;
+}) {
+  const { app, sql, controlGate, requireIdemKey } = o;
+  const replay = (c: Context, replayed: boolean) => {
+    if (replayed) c.header('x-idempotent-replay', 'true');
+  };
+
+  app.get('/control/v1/views', async (c) => {
+    controlGate(c);
+    return c.json({ views: await listSavedViews(sql, viewMember(c.req.query('member') ?? '')) });
+  });
+
+  app.post('/control/v1/views', async (c) => {
+    controlGate(c);
+    const res = await createSavedView(sql, await bodyJson(c), requireIdemKey(c));
+    replay(c, res.replayed);
+    return c.json(res.body, res.status as 201);
+  });
+
+  app.patch('/control/v1/views/:id', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const res = await updateSavedView(sql, id, await bodyJson(c), requireIdemKey(c));
+    replay(c, res.replayed);
+    return c.json(res.body);
+  });
+
+  app.delete('/control/v1/views/:id', async (c) => {
+    controlGate(c);
+    const res = await deleteSavedView(sql, uuidParam(c, 'id'), requireIdemKey(c));
+    replay(c, res.replayed);
+    return c.json(res.body);
+  });
 }

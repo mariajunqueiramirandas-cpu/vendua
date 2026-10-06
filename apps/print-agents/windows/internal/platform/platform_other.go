@@ -20,6 +20,7 @@ func DefaultDataDir() (string, error) {
 
 func HasDisplay() bool                      { return false }
 func OpenURL(u string) error                { return errUnsupported }
+func OpenFile(path string) error            { return errUnsupported }
 func SingleInstance(string) (func(), error) { return func() {}, nil }
 func Install([]string) (bool, error)        { return false, nil }
 func QuitRequests() <-chan struct{}         { return nil }

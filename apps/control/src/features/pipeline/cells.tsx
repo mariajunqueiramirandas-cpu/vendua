@@ -19,6 +19,7 @@ function Chan({
 }) {
   return (
     <span
+      role="img"
       title={title}
       aria-label={title}
       className={cn(
@@ -103,7 +104,10 @@ export function NextAction({ lead: l }: { lead: LeadListItem }) {
         {relDue(l.nextActionAt)}
       </span>
       {l.openTasks > 0 && (
-        <span className="text-muted-foreground" title={`${l.openTasks} tarefa(s) aberta(s)`}>
+        <span
+          className={l.overdueTasks ? 'text-destructive-foreground' : 'text-muted-foreground'}
+          title={`${l.openTasks} tarefa(s) aberta(s)${l.overdueTasks ? `, ${l.overdueTasks} atrasada(s)` : ''}`}
+        >
           {' '}
           · {l.openTasks} tar.
         </span>

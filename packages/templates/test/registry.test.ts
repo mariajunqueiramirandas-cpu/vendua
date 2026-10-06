@@ -58,3 +58,47 @@ describe('2026-09-loyalty-teaser-on-product', () => {
     expect(runMigration(lt, product, { kernelVersion: '1.1.1', sections }).status).toBe('skipped');
   });
 });
+
+describe('2026-10-recent-order-on-home', () => {
+  const ro = findMigration('2026-10-recent-order-on-home')!;
+  const sdkHome = {
+    version: 1 as const,
+    page: 'home' as const,
+    sections: [{ id: 'catalog', type: 'sdk:catalog-grid' as const, settings: { title: 'Doces' } }],
+  };
+
+  test('lands in the catalog grid’s before-grid, settings untouched, idempotently', () => {
+    const r = runMigration(ro, sdkHome, { kernelVersion: '1.21.0', sections });
+    expect(r.status).toBe('applied');
+    if (r.status !== 'applied') return;
+    expect(r.template.sections[0]!.blocks?.['before-grid']?.[0]?.type).toBe('sdk:recent-order');
+    expect(r.template.sections[0]!.settings).toEqual({ title: 'Doces' });
+    expect(runMigration(ro, r.template, { kernelVersion: '1.21.0', sections }).status).toBe(
+      'skipped',
+    );
+  });
+
+  test('a store section’s promo area takes it (the template store’s hero aside)', () => {
+    const home = readTemplatesDir(join(REPO, 'storefronts/_template/templates')).home!;
+    const own = {
+      ...(catalogOf(SDK_SCHEMAS) as Record<string, unknown>),
+      'store:menu-hero': {
+        areas: { aside: { accepts: ['promo', 'badge', 'info'], max: 2 } },
+        order: ['aside'],
+      },
+      'store:menu': { areas: { 'before-grid': { accepts: ['promo', 'info'], max: 2 } } },
+    };
+    const r = runMigration(ro, home, { kernelVersion: '1.21.1', sections: own as never });
+    expect(r.status).toBe('applied');
+    if (r.status !== 'applied') return;
+    expect(r.template.sections.find((s) => s.id === 'hero')?.blocks?.aside?.[0]?.type).toBe(
+      'sdk:recent-order',
+    );
+  });
+
+  test('older Kernels and a merchant who removed it are skipped', () => {
+    expect(runMigration(ro, sdkHome, { kernelVersion: '1.20.0', sections }).status).toBe('skipped');
+    const removed = { ...sdkHome, removed: ['sdk:recent-order' as const] };
+    expect(runMigration(ro, removed, { kernelVersion: '1.21.0', sections }).status).toBe('skipped');
+  });
+});

@@ -32,6 +32,16 @@ func OpenURL(u string) error {
 	return nil
 }
 
+// OpenFile shows a local file with the desktop's default program.
+func OpenFile(path string) error {
+	cmd := exec.Command("xdg-open", path)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
+	return nil
+}
+
 // SingleInstance holds an advisory lock in dataDir for the process lifetime.
 func SingleInstance(dataDir string) (release func(), err error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {

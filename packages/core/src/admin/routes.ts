@@ -464,7 +464,7 @@ export function mountAdmin(o: MountAdminOpts) {
       const products = await tx`
         select p.id, p.name, p.status, p.base_price_cents as "priceCents",
           (select url from product_media where product_id = p.id order by sort limit 1) as "imageUrl"
-        from products p where p.tenant_id = ${tenant.id}
+        from products p where p.tenant_id = ${tenant.id} and p.deleted_at is null
           and translate(lower(p.name), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') like ${like}
         order by p.status = 'archived', p.name limit 8
       `;
@@ -857,6 +857,7 @@ const PREF_KEYS: Record<string, 'boolean' | 'number' | 'string' | 'list'> = {
   volume: 'number',
   push: 'boolean',
   pushPayments: 'boolean',
+  pushWaiting: 'boolean',
   whatsappAlerts: 'boolean',
   emailInvoices: 'boolean',
   theme: 'string',
