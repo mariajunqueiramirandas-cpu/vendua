@@ -841,7 +841,13 @@ export async function insertLine(
   if (!Number.isInteger(input.qty) || input.qty <= 0 || input.qty > 99) {
     throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 1 and 99');
   }
-  const product = await getProductById(tx, tenantId, input.productId);
+  // the cart's lines (for the stock check below) ride along with the product read
+  const [product, existing] = await Promise.all([
+    getProductById(tx, tenantId, input.productId),
+    tx<
+      { product_id: string; qty: number; combo_selections: ComboSelection[] }[]
+    >`select product_id, qty, combo_selections from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId}`,
+  ]);
   if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
   // freeze the accepted price for the cart view; checkout re-checks it
   // against the live catalog (repriceLines)
@@ -849,9 +855,6 @@ export async function insertLine(
   const { modifierIds, modifierQty, selections, picks } = line;
 
   // stock: what's already carted plus this addition must fit
-  const existing = await tx<
-    { product_id: string; qty: number; combo_selections: ComboSelection[] }[]
-  >`select product_id, qty, combo_selections from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId}`;
   await assertStock(
     tx,
     tenantId,
@@ -866,15 +869,19 @@ export async function insertLine(
   // `added` reads the row written: a merge keeps the line's frozen price (checkout reprices)
   let written: { id: string; unit_price_cents: number };
   try {
-    const rows = await tx<{ id: string; unit_price_cents: number }[]>`
-      insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids, modifier_qty, unit_price_cents,
-                              modifier_snapshot, combo_selections, combo_snapshot)
-      values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)}, ${tx.json(modifierQty)},
-              ${line.unitPriceCents}, ${tx.json(line.snapshot as never)}, ${tx.json(selections as never)}, ${tx.json(picks as never)})
-      on conflict (cart_id, product_id, modifier_ids, modifier_qty, combo_selections)
-      do update set qty = cart_items.qty + excluded.qty
-      returning id, unit_price_cents
-    `;
+    // the cart's touch goes out with the insert (a failed insert fails it too, first error wins)
+    const [rows] = await Promise.all([
+      tx<{ id: string; unit_price_cents: number }[]>`
+        insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids, modifier_qty, unit_price_cents,
+                                modifier_snapshot, combo_selections, combo_snapshot)
+        values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)}, ${tx.json(modifierQty)},
+                ${line.unitPriceCents}, ${tx.json(line.snapshot as never)}, ${tx.json(selections as never)}, ${tx.json(picks as never)})
+        on conflict (cart_id, product_id, modifier_ids, modifier_qty, combo_selections)
+        do update set qty = cart_items.qty + excluded.qty
+        returning id, unit_price_cents
+      `.execute(),
+      tx`update carts set updated_at = now() where id = ${cartId}`.execute(),
+    ]);
     written = rows[0]!;
   } catch (err) {
     if ((err as { code?: string }).code === '23514') {
@@ -882,7 +889,6 @@ export async function insertLine(
     }
     throw err;
   }
-  await tx`update carts set updated_at = now() where id = ${cartId}`;
   return {
     itemId: written.id,
     qty: input.qty,

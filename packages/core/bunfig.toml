@@ -1,0 +1,3 @@
+[test]
+# the suite runs against the environment CI gives it, whatever the shell carries
+preload = ["./test/hermetic.ts"]

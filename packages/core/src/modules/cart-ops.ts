@@ -49,14 +49,17 @@ export async function setLineQtyTx(
   }
   await assertCartOpen(tx, tenantId, cartId);
   const id = itemIdOf(itemId);
-  if (qty === 0) {
-    await tx`delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`;
-  } else {
-    await assertLineQty(tx, tenantId, cartId, id, qty);
-    await tx`update cart_items set qty = ${qty} where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`;
-  }
-  await tx`update carts set updated_at = now() where id = ${cartId}`;
-  return loadCartView(tx, tenantId, cartId);
+  if (qty > 0) await assertLineQty(tx, tenantId, cartId, id, qty);
+  // one batch: the write and the cart's touch are executed first, so the view's reads (sent by
+  // loadCartView after them) see both
+  const write = (
+    qty === 0
+      ? tx`delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`
+      : tx`update cart_items set qty = ${qty} where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`
+  ).execute();
+  const touch = tx`update carts set updated_at = now() where id = ${cartId}`.execute();
+  const [, , view] = await Promise.all([write, touch, loadCartView(tx, tenantId, cartId)]);
+  return view;
 }
 
 export async function removeLineTx(
@@ -66,8 +69,11 @@ export async function removeLineTx(
   itemId: string,
 ): Promise<CartView> {
   await assertCartOpen(tx, tenantId, cartId);
-  await tx`delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${itemIdOf(itemId)}`;
-  return loadCartView(tx, tenantId, cartId);
+  // executed before loadCartView sends its reads, so they see the delete
+  const removed =
+    tx`delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${itemIdOf(itemId)}`.execute();
+  const [, view] = await Promise.all([removed, loadCartView(tx, tenantId, cartId)]);
+  return view;
 }
 
 /** The bounded address a cart holds (POST /cart/delivery's body). */
@@ -161,19 +167,18 @@ export async function quoteDeliveryTx(
   if (hasCoords && !coords)
     throw new HttpError(422, 'INVALID_DELIVERY', 'lat/lng must be coordinates');
   const cartId = opts.cartId ?? null;
-  const [zones, settingsRows] = await Promise.all([
+  const [zones, settingsRows, cartRows] = await Promise.all([
     loadZoneRows(tx, tenantId),
     tx<StoreSettingsRow[]>`select * from store_settings where tenant_id = ${tenantId}`,
+    cartId
+      ? tx<{ delivery_route: RouteQuote | null }[]>`
+          select delivery_route from carts where tenant_id = ${tenantId} and id = ${cartId}
+        `
+      : [],
   ]);
   const settings = settingsRows[0] ?? null;
   // one leg prices the whole answer: the fresh one, else the one the cart holds for this pin
-  const stored = cartId
-    ? ((
-        await tx<{ delivery_route: RouteQuote | null }[]>`
-          select delivery_route from carts where tenant_id = ${tenantId} and id = ${cartId}
-        `
-      )[0]?.delivery_route ?? null)
-    : null;
+  const stored = cartRows[0]?.delivery_route ?? null;
   const leg = opts.route ?? stored;
   const match = resolveDelivery(
     zones,
@@ -183,34 +188,42 @@ export async function quoteDeliveryTx(
   );
   // Relatórios' zone conversion: who asked for delivery where (server-side, like order_placed);
   // a quote without a cart session still answers, it just isn't counted
-  if (cartId)
-    await tx`
-      insert into analytics_events (tenant_id, name, at, session_id, props)
-      values (${tenantId}, 'delivery_quoted', now(), ${cartId}, ${tx.json({
-        zone: match?.zone.name ?? null,
-        neighborhood: neighborhood.trim().slice(0, 80) || null,
-        eligible: !!match,
-      })})
-    `;
-  if (!match) return { eligible: false, reason: 'OUT_OF_ZONE' };
-  const totals = cartId
-    ? await loadCartView(tx, tenantId, cartId, new Date(), {
-        paymentMethod: opts.paymentMethod ?? null,
-        delivery: {
-          mode: 'delivery',
-          neighborhood,
-          lat: coords?.lat ?? null,
-          lng: coords?.lng ?? null,
-        },
-        route: leg,
-      }).then(
-        (v) => v.totals,
-        (err) => {
-          if (err instanceof HttpError && err.code === 'CART_NOT_FOUND') return null;
-          throw err;
-        },
-      )
+  const counted = cartId
+    ? tx`
+        insert into analytics_events (tenant_id, name, at, session_id, props)
+        values (${tenantId}, 'delivery_quoted', now(), ${cartId}, ${tx.json({
+          zone: match?.zone.name ?? null,
+          neighborhood: neighborhood.trim().slice(0, 80) || null,
+          eligible: !!match,
+        })})
+      `.execute()
     : null;
+  if (!match) {
+    await counted;
+    return { eligible: false, reason: 'OUT_OF_ZONE' };
+  }
+  // the cart's totals go out with the event's insert
+  const [, totals] = await Promise.all([
+    counted,
+    cartId
+      ? loadCartView(tx, tenantId, cartId, new Date(), {
+          paymentMethod: opts.paymentMethod ?? null,
+          delivery: {
+            mode: 'delivery',
+            neighborhood,
+            lat: coords?.lat ?? null,
+            lng: coords?.lng ?? null,
+          },
+          route: leg,
+        }).then(
+          (v) => v.totals,
+          (err) => {
+            if (err instanceof HttpError && err.code === 'CART_NOT_FOUND') return null;
+            throw err;
+          },
+        )
+      : null,
+  ]);
   return {
     eligible: true,
     zoneId: match.zone.id,

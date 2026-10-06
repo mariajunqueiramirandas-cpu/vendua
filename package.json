@@ -25,5 +25,8 @@
     "@vendua/conformance": "workspace:*",
     "prettier": "3.9.6",
     "prettier-plugin-svelte": "4.1.1"
+  },
+  "patchedDependencies": {
+    "postgres@3.4.7": "patches/postgres@3.4.7.patch"
   }
 }

@@ -1,0 +1,63 @@
+diff --git a/src/index.js b/src/index.js
+index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..6a31308982188b1cd75897c9a11072a1e4c20c63 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -237,12 +237,21 @@ function Postgres(a, b) {
+     let savepoints = 0
+       , connection
+       , prepare = null
++      , closed = null
+ 
+     try {
+       await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
+       return await Promise.race([
+         scope(connection, fn),
+-        new Promise((_, reject) => connection.onclose = reject)
++        new Promise((_, reject) => connection.onclose = e => {
++          // venduá patch: the pool may reconnect this connection for someone else, so from here
++          // no statement of this transaction is written to it (Postgres rolled it back); writing
++          // to the closed socket was an uncaught TypeError that exited the process
++          closed = e
++          while (queries.length)
++            queries.shift().reject(e)
++          reject(e)
++        })
+       ])
+     } catch (error) {
+       throw error
+@@ -255,7 +264,10 @@ function Postgres(a, b) {
+       let uncaughtError
+         , result
+ 
+-      name && await sql`savepoint ${ sql(name) }`
++      // venduá patch: SAVEPOINT goes out with the block's first statements, not a round trip ahead;
++      // one that fails aborts the transaction, so nothing behind it runs
++      const saved = name ? sql`savepoint ${ sql(name) }`.execute() : null
++      saved && saved.catch(() => { /* awaited below */ })
+       try {
+         result = await new Promise((resolve, reject) => {
+           const x = fn(sql)
+@@ -264,7 +276,14 @@ function Postgres(a, b) {
+ 
+         if (uncaughtError)
+           throw uncaughtError
++        saved && await saved
+       } catch (e) {
++        // a savepoint that never opened has nothing to roll back to: its own error, as before
++        const unsaved = saved && await saved.then(() => null, x => x)
++        if (unsaved)
++          throw unsaved
++        if (closed)
++          throw e
+         await (name
+           ? sql`rollback to ${ sql(name) }`
+           : sql`rollback`
+@@ -290,6 +309,8 @@ function Postgres(a, b) {
+ 
+       function handler(q) {
+         q.catch(e => uncaughtError || (uncaughtError = e))
++        if (closed)
++          return q.reject(closed)
+         c.queue === full
+           ? queries.push(q)
+           : c.execute(q) || move(c, full)

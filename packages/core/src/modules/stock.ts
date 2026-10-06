@@ -57,13 +57,17 @@ export async function drawStock(tx: Sql, tenantId: string, demand: Map<string, n
   const stock = await lockStock(tx, tenantId, ids);
   const short = shortfall(demand, stock);
   if (short) throw short;
-  for (const [id, need] of demand) {
-    if (stock.get(id)?.stock == null) continue;
-    await tx`
-      update products set stock_quantity = stock_quantity - ${need}
-      where tenant_id = ${tenantId} and id = ${id}
-    `;
-  }
+  // the rows are locked above; the updates go out as one batch
+  await Promise.all(
+    [...demand]
+      .filter(([id]) => stock.get(id)?.stock != null)
+      .map(
+        ([id, need]) => tx`
+          update products set stock_quantity = stock_quantity - ${need}
+          where tenant_id = ${tenantId} and id = ${id}
+        `,
+      ),
+  );
 }
 
 /** Best-effort early check (add/patch) so the customer hears about it before checkout. */

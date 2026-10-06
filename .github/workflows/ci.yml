@@ -194,17 +194,10 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      # boot compose Postgres so TEST_DATABASE_URL tests actually run instead of skipping
-      - name: Postgres for core tests
+      # Postgres so TEST_DATABASE_URL tests actually run instead of skipping
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          # a broken container must fail here, not as an indirect test-step error
-          docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua
+        uses: ./.github/actions/postgres
       - name: Core tests
         if: steps.scope.outputs.run == 'true'
         run: cd packages/core && TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua bun test
@@ -238,16 +231,12 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      - name: Postgres + migrate
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          # check TCP not the unix socket — the image's init server also answers pg_isready there
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          (cd packages/core && bun run migrate)
+        uses: ./.github/actions/postgres
+      - name: Migrate
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && bun run migrate
       - name: Core API
         if: steps.scope.outputs.run == 'true'
         run: |
@@ -297,15 +286,12 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      - name: Postgres + migrate
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          (cd packages/core && bun run migrate)
+        uses: ./.github/actions/postgres
+      - name: Migrate
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && bun run migrate
       - name: Build the template storefront
         if: steps.scope.outputs.run == 'true'
         run: cd storefronts/_template && bun run build
@@ -362,15 +348,12 @@ jobs:
       - name: Build the admin
         if: steps.scope.outputs.run == 'true'
         run: cd apps/admin && bun run build
-      - name: Postgres + migrate + seed
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          (cd packages/core && bun run migrate && bun run seed:fixtures)
+        uses: ./.github/actions/postgres
+      - name: Migrate + seed
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && bun run migrate && bun run seed:fixtures
       - name: Core API (serves apps/admin/dist at /admin/)
         if: steps.scope.outputs.run == 'true'
         run: |
@@ -429,15 +412,12 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      - name: Postgres + migrate
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          (cd packages/core && bun run migrate)
+        uses: ./.github/actions/postgres
+      - name: Migrate
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && bun run migrate
       - name: Core API
         if: steps.scope.outputs.run == 'true'
         run: |
@@ -486,15 +466,12 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      - name: Postgres + migrate + seed
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          (cd packages/core && bun run migrate && bun run seed:fixtures)
+        uses: ./.github/actions/postgres
+      - name: Migrate + seed
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && bun run migrate && bun run seed:fixtures
       - name: Core API
         if: steps.scope.outputs.run == 'true'
         run: |

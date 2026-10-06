@@ -213,6 +213,8 @@ import { mountFleet } from './modules/fleet/routes.ts';
 import { mountImportsControl } from './modules/menu-import/routes-control.ts';
 import { createPaymentProvider, type PaymentProvider } from './modules/payments/index.ts';
 import { storePaymentsPublic } from './modules/payments/store-payments.ts';
+import { isOnline, loadConnection } from './modules/payments/connections.ts';
+import { StoreReadCache } from './platform/read-cache.ts';
 import {
   DEFAULT_PAYMENT_METHODS,
   isPaymentMethod,
@@ -268,7 +270,46 @@ export interface AppDeps {
   edgeSecret?: string | undefined;
   /** Discord's network for the bot's control routes (default: fetch); tests swap it */
   discordFetch?: DiscordFetch | undefined;
+  /** public storefront reads kept in memory (index.ts passes the notify-driven one); the
+   *  default also waits out pending notifies on each read, so a write is seen right away */
+  readCache?: StoreReadCache | undefined;
 }
+
+// the tables each cached storefront read comes from — migration 0088 notifies on every one
+const STORE_DEPS = [
+  'store_settings',
+  'payment_connections',
+  'domains',
+  'tenants',
+  'plans',
+  'subscriptions',
+  'store_agent',
+];
+const CATALOG_DEPS = [
+  'store_settings',
+  'categories',
+  'products',
+  'product_media',
+  'modifier_groups',
+  'modifiers',
+  'combo_slots',
+  'combo_slot_items',
+];
+const PRODUCT_DEPS = [...CATALOG_DEPS, 'notify_requests'];
+// publicUrl falls back to the slug when the store has no public domain
+const SURFACES_DEPS = [
+  'store_settings',
+  'storefront_templates',
+  'storefront_tokens',
+  'domains',
+  'tenants',
+];
+const STATE_DEPS = ['store_settings', 'storefront_ops', 'storefront_templates'];
+const ZONES_DEPS = ['delivery_zones'];
+const SETTINGS_DEPS = ['store_settings'];
+
+/** a product's face only changes on a minute (its windows are HH:MM in the store's time) */
+const nextMinute = () => (Math.floor(Date.now() / 60_000) + 1) * 60_000;
 
 async function loadSettings(
   tx: Sql,
@@ -466,7 +507,9 @@ export function createApp({
   fleet,
   edgeSecret,
   discordFetch,
+  readCache,
 }: AppDeps) {
+  const cache = readCache ?? new StoreReadCache(sql, { strict: true });
   const provider = paymentProvider ?? createPaymentProvider();
   const geocode = geocoder ?? nominatimGeocoder();
   const tiles = mapTiles ?? mapTilesFromEnv();
@@ -480,7 +523,12 @@ export function createApp({
     const key = c.req.header('idempotency-key');
     if (!key || key.length > 200) return null;
     if (!(await sessionCartId(c, sessionSecret).catch(() => null))) return null;
-    const settings = await withTenant(sql, tenantId, (tx) => loadSettings(tx, tenantId));
+    const settings = await cache.read(
+      tenantId,
+      'settings',
+      () => withTenant(sql, tenantId, (tx) => loadSettings(tx, tenantId)),
+      { deps: SETTINGS_DEPS },
+    );
     const from = storeCoords(settings);
     return from && distancePricingOf(settings) ? routeQuote(from, to) : null;
   };
@@ -564,28 +612,34 @@ export function createApp({
 
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
-    const { settings, online, publicUrl, loyaltyOn, chat } = await withTenant(
-      sql,
+    const { settings, online, publicUrl, loyaltyOn, chat } = await cache.read(
       tenant.id,
-      async (tx) => {
-        const settings = await loadSettings(tx, tenant.id);
-        const online = await storePaymentsPublic(
-          tx,
-          tenant.id,
-          provider,
-          settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
-          readPaymentAdjustments(settings?.payment_adjustments),
-        );
-        const publicUrl = await storeOrigin(tx, tenant, publicStoreDomain);
-        const loyaltyOn = !!settings?.loyalty && (await planHas(tx, tenant.id, 'loyalty'));
-        return {
-          settings,
-          online,
-          publicUrl,
-          loyaltyOn,
-          chat: await webChatProfile(tx, tenant.id),
-        };
-      },
+      'store',
+      () =>
+        withTenant(sql, tenant.id, async (tx) => {
+          const [settings, conn, publicUrl, loyaltyPlan, chat] = await Promise.all([
+            loadSettings(tx, tenant.id),
+            loadConnection(tx, tenant.id),
+            storeOrigin(tx, tenant, publicStoreDomain),
+            planHas(tx, tenant.id, 'loyalty'),
+            webChatProfile(tx, tenant.id),
+          ]);
+          return {
+            settings,
+            online: storePaymentsPublic(
+              conn,
+              provider,
+              settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
+              readPaymentAdjustments(settings?.payment_adjustments),
+            ),
+            // online payments switch off by themselves when the token expires
+            onlineUntil: isOnline(conn, provider) ? new Date(conn!.expires_at).getTime() : null,
+            publicUrl,
+            loyaltyOn: !!settings?.loyalty && loyaltyPlan,
+            chat,
+          };
+        }),
+      { deps: STORE_DEPS, until: (v) => v.onlineUntil },
     );
     const now = new Date();
     const status = currentStatus(settings, now);
@@ -658,22 +712,44 @@ export function createApp({
 
   storefront.get('/catalog', async (c) => {
     const tenant = c.get('tenant');
-    const { categories, nextChangeAt } = await withTenant(sql, tenant.id, (tx) =>
-      getCatalogView(tx, tenant.id),
+    // kept as its JSON until nextChangeAt: a promotion or a product's hours turning (an open
+    // page fetches the catalog again then)
+    const view = await cache.read(
+      tenant.id,
+      'catalog',
+      async () => {
+        const { categories, nextChangeAt } = await withTenant(sql, tenant.id, (tx) =>
+          getCatalogView(tx, tenant.id),
+        );
+        return {
+          json: JSON.stringify({
+            categories,
+            ...(nextChangeAt ? { nextChangeAt: nextChangeAt.toISOString() } : {}),
+          }),
+          until: nextChangeAt?.getTime() ?? null,
+        };
+      },
+      { deps: CATALOG_DEPS, until: (v) => v.until },
     );
-    // a promotion or a product's hours turning: an open page fetches the catalog again then
-    return c.json({
-      categories,
-      ...(nextChangeAt ? { nextChangeAt: nextChangeAt.toISOString() } : {}),
-    });
+    return c.body(view.json, 200, { 'content-type': 'application/json' });
   });
 
   storefront.get('/products/:slug', async (c) => {
     const tenant = c.get('tenant');
-    const { product, settings } = await withTenant(sql, tenant.id, async (tx) => ({
-      product: await getProduct(tx, tenant.id, str(c.req.param('slug'), 'slug', 200)),
-      settings: await loadSettings(tx, tenant.id),
-    }));
+    const slug = str(c.req.param('slug'), 'slug', 200);
+    const { product, settings } = await cache.read(
+      tenant.id,
+      `product:${slug}`,
+      () =>
+        withTenant(sql, tenant.id, async (tx) => {
+          const [product, settings] = await Promise.all([
+            getProduct(tx, tenant.id, slug),
+            loadSettings(tx, tenant.id),
+          ]);
+          return { product, settings };
+        }),
+      { deps: PRODUCT_DEPS, until: nextMinute, keep: (v) => v.product !== null },
+    );
     if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
     const earliest = product.requiresPreorder
       ? (bookableDates(
@@ -707,7 +783,12 @@ export function createApp({
       combo: c.req.query('combo'),
     });
     // kit picks a schedule hides stay known, so a stale pick gets add's SOLD_OUT, not "unknown"
-    const product = await withTenant(sql, tenant.id, (tx) => getProduct(tx, tenant.id, slug, {}));
+    const product = await cache.read(
+      tenant.id,
+      `quote:${slug}`,
+      () => withTenant(sql, tenant.id, (tx) => getProduct(tx, tenant.id, slug, {})),
+      { deps: PRODUCT_DEPS, until: nextMinute, keep: (p) => p !== null },
+    );
     if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
     const line = priceLine(product, {
       modifiers: q.modifiers,
@@ -727,15 +808,26 @@ export function createApp({
     // ?design=1 is the edge's read (Kernel 1.10): the page's live templates and tokens ride
     // along in the injected state, so first paint is the store's current look
     const design = c.req.query('design') === '1';
-    const { settings, templates, tokens, publicUrl } = await withTenant(
-      sql,
+    // the design (templates, tokens) is kept as its JSON: only the live parts encode per request
+    const { settings, templatesJson, tokensJson, publicUrl } = await cache.read(
       tenant.id,
-      async (tx) => ({
-        settings: await loadSettings(tx, tenant.id),
-        templates: design ? await currentTemplatesTx(tx, tenant.id) : undefined,
-        tokens: design ? ((await currentTokensTx(tx, tenant.id))?.tokens ?? null) : undefined,
-        publicUrl: design ? await storeOrigin(tx, tenant, publicStoreDomain) : undefined,
-      }),
+      design ? 'surfaces:design' : 'surfaces',
+      () =>
+        withTenant(sql, tenant.id, async (tx) => {
+          const [settings, templates, tokens, publicUrl] = await Promise.all([
+            loadSettings(tx, tenant.id),
+            design ? currentTemplatesTx(tx, tenant.id) : undefined,
+            design ? currentTokensTx(tx, tenant.id).then((t) => t?.tokens ?? null) : undefined,
+            design ? storeOrigin(tx, tenant, publicStoreDomain) : undefined,
+          ]);
+          return {
+            settings,
+            templatesJson: design ? JSON.stringify(templates ?? {}) : null,
+            tokensJson: design ? JSON.stringify(tokens ?? null) : null,
+            publicUrl,
+          };
+        }),
+      { deps: design ? SURFACES_DEPS : SETTINGS_DEPS },
     );
     const status = currentStatus(settings);
     const notices = composeNotices(tenant.slug, settings, status, {
@@ -749,21 +841,26 @@ export function createApp({
         ...(status.closesAt ? { closesAt: status.closesAt } : {}),
       },
       notices,
-      ...(design
-        ? {
-            templates: templates ?? {},
-            tokens: tokens ?? null,
-            meta: pageMeta(tenant.name, settings, publicUrl!),
-          }
-        : {}),
     };
-    return c.json(envelope);
+    if (!design) return c.json(envelope);
+    // SurfacesEnvelope's templates, tokens and meta, spliced in as JSON
+    const meta = JSON.stringify(pageMeta(tenant.name, settings, publicUrl!));
+    return c.body(
+      `${JSON.stringify(envelope).slice(0, -1)},"templates":${templatesJson},"tokens":${tokensJson},"meta":${meta}}`,
+      200,
+      { 'content-type': 'application/json' },
+    );
   });
 
   // Public — storefronts need zones for address/zone UX.
   storefront.get('/zones', async (c) => {
     const tenant = c.get('tenant');
-    const zones = await withTenant(sql, tenant.id, (tx) => loadZones(tx, tenant.id));
+    const zones = await cache.read(
+      tenant.id,
+      'zones',
+      () => withTenant(sql, tenant.id, (tx) => loadZones(tx, tenant.id)),
+      { deps: ZONES_DEPS },
+    );
     return c.json({
       zones: zones.map((z) => ({
         id: z.id,
@@ -793,14 +890,24 @@ export function createApp({
   storefront.get('/state', async (c) => {
     const tenant = c.get('tenant');
     const withTemplates = c.req.query('templates') === '1';
-    const { settings, ops, templates } = await withTenant(sql, tenant.id, async (tx) => ({
-      settings: await loadSettings(tx, tenant.id),
-      ops: await opsTx(tx, tenant.id),
-      templates: withTemplates ? await currentTemplatesTx(tx, tenant.id) : undefined,
-    }));
+    const { settings, ops, templatesJson } = await cache.read(
+      tenant.id,
+      withTemplates ? 'state:templates' : 'state',
+      () =>
+        withTenant(sql, tenant.id, async (tx) => {
+          const [settings, ops, templates] = await Promise.all([
+            loadSettings(tx, tenant.id),
+            opsTx(tx, tenant.id),
+            withTemplates ? currentTemplatesTx(tx, tenant.id) : undefined,
+          ]);
+          // kept as JSON: v.js polls this, and the composition is most of the bytes
+          return { settings, ops, templatesJson: templates ? JSON.stringify(templates) : null };
+        }),
+      { deps: STATE_DEPS },
+    );
     const status = currentStatus(settings);
     const notices = composeNotices(tenant.slug, settings, status);
-    return c.json({
+    const state = {
       version: 1,
       store: {
         status: status.status,
@@ -809,8 +916,14 @@ export function createApp({
       },
       notices: notices.filter((n) => n.severity === 'blocking' || n.kind === 'emergency'),
       loader: ops.loader,
-      ...(templates ? { templates, adminOrigin: previewParent(c) } : {}),
-    });
+    };
+    if (!templatesJson) return c.json(state);
+    const adminOrigin = JSON.stringify(previewParent(c));
+    return c.body(
+      `${JSON.stringify(state).slice(0, -1)},"templates":${templatesJson},"adminOrigin":${adminOrigin}}`,
+      200,
+      { 'content-type': 'application/json' },
+    );
   });
 
   const checkout = new Hono<{ Variables: { tenant: Tenant } }>();

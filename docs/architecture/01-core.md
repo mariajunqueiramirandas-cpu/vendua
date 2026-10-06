@@ -53,7 +53,12 @@ extracted to a service, its interface and events must not change.
 - Isolation levels per surface:
   - `/storefront/v1/*` — public, tenant-scoped by host, read-heavy, CDN-cacheable
     with short TTLs. Store status and notices are _not_ CDN-cached (or cached
-    ≤30 s) since they drive blocking UI.
+    ≤30 s) since they drive blocking UI. Core itself keeps these reads in memory
+    per store (`platform/read-cache.ts`): a trigger on every table they read
+    (migration 0088) notifies `<tenant>|<table>` on commit and drops the entries
+    that depend on it; status, notices and anything time-bound are still derived
+    per request. Checkout prices only from rows it reads and locks in its own
+    transaction.
   - `/checkout/v1/*` — session-token scoped (anonymous cart/checkout session,
     signed, rotatable). All mutations are idempotent via `Idempotency-Key`.
   - `/admin/v1/*` — merchant-authenticated (JWT, role-scoped: owner/staff).

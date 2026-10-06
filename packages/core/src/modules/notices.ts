@@ -46,14 +46,22 @@ export interface SurfacesEnvelope {
   meta?: PageMeta;
 }
 
+// building a DateTimeFormat costs far more than formatting with one: one per zone
+const resumeFormats = new Map<string, Intl.DateTimeFormat>();
+
 function formatResume(iso: string | undefined, timeZone: string): string {
   if (!iso) return '';
-  return new Intl.DateTimeFormat('pt-BR', {
-    timeZone,
-    hour: '2-digit',
-    minute: '2-digit',
-    weekday: 'short',
-  }).format(new Date(iso));
+  let f = resumeFormats.get(timeZone);
+  if (!f) {
+    f = new Intl.DateTimeFormat('pt-BR', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      weekday: 'short',
+    });
+    resumeFormats.set(timeZone, f);
+  }
+  return f.format(new Date(iso));
 }
 
 export function composeNotices(

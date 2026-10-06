@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { withTenant, type Sql } from './db.ts';
@@ -223,18 +223,21 @@ export async function claim<T>(
   // null = a row from before fingerprints existed: replayable to anyone, as it was
   const sameCaller = (fp: string | null | undefined) => fp == null || fp === fingerprint;
   const claimed = await withTenant(sql, tenantId, async (tx) => {
-    const rows = await tx<{ key: string }[]>`
-      insert into idempotency_keys (tenant_id, key, owner, fingerprint)
-      values (${tenantId}, ${key}, ${owner}, ${fingerprint})
-      on conflict (tenant_id, key) do update
-        set created_at = now(), owner = excluded.owner, fingerprint = excluded.fingerprint
-        where idempotency_keys.response is null
-          and idempotency_keys.created_at < now() - interval '30 seconds'
-      returning key
-    `;
-    // a sweep on ~1 in 50 claims still bounds the table, without a round trip on every write
-    if (Math.random() < 0.02)
-      await tx`delete from idempotency_keys where created_at < now() - interval '7 days'`;
+    const [rows] = await Promise.all([
+      tx<{ key: string }[]>`
+        insert into idempotency_keys (tenant_id, key, owner, fingerprint)
+        values (${tenantId}, ${key}, ${owner}, ${fingerprint})
+        on conflict (tenant_id, key) do update
+          set created_at = now(), owner = excluded.owner, fingerprint = excluded.fingerprint
+          where idempotency_keys.response is null
+            and idempotency_keys.created_at < now() - interval '30 seconds'
+        returning key
+      `,
+      // a sweep on ~1 in 50 claims still bounds the table, sent with the claim
+      Math.random() < 0.02
+        ? tx`delete from idempotency_keys where created_at < now() - interval '7 days'`
+        : null,
+    ]);
     return rows;
   });
   if (!claimed[0]) {
@@ -261,9 +264,11 @@ export async function claim<T>(
   // so a stale-claim stealer waits for the original's tx then replays its result instead of double-applying
   try {
     return await withTenant(sql, tenantId, async (tx): Promise<Claimed<T>> => {
-      await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`;
-      const cur = (
-        await tx<
+      // sent together, the lock executed first: the connection runs them in order, so the read
+      // waits for the lock
+      const [, rows] = await Promise.all([
+        tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`.execute(),
+        tx<
           {
             owner: string | null;
             response: unknown;
@@ -273,8 +278,9 @@ export async function claim<T>(
         >`
           select owner, response, status_code, fingerprint from idempotency_keys
           where tenant_id = ${tenantId} and key = ${key}
-        `
-      )[0];
+        `,
+      ]);
+      const cur = rows[0];
       if (cur?.response != null && cur.status_code != null) {
         if (!sameCaller(cur.fingerprint)) throw keyReused();
         return { status: cur.status_code, body: cur.response as T, replayed: true };
@@ -320,17 +326,20 @@ export async function claimTx<T>(
   checkKey(key, true);
   fingerprint = fingerprintOf(fingerprint);
   const owner = crypto.randomUUID();
-  // serializes with claim()'s second tx, so a dead-claim steal never runs beside its owner
-  await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`;
-  const claimed = await tx<{ key: string }[]>`
-    insert into idempotency_keys (tenant_id, key, owner, fingerprint)
-    values (${tenantId}, ${key}, ${owner}, ${fingerprint})
-    on conflict (tenant_id, key) do update
-      set created_at = now(), owner = excluded.owner, fingerprint = excluded.fingerprint
-      where idempotency_keys.response is null
-        and idempotency_keys.created_at < now() - interval '30 seconds'
-    returning key
-  `;
+  // serializes with claim()'s second tx, so a dead-claim steal never runs beside its owner;
+  // sent together, the insert still runs once the lock is held
+  const [, claimed] = await Promise.all([
+    tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`.execute(),
+    tx<{ key: string }[]>`
+      insert into idempotency_keys (tenant_id, key, owner, fingerprint)
+      values (${tenantId}, ${key}, ${owner}, ${fingerprint})
+      on conflict (tenant_id, key) do update
+        set created_at = now(), owner = excluded.owner, fingerprint = excluded.fingerprint
+        where idempotency_keys.response is null
+          and idempotency_keys.created_at < now() - interval '30 seconds'
+      returning key
+    `,
+  ]);
   if (!claimed[0]) {
     const hit = (
       await tx<{ response: unknown; status_code: number; fingerprint: string | null }[]>`
@@ -452,21 +461,9 @@ export function rateLimit(
   };
 }
 
-const encoder = new TextEncoder();
-
-async function hmac(secret: string, msg: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(msg));
-  return btoa(String.fromCharCode(...new Uint8Array(sig)))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replace(/=+$/, '');
+// unpadded base64url HMAC-SHA256 — synchronous: WebCrypto imported the key on every call
+function hmac(secret: string, msg: string): string {
+  return createHmac('sha256', secret).update(msg).digest('base64url');
 }
 
 /** `vst.<cartId>.<hmac>` checkout session token — the HMAC input binds the tenant, so tokens can't cross tenants. */
@@ -475,7 +472,7 @@ export async function mintSessionToken(
   tenantId: string,
   secret: string,
 ): Promise<string> {
-  return `vst.${cartId}.${await hmac(secret, `${tenantId}|${cartId}`)}`;
+  return `vst.${cartId}.${hmac(secret, `${tenantId}|${cartId}`)}`;
 }
 
 export async function verifySessionToken(
@@ -487,7 +484,7 @@ export async function verifySessionToken(
   if (parts.length !== 3 || parts[0] !== 'vst') return null;
   const [, cartId, sig] = parts;
   if (!cartId || !sig) return null;
-  const expected = await hmac(secret, `${tenantId}|${cartId}`);
+  const expected = hmac(secret, `${tenantId}|${cartId}`);
   if (expected.length !== sig.length) return null;
   let diff = 0;
   for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ sig.charCodeAt(i);
