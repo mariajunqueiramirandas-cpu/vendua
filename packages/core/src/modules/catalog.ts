@@ -609,7 +609,8 @@ export async function getProductById(
   tx: Sql,
   tenantId: string,
   id: string,
-  opts: { forUpdate?: boolean } = {},
+  /** tz: the store's time zone, when the caller already read its settings */
+  opts: { forUpdate?: boolean; tz?: string } = {},
 ): Promise<ProductDetail | null> {
   const lock = opts.forUpdate ? tx`for update of p` : tx``;
   const rows = await tx<ProductRow[]>`
@@ -625,7 +626,7 @@ export async function getProductsById(
   tx: Sql,
   tenantId: string,
   ids: readonly string[],
-  opts: { forUpdate?: boolean } = {},
+  opts: { forUpdate?: boolean; tz?: string } = {},
 ): Promise<Map<string, ProductDetail>> {
   const unique = [...new Set(ids)];
   if (unique.length === 0) return new Map();
@@ -644,7 +645,7 @@ async function attachDetail(
   tx: Sql,
   tenantId: string,
   rows: ProductRow[],
-  opts: { forUpdate?: boolean; hideScheduled?: boolean } = {},
+  opts: { forUpdate?: boolean; hideScheduled?: boolean; tz?: string } = {},
 ): Promise<ProductDetail | null> {
   const product = rows[0];
   if (!product) return null;
@@ -655,7 +656,7 @@ async function attachDetails(
   tx: Sql,
   tenantId: string,
   rows: ProductRow[],
-  opts: { forUpdate?: boolean; hideScheduled?: boolean } = {},
+  opts: { forUpdate?: boolean; hideScheduled?: boolean; tz?: string } = {},
 ): Promise<Map<string, ProductDetail>> {
   const out = new Map<string, ProductDetail>();
   if (rows.length === 0) return out;
@@ -667,7 +668,7 @@ async function attachDetails(
       where tenant_id = ${tenantId} and product_id = any(${ids}::uuid[])
       order by product_id, sort, id
     `,
-    storeTimezone(tx, tenantId),
+    opts.tz ?? storeTimezone(tx, tenantId),
     loadComboSlotsFor(
       tx,
       tenantId,

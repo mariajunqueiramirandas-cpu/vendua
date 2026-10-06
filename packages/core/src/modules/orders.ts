@@ -162,30 +162,17 @@ export async function loadOrderView(
   /** Session-scope: only the cart that produced the order may read it. */
   cartId?: string,
 ): Promise<OrderView> {
-  // one round trip: events and items only count once the order (and its session) checks out
-  const [rows, events, items] = await Promise.all([
-    tx<OrderRow[]>`
-      select id, number, state, customer, delivery, payment, subtotal_cents, delivery_fee_cents,
-             discount_cents, payment_adjustment_cents, total_cents, coupon_code, notes,
-             scheduled_for::text as scheduled_for,
-             placed_at, updated_at, rev
-      from orders where tenant_id = ${tenantId} and id = ${orderId}
-      ${cartId ? tx`and cart_id = ${cartId}` : tx``}
-    `,
-    tx<
-      {
+  // one statement: events and items only count once the order (and its session) checks out
+  const rows = await tx<
+    (OrderRow & {
+      events: {
         at: string;
         from_state: string | null;
         to_state: string;
         actor: string;
         meta: Record<string, unknown>;
-      }[]
-    >`
-      select at, from_state, to_state, actor, meta from order_events
-      where tenant_id = ${tenantId} and order_id = ${orderId} order by at, id
-    `,
-    tx<
-      {
+      }[];
+      items: {
         product_id: string | null;
         slug: string;
         name: string;
@@ -194,14 +181,26 @@ export async function loadOrderView(
         modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
         combo: { slotName: string; name: string; qty: number }[];
         line_total_cents: number;
-      }[]
-    >`
-      select product_id, slug, name, qty, unit_price_cents, modifiers, combo, line_total_cents
-      from order_items where tenant_id = ${tenantId} and order_id = ${orderId} order by sort
-    `,
-  ]);
+      }[];
+    })[]
+  >`
+    select o.id, o.number, o.state, o.customer, o.delivery, o.payment, o.subtotal_cents,
+           o.delivery_fee_cents, o.discount_cents, o.payment_adjustment_cents, o.total_cents,
+           o.coupon_code, o.notes, o.scheduled_for::text as scheduled_for,
+           o.placed_at, o.updated_at, o.rev,
+           (select coalesce(json_agg(e order by e.at, e.id), '[]')
+            from (select id, at, from_state, to_state, actor, meta from order_events
+                  where tenant_id = o.tenant_id and order_id = o.id) e) as events,
+           (select coalesce(json_agg(i order by i.sort), '[]')
+            from (select sort, product_id, slug, name, qty, unit_price_cents, modifiers, combo,
+                         line_total_cents
+                  from order_items where tenant_id = o.tenant_id and order_id = o.id) i) as items
+    from orders o where o.tenant_id = ${tenantId} and o.id = ${orderId}
+    ${cartId ? tx`and o.cart_id = ${cartId}` : tx``}
+  `;
   const order = rows[0];
   if (!order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+  const { events, items } = order;
   return {
     id: order.id,
     number: order.number,
@@ -235,7 +234,8 @@ export async function loadOrderView(
     updatedAt: order.updated_at,
     version: events.length + order.rev,
     timeline: events.map((e) => ({
-      at: e.at,
+      // the format a timestamptz column serialized as before (json_agg writes its own offset)
+      at: new Date(e.at).toISOString(),
       from: e.from_state,
       to: e.to_state,
       actor: e.actor,

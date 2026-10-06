@@ -205,8 +205,8 @@ const fingerprintOf = (f: string) =>
 export type Claimed<T> = { status: number; body: T; replayed: boolean };
 
 /** First result for (tenant, key) is stored; a replay returns it to the same caller
- *  (`fingerprint`), 422 IDEMPOTENCY_KEY_REUSED to anyone else. `run`'s writes and the stored
- *  result commit in one tx. */
+ *  (`fingerprint`), 422 IDEMPOTENCY_KEY_REUSED to anyone else. The claim, `run`'s writes and the
+ *  stored result commit or roll back in one tx. */
 export async function claim<T>(
   sql: Sql,
   tenantId: string,
@@ -216,120 +216,32 @@ export async function claim<T>(
   run: (tx: Sql) => Promise<{ status: number; body: T }>,
 ): Promise<Claimed<T>> {
   checkKey(key);
-  fingerprint = fingerprintOf(fingerprint);
-  // one owner per (tenant,key): on-conflict "steals" only a dead claim (pending >30s);
-  // the claim commits in its own tx so peers see the pending row; the sweep below bounds the table
-  const owner = crypto.randomUUID();
-  // null = a row from before fingerprints existed: replayable to anyone, as it was
-  const sameCaller = (fp: string | null | undefined) => fp == null || fp === fingerprint;
-  const claimed = await withTenant(sql, tenantId, async (tx) => {
-    const [rows] = await Promise.all([
-      tx<{ key: string }[]>`
-        insert into idempotency_keys (tenant_id, key, owner, fingerprint)
-        values (${tenantId}, ${key}, ${owner}, ${fingerprint})
-        on conflict (tenant_id, key) do update
-          set created_at = now(), owner = excluded.owner, fingerprint = excluded.fingerprint
-          where idempotency_keys.response is null
-            and idempotency_keys.created_at < now() - interval '30 seconds'
-        returning key
-      `,
+  return withTenant(sql, tenantId, (tx) =>
+    claimTx(tx, tenantId, key, fingerprint, () => run(tx), {
       // a sweep on ~1 in 50 claims still bounds the table, sent with the claim
-      Math.random() < 0.02
-        ? tx`delete from idempotency_keys where created_at < now() - interval '7 days'`
-        : null,
-    ]);
-    return rows;
-  });
-  if (!claimed[0]) {
-    // another owner holds the key: replay its stored response, waiting briefly for it to land
-    const replay = await withTenant(sql, tenantId, async (tx) => {
-      for (let i = 0; i < 25; i++) {
-        const rows = await tx<
-          { response: unknown; status_code: number; fingerprint: string | null }[]
-        >`
-          select response, status_code, fingerprint from idempotency_keys
-          where tenant_id = ${tenantId} and key = ${key}
-        `;
-        const hit = rows[0];
-        if (hit && !sameCaller(hit.fingerprint)) throw keyReused();
-        if (hit?.response != null && hit.status_code != null) return hit;
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      return null;
-    });
-    if (replay) return { status: replay.status_code, body: replay.response as T, replayed: true };
-    throw inProgress();
-  }
-  // handler writes + recorded response commit in one tx; the per-key advisory lock serializes owners,
-  // so a stale-claim stealer waits for the original's tx then replays its result instead of double-applying
-  try {
-    return await withTenant(sql, tenantId, async (tx): Promise<Claimed<T>> => {
-      // sent together, the lock executed first: the connection runs them in order, so the read
-      // waits for the lock
-      const [, rows] = await Promise.all([
-        tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`.execute(),
-        tx<
-          {
-            owner: string | null;
-            response: unknown;
-            status_code: number;
-            fingerprint: string | null;
-          }[]
-        >`
-          select owner, response, status_code, fingerprint from idempotency_keys
-          where tenant_id = ${tenantId} and key = ${key}
-        `,
-      ]);
-      const cur = rows[0];
-      if (cur?.response != null && cur.status_code != null) {
-        if (!sameCaller(cur.fingerprint)) throw keyReused();
-        return { status: cur.status_code, body: cur.response as T, replayed: true };
-      }
-      // our claim was stolen (>30s between claim and lock) — the other owner is committing; abort, don't double up
-      if (cur?.owner !== owner) throw inProgress();
-      const r = await run(tx);
-      const stored = await tx`
-        update idempotency_keys set response = ${tx.json(r.body as never)}, status_code = ${r.status}
-        where tenant_id = ${tenantId} and key = ${key} and owner = ${owner}
-      `;
-      if (stored.count === 0) throw inProgress();
-      return { status: r.status, body: r.body, replayed: false };
-    });
-  } catch (err) {
-    // release our pending claim so an immediate retry re-executes instead of hitting IDEMPOTENCY_IN_PROGRESS
-    // for the 30s stale window (failed responses aren't persisted); the owner predicate spares a stolen claim
-    try {
-      await withTenant(
-        sql,
-        tenantId,
-        (tx) =>
-          tx`delete from idempotency_keys
-             where tenant_id = ${tenantId} and key = ${key} and owner = ${owner}`,
-      );
-    } catch {
-      /* best effort — the 30s stale window + 7-day sweep still bound it */
-    }
-    throw err;
-  }
+      sweep: Math.random() < 0.02,
+    }),
+  );
 }
 
 /** `claim` inside the caller's transaction: the key row, `run`'s writes and the stored result
- *  commit or roll back together. A key pending under another owner → 409 IDEMPOTENCY_IN_PROGRESS
- *  (no polling: the caller holds a tx open). */
+ *  commit or roll back together. */
 export async function claimTx<T>(
   tx: Sql,
   tenantId: string,
   key: string,
   fingerprint: string,
   run: () => Promise<{ status: number; body: T }>,
+  opts: { sweep?: boolean } = {},
 ): Promise<Claimed<T>> {
   checkKey(key, true);
   fingerprint = fingerprintOf(fingerprint);
   const owner = crypto.randomUUID();
-  // serializes with claim()'s second tx, so a dead-claim steal never runs beside its owner;
-  // sent together, the insert still runs once the lock is held
-  const [, claimed] = await Promise.all([
-    tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`.execute(),
+  // The key row is only ever committed with its result, so the unique index serializes owners: a
+  // concurrent same-key insert waits for this tx, then replays what it committed (or claims a key
+  // whose first attempt rolled back). The 30s steal is for a pending row an older Core committed
+  // in a claim tx of its own and never finished.
+  const [claimed] = await Promise.all([
     tx<{ key: string }[]>`
       insert into idempotency_keys (tenant_id, key, owner, fingerprint)
       values (${tenantId}, ${key}, ${owner}, ${fingerprint})
@@ -339,6 +251,15 @@ export async function claimTx<T>(
           and idempotency_keys.created_at < now() - interval '30 seconds'
       returning key
     `,
+    // inside the work tx, its row locks last as long as the handler: skip locked, so two sweeps
+    // never wait on (or deadlock with) each other; bounded, so it never lengthens a request much
+    opts.sweep
+      ? tx`
+          delete from idempotency_keys where (tenant_id, key) in (
+            select tenant_id, key from idempotency_keys
+            where created_at < now() - interval '7 days'
+            limit 500 for update skip locked)`
+      : null,
   ]);
   if (!claimed[0]) {
     const hit = (
@@ -347,6 +268,7 @@ export async function claimTx<T>(
         where tenant_id = ${tenantId} and key = ${key}
       `
     )[0];
+    // null = a row from before fingerprints existed: replayable to anyone, as it was
     if (hit && hit.fingerprint != null && hit.fingerprint !== fingerprint) throw keyReused();
     if (hit?.response != null && hit.status_code != null) {
       return { status: hit.status_code, body: hit.response as T, replayed: true };
