@@ -229,7 +229,7 @@ export function mountHome(d: AdminDeps) {
         best,
         busiest,
       };
-    }),
+    }, 'home'),
   );
 }
 

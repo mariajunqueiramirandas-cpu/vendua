@@ -23,7 +23,7 @@ import {
   type AdminCtx,
   type AdminDeps,
 } from './context.ts';
-import { handlers } from './handlers.ts';
+import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { nextLocalMidnight } from './routes-catalog.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
@@ -353,13 +353,13 @@ export function mountStore(d: AdminDeps) {
   // attendants read it too: the status pill and today's hours are on every screen
   admin.get(
     '/store',
-    read('attendant', async (tx, t) => view(tx, t)),
+    read('attendant', async (tx, t) => view(tx, t), 'store'),
   );
 
   admin.patch(
     '/store',
     write('manager', async (tx, t, m, c) => {
-      const body = await bodyJson(c, 64 * 1024);
+      const body = await bodyOf(c, 64 * 1024);
       const s = await loadSettings(tx, t.id);
       const set: Record<string, unknown> = {};
       const changed: string[] = [];
@@ -543,14 +543,14 @@ export function mountStore(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'store');
       return { status: 200, body: await view(tx, { ...t, name }) };
-    }),
+    }, 'store.patch'),
   );
 
   // "Pausar agora": 15 min · 1 h · rest of the day · until I resume · custom minutes.
   admin.post(
     '/store/pause',
     write('attendant', async (tx, t, m, c) => {
-      const body = await bodyJson(c);
+      const body = await bodyOf(c);
       const span = oneOf(body.for, 'for', ['15m', '1h', 'today', 'indefinite', 'minutes'] as const);
       const settings = await loadSettings(tx, t.id);
       // a timed pause ends by opening the store — not while the plan is unpaid
@@ -580,7 +580,7 @@ export function mountStore(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'store');
       return { status: 200, body: await view(tx, t) };
-    }),
+    }, 'store.pause'),
   );
 
   admin.post(
@@ -595,7 +595,7 @@ export function mountStore(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'store');
       return { status: 200, body: await view(tx, t) };
-    }),
+    }, 'store.resume'),
   );
 
   // ── delivery zones ───────────────────────────────────────────────────────

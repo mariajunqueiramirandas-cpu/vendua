@@ -11,7 +11,7 @@ import {
 import { readLoyalty, type StoredLoyalty } from '../modules/customer.ts';
 import { audit } from './audit.ts';
 import { bool, int, isObj, oneOf, optInt, optText, text, type AdminDeps } from './context.ts';
-import { handlers } from './handlers.ts';
+import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { loadSettings } from './routes-store.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
@@ -87,13 +87,13 @@ export function mountMarketing(d: AdminDeps) {
         waitlist,
         announcement: s.promo ?? null,
       };
-    }),
+    }, 'marketing'),
   );
 
   admin.post(
     '/coupons',
     write('manager', async (tx, t, m, c) => {
-      const body = await bodyJson(c);
+      const body = await bodyOf(c);
       const code = normalizeCode(text(body.code, 'code', 32, 3));
       if (!COUPON_CODE_RE.test(code))
         throw new HttpError(422, 'BAD_REQUEST', 'use 3–32 letters, numbers, _ or -', {
@@ -136,14 +136,14 @@ export function mountMarketing(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'marketing');
       return { status: 201, body: { coupons: await couponsView(tx, t.id) } };
-    }),
+    }, 'coupon.create'),
   );
 
   admin.patch(
     '/coupons/:id',
     write('manager', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
-      const body = await bodyJson(c);
+      const body = await bodyOf(c);
       const set: Record<string, unknown> = {};
       if (body.active !== undefined) set.active = bool(body.active, 'active');
       if (body.label !== undefined) set.label = optText(body.label, 'label', 120) ?? null;
@@ -172,7 +172,7 @@ export function mountMarketing(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'marketing');
       return { status: 200, body: { coupons: await couponsView(tx, t.id) } };
-    }),
+    }, 'coupon.patch'),
   );
 
   admin.put(

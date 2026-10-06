@@ -100,7 +100,7 @@ export function mountCustomers(d: AdminDeps) {
         `
       )[0]!;
       return { customers: rows, stats, next: rows.length === limit ? offset + limit : null };
-    }),
+    }, 'customers'),
   );
 
   admin.get(

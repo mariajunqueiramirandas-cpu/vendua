@@ -56,6 +56,7 @@ import { mountImports } from '../modules/menu-import/routes.ts';
 import { mountAccount } from './routes-account.ts';
 import { mountAppearance } from './routes-appearance.ts';
 import { mountCatalog } from './routes-catalog.ts';
+import { mountCopilot } from './routes-copilot.ts';
 import { mountCustomers } from './routes-customers.ts';
 import { mountHome } from './routes-home.ts';
 import { mountKitchen } from './routes-kitchen.ts';
@@ -791,6 +792,7 @@ export function mountAdmin(o: MountAdminOpts) {
   mountAccount(deps);
   mountAppearance(deps);
   mountImports(deps);
+  mountCopilot(deps);
 
   // public media read — storefront hosts proxy /v1 to Core, so the same URL works everywhere.
   // ?w= picks the smallest stored width that covers it (Kernel Img's srcset), else the original.

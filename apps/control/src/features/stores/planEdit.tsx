@@ -29,6 +29,12 @@ export const FEATURES: { key: PlanFeature; label: string; short: string; hint: s
     hint: 'IA que vende no WhatsApp da loja',
   },
   {
+    key: 'copilot',
+    label: 'Duá Copiloto',
+    short: 'Copiloto',
+    hint: 'IA que responde a equipe no painel e prepara mudanças',
+  },
+  {
     key: 'customDomain',
     label: 'domínio próprio',
     short: 'domínio',

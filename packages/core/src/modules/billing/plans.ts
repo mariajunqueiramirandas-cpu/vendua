@@ -12,6 +12,8 @@ export interface PlanFeatures {
   loyalty: boolean;
   /** the Vendedor, the store's AI seller on WhatsApp (ADR 0031) */
   vendedor: boolean;
+  /** Duá Copilot, Duá working for the store's people inside the admin (ADR 0034) */
+  copilot: boolean;
 }
 export type PlanFeature = keyof PlanFeatures;
 export const PLAN_FEATURES: readonly PlanFeature[] = [
@@ -21,6 +23,7 @@ export const PLAN_FEATURES: readonly PlanFeature[] = [
   'printing',
   'loyalty',
   'vendedor',
+  'copilot',
 ];
 /** features a trial doesn't open: they wait for the first payment (ADR 0025) */
 const PAID_ONLY: ReadonlySet<PlanFeature> = new Set(['customDomain', 'customSite']);
@@ -94,6 +97,7 @@ export function legacyPlan(id: string): Plan {
       printing: true,
       loyalty: true,
       vendedor: true,
+      copilot: false,
     },
     trialDays: 0,
     recommended: false,

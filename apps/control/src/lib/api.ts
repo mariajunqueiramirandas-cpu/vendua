@@ -879,7 +879,13 @@ export interface BillingStore {
   } | null;
 }
 export type PlanFeature =
-  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor';
+  | 'customDomain'
+  | 'customSite'
+  | 'kds'
+  | 'printing'
+  | 'loyalty'
+  | 'vendedor'
+  | 'copilot';
 export type PlanFeatures = Record<PlanFeature, boolean>;
 export interface ControlPlan {
   id: string;

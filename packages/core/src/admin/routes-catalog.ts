@@ -27,7 +27,7 @@ import {
   text,
   type AdminDeps,
 } from './context.ts';
-import { handlers } from './handlers.ts';
+import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { storeTz } from './routes-orders.ts';
 
@@ -312,7 +312,7 @@ export function mountCatalog(d: AdminDeps) {
           products: products.filter((p) => p.categoryId === c.id),
         })),
       };
-    }),
+    }, 'catalog'),
   );
 
   admin.get(
@@ -481,7 +481,7 @@ export function mountCatalog(d: AdminDeps) {
     '/products/:id',
     write('manager', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
-      const body = await bodyJson(c);
+      const body = await bodyOf(c);
       const before = await productRow(tx, t.id, id);
       const set: Record<string, unknown> = {};
       const changes: string[] = [];
@@ -616,7 +616,7 @@ export function mountCatalog(d: AdminDeps) {
         status: 200,
         body: { ...(await productDetail(tx, t.id, id)), waitlistWoken: woken },
       };
-    }),
+    }, 'product.patch'),
   );
 
   admin.post(
@@ -974,7 +974,7 @@ export function mountCatalog(d: AdminDeps) {
   admin.post(
     '/products/bulk',
     write('manager', async (tx, t, m, c) => {
-      const body = await bodyJson(c);
+      const body = await bodyOf(c);
       const ids = uuidList(body.ids, 'ids', 300);
       const action = oneOf(body.action, 'action', [
         'available',
@@ -1029,7 +1029,7 @@ export function mountCatalog(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'catalog');
       return { status: 200, body: { updated: ids.length } };
-    }),
+    }, 'products.bulk'),
   );
 
   // The Estoque screen's taps: relative changes, so a sale drawn meanwhile still counts.

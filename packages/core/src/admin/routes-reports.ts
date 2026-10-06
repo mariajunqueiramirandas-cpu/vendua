@@ -213,7 +213,7 @@ export function mountReports(d: AdminDeps) {
         coupons,
         repeat,
       };
-    }),
+    }, 'reports'),
   );
 
   // CSV of the orders in range — opens in Excel/Sheets (semicolons, BOM, comma decimals: pt-BR locale)

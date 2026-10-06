@@ -374,7 +374,7 @@ export function mountKitchen(d: AdminDeps) {
         acceptTargetMinutes: s.acceptTarget,
         now: new Date().toISOString(),
       };
-    }),
+    }, 'kitchen'),
   );
 
   admin.post(

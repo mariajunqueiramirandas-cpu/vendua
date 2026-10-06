@@ -519,7 +519,7 @@ export function mountOrders(d: AdminDeps) {
       const more = rows.length > limit;
       const page = rows.slice(0, limit);
       return { orders: page, next: more ? page.at(-1)!.placedAt : null };
-    }),
+    }, 'orders'),
   );
 
   // Encomendas calendar (scheduled_for is a local date).
@@ -583,7 +583,7 @@ export function mountOrders(d: AdminDeps) {
           : null,
         payments,
       };
-    }),
+    }, 'order'),
   );
 
   admin.post('/orders/:id/transition', async (c) => {
