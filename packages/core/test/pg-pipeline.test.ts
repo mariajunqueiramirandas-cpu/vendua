@@ -3,13 +3,14 @@ import postgres from 'postgres';
 import { withTenant } from '../src/platform/db.ts';
 import { faultProxy, type ClientMessage, type Fault } from './fixtures/pg-fault-proxy.ts';
 
-// patches/postgres@3.4.7.patch sends a transaction's first statements right behind BEGIN (and a
-// savepoint block's behind SAVEPOINT) instead of a round trip later. These tests put a proxy
-// between postgres.js and Postgres that rejects BEGIN on a live connection or cuts the connection
-// at an exact message, and check, in Postgres itself, that nothing sent behind BEGIN ever ran
-// outside the transaction: no row is committed, and a sequence (nextval ignores rollbacks) only
-// moves when a statement really ran — inside the transaction Postgres then rolled back.
-describe.skipIf(!process.env.TEST_DATABASE_URL)('pipelined BEGIN under faults (db)', () => {
+// Transactions under faults, with patches/postgres@3.4.7.patch: a transaction never writes to a
+// connection that closed under it (unpatched, its ROLLBACK hit the dead socket: an uncaught
+// TypeError that exits the process), and a savepoint block's statements go out with its SAVEPOINT.
+// A proxy between postgres.js and Postgres rejects a statement on a live connection or cuts the
+// connection at an exact message; Postgres itself then shows that nothing ran outside the
+// transaction: no row is committed, and a sequence (nextval ignores rollbacks) only moves when a
+// statement really ran — inside the transaction Postgres then rolled back.
+describe.skipIf(!process.env.TEST_DATABASE_URL)('transactions under faults (db)', () => {
   const url = process.env.TEST_DATABASE_URL!;
   const sql = postgres(url, { onnotice: () => {} });
   const uncaught: unknown[] = [];
@@ -72,7 +73,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('pipelined BEGIN under faults (d
     }
     throw new Error(`session ${app} still open`);
   };
-  /** statements a transaction pipelines before BEGIN's reply: none awaited before the next */
+  /** statements a transaction sends together: none awaited before the next */
   const pipelined = (tx: postgres.TransactionSql, tag: string) =>
     Promise.all([
       tx`select nextval('pipeline_probe.ran')`,
@@ -92,7 +93,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('pipelined BEGIN under faults (d
     expect(uncaught).toEqual([]);
   };
 
-  test('a BEGIN Postgres rejects on a live connection: nothing sent behind it runs', async () => {
+  test('a BEGIN Postgres rejects on a live connection: nothing after it runs', async () => {
     const tag = `rejected-${crypto.randomUUID()}`;
     let failed = false;
     const c = await client((m) => {

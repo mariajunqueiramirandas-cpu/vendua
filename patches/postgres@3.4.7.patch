@@ -1,97 +1,49 @@
-diff --git a/node_modules/postgres/.bun-tag-2a3327c308e09e99 b/.bun-tag-2a3327c308e09e99
-new file mode 100644
-index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
-diff --git a/node_modules/postgres/.bun-tag-5eb8a27c9173d556 b/.bun-tag-5eb8a27c9173d556
-new file mode 100644
-index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
-diff --git a/node_modules/postgres/.bun-tag-6bdd8c75e763e61a b/.bun-tag-6bdd8c75e763e61a
-new file mode 100644
-index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
-diff --git a/node_modules/postgres/.bun-tag-99ab4ba9e39a6112 b/.bun-tag-99ab4ba9e39a6112
-new file mode 100644
-index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/src/index.js b/src/index.js
-index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..ebe675825bd417b005b4f1180f426d3f21d572e1 100644
+index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..6a31308982188b1cd75897c9a11072a1e4c20c63 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -237,25 +237,60 @@ function Postgres(a, b) {
+@@ -237,12 +237,21 @@ function Postgres(a, b) {
      let savepoints = 0
        , connection
        , prepare = null
--
 +      , closed = null
-+
-+    // venduá patch: the transaction's statements are pipelined behind BEGIN instead of waiting
-+    // a round trip for its reply. A statement sent behind a BEGIN that fails would run outside
-+    // any transaction, so BEGIN also sets a transaction-local marker in the same simple query
-+    // (skipped when BEGIN fails), and the first statement behind it, the guard in scope, ends
-+    // the session when the marker is missing: nothing queued after it can run. With options,
-+    // BEGIN is awaited as before.
-+    const bare = !options.replace(/[^a-z ]/ig, '').trim()
-+    let assigned
-+    const reserving = new Promise(r => assigned = r)
-+    const began = sql.unsafe(
-+      bare
-+        ? "begin; select set_config('postgres_js.begun', '1', true)"
-+        : 'begin ' + options.replace(/[^a-z ]/ig, ''),
-+      [],
-+      { onexecute }
-+    ).execute()
-+    began.catch(() => { /* awaited in scope */ })
+ 
      try {
--      await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
-+      await (bare ? Promise.race([reserving, began]) : began)
-+      // onexecute leaves the connection in `full`, where scope would queue queries one per
-+      // ReadyForQuery; it is ours alone from here, so let scope write to it directly
-+      connection.queue === full && move(connection, reserved)
+       await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
        return await Promise.race([
--        scope(connection, fn),
+         scope(connection, fn),
 -        new Promise((_, reject) => connection.onclose = reject)
-+        scope(connection, fn, undefined, bare ? began : null),
 +        new Promise((_, reject) => connection.onclose = e => {
-+          // the pool may reconnect this connection for someone else: from here no statement of
-+          // this transaction is written to it (Postgres rolled the transaction back)
++          // venduá patch: the pool may reconnect this connection for someone else, so from here
++          // no statement of this transaction is written to it (Postgres rolled it back); writing
++          // to the closed socket was an uncaught TypeError that exited the process
 +          closed = e
 +          while (queries.length)
 +            queries.shift().reject(e)
-+          // a session the guard ended reports why: BEGIN's own error
-+          bare ? began.then(() => reject(e), reject) : reject(e)
++          reject(e)
 +        })
        ])
      } catch (error) {
        throw error
-     }
- 
--    async function scope(c, fn, name) {
-+    async function scope(c, fn, name, began) {
-       const sql = Sql(handler)
-       sql.savepoint = savepoint
-       sql.prepare = x => prepare = x.replace(/[^a-z0-9$-_. ]/gi)
+@@ -255,7 +264,10 @@ function Postgres(a, b) {
        let uncaughtError
          , result
  
 -      name && await sql`savepoint ${ sql(name) }`
-+      const guard = began
-+        ? sql`select pg_terminate_backend(pg_backend_pid()) where current_setting('postgres_js.begun', true) is distinct from '1'`.execute()
-+        : null
-+      guard && guard.catch(() => { /* its error is uncaughtError */ })
-+      // venduá patch: SAVEPOINT goes out with the block's first queries, like BEGIN above
++      // venduá patch: SAVEPOINT goes out with the block's first statements, not a round trip ahead;
++      // one that fails aborts the transaction, so nothing behind it runs
 +      const saved = name ? sql`savepoint ${ sql(name) }`.execute() : null
 +      saved && saved.catch(() => { /* awaited below */ })
        try {
          result = await new Promise((resolve, reject) => {
            const x = fn(sql)
-@@ -264,7 +299,18 @@ function Postgres(a, b) {
+@@ -264,7 +276,14 @@ function Postgres(a, b) {
  
          if (uncaughtError)
            throw uncaughtError
-+        began && await began
 +        saved && await saved
        } catch (e) {
-+        // a BEGIN or savepoint that never opened has nothing to roll back to: its own error
-+        const unbegun = began && await began.then(() => null, x => x)
-+        if (unbegun)
-+          throw unbegun
++        // a savepoint that never opened has nothing to roll back to: its own error, as before
 +        const unsaved = saved && await saved.then(() => null, x => x)
 +        if (unsaved)
 +          throw unsaved
@@ -100,7 +52,7 @@ index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..ebe675825bd417b005b4f1180f426d3f
          await (name
            ? sql`rollback to ${ sql(name) }`
            : sql`rollback`
-@@ -290,6 +336,8 @@ function Postgres(a, b) {
+@@ -290,6 +309,8 @@ function Postgres(a, b) {
  
        function handler(q) {
          q.catch(e => uncaughtError || (uncaughtError = e))
@@ -109,11 +61,3 @@ index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..ebe675825bd417b005b4f1180f426d3f
          c.queue === full
            ? queries.push(q)
            : c.execute(q) || move(c, full)
-@@ -302,6 +350,7 @@ function Postgres(a, b) {
-       c.reserved = () => queries.length
-         ? c.execute(queries.shift())
-         : move(c, reserved)
-+      assigned()
-     }
-   }
- 
