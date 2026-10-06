@@ -15,6 +15,7 @@ import type { Sql } from '../../../platform/db.ts';
 import { brl } from '../../../vendedor/cards.ts';
 import { fold } from '../../../vendedor/knowledge.ts';
 import {
+  askForPin,
   briefText,
   cartBrief,
   core,
@@ -329,7 +330,10 @@ export const setFulfillmentTool = defineTool<
       scheduledFor = input.scheduled_for;
     }
     const checkout = await saveCheckout(ctx, { ...t, cartId }, { scheduledFor });
-    if (delivery.mode === 'delivery' && !cart.delivery?.zoneId)
+    // with no pin yet, a location-priced store hasn't said no: that's not out-of-zone demand
+    const pinFirst =
+      delivery.mode === 'delivery' && delivery.lat == null && pack(ctx).fulfilment.needsPin;
+    if (delivery.mode === 'delivery' && !cart.delivery?.zoneId && !pinFirst)
       await ctx.tx`insert into vendedor_demand (tenant_id, kind, term)
         values (${ctx.tenantId}, 'out_of_zone', ${fold(delivery.neighborhood ?? delivery.cep ?? 'localização').slice(0, 80)})`;
     await ctx.tx`update shopper_threads set stage = 'building', updated_at = now() where id = ${t.id}`;
@@ -338,7 +342,7 @@ export const setFulfillmentTool = defineTool<
     const d = fresh?.delivery;
     let note = delivery.mode === 'pickup' ? 'Retirada na loja.' : '';
     if (d?.mode === 'delivery') {
-      if (!d.zoneId) note = 'Fora da área de entrega. Ofereça retirada.';
+      if (!d.zoneId) note = pinFirst ? askForPin(t) : 'Fora da área de entrega. Ofereça retirada.';
       else if (d.etaMin != null && d.etaMax != null) {
         ctx.figure('entrega.prazo', {
           value: [d.etaMin, d.etaMax],

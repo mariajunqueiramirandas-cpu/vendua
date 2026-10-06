@@ -203,6 +203,38 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     expect(t!.order_id).not.toBeNull();
   });
 
+  test('a store priced by distance delivers: a bairro asks for the location, the pin quotes', async () => {
+    const tenantId = await store();
+    await sql`update store_settings set delivery_enabled = true, distance_pricing = true,
+      delivery_base_fee_cents = 500, delivery_fee_per_km_cents = 100, delivery_max_km = 8,
+      latitude = -23.55, longitude = -46.63 where tenant_id = ${tenantId}`;
+    const threadId = await thread(tenantId, '11944443333');
+    const { rt, adapter } = runtime([
+      tools(call('store_info'), call('quote_delivery', { neighborhood: 'Centro' })),
+      reply('Entregamos sim! Me manda sua localização?'),
+      tools(call('quote_delivery', { use_pin: true })),
+      reply('Entrega: taxa {{entrega.taxa}}, prazo {{entrega.prazo}}.'),
+    ]);
+    await inbound(tenantId, threadId, 'vocês entregam no Centro?');
+    await settle(rt, tenantId);
+    const first = JSON.stringify(adapter.requests[1]);
+    expect(first).toContain('Entrega: sim');
+    expect(first).toContain('por distância, até 8 km da loja');
+    expect(first).toContain('peça ao cliente para mandar a localização');
+    expect(first).not.toContain('A loja não entrega aí');
+
+    await sql`update shopper_messages set status = 'sent' where thread_id = ${threadId} and status = 'queued'`;
+    await sql`insert into shopper_messages (tenant_id, thread_id, author, kind, meta, wa_id, ingest)
+      values (${tenantId}, ${threadId}, 'shopper', 'location', ${sql.json({ lat: -23.56, lng: -46.64 })},
+        ${`WA-loc-${Math.random().toString(36).slice(2, 8)}`}, 'pending')`;
+    await sql`update shopper_threads set last_in_at = now(), pending_since = coalesce(pending_since, now()) where id = ${threadId}`;
+    await settle(rt, tenantId);
+    const sent = (await outbox(tenantId)).map((m) => m.body);
+    expect(sent.at(-1)).toMatch(/^Entrega: taxa R\$ \d+,\d\d, prazo \d+–\d+ min\.$/);
+    const demand = await sql`select 1 from vendedor_demand where tenant_id = ${tenantId}`;
+    expect(demand).toHaveLength(0);
+  });
+
   const shopperMessages = (threadId: string) =>
     sql<{ author: string; status: string; body: string | null }[]>`
       select author, status, body from shopper_messages where thread_id = ${threadId} order by created_at`;

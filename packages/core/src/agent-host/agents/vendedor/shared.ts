@@ -20,6 +20,15 @@ export function thread(ctx: Ctx, opts: { forUpdate?: boolean } = {}): Promise<Th
   return mustThread(ctx.tx, ctx.tenantId, ctx.subject.id, opts);
 }
 
+/** A typed address matched no bairro zone, but the store also prices by location (pack.needsPin). */
+export function askForPin(t: Thread): string {
+  const how =
+    t.channel === 'web' || t.channel === 'instagram'
+      ? 'mande o link (send_link) para o cliente marcar o endereço no mapa ao finalizar no site'
+      : 'peça ao cliente para mandar a localização pelo WhatsApp e use use_pin';
+  return `Pelo bairro não deu para confirmar: esta loja calcula a entrega pela localização. Não diga que não entrega; ${how}.`;
+}
+
 export function isTest(t: Thread): boolean {
   return t.channel === 'test';
 }
