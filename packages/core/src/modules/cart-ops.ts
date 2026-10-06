@@ -4,16 +4,18 @@ import {
   assertCartOpen,
   assertLineQty,
   deliveryPricing,
+  loadCartRow,
   loadCartView,
+  loadStoreSettings,
   loadZoneRows,
   storeCoords,
   type CartDelivery,
+  type CartRow,
   type CartTotals,
   type CartView,
 } from './cart.ts';
 import { couponUsage, evaluateCoupon, loadCoupon, parseCode } from './coupons.ts';
 import { normalizeCep, resolveDelivery, validCoords, type RouteQuote } from './geo.ts';
-import type { StoreSettingsRow } from './store.ts';
 
 // The cart's mutations, shared by the checkout routes and the Vendedor's tools: each runs in the
 // caller's tx (the idempotency claim's), and every one re-reads the cart under its row lock.
@@ -27,13 +29,21 @@ export async function createCartTx(
   tx: Sql,
   tenantId: string,
   secret: string,
-): Promise<{ cartId: string; sessionToken: string }> {
+): Promise<{ cartId: string; sessionToken: string; cart: CartRow }> {
   const cartId = crypto.randomUUID();
   const sessionToken = await mintSessionToken(cartId, tenantId, secret);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sessionToken));
   const hash = Buffer.from(digest).toString('hex');
   await tx`insert into carts (id, tenant_id, session_hash) values (${cartId}, ${tenantId}, ${hash})`;
-  return { cartId, sessionToken };
+  // the row as inserted: the column defaults
+  const cart: CartRow = {
+    id: cartId,
+    status: 'open',
+    delivery: null,
+    delivery_route: null,
+    coupon_code: null,
+  };
+  return { cartId, sessionToken, cart };
 }
 
 /** qty 0 removes the line. An item id the cart doesn't hold changes nothing. */
@@ -47,18 +57,24 @@ export async function setLineQtyTx(
   if (!Number.isInteger(qty) || qty < 0 || qty > 99) {
     throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 0 and 99');
   }
-  await assertCartOpen(tx, tenantId, cartId);
+  const cart = await assertCartOpen(tx, tenantId, cartId);
   const id = itemIdOf(itemId);
   if (qty > 0) await assertLineQty(tx, tenantId, cartId, id, qty);
-  // one batch: the write and the cart's touch are executed first, so the view's reads (sent by
-  // loadCartView after them) see both
+  // one batch: the write (the cart's touch rides in its statement) is executed first, so the
+  // view's reads (sent by loadCartView after it) see it
   const write = (
     qty === 0
-      ? tx`delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`
-      : tx`update cart_items set qty = ${qty} where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`
+      ? tx`
+          with touched as (update carts set updated_at = now() where id = ${cartId})
+          delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`
+      : tx`
+          with touched as (update carts set updated_at = now() where id = ${cartId})
+          update cart_items set qty = ${qty} where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`
   ).execute();
-  const touch = tx`update carts set updated_at = now() where id = ${cartId}`.execute();
-  const [, , view] = await Promise.all([write, touch, loadCartView(tx, tenantId, cartId)]);
+  const [, view] = await Promise.all([
+    write,
+    loadCartView(tx, tenantId, cartId, new Date(), { have: { cart } }),
+  ]);
   return view;
 }
 
@@ -68,11 +84,14 @@ export async function removeLineTx(
   cartId: string,
   itemId: string,
 ): Promise<CartView> {
-  await assertCartOpen(tx, tenantId, cartId);
+  const cart = await assertCartOpen(tx, tenantId, cartId);
   // executed before loadCartView sends its reads, so they see the delete
   const removed =
     tx`delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${itemIdOf(itemId)}`.execute();
-  const [, view] = await Promise.all([removed, loadCartView(tx, tenantId, cartId)]);
+  const [, view] = await Promise.all([
+    removed,
+    loadCartView(tx, tenantId, cartId, new Date(), { have: { cart } }),
+  ]);
   return view;
 }
 
@@ -167,18 +186,13 @@ export async function quoteDeliveryTx(
   if (hasCoords && !coords)
     throw new HttpError(422, 'INVALID_DELIVERY', 'lat/lng must be coordinates');
   const cartId = opts.cartId ?? null;
-  const [zones, settingsRows, cartRows] = await Promise.all([
+  const [zones, settings, cart] = await Promise.all([
     loadZoneRows(tx, tenantId),
-    tx<StoreSettingsRow[]>`select * from store_settings where tenant_id = ${tenantId}`,
-    cartId
-      ? tx<{ delivery_route: RouteQuote | null }[]>`
-          select delivery_route from carts where tenant_id = ${tenantId} and id = ${cartId}
-        `
-      : [],
+    loadStoreSettings(tx, tenantId),
+    cartId ? loadCartRow(tx, tenantId, cartId) : undefined,
   ]);
-  const settings = settingsRows[0] ?? null;
   // one leg prices the whole answer: the fresh one, else the one the cart holds for this pin
-  const stored = cartRows[0]?.delivery_route ?? null;
+  const stored = cart?.delivery_route ?? null;
   const leg = opts.route ?? stored;
   const match = resolveDelivery(
     zones,
@@ -202,10 +216,10 @@ export async function quoteDeliveryTx(
     await counted;
     return { eligible: false, reason: 'OUT_OF_ZONE' };
   }
-  // the cart's totals go out with the event's insert
+  // the cart's totals go out with the event's insert, priced on the rows read above
   const [, totals] = await Promise.all([
     counted,
-    cartId
+    cartId && cart
       ? loadCartView(tx, tenantId, cartId, new Date(), {
           paymentMethod: opts.paymentMethod ?? null,
           delivery: {
@@ -215,13 +229,8 @@ export async function quoteDeliveryTx(
             lng: coords?.lng ?? null,
           },
           route: leg,
-        }).then(
-          (v) => v.totals,
-          (err) => {
-            if (err instanceof HttpError && err.code === 'CART_NOT_FOUND') return null;
-            throw err;
-          },
-        )
+          have: { cart, settings, zones },
+        }).then((v) => v.totals)
       : null,
   ]);
   return {

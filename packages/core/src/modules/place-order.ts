@@ -1,7 +1,7 @@
 import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
-import { loadCartView, loadZoneRows, repriceLines, storeCoords } from './cart.ts';
+import { loadCartRow, loadCartView, loadZoneRows, repriceLines, storeCoords } from './cart.ts';
 import { getProductsById, type ProductDetail } from './catalog.ts';
 import { addressParts, composeAddress, validateCheckout, type CheckoutInput } from './checkout.ts';
 import { couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
@@ -48,21 +48,23 @@ export async function placeOrderTx(
   // executed here in their order, ahead of every query the helpers below send: the cart row first
   // (concurrent checkouts would both see 'open' and mint duplicates), then the advisory lock
   // before reading eligibility (choke point vs concurrent settings/zone/product writes), then
-  // settings, then zones; the payment connection and the cart view are plain reads after them.
-  const lockCart = tx<{ delivery_route: RouteQuote | null }[]>`
-    select delivery_route from carts where tenant_id = ${tenantId} and id = ${cartId} for update
-  `.execute();
+  // settings, then zones; the payment connection and the cart view's lines are plain reads after
+  // them. The view prices from the locked rows themselves.
+  const lockCart = loadCartRow(tx, tenantId, cartId, { forUpdate: true });
   const choke = tx`select pg_advisory_xact_lock(hashtext(${tenantId}))`.execute();
   const lockSettings = tx<StoreSettingsRow[]>`
     select * from store_settings where tenant_id = ${tenantId} for update
-  `.execute();
-  const [[locked], , settingsRows, zones, offer, cart] = await Promise.all([
+  `.then((rows) => rows[0] ?? null);
+  const lockZones = loadZoneRows(tx, tenantId, { forUpdate: true });
+  const [locked, , settings, zones, offer, cart] = await Promise.all([
     lockCart,
     choke,
     lockSettings,
-    loadZoneRows(tx, tenantId, { forUpdate: true }),
+    lockZones,
     onlineOffer(tx, tenantId, provider),
-    loadCartView(tx, tenantId, cartId, now),
+    loadCartView(tx, tenantId, cartId, now, {
+      have: { cart: lockCart, settings: lockSettings, zones: lockZones },
+    }),
   ]);
   // A completed cart must not mint a second order.
   if (cart.status !== 'open') {
@@ -70,7 +72,6 @@ export async function placeOrderTx(
       cartStatus: cart.status,
     });
   }
-  const settings = settingsRows[0] ?? null;
   // Re-validate modifier ids / kit picks against current defs — nothing retired slips through
   // underpriced. The order number rides along: numbering relies on the advisory lock above (else
   // two checkouts read the same max), and only this function inserts orders.
@@ -79,7 +80,7 @@ export async function placeOrderTx(
       tx,
       tenantId,
       cart.items.map((i) => i.productId),
-      { forUpdate: true },
+      { forUpdate: true, tz: settings?.hours?.timezone || 'America/Sao_Paulo' },
     ),
     tx<{ n: number }[]>`
       select coalesce(max(number), 0) + 1 as n from orders where tenant_id = ${tenantId}
@@ -255,10 +256,13 @@ export async function placeOrderTx(
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   const [store] = await Promise.all([
-    // the staff events' store name, and whether this is its first order (counts the row above)
-    tx<{ name: string; orders: number }[]>`
+    // the staff events' store name, whether this is its first order (counts the row above), and
+    // whether the store has the WhatsApp sender or an auto printer the hooks below look for
+    tx<{ name: string; orders: number; whatsapp: boolean; printers: boolean }[]>`
       select name,
-        (select count(*) from (select 1 from orders where tenant_id = ${tenantId} limit 2) o)::int as orders
+        (select count(*) from (select 1 from orders where tenant_id = ${tenantId} limit 2) o)::int as orders,
+        exists (select 1 from store_whatsapp where tenant_id = ${tenantId} and wanted) as whatsapp,
+        exists (select 1 from printers where tenant_id = ${tenantId} and auto and present) as printers
       from tenants where id = ${tenantId}
     `.then((rows) => rows[0]),
     ...cart.items.map(
@@ -335,7 +339,9 @@ export async function placeOrderTx(
       { tenantId, dedupeKey: `onboarding:${tenantId}:first_order` },
     );
   }
-  await enqueueOrderMessageTx(tx, tenantId, orderId, 'placed');
-  await enqueueOrderPrintTx(tx, tenantId, orderId, 'placed');
+  // each hook re-checks everything in a savepoint of its own; the flags only skip a store that
+  // has neither, which is what their first read would have found
+  if (store?.whatsapp !== false) await enqueueOrderMessageTx(tx, tenantId, orderId, 'placed');
+  if (store?.printers !== false) await enqueueOrderPrintTx(tx, tenantId, orderId, 'placed');
   return orderId;
 }

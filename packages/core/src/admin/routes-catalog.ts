@@ -137,49 +137,52 @@ async function productRow(tx: Sql, tenantId: string, id: string): Promise<AdminP
 }
 
 async function productDetail(tx: Sql, tenantId: string, id: string) {
-  const product = await productRow(tx, tenantId, id);
-  const groups = await tx<
-    {
-      id: string;
-      name: string;
-      required: boolean;
-      min_select: number;
-      max_select: number;
-      pricing_rule: string;
-    }[]
-  >`
-    select id, name, required, min_select, max_select, pricing_rule from modifier_groups
-    where tenant_id = ${tenantId} and product_id = ${id} order by sort, name
-  `;
-  const options = await tx<
-    {
-      id: string;
-      group_id: string;
-      name: string;
-      price_delta_cents: number;
-      status: string;
-      max_qty: number;
-      description: string | null;
-      image_url: string | null;
-    }[]
-  >`
-    select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.max_qty, m.description,
-           m.image_url from modifiers m
-      join modifier_groups g on g.id = m.group_id
-    where m.tenant_id = ${tenantId} and g.product_id = ${id} order by m.sort, m.name
-  `;
-  const gallery = await tx`
-    select url, alt, width, height from product_media
-    where tenant_id = ${tenantId} and product_id = ${id} order by sort, id
-  `;
-  const sales = (
-    await tx<{ qty: number; revenueCents: number }[]>`
+  // independent reads in one batch; only a kit's slots wait for the product's kind
+  const [product, groups, options, gallery, [sales], storefront] = await Promise.all([
+    productRow(tx, tenantId, id),
+    tx<
+      {
+        id: string;
+        name: string;
+        required: boolean;
+        min_select: number;
+        max_select: number;
+        pricing_rule: string;
+      }[]
+    >`
+      select id, name, required, min_select, max_select, pricing_rule from modifier_groups
+      where tenant_id = ${tenantId} and product_id = ${id} order by sort, name
+    `,
+    tx<
+      {
+        id: string;
+        group_id: string;
+        name: string;
+        price_delta_cents: number;
+        status: string;
+        max_qty: number;
+        description: string | null;
+        image_url: string | null;
+      }[]
+    >`
+      select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.max_qty, m.description,
+             m.image_url from modifiers m
+        join modifier_groups g on g.id = m.group_id
+      where m.tenant_id = ${tenantId} and g.product_id = ${id} order by m.sort, m.name
+    `,
+    tx`
+      select url, alt, width, height from product_media
+      where tenant_id = ${tenantId} and product_id = ${id} order by sort, id
+    `,
+    tx<{ qty: number; revenueCents: number }[]>`
       select coalesce(sum(i.qty), 0)::int as qty, coalesce(sum(i.line_total_cents), 0)::int as "revenueCents"
       from order_items i join orders o on o.id = i.order_id
       where i.tenant_id = ${tenantId} and i.product_id = ${id}
         and o.state not in ('cancelled', 'refunded') and o.placed_at > now() - interval '30 days'
-    `
-  )[0]!;
+    `,
+    // what the shopper sees now — the storefront's own summary, schedules in Core's words
+    storefrontPreview(tx, tenantId, id),
+  ]);
   return {
     product: {
       ...product,
@@ -204,9 +207,8 @@ async function productDetail(tx: Sql, tenantId: string, id: string) {
       })),
       gallery,
       comboSlots: product.kind === 'combo' ? await loadComboSlots(tx, tenantId, id) : [],
-      sales30: sales,
-      // what the shopper sees now — the storefront's own summary, schedules in Core's words
-      storefront: (await storefrontPreview(tx, tenantId, id))!,
+      sales30: sales!,
+      storefront: storefront!,
     },
   };
 }

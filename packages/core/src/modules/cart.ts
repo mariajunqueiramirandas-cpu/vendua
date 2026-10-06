@@ -608,18 +608,44 @@ async function priceItems(
   }));
 }
 
-/** Cart must exist and be open; a completed cart is 409, not 404. */
-export async function assertCartOpen(tx: Sql, tenantId: string, cartId: string): Promise<void> {
+/** The cart columns its view reads. */
+export interface CartRow {
+  id: string;
+  status: CartView['status'];
+  delivery: CartDelivery | null;
+  delivery_route: RouteQuote | null;
+  coupon_code: string | null;
+}
+
+export function loadCartRow(
+  tx: Sql,
+  tenantId: string,
+  cartId: string,
+  opts: { forUpdate?: boolean } = {},
+): Promise<CartRow | undefined> {
+  const lock = opts.forUpdate ? tx`for update` : tx``;
+  return tx<CartRow[]>`
+    select id, status, delivery, delivery_route, coupon_code from carts
+    where tenant_id = ${tenantId} and id = ${cartId} ${lock}
+  `.then((rows) => rows[0]);
+}
+
+export function loadStoreSettings(tx: Sql, tenantId: string): Promise<StoreSettingsRow | null> {
+  return tx<StoreSettingsRow[]>`select * from store_settings where tenant_id = ${tenantId}`.then(
+    (rows) => rows[0] ?? null,
+  );
+}
+
+/** Cart must exist and be open; a completed cart is 409, not 404. Returns the locked row. */
+export async function assertCartOpen(tx: Sql, tenantId: string, cartId: string): Promise<CartRow> {
   // FOR UPDATE serializes mutations with checkout — a mutation lands
   // before or re-reads the completed status and 409s
-  const rows = await tx<{ status: string }[]>`
-    select status from carts where tenant_id = ${tenantId} and id = ${cartId} for update
-  `;
-  const cart = rows[0];
+  const cart = await loadCartRow(tx, tenantId, cartId, { forUpdate: true });
   if (!cart) throw new HttpError(404, 'CART_NOT_FOUND', 'cart not found');
   if (cart.status !== 'open') {
     throw new HttpError(409, 'CART_NOT_OPEN', 'cart is not open', { cartStatus: cart.status });
   }
+  return cart;
 }
 
 export interface ZoneRow extends ZoneLike {
@@ -692,30 +718,33 @@ export async function loadCartView(
   now = new Date(),
   /** previews: totals for this payment method / this delivery address (the quote), priced on
    *  this road leg (the quote's own; else the one stored with the cart's address) */
-  opts: { paymentMethod?: string | null; delivery?: CartDelivery; route?: RouteQuote | null } = {},
+  opts: {
+    paymentMethod?: string | null;
+    delivery?: CartDelivery;
+    route?: RouteQuote | null;
+    /** rows this tx already read (or is reading), so the view doesn't read them again */
+    have?: {
+      cart?: CartRow | PromiseLike<CartRow | undefined>;
+      /** only for a cart just created: [] */
+      lines?: readonly ItemRow[];
+      settings?: StoreSettingsRow | null | PromiseLike<StoreSettingsRow | null>;
+      zones?: ZoneRow[] | PromiseLike<ZoneRow[]>;
+    };
+  } = {},
 ): Promise<CartView> {
+  const have = opts.have ?? {};
+  // zones only price a delivery: with the cart in hand, one that isn't (nor quoted as one) skips them
+  const known = have.cart && !('then' in have.cart) ? have.cart : null;
+  const noZones = known !== null && (opts.delivery ?? known.delivery)?.mode !== 'delivery';
   // independent reads go out together — postgres.js pipelines them on the tx's connection
-  const [carts, rows, settingsRows, zones] = await Promise.all([
-    tx<
-      {
-        id: string;
-        status: CartView['status'];
-        delivery: CartDelivery | null;
-        delivery_route: RouteQuote | null;
-        coupon_code: string | null;
-      }[]
-    >`
-      select id, status, delivery, delivery_route, coupon_code from carts
-      where tenant_id = ${tenantId} and id = ${cartId}
-    `,
-    loadItemRows(tx, tenantId, cartId),
-    tx<StoreSettingsRow[]>`select * from store_settings where tenant_id = ${tenantId}`,
-    loadZoneRows(tx, tenantId),
+  const [cart, rows, settings, zones] = await Promise.all([
+    have.cart ?? loadCartRow(tx, tenantId, cartId),
+    have.lines ?? loadItemRows(tx, tenantId, cartId),
+    have.settings !== undefined ? have.settings : loadStoreSettings(tx, tenantId),
+    have.zones ?? (noZones ? [] : loadZoneRows(tx, tenantId)),
   ]);
-  const cart = carts[0];
   if (!cart) throw new HttpError(404, 'CART_NOT_FOUND', 'cart not found');
-  const settings = settingsRows[0];
-  if (opts.delivery) cart.delivery = opts.delivery;
+  const delivery = opts.delivery ?? cart.delivery;
   const [items, couponRow] = await Promise.all([
     priceItems(tx, tenantId, rows, settings?.hours?.timezone || 'America/Sao_Paulo'),
     cart.coupon_code ? loadCoupon(tx, tenantId, cart.coupon_code) : null,
@@ -725,12 +754,12 @@ export async function loadCartView(
   let deliveryFee = 0;
   let effectiveMinOrder = settings?.min_order_cents ?? 0;
   let match: ZoneMatch<ZoneRow | DistanceZone> | null = null;
-  if (cart.delivery?.mode === 'delivery') {
+  if (delivery?.mode === 'delivery') {
     match = resolveDelivery(
       zones,
       {
-        neighborhood: cart.delivery.neighborhood,
-        coords: validCoords(cart.delivery.lat, cart.delivery.lng),
+        neighborhood: delivery.neighborhood,
+        coords: validCoords(delivery.lat, delivery.lng),
       },
       storeCoords(settings),
       deliveryPricing(settings, opts.route ?? cart.delivery_route),
@@ -787,9 +816,9 @@ export async function loadCartView(
       paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, opts.paymentMethod)),
     ),
     // a zero fee can mean a free zone — branch on zoneId, not the amount
-    delivery: cart.delivery
+    delivery: delivery
       ? {
-          ...cart.delivery,
+          ...delivery,
           zoneId: match?.zone.id ?? null,
           zoneName: match?.zone.name ?? null,
           distanceKm: match?.distanceKm ?? null,
@@ -817,9 +846,11 @@ export async function addItem(
   cartId: string,
   input: CartItemIn,
   getProductById: (tx: Sql, tenantId: string, id: string) => Promise<ProductDetail | null>,
+  /** the cart's locked row and the store's settings, when the caller holds them */
+  have: { cart?: CartRow; settings?: StoreSettingsRow | null } = {},
 ): Promise<{ cart: CartView; added: AddedLine }> {
   const added = await insertLine(tx, tenantId, cartId, input, getProductById);
-  return { cart: await loadCartView(tx, tenantId, cartId), added };
+  return { cart: await loadCartView(tx, tenantId, cartId, new Date(), { have }), added };
 }
 
 /** What one add put in the cart: `qty` is this call's, priced in Core. */
@@ -841,12 +872,10 @@ export async function insertLine(
   if (!Number.isInteger(input.qty) || input.qty <= 0 || input.qty > 99) {
     throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 1 and 99');
   }
-  // the cart's lines (for the stock check below) ride along with the product read
+  // the cart's lines and their products' stock (for the check below) ride along with the product read
   const [product, existing] = await Promise.all([
     getProductById(tx, tenantId, input.productId),
-    tx<
-      { product_id: string; qty: number; combo_selections: ComboSelection[] }[]
-    >`select product_id, qty, combo_selections from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId}`,
+    loadStockLines(tx, tenantId, cartId),
   ]);
   if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
   // freeze the accepted price for the cart view; checkout re-checks it
@@ -862,6 +891,10 @@ export async function insertLine(
       ...existing.map((e) => ({ productId: e.product_id, qty: e.qty, combo: e.combo_selections })),
       { productId: product.id, qty: input.qty, combo: selections },
     ]),
+    new Map([
+      ...stockOf(existing),
+      [product.id, { name: product.name, stock: product.stockQuantity }],
+    ]),
   );
 
   // same product + modifier set + kit composition merges into one line; merged
@@ -869,19 +902,17 @@ export async function insertLine(
   // `added` reads the row written: a merge keeps the line's frozen price (checkout reprices)
   let written: { id: string; unit_price_cents: number };
   try {
-    // the cart's touch goes out with the insert (a failed insert fails it too, first error wins)
-    const [rows] = await Promise.all([
-      tx<{ id: string; unit_price_cents: number }[]>`
-        insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids, modifier_qty, unit_price_cents,
-                                modifier_snapshot, combo_selections, combo_snapshot)
-        values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)}, ${tx.json(modifierQty)},
-                ${line.unitPriceCents}, ${tx.json(line.snapshot as never)}, ${tx.json(selections as never)}, ${tx.json(picks as never)})
-        on conflict (cart_id, product_id, modifier_ids, modifier_qty, combo_selections)
-        do update set qty = cart_items.qty + excluded.qty
-        returning id, unit_price_cents
-      `.execute(),
-      tx`update carts set updated_at = now() where id = ${cartId}`.execute(),
-    ]);
+    // the cart's touch rides in the insert's statement (a failed insert fails it too)
+    const rows = await tx<{ id: string; unit_price_cents: number }[]>`
+      with touched as (update carts set updated_at = now() where id = ${cartId})
+      insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids, modifier_qty, unit_price_cents,
+                              modifier_snapshot, combo_selections, combo_snapshot)
+      values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)}, ${tx.json(modifierQty)},
+              ${line.unitPriceCents}, ${tx.json(line.snapshot as never)}, ${tx.json(selections as never)}, ${tx.json(picks as never)})
+      on conflict (cart_id, product_id, modifier_ids, modifier_qty, combo_selections)
+      do update set qty = cart_items.qty + excluded.qty
+      returning id, unit_price_cents
+    `;
     written = rows[0]!;
   } catch (err) {
     if ((err as { code?: string }).code === '23514') {
@@ -941,9 +972,7 @@ export async function assertLineQty(
   itemId: string,
   qty: number,
 ): Promise<void> {
-  const lines = await tx<
-    { id: string; product_id: string; qty: number; combo_selections: ComboSelection[] }[]
-  >`select id, product_id, qty, combo_selections from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId}`;
+  const lines = await loadStockLines(tx, tenantId, cartId);
   await assertStock(
     tx,
     tenantId,
@@ -954,5 +983,27 @@ export async function assertLineQty(
         combo: l.combo_selections,
       })),
     ),
+    stockOf(lines),
   );
 }
+
+/** The cart's lines with their products' stock: assertStock reads only kit picks beyond them. */
+function loadStockLines(tx: Sql, tenantId: string, cartId: string) {
+  return tx<
+    {
+      id: string;
+      product_id: string;
+      qty: number;
+      combo_selections: ComboSelection[];
+      name: string;
+      stock_quantity: number | null;
+    }[]
+  >`
+    select ci.id, ci.product_id, ci.qty, ci.combo_selections, p.name, p.stock_quantity
+    from cart_items ci join products p on p.id = ci.product_id
+    where ci.tenant_id = ${tenantId} and ci.cart_id = ${cartId}
+  `;
+}
+
+const stockOf = (lines: { product_id: string; name: string; stock_quantity: number | null }[]) =>
+  new Map(lines.map((l) => [l.product_id, { name: l.name, stock: l.stock_quantity }]));

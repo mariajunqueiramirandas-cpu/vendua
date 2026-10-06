@@ -70,17 +70,23 @@ export async function drawStock(tx: Sql, tenantId: string, demand: Map<string, n
   );
 }
 
-/** Best-effort early check (add/patch) so the customer hears about it before checkout. */
-export async function assertStock(tx: Sql, tenantId: string, demand: Map<string, number>) {
-  const ids = [...demand.keys()];
-  if (ids.length === 0) return;
-  const rows = await tx<{ id: string; name: string; stock_quantity: number | null }[]>`
-    select id, name, stock_quantity from products where tenant_id = ${tenantId} and id = any(${ids}::uuid[])
-  `;
-  const short = shortfall(
-    demand,
-    new Map(rows.map((r) => [r.id, { name: r.name, stock: r.stock_quantity }])),
-  );
+/** Best-effort early check (add/patch) so the customer hears about it before checkout.
+ *  `known`: products the caller already read in this tx; only the rest are read here. */
+export async function assertStock(
+  tx: Sql,
+  tenantId: string,
+  demand: Map<string, number>,
+  known: Map<string, { name: string; stock: number | null }> = new Map(),
+) {
+  const ids = [...demand.keys()].filter((id) => !known.has(id));
+  const rows = ids.length
+    ? await tx<{ id: string; name: string; stock_quantity: number | null }[]>`
+        select id, name, stock_quantity from products where tenant_id = ${tenantId} and id = any(${ids}::uuid[])
+      `
+    : [];
+  const stock = new Map(known);
+  for (const r of rows) stock.set(r.id, { name: r.name, stock: r.stock_quantity });
+  const short = shortfall(demand, stock);
   if (short) throw short;
 }
 

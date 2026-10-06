@@ -6,6 +6,7 @@ import {
   ORDER_STATES,
   canTransition,
   loadOrderView,
+  loadOrderViews,
   recordOrderStep,
   transitionOrder,
   type DeliveryMode,
@@ -85,10 +86,12 @@ export function orderListColumns(tx: Sql) {
   `;
 }
 
-async function views(tx: Sql, tenantId: string, ids: { id: string }[]): Promise<OrderView[]> {
-  const out: OrderView[] = [];
-  for (const { id } of ids) out.push(await loadOrderView(tx, tenantId, id));
-  return out;
+function views(tx: Sql, tenantId: string, ids: { id: string }[]): Promise<OrderView[]> {
+  return loadOrderViews(
+    tx,
+    tenantId,
+    ids.map((r) => r.id),
+  );
 }
 
 /** An admin request (or an automatic one) to give money back; `key` makes it replayable. */
@@ -444,32 +447,34 @@ export function mountOrders(d: AdminDeps) {
   admin.get(
     '/orders/board',
     read('attendant', async (tx, t) => {
-      const tz = await storeTz(tx, t.id);
-      const ids = await tx<{ id: string }[]>`
-        select id from orders
-        where tenant_id = ${t.id} and (
-          (state = any(${ACTIVE}) and (scheduled_for is null or scheduled_for <= (now() at time zone ${tz})::date))
-          or (state = any(${DONE}) and (updated_at at time zone ${tz})::date = (now() at time zone ${tz})::date)
-        )
-        order by placed_at
-        limit 200
-      `;
-      const upcoming = (
-        await tx<{ n: number }[]>`
+      const settings = (
+        await tx<{ tz: string | null; m: number }[]>`
+          select hours ->> 'timezone' as tz, coalesce(accept_target_minutes, 5) as m
+          from store_settings where tenant_id = ${t.id}
+        `
+      )[0];
+      const tz = settings?.tz || 'America/Sao_Paulo';
+      // the board's orders (with their views) and the upcoming count go out together
+      const [orders, [upcoming]] = await Promise.all([
+        tx<{ id: string }[]>`
+          select id from orders
+          where tenant_id = ${t.id} and (
+            (state = any(${ACTIVE}) and (scheduled_for is null or scheduled_for <= (now() at time zone ${tz})::date))
+            or (state = any(${DONE}) and (updated_at at time zone ${tz})::date = (now() at time zone ${tz})::date)
+          )
+          order by placed_at
+          limit 200
+        `.then((ids) => views(tx, t.id, ids)),
+        tx<{ n: number }[]>`
           select count(*)::int as n from orders
           where tenant_id = ${t.id} and state = any(${ACTIVE})
             and scheduled_for > (now() at time zone ${tz})::date
-        `
-      )[0]!.n;
-      const target = (
-        await tx<{ m: number }[]>`
-          select coalesce(accept_target_minutes, 5) as m from store_settings where tenant_id = ${t.id}
-        `
-      )[0]?.m;
+        `,
+      ]);
       return {
-        orders: await views(tx, t.id, ids),
-        scheduledUpcoming: upcoming,
-        acceptTargetMinutes: target ?? 5,
+        orders,
+        scheduledUpcoming: upcoming!.n,
+        acceptTargetMinutes: settings?.m ?? 5,
         now: new Date().toISOString(),
       };
     }),
@@ -553,25 +558,30 @@ export function mountOrders(d: AdminDeps) {
     '/orders/:id',
     read('attendant', async (tx, t, _m, c) => {
       const id = uuidParam(c, 'id');
-      const order = await loadOrderView(tx, t.id, id);
-      const phone = (
-        await tx<{ customer_phone: string | null }[]>`
-          select customer_phone from orders where tenant_id = ${t.id} and id = ${id}
-        `
-      )[0]?.customer_phone;
-      const customer = phone
-        ? (
-            await tx<{ orders: number; firstAt: string; spentCents: number }[]>`
-              select count(*)::int as orders, min(placed_at) as "firstAt",
-                     coalesce(sum(total_cents) filter (where state not in ('cancelled', 'refunded')), 0)::int as "spentCents"
-              from orders where tenant_id = ${t.id} and customer_phone = ${phone}
-            `
-          )[0]
-        : null;
+      // one batch: the view, the customer's totals (keyed by this order's phone) and the payments
+      const [order, [customer], payments] = await Promise.all([
+        loadOrderView(tx, t.id, id),
+        tx<{ phone: string | null; orders: number; firstAt: string; spentCents: number }[]>`
+          select (select customer_phone from orders where tenant_id = ${t.id} and id = ${id}) as phone,
+                 count(*)::int as orders, min(placed_at) as "firstAt",
+                 coalesce(sum(total_cents) filter (where state not in ('cancelled', 'refunded')), 0)::int as "spentCents"
+          from orders
+          where tenant_id = ${t.id}
+            and customer_phone = (select customer_phone from orders where tenant_id = ${t.id} and id = ${id})
+        `,
+        orderPayments(tx, t.id, id),
+      ]);
       return {
         order,
-        customer: customer ? { phone, ...customer } : null,
-        payments: await orderPayments(tx, t.id, id),
+        customer: customer?.phone
+          ? {
+              phone: customer.phone,
+              orders: customer.orders,
+              firstAt: customer.firstAt,
+              spentCents: customer.spentCents,
+            }
+          : null,
+        payments,
       };
     }),
   );
@@ -591,36 +601,41 @@ export function mountOrders(d: AdminDeps) {
         ? null
         : int(body.prepMinutes, 'prepMinutes', 1, 600);
     const key = requestKey(c);
+    let refunded = 0;
     // Before the recorded tx, and outside any tx: money captured online goes back to the shopper
     // (if MP refuses, the order is untouched and the code says why), unpaid attempts stop.
     // A replay finds the order already moved (no refund) or its own reservation (no second one).
-    const pre = await withTenant(
-      d.sql,
-      t0.id,
-      async (tx) =>
-        (
-          await tx<
-            {
-              state: OrderState;
-              mode: DeliveryMode;
-              payment: { online?: boolean; status?: string };
-            }[]
-          >`
-            select state, delivery ->> 'mode' as mode, payment
-            from orders where tenant_id = ${t0.id} and id = ${id}
-          `
-        )[0],
-    );
-    if (!pre) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+    // Only a cancel or a refund touches money; every other step goes straight to its tx.
+    const pre =
+      to === 'cancelled' || to === 'refunded'
+        ? await withTenant(
+            d.sql,
+            t0.id,
+            async (tx) =>
+              (
+                await tx<
+                  {
+                    state: OrderState;
+                    mode: DeliveryMode;
+                    payment: { online?: boolean; status?: string };
+                  }[]
+                >`
+                  select state, delivery ->> 'mode' as mode, payment
+                  from orders where tenant_id = ${t0.id} and id = ${id}
+                `
+              )[0] ?? null,
+          )
+        : undefined;
+    if (pre === null) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
     // cancelling money captured online refunds it: the same role as an explicit refund
     if (
+      pre &&
       to === 'cancelled' &&
       pre.payment.online &&
       PAID_ONLINE.includes(String(pre.payment.status))
     )
       need(c, 'manager');
-    let refunded = 0;
-    if (canTransition(pre.state, to, pre.mode) && pre.payment.online) {
+    if (pre && canTransition(pre.state, to, pre.mode) && pre.payment.online) {
       if (
         (to === 'cancelled' || to === 'refunded') &&
         PAID_ONLINE.includes(String(pre.payment.status))
@@ -658,15 +673,19 @@ export function mountOrders(d: AdminDeps) {
           `;
       }
       await transitionOrder(tx, t.id, id, to, 'merchant', meta);
-      await audit(tx, t.id, m, {
-        action: `order.${to}`,
-        entity: 'order',
-        entityId: id,
-        summary: `pedido #${before.number}: ${STATE_LABEL[before.state]} → ${STATE_LABEL[to]}${reason ? ` (${reason})` : ''}${refunded ? ` · estornou ${brl(refunded)} no Mercado Pago` : ''}`,
-        before: { state: before.state },
-        after: { state: to, ...meta },
-      });
-      return { status: 200, body: { order: await loadOrderView(tx, t.id, id) } };
+      // the audit row and the answer's read go out together
+      const [, order] = await Promise.all([
+        audit(tx, t.id, m, {
+          action: `order.${to}`,
+          entity: 'order',
+          entityId: id,
+          summary: `pedido #${before.number}: ${STATE_LABEL[before.state]} → ${STATE_LABEL[to]}${reason ? ` (${reason})` : ''}${refunded ? ` · estornou ${brl(refunded)} no Mercado Pago` : ''}`,
+          before: { state: before.state },
+          after: { state: to, ...meta },
+        }),
+        loadOrderView(tx, t.id, id),
+      ]);
+      return { status: 200, body: { order } };
     })(c);
     if (res.status === 200 && (to === 'cancelled' || to === 'refunded'))
       await refundLeftovers(pay, t0.id, id);

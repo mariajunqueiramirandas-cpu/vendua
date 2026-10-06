@@ -56,6 +56,7 @@ import {
   addItem,
   assertCartOpen,
   loadCartView,
+  loadStoreSettings,
   loadZoneRows,
   distancePricingOf,
   priceLine,
@@ -963,9 +964,15 @@ export function createApp({
       }
     }
     return idempotency(sql, async (_c, tx) => {
-      const { cartId, sessionToken } = await createCartTx(tx, tenant.id, sessionSecret);
-      const cart = await loadCartView(tx, tenant.id, cartId);
-      return { status: 201, body: { sessionToken, cart } };
+      const [created, settings] = await Promise.all([
+        createCartTx(tx, tenant.id, sessionSecret),
+        loadStoreSettings(tx, tenant.id),
+      ]);
+      // a cart just created holds no lines: its view needs only the store's settings
+      const cart = await loadCartView(tx, tenant.id, created.cartId, new Date(), {
+        have: { cart: created.cart, lines: [], settings },
+      });
+      return { status: 201, body: { sessionToken: created.sessionToken, cart } };
     })(c);
   });
 
@@ -984,7 +991,11 @@ export function createApp({
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
-      await assertCartOpen(tx, tenant.id, cartId);
+      // the view's settings (and the product's time zone) ride along with the cart's lock
+      const [locked, settings] = await Promise.all([
+        assertCartOpen(tx, tenant.id, cartId),
+        loadStoreSettings(tx, tenant.id),
+      ]);
       // A malformed uuid would raise 22P02 (500, not a contract 4xx) — validate first.
       const productId = str(body.productId, 'productId', 64);
       if (!UUID_RE.test(productId)) {
@@ -1010,12 +1021,14 @@ export function createApp({
           })
         : [];
       const comboSelections = parseSelections(body.comboSelections);
+      const tz = settings?.hours?.timezone || 'America/Sao_Paulo';
       const { cart, added } = await addItem(
         tx,
         tenant.id,
         cartId,
         { productId, qty, modifierIds, modifiers, comboSelections },
-        getProductById,
+        (t, tid, id) => getProductById(t, tid, id, { tz }),
+        { cart: locked, settings },
       );
       return { status: 200, body: { cart, added } };
     })(c);

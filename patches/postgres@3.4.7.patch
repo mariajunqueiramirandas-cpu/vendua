@@ -1,5 +1,5 @@
 diff --git a/src/index.js b/src/index.js
-index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..6a31308982188b1cd75897c9a11072a1e4c20c63 100644
+index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..4f30fd228e3f8a5587272b3a50630a6027cee4b3 100644
 --- a/src/index.js
 +++ b/src/index.js
 @@ -237,12 +237,21 @@ function Postgres(a, b) {
@@ -61,3 +61,40 @@ index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..6a31308982188b1cd75897c9a11072a1
          c.queue === full
            ? queries.push(q)
            : c.execute(q) || move(c, full)
+@@ -330,8 +351,11 @@ function Postgres(a, b) {
+     if (ending)
+       return query.reject(Errors.connection('CONNECTION_ENDED', options, options))
+ 
++    // venduá patch: the most recently idle connection, not the oldest. A connection prepares each
++    // statement once (a describe round trip that stalls its pipeline), so light traffic stays on
++    // the few connections that have already prepared what it runs instead of cycling through all.
+     if (open.length)
+-      return go(open.shift(), query)
++      return go(open.pop(), query)
+ 
+     if (closed.length)
+       return connect(closed.shift(), query)
+diff --git a/src/queue.js b/src/queue.js
+index c4ef97164f057db99dce1b9af3401dbb1af37e31..3ea8c3ef77aa1c0f224cd3a1626a74e0ef32cd11 100644
+--- a/src/queue.js
++++ b/src/queue.js
+@@ -15,6 +15,19 @@ function Queue(initial = []) {
+         : (xs.splice(index, 1), x)
+     },
+     push: (x) => (xs.push(x), x),
++    // venduá patch: the newest entry, for the pool to hand out its warmest idle connection
++    pop: () => {
++      if (xs.length === index)
++        return undefined
++
++      const out = xs.pop()
++      if (index === xs.length) {
++        index = 0
++        xs = []
++      }
++
++      return out
++    },
+     shift: () => {
+       const out = xs[index++]
+ 
