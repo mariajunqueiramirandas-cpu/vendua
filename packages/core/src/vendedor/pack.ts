@@ -148,9 +148,9 @@ export async function buildPack(tx: Sql, tenantId: string, now: Date): Promise<S
     now,
     6,
   ).map(
-      (d) =>
-        `${d.date}: ${d.closed ? 'fechado' : `${d.open}–${d.close}`}${d.label ? ` (${d.label})` : ''}`,
-    );
+    (d) =>
+      `${d.date}: ${d.closed ? 'fechado' : `${d.open}–${d.close}`}${d.label ? ` (${d.label})` : ''}`,
+  );
 
   return {
     storeName: tenant!.name,
