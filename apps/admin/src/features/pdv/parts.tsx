@@ -266,17 +266,28 @@ export function Totals({
 }) {
   return (
     <dl className={cn('t-body space-y-1', className)} aria-busy={pending || undefined}>
+      {quote && (quote.discountCents || quote.delivery) ? (
+        <div className={cn('flex justify-between text-muted', !fresh && 'opacity-45')}>
+          <dt>Subtotal</dt>
+          <dd className="tnum">{money(quote.subtotalCents)}</dd>
+        </div>
+      ) : null}
       {quote && quote.discountCents ? (
-        <>
-          <div className="flex justify-between text-muted">
-            <dt>Subtotal</dt>
-            <dd className="tnum">{money(quote.subtotalCents)}</dd>
-          </div>
-          <div className="flex justify-between text-success">
-            <dt>Desconto</dt>
-            <dd className="tnum">−{money(quote.discountCents)}</dd>
-          </div>
-        </>
+        <div className={cn('flex justify-between text-success', !fresh && 'opacity-45')}>
+          <dt>Desconto</dt>
+          <dd className="tnum">−{money(quote.discountCents)}</dd>
+        </div>
+      ) : null}
+      {quote?.delivery ? (
+        <div className={cn('flex justify-between gap-3 text-muted', !fresh && 'opacity-45')}>
+          <dt className="min-w-0 truncate">
+            Entrega
+            {quote.delivery.zoneName ? ` · ${quote.delivery.zoneName}` : ' · taxa digitada'}
+          </dt>
+          <dd className="tnum shrink-0">
+            {quote.delivery.feeCents ? `+${money(quote.delivery.feeCents)}` : 'grátis'}
+          </dd>
+        </div>
       ) : null}
       {extra}
       <div className="flex items-baseline justify-between gap-3 pt-1">

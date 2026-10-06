@@ -14,6 +14,7 @@ import { LockedPage, PlanLocked, reasonOf } from '../../ui/PlanLocked.tsx';
 import { DetailSkeleton } from '../../ui/skeletons.tsx';
 import { qk } from '../../lib/query.ts';
 import { Difference, Movements } from './Caixa.tsx';
+import { PrintButton, usePdvPrint } from './print.tsx';
 
 // The closing report: per method what Core expected, what was counted and the difference, then
 // the day's numbers. Everyone sees it once the caixa is closed (attendants counted blind).
@@ -52,6 +53,7 @@ function ReportScreen() {
 
 function ReportView({ r }: { r: Report }) {
   const total = PDV_METHODS.reduce((n, m) => n + (r.differences[m] ?? 0), 0);
+  const printing = usePdvPrint();
   return (
     <>
       <PageHeader
@@ -147,10 +149,14 @@ function ReportView({ r }: { r: Report }) {
           </Card>
         ) : null}
 
-        <ButtonLink to="/pdv/caixa" variant="secondary" replace>
-          voltar ao caixa
-        </ButtonLink>
+        <div className="flex flex-wrap items-center gap-2">
+          <ButtonLink to="/pdv/caixa" variant="secondary" replace>
+            voltar ao caixa
+          </ButtonLink>
+          <PrintButton printing={printing} what={{ kind: 'caixa', id: r.id }} size="md" />
+        </div>
       </div>
+      {printing.sheet}
     </>
   );
 }

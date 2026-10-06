@@ -68,7 +68,10 @@ export const qk = {
     tab: (id: string, ways = 0) => ['pdv', 'tab', id, ways] as const,
     history: ['pdv', 'history'] as const,
     session: (id: string) => ['pdv', 'session', id] as const,
+    tables: ['pdv', 'tables'] as const,
   },
+  pdvCustomer: (phone: string) => ['pdv-customer', phone] as const,
+  pdvGeocode: (address: string) => ['pdv-geocode', address] as const,
   // outside the `pdv` root: a write elsewhere doesn't re-price an open ticket
   pdvQuote: (body: string) => ['pdv-quote', body] as const,
   pdvPix: (cents: number) => ['pdv-pix', cents] as const,

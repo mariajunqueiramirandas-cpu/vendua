@@ -9,6 +9,7 @@ import {
   api,
   ApiError,
   type CaixaDetail,
+  type PdvDeliveryIn,
   type PdvDiscountIn,
   type PdvLineIn,
   type PdvQuote,
@@ -153,7 +154,7 @@ export function useTicket(storageKey: string) {
 }
 export type Ticket = ReturnType<typeof useTicket>;
 
-function useDebounced<T>(v: T, ms: number) {
+export function useDebounced<T>(v: T, ms: number) {
   const [d, setD] = useState(v);
   useEffect(() => {
     const t = setTimeout(() => setD(v), ms);
@@ -162,25 +163,38 @@ function useDebounced<T>(v: T, ms: number) {
   return d;
 }
 
-/** Core prices the ticket (POST /pdv/quote) a beat after the last tap; the screen only shows it. */
-export function useQuote(lines: PickedLine[], discount: PdvDiscountIn | null) {
+/**
+ * Core prices the ticket (POST /pdv/quote) a beat after the last tap; the screen only shows it.
+ * A phone order adds its address (the fee is Core's too); `hold` waits for the address's pin.
+ */
+export function useQuote(
+  lines: PickedLine[],
+  discount: PdvDiscountIn | null,
+  delivery: PdvDeliveryIn | null = null,
+  hold = false,
+) {
   const body = useMemo(
-    () => JSON.stringify({ lines: lines.map(toLineIn), ...(discount ? { discount } : {}) }),
-    [lines, discount],
+    () =>
+      JSON.stringify({
+        lines: lines.map(toLineIn),
+        ...(discount ? { discount } : {}),
+        ...(delivery ? { delivery } : {}),
+      }),
+    [lines, discount, delivery],
   );
   const asked = useDebounced(body, 250);
   const q = useQuery({
     queryKey: qk.pdvQuote(asked),
     queryFn: () => api.pdv.quote(JSON.parse(asked) as Parameters<typeof api.pdv.quote>[0]),
-    enabled: lines.length > 0,
+    enabled: lines.length > 0 && !hold,
     placeholderData: keepPreviousData,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
   });
   const quote: PdvQuote | null = lines.length ? (q.data?.quote ?? null) : null;
   // the total on screen is the one for these exact lines (a sale is refused on any other)
-  const fresh = !!quote && asked === body && !q.isPlaceholderData && !q.error;
-  const err = lines.length && asked === body ? q.error : null;
+  const fresh = !!quote && asked === body && !q.isPlaceholderData && !q.error && !hold;
+  const err = lines.length && asked === body && !hold ? q.error : null;
   const line =
     err instanceof ApiError && typeof err.details?.line === 'number' ? err.details.line : null;
   return {
@@ -188,6 +202,8 @@ export function useQuote(lines: PickedLine[], discount: PdvDiscountIn | null) {
     fresh,
     body,
     pending: lines.length > 0 && !fresh && !err,
+    /** the address isn't one any zone takes (a manager can type the fee) */
+    outOfZone: isCode(err, 'OUT_OF_ZONE'),
     error: err,
     errorLine: line,
     refetch: q.refetch,
@@ -236,6 +252,12 @@ const PDV_ERRORS: Record<string, string> = {
   INVALID_QTY: 'A quantidade vai de 1 a 99.',
   INVALID_PHONE: 'Digite o celular com DDD, como (22) 99999-0000.',
   FORBIDDEN: 'Só gerentes e donos podem fazer isso.',
+  OUT_OF_ZONE: 'Nenhuma zona de entrega da loja atende esse endereço.',
+  CUSTOMER_REQUIRED: 'Uma entrega precisa do nome e do celular do cliente.',
+  INVALID_DELIVERY: 'Confira o endereço da entrega.',
+  INVALID_CHANGE: 'O troco é só para dinheiro, e para um valor igual ou maior que o total.',
+  NO_PRINTERS: 'Nenhuma impressora ligada agora.',
+  PRINTER_REQUIRED: 'Escolha em qual impressora imprimir.',
 };
 
 export function pdvError(e: unknown): string {

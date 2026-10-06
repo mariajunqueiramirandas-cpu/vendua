@@ -34,6 +34,7 @@ import { Bone, RowsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { isCode, pdvError, putCaixa, useCaixa } from './data.ts';
 import { PdvTop, ReasonField } from './parts.tsx';
+import { PrintButton, usePdvPrint } from './print.tsx';
 
 // O caixa: opened with the float in the drawer, it collects every counter payment, sangrias and
 // suprimentos, and closes with a count per method. Managers see what Core expects; attendants
@@ -180,8 +181,18 @@ function OpenDrawer({
   onSheet: (s: 'sangria' | 'suprimento' | 'close') => void;
 }) {
   const manager = useCan('manager');
+  const printing = usePdvPrint();
+  // the partial shows what Core expects: managers only
+  const print = manager ? (
+    <PrintButton
+      printing={printing}
+      what={{ kind: 'caixa', id: caixa.id }}
+      label="imprimir parcial"
+    />
+  ) : null;
   return (
     <div className="space-y-5">
+      {printing.sheet}
       <Card className="flex flex-wrap items-center gap-x-6 gap-y-3 p-5">
         <div className="min-w-0 flex-1">
           <p className="t-caption text-muted">
@@ -213,19 +224,23 @@ function OpenDrawer({
           >
             suprimento
           </Button>
+          {print}
           <Button className="ml-auto" onClick={() => onSheet('close')}>
             fechar caixa
           </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<ArrowCircleDown />}
-          className="min-h-11 md:hidden"
-          onClick={() => onSheet('suprimento')}
-        >
-          suprimento
-        </Button>
+        <div className="flex w-full flex-wrap items-center gap-2 md:hidden">
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<ArrowCircleDown />}
+            className="min-h-11"
+            onClick={() => onSheet('suprimento')}
+          >
+            suprimento
+          </Button>
+          {print}
+        </div>
       </Card>
 
       <section aria-labelledby="formas-t">

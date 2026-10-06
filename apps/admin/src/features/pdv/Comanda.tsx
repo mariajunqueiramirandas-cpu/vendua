@@ -51,6 +51,7 @@ import {
   useTicket,
 } from './data.ts';
 import { PaySheet } from './PaySheet.tsx';
+import { PrintButton, usePdvPrint } from './print.tsx';
 import {
   DiscountSheet,
   discountLabel,
@@ -86,6 +87,7 @@ function TabScreen() {
   const [voiding, setVoiding] = useState<PdvPayment | null>(null);
   const [change, setChange] = useState<PdvPayment | null>(null);
   const [now, setNow] = useState(Date.now());
+  const printing = usePdvPrint();
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
@@ -317,9 +319,9 @@ function TabScreen() {
               />
             ) : null}
 
-            {isOpen ? (
-              <div className="flex flex-wrap gap-2">
-                {manager ? (
+            {isOpen || tab.status === 'closed' ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {isOpen && manager ? (
                   <Button
                     variant="secondary"
                     size="sm"
@@ -330,7 +332,7 @@ function TabScreen() {
                     {tab.discount ? 'mudar desconto' : 'desconto'}
                   </Button>
                 ) : null}
-                {tab.remainingCents > 1 ? (
+                {isOpen && tab.remainingCents > 1 ? (
                   <Button
                     variant={ways ? 'primary' : 'secondary'}
                     size="sm"
@@ -342,6 +344,11 @@ function TabScreen() {
                     dividir a conta
                   </Button>
                 ) : null}
+                <PrintButton
+                  printing={printing}
+                  what={{ kind: 'tab', id: tab.id, ...(isOpen && ways ? { ways } : {}) }}
+                  label={isOpen && ways ? `imprimir conta em ${ways}` : 'imprimir conta'}
+                />
               </div>
             ) : null}
 
@@ -451,6 +458,7 @@ function TabScreen() {
       />
       <CancelRoundSheet round={cancelRound} tabId={tab.id} onClose={() => setCancelRound(null)} />
       <VoidSheet payment={voiding} onClose={() => setVoiding(null)} />
+      {printing.sheet}
     </Body>
   );
 }

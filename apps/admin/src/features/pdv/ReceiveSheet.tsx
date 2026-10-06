@@ -10,8 +10,8 @@ import { isCode, pdvError, usePdvState } from './data.ts';
 import { PaySheet } from './PaySheet.tsx';
 
 /**
- * An order from the storefront, paid at the counter (the kitchen's ready rail says when to
- * charge): its whole total through the caixa, so the money lands in today's count.
+ * An order from the storefront, or a phone order that went out unpaid ("cobrar na entrega"),
+ * paid at the counter: its whole total through the caixa, so the money lands in today's count.
  */
 export default function ReceiveSheet({ order, onClose }: { order: Order; onClose: () => void }) {
   const qc = useQueryClient();
@@ -67,6 +67,13 @@ export default function ReceiveSheet({ order, onClose }: { order: Order; onClose
       paused={receive.isPaused}
       submitLabel="receber"
       onSubmit={(p) => receive.mutate(p)}
+      before={
+        order.payment.provider === 'pdv' && order.payment.changeForCents ? (
+          <p className="t-body text-muted">
+            Na entrega, o cliente ia pagar com {money(order.payment.changeForCents)}.
+          </p>
+        ) : null
+      }
     />
   );
 }

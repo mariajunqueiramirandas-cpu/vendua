@@ -40,7 +40,9 @@ function methodLabel(o: Order) {
   if (o.payment.method === 'mixed' && split?.length)
     return split.map((x) => `${PDV_METHOD_LABEL[x.method]} ${money(x.cents)}`).join(' + ');
   if (o.payment.provider === 'pdv' && o.payment.method !== 'tab')
-    return `${PAY_LABEL[o.payment.method] ?? o.payment.method} no caixa`;
+    return `${PAY_LABEL[o.payment.method] ?? o.payment.method} ${
+      o.payment.status === 'pending' ? 'na entrega' : 'no caixa'
+    }`;
   if (o.payment.method === 'pix')
     return o.payment.online ? 'Pix pelo Mercado Pago' : 'Pix na chave da loja';
   return PAY_LABEL[o.payment.method] ?? o.payment.method;
@@ -56,6 +58,11 @@ function explain(o: Order): string {
         : `${p.provider === 'pdv' ? 'Pago no caixa' : 'Pago'}${p.confirmedBy ? `, recebido por ${p.confirmedBy}` : ''}`;
     case 'pending':
       if (p.method === 'tab') return 'Paga junto com a comanda, quando ela fechar.';
+      // a phone order charged at the door: the money comes back to the caixa
+      if (p.provider === 'pdv')
+        return `Cobrar na entrega${
+          p.changeForCents ? `, com troco para ${money(p.changeForCents)}` : ''
+        }. Quando o dinheiro voltar, receba no caixa.`;
       if (online && p.method === 'pix')
         return p.pix?.expiresAt
           ? `O Mercado Pago confirma sozinho quando o cliente pagar. O Pix vale até ${clock(p.pix.expiresAt)}.`
@@ -110,7 +117,10 @@ export function PaymentSection({
   // a PDV order's money is the caixa's: Core refuses "marcar pago" on it
   const pdv = p.provider === 'pdv';
   const canMarkPaid = !online && !pdv && p.status !== 'paid' && open;
-  const canReceive = pdvOpen && !online && !pdv && p.status !== 'paid' && open;
+  // a PDV order is received at the caixa only when it went out unpaid ("cobrar na entrega");
+  // a comanda's round is paid through its comanda
+  const pdvLater = pdv && p.status === 'pending' && p.method !== 'tab' && !order.delivery.tabId;
+  const canReceive = pdvOpen && !online && (!pdv || pdvLater) && p.status !== 'paid' && open;
 
   return (
     <Card as="section" aria-label="pagamento" className="divide-y divide-line">

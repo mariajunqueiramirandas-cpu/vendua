@@ -259,6 +259,8 @@ export interface Order {
     status: PaymentStatus;
     /** provider 'pdv' with method 'mixed': what each method took */
     pdv?: { method: PdvMethod; cents: number }[];
+    /** cash on delivery: the note the customer pays with */
+    changeForCents?: number | null;
     /** Mercado Pago handles it (webhook-confirmed); false = the merchant confirms by hand */
     online?: boolean;
     paidAt?: string | null;
@@ -1919,7 +1921,60 @@ export interface PdvQuote {
   lines: PdvQuoteLine[];
   subtotalCents: number;
   discountCents: number;
+  /** 0 without a delivery */
+  deliveryFeeCents?: number;
+  delivery?: PdvDeliveryQuote | null;
   totalCents: number;
+}
+/** a phone order's address (docs/features/pdv.md, "Delivery from the counter") */
+export interface PdvDeliveryIn {
+  street: string;
+  number?: string;
+  complement?: string;
+  neighborhood: string;
+  reference?: string;
+  /** 8 digits */
+  cep?: string;
+  lat?: number;
+  lng?: number;
+  /** manager: a fee typed by hand, skips the zones */
+  feeCents?: number;
+}
+export interface PdvDeliveryQuote {
+  feeCents: number;
+  /** null with a hand-typed fee */
+  zoneName: string | null;
+  etaMin: number | null;
+  etaMax: number | null;
+  distanceKm: number | null;
+}
+export interface PdvCustomer {
+  name: string | null;
+  phone: string;
+  orders: number;
+  lastDelivery: {
+    street?: string | null;
+    number?: string | null;
+    complement?: string | null;
+    neighborhood?: string | null;
+    reference?: string | null;
+    cep?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+  } | null;
+}
+export interface PdvArchivedTable extends PdvTable {
+  archivedAt: string;
+}
+export interface PdvTables {
+  tables: PdvTable[];
+  /** newest first */
+  archived: PdvArchivedTable[];
+}
+/** 422 PRINTER_REQUIRED's details: the screen asks which one */
+export interface PdvPrinterChoice {
+  id: string;
+  name: string;
 }
 export interface PdvPayment {
   id: string;
@@ -2627,18 +2682,34 @@ export const api = {
 
   pdv: {
     state: () => get<PdvState>('/pdv/state'),
-    quote: (p: { lines: PdvLineIn[]; discount?: PdvDiscountIn }) =>
+    quote: (p: { lines: PdvLineIn[]; discount?: PdvDiscountIn; delivery?: PdvDeliveryIn }) =>
       send<{ quote: PdvQuote }>('POST', '/pdv/quote', p),
     sale: (p: {
       lines: PdvLineIn[];
       discount?: PdvDiscountIn;
-      mode: 'takeaway' | 'here';
+      mode: 'takeaway' | 'here' | 'delivery';
+      delivery?: PdvDeliveryIn;
       customer?: { name?: string; phone?: string };
       notes?: string;
       payments: PdvPaymentIn[];
+      /** a delivery charged at the door: payments [] */
+      payLater?: { method: PdvMethod; changeForCents?: number };
       quotedTotalCents: number;
       serveNow?: boolean;
     }) => send<{ order: Order; sale: PdvSale }>('POST', '/pdv/sales', p),
+    /** the name and last address this phone ordered with */
+    customer: (phone: string) =>
+      get<{ customer: PdvCustomer | null }>(`/pdv/customer?phone=${encodeURIComponent(phone)}`),
+    geocode: (p: { street: string; number?: string; neighborhood: string; cep?: string }) =>
+      get<{ point: { lat: number; lng: number; precision: string } | null }>(
+        `/pdv/geocode?${new URLSearchParams(
+          Object.entries(p).filter((e): e is [string, string] => !!e[1]),
+        ).toString()}`,
+      ),
+    printTab: (id: string, p: { printerId?: string; ways?: number }) =>
+      send<{ jobIds: string[] }>('POST', `/pdv/tabs/${id}/print`, p),
+    printCaixa: (id: string, p: { printerId?: string }) =>
+      send<{ jobIds: string[] }>('POST', `/pdv/caixa/${id}/print`, p),
     /** the store's static Pix for this amount; null without a Pix key */
     pix: (amountCents: number) =>
       send<{ copyPaste: string | null }>('POST', '/pdv/pix', { amountCents }),
@@ -2683,7 +2754,9 @@ export const api = {
       send<{ tables: PdvTable[] }>('POST', '/pdv/tables', { labels }),
     updateTable: (id: string, patch: { label?: string; sort?: number }) =>
       send<{ table: PdvTable }>('PATCH', `/pdv/tables/${id}`, patch),
-    archiveTable: (id: string) => send<{ tables: PdvTable[] }>('DELETE', `/pdv/tables/${id}`),
+    tables: () => get<PdvTables>('/pdv/tables'),
+    archiveTable: (id: string) => send<PdvTables>('DELETE', `/pdv/tables/${id}`),
+    restoreTable: (id: string) => send<PdvTables>('POST', `/pdv/tables/${id}/restore`),
     settings: (serviceBps: number) =>
       send<{ serviceBps: number }>('PATCH', '/pdv/settings', { serviceBps }),
   },

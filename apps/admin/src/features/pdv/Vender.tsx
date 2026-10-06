@@ -1,7 +1,22 @@
-import { CaretUp, CheckCircle, Percent, Receipt, User } from '@phosphor-icons/react';
+import {
+  CaretUp,
+  ChefHat,
+  CheckCircle,
+  HandCoins,
+  Percent,
+  Receipt,
+  User,
+} from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { api, type PdvDiscountIn, type PdvPaymentIn, type PdvSale } from '../../lib/api.ts';
+import {
+  api,
+  ApiError,
+  type PdvDiscountIn,
+  type PdvMethod,
+  type PdvPaymentIn,
+  type PdvSale,
+} from '../../lib/api.ts';
 import { money } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { parsePhone } from '../../lib/parse.ts';
@@ -29,15 +44,34 @@ import {
   type PickedLine,
   type Ticket,
 } from './data.ts';
+import {
+  addressLine,
+  addressDone,
+  deliveryIn,
+  DeliveryCard,
+  DeliverySheet,
+  fieldError,
+  NO_ADDRESS,
+  useDeliveryPin,
+  whoDone,
+  type Address,
+} from './Delivery.tsx';
 import { PaySheet } from './PaySheet.tsx';
 import { DiscountSheet, discountLabel, PdvTop, TicketLines, Totals } from './parts.tsx';
 import { Picker } from './Picker.tsx';
 
 // Vender: the counter. Tap products into the ticket, Core prices it, "cobrar" takes the money
 // and makes the order. A keyboard works too: typing searches, Enter in the search adds the first
-// hit, Enter anywhere else charges.
+// hit, Enter anywhere else charges. "Entrega" is a phone order: the customer and address first,
+// Core's fee in the total, and paid now or charged at the door.
 
-type Mode = 'takeaway' | 'here';
+type Mode = 'takeaway' | 'here' | 'delivery';
+type PayLater = { method: PdvMethod; changeForCents?: number };
+/** what the success sheet says about the sale beyond Core's answer */
+interface Done {
+  sale: PdvSale;
+  delivery: { name: string; address: string; later: PayLater | null } | null;
+}
 interface Customer {
   name: string;
   phone: string;
@@ -61,13 +95,25 @@ function Counter() {
   const [customer, setCustomer] = useState<Customer>(NO_CUSTOMER);
   const [discount, setDiscount] = useState<PdvDiscountIn | null>(null);
   const [serveNow, setServeNow] = useState(false);
-  const quote = useQuote(ticket.lines, manager ? discount : null);
+  const [address, setAddress] = useState<Address>(NO_ADDRESS);
+  const [feeCents, setFeeCents] = useState<number | null>(null);
+  const [deliveryOpen, setDeliveryOpen] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const delivering = mode === 'delivery';
+  const pin = useDeliveryPin(address, delivering);
+  const delivery = useMemo(
+    () => (delivering ? deliveryIn(address, pin.pin, manager ? feeCents : null) : null),
+    [delivering, address, pin.pin, manager, feeCents],
+  );
+  const deliveryReady = addressDone(address) && whoDone(customer);
+  const ready = !delivering || deliveryReady;
+  const quote = useQuote(ticket.lines, manager ? discount : null, delivery, pin.waiting);
   const putQuote = usePutQuote();
   const [payOpen, setPayOpen] = useState(false);
   const [ticketOpen, setTicketOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
   const [customerOpen, setCustomerOpen] = useState(false);
-  const [done, setDone] = useState<PdvSale | null>(null);
+  const [done, setDone] = useState<Done | null>(null);
   const search = useRef<HTMLInputElement>(null);
 
   const counts = useMemo(() => {
@@ -78,12 +124,14 @@ function Counter() {
   const items = ticket.lines.reduce((n, l) => n + l.qty, 0);
 
   const sale = useMutation({
-    mutationFn: (payments: PdvPaymentIn[]) => {
+    mutationFn: ({ payments, later }: { payments: PdvPaymentIn[]; later?: PayLater }) => {
       const name = customer.name.trim();
       return api.pdv.sale({
         lines: ticket.lines.map(toLineIn),
         ...(manager && discount ? { discount } : {}),
         mode,
+        ...(delivering && delivery ? { delivery } : {}),
+        ...(later ? { payLater: later } : {}),
         ...(name || customer.digits
           ? {
               customer: {
@@ -95,24 +143,58 @@ function Counter() {
         ...(customer.notes.trim() ? { notes: customer.notes.trim().slice(0, 500) } : {}),
         payments,
         quotedTotalCents: quote.quote!.totalCents,
-        ...(serveNow ? { serveNow: true } : {}),
+        ...(serveNow && !delivering ? { serveNow: true } : {}),
       });
     },
-    onSuccess: (r) => {
+    onSuccess: (r, v) => {
+      const done: Done = {
+        sale: r.sale,
+        delivery: delivering
+          ? {
+              name: customer.name.trim(),
+              address: addressLine(address),
+              later: v.later ?? null,
+            }
+          : null,
+      };
       haptic.commit();
       qc.setQueryData(qk.order(r.order.id), { order: r.order, customer: null });
       void qc.invalidateQueries({ queryKey: ['pdv'] });
       void qc.invalidateQueries({ queryKey: qk.board });
       ticket.clear();
       setCustomer(NO_CUSTOMER);
+      setAddress(NO_ADDRESS);
+      setFeeCents(null);
+      setFieldErrors({});
       setDiscount(null);
       setServeNow(false);
       setPayOpen(false);
       setTicketOpen(false);
-      setDone(r.sale);
+      // the pay sheet lets go of its history entry first, or its back() would close this one
+      setTimeout(() => setDone(done), 320);
     },
     onError: (e) => {
       haptic.error();
+      // who or where is missing or wrong: back to the delivery sheet, on that field
+      const field = e instanceof ApiError ? e.details?.field : null;
+      if (
+        (isCode(e, 'CUSTOMER_REQUIRED') ||
+          isCode(e, 'INVALID_DELIVERY') ||
+          isCode(e, 'INVALID_PHONE')) &&
+        delivering
+      ) {
+        const f = typeof field === 'string' ? field : 'customer.phone';
+        setFieldErrors({ [f]: fieldError(f) ?? pdvError(e) });
+        setPayOpen(false);
+        setTimeout(() => setDeliveryOpen(true), 320);
+        return;
+      }
+      if (isCode(e, 'OUT_OF_ZONE')) {
+        setPayOpen(false);
+        void quote.refetch();
+        toast.error(pdvError(e));
+        return;
+      }
       if (isCode(e, 'PRICES_CHANGED') && e.details?.quote) {
         putQuote(quote.body, e.details.quote as Parameters<typeof putQuote>[1]);
         toast.error(pdvError(e));
@@ -125,13 +207,15 @@ function Counter() {
 
   const charge = () => {
     if (!ticket.lines.length || sale.isPending) return;
+    // a phone order needs who and where before anything is charged
+    if (!ready) return setDeliveryOpen(true);
     if (quote.error) return toast.error(pdvError(quote.error));
     if (!quote.fresh) return toast('Calculando o total, um instante.', { tone: 'info' });
     setPayOpen(true);
   };
   const chargeRef = useRef(charge);
   chargeRef.current = charge;
-  const sheets = payOpen || ticketOpen || discountOpen || customerOpen || !!done;
+  const sheets = payOpen || ticketOpen || discountOpen || customerOpen || deliveryOpen || !!done;
   const sheetsRef = useRef(sheets);
   sheetsRef.current = sheets;
 
@@ -167,24 +251,46 @@ function Counter() {
     toast('Conta limpa.', { undo: () => ticket.restore(before) });
   };
 
+  // one sheet at a time: from the Conta sheet, the next opens once it has let go of history
+  const fromPanel = (inSheet: boolean, open: () => void) => {
+    if (!inSheet) return open();
+    setTicketOpen(false);
+    setTimeout(open, 320);
+  };
+
   const panel = (inSheet: boolean) => (
     <TicketPanel
       ticket={ticket}
       quote={quote}
       mode={mode}
-      setMode={setMode}
+      setMode={(m) => {
+        setMode(m);
+        if (m === 'delivery' && !deliveryReady) fromPanel(inSheet, () => setDeliveryOpen(true));
+      }}
       customer={customer}
       discount={manager ? discount : null}
       manager={manager}
+      delivery={
+        delivering ? (
+          <DeliveryCard
+            who={customer}
+            address={address}
+            quote={quote.quote}
+            fresh={quote.fresh}
+            outOfZone={quote.outOfZone}
+            missedPin={pin.missed}
+            manager={manager}
+            feeCents={feeCents}
+            onFee={setFeeCents}
+            onEdit={() => fromPanel(inSheet, () => setDeliveryOpen(true))}
+          />
+        ) : null
+      }
       onCustomer={() => setCustomerOpen(true)}
       onDiscount={() => setDiscountOpen(true)}
       onClear={clear}
-      onCharge={() => {
-        if (!inSheet) return charge();
-        setTicketOpen(false);
-        // one sheet at a time: the next opens once the first has let go of history
-        setTimeout(charge, 320);
-      }}
+      ready={ready}
+      onCharge={() => fromPanel(inSheet, charge)}
       busy={sale.isPending}
       inSheet={inSheet}
     />
@@ -252,8 +358,10 @@ function Counter() {
         caixaOpen={caixaOpen}
         busy={sale.isPending}
         paused={sale.isPaused}
-        serveNow={{ value: serveNow, onChange: setServeNow }}
-        onSubmit={(p) => sale.mutate(p)}
+        {...(delivering
+          ? { later: { onSubmit: (later: PayLater) => sale.mutate({ payments: [], later }) } }
+          : { serveNow: { value: serveNow, onChange: setServeNow } })}
+        onSubmit={(payments) => sale.mutate({ payments })}
       />
 
       {manager ? (
@@ -278,7 +386,21 @@ function Counter() {
         }}
       />
 
-      <DoneSheet sale={done} onClose={() => setDone(null)} />
+      <DeliverySheet
+        open={deliveryOpen}
+        onOpenChange={setDeliveryOpen}
+        who={customer}
+        address={address}
+        errors={fieldErrors}
+        onSave={(c, a) => {
+          setCustomer(c);
+          setAddress(a);
+          setFieldErrors({});
+          setDeliveryOpen(false);
+        }}
+      />
+
+      <DoneSheet done={done} onClose={() => setDone(null)} />
     </div>
   );
 }
@@ -291,13 +413,17 @@ function TicketPanel({
   customer,
   discount,
   manager,
+  delivery,
   onCustomer,
   onDiscount,
   onClear,
   onCharge,
+  ready,
   busy,
   inSheet,
 }: {
+  /** a phone order without who and where: "cobrar" asks for them first */
+  ready: boolean;
   ticket: Ticket;
   quote: ReturnType<typeof useQuote>;
   mode: Mode;
@@ -305,6 +431,8 @@ function TicketPanel({
   customer: Customer;
   discount: PdvDiscountIn | null;
   manager: boolean;
+  /** a phone order's who and where (and Core's zone, time and fee) */
+  delivery: React.ReactNode;
   onCustomer: () => void;
   onDiscount: () => void;
   onClear: () => void;
@@ -317,14 +445,16 @@ function TicketPanel({
   const body = (
     <>
       <Segmented
-        label="para levar ou comer aqui"
+        label="para levar, comer aqui ou entrega"
         value={mode}
         onChange={setMode}
         options={[
           { value: 'takeaway', label: 'Para levar' },
           { value: 'here', label: 'Comer aqui' },
+          { value: 'delivery', label: 'Entrega' },
         ]}
       />
+      {delivery}
       {empty ? (
         <EmptyState
           art={<ArtTicket />}
@@ -343,7 +473,7 @@ function TicketPanel({
           />
         </div>
       )}
-      {quote.error && quote.errorLine === null ? (
+      {quote.error && quote.errorLine === null && !quote.outOfZone ? (
         <p className="t-caption font-semibold text-danger" role="alert">
           {pdvError(quote.error)}{' '}
           <button
@@ -356,13 +486,15 @@ function TicketPanel({
         </p>
       ) : null}
       <div className="flex flex-wrap gap-2">
-        <ExtraChip
-          Icon={User}
-          on={!!(customer.name || customer.digits || customer.notes)}
-          onClick={onCustomer}
-        >
-          {customer.name || (customer.digits ? customer.phone : 'cliente')}
-        </ExtraChip>
+        {mode !== 'delivery' ? (
+          <ExtraChip
+            Icon={User}
+            on={!!(customer.name || customer.digits || customer.notes)}
+            onClick={onCustomer}
+          >
+            {customer.name || (customer.digits ? customer.phone : 'cliente')}
+          </ExtraChip>
+        ) : null}
         {manager ? (
           <ExtraChip Icon={Percent} on={!!discount} onClick={onDiscount} disabled={empty}>
             {discount ? `desconto ${discountLabel(discount)}` : 'desconto'}
@@ -380,7 +512,7 @@ function TicketPanel({
       </div>
       {!empty ? <Totals quote={quote.quote} fresh={quote.fresh} pending={quote.pending} /> : null}
       <Button size="lg" block disabled={empty || !!quote.error} loading={busy} onClick={onCharge}>
-        {quote.quote && !empty ? `cobrar ${money(quote.quote.totalCents)}` : 'cobrar'}
+        {quote.quote && !empty && ready ? `cobrar ${money(quote.quote.totalCents)}` : 'cobrar'}
         {!inSheet ? (
           <kbd className="t-caption ml-1 hidden rounded bg-[rgb(255_255_255/0.16)] px-1.5 font-sans lg:inline">
             Enter
@@ -504,15 +636,24 @@ function CustomerSheet({
   );
 }
 
-/** The sale went through: the order's number and the change, big, then the next customer. */
-function DoneSheet({ sale, onClose }: { sale: PdvSale | null; onClose: () => void }) {
-  const [shown, setShown] = useState(sale);
+/**
+ * The sale went through: the order's number and the change, big, then the next customer. A phone
+ * order says it went to the kitchen and whether it's paid or charged at the door.
+ */
+function DoneSheet({ done, onClose }: { done: Done | null; onClose: () => void }) {
+  const [shown, setShown] = useState(done);
   useEffect(() => {
-    if (sale) setShown(sale);
-  }, [sale]);
-  const s = sale ?? shown;
+    if (done) setShown(done);
+  }, [done]);
+  const d = done ?? shown;
+  const s = d?.sale;
+  const dv = d?.delivery ?? null;
   return (
-    <Sheet open={!!sale} onOpenChange={(o) => !o && onClose()} title="Venda feita">
+    <Sheet
+      open={!!done}
+      onOpenChange={(o) => !o && onClose()}
+      title={dv ? 'Pedido enviado' : 'Venda feita'}
+    >
       {s ? (
         <div className="space-y-5 pb-2">
           <div className="flex items-center gap-4">
@@ -523,6 +664,38 @@ function DoneSheet({ sale, onClose }: { sale: PdvSale | null; onClose: () => voi
             </div>
             <p className="tnum t-title-2 ml-auto">{money(s.totalCents)}</p>
           </div>
+          {dv ? (
+            <div className="flex items-start gap-3 rounded-md bg-sunken px-4 py-3" role="status">
+              <ChefHat weight="duotone" className="mt-0.5 size-6 shrink-0" aria-hidden />
+              <div className="min-w-0">
+                <p className="font-semibold">Foi para a cozinha</p>
+                <p className="t-caption break-words text-muted">
+                  Entrega para {dv.name}
+                  {dv.address ? ` · ${dv.address}` : ''}
+                </p>
+              </div>
+            </div>
+          ) : null}
+          {dv?.later ? (
+            <div className="flex items-start gap-3 rounded-lg bg-warning-soft px-4 py-3">
+              <HandCoins
+                weight="duotone"
+                className="mt-0.5 size-6 shrink-0 text-warning"
+                aria-hidden
+              />
+              <div className="min-w-0">
+                <p className="font-semibold">
+                  Não pago: cobrar na entrega, em {PDV_METHOD_LABEL[dv.later.method]}
+                </p>
+                <p className="t-caption text-ink">
+                  {dv.later.changeForCents
+                    ? `Levar troco para ${money(dv.later.changeForCents)}. `
+                    : ''}
+                  Quando o dinheiro voltar, receba pelo pedido no caixa.
+                </p>
+              </div>
+            </div>
+          ) : null}
           {s.changeCents > 0 ? (
             <div className="rounded-lg bg-spark-soft px-5 py-4" role="status">
               <p className="t-label">Troco</p>
@@ -531,28 +704,38 @@ function DoneSheet({ sale, onClose }: { sale: PdvSale | null; onClose: () => voi
               </p>
             </div>
           ) : null}
-          <ul className="divide-y divide-line rounded-md bg-sunken px-4">
-            {s.payments.map((p) => {
-              const Icon = PDV_METHOD_ICON[p.method];
-              return (
-                <li key={p.id} className="flex items-center gap-3 py-3">
-                  <Icon weight="duotone" className="size-6 shrink-0" aria-hidden />
-                  <span className="min-w-0 flex-1 font-semibold">
-                    {PDV_METHOD_LABEL[p.method]}
-                    {p.tenderedCents ? (
-                      <span className="t-caption block font-medium text-muted">
-                        recebido {money(p.tenderedCents)}
+          {s.payments.length ? (
+            <div>
+              {dv ? (
+                <p className="t-label mb-2 flex items-center gap-1.5 text-success">
+                  <CheckCircle weight="fill" className="size-4.5" aria-hidden />
+                  Pago
+                </p>
+              ) : null}
+              <ul className="divide-y divide-line rounded-md bg-sunken px-4">
+                {s.payments.map((p) => {
+                  const Icon = PDV_METHOD_ICON[p.method];
+                  return (
+                    <li key={p.id} className="flex items-center gap-3 py-3">
+                      <Icon weight="duotone" className="size-6 shrink-0" aria-hidden />
+                      <span className="min-w-0 flex-1 font-semibold">
+                        {PDV_METHOD_LABEL[p.method]}
+                        {p.tenderedCents ? (
+                          <span className="t-caption block font-medium text-muted">
+                            recebido {money(p.tenderedCents)}
+                          </span>
+                        ) : null}
                       </span>
-                    ) : null}
-                  </span>
-                  <span className="tnum">{money(p.amountCents)}</span>
-                </li>
-              );
-            })}
-          </ul>
+                      <span className="tnum">{money(p.amountCents)}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-2 sm:flex-row-reverse">
             <Button size="lg" autoFocus className="sm:flex-1" onClick={onClose}>
-              nova venda
+              {dv ? 'novo pedido' : 'nova venda'}
             </Button>
             <ButtonLink
               to={`/pedidos/${s.orderId}`}

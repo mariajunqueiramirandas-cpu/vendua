@@ -1,16 +1,31 @@
-import { Check, PencilSimple, Plus, Receipt } from '@phosphor-icons/react';
-import { useQueryClient } from '@tanstack/react-query';
+import {
+  ArrowCounterClockwise,
+  CaretDown,
+  Check,
+  PencilSimple,
+  Plus,
+  Receipt,
+} from '@phosphor-icons/react';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, type PdvState, type PdvTable, type TabSummary } from '../../lib/api.ts';
+import {
+  api,
+  type PdvArchivedTable,
+  type PdvState,
+  type PdvTable,
+  type PdvTables,
+  type TabSummary,
+} from '../../lib/api.ts';
+import { when } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { isPlanRequired, useCan, useFeature } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
+import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
 import { Field, SavedStepper, TextInput } from '../../ui/fields.tsx';
-import { HoldButton } from '../../ui/HoldButton.tsx';
 import { ArtStore } from '../../ui/illustrations.tsx';
 import { LockedPage, PlanLocked, reasonOf } from '../../ui/PlanLocked.tsx';
 import { TableTile } from '../../ui/pdv/TableTile.tsx';
@@ -33,6 +48,34 @@ function useNow(ms: number) {
   return now;
 }
 
+/** A tables write answers with both lists: the floor and the removed ones. */
+function putTables(qc: QueryClient, r: PdvTables) {
+  qc.setQueryData(qk.pdv.tables, r);
+  qc.setQueryData<PdvState>(qk.pdv.state, (s) => (s ? { ...s, tables: r.tables } : s));
+  void qc.invalidateQueries({ queryKey: qk.pdv.state });
+}
+
+/** "trazer de volta": the removed table returns at the end of the floor. */
+function useRestoreTable() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (t: { id: string; label: string }) => api.pdv.restoreTable(t.id),
+    onSuccess: (r, t) => {
+      haptic.commit();
+      putTables(qc, r);
+      toast(`${t.label} voltou para o salão.`);
+    },
+    onError: (e, t) => {
+      haptic.error();
+      if (isCode(e, 'TABLE_LABEL_TAKEN'))
+        return toast.error(
+          `Já tem uma mesa chamada ${t.label} no salão. Mude o nome dela e traga essa de volta.`,
+        );
+      toast.error(pdvError(e));
+    },
+  });
+}
+
 export default function Mesas() {
   return useFeature('pdv') ? <Floor /> : <LockedPage title="Mesas" feature="pdv" />;
 }
@@ -47,6 +90,14 @@ function Floor() {
   const [addOpen, setAddOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [edit, setEdit] = useState<PdvTable | null>(null);
+  const restore = useRestoreTable();
+  // the removed tables, only while a manager edits the floor
+  const removed = useQuery({
+    queryKey: qk.pdv.tables,
+    queryFn: api.pdv.tables,
+    enabled: manager && editing,
+    select: (d) => d.archived ?? [],
+  });
 
   const tabs = data?.tabs ?? [];
   const tables = useMemo(() => [...(data?.tables ?? [])].sort((a, b) => a.sort - b.sort), [data]);
@@ -198,6 +249,13 @@ function Floor() {
                 ) : null}
               </ul>
             )}
+            {editing && removed.data?.length ? (
+              <RemovedTables
+                tables={removed.data}
+                busyId={restore.isPending ? restore.variables?.id : undefined}
+                onRestore={(t) => restore.mutate({ id: t.id, label: t.label })}
+              />
+            ) : null}
           </section>
 
           {!editing ? (
@@ -253,6 +311,7 @@ function Floor() {
             table={edit}
             busy={!!(edit && byTable.get(edit.id))}
             onClose={() => setEdit(null)}
+            onUndo={(t) => restore.mutate({ id: t.id, label: t.label })}
           />
         </>
       ) : null}
@@ -447,14 +506,79 @@ function AddTablesSheet({
   );
 }
 
+/** Tables taken off the floor, newest first, folded away until asked for. */
+function RemovedTables({
+  tables,
+  busyId,
+  onRestore,
+}: {
+  tables: PdvArchivedTable[];
+  busyId: string | undefined;
+  onRestore: (t: PdvArchivedTable) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  return (
+    <div className="mt-5">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((v) => !v)}
+        className="press t-label -mx-1 flex min-h-11 items-center gap-2 rounded-md px-1 text-muted hover:text-ink"
+      >
+        <CaretDown
+          weight="bold"
+          aria-hidden
+          className={cn(
+            'size-4 transition-transform duration-(--duration-quick)',
+            !open && '-rotate-90',
+          )}
+        />
+        Mesas removidas
+        <span className="tnum min-w-6 rounded-full bg-line px-1.5 text-center text-[0.75rem] leading-6">
+          {tables.length}
+        </span>
+      </button>
+      {open ? (
+        <Card className="mt-2">
+          <ul id={listId} aria-label="mesas removidas" className="divide-y divide-line">
+            {tables.map((t) => (
+              <li key={t.id} className="flex items-center gap-3 py-2 pl-4 pr-2">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold">{t.label}</p>
+                  <p className="t-caption text-muted">removida {when(t.archivedAt)}</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<ArrowCounterClockwise />}
+                  loading={busyId === t.id}
+                  disabled={!!busyId}
+                  onClick={() => onRestore(t)}
+                  className="min-h-11 shrink-0"
+                >
+                  trazer de volta
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+    </div>
+  );
+}
+
 function EditTableSheet({
   table,
   busy,
   onClose,
+  onUndo,
 }: {
   table: PdvTable | null;
   busy: boolean;
   onClose: () => void;
+  onUndo: (t: PdvTable) => void;
 }) {
   const qc = useQueryClient();
   const [label, setLabel] = useState('');
@@ -476,13 +600,14 @@ function EditTableSheet({
     },
     onError: (e) => toast.error(pdvError(e)),
   });
+  // reversible now ("trazer de volta"): it happens at once, with "desfazer"
   const archive = useMutation({
-    mutationFn: () => api.pdv.archiveTable(table!.id),
-    onSuccess: (r) => {
+    mutationFn: (t: PdvTable) => api.pdv.archiveTable(t.id),
+    onSuccess: (r, t) => {
       haptic.commit();
-      qc.setQueryData<PdvState>(qk.pdv.state, (s) => (s ? { ...s, tables: r.tables } : s));
-      toast(`${table?.label ?? 'A mesa'} saiu do salão.`);
-      done();
+      putTables(qc, r);
+      toast(`${t.label} saiu do salão.`, { undo: () => onUndo(t) });
+      onClose();
     },
     onError: (e) => toast.error(pdvError(e)),
   });
@@ -518,11 +643,17 @@ function EditTableSheet({
           <p className="t-body text-muted">
             {busy
               ? 'Essa mesa tem uma comanda aberta. Feche a comanda antes de tirar a mesa.'
-              : 'A mesa some daqui. As comandas antigas dela continuam no histórico.'}
+              : 'A mesa sai do salão e fica em "Mesas removidas", de onde volta quando quiser. As comandas antigas dela continuam no histórico.'}
           </p>
-          <HoldButton disabled={busy || archive.isPending} onConfirm={() => archive.mutate()}>
-            segure para tirar a mesa
-          </HoldButton>
+          <Button
+            variant="secondary"
+            className="text-danger!"
+            disabled={busy}
+            loading={archive.isPending}
+            onClick={() => table && archive.mutate(table)}
+          >
+            tirar do salão
+          </Button>
         </div>
       </div>
     </Sheet>

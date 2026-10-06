@@ -1,4 +1,4 @@
-import { ArrowsSplit, Copy, LockSimple, Trash, WifiSlash } from '@phosphor-icons/react';
+import { ArrowsSplit, Copy, LockSimple, Moped, Trash, WifiSlash } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, type PdvMethod, type PdvPaymentIn } from '../../lib/api.ts';
@@ -8,7 +8,7 @@ import { useCan } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { copyText } from '../../ui/CopyValue.tsx';
-import { Field, MoneyField, Toggle } from '../../ui/fields.tsx';
+import { Field, MoneyField, Segmented, Toggle } from '../../ui/fields.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { PDV_METHOD_LABEL } from '../../ui/PaymentChip.tsx';
 import { Keypad, QuickAmount } from '../../ui/pdv/Keypad.tsx';
@@ -46,6 +46,7 @@ export function PaySheet({
   onSubmit,
   before,
   submitLabel = 'confirmar',
+  later,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -62,6 +63,8 @@ export function PaySheet({
   onSubmit: (payments: PdvPaymentIn[]) => void;
   before?: ReactNode;
   submitLabel?: string;
+  /** a delivery may go out unpaid: "cobrar na entrega", with the method and the change */
+  later?: { onSubmit: (p: { method: PdvMethod; changeForCents?: number }) => void };
 }) {
   const seq = useRef(0);
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -70,9 +73,16 @@ export function PaySheet({
   const [amount, setAmount] = useState(single?.initialCents ?? totalCents);
   const amountId = useId();
   const manager = useCan('manager');
+  const [when, setWhen] = useState<'now' | 'later'>('now');
+  const [laterMethod, setLaterMethod] = useState<PdvMethod | null>(null);
+  const [changeFor, setChangeFor] = useState(0);
+  const atDoor = !!later && when === 'later';
 
   useEffect(() => {
     if (!open) return;
+    setWhen('now');
+    setLaterMethod(null);
+    setChangeFor(0);
     setEntries([]);
     setSplit(false);
     setActive(null);
@@ -123,8 +133,20 @@ export function PaySheet({
     ) &&
     (single ? amount <= totalCents && paid === amount : rest === 0);
 
+  const laterValid =
+    !!laterMethod && (laterMethod !== 'cash' || changeFor === 0 || changeFor >= totalCents);
+
   const submit = () => {
-    if (!valid || busy || !caixaOpen) return;
+    if (busy) return;
+    if (atDoor) {
+      if (!laterValid) return;
+      later.onSubmit({
+        method: laterMethod!,
+        ...(laterMethod === 'cash' && changeFor ? { changeForCents: changeFor } : {}),
+      });
+      return;
+    }
+    if (!valid || !caixaOpen) return;
     onSubmit(
       entries.map((e) => ({
         method: e.method,
@@ -157,7 +179,7 @@ export function PaySheet({
       title={title}
       footer={
         <div className="space-y-2">
-          {!caixaOpen ? null : !single && entries.length > 0 && rest !== 0 ? (
+          {atDoor ? null : !caixaOpen ? null : !single && entries.length > 0 && rest !== 0 ? (
             <p
               className={cn('t-label tnum text-center', rest > 0 ? 'text-warning' : 'text-danger')}
               role="status"
@@ -169,15 +191,19 @@ export function PaySheet({
             size="lg"
             block
             loading={busy && !paused}
-            disabled={!valid || !caixaOpen || busy}
+            disabled={(atDoor ? !laterValid : !valid || !caixaOpen) || busy}
             onClick={submit}
-            icon={paused ? <WifiSlash /> : undefined}
+            icon={paused ? <WifiSlash /> : atDoor && laterMethod ? <Moped /> : undefined}
           >
             {paused
               ? 'esperando a conexão…'
-              : entries.length
-                ? `${submitLabel} ${money(single ? amount : totalCents)}`
-                : 'escolha como vai pagar'}
+              : atDoor
+                ? laterMethod
+                  ? 'enviar o pedido'
+                  : 'escolha como vai pagar'
+                : entries.length
+                  ? `${submitLabel} ${money(single ? amount : totalCents)}`
+                  : 'escolha como vai pagar'}
           </Button>
         </div>
       }
@@ -188,7 +214,32 @@ export function PaySheet({
           <p className="tnum t-display">{money(totalCents)}</p>
         </div>
 
-        {!caixaOpen ? (
+        {later ? (
+          <Segmented
+            label="quando o cliente paga"
+            value={when}
+            onChange={setWhen}
+            options={[
+              { value: 'now', label: 'Pagar agora' },
+              { value: 'later', label: 'Cobrar na entrega' },
+            ]}
+          />
+        ) : null}
+
+        {atDoor ? (
+          <PayAtDoor
+            totalCents={totalCents}
+            method={laterMethod}
+            onMethod={(m) => {
+              setLaterMethod(m);
+              if (m !== 'cash') setChangeFor(0);
+            }}
+            changeFor={changeFor}
+            onChangeFor={setChangeFor}
+          />
+        ) : null}
+
+        {atDoor ? null : !caixaOpen ? (
           <Notice
             tone="warning"
             icon={<LockSimple weight="fill" />}
@@ -203,9 +254,9 @@ export function PaySheet({
           </Notice>
         ) : null}
 
-        {before}
+        {atDoor ? null : before}
 
-        {single ? (
+        {!atDoor && single ? (
           <Field label="Quanto recebe agora" htmlFor={amountId}>
             <MoneyField
               id={amountId}
@@ -231,7 +282,7 @@ export function PaySheet({
           </Field>
         ) : null}
 
-        <div>
+        <div hidden={atDoor}>
           <div className="mb-2 flex items-center justify-between gap-3">
             <p className="t-label">Como vai pagar?</p>
             {!single ? (
@@ -262,7 +313,7 @@ export function PaySheet({
           ) : null}
         </div>
 
-        {split && entries.length ? (
+        {!atDoor && split && entries.length ? (
           <ul className="space-y-2" aria-label="pagamentos">
             {entries.map((e) => {
               const Icon = PDV_METHOD_ICON[e.method];
@@ -294,7 +345,7 @@ export function PaySheet({
         ) : null}
 
         {cashEntries.map((e) =>
-          active === e.id || cashEntries.length === 1 ? (
+          !atDoor && (active === e.id || cashEntries.length === 1) ? (
             <CashBox
               key={e.id}
               entry={e}
@@ -304,7 +355,7 @@ export function PaySheet({
           ) : null,
         )}
         {entries
-          .filter((e) => e.method === 'pix' && e.amountCents > 0)
+          .filter((e) => !atDoor && e.method === 'pix' && e.amountCents > 0)
           .map((e) => (
             <PixBox key={e.id} cents={e.amountCents} manager={manager} />
           ))}
@@ -319,6 +370,62 @@ export function PaySheet({
         ) : null}
       </div>
     </Sheet>
+  );
+}
+
+/** "Cobrar na entrega": how the customer will pay at the door, and the change to bring. */
+function PayAtDoor({
+  totalCents,
+  method,
+  onMethod,
+  changeFor,
+  onChangeFor,
+}: {
+  totalCents: number;
+  method: PdvMethod | null;
+  onMethod: (m: PdvMethod) => void;
+  changeFor: number;
+  onChangeFor: (c: number) => void;
+}) {
+  const short = changeFor > 0 && changeFor < totalCents;
+  const bills = BILLS.filter((b) => b > totalCents).slice(0, 3);
+  return (
+    <>
+      <div>
+        <p className="t-label mb-2">Como vai pagar na entrega?</p>
+        <MethodPicker value={method ? [method] : []} onPick={onMethod} />
+        <p className="t-caption mt-2 text-muted">
+          O pedido vai para a cozinha sem pagamento. Quando o dinheiro voltar, receba pelo pedido,
+          no caixa.
+        </p>
+      </div>
+      {method === 'cash' ? (
+        <Keypad
+          label="Troco para quanto?"
+          cents={changeFor}
+          onChange={onChangeFor}
+          keys
+          hint={
+            short ? (
+              <span className="font-semibold text-danger">Menos que o total do pedido.</span>
+            ) : changeFor === 0 ? (
+              <span className="text-muted">Sem valor, o cliente paga o valor exato.</span>
+            ) : (
+              <span className="text-muted">O entregador leva o troco.</span>
+            )
+          }
+        >
+          <QuickAmount on={changeFor === 0} onClick={() => onChangeFor(0)}>
+            não precisa
+          </QuickAmount>
+          {bills.map((b) => (
+            <QuickAmount key={b} on={changeFor === b} onClick={() => onChangeFor(b)}>
+              {money(b)}
+            </QuickAmount>
+          ))}
+        </Keypad>
+      ) : null}
+    </>
   );
 }
 
