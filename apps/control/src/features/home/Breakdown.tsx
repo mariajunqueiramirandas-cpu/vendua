@@ -35,8 +35,8 @@ export function FunnelBar({ s }: { s: Stats }) {
     >
       <div
         className="flex h-8 gap-0.5 overflow-hidden rounded-md"
-        role="img"
-        aria-label={LEAD_STATES.map(([, l], i) => `${l}: ${counts[i]}`).join(', ')}
+        role="group"
+        aria-label="leads por estágio"
       >
         {total === 0 && <div className="flex-1 rounded-md bg-muted" />}
         {LEAD_STATES.map(([st, label], i) => {
@@ -48,6 +48,7 @@ export function FunnelBar({ s }: { s: Stats }) {
               key={st}
               to="/pipeline?v=board"
               title={`${label}: ${n} · ${fmtMoney(s.byState[st]?.valueCents)}`}
+              aria-label={`${label}: ${n}`}
               className={cn(
                 'flex min-w-1 items-center overflow-hidden px-2 text-xs font-medium whitespace-nowrap transition-[filter] first:rounded-l-md last:rounded-r-md hover:brightness-95',
                 STAGE_FILL[st],

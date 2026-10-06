@@ -704,6 +704,24 @@ function Activity() {
   );
 }
 
+const ORDER_DID: Record<string, (n: string) => string> = {
+  'order.confirmed': (n) => `aceitou o pedido #${n}`,
+  'order.preparing': (n) => `começou o preparo do pedido #${n}`,
+  'order.ready': (n) => `marcou o pedido #${n} como pronto`,
+  'order.out_for_delivery': (n) => `mandou o pedido #${n} para entrega`,
+  'order.delivered': (n) => `concluiu o pedido #${n}`,
+  'order.cancelled': (n) => `cancelou o pedido #${n}`,
+  'order.refunded': (n) => `estornou o pedido #${n}`,
+};
+
+/** Core writes a move as "pedido #882: novo → aceito"; after the name it reads as a verb, and
+ *  the move itself is already in the changes under it. Its reason and refund stay. */
+function summaryOf(e: ActivityEntry) {
+  const m = /^pedido #(\d+): .+? → .+?((?: \(.*\))?(?: · .*)?)$/.exec(e.summary);
+  const did = ORDER_DID[e.action];
+  return m && did ? `${did(m[1]!)}${m[2] ?? ''}` : e.summary;
+}
+
 function ActivityRow({ e }: { e: ActivityEntry }) {
   const to = linkOf(e);
   const body = (
@@ -711,7 +729,7 @@ function ActivityRow({ e }: { e: ActivityEntry }) {
       <ClockCounterClockwise className="mt-0.5 size-5 shrink-0 text-muted" aria-hidden />
       <div className="min-w-0 flex-1">
         <p className="t-body">
-          <strong>{e.actor}</strong> {e.summary}
+          <strong>{e.actor}</strong> {summaryOf(e)}
         </p>
         {e.changes?.length ? (
           <ul className="t-caption mt-1 space-y-0.5 text-muted">

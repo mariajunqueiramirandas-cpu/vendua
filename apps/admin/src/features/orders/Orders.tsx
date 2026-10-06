@@ -286,60 +286,73 @@ export default function Orders() {
 
           {/* desktop: the board, drag between lanes, detail on the right */}
           <div className="hidden gap-5 lg:flex">
-            <div
-              className={cn('grid min-w-0 flex-1 gap-4', selected ? 'grid-cols-3' : 'grid-cols-4')}
-            >
-              {LANES.filter((l) => !selected || l.id !== 'concluidos').map((l) => (
-                <section
-                  key={l.id}
-                  aria-label={`${l.label}: ${counts[l.id]}`}
-                  onDragOver={(e) => l.drop && e.preventDefault()}
-                  onDrop={(e) => {
-                    const id = e.dataTransfer.getData('text/plain');
-                    setDragging(null);
-                    dropOn(l, id);
-                  }}
-                  className={cn(
-                    'flex min-h-[60vh] flex-col rounded-lg bg-sunken/60 p-3 transition-colors',
-                    dragging && l.drop && 'ring-2 ring-dashed ring-line-strong',
-                  )}
-                >
-                  <h2 className="t-label mb-3 flex items-center justify-between px-1">
-                    {l.label}
-                    <span
-                      className={cn(
-                        'tnum rounded-full px-2',
-                        l.id === 'novos' && counts.novos
-                          ? 'bg-spark text-on-spark'
-                          : 'bg-line text-muted',
-                      )}
-                    >
-                      {counts[l.id]}
-                    </span>
-                  </h2>
-                  <div className="flex-1 space-y-3">
-                    {isPending ? (
-                      <OrderCardSkeleton />
-                    ) : byLane[l.id].length ? (
-                      byLane[l.id].map((o) => (
-                        <div
-                          key={o.id}
-                          draggable
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData('text/plain', o.id);
-                            setDragging(o.id);
-                          }}
-                          onDragEnd={() => setDragging(null)}
-                        >
-                          {card(o, l.id === 'concluidos')}
-                        </div>
-                      ))
-                    ) : (
-                      empty(l.id)
+            {/* beside the detail panel a laptop has room for one lane across, not three */}
+            <div className="@container/board min-w-0 flex-1">
+              <div
+                className={cn(
+                  'grid gap-4',
+                  selected ? 'grid-cols-1 @3xl/board:grid-cols-3' : 'grid-cols-4',
+                )}
+              >
+                {LANES.filter((l) => !selected || l.id !== 'concluidos').map((l) => (
+                  <section
+                    key={l.id}
+                    aria-label={`${l.label}: ${counts[l.id]}`}
+                    onDragOver={(e) => l.drop && e.preventDefault()}
+                    onDrop={(e) => {
+                      const id = e.dataTransfer.getData('text/plain');
+                      setDragging(null);
+                      dropOn(l, id);
+                    }}
+                    className={cn(
+                      'flex flex-col rounded-lg bg-sunken/60 p-3 transition-colors',
+                      selected ? '@3xl/board:min-h-[60vh]' : 'min-h-[60vh]',
+                      dragging && l.drop && 'ring-2 ring-dashed ring-line-strong',
                     )}
-                  </div>
-                </section>
-              ))}
+                  >
+                    <h2 className="t-label mb-3 flex items-center justify-between px-1">
+                      {l.label}
+                      <span
+                        className={cn(
+                          'tnum rounded-full px-2',
+                          l.id === 'novos' && counts.novos
+                            ? 'bg-spark text-on-spark'
+                            : 'bg-line text-muted',
+                        )}
+                      >
+                        {counts[l.id]}
+                      </span>
+                    </h2>
+                    <div className="grid flex-1 content-start gap-3 grid-cols-[repeat(auto-fill,minmax(min(13rem,100%),1fr))]">
+                      {isPending ? (
+                        <OrderCardSkeleton />
+                      ) : byLane[l.id].length ? (
+                        byLane[l.id].map((o) => (
+                          <div
+                            key={o.id}
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData('text/plain', o.id);
+                              setDragging(o.id);
+                            }}
+                            onDragEnd={() => setDragging(null)}
+                          >
+                            {card(o, l.id === 'concluidos')}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="col-span-full">
+                          {selected ? (
+                            <p className="t-body px-1 py-2 text-muted">Nada aqui agora.</p>
+                          ) : (
+                            empty(l.id)
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                ))}
+              </div>
             </div>
             {selected ? (
               <Panel id={selected} prepDefault={prepDefault} onClose={() => setSelected(null)} />

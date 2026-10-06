@@ -46,7 +46,10 @@ export function StageChips({
           )}
         >
           {o.label}
-          <span className="text-[11px] opacity-75 tnum">{o.count ?? '·'}</span>
+          {/* unpicked it's already muted: a fainter count would fall under 4.5:1 */}
+          <span className={cn('text-[11px] tnum', value === o.value && 'opacity-80')}>
+            {o.count ?? '·'}
+          </span>
         </button>
       ))}
     </div>

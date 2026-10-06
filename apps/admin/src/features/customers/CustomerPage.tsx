@@ -4,6 +4,7 @@ import {
   Plus,
   ShieldCheck,
   Tag,
+  UsersThree,
   WhatsappLogo,
   X,
 } from '@phosphor-icons/react';
@@ -33,6 +34,9 @@ export default function CustomerPage() {
   const { phone: ph = '' } = useParams();
   const s = useSession();
   const owner = useCan('owner');
+  // the Duá's own notebook shows beside the team's: both say whose they are
+  const manager = useCan('manager');
+  const duaOn = !!s.vendedor?.enabled && manager;
   const { data, error, refetch } = useQuery({
     queryKey: qk.customer(ph),
     queryFn: () => api.customer(ph),
@@ -103,7 +107,8 @@ export default function CustomerPage() {
 
       <div className="mt-8 grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
         <div className="space-y-8">
-          <NotesSection phone={ph} notes={data.notes} known={data.knownTags} />
+          <NotesSection phone={ph} notes={data.notes} known={data.knownTags} duaOn={duaOn} />
+          <CustomerFacts phone={ph} customer={c.name} />
           {l.enabled ? (
             <Section title="Cartão fidelidade">
               <Card className="p-5">
@@ -154,7 +159,6 @@ export default function CustomerPage() {
               </Card>
             </Section>
           ) : null}
-          <CustomerFacts phone={ph} customer={c.name} />
           {data.lastAddress ? (
             <Section title="Último endereço">
               <Card className="p-4">
@@ -169,7 +173,7 @@ export default function CustomerPage() {
           {owner ? (
             <Section
               title="Dados pessoais (LGPD)"
-              hint="Quando o cliente pedir uma cópia dos dados ou para apagar."
+              hint={`Quando o cliente pedir uma cópia dos dados ou para apagar. Apagar tira também as anotações${duaOn ? ' e o que o Duá sabe' : ''}.`}
             >
               <Card className="flex flex-wrap gap-2 p-4">
                 <Button
@@ -219,10 +223,12 @@ function NotesSection({
   phone: ph,
   notes,
   known,
+  duaOn,
 }: {
   phone: string;
   notes: CustomerNotes;
   known: string[];
+  duaOn: boolean;
 }) {
   const qc = useQueryClient();
   const initial = useMemo(() => ({ note: notes.note, tags: notes.tags }), [notes.note, notes.tags]);
@@ -249,8 +255,15 @@ function NotesSection({
   const full = draft.tags.length >= TAGS_MAX;
   return (
     <Section
-      title="Anotações"
-      hint="Só a equipe vê. Apagar os dados do cliente apaga isto também."
+      title={
+        <span className="inline-flex items-center gap-2.5">
+          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-sunken text-muted ring-1 ring-line">
+            <UsersThree weight="bold" className="size-4" aria-hidden />
+          </span>
+          {duaOn ? 'Anotações da equipe' : 'Anotações'}
+        </span>
+      }
+      hint={duaOn ? 'Só para a equipe: o cliente não vê e o Duá não usa.' : 'Só a equipe vê.'}
       action={<SaveMark state={state} />}
     >
       <Card className="space-y-5 p-4">
@@ -332,7 +345,7 @@ function NotesSection({
         >
           <TextArea
             id="customer-note"
-            placeholder="Ex.: prefere sem açúcar, entregar no portão lateral"
+            placeholder="Ex.: já reclamou de atraso, dar prioridade"
             maxLength={NOTE_MAX}
             value={draft.note}
             onChange={(e) => setDraft((d) => ({ ...d, note: e.target.value }))}

@@ -380,7 +380,7 @@ function ListTools({
         label="mostrar"
         value={filter}
         onChange={onFilter}
-        className="scroll-row -mx-4 flex-nowrap px-4 md:mx-0 md:flex-wrap md:px-0 lg:-mx-5 lg:flex-nowrap lg:px-5 [&>button]:shrink-0"
+        className="scroll-row -mx-4 px-4 max-md:flex-nowrap md:mx-0 md:px-0 lg:-mx-5 lg:flex-nowrap lg:px-5 [&>button]:shrink-0"
         options={[
           { value: 'all', label: 'todas' },
           {

@@ -19,6 +19,7 @@ function Chan({
 }) {
   return (
     <span
+      role="img"
       title={title}
       aria-label={title}
       className={cn(

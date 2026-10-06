@@ -145,7 +145,7 @@ export function FilterChips<T extends string>({
               'text-[11px] tnum',
               o.tone === 'warn' && o.count && value !== o.value
                 ? 'rounded-full bg-warning-soft px-1 font-semibold text-warning-foreground'
-                : 'opacity-75',
+                : value === o.value && 'opacity-80',
             )}
           >
             {o.count ?? '·'}

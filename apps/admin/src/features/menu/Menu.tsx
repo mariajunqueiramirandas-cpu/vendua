@@ -448,7 +448,10 @@ export default function Menu() {
                     <span
                       className={cn(
                         'tnum min-w-6 rounded-full px-1.5 text-center text-[0.75rem] leading-6',
-                        on && counts[f.value] > 0 ? 'bg-spark text-on-spark' : 'bg-line text-muted',
+                        // over the sunken track a bg-line pill leaves muted text under 4.5:1
+                        on && counts[f.value] > 0
+                          ? 'bg-spark text-on-spark'
+                          : 'bg-surface text-muted',
                       )}
                     >
                       {counts[f.value]}

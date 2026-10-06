@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { api, type BulkLeadPatch, type LeadListItem } from '@/lib/api.ts';
 import { AGENT_GOALS, LEAD_STATE_LABEL, LEAD_STATES, type LeadState } from '@/lib/labels.ts';
 import { errorMessage, qk } from '@/lib/query.ts';
+import { useBottomBar } from '@/lib/bottomBar.ts';
 import { toastUndo } from '@/lib/undo.ts';
 import { Button } from '@/components/ui/button.tsx';
 import { Popover, PopoverContent, PopoverTrigger, Segmented } from '@/components/ui/controls.tsx';
@@ -119,6 +120,7 @@ export function BulkBar({
     );
   };
   const busy = bulk.isPending || stale || tooMany;
+  useBottomBar();
 
   return (
     <div className="sticky bottom-3 z-20 mt-3 flex kb:hidden flex-wrap items-center gap-x-2 gap-y-2 rounded-lg border bg-popover p-2 pl-3 shadow-lg">

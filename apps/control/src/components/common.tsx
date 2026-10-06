@@ -198,7 +198,16 @@ export interface Kpi {
 /** One compact row of numbers — scrolls sideways on phones instead of stacking cards. */
 export function KpiStrip({ items, className }: { items: Kpi[]; className?: string | undefined }) {
   return (
-    <div className={cn('no-scrollbar -mx-3 flex overflow-x-auto px-3 md:mx-0 md:px-0', className)}>
+    // focusable: on a phone the row scrolls sideways, and a keyboard has to reach the end of it
+    <div
+      tabIndex={0}
+      role="group"
+      aria-label="números"
+      className={cn(
+        'no-scrollbar -mx-3 flex overflow-x-auto px-3 md:mx-0 md:px-0 focus-visible:outline-2 focus-visible:outline-ring',
+        className,
+      )}
+    >
       <div className="flex min-w-full shrink-0 divide-x rounded-lg border bg-card shadow-card">
         {items.map((k) => {
           const body = (

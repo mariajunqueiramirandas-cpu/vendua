@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { formatTime, formatWhen, localNow, todayHours } from '@vendua/kernel/rules';
 import { api, type DemandSpan, type SpecialDay, type StoreView } from '../../lib/api.ts';
-import { hhmm, WEEKDAYS_LONG } from '../../lib/format.ts';
+import { dateShort, hhmm, WEEKDAYS_LONG } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -12,6 +12,7 @@ import { Chips, Field, TextArea, TimeInput } from '../../ui/fields.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { BILLING_HOLD_TEXT, BillingHoldNotice, isBillingHold } from './BillingHold.tsx';
+import { addDays, covers, liftDay, onlyOn, setDay } from './specialDays.ts';
 
 type Span = '15m' | '1h' | 'today' | 'indefinite';
 
@@ -81,22 +82,26 @@ export function StatusSheet({
       title={
         demandOnly
           ? 'Muitos pedidos agora'
-          : hold
-            ? 'Sua loja ainda não abriu'
-            : paused
-              ? 'Sua loja está pausada'
-              : 'Pausar a loja'
+          : editHours
+            ? 'Horário de hoje'
+            : hold
+              ? 'Sua loja ainda não abriu'
+              : paused
+                ? 'Sua loja está pausada'
+                : 'Pausar a loja'
       }
       description={
         demandOnly
           ? `Os pedidos continuam chegando, e quem entra na loja vê que o preparo está levando mais que os ~${store.operations.prepTimeMinutes} min de sempre.`
-          : hold
-            ? 'Tudo pronto do seu lado. Falta só o plano.'
-            : paused
-              ? store.status.resumesAt
-                ? `Volta sozinha ${formatWhen(store.status.resumesAt, tz)}.`
-                : 'Fica pausada até você voltar.'
-              : 'Ninguém consegue fazer pedido enquanto estiver pausada. Os pedidos em andamento continuam.'
+          : editHours
+            ? undefined
+            : hold
+              ? 'Tudo pronto do seu lado. Falta só o plano.'
+              : paused
+                ? store.status.resumesAt
+                  ? `Volta sozinha ${formatWhen(store.status.resumesAt, tz)}.`
+                  : 'Fica pausada até você voltar.'
+                : 'Ninguém consegue fazer pedido enquanto estiver pausada. Os pedidos em andamento continuam.'
       }
       footer={
         hold || demandOnly ? null : paused ? (
@@ -285,30 +290,51 @@ export function DemandControl({
 }
 
 function HoursButton({ store, onClick }: { store: StoreView; onClick: () => void }) {
+  const next = nextSpecial(store);
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex min-h-14 w-full items-center gap-3 rounded-md px-3 text-left ring-1 ring-line hover:bg-hover"
+      className="flex min-h-14 w-full items-center gap-3 rounded-md px-3 py-2 text-left ring-1 ring-line hover:bg-hover"
     >
       <Clock className="size-6 shrink-0 text-muted" aria-hidden />
       <span className="min-w-0 flex-1">
         <span className="block font-semibold">Mudar o horário de hoje</span>
         <span className="t-caption block text-muted">{todayLabel(store)}</span>
+        {next ? <span className="t-caption block text-muted">{next}</span> : null}
       </span>
     </button>
   );
 }
 
+/** Core's dates from today on, ranges and yearly repeats spelled out (todayHours reads single dates). */
+const aheadOf = (store: StoreView) => store.specialDaysAhead ?? store.specialDays;
+
 /** Today in the store's zone, a special day first (the Kernel's todayHours). */
-const today = (store: StoreView) => todayHours({ ...store.hours, specialDays: store.specialDays });
+const today = (store: StoreView) => todayHours({ ...store.hours, specialDays: aheadOf(store) });
+
+const hoursText = (d: SpecialDay) =>
+  d.closed || !d.open || !d.close ? 'fechado' : `${hhmm(d.open)} às ${hhmm(d.close)}`;
 
 function todayLabel(store: StoreView) {
   const t = today(store);
   const ranges = t.windows.map((x) => `${hhmm(x.open)} às ${hhmm(x.close)}`).join(', ');
-  if (t.special) return t.closed ? 'Hoje: fechado (dia especial)' : `Hoje: ${ranges}`;
+  if (t.special) {
+    const why = t.special.label ?? 'dia especial';
+    return t.closed ? `Hoje: fechado (${why})` : `Hoje: ${ranges} (${why})`;
+  }
   const day = WEEKDAYS_LONG[localNow(store.hours.timezone).weekday];
   return `Hoje (${day}): ${t.closed ? 'fechado' : ranges}`;
+}
+
+/** The next special day within a week, so a pause or today's change is made knowing it. */
+function nextSpecial(store: StoreView) {
+  const date = today(store).date;
+  const week = addDays(date, 7);
+  const d = aheadOf(store).find((x) => x.date > date && x.date <= week);
+  if (!d) return null;
+  const day = d.date === addDays(date, 1) ? 'Amanhã' : dateShort(d.date);
+  return `${day}: ${hoursText(d)}${d.label ? ` (${d.label})` : ''}`;
 }
 
 function TodayHours({
@@ -320,27 +346,44 @@ function TodayHours({
   onDone: () => void;
   onSaved: (s: StoreView) => void;
 }) {
+  const qc = useQueryClient();
   const t = today(store);
   const date = t.date;
-  const cur = t.special ? store.specialDays.find((d) => d.date === date) : undefined;
   // a day closed as special still starts from the usual hours
   const usual = todayHours(store.hours).windows[0];
-  const [closed, setClosed] = useState(cur?.closed ?? false);
+  const [closed, setClosed] = useState(!!t.special && t.closed);
   const [open, setOpen] = useState(t.windows[0]?.open ?? usual?.open ?? '09:00');
   const [close, setClose] = useState(t.windows[0]?.close ?? usual?.close ?? '18:00');
+  // every write starts from what Core holds now, so an undo never brings back a stale list
+  const latest = () => qc.getQueryData<StoreView>(qk.store)?.specialDays ?? store.specialDays;
   const save = useMutation({
-    mutationFn: (days: SpecialDay[]) => api.updateStore({ specialDays: days }),
-    onSuccess: (s) => {
+    mutationFn: (v: { days: SpecialDay[]; lifted?: SpecialDay[] }) =>
+      api.updateStore({ specialDays: v.days }),
+    onSuccess: (s, v) => {
       onSaved(s);
-      toast('Horário de hoje atualizado ✓');
+      const before = v.lifted;
+      if (before)
+        toast('Hoje volta ao horário de sempre ✓', {
+          undo: () =>
+            void api
+              .updateStore({ specialDays: before })
+              .then(onSaved, (e: unknown) => toast.error(messageOf(e))),
+        });
+      else toast('Horário de hoje atualizado ✓');
       onDone();
     },
     onError: (e) => toast.error(messageOf(e)),
   });
-  const others = store.specialDays.filter((d) => d.date !== date);
+  const tomorrow = aheadOf(store).find((d) => d.date === addDays(date, 1));
+  // what else the merchant set on the days ruling today, which "voltar" leaves alone
+  const lasting = latest().some((d) => covers(d, date) && !onlyOn(d, date));
   return (
     <div className="space-y-5 pt-2">
-      <p className="t-body text-muted">Só vale para hoje. Amanhã volta o horário de sempre.</p>
+      <p className="t-body text-muted">
+        {tomorrow
+          ? `Só vale para hoje. Amanhã segue o dia especial${tomorrow.label ? ` (${tomorrow.label})` : ''}: ${hoursText(tomorrow)}.`
+          : 'Só vale para hoje. Amanhã volta o horário de sempre.'}
+      </p>
       <Chips
         label="hoje"
         value={closed ? 'closed' : 'open'}
@@ -366,21 +409,39 @@ function TodayHours({
           loading={save.isPending}
           icon={<Storefront />}
           onClick={() =>
-            save.mutate([
-              ...others,
-              closed
-                ? { date, closed: true, label: 'Hoje' }
-                : { date, closed: false, open, close, label: 'Hoje' },
-            ])
+            save.mutate({
+              days: setDay(
+                latest(),
+                date,
+                closed
+                  ? { date, closed: true, label: 'Hoje' }
+                  : { date, closed: false, open, close, label: 'Hoje' },
+              ),
+            })
           }
         >
           salvar horário de hoje
         </Button>
       </div>
-      {cur ? (
-        <Button variant="quiet" block onClick={() => save.mutate(others)}>
-          voltar ao horário de sempre
-        </Button>
+      {t.special ? (
+        <div>
+          <Button
+            variant="quiet"
+            block
+            disabled={save.isPending}
+            onClick={() => {
+              const before = latest();
+              save.mutate({ days: liftDay(before, date), lifted: before });
+            }}
+          >
+            voltar ao horário de sempre
+          </Button>
+          {lasting ? (
+            <p className="t-caption mt-1 text-center text-muted">
+              Só hoje. Os outros dias especiais continuam marcados.
+            </p>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

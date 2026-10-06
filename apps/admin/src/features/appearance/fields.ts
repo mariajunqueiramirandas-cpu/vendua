@@ -6,7 +6,7 @@ import type { ComponentType } from '@vendua/templates';
 // only their areas, so their fields are inferred from the values the template holds:
 // the merchant edits copy, photos and links there, never the section's code (§A5).
 
-export type FieldSpec =
+export type FieldSpec = (
   | { kind: 'text'; key: string; label: string; max: number; long: boolean }
   | { kind: 'number'; key: string; label: string; min: number; max: number; def?: number }
   | { kind: 'boolean'; key: string; label: string; def?: boolean }
@@ -14,7 +14,8 @@ export type FieldSpec =
   | { kind: 'image'; key: string; label: string }
   | { kind: 'url'; key: string; label: string }
   | { kind: 'list'; key: string; label: string; max: number; of: FieldSpec[] }
-  | { kind: 'skip'; key: string };
+  | { kind: 'skip'; key: string }
+) & { help?: string };
 
 const SDK_SECTIONS = SDK_SCHEMAS.flatMap((s) => (s.kind === 'section' ? [s] : []));
 const SDK_TITLES = new Map<string, string>(
@@ -38,6 +39,14 @@ const STORE_SECTION_NAMES: Record<string, string> = {
   'store:catalog-browser': 'Cardápio',
   'store:product-figure': 'Foto do produto',
   'store:product-perks': 'Vantagens do produto',
+  // blocks inside a section, should one ever be named on its own
+  'sdk:recent-order': 'Seu último pedido',
+  'sdk:notify-me': 'Avise quando voltar',
+  'sdk:delivery-eta': 'Entrega e retirada',
+  'sdk:stock-counter': 'Últimas unidades',
+  'sdk:promo-badge': 'Selo de promoção',
+  'sdk:pix-info': 'Pague com Pix',
+  'sdk:loyalty-teaser': 'Cartão fidelidade',
 };
 
 export const sectionName = (type: string) =>
@@ -55,6 +64,8 @@ export const ADD_HINT: Record<string, string> = {
   'sdk:product-list': 'Uma seleção de produtos lado a lado.',
   'sdk:store-status': 'Se a loja está aberta, os horários e o endereço.',
   'sdk:rich-text': 'Um título e um texto seu, como um recado ou a sua história.',
+  'sdk:recent-order':
+    'Para quem já pediu deste celular: acompanhar o pedido em andamento ou pedir de novo.',
 };
 
 /** The words a merchant recognises a section by: its own title or first line of copy. */
@@ -107,6 +118,17 @@ const KEY_NAMES: Record<string, string> = {
   showAddress: 'Mostrar endereço',
   showSearch: 'Mostrar busca',
   showCategoryTabs: 'Mostrar abas de categoria',
+  showDietFilter: 'Mostrar filtros de dieta',
+  categoryNav: 'Ao tocar numa aba de categoria',
+  showShare: 'Mostrar botão de compartilhar',
+  showNote: 'Mostrar campo de observação',
+  showMinOrder: 'Mostrar pedido mínimo e entrega grátis',
+  showFee: 'Mostrar taxa de entrega',
+  showPickup: 'Mostrar retirada',
+  storeTitle: 'Título com a loja fechada',
+  successText: 'Depois de pedir o aviso',
+  showWhenPlenty: 'Mostrar mesmo com bastante estoque',
+  showQr: 'Mostrar o QR code',
   showDescription: 'Mostrar descrição',
   cartLabel: 'Nome da sacola',
   searchLabel: 'Texto da busca',
@@ -124,6 +146,17 @@ const KEY_NAMES: Record<string, string> = {
   proof: 'Selos (separe cada um com |)',
 };
 
+/** One line under a setting whose name alone doesn't say what the shopper sees. */
+const KEY_HELP: Record<string, string> = {
+  showDietFilter: 'Vegano, sem glúten e outros: só as dietas que algum produto seu informa.',
+  categoryNav:
+    'Mostrar só a categoria troca a lista a cada toque. Rolar até ela deixa o cardápio inteiro na página.',
+  showShare: 'Para o cliente mandar o link do produto a alguém.',
+  showNote: 'O cliente deixa uma observação no item, como “sem cebola”, e ela chega à cozinha.',
+  showMinOrder: 'Como estão nas suas áreas de entrega.',
+  storeTitle: 'Quando a loja está fechada, o cliente pede um aviso para quando ela abrir.',
+};
+
 const OPTION_NAMES: Record<string, string> = {
   grid: 'grade',
   list: 'lista',
@@ -138,6 +171,8 @@ const OPTION_NAMES: Record<string, string> = {
   editorial: 'editorial',
   cart: 'ir para a sacola',
   stay: 'continuar na página',
+  filter: 'mostrar só a categoria',
+  jump: 'rolar até a categoria',
 };
 export const optionName = (o: string) => OPTION_NAMES[o] ?? o;
 
@@ -147,6 +182,7 @@ export function keyName(k: string) {
 
 type SchemaField = {
   kind: string;
+  label?: string;
   default?: unknown;
   max?: number;
   min?: number;
@@ -155,7 +191,13 @@ type SchemaField = {
 };
 
 function fromSchema(key: string, f: SchemaField): FieldSpec {
-  const label = keyName(key);
+  const spec = fromKind(key, f);
+  return KEY_HELP[key] ? { ...spec, help: KEY_HELP[key] } : spec;
+}
+
+function fromKind(key: string, f: SchemaField): FieldSpec {
+  // the admin's own words first (they match its other switches), then the Kernel's
+  const label = KEY_NAMES[key] ?? f.label ?? keyName(key);
   switch (f.kind) {
     case 'text':
     case 'richText':
