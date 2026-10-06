@@ -109,6 +109,9 @@ services:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       # optional: the commit the "Core reiniciou" card shows
       GIT_COMMIT: ${GIT_COMMIT:-}
+      # Voice-note transcription via the stt service below (ADR 0035); unset secret = off.
+      STT_URL: http://stt:8792
+      STT_SECRET: ${STT_SECRET:-}
       # Instagram DMs via the ig-sidecar service below; the same secret signs both directions.
       IG_SIDECAR_URL: http://ig-sidecar:8790
       IG_SIDECAR_SECRET: ${IG_SIDECAR_SECRET:-}
@@ -274,6 +277,36 @@ services:
       test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8790/healthz || exit 1']
       interval: 10s
       timeout: 5s
+      retries: 6
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Self-hosted speech-to-text for shoppers' voice notes (services/stt, ADR 0035): Parakeet-TDT
+  # 0.6B v3 on CPU. Internal only; without STT_SECRET it idles and refuses every call. The first
+  # build downloads the 2.5 GB model export (cached layer) and compiles it for this host's CPU.
+  # `cpus` keeps it off Core's and Postgres' cores; the engine sizes its threads to it.
+  stt:
+    build:
+      context: ./services/stt
+    cpus: ${STT_CPUS:-2}
+    mem_limit: ${STT_MEM_LIMIT:-3g}
+    environment:
+      STT_SECRET: ${STT_SECRET:-}
+      STT_MAX_BATCH: ${STT_MAX_BATCH:-8}
+      LOG_LEVEL: ${STT_LOG_LEVEL:-info}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8792/healthz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
       retries: 6
     restart: unless-stopped
     logging:

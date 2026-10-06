@@ -8,11 +8,13 @@ import { log } from '../platform/log.ts';
 //   { "transcribe": [route…], "speak": [route…] }   route = { provider, model, zdr, voice? }
 // `zdr` is staff's record of the provider account's retention terms (a per-route choice since
 // 2026-10-05); every route is used either way. Photos go through the model gateway's routes.
+// Provider `sidecar` is the self-hosted STT service (services/stt, ADR 0035) at STT_URL: when
+// staff named no transcribe route and it is configured, voice notes go there by default.
 
 const mediaLog = log.child({ mod: 'vendedor-media' });
 
 export interface MediaRoute {
-  provider: 'openai' | 'elevenlabs';
+  provider: 'openai' | 'elevenlabs' | 'sidecar';
   model: string;
   zdr: boolean;
   voice?: string;
@@ -39,6 +41,7 @@ export interface PhotoReading {
 
 const TIMEOUT_MS = 20_000;
 const CACHE_MS = 30_000;
+const SIDECAR_ROUTE: MediaRoute = { provider: 'sidecar', model: 'parakeet-tdt-0.6b-v3', zdr: true };
 
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
   const res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
@@ -76,8 +79,23 @@ export function mediaProviders(
 
   return {
     async transcribe(audio, mime) {
-      for (const r of await routes('transcribe')) {
+      const sidecar = env.STT_URL && env.STT_SECRET ? env.STT_URL.replace(/\/+$/, '') : null;
+      const configured = await routes('transcribe');
+      for (const r of configured.length || !sidecar ? configured : [SIDECAR_ROUTE]) {
         try {
+          if (r.provider === 'sidecar' && sidecar) {
+            const j = (await fetchJson(`${sidecar}/v1/transcribe`, {
+              method: 'POST',
+              headers: { authorization: `Bearer ${env.STT_SECRET}`, 'content-type': mime },
+              body: audio,
+            })) as { text?: string; confidence?: number | null; language?: string | null };
+            if (typeof j.text === 'string')
+              return {
+                text: j.text.trim().slice(0, 4000),
+                confidence: typeof j.confidence === 'number' ? j.confidence : null,
+                language: j.language ?? null,
+              };
+          }
           if (r.provider === 'openai' && env.OPENAI_API_KEY) {
             const form = new FormData();
             form.set('file', new Blob([audio], { type: mime.split(';')[0] ?? mime }), 'audio.ogg');

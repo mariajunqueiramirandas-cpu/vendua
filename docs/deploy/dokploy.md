@@ -193,6 +193,24 @@ people who never wrote first, and Instagram can challenge or restrict the accoun
 A logged-out session shows up on the card as "reconectar conta" — log in again
 there. The sidecar is AGPL-3.0 (its `LICENSE`); keep it a separate service.
 
+## Voice-note transcription (stt)
+
+The `stt` service ([ADR 0035](../adr/0035-self-hosted-stt.md), `services/stt`) transcribes
+shoppers' voice notes for the Vendedor on this host's CPU, with Parakeet-TDT-0.6B-v3. No audio
+goes to a third party and there is no per-minute charge.
+
+1. Set `STT_SECRET`. It is one value, and compose hands it to both `core` and `stt`. Without it,
+   the service idles and Core keeps using the cloud routes (or none).
+2. Deploy. The first build downloads the 2.5 GB model export, which is a cached layer
+   afterwards, and compiles it for the host's CPU. Compiling needs about 6 GB of RAM. The
+   container needs about 1.5 GB at runtime.
+3. Nothing to set in the CRM: with no `transcribe` route in `agent_runtime.media_routes`, Core
+   uses the sidecar. To keep a cloud route as a fallback, list
+   `{"provider":"sidecar","model":"parakeet-tdt-0.6b-v3","zdr":true}` first.
+
+`STT_CPUS` (default 2) caps the cores it may use, so Core and Postgres keep theirs. If the image is built on another machine for a host without
+AVX-512/AVX-VNNI, build with `--build-arg STT_REDUCE_RANGE=1`.
+
 ## Stores' own WhatsApp (order updates to shoppers)
 
 The `wa-gateway` service ([ADR 0026](../adr/0026-store-whatsapp-gateway.md)) runs from Core's
@@ -253,6 +271,7 @@ through the edge with the store's Host header (DNS and TLS unchecked).
 | `site`       | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
 | `ig-sidecar` | `services/ig-sidecar/Dockerfile` (Go)                      | 8790, internal |
 | `wa-gateway` | `packages/core/Dockerfile`, entrypoint `src/wa-gateway.ts` | 8791, internal |
+| `stt`        | `services/stt/Dockerfile` (Python, ONNX Runtime)           | 8792, internal |
 
 `site` and `publish` share the storefronts Dockerfile's `build` stage, so a deploy runs one
 `bun install` + one vite pass for both (compose/bake dedupe the shared stage).
