@@ -1,11 +1,12 @@
-import { Clock, Pause, Play, Storefront } from '@phosphor-icons/react';
+import { Clock, Fire, Pause, Play, Storefront } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { formatWhen, localNow, todayHours } from '@vendua/kernel/rules';
-import { api, type SpecialDay, type StoreView } from '../../lib/api.ts';
+import { formatTime, formatWhen, localNow, todayHours } from '@vendua/kernel/rules';
+import { api, type DemandSpan, type SpecialDay, type StoreView } from '../../lib/api.ts';
 import { hhmm, WEEKDAYS_LONG } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button } from '../../ui/Button.tsx';
+import { cn } from '../../ui/cn.ts';
 import { messageOf } from '../../ui/feedback.tsx';
 import { Chips, Field, TextArea, TimeInput } from '../../ui/fields.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
@@ -23,7 +24,8 @@ export function StatusSheet({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   store: StoreView;
-  startWith?: 'hours';
+  /** open straight on today's hours, or on "muitos pedidos agora" alone */
+  startWith?: 'hours' | 'demand';
 }) {
   const qc = useQueryClient();
   const [span, setSpan] = useState<Span>('1h');
@@ -65,6 +67,7 @@ export function StatusSheet({
   });
   const hold = store.status.billingHold;
   const paused = store.status.status === 'paused';
+  const demandOnly = startWith === 'demand';
   const preview =
     message.trim() ||
     (span === '15m' || span === '1h'
@@ -75,18 +78,28 @@ export function StatusSheet({
     <Sheet
       open={open}
       onOpenChange={onOpenChange}
-      title={hold ? 'Sua loja ainda não abriu' : paused ? 'Sua loja está pausada' : 'Pausar a loja'}
+      title={
+        demandOnly
+          ? 'Muitos pedidos agora'
+          : hold
+            ? 'Sua loja ainda não abriu'
+            : paused
+              ? 'Sua loja está pausada'
+              : 'Pausar a loja'
+      }
       description={
-        hold
-          ? 'Tudo pronto do seu lado. Falta só o plano.'
-          : paused
-            ? store.status.resumesAt
-              ? `Volta sozinha ${formatWhen(store.status.resumesAt, tz)}.`
-              : 'Fica pausada até você voltar.'
-            : 'Ninguém consegue fazer pedido enquanto estiver pausada. Os pedidos em andamento continuam.'
+        demandOnly
+          ? `Os pedidos continuam chegando, e quem entra na loja vê que o preparo está levando mais que os ~${store.operations.prepTimeMinutes} min de sempre.`
+          : hold
+            ? 'Tudo pronto do seu lado. Falta só o plano.'
+            : paused
+              ? store.status.resumesAt
+                ? `Volta sozinha ${formatWhen(store.status.resumesAt, tz)}.`
+                : 'Fica pausada até você voltar.'
+              : 'Ninguém consegue fazer pedido enquanto estiver pausada. Os pedidos em andamento continuam.'
       }
       footer={
-        hold ? null : paused ? (
+        hold || demandOnly ? null : paused ? (
           <Button
             size="lg"
             block
@@ -109,7 +122,9 @@ export function StatusSheet({
         )
       }
     >
-      {hold && !editHours ? (
+      {demandOnly ? (
+        <DemandControl store={store} onDone={() => onOpenChange(false)} className="pt-2" />
+      ) : hold && !editHours ? (
         <div className="space-y-6 pt-2">
           <BillingHoldNotice onNavigate={() => onOpenChange(false)} />
           <HoursButton store={store} onClick={() => setEditHours(true)} />
@@ -159,10 +174,113 @@ export function StatusSheet({
               </div>
             </>
           ) : null}
+          {!paused ? <DemandControl store={store} boxed /> : null}
           <HoursButton store={store} onClick={() => setEditHours(true)} />
         </div>
       )}
     </Sheet>
+  );
+}
+
+const DEMAND_SPANS: { value: Exclude<DemandSpan, 'off'>; label: string }[] = [
+  { value: '30m', label: '30 min' },
+  { value: '1h', label: '1 hora' },
+  { value: '2h', label: '2 horas' },
+  { value: 'today', label: 'resto do dia' },
+];
+
+/**
+ * "Muitos pedidos agora": the store keeps selling and says the kitchen is slower than usual.
+ * It always has an end — it goes off by itself — and a tap sets or moves it.
+ */
+export function DemandControl({
+  store,
+  boxed,
+  onDone,
+  className,
+}: {
+  store: StoreView;
+  boxed?: boolean;
+  onDone?: () => void;
+  className?: string;
+}) {
+  const qc = useQueryClient();
+  const tz = store.hours.timezone;
+  const on = store.operations.demand === 'high';
+  const until = store.operations.demandUntil;
+  const set = useMutation({
+    mutationFn: (span: DemandSpan) => api.demand(span),
+    onSuccess: (s, span) => {
+      qc.setQueryData(qk.store, s);
+      void qc.invalidateQueries({ queryKey: qk.home });
+      onDone?.();
+      const end = s.operations.demandUntil;
+      if (span === 'off') return toast('Aviso de muitos pedidos desligado.');
+      toast(
+        end
+          ? `Aviso de muitos pedidos até ${formatWhen(end, tz)}.`
+          : 'Aviso de muitos pedidos ligado.',
+        // turning it on can be taken back; moving its end just moves it
+        on ? {} : { undo: () => set.mutate('off') },
+      );
+    },
+    onError: (e) => toast.error(messageOf(e)),
+  });
+  return (
+    <section
+      aria-label="muitos pedidos agora"
+      className={cn(
+        boxed && 'rounded-lg p-4 ring-1 ring-line',
+        on && boxed && 'bg-warning-soft ring-warning/40',
+        className,
+      )}
+    >
+      {boxed ? (
+        <p className="flex items-center gap-2 font-semibold">
+          <Fire weight={on ? 'fill' : 'regular'} className="size-5 text-warning" aria-hidden />
+          Muitos pedidos agora
+        </p>
+      ) : null}
+      {on || boxed ? (
+        <p className={cn('t-body text-muted', boxed && 'mt-1')}>
+          {on
+            ? until
+              ? `Ligado até ${formatTime(until, tz)}. Desliga sozinho.`
+              : 'Ligado. Desliga sozinho em algumas horas.'
+            : `Avisa na loja que o preparo está levando mais que os ~${store.operations.prepTimeMinutes} min de sempre.`}
+        </p>
+      ) : null}
+      <p className="t-caption mb-2 mt-3 font-semibold text-muted">
+        {on ? 'Mudar para' : 'Ligar por'}
+      </p>
+      <div
+        role="group"
+        aria-label={on ? 'mudar até quando' : 'ligar por quanto tempo'}
+        className="flex flex-wrap gap-2"
+      >
+        {DEMAND_SPANS.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            disabled={set.isPending}
+            onClick={() => set.mutate(o.value)}
+            className="press t-label min-h-12 rounded-full bg-surface px-4 ring-1 ring-line-strong transition-colors hover:bg-hover disabled:opacity-60"
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {on ? (
+        <Button
+          variant="ghost"
+          className="mt-2 -ml-3"
+          disabled={set.isPending}
+          onClick={() => set.mutate('off')}
+        >
+          desligar o aviso
+        </Button>
+      ) : null}
+    </section>
   );
 }
 

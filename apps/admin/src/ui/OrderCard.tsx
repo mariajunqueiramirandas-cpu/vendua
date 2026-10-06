@@ -1,4 +1,12 @@
-import { Bag, CalendarBlank, DotsThree, Moped, NotePencil, Timer } from '@phosphor-icons/react';
+import {
+  Bag,
+  CalendarBlank,
+  ClockClockwise,
+  DotsThree,
+  Moped,
+  NotePencil,
+  Timer,
+} from '@phosphor-icons/react';
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { Order } from '../lib/api.ts';
 import { dateShort, minutesSince, money } from '../lib/format.ts';
@@ -415,6 +423,12 @@ export function OrderCard({
             {order.notes ? (
               <span className="inline-flex items-center gap-1 text-warning">
                 <NotePencil className="size-4" /> obs.
+              </span>
+            ) : null}
+            {order.delivery.delayMinutes ? (
+              <span className="tnum inline-flex items-center gap-1 text-warning">
+                <ClockClockwise className="size-4" /> +{order.delivery.delayMinutes} min
+                <span className="sr-only"> de atraso avisado</span>
               </span>
             ) : null}
           </div>

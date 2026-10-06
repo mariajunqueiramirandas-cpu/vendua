@@ -278,8 +278,13 @@ export function mountPrintAgent(o: PrintAgentOpts) {
         : typeof body.error === 'string' && body.error.trim()
           ? body.error.trim().slice(0, 200)
           : 'Falha ao imprimir';
-      await recordJobResultTx(tx, d.tenant.id, d.id, jobId, { ok: body.ok, error });
+      const orderId = await recordJobResultTx(tx, d.tenant.id, d.id, jobId, {
+        ok: body.ok,
+        error,
+      });
       await emitAdminTx(tx, d.tenant.id, 'printers', jobId);
+      // Início's "a comanda não imprimiu" follows the order's tickets
+      if (orderId) await emitAdminTx(tx, d.tenant.id, 'order.changed', orderId);
       return { status: 200, body: {} };
     })(c);
   });

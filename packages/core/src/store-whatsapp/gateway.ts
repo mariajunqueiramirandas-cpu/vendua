@@ -766,7 +766,8 @@ export class Gateway {
         where id = ${next.id}
         returning id, kind, phone, jid, body, media_id, shopper_message_id, attempts, wa_id,
           expires_at < now() as expired,
-          exists (select 1 from store_wa_messages later
+          -- money given back is never stale news
+          coalesce(event, '') not like 'refunded:%' and exists (select 1 from store_wa_messages later
                   where later.tenant_id = store_wa_messages.tenant_id
                     and later.order_id = store_wa_messages.order_id
                     and later.created_at > store_wa_messages.created_at

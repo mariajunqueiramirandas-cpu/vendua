@@ -62,9 +62,11 @@ const DEFAULT_EVENTS: readonly OrderEvent[] = [
   'placed',
   'paid',
   'confirmed',
+  'delayed',
   'ready',
   'out_for_delivery',
   'cancelled',
+  'refunded',
 ];
 
 /** What the screen shows: the stored state, corrected for what the row can't know by itself. */
@@ -147,7 +149,8 @@ export async function whatsappView(tx: Sql, tenantId: string, storeName: string)
     recent: recent.map((r) => ({
       id: r.id,
       kind: r.kind,
-      event: r.event,
+      // a step that repeats carries its occurrence ('delayed:…'): the screen names the step
+      event: r.event?.split(':')[0] ?? null,
       orderId: r.order_id,
       orderNumber: r.number,
       status: r.status,

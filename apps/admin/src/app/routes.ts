@@ -4,7 +4,7 @@ import { api, type Session } from '../lib/api.ts';
 import { featureOpen } from '../lib/session.ts';
 import { isoDate } from '../lib/format.ts';
 import { qk } from '../lib/query.ts';
-import { rangeOf } from '../features/reports/range.ts';
+import { DEFAULT_PERIOD, reportsQuery } from '../features/reports/range.ts';
 
 // Every screen in one place: its code chunk and the query it opens with (its skeleton lives in
 // routeSkeletons.tsx). Chunks warm up in the background after the first screen (Shell), and a
@@ -267,8 +267,8 @@ const ROUTES: RouteDef[] = [
     match: /^\/relatorios$/,
     chunk: chunks.reports,
     data: (qc) => {
-      const { from, to } = rangeOf('7d');
-      return q(qc, qk.reports(from, to), () => api.reports(from, to));
+      const r = reportsQuery(DEFAULT_PERIOD);
+      return q(qc, r.key, () => api.reports(r.params));
     },
   },
   {

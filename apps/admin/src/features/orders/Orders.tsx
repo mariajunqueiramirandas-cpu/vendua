@@ -9,12 +9,11 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { orderPath } from '@vendua/kernel/rules';
 import { api, type Board, type Order, type OrderState } from '../../lib/api.ts';
 import { markOrdersSeen, usePollWhenOffline } from '../../lib/live.ts';
 import { useWakeLock, wakeLockSupported } from '../../lib/wakeLock.ts';
 import { qk } from '../../lib/query.ts';
-import { useSession } from '../../lib/session.ts';
+import { can, useSession } from '../../lib/session.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState, Hint } from '../../ui/feedback.tsx';
@@ -25,8 +24,16 @@ import { HelpButton } from '../../ui/Page.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { nextStep } from '../../ui/StateChip.tsx';
 import { useStoreQuery } from '../store/StatusPill.tsx';
-import { orderWhatsappUrl, usePrintOrder, useTransition } from './actions.ts';
-import { CancelSheet, OrderDetail } from './OrderDetail.tsx';
+import { orderWhatsappUrl, usePrintOrder } from './actions.ts';
+import {
+  CancelSheet,
+  canDelay,
+  DelayChips,
+  OrderDetail,
+  PrintChoice,
+  SoldOutList,
+} from './OrderDetail.tsx';
+import { holdMove, useHeldStates, withHeld } from './transition.ts';
 import { usePreload } from '../../app/routes.ts';
 
 type LaneId = 'novos' | 'preparo' | 'prontos' | 'concluidos';
@@ -77,17 +84,18 @@ export default function Orders() {
   const nav = useNavigate();
   const now = useNow();
   const preload = usePreload();
-  const move = useTransition();
+  const held = useHeldStates();
   const awake = useWakeLock();
   const [lane, setLane] = useState<LaneId>('novos');
   const [selected, setSelected] = useState<string | null>(null);
-  const [more, setMore] = useState<Order | null>(null);
+  const [moreId, setMoreId] = useState<string | null>(null);
   const [cancel, setCancel] = useState<Order | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const known = useRef<Set<string> | null>(null);
   const prepDefault = store?.operations.prepTimeMinutes ?? 30;
 
-  const orders = data?.orders ?? [];
+  // a move waiting out its "desfazer" already shows in its new lane, whatever a refetch says
+  const orders = useMemo(() => (data?.orders ?? []).map((o) => withHeld(o, held)), [data, held]);
   const byLane = useMemo(() => {
     const out = Object.fromEntries(LANES.map((l) => [l.id, [] as Order[]])) as Record<
       LaneId,
@@ -122,34 +130,15 @@ export default function Orders() {
     if (byLane.novos.length && lane !== 'novos' && arriving.size) setLane('novos');
   }, [arriving, byLane.novos.length, lane]);
 
+  // button, keyboard, swipe and drag all hold the move: it reaches Core after "desfazer"
   const advance = (o: Order, prepMinutes?: number) => {
     const n = nextStep(o.state, o.delivery.mode);
-    if (n)
-      move.mutate({
-        order: o,
-        to: n.to,
-        ...(prepMinutes ? { prepMinutes } : {}),
-        idem: `adv-${o.id}-${n.to}`,
-      });
+    if (n) holdMove(o, n.to, prepMinutes);
   };
-  const dropOn = async (l: (typeof LANES)[number], id: string) => {
+  const dropOn = (l: (typeof LANES)[number], id: string) => {
     const o = orders.find((x) => x.id === id);
     if (!o || !l.drop || l.states.includes(o.state)) return;
-    // walk the order's own path to the lane (a transition skips none; pickup never "sai")
-    const path = orderPath(o.delivery.mode) as OrderState[];
-    const i = path.indexOf(o.state);
-    const j = path.indexOf(l.drop);
-    if (i < 0 || j <= i) return;
-    let cur: Order = o;
-    for (const to of path.slice(i + 1, j + 1)) {
-      const r = await move.mutateAsync({
-        order: cur,
-        to,
-        ...(to === 'confirmed' ? { prepMinutes: prepDefault } : {}),
-        idem: `drag-${o.id}-${to}`,
-      });
-      cur = r.order;
-    }
+    holdMove(o, l.drop, prepDefault);
   };
 
   const open = (o: Order) => {
@@ -171,6 +160,9 @@ export default function Orders() {
       onOpen={open}
     />
   );
+
+  const more = moreId ? (orders.find((o) => o.id === moreId) ?? null) : null;
+  const setMore = (o: Order | null) => setMoreId(o?.id ?? null);
 
   const counts = Object.fromEntries(LANES.map((l) => [l.id, byLane[l.id].length])) as Record<
     LaneId,
@@ -305,7 +297,7 @@ export default function Orders() {
                   onDrop={(e) => {
                     const id = e.dataTransfer.getData('text/plain');
                     setDragging(null);
-                    void dropOn(l, id);
+                    dropOn(l, id);
                   }}
                   className={cn(
                     'flex min-h-[60vh] flex-col rounded-lg bg-sunken/60 p-3 transition-colors',
@@ -384,6 +376,23 @@ export default function Orders() {
               >
                 imprimir comanda
               </Button>
+            ) : null}
+            <PrintChoice
+              order={more}
+              printing={printing}
+              lead="ou só em:"
+              className="items-center justify-center"
+            />
+            {canDelay(more) ? (
+              <div className="mt-2 rounded-lg bg-sunken p-3">
+                <DelayChips order={more} />
+              </div>
+            ) : null}
+            {can(s.user.role, 'manager') && more.items.some((i) => i.productId) ? (
+              <section aria-label="acabou algum item?" className="mt-2">
+                <h3 className="t-label px-1">Acabou algum item?</h3>
+                <SoldOutList order={more} />
+              </section>
             ) : null}
             {!['delivered', 'cancelled', 'refunded'].includes(more.state) ? (
               <Button

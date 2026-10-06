@@ -305,21 +305,25 @@ export async function claimDueJobsTx(
   return out;
 }
 
-/** The agent's answer. A late "printed" still wins over expired/failed: the paper is out. */
+/**
+ * The agent's answer. A late "printed" still wins over expired/failed: the paper is out.
+ * Returns the order whose print status Início shows when this answer changes it (a failure, or
+ * a success after one), else null.
+ */
 export async function recordJobResultTx(
   tx: Sql,
   tenantId: string,
   deviceId: string,
   jobId: string,
   result: { ok: boolean; error: string | null },
-): Promise<void> {
-  const rows = await tx<{ printer_id: string; status: string }[]>`
-    select printer_id, status from print_jobs
+): Promise<string | null> {
+  const rows = await tx<{ printer_id: string; status: string; order_id: string | null }[]>`
+    select printer_id, status, order_id from print_jobs
     where tenant_id = ${tenantId} and id = ${jobId} and device_id = ${deviceId}
     for update`;
   const job = rows[0];
   if (!job) throw new HttpError(404, 'JOB_NOT_FOUND', 'job not found');
-  if (job.status === 'done') return;
+  if (job.status === 'done') return null;
   await tx`
     update print_jobs
     set status = ${result.ok ? 'done' : 'failed'}, finished_at = now(),
@@ -333,6 +337,93 @@ export async function recordJobResultTx(
     await tx`
       update printers set last_error = ${result.error}, last_error_at = now()
       where tenant_id = ${tenantId} and id = ${job.printer_id}`;
+  if (!job.order_id) return null;
+  if (!result.ok) return job.order_id;
+  const failed = await tx`
+    select 1 from print_jobs
+    where tenant_id = ${tenantId} and order_id = ${job.order_id} and status = 'failed' limit 1`;
+  return failed.length ? job.order_id : null;
+}
+
+export interface OrderPrintJob {
+  id: string;
+  status: 'pending' | 'sent' | 'done' | 'failed' | 'expired';
+  trigger: 'placed' | 'confirmed' | 'manual';
+  printerId: string;
+  printer: string;
+  device: string;
+  deviceOnline: boolean;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+/** One order's tickets, newest first: what the order screen says about printing. */
+export async function orderJobsTx(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+): Promise<OrderPrintJob[]> {
+  const rows = await tx<
+    (Omit<OrderPrintJob, 'createdAt' | 'finishedAt'> & {
+      createdAt: Date;
+      finishedAt: Date | null;
+    })[]
+  >`
+    select j.id, j.status, j.trigger, j.printer_id as "printerId",
+           coalesce(p.label, p.name) as printer, d.name as device,
+           coalesce(d.connected_at is not null
+                    and (d.disconnected_at is null or d.disconnected_at < d.connected_at)
+                    and d.last_seen_at > now() - make_interval(secs => ${ONLINE_WINDOW_S}), false)
+             as "deviceOnline",
+           j.error, j.created_at as "createdAt", j.finished_at as "finishedAt"
+    from print_jobs j
+      join printers p on p.id = j.printer_id
+      join print_devices d on d.id = j.device_id
+    where j.tenant_id = ${tenantId} and j.order_id = ${orderId} and j.kind = 'order'
+    order by j.created_at desc, j.id
+    limit 20`;
+  return rows.map((r) => ({
+    ...r,
+    createdAt: new Date(r.createdAt).toISOString(),
+    finishedAt: r.finishedAt ? new Date(r.finishedAt).toISOString() : null,
+  }));
+}
+
+/**
+ * Tickets that didn't come out lately for orders still on the board, and that no later ticket
+ * of the same order made up for: failed, or waiting minutes on a device that isn't there.
+ */
+export async function printTroubleTx(tx: Sql, tenantId: string) {
+  return tx<
+    {
+      orderId: string;
+      number: number;
+      printer: string;
+      error: string | null;
+      waiting: boolean;
+      at: Date;
+    }[]
+  >`
+    select j.order_id as "orderId", o.number, coalesce(p.label, p.name) as printer, j.error,
+           j.status <> 'failed' as waiting, coalesce(j.finished_at, j.created_at) as at
+    from print_jobs j
+      join orders o on o.tenant_id = j.tenant_id and o.id = j.order_id
+      join printers p on p.id = j.printer_id
+    where j.tenant_id = ${tenantId} and j.kind = 'order'
+      and o.state in ('placed', 'confirmed', 'preparing', 'ready', 'out_for_delivery')
+      and (
+        (j.status = 'failed' and j.finished_at > now() - interval '3 hours')
+        or (j.status in ('pending', 'sent') and j.created_at < now() - interval '3 minutes'
+            and j.expires_at > now())
+      )
+      and not exists (
+        select 1 from print_jobs k
+        where k.tenant_id = j.tenant_id and k.order_id = j.order_id and k.status = 'done'
+          and k.created_at > j.created_at
+      )
+    order by at desc
+    limit 10`;
 }
 
 export interface ReportedPrinter {

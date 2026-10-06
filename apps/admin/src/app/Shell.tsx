@@ -17,6 +17,7 @@ import {
   useLiveState,
   useLiveStream,
   setSoundOn,
+  usePendingWrites,
   usePollWhenOffline,
 } from '../lib/live.ts';
 import { applyUpdate, onUpdate, setBadge, updateReady } from '../lib/pwa.ts';
@@ -81,6 +82,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const placed = usePlacedCount();
   useEffect(() => setBadge(placed + waiting), [placed, waiting]);
   const live = useLiveState();
+  const pending = usePendingWrites();
   const loc = useLocation();
   const nav = useNavigate();
   const liveRegion = useRef<HTMLDivElement>(null);
@@ -273,8 +275,13 @@ export function Shell({ children }: { children: ReactNode }) {
             role="status"
             className="t-body sticky top-0 z-40 flex items-center justify-center gap-2 bg-warning-soft px-4 py-2 text-warning md:top-0 kb:static"
           >
-            <WifiSlash className="size-5" aria-hidden /> Sem conexão, tentando de novo. O que você
-            fizer agora é enviado quando voltar.
+            <WifiSlash className="size-5 shrink-0" aria-hidden />
+            <span>
+              Sem conexão, tentando de novo.
+              {pending
+                ? ` ${pending === 1 ? '1 ação esperando' : `${pending} ações esperando`} conexão.`
+                : ' O que você fizer agora é enviado quando voltar.'}
+            </span>
           </div>
         ) : null}
 

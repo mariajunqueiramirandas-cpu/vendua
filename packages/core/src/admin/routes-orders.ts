@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import {
+  ORDER_CHANNEL,
   ORDER_STATES,
   canTransition,
   loadOrderView,
@@ -38,6 +39,11 @@ const refundLog = log.child({ mod: 'refunds' });
 
 const ACTIVE = ['placed', 'confirmed', 'preparing', 'ready', 'out_for_delivery'];
 const DONE = ['delivered', 'cancelled', 'refunded'];
+/** accepted and still on its way: the steps whose promise "atrasou" can move */
+const DELAYABLE: readonly OrderState[] = ['confirmed', 'preparing', 'ready', 'out_for_delivery'];
+const METHODS = ['pix', 'card_online', 'card_on_delivery', 'cash', 'meal_voucher'] as const;
+const MODES = ['delivery', 'pickup', 'scheduled'] as const;
+const UNPAID = ['pending', 'failed', 'expired'];
 
 export const STATE_LABEL: Record<OrderState, string> = {
   placed: 'novo',
@@ -495,6 +501,16 @@ export function mountOrders(d: AdminDeps) {
       const before = c.req.query('before');
       if (before && Number.isNaN(Date.parse(before)))
         throw new HttpError(400, 'BAD_REQUEST', 'before must be a timestamp');
+      const filter = <T extends string>(name: string, allowed: readonly T[]): T | undefined => {
+        const v = c.req.query(name);
+        if (!v) return undefined;
+        if (!(allowed as readonly string[]).includes(v))
+          throw new HttpError(400, 'BAD_REQUEST', `unknown ${name}`);
+        return v as T;
+      };
+      const method = filter('method', METHODS);
+      const mode = filter('mode', MODES);
+      const unpaid = ['1', 'true'].includes(filter('unpaid', ['1', 'true', '0', 'false']) ?? '');
       const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 40) || 40));
       const tz = await storeTz(tx, t.id);
       const digits = q.replace(/\D/g, '');
@@ -506,6 +522,9 @@ export function mountOrders(d: AdminDeps) {
           ${from ? tx`and (o.placed_at at time zone ${tz})::date >= ${from}::date` : tx``}
           ${to ? tx`and (o.placed_at at time zone ${tz})::date <= ${to}::date` : tx``}
           ${before ? tx`and o.placed_at < ${new Date(before)}` : tx``}
+          ${method ? tx`and o.payment ->> 'method' = ${method}` : tx``}
+          ${mode === 'scheduled' ? tx`and o.scheduled_for is not null` : mode ? tx`and o.delivery ->> 'mode' = ${mode}` : tx``}
+          ${unpaid ? tx`and coalesce(o.payment ->> 'status', 'pending') = any(${UNPAID}) and o.state <> 'cancelled'` : tx``}
           ${
             q
               ? tx`and (${/^#?\d{1,8}$/.test(q) ? tx`o.number = ${Number(q.replace('#', ''))} or` : tx``}
@@ -734,6 +753,71 @@ export function mountOrders(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'order.changed', id);
       return { status: 200, body: { order: await loadOrderView(tx, t.id, id) } };
+    }),
+  );
+
+  // "Atrasou": an accepted order's promise moves later by a few minutes, the shopper's order page
+  // follows it (rev + notify) and the store's WhatsApp tells them the new time.
+  admin.post(
+    '/orders/:id/delay',
+    write('attendant', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyJson(c, 1024);
+      const minutes = int(body.minutes, 'minutes', 5, 120);
+      const cur = (
+        await tx<
+          {
+            number: number;
+            state: OrderState;
+            delivery: OrderView['delivery'];
+            scheduled: boolean;
+          }[]
+        >`
+          select number, state, delivery, scheduled_for is not null as scheduled from orders
+          where tenant_id = ${t.id} and id = ${id} for update
+        `
+      )[0];
+      if (!cur) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+      if (!DELAYABLE.includes(cur.state))
+        throw new HttpError(
+          409,
+          'ORDER_NOT_DELAYABLE',
+          `a ${cur.state} order has no promise to move`,
+        );
+      if (cur.scheduled)
+        throw new HttpError(409, 'ORDER_NOT_DELAYABLE', 'an encomenda is promised for its day');
+      const d = cur.delivery;
+      const now = Date.now();
+      const to0 = Date.parse(d.promisedTo ?? '');
+      const from0 = Date.parse(d.promisedFrom ?? '');
+      // a promise already past starts again from now; the window keeps its width
+      const to = (Number.isFinite(to0) ? Math.max(to0, now) : now) + minutes * 60_000;
+      const width = Number.isFinite(to0) && Number.isFinite(from0) ? Math.max(0, to0 - from0) : 0;
+      const patch = {
+        promisedFrom: new Date(to - width).toISOString(),
+        promisedTo: new Date(to).toISOString(),
+        delayMinutes: (d.delayMinutes ?? 0) + minutes,
+      };
+      // rev is the live cursor: the shopper's order page re-reads on it
+      await tx`
+        update orders set delivery = delivery || ${tx.json(patch)}, rev = rev + 1, updated_at = now()
+        where tenant_id = ${t.id} and id = ${id}
+      `;
+      await tx`select pg_notify(${ORDER_CHANNEL}, ${id})`;
+      await emitAdminTx(tx, t.id, 'order.changed', id);
+      const notified = await enqueueOrderMessageTx(tx, t.id, id, 'delayed', {
+        occurrence: String(to),
+      });
+      await audit(tx, t.id, m, {
+        action: 'order.delayed',
+        entity: 'order',
+        entityId: id,
+        summary: `pedido #${cur.number}: atrasou ${minutes} min`,
+        before: { promisedFrom: d.promisedFrom ?? null, promisedTo: d.promisedTo ?? null },
+        after: patch,
+      });
+      // whether the shopper hears of it: the store's WhatsApp sends this step to their number
+      return { status: 200, body: { order: await loadOrderView(tx, t.id, id), notified } };
     }),
   );
 

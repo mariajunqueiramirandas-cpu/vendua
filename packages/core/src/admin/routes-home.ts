@@ -1,8 +1,9 @@
+import { printTroubleTx } from '../modules/printing/jobs.ts';
 import type { Sql } from '../platform/db.ts';
 import { roleAtLeast, type AdminDeps, type Role } from './context.ts';
 import { handlers } from './handlers.ts';
 import { onboardingOf, setupChecklist } from './routes-onboarding.ts';
-import { loadSettings, statusOf } from './routes-store.ts';
+import { demandOf, loadSettings, statusOf } from './routes-store.ts';
 
 // Início in one read: the living header, "precisa de você", the setup checklist
 // and the live feed. Everything is scoped to the store's local day.
@@ -33,6 +34,7 @@ export function mountHome(d: AdminDeps) {
         liveRows,
         best,
         [busiestRow],
+        prints,
       ] = await Promise.all([
         tx<
           {
@@ -129,6 +131,7 @@ export function mountHome(d: AdminDeps) {
             and placed_at >= (date_trunc('day', now() at time zone ${tz}) at time zone ${tz})
           group by 1 order by 2 desc limit 1
         `,
+        printTroubleTx(tx, t.id),
       ]);
       const today = todayRow ?? {
         salesCents: 0,
@@ -166,6 +169,22 @@ export function mountHome(d: AdminDeps) {
           href: '/pedidos',
         });
       attention.push(...platform);
+      if (prints.length) {
+        const p = prints[0]!;
+        const orders = new Set(prints.map((x) => x.orderId)).size;
+        attention.push({
+          kind: 'print_failed',
+          count: orders,
+          title:
+            orders === 1
+              ? `A comanda do pedido #${p.number} não imprimiu`
+              : `As comandas de ${orders} pedidos não imprimiram`,
+          detail: p.waiting
+            ? `${p.printer} não respondeu. Confira se o aparelho está ligado.`
+            : `${p.printer}: ${p.error ?? 'falha ao imprimir'}`,
+          href: orders === 1 ? `/pedidos/${p.orderId}` : '/impressoras',
+        });
+      }
       if (manager) {
         const pendingPix = pix[0]!.n;
         if (pendingPix)
@@ -206,6 +225,7 @@ export function mountHome(d: AdminDeps) {
           changesAt: st.resumesAt ?? st.closesAt ?? null,
           override: s.status_override,
         },
+        demand: demandOf(s),
         hours: s.hours,
         specialDays: s.special_days ?? [],
         today: {

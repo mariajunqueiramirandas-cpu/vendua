@@ -65,6 +65,8 @@ export interface OrderRow {
     etaMax?: number;
     promisedFrom?: string | null;
     promisedTo?: string | null;
+    /** minutes the store pushed the promise back after accepting ("atrasou"), summed */
+    delayMinutes?: number;
   };
   payment: {
     /** 'sandbox' (offline methods — no provider) | 'mercadopago' | 'fake'; branch on `online` */
@@ -309,11 +311,14 @@ export async function transitionOrder(
       mode: DeliveryMode;
       customer_phone: string | null;
       number: number;
+      online: boolean;
+      total_cents: number;
       whatsapp: boolean;
       printers: boolean;
     }[]
   >`
     select state, delivery ->> 'mode' as mode, customer_phone, number,
+      coalesce((payment ->> 'online')::boolean, false) as online, total_cents,
       exists (select 1 from store_whatsapp w where w.tenant_id = ${tenantId} and w.wanted) as whatsapp,
       exists (select 1 from printers p where p.tenant_id = ${tenantId} and p.auto and p.present) as printers
     from orders where tenant_id = ${tenantId} and id = ${orderId} for update
@@ -352,8 +357,17 @@ export async function transitionOrder(
       to as OrderStep,
       actor,
     );
-  // the shopper hears it from the store's own WhatsApp (ADR 0026), when the store turned it on
-  if (isOrderEvent(to) && order.whatsapp) await enqueueOrderMessageTx(tx, tenantId, orderId, to);
+  // the shopper hears it from the store's own WhatsApp (ADR 0026), when the store turned it on.
+  // Money refunded online is told when it lands (syncOrderPayment); a refund the store made
+  // itself is the whole order, told here.
+  if (to === 'refunded') {
+    if (order.whatsapp && !order.online)
+      await enqueueOrderMessageTx(tx, tenantId, orderId, 'refunded', {
+        occurrence: String(order.total_cents),
+        refund: { cents: order.total_cents, full: true, online: false },
+      });
+  } else if (isOrderEvent(to) && order.whatsapp)
+    await enqueueOrderMessageTx(tx, tenantId, orderId, to);
   // the kitchen ticket, on the step the store prints at (ADR 0027)
   if (to === 'confirmed' && order.printers)
     await enqueueOrderPrintTx(tx, tenantId, orderId, 'confirmed');

@@ -56,11 +56,17 @@ const EVENTS: { id: WaEvent; label: string; hint: string }[] = [
   { id: 'placed', label: 'Pedido recebido', hint: 'Assim que o pedido chega.' },
   { id: 'paid', label: 'Pagamento confirmado', hint: 'Quando o Pix ou o cartão pelo site cai.' },
   { id: 'confirmed', label: 'Pedido aceito', hint: 'Quando você aceita, com o horário previsto.' },
+  {
+    id: 'delayed',
+    label: 'Atrasou',
+    hint: 'Quando você avisa que vai atrasar, com o novo horário.',
+  },
   { id: 'preparing', label: 'Em preparo', hint: 'Quando você marca em preparo.' },
   { id: 'ready', label: 'Pronto para retirar', hint: 'Só em pedidos de retirada.' },
   { id: 'out_for_delivery', label: 'Saiu para entrega', hint: 'Quando o pedido sai.' },
   { id: 'delivered', label: 'Entregue', hint: 'Um obrigado depois da entrega.' },
   { id: 'cancelled', label: 'Cancelado', hint: 'Se o pedido for cancelado.' },
+  { id: 'refunded', label: 'Dinheiro devolvido', hint: 'Quando um estorno sai, com o valor.' },
 ];
 const EVENT_LABEL = Object.fromEntries(EVENTS.map((e) => [e.id, e.label])) as Record<
   WaEvent,

@@ -1280,6 +1280,14 @@ export async function syncOrderPayment(
     );
     await enqueueOrderMessageTx(tx, tenantId, orderId, 'paid');
   }
+  // money given back reaches the shopper once it's approved, whichever path approved it; the
+  // running total names the occurrence, so a replayed sync never texts twice
+  const before = Number(cur.payment.refundedCents ?? 0);
+  if (refunded > before)
+    await enqueueOrderMessageTx(tx, tenantId, orderId, 'refunded', {
+      occurrence: String(refunded),
+      refund: { cents: refunded - before, full: !before && status === 'refunded', online: true },
+    });
   return { changed: true, status };
 }
 

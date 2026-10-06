@@ -1,19 +1,26 @@
 import {
+  ArrowClockwise,
   ArrowSquareOut,
   Bag,
   CalendarBlank,
+  CaretDown,
+  CheckCircle,
+  ClockClockwise,
+  HourglassMedium,
   MapPin,
   Moped,
   NotePencil,
   Printer,
+  Prohibit,
+  WarningCircle,
   WhatsappLogo,
   XCircle,
 } from '@phosphor-icons/react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Order, OrderPayment } from '../../lib/api.ts';
+import type { Order, OrderPayment, OrderPrintJob, OrderState } from '../../lib/api.ts';
 import { clock, dateShort, money, phone, when } from '../../lib/format.ts';
-import { can, useSession } from '../../lib/session.ts';
+import { can, useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -22,12 +29,21 @@ import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { nextStep, STATE_META, StateChip } from '../../ui/StateChip.tsx';
 import { METHOD_LABEL, PaymentChip } from '../../ui/PaymentChip.tsx';
-import { CANCEL_REASONS, orderWhatsappUrl, usePrintOrder, useTransition } from './actions.ts';
+import {
+  CANCEL_REASONS,
+  orderWhatsappUrl,
+  useDelay,
+  usePrintJobs,
+  usePrintOrder,
+  useSoldOutToday,
+  useTransition,
+} from './actions.ts';
 import { PaymentSection, primaryPayment, refundable } from './PaymentSection.tsx';
 import { RefundSheet } from './RefundSheet.tsx';
+import { afterHeld, holdMove, useHeldStates, withHeld } from './transition.ts';
 
 export function OrderDetail({
-  order,
+  order: shown,
   customer,
   payments,
   prepDefault,
@@ -41,10 +57,12 @@ export function OrderDetail({
   inPanel?: boolean;
 }) {
   const s = useSession();
+  // a move waiting out its "desfazer" shows already, whatever a refetch brought back
+  const order = withHeld(shown, useHeldStates());
   const printing = usePrintOrder(s.store.name);
-  const move = useTransition();
   const [cancelOpen, setCancelOpen] = useState(false);
   const [refundOpen, setRefundOpen] = useState(false);
+  const [soldOutOpen, setSoldOutOpen] = useState(false);
   const manager = can(s.user.role, 'manager');
   const online = !!order.payment.online;
   const main = primaryPayment(payments);
@@ -52,13 +70,8 @@ export function OrderDetail({
   const next = nextStep(order.state, order.delivery.mode);
   const nm = next ? STATE_META[next.to] : null;
   const advance = () =>
-    next &&
-    move.mutate({
-      order,
-      to: next.to,
-      ...(order.state === 'placed' ? { prepMinutes: prepDefault } : {}),
-      idem: `adv-${order.id}-${next.to}`,
-    });
+    next && holdMove(order, next.to, order.state === 'placed' ? prepDefault : undefined);
+  const products = soldOutItems(order);
   const cancellable = !['delivered', 'cancelled', 'refunded'].includes(order.state);
   const d = order.delivery;
   const coords =
@@ -168,6 +181,26 @@ export function OrderDetail({
             <dd className="tnum">{money(order.totalCents)}</dd>
           </div>
         </dl>
+        {manager && products.length ? (
+          <div className="mt-3 border-t border-line pt-3">
+            <Button
+              variant="ghost"
+              size="md"
+              icon={<Prohibit />}
+              aria-expanded={soldOutOpen}
+              className="-ml-3 text-muted!"
+              onClick={() => setSoldOutOpen((v) => !v)}
+            >
+              acabou algum item?
+              <CaretDown
+                weight="bold"
+                aria-hidden
+                className={cn('size-4! transition-transform', soldOutOpen && 'rotate-180')}
+              />
+            </Button>
+            {soldOutOpen ? <SoldOutList order={order} className="mt-1" /> : null}
+          </div>
+        ) : null}
       </Card>
 
       <Card className="divide-y divide-line">
@@ -227,8 +260,12 @@ export function OrderDetail({
                   ? `${clock(d.promisedFrom)}–`
                   : ''}
                 {clock(d.promisedTo)}
+                {d.delayMinutes ? (
+                  <span className="text-warning"> · atrasou {d.delayMinutes} min</span>
+                ) : null}
               </p>
             ) : null}
+            <DelayChips order={order} className="mt-2" />
           </div>
           {mapHref ? (
             <a
@@ -292,17 +329,9 @@ export function OrderDetail({
         </ol>
       </section>
 
+      {printing.available ? <PrintSection order={order} printing={printing} /> : null}
+
       <div className="flex flex-wrap gap-2">
-        {printing.available ? (
-          <Button
-            variant="secondary"
-            icon={<Printer />}
-            loading={printing.pending}
-            onClick={() => printing.print(order)}
-          >
-            imprimir comanda
-          </Button>
-        ) : null}
         {!inPanel ? null : (
           <Link
             to={`/pedidos/${order.id}`}
@@ -339,7 +368,6 @@ export function OrderDetail({
           <Button
             size="lg"
             block
-            loading={move.isPending}
             onClick={advance}
             icon={nm ? <nm.Icon weight="bold" /> : undefined}
           >
@@ -356,7 +384,6 @@ export function OrderDetail({
           <Button
             size="lg"
             block
-            loading={move.isPending}
             onClick={advance}
             icon={nm ? <nm.Icon weight="bold" /> : undefined}
           >
@@ -390,11 +417,14 @@ export function CancelSheet({
   const text = reason === 'outro' ? other.trim() : reason;
   const paid = order.payment.status === 'paid' || order.payment.status === 'partially_refunded';
   const paidOnline = paid && !!order.payment.online;
-  const go = () =>
+  const go = async () => {
+    // a step still waiting out its "desfazer" reaches Core first
+    await afterHeld(order.id);
     move.mutate(
       { order, to: refund ? 'refunded' : 'cancelled', reason: text, idem: `cancel-${order.id}` },
       { onSuccess: () => onOpenChange(false) },
     );
+  };
   return (
     <Sheet
       open={open}
@@ -411,7 +441,7 @@ export function CancelSheet({
       }
       footer={
         paid || refund ? (
-          <HoldButton disabled={!text} onConfirm={go}>
+          <HoldButton disabled={!text} onConfirm={() => void go()}>
             {move.isPending
               ? 'cancelando…'
               : refund
@@ -427,7 +457,7 @@ export function CancelSheet({
             block
             disabled={!text}
             loading={move.isPending}
-            onClick={go}
+            onClick={() => void go()}
           >
             cancelar pedido
           </Button>
@@ -461,5 +491,220 @@ export function CancelSheet({
         </Field>
       ) : null}
     </Sheet>
+  );
+}
+
+const DELAYABLE: readonly OrderState[] = ['confirmed', 'preparing', 'ready', 'out_for_delivery'];
+
+/** accepted, still on its way, with a time promised (an encomenda has a day, not a time) */
+export const canDelay = (o: Order) =>
+  DELAYABLE.includes(o.state) && !o.scheduledFor && !!o.delivery.promisedTo;
+
+/** "Atrasou?": the promise moves later and the shopper hears the new time on WhatsApp. */
+export function DelayChips({ order, className }: { order: Order; className?: string }) {
+  const s = useSession();
+  const delay = useDelay(s.store.name);
+  if (!canDelay(order)) return null;
+  return (
+    <div
+      role="group"
+      aria-label="atrasou? empurrar o horário"
+      className={cn('flex flex-wrap items-center gap-2', className)}
+    >
+      <span className="t-label mr-1 inline-flex items-center gap-1.5 text-muted">
+        <ClockClockwise weight="bold" className="size-5" aria-hidden /> Atrasou?
+      </span>
+      {[10, 20].map((m) => (
+        <button
+          key={m}
+          type="button"
+          onClick={() => delay(order, m)}
+          className="press t-label tnum inline-flex min-h-11 items-center rounded-full px-4 ring-1 ring-line-strong hover:bg-hover"
+        >
+          +{m} min<span className="sr-only"> no horário prometido</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** the order's products, once each: what "acabou" can mark */
+function soldOutItems(o: Order) {
+  const seen = new Map<string, string>();
+  for (const i of o.items) if (i.productId && !seen.has(i.productId)) seen.set(i.productId, i.name);
+  return [...seen].map(([id, name]) => ({ id, name }));
+}
+
+/** "Acabou": one tap sells the product out for today, from the order that showed it. */
+export function SoldOutList({ order, className }: { order: Order; className?: string }) {
+  const manager = useCan('manager');
+  const soldOut = useSoldOutToday();
+  const products = soldOutItems(order);
+  if (!manager || !products.length) return null;
+  return (
+    <ul className={cn('divide-y divide-line', className)}>
+      {products.map((p) => (
+        <li key={p.id} className="flex min-h-14 items-center gap-3 py-1.5">
+          <span className="t-body min-w-0 flex-1 truncate font-semibold">{p.name}</span>
+          <Button
+            variant="secondary"
+            icon={<Prohibit />}
+            onClick={() => soldOut.mutate({ productId: p.id, name: p.name })}
+          >
+            esgotou hoje
+          </Button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+type Printing = ReturnType<typeof usePrintOrder>;
+
+/** The latest ticket on each printer, newest first. */
+function latestJobs(jobs: OrderPrintJob[]) {
+  const seen = new Set<string>();
+  return jobs.filter((j) => (seen.has(j.printerId) ? false : (seen.add(j.printerId), true)));
+}
+
+function jobWords(j: OrderPrintJob): {
+  title: string;
+  detail: string;
+  tone: 'ok' | 'bad' | 'wait';
+} {
+  switch (j.status) {
+    case 'done':
+      return {
+        title: `Impressa às ${clock(j.finishedAt ?? j.createdAt)}`,
+        detail: j.printer,
+        tone: 'ok',
+      };
+    case 'failed':
+      return {
+        title: 'A comanda não imprimiu',
+        detail: `${j.printer}: ${j.error ?? 'falha ao imprimir'}`,
+        tone: 'bad',
+      };
+    case 'expired':
+      return {
+        title: 'A comanda não saiu',
+        detail:
+          j.error === 'Pedido cancelado'
+            ? `${j.printer}: o pedido foi cancelado antes`
+            : `${j.printer}: o aparelho ficou desligado`,
+        tone: 'bad',
+      };
+    default:
+      return j.deviceOnline
+        ? { title: 'Imprimindo…', detail: j.printer, tone: 'wait' }
+        : {
+            title: 'Esperando o aparelho ligar',
+            detail: `${j.printer} · ${j.device} está desligado`,
+            tone: 'wait',
+          };
+  }
+}
+
+/** "Impressa às 12:03 · Cozinha", or why not and "imprimir de novo"; and a printer to pick. */
+function PrintSection({ order, printing }: { order: Order; printing: Printing }) {
+  const jobs = latestJobs(usePrintJobs(order.id, printing.printers.length > 0).data?.jobs ?? []);
+  const many = printing.printers.length > 1;
+  return (
+    <section aria-label="comanda">
+      <h3 className="t-label mb-2 px-1">Comanda</h3>
+      <Card className="divide-y divide-line">
+        {jobs.map((j) => {
+          const w = jobWords(j);
+          const Icon =
+            w.tone === 'ok' ? CheckCircle : w.tone === 'bad' ? WarningCircle : HourglassMedium;
+          return (
+            <div key={j.id} className="flex items-start gap-3 p-4">
+              <Icon
+                weight="fill"
+                aria-hidden
+                className={cn(
+                  'mt-0.5 size-6 shrink-0',
+                  w.tone === 'ok'
+                    ? 'text-success'
+                    : w.tone === 'bad'
+                      ? 'text-danger'
+                      : 'text-muted',
+                )}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold">{w.title}</p>
+                <p className="t-caption text-muted">{w.detail}</p>
+                {w.tone === 'bad' ? (
+                  <Button
+                    variant="secondary"
+                    icon={<ArrowClockwise />}
+                    loading={printing.pending}
+                    className="mt-3"
+                    onClick={() => printing.printTo(order, j.printerId)}
+                  >
+                    imprimir de novo
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+        <div className="space-y-3 p-4">
+          <Button
+            variant="secondary"
+            icon={<Printer />}
+            loading={printing.pending}
+            onClick={() => printing.print(order)}
+          >
+            imprimir comanda
+          </Button>
+          {many ? (
+            <PrintChoice
+              order={order}
+              printing={printing}
+              lead="ou só em:"
+              className="items-center"
+            />
+          ) : null}
+        </div>
+      </Card>
+    </section>
+  );
+}
+
+/** One printer, by name, when the store has more than one. */
+export function PrintChoice({
+  order,
+  printing,
+  className,
+  lead,
+}: {
+  order: Order;
+  printing: Printing;
+  className?: string;
+  /** a few words before the choices, shown only with them */
+  lead?: string;
+}) {
+  if (printing.printers.length < 2) return null;
+  return (
+    <div
+      role="group"
+      aria-label="imprimir em uma impressora"
+      className={cn('flex flex-wrap gap-2', className)}
+    >
+      {lead ? <span className="t-caption text-muted">{lead}</span> : null}
+      {printing.printers.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => printing.printTo(order, p.id)}
+          className="press t-label inline-flex min-h-12 items-center gap-2 rounded-full px-4 ring-1 ring-line-strong hover:bg-hover"
+        >
+          <Printer className="size-5" aria-hidden />
+          {p.name}
+          {!p.online ? <span className="font-normal text-muted">· desligada</span> : null}
+        </button>
+      ))}
+    </div>
   );
 }
