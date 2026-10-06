@@ -1,4 +1,4 @@
--- 0089_orders_qol.sql — handling orders day to day: "atrasou" and "estornado" reach the shopper
+-- 0093_orders_qol.sql — handling orders day to day: "atrasou" and "estornado" reach the shopper
 -- from the store's own WhatsApp, and "muitos pedidos agora" ends by itself.
 
 -- Two order messages can repeat on one order (each delay, each refund). Their occurrence follows a

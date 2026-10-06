@@ -665,7 +665,7 @@ export default function Menu() {
       ) : (
         <div
           data-action-bar
-          className="glass fixed inset-x-0 bottom-[var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))] z-30 border-t border-line px-4 py-3 md:bottom-4 md:left-auto md:right-6 md:max-w-[34rem] md:rounded-lg md:border-0 md:depth-3"
+          className="glass fixed inset-x-0 bottom-[var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))] z-30 border-t border-line px-4 py-3 md:bottom-4 md:left-auto md:right-[calc(var(--dock-w,0px)+1.5rem)] md:max-w-[34rem] md:rounded-lg md:border-0 md:depth-3"
         >
           <div className="mb-2 flex min-h-8 items-center gap-2">
             <p className="t-caption min-w-0 flex-1 text-muted" aria-live="polite">

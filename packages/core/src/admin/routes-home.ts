@@ -10,11 +10,11 @@ import { demandOf, loadSettings, statusOf } from './routes-store.ts';
 
 export function mountHome(d: AdminDeps) {
   const { admin } = d;
-  const { read } = handlers(d);
+  const { read, named } = handlers(d);
 
   admin.get(
     '/home',
-    read('attendant', async (tx, t, m) => {
+    named('home').read('attendant', async (tx, t, m) => {
       const s = await loadSettings(tx, t.id);
       const tz = s.hours?.timezone || 'America/Sao_Paulo';
       const st = statusOf(s);

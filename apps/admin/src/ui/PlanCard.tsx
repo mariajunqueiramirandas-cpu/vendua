@@ -1,5 +1,6 @@
 import {
   ChatCircleDots,
+  ChatsCircle,
   CheckCircle,
   CookingPot,
   Gift,
@@ -105,6 +106,14 @@ export function perksOf(
           : 'cada cliente conta uma vez a cada 24 h',
       Icon: ChatCircleDots,
       needs: ['vendedor'],
+    });
+  if (f.copilot)
+    out.push({
+      key: 'copilot',
+      text: 'Duá Copiloto no painel',
+      sub: 'pergunte da loja e confirme mudanças com um toque',
+      Icon: ChatsCircle,
+      needs: ['copilot'],
     });
   if (f.customDomain && f.customSite)
     out.push({

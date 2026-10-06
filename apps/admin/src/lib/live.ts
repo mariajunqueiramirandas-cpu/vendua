@@ -29,7 +29,8 @@ type Topic =
   | 'vendedor'
   | 'vendedor.waiting'
   | 'vendedor.ask'
-  | 'vendedor.exhausted';
+  | 'vendedor.exhausted'
+  | 'copilot';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity],
@@ -56,6 +57,8 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   // a new contact Duá won't answer until the owner says who it is ("para decidir")
   'vendedor.ask': [['vendedor']],
   'vendedor.exhausted': [['vendedor'], qk.account],
+  // Duá Copilot's reply (or a card decided on another device) for this person
+  copilot: [qk.copilot],
 };
 
 // ── connection + alert state (a tiny external store) ───────────────────────

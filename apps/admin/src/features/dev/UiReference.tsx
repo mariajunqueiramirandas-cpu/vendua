@@ -61,7 +61,8 @@ import { StepFrame } from '../../ui/StepFrame.tsx';
 import { OutcomeList, OutcomeRow } from '../../ui/Outcome.tsx';
 import { HelpButton } from '../../ui/Page.tsx';
 import { PlatformStatus } from '../help/status.tsx';
-import type { SummaryCardData } from '../../lib/api.ts';
+import type { CopilotAction, SummaryCardData } from '../../lib/api.ts';
+import { ActionCard, DuaText } from '../../ui/copilot/index.ts';
 import {
   ActionReceipt,
   AgentGuide,
@@ -83,6 +84,7 @@ import {
   SacolaBar,
   SalesFunnel,
   ScoreRing,
+  Typing,
   VoiceNote,
 } from '../../ui/vendedor/index.ts';
 
@@ -858,6 +860,7 @@ const NONE = {
   printing: false,
   loyalty: false,
   vendedor: false,
+  copilot: false,
 };
 const SAMPLE_PLANS: Plan[] = [
   {
@@ -896,6 +899,7 @@ const SAMPLE_PLANS: Plan[] = [
       printing: true,
       loyalty: true,
       vendedor: true,
+      copilot: true,
     },
     trialDays: 0,
     recommended: false,
@@ -1209,6 +1213,121 @@ function VendedorReference() {
           </div>
         </div>
       </Block>
+      <CopilotReference />
     </>
+  );
+}
+
+// Duá Copilot (ADR 0034): the cards Duá prepares in the admin, in every state
+const card = (over: Partial<CopilotAction>): CopilotAction => ({
+  id: 'c1',
+  kind: 'products.price',
+  title: 'Aumentar 10% o preço de 3 produtos',
+  lines: [
+    { label: 'Pudim de Leite Grande', from: 'R$ 89,90', to: 'R$ 98,90' },
+    { label: 'Pudim de Pistache Grande', from: 'R$ 109,90', to: 'R$ 120,90' },
+    {
+      label: 'Pudim de Doce de Leite com Nozes Caramelizadas Grande',
+      from: 'R$ 94,90',
+      to: 'R$ 104,40',
+    },
+  ],
+  money: true,
+  status: 'proposed',
+  error: null,
+  done: null,
+  link: null,
+  canDecide: true,
+  at: new Date(now).toISOString(),
+  decidedAt: null,
+  expiresAt: new Date(now + 30 * 60_000).toISOString(),
+  ...over,
+});
+const PAUSE: Partial<CopilotAction> = {
+  kind: 'store.pause',
+  title: 'Pausar a loja',
+  money: false,
+  lines: [
+    { label: 'Loja', from: 'Aberta, aceitando pedidos', to: 'Pausada' },
+    { label: 'Volta a aceitar pedidos', from: null, to: '30 minutos depois de confirmar' },
+    { label: 'Aviso para os clientes', from: null, to: 'Cozinha cheia, voltamos já!' },
+  ],
+};
+const COUPON: Partial<CopilotAction> = {
+  kind: 'coupon.create',
+  title: 'Criar um cupom',
+  lines: [
+    { label: 'Código', from: null, to: 'VOLTA10' },
+    { label: 'Desconto', from: null, to: '10% de desconto' },
+    { label: 'Por cliente', from: null, to: '1 vez' },
+  ],
+};
+
+function CopilotReference() {
+  const [busy, setBusy] = useState<'confirm' | 'decline' | null>(null);
+  return (
+    <Block title="Duá Copiloto: conversa e cartões">
+      <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
+        <div className="flex flex-col gap-1.5 rounded-lg bg-bg p-3 ring-1 ring-line">
+          <Bubble voice="you" author="você" time="10:17">
+            Como estão as vendas hoje?
+          </Bubble>
+          <Bubble voice="seller" align="start" time="10:18">
+            <DuaText
+              text={
+                'Hoje até agora: **R$ 1.284,50** em 23 pedidos.\nNa mesma hora da semana passada eram R$ 1.010,00, então **+27%**.\n- Mais vendidos: Pudim de Leite (14), Pudim de Pistache (9)\n- 2 pedidos esperando aceite, veja em [Pedidos](/pedidos)\nQuer que eu veja o que está acabando no estoque?'
+              }
+            />
+          </Bubble>
+          <Bubble voice="you" author="você" time="10:30">
+            Pausa a loja por 30 minutos, a cozinha tá lotada
+          </Bubble>
+          <Bubble voice="seller" align="start" time="10:31">
+            <DuaText text="Preparei a pausa de 30 minutos com um aviso para os clientes. Confere e confirma no cartão." />
+          </Bubble>
+          <ActionCard
+            action={card({ ...PAUSE, id: 'p1' })}
+            busy={busy}
+            onConfirm={() => setBusy('confirm')}
+            onDecline={() => setBusy('decline')}
+            className="my-1 self-start"
+          />
+          <Typing owner />
+        </div>
+        <div className="flex flex-col gap-4">
+          <ActionCard
+            action={card({})}
+            onConfirm={() => toast('confirmar')}
+            onDecline={() => toast('agora não')}
+          />
+          <ActionCard
+            action={card({ ...COUPON, id: 'c2', money: true })}
+            busy="confirm"
+            onConfirm={() => undefined}
+            onDecline={() => undefined}
+          />
+          <ActionCard action={card({ ...PAUSE, canDecide: false })} />
+          <ActionCard
+            action={card({
+              status: 'applied',
+              done: 'Preço de 3 produtos aumentado',
+              link: '/cardapio',
+            })}
+          />
+          <ActionCard action={card({ ...COUPON, status: 'declined' })} />
+          <ActionCard action={card({ ...PAUSE, status: 'expired' })} />
+          <ActionCard
+            action={card({
+              ...COUPON,
+              status: 'failed',
+              error: 'Já existe um cupom com esse código. Peça de novo com outro código.',
+            })}
+          />
+          <SessionCtx.Provider value={SAMPLE_SESSION}>
+            <PlanLocked feature="copilot" plans={SAMPLE_PLANS} compact />
+          </SessionCtx.Provider>
+        </div>
+      </div>
+    </Block>
   );
 }

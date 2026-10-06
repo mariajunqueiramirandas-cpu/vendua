@@ -160,7 +160,7 @@ export type PaymentStatus =
 export type MpStatus = 'not_connected' | 'connected' | 'expiring' | 'disconnected' | 'restricted';
 
 export type PlanFeature =
-  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor';
+  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor' | 'copilot';
 export type PlanFeatures = Record<PlanFeature, boolean>;
 
 export interface Plan {
@@ -1788,6 +1788,65 @@ export interface CustomerFact {
   at: string;
 }
 
+// ── Duá Copilot (ADR 0034): the store's people ask Duá in the admin; he prepares changes as
+// cards and nothing changes until someone with the role confirms one.
+
+export type CopilotActionKind =
+  | 'store.pause'
+  | 'store.resume'
+  | 'store.operations'
+  | 'store.special_day'
+  | 'product.update'
+  | 'products.price'
+  | 'coupon.create'
+  | 'coupon.update';
+
+/** one line of a proposal's diff, formatted by Core (pt-BR); `from: null` is something new */
+export interface CopilotLine {
+  label: string;
+  from: string | null;
+  to: string;
+}
+
+export interface CopilotAction {
+  id: string;
+  kind: CopilotActionKind;
+  /** "Pausar a loja", "Aumentar 10% o preço de 3 produtos" */
+  title: string;
+  lines: CopilotLine[];
+  /** touches prices or discounts */
+  money: boolean;
+  status: 'proposed' | 'applied' | 'declined' | 'expired' | 'failed';
+  /** why the store refused it, when failed (shown as is) */
+  error: string | null;
+  /** what happened, when applied ("Loja pausada até hoje às 15:30") */
+  done: string | null;
+  /** an admin path that shows the result */
+  link: string | null;
+  /** this person may confirm or decline it now */
+  canDecide: boolean;
+  at: string;
+  decidedAt: string | null;
+  expiresAt: string;
+}
+
+export interface CopilotMessage {
+  id: string;
+  author: 'merchant' | 'dua';
+  text: string;
+  at: string;
+}
+
+export type CopilotItem =
+  ({ type: 'message' } & CopilotMessage) | ({ type: 'action' } & CopilotAction);
+
+export interface CopilotView {
+  /** oldest first; each of Duá's replies is followed by the cards it proposed */
+  items: CopilotItem[];
+  /** Duá is working on the last message (Core stops saying so after 2 min) */
+  busy: boolean;
+}
+
 export const api = {
   auth: {
     start: (phone: string) =>
@@ -2229,6 +2288,17 @@ export const api = {
 
   help: (message: string, topic?: string) =>
     send<{ sent: true }>('POST', '/help', { message, topic }),
+
+  copilot: {
+    view: () => get<CopilotView>('/copilot'),
+    /** `screen`: the admin path the person is on, so Duá knows what "este pedido" is */
+    send: (text: string, screen?: string) =>
+      send<CopilotView>('POST', '/copilot/messages', screen ? { text, screen } : { text }),
+    decide: (id: string, decision: 'confirm' | 'decline') =>
+      send<CopilotView>('POST', `/copilot/actions/${encodeURIComponent(id)}`, { decision }),
+    /** "nova conversa": Duá forgets this person's chat; what was applied stays */
+    reset: () => send<CopilotView>('DELETE', '/copilot'),
+  },
 
   vendedor: {
     home: () => get<VendedorHome>('/vendedor'),

@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { addDays, localDateOf, type LocalDate } from '../platform/tz.ts';
-import { DATE_RE, need, type AdminDeps } from './context.ts';
+import { isDate, need, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
 import { storeTz } from './routes-orders.ts';
 
@@ -82,7 +82,7 @@ function range(c: Context, tz: string) {
   }
   const from = c.req.query('from');
   const to = c.req.query('to');
-  if (!from || !to || !DATE_RE.test(from) || !DATE_RE.test(to))
+  if (!isDate(from) || !isDate(to))
     throw new HttpError(400, 'BAD_REQUEST', 'from and to are required (YYYY-MM-DD)');
   const days = spanDays(from, to);
   if (!(days >= 1 && days <= MAX_DAYS))
@@ -155,11 +155,11 @@ async function kpis(tx: Sql, tenantId: string, tz: string, from: string, to: str
 
 export function mountReports(d: AdminDeps) {
   const { admin, sql } = d;
-  const { read } = handlers(d);
+  const { read, named } = handlers(d);
 
   admin.get(
     '/reports',
-    read('manager', async (tx, t, _m, c) => {
+    named('reports').read('manager', async (tx, t, _m, c) => {
       const tz = await storeTz(tx, t.id);
       const r = range(c, tz);
       const current = await kpis(tx, t.id, tz, r.from, r.to);

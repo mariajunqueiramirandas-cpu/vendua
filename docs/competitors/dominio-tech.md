@@ -562,6 +562,11 @@ Six properties. Domínio has half of the first and half of the fifth:
 
 ### 4.3 Design (proposal, not decided)
 
+> **Built in part (2026-10-06):** A and B shipped as Duá Copilot,
+> [ADR 0034](../adr/0034-dua-copilot.md). Named admin routes play the part of the tool registry,
+> proposals stand in for previews, and the only plan with it is Pangolim. C and D3–D4 are still
+> proposals. §4.1 predates the store's own WhatsApp (ADR 0026) and the shopper status messages.
+
 All of it stays inside the invariants in `CLAUDE.md`. Tools run through the same module code as
 the HTTP handlers, so tenant isolation (`SET LOCAL vendua.tenant_id`), the Idempotency-Key claim
 pattern, Core-computed money and bounded inputs come for free. Every run is requested through
@@ -748,3 +753,4 @@ Caveats:
   totals. The proposal now follows the owner's decision: no Claude, ChatGPT or MCP integration,
   and a copilot inside the admin.
 - 2026-10-02: step 5 of §5 written up as [`features/sales-agent.md`](../features/sales-agent.md).
+- 2026-10-06: §4.3 A and B built as Duá Copilot ([ADR 0034](../adr/0034-dua-copilot.md)).

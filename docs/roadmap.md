@@ -55,6 +55,10 @@ the same `agent_runs` machinery the Phase-6 generation pipeline will reuse:
   a handoff, an incident, a store's onboarding toward the First-store gate), buttons that
   approve drafts and acknowledge incidents, slash commands and a daily summary. Setup:
   [deploy/discord.md](deploy/discord.md).
+- **Duá Copilot** ([ADR 0034](adr/0034-dua-copilot.md)) — Duá working for the store's people
+  in the admin (Pangolim): answers from the admin's own routes, with every amount a Core figure,
+  and prepares changes (pause, prep time, special days, prices, stock, coupons) as cards that
+  only a tap applies, through the same handler, audit row and live update as the screen.
 
 **Since the 1b/2 exits (2026-09-28 → 30):**
 

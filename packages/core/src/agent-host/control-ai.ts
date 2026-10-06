@@ -27,6 +27,10 @@ const AGENT_COPY: Record<string, { label: string; hint: string }> = {
     label: 'Duá na entrevista com o dono',
     hint: 'conversa com o dono da loja no treino inicial',
   },
+  copilot: {
+    label: 'Duá Copiloto',
+    hint: 'responde a equipe da loja no painel e prepara mudanças para confirmar',
+  },
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
