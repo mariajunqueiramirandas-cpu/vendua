@@ -550,6 +550,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('bag reminder (db)', () => {
       values (${s.id}, ${cart!.id}, 1, ${sql.json({ name: 'Bia', phone: p })}, ${p},
               ${sql.json({ mode: 'pickup' })}, ${sql.json({ provider: 'sandbox', method: 'pix', status: 'pending' })},
               'placed', 1200, 1200)`;
+    // the bag was never ordered: its noted line and its reminder link must go with the number
+    await sql`update cart_items set note = 'sem cebola, apto 12' where cart_id = ${b.cartId}`;
+    await sql`
+      insert into cart_shares (tenant_id, code, items, expires_at, source_cart_id)
+      values (${s.id}, ${`F${stamp}x`}, ${sql.json([{ slug: 'x', qty: 1, note: 'apto 12' }])},
+              now() + interval '1 day', ${b.cartId})`;
     const exp = await admin('GET', `/customers/${p}/export`);
     expect(exp.status).toBe(200);
     expect(exp.body.cartReminders).toHaveLength(1);
@@ -559,6 +565,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('bag reminder (db)', () => {
     const row = await reminder(b.cartId);
     expect([row.phone, row.name]).toEqual([null, null]);
     expect(row.withdrawn_at).not.toBeNull();
+    const [left] = await sql<{ notes: number; shares: number }[]>`
+      select (select count(*)::int from cart_items where cart_id = ${b.cartId} and note <> '') as notes,
+             (select count(*)::int from cart_shares where source_cart_id = ${b.cartId}) as shares`;
+    expect(left).toEqual({ notes: 0, shares: 0 });
   });
 
   test('admin: the switch, a preview in the store’s words, and never alongside the Vendedor', async () => {

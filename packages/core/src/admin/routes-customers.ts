@@ -366,11 +366,27 @@ export function mountCustomers(d: AdminDeps) {
           where tenant_id = ${t.id} and order_id = any(${orders.map((o) => o.id)}::uuid[])
             and note is not null
         `;
-      if (carts.length)
+      // a bag they asked to be reminded of was never ordered, and its reminder link snapshots it
+      const reminded = (
+        await tx<{ cart_id: string }[]>`
+          select cart_id from cart_reminders
+          where tenant_id = ${t.id} and phone = any(${variants}::text[])
+          union
+          select cart_id from store_wa_messages
+          where tenant_id = ${t.id} and kind = 'cart_reminder' and cart_id is not null
+            and phone = any(${variants}::text[])
+        `
+      ).map((r) => r.cart_id);
+      const noted = [...new Set([...carts, ...reminded])];
+      if (noted.length) {
         await tx`
           delete from cart_items
-          where tenant_id = ${t.id} and cart_id = any(${carts}::uuid[]) and note <> ''
+          where tenant_id = ${t.id} and cart_id = any(${noted}::uuid[]) and note <> ''
         `;
+        await tx`
+          delete from cart_shares where tenant_id = ${t.id} and source_cart_id = any(${noted}::uuid[])
+        `;
+      }
       // each conversation: its messages and media cascade; its agent actor and memory go too
       for (const th of threads)
         await forgetSubjectTx(

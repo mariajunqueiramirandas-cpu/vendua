@@ -156,6 +156,11 @@ interface Due {
 
 async function skipReasonTx(tx: Sql, tenantId: string, d: Due): Promise<string | null> {
   const variants = phoneVariants(d.phone);
+  // two sweeps holding two of one number's bags must not both pass the weekly check; the one
+  // that loses the lock leaves the bag for the next pass (a wait could deadlock the two sweeps)
+  const [lock] = await tx<{ got: boolean }[]>`
+    select pg_try_advisory_xact_lock(hashtext(${`cart-reminder:${tenantId}:${[...variants].sort()[0]}`})) as got`;
+  if (!lock!.got) return 'busy';
   const [r] = await tx<{ empty: boolean; thread: boolean; ordered: boolean; recent: boolean }[]>`
     select
       not exists (select 1 from cart_items where tenant_id = ${tenantId} and cart_id = ${d.cart_id}) as empty,
@@ -247,6 +252,7 @@ export async function cartReminderPass(
     let queued = 0;
     for (const d of due) {
       const skip = await skipReasonTx(tx, tenantId, d);
+      if (skip === 'busy') continue;
       if (skip) {
         await tx`update cart_reminders set skipped = ${skip}, phone = null, name = null
                  where cart_id = ${d.cart_id}`;
