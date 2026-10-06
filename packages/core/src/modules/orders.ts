@@ -155,35 +155,31 @@ export async function orderVersion(tx: Sql, tenantId: string, orderId: string): 
   );
 }
 
-export async function loadOrderView(
-  tx: Sql,
-  tenantId: string,
-  orderId: string,
-  /** Session-scope: only the cart that produced the order may read it. */
-  cartId?: string,
-): Promise<OrderView> {
-  // one statement: events and items only count once the order (and its session) checks out
-  const rows = await tx<
-    (OrderRow & {
-      events: {
-        at: string;
-        from_state: string | null;
-        to_state: string;
-        actor: string;
-        meta: Record<string, unknown>;
-      }[];
-      items: {
-        product_id: string | null;
-        slug: string;
-        name: string;
-        qty: number;
-        unit_price_cents: number;
-        modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
-        combo: { slotName: string; name: string; qty: number }[];
-        line_total_cents: number;
-      }[];
-    })[]
-  >`
+type OrderViewRow = OrderRow & {
+  events: {
+    at: string;
+    from_state: string | null;
+    to_state: string;
+    actor: string;
+    meta: Record<string, unknown>;
+  }[];
+  items: {
+    product_id: string | null;
+    slug: string;
+    name: string;
+    qty: number;
+    unit_price_cents: number;
+    modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
+    combo: { slotName: string; name: string; qty: number }[];
+    line_total_cents: number;
+  }[];
+};
+
+/** Orders with their items and timeline, one statement for any number of them; `where` filters
+ *  `orders o` (the tenant is already applied). */
+function orderViewRows(tx: Sql, tenantId: string, where: ReturnType<Sql>) {
+  // events and items only count once the order (and its session) checks out
+  return tx<OrderViewRow[]>`
     select o.id, o.number, o.state, o.customer, o.delivery, o.payment, o.subtotal_cents,
            o.delivery_fee_cents, o.discount_cents, o.payment_adjustment_cents, o.total_cents,
            o.coupon_code, o.notes, o.scheduled_for::text as scheduled_for,
@@ -195,11 +191,43 @@ export async function loadOrderView(
             from (select sort, product_id, slug, name, qty, unit_price_cents, modifiers, combo,
                          line_total_cents
                   from order_items where tenant_id = o.tenant_id and order_id = o.id) i) as items
-    from orders o where o.tenant_id = ${tenantId} and o.id = ${orderId}
-    ${cartId ? tx`and o.cart_id = ${cartId}` : tx``}
+    from orders o where o.tenant_id = ${tenantId} ${where}
   `;
+}
+
+export async function loadOrderView(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+  /** Session-scope: only the cart that produced the order may read it. */
+  cartId?: string,
+): Promise<OrderView> {
+  const rows = await orderViewRows(
+    tx,
+    tenantId,
+    tx`and o.id = ${orderId} ${cartId ? tx`and o.cart_id = ${cartId}` : tx``}`,
+  );
   const order = rows[0];
   if (!order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+  return orderViewOf(order);
+}
+
+/** Several orders' views in one statement, in the order of `ids`; an id with no order is left out. */
+export async function loadOrderViews(
+  tx: Sql,
+  tenantId: string,
+  ids: readonly string[],
+): Promise<OrderView[]> {
+  if (ids.length === 0) return [];
+  const rows = await orderViewRows(tx, tenantId, tx`and o.id = any(${ids as string[]}::uuid[])`);
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.flatMap((id) => {
+    const row = byId.get(id);
+    return row ? [orderViewOf(row)] : [];
+  });
+}
+
+function orderViewOf(order: OrderViewRow): OrderView {
   const { events, items } = order;
   return {
     id: order.id,
@@ -273,10 +301,21 @@ export async function transitionOrder(
   actor: string,
   meta: Record<string, unknown> = {},
 ): Promise<void> {
+  // the lock also reads whether the store has the WhatsApp sender or an auto printer: the hooks
+  // below re-check everything in a savepoint of their own, the flags only skip a store with neither
   const rows = await tx<
-    { state: OrderState; mode: DeliveryMode; customer_phone: string | null; number: number }[]
+    {
+      state: OrderState;
+      mode: DeliveryMode;
+      customer_phone: string | null;
+      number: number;
+      whatsapp: boolean;
+      printers: boolean;
+    }[]
   >`
-    select state, delivery ->> 'mode' as mode, customer_phone, number
+    select state, delivery ->> 'mode' as mode, customer_phone, number,
+      exists (select 1 from store_whatsapp w where w.tenant_id = ${tenantId} and w.wanted) as whatsapp,
+      exists (select 1 from printers p where p.tenant_id = ${tenantId} and p.auto and p.present) as printers
     from orders where tenant_id = ${tenantId} and id = ${orderId} for update
   `;
   const order = rows[0];
@@ -288,15 +327,21 @@ export async function transitionOrder(
       ? new HttpError(409, 'INVALID_ORDER_TRANSITION', why)
       : new HttpError(422, 'INVALID_ORDER_TRANSITION', `${why} on a ${order.mode} order`);
   }
-  await tx`update orders set state = ${to}, updated_at = now() where id = ${orderId}`;
-  await tx`
-    insert into order_events (tenant_id, order_id, from_state, to_state, actor, meta)
-    values (${tenantId}, ${orderId}, ${order.state}, ${to}, ${actor}, ${tx.json(meta as never)})
-  `;
-  await tx`
-    insert into outbox (tenant_id, topic, payload)
-    values (${tenantId}, ${'order.' + to}, ${tx.json({ orderId, from: order.state, to })})
-  `;
+  // one batch, executed in this order; the notifies are delivered on commit — live waiters
+  // (order-live.ts) and the admin wake then, never on a rolled-back change
+  await Promise.all([
+    tx`update orders set state = ${to}, updated_at = now() where id = ${orderId}`.execute(),
+    tx`
+      insert into order_events (tenant_id, order_id, from_state, to_state, actor, meta)
+      values (${tenantId}, ${orderId}, ${order.state}, ${to}, ${actor}, ${tx.json(meta as never)})
+    `.execute(),
+    tx`
+      insert into outbox (tenant_id, topic, payload)
+      values (${tenantId}, ${'order.' + to}, ${tx.json({ orderId, from: order.state, to })})
+    `.execute(),
+    tx`select pg_notify(${ORDER_CHANNEL}, ${orderId})`.execute(),
+    emitAdminTx(tx, tenantId, 'order.changed', orderId),
+  ]);
   if (to === 'cancelled') await restoreStock(tx, tenantId, orderId);
   if (to === 'delivered') await mintLoyaltyRewards(tx, tenantId, order.customer_phone);
   if (STAFF_STEPS.has(to))
@@ -308,10 +353,8 @@ export async function transitionOrder(
       actor,
     );
   // the shopper hears it from the store's own WhatsApp (ADR 0026), when the store turned it on
-  if (isOrderEvent(to)) await enqueueOrderMessageTx(tx, tenantId, orderId, to);
+  if (isOrderEvent(to) && order.whatsapp) await enqueueOrderMessageTx(tx, tenantId, orderId, to);
   // the kitchen ticket, on the step the store prints at (ADR 0027)
-  if (to === 'confirmed') await enqueueOrderPrintTx(tx, tenantId, orderId, 'confirmed');
-  // delivered on commit — live waiters (order-live.ts) wake then, never on a rolled-back change
-  await tx`select pg_notify(${ORDER_CHANNEL}, ${orderId})`;
-  await emitAdminTx(tx, tenantId, 'order.changed', orderId);
+  if (to === 'confirmed' && order.printers)
+    await enqueueOrderPrintTx(tx, tenantId, orderId, 'confirmed');
 }

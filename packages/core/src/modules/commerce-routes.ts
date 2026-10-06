@@ -59,6 +59,7 @@ import {
   TERMINAL_STATES,
   canTransition,
   loadOrderView,
+  loadOrderViews,
   transitionOrder,
   type DeliveryMode,
   type OrderState,
@@ -1042,9 +1043,11 @@ export function mountCommerce(d: Deps) {
         select id from orders where tenant_id = ${t.id} ${state ? tx`and state = ${state}` : tx``}
         order by placed_at desc limit ${limit}
       `;
-      const out = [];
-      for (const { id } of ids) out.push(await loadOrderView(tx, t.id, id));
-      return out;
+      return loadOrderViews(
+        tx,
+        t.id,
+        ids.map((r) => r.id),
+      );
     });
     return c.json({ orders });
   });

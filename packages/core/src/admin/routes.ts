@@ -257,30 +257,30 @@ export function mountAdmin(o: MountAdminOpts) {
   admin.get('/session', async (c) => {
     const tenant = c.get('tenant');
     const m = c.get('merchant');
-    const { stores } = await sessionStores(sql, tenant.id, m.sessionId, currentMembership(c));
-    const { settings, url, plan, agent } = await withTenant(sql, tenant.id, async (tx) => ({
-      url: await storeOrigin(tx, tenant, o.storeDomain),
-      // which screens open and which show the plan that has them (ADR 0032)
-      plan: await planAccess(tx, tenant.id),
-      settings: (
-        await tx<
-          { logo_url: string | null; prefs: Record<string, unknown>; email: string | null }[]
-        >`
-          select s.logo_url, u.prefs, u.email from merchant_users u
-            left join store_settings s on s.tenant_id = u.tenant_id
-          where u.id = ${m.userId}
-        `
-      )[0],
-      // the nav: Duá's tab and its "precisa de você" badge (sales-agent-ux §2)
-      agent: (
-        await tx<{ enabled: boolean; waiting: number }[]>`
-          select coalesce(a.enabled, false) as enabled,
-            (select count(*) from shopper_threads t where t.tenant_id = ${tenant.id}
-               and t.waiting_since is not null and t.owner <> 'muted' and t.channel = 'whatsapp')::int as waiting
-          from (select 1) one left join store_agent a on a.tenant_id = ${tenant.id}
-        `
-      )[0],
-    }));
+    // the session's stores and the store's own reads run side by side, the latter in one batch
+    const [{ stores }, { settings, url, plan, agent }] = await Promise.all([
+      sessionStores(sql, tenant.id, m.sessionId, currentMembership(c)),
+      withTenant(sql, tenant.id, async (tx) => {
+        const [url, plan, [settings], [agent]] = await Promise.all([
+          storeOrigin(tx, tenant, o.storeDomain),
+          // which screens open and which show the plan that has them (ADR 0032)
+          planAccess(tx, tenant.id),
+          tx<{ logo_url: string | null; prefs: Record<string, unknown>; email: string | null }[]>`
+            select s.logo_url, u.prefs, u.email from merchant_users u
+              left join store_settings s on s.tenant_id = u.tenant_id
+            where u.id = ${m.userId}
+          `,
+          // the nav: Duá's tab and its "precisa de você" badge (sales-agent-ux §2)
+          tx<{ enabled: boolean; waiting: number }[]>`
+            select coalesce(a.enabled, false) as enabled,
+              (select count(*) from shopper_threads t where t.tenant_id = ${tenant.id}
+                 and t.waiting_since is not null and t.owner <> 'muted' and t.channel = 'whatsapp')::int as waiting
+            from (select 1) one left join store_agent a on a.tenant_id = ${tenant.id}
+          `,
+        ]);
+        return { url, plan, settings, agent };
+      }),
+    ]);
     return c.json({
       user: {
         id: m.userId,
