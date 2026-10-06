@@ -52,6 +52,10 @@ function storeText(ctx: BlockCtx): string {
   lines.push(
     `Retirada: ${p.fulfilment.pickup ? 'sim' : 'não'} · Entrega: ${p.fulfilment.delivery ? 'sim' : 'não'} · Pagamento: ${p.payments.map((m) => m.label).join(', ')}${p.onlinePayments ? ' (Pix e cartão online pela loja)' : ''}`,
   );
+  if (p.fulfilment.delivery && p.fulfilment.needsPin)
+    lines.push(
+      'A entrega desta loja é calculada pela localização: se o bairro não bastar, peça a localização antes de dizer que não entrega.',
+    );
   if (!a.capabilities.closeOrder)
     lines.push(
       'Esta loja fecha pedidos pelo site: monte a sacola e mande o link com send_link (sem send_summary nem place_order).',

@@ -1,6 +1,6 @@
 import type { Json } from '@vendua/agent-runtime';
 import { getCatalogView } from '../modules/catalog.ts';
-import { loadZoneRows } from '../modules/cart.ts';
+import { distancePricingOf, loadZoneRows, storeCoords } from '../modules/cart.ts';
 import {
   offeredMethods,
   adjustmentFor,
@@ -49,6 +49,9 @@ export interface StorePack {
     pickup: boolean;
     delivery: boolean;
     zones: string[];
+    /** some address is only priced from a location (radius, polygon or distance pricing): a
+     *  typed bairro that matches no bairro zone isn't "out of the area" yet */
+    needsPin: boolean;
     pickupAddress: string | null;
     prepMinutes: number;
   };
@@ -93,6 +96,8 @@ export async function buildPack(tx: Sql, tenantId: string, now: Date): Promise<S
   const agent = await loadAgent(tx, tenantId);
   const status = storeStatus(settings, now);
   const zones = await loadZoneRows(tx, tenantId);
+  // distance pricing (ADR 0024) delivers with no zones at all, but only from a known store point
+  const pricing = storeCoords(settings) ? distancePricingOf(settings) : null;
   const catalog = await getCatalogView(tx, tenantId, now);
   const sales = await tx<{ product_id: string; n: number }[]>`
     select i.product_id, sum(i.qty)::int as n from order_items i
@@ -182,12 +187,16 @@ export async function buildPack(tx: Sql, tenantId: string, now: Date): Promise<S
     specialDays: special,
     fulfilment: {
       pickup: settings?.pickup_enabled ?? true,
-      delivery: (settings?.delivery_enabled ?? false) && zones.length > 0,
-      zones: zones
-        .map((z) =>
-          z.kind === 'neighborhood' ? `${z.name}: ${z.neighborhoods.join(', ')}` : z.name,
-        )
-        .slice(0, 40),
+      delivery: (settings?.delivery_enabled ?? false) && (zones.length > 0 || !!pricing),
+      zones: [
+        ...zones
+          .map((z) =>
+            z.kind === 'neighborhood' ? `${z.name}: ${z.neighborhoods.join(', ')}` : z.name,
+          )
+          .slice(0, 40),
+        ...(pricing ? [`por distância, até ${pricing.maxKm} km da loja`] : []),
+      ],
+      needsPin: !!pricing || zones.some((z) => z.kind === 'radius' || z.kind === 'polygon'),
       pickupAddress: settings?.pickup_address ?? settings?.address ?? null,
       prepMinutes: settings?.prep_time_minutes ?? 30,
     },

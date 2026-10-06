@@ -8,7 +8,7 @@ import { brl } from '../../../vendedor/cards.ts';
 import { vendedorDeps } from '../../../vendedor/deps.ts';
 import { findAnswers, fold, queueQuestion } from '../../../vendedor/knowledge.ts';
 import { loadStoreSettings, storeStatus } from '../../../vendedor/threads.ts';
-import { core, pack, productIdOf, thread, type Ctx } from './shared.ts';
+import { askForPin, core, pack, productIdOf, thread, type Ctx } from './shared.ts';
 
 const DIETARY_LABEL: Record<string, string> = {
   sem_gluten: 'sem glúten',
@@ -250,6 +250,7 @@ export const quoteDeliveryTool = defineTool<
       ),
     );
     if (!q.eligible) {
+      if (lat === undefined && pack(ctx).fulfilment.needsPin) return { content: askForPin(t) };
       const where = fold(neighborhood ?? cep ?? 'localização');
       return {
         data: { demand: { kind: 'out_of_zone', term: where.slice(0, 80) } },
