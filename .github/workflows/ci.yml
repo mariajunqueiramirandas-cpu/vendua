@@ -108,16 +108,8 @@ jobs:
           bun-version: '1.4.2'
       - run: bun install --frozen-lockfile
       - name: Typecheck
-        run: |
-          # every workspace dir with a `check` script — new packages need zero CI edits
-          for dir in packages/* site apps/* storefronts/*; do
-            [ -d "$dir" ] || continue
-            [ -f "$dir/package.json" ] || continue
-            if jq -e '.scripts.check' "$dir/package.json" > /dev/null; then
-              echo "check $dir"
-              (cd "$dir" && bun run check)
-            fi
-          done
+        # every workspace dir with a `check` script — new packages need zero CI edits (tools/workspaces.mjs, also `bun run check`)
+        run: bun tools/workspaces.mjs check
       - name: Isolation tools tests
         run: bun test tools/
       - name: Agent runtime boundary (ADR 0030)
@@ -154,16 +146,8 @@ jobs:
             fi
           done
       - name: Unit tests (conformance, the status page + any package with a test script but core)
-        run: |
-          for dir in packages/* apps/status tools; do
-            [ "$dir" = packages/core ] && continue # core-tests job
-            [ -d "$dir" ] || continue
-            [ -f "$dir/package.json" ] || continue
-            if jq -e '.scripts.test' "$dir/package.json" > /dev/null 2>&1; then
-              echo "test $dir"
-              (cd "$dir" && bun test)
-            fi
-          done
+        # packages/core is the core-tests job's; the same script serves `bun run test` locally
+        run: bun tools/workspaces.mjs test
 
   # Postgres-backed core tests, split from `check` so the two run in parallel
   core-tests:
@@ -198,9 +182,13 @@ jobs:
       - name: Postgres
         if: steps.scope.outputs.run == 'true'
         uses: ./.github/actions/postgres
+      # the suite only accepts a database named *_test (test/hermetic.ts), so it never shares one with a dev Core
+      - name: Test database
+        if: steps.scope.outputs.run == 'true'
+        run: PGPASSWORD=vendua /usr/lib/postgresql/16/bin/createdb -h localhost -p 5433 -U vendua vendua_test
       - name: Core tests
         if: steps.scope.outputs.run == 'true'
-        run: cd packages/core && TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua bun test
+        run: cd packages/core && TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua_test bun test
 
   # exit criterion: scaffold a fresh storefront, boot Postgres + Core, run the conformance e2e through the preview proxy
   conformance:
@@ -318,11 +306,21 @@ jobs:
   # merchant admin quality gate (docs/merchant-admin.md): every screen at 375/820/1440 in
   # Creme and Noite against a seeded store — no horizontal overflow, no console errors,
   # zero serious/critical axe violations. The bundle budget runs inside `bun run build`.
-  admin-gate:
+  # The screenshots took ~290 s of one job, so each theme × size is its own runner (scripts/shots.ts
+  # THEMES / SIZES): together they cover exactly what the single run did. The `admin-gate` job
+  # below only reports their verdict under the old check name.
+  admin-shots:
+    name: admin-gate shots (${{ matrix.theme }}, ${{ matrix.size }})
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    strategy:
+      # every shard reports its own findings instead of the first failure cancelling the rest
+      fail-fast: false
+      matrix:
+        theme: [creme, noite]
+        size: [phone, tablet, desktop]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -370,17 +368,36 @@ jobs:
         uses: ./.github/actions/playwright-chromium
       - name: Screenshots + overflow + axe
         if: steps.scope.outputs.run == 'true'
+        env:
+          THEMES: ${{ matrix.theme }}
+          SIZES: ${{ matrix.size }}
         run: cd apps/admin && BASE=http://localhost:8787/admin/ AXE=1 bun scripts/shots.ts
       - name: Upload screenshots
         if: always() && steps.scope.outputs.run == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: admin-screenshots
+          name: admin-screenshots-${{ matrix.theme }}-${{ matrix.size }}
           path: apps/admin/shots
           retention-days: 7
       - name: Core log on failure
         if: failure() && steps.scope.outputs.run == 'true'
         run: tail -200 /tmp/core.log
+
+  # one required-check name for the shards above: green only when every shard is, and when the
+  # shards were skipped (label events) so is this
+  admin-gate:
+    needs: admin-shots
+    runs-on: ubuntu-latest
+    if: >-
+      !cancelled() && (github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action))
+    steps:
+      - name: Every admin-gate shard passed
+        env:
+          RESULT: ${{ needs.admin-shots.result }}
+        run: |
+          echo "admin-shots: $RESULT"
+          [ "$RESULT" = success ]
 
   # the staleness guarantee (11): a storefront built on the oldest supported Kernel
   # line, never rebuilt, keeps passing the S-series against Core main

@@ -1,10 +1,22 @@
-# @vendua/core — Venduá Core (Phase 0 skeleton)
+# @vendua/core — Venduá Core
 
 The shared multi-tenant backend. Modular monolith: Bun + Hono + Postgres, one
 process, one schema, row-level security on every tenant table. Normative
 reference: `docs/architecture/01-core.md`.
 
-## What exists in Phase 0
+## What it serves
+
+| Mount                            | For                                                     | What                                                                                                                                                                                                  |
+| -------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/storefront/v1`, `/checkout/v1` | shoppers: tenant from `Host`, an anonymous cart session | the public store, catalog, cart, quote, checkout, customer orders and loyalty (the tables below)                                                                                                      |
+| `/admin/v1`                      | the merchant admin (`apps/admin`): a phone-OTP session  | orders (accept, transition, delay, refund), catalog, store and payment settings, team, reports, the Vendedor, and the print agents' own API under `/admin/v1/agent` (`src/admin/`, ADR 0020 and 0027) |
+| `/control/v1`                    | staff: `CONTROL_SECRET` or a CRM session                | the CRM and its agent engine, billing, template migrations, the fleet                                                                                                                                 |
+| `/edge/v1/resolve`, `/v1/v.js`   | the edge and shoppers' browsers                         | Host → tenant + live release; the loader                                                                                                                                                              |
+| `/analytics/v1/collect`          | the storefront's beacon                                 | web analytics                                                                                                                                                                                         |
+
+The sections below start from the original Phase 0 surface and add what each later phase brought.
+
+## Storefront and checkout (Phase 0)
 
 | Surface          | Scope                                                                  | Endpoints                                                                                                                                                          |
 | ---------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -50,13 +62,17 @@ Env: `VENDUA_EDGE_SECRET`; `VENDUA_PROBES` (`1`/`0`; default on in production, o
 
 ## Dev loop
 
+From the repo root, `bun run dev:stack` starts Core, the merchant admin and the CRM together
+(`--seed` adds the seeds; `bun run dev:stop` stops them; see the `local-stack` skill). By hand:
+
 ```sh
 bun run db:up      # postgres:16 in docker, port 5433
 bun run migrate    # schema (also runs automatically on `bun run dev`)
 bun run seed       # dev tenant: quero-pudim, blank (onboarding fills it)
 bun run seed:fixtures  # CI/fleet: menu, zones, Pix + the canary tenants (what `vendua train` needs)
 bun run dev        # http://localhost:8787
-bun run test       # unit tests (no DB needed)
+bun run migration:new <name>   # next db/migrations/NNNN_<name>.sql, with the tenant RLS skeleton
+bun run test       # the suite; the database tests need TEST_DATABASE_URL (see below)
 bun run check      # tsc
 ```
 
@@ -69,15 +85,36 @@ server proxies `/storefront`+`/checkout` to Core with its own `Host`
 curl -H 'Host: quero-pudim.localhost' localhost:8787/storefront/v1/surfaces
 ```
 
-## Notes / skeleton limits
+## Tests
 
-- Checkout doesn't capture payment: orders are created `placed` with
-  `payment.provider = 'sandbox'` (Pix orders carry a copia e cola for the exact
-  amount). MP OAuth/PIX capture/webhooks land in Phase 3.
-- Admin APIs (`/admin/v1`), payments, notifications, identity, analytics are
-  Phase 2+; only the tables needed for Phase 0 exist.
-- Order transitions exist (`modules/orders.ts`) but no admin surface consumes
-  them yet — exercising them is a merchant-admin concern.
+`bun test` runs the suite. The database-backed describe blocks (most of it) run only when
+`TEST_DATABASE_URL` is set, and `test/hermetic.ts` (the preload in `bunfig.toml`) makes that hard
+to miss:
+
+- Unset, it prints one loud warning with the number of blocks that will be skipped (GitHub Actions
+  fails instead of skipping).
+- The database's name must end in `_test`, or the run is refused before any test loads: the suite
+  rewrites tables and queues agent runs, which a dev Core on the same database would claim.
+
+```sh
+createdb -h localhost -p 5433 -U vendua vendua_test
+TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua_test bun test
+```
+
+The tests migrate their database themselves. Every other variable Core's source reads is cleared
+before the first test loads, so a shell with live keys can't change a result.
+
+## Notes
+
+- Payment: a store with Mercado Pago connected takes online Pix and card
+  (`modules/payments`; a webhook is only a hint, Core fetches the payment itself). Offline
+  methods (cash, card on delivery, meal voucher, Pix settled at the door) create the order
+  `placed` with `payment.provider = 'sandbox'`, the contract's name for "no provider", and
+  `online: false`; with the store's own Pix key set, a Pix order carries a copia e cola for the
+  exact amount.
+- The merchant admin API is `/admin/v1` (`src/admin/`), consumed by `apps/admin`. Order
+  transitions (`modules/orders.ts`) are its `POST /orders/:id/transition`, next to payment,
+  delay and refund.
 - `SESSION_SECRET`, `DATABASE_URL`, `MIGRATION_DATABASE_URL`, `PORT` are env
   vars; dev defaults are in `src/index.ts`. `DB_POOL_MAX` sizes the Postgres pool
   requests use, per process (default 10); `DB_JOBS_POOL_MAX` the separate one for background

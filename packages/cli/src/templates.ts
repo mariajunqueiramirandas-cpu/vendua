@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import { didYouMean, parseOrDie, type FlagSpec } from './args.ts';
 import { control } from './core.ts';
 import { die } from './paths.ts';
 
@@ -30,21 +31,28 @@ function table(rows: Row[]): string {
   ].join('\n');
 }
 
+const FLAGS: Record<string, FlagSpec> = {
+  list: {},
+  migrate: { bool: ['--apply'], value: ['--ring', '--tenant', '--report'] },
+  rollback: { value: ['--ring', '--tenant'] },
+};
+
 export async function cmdTemplates(args: string[]): Promise<never> {
-  const [sub, id] = args;
-  const flag = (name: string) => {
-    const out: string[] = [];
-    args.forEach((a, i) => {
-      if (a === name && args[i + 1]) out.push(args[i + 1]!);
-    });
-    return out;
-  };
-  const ring = flag('--ring')[0];
-  const tenants = flag('--tenant');
-  const reportFile = flag('--report')[0];
+  const sub = args[0] ?? 'list';
+  const spec = FLAGS[sub];
+  if (!spec)
+    die(
+      `unknown templates subcommand '${sub}'${didYouMean(sub, Object.keys(FLAGS))}\nsubcommands: list | migrate | rollback`,
+      2,
+    );
+  const p = parseOrDie(args.slice(1), spec, 'templates');
+  const [id] = p.positionals;
+  const ring = p.get('--ring');
+  const tenants = p.all('--tenant');
+  const reportFile = p.get('--report');
   const scope = { ...(ring ? { ring } : {}), ...(tenants.length ? { tenants } : {}) };
   try {
-    if (sub === 'list' || !sub) {
+    if (sub === 'list') {
       const r = await control<{
         migrations: {
           id: string;
@@ -61,7 +69,7 @@ export async function cmdTemplates(args: string[]): Promise<never> {
     }
     if (!id) die(`usage: vendua templates ${sub} <migration-id>`, 2);
     if (sub === 'migrate') {
-      const apply = args.includes('--apply');
+      const apply = p.has('--apply');
       const r = await control<{ dry: boolean; report: Row[] }>(
         'POST',
         `/control/v1/template-migrations/${id}/run`,

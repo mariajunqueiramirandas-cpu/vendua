@@ -14,6 +14,7 @@ import {
   type StorefrontManifest,
 } from '@vendua/edge/manifest';
 import { checkCompat, type ArtifactManifest } from '@vendua/templates';
+import { didYouMean } from './args.ts';
 import { control } from './core.ts';
 import { fleet, select, type FleetStore } from './fleet.ts';
 import { die } from './paths.ts';
@@ -162,7 +163,8 @@ export async function cmdRelease(args: string[], root: string): Promise<never> {
   if (ai >= 0 && !rest[ai + 1]) die('--artifacts needs a uri', 2);
   const known = new Set(['--no-build', '--no-register', '--all', '--core', '--artifacts']);
   const unknown = rest.find((a) => a.startsWith('--') && !known.has(a));
-  if (unknown) die(`unknown option '${unknown}'\nusage:\n${USAGE}`, 2);
+  if (unknown)
+    die(`unknown option '${unknown}'${didYouMean(unknown, [...known])}\nusage:\n${USAGE}`, 2);
   // bundle names (`_template`, `quero-pudim`) work as well as slugs and tenants
   const slugs = rest
     .filter((a, i) => !a.startsWith('--') && (ai < 0 || i !== ai + 1))

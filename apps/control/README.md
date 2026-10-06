@@ -3,6 +3,10 @@
 Staff CRM + agent ops console. Served by Core at `/control/` in prod (built into
 `dist/`), talks to `/control/v1` through the typed client in `src/lib/api.ts`.
 
+From the repo root, `bun run dev:stack` starts Core, this console and the merchant admin together
+(`--seed` adds the leads below, the fixtures and demo orders; `bun run dev:stop` stops them; see the
+`local-stack` skill). Or one app at a time:
+
 ```sh
 bun run dev      # http://localhost:5195/control/  (proxies /control/v1 → Core :8787)
 bun run check    # tsc

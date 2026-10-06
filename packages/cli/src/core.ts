@@ -1,7 +1,20 @@
 // Staff calls to Core's control API (the Control Plane stand-in until Phase 4).
 //   VENDUA_CORE_ORIGIN (default http://localhost:8787), CONTROL_SECRET (required)
 
+import { suggest } from './args.ts';
+
 export const coreOrigin = () => process.env.VENDUA_CORE_ORIGIN || 'http://localhost:8787';
+
+/** Core answered with a non-2xx; the message keeps the `METHOD /path → status CODE text` shape. */
+export class ControlError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string,
+  ) {
+    super(message);
+  }
+}
 
 export async function control<T>(
   method: string,
@@ -29,8 +42,30 @@ export async function control<T>(
     error?: { code: string; message: string };
   };
   if (!res.ok)
-    throw new Error(
+    throw new ControlError(
       `${method} ${path} → ${res.status} ${json.error?.code ?? ''} ${json.error?.message ?? ''}`.trim(),
+      res.status,
+      json.error?.code ?? '',
     );
   return json;
+}
+
+const NO_SUCH_STORE = new Set(['TENANT_NOT_FOUND', 'STORE_NOT_FOUND']);
+
+/**
+ * What to print for a failed call. A store Core does not know gets the nearest names it does,
+ * instead of the bare API error; anything else keeps its own message.
+ */
+export async function explainError(e: unknown, tenant?: string): Promise<string> {
+  if (!(e instanceof ControlError) || !tenant || e.status !== 404 || !NO_SUCH_STORE.has(e.code))
+    return (e as Error).message;
+  const known = await control<{ storefronts: { slug: string }[] }>(
+    'GET',
+    '/control/v1/fleet/storefronts',
+  )
+    .then((r) => r.storefronts.map((s) => s.slug))
+    .catch(() => []);
+  const near = suggest(tenant, known);
+  const maybe = near.length ? ` — did you mean ${near.map((n) => `'${n}'`).join(' or ')}?` : '';
+  return `no store '${tenant}'${maybe}\n\`vendua fleet stores\` lists every store Core knows`;
 }

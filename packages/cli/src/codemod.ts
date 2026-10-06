@@ -1,6 +1,7 @@
 import { cpSync, existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { apply, diff, findCodemod, plan, CODEMODS, type CodemodResult } from '@vendua/codemods';
+import { didYouMean, parseOrDie, type FlagSpec } from './args.ts';
 import { select, type FleetStore } from './fleet.ts';
 import { die } from './paths.ts';
 
@@ -27,18 +28,37 @@ function show(r: CodemodResult, root: string, dry: boolean) {
   if (dry) for (const e of r.edits) console.log(diff(e).replace(/^/gm, '    '));
 }
 
+const FLAGS: Record<string, FlagSpec> = {
+  list: {},
+  run: { bool: ['--dry'] },
+  rehearse: { value: ['--report'] },
+};
+
 export async function cmdCodemod(args: string[], root: string): Promise<never> {
-  const [sub, id, ...rest] = args;
-  if (sub === 'list' || !sub) {
+  const sub = args[0] ?? 'list';
+  const spec = FLAGS[sub];
+  if (!spec)
+    die(
+      `unknown codemod subcommand '${sub}'${didYouMean(sub, Object.keys(FLAGS))}\nsubcommands: run | rehearse | list`,
+      2,
+    );
+  const p = parseOrDie(args.slice(1), spec, 'codemod');
+  if (sub === 'list') {
     for (const c of CODEMODS) console.log(`${c.id}  ${c.description}`);
     process.exit(0);
   }
+  const [id, ...slugs] = p.positionals;
   const codemod = id ? findCodemod(id) : undefined;
-  if (!codemod) die(`unknown codemod '${id ?? ''}' — see \`vendua codemod list\``, 2);
-  const dry = rest.includes('--dry');
-  const reportIdx = rest.indexOf('--report');
-  const reportFile = reportIdx >= 0 ? rest[reportIdx + 1] : undefined;
-  const slugs = rest.filter((a, i) => !a.startsWith('--') && rest[i - 1] !== '--report');
+  if (!codemod)
+    die(
+      `unknown codemod '${id ?? ''}'${didYouMean(
+        id ?? '',
+        CODEMODS.map((c) => c.id),
+      )} — see \`vendua codemod list\``,
+      2,
+    );
+  const dry = p.has('--dry');
+  const reportFile = p.get('--report');
   let stores: FleetStore[];
   try {
     stores = select(root, slugs);
@@ -57,7 +77,6 @@ export async function cmdCodemod(args: string[], root: string): Promise<never> {
     process.exit(failed ? 1 : 0);
   }
 
-  if (sub !== 'rehearse') die(`unknown codemod subcommand '${sub}' (run | rehearse | list)`, 2);
   const rows: {
     storefront: string;
     codemod: string;

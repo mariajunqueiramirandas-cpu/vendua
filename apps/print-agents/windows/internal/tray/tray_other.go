@@ -12,8 +12,10 @@ import (
 type Options struct {
 	Agent    *agent.Agent
 	AdminURL string
-	Log      *slog.Logger
-	Quit     <-chan struct{}
+	// LogPath is the agent.log the "Abrir log" item opens.
+	LogPath string
+	Log     *slog.Logger
+	Quit    <-chan struct{}
 }
 
 // Run is unavailable here: the tray library needs cgo on this OS. Use -headless.

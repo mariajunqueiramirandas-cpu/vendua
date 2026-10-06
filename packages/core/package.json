@@ -8,6 +8,7 @@
     "start": "bun src/index.ts",
     "db:up": "docker compose up -d postgres",
     "migrate": "bun src/platform/migrate-cli.ts",
+    "migration:new": "bun ../../tools/new-migration.mjs",
     "sim": "bun src/agent/sim-cli.ts",
     "sims:vendedor": "bun src/vendedor/sims/cli.ts",
     "seed": "bun src/platform/seed.ts",

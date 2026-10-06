@@ -73,7 +73,8 @@ func run(apiFlag, dataFlag string, headless, noInstall, debug bool) error {
 			return err
 		}
 	}
-	logFile, err := logx.Open(filepath.Join(dataDir, "agent.log"), 1<<20)
+	logPath := filepath.Join(dataDir, "agent.log")
+	logFile, err := logx.Open(logPath, 1<<20)
 	if err != nil {
 		return err
 	}
@@ -150,7 +151,7 @@ func run(apiFlag, dataFlag string, headless, noInstall, debug bool) error {
 		case <-quit:
 		}
 	} else {
-		tray.Run(ctx, tray.Options{Agent: a, AdminURL: base + "/admin/impressoras", Log: log, Quit: quit})
+		tray.Run(ctx, tray.Options{Agent: a, AdminURL: base + "/admin/impressoras", LogPath: logPath, Log: log, Quit: quit})
 	}
 	stop()
 	select {

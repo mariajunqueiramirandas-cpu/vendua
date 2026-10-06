@@ -2,6 +2,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -62,6 +63,7 @@ type Agent struct {
 	userCode         string
 	approveURL       string
 	scanning         bool
+	offlineWhy       string
 	updateVersion    string
 	last             map[string]jobs.Result
 	connCancel       context.CancelFunc
@@ -174,7 +176,7 @@ func (a *Agent) Rescan() { signal(a.scanNow) }
 func (a *Agent) TestPrinters(ctx context.Context) error {
 	tok := a.token()
 	if tok == "" {
-		return errors.New("not paired")
+		return errNotPaired
 	}
 	a.mu.Lock()
 	printers := slices.Clone(a.cfg.Printers)
@@ -186,7 +188,7 @@ func (a *Agent) TestPrinters(ctx context.Context) error {
 				a.invalidate(tok)
 				return err
 			}
-			errs = append(errs, fmt.Errorf("%s: %w", p.Name, err))
+			errs = append(errs, &printerError{name: cmp.Or(p.Name, p.Address), err: err})
 		}
 	}
 	return errors.Join(errs...)
@@ -235,7 +237,7 @@ func (a *Agent) pair(ctx context.Context, auto, openBrowser bool) {
 				wait = a.o.RateLimitWait
 			}
 			a.log.Warn("requesting pairing code failed", "err", err, "retry_in", wait.Round(time.Millisecond))
-			a.setState(Offline)
+			a.setOffline(err)
 			if a.sleepOrPairRequest(ctx, wait) {
 				openBrowser = true
 			}
@@ -368,7 +370,7 @@ func (a *Agent) connect(ctx context.Context, tok string) {
 		}
 		wait := bo.Next()
 		a.log.Warn("stream down", "err", err, "retry_in", wait.Round(time.Millisecond))
-		a.setState(Offline)
+		a.setOffline(err)
 		if !sleep(ctx, wait) {
 			return
 		}
