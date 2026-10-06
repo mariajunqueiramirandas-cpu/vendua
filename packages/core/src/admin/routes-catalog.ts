@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE, bodyJson, uuidParam } from '../platform/http.ts';
 import {
+  availabilityLabel,
   isLowStock,
   liveStatus,
   loadComboSlots,
@@ -26,6 +27,7 @@ import {
   slugify,
   text,
   type AdminDeps,
+  type Merchant,
 } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
@@ -129,7 +131,8 @@ async function withNow(tx: Sql, tenantId: string, rows: AdminProductRow[]) {
 async function productRow(tx: Sql, tenantId: string, id: string): Promise<AdminProductRow> {
   const row = (
     await tx<AdminProductRow[]>`
-      select ${productCols(tx)} from products p where p.tenant_id = ${tenantId} and p.id = ${id}
+      select ${productCols(tx)} from products p
+      where p.tenant_id = ${tenantId} and p.id = ${id} and p.deleted_at is null
     `
   )[0];
   if (!row) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
@@ -302,7 +305,7 @@ export function mountCatalog(d: AdminDeps) {
         tx,
         t.id,
         await tx<AdminProductRow[]>`
-          select ${productCols(tx)} from products p where p.tenant_id = ${t.id}
+          select ${productCols(tx)} from products p where p.tenant_id = ${t.id} and p.deleted_at is null
           order by p.sort, p.name
         `,
       );
@@ -409,6 +412,11 @@ export function mountCatalog(d: AdminDeps) {
         throw new HttpError(409, 'CATEGORY_NOT_EMPTY', 'move or archive its products first', {
           products: live,
         });
+      // its hidden and apagados products go with it; a cart still holding one can't hold that back
+      await tx`
+        delete from cart_items where tenant_id = ${t.id}
+          and product_id in (select id from products where tenant_id = ${t.id} and category_id = ${id})
+      `;
       await tx`delete from categories where tenant_id = ${t.id} and id = ${id}`;
       await audit(tx, t.id, m, {
         action: 'category.delete',
@@ -929,7 +937,7 @@ export function mountCatalog(d: AdminDeps) {
           if (it.productId === id)
             throw new HttpError(422, 'BAD_REQUEST', 'a kit cannot contain itself');
           const ok = (
-            await tx`select 1 from products where tenant_id = ${t.id} and id = ${it.productId}`
+            await tx`select 1 from products where tenant_id = ${t.id} and id = ${it.productId} and deleted_at is null`
           )[0];
           if (!ok) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'a kit item no longer exists');
           await tx`
@@ -971,64 +979,195 @@ export function mountCatalog(d: AdminDeps) {
     }),
   );
 
+  // Several products at once. Every action but delete/restore answers with `before`, what it
+  // changed, which `revert` puts back: the bar's "desfazer" echoes Core's own values.
   admin.post(
     '/products/bulk',
     write('manager', async (tx, t, m, c) => {
-      const body = await bodyJson(c);
+      const body = await bodyJson(c, 512 * 1024);
+      const action = oneOf(body.action, 'action', BULK_ACTIONS);
+      if (action === 'revert') return revertBulk(tx, t.id, m, body.items);
       const ids = uuidList(body.ids, 'ids', 300);
-      const action = oneOf(body.action, 'action', [
-        'available',
-        'sold_out_today',
-        'hidden',
-        'category',
-        'price_percent',
-      ] as const);
+      // id order, the same as checkout's row locks
+      const rows = (
+        await tx<BulkRow[]>`
+          select ${bulkCols(tx)} from products p
+          where p.tenant_id = ${t.id} and p.id = any(${ids}::uuid[]) order by p.id for update
+        `
+      ).filter((r) => (action === 'restore' ? r.deleted : !r.deleted));
+      const live = rows.map((r) => r.id);
       let summary = '';
+      let before: Record<string, unknown>[] | undefined;
+      let woken = 0;
+      const n = `${live.length} ${live.length === 1 ? 'produto' : 'produtos'}`;
       if (action === 'category') {
         const categoryId = await categoryOf(tx, t.id, body.categoryId);
-        await tx`update products set category_id = ${categoryId} where tenant_id = ${t.id} and id = any(${ids}::uuid[])`;
-        summary = `moveu ${ids.length} produtos de categoria`;
-      } else if (action === 'price_percent') {
-        const pct = int(body.percent, 'percent', -90, 300);
-        if (pct === 0)
-          throw new HttpError(422, 'BAD_REQUEST', 'percent cannot be 0', { field: 'percent' });
-        // integer cents, rounded to the nearest 10 cents — merchants price in round numbers;
-        // the "de" price moves with it and drops when it no longer sits above the price
+        before = rows.map((r) => ({ id: r.id, categoryId: r.categoryId }));
+        await tx`update products set category_id = ${categoryId} where tenant_id = ${t.id} and id = any(${live}::uuid[])`;
+        summary = `moveu ${n} de categoria`;
+      } else if (action === 'price_percent' || action === 'price_amount') {
+        const pct = action === 'price_percent' ? int(body.percent, 'percent', -90, 300) : 0;
+        const add =
+          action === 'price_amount'
+            ? int(body.amountCents, 'amountCents', -MAX_PRICE, MAX_PRICE)
+            : 0;
+        const field = action === 'price_percent' ? 'percent' : 'amountCents';
+        if (pct === 0 && add === 0)
+          throw new HttpError(422, 'BAD_REQUEST', `${field} cannot be 0`, { field });
+        // integer cents. A percentage rounds to the nearest 10 cents (merchants price in round
+        // numbers); an amount is exact. The "de" price and a timed promotion move with it, and
+        // drop when they no longer sit above (or below) the price.
+        const move = (cents: number) =>
+          Math.min(
+            MAX_PRICE,
+            pct ? Math.max(0, Math.round((cents * (100 + pct)) / 1000) * 10) : cents + add,
+          );
+        const next = rows.map((r) => {
+          const base = move(r.priceCents);
+          const cmp = r.compareAtPriceCents === null ? null : move(r.compareAtPriceCents);
+          const promo = r.promoSchedule?.priceCents;
+          const promoNext = typeof promo === 'number' ? move(promo) : null;
+          return {
+            r,
+            base,
+            cmp: cmp !== null && cmp > base ? cmp : null,
+            promo: promoNext !== null && promoNext < base ? promoNext : null,
+            bad:
+              (r.priceCents > 0 || add !== 0) && base <= 0
+                ? true
+                : promoNext !== null && promoNext < 0,
+          };
+        });
+        const bad = next.filter((x) => x.bad);
+        if (bad.length)
+          throw new HttpError(422, 'PRICE_NOT_POSITIVE', 'a price would drop to zero or below', {
+            field,
+            products: bad.slice(0, 10).map((x) => ({ id: x.r.id, name: x.r.name })),
+          });
+        before = rows.map((r) => ({
+          id: r.id,
+          priceCents: r.priceCents,
+          compareAtPriceCents: r.compareAtPriceCents,
+          promoSchedule: r.promoSchedule,
+        }));
+        if (next.length)
+          await tx`
+            update products p set base_price_cents = v.base, compare_at_price_cents = v.cmp,
+              promo_schedule = case when v.promo is not null
+                then jsonb_set(p.promo_schedule, '{priceCents}', to_jsonb(v.promo)) end
+            from unnest(${live}::uuid[], ${next.map((x) => x.base)}::int[],
+                        ${next.map((x) => x.cmp)}::int[], ${next.map((x) => x.promo)}::int[])
+              as v(id, base, cmp, promo)
+            where p.tenant_id = ${t.id} and p.id = v.id
+          `;
+        summary = pct
+          ? `${pct > 0 ? 'aumentou' : 'baixou'} em ${Math.abs(pct)}% o preço de ${n}`
+          : `${add > 0 ? 'aumentou' : 'baixou'} em ${brl(Math.abs(add))} o preço de ${n}`;
+      } else if (action === 'stock') {
+        const stockQuantity =
+          body.stockQuantity === null
+            ? null
+            : int(body.stockQuantity, 'stockQuantity', 0, MAX_STOCK);
+        before = rows.map((r) => ({ id: r.id, stockQuantity: r.stockQuantity }));
+        for (const id of live) woken += (await setStock(tx, t.id, id, { stockQuantity })).waiting;
+        summary =
+          stockQuantity === null
+            ? `parou de contar o estoque de ${n}`
+            : `pôs ${stockQuantity} no estoque de ${n}`;
+      } else if (action === 'schedule') {
+        const sched = parseAvailabilitySchedule(body.availabilitySchedule);
+        before = rows.map((r) => ({ id: r.id, availabilitySchedule: r.availabilitySchedule }));
         await tx`
-          update products p set base_price_cents = n.base,
-            compare_at_price_cents = case when n.cmp > n.base then n.cmp end,
-            promo_schedule = case when n.promo < n.base
-              then jsonb_set(p.promo_schedule, '{priceCents}', to_jsonb(n.promo)) end
-          from (
-            select id,
-              least(${MAX_PRICE}, greatest(0, (round(base_price_cents * (100 + ${pct}) / 1000.0) * 10)::int)) as base,
-              least(${MAX_PRICE}, greatest(0, (round(compare_at_price_cents * (100 + ${pct}) / 1000.0) * 10)::int)) as cmp,
-              least(${MAX_PRICE}, greatest(0, (round((promo_schedule ->> 'priceCents')::int * (100 + ${pct}) / 1000.0) * 10)::int)) as promo
-            from products where tenant_id = ${t.id} and id = any(${ids}::uuid[])
-          ) n
-          where p.tenant_id = ${t.id} and p.id = n.id
+          update products set availability_schedule = ${sched ? tx.json(sched as never) : null}
+          where tenant_id = ${t.id} and id = any(${live}::uuid[])
         `;
-        summary = `${pct > 0 ? 'aumentou' : 'baixou'} em ${Math.abs(pct)}% o preço de ${ids.length} produtos`;
+        summary = sched
+          ? `pôs o horário "${availabilityLabel(sched)}" em ${n}`
+          : `tirou o horário de venda de ${n}`;
+      } else if (action === 'delete') {
+        await softDelete(tx, t.id, live);
+        summary = `apagou ${n}`;
+      } else if (action === 'restore') {
+        await restore(tx, t.id, live);
+        summary = `recuperou ${n}`;
       } else {
         const status =
           action === 'available' ? 'active' : action === 'hidden' ? 'archived' : 'sold_out';
         const until = action === 'sold_out_today' ? await nextLocalMidnight(tx, t.id) : null;
-        for (const id of ids) {
-          await setStock(tx, t.id, id, { status }).catch((e) => {
-            if ((e as HttpError).code !== 'PRODUCT_NOT_FOUND') throw e;
-          });
+        before = rows.map((r) => ({ id: r.id, status: r.status, soldOutUntil: r.soldOutUntil }));
+        for (const id of live) {
+          woken += (await setStock(tx, t.id, id, { status })).waiting;
           await tx`update products set sold_out_until = ${until} where tenant_id = ${t.id} and id = ${id}`;
         }
-        summary = `${action === 'available' ? 'disponibilizou' : action === 'hidden' ? 'escondeu' : 'marcou como esgotado hoje'} ${ids.length} produtos`;
+        summary = `${
+          action === 'available'
+            ? 'disponibilizou'
+            : action === 'hidden'
+              ? 'escondeu'
+              : action === 'sold_out'
+                ? 'marcou como esgotado'
+                : 'marcou como esgotado hoje'
+        } ${n}`;
       }
       await audit(tx, t.id, m, {
         action: `product.bulk.${action}`,
         entity: 'product',
         summary,
-        after: { ids, ...body },
+        ...(before ? { before } : {}),
+        after: {
+          ids: live,
+          ...pickBody(body, ['categoryId', 'percent', 'amountCents', 'stockQuantity']),
+        },
       });
-      await emitAdminTx(tx, t.id, 'catalog');
-      return { status: 200, body: { updated: ids.length } };
+      if (live.length) await emitAdminTx(tx, t.id, 'catalog');
+      return {
+        status: 200,
+        body: { updated: live.length, ...(before ? { before } : {}), waitlistWoken: woken },
+      };
+    }),
+  );
+
+  // "apagar": a soft delete (migration 0090) — orders keep their lines, "desfazer" restores it
+  admin.delete(
+    '/products/:id',
+    write('manager', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const p = await productRow(tx, t.id, id);
+      await softDelete(tx, t.id, [id]);
+      await audit(tx, t.id, m, {
+        action: 'product.delete',
+        entity: 'product',
+        entityId: id,
+        summary: `apagou "${p.name}"`,
+        before: pick(p, ['name', 'priceCents', 'status', 'categoryId']),
+      });
+      await emitAdminTx(tx, t.id, 'catalog', id);
+      return { status: 200, body: { deleted: true } };
+    }),
+  );
+
+  admin.post(
+    '/products/:id/restore',
+    write('manager', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const row = (
+        await tx<{ name: string; deleted: boolean }[]>`
+          select name, deleted_at is not null as deleted from products
+          where tenant_id = ${t.id} and id = ${id} for update
+        `
+      )[0];
+      if (!row) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
+      if (row.deleted) {
+        await restore(tx, t.id, [id]);
+        await audit(tx, t.id, m, {
+          action: 'product.restore',
+          entity: 'product',
+          entityId: id,
+          summary: `recuperou "${row.name}"`,
+        });
+        await emitAdminTx(tx, t.id, 'catalog', id);
+      }
+      return { status: 200, body: await productDetail(tx, t.id, id) };
     }),
   );
 
@@ -1153,4 +1292,177 @@ function pick<T extends object>(o: T, keys: (keyof T)[]) {
   const out: Partial<T> = {};
   for (const k of keys) out[k] = o[k];
   return out;
+}
+
+const brl = (cents: number) => `R$ ${(cents / 100).toFixed(2).replace('.', ',')}`;
+
+function pickBody(body: Record<string, unknown>, keys: string[]) {
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (body[k] !== undefined) out[k] = body[k];
+  return out;
+}
+
+const BULK_ACTIONS = [
+  'available',
+  'sold_out_today',
+  'sold_out',
+  'hidden',
+  'category',
+  'price_percent',
+  'price_amount',
+  'stock',
+  'schedule',
+  'delete',
+  'restore',
+  'revert',
+] as const;
+
+interface BulkRow {
+  id: string;
+  name: string;
+  priceCents: number;
+  compareAtPriceCents: number | null;
+  promoSchedule: PromoSchedule | null;
+  status: string;
+  soldOutUntil: Date | null;
+  categoryId: string;
+  stockQuantity: number | null;
+  availabilitySchedule: AvailabilitySchedule | null;
+  deleted: boolean;
+}
+
+const bulkCols = (tx: Sql) => tx`
+  p.id, p.name, p.base_price_cents as "priceCents", p.compare_at_price_cents as "compareAtPriceCents",
+  p.promo_schedule as "promoSchedule", p.status, p.sold_out_until as "soldOutUntil",
+  p.category_id as "categoryId", p.stock_quantity as "stockQuantity",
+  p.availability_schedule as "availabilitySchedule", p.deleted_at is not null as deleted
+`;
+
+/** The trigger keeps it archived from here on; "esgotado hoje" has nothing left to end. */
+async function softDelete(tx: Sql, tenantId: string, ids: string[]) {
+  if (!ids.length) return;
+  await tx`
+    update products set deleted_status = status, deleted_at = now(), sold_out_until = null
+    where tenant_id = ${tenantId} and id = any(${ids}::uuid[]) and deleted_at is null
+  `;
+}
+
+async function restore(tx: Sql, tenantId: string, ids: string[]) {
+  if (!ids.length) return;
+  await tx`
+    update products set deleted_at = null, status = coalesce(deleted_status, 'archived'),
+      deleted_status = null
+    where tenant_id = ${tenantId} and id = any(${ids}::uuid[]) and deleted_at is not null
+  `;
+}
+
+interface Revert {
+  id: string;
+  categoryId?: string;
+  price?: { base: number; cmp: number | null; promo: PromoSchedule | null };
+  status?: { status: 'active' | 'sold_out' | 'archived'; until: Date | null };
+  stock?: number | null;
+  schedule?: AvailabilitySchedule | null;
+}
+
+/** One `before` entry of a bulk answer, checked like the write that first set it. */
+function parseRevert(x: unknown, i: number): Revert {
+  const at = `items[${i}]`;
+  if (!isObj(x) || typeof x.id !== 'string' || !UUID_RE.test(x.id))
+    throw new HttpError(422, 'BAD_REQUEST', `${at}.id must be an id`, { field: `${at}.id` });
+  const out: Revert = { id: x.id.toLowerCase() };
+  if (x.categoryId !== undefined) {
+    if (typeof x.categoryId !== 'string' || !UUID_RE.test(x.categoryId))
+      throw new HttpError(422, 'BAD_REQUEST', 'pick a category', { field: `${at}.categoryId` });
+    out.categoryId = x.categoryId;
+  }
+  if (x.priceCents !== undefined) {
+    const base = int(x.priceCents, `${at}.priceCents`, 0, MAX_PRICE);
+    const cmp =
+      x.compareAtPriceCents == null
+        ? null
+        : int(x.compareAtPriceCents, `${at}.compareAtPriceCents`, 1, MAX_PRICE);
+    if (cmp !== null && cmp <= base)
+      throw new HttpError(422, 'BAD_REQUEST', 'the "de" price must be above the price', {
+        field: `${at}.compareAtPriceCents`,
+      });
+    const promo = x.promoSchedule == null ? null : parsePromoSchedule(x.promoSchedule, MAX_PRICE);
+    if (promo && promo.priceCents >= base)
+      throw new HttpError(422, 'BAD_REQUEST', 'the promotion price must be below the price', {
+        field: `${at}.promoSchedule.priceCents`,
+      });
+    out.price = { base, cmp, promo };
+  }
+  if (x.status !== undefined) {
+    const status = oneOf(x.status, `${at}.status`, ['active', 'sold_out', 'archived'] as const);
+    let until: Date | null = null;
+    if (status === 'sold_out' && x.soldOutUntil != null) {
+      const d = new Date(text(x.soldOutUntil, `${at}.soldOutUntil`, 40));
+      // "esgotado hoje" ends by the next midnight; one already past is the sweeper's to end
+      if (Number.isNaN(d.getTime()) || Math.abs(d.getTime() - Date.now()) > 2 * 86_400_000)
+        throw new HttpError(422, 'BAD_REQUEST', 'soldOutUntil is not today', {
+          field: `${at}.soldOutUntil`,
+        });
+      until = d;
+    }
+    out.status = { status, until };
+  }
+  if (x.stockQuantity !== undefined)
+    out.stock =
+      x.stockQuantity === null ? null : int(x.stockQuantity, `${at}.stockQuantity`, 0, MAX_STOCK);
+  if (x.availabilitySchedule !== undefined)
+    out.schedule = parseAvailabilitySchedule(x.availabilitySchedule);
+  return out;
+}
+
+/** Puts back what a bulk action changed; products apagados meanwhile are left alone. */
+async function revertBulk(tx: Sql, tenantId: string, m: Merchant, raw: unknown) {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 300)
+    throw new HttpError(422, 'BAD_REQUEST', 'items must list 1–300 products', { field: 'items' });
+  const byId = new Map(raw.map((x, i) => parseRevert(x, i)).map((r) => [r.id, r]));
+  const ids = [...byId.keys()].sort();
+  const live = (
+    await tx<{ id: string }[]>`
+      select id from products where tenant_id = ${tenantId} and id = any(${ids}::uuid[])
+        and deleted_at is null
+      order by id for update
+    `
+  ).map((r) => r.id);
+  const cats = new Set<string>();
+  let woken = 0;
+  for (const id of live) {
+    const x = byId.get(id)!;
+    const set: Record<string, unknown> = {};
+    if (x.categoryId) {
+      if (!cats.has(x.categoryId)) cats.add(await categoryOf(tx, tenantId, x.categoryId));
+      set.category_id = x.categoryId;
+    }
+    if (x.price) {
+      set.base_price_cents = x.price.base;
+      set.compare_at_price_cents = x.price.cmp;
+      set.promo_schedule = x.price.promo ? tx.json(x.price.promo as never) : null;
+    }
+    if (x.schedule !== undefined)
+      set.availability_schedule = x.schedule ? tx.json(x.schedule as never) : null;
+    if (Object.keys(set).length)
+      await tx`update products set ${tx(set as never)} where tenant_id = ${tenantId} and id = ${id}`;
+    if (x.status || x.stock !== undefined) {
+      woken += (
+        await setStock(tx, tenantId, id, {
+          ...(x.status ? { status: x.status.status } : {}),
+          ...(x.stock !== undefined ? { stockQuantity: x.stock } : {}),
+        })
+      ).waiting;
+      if (x.status)
+        await tx`update products set sold_out_until = ${x.status.until} where tenant_id = ${tenantId} and id = ${id}`;
+    }
+  }
+  await audit(tx, tenantId, m, {
+    action: 'product.bulk.revert',
+    entity: 'product',
+    summary: `desfez a última mudança em ${live.length} ${live.length === 1 ? 'produto' : 'produtos'}`,
+    after: { ids: live },
+  });
+  if (live.length) await emitAdminTx(tx, tenantId, 'catalog');
+  return { status: 200, body: { updated: live.length, waitlistWoken: woken } };
 }

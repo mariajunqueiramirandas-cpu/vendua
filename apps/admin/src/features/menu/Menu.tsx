@@ -3,11 +3,13 @@ import {
   ArrowUp,
   CaretRight,
   ClipboardText,
+  DotsThree,
   DownloadSimple,
   Clock,
   FolderSimplePlus,
   GridFour,
   ListBullets,
+  MagnifyingGlass,
   Package,
   PencilSimple,
   Plus,
@@ -18,8 +20,8 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { api, type Category, type Product } from '../../lib/api.ts';
-import { money } from '../../lib/format.ts';
+import { api, ApiError, type BulkBefore, type Category, type Product } from '../../lib/api.ts';
+import { money, plural } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { reducedMotion, SPRING, springEasing } from '../../lib/spring.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
@@ -27,15 +29,7 @@ import { Button, ButtonLink, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState, Hint, messageOf } from '../../ui/feedback.tsx';
-import {
-  Chips,
-  Field,
-  MoneyField,
-  Select,
-  Segmented,
-  TextArea,
-  TextInput,
-} from '../../ui/fields.tsx';
+import { Field, MoneyField, Select, Segmented, TextArea, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { usePreload } from '../../app/routes.ts';
@@ -45,6 +39,14 @@ import { outsideNow } from './schedule.ts';
 import { readableNames } from '../import/copy.ts';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import {
+  BulkCategorySheet,
+  BulkMoreSheet,
+  BulkPriceSheet,
+  BulkScheduleSheet,
+  BulkStockSheet,
+} from './BulkSheets.tsx';
+import { useHeld } from './held.ts';
 
 type View = 'grade' | 'lista';
 type Avail = 'available' | 'sold_out_today' | 'sold_out' | 'hidden';
@@ -64,6 +66,44 @@ function readView(): View {
   }
 }
 
+type Filter = 'todos' | 'disponiveis' | 'esgotados' | 'escondidos' | 'promocao';
+const FILTERS: { value: Filter; label: string }[] = [
+  { value: 'todos', label: 'todos' },
+  { value: 'disponiveis', label: 'disponíveis' },
+  { value: 'esgotados', label: 'esgotados' },
+  { value: 'escondidos', label: 'escondidos' },
+  { value: 'promocao', label: 'em promoção' },
+];
+
+const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
+
+const inFilter = (p: Product, f: Filter) => {
+  if (f === 'todos') return true;
+  if (f === 'promocao') return p.compareAtPriceCents !== null || !!p.promoSchedule;
+  const a = availability(p);
+  return f === 'disponiveis'
+    ? a === 'available'
+    : f === 'esgotados'
+      ? a === 'sold_out'
+      : a === 'hidden';
+};
+
+type Sheet_ =
+  | null
+  | 'new'
+  | 'category'
+  | 'import'
+  | 'organize'
+  | 'bulk-price'
+  | 'bulk-more'
+  | 'bulk-category'
+  | 'bulk-stock'
+  | 'bulk-schedule';
+
+/** what the toast says after the count; [one, many] when it agrees with it */
+type BulkLabel = string | [string, string];
+type Bulk = { ids: string[]; action: string; extra?: Record<string, unknown>; label: BulkLabel };
+
 export default function Menu() {
   const { data, error, refetch, isPending } = useQuery({
     queryKey: qk.catalog,
@@ -74,23 +114,44 @@ export default function Menu() {
   const [view, setView] = useState<View>(readView);
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [sheet, setSheet] = useState<
-    null | 'new' | 'category' | 'import' | 'organize' | 'bulk-price' | 'bulk-category'
-  >(null);
-  // the "Novo produto" app shortcut and photos shared from the gallery land here
+  const [sheet, setSheet] = useState<Sheet_>(null);
+  // search and filter live in the address: back from a product lands on the same list
   const [search, setSearch] = useSearchParams();
+  const update = (patch: Record<string, string | null>) =>
+    setSearch(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        for (const [k, v] of Object.entries(patch)) v ? next.set(k, v) : next.delete(k);
+        return next;
+      },
+      { replace: true },
+    );
+  const [q, setQ] = useState(() => search.get('q') ?? '');
+  useEffect(() => {
+    const t = setTimeout(() => update({ q: q.trim() || null }), 200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+  const shownFilter = search.get('mostrar');
+  const filter: Filter = FILTERS.some((f) => f.value === shownFilter)
+    ? (shownFilter as Filter)
+    : 'todos';
+  // the "Novo produto" app shortcut and photos shared from the gallery land here
   const shared = search.get('foto') === 'compartilhada';
   const [fromShare, setFromShare] = useState(false);
   useEffect(() => {
     if (search.get('novo') !== '1' && !shared) return;
     setFromShare(shared);
     setSheet('new');
-    setSearch({}, { replace: true });
-  }, [search, shared, setSearch]);
+    update({ novo: null, foto: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, shared]);
   const [availFor, setAvailFor] = useState<Product | null>(null);
   const preloadRoute = usePreload();
   const toImport = () => nav('/cardapio/importar');
-  const cats = data?.categories ?? [];
+  // a category deleted a moment ago stays gone while "desfazer" is up
+  const { held, hold, cancel } = useHeld();
+  const cats = useMemo(() => (data?.categories ?? []).filter((c) => !held.has(c.id)), [data, held]);
   useEffect(() => {
     try {
       localStorage.setItem('vendua-menu-view', view);
@@ -141,9 +202,21 @@ export default function Menu() {
       );
     },
   });
+  const done = () => {
+    setPicked(new Set());
+    setSelecting(false);
+    setSheet(null);
+  };
+  // "desfazer" for the bar: Core's own `before` goes back (revert), an apagar is restored
+  const undoBulk = useMutation({
+    mutationFn: (u: { revert: BulkBefore[] } | { restore: string[] }) =>
+      'revert' in u ? api.bulkRevert(u.revert) : api.bulk(u.restore, 'restore'),
+    onSettled: () => void qc.invalidateQueries({ queryKey: qk.catalog }),
+    onSuccess: () => toast('Desfeito'),
+    onError: (e) => toast.error(messageOf(e)),
+  });
   const bulk = useMutation({
-    mutationFn: (v: { ids: string[]; action: string; extra?: Record<string, unknown> }) =>
-      api.bulk(v.ids, v.action, v.extra),
+    mutationFn: (v: Bulk) => api.bulk(v.ids, v.action, v.extra),
     onMutate: async (v) => {
       const status =
         v.action === 'available'
@@ -153,34 +226,68 @@ export default function Menu() {
             : v.action === 'sold_out_today'
               ? 'sold_out'
               : null;
-      // price and category moves are the server's to compute — those wait for the answer
-      if (!status) return undefined;
+      // price, stock, schedule and category moves are the server's to compute — those wait
+      if (!status && v.action !== 'delete') return undefined;
       const ids = new Set(v.ids);
-      setPicked(new Set());
-      setSelecting(false);
-      setSheet(null);
+      done();
       return optimistic<{ categories: Category[] }>(qc, qk.catalog, (d) => ({
         ...d,
         categories: d.categories.map((c) => ({
           ...c,
-          products: c.products.map((p) =>
-            ids.has(p.id) ? { ...p, status, liveStatus: status } : p,
-          ),
+          products:
+            v.action === 'delete'
+              ? c.products.filter((p) => !ids.has(p.id))
+              : c.products.map((p) =>
+                  ids.has(p.id) ? { ...p, status: status!, liveStatus: status! } : p,
+                ),
         })),
       }));
     },
-    onSuccess: (r) => {
+    onSuccess: (r, v) => {
       void qc.invalidateQueries({ queryKey: qk.catalog });
-      toast(`${r.updated} produtos atualizados`);
-      setPicked(new Set());
-      setSelecting(false);
-      setSheet(null);
+      done();
+      const undo =
+        v.action === 'delete'
+          ? () => undoBulk.mutate({ restore: v.ids })
+          : r.before?.length
+            ? () => undoBulk.mutate({ revert: r.before! })
+            : undefined;
+      toast(
+        `${plural(r.updated, 'produto', 'produtos')}: ${
+          typeof v.label === 'string' ? v.label : v.label[r.updated === 1 ? 0 : 1]
+        }${r.waitlistWoken ? ` · ${r.waitlistWoken} na lista de espera` : ''}`,
+        undo ? { undo } : {},
+      );
     },
     onError: (e, _v, ctx) => {
       ctx?.restore();
-      toast.error(messageOf(e));
+      const names =
+        e instanceof ApiError && e.code === 'PRICE_NOT_POSITIVE'
+          ? ((e.details?.products as { name: string }[] | undefined) ?? []).map((p) => p.name)
+          : [];
+      toast.error(
+        names.length
+          ? `${names.slice(0, 3).join(', ')} ficaria sem preço. Baixe menos, ou tire da seleção.`
+          : messageOf(e),
+      );
     },
   });
+  // one sheet to the next: the closing one's history entry goes back first (ui/Sheet), or its
+  // popstate would close the new one
+  const switchSheet = (next: Sheet_) => {
+    setSheet(null);
+    let opened = false;
+    const open = () => {
+      if (opened) return;
+      opened = true;
+      window.removeEventListener('popstate', open);
+      setSheet(next);
+    };
+    window.addEventListener('popstate', open);
+    setTimeout(open, 400);
+  };
+  const run = (action: string, label: BulkLabel, extra?: Record<string, unknown>) =>
+    bulk.mutate({ ids: [...picked], action, label, ...(extra ? { extra } : {}) });
 
   const toggle = (id: string) =>
     setPicked((s) => {
@@ -191,13 +298,33 @@ export default function Menu() {
       return n;
     });
 
-  const total = cats.reduce((a, c) => a + c.products.length, 0);
-  const restock = cats
-    .flatMap((c) => c.products)
-    .filter(
-      (p) =>
-        p.status !== 'archived' && p.stockQuantity != null && (p.stockQuantity === 0 || p.lowStock),
-    ).length;
+  const all = cats.flatMap((c) => c.products);
+  const total = all.length;
+  const restock = all.filter(
+    (p) =>
+      p.status !== 'archived' && p.stockQuantity != null && (p.stockQuantity === 0 || p.lowStock),
+  ).length;
+  // what the search and the filter leave; dragging to reorder waits for the whole list
+  const needle = fold(q.trim());
+  const matches = (p: Product) => !needle || fold(p.name).includes(needle);
+  const counts = Object.fromEntries(
+    FILTERS.map((f) => [f.value, all.filter((p) => matches(p) && inFilter(p, f.value)).length]),
+  ) as Record<Filter, number>;
+  const narrowed = !!needle || filter !== 'todos';
+  const shown = narrowed
+    ? cats
+        .map((c) => ({
+          ...c,
+          products: c.products.filter((p) => matches(p) && inFilter(p, filter)),
+        }))
+        .filter((c) => c.products.length)
+    : cats;
+  const shownCount = shown.reduce((n, c) => n + c.products.length, 0);
+  const pickedProducts = all.filter((p) => picked.has(p.id));
+  const clear = () => {
+    setQ('');
+    update({ q: null, mostrar: null });
+  };
 
   return (
     <PageBody wide>
@@ -281,7 +408,60 @@ export default function Menu() {
         </div>
       </div>
 
-      {total ? (
+      {total > 8 || narrowed ? (
+        <div className="mb-5 space-y-3 xl:flex xl:items-center xl:gap-4 xl:space-y-0">
+          <div className="min-w-0 xl:max-w-sm xl:flex-1">
+            <TextInput
+              type="search"
+              aria-label="buscar produto"
+              placeholder="Buscar produto"
+              value={q}
+              maxLength={80}
+              onChange={(e) => setQ(e.target.value)}
+              lead={<MagnifyingGlass className="size-5" />}
+            />
+          </div>
+          <div className="scroll-row -mx-4 px-4 md:-mx-8 md:px-8 xl:mx-0 xl:shrink-0 xl:px-0">
+            <div
+              role="radiogroup"
+              aria-label="mostrar"
+              className="flex w-max gap-1 rounded-md bg-sunken p-1"
+            >
+              {FILTERS.map((f) => {
+                const on = f.value === filter;
+                return (
+                  <button
+                    key={f.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => {
+                      haptic.tick();
+                      update({ mostrar: f.value === 'todos' ? null : f.value });
+                    }}
+                    className={cn(
+                      'press t-label flex min-h-11 items-center gap-1.5 rounded-[12px] px-3.5 transition-[color,background-color,box-shadow,scale] duration-(--duration-quick)',
+                      on ? 'bg-surface text-ink depth-1' : 'text-muted hover:text-ink',
+                    )}
+                  >
+                    {f.label}
+                    <span
+                      className={cn(
+                        'tnum min-w-6 rounded-full px-1.5 text-center text-[0.75rem] leading-6',
+                        on && counts[f.value] > 0 ? 'bg-spark text-on-spark' : 'bg-line text-muted',
+                      )}
+                    >
+                      {counts[f.value]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {total && !narrowed ? (
         <Link
           to="/cardapio/estoque"
           {...preloadRoute('/cardapio/estoque')}
@@ -302,7 +482,7 @@ export default function Menu() {
         </Link>
       ) : null}
 
-      {cats.length > 1 ? (
+      {cats.length > 1 && !narrowed ? (
         <nav aria-label="categorias" className="scroll-row -mx-4 mb-5 px-4 md:-mx-8 md:px-8">
           <ul className="flex w-max gap-2">
             {cats.map((c) => (
@@ -328,10 +508,25 @@ export default function Menu() {
         </nav>
       ) : null}
 
-      <Hint id="menu-longpress" className="mb-5">
-        Segure uma foto para arrastar e mudar a ordem. No modo lista, toque na disponibilidade para
-        marcar “esgotado hoje”.
-      </Hint>
+      {narrowed ? (
+        shownCount ? (
+          <div className="mb-4 flex min-h-11 items-center gap-3 px-1" aria-live="polite">
+            <p className="t-body min-w-0 flex-1 text-muted">
+              {plural(shownCount, 'produto', 'produtos')}
+              {needle ? ` com “${q.trim()}”` : ''}
+              {filter !== 'todos' ? ` · ${FILTERS.find((f) => f.value === filter)!.label}` : ''}
+            </p>
+            <Button variant="ghost" size="sm" icon={<X />} onClick={clear}>
+              limpar
+            </Button>
+          </div>
+        ) : null
+      ) : (
+        <Hint id="menu-longpress" className="mb-5">
+          Segure uma foto para arrastar e mudar a ordem. No modo lista, toque na disponibilidade
+          para marcar “esgotado hoje”.
+        </Hint>
+      )}
 
       {error && !data ? (
         <ErrorState error={error} retry={() => void refetch()} />
@@ -368,9 +563,28 @@ export default function Menu() {
             </div>
           }
         />
+      ) : narrowed && !shownCount ? (
+        <EmptyState
+          art={<Mascote pose="sem-resultados" />}
+          title={
+            needle
+              ? `Nenhum produto com “${q.trim()}”`
+              : `Nenhum produto ${FILTERS.find((f) => f.value === filter)!.label}`
+          }
+          body={
+            needle
+              ? 'Confira se está escrito certo, ou procure em todos os produtos.'
+              : 'Quando algum produto ficar assim, ele aparece aqui.'
+          }
+          action={
+            <Button variant="secondary" onClick={clear}>
+              ver todos os produtos
+            </Button>
+          }
+        />
       ) : (
         <div className="space-y-8">
-          {cats.map((c) => (
+          {shown.map((c) => (
             <section
               key={c.id}
               id={`cat-${c.id}`}
@@ -395,6 +609,7 @@ export default function Menu() {
               ) : view === 'grade' ? (
                 <ReorderGrid
                   cat={c}
+                  reorder={!narrowed}
                   selecting={selecting}
                   picked={picked}
                   onToggle={toggle}
@@ -417,22 +632,24 @@ export default function Menu() {
               )}
             </section>
           ))}
-          <button
-            type="button"
-            onClick={toImport}
-            {...preloadRoute('/cardapio/importar')}
-            className="press-row flex min-h-16 w-full items-center gap-3 rounded-lg bg-surface px-4 py-3 text-left depth-1 md:hidden"
-          >
-            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sunken">
-              <DownloadSimple className="size-5" aria-hidden />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block font-semibold">Importar de outro app</span>
-              <span className="t-caption block text-muted">
-                Cole o link da sua loja no {readableNames()}
+          {!narrowed ? (
+            <button
+              type="button"
+              onClick={toImport}
+              {...preloadRoute('/cardapio/importar')}
+              className="press-row flex min-h-16 w-full items-center gap-3 rounded-lg bg-surface px-4 py-3 text-left depth-1 md:hidden"
+            >
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sunken">
+                <DownloadSimple className="size-5" aria-hidden />
               </span>
-            </span>
-          </button>
+              <span className="min-w-0 flex-1">
+                <span className="block font-semibold">Importar de outro app</span>
+                <span className="t-caption block text-muted">
+                  Cole o link da sua loja no {readableNames()}
+                </span>
+              </span>
+            </button>
+          ) : null}
         </div>
       )}
 
@@ -448,15 +665,30 @@ export default function Menu() {
       ) : (
         <div
           data-action-bar
-          className="glass fixed inset-x-0 bottom-[var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))] z-30 border-t border-line px-4 py-3 md:bottom-4 md:left-auto md:right-6 md:rounded-lg md:border-0 md:depth-3"
+          className="glass fixed inset-x-0 bottom-[var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))] z-30 border-t border-line px-4 py-3 md:bottom-4 md:left-auto md:right-6 md:max-w-[34rem] md:rounded-lg md:border-0 md:depth-3"
         >
-          <p className="t-caption mb-2 text-muted">{picked.size} selecionados</p>
+          <div className="mb-2 flex min-h-8 items-center gap-2">
+            <p className="t-caption min-w-0 flex-1 text-muted" aria-live="polite">
+              {picked.size === 1 ? '1 selecionado' : `${picked.size} selecionados`}
+            </p>
+            {shownCount > picked.size ? (
+              <button
+                type="button"
+                className="t-caption min-h-8 rounded-full px-2 font-semibold underline underline-offset-2"
+                onClick={() =>
+                  setPicked(new Set(shown.flatMap((c) => c.products.map((p) => p.id))))
+                }
+              >
+                selecionar {narrowed ? 'os mostrados' : 'todos'} ({shownCount})
+              </button>
+            ) : null}
+          </div>
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
               variant="secondary"
               disabled={!picked.size}
-              onClick={() => bulk.mutate({ ids: [...picked], action: 'available' })}
+              onClick={() => run('available', ['disponível', 'disponíveis'])}
             >
               disponível
             </Button>
@@ -464,7 +696,7 @@ export default function Menu() {
               size="sm"
               variant="secondary"
               disabled={!picked.size}
-              onClick={() => bulk.mutate({ ids: [...picked], action: 'sold_out_today' })}
+              onClick={() => run('sold_out_today', ['esgotado hoje', 'esgotados hoje'])}
             >
               esgotado hoje
             </Button>
@@ -472,7 +704,7 @@ export default function Menu() {
               size="sm"
               variant="secondary"
               disabled={!picked.size}
-              onClick={() => bulk.mutate({ ids: [...picked], action: 'hidden' })}
+              onClick={() => run('hidden', ['escondido', 'escondidos'])}
             >
               esconder
             </Button>
@@ -480,17 +712,18 @@ export default function Menu() {
               size="sm"
               variant="secondary"
               disabled={!picked.size}
-              onClick={() => setSheet('bulk-category')}
+              onClick={() => setSheet('bulk-price')}
             >
-              mover
+              preço
             </Button>
             <Button
               size="sm"
               variant="secondary"
+              icon={<DotsThree weight="bold" />}
               disabled={!picked.size}
-              onClick={() => setSheet('bulk-price')}
+              onClick={() => setSheet('bulk-more')}
             >
-              preço %
+              mais
             </Button>
           </div>
         </div>
@@ -516,39 +749,91 @@ export default function Menu() {
       <OrganizeSheet
         open={sheet === 'organize'}
         onOpenChange={(v) => setSheet(v ? 'organize' : null)}
-        cats={cats}
+        all={data?.categories ?? []}
+        held={held}
+        onUndo={cancel}
         onNew={() => setSheet('category')}
+        onDelete={(c) => {
+          // Core keeps a category with products on the menu: say so now, not 6 s later
+          if (c.products.some((p) => p.status !== 'archived'))
+            return void toast.error(
+              `${c.name} ainda tem produtos na loja. Mova, esconda ou apague eles antes.`,
+            );
+          const hidden = c.products.length;
+          hold(
+            c.id,
+            hidden
+              ? `Categoria “${c.name}” apagada, com ${plural(hidden, 'produto escondido', 'produtos escondidos')}`
+              : `Categoria “${c.name}” apagada`,
+            (leaving) =>
+              void api.deleteCategory(c.id, { keepalive: leaving }).then(
+                () => qc.invalidateQueries({ queryKey: qk.catalog }),
+                (e) => {
+                  toast.error(messageOf(e));
+                  void qc.invalidateQueries({ queryKey: qk.catalog });
+                },
+              ),
+          );
+        }}
       />
       <BulkPriceSheet
         open={sheet === 'bulk-price'}
         onOpenChange={(v) => setSheet(v ? 'bulk-price' : null)}
-        count={picked.size}
+        products={pickedProducts}
         loading={bulk.isPending}
-        onApply={(percent) =>
-          bulk.mutate({ ids: [...picked], action: 'price_percent', extra: { percent } })
+        onApply={(x) =>
+          'percent' in x
+            ? run('price_percent', `preço ${x.percent > 0 ? '+' : '−'}${Math.abs(x.percent)}%`, x)
+            : run(
+                'price_amount',
+                `preço ${x.amountCents > 0 ? '+' : '−'}${money(Math.abs(x.amountCents))}`,
+                x,
+              )
         }
       />
-      <Sheet
+      <BulkMoreSheet
+        open={sheet === 'bulk-more'}
+        onOpenChange={(v) => setSheet(v ? 'bulk-more' : null)}
+        count={picked.size}
+        onPick={(what) =>
+          what === 'delete' ? run('delete', ['apagado', 'apagados']) : switchSheet(`bulk-${what}`)
+        }
+      />
+      <BulkCategorySheet
         open={sheet === 'bulk-category'}
         onOpenChange={(v) => setSheet(v ? 'bulk-category' : null)}
-        title={`Mover ${picked.size} produtos para…`}
-      >
-        <div className="grid gap-2 pt-1">
-          {cats.map((c) => (
-            <Button
-              key={c.id}
-              variant="secondary"
-              size="lg"
-              block
-              onClick={() =>
-                bulk.mutate({ ids: [...picked], action: 'category', extra: { categoryId: c.id } })
-              }
-            >
-              {c.name}
-            </Button>
-          ))}
-        </div>
-      </Sheet>
+        count={picked.size}
+        cats={cats}
+        onApply={(categoryId, name) =>
+          run('category', [`movido para ${name}`, `movidos para ${name}`], { categoryId })
+        }
+      />
+      <BulkStockSheet
+        open={sheet === 'bulk-stock'}
+        onOpenChange={(v) => setSheet(v ? 'bulk-stock' : null)}
+        count={picked.size}
+        loading={bulk.isPending}
+        onApply={(stockQuantity) =>
+          run(
+            'stock',
+            stockQuantity === null ? 'sem contar estoque' : `${stockQuantity} no estoque`,
+            { stockQuantity },
+          )
+        }
+      />
+      <BulkScheduleSheet
+        open={sheet === 'bulk-schedule'}
+        onOpenChange={(v) => setSheet(v ? 'bulk-schedule' : null)}
+        count={picked.size}
+        loading={bulk.isPending}
+        onApply={(availabilitySchedule) =>
+          run(
+            'schedule',
+            availabilitySchedule ? 'horário de venda novo' : 'à venda sempre que a loja abre',
+            { availabilitySchedule },
+          )
+        }
+      />
       <Sheet
         open={!!availFor}
         onOpenChange={(v) => !v && setAvailFor(null)}
@@ -582,12 +867,15 @@ export default function Menu() {
 /** Long-press lifts a tile; the others make room; drop saves the order (§6.6). */
 function ReorderGrid({
   cat,
+  reorder,
   selecting,
   picked,
   onToggle,
   onOpen,
 }: {
   cat: Category;
+  /** off while the list is narrowed by a search or filter: a partial order can't be saved */
+  reorder: boolean;
   selecting: boolean;
   picked: Set<string>;
   onToggle: (id: string) => void;
@@ -617,7 +905,7 @@ function ReorderGrid({
   });
 
   const down = (id: string, e: React.PointerEvent) => {
-    if (selecting || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (!reorder || selecting || (e.pointerType === 'mouse' && e.button !== 0)) return;
     origin.current = { x: e.clientX, y: e.clientY };
     dragged.current = false;
     const target = e.currentTarget as HTMLElement;
@@ -1190,14 +1478,23 @@ function ImportSheet({
 function OrganizeSheet({
   open,
   onOpenChange,
-  cats,
+  all,
+  held,
+  onUndo,
   onNew,
+  onDelete,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  cats: Category[];
+  /** every category, the ones being deleted included */
+  all: Category[];
+  /** deleted a moment ago: held behind "desfazer" by the screen, gone from every other list */
+  held: ReadonlySet<string>;
+  onUndo: (id: string) => void;
   onNew: () => void;
+  onDelete: (c: Category) => void;
 }) {
+  const cats = all.filter((c) => !held.has(c.id));
   const qc = useQueryClient();
   const [editing, setEditing] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -1232,14 +1529,6 @@ function OrganizeSheet({
       toast.error(messageOf(e));
     },
   });
-  const del = useMutation({
-    mutationFn: api.deleteCategory,
-    onSuccess: () => {
-      refresh();
-      toast('Categoria apagada');
-    },
-    onError: (e) => toast.error(messageOf(e)),
-  });
   const move = (i: number, d: -1 | 1) => {
     const ids = cats.map((c) => c.id);
     const [x] = ids.splice(i, 1);
@@ -1260,8 +1549,25 @@ function OrganizeSheet({
       }
     >
       <ul className="space-y-2 pt-2">
-        {cats.map((c, i) =>
-          editing === c.id ? (
+        {all.map((c) => {
+          // the sheet covers the toast: its "desfazer" is here too
+          if (held.has(c.id))
+            return (
+              <li
+                key={c.id}
+                className="flex min-h-14 items-center gap-2 rounded-md p-1.5 pl-3 ring-1 ring-line"
+                aria-live="polite"
+              >
+                <span className="t-body min-w-0 flex-1 truncate text-muted">
+                  “{c.name}” apagada
+                </span>
+                <Button variant="ghost" size="sm" onClick={() => onUndo(c.id)}>
+                  desfazer
+                </Button>
+              </li>
+            );
+          const i = cats.indexOf(c);
+          return editing === c.id ? (
             <li key={c.id} className="space-y-4 rounded-md bg-sunken p-3">
               <Field label="Nome" htmlFor="ec-name">
                 <TextInput
@@ -1332,12 +1638,12 @@ function OrganizeSheet({
               >
                 <PencilSimple />
               </IconButton>
-              <IconButton label={`apagar ${c.name}`} size="sm" onClick={() => del.mutate(c.id)}>
+              <IconButton label={`apagar ${c.name}`} size="sm" onClick={() => onDelete(c)}>
                 <Trash />
               </IconButton>
             </li>
-          ),
-        )}
+          );
+        })}
       </ul>
     </Sheet>
   );
@@ -1379,69 +1685,6 @@ function CategoryDescription({
         className={cn('min-h-24', inputClassName)}
       />
     </Field>
-  );
-}
-
-function BulkPriceSheet({
-  open,
-  onOpenChange,
-  count,
-  onApply,
-  loading,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  count: number;
-  onApply: (pct: number) => void;
-  loading: boolean;
-}) {
-  const [dir, setDir] = useState<'up' | 'down'>('up');
-  const [pct, setPct] = useState('10');
-  const n = Math.round(Number(pct.replace(',', '.')));
-  const ok = Number.isFinite(n) && n > 0 && n <= (dir === 'up' ? 300 : 90);
-  return (
-    <Sheet
-      open={open}
-      onOpenChange={onOpenChange}
-      title={`Ajustar o preço de ${count} produtos`}
-      description="Os preços são arredondados para os 10 centavos mais próximos. O preço “de” das promoções acompanha."
-      footer={
-        <Button
-          size="lg"
-          block
-          disabled={!ok}
-          loading={loading}
-          onClick={() => onApply(dir === 'up' ? n : -n)}
-        >
-          {dir === 'up' ? 'aumentar' : 'baixar'} {ok ? `${n}%` : ''}
-        </Button>
-      }
-    >
-      <div className="space-y-4 pt-2">
-        <Chips
-          label="direção"
-          value={dir}
-          onChange={setDir}
-          options={[
-            { value: 'up', label: 'aumentar' },
-            { value: 'down', label: 'baixar' },
-          ]}
-        />
-        <Field label="Quanto?" htmlFor="bp">
-          <TextInput
-            id="bp"
-            inputMode="numeric"
-            trail="%"
-            value={pct}
-            onChange={(e) => setPct(e.target.value)}
-          />
-        </Field>
-        <p className="t-body text-muted">
-          Ex.: um produto de {money(1250)} fica{' '}
-          {money(Math.round((1250 * (100 + (dir === 'up' ? n || 0 : -(n || 0)))) / 1000) * 10)}.
-        </p>
-      </div>
-    </Sheet>
   );
 }
 
