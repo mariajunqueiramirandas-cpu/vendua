@@ -99,6 +99,20 @@ export function untilChange(iso: string | null | undefined): number | false {
   return Number.isFinite(ms) ? Math.min(Math.max(ms, 5000), 6 * 60 * 60_000) : false;
 }
 
+const pausedCount = () =>
+  queryClient
+    .getMutationCache()
+    .getAll()
+    .filter((m) => m.state.isPaused).length;
+
+/** Writes waiting for the connection: what the offline banner counts. */
+export function usePendingWrites(): number {
+  return useSyncExternalStore(
+    (fn) => queryClient.getMutationCache().subscribe(() => fn()),
+    pausedCount,
+  );
+}
+
 export function useLiveState(): LiveState {
   return useSyncExternalStore(
     (fn) => {

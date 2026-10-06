@@ -1,17 +1,26 @@
-import { DownloadSimple, Gift, ShieldCheck, WhatsappLogo } from '@phosphor-icons/react';
+import {
+  DownloadSimple,
+  Gift,
+  Plus,
+  ShieldCheck,
+  Tag,
+  WhatsappLogo,
+  X,
+} from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { whatsappUrl } from '@vendua/kernel/rules';
-import { api } from '../../lib/api.ts';
-import { dateShort, money, phone, plural } from '../../lib/format.ts';
+import { useAutosave } from '../../lib/autosave.ts';
+import { api, type CustomerDetail, type CustomerNotes } from '../../lib/api.ts';
+import { ago, dateShort, money, phone, plural } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, messageOf } from '../../ui/feedback.tsx';
-import { Field, TextInput } from '../../ui/fields.tsx';
+import { Field, SaveMark, TextArea, TextInput } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { DetailSkeleton } from '../../ui/skeletons.tsx';
@@ -82,7 +91,7 @@ export default function CustomerPage() {
         {[
           ['pedidos', String(c.orders)],
           ['gastou no total', money(c.spentCents)],
-          ['ticket médio', c.orders ? money(Math.round(c.spentCents / c.orders)) : '—'],
+          ['ticket médio', c.orders ? money(c.avgTicketCents) : '—'],
           ['cliente desde', dateShort(c.firstAt)],
         ].map(([k, v]) => (
           <Card key={k} className="p-4">
@@ -94,6 +103,7 @@ export default function CustomerPage() {
 
       <div className="mt-8 grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
         <div className="space-y-8">
+          <NotesSection phone={ph} notes={data.notes} known={data.knownTags} />
           {l.enabled ? (
             <Section title="Cartão fidelidade">
               <Card className="p-5">
@@ -193,6 +203,143 @@ export default function CustomerPage() {
       </div>
       <ForgetSheet open={forget} onOpenChange={setForget} phone={c.phone} name={c.name} />
     </PageBody>
+  );
+}
+
+// same rules as Core (routes-customers.ts): lowercase, one space, ≤ 24 characters, ≤ 10 tags
+const TAG_MAX = 24;
+const TAGS_MAX = 10;
+const NOTE_MAX = 2000;
+const tagOf = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase().slice(0, TAG_MAX);
+
+type Draft = { note: string; tags: string[] };
+
+/** What the store writes down about this customer: saved as it's typed, no button (§2.2.5). */
+function NotesSection({
+  phone: ph,
+  notes,
+  known,
+}: {
+  phone: string;
+  notes: CustomerNotes;
+  known: string[];
+}) {
+  const qc = useQueryClient();
+  const initial = useMemo(() => ({ note: notes.note, tags: notes.tags }), [notes.note, notes.tags]);
+  const { draft, setDraft, state } = useAutosave<Draft>(initial, async (v) => {
+    const r = await api.saveCustomerNotes(ph, v);
+    // Core trims the note; the draft keeps what's typed, so a pause after a space loses nothing
+    qc.setQueryData<CustomerDetail>(qk.customer(ph), (old) =>
+      old ? { ...old, notes: { ...r.notes, note: v.note }, knownTags: r.knownTags } : old,
+    );
+    void qc.invalidateQueries({ queryKey: ['customers'], exact: false, refetchType: 'none' });
+    return v;
+  });
+  const [tag, setTag] = useState('');
+  const add = (raw: string) => {
+    const t = tagOf(raw);
+    setTag('');
+    if (!t) return;
+    setDraft((d) =>
+      d.tags.includes(t) || d.tags.length >= TAGS_MAX ? d : { ...d, tags: [...d.tags, t] },
+    );
+  };
+  const remove = (t: string) => setDraft((d) => ({ ...d, tags: d.tags.filter((x) => x !== t) }));
+  const suggestions = known.filter((t) => !draft.tags.includes(t)).slice(0, 6);
+  const full = draft.tags.length >= TAGS_MAX;
+  return (
+    <Section
+      title="Anotações"
+      hint="Só a equipe vê. Apagar os dados do cliente apaga isto também."
+      action={<SaveMark state={state} />}
+    >
+      <Card className="space-y-5 p-4">
+        <Field
+          label="Etiquetas"
+          htmlFor="customer-tag"
+          helper={
+            full
+              ? `Até ${TAGS_MAX} etiquetas por cliente.`
+              : 'Separe clientes por grupo, como "vip" ou "atacado". Dá para filtrar a lista por elas.'
+          }
+        >
+          {draft.tags.length ? (
+            <ul className="flex flex-wrap gap-2" aria-label="etiquetas do cliente">
+              {draft.tags.map((t) => (
+                <li
+                  key={t}
+                  className="t-label inline-flex h-10 items-center gap-1.5 rounded-full bg-sunken pl-3 ring-1 ring-line"
+                >
+                  <Tag className="size-4 shrink-0 text-muted" aria-hidden />
+                  {t}
+                  <button
+                    type="button"
+                    aria-label={`tirar a etiqueta ${t}`}
+                    onClick={() => remove(t)}
+                    className="press grid size-10 place-items-center rounded-full text-muted hover:bg-hover hover:text-ink"
+                  >
+                    <X weight="bold" className="size-4" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {full ? null : (
+            <TextInput
+              id="customer-tag"
+              placeholder="Nova etiqueta"
+              enterKeyHint="done"
+              maxLength={TAG_MAX}
+              value={tag}
+              onChange={(e) => {
+                const v = e.target.value;
+                // a comma (pasted lists, phone keyboards) closes the tag like Enter
+                if (v.includes(',')) v.split(',').forEach(add);
+                else setTag(v);
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                add(tag);
+              }}
+              onBlur={() => add(tag)}
+            />
+          )}
+          {suggestions.length && !full ? (
+            <div className="flex flex-wrap gap-2">
+              {suggestions.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => add(t)}
+                  className="press t-caption inline-flex h-9 items-center gap-1 rounded-full px-3 text-muted ring-1 ring-line-strong hover:bg-hover hover:text-ink"
+                >
+                  <Plus weight="bold" className="size-3.5" aria-hidden />
+                  {t}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </Field>
+        <Field
+          label="Anotação"
+          htmlFor="customer-note"
+          helper={
+            notes.updatedBy && notes.updatedAt
+              ? `Última mudança: ${notes.updatedBy}, ${ago(notes.updatedAt)}.`
+              : undefined
+          }
+        >
+          <TextArea
+            id="customer-note"
+            placeholder="Ex.: prefere sem açúcar, entregar no portão lateral"
+            maxLength={NOTE_MAX}
+            value={draft.note}
+            onChange={(e) => setDraft((d) => ({ ...d, note: e.target.value }))}
+          />
+        </Field>
+      </Card>
+    </Section>
   );
 }
 

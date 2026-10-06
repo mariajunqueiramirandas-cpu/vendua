@@ -2,17 +2,42 @@ import type { Context } from 'hono';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
-import { audit } from './audit.ts';
+import { audit, auditChanges } from './audit.ts';
 import { forgetGate, validAdminEmail, validAdminPhone } from './auth.ts';
 import { ROLES, oneOf, text, type AdminCtx, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
+import { storeTz } from './routes-orders.ts';
 
 const ROLE_LABEL = { owner: 'dono', manager: 'gerente', attendant: 'atendente' } as const;
 /** resends per member per rolling hour */
 const INVITES_PER_HOUR = 3;
 
 const teamLog = log.child({ mod: 'admin-team' });
+
+/** Equipe's "quem mudou o quê" filter: the audit entities each kind of thing covers */
+export const ACTIVITY_KINDS = {
+  pedidos: ['order'],
+  cardapio: ['product', 'category', 'import', 'modifier', 'catalog'],
+  loja: [
+    'store',
+    'zone',
+    'kitchen',
+    'printer',
+    'printers',
+    'print_device',
+    'whatsapp',
+    'page',
+    'tokens',
+  ],
+  clientes: ['customer'],
+  marketing: ['coupon', 'loyalty'],
+  pagamentos: ['payments'],
+  equipe: ['member'],
+  conta: ['account', 'invoice', 'custom_domain', 'help'],
+  vendedor: ['thread', 'store_agent', 'store_knowledge', 'vendedor_runs'],
+} as const satisfies Record<string, readonly string[]>;
+type ActivityKind = keyof typeof ACTIVITY_KINDS;
 
 type Delivery = 'sent' | 'failed' | 'skipped';
 export type InviteResult = { whatsapp: Delivery; email: Delivery };
@@ -308,16 +333,41 @@ export function mountTeam(d: AdminDeps) {
       const before = Number(c.req.query('before'));
       const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50) || 50));
       const entity = c.req.query('entity');
-      if (entity && !/^[a-z]{2,20}$/.test(entity))
+      if (entity && !/^[a-z_]{2,30}$/.test(entity))
         throw new HttpError(400, 'BAD_REQUEST', 'bad entity');
-      const rows = await tx<{ id: number }[]>`
-        select id, actor_label as actor, action, entity, entity_id as "entityId", summary, at
+      const kind = c.req.query('kind');
+      if (kind && !Object.hasOwn(ACTIVITY_KINDS, kind))
+        throw new HttpError(
+          400,
+          'BAD_REQUEST',
+          `kind must be one of ${Object.keys(ACTIVITY_KINDS).join(', ')}`,
+        );
+      const tz = await storeTz(tx, t.id);
+      const rows = await tx<
+        {
+          id: string;
+          actor: string;
+          action: string;
+          entity: string;
+          entityId: string | null;
+          summary: string;
+          at: Date;
+          before: unknown;
+          after: unknown;
+        }[]
+      >`
+        select id, actor_label as actor, action, entity, entity_id as "entityId", summary, at, before, after
         from audit_log where tenant_id = ${t.id}
           ${Number.isInteger(before) && before > 0 ? tx`and id < ${before}` : tx``}
           ${entity ? tx`and entity = ${entity}` : tx``}
+          ${kind ? tx`and entity = any(${ACTIVITY_KINDS[kind as ActivityKind]}::text[])` : tx``}
         order by id desc limit ${limit}
       `;
-      return { entries: rows, next: rows.length === limit ? Number(rows.at(-1)!.id) : null };
+      return {
+        // before/after stay here: they hold whatever a route logged; the feed gets the readable diff
+        entries: rows.map(({ before: b, after: a, ...e }) => ({ ...e, ...auditChanges(b, a, tz) })),
+        next: rows.length === limit ? Number(rows.at(-1)!.id) : null,
+      };
     }),
   );
 }
