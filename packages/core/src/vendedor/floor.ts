@@ -15,6 +15,8 @@ export type Floor =
   | 'wait'
   /** "não é cliente", "pare de me responder" */
   | 'muted'
+  /** the store paused him for a while (`until`): the store answers, he takes back after */
+  | 'paused'
   /** the Vendedor is off, or this number isn't (or isn't yet) a shopper's */
   | 'off';
 
@@ -34,7 +36,7 @@ export interface FloorResult {
 
 export function floorOf(
   t: FloorThread,
-  agent: { enabled: boolean; settings: StoreAgentSettings },
+  agent: { enabled: boolean; settings: StoreAgentSettings; pausedUntil?: Date | null },
   storeOpen: boolean,
   now: Date,
 ): FloorResult {
@@ -47,6 +49,13 @@ export function floorOf(
   if (!agent.enabled) return { floor: 'off', until: null };
   // not a shopper, a friend, or still waiting for a verdict or the owner (ADR 0033)
   if (t.class !== 'shopper' && t.class !== 'unknown') return { floor: 'off', until: null };
+  if (agent.pausedUntil && agent.pausedUntil > now) {
+    const until =
+      t.owner === 'human' && t.humanUntil && t.humanUntil > agent.pausedUntil
+        ? t.humanUntil
+        : agent.pausedUntil;
+    return { floor: 'paused', until };
+  }
   const s = agent.settings;
   if (s.coverage === 'rehearsal') return { floor: 'rehearsal', until: null };
   // the site's chat answers at once: the merchant turned it on for that

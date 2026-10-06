@@ -1,6 +1,7 @@
 import { ArrowCounterClockwise, CookingPot, PaperPlaneRight } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, type ThreadDetail } from '../../lib/api.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
@@ -37,7 +38,22 @@ export default function TestChat() {
     refetchInterval: (query) => (awaiting(query.state.data) ? 1500 : false),
   });
   const d = q.data;
-  const [text, setText] = useState('');
+  // "testar esta pergunta" (from Ensinar or a message's "por quê"): the question waits in the box
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('pergunta')?.trim().slice(0, 1000) ?? '';
+  const [text, setText] = useState(asked);
+  const [prefilled] = useState(!!asked);
+  useEffect(() => {
+    if (!params.has('pergunta')) return;
+    setParams(
+      (p) => {
+        p.delete('pergunta');
+        return p;
+      },
+      { replace: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const put = (next: ThreadDetail) => qc.setQueryData(qk.vendedor.testChat, next);
   const send = useMutation({
     mutationFn: (t: string) => api.vendedor.sendTest(t),
@@ -107,7 +123,12 @@ export default function TestChat() {
 
           composer={
             <div className="flex flex-col gap-3">
-              {!d.messages.length ? (
+              {prefilled && text.trim() ? (
+                <p className="t-caption text-muted" role="status">
+                  A pergunta já está aqui. Toque em enviar para ver como o Duá responde agora.
+                </p>
+              ) : null}
+              {!d.messages.length && !(prefilled && text.trim()) ? (
                 <div className="flex flex-col gap-2">
                   <p className="t-caption text-muted">Para começar, toque numa ou escreva a sua:</p>
                   <div className="flex flex-wrap gap-2">
@@ -141,6 +162,7 @@ export default function TestChat() {
                 </label>
                 <textarea
                   id="test-msg"
+                  autoFocus={prefilled}
                   rows={1}
                   value={text}
                   maxLength={1000}

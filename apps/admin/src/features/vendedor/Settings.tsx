@@ -17,6 +17,7 @@ import { Chips, Field, MoneyField, Segmented, Toggle } from '../../ui/fields.tsx
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { Bubble, PersonaAvatar } from '../../ui/vendedor/index.ts';
+import { PauseRow } from './Pause.tsx';
 import {
   AnswerWhoField,
   CoverageField,
@@ -69,7 +70,7 @@ function Editor({ v, owner }: { v: VendedorSettings; owner: boolean }) {
 
 function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
   const { run, state, retry } = useSettingsPatch();
-  const live = v.enabled && v.settings.coverage !== 'rehearsal';
+  const live = v.enabled && v.settings.coverage !== 'rehearsal' && !v.pausedUntil;
   // he answers on the store's WhatsApp: switching on waits for it (Core: WHATSAPP_REQUIRED, on
   // the same `linked` as Início's). Unknown yet counts as linked, so the switch doesn't flash.
   const home = useQuery({ queryKey: qk.vendedor.home, queryFn: api.vendedor.home });
@@ -94,11 +95,13 @@ function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
           <>
             {!v.enabled
               ? 'As conversas ficam com você até você ligar.'
-              : linked
-                ? v.settings.coverage === 'rehearsal'
-                  ? 'Em ensaio no WhatsApp da loja: escreve, mas não manda. Desligue e as conversas ficam com você.'
-                  : 'Atendendo no WhatsApp da loja. Desligue e as conversas ficam com você.'
-                : 'O WhatsApp da loja está sem conexão: ele volta a atender quando conectar. Desligue e as conversas ficam com você.'}
+              : v.pausedUntil
+                ? 'Ligado, mas em pausa agora. Desligue e as conversas ficam com você.'
+                : linked
+                  ? v.settings.coverage === 'rehearsal'
+                    ? 'Em ensaio no WhatsApp da loja: escreve, mas não manda. Desligue e as conversas ficam com você.'
+                    : 'Atendendo no WhatsApp da loja. Desligue e as conversas ficam com você.'
+                  : 'O WhatsApp da loja está sem conexão: ele volta a atender quando conectar. Desligue e as conversas ficam com você.'}
             {owner ? null : (
               <>
                 {' '}
@@ -108,6 +111,7 @@ function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
           </>
         }
       />
+      {v.enabled ? <PauseRow pausedUntil={v.pausedUntil} /> : null}
       {blocked ? (
         <Link
           to={owner ? '/vendedor/comecar?passo=whatsapp' : '/whatsapp'}

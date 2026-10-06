@@ -1,5 +1,5 @@
-import { ArrowUUpLeft, HandPalm, PaperPlaneRight } from '@phosphor-icons/react';
-import { useState, type ReactNode } from 'react';
+import { ArrowUUpLeft, HandPalm, Lightning, PaperPlaneRight } from '@phosphor-icons/react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { haptic } from '../../lib/haptics.ts';
 import { Button, IconButton } from '../Button.tsx';
 import { cn } from '../cn.ts';
@@ -8,8 +8,9 @@ import { SELLER_EDGE } from './tones.ts';
 /**
  * Who answers this conversation, always visible under it (sales-agent-ux §1.3). The agent's
  * floor: "O Duá está atendendo", "assumir" and the phone hint. The owner's: "Você está
- * atendendo", "devolver ao Duá", his suggested replies (a tap puts one in the composer), the
- * composer, and when he comes back on his own. Taking over is one tap and a light haptic.
+ * atendendo", "devolver ao Duá", the store's own quick replies and his suggestions (a tap puts
+ * one in the composer), the composer, and when he comes back on his own. Taking over is one tap
+ * and a light haptic.
  */
 export function Floor({
   variant,
@@ -23,6 +24,8 @@ export function Floor({
   sending,
   silenceMin,
   keys,
+  onQuick,
+  prefill,
   className,
 }: {
   variant: 'agent' | 'owner';
@@ -42,9 +45,20 @@ export function Floor({
   silenceMin?: number | undefined;
   /** desktop: show the keyboard shortcuts (A assumir · D devolver · J/K) */
   keys?: boolean | undefined;
+  /** opens the store's quick replies ("respostas prontas") */
+  onQuick?: (() => void) | undefined;
+  /** text to put into the composer: a new `n` puts it in (after what's already typed) */
+  prefill?: { text: string; n: number } | undefined;
   className?: string | undefined;
 }) {
   const [text, setText] = useState('');
+  const box = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (!prefill?.text) return;
+    setText((t) => (t.trim() ? `${t.trimEnd()} ${prefill.text}` : prefill.text));
+    box.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill?.n]);
   const send = async () => {
     const t = text.trim();
     if (!t || !onSend || sending) return;
@@ -106,12 +120,26 @@ export function Floor({
               </Button>
             ) : null}
           </div>
-          {suggestions.length ? (
+          {suggestions.length || onQuick ? (
             <div
               className="scroll-row -mx-3.5 flex gap-1.5 px-3.5"
-              aria-label="sugestões do Duá"
+              aria-label={suggestions.length ? 'respostas prontas e sugestões do Duá' : 'respostas'}
               role="group"
             >
+              {onQuick ? (
+                <button
+                  type="button"
+                  onClick={onQuick}
+                  aria-haspopup="dialog"
+                  className={cn(
+                    'press relative inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-surface px-3 text-[0.875rem] font-semibold text-ink ring-1 ring-inset ring-line-strong hover:bg-hover',
+                    "after:absolute after:-inset-y-1 after:inset-x-0 after:content-['']",
+                  )}
+                >
+                  <Lightning weight="bold" className="size-4" aria-hidden />
+                  respostas prontas
+                </button>
+              ) : null}
               {suggestions.map((s) => (
                 <button
                   key={s}
@@ -140,6 +168,7 @@ export function Floor({
                 sua resposta
               </label>
               <textarea
+                ref={box}
                 id="floor-reply"
                 rows={1}
                 value={text}

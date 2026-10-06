@@ -855,6 +855,7 @@ const PREF_KEYS: Record<string, 'boolean' | 'number' | 'string' | 'list'> = {
   volume: 'number',
   push: 'boolean',
   pushPayments: 'boolean',
+  pushWaiting: 'boolean',
   whatsappAlerts: 'boolean',
   emailInvoices: 'boolean',
   theme: 'string',

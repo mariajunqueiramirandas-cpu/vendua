@@ -11,6 +11,8 @@ import {
   Plus,
   Student,
   MaskHappy,
+  Pause,
+  Play,
   type Icon,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -18,7 +20,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { usePreload } from '../../app/routes.ts';
 import { api, type VendedorHome as Data, type WaitingRow } from '../../lib/api.ts';
-import { clock, dateShort, minutesSince, money, num, plural } from '../../lib/format.ts';
+import { clock, dateShort, minutesSince, money, num, plural, until } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
@@ -33,6 +35,7 @@ import { RowsSkeleton, StatTilesSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { PersonaAvatar, ReasonChip } from '../../ui/vendedor/index.ts';
 import { COVERAGE_LABEL, FirstUse, useAgentSwitch } from './Home.parts.tsx';
+import { PauseSheet, useLapse, usePause } from './Pause.tsx';
 
 export default function VendedorHome() {
   const session = useSession();
@@ -172,6 +175,22 @@ function useAnnouncer(data: Data) {
 
 function Presence({ data, manager, owner }: { data: Data; manager: boolean; owner: boolean }) {
   const on = useAgentSwitch();
+  const { resume } = usePause();
+  const [pausing, setPausing] = useState(false);
+  useLapse(data.agent.pausedUntil);
+  // live states can be paused for a while (managers): "pausar" → 1 h or until tomorrow
+  const pauseBtn = manager ? (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-12"
+      icon={<Pause weight="bold" />}
+      aria-haspopup="dialog"
+      onClick={() => setPausing(true)}
+    >
+      pausar
+    </Button>
+  ) : null;
   const warn =
     data.presence === 'disconnected' || data.presence === 'budget' || data.presence === 'trouble';
   let title: string;
@@ -181,14 +200,18 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
     case 'answering':
       title = 'O Duá está atendendo';
       detail = `${plural(data.active, 'conversa', 'conversas')} agora · responde em ${seconds(data.replyP50Sec)}`;
+      action = pauseBtn;
       break;
     case 'rehearsal':
       title = 'O Duá está em ensaio';
       detail = `escreveu ${plural(data.today.drafts, 'resposta', 'respostas')} hoje, sem mandar`;
       action = manager ? (
-        <ButtonLink to="/vendedor/ensaio" variant="secondary" size="sm" className="h-12">
-          ver ensaio
-        </ButtonLink>
+        <>
+          {pauseBtn}
+          <ButtonLink to="/vendedor/ensaio" variant="secondary" size="sm" className="h-12">
+            ver ensaio
+          </ButtonLink>
+        </>
       ) : null;
       break;
     case 'covering':
@@ -197,6 +220,25 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
         data.agent.coverage === 'after_hours'
           ? 'o Duá entra quando a loja fechar'
           : `o Duá entra se você demorar ${data.agent.slowAfterMin} min`;
+      action = pauseBtn;
+      break;
+    case 'paused':
+      title = 'O Duá está pausado';
+      detail = data.agent.pausedUntil
+        ? `Volta sozinho ${until(data.agent.pausedUntil)}. Até lá, as conversas ficam com você.`
+        : 'As conversas ficam com você.';
+      action = manager ? (
+        <Button
+          variant="primary"
+          size="sm"
+          className="h-12"
+          icon={<Play weight="fill" />}
+          loading={resume.isPending}
+          onClick={() => resume.mutate()}
+        >
+          voltar agora
+        </Button>
+      ) : null;
       break;
     case 'disconnected':
       title = 'O Duá parou: o WhatsApp da loja desconectou';
@@ -218,7 +260,8 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
       title = 'O Duá está com instabilidade; as conversas foram para você';
       break;
     default:
-      title = 'O Duá está pausado';
+      // "pausado" is the timed pause now; this is the switch off
+      title = 'O Duá está desligado';
       // switching him back on needs the store's WhatsApp (Core answers WHATSAPP_REQUIRED)
       if (!data.whatsapp.linked) {
         detail = 'Conecte o WhatsApp da loja para ligar de novo.';
@@ -267,7 +310,7 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
           {detail ? <p className="t-body text-muted">{detail}</p> : null}
         </div>
       </div>
-      {action ? <div className="mt-3 flex justify-end">{action}</div> : null}
+      {action ? <div className="mt-3 flex flex-wrap justify-end gap-2">{action}</div> : null}
       {data.agent.enabled ? (
         manager ? (
           <Link
@@ -282,6 +325,7 @@ function Presence({ data, manager, owner }: { data: Data; manager: boolean; owne
           </div>
         )
       ) : null}
+      {manager ? <PauseSheet open={pausing} onOpenChange={setPausing} /> : null}
     </Card>
   );
 }

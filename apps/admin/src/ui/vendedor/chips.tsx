@@ -4,6 +4,7 @@ import {
   HandPalm,
   MagnifyingGlass,
   Package,
+  Pause,
   Question,
   ShieldCheck,
   SpeakerSimpleSlash,
@@ -105,6 +106,14 @@ export function FloorChip({
       <>
         <HandPalm weight="bold" className="size-[15px]" aria-hidden />
         você
+      </>
+    );
+  } else if (floor === 'paused') {
+    tone = 'bg-sunken text-ink';
+    body = (
+      <>
+        <Pause weight="bold" className="size-[15px]" aria-hidden />
+        Duá pausado
       </>
     );
   } else if (floor === 'muted') {
