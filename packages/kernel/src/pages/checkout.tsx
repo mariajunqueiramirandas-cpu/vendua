@@ -99,6 +99,8 @@ interface SavedDraft {
   changeFor: number | null;
   coords: LatLng | null;
   done: StepId[];
+  /** Kernel 1.21 — the phone the bag reminder was asked for (null = not asked) */
+  reminder?: string | null;
 }
 
 const text = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
@@ -137,6 +139,7 @@ function readDraft(session: string | null): SavedDraft | null {
           : null,
       coords: savedPin(d.coords as { lat?: number; lng?: number } | undefined),
       done: Array.isArray(d.done) ? ORDER.filter((s) => (d.done as unknown[]).includes(s)) : [],
+      reminder: typeof d.reminder === 'string' ? text(d.reminder, 20) : null,
     };
   } catch {
     return null;
@@ -307,6 +310,29 @@ export function CheckoutPage() {
   const [syncing, setSyncing] = useState(false);
   const submitting = useRef(false);
   const stepStarted = useRef(Date.now());
+  // Kernel 1.21 — "me lembre pelo WhatsApp": the phone Core holds the consent for (null = none)
+  const [reminder, setReminder] = useState<string | null>(() => restored?.reminder ?? null);
+  const reminderOffered = !!store?.cartReminder && isValidPhone(draft.phone);
+  const askReminder = async (on: boolean) => {
+    const phone = draft.phone;
+    setReminder(on ? phone : null);
+    try {
+      const r = on
+        ? await api.cartReminder({ phone, ...(draft.name.trim() ? { name: draft.name } : {}) })
+        : await api.cancelCartReminder();
+      if (!r.on) setReminder(null);
+    } catch {
+      // quiet: the box unticks, the order goes on
+      setReminder(null);
+    }
+  };
+  // the number fixed after ticking: the reminder follows it
+  useEffect(() => {
+    if (!reminder || !reminderOffered || digitsOf(reminder) === digitsOf(draft.phone)) return;
+    const t = setTimeout(() => void askReminder(true), 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.phone, reminder, reminderOffered]);
 
   useEffect(() => {
     emit('checkout_step', { step, duration_ms: Date.now() - stepStarted.current });
@@ -327,8 +353,9 @@ export function CheckoutPage() {
       changeFor,
       coords,
       done: [...done],
+      reminder,
     });
-  }, [api, draft, mode, pay, notes, scheduledFor, changeFor, coords, done]);
+  }, [api, draft, mode, pay, notes, scheduledFor, changeFor, coords, done, reminder]);
 
   // step entries that can't be shown are skipped, never rewritten into copies of the first
   // step: a reload mid-checkout lands on the first step's entry; with the order placed (no
@@ -850,6 +877,16 @@ export function CheckoutPage() {
                 errors={errors}
                 neighborhoods={neighborhoods}
               />
+            ) : null}
+            {step === 'dados' && reminderOffered ? (
+              <label className="v-check v-reminder" data-vendua="cart-reminder">
+                <input
+                  type="checkbox"
+                  checked={reminder !== null}
+                  onChange={(e) => void askReminder(e.target.checked)}
+                />{' '}
+                Me lembre pelo WhatsApp se eu não terminar o pedido
+              </label>
             ) : null}
             {step === 'entrega' ? (
               <>

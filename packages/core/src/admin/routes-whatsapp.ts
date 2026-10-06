@@ -1,3 +1,4 @@
+import { cartReminderViewTx } from '../modules/cart-reminder.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { whatsappDigits } from '../modules/store.ts';
 import type { Sql } from '../platform/db.ts';
@@ -7,12 +8,14 @@ import {
   ORDER_EVENTS,
   enqueueTextTx,
   previewFacts,
+  previewOriginTx,
   renderOrderMessage,
   testMessage,
   type OrderEvent,
 } from '../store-whatsapp/messages.ts';
 import { audit } from './audit.ts';
-import { bool, isObj, text, type AdminDeps } from './context.ts';
+import { loadAgent } from '../vendedor/settings.ts';
+import { bool, isObj, text, type AdminDeps, type Merchant } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 
@@ -84,7 +87,7 @@ function effective(row: Row | null, available: boolean) {
 }
 
 export async function whatsappView(tx: Sql, tenantId: string, storeName: string) {
-  const [row, available, settings, recent, stats] = await Promise.all([
+  const [row, available, settings, recent, stats, cartReminder] = await Promise.all([
     loadRow(tx, tenantId),
     gatewayAlive(tx),
     tx<{ whatsapp: string | null; tz: string | null }[]>`
@@ -116,11 +119,12 @@ export async function whatsappView(tx: Sql, tenantId: string, storeName: string)
         (select count(*) from store_wa_messages where tenant_id = ${tenantId} and status = 'failed'
            and created_at > now() - interval '7 days')::int as failed,
         (select count(*) from store_wa_optouts where tenant_id = ${tenantId})::int as optouts`,
+    cartReminderViewTx(tx, tenantId, storeName),
   ]);
   const eff = effective(row, available);
   const enabled = new Set(row?.events ?? DEFAULT_EVENTS);
   const tz = settings[0]?.tz || 'America/Sao_Paulo';
-  const facts = previewFacts(storeName, tz);
+  const facts = previewFacts(storeName, tz, await previewOriginTx(tx, tenantId));
   const contact = whatsappDigits(settings[0]?.whatsapp ?? null);
   const pairing = eff.state === 'pairing';
   return {
@@ -146,6 +150,7 @@ export async function whatsappView(tx: Sql, tenantId: string, storeName: string)
       ]),
     ) as Record<OrderEvent, string | null>,
     stats: stats[0] ?? { sent: 0, failed: 0, optouts: 0 },
+    cartReminder,
     recent: recent.map((r) => ({
       id: r.id,
       kind: r.kind,
@@ -161,6 +166,31 @@ export async function whatsappView(tx: Sql, tenantId: string, storeName: string)
       readAt: r.read_at?.toISOString() ?? null,
     })),
   };
+}
+
+/** "Lembrete de sacola": the Vendedor follows up its own conversations, so it can't be on too. */
+async function setCartReminderTx(
+  tx: Sql,
+  t: { id: string; name: string },
+  m: Merchant,
+  on: boolean,
+): Promise<{ status: number; body: unknown }> {
+  if (on && (await loadAgent(tx, t.id)).enabled)
+    throw new HttpError(409, 'VENDEDOR_ON', 'the Vendedor already follows up open bags');
+  await tx`insert into store_whatsapp (tenant_id) values (${t.id}) on conflict do nothing`;
+  const [was] = await tx<{ before: boolean }[]>`
+    update store_whatsapp w set cart_reminder = ${on}, updated_at = now()
+    from (select cart_reminder as before from store_whatsapp where tenant_id = ${t.id} for update) old
+    where w.tenant_id = ${t.id}
+    returning old.before`;
+  if (was!.before !== on)
+    await audit(tx, t.id, m, {
+      action: 'whatsapp.cart_reminder',
+      entity: 'whatsapp',
+      summary: on ? 'ligou o lembrete de sacola' : 'desligou o lembrete de sacola',
+    });
+  await emitAdminTx(tx, t.id, 'whatsapp', 'settings');
+  return { status: 200, body: await whatsappView(tx, t.id, t.name) };
 }
 
 export function mountWhatsapp(d: AdminDeps) {
@@ -265,6 +295,11 @@ export function mountWhatsapp(d: AdminDeps) {
     '/whatsapp/settings',
     write('manager', async (tx, t, m, c) => {
       const body = await bodyJson(c, 4 * 1024);
+      if (body.cartReminder !== undefined) {
+        if (body.events !== undefined)
+          throw new HttpError(422, 'BAD_REQUEST', 'one setting at a time', { field: 'events' });
+        return setCartReminderTx(tx, t, m, bool(body.cartReminder, 'cartReminder'));
+      }
       if (!isObj(body.events))
         throw new HttpError(422, 'BAD_REQUEST', 'events must be an object', { field: 'events' });
       const adds: string[] = [];

@@ -29,8 +29,14 @@ export function cartHash(cart: CartView, draft: CheckoutDraft): string {
         u: i.unitPriceCents,
         m: [...i.modifiers].map((m) => `${m.id}:${m.qty}`).sort(),
         c: i.comboSelections.map((c) => `${c.slotId}:${c.productId}:${c.qty}`).sort(),
+        // only when set: a cart without notes keeps the hash it had before notes existed
+        ...(i.note ? { n: i.note } : {}),
       }))
-      .sort((a, b) => (a.p + a.m.join() + a.c.join()).localeCompare(b.p + b.m.join() + b.c.join())),
+      .sort((a, b) =>
+        (a.p + a.m.join() + a.c.join() + (a.n ?? '')).localeCompare(
+          b.p + b.m.join() + b.c.join() + (b.n ?? ''),
+        ),
+      ),
     fee: cart.totals.deliveryFeeCents,
     discount: cart.totals.discountCents,
     adjustment: cart.totals.paymentAdjustmentCents,

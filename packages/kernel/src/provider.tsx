@@ -79,6 +79,26 @@ function tokensToVars(tokens: StorefrontTokens): Record<string, string> {
 
 const EMPTY_BUNDLE: StorefrontBundle = { sections: {}, snapshot: { templates: {}, tokens: null } };
 
+/** Kernel 1.21 — `/pedido/<id>?t=vot.…`, the link at the end of the store's WhatsApp order
+ *  updates: the status-only credential goes to the api client (and the device's storage, so a
+ *  reload still reads) and leaves the address bar, so a shared screenshot or link doesn't carry it. */
+function takeTrackingLink(api: VenduaApi) {
+  const loc = globalThis.location;
+  if (!loc) return;
+  const params = new URLSearchParams(loc.search);
+  const token = params.get('t');
+  const order = /\/pedido\/([0-9a-f-]{36})\/?$/.exec(loc.pathname)?.[1];
+  if (token === null || !order) return;
+  api.addTrackingToken(order, token);
+  params.delete('t');
+  const rest = params.toString();
+  globalThis.history?.replaceState(
+    globalThis.history.state,
+    '',
+    `${loc.pathname}${rest ? `?${rest}` : ''}${loc.hash}`,
+  );
+}
+
 export function VenduaProvider({
   config,
   storefront = EMPTY_BUNDLE,
@@ -100,6 +120,8 @@ export function VenduaProvider({
     // backend — drop the session and mint a fresh client
     apiRef.current?.api.clearSession();
     apiRef.current = { api: createApi(baseUrl), baseUrl };
+    // before any page's first read: the order page must ask with the link's credential
+    takeTrackingLink(apiRef.current.api);
   }
   const api = apiRef.current.api;
   const listeners = useRef(new Map<string, Set<() => void>>());

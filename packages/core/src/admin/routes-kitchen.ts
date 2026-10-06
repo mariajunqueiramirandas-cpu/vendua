@@ -33,6 +33,8 @@ export interface KitchenItem {
   qty: number;
   modifiers: { name: string; qty: number }[];
   combo: { slotName: string; name: string; qty: number }[];
+  /** the shopper's note for this line ("sem cebola"); absent = none */
+  note?: string;
   categoryId: string | null;
   stationId: string | null;
   doneAt: string | null;
@@ -166,11 +168,12 @@ async function ticketsTx(
         qty: number;
         modifiers: { name: string; qty?: number }[];
         combo: { slotName: string; name: string; qty: number }[];
+        note: string | null;
         categoryId: string | null;
         doneAt: string | null;
       }[]
     >`
-    select i.id, i.order_id as "orderId", i.name, i.qty, i.modifiers, i.combo,
+    select i.id, i.order_id as "orderId", i.name, i.qty, i.modifiers, i.combo, i.note,
            p.category_id as "categoryId", km.done_at as "doneAt"
     from order_items i
     left join products p on p.tenant_id = i.tenant_id and p.id = i.product_id
@@ -191,6 +194,7 @@ async function ticketsTx(
       qty: i.qty,
       modifiers: (i.modifiers ?? []).map((m) => ({ name: m.name, qty: m.qty ?? 1 })),
       combo: (i.combo ?? []).map((c) => ({ slotName: c.slotName, name: c.name, qty: c.qty })),
+      ...(i.note ? { note: i.note } : {}),
       categoryId: i.categoryId,
       stationId: (i.categoryId && stationOf.get(i.categoryId)) || null,
       doneAt: i.doneAt,

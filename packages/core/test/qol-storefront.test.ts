@@ -7,7 +7,8 @@ import { migrate, withTenant } from '../src/platform/db.ts';
 import { wakeStoreWaitlist } from '../src/modules/storefront-platform.ts';
 
 // "Avise-me quando abrir" (Kernel 1.21): a closed store's subscribers hear once it opens — by
-// its hours or a resume — through the restock channel (an outbox row), then they're cleared.
+// its hours or a resume — from the store's own WhatsApp, then they're cleared (qol2-open-notice
+// covers a store without one).
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('closed-store notify (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
@@ -37,6 +38,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('closed-store notify (db)', () =
     await sql`
       insert into store_settings (tenant_id, hours, status_override, prep_time_minutes, min_order_cents, currency, vocabulary)
       values (${t!.id}, ${sql.json(DAY)}, ${over.override ?? null}, 25, 0, 'BRL', ${sql.json({})})`;
+    await sql`insert into store_whatsapp (tenant_id, wanted, state) values (${t!.id}, true, 'open')`;
     return { id: t!.id, host: `${slug}.localhost` };
   };
 
@@ -61,10 +63,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('closed-store notify (db)', () =
 
   const opened = async (tenantId: string) =>
     (
-      await sql<{ payload: { contacts: string[] } }[]>`
-        select payload from outbox where tenant_id = ${tenantId} and topic = 'waitlist.store_open'
-        order by id`
-    ).map((r) => r.payload.contacts.slice().sort());
+      await sql<{ phone: string }[]>`
+        select phone from store_wa_messages where tenant_id = ${tenantId} and kind = 'store_open'
+        order by phone`
+    ).map((r) => r.phone);
 
   afterAll(async () => {
     if (ids.length) await sql`delete from tenants where id = any(${ids}::uuid[])`;
@@ -83,13 +85,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('closed-store notify (db)', () =
     expect(await pending(a.id)).toEqual(['22999990001', '22999990002']);
     expect(await opened(a.id)).toEqual([]);
 
-    // 09:30 — open: one outbox row with both contacts, the subscriptions cleared
+    // 09:30 — open: a message to each, the subscriptions cleared
     expect(await withTenant(sql, a.id, (tx) => wakeStoreWaitlist(tx, a.id, at('09:30')))).toBe(2);
     expect(await pending(a.id)).toEqual([]);
-    expect(await opened(a.id)).toEqual([['22999990001', '22999990002']]);
+    expect(await opened(a.id)).toEqual(['22999990001', '22999990002']);
     // once: a second pass while open sends nothing
     expect(await withTenant(sql, a.id, (tx) => wakeStoreWaitlist(tx, a.id, at('09:31')))).toBe(0);
-    expect(await opened(a.id)).toHaveLength(1);
+    expect(await opened(a.id)).toHaveLength(2);
 
     // the other store's subscriber is its own: untouched, never in this store's row
     expect(await pending(b.id)).toEqual(['22999990003']);
@@ -117,6 +119,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('closed-store notify (db)', () =
       where tenant_id = ${c.id}`;
     await sweepAdmin(sql);
     expect(await pending(c.id)).toEqual([]);
-    expect(await opened(c.id)).toEqual([['22999990004']]);
+    expect(await opened(c.id)).toEqual(['22999990004']);
   });
 });

@@ -2,6 +2,7 @@ import { defineTool, s, ToolError, type Json } from '@vendua/agent-runtime';
 import { addItem, type CartDelivery } from '../../../modules/cart.ts';
 import {
   applyCouponTx,
+  editLineTx,
   removeLineTx,
   setDeliveryTx,
   setLineQtyTx,
@@ -27,7 +28,7 @@ import {
 } from './shared.ts';
 
 const opSchema = s.object({
-  op: s.enum(['add', 'qty', 'remove']),
+  op: s.enum(['add', 'qty', 'remove', 'note']),
   product: s
     .string({ max: 80 })
     .optional()
@@ -53,22 +54,29 @@ const opSchema = s.object({
     )
     .optional()
     .describe('add de combo: escolha por parte [sN] e item [pN] de get_product'),
-  line: s.string({ max: 12 }).optional().describe('qty/remove: id da linha [lN] da sacola'),
+  line: s.string({ max: 12 }).optional().describe('qty/remove/note: id da linha [lN] da sacola'),
+  note: s
+    .string({ max: 140 })
+    .optional()
+    .describe(
+      'add: observação do cliente para esse item ("sem cebola"); note: nova observação da linha [lN] ("" apaga)',
+    ),
 });
 
 type Op = {
-  op: 'add' | 'qty' | 'remove';
+  op: 'add' | 'qty' | 'remove' | 'note';
   product?: string | undefined;
   qty?: number | undefined;
   options?: { id: string; qty?: number | undefined }[] | undefined;
   combo?: { slot: string; product: string; qty?: number | undefined }[] | undefined;
   line?: string | undefined;
+  note?: string | undefined;
 };
 
 export const cartEditTool = defineTool<{ ops: Op[] }, Sql>({
   name: 'cart_edit',
   description:
-    'Monta a sacola: adicionar itens (com opções e combos), mudar quantidade ou remover linhas. Várias operações de uma vez ("2 X-Salada, um sem cebola, e uma coca"). Devolve a sacola calculada pela loja e o que falta.',
+    'Monta a sacola: adicionar itens (com opções, combos e observação), mudar quantidade, trocar a observação ou remover linhas. Várias operações de uma vez ("2 X-Salada, um sem cebola, e uma coca": um X-Salada com note "sem cebola" e outro sem). Devolve a sacola calculada pela loja e o que falta.',
   effect: 'write',
   input: s.object({ ops: s.array(opSchema, { min: 1, max: 10 }) }),
   run: async (ctx: Ctx, input) => {
@@ -98,7 +106,13 @@ export const cartEditTool = defineTool<{ ops: Op[] }, Sql>({
             ctx.tx,
             ctx.tenantId,
             cartId,
-            { productId, qty, modifiers, comboSelections },
+            {
+              productId,
+              qty,
+              modifiers,
+              comboSelections,
+              ...(op.note?.trim() ? { note: op.note } : {}),
+            },
             getProductById,
           );
         } catch (e) {
@@ -110,10 +124,18 @@ export const cartEditTool = defineTool<{ ops: Op[] }, Sql>({
             `${where} (${product.name}): ${msg}${groups.length ? `. Obrigatórios: ${groups.join(', ')}. Pergunte ao cliente e use get_product para os ids.` : ''}`,
           );
         }
-        done.push(`+${qty} ${product.name}`);
+        done.push(`+${qty} ${product.name}${op.note?.trim() ? ` (${op.note.trim()})` : ''}`);
       } else {
         if (!op.line) throw new ToolError(`${where}: falta a linha [lN]`);
         const itemId = ctx.resolve(op.line, 'line');
+        if (op.op === 'note') {
+          if (op.note === undefined) throw new ToolError(`${where}: falta a observação`);
+          await core(() =>
+            editLineTx(ctx.tx, ctx.tenantId, cartId, itemId, { note: op.note ?? '' }),
+          );
+          done.push(`${op.line}: ${op.note.trim() ? `obs. "${op.note.trim()}"` : 'sem obs.'}`);
+          continue;
+        }
         if (op.op === 'remove' || op.qty === 0)
           await core(() => removeLineTx(ctx.tx, ctx.tenantId, cartId, itemId));
         else {

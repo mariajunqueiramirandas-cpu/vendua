@@ -268,7 +268,7 @@ export async function placeOrderTx(
     ...cart.items.map(
       (i, sort) => tx`
         insert into order_items (tenant_id, order_id, product_id, slug, name, qty, unit_price_cents,
-                                 modifiers, combo, line_total_cents, sort)
+                                 modifiers, combo, line_total_cents, sort, note)
         values (${tenantId}, ${orderId}, ${i.productId}, ${i.slug}, ${i.name}, ${i.qty}, ${i.unitPriceCents},
                 ${tx.json(i.modifiers.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents, qty: m.qty })))},
                 ${tx.json(
@@ -280,7 +280,7 @@ export async function placeOrderTx(
                     qty: c.qty,
                   })) as never,
                 )},
-                ${i.lineTotalCents}, ${sort})
+                ${i.lineTotalCents}, ${sort}, ${i.note ?? null})
       `,
     ),
     coupon &&

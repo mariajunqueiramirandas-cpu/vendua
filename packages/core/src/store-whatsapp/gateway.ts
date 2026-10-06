@@ -23,6 +23,7 @@ import {
   type HistoryOutcome,
 } from './history.ts';
 import { contactedTx, OPT_OUT_FOOTER, optedOutTx } from './messages.ts';
+import { NOTICE_KINDS, PROACTIVE_KINDS } from './proactive.ts';
 import {
   HistoryTimeout,
   NotOnWhatsApp,
@@ -741,7 +742,8 @@ export class Gateway {
               or (status = 'sending' and lease_until < now()))
             and (kind = 'chat') = ${lane === 'chat'}
             and not (coalesce(jid, phone) = any(${busy}::text[]))
-          order by created_at
+          -- what the store starts (a bag reminder, "abrimos") waits behind every order notice
+          order by kind = any(${PROACTIVE_KINDS as unknown as string[]}::text[]), created_at
           limit 1
           for update skip locked`
       )[0];
@@ -759,6 +761,7 @@ export class Gateway {
           wa_id: string;
           expired: boolean;
           superseded: boolean;
+          bag_done: boolean;
         }[]
       >`
         update store_wa_messages set status = 'sending', attempts = attempts + 1,
@@ -771,7 +774,10 @@ export class Gateway {
                   where later.tenant_id = store_wa_messages.tenant_id
                     and later.order_id = store_wa_messages.order_id
                     and later.created_at > store_wa_messages.created_at
-                    and later.status = 'sent') as superseded`;
+                    and later.status = 'sent') as superseded,
+          -- a bag reminder whose bag was ordered while it waited in line
+          kind = 'cart_reminder' and not exists (select 1 from carts c
+                  where c.id = store_wa_messages.cart_id and c.status = 'open') as bag_done`;
       const r = claimed[0]!;
       if (r.expired) {
         await tx`update store_wa_messages set status = 'expired', lease_until = null where id = ${r.id}`;
@@ -786,17 +792,24 @@ export class Gateway {
                  where id = ${r.id}`;
         return { ...r, settled: true };
       }
-      if (r.kind === 'order' && (await optedOutTx(tx, tenantId, r.phone!))) {
+      if (r.bag_done) {
+        await tx`update store_wa_messages set status = 'skipped', error = 'ordered', lease_until = null
+                 where id = ${r.id}`;
+        return { ...r, settled: true };
+      }
+      const notice = NOTICE_KINDS.includes(r.kind);
+      if (notice && (await optedOutTx(tx, tenantId, r.phone!))) {
         await tx`update store_wa_messages set status = 'skipped', error = 'opted_out', lease_until = null
                  where id = ${r.id}`;
         return { ...r, settled: true };
       }
       // sends are one at a time per store, so "first message that went out" is decided here;
-      // the stored body becomes what was sent, for WhatsApp's resend-on-retry
+      // the stored body becomes what was sent, for WhatsApp's resend-on-retry. What the store
+      // starts on its own always says how to stop.
       if (
-        r.kind === 'order' &&
+        notice &&
         !r.body.endsWith(OPT_OUT_FOOTER) &&
-        !(await contactedTx(tx, tenantId, r.phone!))
+        (r.kind !== 'order' || !(await contactedTx(tx, tenantId, r.phone!)))
       ) {
         r.body += OPT_OUT_FOOTER;
         await tx`update store_wa_messages set body = ${r.body} where id = ${r.id}`;

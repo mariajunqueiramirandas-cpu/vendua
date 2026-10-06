@@ -271,6 +271,8 @@ export interface Order {
     modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
     combo: { slotName: string; name: string; qty: number }[];
     lineTotalCents: number;
+    /** the shopper's note for this line ("sem cebola") */
+    note?: string | null;
   }[];
   notes: string | null;
   scheduledFor: string | null;
@@ -386,6 +388,8 @@ export interface KitchenItem {
   qty: number;
   modifiers: { name: string; qty: number }[];
   combo: { slotName: string; name: string; qty: number }[];
+  /** the shopper's note for this line ("sem cebola") */
+  note?: string | null;
   categoryId: string | null;
   stationId: string | null;
   doneAt: string | null;
@@ -659,7 +663,7 @@ export interface Home {
   inProgress: number;
   attention: {
     /** orders_waiting | closed_with_orders | pix_to_confirm | low_stock | waitlist |
-     *  alerts_failing | mp_expiring | mp_disconnected | mp_restricted | billing_pending |
+     *  waitlist_open | alerts_failing | mp_expiring | mp_disconnected | mp_restricted | billing_pending |
      *  billing_past_due | invoice_open | trial_ending | incident */
     kind: string;
     count: number;
@@ -950,7 +954,17 @@ export type WaState = 'off' | 'connecting' | 'pairing' | 'open' | 'logged_out' |
 
 export interface WaMessage {
   id: string;
-  kind: 'order' | 'opt_out' | 'opt_in' | 'test';
+  kind:
+    | 'order'
+    | 'opt_out'
+    | 'opt_in'
+    | 'test'
+    | 'agent'
+    | 'chat'
+    /** "lembrete de sacola", once per bag a shopper asked for at checkout */
+    | 'cart_reminder'
+    /** "avise-me quando abrir" */
+    | 'store_open';
   event: WaEvent | null;
   orderId: string | null;
   orderNumber: number | null;
@@ -983,6 +997,16 @@ export interface Whatsapp {
   /** what the shopper reads at each step (a sample order); null = this step says nothing */
   previews: Record<WaEvent, string | null>;
   stats: { sent: number; failed: number; optouts: number };
+  /** "Lembrete de sacola": one message per bag, to shoppers who asked for it at checkout */
+  cartReminder: {
+    on: boolean;
+    /** the Vendedor is on and follows up open bags itself: this stays off */
+    vendedor: boolean;
+    /** what the shopper reads, in the store's words (a sample bag from its menu) */
+    preview: string;
+    /** reminders queued in the last 7 days, and how many of those bags became orders */
+    week: { sent: number; ordered: number };
+  };
   recent: WaMessage[];
 }
 
@@ -2128,6 +2152,8 @@ export const api = {
   whatsapp: () => get<Whatsapp>('/whatsapp'),
   whatsappPair: (phone: string) => send<Whatsapp>('POST', '/whatsapp/pair', { phone }),
   whatsappDisconnect: () => send<Whatsapp>('POST', '/whatsapp/disconnect'),
+  whatsappCartReminder: (on: boolean) =>
+    send<Whatsapp>('PATCH', '/whatsapp/settings', { cartReminder: on }),
   whatsappSettings: (events: Partial<Record<WaEvent, boolean>>) =>
     send<Whatsapp>('PATCH', '/whatsapp/settings', { events }),
   whatsappTest: () => send<Whatsapp>('POST', '/whatsapp/test'),

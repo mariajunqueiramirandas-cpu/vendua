@@ -118,13 +118,14 @@ export default function Whatsapp() {
       {!data ? (
         <SectionsSkeleton columns={2} />
       ) : (
-        // phones read connection → steps → log; wide screens keep the log under the connection
-        <div className="grid gap-8 lg:grid-cols-2 lg:grid-rows-[auto_1fr] [&>*]:min-w-0">
+        // phones read connection → steps → reminder → log; wide screens keep the reminder and
+        // the log under the connection
+        <div className="grid gap-8 lg:grid-cols-2 lg:grid-rows-[auto_auto_1fr] [&>*]:min-w-0">
           <div className="lg:col-start-1 lg:row-start-1">
             <ConnectionCard data={data} owner={owner} />
           </div>
           <Section
-            className="lg:col-start-2 lg:row-span-2 lg:row-start-1"
+            className="lg:col-start-2 lg:row-span-3 lg:row-start-1"
             title="Avisos aos clientes"
             hint="Escolha em que momentos o cliente recebe uma mensagem. Cada uma aparece como ele vai ler."
           >
@@ -132,6 +133,13 @@ export default function Whatsapp() {
           </Section>
           <Section
             className="lg:col-start-1 lg:row-start-2"
+            title="Lembrete de sacola"
+            hint={reminderLine(data)}
+          >
+            <CartReminderCard data={data} />
+          </Section>
+          <Section
+            className="lg:col-start-1 lg:row-start-3"
             title="Últimas mensagens"
             hint={statsLine(data)}
           >
@@ -610,6 +618,95 @@ function EventsCard({ data }: { data: WhatsappData }) {
   );
 }
 
+/** "Nos últimos 7 dias: 12 lembretes · 3 viraram pedido." */
+function reminderLine(d: WhatsappData) {
+  const w = d.cartReminder.week;
+  if (!w.sent) return undefined;
+  const parts = [plural(w.sent, 'lembrete', 'lembretes')];
+  if (w.ordered) parts.push(`${w.ordered} ${w.ordered === 1 ? 'virou pedido' : 'viraram pedido'}`);
+  return `Nos últimos 7 dias: ${parts.join(' · ')}.`;
+}
+
+const REMINDER_RULES = [
+  'Só para quem pedir: ao finalizar a compra, o cliente marca a opção abaixo.',
+  'Uma mensagem por sacola, cerca de 1 hora depois que o cliente parou.',
+  'Só com a loja aberta. À noite, espera a loja abrir (até 24 horas depois).',
+  'Sai do número da loja. Quem responder SAIR não recebe mais.',
+];
+
+function CartReminderCard({ data }: { data: WhatsappData }) {
+  const qc = useQueryClient();
+  const r = data.cartReminder;
+  const save = useMutation({
+    mutationFn: (p: { on: boolean; undo?: boolean }) => api.whatsappCartReminder(p.on),
+    onMutate: (p) =>
+      optimistic<WhatsappData>(qc, qk.whatsapp, (d) => ({
+        ...d,
+        cartReminder: { ...d.cartReminder, on: p.on },
+      })),
+    onSuccess: (d, p) => {
+      qc.setQueryData(qk.whatsapp, d);
+      // it changes what shoppers see at checkout: say so, and offer the way back
+      if (!p.undo)
+        toast(p.on ? 'Lembrete de sacola ligado' : 'Lembrete de sacola desligado', {
+          undo: () => save.mutate({ on: !p.on, undo: true }),
+        });
+    },
+    onError: (e, _p, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
+  });
+  const linked = data.state === 'open' || data.state === 'connecting' || data.state === 'error';
+  return (
+    <Card className="px-4">
+      <Toggle
+        checked={r.on && !r.vendedor}
+        disabled={r.vendedor}
+        onChange={(v) => save.mutate({ on: v })}
+        label="Lembrar quem deixou a sacola"
+        description="O cliente que pediu recebe uma mensagem se não terminar o pedido."
+      />
+      {r.vendedor ? (
+        <Notice tone="info" className="mb-4" title="O Duá já cuida disso">
+          Com o Duá ligado, ele mesmo chama quem parou no meio do pedido, então o lembrete fica
+          desligado.
+        </Notice>
+      ) : (
+        <div className="space-y-4 border-t border-line py-4">
+          <ul className="t-body space-y-2">
+            {REMINDER_RULES.map((rule) => (
+              <li key={rule} className="flex gap-2.5">
+                <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-muted" />
+                <span className="min-w-0">{rule}</span>
+              </li>
+            ))}
+          </ul>
+          <div>
+            <p className="t-caption mb-1.5 text-muted">Ao finalizar a compra, o cliente vê:</p>
+            <p className="t-body flex items-start gap-2.5 rounded-md bg-sunken px-3 py-2.5">
+              <span
+                aria-hidden
+                className="mt-0.5 size-5 shrink-0 rounded-[5px] border-2 border-line-strong bg-surface"
+              />
+              <span className="min-w-0">Me lembre pelo WhatsApp se eu não terminar o pedido</span>
+            </p>
+          </div>
+          <div>
+            <p className="t-caption mb-1.5 text-muted">E, se não terminar, recebe:</p>
+            <Bubble text={r.preview} />
+          </div>
+          {!linked ? (
+            <p className="t-caption text-muted">
+              Funciona com o WhatsApp da loja conectado. Conecte acima para começar.
+            </p>
+          ) : null}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /** what the shopper reads, the way WhatsApp shows it (sample order #128 for Ana) */
 function Bubble({ text }: { text: string }) {
   return (
@@ -624,6 +721,9 @@ function Bubble({ text }: { text: string }) {
 const SKIPPED: Record<string, string> = {
   opted_out: 'pediu para parar',
   disconnected: 'desconectado',
+  // a bag reminder whose bag became an order meanwhile, or that the shopper unticked
+  ordered: 'virou pedido',
+  withdrawn: 'cliente desistiu',
 };
 
 function statusOf(m: WaMessage): { label: string; tone: Tone; read?: boolean } {
@@ -651,6 +751,8 @@ function titleOf(m: WaMessage) {
   if (m.kind === 'opt_out') return 'Cliente pediu para parar';
   if (m.kind === 'opt_in') return 'Cliente voltou a receber';
   if (m.kind === 'test') return 'Teste para você';
+  if (m.kind === 'cart_reminder') return 'Lembrete de sacola';
+  if (m.kind === 'store_open') return 'Aviso: a loja abriu';
   const step = m.event ? EVENT_LABEL[m.event] : 'Aviso';
   return m.orderNumber ? `#${m.orderNumber} · ${step}` : step;
 }

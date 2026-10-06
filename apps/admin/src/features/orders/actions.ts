@@ -283,13 +283,15 @@ export function printTicket(o: Order, storeName: string) {
           i.modifiers.length
             ? `<div class="sub">${i.modifiers.map((m) => esc((m.qty ?? 1) > 1 ? `${m.qty}x ${m.name}` : m.name)).join(' · ')}</div>`
             : ''
-        }${i.combo.length ? `<div class="sub">${i.combo.map((c) => `${c.qty}× ${esc(c.name)}`).join(' · ')}</div>` : ''}</div>`,
+        }${i.combo.length ? `<div class="sub">${i.combo.map((c) => `${c.qty}× ${esc(c.name)}`).join(' · ')}</div>` : ''}${
+          i.note ? `<div class="sub in">OBS: ${esc(i.note)}</div>` : ''
+        }</div>`,
     )
     .join('');
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Pedido #${o.number}</title>
 <style>@page{size:80mm auto;margin:4mm}body{font:14px/1.35 ui-monospace,Menlo,monospace;color:#000;width:72mm;margin:0}
 h1{font-size:34px;margin:0 0 4px}.m{font-size:13px}.it{padding:6px 0;border-bottom:1px dashed #000;font-size:16px}
-.sub{font-size:13px;padding-left:22px}.n{margin-top:8px;padding:6px;border:2px solid #000;font-size:15px;font-weight:bold}
+.sub{font-size:13px;padding-left:22px}.in{font-weight:bold}.n{margin-top:8px;padding:6px;border:2px solid #000;font-size:15px;font-weight:bold}
 .t{margin-top:8px;font-size:16px;font-weight:bold;text-align:right}</style></head><body>
 <div class="m">${esc(storeName)}</div><h1>#${o.number}</h1>
 <div class="m">${esc(o.customer.name)} · ${esc(phone(o.customer.phone))}</div>

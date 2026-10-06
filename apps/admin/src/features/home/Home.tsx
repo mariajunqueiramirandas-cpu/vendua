@@ -373,6 +373,7 @@ const ATTENTION: Record<string, { Icon: typeof Bell; tone: Tone; cta: string }> 
   pix_to_confirm: { Icon: Wallet, tone: 'warning', cta: 'conferir' },
   low_stock: { Icon: Package, tone: 'warning', cta: 'resolver' },
   waitlist: { Icon: UsersThree, tone: 'warning', cta: 'ver' },
+  waitlist_open: { Icon: UsersThree, tone: 'info', cta: 'conectar' },
   alerts_failing: { Icon: BellSlash, tone: 'warning', cta: 'resolver' },
   mp_expiring: { Icon: ClockCountdown, tone: 'warning', cta: 'reconectar' },
   mp_disconnected: { Icon: Plugs, tone: 'danger', cta: 'reconectar' },

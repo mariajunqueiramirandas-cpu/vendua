@@ -1,5 +1,6 @@
 import { printTroubleTx } from '../modules/printing/jobs.ts';
 import type { Sql } from '../platform/db.ts';
+import { waLinkedTx } from '../store-whatsapp/proactive.ts';
 import { roleAtLeast, type AdminDeps, type Role } from './context.ts';
 import { handlers } from './handlers.ts';
 import { onboardingOf, setupChecklist } from './routes-onboarding.ts';
@@ -212,6 +213,20 @@ export function mountHome(d: AdminDeps) {
             detail: 'Avise quando voltar',
             href: '/marketing',
             productId: w.id,
+          });
+        // with WhatsApp linked they hear it on opening; without it only the store can tell them
+        const openWaiters = (
+          await tx<{ n: number }[]>`
+            select count(*)::int as n from notify_requests
+            where tenant_id = ${t.id} and subject = 'store' and notified_at is null`
+        )[0]!.n;
+        if (openWaiters && !(await waLinkedTx(tx, t.id)))
+          attention.push({
+            kind: 'waitlist_open',
+            count: openWaiters,
+            title: `${openWaiters} ${openWaiters === 1 ? 'pessoa quer' : 'pessoas querem'} saber quando abrir`,
+            detail: 'Conecte o WhatsApp para avisar sozinho',
+            href: '/whatsapp',
           });
       }
 

@@ -146,6 +146,8 @@ export interface AddToCartProps {
   comboSelections?: ComboSelection[];
   /** Kernel 1.12 — units per option id in `modifierIds` (options with `maxQty` > 1) */
   modifierQty?: Record<string, number>;
+  /** Kernel 1.21 — the shopper's note for this line ("sem cebola", ≤ 140) */
+  note?: string;
   asChild?: boolean;
   children?: ReactNode;
   onAdded?: () => void;
@@ -159,6 +161,7 @@ export function AddToCart({
   modifierIds = [],
   comboSelections,
   modifierQty,
+  note,
   asChild,
   children,
   onAdded,
@@ -182,6 +185,7 @@ export function AddToCart({
         modifierIds,
         comboSelections,
         modifierQty,
+        note,
       );
       haptic.tick();
       // the value is what Core charged for these units (options, kit, promo); an older Core

@@ -202,4 +202,6 @@ export type {
   // Kernel 1.18
   StoreChat,
   StoreChatMessage,
+  // Kernel 1.21
+  OrderTracking,
 } from './api.ts';

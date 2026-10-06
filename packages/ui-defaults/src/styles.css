@@ -3892,6 +3892,73 @@
     min-height: 86px;
   }
 
+  /* item notes ("sem cebola"): under the line in the bag, the summaries and the order */
+  .v-line-note {
+    display: block;
+    margin: 4px 0 0;
+    padding-left: 8px;
+    border-left: 2px solid color-mix(in srgb, var(--v-color-accent, #3f5e4e) 45%, transparent);
+    font-size: 0.875rem;
+    line-height: 1.4;
+    color: var(--v-color-text, #1c1b1a);
+    overflow-wrap: anywhere;
+  }
+  .v-line-note-edit {
+    display: grid;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .v-line-note-edit .v-textarea,
+  .v-pp-note .v-textarea {
+    min-height: 56px;
+  }
+  .v-line-note-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+  }
+  .v-line-note-bar .v-counter {
+    margin-right: auto;
+  }
+  .v-line-note-bar .v-btn {
+    min-height: 40px;
+    padding: 8px 18px;
+  }
+  .v-pp-note {
+    margin: 4px 0 12px;
+  }
+  .v-pp-note .v-counter {
+    margin: -2px 0 0;
+  }
+
+  /* "me lembre pelo WhatsApp" under the shopper's data */
+  .v-reminder {
+    align-items: flex-start;
+    margin: 4px 0 14px;
+    line-height: 1.4;
+  }
+  .v-reminder input {
+    flex: none;
+    margin-top: 1px;
+  }
+
+  /* the order through the store's WhatsApp link: status and items only */
+  .v-tracking-side {
+    display: grid;
+    gap: 16px;
+    align-content: start;
+    min-width: 0;
+  }
+  .v-tracking-items .v-summary-lines {
+    margin: 0;
+  }
+  .v-tracking-privacy {
+    margin: 0;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+  }
+
   /* ── on-screen keyboard: while a text field has focus on a touch screen, the screen belongs to
      the field. Pinned chrome scrolls away (relative, not static: it stays the containing block
      of its absolute parts) or steps aside, and comes back when the keyboard closes. */

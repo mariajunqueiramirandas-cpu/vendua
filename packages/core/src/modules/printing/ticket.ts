@@ -122,6 +122,7 @@ export function renderOrderTicket(
       r.size(1, 2).bold(true).text(`${item.qty}x ${item.name}`).bold(false).size(1);
       for (const c of item.combo) r.text(`${c.qty}x ${c.slotName}: ${c.name}`, 3);
       for (const m of item.modifiers) r.text(`+ ${m.qty > 1 ? `${m.qty}x ` : ''}${m.name}`, 3);
+      if (item.note) r.bold(true).text(`OBS: ${item.note}`, 3).bold(false);
     }
     r.rule();
 

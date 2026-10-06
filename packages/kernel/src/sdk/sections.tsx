@@ -28,7 +28,7 @@ import type { SectionProps } from '../composition/registry.ts';
 import { Slot } from '../slot.tsx';
 import { useKernel } from '../provider.tsx';
 import { productHref, resolvePaths } from '../config.ts';
-import type { CatalogProduct, ComboSelection } from '../api.ts';
+import { ITEM_NOTE_MAX, type CatalogProduct, type ComboSelection } from '../api.ts';
 import { errorCopy, showInfo } from '../errors.ts';
 import { MAX_LINE_QTY } from '../rules/card.ts';
 import { DIETARY_FILTERS, DIETARY_LABEL, dietaryBadges } from '../rules/dietary.ts';
@@ -278,6 +278,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const [modQty, setModQty] = useState<Record<string, number>>({});
   const [combo, setCombo] = useState<ComboSelection[]>([]);
   const [qty, setQty] = useState(1);
+  const [note, setNote] = useState('');
   const [cartError, setCartError] = useState<string | null>(null);
   const [added, setAdded] = useState(false);
   const currency = store?.currency ?? 'BRL';
@@ -546,6 +547,26 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
               }}
             />
           ) : null}
+          {settings.showNote && !soldOut ? (
+            <div className="v-field v-pp-note" data-part="note">
+              <label className="v-label" htmlFor={`pp-note-${product.id}`}>
+                Alguma observação? <span className="v-muted">(opcional)</span>
+              </label>
+              <textarea
+                id={`pp-note-${product.id}`}
+                name="note"
+                className="v-input v-textarea"
+                rows={2}
+                maxLength={ITEM_NOTE_MAX}
+                placeholder="Ex.: sem cebola, ponto da carne"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+              <p className="v-muted v-num v-counter" aria-hidden="true">
+                {note.length}/{ITEM_NOTE_MAX}
+              </p>
+            </div>
+          ) : null}
           {soldOut && product.availabilityLabel ? (
             <p className="v-note" role="status" data-part="availability">
               <strong>Indisponível agora</strong> · {product.availabilityLabel}
@@ -587,9 +608,12 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                 modifierIds={pickedIds}
                 {...(Object.keys(pickedQty).length ? { modifierQty: pickedQty } : {})}
                 {...(slots.length ? { comboSelections: combo } : {})}
+                {...(settings.showNote && note.trim() ? { note } : {})}
                 asChild
                 onAdded={() => {
                   setAdded(true);
+                  // the next one starts plain: a note belongs to the line just added
+                  setNote('');
                   // the full sacola, as before 1.11: a sheet would sit over the page's own triggers
                   if (settings.afterAdd === 'cart') go(resolvePaths(config).cart);
                 }}

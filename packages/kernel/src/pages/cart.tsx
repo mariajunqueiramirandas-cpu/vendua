@@ -16,7 +16,7 @@ import { Slot } from '../slot.tsx';
 import { showError, showInfo } from '../errors.ts';
 import { useKernel } from '../provider.tsx';
 import { resolvePaths } from '../config.ts';
-import type { Cart, CartItem, QuoteResult } from '../api.ts';
+import { ITEM_NOTE_MAX, type Cart, type CartItem, type QuoteResult } from '../api.ts';
 import { haptic } from '../haptics.ts';
 import { MAX_LINE_QTY } from '../rules/card.ts';
 import type { Vocabulary } from '../rules/copy.ts';
@@ -66,6 +66,11 @@ function Line({
         void run(() => (qty <= 0 ? mutations.remove(item.id) : mutations.updateQty(item.id, next)));
       }}
       onRemove={() => void run(() => mutations.remove(item.id))}
+      noteMax={ITEM_NOTE_MAX}
+      onNote={(note) => {
+        if (note.trim() === (item.note ?? '')) return;
+        void run(() => mutations.setNote(item.id, note));
+      }}
     />
   );
 }

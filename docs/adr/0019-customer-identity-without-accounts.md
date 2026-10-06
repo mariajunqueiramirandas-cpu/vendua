@@ -32,6 +32,11 @@ quantities (`GET /customer/orders`), plus the loyalty card. Addresses, names and
 full order view still need that order's own session token, and "pedir de novo" on
 another device's order goes through the same phone check.
 
+A third, narrower credential (2026-10-06, ADR 0026): the **order tracking token** in the store's
+WhatsApp updates (`vot.<order>.<exp>.<hmac>`, 30 days) opens one order's status-only page (state,
+promised time, steps, items with notes, the store's name) on any device. It shows no name, phone,
+address or payment detail and can't pay, charge a card or reorder.
+
 ## Consequences
 
 - Someone who places an order with a victim's phone can then list the victim's

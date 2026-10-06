@@ -1,6 +1,7 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
-import { HttpError } from '../platform/http.ts';
+import { HttpError, verifySessionToken } from '../platform/http.ts';
 import { mintLoyaltyRewards } from './customer.ts';
 import { enqueueOrderMessageTx, isOrderEvent } from '../store-whatsapp/messages.ts';
 import { enqueueOrderPrintTx } from './printing/jobs.ts';
@@ -113,6 +114,8 @@ export interface OrderItemView {
   modifiers: { name: string; priceDeltaCents: number; qty: number }[];
   combo: { slotName: string; name: string; qty: number }[];
   lineTotalCents: number;
+  /** the shopper's note for this line ("sem cebola"); null = none */
+  note?: string | null;
 }
 
 export interface OrderView {
@@ -174,6 +177,7 @@ type OrderViewRow = OrderRow & {
     modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
     combo: { slotName: string; name: string; qty: number }[];
     line_total_cents: number;
+    note: string | null;
   }[];
 };
 
@@ -191,7 +195,7 @@ function orderViewRows(tx: Sql, tenantId: string, where: ReturnType<Sql>) {
                   where tenant_id = o.tenant_id and order_id = o.id) e) as events,
            (select coalesce(json_agg(i order by i.sort), '[]')
             from (select sort, product_id, slug, name, qty, unit_price_cents, modifiers, combo,
-                         line_total_cents
+                         line_total_cents, note
                   from order_items where tenant_id = o.tenant_id and order_id = o.id) i) as items
     from orders o where o.tenant_id = ${tenantId} ${where}
   `;
@@ -251,6 +255,7 @@ function orderViewOf(order: OrderViewRow): OrderView {
       })),
       combo: i.combo.map((c) => ({ slotName: c.slotName, name: c.name, qty: c.qty })),
       lineTotalCents: i.line_total_cents,
+      note: i.note ?? null,
     })),
     notes: order.notes,
     scheduledFor: order.scheduled_for,
@@ -272,6 +277,152 @@ function orderViewOf(order: OrderViewRow): OrderView {
       meta: e.meta,
     })),
   };
+}
+
+// Order tracking links (the store's WhatsApp updates): `vot.<orderId>.<exp>.<sig>` reads the
+// order's status and nothing else — never the cart session, which would also pay and reorder.
+
+const TRACK_PREFIX = 'vot';
+const TRACK_TTL_S = 30 * 24 * 3600;
+
+const trackSig = (secret: string, tenantId: string, orderId: string, exp: number) =>
+  createHmac('sha256', `${secret}:order-track`)
+    .update(`${TRACK_PREFIX}|${tenantId}|${orderId}|${exp}`)
+    .digest('base64url');
+
+/** A status-only link credential for one order, good for 30 days after it was placed. */
+export function orderTrackToken(
+  secret: string,
+  tenantId: string,
+  orderId: string,
+  placedAt: Date | string,
+): string {
+  const exp = Math.floor(new Date(placedAt).getTime() / 1000) + TRACK_TTL_S;
+  return `${TRACK_PREFIX}.${orderId}.${exp}.${trackSig(secret, tenantId, orderId, exp)}`;
+}
+
+/** The order id a tracking token names, or null (malformed, another store's, expired). */
+export function verifyOrderTrackToken(
+  token: string,
+  secret: string,
+  tenantId: string,
+  now = new Date(),
+): string | null {
+  const parts = token.split('.');
+  if (parts.length !== 4 || parts[0] !== TRACK_PREFIX) return null;
+  const [, orderId, expRaw, sig] = parts as [string, string, string, string];
+  const exp = Number(expRaw);
+  if (!/^[0-9a-f-]{36}$/.test(orderId) || !/^\d{1,12}$/.test(expRaw)) return null;
+  // an order is never placed in the future: no token may outlive a fresh one
+  if (exp * 1000 < now.getTime() || exp * 1000 > now.getTime() + TRACK_TTL_S * 1000) return null;
+  const a = Buffer.from(sig);
+  const b = Buffer.from(trackSig(secret, tenantId, orderId, exp));
+  return a.length === b.length && timingSafeEqual(a, b) ? orderId : null;
+}
+
+/** What a tracking link shows: where the order stands and what was ordered — no customer,
+ *  address, payment, money, order notes or who moved it. */
+export interface OrderStatusView {
+  statusOnly: true;
+  id: string;
+  number: number;
+  state: OrderState;
+  storeName: string;
+  delivery: {
+    mode: DeliveryMode;
+    promisedFrom: string | null;
+    promisedTo: string | null;
+    etaMin: number | null;
+    etaMax: number | null;
+  };
+  scheduledFor: string | null;
+  placedAt: string;
+  updatedAt: string;
+  version: number;
+  timeline: { at: string; to: string }[];
+  items: {
+    name: string;
+    qty: number;
+    modifiers: { name: string; qty: number }[];
+    combo: { slotName: string; name: string; qty: number }[];
+    note: string | null;
+  }[];
+}
+
+/** Whitelists the fields a tracking link may read (never spread the full view into it). */
+export function orderStatusOf(o: OrderView, storeName: string): OrderStatusView {
+  const d = o.delivery;
+  return {
+    statusOnly: true,
+    id: o.id,
+    number: o.number,
+    state: o.state,
+    storeName,
+    delivery: {
+      mode: d.mode,
+      promisedFrom: d.promisedFrom ?? null,
+      promisedTo: d.promisedTo ?? null,
+      etaMin: d.etaMin ?? null,
+      etaMax: d.etaMax ?? null,
+    },
+    scheduledFor: o.scheduledFor,
+    placedAt: new Date(o.placedAt).toISOString(),
+    updatedAt: new Date(o.updatedAt).toISOString(),
+    version: o.version,
+    timeline: o.timeline.map((e) => ({ at: e.at, to: e.to })),
+    items: o.items.map((i) => ({
+      name: i.name,
+      qty: i.qty,
+      modifiers: i.modifiers.map((m) => ({ name: m.name, qty: m.qty })),
+      combo: i.combo.map((c) => ({ slotName: c.slotName, name: c.name, qty: c.qty })),
+      note: i.note ?? null,
+    })),
+  };
+}
+
+export async function loadOrderStatusView(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+): Promise<OrderStatusView> {
+  const [view, store] = await Promise.all([
+    loadOrderView(tx, tenantId, orderId),
+    tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`,
+  ]);
+  return orderStatusOf(view, store[0]?.name ?? '');
+}
+
+/** The checkout's order reads: the cart session that placed it reads it all; a tracking link,
+ *  only that order's status. */
+export type StorefrontOrderAccess = { cartId: string } | { statusOnly: true };
+
+export async function storefrontOrderAccess(
+  authorization: string | undefined,
+  tenantId: string,
+  orderId: string,
+  secret: string,
+): Promise<StorefrontOrderAccess> {
+  const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : '';
+  if (token.startsWith(`${TRACK_PREFIX}.`)) {
+    // one answer for a bad, expired or other order's link
+    if (verifyOrderTrackToken(token, secret, tenantId) !== orderId)
+      throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+    return { statusOnly: true };
+  }
+  const cartId = token ? await verifySessionToken(token, tenantId, secret) : null;
+  if (!cartId) throw new HttpError(401, 'SESSION_REQUIRED', 'a valid session token is required');
+  return { cartId };
+}
+
+export function readStorefrontOrder(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+  access: StorefrontOrderAccess,
+): Promise<OrderView | OrderStatusView> {
+  return 'cartId' in access
+    ? loadOrderView(tx, tenantId, orderId, access.cartId)
+    : loadOrderStatusView(tx, tenantId, orderId);
 }
 
 /** The order's staff card (ADR 0023) moves on — at most once per order and step. */

@@ -59,20 +59,27 @@ import {
   loadStoreSettings,
   loadZoneRows,
   distancePricingOf,
+  parseItemNote,
   priceLine,
   quoteInput,
   storeCoords,
 } from './modules/cart.ts';
 import {
   createCartTx,
+  editLineTx,
   parseDeliveryInput,
   quoteDeliveryTx,
   removeLineTx,
   setDeliveryTx,
-  setLineQtyTx,
 } from './modules/cart-ops.ts';
 import { preordersWhileClosed, validateCheckoutShape } from './modules/checkout.ts';
-import { loadOrderView, orderVersion, TERMINAL_STATES } from './modules/orders.ts';
+import {
+  loadOrderView,
+  orderVersion,
+  readStorefrontOrder,
+  storefrontOrderAccess,
+  TERMINAL_STATES,
+} from './modules/orders.ts';
 import { placeOrderTx } from './modules/place-order.ts';
 import { parseSelections } from './modules/combos.ts';
 import {
@@ -100,6 +107,7 @@ import { OrderHub } from './modules/order-live.ts';
 import { pixPayload, type PixKeyType } from './modules/pix.ts';
 import { bookableDates } from './modules/preorder.ts';
 import { mountWebChat, webChatProfile } from './vendedor/web-chat.ts';
+import { cartReminderOffered, mountCartReminder } from './modules/cart-reminder.ts';
 import { mountCommerce } from './modules/commerce-routes.ts';
 import {
   agentGoal,
@@ -291,6 +299,7 @@ const STORE_DEPS = [
   'plans',
   'subscriptions',
   'store_agent',
+  'store_whatsapp',
 ];
 const CATALOG_DEPS = [
   'store_settings',
@@ -619,17 +628,18 @@ export function createApp({
 
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
-    const { settings, online, publicUrl, loyaltyOn, chat } = await cache.read(
+    const { settings, online, publicUrl, loyaltyOn, chat, cartReminder } = await cache.read(
       tenant.id,
       'store',
       () =>
         withTenant(sql, tenant.id, async (tx) => {
-          const [settings, conn, publicUrl, loyaltyPlan, chat] = await Promise.all([
+          const [settings, conn, publicUrl, loyaltyPlan, chat, cartReminder] = await Promise.all([
             loadSettings(tx, tenant.id),
             loadConnection(tx, tenant.id),
             storeOrigin(tx, tenant, publicStoreDomain),
             planHas(tx, tenant.id, 'loyalty'),
             webChatProfile(tx, tenant.id),
+            cartReminderOffered(tx, tenant.id),
           ]);
           return {
             settings,
@@ -644,6 +654,7 @@ export function createApp({
             publicUrl,
             loyaltyOn: !!settings?.loyalty && loyaltyPlan,
             chat,
+            cartReminder,
           };
         }),
       { deps: STORE_DEPS, until: (v) => v.onlineUntil },
@@ -714,6 +725,8 @@ export function createApp({
       logoUrl: settings?.logo_url ?? null,
       // Kernel 1.18: the Vendedor's chat on the site, when the merchant turned it on
       chat,
+      // Kernel 1.21: checkout may offer "me lembre pelo WhatsApp" (modules/cart-reminder.ts)
+      cartReminder,
     });
   });
 
@@ -1027,12 +1040,13 @@ export function createApp({
           })
         : [];
       const comboSelections = parseSelections(body.comboSelections);
+      const note = parseItemNote(body.note);
       const tz = settings?.hours?.timezone || 'America/Sao_Paulo';
       const { cart, added } = await addItem(
         tx,
         tenant.id,
         cartId,
-        { productId, qty, modifierIds, modifiers, comboSelections },
+        { productId, qty, modifierIds, modifiers, comboSelections, note },
         (t, tid, id) => getProductById(t, tid, id, { tz }),
         { cart: locked, settings },
       );
@@ -1045,13 +1059,10 @@ export function createApp({
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
-      const cart = await setLineQtyTx(
-        tx,
-        tenant.id,
-        cartId,
-        c.req.param('itemId') ?? '',
-        Number(body.qty),
-      );
+      const cart = await editLineTx(tx, tenant.id, cartId, c.req.param('itemId') ?? '', {
+        ...(body.qty !== undefined ? { qty: Number(body.qty) } : {}),
+        ...(body.note !== undefined ? { note: body.note } : {}),
+      });
       return { status: 200, body: { cart } };
     })(c);
   });
@@ -1160,10 +1171,16 @@ export function createApp({
   // `since` — the Kernel's live useOrder; without `wait` it's a plain read
   checkout.get('/orders/:id', async (c) => {
     const tenant = c.get('tenant');
-    const cartId = await sessionCartId(c, sessionSecret);
+    // the cart session that placed it reads it all; a tracking link (vot.…), only its status
+    const access = await storefrontOrderAccess(
+      c.req.header('authorization'),
+      tenant.id,
+      c.req.param('id'),
+      sessionSecret,
+    );
     const orderId = uuidParam(c, 'id');
     const read = () =>
-      withTenant(sql, tenant.id, (tx) => loadOrderView(tx, tenant.id, orderId, cartId));
+      withTenant(sql, tenant.id, (tx) => readStorefrontOrder(tx, tenant.id, orderId, access));
     const waitRaw = c.req.query('wait');
     const sinceRaw = c.req.query('since');
     if (waitRaw === undefined || sinceRaw === undefined) return c.json({ order: await read() });
@@ -2950,6 +2967,7 @@ export function createApp({
     storeDomain: publicStoreDomain,
   });
   mountWebChat({ checkout, sql, sessionSecret, idempotency });
+  mountCartReminder({ checkout, sql, sessionSecret, idempotency });
 
   mountControlBilling({
     app,

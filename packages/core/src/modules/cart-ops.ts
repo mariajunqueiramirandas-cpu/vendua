@@ -8,6 +8,7 @@ import {
   loadCartView,
   loadStoreSettings,
   loadZoneRows,
+  parseItemNote,
   storeCoords,
   type CartDelivery,
   type CartRow,
@@ -76,6 +77,60 @@ export async function setLineQtyTx(
     loadCartView(tx, tenantId, cartId, new Date(), { have: { cart } }),
   ]);
   return view;
+}
+
+/** PATCH a line: its qty, its note, or both (`note` absent = unchanged, '' = none). A note that
+ *  makes the line the same as another one (product, options, note) folds it into that line. */
+export async function editLineTx(
+  tx: Sql,
+  tenantId: string,
+  cartId: string,
+  itemId: string,
+  edit: { qty?: number; note?: unknown },
+): Promise<CartView> {
+  if (edit.note === undefined || edit.qty === 0)
+    return setLineQtyTx(tx, tenantId, cartId, itemId, Number(edit.qty));
+  const note = parseItemNote(edit.note);
+  const qty = edit.qty;
+  if (qty !== undefined && (!Number.isInteger(qty) || qty < 1 || qty > 99)) {
+    throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 0 and 99');
+  }
+  const cart = await assertCartOpen(tx, tenantId, cartId);
+  const id = itemIdOf(itemId);
+  if (qty !== undefined) await assertLineQty(tx, tenantId, cartId, id, qty);
+  const line = (
+    await tx<{ qty: number; twin: string | null; twin_qty: number | null }[]>`
+      select l.qty, t.id as twin, t.qty as twin_qty
+      from cart_items l
+        left join lateral (
+          select id, qty from cart_items t
+          where t.tenant_id = l.tenant_id and t.cart_id = l.cart_id and t.id <> l.id
+            and t.product_id = l.product_id and t.modifier_ids = l.modifier_ids
+            and t.modifier_qty = l.modifier_qty and t.combo_selections = l.combo_selections
+            and t.note = ${note}
+          limit 1
+        ) t on true
+      where l.tenant_id = ${tenantId} and l.cart_id = ${cartId} and l.id = ${id}
+      for update of l`
+  )[0];
+  if (line) {
+    const units = qty ?? line.qty;
+    if (line.twin) {
+      if (units + line.twin_qty! > 99)
+        throw new HttpError(422, 'INVALID_QTY', 'line quantity cannot exceed 99');
+      await tx`
+        with touched as (update carts set updated_at = now() where id = ${cartId})
+        update cart_items set qty = qty + ${units}
+        where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${line.twin}`;
+      await tx`delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`;
+    } else {
+      await tx`
+        with touched as (update carts set updated_at = now() where id = ${cartId})
+        update cart_items set note = ${note}, qty = ${units}
+        where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`;
+    }
+  }
+  return loadCartView(tx, tenantId, cartId, new Date(), { have: { cart } });
 }
 
 export async function removeLineTx(

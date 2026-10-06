@@ -270,7 +270,8 @@ export function mountCustomers(d: AdminDeps) {
       const orders = await tx`
         select number, state, customer, delivery, payment, notes, subtotal_cents, delivery_fee_cents,
                discount_cents, payment_adjustment_cents, total_cents, coupon_code, scheduled_for, placed_at,
-               (select json_agg(json_build_object('name', i.name, 'qty', i.qty, 'lineTotalCents', i.line_total_cents)
+               (select json_agg(json_build_object('name', i.name, 'qty', i.qty, 'lineTotalCents', i.line_total_cents,
+                                                  'note', i.note)
                                 order by i.sort) from order_items i where i.order_id = orders.id) as items
         from orders where tenant_id = ${t.id} and customer_phone = ${phone} order by placed_at
       `;
@@ -285,11 +286,26 @@ export function mountCustomers(d: AdminDeps) {
         select code, label, kind, value, source, ends_at, created_at from coupons
         where tenant_id = ${t.id} and phone = ${phone}
       `;
+      const cartReminders = await tx`
+        select name, consented_at, withdrawn_at, sent_at from cart_reminders
+        where tenant_id = ${t.id} and phone = any(${phoneVariants(phone)}::text[])
+      `;
       const notes = (
         await tx`
           select note, tags, updated_at from customer_notes where tenant_id = ${t.id} and phone = ${phone}
         `
       )[0];
+      // what the Vendedor remembers from their conversations, the store's own notes included
+      const variants = phoneVariants(phone);
+      const agentMemory = await tx`
+        select key, value, provenance, created_at, updated_at from agent_memory
+        where tenant_id = ${t.id} and scope in (
+          select 'shopper_thread:' || id from shopper_threads
+          where tenant_id = ${t.id} and (phone = any(${variants}::text[])
+            or address = any(${variants.flatMap((v) => jidForPhone(v) ?? [])}::text[])
+            or checkout ->> 'phone' = any(${variants}::text[])))
+        order by scope, key
+      `;
       c.header('content-disposition', `attachment; filename="cliente-${phone}.json"`);
       return {
         exportedAt: new Date().toISOString(),
@@ -298,7 +314,9 @@ export function mountCustomers(d: AdminDeps) {
         orders,
         waitlist,
         coupons,
+        cartReminders,
         notes: notes ?? null,
+        agentMemory,
       };
     }),
   );
@@ -340,6 +358,19 @@ export function mountCustomers(d: AdminDeps) {
           update carts set delivery = null, delivery_route = null
           where tenant_id = ${t.id} and id = any(${carts}::uuid[])
         `;
+      // their words on each line ("sem cebola"); a cart line's note is part of its identity, so
+      // a line that held one goes (the order keeps its own copy of the line)
+      if (orders.length)
+        await tx`
+          update order_items set note = null
+          where tenant_id = ${t.id} and order_id = any(${orders.map((o) => o.id)}::uuid[])
+            and note is not null
+        `;
+      if (carts.length)
+        await tx`
+          delete from cart_items
+          where tenant_id = ${t.id} and cart_id = any(${carts}::uuid[]) and note <> ''
+        `;
       // each conversation: its messages and media cascade; its agent actor and memory go too
       for (const th of threads)
         await forgetSubjectTx(
@@ -363,6 +394,11 @@ export function mountCustomers(d: AdminDeps) {
       await tx`
         delete from notify_requests
         where tenant_id = ${t.id} and regexp_replace(contact, '\\D', '', 'g') in (${phone}, ${'55' + phone})
+      `;
+      // a bag reminder they asked for: withdrawn, and the number and name go
+      await tx`
+        update cart_reminders set phone = null, name = null, withdrawn_at = coalesce(withdrawn_at, now())
+        where tenant_id = ${t.id} and phone = any(${variants}::text[])
       `;
       await tx`update coupons set phone = null, active = false where tenant_id = ${t.id} and phone = ${phone}`;
       await tx`delete from customer_notes where tenant_id = ${t.id} and phone = ${phone}`;

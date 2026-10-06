@@ -68,6 +68,12 @@ export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['che
               {i.modifiers.length || i.combo?.length ? (
                 <span className="v-muted v-line-mods"> — {lineSummary(i, currency)}</span>
               ) : null}
+              {i.note ? (
+                <span className="v-line-note" data-part="item-note">
+                  <span className="v-sr">Observação: </span>
+                  {i.note}
+                </span>
+              ) : null}
             </span>
             <span className="v-num">{formatCents(i.lineTotalCents, currency)}</span>
           </li>

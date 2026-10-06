@@ -21,7 +21,7 @@ retypes (those need a Contract major, a codemod and an alias window).
 | `KERNEL_PATHS`     | Same paths by name                                                                                          |
 | `SurfaceRegion`    | Inline notices targeted at a region name                                                                    |
 | `ErrorBoundary`    | Fallback-on-throw wrapper for storefront code                                                               |
-| `SLOT_KEYS`        | The slot registry (35 slots, each with a default in `@vendua/ui-defaults`)                                  |
+| `SLOT_KEYS`        | The slot registry (36 slots, each with a default in `@vendua/ui-defaults`)                                  |
 | `SLOT_ALIASES`     | Deprecated slot keys → their replacement and the codemod that rewrites them                                 |
 
 ```tsx
@@ -445,6 +445,41 @@ dietary? })` keep only products stating every tag in `dietary`, and a search mat
 - **The order page** always offers "Falar com a loja" (`[data-vendua="order-whatsapp"]`, the
   store's WhatsApp with the order number) when the store has one, and the tab title carries the
   state, live: `Pedido #12 · Em preparo · <store>`.
+- **The order through the store's WhatsApp link.** Each order update the store's WhatsApp sends
+  ends with `https://<store>/pedido/<id>?t=vot.…`, a credential that reads that order's status
+  and nothing else (30 days from the order). `VenduaProvider` takes `?t=` on `/pedido/:id` before
+  the page's first read, keeps it on the device (`vendua.trackTokens`, the newest 20) and strips it
+  from the address bar. On a device holding no order token of its own, `useOrder(id)` answers
+  `tracking: OrderTracking` (and `order` stays undefined): `statusOnly: true`, `id`, `number`,
+  `state`, `storeName`, `delivery` (`mode`, `promisedFrom`/`To`, `etaMin`/`Max`),
+  `scheduledFor`, `placedAt`, `updatedAt`, `version` (live, like an order), `timeline` (`at`,
+  `to`) and `items` (`name`, `qty`, `modifiers`, `combo`, `note`) — no customer, address,
+  payment, money or order notes. The device that placed the order keeps its full view. The page
+  renders the new slot `order.TrackingPage` (`order`, `timeline` — the `order.Timeline` slot,
+  rendered — `pickup?`, `timeZone?`, `vocabulary?`), "Falar com a loja" and the menu; never a
+  payment, "pedir de novo" or the shopper's data. Core refuses the link on pay, card and reorder.
+  Api client: `addTrackingToken(orderId, token)`, `tracksOnly(orderId)`, `orderStatus(id)`,
+  `orderStatusWait(…)` and `orderStatusStream(…)` (the arguments of `orderWait` and
+  `orderStream`); a link Core refuses (400, 401, 403, 404) is dropped.
+- **A note on one line** ("sem cebola", ≤ 140, one line of text). `CartItem.note`,
+  `OrderItem.note`, `ImportLine.note` (optional, null/absent = none) — part of the line: the same
+  product and options with another note is another line, the same note adds to it. `useCart()`
+  mutations: `add`/`addLine` take an optional sixth `note`; `setNote(itemId, note)` ('' clears;
+  a line that then matches another folds into it — optional on the `CartMutations` type, always
+  on the Kernel's). `AddToCart` takes `note`. `sdk:purchase-panel` shows "Alguma observação?"
+  (`[data-part="note"]`, a counter; setting `showNote`, default on) and sends it with the add.
+  `cart.LineItem` gains optional `onNote(note)` and `noteMax`: the default shows the note
+  (`[data-part="note"]`) and edits it in place ("Observação" / "Editar observação"). The
+  checkout summary, `order.Items` and `order.TrackingPage` show each line's note
+  (`[data-part="item-note"]`). Core carries it to the order, the kitchen display, the printed
+  ticket, a shared bag and "pedir de novo"; `INVALID_NOTES` (`details.field: 'note'`) past 140.
+- **The bag reminder.** `StoreProfile.cartReminder` (optional; true only when the store sends
+  one WhatsApp reminder about a bag left full). At checkout's "Seus dados", with a valid phone,
+  an unticked "Me lembre pelo WhatsApp se eu não terminar o pedido"
+  (`[data-vendua="cart-reminder"]`): ticking asks Core (`api.cartReminder({ phone, name? })` →
+  `POST /checkout/v1/cart/reminder`), unticking withdraws (`api.cancelCartReminder()` →
+  `DELETE`), a number fixed after ticking follows; a refusal unticks quietly. New
+  `ERROR_CODES`: `REMINDER_OFF` (409, the store doesn't offer it), `INVALID_PHONE` (422).
 - **Jump navigation.** `sdk:catalog-grid` setting `categoryNav`: `filter` (default — one
   category at a time, as before) or `jump` (every category stays on the page, the tabs are links
   that scroll to `#categoria-<slug>`, pinned under the header, the one being read lit with

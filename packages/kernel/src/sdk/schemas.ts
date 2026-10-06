@@ -99,6 +99,8 @@ export const purchasePanel = defineSection({
     afterAdd: select(['cart', 'stay'], { default: 'cart' }),
     /** Kernel 1.21 — "Compartilhar": the share sheet with the product's link */
     showShare: boolean({ default: true, label: 'Botão de compartilhar' }),
+    /** Kernel 1.21 — "Alguma observação?" for this item ("sem cebola"), carried to the kitchen */
+    showNote: boolean({ default: true, label: 'Campo de observação do item' }),
   },
   areas: {
     media: { accepts: ['media', 'badge'], max: 3 },

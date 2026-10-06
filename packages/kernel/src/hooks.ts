@@ -20,6 +20,7 @@ import type {
   Notice,
   Order,
   OrderSummary,
+  OrderTracking,
   ProductDetail,
   QuoteResult,
   StoreProfile,
@@ -194,6 +195,8 @@ export interface CartMutations {
     comboSelections?: ComboSelection[],
     /** Kernel 1.12 — units per option id, for options with `maxQty` > 1 (absent = 1 each) */
     modifierQty?: Record<string, number>,
+    /** Kernel 1.21 — the line's note ("sem cebola", ≤ 140): another note is another line */
+    note?: string,
   ) => Promise<Cart>;
   /** Kernel 1.14 — `add`, also answering what Core added (`added`: units and Core's price).
    *  Optional here so a store's own `CartMutations` (a wrapper, a test double) still type-checks;
@@ -204,8 +207,12 @@ export interface CartMutations {
     modifierIds?: string[],
     comboSelections?: ComboSelection[],
     modifierQty?: Record<string, number>,
+    note?: string,
   ) => Promise<{ cart: Cart; added?: AddedLine }>;
   updateQty: (itemId: string, qty: number) => Promise<Cart>;
+  /** Kernel 1.21 — a line's note ('' clears it); the line folds into an identical one. Optional
+   *  like `addLine`; `useCart().mutations` always has it. */
+  setNote?: (itemId: string, note: string) => Promise<Cart>;
   remove: (itemId: string) => Promise<Cart>;
   setDelivery: (d: { mode: 'pickup' | 'delivery' } & DeliveryAddress) => Promise<Cart>;
   /** Kernel 1.2 — Core validates and prices; a coupon short of its minimum stays on, not applying */
@@ -219,8 +226,8 @@ export interface CartMutations {
   reorder: (orderId: string) => Promise<{ cart: Cart; report: ImportReport }>;
 }
 
-/** The Kernel's own cart mutations: every one, `addLine` included. */
-type KernelCartMutations = CartMutations & Required<Pick<CartMutations, 'addLine'>>;
+/** The Kernel's own cart mutations: every one, `addLine` and `setNote` included. */
+type KernelCartMutations = CartMutations & Required<Pick<CartMutations, 'addLine' | 'setNote'>>;
 
 export function useCart(): {
   /** null = no session/cart yet (or a resolved empty read). */
@@ -261,14 +268,15 @@ export function useCart(): {
 
   const mutations = useMemo<KernelCartMutations>(
     () => ({
-      add: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty) =>
-        api.addItem(productId, qty, modifierIds, comboSelections, modifierQty).then(bump),
-      addLine: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty) =>
-        api.addLine(productId, qty, modifierIds, comboSelections, modifierQty).then((r) => {
+      add: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty, note) =>
+        api.addItem(productId, qty, modifierIds, comboSelections, modifierQty, note).then(bump),
+      addLine: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty, note) =>
+        api.addLine(productId, qty, modifierIds, comboSelections, modifierQty, note).then((r) => {
           bump(r.cart);
           return r;
         }),
       updateQty: (itemId, qty) => api.updateItem(itemId, qty).then(bump),
+      setNote: (itemId, note) => api.setItemNote(itemId, note).then(bump),
       remove: (itemId) => api.removeItem(itemId).then(bump),
       setDelivery: (d) => api.setDelivery(d).then(bump),
       applyCoupon: (code) => api.applyCoupon(code).then(bump),
@@ -390,6 +398,9 @@ export function useStockLeft(
 }
 
 const TERMINAL_ORDER = TERMINAL_ORDER_STATES;
+
+const isTracking = (o: Order | OrderTracking): o is OrderTracking =>
+  (o as OrderTracking).statusOnly === true;
 const FIRST_WAIT_DELAY_MS = 1500;
 
 /** Live by default (Kernel 1.2; SSE since 1.3): a Kernel-owned stream of the
@@ -402,6 +413,9 @@ export function useOrder(
   opts: { live?: boolean } = {},
 ): {
   order: Order | undefined;
+  /** Kernel 1.21 — the order read through the link in the store's WhatsApp updates, on a device
+   *  that holds no token of its own for it: status and items only (`order` stays undefined) */
+  tracking: OrderTracking | undefined;
   loading: boolean;
   error: QueryError | undefined;
   refetch: () => void;
@@ -411,14 +425,19 @@ export function useOrder(
   transport: 'stream' | 'poll' | null;
 } {
   const { api } = useKernel();
-  const q = useQuery(`order:${id}`, () => api.order(id));
-  const [fresh, setFresh] = useState<Order>();
+  // the device's own token reads it all; a tracking link alone, its status
+  const statusOnly = api.tracksOnly(id);
+  const q = useQuery<Order | OrderTracking>(
+    statusOnly ? `order-status:${id}` : `order:${id}`,
+    () => (statusOnly ? api.orderStatus(id) : api.order(id)),
+  );
+  const [fresh, setFresh] = useState<Order | OrderTracking>();
   const [live, setLive] = useState(false);
   const [transport, setTransport] = useState<'stream' | 'poll' | null>(null);
   const armed = useRef(false);
   const want = opts.live !== false;
   // whichever read is newer wins: the live answer or a refetch
-  const own = fresh?.id === id ? fresh : undefined;
+  const own = fresh?.id === id && isTracking(fresh) === statusOnly ? fresh : undefined;
   const current = own && (own.version ?? 0) >= (q.data?.version ?? 0) ? own : (q.data ?? own);
   const versionRef = useRef<number | undefined>(undefined);
   const seen = current?.version;
@@ -446,7 +465,7 @@ export function useOrder(
         const t = setTimeout(r, ms);
         master.signal.addEventListener('abort', () => (clearTimeout(t), r()), { once: true });
       });
-    const accept = (o: Order) => {
+    const accept = (o: Order | OrderTracking) => {
       if ((o.version ?? 0) <= (versionRef.current ?? 0)) return;
       versionRef.current = o.version;
       setFresh(o);
@@ -479,12 +498,22 @@ export function useOrder(
         setTransport(mode);
         try {
           if (mode === 'stream') {
-            await api.orderStream(id, versionRef.current ?? 0, accept, round.signal);
+            await (statusOnly ? api.orderStatusStream : api.orderStream)(
+              id,
+              versionRef.current ?? 0,
+              accept,
+              round.signal,
+            );
             failures = 0;
             // Core closed it (lifetime or terminal) — a beat before reconnecting
             await sleep(1000);
           } else {
-            const r = await api.orderWait(id, versionRef.current ?? 0, 25, round.signal);
+            const r = await (statusOnly ? api.orderStatusWait : api.orderWait)(
+              id,
+              versionRef.current ?? 0,
+              25,
+              round.signal,
+            );
             failures = 0;
             if (r.changed) accept(r.order);
           }
@@ -517,10 +546,11 @@ export function useOrder(
       setLive(false);
       setTransport(null);
     };
-  }, [api, id, want, ready, terminal]);
+  }, [api, id, want, ready, terminal, statusOnly]);
 
   return {
-    order: current,
+    order: current && !isTracking(current) ? current : undefined,
+    tracking: current && isTracking(current) ? current : undefined,
     loading: q.loading && !current,
     error: current ? undefined : q.error,
     refetch: q.refetch,

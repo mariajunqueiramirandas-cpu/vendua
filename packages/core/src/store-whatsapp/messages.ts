@@ -1,5 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
+import { storeOrigin } from '../platform/store-origin.ts';
 import { localParts } from '../platform/tz.ts';
 import { phoneVariants } from './text.ts';
 
@@ -49,6 +50,20 @@ export interface OrderFacts {
   timezone: string;
   /** the money this refund gave back; `full` when nothing paid is left */
   refund?: { cents: number; full: boolean; online: boolean } | null;
+  /** the order's status-only page on the store's site (`/pedido/<id>?t=vot.…`) */
+  trackUrl?: string | null;
+}
+
+interface OrderLinks {
+  storeDomain: string;
+  /** the order's status-only credential (orders.ts orderTrackToken, bound to the boot secret) */
+  token: (tenantId: string, orderId: string, placedAt: Date) => string;
+}
+
+// set once at boot (index.ts); unset = messages go without the link (tests, scripts)
+let orderLinks: OrderLinks | null = null;
+export function configureOrderLinks(c: OrderLinks | null): void {
+  orderLinks = c;
 }
 
 const brl = (cents: number) =>
@@ -66,9 +81,19 @@ export function firstName(name: string): string {
   return first.slice(0, 40);
 }
 
+/** steps after which there is nothing left to follow — the link only shows the order */
+const FINAL_EVENTS: ReadonlySet<OrderEvent> = new Set(['delivered', 'cancelled', 'refunded']);
+
 /** The text for one step, or null when this step says nothing for this order (a delivery
- *  order's "pronto" — its "saiu para entrega" follows). */
+ *  order's "pronto" — its "saiu para entrega" follows). Ends with the order's link, when set. */
 export function renderOrderMessage(event: OrderEvent, o: OrderFacts): string | null {
+  const text = stepText(event, o);
+  if (!text || !o.trackUrl) return text;
+  const label = FINAL_EVENTS.has(event) ? 'Ver o pedido' : 'Acompanhe o pedido';
+  return `${text}\n\n${label}: ${o.trackUrl}`;
+}
+
+function stepText(event: OrderEvent, o: OrderFacts): string | null {
   const n = `#${o.number}`;
   const hi = o.firstName ? `Oi, ${o.firstName}! ` : 'Oi! ';
   switch (event) {
@@ -132,10 +157,16 @@ export const optInAck = (storeName: string) =>
 export const testMessage = (storeName: string) =>
   `Teste da Venduá ✓ O WhatsApp da ${storeName} está conectado e pronto para avisar seus clientes sobre os pedidos.`;
 
-/** Sample order for the admin's previews. */
-export function previewFacts(storeName: string, timezone: string): OrderFacts {
+/** Sample order for the admin's previews; `origin` = the store's address, for a sample link
+ *  (the real one carries the order's id and its status-only token). */
+export function previewFacts(
+  storeName: string,
+  timezone: string,
+  origin?: string | null,
+): OrderFacts {
   const at = (min: number) => new Date(Date.now() + min * 60_000).toISOString();
   return {
+    trackUrl: origin ? `${origin}/pedido/128` : null,
     storeName,
     firstName: 'Ana',
     number: 128,
@@ -149,6 +180,14 @@ export function previewFacts(storeName: string, timezone: string): OrderFacts {
   };
 }
 
+/** The store's address for the previews' sample link; null while messages go without one. */
+export async function previewOriginTx(tx: Sql, tenantId: string): Promise<string | null> {
+  const links = orderLinks;
+  if (!links) return null;
+  const rows = await tx<{ slug: string }[]>`select slug from tenants where id = ${tenantId}`;
+  return rows[0] ? storeOrigin(tx, { id: tenantId, slug: rows[0].slug }, links.storeDomain) : null;
+}
+
 export async function optedOutTx(tx: Sql, tenantId: string, phone: string): Promise<boolean> {
   const rows = await tx`
     select 1 from store_wa_optouts
@@ -156,13 +195,14 @@ export async function optedOutTx(tx: Sql, tenantId: string, phone: string): Prom
   return rows.length > 0;
 }
 
-/** Has this store's WhatsApp already reached this number about an order? The first message
- *  that actually goes out carries the SAIR footer; a failed or expired one doesn't count. */
+/** Has this store's WhatsApp already reached this number about an order (or with a reminder,
+ *  which always carries it)? The first message that actually goes out carries the SAIR footer;
+ *  a failed or expired one doesn't count. */
 export async function contactedTx(tx: Sql, tenantId: string, phone: string): Promise<boolean> {
   const rows = await tx`
     select 1 from store_wa_messages
-    where tenant_id = ${tenantId} and phone = any(${phoneVariants(phone)}) and kind = 'order'
-      and status = 'sent'
+    where tenant_id = ${tenantId} and phone = any(${phoneVariants(phone)})
+      and kind in ('order', 'cart_reminder', 'store_open') and status = 'sent'
     limit 1`;
   return rows.length > 0;
 }
@@ -197,13 +237,15 @@ async function orderFactsTx(
         to: string | null;
         scheduled_for: string | null;
         store_name: string;
+        slug: string;
+        placed_at: Date;
         tz: string | null;
       }[]
     >`
       select o.number, o.customer ->> 'name' as name, o.customer_phone as phone,
              o.delivery ->> 'mode' as mode, o.total_cents as total,
              o.delivery ->> 'promisedFrom' as "from", o.delivery ->> 'promisedTo' as "to",
-             o.scheduled_for::text as scheduled_for, t.name as store_name,
+             o.scheduled_for::text as scheduled_for, t.name as store_name, t.slug, o.placed_at,
              s.hours ->> 'timezone' as tz
       from orders o
         join tenants t on t.id = o.tenant_id
@@ -211,6 +253,7 @@ async function orderFactsTx(
       where o.tenant_id = ${tenantId} and o.id = ${orderId}`
   )[0];
   if (!row) return null;
+  const links = orderLinks;
   return {
     storeName: row.store_name,
     firstName: firstName(row.name ?? ''),
@@ -221,6 +264,9 @@ async function orderFactsTx(
     promisedTo: row.to,
     scheduledFor: row.scheduled_for,
     timezone: row.tz || 'America/Sao_Paulo',
+    trackUrl: links
+      ? `${await storeOrigin(tx, { id: tenantId, slug: row.slug }, links.storeDomain)}/pedido/${orderId}?t=${links.token(tenantId, orderId, row.placed_at)}`
+      : null,
     phone: row.phone,
   };
 }

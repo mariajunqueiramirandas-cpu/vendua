@@ -76,6 +76,9 @@ export interface StoreProfile {
   /** Kernel 1.18 — the store's own assistant (the Vendedor) chats on the site: its name and how
    *  it introduces itself, in Core's words. null/absent = the merchant didn't turn it on. */
   chat?: { name: string; intro: string } | null;
+  /** Kernel 1.21 — the store sends one WhatsApp reminder about a bag left full, to a shopper who
+   *  ticked it at checkout (`api.cartReminder`). Absent = false. */
+  cartReminder?: boolean;
 }
 
 /** Kernel 1.18 — one message of the storefront chat. `core` = a card Core wrote (a summary, a
@@ -358,7 +361,13 @@ export interface CartItem {
   preorderLeadDays?: number;
   /** Kernel 1.12 — option quantities above 1, by modifier id */
   modifierQty?: Record<string, number>;
+  /** Kernel 1.21 — the shopper's note for this line ("sem cebola"); part of the line: the same
+   *  product with another note is another line. null/absent = none */
+  note?: string | null;
 }
+
+/** Kernel 1.21 — the longest note a line takes (Core's cap) */
+export const ITEM_NOTE_MAX = 140;
 
 export interface CartTotals {
   subtotalCents: number;
@@ -525,6 +534,8 @@ export interface ImportLine {
   /** Kernel 1.12 — option quantities (ids in `modifierIds` count as 1) */
   modifiers?: { id: string; qty?: number }[];
   comboSelections?: ComboSelection[];
+  /** Kernel 1.21 — the line's note (≤ 140) */
+  note?: string;
 }
 
 /** A phone's order, as `useOrders` sees it — no address, no other PII. */
@@ -693,6 +704,39 @@ export interface OrderItem {
   modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
   combo: { slotName: string; name: string; qty: number }[];
   lineTotalCents: number;
+  /** Kernel 1.21 — the shopper's note for this line */
+  note?: string | null;
+}
+
+/** Kernel 1.21 — an order read through the link in the store's WhatsApp updates
+ *  (`/pedido/:id?t=…`): where it stands and what was ordered. No customer, address, payment,
+ *  money or order notes — the device that placed it reads those (`Order`). */
+export interface OrderTracking {
+  statusOnly: true;
+  id: string;
+  number: number;
+  state: string;
+  storeName: string;
+  delivery: {
+    mode: 'pickup' | 'delivery';
+    promisedFrom: string | null;
+    promisedTo: string | null;
+    etaMin: number | null;
+    etaMax: number | null;
+  };
+  scheduledFor: string | null;
+  placedAt: string;
+  updatedAt: string;
+  /** the live cursor, as on `Order` */
+  version: number;
+  timeline: { at: string; to: string }[];
+  items: {
+    name: string;
+    qty: number;
+    modifiers: { name: string; qty: number }[];
+    combo: { slotName: string; name: string; qty: number }[];
+    note: string | null;
+  }[];
 }
 
 const SESSION_KEY = 'vendua.session';
@@ -765,6 +809,42 @@ function dropOrderToken(orderId: string) {
   if (!(orderId in m)) return;
   delete m[orderId];
   writeOrderTokens(m);
+}
+
+// Kernel 1.21: the status-only link credential of an order (`?t=` on the link the store's
+// WhatsApp sends), kept like the order tokens so a reload after the param is stripped still reads
+const TRACK_TOKENS_KEY = 'vendua.trackTokens';
+const TRACK_TOKEN_RE = /^vot\.[0-9a-f-]{36}\.\d{1,12}\.[A-Za-z0-9_-]{20,100}$/;
+
+function readTrackTokens(): Record<string, string> {
+  try {
+    return parseTokens(storageOf('localStorage')?.getItem(TRACK_TOKENS_KEY));
+  } catch {
+    return {};
+  }
+}
+
+function storeTrackToken(orderId: string, t: string) {
+  const m = readTrackTokens();
+  delete m[orderId];
+  m[orderId] = t;
+  for (const k of Object.keys(m).slice(0, -ORDER_TOKENS_MAX)) delete m[k];
+  try {
+    storageOf('localStorage')?.setItem(TRACK_TOKENS_KEY, JSON.stringify(m));
+  } catch {
+    /* private mode — the link works for this page */
+  }
+}
+
+function dropTrackToken(orderId: string) {
+  const m = readTrackTokens();
+  if (!(orderId in m)) return;
+  delete m[orderId];
+  try {
+    storageOf('localStorage')?.setItem(TRACK_TOKENS_KEY, JSON.stringify(m));
+  } catch {
+    /* private mode */
+  }
 }
 
 const CUSTOMER_TOKENS_KEY = 'vendua.customerTokens';
@@ -906,6 +986,15 @@ export function createApi(baseUrl = '') {
     return t ? { authorization: `Bearer ${t}` } : {};
   };
   const orderBearer = (id: string) => orderTokenMem.get(id) ?? readOrderTokens()[id] ?? current();
+  const trackTokenMem = new Map<string, string>();
+  const trackBearer = (id: string) => trackTokenMem.get(id) ?? readTrackTokens()[id];
+  const forgetTrack = (id: string) => (err: unknown) => {
+    if (err instanceof ApiError && [400, 401, 403, 404].includes(err.status)) {
+      trackTokenMem.delete(id);
+      dropTrackToken(id);
+    }
+    throw err;
+  };
   // a token Core refuses for this order (gone, or not this device's) is dropped quietly
   const forgetRefused = (id: string) => (err: unknown) => {
     if (err instanceof ApiError && [400, 401, 403, 404].includes(err.status)) {
@@ -984,6 +1073,8 @@ export function createApi(baseUrl = '') {
     modifierIds: string[] = [],
     comboSelections?: ComboSelection[],
     modifierQty?: Record<string, number>,
+    /** Kernel 1.21 — the line's note ("sem cebola"), ≤ 140 */
+    note?: string,
   ): Promise<{ cart: Cart; added?: AddedLine }> => {
     await ensureSessionNow();
     const modifiers = modifierIds
@@ -998,9 +1089,68 @@ export function createApi(baseUrl = '') {
         modifierIds,
         ...(modifiers.length ? { modifiers } : {}),
         ...(comboSelections?.length ? { comboSelections } : {}),
+        ...(note?.trim() ? { note: note.trim().slice(0, ITEM_NOTE_MAX) } : {}),
       }),
     });
     return res.added ? { cart: res.cart, added: res.added } : { cart: res.cart };
+  };
+
+  // Kernel 1.3 — SSE over fetch (the token rides as Bearer, which EventSource can't send)
+  const orderEvents = async <T>(
+    id: string,
+    bearer: string | null | undefined,
+    since: number,
+    onOrder: (order: T) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    let res: Response;
+    try {
+      res = await fetch(co(`/orders/${id}/events`), {
+        headers: {
+          accept: 'text/event-stream',
+          ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+          ...(since > 0 ? { 'last-event-id': String(since) } : {}),
+        },
+        ...(signal ? { signal } : {}),
+      });
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      throw new ApiError(0, 'NETWORK_ERROR', 'could not reach the store backend');
+    }
+    const type = res.headers.get('content-type') ?? '';
+    if (!res.ok || !res.body || !type.includes('text/event-stream')) {
+      const body = (await res.json().catch(() => ({}))) as ApiErrorBody;
+      // a Core without the route answers the generic NOT_FOUND — same as "no stream here"
+      const code = body?.error?.code;
+      throw new ApiError(
+        res.status,
+        res.ok || !code || code === 'NOT_FOUND' ? 'STREAM_UNAVAILABLE' : code,
+        body?.error?.message ?? 'no event stream',
+      );
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buf += dec.decode(value, { stream: true }).replace(/\r\n?/g, '\n');
+      for (let i = buf.indexOf('\n\n'); i >= 0; i = buf.indexOf('\n\n')) {
+        const frame = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        let event = 'message';
+        const data: string[] = [];
+        for (const line of frame.split('\n')) {
+          if (!line || line.startsWith(':')) continue;
+          const at = line.indexOf(':');
+          const field = at < 0 ? line : line.slice(0, at);
+          const v = at < 0 ? '' : line.slice(at + 1).replace(/^ /, '');
+          if (field === 'event') event = v;
+          else if (field === 'data') data.push(v);
+        }
+        if (event === 'order' && data.length) onOrder(JSON.parse(data.join('\n')) as T);
+      }
+    }
   };
 
   return {
@@ -1146,8 +1296,10 @@ export function createApi(baseUrl = '') {
       comboSelections?: ComboSelection[],
       /** Kernel 1.12 — units per option id (absent or 1 = one unit) */
       modifierQty?: Record<string, number>,
+      /** Kernel 1.21 — the line's note */
+      note?: string,
     ): Promise<Cart> {
-      return (await addLine(productId, qty, modifierIds, comboSelections, modifierQty)).cart;
+      return (await addLine(productId, qty, modifierIds, comboSelections, modifierQty, note)).cart;
     },
     /** Kernel 1.14 — `addItem` with Core's `added` (what this call added, priced by Core) */
     addLine,
@@ -1181,6 +1333,27 @@ export function createApi(baseUrl = '') {
         headers: { ...auth(), 'idempotency-key': idemKey() },
         body: JSON.stringify({ qty }),
       }).then((r) => r.cart),
+    /** Kernel 1.21 — a line's note ('' clears it); a line that then matches another (same
+     *  product, options and note) folds into it */
+    setItemNote: (itemId: string, note: string) =>
+      apiFetch<{ cart: Cart }>(co(`/cart/items/${itemId}`), {
+        method: 'PATCH',
+        headers: { ...auth(), 'idempotency-key': idemKey() },
+        body: JSON.stringify({ note: note.trim().slice(0, ITEM_NOTE_MAX) }),
+      }).then((r) => r.cart),
+    /** Kernel 1.21 — "me lembre pelo WhatsApp": consent to one reminder about this bag, from
+     *  the store's number (only when `StoreProfile.cartReminder`). 409 REMINDER_OFF, 422
+     *  INVALID_PHONE */
+    cartReminder: (input: { phone: string; name?: string }) =>
+      cartPost<{ reminder: { on: boolean } }>('/cart/reminder', {
+        phone: input.phone,
+        ...(input.name?.trim() ? { name: input.name.trim().slice(0, 80) } : {}),
+      }).then((r) => r.reminder),
+    /** Kernel 1.21 — withdraws that consent */
+    cancelCartReminder: () =>
+      cartPost<{ reminder: { on: boolean } }>('/cart/reminder', undefined, 'DELETE').then(
+        (r) => r.reminder,
+      ),
     removeItem: (itemId: string) =>
       apiFetch<{ cart: Cart }>(co(`/cart/items/${itemId}`), {
         method: 'DELETE',
@@ -1304,62 +1477,12 @@ export function createApi(baseUrl = '') {
      *  EventSource can't send). Calls `onOrder` per `order` event; resolves when
      *  Core closes the stream (terminal state or lifetime), throws
      *  STREAM_UNAVAILABLE when there's no event stream to read. */
-    orderStream: async (
+    orderStream: (
       id: string,
       since: number,
       onOrder: (order: Order) => void,
       signal?: AbortSignal,
-    ): Promise<void> => {
-      const bearer = orderBearer(id);
-      let res: Response;
-      try {
-        res = await fetch(co(`/orders/${id}/events`), {
-          headers: {
-            accept: 'text/event-stream',
-            ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
-            ...(since > 0 ? { 'last-event-id': String(since) } : {}),
-          },
-          ...(signal ? { signal } : {}),
-        });
-      } catch (err) {
-        if (signal?.aborted) throw err;
-        throw new ApiError(0, 'NETWORK_ERROR', 'could not reach the store backend');
-      }
-      const type = res.headers.get('content-type') ?? '';
-      if (!res.ok || !res.body || !type.includes('text/event-stream')) {
-        const body = (await res.json().catch(() => ({}))) as ApiErrorBody;
-        // a Core without the route answers the generic NOT_FOUND — same as "no stream here"
-        const code = body?.error?.code;
-        throw new ApiError(
-          res.status,
-          res.ok || !code || code === 'NOT_FOUND' ? 'STREAM_UNAVAILABLE' : code,
-          body?.error?.message ?? 'no event stream',
-        );
-      }
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = '';
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) return;
-        buf += dec.decode(value, { stream: true }).replace(/\r\n?/g, '\n');
-        for (let i = buf.indexOf('\n\n'); i >= 0; i = buf.indexOf('\n\n')) {
-          const frame = buf.slice(0, i);
-          buf = buf.slice(i + 2);
-          let event = 'message';
-          const data: string[] = [];
-          for (const line of frame.split('\n')) {
-            if (!line || line.startsWith(':')) continue;
-            const at = line.indexOf(':');
-            const field = at < 0 ? line : line.slice(0, at);
-            const v = at < 0 ? '' : line.slice(at + 1).replace(/^ /, '');
-            if (field === 'event') event = v;
-            else if (field === 'data') data.push(v);
-          }
-          if (event === 'order' && data.length) onOrder(JSON.parse(data.join('\n')) as Order);
-        }
-      }
-    },
+    ): Promise<void> => orderEvents(id, orderBearer(id), since, onOrder, signal),
     /** Kernel 1.2 — long poll: resolves when the order moves past `since` or after `waitS` */
     orderWait: (id: string, since: number, waitS = 25, signal?: AbortSignal) => {
       const bearer = orderBearer(id);
@@ -1371,6 +1494,41 @@ export function createApi(baseUrl = '') {
         },
       );
     },
+    /** Kernel 1.21 — keep an order's status-only link credential (`?t=` of `/pedido/:id`, which
+     *  `VenduaProvider` reads and strips); a malformed one is ignored */
+    addTrackingToken: (orderId: string, token: string): boolean => {
+      if (!/^[0-9a-f-]{36}$/.test(orderId) || !TRACK_TOKEN_RE.test(token)) return false;
+      trackTokenMem.set(orderId, token);
+      storeTrackToken(orderId, token);
+      return true;
+    },
+    /** Kernel 1.21 — true when this device reads the order only through its tracking link (it
+     *  holds no order token for it): `useOrder` then reads `orderStatus` */
+    tracksOnly: (orderId: string): boolean =>
+      !orderTokenMem.has(orderId) &&
+      !(orderId in readOrderTokens()) &&
+      trackBearer(orderId) !== undefined,
+    /** Kernel 1.21 — the order through its tracking link: status and items, nothing personal */
+    orderStatus: (id: string) =>
+      apiFetch<{ order: OrderTracking }>(co(`/orders/${id}`), {
+        headers: { authorization: `Bearer ${trackBearer(id) ?? ''}` },
+      }).then((r) => r.order, forgetTrack(id)),
+    /** Kernel 1.21 — `orderWait` through the tracking link */
+    orderStatusWait: (id: string, since: number, waitS = 25, signal?: AbortSignal) =>
+      apiFetch<{ order: OrderTracking; changed: boolean }>(
+        co(`/orders/${id}?since=${since}&wait=${waitS}`),
+        {
+          headers: { authorization: `Bearer ${trackBearer(id) ?? ''}` },
+          ...(signal ? { signal } : {}),
+        },
+      ),
+    /** Kernel 1.21 — `orderStream` through the tracking link */
+    orderStatusStream: (
+      id: string,
+      since: number,
+      onStatus: (order: OrderTracking) => void,
+      signal?: AbortSignal,
+    ): Promise<void> => orderEvents(id, trackBearer(id), since, onStatus, signal),
   };
 }
 
@@ -1499,6 +1657,9 @@ export const ERROR_CODES = [
   'EMAIL_FETCH_FAILED',
   // Kernel 1.18 — the store has no storefront chat (off, or turned off since the page loaded)
   'CHAT_UNAVAILABLE',
+  // Kernel 1.21 — the bag reminder: the store doesn't offer it; the phone isn't one
+  'REMINDER_OFF',
+  'INVALID_PHONE',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

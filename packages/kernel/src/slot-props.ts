@@ -10,6 +10,7 @@ import type {
   NoticeAction,
   Order,
   OrderItem,
+  OrderTracking,
   ProductDetail,
   StoreProfile,
   CatalogProduct,
@@ -249,6 +250,10 @@ export interface SlotProps {
     max?: number;
     onQty: (qty: number) => void;
     onRemove: () => void;
+    /** Kernel 1.21 — set the line's note (`item.note`; '' clears it), up to `noteMax`
+     *  characters. Present where the bag can be edited; the line may fold into an identical one */
+    onNote?: (note: string) => void;
+    noteMax?: number;
   } & StoreWords;
   'order.StatusPage': {
     order: Order;
@@ -258,6 +263,17 @@ export interface SlotProps {
     pickup?: { address: string | null; instructions: string | null };
   } & StoreTime;
   'order.Timeline': { events: Order['timeline'] } & StoreTime;
+  /** Kernel 1.21 — the order page opened from the link in the store's WhatsApp updates, on a
+   *  device that didn't place it: where the order stands and what was ordered — nothing about
+   *  the shopper, the address or the payment, and no money */
+  'order.TrackingPage': {
+    order: OrderTracking;
+    /** the `order.Timeline` slot, rendered */
+    timeline: ReactNode;
+    /** the store's pickup address/instructions, for pickup orders */
+    pickup?: { address: string | null; instructions: string | null };
+  } & StoreTime &
+    StoreWords;
   'store.HoursTable': { hours: StoreProfile['hours']; status?: StoreProfile['status'] };
   'catalog.ProductCard': {
     product: CatalogProduct;

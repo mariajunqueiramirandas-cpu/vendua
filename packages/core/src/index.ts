@@ -31,6 +31,8 @@ import { startFleetJobs } from './modules/fleet/jobs.ts';
 import { startMenuImportJobs } from './modules/menu-import/jobs.ts';
 import { startWebAnalyticsJobs } from './modules/web-analytics.ts';
 import { startStoreWhatsappWatch } from './store-whatsapp/watch.ts';
+import { configureOrderLinks } from './store-whatsapp/messages.ts';
+import { orderTrackToken } from './modules/orders.ts';
 import { onUnhandledError } from './platform/http.ts';
 import { StoreReadCache } from './platform/read-cache.ts';
 import { recordBoot, unhandledErrorReporter } from './modules/system-events.ts';
@@ -124,6 +126,12 @@ const stopMenuImportJobs = startMenuImportJobs({ sql: jobsSql });
 const stopWebAnalyticsJobs = startWebAnalyticsJobs(jobsSql);
 // stores' own WhatsApp runs in the wa-gateway process (ADR 0026); Core only watches it beat
 const stopStoreWhatsappWatch = startStoreWhatsappWatch(jobsSql);
+// each order message ends with the order's status-only link, signed like the cart sessions
+configureOrderLinks({
+  storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+  token: (tenantId, orderId, placedAt) =>
+    orderTrackToken(sessionSecret, tenantId, orderId, placedAt),
+});
 
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
 const stopPushNotifier = startPushNotifier(jobsSql, adminHub);

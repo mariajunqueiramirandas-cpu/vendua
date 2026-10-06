@@ -10,6 +10,7 @@ const STOREFRONT_MODULES = [
   'platform/tenancy.ts',
   'modules/cart.ts',
   'modules/cart-share.ts',
+  'modules/cart-reminder.ts',
   'modules/cart-ops.ts',
   'modules/catalog.ts',
   'modules/catalog-search.ts',

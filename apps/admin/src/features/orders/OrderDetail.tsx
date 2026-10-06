@@ -137,6 +137,16 @@ export function OrderDetail({
                     ))}
                   </ul>
                 ) : null}
+                {i.note ? (
+                  <p className="t-body mt-0.5 flex items-start gap-1.5 font-semibold">
+                    <NotePencil
+                      weight="bold"
+                      className="mt-0.5 size-4 shrink-0 text-warning"
+                      aria-label="Observação"
+                    />
+                    <span className="min-w-0 break-words">{i.note}</span>
+                  </p>
+                ) : null}
               </div>
               <span className="tnum t-body shrink-0">{money(i.lineTotalCents)}</span>
             </li>

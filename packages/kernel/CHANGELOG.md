@@ -31,6 +31,15 @@ Shopper conveniences — additive; no storefront edit. Every figure shown is sti
 - New block `sdk:recent-order` (`recentOrder`): "Acompanhar pedido" / "Pedir de novo" for the
   device's last order; template migration `2026-10-recent-order-on-home`.
 - Order page: "Falar com a loja" (WhatsApp) always there; the state in the tab title.
+- The link in the store's WhatsApp updates (`/pedido/:id?t=…`): the provider keeps the
+  status-only credential and strips it; `useOrder` answers `tracking` (`OrderTracking`) on a device
+  without the order's own token; new slot `order.TrackingPage`; api `addTrackingToken`,
+  `tracksOnly`, `orderStatus`, `orderStatusWait`, `orderStatusStream`.
+- A note per line ("sem cebola", ≤ 140): `CartItem.note`, `OrderItem.note`, `ImportLine.note`;
+  `add`/`addLine`/`AddToCart` take it, `mutations.setNote`; "Alguma observação?" on
+  `sdk:purchase-panel` (`showNote`); `cart.LineItem` `onNote`/`noteMax`, edited in the bag.
+- The bag reminder opt-in at checkout (`StoreProfile.cartReminder`, `api.cartReminder`,
+  `api.cancelCartReminder`); `ERROR_CODES` gain `REMINDER_OFF` and `INVALID_PHONE`.
 - `sdk:catalog-grid` `categoryNav: 'jump'` — sticky category links with scroll-spy (default
   `filter`; `DEFAULT_TEMPLATES` use `jump`).
 - `sdk:purchase-panel` "Compartilhar" (`showShare`): the share sheet, else the copied link.

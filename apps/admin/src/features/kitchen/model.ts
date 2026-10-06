@@ -153,7 +153,7 @@ export const itemMatches = (i: KitchenItem, key: string) =>
 /** what the voice says when a ticket lands: "Pedido 128. 2 X-Burger, sem cebola. 1 batata." */
 export function spoken(t: KitchenTicket, s: StationPick) {
   const parts = itemsFor(t, s).mine.map((i) => {
-    const mods = i.modifiers.map((m) => m.name).join(', ');
+    const mods = [...i.modifiers.map((m) => m.name), ...(i.note ? [i.note] : [])].join(', ');
     return `${i.qty} ${i.name}${mods ? `, ${mods}` : ''}`;
   });
   return `Pedido ${t.number}. ${parts.join('. ')}.`;

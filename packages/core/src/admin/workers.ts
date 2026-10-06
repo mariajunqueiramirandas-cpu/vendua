@@ -1,5 +1,6 @@
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
+import { cartReminderPass } from '../modules/cart-reminder.ts';
 import { setStock } from '../modules/stock.ts';
 import { wakeStoreWaitlist } from '../modules/storefront-platform.ts';
 import { maskPhone } from '../vendedor/threads.ts';
@@ -562,6 +563,10 @@ export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
     // "avise-me quando abrir": the store opened (hours or a resume) — its subscribers, once
     await withTenant(sql, t.id, (tx) => wakeStoreWaitlist(tx, t.id)).catch((err) =>
       workLog.warn({ err, tenantId: t.id }, 'store waitlist wake failed'),
+    );
+    // the bag reminder a shopper asked for at checkout, an hour after they stopped
+    await cartReminderPass(sql, t.id).catch((err) =>
+      workLog.warn({ err, tenantId: t.id }, 'bag reminder pass failed'),
     );
   }
 }

@@ -27,7 +27,7 @@ const stateWord = (state: string) =>
   capitalize((ORDER_STATE_LABEL[state] ?? state).replace(/^Pedido /, ''));
 import { Slot } from '../slot.tsx';
 import { KLink } from '../sdk/sections.tsx';
-import { KERNEL_PATHS } from '../config.ts';
+import { KERNEL_PATHS, resolvePaths } from '../config.ts';
 import { errorCode, errorCopy, showError, showInfo } from '../errors.ts';
 import { useNavigateTo } from '../primitives.tsx';
 import type { CardPaymentInput, ImportReport, Order, PaymentNext, StoreProfile } from '../api.ts';
@@ -346,16 +346,19 @@ export function OrderPage() {
   const { id = '' } = useParams();
   const { search } = useLocation();
   // live: the Kernel holds a long poll open while the tab is visible (Kernel 1.2)
-  const { order, loading, error, refetch } = useOrder(id);
+  // Kernel 1.21: opened from the store's WhatsApp link on another device, `tracking` (status only)
+  const { order, tracking, loading, error, refetch } = useOrder(id);
   const { store } = useStore();
   const { vocabulary } = useCopy();
   const { reorder, pending } = useReorder();
+  const { config } = useKernel();
   const currency = store?.currency ?? 'BRL';
   const timeZone = store?.hours.timezone || undefined;
   const time = timeZone ? { timeZone } : {};
+  const shown = order ?? tracking;
   // Kernel 1.21: the state in the tab title ("Pedido #12 · Em preparo · Loja"), live
-  usePageTitle(order ? `Pedido #${order.number} · ${stateWord(order.state)}` : null);
-  const talk = order ? whatsappUrl(store?.whatsapp, `Oi! Sobre o pedido #${order.number}.`) : null;
+  usePageTitle(shown ? `Pedido #${shown.number} · ${stateWord(shown.state)}` : null);
+  const talk = shown ? whatsappUrl(store?.whatsapp, `Oi! Sobre o pedido #${shown.number}.`) : null;
   const params = new URLSearchParams(search);
   const isNew = params.has('novo');
   const online = useOnlinePayment(order, store, params);
@@ -370,8 +373,50 @@ export function OrderPage() {
 
   return (
     <main id="main" className="v-page" data-vendua-page="order">
-      {loading && !order ? (
+      {loading && !shown ? (
         <OrderSkeleton />
+      ) : tracking && !order ? (
+        <>
+          <Slot
+            name="order.TrackingPage"
+            order={tracking}
+            vocabulary={vocabulary}
+            {...time}
+            timeline={
+              <Slot
+                name="order.Timeline"
+                events={tracking.timeline.map((e, i) => ({
+                  at: e.at,
+                  from: tracking.timeline[i - 1]?.to ?? null,
+                  to: e.to,
+                  actor: '',
+                  meta: {},
+                }))}
+                {...time}
+              />
+            }
+            {...(tracking.delivery.mode === 'pickup' && store?.pickup
+              ? { pickup: store.pickup }
+              : {})}
+          />
+          <p className="v-section-cta v-order-actions" data-part="actions">
+            {talk ? (
+              <a
+                href={talk}
+                className="v-btn v-btn-ghost"
+                data-vendua="order-whatsapp"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Falar com a loja
+                <span className="v-sr"> no WhatsApp (abre em outra aba)</span>
+              </a>
+            ) : null}
+            <KLink href={resolvePaths(config).catalog} className="v-btn v-btn-ghost">
+              Ver o cardápio
+            </KLink>
+          </p>
+        </>
       ) : !order ? (
         <Slot
           name="system.ErrorFallback"
