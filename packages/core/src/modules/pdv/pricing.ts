@@ -72,9 +72,18 @@ export function parseLines(v: unknown): CartItemIn[] {
       throw bad('BAD_REQUEST', 'productId must be a uuid', { field: 'productId', line });
     if (!Number.isInteger(raw.qty) || (raw.qty as number) < 1 || (raw.qty as number) > 99)
       throw bad('INVALID_QTY', 'qty must be an integer between 1 and 99', { field: 'qty', line });
-    const modifiers = raw.modifiers ?? [];
-    if (!Array.isArray(modifiers) || modifiers.length > 64)
+    const list = raw.modifiers ?? [];
+    if (!Array.isArray(list) || list.length > 64)
       throw bad('INVALID_MODIFIER', 'modifiers must be a list (at most 64)', { line });
+    const modifiers = list.map((m) => {
+      const id = isObj(m) ? m.id : undefined;
+      const qty = isObj(m) && m.qty !== undefined ? m.qty : 1;
+      if (typeof id !== 'string' || id.length < 1 || id.length > 64)
+        throw bad('INVALID_MODIFIER', 'a modifier needs its id', { line });
+      if (!Number.isInteger(qty) || (qty as number) < 1 || (qty as number) > 99)
+        throw bad('INVALID_MODIFIER', 'a modifier qty must be an integer 1–99', { line });
+      return { id, qty: qty as number };
+    });
     const combo = raw.comboSelections ?? [];
     if (!Array.isArray(combo) || combo.length > 64)
       throw bad('INVALID_COMBO', 'comboSelections must be a list (at most 64)', { line });
@@ -87,7 +96,7 @@ export function parseLines(v: unknown): CartItemIn[] {
     return {
       productId: raw.productId.toLowerCase(),
       qty: raw.qty as number,
-      modifiers: modifiers as NonNullable<CartItemIn['modifiers']>,
+      modifiers,
       comboSelections: combo as NonNullable<CartItemIn['comboSelections']>,
       note,
     };

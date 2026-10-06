@@ -406,6 +406,43 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     expect(again.status).toBe(409);
   });
 
+  test('no 500 on bad options, no second charge, no overpaid comanda', async () => {
+    const bad = await attendant('POST', '/pdv/quote', {
+      lines: [{ productId: burger, qty: 1, modifiers: [null] }],
+    });
+    expect(bad.status).toBe(422);
+    // the caixa holds a PDV payment: Pedidos can't unmark it for a second charge
+    const unmark = await owner('POST', `/orders/${saleOrder}/payment`, { status: 'pending' });
+    expect(unmark.status).toBe(409);
+    const open = await attendant('POST', '/pdv/tabs', { label: 'Comanda 7' });
+    const id = open.body.tab.id;
+    const r1 = await attendant('POST', `/pdv/tabs/${id}/rounds`, {
+      lines: [{ productId: burger, qty: 1 }],
+    });
+    await attendant('POST', `/pdv/tabs/${id}/rounds`, { lines: [{ productId: burger, qty: 1 }] });
+    const paid = await attendant('POST', `/pdv/tabs/${id}/payments`, {
+      method: 'pix',
+      amountCents: 1500,
+    });
+    expect(paid.body.tab.remainingCents).toBe(700);
+    const discount = { kind: 'fixed', value: 1000, reason: 'cortesia' };
+    expect((await owner('PATCH', `/pdv/tabs/${id}`, { discount })).status).toBe(422);
+    await owner('POST', `/orders/${r1.body.orderId}/transition`, {
+      to: 'cancelled',
+      reason: 'lançou errado',
+    });
+    const close = await attendant('POST', `/pdv/tabs/${id}/close`);
+    expect(close.status).toBe(409);
+    expect(close.body.error.code).toBe('TAB_OVERPAID');
+    // the difference goes back: void, then take what it owes (1000 + 10%)
+    await owner('POST', `/pdv/payments/${paid.body.payment.id}/void`, { reason: 'devolveu' });
+    const last = await attendant('POST', `/pdv/tabs/${id}/payments`, {
+      method: 'cash',
+      amountCents: 1100,
+    });
+    expect(last.body.tab).toMatchObject({ status: 'closed', serviceCents: 100 });
+  });
+
   test('a cancelled counter sale takes its money out of the open caixa', async () => {
     const r = await owner('POST', `/orders/${saleOrder}/transition`, {
       to: 'cancelled',
@@ -444,17 +481,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     const blind = await attendant('GET', '/pdv/caixa');
     expect(blind.body.caixa.expected).toBeNull();
     const seen = await owner('GET', '/pdv/caixa');
-    // float 100,00 + the storefront order's 15,00 − 5,00 + 2,00; the cancelled sale's left
+    // float 100,00 + the storefront order's 15,00 + Comanda 7's 11,00 − 5,00 + 2,00; the
+    // cancelled sale's left
     expect(seen.body.caixa.expected).toEqual({
-      cash: 11_200,
+      cash: 12_300,
       pix: 0,
       credit: 2200,
       debit: 600,
       voucher: 0,
     });
-    expect(seen.body.caixa.serviceCents).toBe(200);
+    expect(seen.body.caixa.serviceCents).toBe(300);
     const close = await attendant('POST', '/pdv/caixa/close', {
-      counted: { cash: 11_000, credit: 2200, debit: 600 },
+      counted: { cash: 12_100, credit: 2200, debit: 600 },
       notes: 'faltou troco',
     });
     expect(close.status).toBe(200);
@@ -468,7 +506,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     const hist = await owner('GET', '/pdv/caixa/history');
     expect(hist.body.sessions[0]).toMatchObject({ differenceCents: -200, closedBy: 'Caio' });
     const one = await owner('GET', `/pdv/caixa/${close.body.report.id}`);
-    expect(one.body.report.counted.cash).toBe(11_000);
+    expect(one.body.report.counted.cash).toBe(12_100);
     expect((await attendant('GET', '/pdv/caixa')).body.caixa).toBeNull();
   });
 

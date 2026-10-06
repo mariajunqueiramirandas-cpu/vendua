@@ -332,7 +332,16 @@ export function mountPdv(d: AdminDeps) {
         throw new HttpError(409, 'PAYMENT_ONLINE', 'Mercado Pago confirms this payment');
       if (cur.tab_id)
         throw new HttpError(409, 'ORDER_ON_TAB', 'this order is paid with its comanda');
-      if (cur.payment.status === 'paid' || cur.state === 'cancelled' || cur.state === 'refunded')
+      // a payment the caixa already holds, even if Pedidos unmarked it since, is not taken twice
+      const [held] = await tx<{ n: number }[]>`
+        select count(*)::int as n from pdv_payments
+        where tenant_id = ${t.id} and order_id = ${id} and voided_at is null`;
+      if (
+        cur.payment.status === 'paid' ||
+        held!.n > 0 ||
+        cur.state === 'cancelled' ||
+        cur.state === 'refunded'
+      )
         throw new HttpError(409, 'ALREADY_PAID', 'this order has nothing left to pay', {
           state: cur.state,
         });
@@ -507,6 +516,16 @@ export function mountPdv(d: AdminDeps) {
                  where tenant_id = ${t.id} and id = ${id}`;
         changes.push(discount ? `deu desconto (${discount.reason})` : 'tirou o desconto');
       }
+      if (body.discount !== undefined || body.serviceFee !== undefined) {
+        // a smaller bill never leaves the comanda paid beyond it
+        const after = await tabDetail(tx, t.id, id);
+        if (after.remainingCents < 0)
+          throw new HttpError(422, 'TAB_OVERPAID', 'the comanda has been paid more than that', {
+            field: body.discount !== undefined ? 'discount' : 'serviceFee',
+            paidCents: after.paidCents,
+            totalCents: after.totalCents,
+          });
+      }
       if (body.customerName !== undefined) {
         const name = optText(body.customerName, 'customerName', 80) ?? null;
         await tx`update pdv_tabs set customer_name = ${name} where tenant_id = ${t.id} and id = ${id}`;
@@ -588,10 +607,17 @@ export function mountPdv(d: AdminDeps) {
       const tab = await lockTab(tx, t.id, id);
       assertOpen(tab);
       const detail = await tabDetail(tx, t.id, id);
-      if (detail.remainingCents > 0)
-        throw new HttpError(409, 'TAB_UNPAID', 'the comanda still owes', {
-          remainingCents: detail.remainingCents,
-        });
+      // an overpaid comanda (a round cancelled after paying) gives the difference back first:
+      // void a payment and take the right amount
+      if (detail.remainingCents !== 0)
+        throw new HttpError(
+          409,
+          detail.remainingCents > 0 ? 'TAB_UNPAID' : 'TAB_OVERPAID',
+          detail.remainingCents > 0
+            ? 'the comanda still owes'
+            : 'the comanda was paid more than it owes',
+          { remainingCents: detail.remainingCents },
+        );
       await closeTabTx(tx, t.id, detail, m.name);
       await Promise.all([
         audit(tx, t.id, m, {
@@ -649,23 +675,30 @@ export function mountPdv(d: AdminDeps) {
       const body = await bodyOf(c, 2 * 1024);
       const reason = text(body.reason, 'reason', 200, 1);
       await gate(tx, t.id);
-      const [pay] = await tx<
-        { tab_id: string | null; amount_cents: number; voided_at: Date | null; open: boolean }[]
-      >`
-        select p.tab_id, p.amount_cents, p.voided_at, s.closed_at is null as open
-        from pdv_payments p join cash_sessions s on s.id = p.session_id
-        where p.tenant_id = ${t.id} and p.id = ${id}
-      `;
-      if (!pay) throw new HttpError(404, 'PAYMENT_NOT_FOUND', 'payment not found');
-      if (!pay.tab_id || pay.voided_at || !pay.open)
-        throw new HttpError(
-          409,
-          'PAYMENT_LOCKED',
-          'only a payment on an open comanda, in the open caixa, can be voided',
-        );
-      const tab = await lockTab(tx, t.id, pay.tab_id);
-      if (tab.status !== 'open')
-        throw new HttpError(409, 'PAYMENT_LOCKED', 'the comanda is closed');
+      const payRow = () =>
+        tx<
+          {
+            tab_id: string | null;
+            session_id: string;
+            amount_cents: number;
+            voided_at: Date | null;
+          }[]
+        >`
+          select tab_id, session_id, amount_cents, voided_at from pdv_payments
+          where tenant_id = ${t.id} and id = ${id}
+        `.then((rows) => rows[0]);
+      const first = await payRow();
+      if (!first) throw new HttpError(404, 'PAYMENT_NOT_FOUND', 'payment not found');
+      const locked = (why: string) => new HttpError(409, 'PAYMENT_LOCKED', why);
+      if (!first.tab_id) throw locked('only a payment on a comanda can be voided');
+      // the comanda, then the caixa (held so it can't close under the void), as payments do
+      const tab = await lockTab(tx, t.id, first.tab_id);
+      if (tab.status !== 'open') throw locked('the comanda is closed');
+      const caixa = await openCaixaRow(tx, t.id, 'share');
+      const pay = (await payRow())!;
+      if (pay.voided_at) throw locked('this payment is already voided');
+      if (!caixa || caixa.id !== pay.session_id)
+        throw locked('its caixa is closed: the money was counted');
       await tx`
         update pdv_payments set voided_at = now(), voided_by = ${m.name}, void_reason = ${reason}
         where tenant_id = ${t.id} and id = ${id}

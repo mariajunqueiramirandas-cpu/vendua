@@ -504,13 +504,18 @@ export async function transitionOrder(
   ]);
   if (to === 'cancelled') {
     await restoreStock(tx, tenantId, orderId);
-    // a counter sale's money leaves the drawer with it, while its caixa is still open
-    await tx`
-      update pdv_payments set voided_at = now(), voided_by = ${String(meta.by ?? actor).slice(0, 80)},
-        void_reason = 'pedido cancelado'
-      where tenant_id = ${tenantId} and order_id = ${orderId} and voided_at is null
-        and session_id in (select id from cash_sessions where tenant_id = ${tenantId} and closed_at is null)
+    // a counter sale's money leaves the drawer with it, while its caixa is still open (held, so
+    // it can't close in between and lose the void from what it counted)
+    const [caixa] = await tx<{ id: string }[]>`
+      select id from cash_sessions where tenant_id = ${tenantId} and closed_at is null for share
     `;
+    if (caixa)
+      await tx`
+        update pdv_payments set voided_at = now(), voided_by = ${String(meta.by ?? actor).slice(0, 80)},
+          void_reason = 'pedido cancelado'
+        where tenant_id = ${tenantId} and order_id = ${orderId} and voided_at is null
+          and session_id = ${caixa.id}
+      `;
   }
   if (to === 'delivered') await mintLoyaltyRewards(tx, tenantId, order.customer_phone);
   if (STAFF_STEPS.has(to))

@@ -727,6 +727,9 @@ export function mountOrders(d: AdminDeps) {
       if (!cur) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
       if (cur.payment.online)
         throw new HttpError(409, 'PAYMENT_ONLINE', 'Mercado Pago confirms this payment');
+      // the caixa holds it (ADR 0035): it changes there, by cancelling or voiding
+      if (cur.payment.provider === 'pdv')
+        throw new HttpError(409, 'PAYMENT_PDV', 'this payment was taken at the PDV');
       const patch =
         status === 'paid'
           ? { status, paidAt: new Date().toISOString(), confirmedBy: m.name }

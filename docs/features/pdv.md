@@ -162,14 +162,16 @@ interface TabDetail extends TabSummary {
 - `POST /pdv/tabs/:id/rounds` `{ lines, notes?, serveNow? }` → 201 `{ tab: TabDetail, orderId }`.
   The round goes to the kitchen and printers like any accepted order.
 - `PATCH /pdv/tabs/:id` `{ serviceFee?, tableId?, label?, customerName?, discount?: PdvDiscountIn | null }`
-  → `{ tab }`. Moving to a busy table is 409 `TABLE_BUSY`. `discount` needs a manager.
+  → `{ tab }`. Moving to a busy table is 409 `TABLE_BUSY`. `discount` needs a manager. A discount
+  or dropping the service that would leave the comanda paid beyond its total is 422 `TAB_OVERPAID`.
 - `POST /pdv/tabs/:id/payments` `PdvPaymentIn` → `{ tab: TabDetail, payment: PdvPayment }`.
   422 `OVERPAY` `{ remainingCents }` above what remains. When nothing remains, the comanda
   closes (`tab.status = 'closed'`), its orders are paid and delivered, and the table frees.
   Needs an open caixa.
-- `POST /pdv/tabs/:id/close` → `{ tab }`. Only when nothing remains (409 `TAB_UNPAID`
-  `{ remainingCents }`); for a comanda whose rounds were all cancelled, or that a cancelled round
-  left overpaid.
+- `POST /pdv/tabs/:id/close` → `{ tab }`. Only when exactly nothing remains: 409 `TAB_UNPAID`
+  `{ remainingCents }` while it owes, 409 `TAB_OVERPAID` when a round cancelled after paying left
+  it paid beyond its total (void a payment and take the right amount). For a comanda whose
+  rounds were all cancelled before any payment.
 - `POST /pdv/tabs/:id/cancel` `{ reason }` → `{ tab }`. Manager. Only without payments (409
   `TAB_HAS_PAYMENTS`); cancels its open rounds.
 - `POST /pdv/payments/:id/void` `{ reason }` → `{ tab }`. Manager. Only on an open comanda (409
@@ -236,6 +238,8 @@ totalCents, differenceCents }[] }` (closed ones, newest first; `differenceCents`
   (the table's label, or null at the counter) and `delivery.tabId`.
 - These orders have `source = 'pdv'` in the database; the admin tells them apart by
   `payment.provider === 'pdv'`.
+- `POST /orders/:id/payment` (mark paid/unpaid by hand) answers 409 `PAYMENT_PDV` for these: the
+  caixa holds the payment.
 - `payment.provider` is `'pdv'`. `payment.method` is a `PdvMethod`, `'mixed'` (several
   methods; `payment.pdv` lists them as `{ method, cents }`) or `'tab'` (paid with its comanda).
 
