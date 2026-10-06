@@ -1,0 +1,480 @@
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
+import postgres from 'postgres';
+import { createApp } from '../src/app.ts';
+import { discountCents, serviceCents, splitShares } from '../src/modules/pdv/pricing.ts';
+import { migrate } from '../src/platform/db.ts';
+
+describe('pdv money helpers', () => {
+  test('discounts never exceed what they discount; percent rounds', () => {
+    expect(discountCents({ kind: 'fixed', value: 5000, reason: 'x' }, 3000)).toBe(3000);
+    expect(discountCents({ kind: 'percent', value: 1000, reason: 'x' }, 3605)).toBe(361);
+    expect(discountCents(null, 3000)).toBe(0);
+    expect(serviceCents(1000, 2005)).toBe(201);
+    expect(serviceCents(0, 2000)).toBe(0);
+  });
+  test('shares add up to the whole, leftovers on the first', () => {
+    expect(splitShares(2200, 3)).toEqual([734, 733, 733]);
+    expect(splitShares(0, 2)).toEqual([0, 0]);
+    expect(splitShares(10, 4).reduce((a, b) => a + b, 0)).toBe(10);
+  });
+});
+
+// The PDV (ADR 0035): the caixa, counter sales, comandas on tables, payments into the caixa.
+describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
+  const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
+  const appSql = process.env.TEST_APP_DATABASE_URL
+    ? postgres(process.env.TEST_APP_DATABASE_URL, { onnotice: () => {} })
+    : sql;
+  const codes = new Map<string, string>();
+  const app = createApp({
+    sql: appSql,
+    sessionSecret: 's',
+    controlSecret: 'ctl',
+    autoDrain: false,
+    cepLookup: async () => null,
+    storeDomain: 'vendua.test',
+    otpSender: async (phone, text) => {
+      codes.set(phone, /(\d{6})/.exec(text)![1]!);
+    },
+  });
+  const nonce = crypto.randomUUID().slice(0, 8);
+  const slug = `pdv-${nonce}`;
+  const stamp = String(Date.now()).slice(-7);
+  const ownerPhone = `2185${stamp}`;
+  const attendantPhone = `2186${stamp}`;
+  const mirimPhone = `2187${stamp}`;
+  let tenantId = '';
+  let mirimTenant = '';
+  let burger = '';
+  let coke = '';
+  let bacon = '';
+  let idem = 0;
+
+  const call = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) => {
+    const res = await app.request(`http://core.localhost${path}`, {
+      method,
+      headers: {
+        host: 'core.localhost',
+        'content-type': 'application/json',
+        ...(method === 'GET'
+          ? {}
+          : { 'idempotency-key': `${nonce}-${++idem}`, 'x-vendua-admin': '1' }),
+        ...headers,
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+    const ct = res.headers.get('content-type') ?? '';
+    return {
+      status: res.status,
+      body: (ct.includes('json') ? await res.json() : await res.text()) as any,
+      cookie: res.headers.get('set-cookie'),
+    };
+  };
+  const signIn = async (phone: string) => {
+    await call('POST', '/admin/v1/auth/otp/start', { phone });
+    const r = await call('POST', '/admin/v1/auth/otp/verify', { phone, code: codes.get(phone) });
+    expect(r.body.signedIn).toBe(true);
+    return `vendua_admin=${/vendua_admin=([^;]+)/.exec(r.cookie ?? '')![1]!}`;
+  };
+  let ownerCookie = '';
+  let attendantCookie = '';
+  let mirimCookie = '';
+  const owner = (method: string, path: string, body?: unknown) =>
+    call(method, `/admin/v1${path}`, body, { cookie: ownerCookie });
+  const attendant = (method: string, path: string, body?: unknown) =>
+    call(method, `/admin/v1${path}`, body, { cookie: attendantCookie });
+
+  beforeAll(async () => {
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    const store = async (s: string, plan: string | null) => {
+      const id = (
+        await sql<{ id: string }[]>`
+          insert into tenants (slug, name) values (${s}, ${'Loja ' + s}) returning id
+        `
+      )[0]!.id;
+      if (plan) await sql`update tenants set plan = ${plan} where id = ${id}`;
+      await sql`
+        insert into store_settings (tenant_id, hours, prep_time_minutes, min_order_cents, currency, vocabulary,
+                                    pix_key, pix_key_type, pix_beneficiary, pix_city)
+        values (${id}, ${sql.json({ timezone: 'America/Sao_Paulo', windows: [] })}, 20, 0, 'BRL', ${sql.json({})},
+                'loja@example.com', 'email', 'Loja Teste', 'Niteroi')
+      `;
+      return id;
+    };
+    tenantId = await store(slug, null);
+    mirimTenant = await store(`${slug}-m`, 'mirim');
+    await sql`insert into merchant_users (tenant_id, name, phone, role) values (${tenantId}, 'Rita', ${ownerPhone}, 'owner')`;
+    await sql`insert into merchant_users (tenant_id, name, phone, role) values (${tenantId}, 'Caio', ${attendantPhone}, 'attendant')`;
+    await sql`insert into merchant_users (tenant_id, name, phone, role) values (${mirimTenant}, 'Lia', ${mirimPhone}, 'owner')`;
+    const cat = (
+      await sql<{ id: string }[]>`
+        insert into categories (tenant_id, slug, name, sort) values (${tenantId}, 'lanches', 'Lanches', 1)
+        returning id
+      `
+    )[0]!.id;
+    const product = async (name: string, price: number, stock: number | null = null) =>
+      (
+        await sql<{ id: string }[]>`
+          insert into products (tenant_id, category_id, slug, name, base_price_cents, stock_quantity)
+          values (${tenantId}, ${cat}, ${name.toLowerCase()}, ${name}, ${price}, ${stock}) returning id
+        `
+      )[0]!.id;
+    burger = await product('Burger', 1000);
+    coke = await product('Coca', 600, 5);
+    const group = (
+      await sql<{ id: string }[]>`
+        insert into modifier_groups (tenant_id, product_id, name, min_select, max_select)
+        values (${tenantId}, ${burger}, 'Extras', 0, 2) returning id
+      `
+    )[0]!.id;
+    bacon = (
+      await sql<{ id: string }[]>`
+        insert into modifiers (tenant_id, group_id, name, price_delta_cents)
+        values (${tenantId}, ${group}, 'Bacon', 300) returning id
+      `
+    )[0]!.id;
+    ownerCookie = await signIn(ownerPhone);
+    attendantCookie = await signIn(attendantPhone);
+    mirimCookie = await signIn(mirimPhone);
+  });
+
+  afterAll(async () => {
+    for (const id of [tenantId, mirimTenant])
+      if (id) await sql`delete from tenants where id = ${id}`;
+    if (appSql !== sql) await appSql.end();
+    await sql.end();
+  });
+
+  const sale = (o: { quoted: number; payments: unknown[]; serveNow?: boolean; phone?: string }) =>
+    attendant('POST', '/pdv/sales', {
+      lines: [
+        { productId: burger, qty: 2, modifiers: [{ id: bacon }], note: 'sem cebola' },
+        { productId: coke, qty: 1 },
+      ],
+      mode: 'takeaway',
+      quotedTotalCents: o.quoted,
+      payments: o.payments,
+      ...(o.serveNow ? { serveNow: true } : {}),
+      ...(o.phone ? { customer: { name: 'Bia', phone: o.phone } } : {}),
+    });
+
+  test('the plan gate: Mirim has no PDV', async () => {
+    const r = await call('GET', '/admin/v1/pdv/state', undefined, { cookie: mirimCookie });
+    expect(r.status).toBe(403);
+    expect(r.body.error.code ?? r.body.code).toBe('PLAN_REQUIRED');
+  });
+
+  test('quote: Core prices options; a discount needs a manager', async () => {
+    const lines = [
+      { productId: burger, qty: 2, modifiers: [{ id: bacon }] },
+      { productId: coke, qty: 1 },
+    ];
+    const q = await attendant('POST', '/pdv/quote', { lines });
+    expect(q.status).toBe(200);
+    expect(q.body.quote).toMatchObject({ subtotalCents: 3200, discountCents: 0, totalCents: 3200 });
+    expect(q.body.quote.lines[0]).toMatchObject({ unitPriceCents: 1300, lineTotalCents: 2600 });
+    const discount = { kind: 'percent', value: 1000, reason: 'cliente da casa' };
+    expect((await attendant('POST', '/pdv/quote', { lines, discount })).status).toBe(403);
+    const d = await owner('POST', '/pdv/quote', { lines, discount });
+    expect(d.body.quote).toMatchObject({ discountCents: 320, totalCents: 2880 });
+    const bad = await attendant('POST', '/pdv/quote', {
+      lines: [{ productId: crypto.randomUUID(), qty: 1 }],
+    });
+    expect(bad.status).toBe(404);
+    expect(bad.body.error?.details?.line ?? bad.body.details?.line).toBe(0);
+    expect((await attendant('POST', '/pdv/quote', { lines: [] })).status).toBe(422);
+  });
+
+  test('no sale without an open caixa; one caixa at a time', async () => {
+    const r = await sale({ quoted: 3200, payments: [{ method: 'pix', amountCents: 3200 }] });
+    expect(r.status).toBe(409);
+    const open = await attendant('POST', '/pdv/caixa/open', { openingCents: 10_000 });
+    expect(open.status).toBe(201);
+    expect(open.body.caixa).toMatchObject({
+      openingCents: 10_000,
+      openedBy: 'Caio',
+      expected: null,
+    });
+    expect((await owner('POST', '/pdv/caixa/open', { openingCents: 0 })).status).toBe(409);
+  });
+
+  let saleOrder = '';
+  test('a counter sale: re-priced, paid in full, an accepted order with no cart', async () => {
+    const moved = await sale({ quoted: 3000, payments: [{ method: 'pix', amountCents: 3000 }] });
+    expect(moved.status).toBe(409);
+    const short = await sale({ quoted: 3200, payments: [{ method: 'pix', amountCents: 3000 }] });
+    expect(short.status).toBe(422);
+    const tender = await sale({
+      quoted: 3200,
+      payments: [{ method: 'pix', amountCents: 1000, tenderedCents: 2000 }],
+    });
+    expect(tender.status).toBe(422);
+    const r = await sale({
+      quoted: 3200,
+      payments: [
+        { method: 'cash', amountCents: 2000, tenderedCents: 5000 },
+        { method: 'pix', amountCents: 1200 },
+      ],
+    });
+    expect(r.status).toBe(201);
+    expect(r.body.sale).toMatchObject({ totalCents: 3200, changeCents: 3000 });
+    expect(r.body.order).toMatchObject({
+      state: 'confirmed',
+      totalCents: 3200,
+      delivery: { mode: 'pickup' },
+      payment: { provider: 'pdv', method: 'mixed', status: 'paid' },
+    });
+    expect(r.body.order.items[0]).toMatchObject({
+      qty: 2,
+      unitPriceCents: 1300,
+      note: 'sem cebola',
+    });
+    saleOrder = r.body.order.id;
+    const [row] = await sql<{ cart_id: string | null; source: string }[]>`
+      select cart_id, source from orders where id = ${saleOrder}`;
+    expect(row).toEqual({ cart_id: null, source: 'pdv' });
+    const [stock] = await sql<
+      { n: number }[]
+    >`select stock_quantity as n from products where id = ${coke}`;
+    expect(stock!.n).toBe(4);
+  });
+
+  test('"entregar agora" walks the sale to delivered and stamps loyalty by phone', async () => {
+    const r = await attendant('POST', '/pdv/sales', {
+      lines: [{ productId: coke, qty: 1 }],
+      mode: 'here',
+      quotedTotalCents: 600,
+      payments: [{ method: 'debit', amountCents: 600 }],
+      serveNow: true,
+      customer: { phone: '(21) 99888-7766' },
+    });
+    expect(r.status).toBe(201);
+    expect(r.body.order).toMatchObject({
+      state: 'delivered',
+      delivery: { mode: 'dine_in', table: null },
+      payment: { method: 'debit' },
+    });
+    const bad = await attendant('POST', '/pdv/sales', {
+      lines: [{ productId: coke, qty: 1 }],
+      mode: 'here',
+      quotedTotalCents: 600,
+      payments: [{ method: 'debit', amountCents: 600 }],
+      customer: { phone: '123' },
+    });
+    expect(bad.status).toBe(422);
+  });
+
+  let mesa1 = '';
+  let mesa2 = '';
+  let tab = '';
+  test('tables are a manager thing; one open comanda per table', async () => {
+    expect((await attendant('POST', '/pdv/tables', { labels: ['Mesa 1'] })).status).toBe(403);
+    const t = await owner('POST', '/pdv/tables', { labels: ['Mesa 1', 'Mesa 2', 'mesa 1'] });
+    expect(t.status).toBe(201);
+    expect(t.body.tables.map((x: any) => x.label)).toEqual(['Mesa 1', 'Mesa 2']);
+    [mesa1, mesa2] = t.body.tables.map((x: any) => x.id);
+    expect((await owner('PATCH', '/pdv/settings', { serviceBps: 1000 })).status).toBe(200);
+    expect((await owner('PATCH', '/pdv/settings', { serviceBps: 5000 })).status).toBe(422);
+    const open = await attendant('POST', '/pdv/tabs', { tableId: mesa1 });
+    expect(open.status).toBe(201);
+    expect(open.body.tab).toMatchObject({ label: 'Mesa 1', serviceBps: 1000, serviceFee: true });
+    tab = open.body.tab.id;
+    const again = await attendant('POST', '/pdv/tabs', { tableId: mesa1 });
+    expect(again.status).toBe(409);
+    expect((await owner('DELETE', `/pdv/tables/${mesa1}`)).status).toBe(409);
+    expect((await attendant('POST', '/pdv/tabs', {})).status).toBe(422);
+  });
+
+  test('a round goes to the kitchen with its table; the bill has the service', async () => {
+    const r = await attendant('POST', `/pdv/tabs/${tab}/rounds`, {
+      lines: [{ productId: burger, qty: 2 }],
+    });
+    expect(r.status).toBe(201);
+    expect(r.body.tab).toMatchObject({
+      rounds: 1,
+      subtotalCents: 2000,
+      serviceCents: 200,
+      totalCents: 2200,
+      remainingCents: 2200,
+    });
+    const order = await owner('GET', `/orders/${r.body.orderId}`);
+    expect(order.body.order ?? order.body).toMatchObject({
+      state: 'confirmed',
+      delivery: { mode: 'dine_in', table: 'Mesa 1' },
+      payment: { method: 'tab', status: 'pending' },
+    });
+    const kitchen = await owner('GET', '/kitchen');
+    const ticket = kitchen.body.tickets.find((t: any) => t.id === r.body.orderId);
+    expect(ticket).toMatchObject({ mode: 'dine_in', table: 'Mesa 1' });
+    // a dine-in order is never out for delivery
+    const out = await owner('POST', `/orders/${r.body.orderId}/transition`, {
+      to: 'out_for_delivery',
+    });
+    expect(out.status).toBeGreaterThanOrEqual(400);
+    const split = await attendant('GET', `/pdv/tabs/${tab}?ways=3`);
+    expect(split.body.tab.split).toEqual({ ways: 3, sharesCents: [734, 733, 733] });
+    expect((await attendant('GET', `/pdv/tabs/${tab}?ways=50`)).status).toBe(422);
+  });
+
+  test('partial payments, a voided one, then the last one closes the comanda', async () => {
+    const p1 = await attendant('POST', `/pdv/tabs/${tab}/payments`, {
+      method: 'cash',
+      amountCents: 1000,
+    });
+    expect(p1.status).toBe(200);
+    expect(p1.body.tab.remainingCents).toBe(1200);
+    const over = await attendant('POST', `/pdv/tabs/${tab}/payments`, {
+      method: 'credit',
+      amountCents: 1300,
+    });
+    expect(over.status).toBe(422);
+    expect(
+      (await attendant('POST', `/pdv/payments/${p1.body.payment.id}/void`, { reason: 'errou' }))
+        .status,
+    ).toBe(403);
+    const v = await owner('POST', `/pdv/payments/${p1.body.payment.id}/void`, { reason: 'errou' });
+    expect(v.status).toBe(200);
+    expect(v.body.tab.remainingCents).toBe(2200);
+    const off = await attendant('PATCH', `/pdv/tabs/${tab}`, { serviceFee: false });
+    expect(off.body.tab.totalCents).toBe(2000);
+    await attendant('PATCH', `/pdv/tabs/${tab}`, { serviceFee: true });
+    const last = await attendant('POST', `/pdv/tabs/${tab}/payments`, {
+      method: 'credit',
+      amountCents: 2200,
+    });
+    expect(last.status).toBe(200);
+    expect(last.body.tab).toMatchObject({ status: 'closed', remainingCents: 0, serviceCents: 200 });
+    const round = last.body.tab.roundsList[0];
+    expect(round.state).toBe('delivered');
+    const [o] = await sql<{ status: string }[]>`
+      select payment ->> 'status' as status from orders where id = ${round.orderId}`;
+    expect(o!.status).toBe('paid');
+    const closed = await attendant('POST', `/pdv/tabs/${tab}/payments`, {
+      method: 'cash',
+      amountCents: 100,
+    });
+    expect(closed.status).toBe(409);
+    // the table is free again
+    const next = await attendant('POST', '/pdv/tabs', { tableId: mesa1, customerName: 'Joana' });
+    expect(next.status).toBe(201);
+    const moved = await attendant('PATCH', `/pdv/tabs/${next.body.tab.id}`, { tableId: mesa2 });
+    expect(moved.body.tab).toMatchObject({ tableId: mesa2, label: 'Mesa 2' });
+    const state = await attendant('GET', '/pdv/state');
+    expect(state.body.tabs.map((t: any) => t.label)).toEqual(['Mesa 2']);
+    expect(
+      (await attendant('POST', `/pdv/tabs/${next.body.tab.id}/cancel`, { reason: 'x' })).status,
+    ).toBe(403);
+    const cancel = await owner('POST', `/pdv/tabs/${next.body.tab.id}/cancel`, {
+      reason: 'desistiu',
+    });
+    expect(cancel.body.tab.status).toBe('cancelled');
+  });
+
+  test('an order from the storefront is received at the counter', async () => {
+    const cart = (
+      await sql<{ id: string }[]>`
+        insert into carts (tenant_id, session_hash) values (${tenantId}, ${`pdv-${nonce}`}) returning id`
+    )[0]!.id;
+    const [{ id }] = await sql<{ id: string }[]>`
+      insert into orders (tenant_id, cart_id, number, customer, customer_phone, delivery, payment,
+                          state, subtotal_cents, total_cents)
+      values (${tenantId}, ${cart}, 9000, ${sql.json({ name: 'Bia', phone: '' })}, null,
+              ${sql.json({ mode: 'pickup' })}, ${sql.json({ provider: 'sandbox', method: 'cash', status: 'pending', online: false })},
+              'ready', 1500, 1500)
+      returning id`;
+    const short = await attendant('POST', `/pdv/orders/${id}/payments`, {
+      payments: [{ method: 'cash', amountCents: 1000 }],
+    });
+    expect(short.status).toBe(422);
+    const r = await attendant('POST', `/pdv/orders/${id}/payments`, {
+      payments: [{ method: 'cash', amountCents: 1500, tenderedCents: 2000 }],
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.changeCents).toBe(500);
+    expect(r.body.order.payment).toMatchObject({ provider: 'pdv', method: 'cash', status: 'paid' });
+    const again = await attendant('POST', `/pdv/orders/${id}/payments`, {
+      payments: [{ method: 'cash', amountCents: 1500 }],
+    });
+    expect(again.status).toBe(409);
+  });
+
+  test('a cancelled counter sale takes its money out of the open caixa', async () => {
+    const r = await owner('POST', `/orders/${saleOrder}/transition`, {
+      to: 'cancelled',
+      reason: 'cliente desistiu',
+    });
+    expect(r.status).toBe(200);
+    const [n] = await sql<{ n: number }[]>`
+      select count(*)::int as n from pdv_payments where order_id = ${saleOrder} and voided_at is not null`;
+    expect(n!.n).toBe(2);
+  });
+
+  test('sangria and suprimento; attendants close blind; the report keeps the difference', async () => {
+    expect(
+      (
+        await attendant('POST', '/pdv/caixa/movements', {
+          kind: 'sangria',
+          amountCents: 1_000_000,
+          reason: 'banco',
+        })
+      ).status,
+    ).toBe(422);
+    expect(
+      (
+        await attendant('POST', '/pdv/caixa/movements', {
+          kind: 'sangria',
+          amountCents: 500,
+          reason: 'troco do motoboy',
+        })
+      ).status,
+    ).toBe(200);
+    await attendant('POST', '/pdv/caixa/movements', {
+      kind: 'suprimento',
+      amountCents: 200,
+      reason: 'moedas',
+    });
+    const blind = await attendant('GET', '/pdv/caixa');
+    expect(blind.body.caixa.expected).toBeNull();
+    const seen = await owner('GET', '/pdv/caixa');
+    // float 100,00 + the storefront order's 15,00 − 5,00 + 2,00; the cancelled sale's left
+    expect(seen.body.caixa.expected).toEqual({
+      cash: 11_200,
+      pix: 0,
+      credit: 2200,
+      debit: 600,
+      voucher: 0,
+    });
+    expect(seen.body.caixa.serviceCents).toBe(200);
+    const close = await attendant('POST', '/pdv/caixa/close', {
+      counted: { cash: 11_000, credit: 2200, debit: 600 },
+      notes: 'faltou troco',
+    });
+    expect(close.status).toBe(200);
+    expect(close.body.report.differences).toEqual({
+      cash: -200,
+      pix: 0,
+      credit: 0,
+      debit: 0,
+      voucher: 0,
+    });
+    const hist = await owner('GET', '/pdv/caixa/history');
+    expect(hist.body.sessions[0]).toMatchObject({ differenceCents: -200, closedBy: 'Caio' });
+    const one = await owner('GET', `/pdv/caixa/${close.body.report.id}`);
+    expect(one.body.report.counted.cash).toBe(11_000);
+    expect((await attendant('GET', '/pdv/caixa')).body.caixa).toBeNull();
+  });
+
+  test('bad and foreign ids answer 4xx', async () => {
+    expect((await attendant('GET', `/pdv/tabs/${crypto.randomUUID()}`)).status).toBe(404);
+    expect((await attendant('GET', '/pdv/tabs/nope')).status).toBeLessThan(500);
+    expect((await attendant('GET', `/pdv/caixa/${crypto.randomUUID()}`)).status).toBe(404);
+    const pix = await attendant('POST', '/pdv/pix', { amountCents: 1234 });
+    expect(pix.body.copyPaste).toContain('br.gov.bcb.pix');
+  });
+});

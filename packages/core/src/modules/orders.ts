@@ -36,11 +36,12 @@ export const TERMINAL_STATES: ReadonlySet<string> = new Set(['delivered', 'cance
 /** LISTEN channel for order changes — payload is the order id (see order-live.ts). */
 export const ORDER_CHANNEL = 'vendua_order';
 
-export type DeliveryMode = 'pickup' | 'delivery';
+/** dine_in: taken at the PDV, eaten at the store (ADR 0035) */
+export type DeliveryMode = 'pickup' | 'delivery' | 'dine_in';
 
-/** a pickup order is handed over at the counter: it never goes out for delivery */
+/** only a delivery goes out: pickup and dine-in orders are handed over at the store */
 function modeAllows(to: OrderState, mode: DeliveryMode): boolean {
-  return to !== 'out_for_delivery' || mode !== 'pickup';
+  return to !== 'out_for_delivery' || mode === 'delivery';
 }
 
 export function canTransition(from: OrderState, to: OrderState, mode: DeliveryMode): boolean {
@@ -53,7 +54,7 @@ export interface OrderRow {
   state: OrderState;
   customer: { name: string; phone: string };
   delivery: {
-    mode: 'pickup' | 'delivery';
+    mode: DeliveryMode;
     neighborhood?: string;
     address?: string;
     addressParts?: Record<string, string | null>;
@@ -68,6 +69,9 @@ export interface OrderRow {
     promisedTo?: string | null;
     /** minutes the store pushed the promise back after accepting ("atrasou"), summed */
     delayMinutes?: number;
+    /** dine_in: the table's label (null at the counter) and its comanda */
+    table?: string | null;
+    tabId?: string | null;
   };
   payment: {
     /** 'sandbox' (offline methods — no provider) | 'mercadopago' | 'fake'; branch on `online` */
@@ -498,7 +502,16 @@ export async function transitionOrder(
     tx`select pg_notify(${ORDER_CHANNEL}, ${orderId})`.execute(),
     emitAdminTx(tx, tenantId, 'order.changed', orderId),
   ]);
-  if (to === 'cancelled') await restoreStock(tx, tenantId, orderId);
+  if (to === 'cancelled') {
+    await restoreStock(tx, tenantId, orderId);
+    // a counter sale's money leaves the drawer with it, while its caixa is still open
+    await tx`
+      update pdv_payments set voided_at = now(), voided_by = ${String(meta.by ?? actor).slice(0, 80)},
+        void_reason = 'pedido cancelado'
+      where tenant_id = ${tenantId} and order_id = ${orderId} and voided_at is null
+        and session_id in (select id from cash_sessions where tenant_id = ${tenantId} and closed_at is null)
+    `;
+  }
   if (to === 'delivered') await mintLoyaltyRewards(tx, tenantId, order.customer_phone);
   if (STAFF_STEPS.has(to))
     await recordOrderStep(

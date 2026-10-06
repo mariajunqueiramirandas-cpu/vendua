@@ -234,6 +234,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         loyalty: false,
         vendedor: false,
         copilot: false,
+        pdv: false,
       },
       trialDays: 0,
       recommended: false,
@@ -717,6 +718,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       loyalty: true,
       vendedor: true,
       copilot: true,
+      pdv: true,
     });
     expect(acct.body.siteRequest.status).toBe('requested');
   });

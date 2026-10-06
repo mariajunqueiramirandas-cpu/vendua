@@ -73,7 +73,7 @@ export interface OrderListRow {
   phone: string | null;
   totalCents: number;
   placedAt: string;
-  mode: 'pickup' | 'delivery';
+  mode: DeliveryMode;
   neighborhood: string | null;
   paymentMethod: string;
   paymentStatus: string;

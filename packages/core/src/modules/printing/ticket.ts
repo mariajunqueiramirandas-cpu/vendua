@@ -15,6 +15,12 @@ const METHOD: Record<string, string> = {
   card_on_delivery: 'Cartão na entrega',
   cash: 'Dinheiro',
   meal_voucher: 'Vale-refeição',
+  // the PDV's (ADR 0035)
+  credit: 'Crédito',
+  debit: 'Débito',
+  voucher: 'Vale-refeição',
+  mixed: 'Misto',
+  tab: 'Comanda',
 };
 
 /** a job printed this long after it was queued says so at the top */
@@ -66,6 +72,7 @@ function paymentLine(order: OrderView, pickup: boolean): string {
   if (s === 'refunded') return 'ESTORNADO - não cobrar';
   if (order.state === 'cancelled' || order.state === 'refunded') return 'não cobrar';
   if (order.payment.online) return 'aguardando pagamento online - não cobrar';
+  if (order.payment.method === 'tab') return 'cobrar na comanda';
   return pickup ? 'cobrar na retirada' : 'cobrar na entrega';
 }
 
@@ -90,10 +97,19 @@ export function renderOrderTicket(
     }
     r.text(store.name);
     r.size(2).bold(true).text(`#${order.number}`).bold(false).size(1);
-    const pickup = order.delivery.mode === 'pickup';
+    const mode = order.delivery.mode;
+    const pickup = mode !== 'delivery';
     r.size(1, 2)
       .bold(true)
-      .text(pickup ? 'RETIRADA' : 'ENTREGA')
+      .text(
+        mode === 'dine_in'
+          ? order.delivery.table
+            ? order.delivery.table.toUpperCase()
+            : 'NO LOCAL'
+          : pickup
+            ? 'RETIRADA'
+            : 'ENTREGA',
+      )
       .bold(false)
       .size(1);
     if (order.scheduledFor) {

@@ -1,6 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE, bodyJson, uuidParam } from '../platform/http.ts';
-import { transitionOrder, type OrderState } from '../modules/orders.ts';
+import { transitionOrder, type DeliveryMode, type OrderState } from '../modules/orders.ts';
 import { requireFeature } from '../modules/billing/plans.ts';
 import { audit } from './audit.ts';
 import { bool, isObj, text, type AdminDeps } from './context.ts';
@@ -44,7 +44,9 @@ export interface KitchenTicket {
   id: string;
   number: number;
   state: KitchenState;
-  mode: 'pickup' | 'delivery';
+  mode: DeliveryMode;
+  /** dine_in: the table's label (null for "no local" at the counter) */
+  table: string | null;
   name: string;
   notes: string | null;
   scheduledFor: string | null;
@@ -119,7 +121,7 @@ async function ticketsTx(
   which: { tz: string } | { ids: string[] },
 ): Promise<KitchenTicket[]> {
   const rows = await tx<TicketRow[]>`
-    select o.id, o.number, o.state, o.delivery ->> 'mode' as mode,
+    select o.id, o.number, o.state, o.delivery ->> 'mode' as mode, o.delivery ->> 'table' as "table",
            coalesce(split_part(trim(o.customer ->> 'name'), ' ', 1), '') as name,
            o.notes, o.scheduled_for::text as "scheduledFor", o.placed_at as "placedAt",
            coalesce(k.rush, false) as rush,

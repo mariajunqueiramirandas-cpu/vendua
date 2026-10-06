@@ -227,7 +227,7 @@ totalCents, differenceCents }[] }` (closed ones, newest first; `differenceCents`
 - `POST /pdv/tables` `{ labels: string[] }` (1..100 labels, each 1..40) → 201 `{ tables }`.
   A label in use is skipped.
 - `PATCH /pdv/tables/:id` `{ label?, sort? }` → `{ table }`.
-- `DELETE /pdv/tables/:id` → 204. 409 `TABLE_BUSY` with an open comanda.
+- `DELETE /pdv/tables/:id` → `{ tables }`. 409 `TABLE_BUSY` with an open comanda.
 - `PATCH /pdv/settings` `{ serviceBps }` (0..2000) → `{ serviceBps }`.
 
 ## Order changes

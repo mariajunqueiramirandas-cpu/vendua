@@ -1,0 +1,1005 @@
+import type { Context } from 'hono';
+import type { Sql } from '../platform/db.ts';
+import { HttpError, uuidParam } from '../platform/http.ts';
+import { requireFeature } from '../modules/billing/plans.ts';
+import { normalizePhone } from '../modules/customer.ts';
+import { loadOrderView, recordOrderStep, transitionOrder } from '../modules/orders.ts';
+import { pixPayload, type PixKeyType } from '../modules/pix.ts';
+import {
+  assertOpen,
+  caixaDetail,
+  caixaRowById,
+  closeTabTx,
+  expectedOf,
+  lockTab,
+  openCaixaRow,
+  openTabSummaries,
+  parseCounted,
+  paymentView,
+  reportOf,
+  requireOpenCaixa,
+  tabDetail,
+} from '../modules/pdv/ledger.ts';
+import {
+  insertPdvOrderTx,
+  lockOrderNumbers,
+  paidPayment,
+  TAB_PAYMENT,
+} from '../modules/pdv/orders.ts';
+import {
+  changeOf,
+  MAX_CENTS,
+  parseDiscount,
+  parseLines,
+  parsePayment,
+  parsePayments,
+  priceLines,
+  quoteOf,
+  type PdvPaymentIn,
+} from '../modules/pdv/pricing.ts';
+import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
+import { audit } from './audit.ts';
+import { bool, int, isObj, oneOf, optText, roleAtLeast, text, type AdminDeps } from './context.ts';
+import type { Merchant } from './context.ts';
+import { bodyOf, handlers } from './handlers.ts';
+import { emitAdminTx } from './live.ts';
+import { storeTz } from './routes-orders.ts';
+
+// The PDV (ADR 0035): counter sales, comandas on tables, and the caixa. Contract:
+// docs/features/pdv.md. Every route is behind the `pdv` plan feature.
+
+const MAX_TABLES = 200;
+const brl = (cents: number) => `R$ ${(cents / 100).toFixed(2).replace('.', ',')}`;
+
+const gate = (tx: Sql, tenantId: string) => requireFeature(tx, tenantId, 'pdv');
+
+function managerOnly(m: Merchant, what: string) {
+  if (!roleAtLeast(m.role, 'manager'))
+    throw new HttpError(403, 'FORBIDDEN', `${what} needs a manager`, { need: 'manager' });
+}
+
+async function settingsOf(tx: Sql, tenantId: string) {
+  const [s] = await tx<
+    {
+      prep: number | null;
+      service_bps: number;
+      pix_key: string | null;
+      pix_key_type: string | null;
+      pix_beneficiary: string | null;
+      pix_city: string | null;
+      city: string | null;
+    }[]
+  >`
+    select prep_time_minutes as prep, pdv_service_bps as service_bps, pix_key, pix_key_type,
+           pix_beneficiary, pix_city, city
+    from store_settings where tenant_id = ${tenantId}
+  `;
+  return s ?? null;
+}
+
+const sumOf = (ps: PdvPaymentIn[]) => ps.reduce((n, p) => n + p.amountCents, 0);
+
+async function insertPayments(
+  tx: Sql,
+  tenantId: string,
+  sessionId: string,
+  target: { orderId: string } | { tabId: string },
+  payments: PdvPaymentIn[],
+  by: string,
+) {
+  const orderId = 'orderId' in target ? target.orderId : null;
+  const tabId = 'tabId' in target ? target.tabId : null;
+  const rows = [];
+  for (const p of payments)
+    rows.push(
+      (
+        await tx<
+          {
+            id: string;
+            method: PdvPaymentIn['method'];
+            amount_cents: number;
+            tendered_cents: number | null;
+            change_cents: number;
+            at: Date;
+            by_name: string;
+            voided_at: Date | null;
+          }[]
+        >`
+          insert into pdv_payments (tenant_id, session_id, order_id, tab_id, method, amount_cents,
+                                    tendered_cents, change_cents, by_name)
+          values (${tenantId}, ${sessionId}, ${orderId}, ${tabId}, ${p.method}, ${p.amountCents},
+                  ${p.tenderedCents}, ${changeOf(p)}, ${by})
+          returning id, method, amount_cents, tendered_cents, change_cents, at, by_name, voided_at
+        `
+      )[0]!,
+    );
+  return rows.map(paymentView);
+}
+
+function parseCustomer(v: unknown): { name: string | null; phone: string | null } {
+  if (v === undefined || v === null) return { name: null, phone: null };
+  if (!isObj(v))
+    throw new HttpError(422, 'BAD_REQUEST', 'customer must be an object', { field: 'customer' });
+  const name = optText(v.name, 'customer.name', 80) ?? null;
+  const raw = optText(v.phone, 'customer.phone', 40) ?? null;
+  const phone = raw ? normalizePhone(raw) : null;
+  if (phone !== null && !/^\d{10,11}$/.test(phone))
+    throw new HttpError(422, 'INVALID_PHONE', 'phone must have DDD and number', {
+      field: 'customer.phone',
+    });
+  return { name, phone };
+}
+
+const tableLabel = (v: unknown, name = 'label') => text(v, name, 40, 1).replace(/\s+/g, ' ');
+
+async function tableRow(tx: Sql, tenantId: string, id: string) {
+  const [row] = await tx<{ id: string; label: string; sort: number }[]>`
+    select id, label, sort from pdv_tables
+    where tenant_id = ${tenantId} and id = ${id} and archived_at is null
+  `;
+  if (!row) throw new HttpError(404, 'TABLE_NOT_FOUND', 'table not found');
+  return row;
+}
+
+async function busyTab(tx: Sql, tenantId: string, tableId: string, except: string | null = null) {
+  const [row] = await tx<{ id: string }[]>`
+    select id from pdv_tabs
+    where tenant_id = ${tenantId} and table_id = ${tableId} and status = 'open'
+      ${except ? tx`and id <> ${except}` : tx``}
+  `;
+  if (row)
+    throw new HttpError(409, 'TABLE_BUSY', 'this table has an open comanda', { tabId: row.id });
+}
+
+const tables = (tx: Sql, tenantId: string) =>
+  tx<{ id: string; label: string; sort: number }[]>`
+    select id, label, sort from pdv_tables
+    where tenant_id = ${tenantId} and archived_at is null order by sort, label, id
+  `;
+
+const ways = (c: Context) => {
+  const raw = c.req.query('ways');
+  if (raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 2 || n > 20)
+    throw new HttpError(422, 'BAD_REQUEST', 'ways must be an integer 2–20', { field: 'ways' });
+  return n;
+};
+
+export function mountPdv(d: AdminDeps) {
+  const { admin } = d;
+  const { read, write } = handlers(d);
+
+  // ── the screen's state ─────────────────────────────────────────────────────
+
+  admin.get(
+    '/pdv/state',
+    read('attendant', async (tx, t, m) => {
+      const [, caixa, tbls, tabs, s] = await Promise.all([
+        gate(tx, t.id),
+        openCaixaRow(tx, t.id),
+        tables(tx, t.id),
+        openTabSummaries(tx, t.id),
+        settingsOf(tx, t.id),
+      ]);
+      return {
+        caixa: caixa ? await caixaDetail(tx, t.id, caixa, roleAtLeast(m.role, 'manager')) : null,
+        tables: tbls,
+        tabs,
+        serviceBps: s?.service_bps ?? 0,
+      };
+    }),
+  );
+
+  // ── counter ────────────────────────────────────────────────────────────────
+
+  admin.post(
+    '/pdv/quote',
+    read('attendant', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 64 * 1024);
+      const lines = parseLines(body.lines);
+      const discount = parseDiscount(body.discount);
+      if (discount) managerOnly(m, 'a discount');
+      const [, tz] = await Promise.all([gate(tx, t.id), storeTz(tx, t.id)]);
+      return { quote: quoteOf(await priceLines(tx, t.id, lines, { tz }), discount) };
+    }),
+  );
+
+  admin.post(
+    '/pdv/pix',
+    read('attendant', async (tx, t, _m, c) => {
+      const body = await bodyOf(c, 1024);
+      const amount = int(body.amountCents, 'amountCents', 1, MAX_CENTS);
+      const [, s] = await Promise.all([gate(tx, t.id), settingsOf(tx, t.id)]);
+      if (!s?.pix_key || !s.pix_key_type) return { copyPaste: null };
+      return {
+        copyPaste: pixPayload(
+          {
+            key: s.pix_key,
+            keyType: s.pix_key_type as PixKeyType,
+            beneficiary: s.pix_beneficiary ?? '',
+            city: s.pix_city ?? s.city ?? '',
+          },
+          { amountCents: amount, txid: 'PDV' },
+        ),
+      };
+    }),
+  );
+
+  admin.post(
+    '/pdv/sales',
+    write('attendant', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 64 * 1024);
+      const lines = parseLines(body.lines);
+      const discount = parseDiscount(body.discount);
+      if (discount) managerOnly(m, 'a discount');
+      const mode = oneOf(body.mode, 'mode', ['takeaway', 'here'] as const);
+      const customer = parseCustomer(body.customer);
+      const notes = optText(body.notes, 'notes', 500) ?? null;
+      const payments = parsePayments(body.payments);
+      const quoted = int(body.quotedTotalCents, 'quotedTotalCents', 0, MAX_CENTS);
+      const serveNow = body.serveNow === undefined ? false : bool(body.serveNow, 'serveNow');
+      await gate(tx, t.id);
+      // the caixa first (held for share), then checkout's lock, then the products
+      const caixa = await requireOpenCaixa(tx, t.id);
+      await lockOrderNumbers(tx, t.id);
+      const [tz, s] = await Promise.all([storeTz(tx, t.id), settingsOf(tx, t.id)]);
+      const priced = await priceLines(tx, t.id, lines, { forUpdate: true, tz });
+      const quote = quoteOf(priced, discount);
+      if (quote.totalCents !== quoted)
+        throw new HttpError(409, 'PRICES_CHANGED', 'the total changed — review the sale', {
+          quote,
+        });
+      const paid = sumOf(payments);
+      if (paid !== quote.totalCents)
+        throw new HttpError(422, 'PAYMENT_MISMATCH', 'the payments must add up to the total', {
+          totalCents: quote.totalCents,
+          paidCents: paid,
+        });
+      const order = await insertPdvOrderTx(tx, t.id, {
+        lines: priced,
+        subtotalCents: quote.subtotalCents,
+        discountCents: quote.discountCents,
+        totalCents: quote.totalCents,
+        mode: mode === 'takeaway' ? 'pickup' : 'dine_in',
+        table: null,
+        tabId: null,
+        customer: { name: customer.name ?? 'Balcão', phone: customer.phone },
+        notes,
+        payment: paidPayment(payments, m.name),
+        by: m.name,
+        serveNow,
+        prepMinutes: s?.prep ?? 30,
+      });
+      const views = await insertPayments(
+        tx,
+        t.id,
+        caixa.id,
+        { orderId: order.id },
+        payments,
+        m.name,
+      );
+      const change = views.reduce((n, p) => n + p.changeCents, 0);
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.sale',
+          entity: 'order',
+          entityId: order.id,
+          summary: `vendeu no balcão o pedido #${order.number} (${brl(quote.totalCents)})${discount ? ` com desconto de ${brl(quote.discountCents)}: ${discount.reason}` : ''}`,
+          after: { totalCents: quote.totalCents, payments, discount },
+        }),
+        emitAdminTx(tx, t.id, 'pdv', caixa.id),
+      ]);
+      return {
+        status: 201,
+        body: {
+          order: await loadOrderView(tx, t.id, order.id),
+          sale: {
+            orderId: order.id,
+            number: order.number,
+            totalCents: quote.totalCents,
+            changeCents: change,
+            payments: views,
+          },
+        },
+      };
+    }),
+  );
+
+  // an order from the storefront, paid at the counter
+  admin.post(
+    '/pdv/orders/:id/payments',
+    write('attendant', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyOf(c, 8 * 1024);
+      const payments = parsePayments(body.payments);
+      await gate(tx, t.id);
+      const caixa = await requireOpenCaixa(tx, t.id);
+      const [cur] = await tx<
+        {
+          number: number;
+          state: string;
+          total_cents: number;
+          tab_id: string | null;
+          payment: Record<string, unknown>;
+        }[]
+      >`
+        select number, state, total_cents, tab_id, payment from orders
+        where tenant_id = ${t.id} and id = ${id} for update
+      `;
+      if (!cur) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+      if (cur.payment.online)
+        throw new HttpError(409, 'PAYMENT_ONLINE', 'Mercado Pago confirms this payment');
+      if (cur.tab_id)
+        throw new HttpError(409, 'ORDER_ON_TAB', 'this order is paid with its comanda');
+      if (cur.payment.status === 'paid' || cur.state === 'cancelled' || cur.state === 'refunded')
+        throw new HttpError(409, 'ALREADY_PAID', 'this order has nothing left to pay', {
+          state: cur.state,
+        });
+      const paid = sumOf(payments);
+      if (paid !== cur.total_cents)
+        throw new HttpError(422, 'PAYMENT_MISMATCH', 'the payments must add up to the total', {
+          totalCents: cur.total_cents,
+          paidCents: paid,
+        });
+      const views = await insertPayments(tx, t.id, caixa.id, { orderId: id }, payments, m.name);
+      const patch = {
+        ...paidPayment(payments, m.name),
+        requestedMethod: cur.payment.method ?? null,
+      };
+      await tx`
+        update orders set payment = payment || ${tx.json(patch as never)}, rev = rev + 1, updated_at = now()
+        where tenant_id = ${t.id} and id = ${id}
+      `;
+      await recordOrderStep(tx, t.id, { id, number: cur.number }, 'paid', 'merchant');
+      await enqueueOrderMessageTx(tx, t.id, id, 'paid');
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.order_paid',
+          entity: 'order',
+          entityId: id,
+          summary: `recebeu no caixa o pedido #${cur.number} (${brl(cur.total_cents)})`,
+          before: { payment: cur.payment.status },
+          after: { payment: 'paid', payments },
+        }),
+        emitAdminTx(tx, t.id, 'order.changed', id),
+        emitAdminTx(tx, t.id, 'pdv', caixa.id),
+      ]);
+      return {
+        status: 200,
+        body: {
+          order: await loadOrderView(tx, t.id, id),
+          changeCents: views.reduce((n, p) => n + p.changeCents, 0),
+        },
+      };
+    }),
+  );
+
+  // ── comandas ───────────────────────────────────────────────────────────────
+
+  const tabOut = async (tx: Sql, tenantId: string, id: string) => ({
+    tab: await tabDetail(tx, tenantId, id),
+  });
+
+  admin.post(
+    '/pdv/tabs',
+    write('attendant', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 4 * 1024);
+      const tableId =
+        body.tableId === undefined || body.tableId === null
+          ? null
+          : uuidOf(body.tableId, 'tableId');
+      const own = optText(body.label, 'label', 40) ?? null;
+      const customerName = optText(body.customerName, 'customerName', 80) ?? null;
+      if (!tableId && !own)
+        throw new HttpError(422, 'BAD_REQUEST', 'a comanda needs a table or a label', {
+          field: 'tableId',
+        });
+      const [, s] = await Promise.all([gate(tx, t.id), settingsOf(tx, t.id)]);
+      let label = own ?? '';
+      if (tableId) {
+        const table = await tableRow(tx, t.id, tableId);
+        label = own ?? table.label;
+        await busyTab(tx, t.id, tableId);
+      }
+      let id: string;
+      try {
+        id = (
+          await tx<{ id: string }[]>`
+          insert into pdv_tabs (tenant_id, table_id, label, customer_name, service_bps, service_fee, opened_by)
+          values (${t.id}, ${tableId}, ${label}, ${customerName}, ${s?.service_bps ?? 0},
+                  ${(s?.service_bps ?? 0) > 0}, ${m.name})
+          returning id
+        `
+        )[0]!.id;
+      } catch (err) {
+        // two openings raced on one table: the index lets one through
+        if ((err as { code?: string }).code === '23505')
+          throw new HttpError(409, 'TABLE_BUSY', 'this table has an open comanda');
+        throw err;
+      }
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.tab_opened',
+          entity: 'pdv_tab',
+          entityId: id,
+          summary: `abriu a comanda ${label}`,
+        }),
+        emitAdminTx(tx, t.id, 'pdv', id),
+      ]);
+      return { status: 201, body: await tabOut(tx, t.id, id) };
+    }),
+  );
+
+  admin.get(
+    '/pdv/tabs/:id',
+    read('attendant', async (tx, t, _m, c) => {
+      const id = uuidParam(c, 'id');
+      const n = ways(c);
+      await gate(tx, t.id);
+      return { tab: await tabDetail(tx, t.id, id, n) };
+    }),
+  );
+
+  admin.post(
+    '/pdv/tabs/:id/rounds',
+    write('attendant', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyOf(c, 64 * 1024);
+      const lines = parseLines(body.lines);
+      const notes = optText(body.notes, 'notes', 500) ?? null;
+      const serveNow = body.serveNow === undefined ? false : bool(body.serveNow, 'serveNow');
+      await gate(tx, t.id);
+      // the comanda, then checkout's lock, then the products
+      const tab = await lockTab(tx, t.id, id);
+      assertOpen(tab);
+      await lockOrderNumbers(tx, t.id);
+      const [tz, s] = await Promise.all([storeTz(tx, t.id), settingsOf(tx, t.id)]);
+      const priced = await priceLines(tx, t.id, lines, { forUpdate: true, tz });
+      const quote = quoteOf(priced, null);
+      const order = await insertPdvOrderTx(tx, t.id, {
+        lines: priced,
+        subtotalCents: quote.subtotalCents,
+        discountCents: 0,
+        totalCents: quote.totalCents,
+        mode: 'dine_in',
+        table: tab.label,
+        tabId: tab.id,
+        customer: { name: tab.customer_name ?? tab.label, phone: null },
+        notes,
+        payment: TAB_PAYMENT,
+        by: m.name,
+        serveNow,
+        prepMinutes: s?.prep ?? 30,
+      });
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.round',
+          entity: 'pdv_tab',
+          entityId: id,
+          summary: `lançou o pedido #${order.number} na comanda ${tab.label} (${brl(quote.totalCents)})`,
+          after: { orderId: order.id, totalCents: quote.totalCents },
+        }),
+        emitAdminTx(tx, t.id, 'pdv', id),
+      ]);
+      return { status: 201, body: { ...(await tabOut(tx, t.id, id)), orderId: order.id } };
+    }),
+  );
+
+  admin.patch(
+    '/pdv/tabs/:id',
+    write('attendant', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyOf(c, 4 * 1024);
+      await gate(tx, t.id);
+      const tab = await lockTab(tx, t.id, id);
+      assertOpen(tab);
+      const changes: string[] = [];
+      if (body.serviceFee !== undefined) {
+        const on = bool(body.serviceFee, 'serviceFee');
+        await tx`update pdv_tabs set service_fee = ${on} where tenant_id = ${t.id} and id = ${id}`;
+        changes.push(on ? 'cobrou o serviço' : 'tirou o serviço');
+      }
+      if (body.discount !== undefined) {
+        managerOnly(m, 'a discount');
+        const discount = parseDiscount(body.discount);
+        await tx`update pdv_tabs set discount = ${discount ? tx.json(discount as never) : null}
+                 where tenant_id = ${t.id} and id = ${id}`;
+        changes.push(discount ? `deu desconto (${discount.reason})` : 'tirou o desconto');
+      }
+      if (body.customerName !== undefined) {
+        const name = optText(body.customerName, 'customerName', 80) ?? null;
+        await tx`update pdv_tabs set customer_name = ${name} where tenant_id = ${t.id} and id = ${id}`;
+        changes.push('mudou o nome');
+      }
+      let label = optText(body.label, 'label', 40) ?? undefined;
+      if (body.tableId !== undefined) {
+        const tableId = body.tableId === null ? null : uuidOf(body.tableId, 'tableId');
+        if (tableId) {
+          const table = await tableRow(tx, t.id, tableId);
+          await busyTab(tx, t.id, tableId, id);
+          label ??= table.label;
+          changes.push(`passou para ${table.label}`);
+        } else changes.push('saiu da mesa');
+        try {
+          await tx`update pdv_tabs set table_id = ${tableId} where tenant_id = ${t.id} and id = ${id}`;
+        } catch (err) {
+          if ((err as { code?: string }).code === '23505')
+            throw new HttpError(409, 'TABLE_BUSY', 'this table has an open comanda');
+          throw err;
+        }
+      }
+      if (label) {
+        await tx`update pdv_tabs set label = ${label} where tenant_id = ${t.id} and id = ${id}`;
+        if (body.tableId === undefined) changes.push(`renomeou para ${label}`);
+      }
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.tab_changed',
+          entity: 'pdv_tab',
+          entityId: id,
+          summary: `comanda ${tab.label}: ${changes.join(', ') || 'nada mudou'}`,
+          before: { serviceFee: tab.service_fee, discount: tab.discount, tableId: tab.table_id },
+          after: body,
+        }),
+        emitAdminTx(tx, t.id, 'pdv', id),
+      ]);
+      return { status: 200, body: await tabOut(tx, t.id, id) };
+    }),
+  );
+
+  admin.post(
+    '/pdv/tabs/:id/payments',
+    write('attendant', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const payment = parsePayment(await bodyOf(c, 2 * 1024));
+      await gate(tx, t.id);
+      // the comanda, then the caixa
+      const tab = await lockTab(tx, t.id, id);
+      assertOpen(tab);
+      const caixa = await requireOpenCaixa(tx, t.id);
+      const before = await tabDetail(tx, t.id, id);
+      if (payment.amountCents > before.remainingCents)
+        throw new HttpError(422, 'OVERPAY', 'more than what remains on the comanda', {
+          remainingCents: Math.max(0, before.remainingCents),
+        });
+      const [view] = await insertPayments(tx, t.id, caixa.id, { tabId: id }, [payment], m.name);
+      const after = await tabDetail(tx, t.id, id);
+      if (after.remainingCents === 0) await closeTabTx(tx, t.id, after, m.name);
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.tab_payment',
+          entity: 'pdv_tab',
+          entityId: id,
+          summary: `recebeu ${brl(payment.amountCents)} na comanda ${tab.label}${after.remainingCents === 0 ? ' e fechou a conta' : ''}`,
+          after: { payment },
+        }),
+        emitAdminTx(tx, t.id, 'pdv', id),
+      ]);
+      return { status: 200, body: { tab: await tabDetail(tx, t.id, id), payment: view } };
+    }),
+  );
+
+  admin.post(
+    '/pdv/tabs/:id/close',
+    write('attendant', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      await gate(tx, t.id);
+      const tab = await lockTab(tx, t.id, id);
+      assertOpen(tab);
+      const detail = await tabDetail(tx, t.id, id);
+      if (detail.remainingCents > 0)
+        throw new HttpError(409, 'TAB_UNPAID', 'the comanda still owes', {
+          remainingCents: detail.remainingCents,
+        });
+      await closeTabTx(tx, t.id, detail, m.name);
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.tab_closed',
+          entity: 'pdv_tab',
+          entityId: id,
+          summary: `fechou a comanda ${tab.label}`,
+        }),
+        emitAdminTx(tx, t.id, 'pdv', id),
+      ]);
+      return { status: 200, body: await tabOut(tx, t.id, id) };
+    }),
+  );
+
+  admin.post(
+    '/pdv/tabs/:id/cancel',
+    write('manager', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyOf(c, 2 * 1024);
+      const reason = text(body.reason, 'reason', 200, 1);
+      await gate(tx, t.id);
+      const tab = await lockTab(tx, t.id, id);
+      assertOpen(tab);
+      const detail = await tabDetail(tx, t.id, id);
+      if (detail.payments.some((p) => !p.voided))
+        throw new HttpError(409, 'TAB_HAS_PAYMENTS', 'void its payments first');
+      await tx`
+        update pdv_tabs set status = 'cancelled', closed_at = now(), close_reason = ${reason}
+        where tenant_id = ${t.id} and id = ${id}
+      `;
+      for (const r of detail.roundsList)
+        if (r.state !== 'cancelled' && r.state !== 'refunded' && r.state !== 'delivered')
+          await transitionOrder(tx, t.id, r.orderId, 'cancelled', 'merchant', {
+            by: m.name,
+            reason,
+            via: 'pdv',
+          });
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.tab_cancelled',
+          entity: 'pdv_tab',
+          entityId: id,
+          summary: `cancelou a comanda ${tab.label} (${reason})`,
+        }),
+        emitAdminTx(tx, t.id, 'pdv', id),
+      ]);
+      return { status: 200, body: await tabOut(tx, t.id, id) };
+    }),
+  );
+
+  admin.post(
+    '/pdv/payments/:id/void',
+    write('manager', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyOf(c, 2 * 1024);
+      const reason = text(body.reason, 'reason', 200, 1);
+      await gate(tx, t.id);
+      const [pay] = await tx<
+        { tab_id: string | null; amount_cents: number; voided_at: Date | null; open: boolean }[]
+      >`
+        select p.tab_id, p.amount_cents, p.voided_at, s.closed_at is null as open
+        from pdv_payments p join cash_sessions s on s.id = p.session_id
+        where p.tenant_id = ${t.id} and p.id = ${id}
+      `;
+      if (!pay) throw new HttpError(404, 'PAYMENT_NOT_FOUND', 'payment not found');
+      if (!pay.tab_id || pay.voided_at || !pay.open)
+        throw new HttpError(
+          409,
+          'PAYMENT_LOCKED',
+          'only a payment on an open comanda, in the open caixa, can be voided',
+        );
+      const tab = await lockTab(tx, t.id, pay.tab_id);
+      if (tab.status !== 'open')
+        throw new HttpError(409, 'PAYMENT_LOCKED', 'the comanda is closed');
+      await tx`
+        update pdv_payments set voided_at = now(), voided_by = ${m.name}, void_reason = ${reason}
+        where tenant_id = ${t.id} and id = ${id}
+      `;
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.payment_voided',
+          entity: 'pdv_tab',
+          entityId: tab.id,
+          summary: `estornou ${brl(pay.amount_cents)} da comanda ${tab.label} (${reason})`,
+        }),
+        emitAdminTx(tx, t.id, 'pdv', tab.id),
+      ]);
+      return { status: 200, body: await tabOut(tx, t.id, tab.id) };
+    }),
+  );
+
+  // ── caixa ──────────────────────────────────────────────────────────────────
+
+  admin.get(
+    '/pdv/caixa',
+    read('attendant', async (tx, t, m) => {
+      const [, row] = await Promise.all([gate(tx, t.id), openCaixaRow(tx, t.id)]);
+      return {
+        caixa: row ? await caixaDetail(tx, t.id, row, roleAtLeast(m.role, 'manager')) : null,
+      };
+    }),
+  );
+
+  admin.post(
+    '/pdv/caixa/open',
+    write('attendant', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 1024);
+      const opening = int(body.openingCents, 'openingCents', 0, MAX_CENTS);
+      await gate(tx, t.id);
+      if (await openCaixaRow(tx, t.id, 'update'))
+        throw new HttpError(409, 'CAIXA_OPEN', 'the caixa is already open');
+      let row;
+      try {
+        [row] = await tx<{ id: string }[]>`
+          insert into cash_sessions (tenant_id, opened_by, opening_cents)
+          values (${t.id}, ${m.name}, ${opening}) returning id
+        `;
+      } catch (err) {
+        if ((err as { code?: string }).code === '23505')
+          throw new HttpError(409, 'CAIXA_OPEN', 'the caixa is already open');
+        throw err;
+      }
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.caixa_opened',
+          entity: 'cash_session',
+          entityId: row!.id,
+          summary: `abriu o caixa com ${brl(opening)}`,
+        }),
+        emitAdminTx(tx, t.id, 'pdv', row!.id),
+      ]);
+      const open = (await openCaixaRow(tx, t.id))!;
+      return {
+        status: 201,
+        body: { caixa: await caixaDetail(tx, t.id, open, roleAtLeast(m.role, 'manager')) },
+      };
+    }),
+  );
+
+  admin.post(
+    '/pdv/caixa/movements',
+    write('attendant', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 2 * 1024);
+      const kind = oneOf(body.kind, 'kind', ['sangria', 'suprimento'] as const);
+      const amount = int(body.amountCents, 'amountCents', 1, MAX_CENTS);
+      const reason = text(body.reason, 'reason', 140, 1);
+      await gate(tx, t.id);
+      const row = await openCaixaRow(tx, t.id, 'update');
+      if (!row) throw new HttpError(409, 'CAIXA_CLOSED', 'the caixa is closed');
+      if (kind === 'sangria') {
+        const d0 = await caixaDetail(tx, t.id, row, true);
+        if (amount > d0.expected!.cash)
+          throw new HttpError(422, 'INSUFFICIENT_CASH', 'more than the drawer should hold', {
+            field: 'amountCents',
+          });
+      }
+      await tx`
+        insert into cash_movements (tenant_id, session_id, kind, amount_cents, reason, by_name)
+        values (${t.id}, ${row.id}, ${kind}, ${amount}, ${reason}, ${m.name})
+      `;
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: `pdv.${kind}`,
+          entity: 'cash_session',
+          entityId: row.id,
+          summary: `${kind === 'sangria' ? 'tirou' : 'colocou'} ${brl(amount)} ${kind === 'sangria' ? 'do' : 'no'} caixa (${reason})`,
+        }),
+        emitAdminTx(tx, t.id, 'pdv', row.id),
+      ]);
+      return {
+        status: 200,
+        body: { caixa: await caixaDetail(tx, t.id, row, roleAtLeast(m.role, 'manager')) },
+      };
+    }),
+  );
+
+  admin.post(
+    '/pdv/caixa/close',
+    write('attendant', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 2 * 1024);
+      const counted = parseCounted(body.counted);
+      const notes = optText(body.notes, 'notes', 500) ?? null;
+      await gate(tx, t.id);
+      const row = await openCaixaRow(tx, t.id, 'update');
+      if (!row) throw new HttpError(409, 'CAIXA_CLOSED', 'the caixa is closed');
+      const detail = await caixaDetail(tx, t.id, row, true);
+      const expected = expectedOf(row.opening_cents, detail.byMethod, detail.movements);
+      const [closed] = await tx<{ closed_at: Date }[]>`
+        update cash_sessions set closed_at = now(), closed_by = ${m.name},
+          counted = ${tx.json(counted)}, expected = ${tx.json(expected)}, notes = ${notes}
+        where tenant_id = ${t.id} and id = ${row.id}
+        returning closed_at
+      `;
+      const done = {
+        ...row,
+        closed_at: closed!.closed_at,
+        closed_by: m.name,
+        counted,
+        expected,
+        notes,
+      };
+      const report = reportOf(await caixaDetail(tx, t.id, done, true), done);
+      const diff = Object.values(report.differences).reduce((n, v) => n + v, 0);
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.caixa_closed',
+          entity: 'cash_session',
+          entityId: row.id,
+          summary: `fechou o caixa${diff === 0 ? ' sem diferença' : ` com diferença de ${diff < 0 ? '-' : ''}${brl(Math.abs(diff))}`}`,
+          after: { counted, expected },
+        }),
+        emitAdminTx(tx, t.id, 'pdv', row.id),
+      ]);
+      return { status: 200, body: { report } };
+    }),
+  );
+
+  admin.get(
+    '/pdv/caixa/history',
+    read('attendant', async (tx, t, _m, c) => {
+      const raw = Number(c.req.query('limit') ?? 30);
+      const limit = Number.isInteger(raw) && raw >= 1 && raw <= 100 ? raw : 30;
+      await gate(tx, t.id);
+      const rows = await tx<
+        {
+          id: string;
+          opened_at: Date;
+          closed_at: Date;
+          opened_by: string;
+          closed_by: string | null;
+          counted: Record<string, number>;
+          expected: Record<string, number>;
+          total: number;
+        }[]
+      >`
+        select s.id, s.opened_at, s.closed_at, s.opened_by, s.closed_by, s.counted, s.expected,
+               coalesce((select sum(p.amount_cents) from pdv_payments p
+                         where p.tenant_id = s.tenant_id and p.session_id = s.id
+                           and p.voided_at is null), 0)::int as total
+        from cash_sessions s
+        where s.tenant_id = ${t.id} and s.closed_at is not null
+        order by s.closed_at desc limit ${limit}
+      `;
+      const sum = (o: Record<string, number>) => Object.values(o).reduce((n, v) => n + v, 0);
+      return {
+        sessions: rows.map((r) => ({
+          id: r.id,
+          openedAt: new Date(r.opened_at).toISOString(),
+          closedAt: new Date(r.closed_at).toISOString(),
+          openedBy: r.opened_by,
+          closedBy: r.closed_by ?? '',
+          totalCents: r.total,
+          differenceCents: sum(r.counted) - sum(r.expected),
+        })),
+      };
+    }),
+  );
+
+  admin.get(
+    '/pdv/caixa/:id',
+    read('attendant', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      await gate(tx, t.id);
+      const row = await caixaRowById(tx, t.id, id);
+      if (!row) throw new HttpError(404, 'CAIXA_NOT_FOUND', 'caixa not found');
+      if (!row.closed_at)
+        return { caixa: await caixaDetail(tx, t.id, row, roleAtLeast(m.role, 'manager')) };
+      return { report: reportOf(await caixaDetail(tx, t.id, row, true), row) };
+    }),
+  );
+
+  // ── tables and settings ────────────────────────────────────────────────────
+
+  admin.get(
+    '/pdv/tables',
+    read('attendant', async (tx, t) => {
+      const [, rows] = await Promise.all([gate(tx, t.id), tables(tx, t.id)]);
+      return { tables: rows };
+    }),
+  );
+
+  admin.post(
+    '/pdv/tables',
+    write('manager', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 16 * 1024);
+      if (!Array.isArray(body.labels) || body.labels.length < 1 || body.labels.length > 100)
+        throw new HttpError(422, 'BAD_REQUEST', 'labels must hold 1–100 labels', {
+          field: 'labels',
+        });
+      const labels = [...new Set(body.labels.map((l, i) => tableLabel(l, `labels[${i}]`)))];
+      await gate(tx, t.id);
+      const have = await tables(tx, t.id);
+      const taken = new Set(have.map((r) => r.label.toLowerCase()));
+      const fresh = labels.filter((l) => !taken.has(l.toLowerCase()));
+      if (have.length + fresh.length > MAX_TABLES)
+        throw new HttpError(422, 'TOO_MANY_TABLES', `a store has at most ${MAX_TABLES} tables`, {
+          max: MAX_TABLES,
+        });
+      const start = have.reduce((n, r) => Math.max(n, r.sort + 1), 0);
+      if (fresh.length)
+        await tx`
+          insert into pdv_tables ${tx(fresh.map((label, i) => ({ tenant_id: t.id, label, sort: start + i })))}
+          on conflict do nothing
+        `;
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.tables_added',
+          entity: 'pdv_table',
+          summary: `criou ${fresh.length} ${fresh.length === 1 ? 'mesa' : 'mesas'}`,
+          after: { labels: fresh },
+        }),
+        emitAdminTx(tx, t.id, 'pdv', 'tables'),
+      ]);
+      return { status: 201, body: { tables: await tables(tx, t.id) } };
+    }),
+  );
+
+  admin.patch(
+    '/pdv/tables/:id',
+    write('manager', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyOf(c, 1024);
+      const label = body.label === undefined ? undefined : tableLabel(body.label);
+      const sort = body.sort === undefined ? undefined : int(body.sort, 'sort', 0, 100000);
+      await gate(tx, t.id);
+      const before = await tableRow(tx, t.id, id);
+      try {
+        await tx`
+          update pdv_tables set label = ${label ?? before.label}, sort = ${sort ?? before.sort}
+          where tenant_id = ${t.id} and id = ${id}
+        `;
+      } catch (err) {
+        if ((err as { code?: string }).code === '23505')
+          throw new HttpError(409, 'TABLE_LABEL_TAKEN', 'another table has this name', {
+            field: 'label',
+          });
+        throw err;
+      }
+      // an open comanda shows its table's name
+      if (label && label !== before.label)
+        await tx`
+          update pdv_tabs set label = ${label}
+          where tenant_id = ${t.id} and table_id = ${id} and status = 'open' and label = ${before.label}
+        `;
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.table_changed',
+          entity: 'pdv_table',
+          entityId: id,
+          summary: `mesa ${before.label}${label && label !== before.label ? ` agora é ${label}` : ': nova posição'}`,
+          before,
+          after: { label, sort },
+        }),
+        emitAdminTx(tx, t.id, 'pdv', 'tables'),
+      ]);
+      return { status: 200, body: { table: await tableRow(tx, t.id, id) } };
+    }),
+  );
+
+  admin.delete(
+    '/pdv/tables/:id',
+    write('manager', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      await gate(tx, t.id);
+      const before = await tableRow(tx, t.id, id);
+      await busyTab(tx, t.id, id);
+      await tx`update pdv_tables set archived_at = now() where tenant_id = ${t.id} and id = ${id}`;
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.table_archived',
+          entity: 'pdv_table',
+          entityId: id,
+          summary: `removeu a mesa ${before.label}`,
+        }),
+        emitAdminTx(tx, t.id, 'pdv', 'tables'),
+      ]);
+      return { status: 200, body: { tables: await tables(tx, t.id) } };
+    }),
+  );
+
+  admin.patch(
+    '/pdv/settings',
+    write('manager', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 1024);
+      const bps = int(body.serviceBps, 'serviceBps', 0, 2000);
+      await gate(tx, t.id);
+      const [before] = await tx<{ bps: number }[]>`
+        select pdv_service_bps as bps from store_settings where tenant_id = ${t.id} for update
+      `;
+      await tx`update store_settings set pdv_service_bps = ${bps} where tenant_id = ${t.id}`;
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.settings',
+          entity: 'store_settings',
+          summary: `taxa de serviço: ${(bps / 100).toLocaleString('pt-BR')}%`,
+          before: { serviceBps: before?.bps ?? 0 },
+          after: { serviceBps: bps },
+        }),
+        emitAdminTx(tx, t.id, 'pdv', 'settings'),
+      ]);
+      return { status: 200, body: { serviceBps: bps } };
+    }),
+  );
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function uuidOf(v: unknown, field: string): string {
+  if (typeof v !== 'string' || !UUID.test(v))
+    throw new HttpError(422, 'BAD_REQUEST', `${field} must be a uuid`, { field });
+  return v.toLowerCase();
+}
