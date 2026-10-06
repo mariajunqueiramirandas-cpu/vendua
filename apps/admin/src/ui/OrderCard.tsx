@@ -1,18 +1,11 @@
-import {
-  Bag,
-  CalendarBlank,
-  ClockClockwise,
-  DotsThree,
-  Moped,
-  NotePencil,
-  Timer,
-} from '@phosphor-icons/react';
+import { CalendarBlank, ClockClockwise, DotsThree, NotePencil, Timer } from '@phosphor-icons/react';
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { Order } from '../lib/api.ts';
 import { dateShort, minutesSince, money } from '../lib/format.ts';
 import { haptic } from '../lib/haptics.ts';
 import { reducedMotion, SPRING, springEasing } from '../lib/spring.ts';
 import { cn } from './cn.ts';
+import { modeOf } from './orderMode.ts';
 import { PaymentChip } from './PaymentChip.tsx';
 import { nextStep, STATE_META, StateChip } from './StateChip.tsx';
 
@@ -117,6 +110,7 @@ export function OrderCard({
   const first = order.customer.name.trim().split(/\s+/)[0];
   const items = order.items.map((i) => `${i.qty}× ${i.name}`);
   const nextMeta = next ? STATE_META[next.to] : null;
+  const mode = modeOf(order.delivery);
   const advance = () => onAdvance(order, order.state === 'placed' ? prep : undefined);
 
   const setX = (x: number) => {
@@ -408,14 +402,12 @@ export function OrderCard({
             <span className="tnum font-semibold text-ink">{money(order.totalCents)}</span>
             <PaymentChip payment={order.payment} quiet className="h-6 px-2" />
             <span className="inline-flex items-center gap-1">
-              {order.delivery.mode === 'delivery' ? (
-                <Moped className="size-4" />
-              ) : (
-                <Bag className="size-4" />
-              )}
+              <mode.Icon className="size-4" />
               {order.delivery.mode === 'delivery'
                 ? (order.delivery.neighborhood ?? 'entrega')
-                : 'retirada'}
+                : order.delivery.mode === 'dine_in'
+                  ? mode.label
+                  : 'retirada'}
             </span>
             {order.scheduledFor ? (
               <span className="inline-flex items-center gap-1">

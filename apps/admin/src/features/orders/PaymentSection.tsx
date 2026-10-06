@@ -1,19 +1,26 @@
 import {
   ArrowCounterClockwise,
+  CashRegister,
   CheckCircle,
   CreditCard,
   Money,
   PixLogo,
 } from '@phosphor-icons/react';
+import { lazy, Suspense, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { Order, OrderPayment } from '../../lib/api.ts';
 import { clock, money, when } from '../../lib/format.ts';
+import { useFeature } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Notice } from '../../ui/Notice.tsx';
-import { attemptMeta, METHOD_LABEL, REVIEW } from '../../ui/PaymentChip.tsx';
+import { attemptMeta, PAY_LABEL, PDV_METHOD_LABEL, REVIEW } from '../../ui/PaymentChip.tsx';
 import { Bone } from '../../ui/skeletons.tsx';
 import { useMarkPaid } from './actions.ts';
+
+// the PDV's payment flow, only fetched when someone receives an order at the counter
+const ReceiveSheet = lazy(() => import('../pdv/ReceiveSheet.tsx'));
 
 const SETTLED = ['approved', 'partially_refunded', 'refunded', 'charged_back', 'in_mediation'];
 
@@ -29,9 +36,14 @@ export const refundable = (p: OrderPayment | null) =>
   !p || !(p.status === 'approved' || p.status === 'partially_refunded') ? 0 : p.refundableCents;
 
 function methodLabel(o: Order) {
+  const split = o.payment.pdv;
+  if (o.payment.method === 'mixed' && split?.length)
+    return split.map((x) => `${PDV_METHOD_LABEL[x.method]} ${money(x.cents)}`).join(' + ');
+  if (o.payment.provider === 'pdv' && o.payment.method !== 'tab')
+    return `${PAY_LABEL[o.payment.method] ?? o.payment.method} no caixa`;
   if (o.payment.method === 'pix')
     return o.payment.online ? 'Pix pelo Mercado Pago' : 'Pix na chave da loja';
-  return METHOD_LABEL[o.payment.method] ?? o.payment.method;
+  return PAY_LABEL[o.payment.method] ?? o.payment.method;
 }
 
 function explain(o: Order): string {
@@ -41,8 +53,9 @@ function explain(o: Order): string {
     case 'paid':
       return online
         ? `Pago${p.paidAt ? ` ${when(p.paidAt)}` : ''} · confirmado pelo Mercado Pago`
-        : `Pago${p.confirmedBy ? `, confirmado por ${p.confirmedBy}` : ''}`;
+        : `${p.provider === 'pdv' ? 'Pago no caixa' : 'Pago'}${p.confirmedBy ? `, recebido por ${p.confirmedBy}` : ''}`;
     case 'pending':
+      if (p.method === 'tab') return 'Paga junto com a comanda, quando ela fechar.';
       if (online && p.method === 'pix')
         return p.pix?.expiresAt
           ? `O Mercado Pago confirma sozinho quando o cliente pagar. O Pix vale até ${clock(p.pix.expiresAt)}.`
@@ -91,8 +104,13 @@ export function PaymentSection({
   const settled = main && SETTLED.includes(main.status);
   const refunds = (payments ?? []).flatMap((x) => x.refunds);
   const reviews = (payments ?? []).filter((x) => x.review && REVIEW[x.review]);
-  const canMarkPaid =
-    !online && p.status !== 'paid' && !['cancelled', 'refunded'].includes(order.state);
+  const pdvOpen = useFeature('pdv');
+  const [receiving, setReceiving] = useState(false);
+  const open = !['cancelled', 'refunded'].includes(order.state);
+  // a PDV order's money is the caixa's: Core refuses "marcar pago" on it
+  const pdv = p.provider === 'pdv';
+  const canMarkPaid = !online && !pdv && p.status !== 'paid' && open;
+  const canReceive = pdvOpen && !online && !pdv && p.status !== 'paid' && open;
 
   return (
     <Card as="section" aria-label="pagamento" className="divide-y divide-line">
@@ -186,8 +204,24 @@ export function PaymentSection({
         </p>
       ) : null}
 
-      {canRefund || canMarkPaid ? (
+      {pdv && p.method === 'tab' && order.delivery.tabId && pdvOpen ? (
+        <div className="p-4">
+          <Link
+            to={`/pdv/comanda/${order.delivery.tabId}`}
+            className="t-label inline-flex min-h-11 items-center underline underline-offset-2"
+          >
+            abrir a comanda
+          </Link>
+        </div>
+      ) : null}
+
+      {canRefund || canMarkPaid || canReceive ? (
         <div className="flex flex-wrap gap-2 p-4">
+          {canReceive ? (
+            <Button icon={<CashRegister />} onClick={() => setReceiving(true)}>
+              receber no caixa
+            </Button>
+          ) : null}
           {canRefund ? (
             <Button variant="secondary" icon={<ArrowCounterClockwise />} onClick={onRefund}>
               devolver dinheiro
@@ -204,6 +238,11 @@ export function PaymentSection({
             </Button>
           ) : null}
         </div>
+      ) : null}
+      {receiving ? (
+        <Suspense fallback={null}>
+          <ReceiveSheet order={order} onClose={() => setReceiving(false)} />
+        </Suspense>
       ) : null}
     </Card>
   );

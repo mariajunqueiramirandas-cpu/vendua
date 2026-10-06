@@ -61,6 +61,17 @@ export const qk = {
   customerFacts: (phone: string) => ['customers', 'facts', phone] as const,
   // this person's conversation with Duá Copilot (the live topic `copilot`)
   copilot: ['copilot'] as const,
+  // the PDV under one root: the live topic `pdv` refreshes them all
+  pdv: {
+    state: ['pdv', 'state'] as const,
+    caixa: ['pdv', 'caixa'] as const,
+    tab: (id: string, ways = 0) => ['pdv', 'tab', id, ways] as const,
+    history: ['pdv', 'history'] as const,
+    session: (id: string) => ['pdv', 'session', id] as const,
+  },
+  // outside the `pdv` root: a write elsewhere doesn't re-price an open ticket
+  pdvQuote: (body: string) => ['pdv-quote', body] as const,
+  pdvPix: (cents: number) => ['pdv-pix', cents] as const,
 };
 
 // 408 and 429 pass with time; other 4xx won't change by asking again

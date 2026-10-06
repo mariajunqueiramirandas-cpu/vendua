@@ -10,7 +10,6 @@ import {
   caixaDetail,
   caixaRowById,
   closeTabTx,
-  expectedOf,
   lockTab,
   openCaixaRow,
   openTabSummaries,
@@ -811,7 +810,8 @@ export function mountPdv(d: AdminDeps) {
       const row = await openCaixaRow(tx, t.id, 'update');
       if (!row) throw new HttpError(409, 'CAIXA_CLOSED', 'the caixa is closed');
       const detail = await caixaDetail(tx, t.id, row, true);
-      const expected = expectedOf(row.opening_cents, detail.byMethod, detail.movements);
+      // shown in full (managers' view): the open caixa's expected, computed from its ledger
+      const expected = detail.expected!;
       const [closed] = await tx<{ closed_at: Date }[]>`
         update cash_sessions set closed_at = now(), closed_by = ${m.name},
           counted = ${tx.json(counted)}, expected = ${tx.json(expected)}, notes = ${notes}

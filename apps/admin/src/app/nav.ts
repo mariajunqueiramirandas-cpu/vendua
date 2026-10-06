@@ -1,4 +1,5 @@
 import {
+  CashRegister,
   ChartLineUp,
   ChatsCircle,
   CookingPot,
@@ -36,6 +37,8 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { to: '/', label: 'Início', Icon: House, min: 'attendant', primary: true },
   { to: '/pedidos', label: 'Pedidos', Icon: Receipt, min: 'attendant', primary: true },
+  // the counter, the mesas and the caixa (ADR 0035)
+  { to: '/pdv', label: 'PDV', Icon: CashRegister, min: 'attendant', feature: 'pdv' },
   // in the bar while it's on, in "Mais" before (navFor)
   { to: '/vendedor', label: 'Duá', Icon: Sparkle, min: 'attendant', feature: 'vendedor' },
   // Duá Copilot: the store's people ask him in the admin (on phones, in "Mais" and the header)
@@ -83,6 +86,11 @@ export function moreOf(items: NavItem[], vendedorOn: boolean): NavItem[] {
 const DEEP: { match: RegExp; parent: string; title: string }[] = [
   // opened from any screen (the header's Duá): one level down, back returns there
   { match: /^\/copiloto$/, parent: '/', title: 'Copiloto' },
+  // Vender, Mesas and Caixa are the PDV's own tabs; their drill-downs go one level down
+  { match: /^\/pdv\/mesas$/, parent: '/pdv', title: 'Mesas' },
+  { match: /^\/pdv\/caixa$/, parent: '/pdv', title: 'Caixa' },
+  { match: /^\/pdv\/comanda\/[^/]+$/, parent: '/pdv/mesas', title: 'Comanda' },
+  { match: /^\/pdv\/caixa\/[^/]+$/, parent: '/pdv/caixa', title: 'Fechamento' },
   { match: /^\/pedidos\/historico$/, parent: '/pedidos', title: 'Histórico' },
   { match: /^\/pedidos\/agendados$/, parent: '/pedidos', title: 'Encomendas' },
   { match: /^\/pedidos\/[^/]+$/, parent: '/pedidos', title: 'Pedido' },

@@ -105,7 +105,8 @@ export interface CaixaDetail {
     by: string;
     at: string;
   }[];
-  byMethod: ByMethod<{ count: number; cents: number }>;
+  /** cents are null for attendants while the caixa is open: they would give the expected away */
+  byMethod: ByMethod<{ count: number; cents: number | null }>;
   salesCount: number;
   changeCents: number;
   serviceCents: number;
@@ -185,13 +186,14 @@ export async function caixaDetail(
     by: m.by_name,
     at: new Date(m.at).toISOString(),
   }));
+  const blind = !showExpected && !row.closed_at;
   return {
     id: row.id,
     openedAt: new Date(row.opened_at).toISOString(),
     openedBy: row.opened_by,
     openingCents: row.opening_cents,
     movements: moves,
-    byMethod,
+    byMethod: blind ? perMethod((m) => ({ count: byMethod[m].count, cents: null })) : byMethod,
     salesCount: totals[0]?.sales ?? 0,
     changeCents: totals[0]?.change ?? 0,
     serviceCents: service[0]?.cents ?? 0,

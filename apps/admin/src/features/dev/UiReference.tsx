@@ -52,6 +52,10 @@ import { Notice } from '../../ui/Notice.tsx';
 import { CodeInput } from '../../ui/CodeInput.tsx';
 import { CopyValue } from '../../ui/CopyValue.tsx';
 import { PaymentChip } from '../../ui/PaymentChip.tsx';
+import { Keypad, QuickAmount } from '../../ui/pdv/Keypad.tsx';
+import { CaixaBadge, MethodPicker } from '../../ui/pdv/MethodPicker.tsx';
+import { TableTile } from '../../ui/pdv/TableTile.tsx';
+import type { PdvMethod } from '../../lib/api.ts';
 import { PixCode } from '../../ui/PixCode.tsx';
 import { PlanCardSkeleton } from '../../ui/PlanCard.tsx';
 import { PlanCards, PlanCompare, PlanTrialStrip } from '../../ui/PlanPicker.tsx';
@@ -561,6 +565,8 @@ export default function UiReference() {
         </div>
       </Block>
 
+      <PdvReference now={now} />
+
       <Block title="Cardápio">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
           <ProductTile p={product({ name: 'Pudim de leite' })} />
@@ -891,6 +897,7 @@ const NONE = {
   loyalty: false,
   vendedor: false,
   copilot: false,
+  pdv: false,
 };
 const SAMPLE_PLANS: Plan[] = [
   {
@@ -910,7 +917,7 @@ const SAMPLE_PLANS: Plan[] = [
     name: 'Venduá Bandeira',
     priceCents: 16900,
     feeBps: 0,
-    features: { ...NONE, kds: true, printing: true, loyalty: true, vendedor: true },
+    features: { ...NONE, kds: true, printing: true, loyalty: true, vendedor: true, pdv: true },
     trialDays: 14,
     recommended: true,
     aiConversations: 250,
@@ -930,6 +937,7 @@ const SAMPLE_PLANS: Plan[] = [
       loyalty: true,
       vendedor: true,
       copilot: true,
+      pdv: true,
     },
     trialDays: 0,
     recommended: false,
@@ -948,6 +956,52 @@ const SAMPLE_SESSION = {
   support: { whatsapp: null },
   plan: { id: 'mirim', name: 'Venduá Mirim', features: NONE },
 } satisfies Session;
+
+function PdvReference({ now }: { now: number }) {
+  const [methods, setMethods] = useState<PdvMethod[]>(['cash']);
+  const [tendered, setTendered] = useState(5000);
+  const ago = (min: number) => new Date(now - min * 60_000).toISOString();
+  return (
+    <Block title="PDV: mesas, formas e caixa">
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <CaixaBadge open detail="desde 08h12" />
+            <CaixaBadge open={false} detail="abrir" />
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <TableTile label="1" now={now} />
+            <TableTile
+              label="Mesa 2"
+              now={now}
+              tab={{ totalCents: 18_790, openedAt: ago(47), rounds: 2, customerName: 'Ana' }}
+            />
+            <TableTile
+              label="Varanda com um nome bem comprido de quarenta"
+              now={now}
+              tab={{ totalCents: 1_000_000, openedAt: ago(130), rounds: 12, customerName: null }}
+            />
+            <TableTile label="Mesa 4" now={now} editing />
+          </div>
+          <MethodPicker
+            value={methods}
+            onPick={(m) =>
+              setMethods((v) => (v.includes(m) ? v.filter((x) => x !== m) : [...v, m]))
+            }
+          />
+        </div>
+        <Keypad label="Dinheiro recebido (de R$ 42,50)" cents={tendered} onChange={setTendered}>
+          <QuickAmount on={tendered === 0} onClick={() => setTendered(0)}>
+            exato
+          </QuickAmount>
+          <QuickAmount on={tendered === 5000} onClick={() => setTendered(5000)}>
+            R$ 50,00
+          </QuickAmount>
+        </Keypad>
+      </div>
+    </Block>
+  );
+}
 
 function Block({ title, children }: { title: string; children: ReactNode }) {
   return (

@@ -480,6 +480,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     });
     const blind = await attendant('GET', '/pdv/caixa');
     expect(blind.body.caixa.expected).toBeNull();
+    expect(blind.body.caixa.byMethod.cash).toEqual({ count: expect.any(Number), cents: null });
     const seen = await owner('GET', '/pdv/caixa');
     // float 100,00 + the storefront order's 15,00 + Comanda 7's 11,00 − 5,00 + 2,00; the
     // cancelled sale's left

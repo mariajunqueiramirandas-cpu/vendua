@@ -197,7 +197,8 @@ interface CaixaDetail {
     by: string;
     at: string;
   }[];
-  byMethod: Record<PdvMethod, { count: number; cents: number }>; // payments taken, voids excluded
+  // payments taken, voids excluded; cents null for attendants while it is open (blind close)
+  byMethod: Record<PdvMethod, { count: number; cents: number | null }>;
   salesCount: number; // orders and comandas paid in this caixa
   changeCents: number; // change handed out
   serviceCents: number; // service charge in comandas closed in this caixa

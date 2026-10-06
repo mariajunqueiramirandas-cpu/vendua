@@ -1,6 +1,7 @@
 import { MutationObserver, type MutationOptions } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
 import { orderPath } from '@vendua/kernel/rules';
+import { pathMode } from '../../ui/orderMode.ts';
 import { api, ApiError, type Board, type Order, type OrderState } from '../../lib/api.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { markOrdersSeen } from '../../lib/live.ts';
@@ -53,7 +54,7 @@ function put(id: string, f: (o: Order) => Order) {
 /** `to` lies ahead of where the order is (closing it always does) */
 function ahead(o: Order, to: OrderState) {
   if (to === 'cancelled' || to === 'refunded') return true;
-  const path = orderPath(o.delivery.mode);
+  const path = orderPath(pathMode(o.delivery.mode));
   return path.indexOf(to) > path.indexOf(o.state);
 }
 
@@ -245,7 +246,7 @@ function undo(id: string) {
  * any gesture is the same request, so Core never applies it twice.
  */
 export function holdMove(order: Order, target: OrderState, prepMinutes?: number) {
-  const path = orderPath(order.delivery.mode) as OrderState[];
+  const path = orderPath(pathMode(order.delivery.mode)) as OrderState[];
   // a move already held on this order goes out now; this one waits behind it
   if (held.has(order.id)) void commit(order.id);
   const from = withHeld(order, shown);

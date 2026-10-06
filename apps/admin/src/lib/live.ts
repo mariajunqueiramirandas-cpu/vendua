@@ -30,7 +30,8 @@ type Topic =
   | 'vendedor.waiting'
   | 'vendedor.ask'
   | 'vendedor.exhausted'
-  | 'copilot';
+  | 'copilot'
+  | 'pdv';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity],
@@ -59,6 +60,8 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   'vendedor.exhausted': [['vendedor'], qk.account],
   // Duá Copilot's reply (or a card decided on another device) for this person
   copilot: [qk.copilot],
+  // a comanda or the caixa moved; its rounds and receipts are orders too
+  pdv: [['pdv'], ['orders'], qk.home],
 };
 
 // ── connection + alert state (a tiny external store) ───────────────────────

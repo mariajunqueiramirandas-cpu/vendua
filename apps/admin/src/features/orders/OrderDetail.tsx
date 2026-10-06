@@ -1,14 +1,12 @@
 import {
   ArrowClockwise,
   ArrowSquareOut,
-  Bag,
   CalendarBlank,
   CaretDown,
   CheckCircle,
   ClockClockwise,
   HourglassMedium,
   MapPin,
-  Moped,
   NotePencil,
   Printer,
   Prohibit,
@@ -20,15 +18,16 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Order, OrderPayment, OrderPrintJob, OrderState } from '../../lib/api.ts';
 import { clock, dateShort, money, phone, when } from '../../lib/format.ts';
-import { can, useCan, useSession } from '../../lib/session.ts';
+import { can, featureOpen, useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Chips, Field, TextArea } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
+import { modeOf } from '../../ui/orderMode.ts';
 import { nextStep, STATE_META, StateChip } from '../../ui/StateChip.tsx';
-import { METHOD_LABEL, PaymentChip } from '../../ui/PaymentChip.tsx';
+import { PAY_LABEL, PaymentChip } from '../../ui/PaymentChip.tsx';
 import {
   CANCEL_REASONS,
   orderWhatsappUrl,
@@ -74,6 +73,8 @@ export function OrderDetail({
   const products = soldOutItems(order);
   const cancellable = !['delivered', 'cancelled', 'refunded'].includes(order.state);
   const d = order.delivery;
+  const ModeIcon = modeOf(d).Icon;
+  const pdvOpen = featureOpen(s, 'pdv');
   const coords =
     typeof d.lat === 'number' && typeof d.lng === 'number' ? { lat: d.lat, lng: d.lng } : null;
   const mapHref = coords
@@ -178,7 +179,7 @@ export function OrderDetail({
             >
               <dt>
                 {order.paymentAdjustmentCents < 0 ? 'Desconto' : 'Acréscimo'} (
-                {METHOD_LABEL[order.payment.method] ?? 'pagamento'})
+                {PAY_LABEL[order.payment.method] ?? 'pagamento'})
               </dt>
               <dd className="tnum">
                 {order.paymentAdjustmentCents < 0 ? '−' : '+'}
@@ -248,15 +249,25 @@ export function OrderDetail({
           ) : null}
         </div>
         <div className="flex items-start gap-3 p-4">
-          {d.mode === 'delivery' ? (
-            <Moped className="mt-0.5 size-6 shrink-0" />
-          ) : (
-            <Bag className="mt-0.5 size-6 shrink-0" />
-          )}
+          <ModeIcon className="mt-0.5 size-6 shrink-0" />
           <div className="min-w-0 flex-1">
             <p className="font-semibold">
-              {d.mode === 'delivery' ? 'Entrega' : 'Retirada na loja'}
+              {d.mode === 'delivery'
+                ? 'Entrega'
+                : d.mode === 'dine_in'
+                  ? d.table
+                    ? `${modeOf(d).label}, consumo no local`
+                    : 'Consumo no local'
+                  : 'Retirada na loja'}
             </p>
+            {d.mode === 'dine_in' && d.tabId && pdvOpen ? (
+              <Link
+                to={`/pdv/comanda/${d.tabId}`}
+                className="t-body font-semibold underline underline-offset-2"
+              >
+                abrir a comanda
+              </Link>
+            ) : null}
             {d.mode === 'delivery' ? (
               <p className="t-body text-muted">
                 {[d.address, d.neighborhood].filter(Boolean).join(' — ')}

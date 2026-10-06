@@ -37,6 +37,7 @@ export const FEATURE_LABEL: Record<PlanFeature, string> = {
   loyalty: 'o cartão fidelidade',
   vendedor: 'o Duá, vendedor com IA',
   copilot: 'o Duá Copiloto no painel',
+  pdv: 'o PDV, com caixa e mesas',
   customDomain: 'o domínio próprio',
   customSite: 'o site personalizado',
 };
@@ -491,6 +492,10 @@ export function PlanCompare({
     {
       name: 'Cozinha',
       rows: [feat('Tela da cozinha', 'kds'), feat('Impressão automática da comanda', 'printing')],
+    },
+    {
+      name: 'Balcão e mesas',
+      rows: [feat('Caixa, vendas no balcão e comandas nas mesas', 'pdv')],
     },
     { name: 'Clientes', rows: [feat('Cartão fidelidade', 'loyalty')] },
     {
