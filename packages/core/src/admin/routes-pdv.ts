@@ -333,12 +333,13 @@ export function mountPdv(d: AdminDeps) {
         throw new HttpError(422, 'INVALID_PAYMENT', 'only a delivery is paid later', {
           field: 'payLater',
         });
-      const payments: PdvPaymentIn[] =
-        later &&
-        (body.payments === undefined ||
-          (Array.isArray(body.payments) && body.payments.length === 0))
-          ? []
-          : parsePayments(body.payments);
+      // paid later means nothing is paid now: part paid would leave money in the caixa on an
+      // order marked unpaid, with no way to receive the rest
+      if (later && Array.isArray(body.payments) && body.payments.length > 0)
+        throw new HttpError(422, 'INVALID_PAYMENT', 'a sale paid later takes no payments now', {
+          field: 'payments',
+        });
+      const payments: PdvPaymentIn[] = later ? [] : parsePayments(body.payments);
       const quoted = int(body.quotedTotalCents, 'quotedTotalCents', 0, MAX_CENTS);
       const serveNow =
         body.serveNow === undefined || delivery ? false : bool(body.serveNow, 'serveNow');
@@ -525,7 +526,8 @@ export function mountPdv(d: AdminDeps) {
         where tenant_id = ${t.id} and id = ${id}
       `;
       await recordOrderStep(tx, t.id, { id, number: cur.number }, 'paid', 'merchant');
-      await enqueueOrderMessageTx(tx, t.id, id, 'paid');
+      // money a courier brings back after the door is no news to the customer
+      if (cur.state !== 'delivered') await enqueueOrderMessageTx(tx, t.id, id, 'paid');
       await Promise.all([
         audit(tx, t.id, m, {
           action: 'pdv.order_paid',

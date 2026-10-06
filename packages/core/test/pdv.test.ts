@@ -449,6 +449,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     });
     expect(noPhone.status).toBe(422);
     expect(noPhone.body.error.code).toBe('CUSTOMER_REQUIRED');
+    const partly = await attendant('POST', '/pdv/sales', {
+      lines,
+      mode: 'delivery',
+      delivery: address,
+      customer: { name: 'Marta Lima', phone: '21988776655' },
+      quotedTotalCents: 1100,
+      payments: [{ method: 'pix', amountCents: 500 }],
+      payLater: { method: 'cash' },
+    });
+    expect(partly.status).toBe(422);
+    expect(partly.body.error.code).toBe('INVALID_PAYMENT');
     const r = await attendant('POST', '/pdv/sales', {
       lines,
       mode: 'delivery',

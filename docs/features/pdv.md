@@ -133,7 +133,7 @@ interface PdvDeliveryQuote {
   storefront's and don't apply here.
 - `POST /pdv/sales` takes `mode: 'delivery'` with `delivery: PdvDeliveryIn`; then
   `customer.name` (2..80) and `customer.phone` are required (422 `CUSTOMER_REQUIRED`).
-  `payments` may be `[]` with `payLater: { method: PdvMethod; changeForCents?: number }`: the
+  `payments` must be `[]` (422 `INVALID_PAYMENT` otherwise) with `payLater: { method: PdvMethod; changeForCents?: number }`: the
   order goes out unpaid ("cobrar na entrega"; `changeForCents` is cash only, ≥ the total) and is
   received later through `POST /pdv/orders/:id/payments`. With payments, they add up to the
   total as for any sale. The order is accepted at once and goes to the kitchen and printers; the
