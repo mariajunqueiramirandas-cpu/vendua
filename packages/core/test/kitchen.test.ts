@@ -274,6 +274,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: kitchen display (db)', (
       number: ana.number,
       state: 'confirmed',
       mode: 'delivery',
+      table: null,
       name: 'Ana',
       notes: 'sem cebola',
       scheduledFor: null,
