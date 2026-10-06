@@ -106,7 +106,27 @@ for (const theme of THEMES) {
       const file = `${OUT}/${theme}-${vp.name}${r.replace(/[/?=&#]+/g, '_') || '_home'}.png`;
       await page.screenshot({ path: file, fullPage: vp.name === 'phone' });
       let flag = overflow > 0 ? `  ✗ horizontal overflow ${overflow}px` : '';
-      if (overflow > 0) failures++;
+      if (overflow > 0) {
+        failures++;
+        // name what sticks out, so a failure on CI's data can be fixed without reproducing it
+        const culprits = await page.evaluate(() => {
+          const w = document.documentElement.clientWidth;
+          const past = Array.from(document.querySelectorAll<HTMLElement>('body *')).filter((el) => {
+            const b = el.getBoundingClientRect();
+            return b.width > 0 && b.right > w + 0.5;
+          });
+          // the innermost ones: an element whose children all fit is the one to look at
+          return past
+            .filter((el) => !past.some((o) => o !== el && el.contains(o)))
+            .slice(0, 5)
+            .map((el) => {
+              const cls = typeof el.className === 'string' ? el.className.slice(0, 80) : '';
+              const right = el.getBoundingClientRect().right.toFixed(1);
+              return `${el.tagName.toLowerCase()}.${cls} right=${right} "${(el.textContent ?? '').trim().slice(0, 40)}"`;
+            });
+        });
+        for (const c of culprits) console.log(`    ↳ ${c}`);
+      }
       if (AXE && vp.name !== 'tablet') {
         const res = await new AxeBuilder({ page })
           .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
