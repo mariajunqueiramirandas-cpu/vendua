@@ -347,11 +347,11 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 
 export function mountKitchen(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   admin.get(
     '/kitchen',
-    read('attendant', async (tx, t) => {
+    named('kitchen').read('attendant', async (tx, t) => {
       // independent reads in one batch (the plan gate rejects the whole of it), then the
       // tickets and the stats, which need the settings, in another
       const [, tz, s, categories] = await Promise.all([

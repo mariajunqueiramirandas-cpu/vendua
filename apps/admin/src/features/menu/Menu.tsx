@@ -448,7 +448,7 @@ export default function Menu() {
       ) : (
         <div
           data-action-bar
-          className="glass fixed inset-x-0 bottom-[var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))] z-30 border-t border-line px-4 py-3 md:bottom-4 md:left-auto md:right-6 md:rounded-lg md:border-0 md:depth-3"
+          className="glass fixed inset-x-0 bottom-[var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))] z-30 border-t border-line px-4 py-3 md:bottom-4 md:left-auto md:right-[calc(var(--dock-w,0px)+1.5rem)] md:rounded-lg md:border-0 md:depth-3"
         >
           <p className="t-caption mb-2 text-muted">{picked.size} selecionados</p>
           <div className="flex flex-wrap gap-2">

@@ -11,7 +11,7 @@ import {
 import { readLoyalty, type StoredLoyalty } from '../modules/customer.ts';
 import { audit } from './audit.ts';
 import { bool, int, isObj, oneOf, optInt, optText, text, type AdminDeps } from './context.ts';
-import { handlers } from './handlers.ts';
+import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { loadSettings } from './routes-store.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
@@ -56,11 +56,11 @@ function date(v: unknown, name: string): Date | null {
 
 export function mountMarketing(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   admin.get(
     '/marketing',
-    read('manager', async (tx, t) => {
+    named('marketing').read('manager', async (tx, t) => {
       const s = await loadSettings(tx, t.id);
       const loyalty = loyaltyView(readLoyalty(s.loyalty));
       const loyaltyStats = (
@@ -92,8 +92,8 @@ export function mountMarketing(d: AdminDeps) {
 
   admin.post(
     '/coupons',
-    write('manager', async (tx, t, m, c) => {
-      const body = await bodyJson(c);
+    named('coupon.create').write('manager', async (tx, t, m, c) => {
+      const body = await bodyOf(c);
       const code = normalizeCode(text(body.code, 'code', 32, 3));
       if (!COUPON_CODE_RE.test(code))
         throw new HttpError(422, 'BAD_REQUEST', 'use 3–32 letters, numbers, _ or -', {
@@ -141,9 +141,9 @@ export function mountMarketing(d: AdminDeps) {
 
   admin.patch(
     '/coupons/:id',
-    write('manager', async (tx, t, m, c) => {
+    named('coupon.patch').write('manager', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
-      const body = await bodyJson(c);
+      const body = await bodyOf(c);
       const set: Record<string, unknown> = {};
       if (body.active !== undefined) set.active = bool(body.active, 'active');
       if (body.label !== undefined) set.label = optText(body.label, 'label', 120) ?? null;

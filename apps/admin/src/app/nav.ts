@@ -1,5 +1,6 @@
 import {
   ChartLineUp,
+  ChatsCircle,
   CookingPot,
   ForkKnife,
   House,
@@ -37,6 +38,8 @@ export const NAV: NavItem[] = [
   { to: '/pedidos', label: 'Pedidos', Icon: Receipt, min: 'attendant', primary: true },
   // in the bar while it's on, in "Mais" before (navFor)
   { to: '/vendedor', label: 'Duá', Icon: Sparkle, min: 'attendant', feature: 'vendedor' },
+  // Duá Copilot: the store's people ask him in the admin (on phones, in "Mais" and the header)
+  { to: '/copiloto', label: 'Copiloto', Icon: ChatsCircle, min: 'manager', feature: 'copilot' },
   { to: '/cozinha', label: 'Cozinha', Icon: CookingPot, min: 'attendant', feature: 'kds' },
   { to: '/cardapio', label: 'Cardápio', Icon: ForkKnife, min: 'manager', primary: true },
   { to: '/loja', label: 'Loja', Icon: Storefront, min: 'manager', primary: true },
@@ -78,6 +81,8 @@ export function moreOf(items: NavItem[], vendedorOn: boolean): NavItem[] {
 }
 
 const DEEP: { match: RegExp; parent: string; title: string }[] = [
+  // opened from any screen (the header's Duá): one level down, back returns there
+  { match: /^\/copiloto$/, parent: '/', title: 'Copiloto' },
   { match: /^\/pedidos\/historico$/, parent: '/pedidos', title: 'Histórico' },
   { match: /^\/pedidos\/agendados$/, parent: '/pedidos', title: 'Encomendas' },
   { match: /^\/pedidos\/[^/]+$/, parent: '/pedidos', title: 'Pedido' },

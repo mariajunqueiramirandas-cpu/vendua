@@ -36,6 +36,7 @@ export const FEATURE_LABEL: Record<PlanFeature, string> = {
   printing: 'a impressão automática',
   loyalty: 'o cartão fidelidade',
   vendedor: 'o Duá, vendedor com IA',
+  copilot: 'o Duá Copiloto no painel',
   customDomain: 'o domínio próprio',
   customSite: 'o site personalizado',
 };
@@ -505,6 +506,10 @@ export function PlanCompare({
           ),
         },
       ],
+    },
+    {
+      name: 'Duá Copiloto no painel',
+      rows: [feat('Pergunte da loja e confirme mudanças', 'copilot')],
     },
     {
       name: 'Marca',

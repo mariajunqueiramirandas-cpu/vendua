@@ -57,6 +57,8 @@ export const qk = {
     onboarding: ['vendedor', 'onboarding'] as const,
   },
   customerFacts: (phone: string) => ['customers', 'facts', phone] as const,
+  // this person's conversation with Duá Copilot (the live topic `copilot`)
+  copilot: ['copilot'] as const,
 };
 
 // 408 and 429 pass with time; other 4xx won't change by asking again

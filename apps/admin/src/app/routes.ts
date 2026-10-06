@@ -1,6 +1,6 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { createElement, lazy, type ComponentType } from 'react';
-import { api, type Session } from '../lib/api.ts';
+import { api, type PlanFeature, type Session } from '../lib/api.ts';
 import { featureOpen } from '../lib/session.ts';
 import { isoDate } from '../lib/format.ts';
 import { qk } from '../lib/query.ts';
@@ -60,6 +60,8 @@ export const chunks = {
   vendedorResults: once(() => import('../features/vendedor/Results.tsx')),
   vendedorSettings: once(() => import('../features/vendedor/Settings.tsx')),
   vendedorTest: once(() => import('../features/vendedor/TestChat.tsx')),
+  // the route and the wide screens' dock (Shell) share one chunk
+  copilot: once(() => import('../features/copilot/Copilot.tsx')),
   signup: once(() => import('../features/signup/Signup.tsx')),
   notFound: once(() => import('../features/notfound/NotFound.tsx')),
   sheets: once(() => import('./ShellSheets.tsx')),
@@ -115,7 +117,8 @@ export type RouteId =
   | 'vendedorClienteOculto'
   | 'vendedorResults'
   | 'vendedorSettings'
-  | 'vendedorTest';
+  | 'vendedorTest'
+  | 'copilot';
 
 interface RouteDef {
   id: RouteId;
@@ -128,11 +131,12 @@ interface RouteDef {
 const q = (qc: QueryClient, queryKey: readonly unknown[], queryFn: () => Promise<unknown>) =>
   qc.prefetchQuery({ queryKey, queryFn });
 
-// a plan without the kitchen gets its locked page, not a 403 warm-up
-const kds = (qc: QueryClient) => {
+// a plan without the kitchen (or the Copilot) gets its locked page, not a 403 warm-up
+const has = (qc: QueryClient, f: PlanFeature) => {
   const s = qc.getQueryData<Session>(qk.session);
-  return !s || featureOpen(s, 'kds');
+  return !s || featureOpen(s, f);
 };
+const kds = (qc: QueryClient) => has(qc, 'kds');
 
 const ROUTES: RouteDef[] = [
   {
@@ -359,6 +363,12 @@ const ROUTES: RouteDef[] = [
     match: /^\/vendedor\/testar$/,
     chunk: chunks.vendedorTest,
     data: (qc) => q(qc, qk.vendedor.testChat, api.vendedor.testChat),
+  },
+  {
+    id: 'copilot',
+    match: /^\/copiloto$/,
+    chunk: chunks.copilot,
+    data: (qc) => (has(qc, 'copilot') ? q(qc, qk.copilot, api.copilot.view) : Promise.resolve()),
   },
 ];
 

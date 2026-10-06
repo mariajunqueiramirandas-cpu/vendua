@@ -53,6 +53,7 @@ const VendedorClienteOculto = screen(chunks.vendedorClienteOculto, (m) => m.defa
 const VendedorResults = screen(chunks.vendedorResults, (m) => m.default);
 const VendedorSettings = screen(chunks.vendedorSettings, (m) => m.default);
 const VendedorTest = screen(chunks.vendedorTest, (m) => m.default);
+const Copilot = screen(chunks.copilot, (m) => m.default);
 const UiReference = lazy(() => import('../features/dev/UiReference.tsx'));
 
 export default function App() {
@@ -199,6 +200,8 @@ export default function App() {
                   <Route path="conta" element={<Account />} />
                   <Route path="perfil" element={<Profile />} />
                   <Route path="ajuda" element={<Help />} />
+                  {/* Duá Copilot: managers and owners; a plan without it shows the upsell there */}
+                  {manager ? <Route path="copiloto" element={<Copilot />} /> : null}
                   {/* conversations stay open on any plan: threads handed to the store live there */}
                   <Route path="vendedor/conversas" element={<VendedorConversations />} />
                   <Route path="vendedor/conversas/:id" element={<VendedorConversation />} />

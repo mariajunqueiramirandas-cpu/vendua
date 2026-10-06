@@ -27,7 +27,7 @@ import {
   text,
   type AdminDeps,
 } from './context.ts';
-import { handlers } from './handlers.ts';
+import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { storeTz } from './routes-orders.ts';
 
@@ -288,11 +288,11 @@ export function parseMenuPaste(raw: string): { name: string; priceCents: number 
 
 export function mountCatalog(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   admin.get(
     '/catalog',
-    read('manager', async (tx, t) => {
+    named('catalog').read('manager', async (tx, t) => {
       const categories = await tx<
         { id: string; slug: string; name: string; description: string | null; sort: number }[]
       >`
@@ -479,9 +479,9 @@ export function mountCatalog(d: AdminDeps) {
 
   admin.patch(
     '/products/:id',
-    write('manager', async (tx, t, m, c) => {
+    named('product.patch').write('manager', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
-      const body = await bodyJson(c);
+      const body = await bodyOf(c);
       const before = await productRow(tx, t.id, id);
       const set: Record<string, unknown> = {};
       const changes: string[] = [];
@@ -973,8 +973,8 @@ export function mountCatalog(d: AdminDeps) {
 
   admin.post(
     '/products/bulk',
-    write('manager', async (tx, t, m, c) => {
-      const body = await bodyJson(c);
+    named('products.bulk').write('manager', async (tx, t, m, c) => {
+      const body = await bodyOf(c);
       const ids = uuidList(body.ids, 'ids', 300);
       const action = oneOf(body.action, 'action', [
         'available',

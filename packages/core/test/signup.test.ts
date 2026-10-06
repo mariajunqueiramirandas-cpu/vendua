@@ -233,6 +233,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         printing: false,
         loyalty: false,
         vendedor: false,
+        copilot: false,
       },
       trialDays: 0,
       recommended: false,
@@ -715,6 +716,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       printing: true,
       loyalty: true,
       vendedor: true,
+      copilot: true,
     });
     expect(acct.body.siteRequest.status).toBe('requested');
   });
