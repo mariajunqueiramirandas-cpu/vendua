@@ -381,13 +381,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
       await sql<{ id: string }[]>`
         insert into carts (tenant_id, session_hash) values (${tenantId}, ${`pdv-${nonce}`}) returning id`
     )[0]!.id;
-    const [{ id }] = await sql<{ id: string }[]>`
+    const id = (
+      await sql<{ id: string }[]>`
       insert into orders (tenant_id, cart_id, number, customer, customer_phone, delivery, payment,
                           state, subtotal_cents, total_cents)
       values (${tenantId}, ${cart}, 9000, ${sql.json({ name: 'Bia', phone: '' })}, null,
               ${sql.json({ mode: 'pickup' })}, ${sql.json({ provider: 'sandbox', method: 'cash', status: 'pending', online: false })},
               'ready', 1500, 1500)
-      returning id`;
+      returning id`
+    )[0]!.id;
     const short = await attendant('POST', `/pdv/orders/${id}/payments`, {
       payments: [{ method: 'cash', amountCents: 1000 }],
     });
