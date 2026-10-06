@@ -250,8 +250,10 @@ async function orderFactsTx(
       from orders o
         join tenants t on t.id = o.tenant_id
         left join store_settings s on s.tenant_id = o.tenant_id
-      -- a PDV order never had a checkout to follow up on (ADR 0035)
-      where o.tenant_id = ${tenantId} and o.id = ${orderId} and o.source <> 'pdv'`
+      -- a PDV order is followed only when it goes out for delivery: the customer is waiting at
+      -- home on the phone they gave (ADR 0035)
+      where o.tenant_id = ${tenantId} and o.id = ${orderId}
+        and (o.source <> 'pdv' or o.delivery ->> 'mode' = 'delivery')`
   )[0];
   if (!row) return null;
   const links = orderLinks;

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { discountCents, serviceCents, splitShares } from '../src/modules/pdv/pricing.ts';
+import { claimDueJobsTx } from '../src/modules/printing/jobs.ts';
 import { migrate } from '../src/platform/db.ts';
 
 describe('pdv money helpers', () => {
@@ -406,6 +407,95 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     expect(again.status).toBe(409);
   });
 
+  let comanda7 = '';
+  test('a phone order for delivery: priced by the zone, paid at the door, received later', async () => {
+    await sql`
+      insert into delivery_zones (tenant_id, name, neighborhoods, fee_cents, eta_min_minutes, eta_max_minutes)
+      values (${tenantId}, 'Centro', ${sql.json(['Centro'])}, 500, 30, 50)
+    `;
+    const lines = [{ productId: coke, qty: 1 }];
+    const address = {
+      street: 'Rua das Flores',
+      number: '120',
+      neighborhood: 'centro',
+      reference: 'portão azul',
+    };
+    const q = await attendant('POST', '/pdv/quote', { lines, delivery: address });
+    expect(q.status).toBe(200);
+    expect(q.body.quote).toMatchObject({
+      subtotalCents: 600,
+      deliveryFeeCents: 500,
+      totalCents: 1100,
+      delivery: { zoneName: 'Centro', etaMin: 30, etaMax: 50 },
+    });
+    const far = await attendant('POST', '/pdv/quote', {
+      lines,
+      delivery: { ...address, neighborhood: 'Longe' },
+    });
+    expect(far.status).toBe(422);
+    expect(far.body.error.code).toBe('OUT_OF_ZONE');
+    const typed = { ...address, neighborhood: 'Longe', feeCents: 800 };
+    expect((await attendant('POST', '/pdv/quote', { lines, delivery: typed })).status).toBe(403);
+    const byHand = await owner('POST', '/pdv/quote', { lines, delivery: typed });
+    expect(byHand.body.quote).toMatchObject({ deliveryFeeCents: 800, totalCents: 1400 });
+    const noPhone = await attendant('POST', '/pdv/sales', {
+      lines,
+      mode: 'delivery',
+      delivery: address,
+      customer: { name: 'Marta' },
+      quotedTotalCents: 1100,
+      payments: [],
+      payLater: { method: 'cash' },
+    });
+    expect(noPhone.status).toBe(422);
+    expect(noPhone.body.error.code).toBe('CUSTOMER_REQUIRED');
+    const r = await attendant('POST', '/pdv/sales', {
+      lines,
+      mode: 'delivery',
+      delivery: address,
+      customer: { name: 'Marta Lima', phone: '(21) 98877-6655' },
+      quotedTotalCents: 1100,
+      payments: [],
+      payLater: { method: 'cash', changeForCents: 5000 },
+    });
+    expect(r.status).toBe(201);
+    expect(r.body.order).toMatchObject({
+      state: 'confirmed',
+      totalCents: 1100,
+      deliveryFeeCents: 500,
+      delivery: {
+        mode: 'delivery',
+        zoneName: 'Centro',
+        address: 'Rua das Flores, 120',
+        feeCents: 500,
+      },
+      payment: { provider: 'pdv', method: 'cash', status: 'pending', changeForCents: 5000 },
+    });
+    expect(r.body.sale.payments).toEqual([]);
+    // it can go out for delivery, and is received when the courier is back
+    const id = r.body.order.id;
+    for (const to of ['preparing', 'ready', 'out_for_delivery'])
+      expect((await owner('POST', `/orders/${id}/transition`, { to })).status).toBe(200);
+    const got = await attendant('POST', `/pdv/orders/${id}/payments`, {
+      payments: [{ method: 'pix', amountCents: 1100 }],
+    });
+    expect(got.status).toBe(200);
+    expect(got.body.order.payment).toMatchObject({ status: 'paid', method: 'pix' });
+    // next time the phone brings the name and the address
+    const back = await attendant('GET', '/pdv/customer?phone=21988776655');
+    expect(back.body.customer).toMatchObject({
+      name: 'Marta Lima',
+      lastDelivery: {
+        street: 'Rua das Flores',
+        number: '120',
+        neighborhood: 'centro',
+        reference: 'portão azul',
+      },
+    });
+    expect((await attendant('GET', '/pdv/customer?phone=21900000000')).body.customer).toBeNull();
+    expect((await attendant('GET', '/pdv/customer?phone=12')).status).toBe(422);
+  });
+
   test('no 500 on bad options, no second charge, no overpaid comanda', async () => {
     const bad = await attendant('POST', '/pdv/quote', {
       lines: [{ productId: burger, qty: 1, modifiers: [null] }],
@@ -416,6 +506,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     expect(unmark.status).toBe(409);
     const open = await attendant('POST', '/pdv/tabs', { label: 'Comanda 7' });
     const id = open.body.tab.id;
+    comanda7 = id;
     const r1 = await attendant('POST', `/pdv/tabs/${id}/rounds`, {
       lines: [{ productId: burger, qty: 1 }],
     });
@@ -454,6 +545,64 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     expect(n!.n).toBe(2);
   });
 
+  test('the bill and the caixa print on the store printer; archived tables come back', async () => {
+    expect((await attendant('POST', `/pdv/tabs/${comanda7}/print`, {})).status).toBe(409);
+    const [device] = await sql<{ id: string }[]>`
+      insert into print_devices (tenant_id, name, platform) values (${tenantId}, 'Balcão', 'windows')
+      returning id`;
+    const printer = async (key: string, name: string) =>
+      (
+        await sql<{ id: string }[]>`
+          insert into printers (tenant_id, device_id, key, kind, name, address)
+          values (${tenantId}, ${device!.id}, ${key}, 'spooler', ${name}, ${key}) returning id`
+      )[0]!.id;
+    const caixaPrinter = await printer('p1', 'Caixa');
+    await printer('p2', 'Cozinha');
+    const ask = await attendant('POST', `/pdv/tabs/${comanda7}/print`, { ways: 2 });
+    expect(ask.status).toBe(422);
+    expect(ask.body.error.code).toBe('PRINTER_REQUIRED');
+    expect(ask.body.error.details.printers).toHaveLength(2);
+    const bill = await attendant('POST', `/pdv/tabs/${comanda7}/print`, {
+      printerId: caixaPrinter,
+      ways: 2,
+    });
+    expect(bill.status).toBe(202);
+    const state = await attendant('GET', '/pdv/state');
+    expect(
+      (
+        await attendant('POST', `/pdv/caixa/${state.body.caixa.id}/print`, {
+          printerId: caixaPrinter,
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await owner('POST', `/pdv/caixa/${state.body.caixa.id}/print`, { printerId: caixaPrinter }))
+        .status,
+    ).toBe(202);
+    const jobs = await claimDueJobsTx(sql as never, tenantId, device!.id);
+    const text = jobs.map((j) => Buffer.from(j.data, 'base64').toString('latin1')).join('\n');
+    expect(text).toContain('COMANDA 7');
+    expect(text).toContain('Pessoa 2');
+    expect(text).toContain('CAIXA PARCIAL');
+    expect(text).toContain('documento fiscal');
+    await sql`delete from print_devices where id = ${device!.id}`;
+
+    // a table removed by mistake comes back; one whose name was taken since is refused
+    const removed = await owner('DELETE', `/pdv/tables/${mesa2}`);
+    expect(removed.body.archived.map((t: any) => t.id)).toContain(mesa2);
+    const again = await owner('POST', '/pdv/tables', { labels: ['Mesa 2'] });
+    const twin = again.body.tables.find((t: any) => t.label === 'Mesa 2').id;
+    const taken = await owner('POST', `/pdv/tables/${mesa2}/restore`);
+    expect(taken.status).toBe(409);
+    expect(taken.body.error.code).toBe('TABLE_LABEL_TAKEN');
+    expect((await attendant('POST', `/pdv/tables/${mesa2}/restore`)).status).toBe(403);
+    await owner('DELETE', `/pdv/tables/${twin}`);
+    const back = await owner('POST', `/pdv/tables/${mesa2}/restore`);
+    expect(back.status).toBe(200);
+    expect(back.body.tables.map((t: any) => t.id)).toContain(mesa2);
+    expect(back.body.archived.map((t: any) => t.id)).not.toContain(mesa2);
+  });
+
   test('sangria and suprimento; attendants close blind; the report keeps the difference', async () => {
     expect(
       (
@@ -486,14 +635,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     // cancelled sale's left
     expect(seen.body.caixa.expected).toEqual({
       cash: 12_300,
-      pix: 0,
+      pix: 1100,
       credit: 2200,
       debit: 600,
       voucher: 0,
     });
     expect(seen.body.caixa.serviceCents).toBe(300);
     const close = await attendant('POST', '/pdv/caixa/close', {
-      counted: { cash: 12_100, credit: 2200, debit: 600 },
+      counted: { cash: 12_100, pix: 1100, credit: 2200, debit: 600 },
       notes: 'faltou troco',
     });
     expect(close.status).toBe(200);

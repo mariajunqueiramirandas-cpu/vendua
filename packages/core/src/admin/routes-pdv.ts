@@ -1,7 +1,8 @@
 import type { Context } from 'hono';
-import type { Sql } from '../platform/db.ts';
+import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, uuidParam } from '../platform/http.ts';
 import { requireFeature } from '../modules/billing/plans.ts';
+import { printersTx, queueJobsTx } from '../modules/printing/jobs.ts';
 import { normalizePhone } from '../modules/customer.ts';
 import { loadOrderView, recordOrderStep, transitionOrder } from '../modules/orders.ts';
 import { pixPayload, type PixKeyType } from '../modules/pix.ts';
@@ -34,11 +35,32 @@ import {
   parsePayments,
   priceLines,
   quoteOf,
+  PDV_METHODS,
+  subtotalOf,
+  type PdvMethod,
   type PdvPaymentIn,
 } from '../modules/pdv/pricing.ts';
+import {
+  customerByPhone,
+  deliveryJson,
+  parseDelivery,
+  priceDelivery,
+} from '../modules/pdv/delivery.ts';
+import { MAX_CHANGE_CENTS } from '../modules/place-order.ts';
 import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
 import { audit } from './audit.ts';
-import { bool, int, isObj, oneOf, optText, roleAtLeast, text, type AdminDeps } from './context.ts';
+import {
+  bool,
+  int,
+  isObj,
+  need,
+  oneOf,
+  optText,
+  roleAtLeast,
+  text,
+  type AdminCtx,
+  type AdminDeps,
+} from './context.ts';
 import type { Merchant } from './context.ts';
 import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
@@ -115,6 +137,23 @@ async function insertPayments(
   return rows.map(paymentView);
 }
 
+function parsePayLater(v: unknown): { method: PdvMethod; changeForCents: number | null } {
+  if (!isObj(v))
+    throw new HttpError(422, 'INVALID_PAYMENT', 'payLater must be an object', {
+      field: 'payLater',
+    });
+  const method = oneOf(v.method, 'payLater.method', PDV_METHODS);
+  const change =
+    v.changeForCents === undefined || v.changeForCents === null
+      ? null
+      : int(v.changeForCents, 'payLater.changeForCents', 1, MAX_CHANGE_CENTS);
+  if (change !== null && method !== 'cash')
+    throw new HttpError(422, 'INVALID_CHANGE', 'change is only for cash payments', {
+      field: 'payLater.changeForCents',
+    });
+  return { method, changeForCents: change };
+}
+
 function parseCustomer(v: unknown): { name: string | null; phone: string | null } {
   if (v === undefined || v === null) return { name: null, phone: null };
   if (!isObj(v))
@@ -150,11 +189,45 @@ async function busyTab(tx: Sql, tenantId: string, tableId: string, except: strin
     throw new HttpError(409, 'TABLE_BUSY', 'this table has an open comanda', { tabId: row.id });
 }
 
+const archivedTables = (tx: Sql, tenantId: string) =>
+  tx<{ id: string; label: string; sort: number; archivedAt: Date }[]>`
+    select id, label, sort, archived_at as "archivedAt" from pdv_tables
+    where tenant_id = ${tenantId} and archived_at is not null
+    order by archived_at desc, id limit 200
+  `;
+
+const tablesOut = async (tx: Sql, tenantId: string) => {
+  const [active, archived] = await Promise.all([
+    tables(tx, tenantId),
+    archivedTables(tx, tenantId),
+  ]);
+  return { tables: active, archived };
+};
+
 const tables = (tx: Sql, tenantId: string) =>
   tx<{ id: string; label: string; sort: number }[]>`
     select id, label, sort from pdv_tables
     where tenant_id = ${tenantId} and archived_at is null order by sort, label, id
   `;
+
+/** One printer: the one asked for, or the store's only one; else the screen asks which. */
+async function printerFor(tx: Sql, tenantId: string, raw: unknown): Promise<string> {
+  const printers = (await printersTx(tx, tenantId)).filter((p) => p.present);
+  if (raw !== undefined && raw !== null) {
+    const id = uuidOf(raw, 'printerId');
+    if (!printers.some((p) => p.id === id))
+      throw new HttpError(404, 'PRINTER_NOT_FOUND', 'printer not found');
+    return id;
+  }
+  if (printers.length === 0)
+    throw new HttpError(409, 'NO_PRINTERS', 'no printer connected to this store');
+  if (printers.length > 1)
+    throw new HttpError(422, 'PRINTER_REQUIRED', 'pick the printer', {
+      field: 'printerId',
+      printers: printers.map((p) => ({ id: p.id, name: p.name })),
+    });
+  return printers[0]!.id;
+}
 
 const ways = (c: Context) => {
   const raw = c.req.query('ways');
@@ -199,8 +272,15 @@ export function mountPdv(d: AdminDeps) {
       const lines = parseLines(body.lines);
       const discount = parseDiscount(body.discount);
       if (discount) managerOnly(m, 'a discount');
+      const delivery =
+        body.delivery === undefined || body.delivery === null ? null : parseDelivery(body.delivery);
+      if (delivery?.feeCents != null) managerOnly(m, 'a delivery fee typed by hand');
       const [, tz] = await Promise.all([gate(tx, t.id), storeTz(tx, t.id)]);
-      return { quote: quoteOf(await priceLines(tx, t.id, lines, { tz }), discount) };
+      const priced = await priceLines(tx, t.id, lines, { tz });
+      const fee = delivery
+        ? (await priceDelivery(tx, t.id, delivery, subtotalOf(priced))).quote
+        : null;
+      return { quote: quoteOf(priced, discount, fee) };
     }),
   );
 
@@ -232,62 +312,97 @@ export function mountPdv(d: AdminDeps) {
       const lines = parseLines(body.lines);
       const discount = parseDiscount(body.discount);
       if (discount) managerOnly(m, 'a discount');
-      const mode = oneOf(body.mode, 'mode', ['takeaway', 'here'] as const);
+      const mode = oneOf(body.mode, 'mode', ['takeaway', 'here', 'delivery'] as const);
       const customer = parseCustomer(body.customer);
       const notes = optText(body.notes, 'notes', 500) ?? null;
-      const payments = parsePayments(body.payments);
+      const delivery = mode === 'delivery' ? parseDelivery(body.delivery) : null;
+      if (delivery?.feeCents != null) managerOnly(m, 'a delivery fee typed by hand');
+      if (delivery && (!customer.name || customer.name.length < 2 || !customer.phone))
+        throw new HttpError(
+          422,
+          'CUSTOMER_REQUIRED',
+          'a delivery needs the customer name and phone',
+          {
+            field: !customer.name || customer.name.length < 2 ? 'customer.name' : 'customer.phone',
+          },
+        );
+      // a delivery may go out unpaid, charged at the door (and received later at the caixa)
+      const later =
+        body.payLater === undefined || body.payLater === null ? null : parsePayLater(body.payLater);
+      if (later && !delivery)
+        throw new HttpError(422, 'INVALID_PAYMENT', 'only a delivery is paid later', {
+          field: 'payLater',
+        });
+      const payments: PdvPaymentIn[] =
+        later &&
+        (body.payments === undefined ||
+          (Array.isArray(body.payments) && body.payments.length === 0))
+          ? []
+          : parsePayments(body.payments);
       const quoted = int(body.quotedTotalCents, 'quotedTotalCents', 0, MAX_CENTS);
-      const serveNow = body.serveNow === undefined ? false : bool(body.serveNow, 'serveNow');
+      const serveNow =
+        body.serveNow === undefined || delivery ? false : bool(body.serveNow, 'serveNow');
       await gate(tx, t.id);
       // the caixa first (held for share), then checkout's lock, then the products
-      const caixa = await requireOpenCaixa(tx, t.id);
+      const caixa = payments.length ? await requireOpenCaixa(tx, t.id) : null;
       await lockOrderNumbers(tx, t.id);
       const [tz, s] = await Promise.all([storeTz(tx, t.id), settingsOf(tx, t.id)]);
       const priced = await priceLines(tx, t.id, lines, { forUpdate: true, tz });
-      const quote = quoteOf(priced, discount);
+      const fee = delivery ? await priceDelivery(tx, t.id, delivery, subtotalOf(priced)) : null;
+      const quote = quoteOf(priced, discount, fee?.quote ?? null);
       if (quote.totalCents !== quoted)
         throw new HttpError(409, 'PRICES_CHANGED', 'the total changed — review the sale', {
           quote,
         });
       const paid = sumOf(payments);
-      if (paid !== quote.totalCents)
+      if (!later && paid !== quote.totalCents)
         throw new HttpError(422, 'PAYMENT_MISMATCH', 'the payments must add up to the total', {
           totalCents: quote.totalCents,
           paidCents: paid,
         });
+      if (later?.changeForCents != null && later.changeForCents < quote.totalCents)
+        throw new HttpError(422, 'INVALID_CHANGE', 'change must be for at least the total', {
+          field: 'payLater.changeForCents',
+          minCents: quote.totalCents,
+        });
+      const prep = s?.prep ?? 30;
       const order = await insertPdvOrderTx(tx, t.id, {
         lines: priced,
         subtotalCents: quote.subtotalCents,
         discountCents: quote.discountCents,
         totalCents: quote.totalCents,
-        mode: mode === 'takeaway' ? 'pickup' : 'dine_in',
+        mode: delivery ? 'delivery' : mode === 'takeaway' ? 'pickup' : 'dine_in',
+        ...(delivery && fee ? { delivery: deliveryJson(delivery, fee, prep) } : {}),
         table: null,
         tabId: null,
         customer: { name: customer.name ?? 'Balcão', phone: customer.phone },
         notes,
-        payment: paidPayment(payments, m.name),
+        payment: later
+          ? {
+              provider: 'pdv',
+              method: later.method,
+              status: 'pending',
+              online: false,
+              ...(later.changeForCents != null ? { changeForCents: later.changeForCents } : {}),
+            }
+          : paidPayment(payments, m.name),
         by: m.name,
         serveNow,
-        prepMinutes: s?.prep ?? 30,
+        prepMinutes: prep,
       });
-      const views = await insertPayments(
-        tx,
-        t.id,
-        caixa.id,
-        { orderId: order.id },
-        payments,
-        m.name,
-      );
+      const views = caixa
+        ? await insertPayments(tx, t.id, caixa.id, { orderId: order.id }, payments, m.name)
+        : [];
       const change = views.reduce((n, p) => n + p.changeCents, 0);
       await Promise.all([
         audit(tx, t.id, m, {
           action: 'pdv.sale',
           entity: 'order',
           entityId: order.id,
-          summary: `vendeu no balcão o pedido #${order.number} (${brl(quote.totalCents)})${discount ? ` com desconto de ${brl(quote.discountCents)}: ${discount.reason}` : ''}`,
-          after: { totalCents: quote.totalCents, payments, discount },
+          summary: `${delivery ? 'lançou para entrega' : 'vendeu no balcão'} o pedido #${order.number} (${brl(quote.totalCents)})${later ? ', a cobrar na entrega' : ''}${discount ? ` com desconto de ${brl(quote.discountCents)}: ${discount.reason}` : ''}`,
+          after: { totalCents: quote.totalCents, payments, payLater: later, discount },
         }),
-        emitAdminTx(tx, t.id, 'pdv', caixa.id),
+        emitAdminTx(tx, t.id, 'pdv', caixa?.id ?? order.id),
       ]);
       return {
         status: 201,
@@ -304,6 +419,56 @@ export function mountPdv(d: AdminDeps) {
       };
     }),
   );
+
+  // a returning customer, by the phone they're calling from
+  admin.get(
+    '/pdv/customer',
+    read('attendant', async (tx, t, _m, c) => {
+      const raw = (c.req.query('phone') ?? '').slice(0, 40);
+      const phone = normalizePhone(raw);
+      if (!/^\d{10,11}$/.test(phone))
+        throw new HttpError(422, 'INVALID_PHONE', 'phone must have DDD and number', {
+          field: 'phone',
+        });
+      await gate(tx, t.id);
+      return { customer: await customerByPhone(tx, t.id, phone) };
+    }),
+  );
+
+  // an approximate pin for a typed address — no tx around it: it's a call to the geocoder
+  admin.get('/pdv/geocode', async (c) => {
+    need(c as AdminCtx, 'attendant');
+    const tenant = (c as AdminCtx).get('tenant');
+    const q = (k: string, max: number) => {
+      const v = c.req.query(k)?.trim();
+      if (v && v.length > max)
+        throw new HttpError(422, 'BAD_REQUEST', `${k} is too long`, { field: k });
+      return v || null;
+    };
+    const street = q('street', 120);
+    const number = q('number', 10);
+    const neighborhood = q('neighborhood', 80);
+    const cep = q('cep', 12);
+    const store = await withTenant(d.sql, tenant.id, async (tx) => {
+      await gate(tx, tenant.id);
+      return settingsOf(tx, tenant.id);
+    });
+    const city = store?.city ?? null;
+    const point =
+      street || cep
+        ? await d.geocode({
+            text: [[street, number].filter(Boolean).join(', '), neighborhood, city]
+              .filter(Boolean)
+              .join(' — '),
+            cep,
+            street,
+            number,
+            city,
+          })
+        : null;
+    c.header('cache-control', 'no-store');
+    return c.json({ point });
+  });
 
   // an order from the storefront, paid at the counter
   admin.post(
@@ -715,6 +880,27 @@ export function mountPdv(d: AdminDeps) {
     }),
   );
 
+  admin.post(
+    '/pdv/tabs/:id/print',
+    write('attendant', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyOf(c, 1024);
+      const n =
+        body.ways === undefined || body.ways === null ? null : int(body.ways, 'ways', 2, 20);
+      await Promise.all([gate(tx, t.id), requireFeature(tx, t.id, 'printing')]);
+      const tab = await tabDetail(tx, t.id, id, n);
+      const printer = await printerFor(tx, t.id, body.printerId);
+      const jobIds = await queueJobsTx(tx, t.id, [printer], {
+        kind: 'bill',
+        trigger: 'manual',
+        requestedBy: m.userId,
+        doc: tab,
+      });
+      await emitAdminTx(tx, t.id, 'printers', printer);
+      return { status: 202, body: { jobIds } };
+    }),
+  );
+
   // ── caixa ──────────────────────────────────────────────────────────────────
 
   admin.get(
@@ -896,13 +1082,37 @@ export function mountPdv(d: AdminDeps) {
     }),
   );
 
+  admin.post(
+    '/pdv/caixa/:id/print',
+    write('attendant', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyOf(c, 1024);
+      await Promise.all([gate(tx, t.id), requireFeature(tx, t.id, 'printing')]);
+      const row = await caixaRowById(tx, t.id, id);
+      if (!row) throw new HttpError(404, 'CAIXA_NOT_FOUND', 'caixa not found');
+      // an open caixa's partial shows what the drawer should hold: not for a blind close
+      if (!row.closed_at) managerOnly(m, 'printing an open caixa');
+      const detail = await caixaDetail(tx, t.id, row, true);
+      const doc = row.closed_at ? reportOf(detail, row) : detail;
+      const printer = await printerFor(tx, t.id, body.printerId);
+      const jobIds = await queueJobsTx(tx, t.id, [printer], {
+        kind: 'caixa',
+        trigger: 'manual',
+        requestedBy: m.userId,
+        doc,
+      });
+      await emitAdminTx(tx, t.id, 'printers', printer);
+      return { status: 202, body: { jobIds } };
+    }),
+  );
+
   // ── tables and settings ────────────────────────────────────────────────────
 
   admin.get(
     '/pdv/tables',
     read('attendant', async (tx, t) => {
-      const [, rows] = await Promise.all([gate(tx, t.id), tables(tx, t.id)]);
-      return { tables: rows };
+      await gate(tx, t.id);
+      return tablesOut(tx, t.id);
     }),
   );
 
@@ -1001,7 +1211,50 @@ export function mountPdv(d: AdminDeps) {
         }),
         emitAdminTx(tx, t.id, 'pdv', 'tables'),
       ]);
-      return { status: 200, body: { tables: await tables(tx, t.id) } };
+      return { status: 200, body: await tablesOut(tx, t.id) };
+    }),
+  );
+
+  admin.post(
+    '/pdv/tables/:id/restore',
+    write('manager', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      await gate(tx, t.id);
+      const [row] = await tx<{ label: string; archived: boolean }[]>`
+        select label, archived_at is not null as archived from pdv_tables
+        where tenant_id = ${t.id} and id = ${id}
+      `;
+      if (!row) throw new HttpError(404, 'TABLE_NOT_FOUND', 'table not found');
+      const have = await tables(tx, t.id);
+      if (row.archived) {
+        if (have.length >= MAX_TABLES)
+          throw new HttpError(422, 'TOO_MANY_TABLES', `a store has at most ${MAX_TABLES} tables`, {
+            max: MAX_TABLES,
+          });
+        const sort = have.reduce((n, r) => Math.max(n, r.sort + 1), 0);
+        try {
+          await tx`
+            update pdv_tables set archived_at = null, sort = ${Math.min(sort, 100000)}
+            where tenant_id = ${t.id} and id = ${id}
+          `;
+        } catch (err) {
+          if ((err as { code?: string }).code === '23505')
+            throw new HttpError(409, 'TABLE_LABEL_TAKEN', 'another table has this name', {
+              label: row.label,
+            });
+          throw err;
+        }
+        await Promise.all([
+          audit(tx, t.id, m, {
+            action: 'pdv.table_restored',
+            entity: 'pdv_table',
+            entityId: id,
+            summary: `trouxe de volta a mesa ${row.label}`,
+          }),
+          emitAdminTx(tx, t.id, 'pdv', 'tables'),
+        ]);
+      }
+      return { status: 200, body: await tablesOut(tx, t.id) };
     }),
   );
 

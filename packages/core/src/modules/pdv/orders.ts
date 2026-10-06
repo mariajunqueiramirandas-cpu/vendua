@@ -19,7 +19,9 @@ export interface PdvOrderIn {
   subtotalCents: number;
   discountCents: number;
   totalCents: number;
-  mode: 'pickup' | 'dine_in';
+  mode: 'pickup' | 'dine_in' | 'delivery';
+  /** mode 'delivery': the order's delivery jsonb (deliveryJson) */
+  delivery?: Record<string, unknown> & { feeCents: number };
   table: string | null;
   tabId: string | null;
   customer: { name: string; phone: string | null };
@@ -55,7 +57,7 @@ export async function insertPdvOrderTx(
   )[0]!.n;
   const id = crypto.randomUUID();
   const promised = o.serveNow ? null : new Date(Date.now() + o.prepMinutes * 60_000).toISOString();
-  const delivery = {
+  const delivery = o.delivery ?? {
     mode: o.mode,
     neighborhood: null,
     address: null,
@@ -73,7 +75,7 @@ export async function insertPdvOrderTx(
     values (${id}, ${tenantId}, null, ${number},
             ${tx.json({ name: o.customer.name, phone: o.customer.phone ?? '' })}, ${o.customer.phone},
             ${tx.json(delivery as never)}, ${tx.json(o.payment as never)}, 'placed',
-            ${o.subtotalCents}, 0, ${o.discountCents}, 0, ${o.totalCents}, null, ${o.notes}, null,
+            ${o.subtotalCents}, ${o.delivery?.feeCents ?? 0}, ${o.discountCents}, 0, ${o.totalCents}, null, ${o.notes}, null,
             'pdv', ${o.tabId})
   `;
   const [store] = await Promise.all([

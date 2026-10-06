@@ -51,6 +51,9 @@ export interface PdvQuote {
   }[];
   subtotalCents: number;
   discountCents: number;
+  /** a phone order for delivery: the zone's fee (0 otherwise) */
+  deliveryFeeCents: number;
+  delivery: import('./delivery.ts').PdvDeliveryQuote | null;
   totalCents: number;
 }
 
@@ -187,6 +190,10 @@ export function parsePayments(v: unknown): PdvPaymentIn[] {
 export const changeOf = (p: PdvPaymentIn) =>
   p.tenderedCents === null ? 0 : p.tenderedCents - p.amountCents;
 
+/** The subtotal alone, for a zone's free-delivery threshold before the quote is built. */
+export const subtotalOf = (lines: PricedPdvLine[]) =>
+  lines.reduce((n, l) => n + l.lineTotalCents, 0);
+
 /**
  * Prices the lines against the live products. With `forUpdate` the product rows are locked (a
  * sale); the quote reads them plain. A product gone, sold out or off its schedule is refused.
@@ -234,7 +241,11 @@ export async function priceLines(
   });
 }
 
-export function quoteOf(lines: PricedPdvLine[], discount: PdvDiscount | null): PdvQuote {
+export function quoteOf(
+  lines: PricedPdvLine[],
+  discount: PdvDiscount | null,
+  delivery: import('./delivery.ts').PdvDeliveryQuote | null = null,
+): PdvQuote {
   const subtotal = lines.reduce((n, l) => n + l.lineTotalCents, 0);
   if (subtotal > MAX_CENTS)
     throw bad('BAD_REQUEST', 'the sale is above the counter limit', { maxCents: MAX_CENTS });
@@ -256,6 +267,8 @@ export function quoteOf(lines: PricedPdvLine[], discount: PdvDiscount | null): P
     })),
     subtotalCents: subtotal,
     discountCents: off,
-    totalCents: subtotal - off,
+    deliveryFeeCents: delivery?.feeCents ?? 0,
+    delivery,
+    totalCents: subtotal - off + (delivery?.feeCents ?? 0),
   };
 }
