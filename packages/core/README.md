@@ -80,4 +80,5 @@ curl -H 'Host: quero-pudim.localhost' localhost:8787/storefront/v1/surfaces
   them yet — exercising them is a merchant-admin concern.
 - `SESSION_SECRET`, `DATABASE_URL`, `MIGRATION_DATABASE_URL`, `PORT` are env
   vars; dev defaults are in `src/index.ts`. `DB_POOL_MAX` sizes the Postgres pool
-  per process (default 10).
+  requests use, per process (default 10); `DB_JOBS_POOL_MAX` the separate one for background
+  jobs, the scheduler and agents (default 10).

@@ -8,16 +8,29 @@ export type Sql = postgres.Sql;
 const dbLog = log.child({ mod: 'db' });
 
 const poolMax = Number(process.env.DB_POOL_MAX) || 10;
+/** the background-work pool's size (index.ts): what jobs and agents had when they shared the
+ *  request pool — agent activations hold a connection through tool calls, some of them HTTP */
+export const jobsPoolMax = Number(process.env.DB_JOBS_POOL_MAX) || 10;
 
-export function createSql(url: string): Sql {
+export function createSql(url: string, max = poolMax): Sql {
   // route NOTICEs through pino — the default onnotice breaks stdout's JSON-lines contract
   return postgres(url, {
-    max: poolMax,
+    max,
     // an unreachable DB fails the request in seconds instead of holding it for the 30s default
     connect_timeout: 10,
+    // a connection prepares each statement once, so a recycled one starts cold: 2–4 h instead of
+    // postgres.js's 30–60 min, jittered so the pool doesn't recycle all at once (a function is
+    // read per connection, as postgres.js's own default is; its types only say number)
+    max_lifetime: (() => 60 * 60 * (2 + Math.random() * 2)) as unknown as number,
     connection: { application_name: 'vendua-core' },
     onnotice: (n) => dbLog.debug({ code: n.code, message: n.message }, 'notice'),
   });
+}
+
+/** Opens the pool's connections now, so the first requests after a boot don't each pay a
+ *  connection's TCP and auth handshake (and postgres.js's type lookup). Best effort. */
+export async function warmPool(sql: Sql, n = poolMax): Promise<void> {
+  await Promise.all(Array.from({ length: n }, () => sql`select 1`.catch(() => undefined)));
 }
 
 // runs `fn` in a tx with the tenant GUC SET LOCAL — RLS context can't leak

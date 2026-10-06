@@ -1,4 +1,4 @@
-import { OpenRouter } from '@openrouter/sdk';
+import type { OpenRouter } from '@openrouter/sdk';
 import type { IntegrationRow } from '../modules/integrations.ts';
 
 export interface ToolCall {
@@ -155,6 +155,9 @@ async function llmFetch(
   return res;
 }
 
+// The SDK takes ~400 ms to import, most of Core's boot: it loads on the first chat instead.
+let openrouterSdk: Promise<typeof import('@openrouter/sdk')> | null = null;
+
 // openrouter — official SDK
 function openrouterProvider(
   config: Record<string, unknown>,
@@ -166,7 +169,15 @@ function openrouterProvider(
   }
   const model =
     typeof config.model === 'string' && config.model ? config.model : 'liquid/lfm-2.5-2.6b:free';
-  const client = new OpenRouter({ apiKey, timeoutMs: configTimeoutMs(config) });
+  let client: Promise<OpenRouter> | null = null;
+  // a failed import is retried on the next chat, not remembered
+  const openrouter = () =>
+    (client ??= (openrouterSdk ??= import('@openrouter/sdk'))
+      .then(({ OpenRouter }) => new OpenRouter({ apiKey, timeoutMs: configTimeoutMs(config) }))
+      .catch((err) => {
+        openrouterSdk = client = null;
+        throw err;
+      }));
   return {
     name: `openrouter:${model}`,
     async chat({ system, messages, tools }) {
@@ -198,8 +209,8 @@ function openrouterProvider(
         }
       }
       // the SDK narrows on a top-level stream flag, so the cast is the honest read
-      const res = (await llmCall('openrouter', 0, () =>
-        client.chat.send({
+      const res = (await llmCall('openrouter', 0, async () =>
+        (await openrouter()).chat.send({
           chatRequest: {
             model,
             messages: orMessages as never,

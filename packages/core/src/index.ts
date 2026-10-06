@@ -2,7 +2,7 @@ import { createApp } from './app.ts';
 import { AdminHub } from './admin/live.ts';
 import { startAdminSweeper, startPushNotifier } from './admin/workers.ts';
 import { log } from './platform/log.ts';
-import { createSql, migrate } from './platform/db.ts';
+import { createSql, jobsPoolMax, migrate, warmPool } from './platform/db.ts';
 import { join } from 'node:path';
 import { ingestInbound } from './agent/inbound.ts';
 import { startScheduler, stopScheduler } from './agent/scheduler.ts';
@@ -76,6 +76,11 @@ if (migrationUrl) {
 }
 
 const sql = createSql(databaseUrl);
+void warmPool(sql);
+// Background work (jobs, the scheduler, agents, inbound messages) gets a small pool of its own: a
+// request never waits behind a job for a connection, and since a connection prepares each
+// statement once, the request pool stays on statements requests have already prepared.
+const jobsSql = createSql(databaseUrl, jobsPoolMax);
 const adminHub = new AdminHub(sql);
 // one provider for the API and the jobs: the fake driver keeps its state in memory
 const paymentProvider = createPaymentProvider();
@@ -96,13 +101,13 @@ const adminHost = process.env.VENDUA_ADMIN_HOST?.trim().toLowerCase();
 const adminOrigin = adminHost ? `https://${adminHost}` : null;
 // Mercado Pago: token refresh + connection health, pending-payment reconciliation;
 // the plan: invoices, renewals, reminders, custom-domain DNS checks
-const stopPaymentJobs = startPaymentJobs(sql, {
+const stopPaymentJobs = startPaymentJobs(jobsSql, {
   provider: paymentProvider,
   sessionSecret,
   notify,
   adminOrigin,
 });
-const stopBillingJobs = startBillingJobs(sql, {
+const stopBillingJobs = startBillingJobs(jobsSql, {
   provider: paymentProvider,
   notify,
   adminOrigin,
@@ -110,26 +115,26 @@ const stopBillingJobs = startBillingJobs(sql, {
 });
 
 // Control Plane (Phase 4): provisioner, synthetic probes, deployment verification, drift
-const stopFleetJobs = startFleetJobs(fleetDeps(sql, { notify }));
+const stopFleetJobs = startFleetJobs(fleetDeps(jobsSql, { notify }));
 
 // menu import ("cole o link do seu cardápio"): reads pasted stores, re-hosts their photos
-const stopMenuImportJobs = startMenuImportJobs({ sql });
+const stopMenuImportJobs = startMenuImportJobs({ sql: jobsSql });
 
 // privacy-first page views (ADR 0028): the daily salt and 13-month retention expire on a clock
-const stopWebAnalyticsJobs = startWebAnalyticsJobs(sql);
+const stopWebAnalyticsJobs = startWebAnalyticsJobs(jobsSql);
 // stores' own WhatsApp runs in the wa-gateway process (ADR 0026); Core only watches it beat
-const stopStoreWhatsappWatch = startStoreWhatsappWatch(sql);
+const stopStoreWhatsappWatch = startStoreWhatsappWatch(jobsSql);
 
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
-const stopPushNotifier = startPushNotifier(sql, adminHub);
-const stopAdminSweeper = startAdminSweeper(sql, { notify, adminOrigin });
+const stopPushNotifier = startPushNotifier(jobsSql, adminHub);
+const stopAdminSweeper = startAdminSweeper(jobsSql, { notify, adminOrigin });
 
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
 setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
 
 // Scheduler (work loop + job loop over the durable pg queue, woken by LISTEN/NOTIFY) +
 // WhatsApp socket when the baileys driver is enabled.
-startScheduler(sql);
+startScheduler(jobsSql);
 // Agent Runtime v3 (ADR 0030) with the Vendedor (ADR 0031): its tools reach checkout and
 // payments through these deps; its worker ingests the stores' conversations
 configureVendedor({
@@ -139,15 +144,15 @@ configureVendedor({
   storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
   publicOrigin: adminOrigin,
 });
-const agentGateway = hostGateway(sql);
+const agentGateway = hostGateway(jobsSql);
 configureVendedor({ gateway: agentGateway });
-const agentRuntime = startAgentRuntime(sql, { gateway: agentGateway });
-const stopVendedor = startVendedorWorker(sql, {
+const agentRuntime = startAgentRuntime(jobsSql, { gateway: agentGateway });
+const stopVendedor = startVendedorWorker(jobsSql, {
   gateway: agentGateway,
-  media: mediaProviders(sql),
+  media: mediaProviders(jobsSql),
 });
 onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
-  await ingestInbound(sql, {
+  await ingestInbound(jobsSql, {
     channel: 'whatsapp',
     from: jid,
     ...(pushName ? { fromName: pushName } : {}),
@@ -158,7 +163,7 @@ onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
 });
 // Pairing-time history lands as context only (never queues a reply); fromMe echoes staff's phone replies.
 onHistoryMessage(async (m) => {
-  await ingestInbound(sql, {
+  await ingestInbound(jobsSql, {
     channel: 'whatsapp',
     from: m.jid,
     direction: m.fromMe ? 'out' : 'in',
@@ -172,24 +177,53 @@ onHistoryMessage(async (m) => {
 });
 // LID↔PN pairs learned by the socket move LID-keyed leads onto the real number.
 onLidMapping(async (pairs) => {
-  const ids = await adoptLidMappings(sql, pairs);
+  const ids = await adoptLidMappings(jobsSql, pairs);
   if (ids.length) {
     log.child({ mod: 'whatsapp' }).info({ count: ids.length }, 'lid leads re-keyed to phone');
   }
 });
-void getIntegration(sql, 'whatsapp')
-  .then((i) => ensureSocket(sql, i))
+void getIntegration(jobsSql, 'whatsapp')
+  .then((i) => ensureSocket(jobsSql, i))
   .catch((e) => log.child({ mod: 'whatsapp' }).error({ err: e }, 'socket start failed'));
 // Instagram's live session sits in the ig-sidecar; this re-pushes the stored one after a sidecar restart.
-const stopInstagramReconcile = startInstagramReconcile(sql);
+const stopInstagramReconcile = startInstagramReconcile(jobsSql);
 
 // a 500 and a boot reach the team (ADR 0023): system.error is throttled per route
 onUnhandledError(unhandledErrorReporter(sql));
 
 // idleTimeout must clear the SSE heartbeat (20s): Bun's default 10s kills a
 // quiet event stream before the first `:ka`, looping clients forever.
+// Hono compiles its router on the first request it matches (~15 ms with Core's routes): spend it
+// here rather than on a shopper's first request
+await app.request('http://localhost/healthz');
 const server = Bun.serve({ port, fetch: app.fetch, idleTimeout: 60 });
 log.info({ port }, 'listening');
+// One active store's storefront reads, in the background: their code compiles and their statements
+// are prepared on the connection the next request gets, so the first shopper after a deploy finds
+// that path warm. Read-only, best effort.
+void (async () => {
+  // any active store: the code paths and statements are the same for all of them
+  const [store] = await sql<{ host: string }[]>`
+    select coalesce(
+      (select d.host from domains d where d.tenant_id = t.id order by d.is_primary desc limit 1),
+      t.slug || '.' || ${process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br'}
+    ) as host
+    from tenants t where t.status = 'active' limit 1
+  `;
+  if (!store) return;
+  const get = async (path: string) =>
+    (
+      await app.request(`http://${store.host}/storefront/v1${path}`, {
+        headers: { host: store.host },
+      })
+    )
+      .json()
+      .catch(() => null) as Promise<{ categories?: { products?: { slug?: string }[] }[] } | null>;
+  await get('/store');
+  await get('/surfaces?design=1');
+  const slug = (await get('/catalog'))?.categories?.[0]?.products?.[0]?.slug;
+  if (slug) await get(`/products/${encodeURIComponent(slug)}`);
+})().catch(() => undefined);
 void recordBoot(sql);
 
 // Deploys send SIGTERM: stop taking requests and let those in flight finish, stop claiming,
@@ -217,7 +251,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
       new Promise((r) => setTimeout(r, 5_000)).then(() => server.stop(true)),
     ]);
     void Promise.all([drained, stopScheduler(), agentRuntime.stop(), stopVendedor()])
-      .then(() => sql.end({ timeout: 5 }))
+      .then(() => Promise.all([sql.end({ timeout: 5 }), jobsSql.end({ timeout: 5 })]))
       .finally(() => process.exit(0));
   });
 }
