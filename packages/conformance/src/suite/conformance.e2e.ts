@@ -21,6 +21,7 @@ import {
   gotoProductPage,
   newSession,
   openCheckout,
+  orderTokens,
   sessionToken,
   submitPaymentStep,
   trackPageErrors,
@@ -300,27 +301,14 @@ test('[C05] order placement reaches sandbox payment; success surface renders ord
   await page.waitForURL(/pedido|order|status|sucesso/i, { timeout: 15_000 }).catch(() => {});
   await page.waitForLoadState('networkidle').catch(() => {});
 
-  const orderIds: string[] = await page.evaluate(() => {
-    try {
-      return Object.keys(JSON.parse(sessionStorage.getItem('vendua.orderTokens') ?? '{}'));
-    } catch {
-      return [];
-    }
-  });
+  const orderIds = Object.keys(await orderTokens(page));
   const urlMatch = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/.exec(
     page.url(),
   );
   const orderId = urlMatch?.[1] ?? orderIds[0];
   expect(orderId, 'no order id surfaced (URL or vendua.orderTokens) after submit').toBeTruthy();
 
-  const orderTokens: Record<string, string> = await page.evaluate(() => {
-    try {
-      return JSON.parse(sessionStorage.getItem('vendua.orderTokens') ?? '{}');
-    } catch {
-      return {};
-    }
-  });
-  const tok = orderTokens[orderId!] ?? (await sessionToken(page));
+  const tok = (await orderTokens(page))[orderId!] ?? (await sessionToken(page));
   const r = await apiGet(request, OPEN, `/checkout/v1/orders/${orderId}`, tok ?? undefined);
   expect(r.status, `order ${orderId} not readable via API (${r.status})`).toBe(200);
   expect(r.body?.order?.payment?.provider, 'payment provider should be sandbox').toBe('sandbox');
@@ -405,13 +393,7 @@ test('[C07] idempotent retry: double-submit of checkout produces exactly one ord
   expect(await submit.count(), 'no submit button to double').toBeGreaterThan(0);
   await submit.click({ clickCount: 2 }).catch(() => {});
   await page.waitForTimeout(2500);
-  const ids: string[] = await page.evaluate(() => {
-    try {
-      return Object.keys(JSON.parse(sessionStorage.getItem('vendua.orderTokens') ?? '{}'));
-    } catch {
-      return [];
-    }
-  });
+  const ids = Object.keys(await orderTokens(page));
   expect(ids.length, 'UI double-submit produced multiple orders').toBe(1);
 });
 
@@ -636,8 +618,13 @@ test('[S07] (vendua)/* system routes all resolve and render Kernel defaults', as
   );
   expect([200, 201]).toContain(placed.status);
   const orderId = placed.body.order.id as string;
+  // localStorage since Kernel 1.21; an older Kernel reads the tab's sessionStorage
   await page.addInitScript(
-    ([id, t]) => sessionStorage.setItem('vendua.orderTokens', JSON.stringify({ [id!]: t })),
+    ([id, t]) => {
+      const tokens = JSON.stringify({ [id!]: t });
+      localStorage.setItem('vendua.orderTokens', tokens);
+      sessionStorage.setItem('vendua.orderTokens', tokens);
+    },
     [orderId, tok],
   );
 
@@ -764,7 +751,7 @@ test('[Q01] no layout overflow at 320–1440px', async ({ page, request }) => {
   expect(overflow.join('\n')).toHaveLength(0);
 });
 
-test('[Q02] axe audit: zero serious+ violations on home/catalog/product/cart', async ({
+test('[Q02] axe audit: zero serious+ violations on home/catalog/product/cart/checkout/order', async ({
   page,
   request,
 }) => {
@@ -775,6 +762,35 @@ test('[Q02] axe audit: zero serious+ violations on home/catalog/product/cart', a
   if (await gotoProductPage(page, catalogPath, SIMPLE_PRODUCT, O))
     routes.add(new URL(page.url()).pathname);
   routes.add('/cart');
+  // Kernel 1.21: the checkout with a line in the bag, and an order this device placed
+  const { sessionToken: placedTok } = await apiAddItem(request, OPEN, SIMPLE_PRODUCT);
+  const placed = await apiPost(
+    request,
+    OPEN,
+    '/checkout/v1/checkout',
+    {
+      customer: { name: 'QA Q02', phone: '22999990000' },
+      delivery: { mode: 'pickup' },
+      payment: { method: 'pix' },
+    },
+    placedTok,
+  );
+  expect([200, 201]).toContain(placed.status);
+  const orderId = placed.body.order.id as string;
+  const { sessionToken: cartTok } = await apiAddItem(request, OPEN, SIMPLE_PRODUCT);
+  await page.addInitScript(
+    ([cart, id, t]) => {
+      const tokens = JSON.stringify({ [id!]: t });
+      localStorage.setItem('vendua.session', cart!);
+      localStorage.setItem('vendua.orderTokens', tokens);
+      sessionStorage.setItem('vendua.session', cart!);
+      sessionStorage.setItem('vendua.orderTokens', tokens);
+    },
+    [cartTok, orderId, placedTok],
+  );
+  routes.add('/sacola');
+  routes.add('/checkout');
+  routes.add(`/pedido/${orderId}`);
 
   const violations: string[] = [];
   for (const r of routes) {

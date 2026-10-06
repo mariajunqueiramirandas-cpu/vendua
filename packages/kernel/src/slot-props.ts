@@ -181,6 +181,14 @@ export interface SlotProps {
     locateStatus?: 'idle' | 'pending' | 'located' | 'denied' | 'out_of_zone';
     /** what Core answered for the address: zone + fee, when known */
     zoneHint?: string;
+    /** Kernel 1.21 — the addresses remembered on this device (at most 3, most recent first;
+     *  `label` "Rua A, 10 — Centro", `detail` the complement/reference). Picking one fills the
+     *  form. Absent = none saved */
+    savedAddresses?: { id: string; label: string; detail?: string }[];
+    /** Kernel 1.21 — the saved address the form holds now; null = another one */
+    savedAddressId?: string | null;
+    /** Kernel 1.21 — pick a saved address, or null to type another (the fields empty) */
+    onPickAddress?: (id: string | null) => void;
   };
   /** Kernel 1.15 — distance pricing (ADR 0024): the shopper confirms where the order goes on a
    *  map; the confirmed point is what Core prices. Rendered under the address form. */

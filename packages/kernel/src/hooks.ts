@@ -29,7 +29,7 @@ import type { ConsentPurpose } from './config.ts';
 import { refreshOnStatus } from './errors.ts';
 import { cardState, type CardInput, type CardState } from './rules/card.ts';
 import { couponMessage } from './rules/errors.ts';
-import { countdown, formatCents, interpolate } from './rules/format.ts';
+import { countdown, foldText, formatCents, interpolate } from './rules/format.ts';
 import { deliverySummary, type DeliverySummary } from './rules/delivery.ts';
 import {
   hoursRows,
@@ -231,9 +231,22 @@ export function useCart(): {
   refetch: () => void;
 } {
   const { api, invalidate } = useKernel();
-  const q = useQuery('cart', () =>
-    api.sessionToken ? api.cart().then((r) => r.cart) : Promise.resolve(null),
-  );
+  const q = useQuery('cart', () => {
+    const asked = api.sessionToken;
+    if (!asked) return Promise.resolve(null);
+    return api.cart().then(
+      (r) => r.cart,
+      (err: unknown) => {
+        // Kernel 1.21: the session outlives the tab — a cart Core no longer knows is an empty
+        // bag, and the next add starts a fresh one (unless another tab already did)
+        if (err instanceof ApiError && (err.status === 401 || err.code === 'CART_NOT_FOUND')) {
+          if (api.sessionToken === asked) api.clearSession();
+          return null;
+        }
+        throw err;
+      },
+    );
+  });
 
   const bump = useCallback(
     (cart: Cart) => {
@@ -568,7 +581,16 @@ export function useDeliveryQuote(): {
   /** a bairro, or Kernel 1.2 `{ lat, lng }` (e.g. from the device's location); Kernel 1.12
    *  `paymentMethod` adds the cart's `totals` priced for it */
   quote: (
-    where: string | { neighborhood?: string; lat?: number; lng?: number; paymentMethod?: string },
+    where:
+      | string
+      | {
+          neighborhood?: string;
+          lat?: number;
+          lng?: number;
+          paymentMethod?: string;
+          /** Kernel 1.21 — ride the cart session: `totals` come back with this delivery */
+          withCart?: boolean;
+        },
   ) => Promise<QuoteResult>;
   result: QuoteResult | undefined;
   pending: boolean;
@@ -581,7 +603,15 @@ export function useDeliveryQuote(): {
   const seq = useRef(0);
   const quote = useCallback(
     async (
-      where: string | { neighborhood?: string; lat?: number; lng?: number; paymentMethod?: string },
+      where:
+        | string
+        | {
+            neighborhood?: string;
+            lat?: number;
+            lng?: number;
+            paymentMethod?: string;
+            withCart?: boolean;
+          },
     ) => {
       const n = ++seq.current;
       setPending(true);
@@ -619,15 +649,60 @@ export interface CustomerProfile {
     /** Kernel 1.15 — the delivery pin the shopper confirmed on the map */
     lat?: number;
     lng?: number;
+    /** Kernel 1.21 — "ponto de referência" */
+    reference?: string;
   };
+  /** Kernel 1.21 — the delivery addresses remembered on this device, most recent first (at most
+   *  `MAX_SAVED_ADDRESSES`; `address` is the first). `remember` adds the one it's given. */
+  addresses?: CustomerProfile['address'][];
 }
 
 const CUSTOMER_KEY = 'vendua.customer';
+const MAX_SAVED_ADDRESSES = 3;
 let customerMem: CustomerProfile | null | undefined;
 const customerListeners = new Set<() => void>();
 
 const isPin = (lat: unknown, lng: unknown): boolean =>
   typeof lat === 'number' && typeof lng === 'number' && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+
+type SavedAddress = CustomerProfile['address'];
+
+function cleanAddress(a: Partial<SavedAddress> | null | undefined): SavedAddress | null {
+  const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
+  if (!a || typeof a !== 'object') return null;
+  const out: SavedAddress = {
+    street: str(a.street, 120),
+    number: str(a.number, 10),
+    neighborhood: str(a.neighborhood, 80),
+    complement: str(a.complement, 80),
+    ...(typeof a.cep === 'string' && a.cep ? { cep: digitsOf(a.cep).slice(0, 8) } : {}),
+    ...(isPin(a.lat, a.lng) ? { lat: a.lat, lng: a.lng } : {}),
+    ...(typeof a.reference === 'string' && a.reference.trim()
+      ? { reference: a.reference.slice(0, 120) }
+      : {}),
+  };
+  return out;
+}
+
+/** The same door: street, number and complement, accents and case aside. */
+export function sameAddress(a: SavedAddress, b: SavedAddress): boolean {
+  const k = (x: SavedAddress) =>
+    [x.street, x.number, x.complement].map((v) => foldText(v.trim())).join('|');
+  return k(a) === k(b);
+}
+
+/** Kernel 1.21 — the device's addresses, most recent first (a profile from an older Kernel
+ *  holds only `address`). */
+export function savedAddresses(p: CustomerProfile | null | undefined): SavedAddress[] {
+  if (!p) return [];
+  const list = Array.isArray(p.addresses) && p.addresses.length ? p.addresses : [p.address];
+  const out: SavedAddress[] = [];
+  for (const raw of list) {
+    const a = cleanAddress(raw);
+    if (a && a.street.trim() && !out.some((x) => sameAddress(x, a))) out.push(a);
+  }
+  return out.slice(0, MAX_SAVED_ADDRESSES);
+}
 
 function readCustomer(): CustomerProfile | null {
   if (customerMem !== undefined) return customerMem;
@@ -643,7 +718,8 @@ function readCustomer(): CustomerProfile | null {
 
 /** Guest customer remembered on this device, only when they opt in at checkout
  *  (03 — storage only via Kernel session utilities). Phone-OTP accounts land
- *  with the merchant admin (Phase 3) behind this same hook. */
+ *  with the merchant admin (Phase 3) behind this same hook. Kernel 1.21: up to three delivery
+ *  addresses (`addresses`); remembering one puts it first, a pickup (no street) keeps them. */
 export function useCustomer(): {
   customer: CustomerProfile | null;
   status: 'guest' | 'remembered';
@@ -659,17 +735,18 @@ export function useCustomer(): {
     () => null,
   );
   const remember = useCallback((p: CustomerProfile) => {
+    const given = cleanAddress(p.address);
+    const before = savedAddresses(readCustomer());
+    const list = p.addresses
+      ? savedAddresses({ ...p, addresses: p.addresses })
+      : given?.street.trim()
+        ? [given, ...before.filter((a) => !sameAddress(a, given))].slice(0, MAX_SAVED_ADDRESSES)
+        : before;
     const clean: CustomerProfile = {
       name: p.name.slice(0, 120),
       phone: digitsOf(p.phone).slice(0, 13),
-      address: {
-        street: p.address.street.slice(0, 120),
-        number: p.address.number.slice(0, 10),
-        neighborhood: p.address.neighborhood.slice(0, 80),
-        complement: p.address.complement.slice(0, 80),
-        ...(p.address.cep ? { cep: digitsOf(p.address.cep).slice(0, 8) } : {}),
-        ...(isPin(p.address.lat, p.address.lng) ? { lat: p.address.lat, lng: p.address.lng } : {}),
-      },
+      address: list[0] ?? given ?? cleanAddress({})!,
+      ...(list.length ? { addresses: list } : {}),
     };
     customerMem = clean;
     try {
@@ -885,8 +962,9 @@ export function useCardState(
 }
 
 /** The catalog arranged for browsing: `query` searches (accents ignored), empty categories
- *  drop out, sold-out products sink within their category. */
-export function useMenu(opts: { query?: string } = {}): {
+ *  drop out, sold-out products sink within their category; Kernel 1.21: `dietary` narrows it
+ *  to products stating every one of those tags. */
+export function useMenu(opts: { query?: string; dietary?: readonly string[] } = {}): {
   categories: CatalogCategory[];
   /** products shown */
   count: number;
@@ -896,7 +974,12 @@ export function useMenu(opts: { query?: string } = {}): {
 } {
   const { categories, loading, error, refetch } = useCatalog();
   const query = opts.query ?? '';
-  const arranged = useMemo(() => arrangeMenu(categories, { query }), [categories, query]);
+  // Kernel 1.21 — diet filters (`DIETARY_FILTERS`)
+  const diet = (opts.dietary ?? []).join(',');
+  const arranged = useMemo(
+    () => arrangeMenu(categories, { query, dietary: diet ? diet.split(',') : [] }),
+    [categories, query, diet],
+  );
   return {
     categories: arranged,
     count: arranged.reduce((n, c) => n + c.products.length, 0),

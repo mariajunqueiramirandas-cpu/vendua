@@ -61,10 +61,29 @@ const bagBarOnLayout = defineTemplateMigration({
   },
 });
 
+/** Kernel 1.21's `sdk:recent-order` on the home page, in the first area that accepts `promo`
+ *  blocks: a returning shopper's last order ("acompanhar" / "pedir de novo"). It renders nothing
+ *  on a device with no order, so placing it everywhere is safe. */
+const recentOrderOnHome = defineTemplateMigration({
+  id: '2026-10-recent-order-on-home',
+  description:
+    'place sdk:recent-order (Kernel 1.21) in the first home-page area accepting promo blocks',
+  requiresKernel: '>=1.21.0',
+  pages: ['home'],
+  up(t, ctx) {
+    if (t.has('sdk:recent-order') || t.wasRemoved('sdk:recent-order')) return;
+    const hit = findArea(t, 'promo', ctx.sections);
+    if (!hit)
+      throw new MigrationConflict('no area on the home page accepts promo blocks (or it is full)');
+    t.addBlock(hit.section, hit.area, { type: 'sdk:recent-order' });
+  },
+});
+
 export const TEMPLATE_MIGRATIONS: readonly TemplateMigration[] = [
   deliveryEtaOnProduct,
   loyaltyTeaserOnProduct,
   bagBarOnLayout,
+  recentOrderOnHome,
 ];
 
 export function findMigration(id: string): TemplateMigration | undefined {

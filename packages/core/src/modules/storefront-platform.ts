@@ -15,6 +15,7 @@ import {
 import { emitAdminTx } from '../admin/live.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
+import { deriveStatus, type StoreSettingsRow } from './store.ts';
 
 // Phase 1b data plane for storefronts: templates (17), tokens as store data (04),
 // ring + v.js kill switch (05), build manifests, template migrations by ring.
@@ -430,6 +431,52 @@ export async function subscribeNotifyTx(
   `;
   await emitAdminTx(tx, tenantId, 'marketing');
   return { status: 201, body: { subscribed: true } };
+}
+
+/**
+ * "Avise-me quando abrir" (Kernel 1.21): once the store is open — its hours came round, or a
+ * pause or close was lifted — every pending store subscriber is marked notified and handed to
+ * the outbox in one row, the way a restock wakes a product's waitlist (`wakeWaitlist`):
+ * `waitlist.store_open` with their contacts. Each subscription is woken once; the next closing
+ * takes new ones. Run inside the tenant's transaction (the admin sweep, once a minute).
+ */
+export async function wakeStoreWaitlist(tx: Sql, tenantId: string, now = new Date()) {
+  const [pending] = await tx<{ one: number }[]>`
+    select 1 as one from notify_requests
+    where tenant_id = ${tenantId} and subject = 'store' and notified_at is null limit 1
+  `;
+  if (!pending) return 0;
+  const [s] = await tx<
+    Pick<
+      StoreSettingsRow,
+      'hours' | 'status_override' | 'resumes_at' | 'special_days' | 'billing_hold'
+    >[]
+  >`
+    select hours, status_override, resumes_at, special_days, billing_hold
+    from store_settings where tenant_id = ${tenantId}
+  `;
+  // a store waiting for its first plan payment isn't open, whatever its hours say
+  if (!s || s.billing_hold) return 0;
+  const status = deriveStatus(
+    s.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
+    s.status_override ?? null,
+    s.resumes_at ?? null,
+    now,
+    s.special_days ?? [],
+  );
+  if (status.status !== 'open') return 0;
+  const woken = await tx<{ contact: string }[]>`
+    update notify_requests set notified_at = now()
+    where tenant_id = ${tenantId} and subject = 'store' and notified_at is null
+    returning contact
+  `;
+  if (!woken.length) return 0;
+  await tx`
+    insert into outbox (tenant_id, topic, payload)
+    values (${tenantId}, 'waitlist.store_open', ${tx.json({ contacts: woken.map((w) => w.contact) })})
+  `;
+  await emitAdminTx(tx, tenantId, 'marketing');
+  return woken.length;
 }
 
 // ── analytics beacon ─────────────────────────────────────────────────────────

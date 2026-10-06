@@ -147,6 +147,7 @@ may only use `store:` types.
 | `sdk:delivery-eta`     | block   | category `info`; showFee, showPickup — **Kernel 1.1**                 | —                                                                                                                              |
 | `sdk:pix-info`         | block   | category `info`; title, showQr — **Kernel 1.2**                       | —                                                                                                                              |
 | `sdk:loyalty-teaser`   | block   | category `promo`; text — **Kernel 1.2**                               | —                                                                                                                              |
+| `sdk:recent-order`     | block   | category `promo`; title — **Kernel 1.21**                             | —                                                                                                                              |
 
 Kernel 1.5: `catalog.ProductCard` receives an optional `quickAdd(children)` render prop — the
 Kernel's add-to-cart button, offered only for products that can be added as-is (active, not a
@@ -382,6 +383,83 @@ payer: { email, identification }, deviceId }`. 409 `PAYMENT_IN_PROGRESS`, 409
 - `ERROR_CODES` adds `PAYMENT_IN_PROGRESS`. `checkout.PaymentStatus`'s card copy no longer
   mentions leaving the page; `redirecting` stays for a Core that still redirects.
 
+### Shopper conveniences (Kernel 1.21)
+
+Additive — no storefront edit. Money stays Core's: every fee, total and minimum shown is a figure
+Core sent; the Kernel only words and arranges them.
+
+- **The bag and past orders outlive the tab.** The cart session (`vendua.session`) and the order
+  tokens (`vendua.orderTokens`, the newest 20) live in localStorage, shared by the device's tabs,
+  so an Instagram-to-Safari handoff or a next-day visit finds the bag and reopens past orders
+  (`/pedido/:id`, and a phone's order on `/pedidos` when this device holds its token). A token
+  written by an older Kernel in the tab's sessionStorage is still read and moves over on the next
+  write. A cart Core no longer knows (401, `CART_NOT_FOUND`) reads as an empty bag and the next
+  add starts a fresh one; a completed cart rotates as before; an order token Core refuses (400,
+  401, 403, 404) is dropped. Another tab starting or closing the cart rereads this one's bag;
+  back online, every read asks Core again in place. The store chat (1.18) works the same
+  device-wide cart session.
+- **Allergen and diet tags.** `CatalogProduct.dietary` (optional, Core's tags — `vegano`,
+  `vegetariano`, `sem_gluten`, `sem_lactose`, `apimentado`, `contem_gluten`, `contem_lactose`,
+  `contem_ovo`, `contem_amendoim`, `contem_castanhas`, `contem_frutos_do_mar`; skip unknown
+  ones). Rules: `DIETARY_LABEL` (tag → "Sem glúten"), `DIETARY_FILTERS` (the diets a shopper
+  narrows the menu to — never the absence of an allergen warning) and `dietaryBadges(product)`
+  (`DietaryBadge[]`: `{ tag, label, kind: 'diet' | 'allergen' | 'spicy' }`, diets first).
+  `matchProduct(product, categoryName, query, dietary?)` and `arrangeMenu(categories, { query?,
+dietary? })` keep only products stating every tag in `dietary`, and a search matches a stated
+  diet ("vegano", "sem gluten"); `useMenu({ query?, dietary? })` too. The default
+  `catalog.ProductCard` shows the diets (≤ 3, `[data-part="dietary"]`); `sdk:purchase-panel`
+  lists every tag, allergens marked; `sdk:catalog-grid` offers diet chips (setting
+  `showDietFilter`, default on; only diets some product states) and the card link's label names
+  the diets.
+- **The delivery fee in the sacola.** Before the delivery step the bag (`/sacola` and the sheet)
+  shows "Calcular entrega" (`[data-vendua="delivery-estimate"]`): the remembered address (pin,
+  else bairro) or a typed CEP (`useCep`) quoted on this cart — `api.quote` /
+  `useDeliveryQuote().quote` take `withCart: true` (the cart session rides without a payment
+  method; `withCart` itself never reaches Core) and Core answers `totals` with that delivery:
+  the fee, "Total com entrega", the zone's minimum ("faltam …") and the free-delivery gap, all
+  Core's. A store priced by distance says "a partir de" (`fromFeeCents`) until the pin. Hidden
+  once the cart carries a delivery (the summary shows the fee) or when the store doesn't deliver.
+  `sdk:delivery-eta` adds a line with `deliveryWords`' `minOrder` and `freeOver` ("Pedido
+  mínimo R$ 20,00 · grátis acima de R$ 80,00"; setting `showMinOrder`, default on).
+- **"Avise-me quando abrir".** `sdk:notify-me` also shows while the store is closed (not only
+  paused): subject `store`, its own title (setting `storeTitle`) and when it opens. Core wakes
+  each subscriber once when the store next opens (its hours, or a resume) and clears them.
+- **The checkout survives a reload.** The answers typed so far — the data, the address and its
+  "ponto de referência", delivery or pickup, payment, change, notes, the encomenda date, the
+  confirmed pin and the steps done — stay in this tab's sessionStorage for this cart session and
+  come back on a reload (on the step it was on); placing the order clears them. A new tab starts
+  from the remembered profile, as before.
+- **Saved addresses.** `CustomerProfile.addresses` (optional): up to three delivery addresses on
+  this device, most recent first (`address` is the first); `CustomerProfile.address.reference`
+  (optional). `useCustomer().remember` puts the one it's given first (a pickup — no street —
+  keeps them); "Lembrar meus dados" off still forgets everything. `checkout.AddressForm` gains
+  optional `savedAddresses` (`{ id, label, detail? }[]`), `savedAddressId` (the one the form
+  holds; null = another) and `onPickAddress(id | null)`; the default lists them as radios with
+  "Outro endereço" (`[data-part="saved-addresses"]`, `input[name="saved-address"]`).
+- **The returning shopper.** New block `sdk:recent-order` (category `promo`; setting `title`,
+  default "Seu último pedido"; schema `recentOrder` in `@vendua/kernel/sdk-catalog`): the
+  device's last order — "Acompanhar pedido" while it runs, "Pedir de novo" (the same reorder as
+  `/pedidos`) once done, and "Meus pedidos". It reads one order and renders nothing on a device
+  with no order. Template migration `2026-10-recent-order-on-home` places it in the home page's
+  first area accepting `promo` blocks.
+- **The order page** always offers "Falar com a loja" (`[data-vendua="order-whatsapp"]`, the
+  store's WhatsApp with the order number) when the store has one, and the tab title carries the
+  state, live: `Pedido #12 · Em preparo · <store>`.
+- **Jump navigation.** `sdk:catalog-grid` setting `categoryNav`: `filter` (default — one
+  category at a time, as before) or `jump` (every category stays on the page, the tabs are links
+  that scroll to `#categoria-<slug>`, pinned under the header, the one being read lit with
+  `aria-current`). The Kernel's `DEFAULT_TEMPLATES` (a store with no template, and the admin's
+  first edit) use `jump`; saved templates keep their setting.
+- **Share a product.** `sdk:purchase-panel` setting `showShare` (default on): "Compartilhar"
+  opens the system share sheet with the product's own link (`publicUrl` + its route), else copies
+  it (`[data-part="share"]`).
+- **Accessibility and loading.** A new page moves focus to its main heading (`#main h1`, else
+  `#main`) and announces its title (`[data-vendua="route-announcer"]`, polite); the first load,
+  same-page changes, a `#hash` and the bag sheet leave focus alone. `SystemSurfaces` shows "Você
+  está sem internet" (notice kind `offline`, through `system.Notice`) while the device is
+  offline. The bag and order pages load with their shape (`[data-vendua="cart-skeleton"]`,
+  `[data-vendua="order-skeleton"]`) instead of a blank box.
+
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's.
@@ -464,8 +542,14 @@ separate function a store may skip for its own voice. Additive — no storefront
 
 **Menu** (`rules/menu.ts`)
 
-- `arrangeMenu` `(categories, { query? })` — search, empty categories dropped, sold out last within a category.
-- `matchProduct` `(product, categoryName, query)` — the search rule: name, description or category name, accents ignored.
+- `arrangeMenu` `(categories, { query?, dietary? })` — search, empty categories dropped, sold out last within a category; 1.21: `dietary` keeps products stating every tag.
+- `matchProduct` `(product, categoryName, query, dietary?)` — the search rule: name, description or category name, accents ignored; 1.21: or a stated diet, and every `dietary` tag.
+
+**Diet and allergens** (`rules/dietary.ts`, Kernel 1.21)
+
+- `DIETARY_LABEL` — Core's tags in words, in badge order (`sem_gluten` → `Sem glúten`).
+- `DIETARY_FILTERS` — the diets a shopper narrows the menu to (`vegano`, `vegetariano`, `sem_gluten`, `sem_lactose`).
+- `dietaryBadges` `(product)` — `{ tag, label, kind }[]` for the known tags: diets, then spicy, then allergens.
 
 **Hours and status** (`rules/hours.ts`)
 
@@ -628,7 +712,7 @@ unless `store.vocabulary` sets them; the default `cta` follows too (`Adicionar a
 above as schemas: `SDK_SCHEMAS` (all of them, in the table's order) and each by name —
 `pageContent`, `header`, `footer`, `announcementBar`, `headerCart`, `bagBar`, `purchasePanel`,
 `catalogGrid`, `productList`, `storeStatus`, `richTextSection`, `stockCounter`, `notifyMe`,
-`promoBadge`, `deliveryEta`, `pixInfo`, `loyaltyTeaser` — and `catalogOf` `(schemas)` (the
+`promoBadge`, `deliveryEta`, `pixInfo`, `loyaltyTeaser`, `recentOrder` (1.21) — and `catalogOf` `(schemas)` (the
 catalog the artifact manifest publishes). Since 1.14 it also exports `DEFAULT_TEMPLATES` (what a
 page renders with no template), `resolveSettings` `(schema, raw)` (the settings coercion the
 Kernel renders with), `PREVIEW_QUERY_PARAM` and `PREVIEW_MESSAGE` (the editor-preview protocol
@@ -684,6 +768,17 @@ run by one author), `author`, `body`, `link` (a same-origin URL in a message), `
 `typing` (the "digitando…" row), `error`, `composer`, `send`, `count` (characters left, near
 the limit) and `note`; the field is `textarea[name="chat-message"]`.
 
+Parts added in Kernel 1.21: `dietary` (the tag list in `catalog.ProductCard` and
+`sdk:purchase-panel`; each `li` has `data-kind` diet | spicy | allergen and `data-tag`), `share`
+(`sdk:purchase-panel`), in `sdk:catalog-grid` `diet-filter` (chips: `button[aria-pressed]` with
+`data-tag`) and `tabs[data-mode="jump"]` (links with `aria-current`; each `category` then has
+the id `categoria-<slug>`), `terms` (`sdk:delivery-eta`), `when` (`sdk:notify-me`, root
+`data-subject="store"`), in `sdk:recent-order` `root`, `title`, `summary`, `items`, `actions`,
+`reorder`, `orders`, in `checkout.AddressForm` `saved-addresses` and `saved-address`, and inside
+`[data-vendua="delivery-estimate"]` (`data-state` idle | pending | ok | out | later | error |
+distance) `form` (field `input[name="estimate-cep"]`), `submit`, `result`, `fee`, `total`,
+`min-order`, `free-delivery`, `out`, `later`, `error` and `change`.
+
 `vendua check` (`no-v-namespace`) allows exactly those; any other `.v-*` or
 `[data-vendua]` selector in store CSS fails. Slot overrides stay available but are
 the last resort — each one is counted in the artifact manifest.
@@ -701,7 +796,7 @@ an override, and K07 allows `@vendua/kernel/rules` in store code.
 `CartCoupon`, `CartSchedule`, `CouponCheck`, `DeliveryAddress`, `CepResult`, `ImportLine`,
 `ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo` (Kernel 1.7: `PaymentNext`;
 Kernel 1.12: `PaymentAdjustment`, `ModifierPricingRule`; Kernel 1.15: `DistancePricing`,
-`GeoPoint`, `LatLng`, `MapTiles`; Kernel 1.18: `StoreChat`, `StoreChatMessage`); every new DTO field
+`GeoPoint`, `LatLng`, `MapTiles`; Kernel 1.18: `StoreChat`, `StoreChatMessage`; Kernel 1.21: `DietaryBadge`, from the rules); every new DTO field
 is optional so a Kernel 1.2 storefront still runs against an older Core. Slot prop types: `SlotProps`, `CheckoutStep`,
 `CustomerDraft`, `DeliveryOption`, `PaymentMethod`, `ModifierGroup`, `PaymentStatusKind` (1.7).
 

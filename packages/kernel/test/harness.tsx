@@ -188,15 +188,22 @@ export async function mount(opts: {
   snapshot?: TemplateSet;
   sections?: Record<string, unknown>;
   children?: ReactNode;
-  /** a checkout session token already in this tab (an open cart) */
+  /** a checkout session token already on this device (an open cart) */
   session?: string;
   /** a history to start from (instead of `path`), at `index` (default: the last entry) */
   entries?: MemoryRouterProps['initialEntries'];
   index?: number;
+  /** a reload: this tab's storage stays as the last mount left it */
+  keep?: boolean;
+  /** localStorage entries the device already holds */
+  local?: Record<string, string>;
 }): Promise<Mounted> {
-  sessionStorage.clear();
-  localStorage.clear();
-  if (opts.session) sessionStorage.setItem('vendua.session', opts.session);
+  if (!opts.keep) {
+    sessionStorage.clear();
+    localStorage.clear();
+  }
+  for (const [k, v] of Object.entries(opts.local ?? {})) localStorage.setItem(k, v);
+  if (opts.session) localStorage.setItem('vendua.session', opts.session);
   const config = defineStorefront({ contract: 2, tokens: TOKENS, ...opts.config });
   const el = document.createElement('div');
   document.body.appendChild(el);

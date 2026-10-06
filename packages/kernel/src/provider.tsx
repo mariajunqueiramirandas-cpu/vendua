@@ -204,6 +204,29 @@ export function VenduaProvider({
     };
   }, [api, baseUrl]);
 
+  // Kernel 1.21: the cart session is the device's — another tab starting or closing a cart
+  // rereads this one's bag; back online, every read asks Core again (in place, no flash)
+  useEffect(() => {
+    const cache = cacheFor(api);
+    const refresh = (key: string) => {
+      const subs = listeners.current.get(key);
+      if (subs?.size) subs.forEach((fn) => fn());
+      else cache.delete(key);
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === 'vendua.session') refresh('cart');
+    };
+    const onOnline = () => {
+      for (const key of [...cache.keys()]) refresh(key);
+    };
+    globalThis.addEventListener?.('storage', onStorage);
+    globalThis.addEventListener?.('online', onOnline);
+    return () => {
+      globalThis.removeEventListener?.('storage', onStorage);
+      globalThis.removeEventListener?.('online', onOnline);
+    };
+  }, [api]);
+
   // Kernel 1.2 links: `?cart=CODE` restores a shared sacola, `?cupom=CODE` applies a
   // coupon — both land on /sacola with the params stripped (the URL stays shareable once)
   useEffect(() => {

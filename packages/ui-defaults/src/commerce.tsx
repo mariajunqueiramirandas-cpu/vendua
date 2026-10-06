@@ -3,6 +3,7 @@ import type { SlotProps } from '@vendua/kernel';
 import {
   cardState,
   DEFAULT_VOCABULARY,
+  dietaryBadges,
   foldText,
   formatCents,
   formatDateTime,
@@ -395,6 +396,11 @@ export function ProductCard({
   const [imgFailed, setImgFailed] = useState(false);
   const state = cardState(product, stockLeft ?? null);
   const price = priceDisplay(product);
+  // Kernel 1.21 — what the product is (vegano, sem glúten, apimentado); allergen warnings are on
+  // its page, in full
+  const diets = dietaryBadges(product)
+    .filter((b) => b.kind !== 'allergen')
+    .slice(0, 3);
   // sold out says so in the price row instead
   const badge =
     state.badge === 'all-in-bag'
@@ -454,6 +460,15 @@ export function ProductCard({
             <p className="v-card-desc v-muted" data-part="description">
               {product.description}
             </p>
+          ) : null}
+          {diets.length ? (
+            <ul className="v-diet v-card-diet" data-part="dietary">
+              {diets.map((b) => (
+                <li key={b.tag} className="v-diet-badge" data-kind={b.kind} data-tag={b.tag}>
+                  {b.label}
+                </li>
+              ))}
+            </ul>
           ) : null}
           <p
             className="v-card-price v-num"

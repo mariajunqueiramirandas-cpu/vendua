@@ -116,8 +116,28 @@ export async function getProduct(request: APIRequestContext, host: QaHost, slug:
 export const brl = (cents: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
 
+/** The device's cart session: localStorage since Kernel 1.21, the tab's before. */
 export async function sessionToken(page: Page): Promise<string | null> {
-  return page.evaluate(() => globalThis.sessionStorage?.getItem('vendua.session') ?? null);
+  return page.evaluate(
+    () =>
+      globalThis.localStorage?.getItem('vendua.session') ??
+      globalThis.sessionStorage?.getItem('vendua.session') ??
+      null,
+  );
+}
+
+/** Order id → tracking token, wherever the Kernel keeps them (localStorage since 1.21). */
+export async function orderTokens(page: Page): Promise<Record<string, string>> {
+  return page.evaluate(() => {
+    const read = (s: Storage | undefined) => {
+      try {
+        return JSON.parse(s?.getItem('vendua.orderTokens') ?? '{}') as Record<string, string>;
+      } catch {
+        return {};
+      }
+    };
+    return { ...read(globalThis.sessionStorage), ...read(globalThis.localStorage) };
+  });
 }
 
 // first candidate route exposing product-link hooks or slug anchors

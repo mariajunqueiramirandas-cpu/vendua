@@ -97,6 +97,8 @@ export const purchasePanel = defineSection({
     backLabel: text({ max: 40, default: 'Voltar ao cardápio' }),
     soldOutText: text({ max: 80, default: 'Esgotado no momento.' }),
     afterAdd: select(['cart', 'stay'], { default: 'cart' }),
+    /** Kernel 1.21 — "Compartilhar": the share sheet with the product's link */
+    showShare: boolean({ default: true, label: 'Botão de compartilhar' }),
   },
   areas: {
     media: { accepts: ['media', 'badge'], max: 3 },
@@ -119,6 +121,11 @@ export const catalogGrid = defineSection({
     showCategoryTabs: boolean({ default: true }),
     allLabel: text({ max: 40, default: 'Tudo' }),
     emptyText: text({ max: 160, default: 'O cardápio ainda está vazio.' }),
+    /** Kernel 1.21 — "Vegano", "Sem glúten"… chips, only for diets some product states */
+    showDietFilter: boolean({ default: true, label: 'Filtros de dieta' }),
+    /** Kernel 1.21 — the category tabs: 'filter' shows one category at a time; 'jump' keeps
+     *  the whole menu on the page and scrolls to it, the tab of the category being read lit */
+    categoryNav: select(['filter', 'jump'], { default: 'filter', label: 'Abas de categoria' }),
   },
   areas: { 'before-grid': { accepts: ['promo', 'info'], max: 2 } },
 });
@@ -184,6 +191,12 @@ export const notifyMe = defineBlock({
   settings: {
     title: text({ max: 80, default: 'Esgotou? A gente te avisa quando voltar.' }),
     successText: text({ max: 120, default: 'Pronto! Você recebe uma mensagem quando voltar.' }),
+    /** Kernel 1.21 — the store is closed or paused (not the product sold out) */
+    storeTitle: text({
+      max: 80,
+      default: 'Estamos fechados agora. Quer um aviso quando abrir?',
+      label: 'Título quando a loja está fechada',
+    }),
   },
 });
 
@@ -203,6 +216,8 @@ export const deliveryEta = defineBlock({
   settings: {
     showFee: boolean({ default: true }),
     showPickup: boolean({ default: true }),
+    /** Kernel 1.21 — "Pedido mínimo R$ 20,00 · grátis acima de R$ 80,00" (Core's zones) */
+    showMinOrder: boolean({ default: true, label: 'Mostrar pedido mínimo e entrega grátis' }),
   },
 });
 
@@ -225,6 +240,16 @@ export const loyaltyTeaser = defineBlock({
   },
 });
 
+/** Kernel 1.21 — a returning shopper's last order on this device: "Acompanhar pedido #12" while
+ *  it runs, "Pedir de novo" once it's done. Nothing on a device with no order. */
+export const recentOrder = defineBlock({
+  type: 'sdk:recent-order',
+  category: 'promo',
+  settings: {
+    title: text({ max: 60, default: 'Seu último pedido' }),
+  },
+});
+
 export const SDK_SCHEMAS: readonly (SectionSchema | BlockSchema)[] = [
   pageContent,
   header,
@@ -243,6 +268,7 @@ export const SDK_SCHEMAS: readonly (SectionSchema | BlockSchema)[] = [
   deliveryEta,
   pixInfo,
   loyaltyTeaser,
+  recentOrder,
 ];
 
 /** The shape the artifact manifest publishes (template migrations target areas by category). */

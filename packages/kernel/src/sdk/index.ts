@@ -33,4 +33,5 @@ export const SDK_COMPONENTS: RegisteredComponent[] = [
   sdk(schemas.deliveryEta, B.DeliveryEta),
   sdk(schemas.pixInfo, B.PixInfo),
   sdk(schemas.loyaltyTeaser, B.LoyaltyTeaser),
+  sdk(schemas.recentOrder, B.RecentOrder),
 ];

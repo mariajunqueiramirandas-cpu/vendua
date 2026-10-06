@@ -182,6 +182,9 @@ export function AddressForm({
   onLocate,
   locateStatus,
   zoneHint,
+  savedAddresses,
+  savedAddressId,
+  onPickAddress,
 }: SlotProps['checkout.AddressForm']) {
   const err = (k: keyof typeof errors) => errors[k];
   const aria = (k: keyof typeof errors) =>
@@ -231,6 +234,47 @@ export function AddressForm({
   return (
     <fieldset className="v-fieldset" data-part="root">
       <legend className="v-legend">Endereço de entrega</legend>
+      {savedAddresses?.length && onPickAddress ? (
+        <div
+          className="v-options v-saved-addresses"
+          role="radiogroup"
+          aria-label="Endereços salvos neste aparelho"
+          data-part="saved-addresses"
+        >
+          {savedAddresses.map((a) => (
+            <label
+              key={a.id}
+              className="v-option"
+              data-part="saved-address"
+              data-selected={savedAddressId === a.id || undefined}
+            >
+              <input
+                type="radio"
+                name="saved-address"
+                value={a.id}
+                checked={savedAddressId === a.id}
+                onChange={() => onPickAddress(a.id)}
+              />
+              <span className="v-option-label">{a.label}</span>
+              {a.detail ? <span className="v-option-detail v-muted">{a.detail}</span> : null}
+            </label>
+          ))}
+          <label
+            className="v-option"
+            data-part="saved-address"
+            data-selected={savedAddressId == null || undefined}
+          >
+            <input
+              type="radio"
+              name="saved-address"
+              value=""
+              checked={savedAddressId == null}
+              onChange={() => onPickAddress(null)}
+            />
+            <span className="v-option-label">Outro endereço</span>
+          </label>
+        </div>
+      ) : null}
       {onLocate ? (
         <div className="v-locate" data-part="locate">
           <button

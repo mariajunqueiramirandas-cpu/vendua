@@ -22,6 +22,9 @@ import type { Vocabulary } from '../rules/copy.ts';
 import { usePageTitle } from '../head.ts';
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+// "Recebido", "Em preparo": the state without repeating "Pedido" next to the number
+const stateWord = (state: string) =>
+  capitalize((ORDER_STATE_LABEL[state] ?? state).replace(/^Pedido /, ''));
 import { Slot } from '../slot.tsx';
 import { KLink } from '../sdk/sections.tsx';
 import { KERNEL_PATHS } from '../config.ts';
@@ -39,7 +42,8 @@ import { useKernel, invalidateQuery } from '../provider.tsx';
 // the purchased items, Pix copia e cola, "pedir de novo", orders from other
 // devices (phone + order number) and the loyalty card.
 
-function useReorder() {
+/** "Pedir de novo": a past order's lines back in the bag, then the bag (also `sdk:recent-order`). */
+export function useReorder() {
   const { mutations } = useCart();
   const { vocabulary } = useCopy();
   const go = useNavigateTo();
@@ -349,7 +353,9 @@ export function OrderPage() {
   const currency = store?.currency ?? 'BRL';
   const timeZone = store?.hours.timezone || undefined;
   const time = timeZone ? { timeZone } : {};
-  usePageTitle(order ? `Pedido #${order.number}` : null);
+  // Kernel 1.21: the state in the tab title ("Pedido #12 · Em preparo · Loja"), live
+  usePageTitle(order ? `Pedido #${order.number} · ${stateWord(order.state)}` : null);
+  const talk = order ? whatsappUrl(store?.whatsapp, `Oi! Sobre o pedido #${order.number}.`) : null;
   const params = new URLSearchParams(search);
   const isNew = params.has('novo');
   const online = useOnlinePayment(order, store, params);
@@ -365,7 +371,7 @@ export function OrderPage() {
   return (
     <main id="main" className="v-page" data-vendua-page="order">
       {loading && !order ? (
-        <div className="v-panel" aria-busy="true" aria-label="Carregando pedido" />
+        <OrderSkeleton />
       ) : !order ? (
         <Slot
           name="system.ErrorFallback"
@@ -428,7 +434,19 @@ export function OrderPage() {
               reorderPending={pending === order.id}
             />
           ) : null}
-          <p className="v-section-cta">
+          <p className="v-section-cta v-order-actions" data-part="actions">
+            {talk ? (
+              <a
+                href={talk}
+                className="v-btn v-btn-ghost"
+                data-vendua="order-whatsapp"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Falar com a loja
+                <span className="v-sr"> no WhatsApp (abre em outra aba)</span>
+              </a>
+            ) : null}
             <KLink href={KERNEL_PATHS.orders} className="v-btn v-btn-ghost">
               Meus pedidos
             </KLink>
@@ -436,6 +454,30 @@ export function OrderPage() {
         </>
       )}
     </main>
+  );
+}
+
+/** Kernel 1.21 — the order page's shape while it loads (state, progress, facts). */
+function OrderSkeleton() {
+  return (
+    <div
+      className="v-order v-skeleton-page"
+      data-vendua="order-skeleton"
+      aria-busy="true"
+      aria-label="Carregando pedido"
+    >
+      <span className="v-skeleton v-skeleton-line" data-short="" />
+      <div className="v-skeleton v-skeleton-title" />
+      <div className="v-skeleton v-skeleton-bar" />
+      <div className="v-order-grid" aria-hidden="true">
+        <span className="v-skeleton-lines">
+          <span className="v-skeleton v-skeleton-line" />
+          <span className="v-skeleton v-skeleton-line" data-short="" />
+          <span className="v-skeleton v-skeleton-line" />
+        </span>
+        <div className="v-skeleton v-skeleton-block" />
+      </div>
+    </div>
   );
 }
 
@@ -468,6 +510,9 @@ export function OrderHistoryPage() {
   ].sort((a, b) => Date.parse(b.placedAt) - Date.parse(a.placedAt));
   const loading = (local.loading || phone.loading) && rows.length === 0;
 
+  // Kernel 1.21: a phone's order placed on this device opens when its token is still here
+  const { api } = useKernel();
+  const held = new Set(api.orderIds());
   const verify = async (p: string, orderNumber: number) => {
     setVerifying(true);
     setVerifyError(undefined);
@@ -536,7 +581,7 @@ export function OrderHistoryPage() {
             );
             return (
               <li key={o.id} data-origin={o.here ? 'device' : 'phone'}>
-                {o.here ? (
+                {o.here || held.has(o.id) ? (
                   <KLink href={KERNEL_PATHS.order.replace(':id', o.id)} data-state={o.state}>
                     {head}
                   </KLink>

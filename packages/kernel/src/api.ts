@@ -198,6 +198,9 @@ export interface CatalogProduct {
    *  "Seg a sex, 18h–20h"). Inside them `basePriceCents` is already the promotion's price and
    *  `compareAtPriceCents` the regular one */
   promoLabel?: string | null;
+  /** Kernel 1.21 — what the merchant states about allergens and diets (`DIETARY_TAGS`, e.g.
+   *  `sem_gluten`, `vegano`); [] or absent = nothing stated. Unknown tags may appear: skip them */
+  dietary?: string[];
 }
 
 export interface ComboSlot {
@@ -694,30 +697,74 @@ export interface OrderItem {
 
 const SESSION_KEY = 'vendua.session';
 const ORDER_TOKENS_KEY = 'vendua.orderTokens';
+const ORDER_TOKENS_MAX = 20;
 
-// The checkout-time token stays authorized to read that order even after the
-// session rotates onto a fresh cart.
-function readOrderTokens(): Record<string, string> {
+// Kernel 1.21: the cart session and the order tokens live in localStorage, so the bag and past
+// orders survive closing the tab (Instagram's browser handing off to Safari, the next day). A
+// tab from an older Kernel kept them in sessionStorage: they are still read there and move over
+// on the next write. A blocked storage (private mode, a sandbox) throws on access.
+function storageOf(kind: 'localStorage' | 'sessionStorage'): Storage | undefined {
   try {
-    return JSON.parse(globalThis.sessionStorage?.getItem(ORDER_TOKENS_KEY) ?? '{}') as Record<
-      string,
-      string
-    >;
+    return globalThis[kind] ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseTokens(raw: string | null | undefined): Record<string, string> {
+  try {
+    const v = JSON.parse(raw ?? '{}') as unknown;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return Object.fromEntries(
+      Object.entries(v).filter(([, t]) => typeof t === 'string' && t.length <= 400),
+    ) as Record<string, string>;
   } catch {
     return {};
   }
 }
 
-function storeOrderToken(orderId: string, t: string) {
+// The checkout-time token stays authorized to read that order even after the
+// session rotates onto a fresh cart. Oldest first.
+function readOrderTokens(): Record<string, string> {
   try {
-    const m = readOrderTokens();
-    m[orderId] = t;
-    // Bound the map — keep the newest ~20 entries.
-    for (const k of Object.keys(m).slice(0, -20)) delete m[k];
-    globalThis.sessionStorage?.setItem(ORDER_TOKENS_KEY, JSON.stringify(m));
+    return {
+      ...parseTokens(storageOf('sessionStorage')?.getItem(ORDER_TOKENS_KEY)),
+      ...parseTokens(storageOf('localStorage')?.getItem(ORDER_TOKENS_KEY)),
+    };
   } catch {
-    /* private mode — order tracking lives in memory only */
+    return {};
   }
+}
+
+function writeOrderTokens(m: Record<string, string>) {
+  // bounded: the newest ORDER_TOKENS_MAX orders stay reopenable on this device
+  for (const k of Object.keys(m).slice(0, -ORDER_TOKENS_MAX)) delete m[k];
+  const json = JSON.stringify(m);
+  try {
+    storageOf('localStorage')!.setItem(ORDER_TOKENS_KEY, json);
+    storageOf('sessionStorage')?.removeItem(ORDER_TOKENS_KEY);
+  } catch {
+    try {
+      storageOf('sessionStorage')?.setItem(ORDER_TOKENS_KEY, json);
+    } catch {
+      /* private mode — order tracking lives in memory only */
+    }
+  }
+}
+
+function storeOrderToken(orderId: string, t: string) {
+  const m = readOrderTokens();
+  delete m[orderId];
+  m[orderId] = t;
+  writeOrderTokens(m);
+}
+
+/** A token Core no longer honours (the order is gone, or never was this device's): dropped. */
+function dropOrderToken(orderId: string) {
+  const m = readOrderTokens();
+  if (!(orderId in m)) return;
+  delete m[orderId];
+  writeOrderTokens(m);
 }
 
 const CUSTOMER_TOKENS_KEY = 'vendua.customerTokens';
@@ -752,20 +799,38 @@ function writeCustomerTokens(t: CustomerTokens) {
   }
 }
 
-function readStoredToken(): string | null {
+/** The device's cart session (shared by its tabs); undefined = storage can't be read. */
+function readStoredToken(): string | null | undefined {
+  const local = storageOf('localStorage');
   try {
-    return globalThis.sessionStorage?.getItem(SESSION_KEY) ?? null;
+    return (
+      local?.getItem(SESSION_KEY) ||
+      storageOf('sessionStorage')?.getItem(SESSION_KEY) ||
+      (local ? null : undefined)
+    );
   } catch {
-    return null;
+    return undefined;
   }
 }
 
-function storeToken(token: string) {
+/** false = not stored (private mode): the session lives in this page's memory only */
+function storeToken(token: string): boolean {
   try {
-    globalThis.sessionStorage?.setItem(SESSION_KEY, token);
+    storageOf('localStorage')!.setItem(SESSION_KEY, token);
+    storageOf('sessionStorage')?.removeItem(SESSION_KEY);
+    return true;
   } catch {
-    /* private mode — session lives in memory only */
+    return false;
   }
+}
+
+function forgetStoredToken() {
+  for (const kind of ['localStorage', 'sessionStorage'] as const)
+    try {
+      storageOf(kind)?.removeItem(SESSION_KEY);
+    } catch {
+      /* private mode */
+    }
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -817,13 +882,38 @@ export function createApi(baseUrl = '') {
     }
     return next;
   };
-  let token: string | null = readStoredToken();
+  // the stored copy wins (another tab may have started or rotated the device's cart); memory
+  // only while storage is unreadable or refused the write
+  let memToken: string | null = readStoredToken() ?? null;
+  let memOnly = false;
+  const current = (): string | null => {
+    if (memOnly) return memToken;
+    const stored = readStoredToken();
+    if (stored !== undefined) memToken = stored;
+    return memToken;
+  };
+  const setToken = (t: string) => {
+    memToken = t;
+    memOnly = !storeToken(t);
+  };
   let sessionPromise: Promise<{ cart: Cart }> | null = null;
-  // Memory first (survives sessionStorage failures); the persisted copy covers refresh.
+  // Memory first (survives storage failures); the persisted copy covers refresh and later visits.
   const orderTokenMem = new Map<string, string>();
   // Serial delivery writes — a slower earlier write must not overwrite the newer cart.
   let deliveryQueue: Promise<unknown> = Promise.resolve();
-  const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
+  const auth = (): Record<string, string> => {
+    const t = current();
+    return t ? { authorization: `Bearer ${t}` } : {};
+  };
+  const orderBearer = (id: string) => orderTokenMem.get(id) ?? readOrderTokens()[id] ?? current();
+  // a token Core refuses for this order (gone, or not this device's) is dropped quietly
+  const forgetRefused = (id: string) => (err: unknown) => {
+    if (err instanceof ApiError && [400, 401, 403, 404].includes(err.status)) {
+      orderTokenMem.delete(id);
+      dropOrderToken(id);
+    }
+    throw err;
+  };
   let customerTokens: CustomerTokens = readCustomerTokens();
   const rememberCustomer = (phone: string, t: { token: string; expiresAt: string }) => {
     const key = phoneKey(phone);
@@ -856,12 +946,9 @@ export function createApi(baseUrl = '') {
     );
 
   const clearSessionNow = () => {
-    token = null;
-    try {
-      globalThis.sessionStorage?.removeItem(SESSION_KEY);
-    } catch {
-      /* private mode */
-    }
+    memToken = null;
+    memOnly = false;
+    forgetStoredToken();
   };
 
   const ensureSessionNow = async (): Promise<{ cart: Cart }> => {
@@ -869,20 +956,21 @@ export function createApi(baseUrl = '') {
     // or each would mint its own cart and only the last token would survive.
     sessionPromise ??= (async () => {
       // An open cart reuses its token; a spent token rotates through POST /session.
-      if (token) {
+      if (current()) {
         try {
           const { cart } = await cartGet();
           if (cart.status === 'open') return { cart };
         } catch (err) {
-          if (!(err instanceof ApiError) || err.status !== 401) throw err;
+          // a token Core no longer knows (its cart is gone): start a fresh one quietly
+          if (!(err instanceof ApiError) || (err.status !== 401 && err.status !== 404)) throw err;
+          clearSessionNow();
         }
       }
       const res = await apiFetch<{ sessionToken: string; cart: Cart }>(co('/session'), {
         method: 'POST',
         headers: { ...auth(), 'idempotency-key': idemKey() },
       });
-      token = res.sessionToken;
-      storeToken(token);
+      setToken(res.sessionToken);
       return { cart: res.cart };
     })().finally(() => {
       sessionPromise = null;
@@ -917,7 +1005,7 @@ export function createApi(baseUrl = '') {
 
   return {
     get sessionToken() {
-      return token;
+      return current();
     },
 
     store: () => apiFetch<StoreProfile>(sf('/store')),
@@ -939,23 +1027,34 @@ export function createApi(baseUrl = '') {
       }),
     /** order ids this browser placed (their tracking tokens are kept) — newest first */
     orderIds: (): string[] => {
-      const ids = new Set<string>([...orderTokenMem.keys(), ...Object.keys(readOrderTokens())]);
+      const ids = new Set<string>([...Object.keys(readOrderTokens()), ...orderTokenMem.keys()]);
       return [...ids].reverse();
     },
     /** a bairro name, or Kernel 1.2: `{ lat, lng }` from the device / `{ neighborhood }`.
      *  Kernel 1.12: with `paymentMethod` the quote rides the cart session and `totals` come
-     *  back priced for that method */
+     *  back priced for that method. Kernel 1.21: `withCart` rides the session without a method
+     *  (the sacola's "calcular entrega": Core's totals with that delivery) */
     quote: (
-      where: string | { neighborhood?: string; lat?: number; lng?: number; paymentMethod?: string },
-    ) =>
-      apiFetch<QuoteResult>(co('/quote'), {
+      where:
+        | string
+        | {
+            neighborhood?: string;
+            lat?: number;
+            lng?: number;
+            paymentMethod?: string;
+            withCart?: boolean;
+          },
+    ) => {
+      const { withCart, ...body } = typeof where === 'string' ? { neighborhood: where } : where;
+      return apiFetch<QuoteResult>(co('/quote'), {
         method: 'POST',
         headers: {
-          ...(typeof where !== 'string' && where.paymentMethod ? auth() : {}),
+          ...(withCart || body.paymentMethod ? auth() : {}),
           'idempotency-key': idemKey(),
         },
-        body: JSON.stringify(typeof where === 'string' ? { neighborhood: where } : where),
-      }),
+        body: JSON.stringify(body),
+      });
+    },
     /** Kernel 1.2 — address + zone for a CEP (Core calls the CEP service) */
     cep: (cep: string) =>
       apiFetch<CepResult>(sf(`/cep/${encodeURIComponent(digitsOf(cep).slice(0, 8))}`)),
@@ -1090,7 +1189,7 @@ export function createApi(baseUrl = '') {
     setDelivery: (delivery: { mode: 'pickup' | 'delivery' } & DeliveryAddress) => {
       // Bind the token at call time — a queued write must target the cart it was
       // issued for, not a session rotated by a completed checkout.
-      const bound = token;
+      const bound = current();
       const bearer = bound ? { authorization: `Bearer ${bound}` } : {};
       const p = deliveryQueue.then(() =>
         apiFetch<{ cart: Cart }>(co('/cart/delivery'), {
@@ -1104,6 +1203,8 @@ export function createApi(baseUrl = '') {
       return p;
     },
     async checkout(input: CheckoutInput): Promise<Order> {
+      // the cart this order closes: its token is the order's tracking credential
+      const sent = current();
       const r = await apiFetch<{
         order: Order;
         customerToken?: string;
@@ -1112,7 +1213,7 @@ export function createApi(baseUrl = '') {
         method: 'POST',
         // a verified token for this phone lets Core honour its personal (loyalty) coupons
         headers: {
-          ...auth(),
+          ...(sent ? { authorization: `Bearer ${sent}` } : {}),
           ...customerHeader(input.customer.phone),
           'idempotency-key': idemKey(),
         },
@@ -1124,10 +1225,10 @@ export function createApi(baseUrl = '') {
           token: r.customerToken,
           expiresAt: r.customerTokenExpiresAt,
         });
-      // The order's token is its tracking credential — keep it before rotation swaps `token`.
-      if (token) {
-        orderTokenMem.set(r.order.id, token);
-        storeOrderToken(r.order.id, token);
+      // The order's token is its tracking credential — keep it before rotation swaps the session.
+      if (sent) {
+        orderTokenMem.set(r.order.id, sent);
+        storeOrderToken(r.order.id, sent);
       }
       // Rotate now so the next `cart()` reads a fresh cart; a rotation failure must not mask a placed order.
       try {
@@ -1152,10 +1253,10 @@ export function createApi(baseUrl = '') {
       });
     },
     order: (id: string) => {
-      const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
+      const bearer = orderBearer(id);
       return apiFetch<{ order: Order }>(co(`/orders/${id}`), {
         headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
-      }).then((r) => r.order);
+      }).then((r) => r.order, forgetRefused(id));
     },
     /** Kernel 1.7 — start/resume the order's online payment and sync it with the
      *  provider. Same order credential as `order()`; 409 PAYMENT_NOT_REQUIRED, 503
@@ -1166,7 +1267,7 @@ export function createApi(baseUrl = '') {
       id: string,
       opts?: { cardForm?: boolean; challengeDone?: boolean; deviceId?: string | null },
     ) => {
-      const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
+      const bearer = orderBearer(id);
       const deviceId = opts?.deviceId && DEVICE_ID_RE.test(opts.deviceId) ? opts.deviceId : null;
       return apiFetch<{ order: Order; next: PaymentNext }>(co(`/orders/${id}/pay`), {
         method: 'POST',
@@ -1189,7 +1290,7 @@ export function createApi(baseUrl = '') {
      *  PAYMENT_IN_PROGRESS (an earlier submit is unresolved), 409 PAYMENT_NOT_REQUIRED, 422
      *  INVALID_PAYMENT, 503 PAYMENT_UNAVAILABLE. */
     payCard: (id: string, input: CardPaymentInput) => {
-      const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
+      const bearer = orderBearer(id);
       return apiFetch<{ order: Order; next: PaymentNext }>(co(`/orders/${id}/card`), {
         method: 'POST',
         headers: {
@@ -1209,7 +1310,7 @@ export function createApi(baseUrl = '') {
       onOrder: (order: Order) => void,
       signal?: AbortSignal,
     ): Promise<void> => {
-      const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
+      const bearer = orderBearer(id);
       let res: Response;
       try {
         res = await fetch(co(`/orders/${id}/events`), {
@@ -1261,7 +1362,7 @@ export function createApi(baseUrl = '') {
     },
     /** Kernel 1.2 — long poll: resolves when the order moves past `since` or after `waitS` */
     orderWait: (id: string, since: number, waitS = 25, signal?: AbortSignal) => {
-      const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
+      const bearer = orderBearer(id);
       return apiFetch<{ order: Order; changed: boolean }>(
         co(`/orders/${id}?since=${since}&wait=${waitS}`),
         {
