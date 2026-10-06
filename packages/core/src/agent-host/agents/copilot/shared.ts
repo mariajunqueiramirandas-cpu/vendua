@@ -2,6 +2,7 @@ import { ToolError, type ToolContext } from '@vendua/agent-runtime';
 import type { Merchant, Role } from '../../../admin/context.ts';
 import { runRoute, type Replay } from '../../../admin/handlers.ts';
 import type { Sql } from '../../../platform/db.ts';
+import { planHas } from '../../../modules/billing/plans.ts';
 import { HttpError } from '../../../platform/http.ts';
 import type { Tenant } from '../../../platform/tenancy.ts';
 import { addDays, localDateOf, type LocalDate } from '../../../platform/tz.ts';
@@ -43,6 +44,9 @@ export async function who(ctx: Ctx): Promise<Who> {
     left join store_settings s on s.tenant_id = t.id
     where t.id = ${ctx.tenantId}`;
   if (!r) throw new ToolError('Essa pessoa não faz mais parte da equipe da loja.');
+  // a turn queued before a downgrade or a suspension reads and proposes nothing
+  if (r.status !== 'active' || !(await planHas(ctx.tx, ctx.tenantId, 'copilot')))
+    throw new ToolError('BLOQUEADO: o Copiloto não está disponível para esta loja agora.');
   return {
     tenant: { id: r.id, slug: r.slug, name: r.name, status: r.status },
     merchant: {

@@ -338,14 +338,17 @@ describe.skipIf(!OWNER_URL)('Duá Copilot (db)', () => {
         and e.payload ->> 'name' <> 'reply'
       order by e.seq`;
     expect(returned).toHaveLength(10);
-    for (const r of returned) expect({ name: r.name, ok: r.ok }).toEqual({ name: r.name, ok: true });
+    for (const r of returned)
+      expect({ name: r.name, ok: r.ok }).toEqual({ name: r.name, ok: true });
     const out = Object.fromEntries(returned.map((r) => [r.name, r.content]));
     const all = returned.map((r) => r.content).join('\n');
     // amounts and times are ledger references, never typed
     expect(all).not.toMatch(/R\$\s*\d/);
     expect(out.store_now).toContain('Hoje até agora: {{hoje.vendas}} em 1 pedidos');
     expect(out.sales_report).toContain('Faturamento: {{rel.faturamento}}');
-    const order = returned.find((r) => r.name === 'find_orders' && r.content.startsWith('Pedido #41'));
+    const order = returned.find(
+      (r) => r.name === 'find_orders' && r.content.startsWith('Pedido #41'),
+    );
     expect(order?.content).toContain('2× Pudim de Leite');
     expect(order?.content).toContain(`(/pedidos/${o!.id})`);
     expect(out.menu).toMatch(/^## Pudins\n\w+ · Pudim de Leite · \{\{\w+\.preco\}\} · à venda$/m);
@@ -362,16 +365,20 @@ describe.skipIf(!OWNER_URL)('Duá Copilot (db)', () => {
     const s = shared;
     const p = await propose(s, 'product.update', { productId: s.productId, priceCents: 4990 });
     expect(p.lines).toEqual([{ label: 'Preço', from: 'R$ 45,00', to: 'R$ 49,90' }]);
-    const [{ base_price_cents: before }] = await sql`
-      select base_price_cents from products where id = ${s.productId}`;
+    const { base_price_cents: before } = (
+      await sql<{ base_price_cents: number }[]>`
+      select base_price_cents from products where id = ${s.productId}`
+    )[0]!;
     expect(before).toBe(4500);
     const headers = { cookie: s.owner, 'idempotency-key': `${nonce}-same` };
     const a = await request('POST', `/copilot/actions/${p.id}`, { decision: 'confirm' }, headers);
     const b = await request('POST', `/copilot/actions/${p.id}`, { decision: 'confirm' }, headers);
     expect(a.status).toBe(200);
     expect(b.status).toBe(200);
-    const [{ base_price_cents: after }] = await sql`
-      select base_price_cents from products where id = ${s.productId}`;
+    const { base_price_cents: after } = (
+      await sql<{ base_price_cents: number }[]>`
+      select base_price_cents from products where id = ${s.productId}`
+    )[0]!;
     expect(after).toBe(4990);
     expect(await audits(s.tenantId, 'product.update')).toHaveLength(1);
     const card = b.body.items.find((i: any) => i.id === p.id);
@@ -380,6 +387,49 @@ describe.skipIf(!OWNER_URL)('Duá Copilot (db)', () => {
       money: true,
       done: 'Pudim de Leite atualizado',
     });
+  });
+
+  test('a card never applies to values nobody saw', async () => {
+    const s = shared;
+    const p = await propose(s, 'products.price', { productIds: [s.productId], percent: 10 });
+    // the price moves on the Cardápio screen before the tap
+    await as(s.owner)('PATCH', `/products/${s.productId}`, { priceCents: 6000 });
+    const r = await as(s.owner)('POST', `/copilot/actions/${p.id}`, { decision: 'confirm' });
+    const card = r.body.items.find((i: any) => i.id === p.id);
+    expect(card.status).toBe('failed');
+    expect(card.error).toMatch(/^Isso mudou desde que o Duá preparou o cartão/);
+    const { base_price_cents } = (
+      await sql<{ base_price_cents: number }[]>`
+        select base_price_cents from products where id = ${s.productId}`
+    )[0]!;
+    expect(base_price_cents).toBe(6000);
+
+    // unchanged since the proposal: it applies, with the store's own rounding
+    const q = await propose(s, 'products.price', { productIds: [s.productId], percent: 5 });
+    expect(q.lines).toEqual([{ label: 'Pudim de Leite', from: 'R$ 60,00', to: 'R$ 63,00' }]);
+    await as(s.owner)('POST', `/copilot/actions/${q.id}`, { decision: 'confirm' });
+    const after = (
+      await sql<{ base_price_cents: number }[]>`
+        select base_price_cents from products where id = ${s.productId}`
+    )[0]!;
+    expect(after.base_price_cents).toBe(6300);
+  });
+
+  test('an impossible date is a 400 on the route and a tool error for Duá', async () => {
+    const s = shared;
+    const bad = await as(s.owner)('GET', '/reports?from=2026-02-31&to=2026-03-02');
+    expect(bad.status).toBe(400);
+    const orders = await as(s.owner)('GET', '/orders?from=2026-02-30');
+    expect(orders.status).toBe(400);
+    await as(s.owner)('DELETE', '/copilot');
+    const { rt } = runtime([
+      tools(call('sales_report', { from: '2026-02-31', to: '2026-03-02' })),
+      reply('Essa data não existe. Qual período você quer?'),
+    ]);
+    await as(s.owner)('POST', '/copilot/messages', { text: 'vendas de 31/02 a 02/03' });
+    await settle(rt, s.tenantId);
+    const view = (await as(s.owner)('GET', '/copilot')).body;
+    expect(view.items.at(-1).text).toBe('Essa data não existe. Qual período você quer?');
   });
 
   test('declined and expired cards never apply', async () => {
@@ -397,8 +447,10 @@ describe.skipIf(!OWNER_URL)('Duá Copilot (db)', () => {
     const e = await as(s.owner)('POST', `/copilot/actions/${late.id}`, { decision: 'confirm' });
     expect(e.body.items.find((i: any) => i.id === late.id).status).toBe('expired');
 
-    const [{ prep_time_minutes }] = await sql`
-      select prep_time_minutes from store_settings where tenant_id = ${s.tenantId}`;
+    const { prep_time_minutes } = (
+      await sql<{ prep_time_minutes: number }[]>`
+      select prep_time_minutes from store_settings where tenant_id = ${s.tenantId}`
+    )[0]!;
     expect(prep_time_minutes).toBe(25);
   });
 
@@ -467,8 +519,10 @@ describe.skipIf(!OWNER_URL)('Duá Copilot (db)', () => {
       specialDays: [{ date: '2099-12-31', closed: false, open: '10:00', close: '14:00' }],
     });
     await as(s.owner)('POST', `/copilot/actions/${p.id}`, { decision: 'confirm' });
-    const [{ special_days }] = await sql`
-      select special_days from store_settings where tenant_id = ${s.tenantId}`;
+    const { special_days } = (
+      await sql<{ special_days: { date: string }[] }[]>`
+      select special_days from store_settings where tenant_id = ${s.tenantId}`
+    )[0]!;
     expect(special_days.map((d: { date: string }) => d.date)).toEqual(['2099-12-25', '2099-12-31']);
   });
 

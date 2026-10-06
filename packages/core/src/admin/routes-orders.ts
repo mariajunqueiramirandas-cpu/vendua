@@ -30,7 +30,7 @@ import {
 } from '../modules/payments/store-payments.ts';
 import { log } from '../platform/log.ts';
 import { audit } from './audit.ts';
-import { DATE_RE, int, need, oneOf, optInt, optText, type AdminDeps } from './context.ts';
+import { int, isDate, need, oneOf, optInt, optText, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 
@@ -424,7 +424,7 @@ const PAID_ONLINE = ['paid', 'partially_refunded'];
 
 export function mountOrders(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
   const pay = { sql: d.sql, provider: d.provider, sessionSecret: d.sessionSecret };
   const lockPayment = async (tx: Sql, tenantId: string, id: string) =>
     (
@@ -483,14 +483,14 @@ export function mountOrders(d: AdminDeps) {
   // History with search + filters; keyset on placed_at so paging is stable while orders arrive.
   admin.get(
     '/orders',
-    read('attendant', async (tx, t, _m, c) => {
+    named('orders').read('attendant', async (tx, t, _m, c) => {
       const q = (c.req.query('q') ?? '').trim().slice(0, 80);
       const state = c.req.query('state');
       if (state && state !== 'active' && !(ORDER_STATES as readonly string[]).includes(state))
         throw new HttpError(400, 'BAD_REQUEST', 'unknown state');
       const from = c.req.query('from');
       const to = c.req.query('to');
-      if ((from && !DATE_RE.test(from)) || (to && !DATE_RE.test(to)))
+      if ((from && !isDate(from)) || (to && !isDate(to)))
         throw new HttpError(400, 'BAD_REQUEST', 'from/to must be YYYY-MM-DD');
       const before = c.req.query('before');
       if (before && Number.isNaN(Date.parse(before)))
@@ -519,7 +519,7 @@ export function mountOrders(d: AdminDeps) {
       const more = rows.length > limit;
       const page = rows.slice(0, limit);
       return { orders: page, next: more ? page.at(-1)!.placedAt : null };
-    }, 'orders'),
+    }),
   );
 
   // Encomendas calendar (scheduled_for is a local date).
@@ -528,7 +528,7 @@ export function mountOrders(d: AdminDeps) {
     read('attendant', async (tx, t, _m, c) => {
       const from = c.req.query('from');
       const to = c.req.query('to');
-      if (!from || !to || !DATE_RE.test(from) || !DATE_RE.test(to))
+      if (!isDate(from) || !isDate(to))
         throw new HttpError(400, 'BAD_REQUEST', 'from and to are required (YYYY-MM-DD)');
       const span = (Date.parse(to) - Date.parse(from)) / 86_400_000;
       if (!(span >= 0 && span <= 62))
@@ -556,7 +556,7 @@ export function mountOrders(d: AdminDeps) {
 
   admin.get(
     '/orders/:id',
-    read('attendant', async (tx, t, _m, c) => {
+    named('order').read('attendant', async (tx, t, _m, c) => {
       const id = uuidParam(c, 'id');
       // one batch: the view, the customer's totals (keyed by this order's phone) and the payments
       const [order, [customer], payments] = await Promise.all([
@@ -583,7 +583,7 @@ export function mountOrders(d: AdminDeps) {
           : null,
         payments,
       };
-    }, 'order'),
+    }),
   );
 
   admin.post('/orders/:id/transition', async (c) => {

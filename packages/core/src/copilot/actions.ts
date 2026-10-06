@@ -115,6 +115,12 @@ interface KindDef<I, S> {
   lines: (before: S, after: S, i: I, c: Ctx) => Line[];
   done: (after: S, i: I, c: Ctx) => string;
   link: (i: I) => string | null;
+  /**
+   * The part of the state the card shows as "from". Confirming re-reads it and refuses on any
+   * change, so a tap never applies to values nobody saw (a price edited meanwhile, a sale that
+   * drew stock). Absent: the change doesn't depend on what was there.
+   */
+  basis?: (before: S, i: I) => unknown;
 }
 
 // ── formatting (pt-BR, the store's clock) ───────────────────────────────────
@@ -343,6 +349,10 @@ const operations: KindDef<OperationsInput, StoreSnap> = {
         ? 'A loja avisa que há muitos pedidos'
         : 'Aviso de muitos pedidos tirado',
   link: () => '/loja',
+  basis: (b, i) => ({
+    ...(i.prepTimeMinutes !== undefined ? { prepTimeMinutes: b.prepTimeMinutes } : {}),
+    ...(i.demand !== undefined ? { demand: b.demand } : {}),
+  }),
 };
 
 function dayWord(d: SpecialDayInput | undefined): string {
@@ -355,6 +365,8 @@ const specialDay: KindDef<SpecialDayInput, StoreSnap> = {
   money: () => false,
   // the day merges into the list as it is when the request runs, never a stale copy
   replay: async (tx, t, i) => {
+    // the list is read and written back whole: hold the row so a concurrent edit waits
+    await tx`select 1 from store_settings where tenant_id = ${t} for update`;
     const { specialDays } = await storeSnap(tx, t);
     const day: SpecialDayInput = { date: i.date, closed: i.closed };
     if (!i.closed) Object.assign(day, { open: i.open, close: i.close });
@@ -380,6 +392,7 @@ const specialDay: KindDef<SpecialDayInput, StoreSnap> = {
       ? `A loja fica fechada em ${dayLabel(i.date)}`
       : `Horário especial em ${dayLabel(i.date)}`,
   link: () => '/loja',
+  basis: (b, i) => b.specialDays.find((d) => d.date === i.date) ?? null,
 };
 
 function stockWord(n: number | null): string {
@@ -427,6 +440,12 @@ const product: KindDef<ProductInput, ProductSnap | null> = {
   },
   done: (after) => (after ? `${after.name} atualizado` : 'Produto atualizado'),
   link: (i) => `/cardapio/produto/${i.productId}`,
+  basis: (b, i) =>
+    b && {
+      ...(i.priceCents !== undefined ? { priceCents: b.priceCents } : {}),
+      ...(i.availability !== undefined ? { availability: b.availability } : {}),
+      ...(i.stockQuantity !== undefined ? { stockQuantity: b.stockQuantity } : {}),
+    },
 };
 
 const MAX_PRICE_LINES = 12;
@@ -466,6 +485,7 @@ const prices: KindDef<PriceInput, PriceSnap> = {
   done: (_after, i) =>
     `Preço de ${i.productIds.length} ${i.productIds.length === 1 ? 'produto' : 'produtos'} ${i.percent > 0 ? 'aumentado' : 'reduzido'}`,
   link: () => '/cardapio',
+  basis: (b) => b.map((p) => [p.id, p.priceCents]),
 };
 
 const couponCreate: KindDef<CouponInput, null> = {
@@ -545,6 +565,12 @@ const couponUpdate: KindDef<CouponUpdateInput, CouponSnap | null> = {
       ? `Cupom ${after.code} ${after.active ? 'atualizado' : 'desativado'}`
       : 'Cupom atualizado',
   link: () => '/marketing',
+  basis: (b, i) =>
+    b && {
+      ...(i.active !== undefined ? { active: b.active } : {}),
+      ...(i.endsAt !== undefined ? { endsAt: b.endsAt?.toISOString() ?? null } : {}),
+      ...(i.maxRedemptions !== undefined ? { maxRedemptions: b.maxRedemptions } : {}),
+    },
 };
 
 // the map is the registry the tools and the confirm route share
@@ -626,12 +652,33 @@ export async function proposeTx(
   }));
   const link = def.link(p.input);
   const [row] = await tx<{ id: string }[]>`
-    insert into copilot_actions (tenant_id, user_id, turn_id, kind, input, title, lines, link, money, min_role)
+    insert into copilot_actions (tenant_id, user_id, turn_id, kind, input, title, lines, link, basis, money, min_role)
     values (${t}, ${p.merchant.userId}, ${p.turnId}, ${p.kind}, ${tx.json(p.input as never)}, ${title},
-            ${tx.json(lines as never)}, ${link}, ${def.money(p.input)}, ${role})
+            ${tx.json(lines as never)}, ${link}, ${basisJson(tx, def, before, p.input)},
+            ${def.money(p.input)}, ${role})
     returning id`;
   return { id: row!.id, title, lines };
 }
+
+/** Key order and Dates out of the way: what jsonb gives back compares equal to what went in. */
+function canon(v: unknown): unknown {
+  if (v instanceof Date) return v.toISOString();
+  if (Array.isArray(v)) return v.map(canon);
+  if (v && typeof v === 'object')
+    return Object.fromEntries(
+      Object.keys(v)
+        .sort()
+        .map((k) => [k, canon((v as Record<string, unknown>)[k])]),
+    );
+  return v ?? null;
+}
+
+function basisJson(tx: Sql, def: KindDef<unknown, unknown>, before: unknown, input: unknown) {
+  return def.basis ? tx.json(canon(def.basis(before, input)) as never) : null;
+}
+
+const DRIFTED =
+  'Isso mudou desde que o Duá preparou o cartão. Peça de novo para ver os valores de agora.';
 
 /** The pt-BR the card shows when Core refused a confirmed change. */
 export function refusal(e: HttpError): string {
@@ -661,6 +708,7 @@ interface ActionRow {
   status: ActionStatus;
   min_role: Role;
   expires_at: Date;
+  basis: unknown;
 }
 
 /**
@@ -676,7 +724,7 @@ export async function decideTx(
   decision: 'confirm' | 'decline',
 ): Promise<void> {
   const [a] = await tx<ActionRow[]>`
-    select id, user_id, kind, input, status, min_role, expires_at from copilot_actions
+    select id, user_id, kind, input, status, min_role, expires_at, basis from copilot_actions
     where tenant_id = ${t.id} and id = ${actionId} and user_id = ${m.userId}
     for update`;
   if (!a) throw new HttpError(404, 'ACTION_NOT_FOUND', 'no such proposal');
@@ -696,6 +744,11 @@ export async function decideTx(
     throw new HttpError(403, 'FORBIDDEN', 'your role cannot do this', { need: a.min_role });
 
   const def = KINDS[a.kind] as KindDef<unknown, unknown>;
+  if (def.basis) {
+    const now = canon(def.basis(await def.snapshot(tx, t.id, a.input), a.input));
+    if (JSON.stringify(now) !== JSON.stringify(canon(a.basis)))
+      return settle('failed', { error: DRIFTED });
+  }
   const by: Merchant = { ...m, name: `${m.name} pelo Duá`.slice(0, 120) };
   try {
     const { after, result } = await (tx as unknown as Savepointable).savepoint(async (sp) => {

@@ -1,4 +1,5 @@
 import { defineTool, s, ToolError } from '@vendua/agent-runtime';
+import { isDate } from '../../../admin/context.ts';
 import type { OrderListRow } from '../../../admin/routes-orders.ts';
 import type { AdminProductRow } from '../../../admin/routes-catalog.ts';
 import type { OrderView } from '../../../modules/orders.ts';
@@ -148,6 +149,8 @@ export const salesReportTool = defineTool<
     detail: s.enum(['resumo', 'completo'] as const).optional(),
   }),
   run: async (ctx: Ctx, input) => {
+    if ((input.from && !isDate(input.from)) || (input.to && !isDate(input.to)))
+      throw new ToolError('from e to são datas reais no formato AAAA-MM-DD.');
     const w = await who(ctx);
     const range =
       input.from && input.to
@@ -252,6 +255,8 @@ export const findOrdersTool = defineTool<
     number: s.int({ min: 1, max: 100_000_000 }).optional(),
   }),
   run: async (ctx: Ctx, input) => {
+    if (input.date && !isDate(input.date))
+      throw new ToolError('date é uma data real no formato AAAA-MM-DD.');
     const w = await who(ctx);
     const query: Record<string, string> = { limit: input.number ? '5' : '15' };
     if (input.number) query.q = String(input.number);
@@ -301,7 +306,10 @@ const LIVE: Record<string, string> = {
   archived: 'escondido',
 };
 
-export const menuTool = defineTool<{ query?: string | undefined; filter?: 'low_stock' | 'sold_out' | undefined}, Sql>({
+export const menuTool = defineTool<
+  { query?: string | undefined; filter?: 'low_stock' | 'sold_out' | undefined },
+  Sql
+>({
   name: 'menu',
   description:
     'O cardápio como a loja vê: produtos com código curto (use-o nas propostas), categoria, preço, situação (à venda, esgotado, escondido) e estoque. query filtra pelo nome; filter=low_stock mostra o que está acabando, filter=sold_out o que está esgotado.',
@@ -398,7 +406,7 @@ interface CustomerRow {
   lastAt: string | null;
 }
 
-export const customersTool = defineTool<{ sort?: 'value' | 'orders' | 'recent' | undefined}, Sql>({
+export const customersTool = defineTool<{ sort?: 'value' | 'orders' | 'recent' | undefined }, Sql>({
   name: 'top_customers',
   description:
     'Os melhores clientes da loja (por valor gasto, por número de pedidos ou os mais recentes): primeiro nome, pedidos e total. Nunca repita telefones.',

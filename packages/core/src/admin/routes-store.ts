@@ -326,7 +326,7 @@ function polygonMismatch(err: unknown): never {
 
 export function mountStore(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
   const view = (tx: Sql, t: { id: string; slug: string; name: string }) =>
     storeView(tx, t.id, t.slug, t.name, d.storeDomain);
 
@@ -353,12 +353,12 @@ export function mountStore(d: AdminDeps) {
   // attendants read it too: the status pill and today's hours are on every screen
   admin.get(
     '/store',
-    read('attendant', async (tx, t) => view(tx, t), 'store'),
+    named('store').read('attendant', async (tx, t) => view(tx, t)),
   );
 
   admin.patch(
     '/store',
-    write('manager', async (tx, t, m, c) => {
+    named('store.patch').write('manager', async (tx, t, m, c) => {
       const body = await bodyOf(c, 64 * 1024);
       const s = await loadSettings(tx, t.id);
       const set: Record<string, unknown> = {};
@@ -543,13 +543,13 @@ export function mountStore(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'store');
       return { status: 200, body: await view(tx, { ...t, name }) };
-    }, 'store.patch'),
+    }),
   );
 
   // "Pausar agora": 15 min · 1 h · rest of the day · until I resume · custom minutes.
   admin.post(
     '/store/pause',
-    write('attendant', async (tx, t, m, c) => {
+    named('store.pause').write('attendant', async (tx, t, m, c) => {
       const body = await bodyOf(c);
       const span = oneOf(body.for, 'for', ['15m', '1h', 'today', 'indefinite', 'minutes'] as const);
       const settings = await loadSettings(tx, t.id);
@@ -580,12 +580,12 @@ export function mountStore(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'store');
       return { status: 200, body: await view(tx, t) };
-    }, 'store.pause'),
+    }),
   );
 
   admin.post(
     '/store/resume',
-    write('attendant', async (tx, t, m) => {
+    named('store.resume').write('attendant', async (tx, t, m) => {
       assertNoBillingHold(await loadSettings(tx, t.id));
       await tx`update store_settings set status_override = null, resumes_at = null where tenant_id = ${t.id}`;
       await audit(tx, t.id, m, {
@@ -595,7 +595,7 @@ export function mountStore(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'store');
       return { status: 200, body: await view(tx, t) };
-    }, 'store.resume'),
+    }),
   );
 
   // ── delivery zones ───────────────────────────────────────────────────────

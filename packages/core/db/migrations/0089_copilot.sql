@@ -50,6 +50,8 @@ create table if not exists copilot_actions (
   lines jsonb not null default '[]' check (jsonb_typeof(lines) = 'array'
     and octet_length(lines::text) <= 16000),
   link text check (char_length(link) <= 200),
+  -- what the card showed as "from": confirming refuses if it changed meanwhile
+  basis jsonb check (basis is null or octet_length(basis::text) <= 16000),
   money boolean not null default false,
   min_role text not null check (min_role in ('owner', 'manager', 'attendant')),
   status text not null default 'proposed'

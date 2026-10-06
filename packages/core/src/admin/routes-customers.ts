@@ -48,11 +48,11 @@ async function summary(tx: Sql, tenantId: string, phone: string) {
 
 export function mountCustomers(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   admin.get(
     '/customers',
-    read('manager', async (tx, t, _m, c) => {
+    named('customers').read('manager', async (tx, t, _m, c) => {
       const q = fold((c.req.query('q') ?? '').trim().slice(0, 80));
       const sort = oneOf(c.req.query('sort') ?? 'recent', 'sort', [
         'recent',
@@ -100,7 +100,7 @@ export function mountCustomers(d: AdminDeps) {
         `
       )[0]!;
       return { customers: rows, stats, next: rows.length === limit ? offset + limit : null };
-    }, 'customers'),
+    }),
   );
 
   admin.get(

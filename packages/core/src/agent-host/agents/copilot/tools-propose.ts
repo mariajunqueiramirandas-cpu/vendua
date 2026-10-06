@@ -1,4 +1,5 @@
 import { defineTool, s, ToolError } from '@vendua/agent-runtime';
+import { isDate } from '../../../admin/context.ts';
 import type { Sql } from '../../../platform/db.ts';
 import {
   AVAILABILITY,
@@ -20,7 +21,6 @@ import { refused, todayIn, who, type Ctx } from './shared.ts';
 // (copilot_actions). The route the card replays already ran once, rolled back, so what can't be
 // done is refused here, with the store's reason.
 
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 async function propose(ctx: Ctx, kind: ActionKind, input: unknown) {
@@ -102,7 +102,7 @@ export const proposeSpecialDayTool = defineTool<SpecialDayInput, Sql>({
     label: s.string({ min: 1, max: 60 }).optional(),
   }),
   run: async (ctx: Ctx, input) => {
-    if (!DATE.test(input.date)) throw new ToolError('date é AAAA-MM-DD.');
+    if (!isDate(input.date)) throw new ToolError('date é uma data real no formato AAAA-MM-DD.');
     const w = await who(ctx);
     if (input.date < todayIn(w.tz, ctx.now))
       throw new ToolError('Essa data já passou. Confirme o dia com a pessoa.');

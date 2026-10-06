@@ -20,6 +20,16 @@ type Work<T> = (tx: Sql, tenant: Tenant, m: Merchant, c: Context) => Promise<T>;
  * production; in tests every app mounts the same code.
  */
 const ROUTES = new Map<string, { role: Role; fn: Work<unknown> }>();
+/** names per mount: one app naming two handlers alike is a bug, a second app is a remount */
+const NAMED = new WeakMap<AdminDeps, Set<string>>();
+
+function register(d: AdminDeps, name: string, role: Role, fn: Work<unknown>) {
+  const names = NAMED.get(d) ?? new Set<string>();
+  if (names.has(name)) throw new Error(`admin route name ${name} is used twice`);
+  names.add(name);
+  NAMED.set(d, names);
+  ROUTES.set(name, { role, fn });
+}
 
 /** What a replayed request carries instead of an HTTP request. */
 export interface Replay {
@@ -69,26 +79,34 @@ export function routeRole(name: string): Role | null {
 
 /**
  * read = role check + tenant tx; write = role check + idempotent claim in the tenant tx.
- * A `name` also lists the handler for Copilot (`runRoute`).
+ * `named(name).read/write` is the same handler, also listed for Copilot (`runRoute`).
  */
 export function handlers(d: AdminDeps) {
-  const read = (role: Role, fn: Work<object>, name?: string) => {
-    if (name) ROUTES.set(name, { role, fn });
-    return async (c: AdminCtx): Promise<Response> => {
+  const read =
+    (role: Role, fn: Work<object>) =>
+    async (c: AdminCtx): Promise<Response> => {
       const m = need(c, role);
       const t = c.get('tenant');
       const out = await withTenant(d.sql, t.id, (tx) => fn(tx, t, m, c));
       c.header('cache-control', 'no-store');
       return c.json(out);
     };
-  };
-  const write = (role: Role, fn: Work<{ status: number; body: unknown }>, name?: string) => {
-    if (name) ROUTES.set(name, { role, fn });
-    return async (c: AdminCtx): Promise<Response> => {
+  const write =
+    (role: Role, fn: Work<{ status: number; body: unknown }>) =>
+    async (c: AdminCtx): Promise<Response> => {
       const m = need(c, role);
       const t = c.get('tenant');
       return d.idempotency(d.sql, (c2, tx) => fn(tx, t, m, c2))(c);
     };
-  };
-  return { read, write };
+  const named = (name: string) => ({
+    read: (role: Role, fn: Work<object>) => {
+      register(d, name, role, fn);
+      return read(role, fn);
+    },
+    write: (role: Role, fn: Work<{ status: number; body: unknown }>) => {
+      register(d, name, role, fn);
+      return write(role, fn);
+    },
+  });
+  return { read, write, named };
 }

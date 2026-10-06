@@ -38,8 +38,9 @@ How it works:
   the `interactive` lane and its own `copilot` transport. Replies are `copilot_messages` rows
   written in the step's transaction, and the SSE topic `copilot` (id = user id) refreshes the
   admin.
-- **Routes as functions.** `handlers(d).read/write(role, fn, name)` lists a handler by name.
-  `runRoute(tx, name, tenant, merchant, replay)` runs that same handler inside a caller's tenant
+- **Routes as functions.** `handlers(d).named(name).read/write(role, fn)` is the same handler as
+  `read/write(role, fn)`, also listed by name (a name used twice in one mount throws).
+  `runRoute(tx, name, tenant, merchant, replay)` runs that handler inside a caller's tenant
   transaction, through a stand-in context that serves `req.param`, `req.query` and the replayed
   body (`bodyOf(c)`). The route's role check runs too. The named reads are home, reports,
   catalog, orders, order, marketing, store, customers and kitchen. The named writes are
@@ -69,7 +70,10 @@ How it works:
 - **The tap is the only apply.** `POST /admin/v1/copilot/actions/:id {decision}` runs in the
   request's idempotency claim. It locks the row and checks it is that person's (404 otherwise),
   still `proposed`, not past `expires_at` (30 minutes), and allowed for their role. It then runs
-  the route for real, as the merchant named "<name> pelo Duá". The route's audit row and
+  the route for real, as the merchant named "<name> pelo Duá". Before that it re-reads the
+  values the card showed as "from" (its `basis`: the prices, the product's fields, the coupon's,
+  the prep time, that day's hours) and refuses on any change, so a tap never applies to values
+  nobody saw. The route's audit row and
   `emitAdminTx` are therefore the screen's own, and "Quem mudou o quê" shows who asked through
   Duá. A store refusal at that moment is recorded on the card (`failed`, pt-BR reason), not
   thrown, so a retry replays it. A special day merges into the list as it is at confirm time,
@@ -88,7 +92,9 @@ How it works:
 - A dry run is only as side-effect free as the handler. The named writes do database work and
   `pg_notify` only, both rolled back with the savepoint. A future handler that calls out over HTTP
   must not be named.
-- Absolute values (stock count, price) are applied as proposed. A sale drawn between the proposal
-  and the tap is overwritten by a stock count; the 30-minute expiry bounds that window.
+- A sale that draws stock, or anyone editing a price, between the proposal and the tap fails the
+  card ("isso mudou"); the person asks Duá again and sees the values of now.
+- A turn queued before a downgrade or a suspension reads and proposes nothing: the tools check the
+  plan and the store on every call.
 - With no model route configured, a turn fails after its attempts and Duá's fallback line is
   written, so the admin never waits forever.

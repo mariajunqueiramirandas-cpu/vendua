@@ -56,11 +56,11 @@ function date(v: unknown, name: string): Date | null {
 
 export function mountMarketing(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   admin.get(
     '/marketing',
-    read('manager', async (tx, t) => {
+    named('marketing').read('manager', async (tx, t) => {
       const s = await loadSettings(tx, t.id);
       const loyalty = loyaltyView(readLoyalty(s.loyalty));
       const loyaltyStats = (
@@ -87,12 +87,12 @@ export function mountMarketing(d: AdminDeps) {
         waitlist,
         announcement: s.promo ?? null,
       };
-    }, 'marketing'),
+    }),
   );
 
   admin.post(
     '/coupons',
-    write('manager', async (tx, t, m, c) => {
+    named('coupon.create').write('manager', async (tx, t, m, c) => {
       const body = await bodyOf(c);
       const code = normalizeCode(text(body.code, 'code', 32, 3));
       if (!COUPON_CODE_RE.test(code))
@@ -136,12 +136,12 @@ export function mountMarketing(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'marketing');
       return { status: 201, body: { coupons: await couponsView(tx, t.id) } };
-    }, 'coupon.create'),
+    }),
   );
 
   admin.patch(
     '/coupons/:id',
-    write('manager', async (tx, t, m, c) => {
+    named('coupon.patch').write('manager', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
       const body = await bodyOf(c);
       const set: Record<string, unknown> = {};
@@ -172,7 +172,7 @@ export function mountMarketing(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'marketing');
       return { status: 200, body: { coupons: await couponsView(tx, t.id) } };
-    }, 'coupon.patch'),
+    }),
   );
 
   admin.put(
