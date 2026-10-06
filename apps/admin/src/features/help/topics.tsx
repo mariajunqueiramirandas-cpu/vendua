@@ -32,7 +32,8 @@ export type TopicId =
   | 'equipe'
   | 'conta'
   | 'perfil'
-  | 'vendedor';
+  | 'vendedor'
+  | 'copiloto';
 
 export const TOPICS: Record<TopicId, Topic> = {
   inicio: {
@@ -481,9 +482,38 @@ export const TOPICS: Record<TopicId, Topic> = {
       },
     ],
   },
+  copiloto: {
+    title: 'Copiloto',
+    intro: 'O Duá no painel: você pergunta da loja ou pede uma mudança, e ele prepara.',
+    items: [
+      {
+        q: 'O que posso perguntar?',
+        a: 'Como vão as vendas, o que está acabando no estoque, o que mais vende, como está a cozinha. Ele responde com os números da loja.',
+      },
+      {
+        q: 'O Duá muda alguma coisa sozinho?',
+        a: (
+          <>
+            Não. Quando você pede uma mudança (pausar a loja, mudar um preço, criar um cupom, mudar
+            o horário), ele monta um cartão com o antes e o depois. Nada muda até você tocar em{' '}
+            <strong>confirmar</strong>. Se não quiser, toque em <strong>agora não</strong>.
+          </>
+        ),
+      },
+      {
+        q: 'Quem da equipe usa o Copiloto?',
+        a: 'Donos e gerentes. Cada pessoa tem a sua própria conversa com o Duá.',
+      },
+      {
+        q: 'O que faz “nova conversa”?',
+        a: 'O Duá esquece a conversa e começa do zero. O que você já confirmou continua valendo.',
+      },
+    ],
+  },
 };
 
 const BY_ROUTE: Partial<Record<RouteId, TopicId>> = {
+  copilot: 'copiloto',
   home: 'inicio',
   orders: 'pedidos',
   order: 'pedidos',

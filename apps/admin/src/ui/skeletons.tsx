@@ -124,6 +124,30 @@ export function RowsSkeleton({
   );
 }
 
+/** A chat with Duá (the Copilot): bubbles on both sides, his on the left. */
+export function ChatSkeleton({ className }: { className?: string }) {
+  const bubble = 'flex max-w-[78%] flex-col gap-2 rounded-[18px] px-3.5 py-3';
+  return (
+    <SkeletonGroup className={cn('flex flex-col gap-3', className)}>
+      <div className={cn(bubble, 'w-56 self-end rounded-br-md bg-sunken')}>
+        <Bone className="h-3.5 w-4/5" />
+      </div>
+      <div className={cn(bubble, 'w-72 self-start rounded-bl-md bg-surface depth-1')}>
+        <Bone className="h-3.5 w-full" />
+        <Bone className="h-3.5 w-11/12" />
+        <Bone className="h-3.5 w-2/3" />
+      </div>
+      <div className={cn(bubble, 'w-44 self-end rounded-br-md bg-sunken')}>
+        <Bone className="h-3.5 w-3/4" />
+      </div>
+      <div className={cn(bubble, 'w-80 self-start rounded-bl-md bg-surface depth-1')}>
+        <Bone className="h-3.5 w-full" />
+        <Bone className="h-3.5 w-1/2" />
+      </div>
+    </SkeletonGroup>
+  );
+}
+
 /** Filter chips / segmented control above a list. */
 export function ChipsSkeleton({ count = 4, className }: { count?: number; className?: string }) {
   return (

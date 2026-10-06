@@ -296,6 +296,17 @@
   --tabbar-h: 0px;
 }
 
+/* what the Copilot's dock takes from the right of a wide screen (app/Shell.tsx, its w-96):
+   toasts and floating bars on desktop sit left of it */
+:root {
+  --dock-w: 0px;
+}
+@media (min-width: 1200px) {
+  :root[data-dock] {
+    --dock-w: 24rem;
+  }
+}
+
 /* the phone top bar (app/Shell.tsx: avatar row, 12px + 48px + 8px), which stays stuck to
    the top: sticky content below it starts here; 0 from tablets up and while typing */
 :root {
@@ -454,6 +465,9 @@
 }
 .vt-rail {
   view-transition-name: rail;
+}
+.vt-dock {
+  view-transition-name: dock;
 }
 /* the phone status pill slides aside for the back button instead of ghosting */
 .vt-pill {

@@ -70,8 +70,17 @@ export function MiniChat({
   );
 }
 
-/** "Duá está escrevendo": three dots in his bubble, still under reduced motion */
-function Typing({ owner }: { owner?: boolean | undefined }) {
+/**
+ * "Duá está escrevendo": three dots in his bubble, still under reduced motion. `owner`: Duá
+ * on the left, as in the test chat and the Copilot.
+ */
+export function Typing({
+  owner,
+  className,
+}: {
+  owner?: boolean | undefined;
+  className?: string | undefined;
+}) {
   return (
     <div
       role="status"
@@ -79,6 +88,7 @@ function Typing({ owner }: { owner?: boolean | undefined }) {
         'flex items-center gap-1 rounded-[18px] px-4 py-3',
         owner ? 'self-start rounded-bl-md' : 'self-end rounded-br-md',
         SELLER,
+        className,
       )}
     >
       <span className="sr-only">Duá está escrevendo</span>

@@ -6,6 +6,7 @@ import {
   CalendarSkeleton,
   FieldSkeleton,
   BoardSkeleton,
+  ChatSkeleton,
   KitchenSkeleton,
   ChipsSkeleton,
   DashboardSkeleton,
@@ -159,6 +160,7 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
   vendedorResults: () => page('Resultados', <ReportsSkeleton />),
   vendedorSettings: () => page('Configurar', <SectionsSkeleton />),
   vendedorTest: () => page('Testar como cliente', <DetailSkeleton />, { subtitle: false }),
+  copilot: () => page('Copiloto', <ChatSkeleton />),
 };
 
 export default function RouteSkeleton({ pathname }: { pathname: string }) {

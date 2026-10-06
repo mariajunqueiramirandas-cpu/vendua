@@ -261,7 +261,7 @@ export function Toaster() {
       aria-live="polite"
       data-no-pull
       style={bar ? ({ '--bar-h': `${bar}px` } as React.CSSProperties) : undefined}
-      className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))+16px)] z-[70] flex flex-col items-center gap-2 px-4 max-md:[html:not([data-kb]):has([data-action-bar])_&]:bottom-[calc(var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))+var(--bar-h,80px)+16px)] md:bottom-6 md:left-auto md:right-6 md:w-[420px] md:items-end"
+      className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))+16px)] z-[70] flex flex-col items-center gap-2 px-4 max-md:[html:not([data-kb]):has([data-action-bar])_&]:bottom-[calc(var(--tabbar-h,calc(72px+env(safe-area-inset-bottom)))+var(--bar-h,80px)+16px)] md:bottom-6 md:left-auto md:right-[calc(var(--dock-w,0px)+1.5rem)] md:w-[420px] md:items-end"
     >
       {list.map((t) => (
         <One key={t.id} t={t} />
