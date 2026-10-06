@@ -2,8 +2,10 @@ import { Link, useParams } from 'react-router-dom';
 import { ExternalLink, SearchX } from 'lucide-react';
 import { ApiError, type CustomerDetail } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
+import { fmtBrPhone } from '@/lib/contact.ts';
 import { fmtDate, fmtMoney, fmtUsd } from '@/lib/format.ts';
 import { RiskChips } from '@/features/overview/risk.tsx';
+import { ContactLink } from '@/components/ContactLinks.tsx';
 import { Page } from '@/components/Page.tsx';
 import { EmptyState, ErrorState, KpiStrip, LoadingRows } from '@/components/common.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
@@ -16,6 +18,7 @@ import { isStoreId, useBillingStore, useCustomer } from './queries.ts';
 import { Spark } from './Spark.tsx';
 import { siteOpen } from './storeRows.tsx';
 import { AiPanel, ChannelsPanel, InvoicesPanel, UsersPanel } from './storePanels.tsx';
+import { StoreTimeline } from './StoreTimeline.tsx';
 
 const gone = (e: unknown) => e instanceof ApiError && (e.status === 404 || e.status === 400);
 
@@ -50,6 +53,28 @@ function Header({ d }: { d: CustomerDetail }) {
       <span className="text-xs text-muted-foreground md:ml-auto">
         cliente desde {fmtDate(s.createdAt)}
       </span>
+      {d.owner && <Owner owner={d.owner} />}
+    </div>
+  );
+}
+
+/** Whom to call about the store: its owner, with WhatsApp / phone / email links. */
+function Owner({ owner }: { owner: NonNullable<CustomerDetail['owner']> }) {
+  return (
+    <div className="flex min-w-0 basis-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+      <span>dono</span>
+      <span className="truncate font-medium text-foreground">{owner.name ?? 'sem nome'}</span>
+      <span className="inline-flex items-center">
+        <span className="tnum select-all">{fmtBrPhone(owner.phone)}</span>
+        <ContactLink kind="whatsapp" value={owner.phone} />
+        <ContactLink kind="tel" value={owner.phone} />
+      </span>
+      {owner.email && (
+        <span className="inline-flex min-w-0 items-center">
+          <span className="truncate select-all">{owner.email}</span>
+          <ContactLink kind="email" value={owner.email} />
+        </span>
+      )}
     </div>
   );
 }
@@ -193,6 +218,7 @@ export default function StorePage() {
             <Charts d={d} />
             <InvoicesPanel d={d} />
             <UsersPanel d={d} />
+            <StoreTimeline id={s.id} />
           </div>
           <div className={cn('flex min-w-0 flex-col gap-3 md:gap-4', toDo && 'max-lg:order-first')}>
             <BillingPanel b={billing} />

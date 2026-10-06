@@ -103,6 +103,8 @@ import { mountWebChat, webChatProfile } from './vendedor/web-chat.ts';
 import { mountCommerce } from './modules/commerce-routes.ts';
 import {
   agentGoal,
+  bulkLeadPatch,
+  bulkUpdateLeads,
   deleteLead,
   exportLeadsCsv,
   findDuplicates,
@@ -115,6 +117,7 @@ import {
   leadState,
   leadStats,
   listLeads,
+  mountSavedViews,
   parseLeadsCsv,
   segmentStats,
   updateLead,
@@ -124,10 +127,13 @@ import {
 import {
   ACTIVITY_KINDS,
   addActivity,
-  completeTask,
   createTask,
+  deleteTask,
   listActivities,
   listTasks,
+  patchTask,
+  taskDueAt,
+  taskPatch,
   type ActivityKind,
 } from './modules/activities.ts';
 import {
@@ -1330,11 +1336,19 @@ export function createApp({
     const q = c.req.query('q');
     const cursor = c.req.query('cursor');
     const sort = c.req.query('sort');
+    const segment = c.req.query('segment');
+    const source = c.req.query('source');
+    const city = c.req.query('city');
     const { leads, nextCursor } = await listLeads(sql, {
       ...(q ? { q } : {}),
       ...(state ? { state: leadState(state) } : {}),
       ...(tag ? { tag: str(tag, 'tag', 60) } : {}),
       ...(archived === 'only' || archived === 'all' ? { archived } : {}),
+      ...(segment ? { segment: str(segment, 'segment', 80) } : {}),
+      ...(source ? { source: str(source, 'source', 100) } : {}),
+      ...(city ? { city: str(city, 'city', 120) } : {}),
+      ...(c.req.query('draft') === '1' ? { hasDraft: true } : {}),
+      ...(c.req.query('overdue') === '1' ? { overdue: true } : {}),
       ...(limit ? { limit: Math.min(Math.max(Number(limit) || 50, 1), 200) } : {}),
       ...(cursor ? { cursor } : {}),
       ...(sort ? { sort: leadSort(sort) } : {}),
@@ -1470,6 +1484,14 @@ export function createApp({
     return c.json(res.body);
   });
 
+  // the pipeline's selection bar: one claim, each lead through the single PATCH's updateLeadTx
+  app.post('/control/v1/leads/bulk', async (c) => {
+    controlGate(c);
+    const res = await bulkUpdateLeads(sql, bulkLeadPatch(await bodyJson(c)), requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
   app.delete('/control/v1/leads/:id', async (c) => {
     controlGate(c);
     const res = await deleteLead(sql, uuidParam(c, 'id'), requireIdemKey(c));
@@ -1565,7 +1587,7 @@ export function createApp({
       uuidParam(c, 'id'),
       {
         title: str(body.title, 'title', 300),
-        dueAt: (body.dueAt as string) ?? null,
+        dueAt: taskDueAt(body.dueAt),
         createdBy: 'staff',
       },
       requireIdemKey(c),
@@ -1591,14 +1613,15 @@ export function createApp({
 
   app.patch('/control/v1/tasks/:id', async (c) => {
     controlGate(c);
-    const body = await bodyJson(c);
-    const res = await completeTask(
-      sql,
-      uuidParam(c, 'id'),
-      body.done !== false,
-      requireIdemKey(c),
-      'staff',
-    );
+    const id = uuidParam(c, 'id');
+    const res = await patchTask(sql, id, taskPatch(await bodyJson(c)), requireIdemKey(c), 'staff');
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.delete('/control/v1/tasks/:id', async (c) => {
+    controlGate(c);
+    const res = await deleteTask(sql, uuidParam(c, 'id'), requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     return c.json(res.body);
   });
@@ -2938,6 +2961,7 @@ export function createApp({
     signupReady: signupReady ?? (() => signupReadiness(sql, provider)),
   });
   mountControlCustomers({ app, sql, controlGate, storeDomain: publicStoreDomain });
+  mountSavedViews({ app, sql, controlGate, requireIdemKey });
   mountIncidentsControl({ app, sql, controlGate });
   mountAgentRuntimeControl({ app, sql, controlGate });
   mountAgentRuntimeAi({ app, sql, controlGate, storeDomain: publicStoreDomain });

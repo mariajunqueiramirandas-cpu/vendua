@@ -93,6 +93,8 @@ export interface Lead {
 export interface LeadListItem extends Lead {
   score: number;
   openTasks: number;
+  /** open tasks past their due date */
+  overdueTasks: number;
   pendingDrafts: number;
   lastActivityAt: string | null;
 }
@@ -104,6 +106,34 @@ export interface Activity {
   meta: Record<string, unknown>;
   createdBy: string;
   at: string;
+}
+export interface TaskPatch {
+  title?: string;
+  dueAt?: string | null;
+  snooze?: '1d' | '1w';
+  done?: boolean;
+}
+export interface BulkLeadPatch {
+  ids: string[];
+  state?: Lead['state'];
+  archived?: boolean;
+  addTags?: string[];
+  removeTags?: string[];
+}
+export interface BulkLeadResult {
+  id: string;
+  state: Lead['state'];
+  archivedAt: string | null;
+  tags: string[];
+}
+/** a staff member's named pipeline filters (URL params of /pipeline) */
+export interface SavedView {
+  id: string;
+  member: string;
+  name: string;
+  params: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
 }
 export interface Task {
   id: string;
@@ -558,6 +588,24 @@ const apiBase = {
     }),
   setTaskDone: (id: string, done: boolean) =>
     req<{ task: Task }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ done }) }),
+  /** title / dueAt (null clears) / snooze pushes the due date from max(due, now) */
+  patchTask: (id: string, patch: TaskPatch) =>
+    req<{ task: Task }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteTask: (id: string) =>
+    req<{ ok: true; leadId: string }>(`/tasks/${id}`, { method: 'DELETE' }),
+  /** the pipeline's selection: same effects as one PATCH per lead, ≤ 200 ids, all or nothing */
+  bulkLeads: (b: BulkLeadPatch) =>
+    req<{ updated: number; leads: BulkLeadResult[] }>('/leads/bulk', {
+      method: 'POST',
+      body: JSON.stringify(b),
+    }),
+  views: (member: string) =>
+    req<{ views: SavedView[] }>(`/views?member=${encodeURIComponent(member)}`),
+  createView: (v: { member: string; name: string; params: Record<string, string> }) =>
+    req<{ view: SavedView }>('/views', { method: 'POST', body: JSON.stringify(v) }),
+  patchView: (id: string, v: { name?: string; params?: Record<string, string> }) =>
+    req<{ view: SavedView }>(`/views/${id}`, { method: 'PATCH', body: JSON.stringify(v) }),
+  deleteView: (id: string) => req<{ ok: true }>(`/views/${id}`, { method: 'DELETE' }),
 
   threads: (q: { channel?: string; q?: string } = {}) => {
     const params = new URLSearchParams(
@@ -1390,8 +1438,33 @@ export interface CustomersOverview {
   totals: { stores: number; active: number; suspended: number };
 }
 
+export interface StoreHit {
+  id: string;
+  slug: string;
+  name: string;
+  status: 'active' | 'suspended';
+  host: string | null;
+}
+/** a staff event about one store (staff_events, pruned after 30 days) */
+export interface StoreEvent {
+  id: number;
+  kind: string;
+  label: string;
+  category: string;
+  severity: 'info' | 'success' | 'warning' | 'critical';
+  data: Record<string, unknown>;
+  createdAt: string;
+}
+export interface StoreEventsPage {
+  events: StoreEvent[];
+  /** pass as `before` for the next (older) page */
+  nextBefore: number | null;
+}
+
 export interface CustomerDetail {
   store: CustomerRow;
+  /** the store's first owner — whom staff call or write to */
+  owner: { name: string | null; phone: string; email: string | null } | null;
   ai: {
     included: boolean;
     period: 'month' | 'trial' | null;
@@ -1550,6 +1623,14 @@ const fleetConsole = {
   customers: () => req<{ asOf: string; stores: CustomerRow[] }>('/customers'),
   customersOverview: () => req<CustomersOverview>('/customers/overview'),
   customer: (id: string) => req<CustomerDetail>(`/customers/${encodeURIComponent(id)}`),
+  searchStores: (q: string) =>
+    req<{ stores: StoreHit[] }>(`/customers/search?q=${encodeURIComponent(q)}&limit=6`),
+  storeEvents: (id: string, q: { before?: number | undefined; category?: string | undefined }) => {
+    const params = new URLSearchParams({ limit: '30' });
+    if (q.before) params.set('before', String(q.before));
+    if (q.category) params.set('category', q.category);
+    return req<StoreEventsPage>(`/customers/${encodeURIComponent(id)}/events?${params}`);
+  },
   aiModels: () => req<AiModelsView>('/ai/models'),
   aiCatalog: () => req<AiCatalogView>('/ai/catalog'),
   aiEndpoints: (model: string) =>

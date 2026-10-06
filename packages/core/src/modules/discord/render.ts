@@ -197,7 +197,7 @@ function merchantHelp(ev: Ev<'merchant.help'>, ctx: RenderCtx): Rendered {
         fields: fields(field('quem', esc(d.who)), field('contato', esc(d.contact))),
       },
       row(
-        linkButton('abrir lojas no CRM', ctx.crm('/lojas')),
+        ev.tenant_id ? null : linkButton('abrir lojas no CRM', ctx.crm('/lojas')),
         linkButton('ver loja', ctx.storeUrl),
       ),
     ),
@@ -521,7 +521,10 @@ function onboarding(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
       color: complete ? COLORS.success : COLORS.info,
       at: created?.created_at ?? s?.createdAt,
     },
-    row(linkButton('ver loja', ctx.storeUrl), linkButton('lojas no CRM', ctx.crm('/lojas'))),
+    row(
+      linkButton('ver loja', ctx.storeUrl),
+      ev.tenant_id ? null : linkButton('lojas no CRM', ctx.crm('/lojas')),
+    ),
   );
   const reply =
     ev.kind === 'store.onboarding'
@@ -1120,6 +1123,10 @@ export function familyOf(anchor: string | null): string | null {
 }
 
 export function render(ev: EventRow, history: EventRow[], ctx: RenderCtx): Rendered {
+  return withStorePage(renderCard(ev, history, ctx), ev, ctx);
+}
+
+function renderCard(ev: EventRow, history: EventRow[], ctx: RenderCtx): Rendered {
   const family = familyOf(ev.anchor);
   if (family && FAMILIES[family]) return FAMILIES[family](ev, history.length ? history : [ev], ctx);
   const one = STANDALONE[ev.kind] as ((e: EventRow, c: RenderCtx) => Rendered) | undefined;
@@ -1131,4 +1138,20 @@ export function render(ev: EventRow, history: EventRow[], ctx: RenderCtx): Rende
       description: code(JSON.stringify(ev.data, null, 2), 1500),
     }),
   };
+}
+
+/** An event about one store links to that store's page in the CRM, whatever its card. */
+function withStorePage(out: Rendered, ev: EventRow, ctx: RenderCtx): Rendered {
+  if (!ev.tenant_id) return out;
+  const btn = linkButton('loja no CRM', ctx.crm(`/lojas/${ev.tenant_id}`))!;
+  const rows = out.card.components ?? [];
+  const last = rows.at(-1);
+  // Discord: at most 5 buttons per row and 5 rows
+  const components =
+    last && last.components.length < 5
+      ? [...rows.slice(0, -1), { ...last, components: [...last.components, btn] }]
+      : rows.length < 5
+        ? [...rows, ...row(btn)]
+        : rows;
+  return { ...out, card: { ...out.card, components } };
 }

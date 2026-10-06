@@ -6,6 +6,7 @@ import type { Tenant } from '../platform/tenancy.ts';
 import { aiAllowanceTx } from './billing/ai-allowance.ts';
 import { legacyPlan, planView, type PlanRow } from './billing/plans.ts';
 import { controlTx } from './control.ts';
+import { listStoreEventsTx, STAFF_CATEGORIES, type StaffCategory } from './staff-events.ts';
 
 // /control/v1/customers (CRM "Visão" and "Lojas"): every store we serve, what it pays us, how it
 // sells and how much of Duá it uses. One set-based read under controlTx; orders, admins and the
@@ -517,8 +518,18 @@ async function detailTx(tx: Sql, storeDomain: string, id: string, now: Date) {
       select id, number, kind, status, amount_cents, created_at, due_at, paid_at from invoices
       where tenant_id = ${id} order by created_at desc, number desc limit 12
     `,
-    tx<{ id: string; name: string | null; role: string; last_seen_at: Date | null }[]>`
-      select id, name, role, last_seen_at from merchant_users
+    tx<
+      {
+        id: string;
+        name: string | null;
+        role: string;
+        last_seen_at: Date | null;
+        phone: string;
+        email: string | null;
+        created_at: Date;
+      }[]
+    >`
+      select id, name, role, last_seen_at, phone, email, created_at from merchant_users
       where tenant_id = ${id} and status = 'active'
       order by last_seen_at desc nulls last, created_at
     `,
@@ -536,8 +547,13 @@ async function detailTx(tx: Sql, storeDomain: string, id: string, now: Date) {
     `,
   ]);
   const w = wa[0];
+  // who staff call or write to about the store: its first owner
+  const owner = users
+    .filter((u) => u.role === 'owner')
+    .sort((a, b) => a.created_at.getTime() - b.created_at.getTime())[0];
   return {
     store,
+    owner: owner ? { name: owner.name, phone: owner.phone, email: owner.email } : null,
     ai: {
       included: ai.included,
       period: ai.period,
@@ -579,6 +595,29 @@ async function detailTx(tx: Sql, storeDomain: string, id: string, now: Date) {
   };
 }
 
+export interface StoreHit {
+  id: string;
+  slug: string;
+  name: string;
+  status: 'active' | 'suspended';
+  host: string | null;
+}
+
+export async function searchStoresTx(tx: Sql, q: string, limit: number): Promise<StoreHit[]> {
+  const like = `%${q.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
+  const prefix = `${q.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
+  return tx<StoreHit[]>`
+    select t.id, t.slug, t.name, t.status,
+      (select d.host from domains d where d.tenant_id = t.id
+        order by d.is_primary desc, length(d.host), d.host limit 1) as host
+    from tenants t
+    where t.name ilike ${like} or t.slug ilike ${like}
+       or exists (select 1 from domains d where d.tenant_id = t.id and d.host ilike ${like})
+    order by lower(t.slug) = lower(${q}) desc, t.name ilike ${prefix} desc, lower(t.name), t.id
+    limit ${limit}
+  `;
+}
+
 export function mountControlCustomers(o: {
   app: Hono<{ Variables: { tenant: Tenant } }>;
   sql: Sql;
@@ -603,6 +642,42 @@ export function mountControlCustomers(o: {
   app.get('/control/v1/customers/overview', async (c) => {
     controlGate(c);
     const out = await controlTx(sql, (tx) => overviewTx(tx, storeDomain, clock()));
+    c.header('cache-control', 'no-store');
+    return c.json(out);
+  });
+
+  // the ⌘K palette: a few stores by name, slug or domain — no aggregates
+  app.get('/control/v1/customers/search', async (c) => {
+    controlGate(c);
+    const q = (c.req.query('q') ?? '').trim();
+    if (q.length > 100) throw new HttpError(422, 'BAD_REQUEST', 'q must be at most 100 chars');
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 8, 1), 20);
+    if (q.length < 2) return c.json({ stores: [] });
+    const stores = await controlTx(sql, (tx) => searchStoresTx(tx, q, limit));
+    c.header('cache-control', 'no-store');
+    return c.json({ stores });
+  });
+
+  app.get('/control/v1/customers/:id/events', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id').toLowerCase();
+    const before = c.req.query('before');
+    if (before !== undefined && !/^[1-9]\d{0,17}$/.test(before)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'before must be an event id');
+    }
+    const category = c.req.query('category');
+    if (category && !(STAFF_CATEGORIES as readonly string[]).includes(category)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'unknown category');
+    }
+    const out = await controlTx(sql, async (tx) => {
+      if (!(await tx`select 1 from tenants where id = ${id}`)[0]) return null;
+      return listStoreEventsTx(tx, id, {
+        before: before ? Number(before) : null,
+        limit: Number(c.req.query('limit')) || 30,
+        category: (category as StaffCategory | undefined) ?? null,
+      });
+    });
+    if (!out) throw new HttpError(404, 'NOT_FOUND', 'store not found');
     c.header('cache-control', 'no-store');
     return c.json(out);
   });

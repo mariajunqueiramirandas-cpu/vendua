@@ -59,6 +59,10 @@ export const qk = {
   customers: () => ['customers'] as const,
   customersOverview: () => ['customers', 'overview'] as const,
   customer: (id: string) => ['customers', 'one', id] as const,
+  storeSearch: (q: string) => ['customers', 'search', q] as const,
+  // pages merged by useInfiniteQuery — its own key segment, never shared with the detail
+  storeEvents: (id: string, category: string) => ['customers', 'events', id, category] as const,
+  views: (member: string) => ['views', member] as const,
   aiModels: () => ['ai-models'] as const,
   aiCatalog: () => ['ai-catalog'] as const,
   aiEndpoints: (model: string) => ['ai-endpoints', model] as const,

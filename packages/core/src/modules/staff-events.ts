@@ -824,3 +824,61 @@ export async function recordStaffEvent<K extends StaffEventKind>(
     eventLog.warn({ err: e, kind }, 'staff event not recorded');
   }
 }
+
+export interface StoreEventItem {
+  id: number;
+  kind: StaffEventKind;
+  label: string;
+  category: StaffCategory;
+  severity: Severity;
+  data: Record<string, unknown>;
+  createdAt: string;
+}
+
+export const STORE_EVENTS_MAX = 100;
+
+/** One store's events, newest first, paged by id (`before` = the last id of the previous page).
+ *  Rows are pruned after 30 days, so this is the store's recent history, not an archive. */
+export async function listStoreEventsTx(
+  tx: Sql,
+  tenantId: string,
+  o: { before?: number | null; limit?: number; category?: StaffCategory | null } = {},
+): Promise<{ events: StoreEventItem[]; nextBefore: number | null }> {
+  const limit = Math.min(Math.max(o.limit ?? 30, 1), STORE_EVENTS_MAX);
+  const kinds = o.category
+    ? STAFF_EVENT_KIND_LIST.filter((k) => STAFF_EVENT_KINDS[k].category === o.category)
+    : null;
+  const rows = await tx<
+    {
+      id: string;
+      kind: string;
+      severity: Severity;
+      data: Record<string, unknown>;
+      created_at: Date;
+    }[]
+  >`
+    select id, kind, severity, data, created_at from staff_events
+    where tenant_id = ${tenantId}
+      and (${o.before ?? null}::bigint is null or id < ${o.before ?? null}::bigint)
+      and (${kinds}::text[] is null or kind = any(${kinds}::text[]))
+    order by id desc
+    limit ${limit + 1}
+  `;
+  const events = rows
+    .slice(0, limit)
+    .filter((r) => isStaffEventKind(r.kind))
+    .map((r) => {
+      const kind = r.kind as StaffEventKind;
+      return {
+        id: Number(r.id),
+        kind,
+        label: STAFF_EVENT_KINDS[kind].label,
+        category: STAFF_EVENT_KINDS[kind].category,
+        severity: r.severity,
+        data: r.data ?? {},
+        createdAt: r.created_at.toISOString(),
+      };
+    });
+  const last = rows[limit - 1];
+  return { events, nextBefore: rows.length > limit && last ? Number(last.id) : null };
+}

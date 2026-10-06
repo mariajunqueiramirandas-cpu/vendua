@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { SearchX, Undo2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { SearchX, Store, Undo2 } from 'lucide-react';
 import type { FleetStatus, FleetStorefront, FleetStorefrontDetail } from '@/lib/api.ts';
 import { EmptyState, Fact, LoadingRows } from '@/components/common.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
@@ -269,6 +270,12 @@ export function FleetSheet({
             <Policy s={head} />
             {head.maintenance && <Badge variant="warn">manutenção</Badge>}
             {head.status !== 'active' && <Badge variant="outline">{head.status}</Badge>}
+            <Link
+              to={`/lojas/${head.tenantId}`}
+              className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-2 hover:underline pointer-coarse:min-h-9"
+            >
+              <Store className="size-3.5" /> página da loja
+            </Link>
           </span>
         ) : undefined
       }

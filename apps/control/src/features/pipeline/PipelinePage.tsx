@@ -54,6 +54,15 @@ export default function PipelinePage() {
     () => uniq([...leads.map((l) => l.source), ...(stats?.bySource.map((s) => s.key) ?? [])]),
     [leads, stats],
   );
+  const known = useMemo(
+    () => ({
+      tags: knownTags,
+      segments: knownSegments,
+      sources: knownSources,
+      cities: uniq(leads.map((l) => l.city)),
+    }),
+    [knownTags, knownSegments, knownSources, leads],
+  );
   // Stage counts come from stats — pipeline-wide, not just the loaded page.
   const total = stats ? Object.values(stats.byState).reduce((a, s) => a + s.count, 0) : undefined;
 
@@ -179,10 +188,10 @@ export default function PipelinePage() {
           />
         </>
       }
-      toolbar={<PipelineToolbar p={p} chips={chips} tags={knownTags} onImport={pickCsv} />}
+      toolbar={<PipelineToolbar p={p} chips={chips} known={known} onImport={pickCsv} />}
     >
       {view === 'list' ? (
-        <LeadsList query={list} p={p} onImport={pickCsv} />
+        <LeadsList query={list} p={p} onImport={pickCsv} tags={knownTags} />
       ) : board.isPending ? (
         <LoadingRows />
       ) : board.isError && !board.data ? (

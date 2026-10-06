@@ -5,24 +5,17 @@ import { Plus, Send, Upload, X } from 'lucide-react';
 import { api, type LeadListItem } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { fmtMoney, isLate, rel, relDue } from '@/lib/format.ts';
-import { AGENT_GOALS } from '@/lib/labels.ts';
 import { errorMessage } from '@/lib/query.ts';
 import { DataList, type Column } from '@/components/DataList.tsx';
 import { Avatar, EmptyState, ErrorState, ScoreBar, StateChip } from '@/components/common.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card } from '@/components/ui/card.tsx';
-import { Segmented } from '@/components/ui/controls.tsx';
+import { BulkBar, type Channel, type Goal } from './BulkBar.tsx';
 import { AgentMode, Channels, Drafts, FitIntent, NextAction } from './cells.tsx';
 import type { PipelineParams } from './params.ts';
 
 type Page = { leads: LeadListItem[]; nextCursor: string | null };
-const CHANNELS = [
-  ['auto', 'auto'],
-  ['whatsapp', 'whatsapp'],
-  ['instagram', 'instagram'],
-  ['email', 'email'],
-] as const;
 
 const COLUMNS: Column<LeadListItem>[] = [
   {
@@ -39,6 +32,7 @@ const COLUMNS: Column<LeadListItem>[] = [
           </span>
         )}
         {l.unsubscribedAt && <Badge variant="bad">descadastrado</Badge>}
+        {l.archivedAt && <Badge variant="outline">arquivado</Badge>}
         {l.tags.slice(0, 2).map((t) => (
           <Badge key={t} className="max-xl:hidden">
             {t}
@@ -107,6 +101,7 @@ function MobileRow({ lead: l }: { lead: LeadListItem }) {
         <AgentMode lead={l} />
         <Drafts n={l.pendingDrafts} />
         {l.unsubscribedAt && <Badge variant="bad">descadastrado</Badge>}
+        {l.archivedAt && <Badge variant="outline">arquivado</Badge>}
         <span className={cn('ml-auto shrink-0 tnum', late && 'text-destructive-foreground')}>
           {l.nextActionAt ? relDue(l.nextActionAt) : rel(l.lastActivityAt ?? l.updatedAt)}
         </span>
@@ -119,21 +114,22 @@ export function LeadsList({
   query,
   p,
   onImport,
+  tags,
 }: {
   query: UseInfiniteQueryResult<InfiniteData<Page>>;
   p: PipelineParams;
   onImport: () => void;
+  /** known tags, offered by the selection's "tag" */
+  tags: string[];
 }) {
   const nav = useNavigate();
   const leads = useMemo(() => query.data?.pages.flatMap((pg) => pg.leads) ?? [], [query.data]);
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [goal, setGoal] = useState<'negotiation' | 'meeting'>('negotiation');
-  const [channel, setChannel] = useState<'auto' | 'whatsapp' | 'instagram' | 'email'>('auto');
   const [dispatchMsg, setDispatchMsg] = useState('');
   // Bumped on filter change — invalidates in-flight dispatch results.
   const filterGen = useRef(0);
   const dispatchM = useMutation({
-    mutationFn: (v: { ids: string[]; goal: typeof goal; channel: typeof channel }) =>
+    mutationFn: (v: { ids: string[]; goal: Goal; channel: Channel }) =>
       api.requestAgent({
         kind: 'outreach',
         leadIds: v.ids,
@@ -161,7 +157,7 @@ export function LeadsList({
     });
   }, [leads, query.data, query.isPlaceholderData]);
 
-  const dispatch = async () => {
+  const dispatch = async (goal: Goal, channel: Channel) => {
     const gen = filterGen.current;
     setDispatchMsg('');
     try {
@@ -256,42 +252,17 @@ export function LeadsList({
         </div>
       )}
 
-      {/* Pinned to the scrollport bottom so dispatch controls ride with a long list. */}
       {sel.size > 0 && (
-        <div className="sticky bottom-3 z-20 mt-3 flex kb:hidden flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-popover p-2 pl-3 shadow-lg">
-          <span className="flex items-center gap-1 text-sm font-semibold">
-            {sel.size} selecionado{sel.size === 1 ? '' : 's'}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setSel(new Set())}
-              aria-label="limpar seleção"
-              title="limpar seleção"
-            >
-              <X />
-            </Button>
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground max-sm:hidden">objetivo</span>
-            <Segmented size="sm" value={goal} onChange={setGoal} options={AGENT_GOALS} />
-          </span>
-          <span
-            className="flex items-center gap-1.5"
-            title="auto = o agente escolhe o canal alcançável"
-          >
-            <span className="text-xs text-muted-foreground max-sm:hidden">canal</span>
-            <Segmented size="sm" value={channel} onChange={setChannel} options={CHANNELS} />
-          </span>
-          <Button
-            variant="agent"
-            className="max-sm:w-full sm:ml-auto"
-            // placeholder rows belong to the previous filters — never dispatch on them
-            disabled={dispatchM.isPending || query.isPlaceholderData}
-            onClick={() => void dispatch()}
-          >
-            <Send /> {dispatchM.isPending ? 'disparando…' : 'disparar agente'}
-          </Button>
-        </div>
+        <BulkBar
+          leads={leads}
+          sel={sel}
+          onClear={() => setSel(new Set())}
+          stale={query.isPlaceholderData}
+          archivedView={p.filters.archived === 'only'}
+          tags={tags}
+          dispatch={(goal, channel) => void dispatch(goal, channel)}
+          dispatching={dispatchM.isPending}
+        />
       )}
     </>
   );
