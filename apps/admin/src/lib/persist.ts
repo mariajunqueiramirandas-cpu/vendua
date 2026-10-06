@@ -84,6 +84,9 @@ export function persistCache(qc: QueryClient) {
     const state = redact(
       dehydrate(qc, {
         shouldDehydrateQuery: (q) => q.state.status === 'success',
+        // held order moves persist themselves (features/orders/transition.ts); a second copy here
+        // would count twice in the offline banner
+        shouldDehydrateMutation: () => false,
       }),
     );
     if (!state.queries.some((q) => q.queryKey[0] === 'session')) return void clearPersisted();

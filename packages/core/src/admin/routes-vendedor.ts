@@ -496,6 +496,15 @@ export function mountVendedor(d: AdminDeps) {
     }),
   );
 
+  /** Threads whose shopper wrote in the last 24 h and still waits for an answer Duá may give. */
+  const owedThreads = (tx: Sql, tenantId: string) =>
+    tx<{ id: string }[]>`
+      select id from shopper_threads
+      where tenant_id = ${tenantId} and channel in ('whatsapp', 'web') and pending_since is not null
+        and class in ('shopper', 'unknown') and last_in_at > now() - interval '24 hours'
+        and (owner in ('open', 'agent') or (owner = 'human' and (human_until is null or human_until <= now())))
+      order by last_in_at desc limit 50`;
+
   /** "Pausar 1 h / até amanhã": a gate on every conversation's floor, lifted by the clock. */
   admin.post(
     '/vendedor/pause',
@@ -507,6 +516,16 @@ export function mountVendedor(d: AdminDeps) {
       if (!agent.enabled) throw new HttpError(409, 'VENDEDOR_OFF', 'Duá is not on');
       const until = span === '1h' ? new Date(Date.now() + 3600_000) : await nextMorning(tx, t.id);
       await tx`update store_agent set paused_until = ${until}, updated_at = now() where tenant_id = ${t.id}`;
+      // a turn that lands inside the pause does nothing and books no timer: who is waiting now
+      // (or whose 1 h timer this pause outlasts) is answered when this pause lapses
+      for (const th of await owedThreads(tx, t.id))
+        await dispatchTx(tx, {
+          actor: actorOf(t.id, th.id),
+          kind: 'timer.handback',
+          source: `admin:${m.userId}`,
+          dedupeKey: `pause:${th.id}:${until.toISOString()}`,
+          deliverAt: new Date(until.getTime() + 1_000),
+        });
       await audit(tx, t.id, m, {
         action: 'vendedor.pause',
         entity: 'store_agent',
@@ -527,12 +546,7 @@ export function mountVendedor(d: AdminDeps) {
         where tenant_id = ${t.id} and paused_until is not null`;
       if (agent.enabled && agent.pausedUntil && pausedNow(agent)) {
         // who wrote meanwhile and still has no answer hears from him now, not at the old time
-        const owed = await tx<{ id: string }[]>`
-          select id from shopper_threads
-          where tenant_id = ${t.id} and channel in ('whatsapp', 'web') and pending_since is not null
-            and class in ('shopper', 'unknown') and last_in_at > now() - interval '24 hours'
-            and (owner in ('open', 'agent') or (owner = 'human' and (human_until is null or human_until <= now())))
-          order by last_in_at desc limit 50`;
+        const owed = await owedThreads(tx, t.id);
         for (const th of owed)
           await dispatchTx(tx, {
             actor: actorOf(t.id, th.id),

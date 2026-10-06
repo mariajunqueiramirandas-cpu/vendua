@@ -328,6 +328,12 @@ describe.skipIf(!OWNER_URL)('the merchant supervising Duá (db)', () => {
     expect(at.getTime() - Date.now()).toBeLessThanOrEqual(30 * 3600_000);
     // 6 a.m. in São Paulo is 09:00 UTC
     expect(at.getUTCHours()).toBe(9);
+    // the shopper still waiting gets a wake for this pause's end, not only the old hour's
+    const lapse = await sql<{ deliver_at: Date }[]>`
+      select b.deliver_at from agent_mailbox b join agent_actors a on a.id = b.actor_id
+      where a.tenant_id = ${tenantId} and a.subject_id = ${t.id}
+        and b.dedupe_key = ${`pause:${t.id}:${at.toISOString()}`}`;
+    expect(lapse.map((r) => r.deliver_at.getTime())).toEqual([at.getTime() + 1000]);
     const back = await manager('POST', '/vendedor/resume', {});
     expect(back.status).toBe(200);
     expect(back.body.pausedUntil).toBeNull();

@@ -101,6 +101,7 @@ export function mountHome(d: AdminDeps) {
           ? tx<{ id: string; name: string; n: number }[]>`
               select p.id, p.name, count(*)::int as n from notify_requests n join products p on p.id = n.product_id
               where n.tenant_id = ${t.id} and n.subject = 'product' and n.notified_at is null
+                and p.deleted_at is null
               group by p.id order by n desc limit 3
             `
           : [],

@@ -36,7 +36,8 @@ function files(dir: string): string[] {
 describe('error codes', () => {
   test('every HttpError code Core throws is in the Kernel ERROR_CODES', () => {
     const api = readFileSync(join(import.meta.dir, '../../kernel/src/api.ts'), 'utf8');
-    const block = api.slice(api.indexOf('export const ERROR_CODES'), api.indexOf('] as const'));
+    const start = api.indexOf('export const ERROR_CODES');
+    const block = api.slice(start, api.indexOf('] as const', start));
     const known = new Set([...block.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]));
     const thrown = new Set<string>();
     const scoped = files(join(import.meta.dir, '../src')).filter((f) =>
