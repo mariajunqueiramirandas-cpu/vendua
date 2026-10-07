@@ -342,6 +342,22 @@ describe('preorder calendar', () => {
     const plain = scheduleView([{ requiresPreorder: false, preorderLeadDays: 0 }], { hours }, now);
     expect(validateSchedule(plain, undefined, 'cash')).toBeNull();
   });
+  test('special days: holidays and vacations close a date, a special opening adds one', () => {
+    const special_days = [
+      { date: '2026-09-26', closed: true, label: 'Feriado' },
+      { date: '2026-09-27', closed: false, open: '10:00', close: '14:00' },
+      { date: '2026-09-30', until: '2026-10-01', closed: true, label: 'Férias' },
+    ];
+    expect(bookableDates(hours, 2, 7, now, special_days)).toEqual(['2026-09-27', '2026-09-29']);
+    const v = scheduleView(
+      [{ requiresPreorder: true, preorderLeadDays: 2 }],
+      { hours, preorder_max_days: 7, special_days },
+      now,
+    );
+    expect(() => validateSchedule(v, '2026-09-26', 'pix')).toThrow('that date is not available');
+    expect(() => validateSchedule(v, '2026-09-30', 'pix')).toThrow('that date is not available');
+    expect(validateSchedule(v, '2026-09-27', 'pix')).toBe('2026-09-27');
+  });
 });
 
 describe('coupons', () => {
@@ -394,6 +410,10 @@ describe('coupons', () => {
         { phone: '2188', usage: { total: 0, byPhone: 0, priorOrders: 2 } },
       ).reason,
     ).toBe('COUPON_FIRST_ORDER_ONLY');
+    // a phone with no digits is nobody's: per-phone and first-order rules can't hold
+    expect(ev({ per_phone_limit: 1 }, { phone: '' }).reason).toBe('COUPON_ALREADY_USED');
+    expect(ev({ first_order_only: true }, { phone: '' }).reason).toBe('COUPON_FIRST_ORDER_ONLY');
+    expect(ev({}, { phone: '' }).ok).toBe(true);
     // unknown phone (cart preview): phone rules wait for checkout
     expect(ev({ first_order_only: true, phone: '2299' }).ok).toBe(true);
     expect(ev({ active: false }).reason).toBe('COUPON_NOT_FOUND');

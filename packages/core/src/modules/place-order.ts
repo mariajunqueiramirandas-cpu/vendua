@@ -162,7 +162,7 @@ export async function placeOrderTx(
           subtotal,
         )
       : 0;
-  const phone = body.customer.phone ? normalizePhone(body.customer.phone) : null;
+  const phone = (body.customer.phone && normalizePhone(body.customer.phone)) || null;
 
   // coupon: re-evaluated with the phone (per-phone limits, first order, personal rewards)
   let discount = 0;
@@ -185,9 +185,16 @@ export async function placeOrderTx(
         field: 'coupon',
         ...out.details,
       });
-    discount = out.discountCents;
-    if (row.kind !== 'free_delivery') itemDiscount = discount;
-    coupon = { id: row.id, code: row.code };
+    // a free delivery on a trip that costs nothing: no redemption to spend the reward on
+    if (out.discountCents > 0) {
+      if (!phone)
+        throw new HttpError(422, 'INVALID_CUSTOMER', 'a coupon needs the phone number', {
+          field: 'customer.phone',
+        });
+      discount = out.discountCents;
+      if (row.kind !== 'free_delivery') itemDiscount = discount;
+      coupon = { id: row.id, code: row.code };
+    }
   }
 
   await drawStock(

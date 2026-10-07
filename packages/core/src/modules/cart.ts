@@ -856,6 +856,7 @@ export async function loadCartView(
         hours: settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
         preorder_payment_methods: settings?.preorder_payment_methods ?? null,
         preorder_max_days: settings?.preorder_max_days ?? null,
+        special_days: settings?.special_days ?? [],
       },
       now,
     ),

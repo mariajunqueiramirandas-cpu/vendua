@@ -447,6 +447,54 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     expect(ok.body.order.discountCents).toBe(0);
   });
 
+  test('a phone without digits is refused; free delivery on a pickup spends no reward', async () => {
+    const auth = await session();
+    await call('POST', '/checkout/v1/cart/items', { productId: ids.coco, qty: 1 }, auth);
+    expect((await call('POST', '/checkout/v1/cart/coupon', { code: 'frete' }, auth)).status).toBe(
+      200,
+    );
+    const input = (phone: string) => ({
+      customer: { name: 'Bia', phone },
+      delivery: { mode: 'pickup' },
+      payment: { method: 'cash' },
+    });
+    const blank = await call('POST', '/checkout/v1/checkout', input('--------'), auth);
+    expect(blank.status).toBe(422);
+    expect(blank.body.error).toMatchObject({
+      code: 'INVALID_CUSTOMER',
+      details: { field: 'customer.phone' },
+    });
+    const ok = await call('POST', '/checkout/v1/checkout', input('22977770000'), auth);
+    expect(ok.status).toBe(201);
+    expect(ok.body.order.discountCents).toBe(0);
+    const [row] = await sql<{ coupon_code: string | null; redemptions: number }[]>`
+      select coupon_code, (select count(*)::int from coupon_redemptions where order_id = o.id) as redemptions
+      from orders o where id = ${ok.body.order.id}
+    `;
+    expect(row).toEqual({ coupon_code: null, redemptions: 0 });
+  });
+
+  test('staff coupon dates: a bad date or an end before the start is a 400', async () => {
+    const make = (extra: Record<string, unknown>) =>
+      ctl('POST', '/coupons', { code: `D${++idem}`, kind: 'fixed', value: 100, ...extra });
+    expect((await make({ endsAt: 'foo' })).status).toBe(400);
+    expect(
+      (await make({ startsAt: '2026-10-10T00:00:00Z', endsAt: '2026-10-01T00:00:00Z' })).status,
+    ).toBe(400);
+    const made = await make({ startsAt: '2026-10-10T00:00:00Z' });
+    expect(made.status).toBe(201);
+    const code = made.body.coupon.code;
+    const bad = await ctl('PATCH', `/coupons/${code}`, { endsAt: 'foo' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.code).toBe('BAD_REQUEST');
+    expect(
+      (await ctl('PATCH', `/coupons/${code}`, { endsAt: '2026-10-09T00:00:00Z' })).status,
+    ).toBe(400);
+    const ok = await ctl('PATCH', `/coupons/${code}`, { endsAt: '2026-10-11T00:00:00Z' });
+    expect(ok.status).toBe(200);
+    expect(new Date(ok.body.coupon.ends_at).toISOString()).toBe('2026-10-11T00:00:00.000Z');
+  });
+
   test('live order: a waiting read wakes on the transition', async () => {
     const auth = { authorization: `Bearer ${orderToken}` };
     const waiting = call('GET', `/checkout/v1/orders/${orderId}?since=1&wait=10`, undefined, auth);

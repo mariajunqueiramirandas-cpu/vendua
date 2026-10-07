@@ -1,5 +1,5 @@
 import { HttpError } from '../platform/http.ts';
-import { normalizePhone } from './customer.ts';
+import { validPhone } from './customer.ts';
 import { deliveryPricing, validateLine, type CartView } from './cart.ts';
 import type { ProductDetail } from './catalog.ts';
 import {
@@ -246,12 +246,17 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
       ? i.customer.phone !== undefined &&
         i.customer.phone !== null &&
         !bounded(i.customer.phone, 40)
-      : !bounded(i.customer?.phone, 40) || i.customer.phone.trim().length < 8
+      : !bounded(i.customer?.phone, 40) || !i.customer.phone.trim()
   ) {
     throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.phone is required', {
       field: 'customer.phone',
     });
   }
+  // per-phone coupon limits and first-order rewards key on these digits
+  if (!atTable && !validPhone(i.customer.phone))
+    throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.phone must have DDD and number', {
+      field: 'customer.phone',
+    });
   if (i.delivery?.mode !== 'pickup' && i.delivery?.mode !== 'delivery' && !atTable) {
     throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.mode must be pickup or delivery', {
       field: 'delivery.mode',
@@ -260,7 +265,7 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
   if (atTable) {
     // no phone is asked at a table; one sent anyway must be a real one (it mints a customer token)
     const phone = typeof i.customer.phone === 'string' ? i.customer.phone.trim() : '';
-    if (phone && !/^\d{10,11}$/.test(normalizePhone(phone)))
+    if (phone && !validPhone(phone))
       throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.phone must have DDD and number', {
         field: 'customer.phone',
       });
