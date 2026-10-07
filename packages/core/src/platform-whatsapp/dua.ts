@@ -203,21 +203,26 @@ export async function routeToDua(d: DuaDeps, row: InboxRow): Promise<DuaOutcome>
     .map((c) => ({ ...c.m, first: c.e.first }));
   if (!eligible.length) {
     const off = checked.find((c) => c.e.switchOff);
-    const refuse = await controlTx(
-      d.sql,
-      (tx) => tx`
+    // the day's marker, the answer and the consumed row commit together: a crash in between
+    // retries the whole answer instead of finding the marker set and staying silent
+    await controlTx(d.sql, async (tx) => {
+      const first = await tx`
         update platform_wa_dua_senders
         set refused_on = (now() at time zone ${TZ})::date, updated_at = now()
         where phone = ${phone} and refused_on is distinct from (now() at time zone ${TZ})::date
-        returning phone`,
-    );
-    if (!refuse.length) return consumeSilently(d, row);
-    return answer(
-      d,
-      row,
-      'refused',
-      off ? DUA.turnOn(off.e.first, appLink(d, '/perfil')) : DUA.notForYou(appLink(d, '/')),
-    );
+        returning phone`;
+      if (first.length)
+        await enqueuePlatformWaTx(tx, {
+          to: jid,
+          body: off
+            ? DUA.turnOn(off.e.first, appLink(d, '/perfil'))
+            : DUA.notForYou(appLink(d, '/')),
+          purpose: 'dua',
+          dedupeKey: `dua-in:${row.id}:refused`,
+        });
+      await markDoneTx(tx, row.id);
+    });
+    return { route: 'done' };
   }
 
   const body = (row.body ?? '').trim();
@@ -233,11 +238,6 @@ export async function routeToDua(d: DuaDeps, row: InboxRow): Promise<DuaOutcome>
   const heard = await hear(d, row, target, body);
   if ('route' in heard) return heard;
   return dispatchTurn(d, row, target, heard);
-}
-
-async function consumeSilently(d: DuaDeps, row: InboxRow): Promise<DuaOutcome> {
-  await controlTx(d.sql, (tx) => markDoneTx(tx, row.id));
-  return { route: 'done' };
 }
 
 /** One eligible store is that store; several are a numbered choice that sticks until #loja. */

@@ -145,17 +145,18 @@ async function forwardToWhatsApp(sql: Sql, tenantId: string, messageId: string, 
   const [store] = await sql<{ tz: string | null }[]>`
     select hours ->> 'timezone' as tz from store_settings where tenant_id = ${tenantId}`;
   const host = process.env.VENDUA_ADMIN_HOST?.trim();
-  const body = [
-    toWhatsApp(text),
-    renderCards(
-      cards.map((c) => ({ ref: c.wa_ref, title: c.title, lines: c.lines, money: c.money })),
-      {
-        expiresAt: new Date(Math.min(...cards.map((c) => c.expires_at.getTime()))),
-        tz: store?.tz || 'America/Sao_Paulo',
-        appLink: host ? `https://${host}/admin/copiloto` : null,
-      },
-    ),
-  ]
+  const rendered = renderCards(
+    cards.map((c) => ({ ref: c.wa_ref, title: c.title, lines: c.lines, money: c.money })),
+    {
+      expiresAt: new Date(Math.min(...cards.map((c) => c.expires_at.getTime()))),
+      tz: store?.tz || 'America/Sao_Paulo',
+      appLink: host ? `https://${host}/admin/copiloto` : null,
+    },
+  );
+  // the cards and their "SIM" fit first: a long reply is cut, never a card someone can confirm
+  const room = 4000 - (rendered ? rendered.length + 2 : 0);
+  const said = toWhatsApp(text);
+  const body = [said.length > room ? `${said.slice(0, Math.max(0, room - 1))}…` : said, rendered]
     .filter(Boolean)
     .join('\n\n');
   await sql`select enqueue_dua_whatsapp(${messageId}::uuid, ${body})`;
