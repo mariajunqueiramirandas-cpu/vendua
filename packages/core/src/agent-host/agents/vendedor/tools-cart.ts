@@ -18,6 +18,7 @@ import {
   askForPin,
   briefText,
   cartBrief,
+  checkPaymentGuards,
   core,
   ensureCart,
   pack,
@@ -379,18 +380,7 @@ export const setPaymentTool = defineTool<
       );
     const cart = await viewCart(ctx, t);
     const total = cart?.totals.totalCents ?? 0;
-    for (const g of p.guards) {
-      if (g.kind === 'cash_max' && method === 'cash' && total > g.cents) {
-        ctx.figure('regra.dinheiro_max', { value: g.cents, text: brl(g.cents), kind: 'money' });
-        throw new ToolError(
-          'Regra da loja: dinheiro só até {{regra.dinheiro_max}}. Ofereça outra forma.',
-        );
-      }
-      if (g.kind === 'pix_only_above' && method !== 'pix' && total > g.cents) {
-        ctx.figure('regra.pix_acima', { value: g.cents, text: brl(g.cents), kind: 'money' });
-        throw new ToolError('Regra da loja: acima de {{regra.pix_acima}} só Pix.');
-      }
-    }
+    checkPaymentGuards(ctx, method, total);
     const cancelled =
       (ctx.state.context.subject as { customer?: { cancelledRecently?: number } | null } | null)
         ?.customer?.cancelledRecently ?? 0;

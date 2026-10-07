@@ -482,6 +482,10 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     await inbound(tenantId, threadId, 'catupiry');
     await settle(rt, tenantId);
     await sql`update shopper_threads set last_in_at = now() - interval '10 minutes', stage = 'building' where id = ${threadId}`;
+    // SAIR stops it, under the spelling without the 9th digit too
+    await sql`insert into store_wa_optouts (tenant_id, phone) values (${tenantId}, '1113571357')`;
+    expect(await recoveryPass(app, tenantId)).toBe(0);
+    await sql`delete from store_wa_optouts where tenant_id = ${tenantId}`;
     expect(await recoveryPass(app, tenantId)).toBe(1);
     expect(await recoveryPass(app, tenantId)).toBe(0);
     const rows =
@@ -496,10 +500,19 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     const [p] = await sql<
       { id: string }[]
     >`select id from products where tenant_id = ${tenantId} limit 1`;
-    await sql`insert into outbox (tenant_id, topic, payload) values
-      (${tenantId}, 'waitlist.restocked', ${sql.json({ productId: p!.id, contacts: ['5511924682468'] })})`;
-    while ((await outboxPass(app, { lagMs: 0 })) === 200);
-    await outboxPass(app, { lagMs: 0 });
+    const restocked = async () => {
+      await sql`insert into outbox (tenant_id, topic, payload) values
+        (${tenantId}, 'waitlist.restocked', ${sql.json({ productId: p!.id, contacts: ['5511924682468'] })})`;
+      while ((await outboxPass(app, { lagMs: 0 })) === 200);
+      await outboxPass(app, { lagMs: 0 });
+    };
+    await sql`insert into store_wa_optouts (tenant_id, phone) values (${tenantId}, '11924682468')`;
+    await restocked();
+    expect(
+      await sql`select 1 from agent_mailbox where tenant_id = ${tenantId} and kind = 'timer.back_in_stock'`,
+    ).toHaveLength(0);
+    await sql`delete from store_wa_optouts where tenant_id = ${tenantId}`;
+    await restocked();
     const rows = await sql<{ kind: string; payload: { name: string } }[]>`
       select kind, payload from agent_mailbox where tenant_id = ${tenantId} and kind = 'timer.back_in_stock'`;
     expect(rows).toHaveLength(1);
@@ -516,7 +529,7 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
       incentives: {
         couponIds: [cp!.id],
         reasons: ['recovery'],
-        minOrderCents: 0,
+        minOrderCents: 4000,
         monthlyBudgetCents: 1500,
         perCustomerDays: 30,
       },
@@ -546,17 +559,157 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
         phone: string;
         max_redemptions: number;
         max_discount_cents: number;
+        min_subtotal_cents: number;
         source: string;
       }[]
     >`
-      select code, phone, max_redemptions, max_discount_cents, source from coupons
+      select code, phone, max_redemptions, max_discount_cents, min_subtotal_cents, source from coupons
       where tenant_id = ${tenantId} and source = 'agent'`;
-    // capped at what the budget was charged
-    expect(c).toMatchObject({ phone: '11935793579', max_redemptions: 1, max_discount_cents: 1000 });
+    // capped at what the budget was charged; the minimum checked at the grant holds at redemption
+    expect(c).toMatchObject({
+      phone: '11935793579',
+      max_redemptions: 1,
+      max_discount_cents: 1000,
+      min_subtotal_cents: 4000,
+    });
     expect((await outbox(tenantId)).map((m) => m.body)[0]).toContain(c!.code);
     await inbound(tenantId, threadId, 'e mais um cupom?');
     await settle(rt, tenantId);
     expect(await sql`select 1 from agent_incentives where tenant_id = ${tenantId}`).toHaveLength(1);
+  });
+
+  test('Ensaio: an incentive is only rehearsed — no coupon, no budget, nothing applied', async () => {
+    const tenantId = await store({ coverage: 'rehearsal' });
+    const [cp] = await sql<{ id: string }[]>`
+      insert into coupons (tenant_id, code, kind, value, label, source) values (${tenantId}, 'VOLTA10', 'fixed', 1000, 'R$ 10 de volta', 'merchant')
+      returning id`;
+    await sql`update store_agent set settings = settings || ${sql.json({
+      capabilities: { closeOrder: true, sendPix: true, suggest: true, coupons: true },
+      incentives: {
+        couponIds: [cp!.id],
+        reasons: ['recovery'],
+        minOrderCents: 0,
+        monthlyBudgetCents: 1500,
+        perCustomerDays: 30,
+      },
+    })} where tenant_id = ${tenantId}`;
+    const threadId = await thread(tenantId, '11935793580');
+    const { rt, adapter } = runtime([
+      tools(call('get_product', { product: 'pizza-calabresa' })),
+      tools(
+        call('cart_edit', {
+          ops: [{ op: 'add', product: 'pizza-calabresa', options: [{ id: 'm1' }] }],
+        }),
+      ),
+      tools(call('offer_incentive', { reason: 'recovery' })),
+      reply('Anotei a sua pizza!'),
+    ]);
+    await inbound(tenantId, threadId, 'uma calabresa com catupiry');
+    await settle(rt, tenantId);
+    expect(JSON.stringify(adapter.requests.at(-1)!.messages.at(-1))).toContain('Ensaio');
+    expect(await sql`select 1 from agent_incentives where tenant_id = ${tenantId}`).toHaveLength(0);
+    expect(
+      await sql`select 1 from coupons where tenant_id = ${tenantId} and source = 'agent'`,
+    ).toHaveLength(0);
+    const [cart] = await sql<{ coupon_code: string | null }[]>`
+      select c.coupon_code from carts c join shopper_threads t on t.cart_id = c.id where t.id = ${threadId}`;
+    expect(cart!.coupon_code).toBeNull();
+  });
+
+  test('a payment rule holds at the summary and at the yes, not only when payment was set', async () => {
+    const tenantId = await store();
+    const rule = (cents: number) =>
+      sql`insert into store_knowledge (tenant_id, kind, status, source, answer, guard)
+        values (${tenantId}, 'rule', 'live', 'merchant', 'Dinheiro só até o limite',
+          ${sql.json({ kind: 'cash_max', cents })})`;
+    await rule(6000);
+    // cash was fine for one pizza (R$ 51); the second one crosses R$ 60
+    const threadId = await thread(tenantId, '11961616161');
+    const { rt, adapter } = runtime([
+      tools(call('get_product', { product: 'pizza-calabresa' })),
+      tools(
+        call('cart_edit', {
+          ops: [{ op: 'add', product: 'pizza-calabresa', options: [{ id: 'm1' }] }],
+        }),
+        call('set_fulfillment', { mode: 'pickup' }),
+        call('set_payment', { method: 'cash' }),
+        call('set_customer', { name: 'Ana' }),
+      ),
+      tools(
+        call('cart_edit', {
+          ops: [{ op: 'add', product: 'pizza-calabresa', options: [{ id: 'm1' }] }],
+        }),
+      ),
+      tools(call('send_summary')),
+      reply('Pode ser no Pix?'),
+    ]);
+    await inbound(
+      tenantId,
+      threadId,
+      'duas calabresas com catupiry, retiro, pago em dinheiro, Ana',
+    );
+    await settle(rt, tenantId);
+    expect(JSON.stringify(adapter.requests.at(-1)!.messages.at(-1))).toContain(
+      'Regra da loja: dinheiro',
+    );
+    const [t] = await sql<
+      { summary: unknown }[]
+    >`select summary from shopper_threads where id = ${threadId}`;
+    expect(t!.summary).toBeNull();
+
+    // a rule that lands between the card and the yes still holds
+    const other = await store();
+    const otherThread = await thread(other, '11962626262');
+    const { rt: rt2, adapter: a2 } = await toSummary(other, otherThread, [
+      tools(call('place_order')),
+      reply('Pode ser no Pix?'),
+    ]);
+    await sql`insert into store_knowledge (tenant_id, kind, status, source, answer, guard)
+      values (${other}, 'rule', 'live', 'merchant', 'Dinheiro só até o limite',
+        ${sql.json({ kind: 'cash_max', cents: 5000 })})`;
+    await inbound(other, otherThread, 'sim');
+    await settle(rt2, other);
+    expect(await sql`select 1 from orders where tenant_id = ${other}`).toHaveLength(0);
+    expect(JSON.stringify(a2.requests.at(-1)!.messages.at(-1))).toContain(
+      'Regra da loja: dinheiro',
+    );
+  });
+
+  test('a phone-bound coupon replaces the applied one only when it takes more off', async () => {
+    const tenantId = await store();
+    const phone = '11963636363';
+    await sql`insert into coupons (tenant_id, code, kind, value, source) values
+      (${tenantId}, 'PIZZA20', 'percent', 20, 'merchant')`;
+    await sql`insert into coupons (tenant_id, code, kind, value, source, phone) values
+      (${tenantId}, 'MEU5', 'fixed', 500, 'merchant', ${phone})`;
+    const threadId = await thread(tenantId, phone);
+    const { rt } = runtime([
+      tools(call('get_product', { product: 'pizza-calabresa' })),
+      tools(
+        call('cart_edit', {
+          ops: [{ op: 'add', product: 'pizza-calabresa', options: [{ id: 'm1' }] }],
+        }),
+        call('set_fulfillment', { mode: 'pickup' }),
+        call('set_payment', { method: 'pix' }),
+        call('set_customer', { name: 'Ana' }),
+        call('apply_coupon', { code: 'PIZZA20' }),
+      ),
+      tools(call('send_summary')),
+      reply('Posso confirmar?'),
+    ]);
+    await inbound(
+      tenantId,
+      threadId,
+      'uma calabresa com catupiry, retiro, pix, Ana, cupom PIZZA20',
+    );
+    await settle(rt, tenantId);
+    const [cart] = await sql<{ coupon_code: string | null }[]>`
+      select c.coupon_code from carts c join shopper_threads t on t.cart_id = c.id where t.id = ${threadId}`;
+    expect(cart!.coupon_code).toBe('PIZZA20');
+    const [t] = await sql<
+      { summary: { totalCents: number } | null }[]
+    >`select summary from shopper_threads where id = ${threadId}`;
+    expect(t!.summary?.totalCents).toBe(5100 - 1020);
   });
 
   test('a pinned pairing is the suggestion Core offers, with its figures', async () => {

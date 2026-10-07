@@ -26,6 +26,7 @@ import { handoffTx } from './handoff.ts';
 import {
   briefText,
   cartBrief,
+  checkPaymentGuards,
   core,
   ensureCart,
   isTest,
@@ -93,6 +94,9 @@ async function bestOwnCoupon(ctx: Ctx, t: Thread, cartId: string): Promise<void>
     order by c.created_at desc limit 5`;
   if (!codes.length) return;
   const sp = ctx.tx as unknown as Savepointable;
+  // the coupon already on the cart (a public one the shopper typed, say) is the bar to beat
+  const current = await loadCartView(ctx.tx, ctx.tenantId, cartId);
+  const bar = current.coupon?.applies ? current.totals.discountCents : 0;
   let best: { code: string; cents: number } | null = null;
   for (const { code } of codes) {
     try {
@@ -104,7 +108,7 @@ async function bestOwnCoupon(ctx: Ctx, t: Thread, cartId: string): Promise<void>
     } catch (e) {
       if (!(e instanceof DryRun)) continue;
       const cents = Number(e.result);
-      if (cents > 0 && (!best || cents > best.cents)) best = { code, cents };
+      if (cents > bar && (!best || cents > best.cents)) best = { code, cents };
     }
   }
   if (best) {
@@ -174,6 +178,10 @@ export const sendSummaryTool = defineTool<Record<string, never>, Sql>({
         cart = (await viewCart(ctx, { ...t, cartId }))!;
       }
     }
+
+    // set_payment checked an earlier total: items added since can cross the store's limits
+    const method = t.checkout.payment?.method;
+    if (method) checkPaymentGuards(ctx, method, cart.totals.totalCents);
 
     const agent = await loadAgent(ctx.tx, ctx.tenantId);
     const total = cart.totals.totalCents;
@@ -321,6 +329,7 @@ export const placeOrderTool = defineTool<Record<string, never>, Sql>({
           return { status: 409, body: { kind: 'refused', code: 'CART_NOT_OPEN', details: null } };
         if (cartHash(cart, t.checkout) !== summary.hash)
           return { status: 409, body: { kind: 'refused', code: 'CART_CHANGED', details: null } };
+        if (method) checkPaymentGuards(ctx, method, cart.totals.totalCents);
         const input = checkoutInput(t, cart);
         if (test) {
           try {

@@ -7,9 +7,11 @@ import { createApp } from '../src/app.ts';
 import { vendedor } from '../src/agent-host/agents/vendedor/index.ts';
 import { hostHooks } from '../src/agent-host/hooks.ts';
 import { PgActorStore } from '../src/agent-host/store/pg-store.ts';
-import { migrate, type Sql } from '../src/platform/db.ts';
+import { migrate, withTenant, type Sql } from '../src/platform/db.ts';
+import { claimForTurnTx, WEB_CHAT_NEW_PER_HOUR } from '../src/vendedor/allowance.ts';
 import { configureVendedor } from '../src/vendedor/deps.ts';
 import { ingestPass } from '../src/vendedor/ingest.ts';
+import { loadThread } from '../src/vendedor/threads.ts';
 import { vendedorTransport } from '../src/vendedor/transport.ts';
 
 // The storefront chat (ADR 0031 V4): the Vendedor on the store's site, editing the page's own cart.
@@ -135,5 +137,39 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('the storefront chat (db)', () =
     expect(await sql`select 1 from store_wa_messages where tenant_id = ${tenantId}`).toHaveLength(
       0,
     );
+  });
+
+  test('scripted carts cannot spend the month: new site conversations are capped per hour', async () => {
+    const webThread = async (tag: string) => {
+      const [c] = await sql<{ id: string }[]>`
+        insert into carts (tenant_id, session_hash) values (${tenantId}, ${`${tag}-${crypto.randomUUID()}`}) returning id`;
+      const [t] = await sql<{ id: string }[]>`
+        insert into shopper_threads (tenant_id, channel, address, cart_id, class)
+        values (${tenantId}, 'web', ${`web:${c!.id}`}, ${c!.id}, 'shopper') returning id`;
+      return { id: t!.id, tag };
+    };
+    const claim = (threadId: string) =>
+      withTenant(appSql, tenantId, async (tx) => {
+        const t = (await loadThread(tx, tenantId, threadId, { forUpdate: true }))!;
+        return claimForTurnTx(tx, t, 'agent', { key: `cap:${threadId}`, silenceMin: 30 });
+      });
+    const counted = () =>
+      sql`select 1 from ai_conversations a join shopper_threads t on a.subject_key = 'thread:' || t.id::text
+        where a.tenant_id = ${tenantId} and t.channel = 'web' and a.started_at > now() - interval '1 hour'`;
+    while ((await counted()).length < WEB_CHAT_NEW_PER_HOUR) {
+      const t = await webThread('script');
+      expect(await claim(t.id)).toBe(true);
+    }
+    const over = await webThread('over');
+    expect(await claim(over.id)).toBe(false);
+    expect(await counted()).toHaveLength(WEB_CHAT_NEW_PER_HOUR);
+    const [msg] = await sql<{ author: string; body: string }[]>`
+      select author, body from shopper_messages where thread_id = ${over.id}`;
+    expect(msg).toMatchObject({ author: 'core', body: expect.stringContaining('cardápio') });
+    // a conversation already counted keeps going
+    const [first] = await sql<{ id: string }[]>`
+      select t.id from shopper_threads t join ai_conversations a on a.subject_key = 'thread:' || t.id::text
+      where t.tenant_id = ${tenantId} and t.channel = 'web' limit 1`;
+    expect(await claim(first!.id)).toBe(true);
   });
 });
