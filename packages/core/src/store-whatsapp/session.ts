@@ -52,6 +52,9 @@ export interface WaInbound {
   pnForLid(lid: string): Promise<string | null>;
   /** the media bytes (audio, image), bounded */
   download(): Promise<Uint8Array>;
+  /** the normalized message, for readers with their own rules (platform sessions) */
+  message?: unknown;
+  timestamp?: unknown;
 }
 
 export type OutContent =
@@ -80,6 +83,7 @@ export interface WaSocket {
       cb: (u: { key?: WaKey; update?: { status?: number | null } }[]) => void,
     ): void;
     on(event: 'messaging-history.set', cb: (h: HistorySet) => void): void;
+    on(event: 'lid-mapping.update', cb: (m: { lid?: string; pn?: string }) => void): void;
     on(
       event: 'presence.update',
       cb: (p: { id: string; presences: Record<string, { lastKnownPresence?: string }> }) => void,
@@ -119,6 +123,7 @@ export interface WaMessage {
   key?: WaKey;
   message?: unknown;
   pushName?: string | null;
+  messageTimestamp?: unknown;
 }
 
 export interface ConnectionUpdate {
@@ -151,6 +156,8 @@ export interface WaRuntime {
     getMessage: (key: WaKey) => Promise<{ conversation: string } | undefined>;
     /** the store's history stays unsynced, except an on-demand answer someone is waiting for */
     wantsOnDemand?: () => boolean;
+    /** import the bulk syncs (recent, full) a pairing brings — platform sessions only */
+    syncHistory?: () => boolean;
   }): Promise<WaSocket>;
   normalize(message: unknown): unknown;
   /** a media message's bytes (baileys `downloadMediaMessage`, re-upload on expired links) */
@@ -169,6 +176,19 @@ export interface SessionHooks {
   messageText(waId: string): Promise<string | null>;
   /** wipe this store's login (logout, logged out by the phone, fresh pairing) */
   wipe(): Promise<void>;
+  /** every sync but on-demand answers (absent for stores: they ignore them) */
+  onHistory?(
+    h: HistorySet,
+    ctx: { pnForLid(lid: string): Promise<string | null>; ownPhone: string | null },
+  ): void;
+  onLidMapping?(m: { lid?: string; pn?: string }): void;
+}
+
+/** What sets a platform session apart from a store's; the defaults are the store's. */
+export interface SessionOptions {
+  /** the digits to request a pair code for; default: a Brazilian national number */
+  pairPhone?: (phone: string) => string | null;
+  syncHistory?: () => boolean;
 }
 
 export class NotOnWhatsApp extends Error {
@@ -236,6 +256,11 @@ export function pairingConfirmed(creds: Creds): boolean {
   return !!creds.registered || !!creds.account;
 }
 
+function ownPhone(sock: WaSocket): string | null {
+  const raw = sock.user?.phoneNumber ?? sock.user?.id;
+  return raw?.split('@')[0]?.split(':')[0]?.replace(/\D/g, '') || null;
+}
+
 function statusOf(u: ConnectionUpdate): number | undefined {
   const err = u.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined;
   return err?.output?.statusCode;
@@ -263,6 +288,7 @@ export class StoreSession {
     private hooks: SessionHooks,
     private log: Logger,
     private reconnectDelay: (failures: number) => number = reconnectDelayMs,
+    private opts: SessionOptions = {},
   ) {}
 
   get state(): SessionState {
@@ -367,6 +393,7 @@ export class StoreSession {
           return text ? { conversation: text } : undefined;
         },
         wantsOnDemand: () => this.historyWaits.size > 0,
+        ...(this.opts.syncHistory ? { syncHistory: this.opts.syncHistory } : {}),
       });
     } catch (e) {
       this.log.error({ err: e }, 'socket start failed');
@@ -404,7 +431,15 @@ export class StoreSession {
       );
     });
     sock.ev.on('messaging-history.set', (h) => {
-      if (this.sock !== sock || h.syncType !== ON_DEMAND_SYNC) return;
+      if (this.sock !== sock) return;
+      if (h.syncType !== ON_DEMAND_SYNC) {
+        this.hooks.onHistory?.(h, {
+          pnForLid: async (lid) =>
+            userJid(await sock.signalRepository?.lidMapping?.getPNForLID(lid).catch(() => null)),
+          ownPhone: ownPhone(sock),
+        });
+        return;
+      }
       for (const w of this.historyWaits) {
         const got = answerFor(h, w);
         if (!got) continue;
@@ -413,6 +448,11 @@ export class StoreSession {
         return;
       }
     });
+    const onLid = this.hooks.onLidMapping?.bind(this.hooks);
+    if (onLid)
+      sock.ev.on('lid-mapping.update', (m) => {
+        if (this.sock === sock) onLid(m);
+      });
     sock.ev.on('presence.update', ({ id, presences }) => {
       if (this.sock !== sock) return;
       const jid = userJid(id);
@@ -449,7 +489,9 @@ export class StoreSession {
     if (u.qr && this.pairing && !this.pairing.issued) {
       // the code only registers while this socket's registration stream is live (first qr)
       this.pairing.issued = true;
-      const phone = jidForPhone(this.pairing.phone)?.split('@')[0];
+      const phone = this.opts.pairPhone
+        ? this.opts.pairPhone(this.pairing.phone)
+        : jidForPhone(this.pairing.phone)?.split('@')[0];
       if (!phone) {
         this.set({ state: 'off', detail: 'bad_phone' });
         await this.stop();
@@ -482,13 +524,11 @@ export class StoreSession {
     if (u.connection === 'open') {
       this.failures = 0;
       this.pairing = null;
-      const raw = sock.user?.phoneNumber ?? sock.user?.id;
-      const digits = raw?.split('@')[0]?.split(':')[0]?.replace(/\D/g, '') || null;
       this.log.info('socket open');
       this.set({
         state: 'open',
         detail: null,
-        phone: digits,
+        phone: ownPhone(sock),
         name: sock.user?.name ?? null,
         pairCode: null,
         pairCodeExpiresAt: null,
@@ -572,6 +612,8 @@ export class StoreSession {
           userJid(await sock.signalRepository?.lidMapping?.getPNForLID(lid).catch(() => null)),
         download: () =>
           bounded(this.runtime.download(m, sock, this.log), DOWNLOAD_TIMEOUT_MS, 'media download'),
+        message: content,
+        timestamp: m.messageTimestamp,
       });
     }
   }

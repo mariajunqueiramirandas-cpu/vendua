@@ -1,11 +1,13 @@
 import { createSql } from './platform/db.ts';
 import { log } from './platform/log.ts';
 import { Gateway } from './store-whatsapp/gateway.ts';
+import { PlatformGateway } from './store-whatsapp/platform.ts';
 import { baileysRuntime } from './store-whatsapp/runtime.ts';
 
 // The wa-gateway process (ADR 0026): every store's own WhatsApp, apart from the API so a Core
-// deploy or crash never drops them and a baileys crash never takes checkout down. Same image as
-// Core, started with `bun src/wa-gateway.ts`; it never migrates (Core does, on boot).
+// deploy or crash never drops them and a baileys crash never takes checkout down, and Venduá's own
+// number (platform_wa_sessions; WA_PLATFORM_SESSIONS=0 leaves it to other processes). Same image
+// as Core, started with `bun src/wa-gateway.ts`; it never migrates (Core does, on boot).
 
 const gwLog = log.child({ mod: 'wa-gateway' });
 const databaseUrl =
@@ -21,9 +23,10 @@ const num = (v: string | undefined, d: number) => (v && Number(v) > 0 ? Number(v
 const port = num(process.env.WA_GATEWAY_PORT, 8791);
 
 const sql = createSql(databaseUrl);
+const runtime = await baileysRuntime(gwLog);
 const gateway = new Gateway({
   sql,
-  runtime: await baileysRuntime(gwLog),
+  runtime,
   sealSecret,
   version: process.env.VENDUA_VERSION || 'dev',
   maxSessions: num(process.env.WA_MAX_SESSIONS, 300),
@@ -33,6 +36,17 @@ const gateway = new Gateway({
   conversationGapMs: num(process.env.WA_CONVERSATION_GAP_MS, 250),
   log: gwLog,
 });
+const platform =
+  process.env.WA_PLATFORM_SESSIONS === '0'
+    ? null
+    : new PlatformGateway({
+        sql,
+        runtime,
+        sealSecret,
+        id: gateway.id,
+        minSendGapMs: num(process.env.WA_PLATFORM_MIN_SEND_GAP_MS, 1_500),
+        log: gwLog,
+      });
 
 // baileys rejects promises nobody awaits on a dying socket — one store's must never kill the rest
 process.on('unhandledRejection', (err) => gwLog.error({ err }, 'unhandled rejection'));
@@ -43,12 +57,23 @@ const server = Bun.serve({
     const url = new URL(req.url);
     if (url.pathname !== '/healthz') return new Response('not found', { status: 404 });
     const h = gateway.health();
-    return Response.json({ ok: !h.stopping, ...h }, { status: h.stopping ? 503 : 200 });
+    const p = platform?.health() ?? { sessions: 0, open: 0 };
+    return Response.json(
+      {
+        ok: !h.stopping,
+        ...h,
+        sessions: h.sessions + p.sessions,
+        open: h.open + p.open,
+        platform: p,
+      },
+      { status: h.stopping ? 503 : 200 },
+    );
   },
 });
 
 await gateway.start();
-gwLog.info({ port, id: gateway.id }, 'wa-gateway running');
+await platform?.start();
+gwLog.info({ port, id: gateway.id, platform: !!platform }, 'wa-gateway running');
 
 let shuttingDown = false;
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {
@@ -57,8 +82,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     shuttingDown = true;
     gwLog.info({ sig }, 'shutting down — closing sockets and handing leases back');
     const hardStop = setTimeout(() => process.exit(1), 15_000);
-    void gateway
-      .stop()
+    void Promise.all([gateway.stop(), platform?.stop()])
       .then(() => server.stop(true))
       .then(() => sql.end({ timeout: 5 }))
       .finally(() => {

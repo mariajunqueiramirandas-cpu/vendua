@@ -72,7 +72,7 @@ export async function baileysRuntime(log: Logger): Promise<WaRuntime> {
         {},
         { reuploadRequest: (m) => sock.updateMediaMessage(m), logger },
       ),
-    connect: async ({ creds, keys, logger, getMessage, wantsOnDemand }) => {
+    connect: async ({ creds, keys, logger, getMessage, wantsOnDemand, syncHistory }) => {
       const v = await currentVersion();
       const socketLog = logger.child({ mod: 'baileys' }, { level });
       return b.default({
@@ -85,7 +85,13 @@ export async function baileysRuntime(log: Logger): Promise<WaRuntime> {
         markOnlineOnConnect: false,
         syncFullHistory: false,
         shouldSyncHistoryMessage: ({ syncType }: { syncType?: number | null }) =>
-          syncType === T.ON_DEMAND ? !!wantsOnDemand?.() : !skipped.has(syncType ?? -1),
+          syncType === T.ON_DEMAND
+            ? !!wantsOnDemand?.()
+            : // a platform number imports its recent chats at pairing (the CRM's leads), as
+              // Core's socket did on Baileys' defaults: everything but the FULL sync
+              syncHistory?.()
+              ? syncType !== T.FULL
+              : !skipped.has(syncType ?? -1),
         // groups, broadcasts and channels are never decrypted
         shouldIgnoreJid: (jid: string) =>
           !!(b.isJidGroup(jid) || b.isJidBroadcast(jid) || b.isJidNewsletter(jid)),
