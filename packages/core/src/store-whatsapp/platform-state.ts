@@ -299,7 +299,14 @@ export async function platformHousekeeping(
       update platform_wa_outbox set status = 'expired', lease_until = null
       where status = 'pending' and expires_at < now()`;
     const media =
-      await tx`delete from platform_wa_media where created_at < now() - interval '1 day'`;
+      // a note still waiting in the inbox (Core down, a backlog) keeps its bytes for a week
+      await tx`
+        delete from platform_wa_media m
+        where m.created_at < now() - interval '1 day'
+          and not exists (
+            select 1 from platform_wa_inbox i
+            where i.media_id = m.id and i.status = 'pending'
+              and m.created_at > now() - interval '7 days')`;
     const inbox = await tx`
       delete from platform_wa_inbox
       where status in ('done', 'failed') and created_at < now() - interval '30 days'`;

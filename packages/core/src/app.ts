@@ -1823,8 +1823,17 @@ export function createApp({
       const { reconcileInstagram } = await import('./agent/channels/instagram.ts');
       void getIntegration(sql, 'instagram').then((i) => reconcileInstagram(sql, i));
     }
-    const { platformTransport } = await import('./platform-whatsapp/transport.ts');
-    // on the gateway the number isn't Core's to open or close
+    const { platformTransport, VENDUA_SESSION } = await import('./platform-whatsapp/transport.ts');
+    if (kind === 'whatsapp' && platformTransport() === 'gateway') {
+      // on the gateway the number is the session row's: a disable lets go of the socket there
+      const wa = await getIntegration(sql, 'whatsapp');
+      await controlTx(
+        sql,
+        (tx) => tx`
+          update platform_wa_sessions set wanted = ${wa?.driver === 'baileys'}, updated_at = now()
+          where name = ${VENDUA_SESSION}`,
+      );
+    }
     if (kind === 'whatsapp' && platformTransport() === 'socket') {
       // A disable/switch must close the old Baileys session now, not lazily.
       const { ensureSocket } = await import('./agent/channels/whatsapp.ts');

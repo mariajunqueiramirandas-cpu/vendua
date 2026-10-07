@@ -18,6 +18,7 @@ import { insertLeadTx } from '../src/modules/leads.ts';
 import { notifyStaff } from '../src/modules/staff.ts';
 import { composeMessageTx } from '../src/modules/threads.ts';
 import { settleCrmOnce } from '../src/platform-whatsapp/crm-settle.ts';
+import { enqueuePlatformWa } from '../src/platform-whatsapp/outbox.ts';
 import {
   setCachedPlatformSession,
   type PlatformSessionRow,
@@ -398,5 +399,43 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       });
       expect(await sq.json()).toMatchObject({ transport: 'socket', status: 'off' });
     }, 15_000);
+
+    test('turning the WhatsApp integration off lets go of the number on the gateway', async () => {
+      gateway();
+      await sql`update platform_wa_sessions set wanted = true where name = 'vendua'`;
+      const put = (key: string, enabled: boolean) =>
+        app.request('/control/v1/integrations/whatsapp', {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/json',
+            'x-vendua-control': 'ctl-secret',
+            'idempotency-key': `pwa-${nonce}-${key}`,
+          },
+          body: JSON.stringify({ driver: 'baileys', enabled }),
+        });
+      const wanted = async () =>
+        (
+          await sql<{ wanted: boolean }[]>`
+          select wanted from platform_wa_sessions where name = 'vendua'`
+        )[0]!.wanted;
+      expect((await put('int-off', false)).status).toBe(200);
+      expect(await wanted()).toBe(false);
+      expect((await put('int-on', true)).status).toBe(200);
+      expect(await wanted()).toBe(true);
+    });
+
+    test('a CRM message keeps its whole body in the outbox', async () => {
+      const long = 'x'.repeat(7000);
+      const { id } = await enqueuePlatformWa(sql as never, {
+        to: `55${phone11()}`,
+        body: long,
+        purpose: 'crm',
+        dedupeKey: `crm-long-${nonce}`,
+      });
+      const [row] = await sql<
+        { body: string }[]
+      >`select body from platform_wa_outbox where id = ${id}`;
+      expect(row!.body.length).toBe(7000);
+    });
   },
 );

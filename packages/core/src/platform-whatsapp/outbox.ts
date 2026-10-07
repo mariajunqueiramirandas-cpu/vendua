@@ -33,7 +33,8 @@ export async function enqueuePlatformWaTx(
   m: Enqueue,
 ): Promise<{ id: string; inserted: boolean }> {
   const to = m.to.includes('@') ? m.to : m.to.replace(/\D/g, '');
-  const body = m.body.trim().slice(0, 4000);
+  // Duá and notices are short by construction; a CRM message is never cut (the thread caps it)
+  const body = m.body.trim();
   if (!body) throw new Error('empty whatsapp message');
   const ttl = m.ttlMs ?? TTL_MS[m.purpose];
   const inserted = await tx<{ id: string }[]>`

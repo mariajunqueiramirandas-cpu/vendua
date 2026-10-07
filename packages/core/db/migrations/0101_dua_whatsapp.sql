@@ -56,7 +56,8 @@ create table if not exists platform_wa_outbox (
   session text not null default 'vendua' references platform_wa_sessions (name) on delete cascade,
   -- international digits, or a jid (a lead known only by its @lid)
   to_jid text not null check (char_length(to_jid) between 10 and 120),
-  body text not null check (char_length(body) between 1 and 4000),
+  -- a CRM message may be as long as the thread allows (composeMessage: 8000)
+  body text not null check (char_length(body) between 1 and 8000),
   -- the pump's order: otp > dua > notice > crm
   purpose text not null check (purpose in ('otp', 'dua', 'notice', 'crm')),
   -- what it answers for: the lead_messages id of a CRM send, the copilot_messages id of a reply

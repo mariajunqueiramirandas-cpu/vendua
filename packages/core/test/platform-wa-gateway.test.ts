@@ -12,7 +12,7 @@ import {
   platformAuthStore,
   type BufferCodec,
 } from '../src/store-whatsapp/auth-store.ts';
-import { channelStep } from '../src/store-whatsapp/platform-state.ts';
+import { channelStep, platformHousekeeping } from '../src/store-whatsapp/platform-state.ts';
 import {
   platformAddress,
   platformPairPhone,
@@ -715,5 +715,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('platform whatsapp: gateway (db)
     expect(r.state).toBe('connecting');
     await expect(cutover(appSql, { ...opts, force: false })).rejects.toThrow(/--force/);
     expect((await cutover(appSql, { ...opts, force: true })).copied).toBe(2);
+  });
+  test('housekeeping keeps a voice note while its message still waits for Core', async () => {
+    const note = async () =>
+      (
+        await sql<{ id: string }[]>`
+          insert into platform_wa_media (session, mime, bytes, seconds, created_at)
+          values ('vendua', 'audio/ogg', ${Buffer.from([1])}, 3, now() - interval '2 days')
+          returning id`
+      )[0]!.id;
+    const waiting = await note();
+    const done = await note();
+    await sql`
+      insert into platform_wa_inbox (session, kind, from_jid, body, media_id, status)
+      values ('vendua', 'message', '5511900000000@s.whatsapp.net', '[áudio]', ${waiting}, 'pending'),
+             ('vendua', 'message', '5511900000000@s.whatsapp.net', '[áudio]', ${done}, 'done')`;
+    try {
+      await platformHousekeeping(appSql as never);
+      const left = await sql<{ id: string }[]>`
+        select id from platform_wa_media where id in (${waiting}, ${done})`;
+      expect(left.map((r) => r.id)).toEqual([waiting]);
+    } finally {
+      await sql`delete from platform_wa_inbox where media_id = ${waiting} or (media_id is null and from_jid = '5511900000000@s.whatsapp.net')`;
+      await sql`delete from platform_wa_media where id = ${waiting}`;
+    }
   });
 });
