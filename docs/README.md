@@ -68,6 +68,7 @@ Then per topic as needed:
 | Feature deep dives (iFood, WhatsApp bot) | [features/](features/README.md)                                                  |
 | Merchant's AI sales agent (design)       | [features/sales-agent](features/sales-agent.md)                                  |
 | Vendedor features and screens            | [features](features/sales-agent-features.md), [UX](features/sales-agent-ux.md)   |
+| Differentiators (proposed)               | [features/ § Differentiators](features/README.md#differentiators)                |
 
 ## ADRs
 
