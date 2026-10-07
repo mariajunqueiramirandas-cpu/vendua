@@ -14,30 +14,22 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 import numpy as np
 import onnx
 from onnx import helper, numpy_helper
 
-from .fetch import DEFAULT
+from .fetch import DEFAULT, variant
 
 # raw min-word entropy confidence that maps to 0.7 (Core's confirm gate), per model: the base
 # model's worst 15% on FLEURS pt-BR; the pt-BR fine-tune's threshold flags the same share of
 # a 200-clip FLEURS + CORAA mix as the base one does
 GATE_RAW = {"parakeet-tdt-0.6b-v3": 0.0057, "parakeet-tdt-0.6b-v3-ptbr": 0.00285}
-
-def cpu_has_vnni() -> bool:
-    try:
-        flags = Path("/proc/cpuinfo").read_text()
-    except OSError:
-        return False
-    return any(f in flags for f in ("avx512_vnni", "avx_vnni", "amx_int8"))
-
 
 def rewrite_pointwise_convs(model: onnx.ModelProto) -> int:
     """Conv1d(kernel 1, group 1) on [B, C, T] -> Transpose, MatMul, Transpose.
@@ -140,14 +132,21 @@ def extract_decoder(src: Path) -> dict[str, np.ndarray]:
     }
 
 
+def save_npz(path: Path, arrays: dict[str, np.ndarray]) -> None:
+    """np.savez, minus the build time it stamps on each member: the release digests in
+    stt/fetch.py need the same bytes from every build."""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+        for name, a in arrays.items():
+            with z.open(zipfile.ZipInfo(f"{name}.npy", (1980, 1, 1, 0, 0, 0)), "w", force_zip64=True) as f:
+                np.lib.format.write_array(f, np.asanyarray(a), allow_pickle=False)
+
+
 def main(src_dir: str, out_dir: str, model: str = DEFAULT) -> None:
     src, out = Path(src_dir), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    # u8s8 without VNNI saturates int16 intermediates; the image is compiled on the host it runs on
-    forced = os.environ.get("STT_REDUCE_RANGE", "auto")
-    reduce_range = not cpu_has_vnni() if forced == "auto" else forced == "1"
+    reduce_range = variant() == "compat"
     rewritten = compile_encoder(src / "encoder-model.onnx", out / "encoder.int8.onnx", reduce_range)
-    np.savez(out / "decoder.npz", **extract_decoder(src / "decoder_joint-model.onnx"))
+    save_npz(out / "decoder.npz", extract_decoder(src / "decoder_joint-model.onnx"))
     shutil.copyfile(src / "vocab.txt", out / "vocab.txt")
     shutil.copyfile(src / "nemo128.onnx", out / "preprocessor.onnx")
     manifest = {

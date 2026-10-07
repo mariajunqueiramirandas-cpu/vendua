@@ -201,9 +201,9 @@ goes to a third party and there is no per-minute charge.
 
 1. Set `STT_SECRET`. It is one value, and compose hands it to both `core` and `stt`. Without it,
    the service idles and Core keeps using the cloud routes (or none).
-2. Deploy. The first build downloads the 2.5 GB model export, which is a cached layer
-   afterwards, and compiles it for the host's CPU. Compiling needs about 6 GB of RAM. The
-   container needs about 1.5 GB at runtime.
+2. Deploy. The first build downloads the 0.8 GB compiled model from this repo's GitHub Release
+   (`stt-models-v*`), the build that fits the host's CPU, and caches it. The container needs
+   about 1.5 GB at runtime.
 3. Check the CRM, under IA → Voz. It shows whether the voice server is up and which model it
    runs, and it sets the order of the transcription routes. With no route saved, Core uses the
    voice server. Saving a list there picks another order or adds a cloud fallback. Keep
@@ -212,7 +212,8 @@ goes to a third party and there is no per-minute charge.
 `STT_CPUS` (default 2) caps the cores it may use, so Core and Postgres keep theirs.
 `STT_MODEL=parakeet-tdt-0.6b-v3-ptbr` builds the Brazilian Portuguese fine-tune instead: better
 on spontaneous speech, worse on read speech (ADR 0037). If the image is built on another machine for a host without
-AVX-512/AVX-VNNI, build with `--build-arg STT_REDUCE_RANGE=1`.
+AVX-512/AVX-VNNI, build with `--build-arg STT_REDUCE_RANGE=1`. If the release is missing a file,
+the build downloads the 2.5 GB fp32 export and compiles it instead, which needs about 6 GB of RAM.
 
 ## Stores' own WhatsApp (order updates to shoppers)
 

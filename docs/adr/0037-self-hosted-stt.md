@@ -65,10 +65,12 @@ engine sizes its threads to that quota.
 
 ## Consequences
 
-- The `stt` image is about 1 GB compressed (2.5 GB on disk). Its first build downloads the 2.5 GB fp32 export (pinned by
-  revision and sha256) and needs about 6 GB of RAM to compile. Later builds reuse that layer.
-- The compiled model matches the build host's CPU. Building elsewhere for a host without VNNI
-  needs `--build-arg STT_REDUCE_RANGE=1`.
+- The `stt` image is about 1 GB compressed (2.5 GB on disk). Its build downloads the compiled
+  model (0.8 GB) from this repo's GitHub Release. CI compiles it from the pinned fp32 export and
+  checks it against the sha256 pins before publishing. Compiling is reproducible, so anyone can
+  check the release the same way.
+- The image takes the compiled build that matches its build host's CPU. Building elsewhere for
+  a host without VNNI needs `--build-arg STT_REDUCE_RANGE=1`.
 - `language` comes back `null`, because the model doesn't report the language it detected.
 - **Upgrade path:** Canary-1B-v2 runs on the same preprocessor and encoder stack, with
   better pt WER (4.50). Its autoregressive decoder would need its own loop. A GPU host could run
