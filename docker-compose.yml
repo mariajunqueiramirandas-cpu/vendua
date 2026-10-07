@@ -293,6 +293,9 @@ services:
       args:
         # parakeet-tdt-0.6b-v3-ptbr = the Brazilian Portuguese fine-tune (ADR 0037)
         STT_MODEL: ${STT_MODEL:-parakeet-tdt-0.6b-v3}
+        # base URL of the precompiled-model tarballs (services/stt/scripts/pack-models.sh);
+        # unset = download the 2.5 GB fp32 export and compile it here
+        STT_PREBUILT_URL: ${STT_PREBUILT_URL:-}
     cpus: ${STT_CPUS:-2}
     mem_limit: ${STT_MEM_LIMIT:-3g}
     environment:
