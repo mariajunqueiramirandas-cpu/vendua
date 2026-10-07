@@ -292,6 +292,48 @@ without it, a store with one connected printer uses it, else 422 `PRINTER_REQUIR
   end. 409 `TABLE_LABEL_TAKEN` when an active table has its name, 422 `TOO_MANY_TABLES`.
 - `PATCH /pdv/settings` `{ serviceBps }` (0..2000) → `{ serviceBps }`.
 
+## QR ordering at the table (ADR 0036)
+
+### Storefront (the Kernel)
+
+- `GET /storefront/v1/store` gains `dineIn: { enabled: boolean }`: the `pdv` plan and the
+  store's "pedidos pelo QR" switch.
+- `GET /storefront/v1/table?t=<token>` →
+  `{ table: { label: string; ordering: boolean; reason: null | 'off' | 'closed' | 'paused' } }`.
+  404 `TABLE_NOT_FOUND` for a bad, replaced or removed table's token. `ordering: false` means
+  the menu can be browsed but checkout will refuse (`off`: the store turned QR orders off or its
+  plan lacks them; `closed` / `paused`: the store's status).
+- The QR's URL is the store's origin with `?mesa=<token>`.
+- `POST /checkout/v1/cart/delivery` accepts `{ mode: 'dine_in' }`: no fee and no minimum order
+  in the cart's totals.
+- `POST /checkout/v1/checkout` with `delivery: { mode: 'dine_in', table: <token> }`:
+  - `customer.name` 2..80 is required; `customer.phone` is optional (not asked).
+  - `payment.method`: `'tab'` (pay at the table, on the comanda), or `'pix'` / `'card_online'`
+    when the store takes online payments (`store.online`), paid on the order page as today.
+    Anything else is 422 `PAYMENT_METHOD_UNAVAILABLE`. No `changeForCents`, no `scheduledFor`.
+  - 404 `TABLE_NOT_FOUND`; 423 `TABLE_ORDERS_OFF`; 423 `STORE_CLOSED` / `STORE_PAUSED` (no
+    encomenda escape at a table); 429 `TABLE_ORDERS_PENDING` when five of this table's QR orders
+    still wait for the staff.
+  - The order comes back `placed` (staff accept it), with `delivery: { mode: 'dine_in',
+table: 'Mesa 5', feeCents: 0, … }`; with `tab` its payment is
+    `{ provider: 'pdv', method: 'tab', status: 'pending', online: false }`.
+- Tracking (`GET /checkout/v1/orders/:id`, the status view) carries `delivery.table`. A dine-in
+  order walks placed → confirmed → preparing → ready → delivered ("servido"); it never goes out
+  for delivery.
+
+### Admin
+
+- `PdvTable` gains `qrUrl: string` (in `GET /pdv/state`, `GET /pdv/tables` and every reply that
+  lists tables).
+- `POST /pdv/tables/:id/qr` (manager) → `{ table: PdvTable }` with a new `qrUrl`; the old QR
+  stops working at once.
+- `GET /pdv/state` gains `qrOrders: boolean`; `PATCH /pdv/settings` takes `qrOrders?: boolean`
+  (with or without `serviceBps`) and answers `{ serviceBps, qrOrders }`.
+- `TabRound` gains `source: 'pdv' | 'table_qr'` and `paidOnline: boolean`. A round paid online
+  is listed but left out of the comanda's `subtotalCents`, service, total and remaining.
+- QR orders land on Pedidos as `placed` dine-in orders with the table, like a storefront order;
+  accepting them sends them to the kitchen and the printers.
+
 ## Order changes
 
 - `delivery.mode` is `'pickup' | 'delivery' | 'dine_in'`. A dine-in order has `delivery.table`
