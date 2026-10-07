@@ -15,7 +15,8 @@ const GUIDES = [
   '/guias/encomendas-de-bolos-e-doces/',
   '/guias/delivery-proprio/',
 ];
-const CONTENT = [...NICHES, '/guias/', ...GUIDES, '/sobre/'];
+const POSTS = ['/novidades/dua-entende-audios/'];
+const CONTENT = [...NICHES, '/guias/', ...GUIDES, '/novidades/', ...POSTS, '/sobre/'];
 const PAGES = [HOME, ...CONTENT, PRIVACY, MISSING];
 const DOMAIN = 'https://vendua.com.br';
 const INSTAGRAM = 'https://www.instagram.com/vendua.digital/';
@@ -151,9 +152,13 @@ test.describe('busca', () => {
     const footer = await page
       .locator('footer a[href^="/"]')
       .evaluateAll((els) => els.map((a) => a.getAttribute('href')));
-    for (const path of [...NICHES, '/guias/', '/sobre/', PRIVACY]) expect(footer).toContain(path);
+    for (const path of [...NICHES, '/guias/', '/novidades/', '/sobre/', PRIVACY])
+      expect(footer).toContain(path);
     await page.goto('/guias/');
     for (const path of GUIDES)
+      await expect(page.locator(`main a[href="${path}"]`).first(), path).toBeVisible();
+    await page.goto('/novidades/');
+    for (const path of POSTS)
       await expect(page.locator(`main a[href="${path}"]`).first(), path).toBeVisible();
   });
 });

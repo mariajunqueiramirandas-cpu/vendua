@@ -21,6 +21,7 @@
       </ul>
       <ul>
         <li><a href="/guias/">Guias</a></li>
+        <li><a href="/novidades/">Novidades</a></li>
         <li><a href="/sobre/">Sobre a Venduá</a></li>
         <li><a href="/privacidade/">Privacidade</a></li>
         <li>

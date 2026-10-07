@@ -92,29 +92,29 @@ async function derive(d: IngestDeps, r: Row): Promise<Derived> {
   );
   const m = media[0];
   if (!m) return out;
+  const productNames = async () =>
+    (
+      await withTenant(
+        d.sql,
+        r.tenant_id,
+        (tx) =>
+          tx<
+            { name: string }[]
+          >`select name from products where tenant_id = ${r.tenant_id} and status = 'active' limit 120`,
+      )
+    ).map((n) => n.name);
   if (r.kind === 'audio' && d.media) {
-    const t = await d.media.transcribe(m.bytes, m.mime);
+    // the catalog's names steer the transcription toward what this store sells
+    const phrases = await productNames().catch(() => []); // a hint: never blocks the note
+    const t = await d.media.transcribe(m.bytes, m.mime, { phrases });
     if (t) {
       out.transcript = t.text;
       out.confidence = t.confidence;
     }
   }
   if (r.kind === 'image' && d.gateway) {
-    const names = await withTenant(
-      d.sql,
-      r.tenant_id,
-      (tx) =>
-        tx<
-          { name: string }[]
-        >`select name from products where tenant_id = ${r.tenant_id} and status = 'active' limit 120`,
-    );
-    const p = await readPhoto(
-      d.gateway,
-      r.tenant_id,
-      m.bytes,
-      m.mime,
-      names.map((n) => n.name),
-    );
+    const names = await productNames();
+    const p = await readPhoto(d.gateway, r.tenant_id, m.bytes, m.mime, names);
     if (p) {
       out.description = p.description;
       out.receipt = p.looksLikeReceipt;
