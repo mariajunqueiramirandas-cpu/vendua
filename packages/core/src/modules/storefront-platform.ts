@@ -498,12 +498,20 @@ export async function wakeStoreWaitlist(tx: Sql, tenantId: string, now = new Dat
   );
   const body = storeOpenMessage(store!.name, url);
   let queued = 0;
-  for (const phone of new Set(woken.map((w) => nationalPhone(w.contact)))) {
-    if (!phone || (await optedOutTx(tx, tenantId, phone))) continue;
-    // a subscription from before the cap, or the same number with and without its 9
+  // one lock per number (either spelling), taken in key order so two sweeps can't deadlock
+  const lockKey = (phone: string) => [...phoneVariants(phone)].sort()[0]!;
+  const phones = [...new Set(woken.map((w) => nationalPhone(w.contact)))]
+    .filter((p): p is string => !!p)
+    .sort((a, b) => (lockKey(a) < lockKey(b) ? -1 : lockKey(a) > lockKey(b) ? 1 : 0));
+  for (const phone of phones) {
+    if (await optedOutTx(tx, tenantId, phone)) continue;
+    // a subscription from before the cap, or the same number with and without its 9: a sweep
+    // alongside holding the other spelling waits on the lock, then sees this one's message
+    const variants = phoneVariants(phone);
+    await tx`select pg_advisory_xact_lock(hashtextextended(${`store-open:${tenantId}:${lockKey(phone)}`}, 0))`;
     const [recent] = await tx`
       select 1 from store_wa_messages
-      where tenant_id = ${tenantId} and kind = 'store_open' and phone = any(${phoneVariants(phone)})
+      where tenant_id = ${tenantId} and kind = 'store_open' and phone = any(${variants})
         and created_at > now() - ${STORE_OPEN_PER_PHONE}::interval
       limit 1`;
     if (recent) continue;
