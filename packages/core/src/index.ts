@@ -219,8 +219,9 @@ const platformInbox = startPlatformInbox({
   origin: adminOrigin,
 });
 const socketPump = waTransport === 'socket' ? startSocketPump(jobsSql) : null;
-// CRM sends finish (lead state, cadence) when the gateway reports them sent
-const stopCrmSettle = waTransport === 'gateway' ? startCrmSettle(jobsSql) : null;
+// CRM sends finish (lead state, cadence) when their outbox row settles; in socket mode too, for
+// rows queued before a rollback that the socket pump then sends
+const stopCrmSettle = startCrmSettle(jobsSql);
 // Instagram's live session sits in the ig-sidecar; this re-pushes the stored one after a sidecar restart.
 const stopInstagramReconcile = startInstagramReconcile(jobsSql);
 
@@ -281,7 +282,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     stopInstagramReconcile();
     void platformInbox.stop();
     void socketPump?.stop();
-    void stopCrmSettle?.();
+    void stopCrmSettle();
     readCache.stop();
     void stopPushNotifier.then((stop) => stop()).catch(() => undefined);
     // event streams never finish on their own: requests get a few seconds, then the rest close

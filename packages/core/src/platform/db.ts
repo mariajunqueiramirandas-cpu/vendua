@@ -57,19 +57,17 @@ export async function withTenant<T>(
 }
 
 /**
- * withTenant that also opens the control scope, for the one place that must commit a store's
- * rows and a platform row atomically: the platform WhatsApp inbox consumer (Duá by WhatsApp),
- * which marks the inbox row consumed in the transaction that dispatches the turn.
+ * Runs `fn` with the control scope open inside a tenant transaction, then closes it, so a store's
+ * rows and a platform row commit together (the platform WhatsApp inbox consumer marks its row
+ * consumed in the transaction that dispatches a Duá turn or applies a card). Only the platform
+ * statements go in `fn`: store routes must never run with the scope open, since control_access
+ * policies would stop scoping them to the tenant. A throw aborts the transaction anyway.
  */
-export async function withTenantAndControl<T>(
-  sql: Sql,
-  tenantId: string,
-  fn: (tx: Sql) => Promise<T>,
-): Promise<T> {
-  return withTenant(sql, tenantId, async (tx) => {
-    await tx`select set_config('vendua.control', '1', true)`;
-    return fn(tx);
-  });
+export async function inControlScope<T>(tx: Sql, fn: () => Promise<T>): Promise<T> {
+  await tx`select set_config('vendua.control', '1', true)`;
+  const out = await fn();
+  await tx`select set_config('vendua.control', '', true)`;
+  return out;
 }
 
 interface MigrationRow {

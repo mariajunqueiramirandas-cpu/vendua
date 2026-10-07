@@ -27,7 +27,7 @@ const TTL_MS: Record<OutboxPurpose, number> = {
   crm: 6 * 60 * 60_000,
 };
 
-/** `tx` must carry the control GUC (controlTx, withTenantAndControl). */
+/** `tx` must carry the control GUC (controlTx, inControlScope). */
 export async function enqueuePlatformWaTx(
   tx: Sql,
   m: Enqueue,

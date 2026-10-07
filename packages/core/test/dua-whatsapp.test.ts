@@ -364,6 +364,25 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
     expect(cards.map((c) => (c as { status: string }).status)).toEqual(['applied', 'declined']);
   });
 
+  test('an “ok” after Duá moved on is a message for Duá, not a yes to the older card', async () => {
+    const s = await store();
+    const rt = runtime([
+      tools(call('propose_pause', { minutes: 30, message: 'Já voltamos' })),
+      reply('Preparei a pausa.'),
+      reply('Quer que eu mude o horário de amanhã?'),
+    ]);
+    await inbound(s.phone, 'pausa a loja meia hora');
+    await settle(rt, s.tenantId);
+    await inbound(s.phone, 'e o horário de amanhã?');
+    await settle(rt, s.tenantId);
+    expect(await lastSent(s.phone)).toBe('Quer que eu mude o horário de amanhã?');
+    await inbound(s.phone, 'ok');
+    const [st] = await sql<{ status_override: string | null }[]>`
+      select status_override from store_settings where tenant_id = ${s.tenantId}`;
+    expect(st!.status_override).toBeNull();
+    expect((await mailbox(s.tenantId)).map((m) => m.payload.text)).toContain('ok');
+  });
+
   test('values that changed since the card refuse the SIM', async () => {
     const s = await store();
     await inbound(s.phone, 'muda o preparo pra 40 minutos');

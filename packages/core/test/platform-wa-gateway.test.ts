@@ -29,7 +29,29 @@ import { messageIdFor } from '../src/store-whatsapp/text.ts';
 
 // Venduá's own number on the wa-gateway (docs/features/dua-no-whatsapp.md §4).
 
-const { BufferJSON } = (await import('baileys')) as unknown as { BufferJSON: BufferCodec };
+// Baileys' BufferJSON wire format, written out: another test file mocks the 'baileys' module, and
+// bun's module mocks outlive their file
+const BufferJSON: BufferCodec = {
+  replacer: (_k, v) => {
+    const b = v as { type?: string; data?: unknown } | null;
+    if (Buffer.isBuffer(v) || v instanceof Uint8Array || b?.type === 'Buffer')
+      return {
+        type: 'Buffer',
+        data: Buffer.from((b?.data ?? v) as Uint8Array).toString('base64'),
+      };
+    return v;
+  },
+  reviver: (_k, v) => {
+    const b = v as { type?: string; buffer?: boolean; data?: unknown; value?: unknown } | null;
+    if (b && typeof b === 'object' && (b.buffer === true || b.type === 'Buffer')) {
+      const val = b.data ?? b.value;
+      return typeof val === 'string'
+        ? Buffer.from(val, 'base64')
+        : Buffer.from((val ?? []) as number[]);
+    }
+    return v;
+  },
+};
 
 describe('platform whatsapp: pure rules', () => {
   test('pair phones are international digits; outbox addresses keep both 9th-digit forms for BR', () => {

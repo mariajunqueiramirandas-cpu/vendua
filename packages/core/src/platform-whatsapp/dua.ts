@@ -6,7 +6,7 @@ import { decideTx } from '../copilot/actions.ts';
 import { planHas } from '../modules/billing/plans.ts';
 import { controlTx } from '../modules/control.ts';
 import { normalizePhone } from '../modules/customer.ts';
-import { withTenant, withTenantAndControl, type Sql } from '../platform/db.ts';
+import { inControlScope, withTenant, type Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
@@ -225,7 +225,10 @@ export async function routeToDua(d: DuaDeps, row: InboxRow): Promise<DuaOutcome>
   const target = await chooseStore(d, row, sender, eligible, body, reply);
   if ('route' in target) return target;
 
-  if (reply && 'decision' in reply) return decideByReply(d, row, target, reply);
+  if (reply && 'decision' in reply) {
+    const decided = await decideByReply(d, row, target, reply);
+    if (decided) return decided;
+  }
 
   const heard = await hear(d, row, target, body);
   if ('route' in heard) return heard;
@@ -340,31 +343,49 @@ async function actorOf(tx: Sql, e: Eligible): Promise<{ t: Tenant; m: Merchant }
 }
 
 /**
- * "SIM", "SIM 2", "não": against the cards of the last reply that went out by WhatsApp. The card
- * is applied by decideTx with the admin tap's checks (role, expiry, basis drift); the outcome is
- * written to the conversation and sent back.
+ * "SIM", "SIM 2", "não": against the cards of Duá's last reply by WhatsApp. The card is applied by
+ * decideTx with the admin tap's checks (role, expiry, basis drift); the outcome is written to the
+ * conversation and sent back. null when Duá has said something since its last cards: an "ok" to a
+ * later question is a message for Duá, never a yes to a card further up.
  */
 async function decideByReply(
   d: DuaDeps,
   row: InboxRow,
   e: Eligible,
   reply: { decision: 'confirm' | 'decline'; n: number | null },
-): Promise<DuaOutcome> {
+): Promise<DuaOutcome | null> {
   const body = (row.body ?? '').trim().slice(0, MAX_BODY);
-  await withTenantAndControl(d.sql, e.tenant_id, async (tx) => {
+  let stale = false;
+  // decideTx replays admin routes: the control scope opens only around the platform statements
+  await withTenant(d.sql, e.tenant_id, async (tx) => {
+    const [last] = await tx<{ batch: string | null; reply: string | null }[]>`
+      select
+        (select message_id from copilot_actions
+         where tenant_id = ${e.tenant_id} and user_id = ${e.user_id} and wa_ref is not null
+         order by created_at desc limit 1) as batch,
+        (select id from copilot_messages
+         where tenant_id = ${e.tenant_id} and user_id = ${e.user_id} and author = 'dua'
+           and channel = 'whatsapp' and turn_id is not null
+         order by created_at desc, id desc limit 1) as reply`;
+    if (last?.batch && last.batch !== last.reply) {
+      stale = true;
+      return;
+    }
     const say = async (text: string) => {
       await tx`
         insert into copilot_messages (tenant_id, user_id, author, body, channel)
         values (${e.tenant_id}, ${e.user_id}, 'merchant', ${body}, 'whatsapp'),
                (${e.tenant_id}, ${e.user_id}, 'dua', ${text}, 'whatsapp')`;
-      await enqueuePlatformWaTx(tx, {
-        to: replyTo(row),
-        body: text,
-        purpose: 'dua',
-        dedupeKey: `dua-in:${row.id}:decided`,
-      });
       await emitAdminTx(tx, e.tenant_id, 'copilot', e.user_id);
-      await markDoneTx(tx, row.id);
+      await inControlScope(tx, async () => {
+        await enqueuePlatformWaTx(tx, {
+          to: replyTo(row),
+          body: text,
+          purpose: 'dua',
+          dedupeKey: `dua-in:${row.id}:decided`,
+        });
+        await markDoneTx(tx, row.id);
+      });
     };
     const actor = await actorOf(tx, e);
     if (!actor) return say(DUA.forbidden);
@@ -420,7 +441,7 @@ async function decideByReply(
       );
     return say(DUA.decided);
   });
-  return { route: 'done' };
+  return stale ? null : { route: 'done' };
 }
 
 type Savepointable = { savepoint: <T>(fn: (sp: Sql) => Promise<T>) => Promise<T> };
@@ -473,7 +494,7 @@ async function dispatchTurn(
   e: Eligible,
   heard: Heard,
 ): Promise<DuaOutcome> {
-  await withTenantAndControl(d.sql, e.tenant_id, async (tx) => {
+  await withTenant(d.sql, e.tenant_id, async (tx) => {
     const shown = heard.text.replace(`${HEARD_UNSURE} `, '');
     const [msg] = await tx<{ id: string }[]>`
       insert into copilot_messages (tenant_id, user_id, author, body, channel, kind)
@@ -497,7 +518,7 @@ async function dispatchTurn(
       },
     });
     await emitAdminTx(tx, e.tenant_id, 'copilot', e.user_id);
-    await markDoneTx(tx, row.id);
+    await inControlScope(tx, () => markDoneTx(tx, row.id));
   });
   duaLog.info({ tenantId: e.tenant_id, voice: heard.voice }, 'dua whatsapp message');
   return { route: 'done' };

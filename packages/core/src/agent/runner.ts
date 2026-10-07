@@ -2679,7 +2679,8 @@ async function drainOnce(sql: Sql, limit: number, orphans: boolean): Promise<num
         -- on the platform gateway the send is an outbox row, settled when it goes out
         and not exists (
           select 1 from platform_wa_outbox o
-          where o.purpose = 'crm' and o.ref = lead_messages.id::text and o.settled_at is null)
+          where o.purpose = 'crm' and o.ref = lead_messages.id::text and o.settled_at is null
+            and o.expires_at > now())
       returning thread_id
     `,
   );
