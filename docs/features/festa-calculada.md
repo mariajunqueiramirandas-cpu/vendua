@@ -150,7 +150,13 @@ Idempotency-Key through `platform/http.ts` and goes through the kernel api clien
 is an ordinary cart, and the shopper can still edit lines.
 
 The cart records `party: { profileId, adults, children }`, and each party line records the group it
-came from (`groupId`), so a product mapped into two groups is never counted twice. At placement,
+came from (`groupId`), so a product mapped into two groups is never counted twice. The group
+is part of a line's identity. Today lines merge on
+`(cart_id, product_id, modifier_ids, modifier_qty, combo_selections, note)` (the insert's conflict
+target, `cart.ts:937`, and `editLineTx`'s twin lookup, `cart-ops.ts:102-124`). A new nullable
+`cart_items.party_group_id` joins that unique index, the conflict target and the twin lookup, so
+two groups that pick the same product keep two lines and edits never fold one group into another.
+Ordinary lines have it null and merge exactly as today. At placement,
 `placeOrderTx` computes a frozen snapshot from the final lines,
 `orders.party = { profileId, adults, children, groups: [{ groupId, units }] }`, where `units` is
 `qty × units_per_sale` at that moment. Capacity, the sinal and reminders read that snapshot, never

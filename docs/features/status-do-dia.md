@@ -168,17 +168,27 @@ is open decision 6: attendants run the oven, but their routes today are orders, 
    `low-stock` (today: sold-out > all-in-bag > low-stock > preorder, `card.ts:24-25`), and
    `ui-defaults` renders "Saiu do forno · há N min".
 2. **Stock.** With `units` and a stock-tracked product, stock goes up by `units` through the
-   existing stock path (`modules/stock.ts`).
-3. **Waitlist.** It runs only when the product is orderable after steps 1–2: active, inside its
-   schedule, not marked sold out (manually or by `sold_out_until`), and with stock above zero or
-   untracked. `wakeWaitlist` marks every pending request notified, so waking it for a product that
-   is still unavailable would send a false "voltou" and swallow the real one later. A tap with no
-   `units` on a product whose tracked stock is still 0 is refused with 409 `NOT_AVAILABLE`, and the
-   admin asks "Quantas saíram?" instead of showing a badge for nothing. A tap on a product marked sold out
-   asks first: "Pão de queijo está esgotado. Voltar a vender?". The yes clears the mark through
-   the existing availability route and then wakes the waitlist. When it runs, `wakeWaitlist`
-   (`stock.ts:145`) marks the product's pending `notify_requests` notified and writes the
-   `waitlist.restocked` outbox row. Today only the
+   existing stock path (`modules/stock.ts`). A tap with no `units` on a product whose tracked
+   stock is still 0 is refused with 409 `NOT_AVAILABLE`, and the admin asks "Quantas saíram?"
+   instead of showing a badge for nothing. A tap on a product marked sold out asks first: "Pão de
+   queijo está esgotado. Voltar a vender?". The yes clears the mark through the existing
+   availability route in the same transaction.
+3. **Waitlist: the orderability check moves into `wakeWaitlist`.** Today `setStock` wakes the
+   waitlist on any change that makes the product `active` with stock ≠ 0 (`stock.ts:94-119`),
+   whatever its `sold_out_until` or schedule says. `wakeWaitlist` (`stock.ts:145`) then marks
+   every pending request notified. So the stock step alone, which step 2 runs before anything
+   else could check, would send a false "voltou" for a product still hidden and swallow the real
+   one later. Checking afterwards can't undo that.
+   - The fix lives in one place. `wakeWaitlist` itself first checks that the product is orderable
+     now: active, stock above zero or untracked, `sold_out_until` null or past, and inside its
+     schedule. Otherwise it returns 0 and leaves the requests pending.
+   - So every caller is safe: `setStock`, "Saiu do forno", and the existing restock path, which
+     today has the same gap but only the Vendedor hears it.
+   - The moments a product becomes orderable without a stock change also call it: the sweeper
+     clearing an expired `sold_out_until` (`admin/workers.ts`), "voltar a vender", and the sweeper
+     noticing a product's schedule window open while it has pending requests.
+
+   When it does wake, it writes the `waitlist.restocked` outbox row, as today. Today only the
    Vendedor consumes that row, and only for shoppers with a recent thread. A second consumer
    queues a new shopper-asked kind, `product_back` (migration on the 0096 CHECK), for the other
    contacts. The same consumer covers ordinary restocks, so "avise-me" finally reaches everyone. It

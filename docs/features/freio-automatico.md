@@ -129,12 +129,16 @@ Inputs, read in one query per store:
 
 The model:
 
-1. `backlog = Σ max(0, p_i − elapsed_i) / c` over the tickets **ahead** of the order being
-   promised, the minutes of work ahead spread over the parallel capacity. For a quote or a new
-   order, that is every open ticket. For an order already in the queue (on accept, or when the
-   sweeper re-predicts it), it is the tickets placed before it, never the order itself.
-   Otherwise its own prep counts twice.
-2. `ready_new = now + backlog + p_new`.
+1. **Lanes, not an average.** The kitchen is `c` lanes. Each ticket **ahead** of the order being
+   promised is placed, oldest first, on the lane that frees soonest. A started ticket holds its
+   lane for its remaining `max(0, p_i − elapsed_i)`, and a waiting one takes the next free lane
+   for its full `p_i`. For a quote or a new order, "ahead" is every open ticket. For an order
+   already in the queue (on accept, or when the sweeper re-predicts it), it is the tickets placed
+   before it, never the order itself, otherwise its own prep counts twice.
+2. `start` is the earliest moment any lane is free (now, if one is idle), and
+   `ready_new = start + p_new`. With `c = 3` and one 30-minute ticket ahead, a new order starts now. With four equal
+   tickets it waits for the first lane, 30 minutes, not 40. Dividing total work by `c` gets both
+   wrong. `backlogMinutes` in the API is `start − now`.
 3. **Delivery promise:** `ready_new + driveMinutes + dispatch_buffer`. The buffer is a store
    setting, 5 minutes by default.
 4. **The window:** `[t, t + max(10, ceil(drive/2))]`, the spread `priceByDistance` already uses.
@@ -194,10 +198,13 @@ default thresholds can be edited:
 
 ### 4.3 Late orders (Atraso avisado)
 
-- **Detection.** On every sweep, for each open, non-scheduled order, predict its ready time from
-  its queue position and remaining prep, plus drive and buffer for delivery. The order is late when
-  the prediction passes `promisedTo` by 5 minutes or more, or when `promisedTo − 5 min` has passed
-  and it isn't ready yet.
+- **Detection.** On every sweep, each open, non-scheduled order whose `promisedTo` is less than
+  15 minutes away (or past) is re-predicted: its ready time from its lane position and remaining
+  prep, plus drive and buffer for delivery. Being near the deadline only starts the evaluation.
+  The order counts as late only when the predicted ready time (pickup) or delivery time passes
+  `promisedTo` by 5 minutes or more. An order still not ready at `promisedTo` is predicted no
+  earlier than now plus its remaining prep, so it gets there on its own. A pickup promised for
+  21:00 and predicted ready at 20:58 sends nothing.
 - **Action, once per order.** A new table `order_late_notices` makes it idempotent: `order_id`
   (primary key), `tenant_id`, `predicted_minutes`, `coupon_id`, `mode`, `created_at`.
   - Sugerir: an admin card and a push to the attendants on shift.
