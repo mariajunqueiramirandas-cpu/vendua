@@ -15,7 +15,7 @@ the two phones come up one after the other and the order push drops onto the fro
 plays it back (Duá ducks, the letters sink) while the header's logo takes over. All CSS (`linear()`
 springs, scroll-driven animations); without support or with reduced motion it's the finished poster.
 Other pages: one per kind of shop (`/para/doceiras/`, `/para/marmitarias/`,
-`/para/hamburguerias/`, `/para/padarias/`), the guides (`/guias/` and four articles), `/sobre/`,
+`/para/hamburguerias/`, `/para/padarias/`), the guides (`/guias/` and four articles), the news (`/novidades/` and twelve posts), `/sobre/`,
 `/privacidade/` and the 404. See "Search" below for why they exist and the rules they follow.
 
 ## Launch decisions the copy encodes
@@ -131,6 +131,25 @@ Other pages: one per kind of shop (`/para/doceiras/`, `/para/marmitarias/`,
   italic or highlighted word in a headline, no identical card grids. Instrument Serif appears only
   inside the admin screens (the greeting), not in site copy. See `.claude/skills/frontend-design/`.
 
+## Novidades
+
+`/novidades/<slug>/` posts say what a feature does in the shop's day (layout `Article`, listed in
+`posts` in `src/lib/pages.ts`, each post's closing links three others). Each carries custom widgets
+in `src/lib/posts/<slug>/`: hand-drawn SVG/CSS, no chart library, and one motif taken from its
+subject (the kitchen ticket rail, thermal paper, the map, the stamp card, the door sign).
+
+- A widget either computes with the product's **real rule** (ported from the file its comment names:
+  thresholds, limits, formulas, parsers; money in integer cents) or shows **example data** that says
+  so ("Exemplo", "Simulação com a Bolos da Nena") and reconciles with `screens.facts.json`. No
+  measured claims: Venduá has no conversion, time-saved or revenue numbers, so none are quoted.
+- It renders its finished state without JavaScript and becomes interactive with it. Its inputs and
+  buttons send nothing anywhere; the e2e allows them only inside `.prose` and still forbids `<form>`.
+- `Prose` styles `p`, `li`, `ul`, `h2`, `h3` inside a post at specificity (0,2,1), so a widget
+  overrides them with a class on its own root (`figure.w p`); no class named `skip`. Dark styles use
+  `@media (prefers-color-scheme: dark)` like everywhere.
+- The posts name plans, never prices or dates. What isn't built (card machines, NFC-e, routing a
+  printer by station, anota.ai and iFood import…) is said plainly or left out.
+
 ## Search
 
 The site is found two ways: by the name, and by what a shop owner types ("cardápio digital para
@@ -193,7 +212,7 @@ Images are committed; `scripts/assets.ts` rebuilds them (no argument = all three
 
 ## Structure
 
-- `src/routes/`: home, `para/<kind>/`, `guias/` and its articles, `/sobre/`, `/privacidade/`, 404.
+- `src/routes/`: home, `para/<kind>/`, `guias/` and its articles, `novidades/` and its posts, `/sobre/`, `/privacidade/`, 404.
 - `src/lib/sections/`: the five moments (`Hero`, `WhoFor`, `Demos`, `Plans`, `Night`).
 - `src/lib/demos/`: `DemoFrame` (example note, recomeçar, reduced motion, hydration) and the four
   demos (`Vendedor` (Duá's chat, tab "Duá"), `Pedido`, `Cozinha`, `Loja`, each with its parts in a folder). `Demos.svelte`

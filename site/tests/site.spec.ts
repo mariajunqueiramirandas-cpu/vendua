@@ -15,7 +15,20 @@ const GUIDES = [
   '/guias/encomendas-de-bolos-e-doces/',
   '/guias/delivery-proprio/',
 ];
-const POSTS = ['/novidades/dua-entende-audios/'];
+const POSTS = [
+  '/novidades/dua-fecha-o-pedido/',
+  '/novidades/dua-chama-voce/',
+  '/novidades/dua-entende-audios/',
+  '/novidades/dua-aprende-e-mostra-resultado/',
+  '/novidades/tela-da-cozinha/',
+  '/novidades/impressao-automatica/',
+  '/novidades/pdv-mesas-e-qr/',
+  '/novidades/entrega-por-distancia/',
+  '/novidades/importar-cardapio-por-link/',
+  '/novidades/seu-dia-e-aviso-de-pedido/',
+  '/novidades/cupons-e-cartao-fidelidade/',
+  '/novidades/pausar-a-loja/',
+];
 const CONTENT = [...NICHES, '/guias/', ...GUIDES, '/novidades/', ...POSTS, '/sobre/'];
 const PAGES = [HOME, ...CONTENT, PRIVACY, MISSING];
 const DOMAIN = 'https://vendua.com.br';
@@ -334,14 +347,16 @@ test.describe('conteúdo', () => {
     for (const path of PAGES) {
       await page.goto(path);
       // the only control is the plans' calculator (a number, no submit): nothing collects data
-      await expect(page.locator('form, textarea, select'), path).toHaveCount(0);
-      expect(
-        await page
-          .locator('input')
-          .evaluateAll((els) => els.filter((e) => !e.closest('#preco')).length),
-        path,
-      ).toBe(0);
-      await expect(page.locator('button[type="submit"], [role="button"]'), path).toHaveCount(0);
+      // (a news post's widgets are simulations: their sliders, fields and buttons live inside the
+      // post's text, send nothing anywhere, and no <form> exists on any page)
+      await expect(page.locator('form'), path).toHaveCount(0);
+      const outsideText = (sel: string) =>
+        page
+          .locator(sel)
+          .evaluateAll((els) => els.filter((e) => !e.closest('#preco, .prose')).length);
+      expect(await outsideText('textarea, select'), path).toBe(0);
+      expect(await outsideText('input'), path).toBe(0);
+      expect(await outsideText('button[type="submit"], [role="button"]'), path).toBe(0);
       // the header's call to action, on every page
       await expect(page.locator(`header a[href="${START}"]`), path).toHaveCount(1);
 
@@ -374,8 +389,8 @@ test.describe('conteúdo', () => {
           expect(url.hostname, `${path}: link externo "${l.text}"`).toMatch(
             /(^|\.)instagram\.com$/,
           );
-        // a guide's title names a topic ("vender pelo WhatsApp"), not a call to action
-        else if (!/^\/guias\/./.test(url.pathname))
+        // a guide's or news post's title names a topic ("vender pelo WhatsApp"), not a call to action
+        else if (!/^\/(guias|novidades)\/./.test(url.pathname))
           expect(l.text, `${path}: ${l.href}`).not.toMatch(CTA);
       }
       const instagram = links.filter((l) => l.href === INSTAGRAM);
@@ -385,11 +400,11 @@ test.describe('conteúdo', () => {
       ).toHaveLength(1);
       // at most one "acompanhe no Instagram" line near the closing call to action
       expect(instagram.filter((l) => !l.footer).length, path).toBeLessThanOrEqual(1);
-      // the demos' buttons are the visitor's lines in a simulation ("Quero a fatia também"), not calls to action
+      // the demos' and the posts' widget buttons are the visitor's lines in a simulation ("Quero a fatia também", "imprimir teste"), not calls to action
       for (const b of await page
         .locator('button')
         .evaluateAll((els) =>
-          els.filter((e) => !e.closest('.demo')).map((e) => e.textContent ?? ''),
+          els.filter((e) => !e.closest('.demo, .prose')).map((e) => e.textContent ?? ''),
         ))
         expect(b, `${path}: botão`).not.toMatch(CTA);
     }
