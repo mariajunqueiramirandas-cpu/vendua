@@ -1,9 +1,9 @@
 # Duá no WhatsApp do dono, and Venduá's own numbers on the gateway
 
-> Status: Proposed, not planned · Started 2026-10-07 · Kind: differentiator · Builds on:
+> Status: Proposed, not planned (the WhatsApp door itself is decided, 2026-10-07) · Started 2026-10-07 · Kind: differentiator · Builds on:
 > [ADR 0034](../adr/0034-dua-copilot.md) (Copilot), [ADR 0026](../adr/0026-store-whatsapp-gateway.md)
 > (the gateway), [ADR 0037](../adr/0037-self-hosted-stt.md) (voice),
-> [ADR 0020](../adr/0020-merchant-identity.md) (merchant identity) · Needs: an amendment to ADR 0034
+> [ADR 0020](../adr/0020-merchant-identity.md) (merchant identity) · Decided: ADR 0034 amended 2026-10-07 (the owner's call)
 
 Owners run the store from the kitchen with their hands full. Duá Copilot works, but only inside the
 admin. This feature lets owners and managers talk to the same Duá on WhatsApp, typing or sending a
@@ -57,8 +57,8 @@ Paths are under `packages/core/` unless they start with `apps/`, `packages/` or 
   admin's own routes, which enforce their roles, and `who()` re-reads the person on every tool call
   (`agent-host/agents/copilot/shared.ts:27-61`).
 - **ADR 0034's context** quotes the owner (2026-10-01): our merchant AI is "a copilot inside the
-  Venduá admin". This proposal adds a door outside the admin, so the owner amends that ADR or says
-  no. Same Duá, same tools, nothing applied without the person's yes.
+  Venduá admin". On 2026-10-07 the owner approved a door outside the admin, and ADR 0034 now
+  records that as an amendment. Same Duá, same tools, nothing applied without the person's yes.
 
 ## 2. What it feels like
 
@@ -339,7 +339,8 @@ After each, `invariant-reviewer` runs on the diff (`CLAUDE.md`).
 
 ## 9. Open decisions
 
-1. **Amend ADR 0034** to add the WhatsApp door (the owner's call).
+1. ~~Amend ADR 0034 to add the WhatsApp door.~~ **Decided 2026-10-07:** yes, the owner's call.
+   ADR 0034 is amended.
 2. **One platform number or two** (Vendas and Lojas). Two is recommended.
 3. **Money cards by "SIM",** or app-only.
 4. **Attendants.** Today the HTTP gate is `manager`. Attendant-level routes exist (orders, kitchen,
@@ -363,3 +364,4 @@ After each, `invariant-reviewer` runs on the diff (`CLAUDE.md`).
 ## Change log
 
 - 2026-10-07: first proposal.
+- 2026-10-07: the owner approved the WhatsApp door (open decision 1); ADR 0034 amended.
