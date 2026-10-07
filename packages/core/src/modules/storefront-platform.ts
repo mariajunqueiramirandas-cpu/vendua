@@ -17,6 +17,7 @@ import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 import { optedOutTx } from '../store-whatsapp/messages.ts';
+import { phoneVariants } from '../store-whatsapp/text.ts';
 import {
   PROACTIVE_TTL,
   nationalPhone,
@@ -413,6 +414,8 @@ export async function rollbackTemplateMigration(
 
 // ── notify-me ────────────────────────────────────────────────────────────────
 
+const STORE_OPEN_PER_PHONE = '7 days';
+
 export async function subscribeNotifyTx(
   tx: Sql,
   tenantId: string,
@@ -421,9 +424,11 @@ export async function subscribeNotifyTx(
   const subject = body.subject;
   if (subject !== 'store' && subject !== 'product')
     throw new HttpError(400, 'INVALID_NOTIFY', "subject must be 'store' or 'product'");
-  const contact = typeof body.phone === 'string' ? body.phone.replace(/\D/g, '') : '';
-  if (contact.length < 10 || contact.length > 13)
-    throw new HttpError(400, 'INVALID_NOTIFY', 'phone must have 10–13 digits');
+  // national digits, as the store's WhatsApp queue keys a number: 11… and 5511… are one
+  const contact =
+    typeof body.phone === 'string' && body.phone.length <= 40 ? nationalPhone(body.phone) : null;
+  if (!contact)
+    throw new HttpError(400, 'INVALID_NOTIFY', 'phone must be a Brazilian number with DDD');
   let productId: string | null = null;
   if (subject === 'product') {
     if (typeof body.productId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.productId))
@@ -432,6 +437,16 @@ export async function subscribeNotifyTx(
       await tx`select 1 from products where tenant_id = ${tenantId} and id = ${body.productId}`;
     if (!hit[0]) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
     productId = body.productId;
+  }
+  // Anyone can type any number: one "store open" message per number a week, and the same answer
+  // whether or not this request will ever reach it.
+  if (subject === 'store') {
+    const [capped] = await tx`
+      select 1 from notify_requests
+      where tenant_id = ${tenantId} and subject = 'store' and contact = any(${phoneVariants(contact)})
+        and (notified_at is null or notified_at > now() - ${STORE_OPEN_PER_PHONE}::interval)
+      limit 1`;
+    if (capped) return { status: 201, body: { subscribed: true } };
   }
   await tx`
     insert into notify_requests (tenant_id, subject, product_id, channel, contact)
@@ -485,6 +500,13 @@ export async function wakeStoreWaitlist(tx: Sql, tenantId: string, now = new Dat
   let queued = 0;
   for (const phone of new Set(woken.map((w) => nationalPhone(w.contact)))) {
     if (!phone || (await optedOutTx(tx, tenantId, phone))) continue;
+    // a subscription from before the cap, or the same number with and without its 9
+    const [recent] = await tx`
+      select 1 from store_wa_messages
+      where tenant_id = ${tenantId} and kind = 'store_open' and phone = any(${phoneVariants(phone)})
+        and created_at > now() - ${STORE_OPEN_PER_PHONE}::interval
+      limit 1`;
+    if (recent) continue;
     await tx`
       insert into store_wa_messages (tenant_id, kind, phone, body, expires_at)
       values (${tenantId}, 'store_open', ${phone}, ${body}, now() + ${PROACTIVE_TTL}::interval)`;

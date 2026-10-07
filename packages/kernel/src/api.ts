@@ -5,7 +5,8 @@ import { digitsOf, phoneKey } from './rules/phone.ts';
 export { formatCents, phoneKey };
 
 // The only supported path from a storefront to Core (no fetch/axios in storefront
-// code). Mutations send a fresh Idempotency-Key; the session token rides as Bearer.
+// code). Mutations send a fresh Idempotency-Key (checkout reuses its own while an attempt's
+// outcome is unknown); the session token rides as Bearer.
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: Record<string, unknown> };
@@ -1004,6 +1005,9 @@ export function createApi(baseUrl = '') {
   const orderTokenMem = new Map<string, string>();
   // Serial delivery writes — a slower earlier write must not overwrite the newer cart.
   let deliveryQueue: Promise<unknown> = Promise.resolve();
+  // Core's claim fingerprints the caller, not the body: one key per (cart, body), kept across
+  // attempts whose outcome is unknown so a committed order replays instead of 409 CART_NOT_OPEN.
+  let checkoutKey: { of: string; key: string } | null = null;
   const auth = (): Record<string, string> => {
     const t = current();
     return t ? { authorization: `Bearer ${t}` } : {};
@@ -1406,22 +1410,37 @@ export function createApi(baseUrl = '') {
     async checkout(input: CheckoutInput): Promise<Order> {
       // the cart this order closes: its token is the order's tracking credential
       const sent = current();
-      const r = await apiFetch<{
+      const body = JSON.stringify(input);
+      const of = `${sent ?? ''}\n${body}`;
+      if (checkoutKey?.of !== of) checkoutKey = { of, key: idemKey() };
+      const attempt = checkoutKey;
+      let r: {
         order: Order;
         /** null for a table's order (no phone): nothing to keep */
         customerToken?: string | null;
         customerTokenExpiresAt?: string | null;
-      }>(co('/checkout'), {
-        method: 'POST',
-        // a verified token for this phone lets Core honour its personal (loyalty) coupons
-        headers: {
-          ...(sent ? { authorization: `Bearer ${sent}` } : {}),
-          // a table order carries no phone: no customer token rides with it
-          ...(input.customer.phone ? customerHeader(input.customer.phone) : {}),
-          'idempotency-key': idemKey(),
-        },
-        body: JSON.stringify(input),
-      });
+      };
+      try {
+        r = await apiFetch<typeof r>(co('/checkout'), {
+          method: 'POST',
+          // a verified token for this phone lets Core honour its personal (loyalty) coupons
+          headers: {
+            ...(sent ? { authorization: `Bearer ${sent}` } : {}),
+            // a table order carries no phone: no customer token rides with it
+            ...(input.customer.phone ? customerHeader(input.customer.phone) : {}),
+            'idempotency-key': attempt.key,
+          },
+          body,
+        });
+      } catch (err) {
+        // a definite refusal (PRICES_CHANGED is stored under the key) needs a new key to retry
+        const unknown =
+          err instanceof ApiError &&
+          (err.status === 0 || err.status >= 500 || err.code === 'IDEMPOTENCY_IN_PROGRESS');
+        if (!unknown && checkoutKey === attempt) checkoutKey = null;
+        throw err;
+      }
+      if (checkoutKey === attempt) checkoutKey = null;
       // this device placed an order for the phone — it may read the phone's history
       if (r.customerToken && r.customerTokenExpiresAt && input.customer.phone)
         rememberCustomer(input.customer.phone, {
