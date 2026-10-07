@@ -1,4 +1,5 @@
 import { HttpError } from '../platform/http.ts';
+import { normalizePhone } from './customer.ts';
 import { deliveryPricing, validateLine, type CartView } from './cart.ts';
 import type { ProductDetail } from './catalog.ts';
 import {
@@ -257,6 +258,12 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
     });
   }
   if (atTable) {
+    // no phone is asked at a table; one sent anyway must be a real one (it mints a customer token)
+    const phone = typeof i.customer.phone === 'string' ? i.customer.phone.trim() : '';
+    if (phone && !/^\d{10,11}$/.test(normalizePhone(phone)))
+      throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.phone must have DDD and number', {
+        field: 'customer.phone',
+      });
     if (!bounded(i.delivery.table, 200) || !i.delivery.table)
       throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.table is required', {
         field: 'delivery.table',

@@ -275,6 +275,8 @@ export interface TabRound {
   source: 'pdv' | 'table_qr';
   /** paid online with its own payment: not part of what the comanda owes */
   paidOnline: boolean;
+  /** chose to pay online and hasn't yet: not owed here, and the comanda can't close over it */
+  onlinePending: boolean;
   /* a QR order still 'placed' waits for the staff: listed, not owed until accepted */
   placedAt: string;
   totalCents: number;
@@ -300,6 +302,11 @@ export interface TabDetail extends TabSummary {
   payments: PdvPaymentView[];
   split: { ways: number; sharesCents: number[] } | null;
 }
+
+/** What keeps a comanda open: a QR order the staff haven't accepted, or an online payment that
+ *  hasn't come in (closing would serve it unpaid). */
+export const holdsTab = (r: Pick<TabRound, 'state' | 'onlinePending'>) =>
+  r.state === 'placed' || r.onlinePending;
 
 /** The bill: rounds still standing, the manager's discount, then the service on what's left. */
 export function billOf(
@@ -389,6 +396,7 @@ export async function tabDetail(
         state: string;
         source: string;
         online: boolean;
+        paid: boolean;
         placed_at: Date;
         total_cents: number;
         items: {
@@ -402,6 +410,7 @@ export async function tabDetail(
     >`
       select o.id, o.number, o.state, o.source, o.placed_at, o.total_cents,
              coalesce(o.payment ->> 'provider', '') <> 'pdv' as online,
+             coalesce(o.payment ->> 'status', '') in ('paid', 'partially_refunded') as paid,
              (select coalesce(json_agg(i order by i.sort), '[]')
               from (select sort, name, qty, line_total_cents, modifiers, note from order_items
                     where tenant_id = o.tenant_id and order_id = o.id) i) as items
@@ -437,7 +446,8 @@ export async function tabDetail(
       number: r.number,
       state: r.state,
       source: r.source === 'table_qr' ? 'table_qr' : 'pdv',
-      paidOnline: r.online,
+      paidOnline: r.online && r.paid,
+      onlinePending: r.online && !r.paid && r.state !== 'cancelled' && r.state !== 'refunded',
       placedAt: new Date(r.placed_at).toISOString(),
       totalCents: r.total_cents,
       items: r.items.map((i) => ({
@@ -470,7 +480,7 @@ export async function closeTabTx(
   `;
   const live = tab.roundsList.filter((r) => r.state !== 'cancelled' && r.state !== 'refunded');
   // a round paid online keeps its own payment; only the comanda's own are paid here
-  const owed = live.filter((r) => !r.paidOnline);
+  const owed = live.filter((r) => !r.paidOnline && !r.onlinePending);
   if (owed.length)
     await tx`
       update orders set payment = ${tx.json({ ...TAB_PAYMENT, status: 'paid', paidAt: now.toISOString(), confirmedBy: by } as never)},

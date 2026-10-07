@@ -654,6 +654,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     const view = await shop('POST', '/checkout/v1/cart/delivery', { mode: 'dine_in' }, s1);
     expect(view.body.cart?.totals ?? view.body.totals).toMatchObject({ deliveryFeeCents: 0 });
     expect((await order(s1, { payment: { method: 'pix' } })).status).toBe(422);
+    const badPhone = await order(s1, { customer: { name: 'Lia', phone: '1' } });
+    expect(badPhone.status).toBe(422);
+    expect(badPhone.body.error.code).toBe('INVALID_CUSTOMER');
     const placed = await order(s1);
     expect(placed.status).toBe(201);
     expect(placed.body.customerToken).toBeNull();

@@ -2020,6 +2020,8 @@ export interface TabRound {
   source: 'pdv' | 'table_qr';
   /** paid online by the customer: listed, but outside the comanda's totals and what remains */
   paidOnline: boolean;
+  /** chose to pay online and hasn't yet: not owed here, and it holds the comanda open */
+  onlinePending: boolean;
   placedAt: string;
   totalCents: number;
   items: {

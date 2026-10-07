@@ -329,13 +329,17 @@ table: 'Mesa 5', feeCents: 0, … }`; with `tab` its payment is
   stops working at once.
 - `GET /pdv/state` gains `qrOrders: boolean`; `PATCH /pdv/settings` takes `qrOrders?: boolean`
   (with or without `serviceBps`) and answers `{ serviceBps, qrOrders }`.
-- `TabRound` gains `source: 'pdv' | 'table_qr'` and `paidOnline: boolean`. A round paid online
-  is listed but left out of the comanda's `subtotalCents`, service, total and remaining.
+- `TabRound` gains `source: 'pdv' | 'table_qr'`, `paidOnline: boolean` and
+  `onlinePending: boolean`. A round paid (or chosen to be paid) online is listed but left out of
+  the comanda's `subtotalCents`, service, total and remaining.
 - QR orders land on Pedidos as `placed` dine-in orders with the table, like a storefront order;
   accepting them sends them to the kitchen and the printers.
-- A QR order still `placed` is listed on its comanda but not owed until the staff accept it;
-  `POST /pdv/tabs/:id/close` answers 409 `TAB_HAS_PENDING` while one waits, and a payment that
-  reaches zero then doesn't close the comanda by itself.
+- A QR order still `placed` is listed on its comanda but not owed until the staff accept it.
+  While one waits, or while a round's online payment hasn't come in (`onlinePending`),
+  `POST /pdv/tabs/:id/close` answers 409 `TAB_HAS_PENDING` and a payment that reaches zero
+  doesn't close the comanda by itself.
+- `POST /pdv/tabs/:id/cancel` answers 409 `TAB_HAS_ONLINE_ROUNDS` while a round paid (or being
+  paid) online stands: cancelling that order in Pedidos refunds it first.
 
 ## Order changes
 

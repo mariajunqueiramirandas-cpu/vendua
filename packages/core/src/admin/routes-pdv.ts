@@ -14,6 +14,7 @@ import {
   caixaDetail,
   caixaRowById,
   closeTabTx,
+  holdsTab,
   lockTab,
   openCaixaRow,
   openTabSummaries,
@@ -775,7 +776,7 @@ export function mountPdv(d: AdminDeps) {
       const [view] = await insertPayments(tx, t.id, caixa.id, { tabId: id }, [payment], m.name);
       const after = await tabDetail(tx, t.id, id);
       // a QR order still waiting for the staff keeps the comanda open (ADR 0036)
-      const waiting = after.roundsList.some((r) => r.state === 'placed');
+      const waiting = after.roundsList.some(holdsTab);
       if (after.remainingCents === 0 && !waiting) await closeTabTx(tx, t.id, after, m.name);
       await Promise.all([
         audit(tx, t.id, m, {
@@ -801,8 +802,12 @@ export function mountPdv(d: AdminDeps) {
       const detail = await tabDetail(tx, t.id, id);
       // an overpaid comanda (a round cancelled after paying) gives the difference back first:
       // void a payment and take the right amount
-      if (detail.roundsList.some((r) => r.state === 'placed'))
-        throw new HttpError(409, 'TAB_HAS_PENDING', 'accept or cancel its waiting QR orders first');
+      if (detail.roundsList.some(holdsTab))
+        throw new HttpError(
+          409,
+          'TAB_HAS_PENDING',
+          'accept or cancel its waiting QR orders, or wait for their online payment',
+        );
       if (detail.remainingCents !== 0)
         throw new HttpError(
           409,
@@ -838,6 +843,18 @@ export function mountPdv(d: AdminDeps) {
       const detail = await tabDetail(tx, t.id, id);
       if (detail.payments.some((p) => !p.voided))
         throw new HttpError(409, 'TAB_HAS_PAYMENTS', 'void its payments first');
+      // a round paid (or being paid) online is cancelled in Pedidos, which refunds it
+      if (
+        detail.roundsList.some(
+          (r) =>
+            (r.paidOnline || r.onlinePending) && r.state !== 'cancelled' && r.state !== 'refunded',
+        )
+      )
+        throw new HttpError(
+          409,
+          'TAB_HAS_ONLINE_ROUNDS',
+          'cancel its online-paid orders in Pedidos first',
+        );
       await tx`
         update pdv_tabs set status = 'cancelled', closed_at = now(), close_reason = ${reason}
         where tenant_id = ${t.id} and id = ${id}

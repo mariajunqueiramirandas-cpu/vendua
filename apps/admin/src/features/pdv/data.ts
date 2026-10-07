@@ -233,7 +233,9 @@ const PDV_ERRORS: Record<string, string> = {
   OVERPAY: 'O valor passa do que falta na comanda.',
   TAB_UNPAID: 'Ainda falta receber nessa comanda.',
   TAB_HAS_PENDING:
-    'Um pedido pelo QR dessa mesa ainda espera alguém aceitar. Aceite ou cancele antes de fechar a comanda.',
+    'Um pedido pelo QR dessa mesa ainda espera alguém aceitar, ou o pagamento online dele ainda não caiu. Resolva o pedido antes de fechar a comanda.',
+  TAB_HAS_ONLINE_ROUNDS:
+    'Essa comanda tem pedidos pagos online. Cancele esses pedidos em Pedidos (o dinheiro volta para o cliente) antes de cancelar a comanda.',
   TAB_OVERPAID:
     'A comanda ficaria paga a mais. Um gerente estorna um pagamento e você recebe o valor certo.',
   PAYMENT_PDV: 'Esse pedido foi pago no caixa: o pagamento é do caixa.',

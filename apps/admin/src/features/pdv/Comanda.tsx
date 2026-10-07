@@ -159,7 +159,9 @@ function TabScreen() {
   // Core leaves rounds paid online out of every figure below; the screen only says so
   const online = live.filter((r) => r.paidOnline).length;
   // a QR order the staff haven't accepted yet: listed, not owed, and it holds the comanda open
-  const waiting = live.filter((r) => r.source === 'table_qr' && r.state === 'placed');
+  const waiting = live.filter(
+    (r) => (r.source === 'table_qr' && r.state === 'placed') || r.onlinePending,
+  );
   const activePays = tab.payments.filter((p) => !p.voided);
   const name = tableName(tab.label);
 
@@ -624,7 +626,11 @@ function Rounds({
             const qr = r.source === 'table_qr';
             // paid online: its money went through Mercado Pago, so undoing it is the order's refund
             const cancellable =
-              tab.status === 'open' && !gone && r.state !== 'delivered' && !r.paidOnline;
+              tab.status === 'open' &&
+              !gone &&
+              r.state !== 'delivered' &&
+              !r.paidOnline &&
+              !r.onlinePending;
             return (
               <li key={r.orderId}>
                 <Card className={cn('p-4', gone && 'opacity-60')}>
@@ -643,11 +649,18 @@ function Rounds({
                         className={cn(
                           'tnum font-semibold',
                           gone && 'line-through',
-                          (r.paidOnline || (qr && r.state === 'placed')) && !gone && 'text-muted',
+                          (r.paidOnline || r.onlinePending || (qr && r.state === 'placed')) &&
+                            !gone &&
+                            'text-muted',
                         )}
                       >
                         {money(r.totalCents)}
                       </span>
+                      {r.onlinePending && r.state !== 'placed' ? (
+                        <span className="t-caption font-semibold text-warning">
+                          aguardando pagamento online
+                        </span>
+                      ) : null}
                       {qr && r.state === 'placed' && !r.paidOnline ? (
                         <span className="t-caption font-semibold text-warning">
                           aguardando aceite
@@ -701,7 +714,10 @@ function Rounds({
                       {cancellable ? ', ou cancelar a rodada aqui' : ''}.
                     </p>
                   ) : null}
-                  {r.paidOnline && !gone && tab.status === 'open' && r.state !== 'delivered' ? (
+                  {(r.paidOnline || r.onlinePending) &&
+                  !gone &&
+                  tab.status === 'open' &&
+                  r.state !== 'delivered' ? (
                     <Link
                       to={`/pedidos/${r.orderId}`}
                       className="t-label -mb-2 -ml-2 mt-2 inline-flex min-h-11 items-center rounded-md px-2 text-muted hover:text-ink"

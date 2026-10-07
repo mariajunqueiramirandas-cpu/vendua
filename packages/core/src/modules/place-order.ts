@@ -140,25 +140,6 @@ export async function placeOrderTx(
       throw new HttpError(422, 'PAYMENT_METHOD_UNAVAILABLE', 'pix at a table is paid online', {
         field: 'payment.method',
       });
-    // a prank stops at the staff, who accept every QR order; this keeps the queue short
-    if (table.tabId) {
-      const n = (
-        await tx<{ n: number }[]>`
-        select count(*)::int as n from orders
-        where tenant_id = ${tenantId} and tab_id = ${table.tabId} and source = 'table_qr'
-          and state = 'placed'
-      `
-      )[0]!.n;
-      if (n >= MAX_PENDING_AT_TABLE)
-        throw new HttpError(
-          429,
-          'TABLE_ORDERS_PENDING',
-          'this table has orders waiting for the staff',
-          {
-            pending: n,
-          },
-        );
-    }
   }
   const scheduledFor = validateSchedule(
     cart.schedule,
@@ -309,7 +290,9 @@ export async function placeOrderTx(
   let tabId: string | null = null;
   if (table) {
     tabId = table.tabId;
-    if (!tabId) {
+    // a waiter may open (or close) the table's comanda at the same moment: the index lets one
+    // opening through; a comanda found that way is locked, and a closed one means open anew
+    for (let tries = 0; !tabId && tries < 3; tries++) {
       const [opened] = await tx<{ id: string }[]>`
         insert into pdv_tabs (tenant_id, table_id, label, service_bps, service_fee, opened_by)
         values (${tenantId}, ${table.id}, ${table.label}, ${table.serviceBps}, ${table.serviceBps > 0},
@@ -320,12 +303,32 @@ export async function placeOrderTx(
       tabId =
         opened?.id ??
         (
-          await tx<{ id: string }[]>`
-            select id from pdv_tabs
+          await tx<{ id: string; status: string }[]>`
+            select id, status from pdv_tabs
             where tenant_id = ${tenantId} and table_id = ${table.id} and status = 'open'
+            for update
           `
-        )[0]!.id;
+        ).find((r) => r.status === 'open')?.id ??
+        null;
     }
+    if (!tabId) throw new HttpError(409, 'TABLE_BUSY', 'the table changed — try again');
+    // a prank stops at the staff, who accept every QR order; this keeps the queue short
+    const waiting = (
+      await tx<{ n: number }[]>`
+        select count(*)::int as n from orders
+        where tenant_id = ${tenantId} and tab_id = ${tabId} and source = 'table_qr'
+          and state = 'placed'
+      `
+    )[0]!.n;
+    if (waiting >= MAX_PENDING_AT_TABLE)
+      throw new HttpError(
+        429,
+        'TABLE_ORDERS_PENDING',
+        'this table has orders waiting for the staff',
+        {
+          pending: waiting,
+        },
+      );
     (delivery as { tabId?: string | null }).tabId = tabId;
   }
   await tx`
@@ -388,6 +391,8 @@ export async function placeOrderTx(
     `,
     // the merchant admin's live board rings on commit
     emitAdminTx(tx, tenantId, 'order.placed', orderId),
+    // a QR order lands on its table's comanda (ADR 0036)
+    tabId && emitAdminTx(tx, tenantId, 'pdv', tabId),
   ]);
 
   // staff events (ADR 0023) after the batch: each one is a savepoint, which must not interleave
