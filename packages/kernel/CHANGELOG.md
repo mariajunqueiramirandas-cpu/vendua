@@ -3,6 +3,33 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.22.0
+
+Ordering at the table from its QR code (ADR 0036) — additive; no storefront edit. Checkout stays
+the Kernel's; every total is still Core's.
+
+- `?mesa=<token>` (the table's QR): `VenduaProvider` asks Core (`GET /storefront/v1/table`, api
+  `table`), keeps the table for the browser session (sessionStorage), strips the param and says
+  "Você está na Mesa 5" — or why ordering is off, closed or paused. A token Core doesn't know is
+  dropped with a gentle message. New hook `useTable()` → `{ table: TableInfo | null, leave() }`
+  (read-only; no token) and type `TableInfo`.
+- `StoreProfile.dineIn?: { enabled }`. With a table and `dineIn.enabled`, checkout asks only the
+  name (`checkout.AddressForm` `nameOnly`), the delivery step is a locked "Na Mesa 5" (mode
+  `dine_in`, `setDelivery({ mode: 'dine_in' })`, "Não estou na mesa"), payment offers "Pagar na
+  mesa" (`tab`) and the online Pix/card only, with no change field and no encomenda date; it
+  submits `delivery: { mode: 'dine_in', table }`. Without a table checkout is unchanged.
+- `ERROR_CODES` and `ERROR_COPY`: `TABLE_NOT_FOUND`, `TABLE_ORDERS_OFF`, `TABLE_ORDERS_PENDING`,
+  `TABLE_BUSY` (the comanda changed in that instant: "A mesa acabou de mudar — tente de novo").
+- The order page: the table on the status and tracking pages, "Servido" at the end
+  (`orderStepLabel`, new rule `orderStateLabel`, `order.Timeline` optional `mode`), `tab` reads
+  "Pagar na mesa" (`PAYMENT_METHOD_LABEL`, `PAYMENT_METHOD_DETAIL`).
+- Widened unions (Contract 2: enums are open on the wire): delivery `mode` gains `'dine_in'`
+  (`Cart`, `CheckoutInput`, `Order`, `OrderTracking`, `OrderSummary`, `setDelivery`,
+  `DeliveryOption`), payment method `'tab'` (`CheckoutInput`, `PaymentMethod`);
+  `Order.delivery.table` / `OrderTracking.delivery.table` optional; `CheckoutInput.customer.phone`
+  optional. An override switching on `DeliveryOption['mode']` (or `PaymentMethod['id']`) sees the
+  new value only at stores with QR ordering.
+
 ## 1.21.0
 
 Shopper conveniences — additive; no storefront edit. Every figure shown is still Core's.

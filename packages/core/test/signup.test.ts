@@ -443,10 +443,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     ).toEqual({
       open: false,
     });
+    // only this request's messages: mkPhone is clock-based, and an earlier test's number can
+    // come out the same
+    const sent = wa.length;
     const otp = await call('POST', '/admin/v1/signup/otp/start', { phone }, {}, closed);
     expect(otp.status).toBe(503);
     expect(otp.body.error.code).toBe('SIGNUP_CLOSED');
-    expect(wa.some((m) => m.phone === phone)).toBe(false);
+    expect(wa.slice(sent).some((m) => m.phone === phone)).toBe(false);
     // a token from when it was open can't create a store once it closed
     const token = (await verified(phone, createApp(deps))).signupToken;
     const r = await signup(token, `signup-${nonce}-shut`, {}, closed);

@@ -75,6 +75,20 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
     title: 'O chat da loja está desligado agora',
     body: 'Você ainda pode fazer o pedido pelo site.',
   },
+  // Kernel 1.22 — ordering from a table's QR code
+  TABLE_NOT_FOUND: {
+    title: 'Esse QR code não vale mais',
+    body: 'Peça à equipe o QR code atual da mesa.',
+  },
+  TABLE_ORDERS_OFF: {
+    title: 'A loja não está recebendo pedidos pela mesa agora',
+    body: 'Chame a equipe para pedir.',
+  },
+  TABLE_BUSY: { title: 'A mesa acabou de mudar', body: 'Tente de novo.' },
+  TABLE_ORDERS_PENDING: {
+    title: 'Esta mesa já tem pedidos esperando a equipe',
+    body: 'Assim que a equipe aceitar os anteriores, você pode mandar outro.',
+  },
 };
 
 const FALLBACK = { title: 'Não foi possível concluir', body: 'Tente novamente em instantes.' };

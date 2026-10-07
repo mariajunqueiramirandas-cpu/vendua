@@ -214,7 +214,8 @@ export interface CartMutations {
    *  like `addLine`; `useCart().mutations` always has it. */
   setNote?: (itemId: string, note: string) => Promise<Cart>;
   remove: (itemId: string) => Promise<Cart>;
-  setDelivery: (d: { mode: 'pickup' | 'delivery' } & DeliveryAddress) => Promise<Cart>;
+  /** Kernel 1.22: `{ mode: 'dine_in' }` at a table */
+  setDelivery: (d: { mode: 'pickup' | 'delivery' | 'dine_in' } & DeliveryAddress) => Promise<Cart>;
   /** Kernel 1.2 — Core validates and prices; a coupon short of its minimum stays on, not applying */
   applyCoupon: (code: string) => Promise<Cart>;
   removeCoupon: () => Promise<Cart>;

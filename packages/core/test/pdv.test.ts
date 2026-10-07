@@ -653,6 +653,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     const s1 = await cart();
     const view = await shop('POST', '/checkout/v1/cart/delivery', { mode: 'dine_in' }, s1);
     expect(view.body.cart?.totals ?? view.body.totals).toMatchObject({ deliveryFeeCents: 0 });
+    // the cart preview with "pagar na mesa" chosen
+    expect((await shop('GET', '/checkout/v1/cart?paymentMethod=tab', undefined, s1)).status).toBe(
+      200,
+    );
     expect((await order(s1, { payment: { method: 'pix' } })).status).toBe(422);
     const badPhone = await order(s1, { customer: { name: 'Lia', phone: '1' } });
     expect(badPhone.status).toBe(422);

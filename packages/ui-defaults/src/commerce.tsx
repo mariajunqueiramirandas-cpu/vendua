@@ -17,8 +17,8 @@ import {
   mediaSrcSet,
   modifierMax,
   modifierUnits,
-  ORDER_STATE_LABEL,
   orderProgress,
+  orderStateLabel,
   orderStepLabel,
   PAYMENT_METHOD_LABEL,
   PAYMENT_STATUS_LABEL,
@@ -289,7 +289,7 @@ export function CartLineItem({
   );
 }
 
-export function OrderTimeline({ events, timeZone }: SlotProps['order.Timeline']) {
+export function OrderTimeline({ events, mode, timeZone }: SlotProps['order.Timeline']) {
   return (
     <ol className="v-timeline" data-vendua="order-timeline" data-part="root">
       {events.map((e, i) => (
@@ -300,7 +300,7 @@ export function OrderTimeline({ events, timeZone }: SlotProps['order.Timeline'])
           data-state={e.to}
           data-current={i === events.length - 1 || undefined}
         >
-          <span className="v-timeline-label">{ORDER_STATE_LABEL[e.to] ?? e.to}</span>
+          <span className="v-timeline-label">{orderStateLabel(e.to, mode)}</span>
           <time className="v-muted" dateTime={e.at}>
             {formatDateTime(e.at, timeZone)}
           </time>
@@ -329,7 +329,7 @@ export function OrderStatusPage({
       <header className="v-order-head" data-part="head">
         <p className="v-eyebrow">Pedido #{order.number}</p>
         <h1 className="v-page-title" data-part="state">
-          {ORDER_STATE_LABEL[order.state] ?? order.state}
+          {orderStateLabel(order.state, d.mode)}
         </h1>
         {order.scheduledFor ? (
           <p className="v-muted" data-part="scheduled">
@@ -337,7 +337,11 @@ export function OrderStatusPage({
           </p>
         ) : d.promisedTo && !TERMINAL_ORDER_STATES.has(order.state) ? (
           <p className="v-muted" data-part="promise">
-            {d.mode === 'delivery' ? 'Chega' : 'Pronto para retirar'}{' '}
+            {d.mode === 'delivery'
+              ? 'Chega'
+              : d.mode === 'dine_in'
+                ? 'Fica pronto'
+                : 'Pronto para retirar'}{' '}
             {d.promisedFrom && d.promisedFrom !== d.promisedTo
               ? `entre ${formatTime(d.promisedFrom, timeZone)} e ${formatTime(d.promisedTo, timeZone)}`
               : `por volta de ${formatTime(d.promisedTo, timeZone)}`}
@@ -352,21 +356,28 @@ export function OrderStatusPage({
       <div className="v-order-grid">
         <div data-part="timeline">{timeline}</div>
         <dl className="v-order-facts" data-part="facts">
-          <div>
-            <dt>{d.mode === 'delivery' ? 'Entrega' : 'Retirada'}</dt>
-            <dd>
-              {d.mode === 'delivery'
-                ? [typeof d.address === 'string' ? d.address : null, d.neighborhood]
-                    .filter(Boolean)
-                    .join(' — ') || 'Endereço informado'
-                : (pickup?.address ?? 'Na loja')}
-              {d.mode === 'pickup' && pickup?.instructions ? (
-                <span className="v-order-fact-note v-muted" data-part="pickup-instructions">
-                  {pickup.instructions}
-                </span>
-              ) : null}
-            </dd>
-          </div>
+          {d.mode === 'dine_in' ? (
+            <div data-part="table">
+              <dt>Na mesa</dt>
+              <dd>{d.table ?? 'No salão'}</dd>
+            </div>
+          ) : (
+            <div>
+              <dt>{d.mode === 'delivery' ? 'Entrega' : 'Retirada'}</dt>
+              <dd>
+                {d.mode === 'delivery'
+                  ? [typeof d.address === 'string' ? d.address : null, d.neighborhood]
+                      .filter(Boolean)
+                      .join(' — ') || 'Endereço informado'
+                  : (pickup?.address ?? 'Na loja')}
+                {d.mode === 'pickup' && pickup?.instructions ? (
+                  <span className="v-order-fact-note v-muted" data-part="pickup-instructions">
+                    {pickup.instructions}
+                  </span>
+                ) : null}
+              </dd>
+            </div>
+          )}
           <div>
             <dt>Pagamento</dt>
             <dd>
@@ -416,7 +427,7 @@ export function OrderTrackingPage({
           {order.storeName ? `${order.storeName} · ` : ''}Pedido #{order.number}
         </p>
         <h1 className="v-page-title" data-part="state">
-          {ORDER_STATE_LABEL[order.state] ?? order.state}
+          {orderStateLabel(order.state, d.mode)}
         </h1>
         {order.scheduledFor ? (
           <p className="v-muted" data-part="scheduled">
@@ -424,7 +435,11 @@ export function OrderTrackingPage({
           </p>
         ) : d.promisedTo && !TERMINAL_ORDER_STATES.has(order.state) ? (
           <p className="v-muted" data-part="promise">
-            {d.mode === 'delivery' ? 'Chega' : 'Pronto para retirar'}{' '}
+            {d.mode === 'delivery'
+              ? 'Chega'
+              : d.mode === 'dine_in'
+                ? 'Fica pronto'
+                : 'Pronto para retirar'}{' '}
             {d.promisedFrom && d.promisedFrom !== d.promisedTo
               ? `entre ${formatTime(d.promisedFrom, timeZone)} e ${formatTime(d.promisedTo, timeZone)}`
               : `por volta de ${formatTime(d.promisedTo, timeZone)}`}
@@ -468,17 +483,24 @@ export function OrderTrackingPage({
             </ul>
           </div>
           <dl className="v-order-facts" data-part="facts">
-            <div>
-              <dt>{d.mode === 'delivery' ? 'Entrega' : 'Retirada'}</dt>
-              <dd>
-                {d.mode === 'delivery' ? 'No endereço do pedido' : (pickup?.address ?? 'Na loja')}
-                {d.mode === 'pickup' && pickup?.instructions ? (
-                  <span className="v-order-fact-note v-muted" data-part="pickup-instructions">
-                    {pickup.instructions}
-                  </span>
-                ) : null}
-              </dd>
-            </div>
+            {d.mode === 'dine_in' ? (
+              <div data-part="table">
+                <dt>Na mesa</dt>
+                <dd>{d.table ?? 'No salão'}</dd>
+              </div>
+            ) : (
+              <div>
+                <dt>{d.mode === 'delivery' ? 'Entrega' : 'Retirada'}</dt>
+                <dd>
+                  {d.mode === 'delivery' ? 'No endereço do pedido' : (pickup?.address ?? 'Na loja')}
+                  {d.mode === 'pickup' && pickup?.instructions ? (
+                    <span className="v-order-fact-note v-muted" data-part="pickup-instructions">
+                      {pickup.instructions}
+                    </span>
+                  ) : null}
+                </dd>
+              </div>
+            )}
           </dl>
           <p className="v-muted v-tracking-privacy" data-part="privacy">
             Este link mostra o andamento do pedido. Endereço e pagamento ficam só no aparelho em que
@@ -491,7 +513,13 @@ export function OrderTrackingPage({
 }
 
 /** The happy path as a glanceable track; cancelled/refunded orders skip it. */
-function OrderProgress({ state, mode }: { state: string; mode: 'delivery' | 'pickup' }) {
+function OrderProgress({
+  state,
+  mode,
+}: {
+  state: string;
+  mode: SlotProps['order.StatusPage']['order']['delivery']['mode'];
+}) {
   const progress = orderProgress({ state, mode });
   if (progress.outcome || progress.current < 0) return null;
   return (

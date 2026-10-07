@@ -69,6 +69,7 @@ const RULES_V1 = [
   'noticeSeverity',
   'orderPath',
   'orderProgress',
+  'orderStateLabel',
   'orderStepLabel',
   'phoneDisplay',
   'phoneKey',
@@ -207,6 +208,8 @@ const FROZEN_V1 = [
   'useStoreStatus',
   // Kernel 1.18 — the store's assistant (the Vendedor) chatting on the site
   'useStoreChat',
+  // Kernel 1.22 — the table whose QR code opened the store
+  'useTable',
   // …and every rule (RULES_V1), also served by the main entry
   ...RULES_V1,
 ];

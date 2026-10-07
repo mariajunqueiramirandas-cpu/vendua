@@ -53,6 +53,7 @@ export {
   orderPath,
   orderProgress,
   orderStepLabel,
+  orderStateLabel,
   PAYMENT_METHOD_LABEL,
   PAYMENT_LABEL,
   PAYMENT_METHOD_ORDER,

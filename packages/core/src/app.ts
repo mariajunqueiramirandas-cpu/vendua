@@ -345,7 +345,8 @@ const loadZones = loadZoneRows;
 /** The store's Pix for the storefront page — key, beneficiary and an amount-less copia e cola. */
 /** optional `paymentMethod` of the cart/quote previews */
 function paymentMethodParam(v: unknown): string | null {
-  if (v === undefined || v === null || v === '') return null;
+  // 'tab' (paid at the table, ADR 0036) has no discount or surcharge to preview
+  if (v === undefined || v === null || v === '' || v === 'tab') return null;
   if (!isPaymentMethod(v))
     throw new HttpError(422, 'INVALID_PAYMENT', 'paymentMethod is not a payment method', {
       field: 'paymentMethod',

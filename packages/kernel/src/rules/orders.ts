@@ -21,8 +21,12 @@ export const TERMINAL_ORDER_STATES: ReadonlySet<string> = new Set([
   'refunded',
 ]);
 
-/** The happy path an order walks for its mode. */
-export function orderPath(mode: 'delivery' | 'pickup'): string[] {
+/** Kernel 1.22 adds 'dine_in' (an order at a table). */
+type OrderMode = 'delivery' | 'pickup' | 'dine_in';
+
+/** The happy path an order walks for its mode (a table's order ends served, never out for
+ *  delivery). */
+export function orderPath(mode: OrderMode): string[] {
   return mode === 'delivery'
     ? ['placed', 'confirmed', 'preparing', 'ready', 'out_for_delivery', 'delivered']
     : ['placed', 'confirmed', 'preparing', 'ready', 'delivered'];
@@ -40,8 +44,8 @@ export interface OrderProgress {
 type ProgressInput = {
   state: string;
   /** an `Order` carries `delivery.mode`, an `OrderSummary` carries `mode` */
-  mode?: 'delivery' | 'pickup';
-  delivery?: { mode: 'delivery' | 'pickup' };
+  mode?: OrderMode;
+  delivery?: { mode: OrderMode };
   timeline?: { to: string }[];
 };
 
@@ -69,10 +73,18 @@ export function orderProgress(order: ProgressInput): OrderProgress {
   };
 }
 
-/** A step's short name on the progress track (`Preparo`, `A caminho`, `Retirado`). */
-export function orderStepLabel(state: string, mode: 'delivery' | 'pickup'): string {
-  if (state === 'delivered') return mode === 'delivery' ? 'Entregue' : 'Retirado';
+/** A step's short name on the progress track (`Preparo`, `A caminho`, `Retirado`, `Servido`). */
+export function orderStepLabel(state: string, mode: OrderMode): string {
+  if (state === 'delivered')
+    return mode === 'delivery' ? 'Entregue' : mode === 'dine_in' ? 'Servido' : 'Retirado';
   return STEP_LABEL[state] ?? ORDER_STATE_LABEL[state] ?? state;
+}
+
+/** Kernel 1.22 — the state in words for the order's mode: `ORDER_STATE_LABEL`, except that an
+ *  order at a table is `Servido`, not `Entregue`. */
+export function orderStateLabel(state: string, mode?: OrderMode | null): string {
+  if (state === 'delivered' && mode === 'dine_in') return 'Servido';
+  return ORDER_STATE_LABEL[state] ?? state;
 }
 
 const STEP_LABEL: Record<string, string> = {
@@ -90,6 +102,8 @@ export const PAYMENT_METHOD_LABEL: Record<string, string> = {
   card_on_delivery: 'Cartão na entrega',
   cash: 'Dinheiro',
   meal_voucher: 'Vale-refeição',
+  // Kernel 1.22 — at a table, on its comanda
+  tab: 'Pagar na mesa',
 };
 /** @deprecated alias of `PAYMENT_METHOD_LABEL` (the ui-defaults name) */
 export const PAYMENT_LABEL = PAYMENT_METHOD_LABEL;
@@ -106,6 +120,7 @@ export const PAYMENT_METHOD_ORDER = [
 /** A second line under a method's name. */
 export const PAYMENT_METHOD_DETAIL: Record<string, string> = {
   card_online: 'Pago pelo Mercado Pago',
+  tab: 'Entra na conta da mesa; você paga à equipe',
 };
 
 export const PAYMENT_STATUS_LABEL: Record<string, string> = {
