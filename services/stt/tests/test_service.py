@@ -202,6 +202,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(body, {"text": f"len {SAMPLE_RATE}", "confidence": 0.9, "language": None, "seconds": 1.0})
         with urllib.request.urlopen(url + "/healthz", timeout=5) as r:
             self.assertEqual(r.status, 200)
+            self.assertEqual(json.loads(r.read()), {"ok": True, "queue": 0, "model": None})
 
     def test_rejections(self):
         url = self.start(STT_SECRET="s3cret")

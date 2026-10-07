@@ -6,6 +6,7 @@ import { LEAD_STATES, type LeadState } from './leads.ts';
 import { JOB_KINDS } from '../agent/tool-meta.ts';
 import { normalizeStaff } from './staff-config.ts';
 import { validateDiscordConfig, validateDiscordSetting } from './discord/config.ts';
+import { validateMediaRoutes } from '../vendedor/media.ts';
 
 // modular provider config: `secret_ref` is the NAME of the env var holding the
 // credential — secret values never enter the DB
@@ -537,6 +538,10 @@ export function validateSetting(key: string, value: unknown): void {
   }
   if (key === 'agent_runtime.budgets') {
     validateBudgets(value, bad);
+    return;
+  }
+  if (key === 'agent_runtime.media_routes') {
+    validateMediaRoutes(value, bad);
     return;
   }
   if (key === 'signup') {

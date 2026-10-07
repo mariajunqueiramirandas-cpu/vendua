@@ -64,6 +64,7 @@ export const qk = {
   storeEvents: (id: string, category: string) => ['customers', 'events', id, category] as const,
   views: (member: string) => ['views', member] as const,
   aiModels: () => ['ai-models'] as const,
+  aiVoice: () => ['ai-voice'] as const,
   aiCatalog: () => ['ai-catalog'] as const,
   aiEndpoints: (model: string) => ['ai-endpoints', model] as const,
   aiUsage: (days: number) => ['ai-usage', days] as const,

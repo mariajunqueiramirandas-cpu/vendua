@@ -18,8 +18,10 @@ Core ingest (vendedor/ingest.ts) ──bearer──▶ stt :8792 ──▶ {text
 
 Core's `transcribe` (`packages/core/src/vendedor/media.ts`) calls it as provider `sidecar`. It
 is used by default when `STT_URL` and `STT_SECRET` are set and staff named no `transcribe`
-route. It can also be listed among the cloud routes in `agent_runtime.media_routes`, first or as
-a fallback. The audio never leaves the host, and transcripts are never logged or stored here.
+route. Staff set the order of routes in the CRM, under IA → Voz (`agent_runtime.media_routes`,
+which Core checks when it's saved). That screen also shows whether this service is up, using
+`/healthz`. The service can come first, or after a cloud route as a fallback. The audio never
+leaves the host, and transcripts are never logged or stored here.
 
 ## API
 
@@ -27,7 +29,7 @@ a fallback. The audio never leaves the host, and transcripts are never logged or
 | --------------------- | -------------------- | ---------------------- | ----------------------------------------- |
 | `POST /v1/transcribe` | `Bearer $STT_SECRET` | the audio file's bytes | `{text, confidence, language, seconds}`   |
 | `?words=1`            |                      |                        | adds `words: [{word, start, confidence}]` |
-| `GET /healthz`        | none                 |                        | 200 once warm, `{ok, queue}`              |
+| `GET /healthz`        | none                 |                        | 200 once warm, `{ok, queue, model}`       |
 
 Ogg/Opus voice notes, mp3, m4a/mp4, WebM, FLAC, AMR and WAV are accepted, picked by their
 magic bytes. `language` is always `null`: the model picks among its 25 languages but doesn't

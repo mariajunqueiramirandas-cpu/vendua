@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import type { AiModelsView } from '@/lib/api.ts';
@@ -26,43 +26,14 @@ import {
   type Errors,
   type RoutesDraft,
 } from './draft.ts';
-import { ErrorsCtx, FieldMsg, HintPanel, Notice, type Ns } from './bits.tsx';
+import { ErrorsCtx, FieldMsg, HintPanel, Notice, SaveBarShown, type Ns } from './bits.tsx';
 import { BudgetsPanel } from './BudgetsPanel.tsx';
 import { providerLabel } from './format.ts';
 import { AgentOverrides, StoreOverrides } from './Overrides.tsx';
 import { useAiModels, useSaveAiSetting, type AiSettingKey } from './queries.ts';
 import { TiersEditor, type KeyStatus } from './RouteEditor.tsx';
+import { useSyncedDraft } from './synced.ts';
 import { AI_TABS } from './tabs.ts';
-
-/**
- * A local copy of a server value. A refetch replaces it only while it's unedited, so the
- * 60 s poll never eats someone's changes; `dirty` compares the serialized forms.
- */
-function useSyncedDraft<S, D>(src: S | undefined, toDraft: (s: S) => D, out: (d: D) => unknown) {
-  const [draft, setDraft] = useState<D | null>(null);
-  const base = useRef<string | null>(null);
-  const [, bump] = useState(0);
-  const canon = (d: D) => JSON.stringify(out(d));
-  useEffect(() => {
-    if (src === undefined) return;
-    const next = toDraft(src);
-    const prev = base.current;
-    setDraft((d) => (d === null || canon(d) === prev ? next : d));
-    base.current = canon(next);
-    bump((n) => n + 1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src]);
-  return {
-    draft,
-    setDraft: (d: D) => setDraft(d),
-    dirty: draft !== null && base.current !== null && canon(draft) !== base.current,
-    discard: () => src !== undefined && setDraft(toDraft(src)),
-    markSaved: (d: D) => {
-      base.current = canon(d);
-      bump((n) => n + 1);
-    },
-  };
-}
 
 const SOURCE: Record<
   AiModelsView['routesSource'],
@@ -350,6 +321,7 @@ export default function ModelsPage() {
           </div>
           {(dirty || general) && (
             <div className="sticky bottom-0 z-20 mx-auto -mb-3 max-w-4xl pb-3 md:-mb-5 md:pb-5">
+              <SaveBarShown />
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-popover px-3 py-2 shadow-pop">
                 <div className="min-w-0 flex-1 text-[13px]">
                   {general ? (

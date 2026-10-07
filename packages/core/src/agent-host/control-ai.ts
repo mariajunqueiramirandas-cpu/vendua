@@ -1,13 +1,15 @@
 import type { Context, Hono } from 'hono';
 import { customerRowsTx, roundUsd } from '../modules/control-customers.ts';
 import { controlTx } from '../modules/control.ts';
+import { sidecarStatus } from '../vendedor/media.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { AGENTS } from './agents/index.ts';
 import { createModelCatalog, type ModelCatalog } from './model-catalog.ts';
 
-// /control/v1/ai (CRM "IA"): which models Duá runs on and what it costs. Routes and budgets are
-// written through PUT /control/v1/settings/agent_runtime.{routes,budgets} (validateSetting).
+// /control/v1/ai (CRM "IA"): which models Duá runs on, how it hears voice notes and what it costs.
+// Routes, media routes and budgets are written through
+// PUT /control/v1/settings/agent_runtime.{routes,media_routes,budgets} (validateSetting).
 
 /** the keys adaptersFromEnv (models.ts) builds a provider from */
 const PROVIDERS = [
@@ -94,6 +96,34 @@ export function mountAgentRuntimeAi(o: {
         budgetKey: def.budgets?.tenantDaily ?? null,
         defaultTier: def.models.default,
       })),
+    });
+  });
+
+  // CRM "IA > Voz": the transcription routes (vendedor/media.ts), the STT sidecar's state and the
+  // cloud keys a route can use.
+  app.get('/control/v1/ai/voice', async (c) => {
+    controlGate(c);
+    const [rows, sidecar] = await Promise.all([
+      controlTx(
+        sql,
+        (tx) => tx<{ value: Record<string, unknown> }[]>`
+          select value from control_settings where key = 'agent_runtime.media_routes'`,
+      ),
+      sidecarStatus(env),
+    ]);
+    c.header('cache-control', 'no-store');
+    return c.json({
+      routes: rows[0]?.value ?? {},
+      saved: rows.length > 0,
+      sidecar,
+      providers: [
+        { id: 'openai', configured: !!env.OPENAI_API_KEY, secretName: 'OPENAI_API_KEY' },
+        {
+          id: 'elevenlabs',
+          configured: !!env.ELEVENLABS_API_KEY,
+          secretName: 'ELEVENLABS_API_KEY',
+        },
+      ],
     });
   });
 

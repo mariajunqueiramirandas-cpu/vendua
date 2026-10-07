@@ -204,9 +204,10 @@ goes to a third party and there is no per-minute charge.
 2. Deploy. The first build downloads the 2.5 GB model export, which is a cached layer
    afterwards, and compiles it for the host's CPU. Compiling needs about 6 GB of RAM. The
    container needs about 1.5 GB at runtime.
-3. Nothing to set in the CRM: with no `transcribe` route in `agent_runtime.media_routes`, Core
-   uses the sidecar. To keep a cloud route as a fallback, list
-   `{"provider":"sidecar","model":"parakeet-tdt-0.6b-v3","zdr":true}` first.
+3. Check the CRM, under IA → Voz. It shows whether the voice server is up and which model it
+   runs, and it sets the order of the transcription routes. With no route saved, Core uses the
+   voice server. Saving a list there picks another order or adds a cloud fallback. Keep
+   "Venduá" first, because when a cloud route comes first the audio leaves the platform.
 
 `STT_CPUS` (default 2) caps the cores it may use, so Core and Postgres keep theirs.
 `STT_MODEL=parakeet-tdt-0.6b-v3-ptbr` builds the Brazilian Portuguese fine-tune instead: better

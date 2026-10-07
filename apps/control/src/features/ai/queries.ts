@@ -3,7 +3,8 @@ import { api, ApiError, type CustomerRow } from '@/lib/api.ts';
 import { qk } from '@/lib/query.ts';
 
 export type AiDays = 7 | 30;
-export type AiSettingKey = 'agent_runtime.routes' | 'agent_runtime.budgets';
+export type AiSettingKey =
+  'agent_runtime.routes' | 'agent_runtime.budgets' | 'agent_runtime.media_routes';
 
 export const useAiUsage = (days: AiDays) =>
   useQuery({
@@ -13,6 +14,8 @@ export const useAiUsage = (days: AiDays) =>
   });
 
 export const useAiModels = () => useQuery({ queryKey: qk.aiModels(), queryFn: api.aiModels });
+
+export const useAiVoice = () => useQuery({ queryKey: qk.aiVoice(), queryFn: api.aiVoice });
 
 /**
  * OpenRouter's models, also mapped to the direct providers' ids. Core caches them an hour, so
@@ -54,6 +57,7 @@ export function useSaveAiSetting() {
     onSettled: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: qk.aiModels() }),
+        qc.invalidateQueries({ queryKey: qk.aiVoice() }),
         qc.invalidateQueries({ queryKey: qk.settings() }),
       ]),
   });
