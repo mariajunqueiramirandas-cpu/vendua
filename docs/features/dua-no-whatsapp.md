@@ -393,6 +393,11 @@ Where the build differs from, or settles, the design above:
   function that picks the recipient itself: the person whose conversation it is, at the jid they
   write from, only while their switch is on. A turn's tenant transaction never gets the control
   scope.
+- **§5.3's `withTenantAndControl`** became `inControlScope` (`platform/db.ts`): the turn and the
+  card decision run under plain `withTenant`, and the control scope opens only around the inbox and
+  outbox statements, so admin routes replayed by `decideTx` never run with `control_access` on.
+- **A "SIM" decides only the cards of Duá's latest model reply by WhatsApp.** Once Duá has said
+  something since, an "ok" is a message for Duá, not a yes to a card further up.
 - **Cards** get their number (`copilot_actions.wa_ref`) when they are first sent, and "SIM n" is
   matched against the last WhatsApp reply's cards, so a number never shifts to another card.
 - **Open decision 3 (money cards):** app-only for now. "SIM" on a card with `money` set answers
