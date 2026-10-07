@@ -290,6 +290,9 @@ services:
   stt:
     build:
       context: ./services/stt
+      args:
+        # parakeet-tdt-0.6b-v3-ptbr = the Brazilian Portuguese fine-tune (ADR 0035)
+        STT_MODEL: ${STT_MODEL:-parakeet-tdt-0.6b-v3}
     cpus: ${STT_CPUS:-2}
     mem_limit: ${STT_MEM_LIMIT:-3g}
     environment:

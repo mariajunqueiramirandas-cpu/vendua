@@ -7,6 +7,10 @@ only what changed since the last one:
   non-blank token is emitted: a blank leaves it unchanged, so its output is cached;
 - layer 0's input term is a per-token lookup table (embedding @ W0 folded at compile time);
 - all live utterances step together, so the 640 x 8198 output head is a GEMM, not B GEMVs.
+
+Per emitted token it also keeps NeMo's entropy-based confidence (Tsallis, alpha = 1/3,
+exponential normalization; Laptev & Ginsburg, ICASSP 2023), which flags wrong words far
+better than the token's own probability.
 """
 
 from __future__ import annotations
@@ -15,7 +19,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .boost import PhraseBoost
+
 MAX_SYMBOLS_PER_STEP = 10
+TSALLIS_ALPHA = 1 / 3
 
 
 @dataclass
@@ -23,6 +30,7 @@ class Hypothesis:
     tokens: list[int] = field(default_factory=list)
     frames: list[int] = field(default_factory=list)
     logprobs: list[float] = field(default_factory=list)
+    confidences: list[float] = field(default_factory=list)
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
@@ -48,6 +56,8 @@ class TdtDecoder:
         self.blank = int(weights["blank"])
         self.vocab = self.blank + 1
         self.durations = np.asarray(weights["durations"], dtype=np.int64)
+        a = TSALLIS_ALPHA
+        self._conf_floor = float(np.exp((1 - self.vocab ** (1 - a)) / (1 - a)))  # uniform
         self.hidden = self.r0.shape[0]
         # the predictor's output before any token: the blank fed from a zero state
         z = np.zeros((1, self.hidden), np.float32)
@@ -76,8 +86,16 @@ class TdtDecoder:
         p += self.pred_b
         return p, np.concatenate([y0, y1], axis=1), np.concatenate([c0n, c1n], axis=1)
 
-    def decode(self, enc: np.ndarray, lengths: np.ndarray) -> list[Hypothesis]:
-        """enc: [B, T, D] encoder output, lengths: [B] valid frames."""
+    def _confidence(self, logp: np.ndarray) -> np.ndarray:
+        """Tsallis-entropy confidence of each row's full token distribution, 0 (uniform) .. 1."""
+        a = TSALLIS_ALPHA
+        s = np.exp(logp * a).sum(axis=1)
+        return (np.exp((1 - s) / (1 - a)) - self._conf_floor) / (1 - self._conf_floor)
+
+    def decode(
+        self, enc: np.ndarray, lengths: np.ndarray, boosts: list[PhraseBoost | None] | None = None
+    ) -> list[Hypothesis]:
+        """enc: [B, T, D] encoder output, lengths: [B] valid frames, boosts: per utterance."""
         B, T, _ = enc.shape
         H = self.hidden
         lengths = np.minimum(np.asarray(lengths, dtype=np.int64), T)
@@ -89,6 +107,8 @@ class TdtDecoder:
         t = np.zeros(B, np.int64)
         symbols = np.zeros(B, np.int64)
         hyps = [Hypothesis() for _ in range(B)]
+        boosts = boosts or [None] * B
+        states: list[tuple[int, ...]] = [()] * B
         V = self.vocab
         live = np.flatnonzero(t < lengths)
         while live.size:
@@ -97,20 +117,37 @@ class TdtDecoder:
             np.maximum(z, 0.0, out=z)
             logits = z @ self.out_w
             logits += self.out_b
-            tok = logits[:, :V].argmax(axis=1)
+            tl = logits[:, :V]
+            restore = []
+            for k, b in enumerate(live.tolist()):
+                if boosts[b] is not None:
+                    bonus = boosts[b].bonuses(states[b])
+                    if bonus:
+                        ids = np.fromiter(bonus, np.int64, len(bonus))
+                        restore.append((k, ids, tl[k, ids].copy()))
+                        tl[k, ids] += np.fromiter((v[0] for v in bonus.values()), np.float32, len(bonus))
+            tok = tl.argmax(axis=1)
+            for k, ids, orig in restore:
+                tl[k, ids] = orig  # probabilities stay the model's own
             dur = self.durations[logits[:, V:].argmax(axis=1)]
             emit = tok != self.blank
             if emit.any():
                 rows = live[emit]
-                lt = logits[emit, :V]
+                lt = tl[emit]
                 m = lt.max(axis=1)
                 lse = m + np.log(np.exp(lt - m[:, None]).sum(axis=1))
-                lp = lt[np.arange(rows.size), tok[emit]] - lse
+                logp = lt - lse[:, None]
+                lp = logp[np.arange(rows.size), tok[emit]]
+                conf = self._confidence(logp)
                 for k, b in enumerate(rows.tolist()):
                     hy = hyps[b]
-                    hy.tokens.append(int(tok[emit][k]))
+                    token = int(tok[emit][k])
+                    hy.tokens.append(token)
                     hy.frames.append(int(t[b]))
                     hy.logprobs.append(float(lp[k]))
+                    hy.confidences.append(float(conf[k]))
+                    if boosts[b] is not None:
+                        states[b] = boosts[b].advance(states[b], token)
                 p, hn, cn = self._predict(tok[emit], h[rows, :H], c[rows, :H], h[rows, H:], c[rows, H:])
                 P[rows], h[rows], c[rows] = p, hn, cn
                 symbols[rows] += 1

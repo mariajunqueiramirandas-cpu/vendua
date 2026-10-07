@@ -23,21 +23,33 @@ a fallback. The audio never leaves the host, and transcripts are never logged or
 
 ## API
 
-| Route                 | Auth                 | Body                   | Returns                                 |
-| --------------------- | -------------------- | ---------------------- | --------------------------------------- |
-| `POST /v1/transcribe` | `Bearer $STT_SECRET` | the audio file's bytes | `{text, confidence, language, seconds}` |
-| `?words=1`            |                      |                        | adds `words: [{word, start}]` (seconds) |
-| `GET /healthz`        | none                 |                        | 200 once warm, `{ok, queue}`            |
+| Route                 | Auth                 | Body                   | Returns                                   |
+| --------------------- | -------------------- | ---------------------- | ----------------------------------------- |
+| `POST /v1/transcribe` | `Bearer $STT_SECRET` | the audio file's bytes | `{text, confidence, language, seconds}`   |
+| `?words=1`            |                      |                        | adds `words: [{word, start, confidence}]` |
+| `GET /healthz`        | none                 |                        | 200 once warm, `{ok, queue}`              |
 
-Any format ffmpeg reads works: Ogg/Opus voice notes, mp3, m4a, wav. 16 kHz mono WAV skips
-ffmpeg. `confidence` is `exp(mean token log-prob)`, the same scale Core derives from Whisper's
-`avg_logprob`. `language` is always `null`: the model picks among its 25 languages but doesn't
+Ogg/Opus voice notes, mp3, m4a/mp4, WebM, FLAC, AMR and WAV are accepted, picked by their
+magic bytes. `language` is always `null`: the model picks among its 25 languages but doesn't
 say which.
+
+**`confidence`** is calibrated for Core's "below 0.7, ask the shopper to confirm" gate. It is
+the lowest word's entropy confidence, mapped so that 0.7 marks the worst 15% of FLEURS pt-BR
+transcripts (11.4% mean WER below it, 3.7% above). That ranks bad transcripts better than
+`exp(mean log-prob)` (AUROC 0.80 vs 0.77), which never went below 0.9 here and so never tripped
+the gate. Word `confidence` is NeMo's Tsallis-entropy measure (α = 1/3, exponential
+normalization) before mapping. At word level it flags wrong words about as well as the token
+probability does (AUROC 0.861 vs 0.859).
+
+**`x-stt-phrases`** (optional header) boosts phrases the audio likely contains: Core sends the
+store's active product names. The value is percent-encoded JSON, an array of at most 300
+strings of up to 80 characters; anything else is a 400 `bad_phrases`.
 
 Errors are `{error: code}` with a stable status:
 
 | Status | Codes                                                   |
 | ------ | ------------------------------------------------------- |
+| 400    | `bad_phrases`, `short_body`                             |
 | 401    | `unauthorized`                                          |
 | 411    | `length_required`                                       |
 | 413    | `too_big` (bytes), `too_long` (seconds)                 |
@@ -59,7 +71,11 @@ Errors are `{error: code}` with a stable status:
 | `STT_REQUEST_TIMEOUT_S` | `120`          |                                                       |
 | `LOG_LEVEL`             | `info`         | `debug` adds a line per batch (size, padding, RTFx)   |
 
-Build arg `STT_REDUCE_RANGE` (`auto`, `0` or `1`): see "The compile step".
+Build args:
+
+- `STT_MODEL`: `parakeet-tdt-0.6b-v3` (default) or `parakeet-tdt-0.6b-v3-ptbr`, the Brazilian
+  Portuguese fine-tune (see "Numbers").
+- `STT_REDUCE_RANGE`: `auto`, `0` or `1`; see "The compile step".
 
 ## The engine
 
@@ -119,16 +135,31 @@ about 25% faster per step and isn't exact, so it was left out.
 - **Continuous batching.** One thread owns the cores. An idle engine takes a request at once,
   and requests that queue during a run go into the next batch. A batch is the oldest request
   plus the queued ones nearest it in length, capped by count and by padded seconds.
-- **ffmpeg runs per request,** in a subprocess limited to `pipe:` I/O, so a malformed file
-  can't crash the server or make it open files or URLs. The number of concurrent decodes is
-  bounded.
+- **Audio is decoded in-process** with PyAV (libav). An ffmpeg subprocess cost 177 ms per 14 s
+  voice note, mostly process start-up and resampling. PyAV takes 53 ms. The demuxer is picked
+  from the file's magic bytes, so libav never probes, and nested protocol opens are refused, so
+  playlists or concat files can't make it read other files or URLs. Opus decodes at 48 kHz and
+  goes to 16 kHz through an exact 3:1 polyphase decimator (`audio.decimate3`); other rates use
+  libswresample.
+- **Leading and trailing silence is trimmed** (`audio.speech_span`), keeping 0.5 s of padding.
+  It uses frame energy against the clip's own noise floor, and doesn't cut when speech and
+  floor aren't clearly apart.
+- **Notes over 30 s are cut at their quietest pauses** into 15–30 s chunks (`audio.chunks`).
+  The chunks are decoded in the same batch and stitched back together.
+- **Phrase boosting** (`stt/boost.py`): a token automaton over a character trie of the
+  phrases, in four casings, so any tokenization of a name matches. Pieces that start a phrase
+  at a word boundary get +1.5 log-prob, and pieces that continue one get +3.0. The bonus
+  decides the greedy step only; reported probabilities stay the model's. Each phrase list is
+  built once (LRU) on the request thread.
 - **The thread count follows the container's CPU quota** (cgroup `cpu.max`), so compose's
   `cpus` sizes the engine.
 
 ## Numbers
 
-FLEURS pt-BR test set: 919 clips, 3.2 h of audio. Measured on 4 cores of a Xeon with AVX-512
-VNNI and AMX, with `python bench.py <models> <fleurs/pt_br> <batch>`:
+Measured with `python bench.py <models> <dir> [--limit N] [--no-trim]`. The FLEURS pt-BR test
+set is 919 clips and 3.2 h, re-encoded as 24 kbps Ogg/Opus like WhatsApp voice notes.
+
+Speed, first host (4 cores of a Xeon with AVX-512 VNNI and AMX, WAV input):
 
 | Pipeline                                  | RTFx | ms per clip |
 | ----------------------------------------- | ---- | ----------- |
@@ -136,8 +167,52 @@ VNNI and AMX, with `python bench.py <models> <fleurs/pt_br> <batch>`:
 | this engine, batch 1                      | 30.8 | 412         |
 | this engine, batch 8                      | 60.0 | 211         |
 
-WER on this set is still to be measured: the first run's TSV parsing was wrong (fixed in
-`bench.py`).
+Later runs were on a second host: a 2.8 GHz Xeon without AMX and with a 33 MB L3, about half
+as fast. Each comparison below was made on a single host.
+
+| Change, full FLEURS Opus set, batch 8 | WER          | Speed              |
+| ------------------------------------- | ------------ | ------------------ |
+| base (WAV input)                      | 5.08%        | RTFx 28.9          |
+| Opus, ffmpeg subprocess               | 5.03%        | 177 ms/note decode |
+| Opus, PyAV + decimator                | 5.08% (1)    | 53 ms/note decode  |
+| + trimming (keeps 89% of the audio)   | 5.11 → 4.66% | RTFx 27.7 → 29.3   |
+
+(1) 236 transcripts differ, 48 better and 55 worse: a coin flip (sign test p ≈ 0.55), not a loss.
+
+Long notes, built by joining FLEURS clips with 0.4 s gaps. WER is shown whole, then for the
+same clips decoded one by one:
+
+| Note length | Without chunking | With chunking | Clips one by one |
+| ----------- | ---------------- | ------------- | ---------------- |
+| ~120 s      | 5.38%            | 2.99%         | 3.23%            |
+| ~180 s      | 7.37%            | 6.89%         | 6.32%            |
+
+A 180 s note takes 12.1 s instead of 19.4 s when chunked.
+
+Phrase boosting (150 FLEURS clips; each clip's proper nouns stand in for unusual product names,
+plus 60 distractor names from other clips per catalog):
+
+| Boost (start, step) | Names recognized | WER   | False names | Time |
+| ------------------- | ---------------- | ----- | ----------- | ---- |
+| none                | 75.7%            | 4.58% | 0           | 74 s |
+| 1.5, 3.0 (default)  | 81.3%            | 4.06% | 0           | 72 s |
+| 3.0, 5.0            | 82.0%            | 4.00% | 0           | 72 s |
+
+Base model vs the pt-BR fine-tune (TAGARELA podcasts), 100 clips each:
+
+| Model                  | CORAA (spontaneous pt-BR) | FLEURS (read, Opus) |
+| ---------------------- | ------------------------- | ------------------- |
+| parakeet-tdt-0.6b-v3   | 12.32%                    | 4.40%               |
+| ...-ptbr (`STT_MODEL`) | 7.51%                     | 6.08%               |
+
+Voice notes are spontaneous speech, where the fine-tune is 39% better. It is worse on read
+speech, and it is one person's model, so it is opt-in until real voice notes decide.
+
+Tried and not kept:
+
+- **int8 joint head:** about 25% faster per step, but not exact.
+- **Attention rewrite:** folding 1/√d into the query and dropping the post-softmax mask pass
+  was within noise (±10%) over four alternating runs.
 
 ## Develop
 
@@ -146,6 +221,7 @@ cd services/stt
 python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m unittest discover -s tests -t .      # no model needed
 .venv/bin/python -m stt.fetch /tmp/pv3 && .venv/bin/python -m stt.compile /tmp/pv3 /tmp/models
+# the pt-BR fine-tune: stt.fetch /tmp/ptbr parakeet-tdt-0.6b-v3-ptbr; stt.compile /tmp/ptbr /tmp/m parakeet-tdt-0.6b-v3-ptbr
 STT_SECRET=dev STT_MODEL_DIR=/tmp/models .venv/bin/python -m stt.server
 curl -sS -H 'authorization: Bearer dev' --data-binary @note.ogg localhost:8792/v1/transcribe
 ```

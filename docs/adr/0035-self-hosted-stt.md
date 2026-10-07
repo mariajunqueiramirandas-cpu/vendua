@@ -74,3 +74,27 @@ engine sizes its threads to that quota.
   better pt WER (4.50). Its autoregressive decoder would need its own loop. A GPU host could run
   Voxtral Mini or Whisper turbo behind the same `/v1/transcribe` contract.
 - CC-BY-4.0 requires attribution, which is in `services/stt/README.md`.
+
+## Additions (2026-10-07)
+
+Measured on FLEURS pt-BR re-encoded as Opus and on CORAA spontaneous speech; the numbers are in
+`services/stt/README.md`.
+
+- **The store's catalog is boosted.** Ingest sends the store's active product names with each
+  note (`x-stt-phrases`), and the decoder favors them (shallow fusion, as in NeMo's GPU-PB). On
+  FLEURS proper nouns, names recognized went from 75.7% to 81.3%, with no false names and no
+  speed cost.
+- **`confidence` now trips Core's 0.7 gate.** It is the lowest word's entropy confidence,
+  calibrated so 0.7 marks the worst 15% of FLEURS transcripts. The old `exp(mean log-prob)`
+  never went below 0.9, so with the sidecar the agent never asked a shopper to confirm a note.
+  It will now ask more often. Spontaneous speech scores lower, so the real rate needs watching
+  on actual voice notes.
+- **Silence is trimmed and long notes are chunked at pauses.** Trimming took WER from 5.11% to
+  4.66% and saved 11% of the audio. Chunking took WER at 120 s from 5.38% to 2.99%, and makes
+  a 180 s note 1.6× faster.
+- **Audio is decoded in-process** (PyAV), at 53 ms per note instead of 177 ms through an
+  ffmpeg subprocess. The demuxer is chosen from magic bytes and nested opens are refused.
+- **The pt-BR fine-tune is opt-in** (`STT_MODEL=parakeet-tdt-0.6b-v3-ptbr`). It is 39% better
+  on spontaneous Brazilian Portuguese (CORAA 12.3% → 7.5%), worse on read speech (FLEURS 4.4% →
+  6.1%), and comes from a single community author. Real voice notes should decide the default.
+- **An attention-graph rewrite was tried and dropped:** within noise.

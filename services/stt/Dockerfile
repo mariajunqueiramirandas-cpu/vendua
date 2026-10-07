@@ -5,18 +5,19 @@ FROM python:3.13-slim-trixie AS model
 WORKDIR /src
 COPY requirements.txt requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt
-COPY stt/__init__.py stt/fetch.py stt/
-RUN python -m stt.fetch /src/export
-COPY stt/compile.py stt/decoder.py stt/
+COPY stt/__init__.py stt/cpus.py stt/fetch.py stt/
+# parakeet-tdt-0.6b-v3 (default) or parakeet-tdt-0.6b-v3-ptbr, the Brazilian Portuguese fine-tune
+# (ADR 0035: better on spontaneous speech, worse on read speech)
+ARG STT_MODEL=parakeet-tdt-0.6b-v3
+RUN python -m stt.fetch /src/export $STT_MODEL
+COPY stt/compile.py stt/
 # auto = decide from this host's /proc/cpuinfo; 1 when the image will run on CPUs without VNNI
 ARG STT_REDUCE_RANGE=auto
-RUN STT_REDUCE_RANGE=$STT_REDUCE_RANGE python -m stt.compile /src/export /models
+RUN STT_REDUCE_RANGE=$STT_REDUCE_RANGE python -m stt.compile /src/export /models $STT_MODEL
 
 FROM python:3.13-slim-trixie
-# ffmpeg decodes Ogg/Opus voice notes, in a subprocess so a bad file can't take the server down
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --no-create-home stt
+# audio is decoded in-process by PyAV, whose wheel bundles the libav libraries it needs
+RUN useradd --system --uid 10001 --no-create-home stt
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY --from=model /models /models

@@ -1,6 +1,6 @@
 """Turns the pinned Parakeet-TDT-0.6B-v3 ONNX export into what the engine loads.
 
-  python -m stt.compile <src dir with the fp32 export> <out dir>
+  python -m stt.compile <src dir with the fp32 export> <out dir> [model]
 
 - encoder.int8.onnx: the fp32 encoder with every 1x1 Conv1d rewritten as a MatMul, then
   dynamically quantized (MatMul only, per-channel, signed int8 weights). The community int8
@@ -23,6 +23,13 @@ from pathlib import Path
 import numpy as np
 import onnx
 from onnx import helper, numpy_helper
+
+from .fetch import DEFAULT
+
+# raw min-word entropy confidence that maps to 0.7 (Core's confirm gate), per model: the base
+# model's worst 15% on FLEURS pt-BR; the pt-BR fine-tune's threshold flags the same share of
+# a 200-clip FLEURS + CORAA mix as the base one does
+GATE_RAW = {"parakeet-tdt-0.6b-v3": 0.0057, "parakeet-tdt-0.6b-v3-ptbr": 0.00285}
 
 def cpu_has_vnni() -> bool:
     try:
@@ -133,7 +140,7 @@ def extract_decoder(src: Path) -> dict[str, np.ndarray]:
     }
 
 
-def main(src_dir: str, out_dir: str) -> None:
+def main(src_dir: str, out_dir: str, model: str = DEFAULT) -> None:
     src, out = Path(src_dir), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     # u8s8 without VNNI saturates int16 intermediates; the image is compiled on the host it runs on
@@ -143,10 +150,15 @@ def main(src_dir: str, out_dir: str) -> None:
     np.savez(out / "decoder.npz", **extract_decoder(src / "decoder_joint-model.onnx"))
     shutil.copyfile(src / "vocab.txt", out / "vocab.txt")
     shutil.copyfile(src / "nemo128.onnx", out / "preprocessor.onnx")
-    manifest = {"model": "parakeet-tdt-0.6b-v3", "pointwise_convs_rewritten": rewritten, "reduce_range": reduce_range}
+    manifest = {
+        "model": model,
+        "gate_raw": GATE_RAW[model],
+        "pointwise_convs_rewritten": rewritten,
+        "reduce_range": reduce_range,
+    }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(json.dumps(manifest))
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:3])
+    main(*sys.argv[1:4])

@@ -27,8 +27,13 @@ export interface Transcript {
   language: string | null;
 }
 
+export interface TranscribeHints {
+  /** words the audio likely contains (the store's product names); the sidecar boosts them */
+  phrases?: readonly string[];
+}
+
 export interface MediaProviders {
-  transcribe(audio: Uint8Array, mime: string): Promise<Transcript | null>;
+  transcribe(audio: Uint8Array, mime: string, hints?: TranscribeHints): Promise<Transcript | null>;
   /** Ogg/Opus bytes for a WhatsApp voice note, or null. */
   speak(text: string): Promise<{ bytes: Uint8Array; mime: string; seconds: number } | null>;
 }
@@ -42,6 +47,28 @@ export interface PhotoReading {
 const TIMEOUT_MS = 20_000;
 const CACHE_MS = 30_000;
 const SIDECAR_ROUTE: MediaRoute = { provider: 'sidecar', model: 'parakeet-tdt-0.6b-v3', zdr: true };
+// services/stt caps: 300 phrases of up to 80 characters; the header itself stays well under the
+// sidecar's 64 KB header-line limit
+const MAX_PHRASES = 300;
+const MAX_PHRASE_CHARS = 80;
+const MAX_HEADER_BYTES = 16_384;
+
+/** The sidecar's x-stt-phrases header: percent-encoded JSON, within its caps. */
+export function phrasesHeader(phrases: readonly string[] | undefined): string | null {
+  const list = [
+    ...new Set(
+      (phrases ?? [])
+        .map((p) => p.replace(/\s+/g, ' ').trim())
+        .filter((p) => p && p.length <= MAX_PHRASE_CHARS),
+    ),
+  ].slice(0, MAX_PHRASES);
+  let header = encodeURIComponent(JSON.stringify(list));
+  while (header.length > MAX_HEADER_BYTES && list.length) {
+    list.pop();
+    header = encodeURIComponent(JSON.stringify(list));
+  }
+  return list.length ? header : null;
+}
 
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
   const res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
@@ -78,15 +105,21 @@ export function mediaProviders(
   };
 
   return {
-    async transcribe(audio, mime) {
+    async transcribe(audio, mime, hints) {
       const sidecar = env.STT_URL && env.STT_SECRET ? env.STT_URL.replace(/\/+$/, '') : null;
       const configured = await routes('transcribe');
       for (const r of configured.length || !sidecar ? configured : [SIDECAR_ROUTE]) {
         try {
           if (r.provider === 'sidecar' && sidecar) {
+            const headers: Record<string, string> = {
+              authorization: `Bearer ${env.STT_SECRET}`,
+              'content-type': mime,
+            };
+            const phrases = phrasesHeader(hints?.phrases);
+            if (phrases) headers['x-stt-phrases'] = phrases;
             const j = (await fetchJson(`${sidecar}/v1/transcribe`, {
               method: 'POST',
-              headers: { authorization: `Bearer ${env.STT_SECRET}`, 'content-type': mime },
+              headers,
               body: audio,
             })) as { text?: string; confidence?: number | null; language?: string | null };
             if (typeof j.text === 'string')

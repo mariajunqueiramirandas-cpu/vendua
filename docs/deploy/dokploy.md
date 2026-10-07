@@ -208,7 +208,9 @@ goes to a third party and there is no per-minute charge.
    uses the sidecar. To keep a cloud route as a fallback, list
    `{"provider":"sidecar","model":"parakeet-tdt-0.6b-v3","zdr":true}` first.
 
-`STT_CPUS` (default 2) caps the cores it may use, so Core and Postgres keep theirs. If the image is built on another machine for a host without
+`STT_CPUS` (default 2) caps the cores it may use, so Core and Postgres keep theirs.
+`STT_MODEL=parakeet-tdt-0.6b-v3-ptbr` builds the Brazilian Portuguese fine-tune instead: better
+on spontaneous speech, worse on read speech (ADR 0035). If the image is built on another machine for a host without
 AVX-512/AVX-VNNI, build with `--build-arg STT_REDUCE_RANGE=1`.
 
 ## Stores' own WhatsApp (order updates to shoppers)

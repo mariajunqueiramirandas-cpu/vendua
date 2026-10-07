@@ -26,6 +26,7 @@ class Overloaded(Exception):
 @dataclass
 class _Job:
     wave: np.ndarray
+    boost: object = None  # the engine's PhraseBoost for this request, or None
     future: Future = field(default_factory=Future)
     queued_at: float = field(default_factory=time.monotonic)
 
@@ -42,7 +43,7 @@ class BatchStats:
 class Batcher:
     def __init__(
         self,
-        transcribe: Callable[[list[np.ndarray]], list[Transcript]],
+        transcribe: Callable[[list[np.ndarray], list], list[Transcript]],
         max_batch: int = 8,
         max_padded_seconds: float = 480.0,
         max_queue: int = 64,
@@ -60,8 +61,8 @@ class Batcher:
         self._thread = threading.Thread(target=self._loop, name="stt-batcher", daemon=True)
         self._thread.start()
 
-    def submit(self, wave: np.ndarray) -> Future:
-        job = _Job(wave)
+    def submit(self, wave: np.ndarray, boost: object = None) -> Future:
+        job = _Job(wave, boost)
         with self._cv:
             if len(self._queue) >= self.max_queue:
                 raise Overloaded()
@@ -106,7 +107,7 @@ class Batcher:
                 continue
             started = time.monotonic()
             try:
-                results = self._transcribe([j.wave for j in batch])
+                results = self._transcribe([j.wave for j in batch], [j.boost for j in batch])
             except Exception as err:  # noqa: BLE001 — the waiting requests get it
                 for j in batch:
                     j.future.set_exception(err)

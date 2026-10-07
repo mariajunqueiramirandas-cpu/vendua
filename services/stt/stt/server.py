@@ -2,6 +2,8 @@
 
   POST /v1/transcribe   body = the audio file's bytes, Authorization: Bearer $STT_SECRET
                         -> {text, confidence, language, seconds[, words]}   (?words=1 for words)
+                        x-stt-phrases: percent-encoded JSON array of phrases to boost (a
+                        store's product names), at most 300 of up to 80 characters
   GET  /healthz         -> 200 once the model is loaded and warm
 
 Transcripts are shoppers' words: never logged, never kept.
@@ -17,12 +19,29 @@ import threading
 import time
 from concurrent.futures import TimeoutError as FutureTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import audio
 from .batcher import Batcher, BatchStats, Overloaded
+from .boost import MAX_PHRASE_CHARS, MAX_PHRASES
 from .cpus import cpu_budget
 from .engine import Engine
+
+
+def parse_phrases(header: str | None) -> list[str] | None:
+    """The x-stt-phrases header -> phrases; ValueError when malformed or past the caps."""
+    if not header:
+        return []
+    phrases = json.loads(unquote(header, errors="strict"))
+    if not isinstance(phrases, list) or len(phrases) > MAX_PHRASES:
+        raise ValueError("phrases")
+    out = []
+    for p in phrases:
+        if not isinstance(p, str) or len(p) > MAX_PHRASE_CHARS:
+            raise ValueError("phrase")
+        if p.strip():
+            out.append(" ".join(p.split()))
+    return out
 
 
 def log(level: str, msg: str, **fields) -> None:
@@ -47,9 +66,11 @@ class Config:
 
 
 class App:
-    def __init__(self, cfg: Config, batcher: Batcher):
+    def __init__(self, cfg: Config, batcher: Batcher, boost=None):
         self.cfg = cfg
         self.batcher = batcher
+        # built on the request thread (cached per phrase list), so the engine thread never waits
+        self.boost = boost or (lambda phrases: None)
         self.ready = False
         # ffmpeg runs on the request threads; keep it from starving the engine's cores
         self.decoders = threading.BoundedSemaphore(max(2, cfg.threads))
@@ -129,6 +150,11 @@ class Handler(BaseHTTPRequestHandler):
             self._fail(400, "short_body")
             return 400, "short_body", 0.0
         try:
+            phrases = parse_phrases(self.headers.get("x-stt-phrases"))
+        except (ValueError, UnicodeDecodeError):
+            self._fail(400, "bad_phrases")
+            return 400, "bad_phrases", 0.0
+        try:
             with self.app.decoders:
                 wave = audio.decode(body, cfg.max_seconds)
         except audio.AudioError as e:
@@ -137,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
             return status, e.code, 0.0
         seconds = wave.size / audio.SAMPLE_RATE
         try:
-            future = self.app.batcher.submit(wave)
+            future = self.app.batcher.submit(wave, self.app.boost(phrases) if phrases else None)
         except Overloaded:
             self._fail(503, "overloaded")
             return 503, "overloaded", seconds
@@ -158,7 +184,7 @@ class Handler(BaseHTTPRequestHandler):
             "seconds": round(tr.seconds, 3),
         }
         if parse_qs(query).get("words") == ["1"]:
-            out["words"] = [{"word": w, "start": s} for w, s in tr.words]
+            out["words"] = [{"word": w.word, "start": w.start, "confidence": round(w.confidence, 4)} for w in tr.words]
         self._send(200, out)
         return 200, "ok", seconds
 
@@ -183,7 +209,7 @@ def build(cfg: Config, engine) -> tuple[ThreadingHTTPServer, App]:
         max_wait_ms=cfg.max_wait_ms,
         on_batch=on_batch if os.environ.get("LOG_LEVEL") == "debug" else None,
     )
-    app = App(cfg, batcher)
+    app = App(cfg, batcher, getattr(engine, "boost", None))
     handler = type("BoundHandler", (Handler,), {"app": app})
     httpd = ThreadingHTTPServer(cfg.addr, handler)
     httpd.daemon_threads = True
