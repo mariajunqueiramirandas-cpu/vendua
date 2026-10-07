@@ -101,6 +101,8 @@ export const DUA = {
   chosen: (name: string) =>
     `Certo, agora é ${name}. Pode mandar. Para trocar de loja, mande #loja.`,
   onlyStore: (name: string) => `Você fala comigo pela ${name}.`,
+  moreInPanel: (n: number, link: string | null) =>
+    `${n === 1 ? 'Mais um cartão' : `Mais ${n} cartões`} para conferir no painel${link ? `: ${link}` : ''}.`,
   calm: 'Calma, já respondo.',
   turnOn: (first: string, link: string | null) =>
     `Oi, ${first}! Para falar com o Duá por aqui, ligue “Duá pelo WhatsApp” em Perfil, no painel${link ? `: ${link}` : ''}.`,
@@ -115,3 +117,6 @@ export const DUA = {
 /** Below this, Duá repeats what it heard before proposing anything. */
 export const LOW_CONFIDENCE = 0.6;
 export const HEARD_UNSURE = '[áudio; a transcrição pode ter erros]';
+
+/** The inbox body the gateway writes for a voice note it couldn't download (Core: "manda de novo"). */
+export const AUDIO_NOT_FETCHED = '[áudio não baixado]';

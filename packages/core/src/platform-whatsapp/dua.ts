@@ -12,8 +12,16 @@ import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { phoneVariants } from '../store-whatsapp/text.ts';
 import type { MediaProviders } from '../vendedor/media.ts';
-import { DUA, HEARD_UNSURE, LOW_CONFIDENCE, parseChoice, parseReply } from './dua-text.ts';
+import {
+  AUDIO_NOT_FETCHED,
+  DUA,
+  HEARD_UNSURE,
+  LOW_CONFIDENCE,
+  parseChoice,
+  parseReply,
+} from './dua-text.ts';
 import { enqueuePlatformWaTx } from './outbox.ts';
+import { platformTransport } from './transport.ts';
 
 // Duá by WhatsApp (docs/features/dua-no-whatsapp.md §5, ADR 0034 amended 2026-10-07): a message
 // from a merchant phone to Venduá's number reaches that person's Copilot conversation. Who is
@@ -460,7 +468,12 @@ async function hear(
 ): Promise<Heard | DuaOutcome> {
   const audioTag = body.startsWith('[áudio');
   if (!row.media_id) {
-    if (audioTag) return answer(d, row, 'voice', d.media ? DUA.voiceTooLong : DUA.textOnly);
+    // Core's socket never downloads; the gateway marks a note it couldn't fetch, and keeps none
+    // of one past the caps
+    if (audioTag && (!d.media || platformTransport() === 'socket'))
+      return answer(d, row, 'voice', DUA.textOnly);
+    if (body.startsWith(AUDIO_NOT_FETCHED)) return answer(d, row, 'voice', DUA.voiceUnheard);
+    if (audioTag) return answer(d, row, 'voice', DUA.voiceTooLong);
     if (!body || /^\[(imagem|vídeo|documento|figurinha)/.test(body))
       return answer(d, row, 'media', DUA.mediaOnly);
     return { text: body.slice(0, MAX_BODY), voice: false };

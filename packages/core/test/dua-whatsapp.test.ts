@@ -18,6 +18,7 @@ import { copilotTransport } from '../src/copilot/view.ts';
 import { migrate, withTenant, type Sql } from '../src/platform/db.ts';
 import { routeToDua, type InboxRow } from '../src/platform-whatsapp/dua.ts';
 import {
+  AUDIO_NOT_FETCHED,
   DUA,
   HEARD_UNSURE,
   parseChoice,
@@ -438,9 +439,22 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
     expect(box[0]!.payload.kind).toBe('voice');
     const v = await view(s);
     expect(v.items.filter((i) => i.type === 'message' && i.voice)).toHaveLength(2);
-    // over the cap the gateway keeps no media: the tag alone asks for a shorter one
-    await inbound(s.phone, '[áudio]');
-    expect(await lastSent(s.phone)).toBe(DUA.voiceTooLong);
+    // over the cap the gateway keeps no media: the tag alone asks for a shorter one, a note it
+    // couldn't fetch asks again, and Core's own socket (no downloads) asks for text
+    const prev = process.env.WA_PLATFORM_TRANSPORT;
+    process.env.WA_PLATFORM_TRANSPORT = 'gateway';
+    try {
+      await inbound(s.phone, '[áudio]');
+      expect(await lastSent(s.phone)).toBe(DUA.voiceTooLong);
+      await inbound(s.phone, AUDIO_NOT_FETCHED);
+      expect(await lastSent(s.phone)).toBe(DUA.voiceUnheard);
+      process.env.WA_PLATFORM_TRANSPORT = 'socket';
+      await inbound(s.phone, '[áudio]');
+      expect(await lastSent(s.phone)).toBe(DUA.textOnly);
+    } finally {
+      if (prev === undefined) delete process.env.WA_PLATFORM_TRANSPORT;
+      else process.env.WA_PLATFORM_TRANSPORT = prev;
+    }
   });
 
   test('past 30 messages in 10 minutes: one “calma”, and the rest wait', async () => {

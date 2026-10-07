@@ -1,3 +1,4 @@
+import { AUDIO_NOT_FETCHED } from '../src/platform-whatsapp/dua-text.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import pino from 'pino';
@@ -461,6 +462,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('platform whatsapp: gateway (db)
     const v2 = rows.find((r) => r.provider_id === 'IN-V2')!;
     expect(v2.body).toBe('[áudio]');
     expect(v2.media_id).toBeNull();
+
+    // a short note WhatsApp wouldn't hand over is marked, not mistaken for a long one
+    world.media = new Uint8Array(0);
+    try {
+      upsert([{ key: { remoteJid: shopperPn, id: 'IN-V3' }, message: audio(5) }]);
+      await until(async () => (await inbox()).some((r) => r.provider_id === 'IN-V3'));
+      const v3 = (await inbox()).find((r) => r.provider_id === 'IN-V3')!;
+      expect(v3.body).toBe(AUDIO_NOT_FETCHED);
+      expect(v3.media_id).toBeNull();
+    } finally {
+      world.media = new Uint8Array([1, 2, 3]);
+    }
   });
 
   test('history at pairing: LID pairs first, then messages named as the CRM did; history = false keeps only pairs', async () => {
@@ -675,6 +688,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('platform whatsapp: gateway (db)
     await until(() => gw.sessionOf(S) === null);
     expect(s.ended).toBe(true);
     await sql`update platform_wa_sessions set owner = null, lease_until = null where name = ${S}`;
+  });
+
+  test('a session nobody wants any more is let go and reads as off', async () => {
+    await gw.tick();
+    await until(() => gw.sessionOf(S)?.running === true);
+    world.last.connection({ connection: 'open' });
+    await until(async () => (await row()).state === 'open');
+    await sql`update platform_wa_sessions set wanted = false where name = ${S}`;
+    await gw.tick();
+    await until(async () => (await row()).owner === null);
+    const r = await row();
+    expect(r.state).toBe('off');
+    expect(r.detail).toBe('released');
+    await sql`update platform_wa_sessions set wanted = true, state = 'connecting' where name = ${S}`;
   });
 
   test('wipe: logout on WhatsApp, login forgotten, request cleared, lease handed back', async () => {

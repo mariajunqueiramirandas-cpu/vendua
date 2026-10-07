@@ -1,3 +1,4 @@
+import { AUDIO_NOT_FETCHED } from '../platform-whatsapp/dua-text.ts';
 import { hostname } from 'node:os';
 import type { Logger } from 'pino';
 import {
@@ -390,6 +391,7 @@ export class PlatformGateway {
     const dm = await resolveDmJid(m.jid, m.alt ?? undefined, m.pnForLid);
     if (!dm) return;
     let media: InboxMedia | null = null;
+    let fetchFailed = false;
     const audio = m.content?.kind === 'audio' ? m.content.media : null;
     if (
       audio?.type === 'audio' &&
@@ -402,7 +404,9 @@ export class PlatformGateway {
         const got = await m.download();
         if (got.byteLength > 0 && got.byteLength <= MAX_MEDIA_BYTES)
           media = { mime: audio.mime, bytes: got, seconds: audio.seconds };
+        else fetchFailed = true;
       } catch (e) {
+        fetchFailed = true;
         this.log.warn({ err: e, session: name }, 'voice note not downloaded');
       }
     }
@@ -416,7 +420,8 @@ export class PlatformGateway {
         alt_jid: dm.alias ?? null,
         phone: digitsOf(dm.jid),
         push_name: m.pushName,
-        body,
+        // WhatsApp won't deliver it again: Core asks for it instead of reading it as too long
+        body: fetchFailed ? AUDIO_NOT_FETCHED : body,
         provider_id: m.id,
         from_me: false,
         sent_at: messageTs(m.timestamp),
@@ -566,7 +571,11 @@ export class PlatformGateway {
     await controlTx(
       this.o.sql,
       (tx) => tx`
-        update platform_wa_sessions set owner = null, lease_until = null
+        update platform_wa_sessions set owner = null, lease_until = null,
+          -- let go because nobody wants it (the integration was turned off): not 'open' any more
+          state = case when wanted then state else 'off' end,
+          detail = case when wanted then detail else 'released' end,
+          state_changed_at = case when wanted or state = 'off' then state_changed_at else now() end
         where name = ${name} and owner = ${this.id} and lease_epoch = ${o.fence.epoch}`,
     );
   }

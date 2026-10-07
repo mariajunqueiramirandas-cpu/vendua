@@ -2,12 +2,14 @@ import type { FencedTx, OutboundMessage, Transport } from '@vendua/agent-runtime
 import { roleAtLeast, type Merchant, type Role } from '../admin/context.ts';
 import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
-import { renderCards, toWhatsApp } from '../platform-whatsapp/dua-text.ts';
+import { DUA, renderCards, toWhatsApp } from '../platform-whatsapp/dua-text.ts';
 import type { ActionKind, ActionStatus, ActionView, Line } from './actions.ts';
 
 /** How long Duá may take before the admin stops showing it as writing. */
 export const BUSY_MS = 2 * 60_000;
 const SHOWN = 60;
+/** what a WhatsApp reply's cards may take of its 4000 characters */
+const CARDS_ROOM = 3200;
 
 export interface MessageView {
   id: string;
@@ -134,25 +136,36 @@ async function forwardToWhatsApp(sql: Sql, tenantId: string, messageId: string, 
     select id, wa_ref, title, lines, money, expires_at from copilot_actions
     where tenant_id = ${tenantId} and message_id = ${messageId} and status = 'proposed'
     order by created_at, id`;
-  let ref = 0;
-  for (const c of cards) {
-    ref++;
-    if (c.wa_ref == null) {
-      await sql`update copilot_actions set wa_ref = ${ref} where id = ${c.id} and wa_ref is null`;
-      c.wa_ref = ref;
-    }
-  }
   const [store] = await sql<{ tz: string | null }[]>`
     select hours ->> 'timezone' as tz from store_settings where tenant_id = ${tenantId}`;
   const host = process.env.VENDUA_ADMIN_HOST?.trim();
-  const rendered = renderCards(
-    cards.map((c) => ({ ref: c.wa_ref, title: c.title, lines: c.lines, money: c.money })),
-    {
-      expiresAt: new Date(Math.min(...cards.map((c) => c.expires_at.getTime()))),
-      tz: store?.tz || 'America/Sao_Paulo',
-      appLink: host ? `https://${host}/admin/copiloto` : null,
-    },
-  );
+  const appLink = host ? `https://${host}/admin/copiloto` : null;
+  const render = (cs: CardRow[]) =>
+    renderCards(
+      cs.map((c, i) => ({
+        ref: c.wa_ref ?? i + 1,
+        title: c.title,
+        lines: c.lines,
+        money: c.money,
+      })),
+      {
+        expiresAt: new Date(Math.min(...cs.map((c) => c.expires_at.getTime()))),
+        tz: store?.tz || 'America/Sao_Paulo',
+        appLink,
+      },
+    );
+  // as many cards as fit whole; the rest stay in the panel, with no number to answer "SIM" to
+  let shown: CardRow[] = [...cards];
+  while (shown.length && render(shown).length > CARDS_ROOM) shown = shown.slice(0, -1);
+  for (const [i, c] of shown.entries())
+    if (c.wa_ref == null) {
+      await sql`update copilot_actions set wa_ref = ${i + 1} where id = ${c.id} and wa_ref is null`;
+      c.wa_ref = i + 1;
+    }
+  const rest = cards.length - shown.length;
+  const rendered = [render(shown), rest ? DUA.moreInPanel(rest, appLink) : '']
+    .filter(Boolean)
+    .join('\n\n');
   // the cards and their "SIM" fit first: a long reply is cut, never a card someone can confirm
   const room = 4000 - (rendered ? rendered.length + 2 : 0);
   const said = toWhatsApp(text);
