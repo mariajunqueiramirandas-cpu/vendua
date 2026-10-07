@@ -722,13 +722,27 @@ export function mountOrders(d: AdminDeps) {
       // the money already went back but the order moved on meanwhile (delivered, say): it ends
       // refunded rather than an active order with nothing paid
       if (refunded && to === 'cancelled' && err instanceof HttpError && err.status === 409)
-        await withTenant(d.sql, t0.id, (tx) =>
-          transitionOrder(tx, t0.id, id, 'refunded', 'merchant', {
+        await withTenant(d.sql, t0.id, async (tx) => {
+          const before = await loadOrderView(tx, t0.id, id);
+          await transitionOrder(tx, t0.id, id, 'refunded', 'merchant', {
             by: m0.name,
             refundedCents: refunded,
             ...(reason ? { reason } : {}),
-          }),
-        ).catch(() => {});
+          });
+          await audit(tx, t0.id, m0, {
+            action: 'order.refunded',
+            entity: 'order',
+            entityId: id,
+            summary: `pedido #${before.number}: ${STATE_LABEL[before.state]} → ${STATE_LABEL.refunded} · estornou ${brl(refunded)} no Mercado Pago ao cancelar`,
+            before: { state: before.state },
+            after: { state: 'refunded', refundedCents: refunded },
+          });
+        }).catch((e) =>
+          refundLog.warn(
+            { err: e, tenantId: t0.id, orderId: id },
+            'refunded cancel left the order as it was',
+          ),
+        );
       throw err;
     }
     if (res.status === 200 && (to === 'cancelled' || to === 'refunded'))
