@@ -22,6 +22,7 @@ import { setStatusRefresher, showError, showInfo } from './errors.ts';
 import { beacon } from './telemetry.ts';
 import type { StorefrontBundle } from './composition/registry.ts';
 import { setThemeColor } from './theme-color.ts';
+import { takeTableLink } from './table.ts';
 
 // tenant context, api client, token emission — mounted once per storefront root
 // (03-storefront-contract.md#required-mounts); Phase 0 uses a minimal in-flight
@@ -76,6 +77,8 @@ function tokensToVars(tokens: StorefrontTokens): Record<string, string> {
   }
   return vars;
 }
+
+const tableTaken = new WeakSet<VenduaApi>();
 
 const EMPTY_BUNDLE: StorefrontBundle = { sections: {}, snapshot: { templates: {}, tokens: null } };
 
@@ -247,6 +250,13 @@ export function VenduaProvider({
       globalThis.removeEventListener?.('storage', onStorage);
       globalThis.removeEventListener?.('online', onOnline);
     };
+  }, [api]);
+
+  // Kernel 1.22 (ADR 0036): `?mesa=<token>`, the table's QR code — once per client
+  useEffect(() => {
+    if (tableTaken.has(api)) return;
+    tableTaken.add(api);
+    takeTableLink(api);
   }, [api]);
 
   // Kernel 1.2 links: `?cart=CODE` restores a shared sacola, `?cupom=CODE` applies a

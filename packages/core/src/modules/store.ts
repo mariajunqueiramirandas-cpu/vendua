@@ -94,6 +94,8 @@ export interface StoreSettingsRow {
   prep_time_minutes: number;
   min_order_cents: number;
   pickup_enabled: boolean;
+  /** the PDV's QR codes take orders (ADR 0036, migration 0099) */
+  pdv_qr_orders?: boolean;
   delivery_enabled: boolean;
   promo: { title: string; body?: string } | null;
   currency: string;

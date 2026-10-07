@@ -24,6 +24,7 @@ import { formatCents } from '../rules/format.ts';
 import { digitsOf, isValidCep, maskCep } from '../rules/phone.ts';
 import { usePageTitle } from '../head.ts';
 import { closedNote } from './closed.ts';
+import { useTableSession } from '../table.ts';
 
 // /sacola — Kernel page (17 — Kernel pages), rendered inside the store's layout.
 // Totals are Core's; the page only wires slots to the cart mutations.
@@ -155,6 +156,8 @@ function DeliveryEstimate({ cart, currency }: { cart: Cart; currency: string }) 
   const money = (c: number) => formatCents(c, currency);
   const byDistance = store?.distancePricing ?? null;
   const geoZones = zones.some((z) => z.kind === 'radius' || z.kind === 'polygon');
+  // Kernel 1.22 — at a table nothing is delivered
+  const atTable = !!useTableSession() && store?.dineIn?.enabled === true;
   const remembered = customer?.address;
   const [where, setWhere] = useState<{ arg: QuoteWhere; place: string } | null>(() => {
     const pin = pinOf(remembered);
@@ -172,7 +175,7 @@ function DeliveryEstimate({ cart, currency }: { cart: Cart; currency: string }) 
   const cartKey = [t.subtotalCents, t.discountCents ?? 0, t.itemCount].join('|');
 
   useEffect(() => {
-    if (!where) return;
+    if (!where || atTable) return;
     let live = true;
     setEstimate({ kind: 'pending' });
     quote({ ...where.arg, withCart: true }).then(
@@ -192,7 +195,7 @@ function DeliveryEstimate({ cart, currency }: { cart: Cart; currency: string }) 
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [where, cartKey]);
+  }, [where, cartKey, atTable]);
 
   // a remembered CEP alone (no bairro) is looked up once
   const autoCep = useRef(where === null && !byDistance && isValidCep(cep));
@@ -216,6 +219,7 @@ function DeliveryEstimate({ cart, currency }: { cart: Cart; currency: string }) 
   if (
     !store ||
     store.deliveryEnabled === false ||
+    atTable ||
     cart.delivery?.mode === 'delivery' ||
     (!byDistance && zones.length === 0)
   )

@@ -28,6 +28,7 @@ const NONE = {
   loyalty: false,
   vendedor: false,
   copilot: false,
+  pdv: false,
 };
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
@@ -193,6 +194,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       printing: true,
       loyalty: true,
       vendedor: true,
+      pdv: true,
     });
     expect(Object.values(plans[2].features).every((v) => v === true)).toBe(true);
     expect(plans.map((p) => [p.aiConversations, p.aiTrialConversations])).toEqual([
@@ -377,6 +379,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
         loyalty: true,
         vendedor: true,
         copilot: true,
+        pdv: true,
       },
     });
     const paid = await store('sess-p', 'pangolim', 'active');
@@ -388,6 +391,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       loyalty: true,
       vendedor: true,
       copilot: true,
+      pdv: true,
     });
     // any role gets it
     const attendant = `217${String(Date.now() + 999).slice(-8)}`;

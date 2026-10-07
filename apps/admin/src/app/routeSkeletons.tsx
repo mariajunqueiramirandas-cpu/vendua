@@ -19,6 +19,7 @@ import {
   RowsSkeleton,
   SectionsSkeleton,
   StatTilesSkeleton,
+  TilesSkeleton,
 } from '../ui/skeletons.tsx';
 
 import { matchRoute, type RouteId } from './routes.ts';
@@ -81,6 +82,34 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
     </div>
   ),
   kitchen: () => <KitchenSkeleton />,
+  pdv: () => (
+    <div className="mx-auto w-full max-w-[1600px] px-4 pb-32 pt-4 md:px-6 md:pt-6 lg:px-8">
+      <ChipsSkeleton count={3} className="mb-5" />
+      <div className="md:grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="space-y-4">
+          <FieldSkeleton />
+          <ChipsSkeleton count={5} />
+          <TilesSkeleton count={8} />
+        </div>
+        <div className="hidden md:block">
+          <SectionsSkeleton />
+        </div>
+      </div>
+    </div>
+  ),
+  pdvMesas: () => page('Mesas', <TilesSkeleton count={8} />, { wide: true, subtitle: false }),
+  pdvQr: () => page('QR das mesas', <TilesSkeleton count={3} />),
+  pdvComanda: () => page('Comanda', <DetailSkeleton />, { subtitle: false }),
+  pdvCaixa: () =>
+    page(
+      'Caixa',
+      <div className="space-y-4">
+        <StatTilesSkeleton count={4} />
+        <RowsSkeleton rows={3} avatar={false} />
+      </div>,
+      { subtitle: false },
+    ),
+  pdvReport: () => page('Fechamento do caixa', <DetailSkeleton />),
   pickup: () => <KitchenSkeleton pickup />,
   product: () => page('Produto', <ProductSkeleton />, { subtitle: false }),
   menu: () => page('Cardápio', <MenuSkeleton />, { wide: true, subtitle: false }),

@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { orderPath } from '@vendua/kernel/rules';
+import { pathMode } from '../../ui/orderMode.ts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
@@ -196,7 +197,7 @@ export function useAdvance() {
   const step = useStep();
   const run = useCallback(
     async (ticket: KitchenTicket, target: OrderState, prepMinutes?: number) => {
-      const path = orderPath(ticket.mode) as OrderState[];
+      const path = orderPath(pathMode(ticket.mode)) as OrderState[];
       const i = path.indexOf(ticket.state);
       const j = path.indexOf(target);
       if (i < 0 || j <= i) return;

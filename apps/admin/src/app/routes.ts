@@ -32,6 +32,12 @@ export const chunks = {
   order: once(() => import('../features/orders/OrderPage.tsx')),
   kitchen: once(() => import('../features/kitchen/Kitchen.tsx')),
   pickup: once(() => import('../features/kitchen/Pickup.tsx')),
+  pdv: once(() => import('../features/pdv/Vender.tsx')),
+  pdvMesas: once(() => import('../features/pdv/Mesas.tsx')),
+  pdvQr: once(() => import('../features/pdv/MesasQr.tsx')),
+  pdvComanda: once(() => import('../features/pdv/Comanda.tsx')),
+  pdvCaixa: once(() => import('../features/pdv/Caixa.tsx')),
+  pdvReport: once(() => import('../features/pdv/CaixaReport.tsx')),
   menu: once(() => import('../features/menu/Menu.tsx')),
   product: once(() => import('../features/menu/ProductPage.tsx')),
   importMenu: once(() => import('../features/import/ImportPage.tsx')),
@@ -91,6 +97,12 @@ export type RouteId =
   | 'orders'
   | 'kitchen'
   | 'pickup'
+  | 'pdv'
+  | 'pdvMesas'
+  | 'pdvQr'
+  | 'pdvComanda'
+  | 'pdvCaixa'
+  | 'pdvReport'
   | 'product'
   | 'importMenu'
   | 'stock'
@@ -137,6 +149,7 @@ const has = (qc: QueryClient, f: PlanFeature) => {
   return !s || featureOpen(s, f);
 };
 const kds = (qc: QueryClient) => has(qc, 'kds');
+const pdv = (qc: QueryClient) => has(qc, 'pdv');
 
 const ROUTES: RouteDef[] = [
   {
@@ -188,6 +201,47 @@ const ROUTES: RouteDef[] = [
     match: /^\/cozinha$/,
     chunk: chunks.kitchen,
     data: (qc) => (kds(qc) ? q(qc, qk.kitchen, api.kitchen) : Promise.resolve()),
+  },
+  {
+    id: 'pdv',
+    match: /^\/pdv$/,
+    chunk: chunks.pdv,
+    data: (qc) =>
+      pdv(qc)
+        ? Promise.all([q(qc, qk.pdv.state, api.pdv.state), q(qc, qk.catalog, api.catalog)])
+        : Promise.resolve(),
+  },
+  {
+    id: 'pdvMesas',
+    match: /^\/pdv\/mesas$/,
+    chunk: chunks.pdvMesas,
+    data: (qc) => (pdv(qc) ? q(qc, qk.pdv.state, api.pdv.state) : Promise.resolve()),
+  },
+  {
+    id: 'pdvQr',
+    match: /^\/pdv\/mesas\/qr$/,
+    chunk: chunks.pdvQr,
+    data: (qc) => (pdv(qc) ? q(qc, qk.pdv.state, api.pdv.state) : Promise.resolve()),
+  },
+  {
+    id: 'pdvComanda',
+    match: /^\/pdv\/comanda\/([^/]+)$/,
+    chunk: chunks.pdvComanda,
+    data: (qc, m) =>
+      pdv(qc) ? q(qc, qk.pdv.tab(m[1]!), () => api.pdv.tab(m[1]!)) : Promise.resolve(),
+  },
+  {
+    id: 'pdvReport',
+    match: /^\/pdv\/caixa\/([^/]+)$/,
+    chunk: chunks.pdvReport,
+    data: (qc, m) =>
+      pdv(qc) ? q(qc, qk.pdv.session(m[1]!), () => api.pdv.session(m[1]!)) : Promise.resolve(),
+  },
+  {
+    id: 'pdvCaixa',
+    match: /^\/pdv\/caixa$/,
+    chunk: chunks.pdvCaixa,
+    data: (qc) => (pdv(qc) ? q(qc, qk.pdv.caixa, api.pdv.caixa) : Promise.resolve()),
   },
   {
     id: 'product',

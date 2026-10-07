@@ -14,6 +14,8 @@ export interface PlanFeatures {
   vendedor: boolean;
   /** Duá Copilot, Duá working for the store's people inside the admin (ADR 0034) */
   copilot: boolean;
+  /** the PDV: counter sales, mesas and the caixa (ADR 0035) */
+  pdv: boolean;
 }
 export type PlanFeature = keyof PlanFeatures;
 export const PLAN_FEATURES: readonly PlanFeature[] = [
@@ -24,6 +26,7 @@ export const PLAN_FEATURES: readonly PlanFeature[] = [
   'loyalty',
   'vendedor',
   'copilot',
+  'pdv',
 ];
 /** features a trial doesn't open: they wait for the first payment (ADR 0025) */
 const PAID_ONLY: ReadonlySet<PlanFeature> = new Set(['customDomain', 'customSite']);
@@ -98,6 +101,7 @@ export function legacyPlan(id: string): Plan {
       loyalty: true,
       vendedor: true,
       copilot: false,
+      pdv: true,
     },
     trialDays: 0,
     recommended: false,

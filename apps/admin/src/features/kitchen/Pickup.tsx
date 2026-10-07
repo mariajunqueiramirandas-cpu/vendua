@@ -63,7 +63,7 @@ function PickupPanel() {
     };
   }, []);
 
-  const shown = (t: KitchenTicket) => deliveries || t.mode === 'pickup';
+  const shown = (t: KitchenTicket) => deliveries || t.mode !== 'delivery';
   const tickets = data?.tickets ?? [];
   const making = useMemo(
     () =>

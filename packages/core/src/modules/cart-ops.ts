@@ -156,6 +156,7 @@ export function parseDeliveryInput(input: unknown): CartDelivery {
     throw new HttpError(422, 'INVALID_DELIVERY', 'mode must be pickup or delivery');
   const body = input as Record<string, unknown>;
   const { mode } = body;
+  if (mode === 'dine_in') return { mode };
   if (mode !== 'pickup' && mode !== 'delivery') {
     throw new HttpError(422, 'INVALID_DELIVERY', 'mode must be pickup or delivery');
   }

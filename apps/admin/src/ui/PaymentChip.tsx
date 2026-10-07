@@ -6,10 +6,17 @@ import {
   HourglassMedium,
   Money,
   Prohibit,
+  Receipt,
   Scales,
   WarningOctagon,
 } from '@phosphor-icons/react';
-import { ApiError, type PaymentReview, type PayMethod } from '../lib/api.ts';
+import {
+  ApiError,
+  type OrderPayMethod,
+  type PaymentReview,
+  type PayMethod,
+  type PdvMethod,
+} from '../lib/api.ts';
 import { cn } from './cn.ts';
 import { messageOf } from './feedback.tsx';
 
@@ -31,7 +38,29 @@ export const METHOD_LABEL: Record<PayMethod, string> = {
   meal_voucher: 'Vale-refeição',
 };
 
-type Pay = { method: PayMethod | string; status: string; online?: boolean | undefined };
+/** the counter's five (ADR 0035) */
+export const PDV_METHOD_LABEL: Record<PdvMethod, string> = {
+  cash: 'Dinheiro',
+  pix: 'Pix',
+  credit: 'Crédito',
+  debit: 'Débito',
+  voucher: 'Vale-refeição',
+};
+
+/** any order's method, the storefront's or the counter's */
+export const PAY_LABEL: Record<OrderPayMethod, string> = {
+  ...METHOD_LABEL,
+  ...PDV_METHOD_LABEL,
+  mixed: 'Misto',
+  tab: 'Comanda',
+};
+
+type Pay = {
+  method: OrderPayMethod | string;
+  status: string;
+  online?: boolean | undefined;
+  provider?: string | undefined;
+};
 type Meta = { label: string; tone: Tone; Icon: typeof Money };
 
 /**
@@ -43,11 +72,13 @@ export function paymentMeta(p: Pay, quiet = false): Meta | null {
   switch (p.status) {
     case 'paid':
       return {
-        label: p.online ? 'Pago online' : 'Pago',
+        label: p.online ? 'Pago online' : p.provider === 'pdv' ? 'Pago no caixa' : 'Pago',
         tone: 'success',
         Icon: CurrencyCircleDollar,
       };
     case 'pending':
+      // a comanda's round: paid when the comanda closes
+      if (p.method === 'tab') return { label: 'Na comanda', tone: 'info', Icon: Receipt };
       if (p.method === 'pix')
         return {
           label: p.online ? 'Aguardando Pix' : 'Pix a conferir',

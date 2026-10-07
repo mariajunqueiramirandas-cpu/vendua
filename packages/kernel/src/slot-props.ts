@@ -45,7 +45,9 @@ export interface CustomerDraft {
 }
 
 export interface DeliveryOption {
-  mode: 'pickup' | 'delivery';
+  /** Kernel 1.22 adds 'dine_in': at a table (ADR 0036) it is the only option, already chosen —
+   *  only stores with QR ordering ever show it */
+  mode: 'pickup' | 'delivery' | 'dine_in';
   label: string;
   detail?: string;
   disabled?: boolean;
@@ -55,8 +57,9 @@ export interface DeliveryOption {
 
 export interface PaymentMethod {
   /** Kernel 1.7 adds 'card_online' — card through Mercado Pago (in the page since 1.19);
-   *  Kernel 1.12 adds 'meal_voucher' ("Vale-refeição", paid on delivery) */
-  id: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher';
+   *  Kernel 1.12 adds 'meal_voucher' ("Vale-refeição", paid on delivery); Kernel 1.22 'tab'
+   *  ("Pagar na mesa": on the table's comanda, offered only at a table) */
+  id: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher' | 'tab';
   label: string;
   detail?: string;
   /** Kernel 1.12 — the store's discount/surcharge for this method, as a label ("−5%",
@@ -173,6 +176,8 @@ export interface SlotProps {
     errors: Partial<Record<keyof CustomerDraft, string>>;
     /** 'customer' = name/phone; 'address' = delivery address */
     part: 'customer' | 'address';
+    /** Kernel 1.22 — part 'customer' asks only the name (an order at a table: no phone) */
+    nameOnly?: boolean;
     neighborhoods: string[];
     /** Kernel 1.2 — CEP autofill (Core lookup); absent = no CEP field */
     onCep?: (cep: string) => void;
@@ -262,7 +267,11 @@ export interface SlotProps {
     /** Kernel 1.7 — the store's pickup address/instructions, for pickup orders */
     pickup?: { address: string | null; instructions: string | null };
   } & StoreTime;
-  'order.Timeline': { events: Order['timeline'] } & StoreTime;
+  'order.Timeline': {
+    events: Order['timeline'];
+    /** Kernel 1.22 — the order's mode, for the words ("Servido" at a table) */
+    mode?: Order['delivery']['mode'];
+  } & StoreTime;
   /** Kernel 1.21 — the order page opened from the link in the store's WhatsApp updates, on a
    *  device that didn't place it: where the order stands and what was ordered — nothing about
    *  the shopper, the address or the payment, and no money */

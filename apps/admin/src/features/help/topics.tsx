@@ -33,7 +33,8 @@ export type TopicId =
   | 'conta'
   | 'perfil'
   | 'vendedor'
-  | 'copiloto';
+  | 'copiloto'
+  | 'pdv';
 
 export const TOPICS: Record<TopicId, Topic> = {
   inicio: {
@@ -510,9 +511,79 @@ export const TOPICS: Record<TopicId, Topic> = {
       },
     ],
   },
+  pdv: {
+    title: 'PDV',
+    intro: 'Venda no balcão, comandas nas mesas e o caixa do dia, com o cardápio da loja.',
+    items: [
+      {
+        q: 'Como faço uma venda no balcão?',
+        a: (
+          <>
+            Em <strong>Vender</strong>, toque nos produtos (o que tem opções pede elas antes),
+            escolha <strong>para levar</strong> ou <strong>comer aqui</strong> e toque em{' '}
+            <strong>cobrar</strong>. O total é sempre o que a loja calcula. No computador, é só
+            digitar para buscar; Enter na busca põe o primeiro produto e Enter fora dela cobra.
+          </>
+        ),
+      },
+      {
+        q: 'Como recebo em mais de uma forma, ou com troco?',
+        a: (
+          <>
+            Ao cobrar, toque em <strong>dividir em formas</strong> e escolha cada forma com o seu
+            valor. No dinheiro, digite quanto o cliente entregou: o troco aparece quando a venda
+            fecha. No Pix, o QR da chave da loja aparece com o valor.
+          </>
+        ),
+      },
+      {
+        q: 'Como funcionam as mesas?',
+        a: (
+          <>
+            Em <L to="/pdv/mesas">Mesas</L>, toque numa mesa livre para abrir a comanda. Cada vez
+            que você adiciona itens, sai uma rodada para a cozinha. Receba um pagamento de cada vez,
+            ou divida a conta em partes: quando não falta nada, a comanda fecha e a mesa fica livre.
+          </>
+        ),
+      },
+      {
+        q: 'Como abro e fecho o caixa?',
+        a: (
+          <>
+            Em <L to="/pdv/caixa">Caixa</L>, abra com o troco da gaveta. Sangria é dinheiro que sai
+            da gaveta e suprimento é o que entra. Para fechar, conte cada forma: o fechamento mostra
+            o que sobrou ou faltou.
+          </>
+        ),
+      },
+      {
+        q: 'Como funcionam os pedidos pelo QR da mesa?',
+        a: (
+          <>
+            Cada mesa tem o seu QR: o cliente aponta a câmera, vê o cardápio e pede para aquela
+            mesa. O pedido chega em <strong>Pedidos</strong> e só vai para a cozinha quando alguém
+            da equipe aceita. O cliente paga online ou deixa na comanda, e o que foi pago online
+            aparece na comanda como <strong>pago online</strong>, fora do que falta receber. Para
+            imprimir os QR, abra <strong>Mesas</strong>, toque em <strong>editar mesas</strong> e em{' '}
+            <strong>imprimir todos</strong>.
+          </>
+        ),
+      },
+      {
+        q: 'O que só gerentes fazem?',
+        a: 'Dar desconto, estornar um pagamento, cancelar uma comanda, criar e editar as mesas, mudar a taxa de serviço, ligar os pedidos pelo QR e gerar um QR novo para uma mesa.',
+      },
+    ],
+  },
 };
 
 const BY_ROUTE: Partial<Record<RouteId, TopicId>> = {
+  pdv: 'pdv',
+  pdvMesas: 'pdv',
+  pdvQr: 'pdv',
+  pdvComanda: 'pdv',
+  pdvCaixa: 'pdv',
+  pdvReport: 'pdv',
   copilot: 'copiloto',
   home: 'inicio',
   orders: 'pedidos',

@@ -4,7 +4,13 @@ import { log } from '../../platform/log.ts';
 import { planHas } from '../billing/plans.ts';
 import { loadOrderView } from '../orders.ts';
 import type { CodePage, Paper } from './escpos.ts';
-import { renderOrderTicket, renderTestTicket } from './ticket.ts';
+import type { CaixaDetail, TabDetail } from '../pdv/ledger.ts';
+import {
+  renderBillTicket,
+  renderCaixaTicket,
+  renderOrderTicket,
+  renderTestTicket,
+} from './ticket.ts';
 
 const printLog = log.child({ mod: 'printing' });
 
@@ -139,10 +145,12 @@ export async function queueJobsTx(
   tenantId: string,
   printerIds: string[],
   job: {
-    kind: 'order' | 'test';
+    kind: 'order' | 'test' | 'bill' | 'caixa';
     trigger: PrintTrigger | 'manual' | 'test';
     orderId?: string | null;
     requestedBy?: string | null;
+    /** bill | caixa: what to print, as Core computed it when it was asked for */
+    doc?: unknown;
   },
 ): Promise<string[]> {
   if (printerIds.length === 0) return [];
@@ -156,9 +164,9 @@ export async function queueJobsTx(
       delete from print_jobs where tenant_id = ${tenantId} and created_at < now() - interval '30 days'`;
   }
   const rows = await tx<{ id: string }[]>`
-    insert into print_jobs (tenant_id, printer_id, device_id, order_id, kind, trigger, requested_by)
+    insert into print_jobs (tenant_id, printer_id, device_id, order_id, kind, trigger, requested_by, doc)
     select ${tenantId}, p.id, p.device_id, ${job.orderId ?? null}, ${job.kind}, ${job.trigger},
-           ${job.requestedBy ?? null}
+           ${job.requestedBy ?? null}, ${job.doc === undefined ? null : tx.json(job.doc as never)}
     from printers p where p.tenant_id = ${tenantId} and p.id = any(${printerIds}::uuid[])
     on conflict (printer_id, order_id) where trigger in ('placed', 'confirmed') do nothing
     returning id`;
@@ -244,7 +252,8 @@ export async function claimDueJobsTx(
       id: string;
       printer_id: string;
       order_id: string | null;
-      kind: 'order' | 'test';
+      kind: 'order' | 'test' | 'bill' | 'caixa';
+      doc: unknown;
       created_at: Date;
       printer_name: string;
       paper: Paper;
@@ -253,7 +262,7 @@ export async function claimDueJobsTx(
       cut: boolean;
     }[]
   >`
-    select j.id, j.printer_id, j.order_id, j.kind, j.created_at,
+    select j.id, j.printer_id, j.order_id, j.kind, j.doc, j.created_at,
            coalesce(p.label, p.name) as printer_name, p.paper, p.codepage, p.copies, p.cut
     from print_jobs j join printers p on p.id = j.printer_id
     where j.tenant_id = ${tenantId} and j.device_id = ${deviceId}
@@ -274,15 +283,19 @@ export async function claimDueJobsTx(
     const opts = { paper: j.paper, codepage: j.codepage, copies: j.copies, cut: j.cut };
     try {
       const bytes =
-        j.kind === 'test' || !j.order_id
-          ? renderTestTicket(shop, { name: j.printer_name }, opts, now)
-          : renderOrderTicket(
-              await loadOrderView(tx, tenantId, j.order_id),
-              shop,
-              opts,
-              new Date(j.created_at),
-              now,
-            );
+        j.kind === 'bill' && j.doc
+          ? renderBillTicket(j.doc as TabDetail, shop, opts, new Date(j.created_at))
+          : j.kind === 'caixa' && j.doc
+            ? renderCaixaTicket(j.doc as CaixaDetail, shop, opts, new Date(j.created_at))
+            : j.kind === 'test' || !j.order_id
+              ? renderTestTicket(shop, { name: j.printer_name }, opts, now)
+              : renderOrderTicket(
+                  await loadOrderView(tx, tenantId, j.order_id),
+                  shop,
+                  opts,
+                  new Date(j.created_at),
+                  now,
+                );
       out.push({
         id: j.id,
         printerId: j.printer_id,

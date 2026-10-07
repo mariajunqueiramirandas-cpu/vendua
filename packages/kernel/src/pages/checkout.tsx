@@ -47,6 +47,8 @@ import {
 import { digitsOf, isValidCep, isValidPhone } from '../rules/phone.ts';
 import { usePageTitle } from '../head.ts';
 import { preloadMpDevice } from '../mp-device.ts';
+import { currentTable, setTable, tableName, useTableSession } from '../table.ts';
+import { showInfo } from '../errors.ts';
 
 // /checkout — the Kernel-owned checkout (ADR 0004): a three-step machine
 // (dados → entrega → pagamento). Validation here is shape-only; every business
@@ -71,6 +73,15 @@ const LEGACY_METHODS = ['pix', 'card_on_delivery', 'cash'];
 
 const NOTES_MAX = 500;
 
+// at a table the store's status reads differently: no encomenda, no delivery to fall back on
+const TABLE_COPY: Record<string, { title: string; body?: string }> = {
+  STORE_CLOSED: {
+    title: 'A loja está fechada agora',
+    body: 'Os pedidos pela mesa voltam quando ela abrir.',
+  },
+  STORE_PAUSED: { title: 'A loja pausou os pedidos', body: 'Tente de novo em instantes.' },
+};
+
 /** The store's rule as a label ("−5%", "+R$ 1,50") — the cents are Core's, in the totals. */
 function adjustmentLabel(a: PaymentAdjustment, currency: string): PaymentMethod['adjustment'] {
   const kind = adjustmentKind(a);
@@ -87,7 +98,7 @@ const savedPin = (a: { lat?: number; lng?: number } | undefined): LatLng | null 
 // next order): sessionStorage, bound to the cart session they were typed for, cleared once the
 // order is placed.
 const DRAFT_KEY = 'vendua.checkoutDraft';
-const METHOD_IDS: readonly string[] = PAYMENT_METHOD_ORDER;
+const METHOD_IDS: readonly string[] = [...PAYMENT_METHOD_ORDER, 'tab'];
 
 interface SavedDraft {
   session: string;
@@ -182,11 +193,16 @@ function addressLabel(a: Address): { label: string; detail?: string } {
   };
 }
 
-function validate(step: StepId, d: CustomerDraft, mode: 'pickup' | 'delivery', located = false) {
+// Kernel 1.22 — at a table Core takes only the name (2..80), no phone
+const NAME_MAX = 80;
+
+function validate(step: StepId, d: CustomerDraft, mode: DeliveryOption['mode'], located = false) {
   const e: Partial<Record<keyof CustomerDraft, string>> = {};
   if (step === 'dados') {
     if (d.name.trim().length < 2) e.name = 'Informe seu nome.';
-    if (!isValidPhone(d.phone)) e.phone = 'Informe um WhatsApp com DDD.';
+    else if (mode === 'dine_in' && d.name.trim().length > NAME_MAX)
+      e.name = `Use até ${NAME_MAX} letras.`;
+    if (mode !== 'dine_in' && !isValidPhone(d.phone)) e.phone = 'Informe um WhatsApp com DDD.';
   }
   if (step === 'entrega' && mode === 'delivery') {
     // a device location resolves the zone by distance — the bairro is then optional
@@ -216,6 +232,10 @@ export function CheckoutPage() {
   const summary = useDeliverySummary();
   const coupon = useCoupon();
   usePageTitle('Finalizar pedido');
+  // Kernel 1.22 (ADR 0036): opened from a table's QR code, at a store taking table orders
+  const table = useTableSession();
+  const atTable = !!table && store?.dineIn?.enabled === true;
+  const tableOff = !!table && !!store && store.dineIn?.enabled !== true;
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -301,7 +321,10 @@ export function CheckoutPage() {
         ? 'delivery'
         : 'pickup',
   );
-  const [pay, setPay] = useState<PaymentMethod['id']>(() => restored?.pay ?? 'pix');
+  const deliveryMode: DeliveryOption['mode'] = atTable ? 'dine_in' : mode;
+  const [pay, setPay] = useState<PaymentMethod['id']>(
+    () => restored?.pay ?? (currentTable() ? 'tab' : 'pix'),
+  );
   // Kernel 1.17 — cash change in cents (null = none); Core checks it covers the total
   const [changeFor, setChangeFor] = useState<number | null>(() => restored?.changeFor ?? null);
   const [changeError, setChangeError] = useState<string | undefined>();
@@ -312,7 +335,7 @@ export function CheckoutPage() {
   const stepStarted = useRef(Date.now());
   // Kernel 1.21 — "me lembre pelo WhatsApp": the phone Core holds the consent for (null = none)
   const [reminder, setReminder] = useState<string | null>(() => restored?.reminder ?? null);
-  const reminderOffered = !!store?.cartReminder && isValidPhone(draft.phone);
+  const reminderOffered = !!store?.cartReminder && !atTable && isValidPhone(draft.phone);
   const askReminder = async (on: boolean) => {
     const phone = draft.phone;
     setReminder(on ? phone : null);
@@ -414,8 +437,18 @@ export function CheckoutPage() {
     zones.some((z) => z.kind === 'radius' || z.kind === 'polygon');
   const schedule = cart?.schedule;
   const encomenda = schedule?.required === true;
-  const closedNow = cart?.status === 'open' ? closedNote(store, cart.items, vocabulary.bag) : null;
-  const allowed = encomenda ? schedule!.paymentMethods.join(',') : '';
+  const closedNow =
+    cart?.status !== 'open'
+      ? null
+      : atTable
+        ? store?.status === 'closed'
+          ? 'A loja está fechada agora. Os pedidos pela mesa voltam quando ela abrir.'
+          : store?.status === 'paused'
+            ? 'A loja pausou os pedidos por alguns instantes. Tente de novo daqui a pouco.'
+            : null
+        : closedNote(store, cart.items, vocabulary.bag);
+  // a table has no encomenda: Core takes no date there
+  const allowed = encomenda && !atTable ? schedule!.paymentMethods.join(',') : '';
   // the store's own list (Kernel 1.4); absent on an older Core = the three offline ones
   const accepted = store?.paymentMethods?.join(',') ?? '';
   const online = store?.onlinePayments;
@@ -437,18 +470,41 @@ export function CheckoutPage() {
         }),
     [accepted, cardOnline, pixOnline, adjustments, currency],
   );
+  // at a table: "Pagar na mesa" (the comanda) and only the methods paid online right now
+  const cardPaidOnline = online?.card === true;
+  const tableMethods = useMemo<PaymentMethod[]>(() => {
+    const tab = adjustments?.tab && adjustmentLabel(adjustments.tab, currency);
+    return [
+      {
+        id: 'tab',
+        label: PAYMENT_METHOD_LABEL.tab ?? 'Pagar na mesa',
+        ...(PAYMENT_METHOD_DETAIL.tab ? { detail: PAYMENT_METHOD_DETAIL.tab } : {}),
+        ...(tab ? { adjustment: tab } : {}),
+      },
+      ...byStore.filter(
+        (m) => (m.id === 'pix' && pixOnline) || (m.id === 'card_online' && cardPaidOnline),
+      ),
+    ];
+  }, [byStore, pixOnline, cardPaidOnline, adjustments, currency]);
   const methods = useMemo(
-    () => (allowed ? byStore.filter((m) => allowed.split(',').includes(m.id)) : byStore),
-    [allowed, byStore],
+    () =>
+      atTable
+        ? tableMethods
+        : allowed
+          ? byStore.filter((m) => allowed.split(',').includes(m.id))
+          : byStore,
+    [atTable, tableMethods, allowed, byStore],
   );
   // the online Pix's device fingerprint starts loading here, so the order page rarely waits
   useEffect(() => {
     if (step === 'pagamento' && pay === 'pix' && pixOnline) preloadMpDevice();
   }, [step, pay, pixOnline]);
-  // an encomenda narrows payment (Pix-only in the reference) — keep the choice valid
+  // an encomenda narrows payment (Pix-only in the reference) — keep the choice valid; not before
+  // the store is read (a table's "Pagar na mesa" isn't offered until then)
+  const storeRead = !!store;
   useEffect(() => {
-    if (methods.length && !methods.some((m) => m.id === pay)) setPay(methods[0]!.id);
-  }, [methods, pay]);
+    if (storeRead && methods.length && !methods.some((m) => m.id === pay)) setPay(methods[0]!.id);
+  }, [storeRead, methods, pay]);
   // Kernel 1.12: on the payment step Core prices the chosen method's discount/surcharge into
   // the cart's totals (`GET /cart?paymentMethod=`); the page never adds it up itself. The key
   // ties an answer to the cart it priced, so a coupon or a delivery change asks again.
@@ -487,24 +543,32 @@ export function CheckoutPage() {
       ? `a partir de ${money(byDistance.fromFeeCents)}`
       : 'calculada pela distância'
     : feeWords;
-  const options: DeliveryOption[] = [
-    {
-      mode: 'delivery',
-      label: 'Entrega',
-      ...(deliveryDetail ? { detail: deliveryDetail } : {}),
-      disabled: !deliveryOk,
-    },
-    {
-      mode: 'pickup',
-      label: 'Retirada',
-      detail: store?.pickup?.address ?? store?.address ?? 'na loja',
-      ...(store?.pickup?.instructions ? { note: store.pickup.instructions } : {}),
-      disabled: !pickupOk,
-    },
-  ];
+  const options: DeliveryOption[] = atTable
+    ? [
+        {
+          mode: 'dine_in',
+          label: `Na ${tableName(table!.label)}`,
+          detail: 'A equipe confirma o pedido e traz até a mesa',
+        },
+      ]
+    : [
+        {
+          mode: 'delivery',
+          label: 'Entrega',
+          ...(deliveryDetail ? { detail: deliveryDetail } : {}),
+          disabled: !deliveryOk,
+        },
+        {
+          mode: 'pickup',
+          label: 'Retirada',
+          detail: store?.pickup?.address ?? store?.address ?? 'na loja',
+          ...(store?.pickup?.instructions ? { note: store.pickup.instructions } : {}),
+          disabled: !pickupOk,
+        },
+      ];
 
   // ── the delivery pin (Kernel 1.15, ADR 0024) ───────────────────────────────
-  const pinWanted = !!byDistance && step === 'entrega' && mode === 'delivery';
+  const pinWanted = !!byDistance && step === 'entrega' && deliveryMode === 'delivery';
   const canGeolocate = typeof navigator !== 'undefined' && 'geolocation' in navigator;
   const pinWords = (r: QuoteResult) => {
     // with the cart session Core's totals carry the fee after any free-delivery threshold
@@ -721,8 +785,8 @@ export function CheckoutPage() {
   };
 
   const deliveryPayload = () =>
-    mode === 'pickup'
-      ? { mode }
+    deliveryMode !== 'delivery'
+      ? { mode: deliveryMode }
       : {
           mode,
           ...(draft.neighborhood.trim() ? { neighborhood: draft.neighborhood.trim() } : {}),
@@ -743,10 +807,19 @@ export function CheckoutPage() {
     void coupon.remove();
   };
 
+  // "não estou na mesa" (or a QR Core no longer honours): back to delivery and pickup, from
+  // the first step when the phone (not asked at the table) is still missing
+  const leaveTable = () => {
+    setTable(null);
+    setDone(new Set<StepId>(isValidPhone(draft.phone) ? ['dados'] : []));
+    setErrors({});
+    reset();
+  };
+
   const advance = async () => {
-    const e = validate(step, draft, mode, coords !== null);
+    const e = validate(step, draft, deliveryMode, coords !== null);
     setErrors(e);
-    const needPin = step === 'entrega' && mode === 'delivery' && !!byDistance && !coords;
+    const needPin = step === 'entrega' && deliveryMode === 'delivery' && !!byDistance && !coords;
     if (needPin)
       setPinError(
         pinStatus === 'out_of_zone'
@@ -777,7 +850,7 @@ export function CheckoutPage() {
 
   const place = async () => {
     if (submitting.current || pending || closedNow) return;
-    if (encomenda && !scheduledFor) {
+    if (encomenda && !atTable && !scheduledFor) {
       setScheduleError('Escolha a data da encomenda.');
       return;
     }
@@ -786,8 +859,10 @@ export function CheckoutPage() {
     setScheduleError(undefined);
     try {
       const order = await submit({
-        customer: { name: draft.name.trim(), phone: digitsOf(draft.phone) },
-        delivery: deliveryPayload(),
+        customer: atTable
+          ? { name: draft.name.trim().slice(0, NAME_MAX) }
+          : { name: draft.name.trim(), phone: digitsOf(draft.phone) },
+        delivery: atTable ? { mode: 'dine_in', table: table!.token } : deliveryPayload(),
         payment: {
           method: pay,
           ...(pay === 'cash' &&
@@ -798,11 +873,18 @@ export function CheckoutPage() {
             : {}),
         },
         ...(notes.trim() ? { notes: notes.trim().slice(0, NOTES_MAX) } : {}),
-        ...(scheduledFor ? { scheduledFor } : {}),
+        ...(scheduledFor && !atTable ? { scheduledFor } : {}),
       });
       placed.current = true;
       clearDraft();
-      if (draft.remember)
+      if (draft.remember && atTable)
+        // the name only: the phone and addresses the device holds stay as they are
+        remember({
+          name: draft.name,
+          phone: customer?.phone ?? '',
+          address: { street: '', number: '', neighborhood: '', complement: '' },
+        });
+      else if (draft.remember)
         remember({
           name: draft.name,
           phone: draft.phone,
@@ -827,6 +909,11 @@ export function CheckoutPage() {
     } catch (err) {
       // useCheckout().error carries the typed failure; route the fixable ones to their field
       const code = errorCode(err);
+      if (code === 'TABLE_NOT_FOUND' && atTable) {
+        const copy = errorCopy(code);
+        leaveTable();
+        showInfo('table', copy.title, copy.body);
+      }
       if (code === 'SCHEDULE_REQUIRED' || code === 'INVALID_SCHEDULE')
         setScheduleError(errorCopy(code).title);
       if (code === 'INVALID_CHANGE')
@@ -846,8 +933,9 @@ export function CheckoutPage() {
     }
   };
 
-  const failure = error ? errorCopy(error.code) : null;
-  const steps: CheckoutStep[] = ORDER.map((id) => ({ id, label: LABEL[id], done: done.has(id) }));
+  const failure = error ? (atTable && TABLE_COPY[error.code]) || errorCopy(error.code) : null;
+  const labelOf = (id: StepId) => (atTable && id === 'entrega' ? 'Mesa' : LABEL[id]);
+  const steps: CheckoutStep[] = ORDER.map((id) => ({ id, label: labelOf(id), done: done.has(id) }));
 
   return (
     <main id="main" className="v-page" data-vendua-page="checkout">
@@ -866,7 +954,7 @@ export function CheckoutPage() {
             }}
           >
             <h2 className="v-sr" ref={stepHeading} tabIndex={-1}>
-              Etapa {ORDER.indexOf(step) + 1} de {ORDER.length}: {LABEL[step]}
+              Etapa {ORDER.indexOf(step) + 1} de {ORDER.length}: {labelOf(step)}
             </h2>
             {step === 'dados' ? (
               <Slot
@@ -876,6 +964,7 @@ export function CheckoutPage() {
                 onChange={patch}
                 errors={errors}
                 neighborhoods={neighborhoods}
+                {...(atTable ? { nameOnly: true } : {})}
               />
             ) : null}
             {step === 'dados' && reminderOffered ? (
@@ -890,14 +979,29 @@ export function CheckoutPage() {
             ) : null}
             {step === 'entrega' ? (
               <>
+                {tableOff ? (
+                  <p className="v-note" role="status" data-vendua="table-note">
+                    Os pedidos pela mesa estão desligados agora: chame a equipe, ou peça para
+                    entrega ou retirada.
+                  </p>
+                ) : null}
                 <Slot
                   name="checkout.DeliveryOptions"
                   options={options}
-                  selected={mode}
-                  onSelect={setMode}
+                  selected={deliveryMode}
+                  onSelect={(m) => {
+                    if (m === 'pickup' || m === 'delivery') setMode(m);
+                  }}
                   currency={currency}
                 />
-                {mode === 'delivery' ? (
+                {table ? (
+                  <p className="v-note" data-vendua="table-leave">
+                    <button type="button" className="v-btn v-btn-ghost" onClick={leaveTable}>
+                      Não estou na mesa
+                    </button>
+                  </p>
+                ) : null}
+                {deliveryMode === 'delivery' ? (
                   <Slot
                     name="checkout.AddressForm"
                     part="address"
@@ -931,7 +1035,7 @@ export function CheckoutPage() {
                       : {})}
                   />
                 ) : null}
-                {mode === 'delivery' && byDistance ? (
+                {deliveryMode === 'delivery' && byDistance ? (
                   <Slot
                     name="checkout.LocationPicker"
                     {...(mapAt ??
@@ -953,7 +1057,7 @@ export function CheckoutPage() {
             ) : null}
             {step === 'pagamento' ? (
               <>
-                {schedule && (encomenda || scheduledFor) ? (
+                {schedule && !atTable && (encomenda || scheduledFor) ? (
                   <Slot
                     name="checkout.SchedulePicker"
                     dates={schedule.dates}
@@ -988,7 +1092,7 @@ export function CheckoutPage() {
                       }
                     : {})}
                 />
-                {encomenda && methods.length < byStore.length ? (
+                {encomenda && !atTable && methods.length < byStore.length ? (
                   <p className="v-muted" data-part="payment-note">
                     Encomendas aceitam: {methods.map((m) => m.label).join(', ')}.
                   </p>

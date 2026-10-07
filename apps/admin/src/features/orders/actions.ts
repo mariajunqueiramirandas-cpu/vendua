@@ -5,7 +5,8 @@ import { clock, money, phone } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { useFeature } from '../../lib/session.ts';
-import { METHOD_LABEL, payError } from '../../ui/PaymentChip.tsx';
+import { tableName } from '../../ui/orderMode.ts';
+import { PAY_LABEL, payError } from '../../ui/PaymentChip.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { holdAction, transitionOptions } from './transition.ts';
@@ -83,7 +84,7 @@ export function useDelay(storeName: string) {
 function delayWhatsappUrl(o: Order, storeName: string) {
   const d = o.delivery;
   const when =
-    d.mode === 'pickup'
+    d.mode !== 'delivery'
       ? `fica pronto por volta das ${clock(d.promisedTo!)}`
       : d.promisedFrom && d.promisedFrom !== d.promisedTo
         ? `chega entre ${clock(d.promisedFrom)} e ${clock(d.promisedTo!)}`
@@ -255,7 +256,7 @@ export function whatsappFor(o: Order, storeName: string): string {
     case 'preparing':
       return `${hi} Seu pedido #${o.number} já está sendo preparado${promised ? ` e fica pronto por volta das ${promised}` : ''}.`;
     case 'ready':
-      return o.delivery.mode === 'pickup'
+      return o.delivery.mode !== 'delivery'
         ? `${hi} Seu pedido #${o.number} está pronto para retirar. Te esperamos!`
         : `${hi} Seu pedido #${o.number} está pronto e já vai sair.`;
     case 'out_for_delivery':
@@ -294,13 +295,13 @@ h1{font-size:34px;margin:0 0 4px}.m{font-size:13px}.it{padding:6px 0;border-bott
 .sub{font-size:13px;padding-left:22px}.in{font-weight:bold}.n{margin-top:8px;padding:6px;border:2px solid #000;font-size:15px;font-weight:bold}
 .t{margin-top:8px;font-size:16px;font-weight:bold;text-align:right}</style></head><body>
 <div class="m">${esc(storeName)}</div><h1>#${o.number}</h1>
-<div class="m">${esc(o.customer.name)} · ${esc(phone(o.customer.phone))}</div>
-<div class="m">${o.delivery.mode === 'delivery' ? `ENTREGA: ${esc(o.delivery.address ?? '')} ${esc(o.delivery.neighborhood ?? '')}` : 'RETIRADA'}</div>
+<div class="m">${esc(o.customer.name)}${o.customer.phone ? ` · ${esc(phone(o.customer.phone))}` : ''}</div>
+<div class="m">${o.delivery.mode === 'delivery' ? `ENTREGA: ${esc(o.delivery.address ?? '')} ${esc(o.delivery.neighborhood ?? '')}` : o.delivery.mode === 'dine_in' ? (o.delivery.table ? esc(tableName(o.delivery.table).toUpperCase()) : 'CONSUMO NO LOCAL') : 'RETIRADA'}</div>
 ${o.scheduledFor ? `<div class="m">ENCOMENDA PARA ${esc(o.scheduledFor)}</div>` : ''}
 <div class="m">${new Date(o.placedAt).toLocaleString('pt-BR')}</div>
 <div style="margin-top:8px">${items}</div>
 ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
-<div class="t">${esc(money(o.totalCents))} · ${esc(METHOD_LABEL[o.payment.method] ?? o.payment.method)}${
+<div class="t">${esc(money(o.totalCents))} · ${esc(PAY_LABEL[o.payment.method] ?? o.payment.method)}${
     o.payment.status === 'paid' ? ' (pago)' : ''
   }</div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),300)}</script></body></html>`;
