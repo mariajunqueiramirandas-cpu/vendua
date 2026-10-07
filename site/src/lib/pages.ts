@@ -1,6 +1,6 @@
 import type { Kind } from './components/KindArt.svelte';
 
-// The pages beyond the home: one per kind of shop and the guides. The footer, the home's "para quem"
+// The pages beyond the home: one per kind of shop, the guides and the news posts. The footer, the home's "para quem"
 // tiles, the guides index and each page's related links read this list, so a new page is linked from
 // everywhere once it is here. postbuild.ts builds the sitemap from the build itself.
 
@@ -60,3 +60,18 @@ export const guides: Guide[] = [
 ];
 
 export const guide = (path: string) => guides.find((g) => g.path === path)!;
+
+// News posts (/novidades/<slug>/): what changed in the product, written for the shop owner. Same
+// layout and rules as the guides.
+export const posts: Guide[] = [
+  {
+    path: '/novidades/dua-entende-audios/',
+    title: 'O Duá entende os áudios do seu cliente, e quem ouve é a Venduá',
+    description:
+      'O cliente manda áudio no WhatsApp e o Duá entende, com o reconhecimento de voz rodando nos servidores da Venduá: mais rápido, sem o áudio sair daqui.',
+    published: '2026-10-07',
+  },
+];
+
+/** a guide or a news post */
+export const article = (path: string) => [...guides, ...posts].find((g) => g.path === path)!;

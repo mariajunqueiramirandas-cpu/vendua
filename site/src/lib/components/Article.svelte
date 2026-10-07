@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { guide as find } from '$lib/pages';
+  import { article as find } from '$lib/pages';
   import { article, breadcrumbs } from '$lib/seo';
   import Band from './Band.svelte';
   import Closing from './Closing.svelte';
@@ -11,8 +11,9 @@
   import Prose from './Prose.svelte';
   import Seo from './Seo.svelte';
 
-  // A guide (/guias/<slug>/): title and description come from $lib/pages, the page brings the
-  // lede, Duá's pose, the outline ("Neste guia", the h2 ids) and the text (styled by Prose).
+  // A guide (/guias/<slug>/) or a news post (/novidades/<slug>/): title and description come from
+  // $lib/pages, the page brings the lede, Duá's pose, the outline (the h2 ids) and the text (styled
+  // by Prose).
   let {
     path,
     lede,
@@ -30,10 +31,11 @@
   } = $props();
 
   const g = $derived(find(path));
-  const crumbs = [
+  const news = $derived(path.startsWith('/novidades/'));
+  const crumbs = $derived([
     { name: 'Início', path: '/' },
-    { name: 'Guias', path: '/guias/' },
-  ];
+    news ? { name: 'Novidades', path: '/novidades/' } : { name: 'Guias', path: '/guias/' },
+  ]);
   const schema = $derived([
     breadcrumbs([...crumbs, { name: g.title, path }]),
     article({ title: g.title, description: g.description, path, published: g.published }),
@@ -61,7 +63,7 @@
 
   <div class="wrap body">
     <nav class="outline" aria-labelledby="neste-guia">
-      <h2 id="neste-guia" class="outline-title">Neste guia</h2>
+      <h2 id="neste-guia" class="outline-title">{news ? 'Neste texto' : 'Neste guia'}</h2>
       <ol>
         {#each outline as o (o.id)}
           <li><a href="#{o.id}">{o.title}</a></li>
