@@ -8,7 +8,7 @@ import { log } from '../platform/log.ts';
 //   { "transcribe": [route…], "speak": [route…] }   route = { provider, model, zdr, voice? }
 // `zdr` is staff's record of the provider account's retention terms (a per-route choice since
 // 2026-10-05); every route is used either way. Photos go through the model gateway's routes.
-// Provider `sidecar` is the self-hosted STT service (services/stt, ADR 0035) at STT_URL: when
+// Provider `sidecar` is the self-hosted STT service (services/stt, ADR 0037) at STT_URL: when
 // staff named no transcribe route and it is configured, voice notes go there by default.
 
 const mediaLog = log.child({ mod: 'vendedor-media' });

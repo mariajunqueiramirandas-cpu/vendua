@@ -7,7 +7,7 @@ COPY requirements.txt requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt
 COPY stt/__init__.py stt/cpus.py stt/fetch.py stt/
 # parakeet-tdt-0.6b-v3 (default) or parakeet-tdt-0.6b-v3-ptbr, the Brazilian Portuguese fine-tune
-# (ADR 0035: better on spontaneous speech, worse on read speech)
+# (ADR 0037: better on spontaneous speech, worse on read speech)
 ARG STT_MODEL=parakeet-tdt-0.6b-v3
 RUN python -m stt.fetch /src/export $STT_MODEL
 COPY stt/compile.py stt/

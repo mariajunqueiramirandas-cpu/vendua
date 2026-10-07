@@ -4,7 +4,7 @@ import postgres from 'postgres';
 import { mediaProviders, phrasesHeader, type MediaRoute } from '../src/vendedor/media.ts';
 import { migrate } from '../src/platform/db.ts';
 
-// Voice-note transcription through the self-hosted STT sidecar (services/stt, ADR 0035).
+// Voice-note transcription through the self-hosted STT sidecar (services/stt, ADR 0037).
 describe.skipIf(!process.env.TEST_DATABASE_URL)('media transcribe via sidecar (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
   const KEY = 'agent_runtime.media_routes';

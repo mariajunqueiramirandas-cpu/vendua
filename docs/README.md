@@ -111,6 +111,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0034](adr/0034-dua-copilot.md)                        | Duá Copilot: the admin's own routes, proposals a tap applies   |
 | [0035](adr/0035-pdv.md)                                | The PDV: counter sales, mesas with comandas, the caixa         |
 | [0036](adr/0036-qr-table-ordering.md)                  | Ordering from the table's QR code                              |
+| [0037](adr/0037-self-hosted-stt.md)                    | Shoppers' voice notes transcribed on our own hardware          |
 
 ## Conventions
 

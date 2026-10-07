@@ -109,7 +109,7 @@ services:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       # optional: the commit the "Core reiniciou" card shows
       GIT_COMMIT: ${GIT_COMMIT:-}
-      # Voice-note transcription via the stt service below (ADR 0035); unset secret = off.
+      # Voice-note transcription via the stt service below (ADR 0037); unset secret = off.
       STT_URL: http://stt:8792
       STT_SECRET: ${STT_SECRET:-}
       # Instagram DMs via the ig-sidecar service below; the same secret signs both directions.
@@ -283,7 +283,7 @@ services:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
 
-  # Self-hosted speech-to-text for shoppers' voice notes (services/stt, ADR 0035): Parakeet-TDT
+  # Self-hosted speech-to-text for shoppers' voice notes (services/stt, ADR 0037): Parakeet-TDT
   # 0.6B v3 on CPU. Internal only; without STT_SECRET it idles and refuses every call. The first
   # build downloads the 2.5 GB model export (cached layer) and compiles it for this host's CPU.
   # `cpus` keeps it off Core's and Postgres' cores; the engine sizes its threads to it.
@@ -291,7 +291,7 @@ services:
     build:
       context: ./services/stt
       args:
-        # parakeet-tdt-0.6b-v3-ptbr = the Brazilian Portuguese fine-tune (ADR 0035)
+        # parakeet-tdt-0.6b-v3-ptbr = the Brazilian Portuguese fine-tune (ADR 0037)
         STT_MODEL: ${STT_MODEL:-parakeet-tdt-0.6b-v3}
     cpus: ${STT_CPUS:-2}
     mem_limit: ${STT_MEM_LIMIT:-3g}

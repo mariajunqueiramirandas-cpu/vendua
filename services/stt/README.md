@@ -1,7 +1,7 @@
 # stt
 
 Self-hosted speech-to-text for the Vendedor's voice notes
-([ADR 0035](../../docs/adr/0035-self-hosted-stt.md)). It runs NVIDIA's
+([ADR 0037](../../docs/adr/0037-self-hosted-stt.md)). It runs NVIDIA's
 [Parakeet-TDT-0.6B-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) on CPU, on an inference
 engine written for it here. Python, ONNX Runtime and numpy.
 

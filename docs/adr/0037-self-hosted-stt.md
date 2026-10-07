@@ -1,4 +1,4 @@
-# ADR 0035: Shoppers' voice notes are transcribed on our own hardware
+# ADR 0037: Shoppers' voice notes are transcribed on our own hardware
 
 - Status: Accepted (implemented 2026-10-06, `services/stt`)
 - Date: 2026-10-06

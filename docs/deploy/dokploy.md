@@ -195,7 +195,7 @@ there. The sidecar is AGPL-3.0 (its `LICENSE`); keep it a separate service.
 
 ## Voice-note transcription (stt)
 
-The `stt` service ([ADR 0035](../adr/0035-self-hosted-stt.md), `services/stt`) transcribes
+The `stt` service ([ADR 0037](../adr/0037-self-hosted-stt.md), `services/stt`) transcribes
 shoppers' voice notes for the Vendedor on this host's CPU, with Parakeet-TDT-0.6B-v3. No audio
 goes to a third party and there is no per-minute charge.
 
@@ -210,7 +210,7 @@ goes to a third party and there is no per-minute charge.
 
 `STT_CPUS` (default 2) caps the cores it may use, so Core and Postgres keep theirs.
 `STT_MODEL=parakeet-tdt-0.6b-v3-ptbr` builds the Brazilian Portuguese fine-tune instead: better
-on spontaneous speech, worse on read speech (ADR 0035). If the image is built on another machine for a host without
+on spontaneous speech, worse on read speech (ADR 0037). If the image is built on another machine for a host without
 AVX-512/AVX-VNNI, build with `--build-arg STT_REDUCE_RANGE=1`.
 
 ## Stores' own WhatsApp (order updates to shoppers)
