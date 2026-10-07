@@ -41,6 +41,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
   });
   const nonce = crypto.randomUUID().slice(0, 8);
   const slug = `pdv-${nonce}`;
+  const host = `${slug}.localhost`;
   const stamp = String(Date.now()).slice(-7);
   const ownerPhone = `2185${stamp}`;
   const attendantPhone = `2186${stamp}`;
@@ -109,6 +110,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
       return id;
     };
     tenantId = await store(slug, null);
+    await sql`insert into domains (host, tenant_id) values (${host}, ${tenantId})`;
+    await sql`
+      update store_settings set hours = ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '00:00' }] })}
+      where tenant_id = ${tenantId}`;
     mirimTenant = await store(`${slug}-m`, 'mirim');
     await sql`insert into merchant_users (tenant_id, name, phone, role) values (${tenantId}, 'Rita', ${ownerPhone}, 'owner')`;
     await sql`insert into merchant_users (tenant_id, name, phone, role) values (${tenantId}, 'Caio', ${attendantPhone}, 'attendant')`;
@@ -614,6 +619,112 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     expect(back.body.archived.map((t: any) => t.id)).not.toContain(mesa2);
   });
 
+  test('ordering from the table QR: a placed order on the comanda, accepted by the staff', async () => {
+    const shop = (method: string, path: string, body?: unknown, auth?: string) =>
+      call(method, path, body, { host, ...(auth ? { authorization: `Bearer ${auth}` } : {}) });
+    const tbls = await attendant('GET', '/pdv/tables');
+    const qrUrl: string = tbls.body.tables.find((t: any) => t.id === mesa1).qrUrl;
+    expect(qrUrl).toMatch(/\?mesa=vqr\./);
+    const token = decodeURIComponent(qrUrl.split('?mesa=')[1]!);
+    expect((await shop('GET', '/storefront/v1/table?t=vqr.nope')).status).toBe(404);
+    const seen = await shop('GET', `/storefront/v1/table?t=${encodeURIComponent(token)}`);
+    expect(seen.body.table).toEqual({ label: 'Mesa 1', ordering: true, reason: null });
+    expect((await shop('GET', '/storefront/v1/store')).body.dineIn).toEqual({ enabled: true });
+
+    const cart = async () => {
+      const s = (await shop('POST', '/checkout/v1/session')).body.sessionToken as string;
+      expect(
+        (await shop('POST', '/checkout/v1/cart/items', { productId: burger, qty: 1 }, s)).status,
+      ).toBe(200);
+      return s;
+    };
+    const order = (s: string, extra: Record<string, unknown> = {}, t = token) =>
+      shop(
+        'POST',
+        '/checkout/v1/checkout',
+        {
+          customer: { name: 'Lia' },
+          delivery: { mode: 'dine_in', table: t },
+          payment: { method: 'tab' },
+          ...extra,
+        },
+        s,
+      );
+    const s1 = await cart();
+    const view = await shop('POST', '/checkout/v1/cart/delivery', { mode: 'dine_in' }, s1);
+    expect(view.body.cart?.totals ?? view.body.totals).toMatchObject({ deliveryFeeCents: 0 });
+    expect((await order(s1, { payment: { method: 'pix' } })).status).toBe(422);
+    const placed = await order(s1);
+    expect(placed.status).toBe(201);
+    expect(placed.body.customerToken).toBeNull();
+    expect(placed.body.order).toMatchObject({
+      state: 'placed',
+      delivery: { mode: 'dine_in', table: 'Mesa 1' },
+      payment: { provider: 'pdv', method: 'tab', status: 'pending' },
+    });
+    const id = placed.body.order.id;
+    const track = await shop('GET', `/checkout/v1/orders/${id}`, undefined, s1);
+    expect(track.status).toBe(200);
+    const [row] = await sql<{ source: string; tab_id: string }[]>`
+      select source, tab_id from orders where id = ${id}`;
+    expect(row!.source).toBe('table_qr');
+    // the first QR order opened the table's comanda; it isn't owed until the staff accept it
+    let tab = (await attendant('GET', `/pdv/tabs/${row!.tab_id}`)).body.tab;
+    expect(tab).toMatchObject({ label: 'Mesa 1', tableId: mesa1, subtotalCents: 0 });
+    expect(tab.roundsList[0]).toMatchObject({
+      source: 'table_qr',
+      paidOnline: false,
+      state: 'placed',
+    });
+    expect((await attendant('POST', `/pdv/tabs/${tab.id}/close`)).body.error.code).toBe(
+      'TAB_HAS_PENDING',
+    );
+    expect((await owner('POST', `/orders/${id}/transition`, { to: 'confirmed' })).status).toBe(200);
+    tab = (await attendant('GET', `/pdv/tabs/${tab.id}`)).body.tab;
+    expect(tab).toMatchObject({ subtotalCents: 1000, serviceCents: 100, totalCents: 1100 });
+
+    // five waiting orders at once is the most a table gets
+    const waiting: string[] = [];
+    for (let i = 0; i < 5; i++) waiting.push((await order(await cart())).body.order.id);
+    const sixth = await order(await cart());
+    expect(sixth.status).toBe(429);
+    expect(sixth.body.error.code).toBe('TABLE_ORDERS_PENDING');
+    for (const w of waiting)
+      await owner('POST', `/orders/${w}/transition`, { to: 'cancelled', reason: 'trote' });
+
+    // the store can switch it off, and a closed store takes no table orders
+    await owner('PATCH', '/pdv/settings', { qrOrders: false });
+    expect(
+      (await shop('GET', `/storefront/v1/table?t=${encodeURIComponent(token)}`)).body.table,
+    ).toMatchObject({
+      ordering: false,
+      reason: 'off',
+    });
+    expect((await order(await cart())).body.error.code).toBe('TABLE_ORDERS_OFF');
+    expect((await owner('PATCH', '/pdv/settings', { qrOrders: true })).body).toEqual({
+      serviceBps: 1000,
+      qrOrders: true,
+    });
+    await sql`update store_settings set status_override = 'closed' where tenant_id = ${tenantId}`;
+    expect((await order(await cart())).body.error.code).toBe('STORE_CLOSED');
+    await sql`update store_settings set status_override = null where tenant_id = ${tenantId}`;
+
+    // a new QR retires the printed one
+    expect((await attendant('POST', `/pdv/tables/${mesa1}/qr`)).status).toBe(403);
+    const fresh = await owner('POST', `/pdv/tables/${mesa1}/qr`);
+    expect(fresh.body.table.qrUrl).not.toBe(qrUrl);
+    expect((await shop('GET', `/storefront/v1/table?t=${encodeURIComponent(token)}`)).status).toBe(
+      404,
+    );
+    expect((await order(await cart())).status).toBe(404);
+
+    const paid = await attendant('POST', `/pdv/tabs/${tab.id}/payments`, {
+      method: 'cash',
+      amountCents: 1100,
+    });
+    expect(paid.body.tab.status).toBe('closed');
+  });
+
   test('sangria and suprimento; attendants close blind; the report keeps the difference', async () => {
     expect(
       (
@@ -642,18 +753,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     expect(blind.body.caixa.expected).toBeNull();
     expect(blind.body.caixa.byMethod.cash).toEqual({ count: expect.any(Number), cents: null });
     const seen = await owner('GET', '/pdv/caixa');
-    // float 100,00 + the storefront order's 15,00 + Comanda 7's 11,00 − 5,00 + 2,00; the
+    // float 100,00 + the storefront order's 15,00 + Comanda 7's 11,00 + Mesa 1's QR 11,00
+    // − 5,00 + 2,00; the
     // cancelled sale's left
     expect(seen.body.caixa.expected).toEqual({
-      cash: 12_300,
+      cash: 13_400,
       pix: 1100,
       credit: 2200,
       debit: 600,
       voucher: 0,
     });
-    expect(seen.body.caixa.serviceCents).toBe(300);
+    expect(seen.body.caixa.serviceCents).toBe(400);
     const close = await attendant('POST', '/pdv/caixa/close', {
-      counted: { cash: 12_100, pix: 1100, credit: 2200, debit: 600 },
+      counted: { cash: 13_200, pix: 1100, credit: 2200, debit: 600 },
       notes: 'faltou troco',
     });
     expect(close.status).toBe(200);
@@ -667,7 +779,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     const hist = await owner('GET', '/pdv/caixa/history');
     expect(hist.body.sessions[0]).toMatchObject({ differenceCents: -200, closedBy: 'Caio' });
     const one = await owner('GET', `/pdv/caixa/${close.body.report.id}`);
-    expect(one.body.report.counted.cash).toBe(12_100);
+    expect(one.body.report.counted.cash).toBe(13_200);
     expect((await attendant('GET', '/pdv/caixa')).body.caixa).toBeNull();
   });
 

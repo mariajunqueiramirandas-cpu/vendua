@@ -77,7 +77,7 @@ export function summaryCard(
     discountLabel: cart.coupon?.applies ? cart.coupon.label || cart.coupon.code : null,
     adjustmentCents: cart.totals.paymentAdjustmentCents,
     totalCents: cart.totals.totalCents,
-    mode: d?.mode ?? 'pickup',
+    mode: d?.mode === 'delivery' ? 'delivery' : 'pickup',
     address,
     eta,
     payment: o.paymentMethod ? PAYMENT_LABEL[o.paymentMethod] : null,

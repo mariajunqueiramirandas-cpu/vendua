@@ -338,6 +338,8 @@ export interface OrderStatusView {
     promisedTo: string | null;
     etaMin: number | null;
     etaMax: number | null;
+    /** dine_in: the table's label (ADR 0036) */
+    table?: string | null;
   };
   scheduledFor: string | null;
   placedAt: string;
@@ -368,6 +370,7 @@ export function orderStatusOf(o: OrderView, storeName: string): OrderStatusView 
       promisedTo: d.promisedTo ?? null,
       etaMin: d.etaMin ?? null,
       etaMax: d.etaMax ?? null,
+      ...(d.mode === 'dine_in' ? { table: d.table ?? null } : {}),
     },
     scheduledFor: o.scheduledFor,
     placedAt: new Date(o.placedAt).toISOString(),

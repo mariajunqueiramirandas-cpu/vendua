@@ -1,5 +1,8 @@
 import type { Context } from 'hono';
 import { withTenant, type Sql } from '../platform/db.ts';
+import { storeOrigin } from '../platform/store-origin.ts';
+import type { Tenant } from '../platform/tenancy.ts';
+import { tableToken } from '../modules/pdv/qr.ts';
 import { HttpError, uuidParam } from '../platform/http.ts';
 import { requireFeature } from '../modules/billing/plans.ts';
 import { printersTx, queueJobsTx } from '../modules/printing/jobs.ts';
@@ -84,6 +87,7 @@ async function settingsOf(tx: Sql, tenantId: string) {
     {
       prep: number | null;
       service_bps: number;
+      qr_orders: boolean;
       pix_key: string | null;
       pix_key_type: string | null;
       pix_beneficiary: string | null;
@@ -91,7 +95,8 @@ async function settingsOf(tx: Sql, tenantId: string) {
       city: string | null;
     }[]
   >`
-    select prep_time_minutes as prep, pdv_service_bps as service_bps, pix_key, pix_key_type,
+    select prep_time_minutes as prep, pdv_service_bps as service_bps, pdv_qr_orders as qr_orders,
+           pix_key, pix_key_type,
            pix_beneficiary, pix_city, city
     from store_settings where tenant_id = ${tenantId}
   `;
@@ -196,19 +201,37 @@ const archivedTables = (tx: Sql, tenantId: string) =>
     order by archived_at desc, id limit 200
   `;
 
-const tablesOut = async (tx: Sql, tenantId: string) => {
-  const [active, archived] = await Promise.all([
-    tables(tx, tenantId),
-    archivedTables(tx, tenantId),
-  ]);
-  return { tables: active, archived };
+const tablesOut = async (
+  tx: Sql,
+  t: Tenant,
+  d: Pick<AdminDeps, 'sessionSecret' | 'storeDomain'>,
+) => {
+  const [active, archived] = await Promise.all([tables(tx, t.id), archivedTables(tx, t.id)]);
+  return { tables: await withQr(tx, t, d, active), archived };
 };
 
 const tables = (tx: Sql, tenantId: string) =>
-  tx<{ id: string; label: string; sort: number }[]>`
-    select id, label, sort from pdv_tables
+  tx<{ id: string; label: string; sort: number; qr_rev: number }[]>`
+    select id, label, sort, qr_rev from pdv_tables
     where tenant_id = ${tenantId} and archived_at is null order by sort, label, id
   `;
+
+/** The tables as the admin shows them: each with its QR's link (ADR 0036). */
+async function withQr(
+  tx: Sql,
+  t: Tenant,
+  d: Pick<AdminDeps, 'sessionSecret' | 'storeDomain'>,
+  rows: { id: string; label: string; sort: number; qr_rev: number }[],
+) {
+  if (rows.length === 0) return [];
+  const origin = await storeOrigin(tx, t, d.storeDomain);
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.label,
+    sort: r.sort,
+    qrUrl: `${origin}/?mesa=${tableToken(d.sessionSecret, t.id, r.id, r.qr_rev)}`,
+  }));
+}
 
 /** One printer: the one asked for, or the store's only one; else the screen asks which. */
 async function printerFor(tx: Sql, tenantId: string, raw: unknown): Promise<string> {
@@ -256,9 +279,10 @@ export function mountPdv(d: AdminDeps) {
       ]);
       return {
         caixa: caixa ? await caixaDetail(tx, t.id, caixa, roleAtLeast(m.role, 'manager')) : null,
-        tables: tbls,
+        tables: await withQr(tx, t, d, tbls),
         tabs,
         serviceBps: s?.service_bps ?? 0,
+        qrOrders: s?.qr_orders ?? true,
       };
     }),
   );
@@ -750,13 +774,15 @@ export function mountPdv(d: AdminDeps) {
         });
       const [view] = await insertPayments(tx, t.id, caixa.id, { tabId: id }, [payment], m.name);
       const after = await tabDetail(tx, t.id, id);
-      if (after.remainingCents === 0) await closeTabTx(tx, t.id, after, m.name);
+      // a QR order still waiting for the staff keeps the comanda open (ADR 0036)
+      const waiting = after.roundsList.some((r) => r.state === 'placed');
+      if (after.remainingCents === 0 && !waiting) await closeTabTx(tx, t.id, after, m.name);
       await Promise.all([
         audit(tx, t.id, m, {
           action: 'pdv.tab_payment',
           entity: 'pdv_tab',
           entityId: id,
-          summary: `recebeu ${brl(payment.amountCents)} na comanda ${tab.label}${after.remainingCents === 0 ? ' e fechou a conta' : ''}`,
+          summary: `recebeu ${brl(payment.amountCents)} na comanda ${tab.label}${after.remainingCents === 0 && !waiting ? ' e fechou a conta' : ''}`,
           after: { payment },
         }),
         emitAdminTx(tx, t.id, 'pdv', id),
@@ -775,6 +801,8 @@ export function mountPdv(d: AdminDeps) {
       const detail = await tabDetail(tx, t.id, id);
       // an overpaid comanda (a round cancelled after paying) gives the difference back first:
       // void a payment and take the right amount
+      if (detail.roundsList.some((r) => r.state === 'placed'))
+        throw new HttpError(409, 'TAB_HAS_PENDING', 'accept or cancel its waiting QR orders first');
       if (detail.remainingCents !== 0)
         throw new HttpError(
           409,
@@ -1114,7 +1142,7 @@ export function mountPdv(d: AdminDeps) {
     '/pdv/tables',
     read('attendant', async (tx, t) => {
       await gate(tx, t.id);
-      return tablesOut(tx, t.id);
+      return tablesOut(tx, t, d);
     }),
   );
 
@@ -1150,7 +1178,7 @@ export function mountPdv(d: AdminDeps) {
         }),
         emitAdminTx(tx, t.id, 'pdv', 'tables'),
       ]);
-      return { status: 201, body: { tables: await tables(tx, t.id) } };
+      return { status: 201, body: { tables: await withQr(tx, t, d, await tables(tx, t.id)) } };
     }),
   );
 
@@ -1192,7 +1220,13 @@ export function mountPdv(d: AdminDeps) {
         }),
         emitAdminTx(tx, t.id, 'pdv', 'tables'),
       ]);
-      return { status: 200, body: { table: await tableRow(tx, t.id, id) } };
+      const [one] = await withQr(
+        tx,
+        t,
+        d,
+        (await tables(tx, t.id)).filter((r) => r.id === id),
+      );
+      return { status: 200, body: { table: one } };
     }),
   );
 
@@ -1213,7 +1247,7 @@ export function mountPdv(d: AdminDeps) {
         }),
         emitAdminTx(tx, t.id, 'pdv', 'tables'),
       ]);
-      return { status: 200, body: await tablesOut(tx, t.id) };
+      return { status: 200, body: await tablesOut(tx, t, d) };
     }),
   );
 
@@ -1256,7 +1290,7 @@ export function mountPdv(d: AdminDeps) {
           emitAdminTx(tx, t.id, 'pdv', 'tables'),
         ]);
       }
-      return { status: 200, body: await tablesOut(tx, t.id) };
+      return { status: 200, body: await tablesOut(tx, t, d) };
     }),
   );
 
@@ -1264,23 +1298,68 @@ export function mountPdv(d: AdminDeps) {
     '/pdv/settings',
     write('manager', async (tx, t, m, c) => {
       const body = await bodyOf(c, 1024);
-      const bps = int(body.serviceBps, 'serviceBps', 0, 2000);
+      const bps =
+        body.serviceBps === undefined ? undefined : int(body.serviceBps, 'serviceBps', 0, 2000);
+      const qr = body.qrOrders === undefined ? undefined : bool(body.qrOrders, 'qrOrders');
+      if (bps === undefined && qr === undefined)
+        throw new HttpError(422, 'BAD_REQUEST', 'send serviceBps or qrOrders', {
+          field: 'serviceBps',
+        });
       await gate(tx, t.id);
-      const [before] = await tx<{ bps: number }[]>`
-        select pdv_service_bps as bps from store_settings where tenant_id = ${t.id} for update
+      const [before] = await tx<{ bps: number; qr: boolean }[]>`
+        select pdv_service_bps as bps, pdv_qr_orders as qr from store_settings
+        where tenant_id = ${t.id} for update
       `;
-      await tx`update store_settings set pdv_service_bps = ${bps} where tenant_id = ${t.id}`;
+      const next = { bps: bps ?? before?.bps ?? 0, qr: qr ?? before?.qr ?? true };
+      await tx`
+        update store_settings set pdv_service_bps = ${next.bps}, pdv_qr_orders = ${next.qr}
+        where tenant_id = ${t.id}
+      `;
+      const said = [
+        bps !== undefined ? `taxa de serviço: ${(bps / 100).toLocaleString('pt-BR')}%` : null,
+        qr !== undefined ? `pedidos pelo QR da mesa ${qr ? 'ligados' : 'desligados'}` : null,
+      ].filter(Boolean);
       await Promise.all([
         audit(tx, t.id, m, {
           action: 'pdv.settings',
           entity: 'store_settings',
-          summary: `taxa de serviço: ${(bps / 100).toLocaleString('pt-BR')}%`,
-          before: { serviceBps: before?.bps ?? 0 },
-          after: { serviceBps: bps },
+          summary: said.join('; '),
+          before: { serviceBps: before?.bps ?? 0, qrOrders: before?.qr ?? true },
+          after: { serviceBps: next.bps, qrOrders: next.qr },
         }),
         emitAdminTx(tx, t.id, 'pdv', 'settings'),
+        // the storefront's profile says whether its tables take orders
+        emitAdminTx(tx, t.id, 'store', 'settings'),
       ]);
-      return { status: 200, body: { serviceBps: bps } };
+      return { status: 200, body: { serviceBps: next.bps, qrOrders: next.qr } };
+    }),
+  );
+
+  admin.post(
+    '/pdv/tables/:id/qr',
+    write('manager', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      await gate(tx, t.id);
+      const before = await tableRow(tx, t.id, id);
+      await tx`
+        update pdv_tables set qr_rev = qr_rev + 1 where tenant_id = ${t.id} and id = ${id}
+      `;
+      const [one] = await withQr(
+        tx,
+        t,
+        d,
+        (await tables(tx, t.id)).filter((r) => r.id === id),
+      );
+      await Promise.all([
+        audit(tx, t.id, m, {
+          action: 'pdv.table_qr_replaced',
+          entity: 'pdv_table',
+          entityId: id,
+          summary: `gerou um novo QR para a mesa ${before.label}: o anterior não funciona mais`,
+        }),
+        emitAdminTx(tx, t.id, 'pdv', 'tables'),
+      ]);
+      return { status: 200, body: { table: one } };
     }),
   );
 }

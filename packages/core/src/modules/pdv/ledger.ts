@@ -271,6 +271,11 @@ export interface TabRound {
   orderId: string;
   number: number;
   state: string;
+  /** pdv: taken by the staff; table_qr: ordered from the table's QR code (ADR 0036) */
+  source: 'pdv' | 'table_qr';
+  /** paid online with its own payment: not part of what the comanda owes */
+  paidOnline: boolean;
+  /* a QR order still 'placed' waits for the staff: listed, not owed until accepted */
   placedAt: string;
   totalCents: number;
   items: {
@@ -310,9 +315,11 @@ const tabSums = (tx: Sql, tenantId: string, where: ReturnType<Sql>) =>
   tx<TabSumRow[]>`
     select t.id, t.table_id, t.label, t.customer_name, t.status, t.service_bps, t.service_fee,
            t.discount, t.service_cents, t.opened_by, t.opened_at, t.closed_at,
+           -- a round paid online (a QR order, ADR 0036) is listed but not owed on the comanda
            coalesce((select sum(o.total_cents) from orders o
                      where o.tenant_id = t.tenant_id and o.tab_id = t.id
-                       and o.state not in ('cancelled', 'refunded')), 0)::int as subtotal,
+                       and o.state not in ('placed', 'cancelled', 'refunded')
+                       and o.payment ->> 'provider' = 'pdv'), 0)::int as subtotal,
            (select count(*) from orders o
             where o.tenant_id = t.tenant_id and o.tab_id = t.id
               and o.state not in ('cancelled', 'refunded'))::int as rounds,
@@ -380,6 +387,8 @@ export async function tabDetail(
         id: string;
         number: number;
         state: string;
+        source: string;
+        online: boolean;
         placed_at: Date;
         total_cents: number;
         items: {
@@ -391,7 +400,8 @@ export async function tabDetail(
         }[];
       }[]
     >`
-      select o.id, o.number, o.state, o.placed_at, o.total_cents,
+      select o.id, o.number, o.state, o.source, o.placed_at, o.total_cents,
+             coalesce(o.payment ->> 'provider', '') <> 'pdv' as online,
              (select coalesce(json_agg(i order by i.sort), '[]')
               from (select sort, name, qty, line_total_cents, modifiers, note from order_items
                     where tenant_id = o.tenant_id and order_id = o.id) i) as items
@@ -426,6 +436,8 @@ export async function tabDetail(
       orderId: r.id,
       number: r.number,
       state: r.state,
+      source: r.source === 'table_qr' ? 'table_qr' : 'pdv',
+      paidOnline: r.online,
       placedAt: new Date(r.placed_at).toISOString(),
       totalCents: r.total_cents,
       items: r.items.map((i) => ({
@@ -457,11 +469,13 @@ export async function closeTabTx(
     where tenant_id = ${tenantId} and id = ${tab.id}
   `;
   const live = tab.roundsList.filter((r) => r.state !== 'cancelled' && r.state !== 'refunded');
-  if (live.length)
+  // a round paid online keeps its own payment; only the comanda's own are paid here
+  const owed = live.filter((r) => !r.paidOnline);
+  if (owed.length)
     await tx`
       update orders set payment = ${tx.json({ ...TAB_PAYMENT, status: 'paid', paidAt: now.toISOString(), confirmedBy: by } as never)},
         rev = rev + 1, updated_at = now()
-      where tenant_id = ${tenantId} and id = any(${live.map((r) => r.orderId)}::uuid[])
+      where tenant_id = ${tenantId} and id = any(${owed.map((r) => r.orderId)}::uuid[])
     `;
   for (const r of live) await deliverTx(tx, tenantId, r.orderId, by);
 }

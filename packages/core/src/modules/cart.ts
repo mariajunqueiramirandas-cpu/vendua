@@ -177,7 +177,8 @@ export interface CartTotals {
 }
 
 export interface CartDelivery {
-  mode: 'pickup' | 'delivery';
+  /** dine_in: a cart at a table (ADR 0036) — no fee, no minimum */
+  mode: 'pickup' | 'delivery' | 'dine_in';
   neighborhood?: string | null;
   address?: string | null;
   street?: string | null;
@@ -773,7 +774,7 @@ export async function loadCartView(
   const subtotal = items.reduce((s, i) => s + i.lineTotalCents, 0);
 
   let deliveryFee = 0;
-  let effectiveMinOrder = settings?.min_order_cents ?? 0;
+  let effectiveMinOrder = delivery?.mode === 'dine_in' ? 0 : (settings?.min_order_cents ?? 0);
   let match: ZoneMatch<ZoneRow | DistanceZone> | null = null;
   if (delivery?.mode === 'delivery') {
     match = resolveDelivery(
