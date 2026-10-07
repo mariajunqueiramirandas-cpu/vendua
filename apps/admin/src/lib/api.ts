@@ -202,6 +202,8 @@ export interface Session {
     phone: string;
     role: Role;
     email: string | null;
+    /** typed in Perfil, waiting for its confirmation link */
+    pendingEmail?: string | null;
     prefs: {
       sound?: boolean;
       volume?: number;
@@ -2165,7 +2167,7 @@ export const api = {
     name?: string;
     email?: string | null;
     prefs?: Partial<Session['user']['prefs']>;
-  }) => send<{ user: unknown }>('PATCH', '/me', patch),
+  }) => send<{ user: unknown; emailConfirmation?: 'sent' | 'rate_limited' }>('PATCH', '/me', patch),
   sessions: () =>
     get<{
       sessions: {

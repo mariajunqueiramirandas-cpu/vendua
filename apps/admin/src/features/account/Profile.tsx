@@ -60,7 +60,13 @@ export default function Profile() {
   const patch = (body: Parameters<typeof api.updateMe>[0]) =>
     void save
       .track(api.updateMe(body))
-      .then(() => qc.invalidateQueries({ queryKey: qk.session }))
+      .then((r) => {
+        // a new email signs in once proven: it waits for the link sent to it
+        if (r.emailConfirmation === 'sent') toast('Enviamos um link para confirmar o e-mail');
+        else if (r.emailConfirmation === 'rate_limited')
+          toast.error('Muitos pedidos de confirmação. Tente de novo em uma hora.');
+        return qc.invalidateQueries({ queryKey: qk.session });
+      })
       .catch((e) => toast.error(messageOf(e)));
   // toggles flip at once; a failed save puts them back
   const setPref = async (p: Partial<Session['user']['prefs']>) => {
@@ -107,7 +113,11 @@ export default function Profile() {
               label="E-mail"
               optional
               htmlFor="me-mail"
-              helper="Para receber avisos se o WhatsApp falhar."
+              helper={
+                s.user.pendingEmail
+                  ? `Confirme ${s.user.pendingEmail} pelo link que enviamos para lá.`
+                  : 'Para receber avisos se o WhatsApp falhar.'
+              }
             >
               <CommitInput
                 id="me-mail"
