@@ -545,8 +545,15 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
           );
           if (key.remoteJid)
             rememberUnread(dm, { remoteJid: key.remoteJid, id: key.id, fromMe: false });
+          const id = key.id;
           for (const fn of handlers) {
-            void fn(dm.jid, text, key.id, m.pushName, dm.alias);
+            void (async () => {
+              try {
+                await fn(dm.jid, text, id, m.pushName, dm.alias);
+              } catch (e) {
+                waLog.warn({ err: e, id }, 'inbound message ingest failed');
+              }
+            })();
           }
         }
       })
