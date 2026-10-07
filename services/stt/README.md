@@ -133,7 +133,7 @@ This decoder runs the same greedy TDT search with the work split by what actuall
 - The prediction network runs only when a non-blank token is emitted. A blank changes nothing,
   so its output is cached. The start state (blank fed from zeros) is computed at load.
 - Layer 0's input term is `embedding @ W_ih + biases`, a function of the token alone. It is
-  folded into an 8193×2560 lookup table at compile time. Layer 1's two GEMMs are fused into one.
+  folded into an 8193×2560 lookup table when the model loads. Layer 1's two GEMMs are fused into one.
 - All live utterances step together, so the 640×8198 output head is one GEMM per step instead
   of one GEMV per utterance.
 
