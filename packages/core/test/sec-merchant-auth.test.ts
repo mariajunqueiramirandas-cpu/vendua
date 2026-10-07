@@ -117,6 +117,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
   const victimPhone = `2192${stamp}`;
   const capPhone = `2191${stamp}`;
   const attackerMail = `sec-atk-${nonce}@exemplo.com`;
+  const newMail = `sec-new-${nonce}@exemplo.com`;
   let storeX = '';
   let storeY = '';
   let idem = 0;
@@ -160,7 +161,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
   });
 
   afterAll(async () => {
-    await sql`delete from merchant_login_links where email = ${attackerMail}`;
+    await sql`delete from merchant_login_links where email in (${attackerMail}, ${newMail}, ${`outro-${newMail}`})`;
+    await sql`delete from merchant_login_failures where phone in (${attackerPhone}, ${victimPhone}, ${capPhone})`;
     await sql`delete from merchant_login_codes where phone in (${attackerPhone}, ${victimPhone}, ${capPhone})`;
     if (storeX) await sql`delete from tenants where id in (${storeX}, ${storeY})`;
     if (appSql !== sql) await appSql.end();
@@ -237,15 +239,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
     expect((await call('POST', '/session/switch', { storeId: storeY }, legacy)).status).toBe(404);
   });
 
-  test('admin OTP: 10 wrong codes in a day lock the phone, with the same answer', async () => {
+  test("admin OTP: wrong codes lock the IP that sent them, not the owner's own", async () => {
+    const wrongFor = (right: string) => (right === '000000' ? '111111' : '000000');
+    // each code an hour older than the next: the per-hour code cap isn't what's under test
+    const ask = async (ip: string) => {
+      await sql`
+        update merchant_login_codes set created_at = created_at - interval '1 hour'
+        where phone = ${capPhone}
+      `;
+      await startOtp(appSql, capPhone, otpSender, ip);
+    };
+    // a stranger at one IP: 10 wrong codes lock that IP for this phone
     for (let n = 0; n < 2; n++) {
-      await startOtp(appSql, capPhone, otpSender);
-      const right = codes.get(capPhone)!;
-      const wrong = right === '000000' ? '111111' : '000000';
-      for (let i = 0; i < 5; i++) expect(await verifyOtp(appSql, capPhone, wrong)).toBe(false);
+      await ask('stranger-1');
+      const wrong = wrongFor(codes.get(capPhone)!);
+      for (let i = 0; i < 5; i++)
+        expect(await verifyOtp(appSql, capPhone, wrong, 'stranger-1')).toBe(false);
     }
-    await startOtp(appSql, capPhone, otpSender);
-    expect(await verifyOtp(appSql, capPhone, codes.get(capPhone)!)).toBe(false);
+    await ask('stranger-1');
+    expect(await verifyOtp(appSql, capPhone, codes.get(capPhone)!, 'stranger-1')).toBe(false);
+    // the owner, elsewhere, still gets in with a fresh code
+    await ask('owner');
+    expect(await verifyOtp(appSql, capPhone, codes.get(capPhone)!, 'owner')).toBe(true);
+
+    // past the phone's 30 a day, a code only works for the clean IP that asked for it
+    for (let n = 0; n < 4; n++) {
+      await ask(`stranger-${n + 2}`);
+      const wrong = wrongFor(codes.get(capPhone)!);
+      for (let i = 0; i < 5; i++)
+        expect(await verifyOtp(appSql, capPhone, wrong, `stranger-${n + 2}`)).toBe(false);
+    }
+    await ask('owner');
+    expect(await verifyOtp(appSql, capPhone, codes.get(capPhone)!, 'stranger-9')).toBe(false);
     const call = client(mkApp());
     const r = await call('POST', '/auth/otp/verify', {
       phone: capPhone,
@@ -253,13 +278,73 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
     });
     expect(r.status).toBe(422);
     expect(r.body.error.code).toBe('INVALID_CODE');
+    expect(await verifyOtp(appSql, capPhone, codes.get(capPhone)!, 'owner')).toBe(true);
+    // a stranger asking for its own code gets one try, then nothing
+    await ask('stranger-10');
+    const right = codes.get(capPhone)!;
+    expect(await verifyOtp(appSql, capPhone, wrongFor(right), 'stranger-10')).toBe(false);
+    expect(await verifyOtp(appSql, capPhone, right, 'stranger-10')).toBe(false);
 
     // the window passes
     await sql`
-      update merchant_login_codes set created_at = now() - interval '25 hours'
-      where phone = ${capPhone} and attempts > 0
+      update merchant_login_failures set created_at = now() - interval '25 hours'
+      where phone = ${capPhone}
     `;
-    expect(await verifyOtp(appSql, capPhone, codes.get(capPhone)!)).toBe(true);
+    expect(await verifyOtp(appSql, capPhone, right, 'stranger-10')).toBe(true);
+  });
+
+  test('a new email on /me waits for the link sent to it, then signs in and is audited', async () => {
+    const call = client(mkApp());
+    const atk = await otpSignIn(call, attackerPhone, storeX);
+    const patch = await call('PATCH', '/me', { email: newMail.toUpperCase() }, atk);
+    expect(patch.status).toBe(200);
+    expect(patch.body.user.email).toBeNull();
+    expect(patch.body.user.pendingEmail).toBe(newMail);
+    expect(patch.body.emailConfirmation).toBe('sent');
+    expect((await call('GET', '/session', undefined, atk)).body.user).toMatchObject({
+      email: null,
+      pendingEmail: newMail,
+    });
+    // unproven, the address signs nobody in
+    const before = emails.length;
+    await call('POST', '/auth/email/start', { email: newMail });
+    const sent = emails.slice(before).filter((e) => e.to === newMail);
+    expect(sent).toHaveLength(0);
+
+    const token = /link=([A-Za-z0-9_-]{43})/.exec(
+      [...emails].reverse().find((e) => e.to === newMail)!.text,
+    )![1]!;
+    const v = await call('POST', '/auth/email/verify', { token });
+    expect(v.status).toBe(200);
+    expect(v.body.signedIn).toBe(true);
+    expect(v.body.store.id).toBe(storeX);
+    expect((await call('POST', '/auth/email/verify', { token })).status).toBe(422);
+    expect((await call('GET', '/session', undefined, atk)).body.user).toMatchObject({
+      email: newMail,
+      pendingEmail: null,
+    });
+    const audits = await sql<{ summary: string }[]>`
+      select summary from audit_log where tenant_id = ${storeX} and action = 'me.email' order by id
+    `;
+    expect(audits.map((a) => a.summary)).toEqual(['cadastrou um e-mail de acesso']);
+
+    // a link to an address that's no longer pending doesn't promote it
+    await call('PATCH', '/me', { email: `outro-${newMail}` }, atk);
+    const stale = /link=([A-Za-z0-9_-]{43})/.exec(
+      [...emails].reverse().find((e) => e.to === `outro-${newMail}`)!.text,
+    )![1]!;
+    await call('PATCH', '/me', { email: newMail }, atk);
+    expect((await call('POST', '/auth/email/verify', { token: stale })).status).toBe(422);
+    const cleared = await call('PATCH', '/me', { email: null }, atk);
+    expect(cleared.body.user).toMatchObject({ email: null, pendingEmail: null });
+    expect(
+      (
+        await sql<{ n: number }[]>`
+          select count(*)::int as n from audit_log
+          where tenant_id = ${storeX} and action = 'me.email' and summary = 'removeu o e-mail de acesso'
+        `
+      )[0]!.n,
+    ).toBe(1);
   });
 
   test('push: only push-service endpoints; at most 10 devices per member', async () => {

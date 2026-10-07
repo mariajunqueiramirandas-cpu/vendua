@@ -391,6 +391,16 @@ export async function setChargeAmount(ctx: BillingCtx, tx: Sql, sub: SubRow, cen
   await tx`update subscriptions set charge_cents = ${cents} where tenant_id = ${sub.tenant_id}`;
 }
 
+/** A voided invoice's Pix is withdrawn too: paid late, it would only reach the team. */
+export async function voidUnpaidTx(ctx: BillingCtx, tx: Sql, tenantId: string) {
+  const rows = await tx<{ method: string; provider_payment_id: string | null }[]>`
+    update invoices set status = 'void' where tenant_id = ${tenantId} and status in ('open', 'failed')
+    returning method, provider_payment_id
+  `;
+  for (const r of rows)
+    if (r.method === 'pix' && r.provider_payment_id) dropPix(ctx)(r.provider_payment_id);
+}
+
 export const dropPix =
   (ctx: BillingCtx): DropPix =>
   (id) =>
@@ -987,7 +997,7 @@ export async function cancelSubscription(ctx: BillingCtx, tx: Sql, tenantId: str
         checkout_url = null, updated_at = now(), status_changed_at = now()
       where tenant_id = ${tenantId}
     `;
-    await tx`update invoices set status = 'void' where tenant_id = ${tenantId} and status in ('open', 'failed')`;
+    await voidUnpaidTx(ctx, tx, tenantId);
     if (sub.method === 'card')
       await viaProvider(() => stopPreapproval(ctx, sub.provider_subscription_id, 'cancelled'));
     await noticeCancelled(ctx, tx, sub, false);
@@ -996,8 +1006,10 @@ export async function cancelSubscription(ctx: BillingCtx, tx: Sql, tenantId: str
       update subscriptions set cancel_at_period_end = true, updated_at = now()
       where tenant_id = ${tenantId}
     `;
-    for (const inv of await unpaidAhead(tx, sub))
+    for (const inv of await unpaidAhead(tx, sub)) {
       await tx`update invoices set status = 'void' where id = ${inv.id}`;
+      if (inv.method === 'pix' && inv.provider_payment_id) dropPix(ctx)(inv.provider_payment_id);
+    }
     await cancelPendingUpgrade(ctx, tx, sub);
     // paused, not cancelled: "voltar atrás" before the period ends re-authorizes the same card
     if (sub.method === 'card')
@@ -1374,7 +1386,7 @@ export async function syncPreapproval(
           status_changed_at = now()
         where tenant_id = ${tenantId}
       `;
-      await tx`update invoices set status = 'void' where tenant_id = ${tenantId} and status in ('open', 'failed')`;
+      await voidUnpaidTx(ctx, tx, tenantId);
       await noticeCancelled(ctx, tx, sub, false, 'mercadopago');
     } else if (sub.status !== 'cancelled' && !sub.cancel_at_period_end) {
       // cancelled on MP's side: the paid period is still the store's, then it ends (jobs.ts)
@@ -1485,6 +1497,18 @@ export async function settlePixPayment(
         `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) já estava paga e recebeu outro Pix (${pay.id}, ${formatBRL(pay.amountCents)}). Confira e devolva pelo Mercado Pago.`,
         `invoice-dup:${pay.id}`,
       );
+    return false;
+  }
+  // a voided plan invoice's QR still pays at Mercado Pago; activating on it would give the plan the
+  // subscription has now (maybe pricier) for this invoice's old amount. Upgrades and packs settle
+  // their own late payments (markInvoicePaid).
+  if (inv.status === 'void' && inv.kind !== 'upgrade' && inv.kind !== 'ai_pack') {
+    await flag(
+      `Pix numa fatura cancelada: ${t?.name ?? tenantId}`,
+      `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) estava cancelada e recebeu um Pix (${pay.id}, ${formatBRL(pay.amountCents)}). Nada foi ativado: devolva pelo Mercado Pago ou acerte com a loja.`,
+      `invoice-void:${pay.id}`,
+    );
+    await emitAdminTx(tx, tenantId, 'billing', inv.id);
     return false;
   }
   if (pay.amountCents < inv.amount_cents) {

@@ -505,20 +505,35 @@ export async function transitionOrder(
     tx`select pg_notify(${ORDER_CHANNEL}, ${orderId})`.execute(),
     emitAdminTx(tx, tenantId, 'order.changed', orderId),
   ]);
-  if (to === 'cancelled') {
-    await restoreStock(tx, tenantId, orderId);
+  if (to === 'cancelled') await restoreStock(tx, tenantId, orderId);
+  if (to === 'cancelled' || to === 'refunded') {
     // a counter sale's money leaves the drawer with it, while its caixa is still open (held, so
     // it can't close in between and lose the void from what it counted)
     const [caixa] = await tx<{ id: string }[]>`
       select id from cash_sessions where tenant_id = ${tenantId} and closed_at is null for share
     `;
-    if (caixa)
+    if (caixa) {
+      const by = String(meta.by ?? actor).slice(0, 80);
       await tx`
-        update pdv_payments set voided_at = now(), voided_by = ${String(meta.by ?? actor).slice(0, 80)},
-          void_reason = 'pedido cancelado'
+        update pdv_payments set voided_at = now(), voided_by = ${by},
+          void_reason = ${to === 'cancelled' ? 'pedido cancelado' : 'pedido estornado'}
         where tenant_id = ${tenantId} and order_id = ${orderId} and voided_at is null
           and session_id = ${caixa.id}
       `;
+      // cash taken in a caixa already closed is handed back from this one's drawer
+      const [earlier] = await tx<{ cents: number }[]>`
+        select coalesce(sum(p.amount_cents), 0)::int as cents
+        from pdv_payments p join cash_sessions s on s.tenant_id = p.tenant_id and s.id = p.session_id
+        where p.tenant_id = ${tenantId} and p.order_id = ${orderId} and p.voided_at is null
+          and p.method = 'cash' and s.closed_at is not null
+      `;
+      if (earlier && earlier.cents > 0)
+        await tx`
+          insert into cash_movements (tenant_id, session_id, kind, amount_cents, reason, by_name)
+          values (${tenantId}, ${caixa.id}, 'sangria', ${earlier.cents},
+            ${`${to === 'cancelled' ? 'cancelamento' : 'estorno'} do pedido #${order.number}`}, ${by})
+        `;
+    }
   }
   if (to === 'delivered') await mintLoyaltyRewards(tx, tenantId, order.customer_phone);
   if (STAFF_STEPS.has(to))

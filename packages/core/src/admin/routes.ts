@@ -23,6 +23,7 @@ import {
   sessionAlive,
   sessionStores,
   setAdminCookie,
+  startEmailChange,
   startEmailLink,
   startOtp,
   validAdminEmail,
@@ -72,7 +73,7 @@ import { mountStore } from './routes-store.ts';
 import { mountTeam } from './routes-team.ts';
 import { mountWhatsapp } from './routes-whatsapp.ts';
 import { mountPrinting } from './routes-print.ts';
-import { processImage } from './media.ts';
+import { MEDIA_QUOTA_BYTES, mediaBytesUsed, processedBytes, processImage } from './media.ts';
 import { isPushEndpoint, pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
 import { recordPushAttempt } from './workers.ts';
 import { getIntegration } from '../modules/integrations.ts';
@@ -116,14 +117,15 @@ export function mountAdmin(o: MountAdminOpts) {
 
   // ── sign-in (pre-tenant) ─────────────────────────────────────────────────
   // one bucket per client IP for the whole auth surface — codes are the scarce thing
-  const authLimit = rateLimitByIp(20, { trustForwardedFor: o.trustProxy, proxyHops: o.proxyHops });
+  const ipFlags = { trustForwardedFor: o.trustProxy, proxyHops: o.proxyHops };
+  const authLimit = rateLimitByIp(20, ipFlags);
 
   admin.post('/auth/otp/start', authLimit, async (c) => {
     const body = await bodyJson(c);
     const phone = validAdminPhone(body.phone);
     if (!phone)
       throw new HttpError(422, 'INVALID_PHONE', 'type the phone with DDD', { field: 'phone' });
-    return c.json(await startOtp(sql, phone, o.otpSender));
+    return c.json(await startOtp(sql, phone, o.otpSender, clientIp(c, ipFlags)));
   });
 
   // one or several stores behind the verified phone/address: a session, or the picker
@@ -147,7 +149,7 @@ export function mountAdmin(o: MountAdminOpts) {
     const body = await bodyJson(c);
     const phone = validAdminPhone(body.phone);
     const code = typeof body.code === 'string' ? body.code.replace(/\D/g, '') : '';
-    if (!phone || !(await verifyOtp(sql, phone, code)))
+    if (!phone || !(await verifyOtp(sql, phone, code, clientIp(c, ipFlags))))
       throw new HttpError(422, 'INVALID_CODE', 'wrong or expired code', { field: 'code' });
     const stores = await membershipsFor(sql, phone);
     if (stores.length === 0)
@@ -183,9 +185,44 @@ export function mountAdmin(o: MountAdminOpts) {
     );
   });
 
+  // the member opened the link sent to the address they typed in Perfil: now it signs in
+  const confirmEmail = (email: string, to: { tenantId: string; userId: string }) =>
+    withTenant(sql, to.tenantId, async (tx) => {
+      const cur = (
+        await tx<{ name: string; email: string | null }[]>`
+          select name, email from merchant_users
+          where tenant_id = ${to.tenantId} and id = ${to.userId} and status = 'active'
+            and pending_email = ${email}
+          for update
+        `
+      )[0];
+      if (!cur) return false;
+      await tx`
+        update merchant_users set email = pending_email, pending_email = null
+        where tenant_id = ${to.tenantId} and id = ${to.userId}
+      `;
+      await audit(
+        tx,
+        to.tenantId,
+        { userId: to.userId, name: cur.name },
+        {
+          action: 'me.email',
+          entity: 'member',
+          entityId: to.userId,
+          summary: cur.email ? 'trocou o e-mail de acesso' : 'cadastrou um e-mail de acesso',
+          before: { email: cur.email },
+          after: { email },
+        },
+      );
+      await emitAdminTx(tx, to.tenantId, 'team');
+      return true;
+    });
+
   admin.post('/auth/email/verify', authLimit, async (c) => {
     const body = await bodyJson(c);
-    const email = await verifyEmailLink(sql, body.token);
+    const link = await verifyEmailLink(sql, body.token);
+    const email =
+      link && (!link.change || (await confirmEmail(link.email, link.change))) ? link.email : null;
     const stores = email ? await membershipsOf(sql, { kind: 'email', subject: email }) : [];
     if (!email || stores.length === 0)
       throw new HttpError(422, 'INVALID_LINK', 'this link is used or expired — ask for a new one', {
@@ -267,8 +304,15 @@ export function mountAdmin(o: MountAdminOpts) {
           storeOrigin(tx, tenant, o.storeDomain),
           // which screens open and which show the plan that has them (ADR 0032)
           planAccess(tx, tenant.id),
-          tx<{ logo_url: string | null; prefs: Record<string, unknown>; email: string | null }[]>`
-            select s.logo_url, u.prefs, u.email from merchant_users u
+          tx<
+            {
+              logo_url: string | null;
+              prefs: Record<string, unknown>;
+              email: string | null;
+              pending_email: string | null;
+            }[]
+          >`
+            select s.logo_url, u.prefs, u.email, u.pending_email from merchant_users u
               left join store_settings s on s.tenant_id = u.tenant_id
             where u.id = ${m.userId}
           `,
@@ -290,6 +334,8 @@ export function mountAdmin(o: MountAdminOpts) {
         phone: m.phone,
         role: m.role,
         email: settings?.email ?? null,
+        // typed in Perfil, waiting for its link to be opened
+        pendingEmail: settings?.pending_email ?? null,
         prefs: settings?.prefs ?? {},
       },
       store: {
@@ -336,11 +382,13 @@ export function mountAdmin(o: MountAdminOpts) {
   admin.patch('/me', async (c) => {
     const m = c.get('merchant');
     const tenant = c.get('tenant');
-    return o.idempotency(sql, async (c, tx) => {
+    let confirm = null as string | null;
+    const res = await o.idempotency(sql, async (c, tx) => {
       const body = await bodyJson(c);
       const name = body.name === undefined ? undefined : text(body.name, 'name', 80, 1);
-      const email = optText(body.email, 'email', 200);
-      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
+      const typed = optText(body.email, 'email', 200);
+      const email = typed ? validAdminEmail(typed) : typed;
+      if (email === null && typed)
         throw new HttpError(422, 'BAD_REQUEST', 'email looks wrong', { field: 'email' });
       let prefs: Record<string, unknown> | undefined;
       if (body.prefs !== undefined) {
@@ -348,19 +396,66 @@ export function mountAdmin(o: MountAdminOpts) {
           throw new HttpError(422, 'BAD_REQUEST', 'prefs must be a small object');
         prefs = pickPrefs(body.prefs);
       }
+      const cur = (
+        await tx<{ email: string | null }[]>`
+          select email from merchant_users where tenant_id = ${tenant.id} and id = ${m.userId} for update
+        `
+      )[0]!;
+      // the address is a sign-in factor: a new one waits for its link; removing one is immediate
+      const same = email && cur.email?.toLowerCase() === email;
+      const pending = email && !same ? email : null;
       const row = (
-        await tx<{ id: string; name: string; email: string | null; prefs: unknown }[]>`
+        await tx<
+          {
+            id: string;
+            name: string;
+            email: string | null;
+            pendingEmail: string | null;
+            prefs: unknown;
+          }[]
+        >`
           update merchant_users set
             name = ${name ?? tx`name`},
-            email = ${email === undefined ? tx`email` : email},
+            email = ${email === null ? null : tx`email`},
+            pending_email = ${email === undefined ? tx`pending_email` : pending},
             prefs = ${prefs ? tx`prefs || ${tx.json(prefs as never)}` : tx`prefs`}
           where tenant_id = ${tenant.id} and id = ${m.userId}
-          returning id, name, email, prefs
+          returning id, name, email, pending_email as "pendingEmail", prefs
         `
-      )[0];
+      )[0]!;
+      if (email === null && cur.email)
+        await audit(tx, tenant.id, m, {
+          action: 'me.email',
+          entity: 'member',
+          entityId: m.userId,
+          summary: 'removeu o e-mail de acesso',
+          before: { email: cur.email },
+          after: { email: null },
+        });
+      confirm = pending;
       await emitAdminTx(tx, tenant.id, 'team');
       return { status: 200, body: { user: row } };
     })(c);
+    if (!confirm || res.status !== 200) return res;
+    const origin = o.publicOrigin(c);
+    const out = await startEmailChange(
+      sql,
+      { tenantId: tenant.id, userId: m.userId, email: confirm },
+      (token) => `${origin}/admin/entrar?link=${token}`,
+      (to, link, linkId) =>
+        o.notify.email(
+          to,
+          'Confirme seu email na Venduá',
+          `${m.name}, toque no link para confirmar este email no painel da ${tenant.name}:\n\n${link}\n\nEle vale por 15 minutos e funciona uma vez. Depois disso, você também pode entrar com este email. Se não foi você que pediu, ignore este email.`,
+          `admin-email-change:${linkId}`,
+        ),
+    );
+    const { user } = (await res.json()) as { user: unknown };
+    return c.json({
+      user,
+      emailConfirmation: out.sent ? 'sent' : 'rate_limited',
+      ...(out.devLink ? { devLink: out.devLink } : {}),
+    });
   });
 
   admin.get('/me/sessions', async (c) => {
@@ -584,6 +679,12 @@ export function mountAdmin(o: MountAdminOpts) {
     // decode + encode outside the claim tx: it's CPU, not data
     const img = await processImage(bytes);
     return o.idempotency(sql, async (_c, tx) => {
+      if ((await mediaBytesUsed(tx, tenant.id)) + processedBytes(img) > MEDIA_QUOTA_BYTES)
+        throw new HttpError(
+          413,
+          'MEDIA_QUOTA',
+          'this store uploaded too many photos this month — try again in a few days',
+        );
       const dom = dominant && /^#[0-9a-f]{6}$/.test(dominant) ? dominant : null;
       const row = (
         await tx<{ id: string }[]>`

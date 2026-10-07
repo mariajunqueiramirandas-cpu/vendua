@@ -773,6 +773,78 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(row).toEqual({ whatsapp: `+${pn}`, name: `+${pn}` });
   });
 
+  test('a burst from a new number mints one lead, not one per message', async () => {
+    await migrate(sql, MIGRATIONS);
+    const jid = freshJid();
+    const results = await Promise.all(
+      [1, 2, 3, 4, 5].map((i) =>
+        ingestInbound(sql, {
+          channel: 'whatsapp',
+          from: jid,
+          body: `oi ${i}`,
+          providerMessageId: `burst-new-${i}-${pmRun}`,
+        }),
+      ),
+    );
+    const ids = new Set(results.map((r) => ('ignored' in r ? null : r.leadId)));
+    expect(ids.size).toBe(1);
+    expect(await leadsFor(jid)).toHaveLength(1);
+    expect(results.filter((r) => !('ignored' in r) && r.leadCreated)).toHaveLength(1);
+  });
+
+  test('a BR mobile matches its lead across the 9th digit, both ways', async () => {
+    await migrate(sql, MIGRATIONS);
+    const sub = `8${crypto.randomUUID().replace(/\D/g, '').slice(0, 7)}`;
+    const withNine = `55219${sub}`;
+    const typed = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: `Nono ${pmRun}`, whatsapp: `+55 21 ${sub}` }),
+    ).then((r) => r.body.lead.id);
+    const res = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: `${withNine}@s.whatsapp.net`,
+      body: 'oi',
+      providerMessageId: `nono-1-${pmRun}`,
+      historical: true,
+    });
+    if ('ignored' in res) throw new Error('unexpected ignore');
+    expect(res.leadId).toBe(typed);
+    expect(res.leadCreated).toBe(false);
+
+    // a lead in the 9 form, a burst in both forms: one lock, one lead
+    const sub2 = `9${crypto.randomUUID().replace(/\D/g, '').slice(0, 7)}`;
+    const burst = await Promise.all(
+      [`55319${sub2}`, `5531${sub2}`, `55319${sub2}`, `5531${sub2}`].map((n, i) =>
+        ingestInbound(sql, {
+          channel: 'whatsapp',
+          from: `${n}@s.whatsapp.net`,
+          body: `oi ${i}`,
+          providerMessageId: `nono-burst-${i}-${pmRun}`,
+          historical: true,
+        }),
+      ),
+    );
+    const ids = new Set(burst.map((r) => ('ignored' in r ? null : r.leadId)));
+    expect(ids.size).toBe(1);
+    expect(ids.has(null)).toBe(false);
+  });
+
+  test('a 9 + landline-looking number is not matched to that landline', async () => {
+    await migrate(sql, MIGRATIONS);
+    const sub = `3${crypto.randomUUID().replace(/\D/g, '').slice(0, 7)}`;
+    const landline = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: `Fixo ${pmRun}`, phone: `+55 41 ${sub}` }),
+    ).then((r) => r.body.lead.id);
+    const res = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: `55419${sub}@s.whatsapp.net`,
+      body: 'oi',
+      providerMessageId: `nono-fixo-${pmRun}`,
+      historical: true,
+    });
+    if ('ignored' in res) throw new Error('unexpected ignore');
+    expect(res.leadId).not.toBe(landline);
+  });
+
   test('whatsappRegistered degrades to null with no live socket', async () => {
     // No baileys socket runs in tests — the probe must answer "can't tell",
     // never crash and never a false negative that would un-verify a number.

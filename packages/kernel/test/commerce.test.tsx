@@ -387,6 +387,76 @@ describe('checkout carries the phone’s customer token', () => {
   });
 });
 
+describe('checkout keeps its Idempotency-Key while an attempt’s outcome is unknown', () => {
+  const INPUT = {
+    customer: { name: 'Ana', phone: '(22) 99999-0001' },
+    delivery: { mode: 'pickup' },
+    payment: { method: 'pix' },
+  };
+  async function run(replies: (() => Response)[], inputs: unknown[]) {
+    const { createApi } = await import('../src/api.ts');
+    const keys: string[] = [];
+    const outcomes: string[] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path !== '/checkout/v1/checkout')
+        return json(201, { sessionToken: 'st2', cart: { status: 'open' } });
+      keys.push(new Headers(init?.headers).get('idempotency-key') ?? '');
+      const reply = replies.shift();
+      if (!reply) throw new TypeError('no reply');
+      return reply();
+    }) as typeof fetch;
+    try {
+      const api = createApi('http://shop.test');
+      for (const i of inputs)
+        outcomes.push(
+          await api.checkout(i as never).then(
+            (o) => `order:${o.id}`,
+            (e: { code: string }) => e.code,
+          ),
+        );
+    } finally {
+      globalThis.fetch = real;
+    }
+    return { keys, outcomes };
+  }
+  const placed = () => json(201, { order: { id: 'o1' } });
+
+  test('a lost response, a 5xx or IDEMPOTENCY_IN_PROGRESS retries with the same key', async () => {
+    const lost = () => {
+      throw new TypeError('network down');
+    };
+    const { keys, outcomes } = await run(
+      [
+        lost,
+        () => json(502, {}),
+        () => json(409, { error: { code: 'IDEMPOTENCY_IN_PROGRESS', message: 'retry' } }),
+        placed,
+      ],
+      [INPUT, INPUT, INPUT, INPUT],
+    );
+    expect(outcomes).toEqual(['NETWORK_ERROR', 'INTERNAL', 'IDEMPOTENCY_IN_PROGRESS', 'order:o1']);
+    expect(new Set(keys).size).toBe(1);
+  });
+
+  test('a definite refusal, a changed body or a placed order takes a new key', async () => {
+    const { keys, outcomes } = await run(
+      [
+        () => json(409, { error: { code: 'PRICES_CHANGED', message: 'repriced' } }),
+        () => json(502, {}),
+        placed,
+        placed,
+      ],
+      [INPUT, INPUT, { ...INPUT, payment: { method: 'cash' } }, INPUT],
+    );
+    expect(outcomes).toEqual(['PRICES_CHANGED', 'INTERNAL', 'order:o1', 'order:o1']);
+    expect(keys[1]).not.toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[1]);
+    expect(keys[3]).not.toBe(keys[2]);
+  });
+});
+
 describe('stock already in the cart', () => {
   const STOCKED = { ...DETAIL, modifierGroups: [], stockQuantity: 3 };
   const cartWith = (qty: number) => ({

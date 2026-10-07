@@ -573,11 +573,12 @@ export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
 
 async function sweepTenant(sql: Sql, tenantId: string) {
   await withTenant(sql, tenantId, async (tx) => {
-    const due = await tx<{ id: string }[]>`
-      select id from products where tenant_id = ${tenantId} and sold_out_until is not null and sold_out_until <= now()
+    const due = await tx<{ id: string; status: string }[]>`
+      select id, status from products where tenant_id = ${tenantId} and sold_out_until is not null and sold_out_until <= now()
     `;
     for (const p of due) {
-      await setStock(tx, tenantId, p.id, { status: 'active' });
+      // only "esgotado hoje" comes back: an archived/hidden product with a stale timer stays put
+      if (p.status === 'sold_out') await setStock(tx, tenantId, p.id, { status: 'active' });
       await tx`update products set sold_out_until = null where id = ${p.id}`;
     }
     // a store waiting for its first plan payment stays paused whatever the timer said

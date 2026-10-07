@@ -119,7 +119,8 @@ export async function grantIncentiveTx(
       kind: t.kind,
       value: t.value,
       label: t.label ?? undefined,
-      minSubtotalCents: t.min_subtotal_cents,
+      // the floor checked above holds at redemption too: shrinking the cart after the grant loses it
+      minSubtotalCents: Math.max(t.min_subtotal_cents, floor),
       // the budget was charged for today's cart: a bigger cart later can't take more off
       maxDiscountCents: cost,
       endsAt: new Date(o.now.getTime() + 48 * 3600_000),

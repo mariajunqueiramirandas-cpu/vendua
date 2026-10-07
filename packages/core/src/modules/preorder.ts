@@ -1,9 +1,9 @@
 import { HttpError } from '../platform/http.ts';
 import { localParts } from '../platform/tz.ts';
-import type { StoreHours } from './store.ts';
+import { specialDayOn, type SpecialDay, type StoreHours } from './store.ts';
 
 // Encomendas: products that must be ordered N days ahead. Core owns the calendar —
-// which dates are bookable (lead time, open weekdays, horizon) — the Kernel renders it.
+// which dates are bookable (lead time, open weekdays, special days, horizon) — the Kernel renders it.
 
 export interface ScheduleView {
   /** a line in the cart requires a scheduled date */
@@ -27,6 +27,7 @@ export function bookableDates(
   leadDays: number,
   maxDays: number,
   now: Date,
+  special: readonly SpecialDay[] = [],
 ): string[] {
   const { y, m, d } = localDate(now, hours.timezone || 'America/Sao_Paulo');
   const openDays = new Set(hours.windows.flatMap((w) => w.days));
@@ -34,8 +35,13 @@ export function bookableDates(
   for (let off = Math.max(0, leadDays); off <= maxDays; off++) {
     // pure calendar arithmetic on the store's local date — UTC noon avoids DST edges
     const dt = new Date(Date.UTC(y, m - 1, d + off, 12));
-    if (openDays.size > 0 && !openDays.has(dt.getUTCDay())) continue;
-    out.push(iso(dt));
+    const date = iso(dt);
+    // a special day replaces the weekly hours, as deriveStatus reads them
+    const s = specialDayOn(special, date);
+    if (s) {
+      if (s.closed || !s.open || !s.close) continue;
+    } else if (openDays.size > 0 && !openDays.has(dt.getUTCDay())) continue;
+    out.push(date);
   }
   return out;
 }
@@ -46,6 +52,7 @@ export function scheduleView(
     hours: StoreHours;
     preorder_payment_methods?: string[] | null;
     preorder_max_days?: number | null;
+    special_days?: SpecialDay[] | null;
   },
   now: Date,
 ): ScheduleView {
@@ -54,7 +61,13 @@ export function scheduleView(
   return {
     required: pre.length > 0,
     leadDays,
-    dates: bookableDates(settings.hours, leadDays, settings.preorder_max_days ?? 30, now),
+    dates: bookableDates(
+      settings.hours,
+      leadDays,
+      settings.preorder_max_days ?? 30,
+      now,
+      settings.special_days ?? [],
+    ),
     paymentMethods: settings.preorder_payment_methods ?? ['pix'],
   };
 }

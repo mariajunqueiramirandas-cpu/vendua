@@ -207,6 +207,15 @@ export const offerSuggestionTool = defineTool<
   },
 });
 
+type Grant = Awaited<ReturnType<typeof grantIncentiveTx>>;
+type Savepointable = { savepoint: <T>(fn: (sp: Sql) => Promise<T>) => Promise<T> };
+
+class Rehearsed extends Error {
+  constructor(readonly grant: Grant) {
+    super('rehearsal');
+  }
+}
+
 export const offerIncentiveTool = defineTool<
   { reason: 'recovery' | 'first_order' | 'hesitation' },
   Sql
@@ -229,15 +238,35 @@ export const offerIncentiveTool = defineTool<
     }
     const agent = await loadAgent(ctx.tx, ctx.tenantId);
     const proven = t.channel === 'whatsapp' && t.phone && !t.phone.startsWith('+') ? t.phone : null;
-    const g = await grantIncentiveTx(ctx.tx, ctx.tenantId, {
-      threadId: t.id,
-      phone: proven,
-      reason: input.reason,
-      cart,
-      settings: agent.settings,
-      guards: pack(ctx).guards,
-      now: ctx.now,
-    });
+    const grant = (tx: Sql) =>
+      grantIncentiveTx(tx, ctx.tenantId, {
+        threadId: t.id,
+        phone: proven,
+        reason: input.reason,
+        cart,
+        settings: agent.settings,
+        guards: pack(ctx).guards,
+        now: ctx.now,
+      });
+    if ((ctx.state.context.subject as { floor?: string } | null)?.floor === 'rehearsal') {
+      // Ensaio only drafts: the grant runs and rolls back, so no coupon exists and no budget is spent
+      const w = await (ctx.tx as unknown as Savepointable)
+        .savepoint(async (sp) => {
+          throw new Rehearsed(await grant(sp));
+        })
+        .catch((e: unknown) => {
+          if (e instanceof Rehearsed) return e.grant;
+          throw e;
+        });
+      if (!w.ok) return { content: `Sem cupom agora (${w.reason}). Não mencione desconto.` };
+      ctx.figure('cupom.valor', { value: w.valueCents, text: brl(w.valueCents), kind: 'money' });
+      return {
+        content:
+          'Ensaio: a loja concederia um cupom de até {{cupom.valor}}, mas nada foi criado nem aplicado. Escreva como ofereceria.',
+        data: { incentive: null },
+      };
+    }
+    const g = await grant(ctx.tx);
     if (!g.ok) return { content: `Sem cupom agora (${g.reason}). Não mencione desconto.` };
     const { applyCouponTx } = await import('../../../modules/cart-ops.ts');
     await applyCouponTx(ctx.tx, ctx.tenantId, t.cartId!, g.code, proven, proven);

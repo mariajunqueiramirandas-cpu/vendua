@@ -88,9 +88,10 @@ export function evaluateCoupon(
     return fail('COUPON_NOT_YOURS');
   if (ctx.phone != null) {
     if (c.phone && c.phone !== ctx.phone) return fail('COUPON_NOT_YOURS');
-    if (c.per_phone_limit != null && (ctx.usage.byPhone ?? 0) >= c.per_phone_limit)
+    // a phone without digits is nobody's: it can't show it is under the limit or new here
+    if (c.per_phone_limit != null && (!ctx.phone || (ctx.usage.byPhone ?? 0) >= c.per_phone_limit))
       return fail('COUPON_ALREADY_USED');
-    if (c.first_order_only && (ctx.usage.priorOrders ?? 0) > 0)
+    if (c.first_order_only && (!ctx.phone || (ctx.usage.priorOrders ?? 0) > 0))
       return fail('COUPON_FIRST_ORDER_ONLY');
   }
   let discount = 0;

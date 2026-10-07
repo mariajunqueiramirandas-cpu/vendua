@@ -892,10 +892,11 @@ export function mountPdv(d: AdminDeps) {
             tab_id: string | null;
             session_id: string;
             amount_cents: number;
+            method: string;
             voided_at: Date | null;
           }[]
         >`
-          select tab_id, session_id, amount_cents, voided_at from pdv_payments
+          select tab_id, session_id, amount_cents, method, voided_at from pdv_payments
           where tenant_id = ${t.id} and id = ${id}
         `.then((rows) => rows[0]);
       const first = await payRow();
@@ -908,12 +909,19 @@ export function mountPdv(d: AdminDeps) {
       const caixa = await openCaixaRow(tx, t.id, 'share');
       const pay = (await payRow())!;
       if (pay.voided_at) throw locked('this payment is already voided');
-      if (!caixa || caixa.id !== pay.session_id)
-        throw locked('its caixa is closed: the money was counted');
+      if (!caixa) throw locked('open the caixa to give the money back');
       await tx`
         update pdv_payments set voided_at = now(), voided_by = ${m.name}, void_reason = ${reason}
         where tenant_id = ${t.id} and id = ${id}
       `;
+      // taken in a caixa already counted: the cash handed back leaves this one's drawer, else a
+      // comanda overpaid after a shift change could never close, cancel or be voided
+      if (caixa.id !== pay.session_id && pay.method === 'cash')
+        await tx`
+          insert into cash_movements (tenant_id, session_id, kind, amount_cents, reason, by_name)
+          values (${t.id}, ${caixa.id}, 'sangria', ${pay.amount_cents},
+            ${`estorno na comanda ${tab.label}`.slice(0, 140)}, ${m.name})
+        `;
       await Promise.all([
         audit(tx, t.id, m, {
           action: 'pdv.payment_voided',
@@ -1006,7 +1014,8 @@ export function mountPdv(d: AdminDeps) {
       await gate(tx, t.id);
       const row = await openCaixaRow(tx, t.id, 'update');
       if (!row) throw new HttpError(409, 'CAIXA_CLOSED', 'the caixa is closed');
-      if (kind === 'sangria') {
+      // only for who sees the expected count: a refusal would let an attendant probe the blind close
+      if (kind === 'sangria' && roleAtLeast(m.role, 'manager')) {
         const d0 = await caixaDetail(tx, t.id, row, true);
         if (amount > d0.expected!.cash)
           throw new HttpError(422, 'INSUFFICIENT_CASH', 'more than the drawer should hold', {

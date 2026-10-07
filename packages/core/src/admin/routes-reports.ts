@@ -116,7 +116,15 @@ export function csvResponse(c: Context, filename: string, head: string[], rows: 
   );
 }
 
-const COUNTED = ['cancelled', 'refunded'];
+// money the store kept: an online refund or a chargeback leaves the order's state alone
+const kept = (tx: Sql, a = '') =>
+  tx.unsafe(
+    `${a}state not in ('cancelled', 'refunded') and coalesce(${a}payment ->> 'status', '') not in ('refunded', 'charged_back')`,
+  );
+const net = (tx: Sql, a = '') =>
+  tx.unsafe(
+    `(${a}total_cents - least(${a}total_cents, coalesce((${a}payment ->> 'refundedCents')::int, 0)))`,
+  );
 
 async function kpis(tx: Sql, tenantId: string, tz: string, from: string, to: string) {
   return (
@@ -135,11 +143,11 @@ async function kpis(tx: Sql, tenantId: string, tz: string, from: string, to: str
         select * from orders
         where tenant_id = ${tenantId}
           and (placed_at at time zone ${tz})::date between ${from}::date and ${to}::date
-      ), ok as (select * from o where state <> all(${COUNTED}))
+      ), ok as (select * from o where ${kept(tx)})
       select
-        coalesce((select sum(total_cents) from ok), 0)::int as "revenueCents",
+        coalesce((select sum(${net(tx)}) from ok), 0)::int as "revenueCents",
         (select count(*) from ok)::int as orders,
-        coalesce((select round(avg(total_cents)) from ok), 0)::int as "avgTicketCents",
+        coalesce((select round(avg(${net(tx)})) from ok), 0)::int as "avgTicketCents",
         (select count(distinct customer_phone) from ok)::int as customers,
         (select count(distinct customer_phone) from ok
           where not exists (
@@ -166,8 +174,8 @@ export function mountReports(d: AdminDeps) {
       const previous = await kpis(tx, t.id, tz, r.prevFrom, r.prevTo);
       const series = await tx`
         select d::date::text as date,
-               coalesce(sum(o.total_cents) filter (where o.state <> all(${COUNTED})), 0)::int as "revenueCents",
-               count(o.id) filter (where o.state <> all(${COUNTED}))::int as orders
+               coalesce(sum(${net(tx, 'o.')}) filter (where ${kept(tx, 'o.')}), 0)::int as "revenueCents",
+               count(o.id) filter (where ${kept(tx, 'o.')})::int as orders
         from generate_series(${r.from}::date, ${r.to}::date, interval '1 day') d
         left join orders o on o.tenant_id = ${t.id} and (o.placed_at at time zone ${tz})::date = d::date
         group by d order by d
@@ -177,16 +185,20 @@ export function mountReports(d: AdminDeps) {
                extract(hour from placed_at at time zone ${tz})::int as hour,
                count(*)::int as orders
         from orders
-        where tenant_id = ${t.id} and state <> all(${COUNTED})
+        where tenant_id = ${t.id} and ${kept(tx)}
           and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
         group by 1, 2
       `;
       const products = await tx`
         select coalesce(i.product_id::text, i.name) as key, (array_agg(i.name))[1] as name,
-               sum(i.qty)::int as qty, sum(i.line_total_cents)::int as "revenueCents",
+               sum(i.qty)::int as qty,
+               -- a partial refund comes off each line in proportion, as it does off the order
+               sum(case when o.total_cents > 0
+                        then round(i.line_total_cents::numeric * ${net(tx, 'o.')} / o.total_cents)
+                        else i.line_total_cents end)::int as "revenueCents",
                (select url from product_media m where m.product_id = i.product_id order by sort limit 1) as "imageUrl"
         from order_items i join orders o on o.id = i.order_id
-        where o.tenant_id = ${t.id} and o.state <> all(${COUNTED})
+        where o.tenant_id = ${t.id} and ${kept(tx, 'o.')}
           and (o.placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
         group by 1, i.product_id order by qty desc limit 10
       `;
@@ -216,10 +228,10 @@ export function mountReports(d: AdminDeps) {
       >`
         select case when delivery ->> 'mode' = 'pickup' then 'Retirada'
                     else coalesce(delivery ->> 'zoneName', delivery ->> 'neighborhood', 'Entrega') end as name,
-               count(*)::int as orders, sum(total_cents)::int as "revenueCents",
+               count(*)::int as orders, sum(${net(tx)})::int as "revenueCents",
                coalesce(sum(delivery_fee_cents), 0)::int as "feesCents"
         from orders
-        where tenant_id = ${t.id} and state <> all(${COUNTED})
+        where tenant_id = ${t.id} and ${kept(tx)}
           and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
         group by 1 order by orders desc limit 20
       `;
@@ -233,7 +245,7 @@ export function mountReports(d: AdminDeps) {
             and (at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
         )
         select q.zone, count(*)::int as quotes,
-               count(o.id) filter (where o.state <> all(${COUNTED}))::int as converted
+               count(o.id) filter (where ${kept(tx, 'o.')})::int as converted
         from q left join orders o on o.tenant_id = ${t.id} and o.cart_id::text = q.session_id
         group by q.zone
       `;
@@ -267,17 +279,17 @@ export function mountReports(d: AdminDeps) {
         group by lower(nb) order by quotes desc, neighborhood limit 10
       `;
       const payments = await tx`
-        select payment ->> 'method' as method, count(*)::int as orders, sum(total_cents)::int as "revenueCents"
+        select payment ->> 'method' as method, count(*)::int as orders, sum(${net(tx)})::int as "revenueCents"
         from orders
-        where tenant_id = ${t.id} and state <> all(${COUNTED})
+        where tenant_id = ${t.id} and ${kept(tx)}
           and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
         group by 1 order by orders desc
       `;
       const coupons = await tx`
         select o.coupon_code as code, count(*)::int as orders, sum(o.discount_cents)::int as "discountCents",
-               sum(o.total_cents)::int as "revenueCents"
+               sum(${net(tx, 'o.')})::int as "revenueCents"
         from orders o
-        where o.tenant_id = ${t.id} and o.coupon_code is not null and o.state <> all(${COUNTED})
+        where o.tenant_id = ${t.id} and o.coupon_code is not null and ${kept(tx, 'o.')}
           and (o.placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
         group by 1 order by orders desc limit 10
       `;
@@ -285,7 +297,7 @@ export function mountReports(d: AdminDeps) {
         await tx<{ customers: number; returning: number }[]>`
           select count(*)::int as customers, count(*) filter (where n >= 2)::int as returning from (
             select customer_phone, count(*) as n from orders
-            where tenant_id = ${t.id} and customer_phone is not null and state <> all(${COUNTED})
+            where tenant_id = ${t.id} and customer_phone is not null and ${kept(tx)}
               and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
             group by customer_phone
           ) x

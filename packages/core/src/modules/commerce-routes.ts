@@ -778,6 +778,14 @@ export function mountCommerce(d: Deps) {
     return c.json({ coupons });
   });
 
+  const date = (v: unknown, name: string) => {
+    if (v === undefined || v === null) return null;
+    const d = new Date(str(v, name, 40));
+    if (Number.isNaN(d.getTime()))
+      throw new HttpError(400, 'BAD_REQUEST', `${name} must be a date`);
+    return d;
+  };
+
   app.post(`${base}/coupons`, async (c) => {
     controlGate(c);
     const t = await tenantBySlug(c.req.param('slug'));
@@ -792,13 +800,10 @@ export function mountCommerce(d: Deps) {
       kind === 'free_delivery'
         ? 0
         : int(body.value, 'value', 1, kind === 'percent' ? 100 : 10_000_000);
-    const date = (v: unknown, name: string) => {
-      if (v === undefined || v === null) return null;
-      const d = new Date(str(v, name, 40));
-      if (Number.isNaN(d.getTime()))
-        throw new HttpError(400, 'BAD_REQUEST', `${name} must be a date`);
-      return d;
-    };
+    const startsAt = date(body.startsAt, 'startsAt');
+    const endsAt = date(body.endsAt, 'endsAt');
+    if (startsAt && endsAt && endsAt <= startsAt)
+      throw new HttpError(400, 'BAD_REQUEST', 'endsAt must be after startsAt');
     const phone = body.phone === undefined || body.phone === null ? null : validPhone(body.phone);
     if (body.phone && !phone)
       throw new HttpError(400, 'BAD_REQUEST', 'phone must have DDD + number');
@@ -812,7 +817,7 @@ export function mountCommerce(d: Deps) {
                     ${body.label === undefined || body.label === null ? null : str(body.label, 'label', 120)},
                     ${optInt(body.minSubtotalCents, 'minSubtotalCents', 0, 10_000_000) ?? 0},
                     ${optInt(body.maxDiscountCents, 'maxDiscountCents', 1, 10_000_000) ?? null},
-                    ${date(body.startsAt, 'startsAt')}, ${date(body.endsAt, 'endsAt')},
+                    ${startsAt}, ${endsAt},
                     ${optInt(body.maxRedemptions, 'maxRedemptions', 1, 1_000_000) ?? null},
                     ${optInt(body.perPhoneLimit, 'perPhoneLimit', 1, 1000) ?? null},
                     ${body.firstOrderOnly === true}, ${phone}, 'staff')
@@ -837,15 +842,19 @@ export function mountCommerce(d: Deps) {
     const body = await bodyJson(c);
     if (body.active !== undefined && typeof body.active !== 'boolean')
       throw new HttpError(400, 'BAD_REQUEST', 'active must be a boolean');
+    const endsAt = date(body.endsAt, 'endsAt');
     const res = await claimTenant(c, t.id, async (tx) => {
       const row = (
-        await tx`
+        await tx<{ starts_at: Date | null; ends_at: Date | null }[]>`
           update coupons set active = ${body.active === undefined ? tx`active` : (body.active as boolean)},
-            ends_at = ${body.endsAt === undefined ? tx`ends_at` : body.endsAt === null ? null : new Date(str(body.endsAt, 'endsAt', 40))}
+            ends_at = ${body.endsAt === undefined ? tx`ends_at` : endsAt}
           where tenant_id = ${t.id} and code = ${code} returning *
         `
       )[0];
       if (!row) throw new HttpError(404, 'COUPON_NOT_FOUND', 'coupon not found');
+      // thrown after the update: it rolls back with the tx
+      if (row.starts_at && row.ends_at && row.ends_at <= row.starts_at)
+        throw new HttpError(400, 'BAD_REQUEST', 'endsAt must be after startsAt');
       await emitAdminTx(tx, t.id, 'marketing');
       return { status: 200, body: { coupon: row } };
     });

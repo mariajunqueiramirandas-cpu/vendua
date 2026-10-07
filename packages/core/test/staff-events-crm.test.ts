@@ -538,11 +538,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
       by: 'staff',
     });
 
+    // reminders already sent for the old time must not suppress the new time's
+    await sql`update meetings set reminder_24h_at = now(), reminder_1h_at = now() where id = ${staffMeeting}`;
     const newStart = await pick();
     expect(
       (await control('PATCH', `/control/v1/meetings/${staffMeeting}`, { startsAt: newStart }))
         .status,
     ).toBe(200);
+    expect(
+      (
+        await sql`select reminder_24h_at, reminder_1h_at from meetings where id = ${staffMeeting}`
+      )[0],
+    ).toEqual({ reminder_24h_at: null, reminder_1h_at: null });
     expect(
       (await control('PATCH', `/control/v1/meetings/${staffMeeting}`, { status: 'cancelled' }))
         .status,

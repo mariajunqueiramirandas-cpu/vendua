@@ -51,6 +51,12 @@ async function team(tx: Sql, tenantId: string) {
   `;
 }
 
+/** Serializes owner removals/demotions per store: two owners removing each other in parallel
+ *  would each count the other as the one left. Taken before reading the member row. */
+async function lockOwners(tx: Sql, tenantId: string) {
+  await tx`select pg_advisory_xact_lock(hashtextextended(${`owners:${tenantId}`}, 0))`;
+}
+
 async function owners(tx: Sql, tenantId: string, except: string) {
   return (
     await tx<{ n: number }[]>`
@@ -273,6 +279,7 @@ export function mountTeam(d: AdminDeps) {
     write('owner', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
       const body = await bodyJson(c);
+      await lockOwners(tx, t.id);
       const cur = (
         await tx<{ name: string; role: keyof typeof ROLE_LABEL }[]>`
           select name, role from merchant_users where tenant_id = ${t.id} and id = ${id} and status = 'active'
@@ -303,6 +310,7 @@ export function mountTeam(d: AdminDeps) {
     '/team/:id',
     write('owner', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
+      await lockOwners(tx, t.id);
       const cur = (
         await tx<{ name: string; role: string }[]>`
           select name, role from merchant_users where tenant_id = ${t.id} and id = ${id} and status = 'active'

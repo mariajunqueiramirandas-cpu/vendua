@@ -186,6 +186,22 @@ export async function saveCheckout(
 
 export const paymentLabel = (m: PaymentMethod) => PAYMENT_LABEL[m];
 
+/** The store's payment rules (cash_max, pix_only_above) against a total Core computed. */
+export function checkPaymentGuards(ctx: Ctx, method: PaymentMethod, totalCents: number): void {
+  for (const g of pack(ctx).guards) {
+    if (g.kind === 'cash_max' && method === 'cash' && totalCents > g.cents) {
+      ctx.figure('regra.dinheiro_max', { value: g.cents, text: brl(g.cents), kind: 'money' });
+      throw new ToolError(
+        'Regra da loja: dinheiro só até {{regra.dinheiro_max}}. Ofereça outra forma.',
+      );
+    }
+    if (g.kind === 'pix_only_above' && method !== 'pix' && totalCents > g.cents) {
+      ctx.figure('regra.pix_acima', { value: g.cents, text: brl(g.cents), kind: 'money' });
+      throw new ToolError('Regra da loja: acima de {{regra.pix_acima}} só Pix.');
+    }
+  }
+}
+
 /** The product behind a slug from the pack or an alias a tool handed out. */
 export async function productIdOf(ctx: Ctx, ref: string): Promise<string> {
   const r = ref.trim();

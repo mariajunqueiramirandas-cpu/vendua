@@ -3,6 +3,15 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.22.1
+
+Checkout retries — patch; no storefront edit, no new export.
+
+- `checkout` keeps one Idempotency-Key per cart and request body while an attempt's outcome is
+  unknown (network error, 5xx, `IDEMPOTENCY_IN_PROGRESS`), so a retry of an order Core already
+  placed gets that order back instead of 409 `CART_NOT_OPEN` (or a second order). A definite
+  refusal (`PRICES_CHANGED`, a validation error) or a placed order takes a new key.
+
 ## 1.22.0
 
 Ordering at the table from its QR code (ADR 0036) — additive; no storefront edit. Checkout stays

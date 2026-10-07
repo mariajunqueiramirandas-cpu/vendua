@@ -17,6 +17,13 @@ const actorOf = (tenantId: string, threadId: string) => ({
   subject: { kind: SUBJECT_KIND, id: threadId },
 });
 
+/** SAIR stops every automatic message (store_wa_optouts), under either spelling of the 9th digit. */
+const notOptedOut = (tx: Sql) => tx`not exists (
+  select 1 from store_wa_optouts x where x.tenant_id = t.tenant_id and x.phone in (t.phone,
+    case when length(t.phone) = 11 and substr(t.phone, 3, 1) = '9' then left(t.phone, 2) || substr(t.phone, 4)
+         when length(t.phone) = 10 and substr(t.phone, 3, 1) between '6' and '9'
+           then left(t.phone, 2) || '9' || substr(t.phone, 3) end))`;
+
 async function enabledStores(sql: Sql): Promise<string[]> {
   const rows = await controlTx(
     sql,
@@ -47,6 +54,7 @@ export async function recoveryPass(sql: Sql, tenantId: string, now = new Date())
         and t.last_out_at >= t.last_in_at
         and (t.recovery_at is null or t.recovery_at < ${new Date(now.getTime() - 24 * 3600_000)})
         and exists (select 1 from cart_items i where i.cart_id = c.id)
+        and ${notOptedOut(tx)}
       limit 50`;
     for (const t of due) {
       await dispatchTx(tx, {
@@ -76,6 +84,7 @@ export async function pixExpiryPass(sql: Sql, tenantId: string, now = new Date()
         and (m.meta -> 'data' ->> 'orderNumber')::int = o.number
         and (m.meta -> 'data' ->> 'expiresAt')::timestamptz < ${now}
         and (m.meta -> 'data' ->> 'expiresAt')::timestamptz > ${new Date(now.getTime() - 6 * 3600_000)}
+        and ${notOptedOut(tx)}
       order by o.id, m.created_at desc
       limit 50`;
     for (const d of due)
@@ -165,8 +174,9 @@ async function outboxRow(
         { name: string }[]
       >`select name from products where tenant_id = ${r.tenant_id} and id = ${productId}`;
       const threads = await tx<{ id: string }[]>`
-          select id from shopper_threads where tenant_id = ${r.tenant_id} and channel = 'whatsapp'
-            and phone = any(${contacts}) and owner <> 'muted' and last_in_at > now() - interval '24 hours'`;
+          select t.id from shopper_threads t where t.tenant_id = ${r.tenant_id} and t.channel = 'whatsapp'
+            and t.phone = any(${contacts}) and t.owner <> 'muted' and t.last_in_at > now() - interval '24 hours'
+            and ${notOptedOut(tx)}`;
       for (const t of threads)
         await dispatchTx(tx, {
           actor: actorOf(r.tenant_id, t.id),

@@ -809,6 +809,7 @@ export function createApp({
           product.preorderLeadDays,
           settings?.preorder_max_days ?? 30,
           new Date(),
+          settings?.special_days ?? [],
         )[0] ?? null)
       : null;
     return c.json({ product: { ...product, preorderEarliestDate: earliest } });

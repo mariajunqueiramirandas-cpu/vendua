@@ -308,7 +308,26 @@ export async function addInboundMessage(
   const body = str(input.body, 'body', 8000).trim();
   if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required');
   const direction = input.direction ?? 'in';
+  const from = str(input.from, 'from', 300).trim();
+  const fromDigits = contactDigits(from);
+  const altDigitsList = input.fromAlias ? contactDigits(input.fromAlias) : [];
   const result = await controlTx(sql, async (tx) => {
+    // No unique index ties a lead to one contact: each message of a burst from a new sender
+    // would find no lead and mint its own. Serialize per contact (both 9th-digit forms share a key).
+    const lockKeys = new Set<string>();
+    if (input.channel === 'email') {
+      lockKeys.add(from.toLowerCase());
+    } else if (input.channel === 'instagram') {
+      if (input.externalThreadId) lockKeys.add(`id:${input.externalThreadId}`);
+      const h = instagramHandle(from);
+      if (h) lockKeys.add(h);
+    } else {
+      for (const v of [fromDigits, altDigitsList]) if (v[0]) lockKeys.add([...v].sort()[0]!);
+    }
+    for (const k of [...lockKeys].sort()) {
+      await tx`select pg_advisory_xact_lock(hashtext(${`lead-contact:${input.channel}:${k}`}))`;
+    }
+
     // Provider ids are namespaced per channel — they share no global namespace.
     const pmid = input.providerMessageId ? `${input.channel}:${input.providerMessageId}` : null;
     if (pmid) {
@@ -331,7 +350,6 @@ export async function addInboundMessage(
     // Lead match: email on `email`, the sender's thread then handle on instagram,
     // digits on phone/whatsapp for whatsapp.
     let leadId: string | null = null;
-    const from = str(input.from, 'from', 300).trim();
     const unverified = input.channel === 'email' && input.unverifiedSender === true;
     const igHandle = input.channel === 'instagram' ? instagramHandle(from) : null;
     if (input.channel === 'instagram') {
@@ -379,16 +397,15 @@ export async function addInboundMessage(
           `;
       leadId = rows[0]?.id ?? null;
     } else {
-      const digits = from.replace(/\D/g, '');
       // `whatsapp` matches on either alias (LID ↔ PN jid pair) so a lid-first contact
       // isn't re-minted; `phone` stays primary-only — the lid is not a phone number.
       const altDigits = input.fromAlias?.replace(/\D/g, '') ?? '';
-      const whatsappDigits = [digits, altDigits].filter((d) => d.length >= 6);
+      const whatsappDigits = [...fromDigits, ...altDigitsList].filter((d) => d.length >= 6);
       if (whatsappDigits.length) {
         const rows = await tx`
           select id from leads where archived_at is null and (
             regexp_replace(coalesce(whatsapp, ''), '\\D', '', 'g') = any(${whatsappDigits})
-            or regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = ${digits}
+            or regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = any(${fromDigits})
           ) order by created_at desc limit 1
         `;
         leadId = rows[0]?.id ?? null;
@@ -404,12 +421,12 @@ export async function addInboundMessage(
             whatsapp = case
               when whatsapp is null or whatsapp = '' then ${stored}
               when ${hasAlt} and regexp_replace(whatsapp, '\\D', '', 'g') = ${altDigits} then ${stored}
-              when whatsapp like '%@s.whatsapp.net' and regexp_replace(whatsapp, '\\D', '', 'g') = ${digits} then ${stored}
+              when whatsapp like '%@s.whatsapp.net' and regexp_replace(whatsapp, '\\D', '', 'g') = any(${fromDigits}) then ${stored}
               else whatsapp
             end,
             whatsapp_verified = whatsapp_verified
               or whatsapp is null or whatsapp = ''
-              or regexp_replace(whatsapp, '\\D', '', 'g') = ${digits}
+              or regexp_replace(whatsapp, '\\D', '', 'g') = any(${fromDigits})
               or (${hasAlt} and regexp_replace(whatsapp, '\\D', '', 'g') = ${altDigits})
           where id = ${leadId}
         `;
@@ -994,6 +1011,19 @@ export async function markMessageFailed(tx: Sql, messageId: string, reason: stri
     update lead_messages set status = 'failed', error = ${reason.slice(0, 300)}, updated_at = now()
     where id = ${messageId}
   `;
+}
+
+/** An inbound address's digits, plus the other 9th-digit form of a Brazilian mobile — WhatsApp
+ *  knows a number by one form while a lead may have been typed with the other. Unlike
+ *  store-whatsapp's `phoneVariants` it is symmetric: 9 + 2–5 is no mobile's old form but a
+ *  landline's number. A LID is no phone. */
+function contactDigits(addr: string): string[] {
+  const d = addr.split('@')[0]!.split(':')[0]!.replace(/\D/g, '');
+  if (!d) return [];
+  if (addr.endsWith('@lid')) return [d];
+  const m = /^55(\d\d)(9?)([6-9]\d{7})$/.exec(d);
+  if (!m) return [d];
+  return [d, m[2] ? `55${m[1]}${m[3]}` : `55${m[1]}9${m[3]}`];
 }
 
 /** whatsapp jid → the lead's stored number: '5511…@s.whatsapp.net' → '+5511…'.

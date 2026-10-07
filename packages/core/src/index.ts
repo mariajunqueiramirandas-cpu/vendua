@@ -159,13 +159,15 @@ const stopVendedor = startVendedorWorker(jobsSql, {
   gateway: agentGateway,
   media: mediaProviders(jobsSql),
 });
+// ingestInbound caps a body at 8000 chars: a longer WhatsApp message is cut, not dropped
+const waBody = (text: string) => (text.length > 8000 ? text.slice(0, 8000) : text);
 onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
   await ingestInbound(jobsSql, {
     channel: 'whatsapp',
     from: jid,
     ...(pushName ? { fromName: pushName } : {}),
     ...(altJid ? { fromAlias: altJid } : {}),
-    body: text,
+    body: waBody(text),
     providerMessageId: providerId,
   });
 });
@@ -178,7 +180,7 @@ onHistoryMessage(async (m) => {
     ...(m.pushName ? { fromName: m.pushName } : {}),
     ...(m.altJid ? { fromAlias: m.altJid } : {}),
     ...(m.sentAt ? { sentAt: m.sentAt } : {}),
-    body: m.text,
+    body: waBody(m.text),
     providerMessageId: m.providerId,
     historical: true,
   });

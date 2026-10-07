@@ -42,6 +42,7 @@ import {
   RENEW_AHEAD_MS,
   settlePixPayment,
   stopPreapproval,
+  voidUnpaidTx,
   withEffects,
   type BillingCtx,
 } from './subscriptions.ts';
@@ -281,7 +282,7 @@ const endCancelled: Step = async (sql, base, now) => {
           checkout_url = null, updated_at = now(), status_changed_at = now()
         where tenant_id = ${tenant_id}
       `;
-        await tx`update invoices set status = 'void' where tenant_id = ${tenant_id} and status in ('open', 'failed')`;
+        await voidUnpaidTx(ctx, tx, tenant_id);
         await applyHold(tx, tenant_id);
         await emitAdminTx(tx, tenant_id, 'billing');
         await noticeCancelled(ctx, tx, sub, true);

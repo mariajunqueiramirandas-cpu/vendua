@@ -227,7 +227,8 @@ export async function refundOrderPayments(
     const outcome = await withTenant(d.sql, tenantId, (tx) =>
       recordRefund(tx, tenantId, r, refund),
     );
-    if (outcome === 'amount') await resyncPayment(d, tenantId, plan.tok, r.provider_payment_id);
+    if (outcome === 'amount' || outcome === 'stale')
+      await resyncPayment(d, tenantId, plan.tok, r.provider_payment_id);
     if (outcome === 'duplicate') throw refundFailed('duplicate');
     if (refund.status === 'rejected') throw refundFailed('rejected');
   }
@@ -269,7 +270,7 @@ async function recordRefund(
   tenantId: string,
   r: Reservation,
   refund: { id: string; amountCents: number; status: 'pending' | 'approved' | 'rejected' },
-): Promise<'ok' | 'duplicate' | 'amount'> {
+): Promise<'ok' | 'duplicate' | 'amount' | 'stale'> {
   const pay = (
     await tx<PaymentRow[]>`select * from payments where id = ${r.payment_id} for update`
   )[0]!;
@@ -320,7 +321,10 @@ async function recordRefund(
     await markReview(tx, tenantId, pay, 'refund_amount_mismatch');
     return 'amount';
   }
-  return 'ok';
+  // MP already held refunds made outside Venduá (its panel): this one adds to them, which only
+  // MP's own total can tell
+  const before = approved - (refund.status === 'approved' ? amount : 0);
+  return pay.refunded_cents > before ? 'stale' : 'ok';
 }
 
 /** Provider truth for one payment, applied (outside any tx for the fetch). */
@@ -637,21 +641,26 @@ export function mountOrders(d: AdminDeps) {
                     state: OrderState;
                     mode: DeliveryMode;
                     payment: { online?: boolean; status?: string };
+                    counter_paid: boolean;
                   }[]
                 >`
-                  select state, delivery ->> 'mode' as mode, payment
+                  select state, delivery ->> 'mode' as mode, payment,
+                    exists (
+                      select 1 from pdv_payments p
+                      where p.tenant_id = ${t0.id} and p.order_id = ${id} and p.voided_at is null
+                    ) as counter_paid
                   from orders where tenant_id = ${t0.id} and id = ${id}
                 `
               )[0] ?? null,
           )
         : undefined;
     if (pre === null) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
-    // cancelling money captured online refunds it: the same role as an explicit refund
+    // cancelling money captured online refunds it, and cancelling a sale paid at the caixa takes
+    // its money out of the drawer's expected count: the same role as an explicit refund
     if (
       pre &&
       to === 'cancelled' &&
-      pre.payment.online &&
-      PAID_ONLINE.includes(String(pre.payment.status))
+      (pre.counter_paid || (pre.payment.online && PAID_ONLINE.includes(String(pre.payment.status))))
     )
       need(c, 'manager');
     if (pre && canTransition(pre.state, to, pre.mode) && pre.payment.online) {
@@ -670,7 +679,7 @@ export function mountOrders(d: AdminDeps) {
         ).refundedCents;
       else if (to === 'cancelled') await cancelOpenAttempts(pay, t0.id, id);
     }
-    const res = await write('attendant', async (tx, t, m) => {
+    const step = write('attendant', async (tx, t, m) => {
       const meta: Record<string, unknown> = { by: m.name };
       if (reason) meta.reason = reason;
       if (prep) meta.prepMinutes = prep;
@@ -705,7 +714,37 @@ export function mountOrders(d: AdminDeps) {
         loadOrderView(tx, t.id, id),
       ]);
       return { status: 200, body: { order } };
-    })(c);
+    });
+    let res: Response;
+    try {
+      res = await step(c);
+    } catch (err) {
+      // the money already went back but the order moved on meanwhile (delivered, say): it ends
+      // refunded rather than an active order with nothing paid
+      if (refunded && to === 'cancelled' && err instanceof HttpError && err.status === 409)
+        await withTenant(d.sql, t0.id, async (tx) => {
+          const before = await loadOrderView(tx, t0.id, id);
+          await transitionOrder(tx, t0.id, id, 'refunded', 'merchant', {
+            by: m0.name,
+            refundedCents: refunded,
+            ...(reason ? { reason } : {}),
+          });
+          await audit(tx, t0.id, m0, {
+            action: 'order.refunded',
+            entity: 'order',
+            entityId: id,
+            summary: `pedido #${before.number}: ${STATE_LABEL[before.state]} → ${STATE_LABEL.refunded} · estornou ${brl(refunded)} no Mercado Pago ao cancelar`,
+            before: { state: before.state },
+            after: { state: 'refunded', refundedCents: refunded },
+          });
+        }).catch((e) =>
+          refundLog.warn(
+            { err: e, tenantId: t0.id, orderId: id },
+            'refunded cancel left the order as it was',
+          ),
+        );
+      throw err;
+    }
     if (res.status === 200 && (to === 'cancelled' || to === 'refunded'))
       await refundLeftovers(pay, t0.id, id);
     return res;

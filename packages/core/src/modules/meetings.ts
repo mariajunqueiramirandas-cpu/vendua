@@ -1137,6 +1137,9 @@ export async function patchMeeting(
     const updated = (
       await tx<MeetingRow[]>`
         update meetings set starts_at = ${start.toISOString()}, ends_at = ${end.toISOString()},
+          -- a new time earns its own reminders; the right-hand starts_at is the old value
+          reminder_24h_at = case when starts_at = ${start.toISOString()}::timestamptz then reminder_24h_at end,
+          reminder_1h_at = case when starts_at = ${start.toISOString()}::timestamptz then reminder_1h_at end,
           updated_at = now()
         where id = ${row.id} returning *
       `

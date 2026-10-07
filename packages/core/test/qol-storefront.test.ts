@@ -97,9 +97,39 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('closed-store notify (db)', () =
     expect(await pending(b.id)).toEqual(['22999990003']);
     expect(await opened(b.id)).toEqual([]);
 
-    // the next closing takes a new subscription for the same phone
+    // the same answer that week, but no second message for the number
+    const again = await subscribe(a.host, '22999990001');
+    expect(again.status).toBe(201);
+    expect(await again.json()).toEqual({ subscribed: true });
+    expect(await pending(a.id)).toEqual([]);
+    // a week on, the next closing takes a new subscription for the same phone
+    await sql`update notify_requests set notified_at = now() - interval '8 days' where tenant_id = ${a.id}`;
     expect((await subscribe(a.host, '22999990001')).status).toBe(201);
     expect(await pending(a.id)).toEqual(['22999990001']);
+  });
+
+  test('a typed number is one number: +55, with or without its 9, asked again and again', async () => {
+    const e = await store('repeat', { override: 'closed' });
+    for (const typed of ['22999990005', '+55 (22) 99999-0005', '5522999990005', '2299990005'])
+      expect(await (await subscribe(e.host, typed)).json()).toEqual({ subscribed: true });
+    expect(await pending(e.id)).toEqual(['22999990005']);
+    expect((await subscribe(e.host, '123')).status).toBe(400);
+
+    // rows from before the cap: one message to the number, however it was stored
+    await sql`
+      insert into notify_requests (tenant_id, subject, channel, contact)
+      values (${e.id}, 'store', 'whatsapp', '5522999990005'), (${e.id}, 'store', 'whatsapp', '2299990005')`;
+    await sql`update store_settings set status_override = null where tenant_id = ${e.id}`;
+    expect(await withTenant(sql, e.id, (tx) => wakeStoreWaitlist(tx, e.id, at('10:00')))).toBe(1);
+    expect(await opened(e.id)).toEqual(['22999990005']);
+    expect(await pending(e.id)).toEqual([]);
+
+    // a later round that week (another row from before the cap) sends nothing more
+    await sql`
+      insert into notify_requests (tenant_id, subject, channel, contact)
+      values (${e.id}, 'store', 'whatsapp', '22999990005')`;
+    expect(await withTenant(sql, e.id, (tx) => wakeStoreWaitlist(tx, e.id, at('11:00')))).toBe(0);
+    expect(await opened(e.id)).toEqual(['22999990005']);
   });
 
   test('a manual close holds them; the resume (the admin sweep) wakes them', async () => {
