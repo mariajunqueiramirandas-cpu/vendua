@@ -33,7 +33,12 @@ interface Person {
   name: string;
   role: string;
   screen: string | null;
+  channel: 'admin' | 'whatsapp' | null;
 }
+
+// Duá by WhatsApp (ADR 0034, amended 2026-10-07): the same conversation, but the screen is a chat
+const BY_WHATSAPP = `A pessoa está falando com você pelo WhatsApp, não pelo painel. Não use links [texto](/caminho): diga o nome da tela. Os cartões que você preparar chegam a ela como texto, e ela confirma respondendo SIM (mudanças de preço e cupons, só no painel); peça para conferir e responder SIM, nunca para tocar em Confirmar. Respostas ainda mais curtas.
+Se a mensagem começar com "[áudio; a transcrição pode ter erros]", comece dizendo o que entendeu ("Entendi: …") e, se for pedir uma mudança, confira antes de propor.`;
 
 const ROLE_WORD: Record<string, string> = {
   owner: 'dono(a)',
@@ -92,7 +97,7 @@ export const copilot = defineAgent<Sql>({
         const where = screenWord(p.screen);
         return [
           `Você fala com ${p.name.split(' ')[0]}, ${ROLE_WORD[p.role] ?? p.role} da loja.`,
-          where ? `A pessoa escreveu de: ${where}.` : '',
+          p.channel === 'whatsapp' ? BY_WHATSAPP : where ? `A pessoa escreveu de: ${where}.` : '',
         ]
           .filter(Boolean)
           .join(' ');
@@ -121,12 +126,14 @@ export const copilot = defineAgent<Sql>({
       } as unknown as Json;
     },
     subject: async ({ tx, tenantId, subject }) => {
-      const [r] = await tx<{ name: string; role: string; screen: string | null }[]>`
-        select u.name, u.role,
-          (select m.screen from copilot_messages m
-           where m.tenant_id = ${tenantId} and m.user_id = u.id and m.author = 'merchant'
-           order by m.created_at desc limit 1) as screen
-        from merchant_users u where u.tenant_id = ${tenantId} and u.id = ${subject.id}`;
+      const [r] = await tx<Person[]>`
+        select u.name, u.role, last.screen, last.channel
+        from merchant_users u
+        left join lateral (
+          select m.screen, m.channel from copilot_messages m
+          where m.tenant_id = ${tenantId} and m.user_id = u.id and m.author = 'merchant'
+          order by m.created_at desc limit 1) last on true
+        where u.tenant_id = ${tenantId} and u.id = ${subject.id}`;
       return (r ?? null) as unknown as Json;
     },
   },

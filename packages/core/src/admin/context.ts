@@ -43,9 +43,20 @@ export interface AdminDeps {
   signupReady: () => Promise<SignupReadiness>;
 }
 
+/** How a platform WhatsApp message rides the outbox once the number is on the gateway (ignored
+ *  before the cutover, when it is sent at once). */
+export interface WhatsAppNotifyOpts {
+  /** default 'notice' */
+  purpose?: 'otp' | 'notice';
+  /** one per logical message, so a retried caller doesn't send it twice */
+  dedupeKey?: string;
+  /** wait this long for the gateway to send it; anything but sent throws */
+  waitMs?: number;
+}
+
 /** Messages to store people (not shoppers) from the platform's own number and address. */
 export interface MerchantNotify {
-  whatsapp: (phone: string, text: string) => Promise<void>;
+  whatsapp: (phone: string, text: string, opts?: WhatsAppNotifyOpts) => Promise<void>;
   email: (to: string, subject: string, text: string, idemKey: string) => Promise<void>;
 }
 

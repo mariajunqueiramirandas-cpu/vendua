@@ -458,6 +458,16 @@ async function testIntegration(
       if (integration.driver === 'log') {
         return { ok: true, detail: 'driver log — imprime no console' };
       }
+      const { platformTransport } = await import('./platform-whatsapp/transport.ts');
+      if (platformTransport() === 'gateway') {
+        const { readPlatformSession } = await import('./platform-whatsapp/session.ts');
+        const row = await timed(readPlatformSession(sql), 'sessão do gateway');
+        if (!row) return { ok: false, detail: 'sessão do gateway não existe' };
+        if (row.state === 'open') return { ok: true, detail: 'gateway pareado' };
+        if (row.state === 'pairing')
+          return { ok: true, detail: 'aguardando o código de pareamento' };
+        return { ok: false, detail: `gateway ${row.state}${row.detail ? ` (${row.detail})` : ''}` };
+      }
       const { ensureSocket, waStatus } = await import('./agent/channels/whatsapp.ts');
       const s = await timed(ensureSocket(sql, integration), 'socket baileys');
       if (!s) return { ok: false, detail: 'socket não subiu' };
@@ -1813,7 +1823,18 @@ export function createApp({
       const { reconcileInstagram } = await import('./agent/channels/instagram.ts');
       void getIntegration(sql, 'instagram').then((i) => reconcileInstagram(sql, i));
     }
-    if (kind === 'whatsapp') {
+    const { platformTransport, VENDUA_SESSION } = await import('./platform-whatsapp/transport.ts');
+    if (kind === 'whatsapp' && platformTransport() === 'gateway') {
+      // on the gateway the number is the session row's: a disable lets go of the socket there
+      const wa = await getIntegration(sql, 'whatsapp');
+      await controlTx(
+        sql,
+        (tx) => tx`
+          update platform_wa_sessions set wanted = ${wa?.driver === 'baileys'}, updated_at = now()
+          where name = ${VENDUA_SESSION}`,
+      );
+    }
+    if (kind === 'whatsapp' && platformTransport() === 'socket') {
       // A disable/switch must close the old Baileys session now, not lazily.
       const { ensureSocket } = await import('./agent/channels/whatsapp.ts');
       void getIntegration(sql, 'whatsapp')
@@ -2641,9 +2662,35 @@ export function createApp({
     return c.json({ channels: await channelHealth(sql) });
   });
 
-  // status = live socket state so the UI doesn't guess from QR presence.
+  // status = live socket state so the UI doesn't guess from QR presence. On the gateway it is the
+  // session row's, and pairing is by code only.
   app.get('/control/v1/wa/qr', async (c) => {
     controlGate(c);
+    const { platformTransport } = await import('./platform-whatsapp/transport.ts');
+    if (platformTransport() === 'gateway') {
+      const { readPlatformSession } = await import('./platform-whatsapp/session.ts');
+      const row = await readPlatformSession(sql);
+      const state = row?.state ?? 'off';
+      const pairing =
+        state === 'pairing' &&
+        !!row?.pair_code &&
+        (!row.pair_code_expires_at || row.pair_code_expires_at > new Date());
+      return c.json({
+        qr: null,
+        status:
+          state === 'open'
+            ? 'open'
+            : state === 'connecting' || state === 'pairing'
+              ? 'connecting'
+              : 'off',
+        me: state === 'open' && row?.phone ? { phone: row.phone, name: row.account_name } : null,
+        transport: 'gateway',
+        state,
+        detail: row?.detail ?? null,
+        pairCode: pairing ? row!.pair_code : null,
+        pairCodeExpiresAt: pairing ? (row!.pair_code_expires_at?.toISOString() ?? null) : null,
+      });
+    }
     const rows = await controlTx(
       sql,
       (tx) =>
@@ -2652,7 +2699,12 @@ export function createApp({
         >`select value from control_settings where key = 'wa_qr'`,
     );
     const { waStatus, waIdentity } = await import('./agent/channels/whatsapp.ts');
-    return c.json({ qr: rows[0]?.value?.qr ?? null, status: waStatus(), me: waIdentity() });
+    return c.json({
+      qr: rows[0]?.value?.qr ?? null,
+      status: waStatus(),
+      me: waIdentity(),
+      transport: 'socket',
+    });
   });
 
   // WhatsApp "conectar com número" flow — staff sends digits, Baileys returns the code.
@@ -2662,6 +2714,7 @@ export function createApp({
     const phone = str(body.phone, 'phone', 40);
     // Claimed so a retry replays the issued code; failures throw for a genuinely fresh retry.
     const res = await claimControl(sql, requireIdemKey(c), async () => {
+      // on the gateway, pairCode asks the session row for a code and waits for it
       const { pairCode } = await import('./agent/channels/whatsapp.ts');
       try {
         return { status: 200, body: { code: await pairCode(sql, phone) } };
@@ -2677,7 +2730,17 @@ export function createApp({
   // Unpair + restart the socket so a fresh QR emits; claimed so a retried logout can't race re-pairing.
   app.post('/control/v1/wa/logout', async (c) => {
     controlGate(c);
-    const res = await claimControl(sql, requireIdemKey(c), async () => {
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      const { platformTransport, VENDUA_SESSION } =
+        await import('./platform-whatsapp/transport.ts');
+      if (platformTransport() === 'gateway') {
+        // the gateway logs out on WhatsApp's side and wipes the login
+        await tx`
+          update platform_wa_sessions set wipe_requested_at = now(), pair_requested_at = null,
+            pair_code = null, pair_code_expires_at = null, updated_at = now()
+          where name = ${VENDUA_SESSION}`;
+        return { status: 200, body: { ok: true } };
+      }
       const { logoutWa, ensureSocket } = await import('./agent/channels/whatsapp.ts');
       const integration = await getIntegration(sql, 'whatsapp');
       const accountId = (integration?.config.accountId as string) ?? 'default';

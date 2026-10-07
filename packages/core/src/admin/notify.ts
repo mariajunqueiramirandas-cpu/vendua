@@ -1,6 +1,7 @@
 import { sendEmail } from '../agent/channels/email.ts';
-import { sendWhatsApp } from '../agent/channels/whatsapp.ts';
 import { getIntegration } from '../modules/integrations.ts';
+import { waitForSent } from '../platform-whatsapp/outbox.ts';
+import { sendPlatformText } from '../platform-whatsapp/send.ts';
 import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import type { MerchantNotify } from './context.ts';
@@ -15,13 +16,22 @@ const notifyLog = log.child({ mod: 'merchant-notify' });
 export function platformNotify(sql: Sql): MerchantNotify {
   const dev = process.env.NODE_ENV !== 'production';
   return {
-    async whatsapp(phone, text) {
+    async whatsapp(phone, text, opts) {
       const wa = await getIntegration(sql, 'whatsapp');
       if (!wa) {
         if (dev) return void notifyLog.info({ to: `…${phone.slice(-4)}`, text }, 'dev whatsapp');
         throw new Error('no whatsapp integration');
       }
-      await sendWhatsApp(sql, wa, `55${phone}`, text);
+      const sent = await sendPlatformText(sql, wa, {
+        to: `55${phone}`,
+        text,
+        purpose: opts?.purpose ?? 'notice',
+        ...(opts?.dedupeKey ? { dedupeKey: opts.dedupeKey } : {}),
+      });
+      if (sent.queued && sent.id && opts?.waitMs) {
+        const outcome = await waitForSent(sql, sent.id, opts.waitMs);
+        if (outcome !== 'sent') throw new Error(`whatsapp message ${outcome}`);
+      }
     },
     async email(to, subject, text, idemKey) {
       const mail = await getIntegration(sql, 'email');

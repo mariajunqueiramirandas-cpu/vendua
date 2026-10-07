@@ -34,6 +34,7 @@ export function Bubble({
   time,
   status,
   tag,
+  tagIcon,
   draft,
   signed,
   align,
@@ -48,6 +49,8 @@ export function Bubble({
   status?: BubbleStatus | undefined;
   /** an offer: "sugestão" */
   tag?: ReactNode | undefined;
+  /** the tag's icon, in place of the offer's sparkle */
+  tagIcon?: ReactNode | undefined;
   /** Ensaio: written, never sent */
   draft?: boolean | undefined;
   /** the seller's signature above the bubble (default on); off for a run of its bubbles */
@@ -85,8 +88,8 @@ export function Bubble({
       >
         {sign ? null : <span className="sr-only">{who}: </span>}
         {tag ? (
-          <span className="t-caption mb-1 inline-flex items-center gap-1 self-start rounded-full bg-surface px-2 py-px font-semibold text-muted">
-            <Sparkle weight="bold" className="size-3.5" aria-hidden />
+          <span className="t-caption mb-1 inline-flex items-center gap-1 self-start rounded-full bg-surface px-2 py-px font-semibold text-muted [&_svg]:size-3.5">
+            {tagIcon ?? <Sparkle weight="bold" aria-hidden />}
             {tag}
           </span>
         ) : null}

@@ -712,7 +712,7 @@ interface ActionRow {
 }
 
 /**
- * The merchant's tap on a card. Confirming re-runs the route as `m` (the audit row names them,
+ * The merchant's tap on a card, or their "SIM" by WhatsApp (`via`). Confirming re-runs the route as `m` (the audit row names them,
  * "pelo Duá") inside the caller's claimed transaction; a refusal is recorded on the card rather
  * than thrown, so the claim stores it. A card already decided is left as it is.
  */
@@ -722,6 +722,7 @@ export async function decideTx(
   m: Merchant,
   actionId: string,
   decision: 'confirm' | 'decline',
+  o: { via?: 'whatsapp' } = {},
 ): Promise<void> {
   const [a] = await tx<ActionRow[]>`
     select id, user_id, kind, input, status, min_role, expires_at, basis from copilot_actions
@@ -749,7 +750,11 @@ export async function decideTx(
     if (JSON.stringify(now) !== JSON.stringify(canon(a.basis)))
       return settle('failed', { error: DRIFTED });
   }
-  const by: Merchant = { ...m, name: `${m.name} pelo Duá`.slice(0, 120) };
+  // the audit row says which door the yes came through
+  const by: Merchant = {
+    ...m,
+    name: `${m.name} pelo Duá${o.via === 'whatsapp' ? ' (WhatsApp)' : ''}`.slice(0, 120),
+  };
   try {
     const { after, result } = await (tx as unknown as Savepointable).savepoint(async (sp) => {
       const out = await runRoute(sp, def.route, t, by, await def.replay(sp, t.id, a.input));

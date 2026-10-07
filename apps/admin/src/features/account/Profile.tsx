@@ -4,6 +4,7 @@ import {
   CheckCircle,
   CurrencyCircleDollar,
   DeviceMobile,
+  DownloadSimple,
   EnvelopeSimple,
   Moon,
   SignOut,
@@ -16,7 +17,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api, type Alerts, type Session } from '../../lib/api.ts';
-import { ago, when } from '../../lib/format.ts';
+import { ago, phone, when } from '../../lib/format.ts';
 import { setSoundOn } from '../../lib/live.ts';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../../lib/push.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
@@ -130,6 +131,14 @@ export default function Profile() {
             </Field>
           </Card>
         </Section>
+        {s.duaWhatsapp ? (
+          <DuaWhatsappSection
+            dua={s.duaWhatsapp}
+            on={prefs.duaWhatsapp === true}
+            myPhone={s.user.phone}
+            onChange={(v) => void setPref({ duaWhatsapp: v })}
+          />
+        ) : null}
         <Section title="Pedido novo" hint="Como o painel te chama quando chega um pedido.">
           <Card className="space-y-4 p-5">
             <Toggle
@@ -354,6 +363,105 @@ export default function Profile() {
         </Section>
       </div>
     </PageBody>
+  );
+}
+
+/** "+55 (11) 98765-4321" for Brazil; other countries as "+<digits>" */
+function intlPhone(d: string) {
+  return d.startsWith('55') && (d.length === 12 || d.length === 13) ? `+55 ${phone(d)}` : `+${d}`;
+}
+
+function vcard(d: string) {
+  const card = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    'FN:Duá · Venduá',
+    'N:Venduá;Duá;;;',
+    'ORG:Venduá',
+    `TEL;TYPE=CELL:+${d}`,
+    'END:VCARD',
+    '',
+  ].join('\r\n');
+  return `data:text/vcard;charset=utf-8,${encodeURIComponent(card)}`;
+}
+
+/** Perfil's opt-in to talk to Duá from the person's own WhatsApp (dua-no-whatsapp §6). */
+function DuaWhatsappSection({
+  dua,
+  on,
+  myPhone,
+  onChange,
+}: {
+  dua: NonNullable<Session['duaWhatsapp']>;
+  on: boolean;
+  myPhone: string;
+  onChange: (v: boolean) => void;
+}) {
+  const active = on && dua.allowed;
+  return (
+    <Section
+      id="dua-whatsapp"
+      title="Duá pelo WhatsApp"
+      hint="Pergunte e peça mudanças na loja sem abrir o painel."
+    >
+      <Card className="space-y-4 p-5">
+        <Toggle
+          checked={active}
+          disabled={!dua.allowed}
+          onChange={onChange}
+          label={
+            <span className="inline-flex items-center gap-2">
+              <WhatsappLogo className="size-5" /> Falar com o Duá pelo WhatsApp
+            </span>
+          }
+          description={
+            dua.allowed
+              ? `Escrevendo ou por áudio, do seu número ${phone(myPhone)}.`
+              : 'O dono da loja desligou o Duá pelo WhatsApp para gerentes.'
+          }
+        />
+        {active ? (
+          <div className="space-y-4 border-t border-line pt-4">
+            {dua.number ? (
+              <div>
+                <p className="t-label text-muted">Número da Venduá</p>
+                <p className="t-title-2 mt-0.5 whitespace-nowrap tabular-nums">
+                  {intlPhone(dua.number)}
+                </p>
+                <p className="t-caption mt-1 text-muted">
+                  É o mesmo número que manda seus códigos de acesso.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <a
+                    href={`https://wa.me/${dua.number}?text=oi`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-whatsapp px-4 text-on-whatsapp depth-1 transition-transform active:scale-[0.97]"
+                  >
+                    <WhatsappLogo weight="fill" className="size-5" /> abrir no WhatsApp
+                  </a>
+                  <a
+                    href={vcard(dua.number)}
+                    download="dua-vendua.vcf"
+                    className="t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-surface px-4 text-ink ring-1 ring-line-strong depth-1 transition-transform hover:bg-hover active:scale-[0.97]"
+                  >
+                    <DownloadSimple className="size-5" /> salvar contato
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <p className="t-body text-muted">
+                Mande uma mensagem para o número que manda seus códigos de acesso.
+              </p>
+            )}
+            <ul className="t-caption list-disc space-y-1 pl-5 text-muted">
+              <li>Quando o Duá preparar uma mudança, responda SIM para aplicar.</li>
+              <li>Mudanças de preço e desconto continuam só pelo painel.</li>
+            </ul>
+          </div>
+        ) : null}
+      </Card>
+    </Section>
   );
 }
 

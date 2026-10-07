@@ -1,7 +1,7 @@
 # ADR 0034: Duá Copilot, Duá working for the store's people in the admin
 
-- Status: Accepted (built 2026-10-06, Core migration 0089); the WhatsApp door accepted
-  2026-10-07, not built
+- Status: Accepted (built 2026-10-06, Core migration 0089); the WhatsApp door accepted and built
+  2026-10-07 (Core migration 0101)
 - Date: 2026-10-06
 
 ## Context
@@ -35,7 +35,9 @@ conversation, tools and cards. A card is applied by a "SIM" reply that Core matc
 closed grammar before the model sees it, through the same `decideTx` and the same role, expiry and
 basis checks as the tap. The model still applies nothing. The design, including the platform
 WhatsApp on the gateway it needs first, is
-[`features/dua-no-whatsapp.md`](../features/dua-no-whatsapp.md). It is not built yet.
+[`features/dua-no-whatsapp.md`](../features/dua-no-whatsapp.md). Built 2026-10-07: a yes by
+WhatsApp is audited as "<name> pelo Duá (WhatsApp)", and cards that touch money (prices, coupons)
+are confirmed only in the admin until the owner decides otherwise.
 
 How it works:
 

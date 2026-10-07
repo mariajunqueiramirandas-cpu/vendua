@@ -1,6 +1,7 @@
 # Duá no WhatsApp do dono, and Venduá's own numbers on the gateway
 
-> Status: Proposed, not planned (the WhatsApp door itself is decided, 2026-10-07) · Started 2026-10-07 · Kind: differentiator · Builds on:
+> Status: Built 2026-10-07 (Core migration 0101); the cutover of Venduá's number to the gateway
+> (§4.4) is an operations step still to run · Started 2026-10-07 · Kind: differentiator · Builds on:
 > [ADR 0034](../adr/0034-dua-copilot.md) (Copilot), [ADR 0026](../adr/0026-store-whatsapp-gateway.md)
 > (the gateway), [ADR 0037](../adr/0037-self-hosted-stt.md) (voice),
 > [ADR 0020](../adr/0020-merchant-identity.md) (merchant identity) · Decided: ADR 0034 amended 2026-10-07 (the owner's call)
@@ -373,8 +374,47 @@ After each, `invariant-reviewer` runs on the diff (`CLAUDE.md`).
 - **Unofficial client.** Venduá's number already runs on Baileys today. The move changes where
   the session runs, not the exposure.
 
+## As built (2026-10-07)
+
+Where the build differs from, or settles, the design above:
+
+- **Duá works before the cutover.** Core's socket hands merchant messages to `platform_wa_inbox`
+  (`socketMessageToInbox`) instead of dropping them, and Core sends the Duá outbox rows itself
+  (`platform-whatsapp/socket-pump.ts`). Before the cutover Duá reads text only, since the socket
+  doesn't download media; voice notes need the gateway. With `WA_PLATFORM_TRANSPORT=gateway` the
+  gateway holds the number, every caller in §4.3 enqueues, and Core runs no socket.
+- **Code map.** `src/platform-whatsapp/`: `transport.ts` (the flag), `outbox.ts`, `session.ts`
+  (the cached row behind `waStatus`/`waIdentity`), `probe.ts`, `send.ts`, `inbox.ts` (the
+  consumer and routing by sender), `dua.ts` and `dua-text.ts` (§5), `crm-settle.ts` (CRM sends
+  finish when the gateway reports them sent), `cutover-cli.ts` (§4.4 step 3). The gateway side is
+  `src/store-whatsapp/platform.ts`.
+- **Replies.** The copilot transport sees a WhatsApp-started turn from its mailbox rows (source
+  `whatsapp:<userId>`) and queues the reply with `enqueue_dua_whatsapp(message, body)`, a definer
+  function that picks the recipient itself: the person whose conversation it is, at the jid they
+  write from, only while their switch is on. A turn's tenant transaction never gets the control
+  scope.
+- **§5.3's `withTenantAndControl`** became `inControlScope` (`platform/db.ts`): the turn and the
+  card decision run under plain `withTenant`, and the control scope opens only around the inbox and
+  outbox statements, so admin routes replayed by `decideTx` never run with `control_access` on.
+- **A "SIM" decides only the cards of Duá's latest model reply by WhatsApp.** Once Duá has said
+  something since, an "ok" is a message for Duá, not a yes to a card further up.
+- **Cards** get their number (`copilot_actions.wa_ref`) when they are first sent, and "SIM n" is
+  matched against the last WhatsApp reply's cards, so a number never shifts to another card.
+- **Open decision 3 (money cards):** app-only for now. "SIM" on a card with `money` set answers
+  with a pointer to the Copilot screen. Changing it is one condition in `dua.ts`.
+- **Open decision 4 (attendants):** not let in. **6 (plan):** the same `copilot` feature.
+  **7 (QR):** pair code only on the gateway; socket mode keeps its QR.
+- **Audit.** `audit_log` has no meta column, so a yes by WhatsApp is named
+  "<name> pelo Duá (WhatsApp)" (`decideTx(…, { via: 'whatsapp' })`).
+- **An unresolved `@lid` sender** can't be told apart from a lead, so it stays the CRM's (§5.1's
+  "use o app" answer needs a known merchant).
+- **Fixed answers** (switch off, not allowed, store choice, "calma") are written by Core, not the
+  model, and sent once per day for refusals. A "SIM" exchange is written to the conversation too,
+  so the admin shows it.
+
 ## Change log
 
 - 2026-10-07: first proposal.
 - 2026-10-07: the owner approved the WhatsApp door (open decision 1); ADR 0034 amended.
 - 2026-10-07: one Venduá number, the owner's call (open decision 2); routing is by sender.
+- 2026-10-07: built behind `WA_PLATFORM_TRANSPORT`; money cards app-only, attendants out (see As built).

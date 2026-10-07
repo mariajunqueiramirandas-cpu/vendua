@@ -1,4 +1,4 @@
-import type { IgStatus, Integration } from '@/lib/api.ts';
+import type { IgStatus, Integration, WaQr } from '@/lib/api.ts';
 
 export type Driver = {
   d: string;
@@ -156,10 +156,17 @@ export const KINDS: Kind[] = [
   },
 ];
 
-export type WaState = {
-  qr: string | null;
-  status: string;
-  me: { phone: string | null; name: string | null } | null;
+export type WaState = WaQr;
+
+/** the gateway session's state, in the screen's words */
+export const WA_GATEWAY_STATE: Record<NonNullable<WaQr['state']>, string> = {
+  off: 'desligado',
+  connecting: 'conectando…',
+  pairing: 'aguardando código',
+  open: 'conectado',
+  logged_out: 'desvinculado',
+  banned: 'número bloqueado',
+  error: 'com erro',
 };
 export const WA_IDLE: WaState = { qr: null, status: 'off', me: null };
 
@@ -184,6 +191,8 @@ export function providerStatus(
   }
   if (kindKey === 'whatsapp' && cur.driver === 'baileys') {
     if (wa.status === 'open') return { tone: 'live', text: 'conectado' };
+    if (wa.transport === 'gateway')
+      return { tone: 'warn', text: WA_GATEWAY_STATE[wa.state ?? 'off'] ?? 'desligado' };
     if (wa.status === 'qr') return { tone: 'warn', text: 'escanear QR' };
     if (wa.status === 'connecting') return { tone: 'warn', text: 'conectando…' };
     return { tone: 'warn', text: 'socket offline' };

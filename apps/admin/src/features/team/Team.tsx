@@ -14,6 +14,7 @@ import {
   useInfiniteQuery,
   useQuery,
   useQueryClient,
+  type QueryClient,
 } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -32,7 +33,7 @@ import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
-import { Chips, Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
+import { Chips, Field, PhoneInput, TextInput, Toggle } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { OutcomeList, OutcomeRow } from '../../ui/Outcome.tsx';
@@ -46,13 +47,21 @@ const ROLE_HELP: Record<Role, string> = {
   attendant: 'Pedidos e pausar a loja. Ideal para quem fica no balcão.',
 };
 
+type TeamData = Awaited<ReturnType<typeof api.team>>;
+
+/** a member write answers the list only: the store's switches stay as they were */
+function setMembers(qc: QueryClient, members: Member[]) {
+  qc.setQueryData<TeamData>(qk.team, (d) => ({ ...d, members }));
+}
+
 export default function Team() {
   const owner = useCan('owner');
   const { data, error, refetch } = useQuery({ queryKey: qk.team, queryFn: api.team });
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
   const [result, setResult] = useState<InviteOutcome | null>(null);
-  const me = useSession().user.id;
+  const session = useSession();
+  const me = session.user.id;
   return (
     <PageBody wide>
       <PageHeader
@@ -67,51 +76,89 @@ export default function Team() {
         }
       />
       <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
-        <Section title="Pessoas">
-          {error && !data ? (
-            <ErrorState error={error} retry={() => void refetch()} />
-          ) : !data ? (
-            <RowsSkeleton rows={3} />
-          ) : (
-            <Card as="section" aria-label="pessoas da equipe">
-              <ul className="divide-y divide-line">
-                {data.members.map((m) => (
-                  <MemberRow
-                    key={m.id}
-                    m={m}
-                    me={m.id === me}
-                    owner={owner}
-                    onOpen={() => setEditing(m)}
-                    onResent={setResult}
-                  />
-                ))}
-              </ul>
-            </Card>
-          )}
-          {owner && data && data.members.filter((m) => m.status !== 'revoked').length === 1 ? (
-            <DuaNote pose="carinho" title="Tocando a loja sem ajuda?" className="mt-3">
-              Chame quem ajuda no balcão ou na cozinha. Cada pessoa entra com o próprio celular, e
-              você escolhe o que ela pode fazer.
-            </DuaNote>
+        <div className="space-y-8">
+          <Section title="Pessoas">
+            {error && !data ? (
+              <ErrorState error={error} retry={() => void refetch()} />
+            ) : !data ? (
+              <RowsSkeleton rows={3} />
+            ) : (
+              <Card as="section" aria-label="pessoas da equipe">
+                <ul className="divide-y divide-line">
+                  {data.members.map((m) => (
+                    <MemberRow
+                      key={m.id}
+                      m={m}
+                      me={m.id === me}
+                      owner={owner}
+                      onOpen={() => setEditing(m)}
+                      onResent={setResult}
+                    />
+                  ))}
+                </ul>
+              </Card>
+            )}
+            {owner && data && data.members.filter((m) => m.status !== 'revoked').length === 1 ? (
+              <DuaNote pose="carinho" title="Tocando a loja sem ajuda?" className="mt-3">
+                Chame quem ajuda no balcão ou na cozinha. Cada pessoa entra com o próprio celular, e
+                você escolhe o que ela pode fazer.
+              </DuaNote>
+            ) : null}
+            {owner ? (
+              <Button
+                variant="secondary"
+                block
+                className="mt-3 md:hidden"
+                icon={<Plus />}
+                onClick={() => setAdding(true)}
+              >
+                adicionar pessoa
+              </Button>
+            ) : null}
+          </Section>
+          {owner && session.duaWhatsapp && data ? (
+            <DuaWhatsappManagers on={data.duaWhatsappManagers !== false} />
           ) : null}
-          {owner ? (
-            <Button
-              variant="secondary"
-              block
-              className="mt-3 md:hidden"
-              icon={<Plus />}
-              onClick={() => setAdding(true)}
-            >
-              adicionar pessoa
-            </Button>
-          ) : null}
-        </Section>
+        </div>
         <Activity />
       </div>
       <AddSheet open={adding} onOpenChange={setAdding} />
       <InviteResultSheet result={result} onClose={() => setResult(null)} />
       <EditSheet member={editing} onClose={() => setEditing(null)} />
     </PageBody>
+  );
+}
+
+/** the owner's per-store switch: managers may talk to Duá by WhatsApp (dua-no-whatsapp §6) */
+function DuaWhatsappManagers({ on }: { on: boolean }) {
+  const qc = useQueryClient();
+  const set = useMutation({
+    mutationFn: (v: boolean) => api.teamSettings({ duaWhatsappManagers: v }),
+    onMutate: (v) => optimistic<TeamData>(qc, qk.team, (d) => ({ ...d, duaWhatsappManagers: v })),
+    onSuccess: (r) => {
+      qc.setQueryData<TeamData>(qk.team, (d) => d && { ...d, ...r });
+      void qc.invalidateQueries({ queryKey: qk.activity });
+    },
+    onError: (e, _v, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
+  });
+  return (
+    <Section title="Duá pelo WhatsApp">
+      <Card className="px-5 py-1">
+        <Toggle
+          checked={on}
+          onChange={(v) => set.mutate(v)}
+          label={
+            <span className="inline-flex items-center gap-2">
+              <WhatsappLogo className="size-5" /> Duá pelo WhatsApp para gerentes
+            </span>
+          }
+          description="Gerentes podem ligar no Perfil e falar com o Duá pelo próprio WhatsApp. Você sempre pode."
+        />
+      </Card>
+    </Section>
   );
 }
 
@@ -175,7 +222,7 @@ function MemberRow({
   const resend = useMutation({
     mutationFn: () => api.resendInvite(m.id),
     onSuccess: (r) => {
-      qc.setQueryData(qk.team, { members: r.members });
+      setMembers(qc, r.members);
       onResent({
         member: m,
         invite: r.invite,
@@ -255,7 +302,7 @@ function AddSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boo
     mutationFn: (v: { name: string; phone: string; role: Role; email: string | null }) =>
       api.addMember(v),
     onSuccess: (r, v) => {
-      qc.setQueryData(qk.team, { members: r.members });
+      setMembers(qc, r.members);
       void qc.invalidateQueries({ queryKey: qk.activity });
       setName('');
       setPh('');
@@ -484,7 +531,7 @@ function EditSheet({ member, onClose }: { member: Member | null; onClose: () => 
     if (member) setRole(member.role);
   }, [member]);
   const done = (r: { members: Member[] }, msg: string) => {
-    qc.setQueryData(qk.team, r);
+    setMembers(qc, r.members);
     void qc.invalidateQueries({ queryKey: qk.activity });
     toast(msg);
   };
@@ -493,7 +540,8 @@ function EditSheet({ member, onClose }: { member: Member | null; onClose: () => 
     mutationFn: (v: { id: string; role: Role }) => api.updateMember(v.id, { role: v.role }),
     onMutate: (v) => {
       onClose();
-      return optimistic<{ members: Member[] }>(qc, qk.team, (d) => ({
+      return optimistic<TeamData>(qc, qk.team, (d) => ({
+        ...d,
         members: d.members.map((m) => (m.id === v.id ? { ...m, role: v.role } : m)),
       }));
     },
@@ -507,7 +555,8 @@ function EditSheet({ member, onClose }: { member: Member | null; onClose: () => 
     mutationFn: (v: { id: string; name: string }) => api.removeMember(v.id),
     onMutate: (v) => {
       onClose();
-      return optimistic<{ members: Member[] }>(qc, qk.team, (d) => ({
+      return optimistic<TeamData>(qc, qk.team, (d) => ({
+        ...d,
         members: d.members.filter((m) => m.id !== v.id),
       }));
     },
