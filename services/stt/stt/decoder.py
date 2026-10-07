@@ -5,7 +5,7 @@ only what changed since the last one:
 - the joint's encoder projection runs once, as one GEMM over every frame of the batch;
 - the prediction network (embedding -> 2x LSTM -> joint projection) runs only when a
   non-blank token is emitted: a blank leaves it unchanged, so its output is cached;
-- layer 0's input term is a per-token lookup table (embedding @ W0 folded at compile time);
+- layer 0's input term is a per-token lookup table (embedding @ W0 folded at load);
 - all live utterances step together, so the 640 x 8198 output head is a GEMM, not B GEMVs.
 
 Per emitted token it also keeps NeMo's entropy-based confidence (Tsallis, alpha = 1/3,
@@ -43,7 +43,7 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
 
 class TdtDecoder:
     def __init__(self, weights: dict[str, np.ndarray]):
-        self.table0 = weights["table0"]
+        self.table0 = weights["embed"] @ weights["w0"] + weights["b0"]
         self.r0 = weights["r0"]
         self.wr1 = weights["wr1"]
         self.b1 = weights["b1"]

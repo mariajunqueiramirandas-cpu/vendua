@@ -113,10 +113,12 @@ def extract_decoder(src: Path) -> dict[str, np.ndarray]:
     embed = w["decoder.prediction.embed.weight"]
     (w0, r0, b0), (w1, r1, b1) = ((w[n.input[1]][0], w[n.input[2]][0], w[n.input[3]][0]) for n in lstm)
     h = r0.shape[1]
-    # layer 0's input term is a pure function of the token: fold it into a lookup table
-    table0 = embed @ w0.T + b0[: 4 * h] + b0[4 * h :]
+    # layer 0's input term is a pure function of the token; stt.decoder folds it into a lookup
+    # table at load, because a GEMM's bytes vary with the CPU's BLAS kernel and these must not
     return {
-        "table0": table0.astype(np.float32),
+        "embed": embed,
+        "w0": np.ascontiguousarray(w0.T),
+        "b0": (b0[: 4 * h] + b0[4 * h :]).astype(np.float32),
         "r0": np.ascontiguousarray(r0.T),
         "wr1": np.ascontiguousarray(np.concatenate([w1, r1], axis=1).T),
         "b1": (b1[: 4 * h] + b1[4 * h :]).astype(np.float32),
