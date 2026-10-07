@@ -160,11 +160,12 @@ Paths are under `packages/core/` unless they start with `apps/`, `packages/` or 
 ### 4.4 "Saiu do forno"
 
 `POST /admin/v1/products/:id/fresh { units? }` takes an Idempotency-Key through `write()`. Its role
-is open decision 6: attendants run the oven, but they only touch orders today. In one transaction:
+is open decision 6: attendants run the oven, but their routes today are orders, kitchen, PDV, pause and share, never the catalog. In one transaction:
 
 1. **Badge.** `products.fresh_until = now() + store_settings.fresh_minutes` (default 30) and
    `emitAdminTx(…, 'catalog')`. The Kernel's `CatalogProduct` gains optional `freshSince` and
-   `freshUntil`. `rules/card.ts` adds a `'fresh'` badge below sold-out and above promo, and
+   `freshUntil`. `rules/card.ts` adds `'fresh'` to the badge union, after `sold-out` and `all-in-bag` and before
+   `low-stock` (today: sold-out > all-in-bag > low-stock > preorder, `card.ts:24-25`), and
    `ui-defaults` renders "Saiu do forno · há N min".
 2. **Stock.** With `units` and a stock-tracked product, stock goes up by `units` through the
    existing stock path (`modules/stock.ts`).

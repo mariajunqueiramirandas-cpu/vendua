@@ -50,7 +50,7 @@ Paths are under `packages/core/` unless they start with `apps/`, `packages/` or 
 - **Owners are away from the admin.** A pizzaiolo with floury hands won't open a PWA to mark a
   product sold out, but will send a 4-second voice note.
 - **Owners already write to our number, and we drop it.** The CRM ingest drops any message from a
-  merchant phone (`agent/inbound.ts:66-69`): "a 'valeu' back is not a sales lead". So a reply to a
+  merchant phone (`agent/inbound.ts:65-69`): "a 'valeu' back is not a sales lead". So a reply to a
   billing notice or a sign-in code vanishes without a trace.
 - **The Copilot is ready for a second door.** `decideTx` is a pure function of
   `(tx, Tenant, Merchant, id, decision)` (`copilot/actions.ts:719-767`). Its reads go through the
@@ -112,7 +112,9 @@ Everything here has to survive the move:
 - **Pairing.** By pair code (`POST /control/v1/wa/pair-code`) or QR (`wa_qr` setting,
   `GET /control/v1/wa/qr`), and logout.
 - **History at pairing.** History sync is imported as context, scoped by the `whatsapp_history`
-  setting (`agent/inbound.ts:72-82`). The store gateway skips history.
+  setting (`agent/inbound.ts:70-82`). The store gateway skips the bulk syncs (recent and full,
+  `store-whatsapp/runtime.ts:63,88`) and fetches one chat's history only on demand
+  (`store-whatsapp/history.ts`, ADR 0033).
 - **LID mapping.** LID↔PN pairs re-key leads (`adoptLidMappings`, `modules/threads.ts:1040`).
 - **Inbound.** Messages go to `ingestInbound`, which drops team and merchant phones, writes leads,
   threads and messages, and wakes the lead's inbox through `requestAgentTx`.
@@ -174,9 +176,14 @@ callbacks:
 **Callers.** `sendWhatsApp(sql, wa, to, text)` becomes
 `enqueuePlatformWa(tx, { session, to, body, purpose, dedupeKey })`:
 
-- **OTP** (`admin/auth.ts`, `billing/signup.ts`). Enqueue with purpose `otp`, then wait up to 8 s
-  for `sent` (LISTEN). On timeout the screen offers the email link (`merchant_login_links`, 0100)
-  as it does when WhatsApp fails today.
+- **Login OTP** (`whatsappOtpSender`, `admin/auth.ts:107-118`). The send stays detached
+  (`auth.ts:150-155`): a known phone must answer as fast as an unknown one, so nobody can tell
+  which phones are merchants by timing. The enqueue happens off the response path, as the send
+  does today. Purpose `otp` puts it first in the pump. A failure is still only logged, and
+  "entrar com e-mail" (`apps/admin/src/features/auth/Login.tsx:300`) stays where it is.
+- **Signup OTP** (`modules/billing/signup.ts:189`, through `platformNotify`). It awaits its send
+  and answers 503 `OTP_UNAVAILABLE` on failure (`signup.ts:194`). It enqueues with purpose `otp`
+  and waits up to 8 s for `sent` (LISTEN), then answers the same 503.
 - **CRM agent sends** (`agent/send.ts`). The claim and the outbox row are written in one
   transaction. Delivery becomes at least once, deduped by WhatsApp through
   `messageIdFor(row id)`. Today it is at most once, and a crash between send and finalize loses the
@@ -191,7 +198,9 @@ callbacks:
   Store sessions are pair-code only.
 
 **Health.** The gateway writes the platform sessions' state. `recordChannelState` emits
-`channel.down|up whatsapp` from it, and `channel-health.ts` reads it.
+`channel.down|up whatsapp` from it (`modules/system-events.ts:105`), and the console's status
+reads the session row instead of the socket's memory. `channel-health.ts` is a rollup of lead
+sends and doesn't change.
 
 ### 4.4 Cutover
 
@@ -246,7 +255,7 @@ the same WhatsApp. The opt-in adds an explicit yes from inside an authenticated 
 ### 5.3 The turn
 
 In one inbox-consumer transaction that sets **both** RLS contexts. `withTenant`
-(`platform/db.ts:9-17`) sets only `vendua.tenant_id`, and `platform_wa_inbox` is control-scoped,
+(`platform/db.ts:38-55`) sets only `vendua.tenant_id`, and `platform_wa_inbox` is control-scoped,
 so the transaction also runs `set_config('vendua.control', '1', true)`, as
 `modules/payments/jobs.ts:46` does. That keeps "consumed" atomic with the dispatch. A small helper,
 `withTenantAndControl`, keeps it in one place, and it is used only by this consumer:
@@ -277,7 +286,7 @@ goes back through the door the question came from, and the admin shows both.
   on unofficial clients.
 - **Matching is deterministic and runs before the model.** The consumer matches a reply against a
   closed grammar: `sim`, `s`, `pode`, `ok`, `sim <n>`, `não`, `nao`. A match on an open, unexpired
-  card of this person calls `decideTx(tx, tenant, merchant, actionId, 'apply' | 'decline')`. That
+  card of this person calls `decideTx(tx, tenant, merchant, actionId, 'confirm' | 'decline')`. That
   is the same function as the admin tap, with the same role, expiry and basis-drift checks, the
   route re-run as "<name> pelo Duá", and the route's own `audit_log` row. The audit meta gains
   `channel: 'whatsapp'`.
@@ -292,7 +301,8 @@ goes back through the door the question came from, and the admin shows both.
 
 - 30 inbound messages per phone per 10 minutes. Past that, one "calma, já respondo" and the rest
   wait.
-- Bodies cut at 2,000 characters (`copilot_messages`); voice capped at 180 s and 8 MB.
+- Inbound bodies cut at 2,000 characters, the cap the admin route applies
+  (`admin/routes-copilot.ts:38`); voice capped at 180 s and 8 MB.
 - The store's `copilot` daily budget applies unchanged. When it is spent, Duá says so and points to
   the app.
 - Proactive messages from Duá to owners (a morning summary, alerts) are out of scope. The existing
@@ -341,7 +351,7 @@ After each, `invariant-reviewer` runs on the diff (`CLAUDE.md`).
 ## 10. Risks
 
 - **The number is restricted.** Today one number carries outreach and every sign-in code. W1's split
-  limits the damage, and the email link stays the sign-in fallback.
+  limits the damage, and "entrar com e-mail" stays available.
 - **A one-way cutover.** Signal keys move with the session, so the rehearsal on a test number is not
   optional.
 - **Someone else holds the phone.** Whoever holds the owner's unlocked phone can talk to Duá.
