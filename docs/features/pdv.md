@@ -333,6 +333,9 @@ table: 'Mesa 5', feeCents: 0, … }`; with `tab` its payment is
   is listed but left out of the comanda's `subtotalCents`, service, total and remaining.
 - QR orders land on Pedidos as `placed` dine-in orders with the table, like a storefront order;
   accepting them sends them to the kitchen and the printers.
+- A QR order still `placed` is listed on its comanda but not owed until the staff accept it;
+  `POST /pdv/tabs/:id/close` answers 409 `TAB_HAS_PENDING` while one waits, and a payment that
+  reaches zero then doesn't close the comanda by itself.
 
 ## Order changes
 
