@@ -24,3 +24,11 @@ def cpu_budget() -> int:
             n = min(n, max(1, math.ceil(int(quota) / int(period))))
         break
     return n
+
+
+def cpu_has_vnni() -> bool:
+    try:
+        flags = Path("/proc/cpuinfo").read_text()
+    except OSError:
+        return False
+    return any(f in flags for f in ("avx512_vnni", "avx_vnni", "amx_int8"))

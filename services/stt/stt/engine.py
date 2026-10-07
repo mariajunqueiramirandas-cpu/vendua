@@ -74,7 +74,9 @@ class Engine:
         self.threads = threads or cpu_budget()
         self.trim = trim
         manifest = d / "manifest.json"
-        self.gate = json.loads(manifest.read_text()).get("gate_raw", DEFAULT_GATE_RAW) if manifest.exists() else DEFAULT_GATE_RAW
+        meta = json.loads(manifest.read_text()) if manifest.exists() else {}
+        self.gate = meta.get("gate_raw", DEFAULT_GATE_RAW)
+        self.model = meta.get("model")
         self.pre = _session(d / "preprocessor.onnx", self.threads)
         self.enc = _session(d / "encoder.int8.onnx", self.threads)
         with np.load(d / "decoder.npz") as w:

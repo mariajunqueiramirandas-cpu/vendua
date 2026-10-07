@@ -1,0 +1,92 @@
+name: stt-models
+
+# The stt service's compiled models (services/stt/stt/compile.py), published as the GitHub Release
+# that TAG in services/stt/stt/fetch.py names, so an image build downloads 0.8 GB instead of the
+# 2.5 GB fp32 export and the compile. Compiling is deterministic: every run checks its output
+# against the digests pinned in fetch.py, so a PR that moves one has to pin the new ones under a
+# new tag. A published file never changes under its tag.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/stt/stt/compile.py'
+      - 'services/stt/stt/fetch.py'
+      - 'services/stt/stt/cpus.py'
+      - 'services/stt/requirements*.txt'
+      - '.github/workflows/stt-models.yml'
+  pull_request:
+    paths:
+      - 'services/stt/stt/compile.py'
+      - 'services/stt/stt/fetch.py'
+      - 'services/stt/stt/cpus.py'
+      - 'services/stt/requirements*.txt'
+      - '.github/workflows/stt-models.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        model: [parakeet-tdt-0.6b-v3, parakeet-tdt-0.6b-v3-ptbr]
+    defaults:
+      run:
+        working-directory: services/stt
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: services/stt/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Download the pinned fp32 export
+        run: python -m stt.fetch "$RUNNER_TEMP/src" ${{ matrix.model }}
+      - name: Compile both variants
+        run: |
+          STT_REDUCE_RANGE=0 python -m stt.compile "$RUNNER_TEMP/src" "$RUNNER_TEMP/out/vnni" ${{ matrix.model }}
+          STT_REDUCE_RANGE=1 python -m stt.compile "$RUNNER_TEMP/src" "$RUNNER_TEMP/out/compat" ${{ matrix.model }}
+      - name: Check them against the pins
+        run: python -m stt.fetch --stage "$RUNNER_TEMP/out" "$RUNNER_TEMP/assets" ${{ matrix.model }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          name: ${{ matrix.model }}
+          path: ${{ runner.temp }}/assets/
+          compression-level: 0
+          retention-days: 1
+
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: compile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish what the tag doesn't have yet
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$(sed -n 's/^TAG = "\(.*\)"$/\1/p' services/stt/stt/fetch.py)"
+          test -n "$tag"
+          # --latest=false: the admin links the print agents' releases/latest/download/…
+          if ! gh release view "$tag" > /dev/null 2>&1; then
+            gh release create "$tag" --title "stt models ($tag)" --latest=false --notes-file - assets/* <<'EOF'
+          Compiled int8 models for `services/stt` (see its README), downloaded by its Docker build and pinned by sha256 in `services/stt/stt/fetch.py`. `vnni` is for CPUs with AVX-512 VNNI, AVX-VNNI or AMX; `compat` for the others.
+
+          Made from NVIDIA's Parakeet-TDT-0.6B-v3 (CC-BY-4.0, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), as exported to ONNX by istupakov/onnx-asr, and from its Brazilian Portuguese fine-tune by alexandreacff, exported by alefiury (CC-BY-4.0). Changed by Venduá: pointwise convolutions rewritten as MatMul, weights quantized to int8, decoder weights re-laid out. Licensed CC-BY-4.0.
+          EOF
+            exit 0
+          fi
+          have="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+          for f in assets/*; do
+            grep -qx "$(basename "$f")" <<< "$have" || gh release upload "$tag" "$f"
+          done

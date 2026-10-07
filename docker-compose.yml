@@ -285,7 +285,7 @@ services:
 
   # Self-hosted speech-to-text for shoppers' voice notes (services/stt, ADR 0037): Parakeet-TDT
   # 0.6B v3 on CPU. Internal only; without STT_SECRET it idles and refuses every call. The first
-  # build downloads the 2.5 GB model export (cached layer) and compiles it for this host's CPU.
+  # build downloads the 0.8 GB compiled model for this host's CPU from our GitHub Release.
   # `cpus` keeps it off Core's and Postgres' cores; the engine sizes its threads to it.
   stt:
     build:

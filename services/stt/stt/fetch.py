@@ -1,6 +1,9 @@
-"""Downloads a pinned Parakeet-TDT-0.6B-v3 fp32 ONNX export, checking every file's sha256.
+"""Downloads a model, checking every file's sha256.
 
-  python -m stt.fetch <dir> [model]
+  python -m stt.fetch --compiled <dir> [model]   what stt.compile makes, from this repo's release
+  python -m stt.fetch <dir> [model]              the pinned fp32 ONNX export it is made from
+  python -m stt.fetch --stage <compiled> <assets> [model]   (CI) names a model's two compiled
+                                                 variants as release assets, checking the pins
 
 `parakeet-tdt-0.6b-v3`: NVIDIA's weights (CC-BY-4.0), exported by github.com/istupakov/onnx-asr.
 `parakeet-tdt-0.6b-v3-ptbr`: the same model fine-tuned on Brazilian Portuguese podcasts
@@ -11,9 +14,14 @@ vocabulary; only the weights differ.
 from __future__ import annotations
 
 import hashlib
+import os
+import shutil
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
+
+from .cpus import cpu_has_vnni
 
 PREPROCESSOR = "a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f"
 VOCAB = "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"
@@ -44,6 +52,53 @@ MODELS = {
 }
 DEFAULT = "parakeet-tdt-0.6b-v3"
 
+# stt.compile's output for each model, published by .github/workflows/stt-models.yml. Compiling
+# is deterministic, so these are the digests compiling the exports above gives on any host, and
+# that workflow checks them before it publishes. A compiler change that moves one needs a new tag.
+TAG = "stt-models-v1"
+RELEASE = f"https://github.com/mariajunqueiramirandas-cpu/vendua/releases/download/{TAG}"
+# vnni: reduce_range off, for CPUs with VNNI/AMX; compat: reduce_range on, for CPUs without
+COMPILED = {
+    (model, variant): {
+        "encoder.int8.onnx": encoder,
+        "decoder.npz": decoder,
+        "manifest.json": manifest,
+        "preprocessor.onnx": PREPROCESSOR,
+        "vocab.txt": VOCAB,
+    }
+    for model, variant, encoder, decoder, manifest in (
+        (
+            "parakeet-tdt-0.6b-v3",
+            "vnni",
+            "e851c577ef97570f76f591a09c5dce90ff23cd672892fcfeb257978895494185",
+            "3073c8477007849ed6aafdae918d41e763e36ec85bccfd3345b2375c817af242",
+            "f75642e3e5fb632c9336a31fd4185c5569e4b598188f44bd431cd50c254bccdb",
+        ),
+        (
+            "parakeet-tdt-0.6b-v3",
+            "compat",
+            "581a137e454d26a0b43ead9cf44c34e3a7fb192299d1f23fd15c55f14be498a9",
+            "3073c8477007849ed6aafdae918d41e763e36ec85bccfd3345b2375c817af242",
+            "5619a34a891599b9936e0f1e5f5156adc5f4ae3a898b1874bba17fa77dc36d1a",
+        ),
+        (
+            "parakeet-tdt-0.6b-v3-ptbr",
+            "vnni",
+            "3dc7fcace0aa3bcf8f19f87f0937beec22b8c24d55bdf3427995d4cb20392375",
+            "d37e54399a81573c4e0595b6029f3b5834690d377c4bcc04fadaf012e93e275b",
+            "776976a6aab13afaa34b6cab3bc3ae0a92222e70ced759745570c05d110fcabf",
+        ),
+        (
+            "parakeet-tdt-0.6b-v3-ptbr",
+            "compat",
+            "864d9b049ed6d7105ab98d32637e178bfa486c6e775f93c604a3b54eeab04e17",
+            "d37e54399a81573c4e0595b6029f3b5834690d377c4bcc04fadaf012e93e275b",
+            "7abbfa5368e7162f958922599640a34b916a25c440246290b35c5b4abe522d19",
+        ),
+    )
+}
+NOT_PUBLISHED = 3  # exit status: the release lacks a file, so the image compiles instead
+
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -53,27 +108,74 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def download(url: str, dst: Path, digest: str) -> None:
+    if dst.exists() and sha256(dst) == digest:
+        return
+    tmp = dst.with_suffix(dst.suffix + ".part")
+    h = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(url, timeout=60) as r, tmp.open("wb") as f:
+            while chunk := r.read(1 << 20):
+                h.update(chunk)
+                f.write(chunk)
+    except urllib.error.HTTPError as e:
+        tmp.unlink(missing_ok=True)
+        if e.code == 404:
+            print(f"{url}: not published", file=sys.stderr)
+            sys.exit(NOT_PUBLISHED)
+        raise
+    if h.hexdigest() != digest:
+        tmp.unlink()
+        sys.exit(f"{dst.name}: sha256 {h.hexdigest()} != pinned {digest}")
+    tmp.rename(dst)
+    print(f"fetched {dst.name}")
+
+
 def main(out_dir: str, model: str = DEFAULT) -> None:
     repo, revision, files = MODELS[model]
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     for name, digest in files.items():
-        dst = out / name
-        if dst.exists() and sha256(dst) == digest:
-            continue
-        url = f"https://huggingface.co/{repo}/resolve/{revision}/{name}"
-        tmp = dst.with_suffix(dst.suffix + ".part")
-        h = hashlib.sha256()
-        with urllib.request.urlopen(url, timeout=60) as r, tmp.open("wb") as f:
-            while chunk := r.read(1 << 20):
-                h.update(chunk)
-                f.write(chunk)
-        if h.hexdigest() != digest:
-            tmp.unlink()
-            sys.exit(f"{name}: sha256 {h.hexdigest()} != pinned {digest}")
-        tmp.rename(dst)
-        print(f"fetched {name}")
+        download(f"https://huggingface.co/{repo}/resolve/{revision}/{name}", out / name, digest)
+
+
+def variant() -> str:
+    # u8s8 without VNNI saturates int16 intermediates (stt.compile); auto = this host's CPU
+    forced = os.environ.get("STT_REDUCE_RANGE", "auto")
+    reduce_range = not cpu_has_vnni() if forced == "auto" else forced == "1"
+    return "compat" if reduce_range else "vnni"
+
+
+def compiled(out_dir: str, model: str = DEFAULT) -> None:
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    v = variant()
+    for name, digest in COMPILED[(model, v)].items():
+        download(f"{RELEASE}/{model}.{v}.{name}", out / name, digest)
+
+
+def stage(compiled_dir: str, assets_dir: str, model: str = DEFAULT) -> None:
+    """<compiled>/<vnni|compat>/ are stt.compile outputs; each file becomes <model>.<variant>.<name>."""
+    assets = Path(assets_dir)
+    assets.mkdir(parents=True, exist_ok=True)
+    wrong = []
+    for v in ("vnni", "compat"):
+        pins = dict(COMPILED[(model, v)])
+        for f in sorted((Path(compiled_dir) / v).iterdir()):
+            got = sha256(f)
+            if pins.pop(f.name, None) != got:
+                wrong.append(f'{model} {v}: "{f.name}": "{got}",')
+            shutil.move(f, assets / f"{model}.{v}.{f.name}")
+        wrong += [f"{model} {v}: {name} not compiled" for name in pins]
+    if wrong:
+        sys.exit("compiled files differ from COMPILED in stt/fetch.py:\n" + "\n".join(wrong))
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:3])
+    args = sys.argv[1:]
+    if args[:1] == ["--compiled"]:
+        compiled(*args[1:3])
+    elif args[:1] == ["--stage"]:
+        stage(*args[1:4])
+    else:
+        main(*args[:2])

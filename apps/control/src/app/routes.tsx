@@ -56,6 +56,7 @@ const StoresPage = lazy(() => import('@/features/stores/StoresPage.tsx'));
 const StorePage = lazy(() => import('@/features/stores/StorePage.tsx'));
 const AiUsagePage = lazy(() => import('@/features/ai/UsagePage.tsx'));
 const AiModelsPage = lazy(() => import('@/features/ai/ModelsPage.tsx'));
+const AiVoicePage = lazy(() => import('@/features/ai/VoicePage.tsx'));
 const BillingPlansPage = lazy(() => import('@/features/stores/PlansPage.tsx'));
 const IncidentsPage = lazy(() => import('@/features/stores/IncidentsPage.tsx'));
 const FleetPage = lazy(() => import('@/features/fleet/FleetPage.tsx'));
@@ -153,6 +154,7 @@ export function AppRoutes() {
         <Route path="/lojas/:id" element={<StorePage />} />
         <Route path="/ia" element={<AiUsagePage />} />
         <Route path="/ia/modelos" element={<AiModelsPage />} />
+        <Route path="/ia/voz" element={<AiVoicePage />} />
         <Route path="/config" element={<SettingsPage />} />
         <Route path="/_ui" element={<UiPreview />} />
 

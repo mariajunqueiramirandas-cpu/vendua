@@ -7,7 +7,8 @@ engine written for it here. Python, ONNX Runtime and numpy.
 
 **Model license: CC-BY-4.0** (NVIDIA). Attribution is this paragraph. The ONNX export comes from
 [istupakov/onnx-asr](https://github.com/istupakov/onnx-asr) and is pinned by revision and
-sha256 in `stt/fetch.py`.
+sha256 in `stt/fetch.py`. Our compiled int8 version of it is published, under the same license,
+as this repo's `stt-models-v*` GitHub Release (see "The compile step").
 
 ## How it fits
 
@@ -18,8 +19,10 @@ Core ingest (vendedor/ingest.ts) ──bearer──▶ stt :8792 ──▶ {text
 
 Core's `transcribe` (`packages/core/src/vendedor/media.ts`) calls it as provider `sidecar`. It
 is used by default when `STT_URL` and `STT_SECRET` are set and staff named no `transcribe`
-route. It can also be listed among the cloud routes in `agent_runtime.media_routes`, first or as
-a fallback. The audio never leaves the host, and transcripts are never logged or stored here.
+route. Staff set the order of routes in the CRM, under IA → Voz (`agent_runtime.media_routes`,
+which Core checks when it's saved). That screen also shows whether this service is up, using
+`/healthz`. The service can come first, or after a cloud route as a fallback. The audio never
+leaves the host, and transcripts are never logged or stored here.
 
 ## API
 
@@ -27,7 +30,7 @@ a fallback. The audio never leaves the host, and transcripts are never logged or
 | --------------------- | -------------------- | ---------------------- | ----------------------------------------- |
 | `POST /v1/transcribe` | `Bearer $STT_SECRET` | the audio file's bytes | `{text, confidence, language, seconds}`   |
 | `?words=1`            |                      |                        | adds `words: [{word, start, confidence}]` |
-| `GET /healthz`        | none                 |                        | 200 once warm, `{ok, queue}`              |
+| `GET /healthz`        | none                 |                        | 200 once warm, `{ok, queue, model}`       |
 
 Ogg/Opus voice notes, mp3, m4a/mp4, WebM, FLAC, AMR and WAV are accepted, picked by their
 magic bytes. `language` is always `null`: the model picks among its 25 languages but doesn't
@@ -76,6 +79,9 @@ Build args:
 - `STT_MODEL`: `parakeet-tdt-0.6b-v3` (default) or `parakeet-tdt-0.6b-v3-ptbr`, the Brazilian
   Portuguese fine-tune (see "Numbers").
 - `STT_REDUCE_RANGE`: `auto`, `0` or `1`; see "The compile step".
+- `STT_FROM`: `release` (default) downloads the compiled model, 0.8 GB. `compile` downloads the
+  2.5 GB fp32 export and compiles it in the build, which needs about 6 GB of RAM. `release`
+  falls back to `compile` while the release lacks a file.
 
 ## The engine
 
@@ -83,7 +89,7 @@ The time per voice note splits into feature extraction (2%), the FastConformer e
 and the TDT decoder loop (5%), measured on the reference pipeline. So most of the work went
 into the encoder.
 
-### The compile step (`stt/compile.py`, at image build)
+### The compile step (`stt/compile.py`, in CI)
 
 The community int8 export quantizes the Conformer's 48 pointwise (1×1) convolutions as
 `ConvInteger`, with **uint8** weights. ONNX Runtime runs `ConvInteger` through im2col and an
@@ -96,10 +102,17 @@ The compiler starts from the fp32 export instead:
    optimizer cancels those Transposes against the ones around the conv module.
 2. It quantizes dynamically: MatMul only, per output channel, with **signed** int8 weights.
    Depthwise convs and attention score products stay fp32.
-3. It turns on `reduce_range` only when the building host has no VNNI. Without VNNI, u8×s8
-   saturates int16 intermediates. Dokploy builds on the host it runs on.
+3. It turns on `reduce_range` only for CPUs without VNNI. Without VNNI, u8×s8 saturates int16
+   intermediates. So each model has two builds: `vnni` and `compat` (`reduce_range` on). The
+   image build picks one from its host's `/proc/cpuinfo`; Dokploy builds on the host it runs on.
 4. It lifts the decoder and joint weights out of ONNX into `decoder.npz`, pre-folded (see
    below).
+
+The output is the same bytes on every host. `.github/workflows/stt-models.yml` compiles both
+models in both builds, checks each file against the sha256 pinned in `COMPILED`
+(`stt/fetch.py`), and publishes them as the GitHub Release `TAG` names. The image build
+downloads those files. A change that moves a digest fails that check on its PR, and the error
+prints the new pins. Pin them under a new `TAG`, because a published file never changes.
 
 | Encoder (same 20 FLEURS clips, 288 s audio, 4 cores) | Encoder time | Encoder RTFx | Error vs fp32 |
 | ---------------------------------------------------- | ------------ | ------------ | ------------- |
@@ -220,8 +233,8 @@ Tried and not kept:
 cd services/stt
 python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m unittest discover -s tests -t .      # no model needed
-.venv/bin/python -m stt.fetch /tmp/pv3 && .venv/bin/python -m stt.compile /tmp/pv3 /tmp/models
-# the pt-BR fine-tune: stt.fetch /tmp/ptbr parakeet-tdt-0.6b-v3-ptbr; stt.compile /tmp/ptbr /tmp/m parakeet-tdt-0.6b-v3-ptbr
+.venv/bin/python -m stt.fetch --compiled /tmp/models   # or ... parakeet-tdt-0.6b-v3-ptbr
+# from the fp32 export instead: stt.fetch /tmp/pv3 && stt.compile /tmp/pv3 /tmp/models
 STT_SECRET=dev STT_MODEL_DIR=/tmp/models .venv/bin/python -m stt.server
 curl -sS -H 'authorization: Bearer dev' --data-binary @note.ogg localhost:8792/v1/transcribe
 ```

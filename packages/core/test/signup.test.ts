@@ -123,7 +123,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   };
   const app = createApp(deps);
   const nonce = crypto.randomUUID().slice(0, 6);
-  const mkPhone = (n: number) => `219${String(Date.now() + n * 17).slice(-8)}`;
+  // one base and a counter: Date.now() at each call let two tests' phones meet 17 ms apart
+  const phoneBase = Date.now();
+  let phones = 0;
+  const mkPhone = () => `219${String(phoneBase + ++phones * 17).slice(-8)}`;
   const created: string[] = [];
   let idem = 0;
   const originalStaff = billingStaff.notify;
@@ -260,7 +263,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   });
 
   test('otp: wrong codes fail, a login code never verifies a signup', async () => {
-    const phone = mkPhone(1);
+    const phone = mkPhone();
     await call('POST', '/admin/v1/signup/otp/start', { phone });
     const code = /(\d{6})/.exec(wa.filter((m) => m.phone === phone).at(-1)!.text)![1]!;
     const bad = await call('POST', '/admin/v1/signup/otp/verify', {
@@ -282,7 +285,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   const pixSlug = `signup-${nonce}-pix`;
 
   test('pix signup: store paused behind the hold → pay → open, period set', async () => {
-    const phone = mkPhone(2);
+    const phone = mkPhone();
     pixToken = (await verified(phone)).signupToken;
     const r = await signup(pixToken, pixSlug.toUpperCase());
     expect(r.status).toBe(201);
@@ -353,7 +356,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   test('the payer CPF/CNPJ: required, checked, stored, sent to MP, changed in Conta', async () => {
     // its own app: three signups here would spend the shared one's per-IP limit
     const other = createApp(deps);
-    const token = (await verified(mkPhone(15), other)).signupToken;
+    const token = (await verified(mkPhone(), other)).signupToken;
     const slug = `signup-${nonce}-doc`;
     const missing = await signup(token, slug, { document: undefined }, other);
     expect(missing.status).toBe(422);
@@ -437,7 +440,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   test('closed until the CRM switch, WhatsApp, email and billing are all there', async () => {
     let gate = { on: false, whatsapp: true, email: true, billing: true, open: false };
     const closed = createApp({ ...deps, signupReady: async () => gate });
-    const phone = mkPhone(12);
+    const phone = mkPhone();
     expect(
       (await call('GET', '/admin/v1/signup/plans', undefined, {}, closed)).body.signup,
     ).toEqual({
@@ -536,7 +539,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         },
       },
     });
-    const token = (await verified(mkPhone(13), flaky)).signupToken;
+    const token = (await verified(mkPhone(), flaky)).signupToken;
     const slug = `signup-${nonce}-flaky`;
     const r = await signup(token, slug, {}, flaky);
     expect(r.status).toBe(201);
@@ -557,7 +560,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
 
   test('a first charge MP refuses: its own code, the team hears why once, a retry goes through', async () => {
     const own = createApp(deps);
-    const token = (await verified(mkPhone(14), own)).signupToken;
+    const token = (await verified(mkPhone(), own)).signupToken;
     const slug = `signup-${nonce}-mprefused`;
     fake.revoked.add('platform');
     try {
@@ -585,7 +588,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
 
   test('a plan that is listed but closed is refused before anything is created', async () => {
     const other = createApp(deps);
-    const token = (await verified(mkPhone(11), other)).signupToken;
+    const token = (await verified(mkPhone(), other)).signupToken;
     await sql`update plans set available = false where id = 'pangolim'`;
     try {
       const r = await signup(token, `signup-${nonce}-closed`, { planId: 'pangolim' }, other);
@@ -615,7 +618,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   test('segment: kept with the store, onboarding marked from signup; a replay changes neither', async () => {
     // its own app: the shared one's per-IP signup budget belongs to the tests below
     const other = createApp(deps);
-    const token = (await verified(mkPhone(10), other)).signupToken;
+    const token = (await verified(mkPhone(), other)).signupToken;
     const slug = `signup-${nonce}-seg`;
     const bad = await signup(token, slug, { segment: 'sorvetes' }, other);
     expect(bad.status).toBe(422);
@@ -649,7 +652,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   });
 
   test('taken and reserved slugs', async () => {
-    const other = (await verified(mkPhone(3))).signupToken;
+    const other = (await verified(mkPhone())).signupToken;
     const taken = await signup(other, pixSlug);
     expect(taken.status).toBe(409);
     expect(taken.body.error.code).toBe('SLUG_TAKEN');
@@ -670,7 +673,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   });
 
   test('card signup → assinatura authorized → active', async () => {
-    const token = (await verified(mkPhone(4))).signupToken;
+    const token = (await verified(mkPhone())).signupToken;
     const r = await signup(token, `signup-${nonce}-card`, { method: 'card' });
     expect(r.status).toBe(201);
     expect(r.body.next.kind).toBe('card');
@@ -704,7 +707,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   });
 
   test('Pangolim signup opens a site request for the team once paid', async () => {
-    const token = (await verified(mkPhone(5))).signupToken;
+    const token = (await verified(mkPhone())).signupToken;
     const r = await signup(token, `signup-${nonce}-pro`, { planId: 'pangolim' });
     expect(r.status).toBe(201);
     const tenant = r.body.store.id;
@@ -729,10 +732,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   test('signup codes: a durable daily cap per IP', async () => {
     const ip = `203.0.113.${Math.floor(Math.random() * 250)}-${nonce}`;
     const notify = { whatsapp: async () => {}, email: async () => {} };
-    await startSignupOtp(appSql, mkPhone(7), notify, { ip, perIpDay: 2 });
-    await startSignupOtp(appSql, mkPhone(8), notify, { ip, perIpDay: 2 });
+    await startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2 });
+    await startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2 });
     await expect(
-      startSignupOtp(appSql, mkPhone(9), notify, { ip, perIpDay: 2 }),
+      startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2 }),
     ).rejects.toMatchObject({
       status: 429,
     });
@@ -740,7 +743,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
 
   test('at most 3 stores per phone per day; billing off → 503', async () => {
     const other = createApp(deps);
-    const phone = mkPhone(6);
+    const phone = mkPhone();
     const token = (await verified(phone, other)).signupToken;
     // four at once: the per-phone lock lets exactly three through
     const res = await Promise.all(
@@ -764,7 +767,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
 
   test('access code: no Mercado Pago, the store waits on its invoice until the team marks it paid', async () => {
     const other = createApp(deps);
-    const token = (await verified(mkPhone(7), other)).signupToken;
+    const token = (await verified(mkPhone(), other)).signupToken;
     const slug = `signup-${nonce}-code`;
     const before = process.env.VENDUA_SIGNUP_ACCESS_CODE;
     fake.platformConfigured = false;
@@ -909,7 +912,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     const control = (path: string) =>
       call('POST', path, {}, { 'x-vendua-control': 'ctl', 'idempotency-key': crypto.randomUUID() });
     const other = createApp(deps);
-    const token = (await verified(mkPhone(8), other)).signupToken;
+    const token = (await verified(mkPhone(), other)).signupToken;
     const pix = await signup(token, `signup-${nonce}-crm-pix`, {}, other);
     expect(pix.body.next.kind).toBe('pix');
     const before = (

@@ -4,7 +4,7 @@
                         -> {text, confidence, language, seconds[, words]}   (?words=1 for words)
                         x-stt-phrases: percent-encoded JSON array of phrases to boost (a
                         store's product names), at most 300 of up to 80 characters
-  GET  /healthz         -> 200 once the model is loaded and warm
+  GET  /healthz         -> 200 once the model is loaded and warm: {ok, queue, model}
 
 Transcripts are shoppers' words: never logged, never kept.
 """
@@ -66,9 +66,10 @@ class Config:
 
 
 class App:
-    def __init__(self, cfg: Config, batcher: Batcher, boost=None):
+    def __init__(self, cfg: Config, batcher: Batcher, boost=None, model: str | None = None):
         self.cfg = cfg
         self.batcher = batcher
+        self.model = model
         # built on the request thread (cached per phrase list), so the engine thread never waits
         self.boost = boost or (lambda phrases: None)
         self.ready = False
@@ -101,7 +102,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._fail(404, "not_found")
         if not self.app.ready:
             return self._fail(503, "warming_up")
-        self._send(200, {"ok": True, "queue": self.app.batcher.depth})
+        self._send(200, {"ok": True, "queue": self.app.batcher.depth, "model": self.app.model})
 
     def do_POST(self):
         started = time.monotonic()
@@ -209,7 +210,7 @@ def build(cfg: Config, engine) -> tuple[ThreadingHTTPServer, App]:
         max_wait_ms=cfg.max_wait_ms,
         on_batch=on_batch if os.environ.get("LOG_LEVEL") == "debug" else None,
     )
-    app = App(cfg, batcher, getattr(engine, "boost", None))
+    app = App(cfg, batcher, getattr(engine, "boost", None), getattr(engine, "model", None))
     handler = type("BoundHandler", (Handler,), {"app": app})
     httpd = ThreadingHTTPServer(cfg.addr, handler)
     httpd.daemon_threads = True

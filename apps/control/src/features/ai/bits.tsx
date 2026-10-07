@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Plus, Search } from 'lucide-react';
+import { useBottomBar } from '@/lib/bottomBar.ts';
 import { cn } from '@/lib/cn.ts';
 import { useIsMobile } from '@/lib/hooks.ts';
 import { Panel } from '@/components/ui/card.tsx';
@@ -223,4 +224,10 @@ export function HintPanel({
       {children}
     </Panel>
   );
+}
+
+/** Rendered with a page's sticky save bar: hides the floating setup pill, which would cover "salvar". */
+export function SaveBarShown() {
+  useBottomBar();
+  return null;
 }

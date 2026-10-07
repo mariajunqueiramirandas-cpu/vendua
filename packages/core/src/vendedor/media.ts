@@ -53,6 +53,64 @@ const MAX_PHRASES = 300;
 const MAX_PHRASE_CHARS = 80;
 const MAX_HEADER_BYTES = 16_384;
 
+const MAX_ROUTES = 5;
+const MODEL_ID = /^[A-Za-z0-9._:/-]{1,80}$/;
+const PROVIDERS_FOR = {
+  transcribe: ['sidecar', 'openai', 'elevenlabs'],
+  speak: ['openai', 'elevenlabs'],
+} as const;
+
+/** write-time check for `agent_runtime.media_routes` (validateSetting); paths are `transcribe.0.model` */
+export function validateMediaRoutes(
+  value: unknown,
+  bad: (field: string, why: string) => Error,
+): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw bad('value', 'must be an object with transcribe and speak lists');
+  for (const key of Object.keys(value))
+    if (key !== 'transcribe' && key !== 'speak') throw bad(key, 'is not a media route list');
+  for (const kind of ['transcribe', 'speak'] as const) {
+    const list = (value as Record<string, unknown>)[kind];
+    if (list === undefined) continue;
+    if (!Array.isArray(list)) throw bad(kind, 'must be a list');
+    if (list.length > MAX_ROUTES) throw bad(kind, `holds at most ${MAX_ROUTES} routes`);
+    list.forEach((raw, i) => {
+      const at = `${kind}.${i}`;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw bad(at, 'must be a route');
+      const r = raw as Record<string, unknown>;
+      if (!(PROVIDERS_FOR[kind] as readonly unknown[]).includes(r.provider))
+        throw bad(`${at}.provider`, `must be one of ${PROVIDERS_FOR[kind].join(', ')}`);
+      if (typeof r.model !== 'string' || !MODEL_ID.test(r.model))
+        throw bad(`${at}.model`, 'must be a model id (up to 80 letters, digits, . _ : / -)');
+      if (typeof r.zdr !== 'boolean') throw bad(`${at}.zdr`, 'must be true or false');
+      if (r.voice !== undefined && (typeof r.voice !== 'string' || !MODEL_ID.test(r.voice)))
+        throw bad(`${at}.voice`, 'must be a voice id');
+      if (kind === 'speak' && r.provider === 'elevenlabs' && r.voice === undefined)
+        throw bad(`${at}.voice`, 'is required for ElevenLabs');
+    });
+  }
+}
+
+/** The STT sidecar as the CRM shows it: configured by env, answering /healthz, its model. */
+export async function sidecarStatus(
+  env: Record<string, string | undefined> = process.env,
+): Promise<{ configured: boolean; reachable: boolean; model: string | null }> {
+  if (!env.STT_URL || !env.STT_SECRET) return { configured: false, reachable: false, model: null };
+  try {
+    const res = await fetch(`${env.STT_URL.replace(/\/+$/, '')}/healthz`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    const j = (await res.json().catch(() => ({}))) as { model?: unknown };
+    return {
+      configured: true,
+      reachable: res.ok,
+      model: typeof j.model === 'string' ? j.model.slice(0, 80) : null,
+    };
+  } catch {
+    return { configured: true, reachable: false, model: null };
+  }
+}
+
 /** The sidecar's x-stt-phrases header: percent-encoded JSON, within its caps. */
 export function phrasesHeader(phrases: readonly string[] | undefined): string | null {
   const list = [

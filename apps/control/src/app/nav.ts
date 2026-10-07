@@ -62,6 +62,7 @@ export const DESTINATIONS: { to: string; label: string; group: string }[] = [
   { to: '/lojas/frota?f=falhando', label: 'Lojas com sonda falhando', group: 'Lojas' },
   { to: '/ia', label: 'Uso da IA (Duá)', group: 'IA' },
   { to: '/ia/modelos', label: 'Modelos e orçamentos', group: 'IA' },
+  { to: '/ia/voz', label: 'Voz: áudios dos clientes', group: 'IA' },
   { to: '/vendas', label: 'Hoje', group: 'Vendas' },
   { to: '/vendas?t=tarefas', label: 'Tarefas', group: 'Vendas' },
   { to: '/pipeline', label: 'Leads (lista)', group: 'Pipeline' },

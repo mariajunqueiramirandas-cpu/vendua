@@ -1548,6 +1548,26 @@ export interface AiModelsView {
     defaultTier: ModelTier;
   }[];
 }
+/** control_settings `agent_runtime.media_routes`: voice notes in (transcribe) and voice replies (speak) */
+export type MediaProviderId = 'sidecar' | 'openai' | 'elevenlabs';
+export interface MediaRouteSetting {
+  provider: MediaProviderId;
+  model: string;
+  zdr: boolean;
+  voice?: string;
+}
+export interface MediaRoutesSetting {
+  transcribe?: MediaRouteSetting[];
+  speak?: MediaRouteSetting[];
+}
+/** GET /ai/voice: the routes, the self-hosted STT sidecar's state and the cloud keys */
+export interface AiVoiceView {
+  routes: MediaRoutesSetting;
+  /** false = no row yet: the sidecar is used when it's configured */
+  saved: boolean;
+  sidecar: { configured: boolean; reachable: boolean; model: string | null };
+  providers: { id: Exclude<MediaProviderId, 'sidecar'>; configured: boolean; secretName: string }[];
+}
 export interface AiPricing {
   /** USD per 1M tokens */
   inputPerMTok: number;
@@ -1632,6 +1652,7 @@ const fleetConsole = {
     return req<StoreEventsPage>(`/customers/${encodeURIComponent(id)}/events?${params}`);
   },
   aiModels: () => req<AiModelsView>('/ai/models'),
+  aiVoice: () => req<AiVoiceView>('/ai/voice'),
   aiCatalog: () => req<AiCatalogView>('/ai/catalog'),
   aiEndpoints: (model: string) =>
     req<AiEndpointsView>(`/ai/endpoints?model=${encodeURIComponent(model)}`),
