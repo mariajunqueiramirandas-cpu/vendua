@@ -6,6 +6,7 @@ import { parseMenuPaste, parseMoney } from '../src/admin/routes-catalog.ts';
 import { sweepAdmin } from '../src/admin/workers.ts';
 import { ingestInbound } from '../src/agent/inbound.ts';
 import { sessionAlive } from '../src/admin/auth.ts';
+import { MEDIA_QUOTA_BYTES } from '../src/admin/media.ts';
 import { encryptPayload } from '../src/admin/webpush.ts';
 import { activeCarts } from '../src/modules/presence.ts';
 import { migrate } from '../src/platform/db.ts';
@@ -762,6 +763,53 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(log.body.entries.find((e: any) => e.summary.startsWith('pausou')).actor).toBe('Caio');
   });
 
+  test('Equipe: two owners demoting each other at once leave one owner', async () => {
+    const sw = await owner('POST', '/session/switch', { storeId: tenant2 });
+    expect(sw.status).toBe(200);
+    const cookie = `vendua_admin=${/vendua_admin=([^;]+)/.exec(sw.cookie ?? '')![1]!}`;
+    const maria = (
+      await sql<{ id: string }[]>`
+        select id from merchant_users where tenant_id = ${tenant2} and phone = ${ownerPhone}
+      `
+    )[0]!.id;
+    const bia = (
+      await sql<{ id: string }[]>`
+        insert into merchant_users (tenant_id, name, phone, role)
+        values (${tenant2}, 'Bia', ${`218${String(Date.now()).slice(-8)}`}, 'owner') returning id
+      `
+    )[0]!.id;
+    // Bia's demotion of Maria, in flight: Maria's demotion of Bia must wait for it, then see it
+    let locked!: () => void;
+    let release!: () => void;
+    const holding = new Promise<void>((r) => (locked = r));
+    const done = new Promise<void>((r) => (release = r));
+    const other = sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended(${`owners:${tenant2}`}, 0))`;
+      await tx`update merchant_users set role = 'manager' where id = ${maria}`;
+      locked();
+      await done;
+    });
+    await holding;
+    let settled = false;
+    const mine = call('PATCH', `/admin/v1/team/${bia}`, { role: 'manager' }, { cookie }).finally(
+      () => (settled = true),
+    );
+    await Bun.sleep(300);
+    expect(settled).toBe(false);
+    release();
+    await other;
+    const r = await mine;
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe('LAST_OWNER');
+    const left = await sql<{ n: number }[]>`
+      select count(*)::int as n from merchant_users
+      where tenant_id = ${tenant2} and role = 'owner' and status = 'active'
+    `;
+    expect(left[0]!.n).toBe(1);
+    await sql`update merchant_users set role = 'owner' where id = ${maria}`;
+    await sql`delete from merchant_users where id = ${bia}`;
+  });
+
   test('media: upload sniffs the bytes, serves immutable from /v1/media', async () => {
     const png = Uint8Array.from(
       Buffer.from(
@@ -789,6 +837,39 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(withPhoto.body.product.imageUrl).toBe(res.body.url);
     expect(withPhoto.body.product.dominant).toBe('#aabbcc');
   });
+
+  test('media: a store past its storage quota gets a stable 413', async () => {
+    const png = Uint8Array.from(
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+    // compressible filler: octet_length counts it whole, TOAST stores it small
+    const rows = Math.ceil(MEDIA_QUOTA_BYTES / (2 * 1024 * 1024));
+    const filler = await sql<{ id: string }[]>`
+      insert into media_objects (tenant_id, mime, bytes)
+      select ${tenant2}, 'image/webp', convert_to(repeat('a', 2 * 1024 * 1024), 'UTF8')
+      from generate_series(1, ${rows})
+      returning id
+    `;
+    try {
+      const sw = await owner('POST', '/session/switch', { storeId: tenant2 });
+      const cookie = `vendua_admin=${/vendua_admin=([^;]+)/.exec(sw.cookie ?? '')![1]!}`;
+      const full = await call('POST', '/admin/v1/media', png, {
+        cookie,
+        'content-type': 'image/png',
+      });
+      expect(full.status).toBe(413);
+      expect(full.body.error.code).toBe('MEDIA_QUOTA');
+      // the other store's quota is its own
+      expect((await owner('POST', '/media', png, { 'content-type': 'image/png' })).status).toBe(
+        201,
+      );
+    } finally {
+      await sql`delete from media_objects where id = any(${filler.map((f) => f.id)}::uuid[])`;
+    }
+  }, 30_000);
 
   test('Aparência: tokens validate contrast and go live without a rebuild on Kernel 1.10', async () => {
     const tokens = {

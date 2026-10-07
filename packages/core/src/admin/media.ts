@@ -1,3 +1,4 @@
+import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 
 // Server-side image pipeline for POST /media. The admin already resizes in the browser, but
@@ -12,6 +13,8 @@ const QUALITY = 82;
 /** decode guard: a small file can still claim a huge canvas */
 const MAX_PIXELS = 20_000_000;
 const MAX_STORED = 2 * 1024 * 1024;
+/** per store, originals + srcset variants; nothing deletes media yet, so replaced photos count */
+export const MEDIA_QUOTA_BYTES = 500 * 1024 * 1024;
 
 interface BunImage {
   metadata(): Promise<{ width: number; height: number; format: string }>;
@@ -68,4 +71,15 @@ export async function processImage(input: Uint8Array): Promise<ProcessedImage> {
     });
   }
   return { bytes, width, height, variants };
+}
+
+/** Bytes a store keeps in media (octet_length reads the TOAST header, not the data). */
+export async function mediaBytesUsed(tx: Sql, tenantId: string): Promise<number> {
+  const [row] = await tx<{ n: string }[]>`
+    select (
+      coalesce((select sum(octet_length(bytes)) from media_objects where tenant_id = ${tenantId}), 0)
+      + coalesce((select sum(octet_length(bytes)) from media_variants where tenant_id = ${tenantId}), 0)
+    )::text as n
+  `;
+  return Number(row!.n);
 }
