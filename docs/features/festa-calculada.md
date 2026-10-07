@@ -93,10 +93,10 @@ After booking, from the store's number:
 | Piece                       | Where                                                                                                                                                                                            | What it gives us                                                        |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | Encomenda dates             | `modules/preorder.ts` `bookableDates()` (:25-47): `products.preorder_lead_days`, `store_settings.preorder_max_days`, weekly hours, `special_days` (closed days and ranges skipped since 075cfaa) | The date picker and its validation (`validateSchedule`, :76-94)         |
-| Pix-only encomendas         | `validateSchedule` throws 422 `PAYMENT_NOT_ALLOWED` (:94), called at `place-order.ts:144`                                                                                                        | Where the sinal rule hooks in                                           |
+| Pix-only encomendas         | `validateSchedule` throws 422 `PAYMENT_NOT_ALLOWED` (:95), called at `place-order.ts:144`                                                                                                        | Where the sinal rule hooks in                                           |
 | One order per cart          | `placeOrderTx`: cart `for update`, `pg_advisory_xact_lock(tenant)` (`place-order.ts:61`), `orders_cart_unique`                                                                                   | A race-free place to count a date's capacity                            |
-| Totals                      | `place-order.ts:~224` (`subtotal + deliveryFee − discount + paymentAdjustment`), previewed by `cart.ts:336-351`                                                                                  | The quote is a cart quote; no new money math except the split           |
-| Payments                    | `payments` rows (`unique(order_id, attempt)`), `orders.payment` jsonb, `syncOrderPayment` (`payments/store-payments.ts:1203`), MP Pix TTL 30 min (`:35`)                                         | Attempts, webhooks, reconcile, refunds spread across payment rows       |
+| Totals                      | `place-order.ts:214` (`subtotal + deliveryFee − discount + paymentAdjustment`), previewed by `cart.ts:336-351`                                                                                   | The quote is a cart quote; no new money math except the split           |
+| Payments                    | `payments` rows (`unique(order_id, attempt)`), `orders.payment` jsonb, `syncOrderPayment` (`modules/payments/store-payments.ts:1203`), MP Pix TTL 30 min (`:35`)                                 | Attempts, webhooks, reconcile, refunds spread across payment rows       |
 | Partial refunds             | `refundOrderPayments` with `amountCents`, `payment_refunds` reservations (`admin/routes-orders.ts:138`)                                                                                          | Refunding a sinal or a balance already works per payment row            |
 | Comanda payments            | `pdv_payments` (0097) take partial payments until a tab is settled                                                                                                                               | The model the balance at the caixa copies                               |
 | Order messages              | `store-whatsapp/messages.ts`: `placed` already says "sua encomenda #N para dd/mm"; unique per `(order_id, event)`                                                                                | Reminders are new events on the same queue                              |
@@ -108,12 +108,13 @@ After booking, from the store's number:
 - No capacity per date.
 - No partial payment on an order. A provider amount that differs from `orders.total_cents` is marked
   `amount_mismatch` (`store-payments.ts:1414`). A second settled payment is `paid_twice` (`:1345`).
-- The caixa can't take a balance. `POST /pdv/orders/:id/payments` refuses online-paid orders (409
-  `PAYMENT_ONLINE`) and requires the payments to equal the total exactly (422 `PAYMENT_MISMATCH`,
-  `admin/routes-pdv.ts:500-575`).
+- The caixa can't take a balance. `POST /pdv/orders/:id/payments` (`admin/routes-pdv.ts:500-575`)
+  refuses any order paid online, settled or not (409 `PAYMENT_ONLINE`). It refuses an order that
+  is already paid (409 `ALREADY_PAID`), and it requires the payments to equal the total exactly
+  (422 `PAYMENT_MISMATCH`).
 - No reminder before an encomenda date.
 - No per-guest rule or selling unit on a product.
-- Line quantity is capped at 99 (`cart.ts:515`, `order_items.qty` check). Party lines must be sold
+- Line quantity is capped at 99 (`cart-ops.ts:58-59`, `cart.ts:895`; DB checks `cart_items_qty_range` and `order_items.qty`). Party lines must be sold
   in packs (cento, meio cento) to stay under it.
 - No cancellation window. Shoppers can't cancel; only the store can.
 
@@ -148,8 +149,13 @@ The math, all in Core with integers:
 Idempotency-Key through `platform/http.ts` and goes through the kernel api client. From there it
 is an ordinary cart, and the shopper can still edit lines.
 
-The cart records `party: { profileId, adults, children }` so the order and the calendar know it is
-a party. Capacity, the sinal and reminders key off that, not off product flags.
+The cart records `party: { profileId, adults, children }`, and each party line records the group it
+came from (`groupId`), so a product mapped into two groups is never counted twice. At placement,
+`placeOrderTx` computes a frozen snapshot from the final lines,
+`orders.party = { profileId, adults, children, groups: [{ groupId, units }] }`, where `units` is
+`qty × units_per_sale` at that moment. Capacity, the sinal and reminders read that snapshot, never
+the live profile. Editing a profile or `party_group_products` after booking can't reopen a full day
+or overbook it.
 
 ### 4.2 Capacity per date
 
@@ -160,9 +166,9 @@ a party. Capacity, the sinal and reminders key off that, not off product flags.
 
   Either can be empty, meaning no cap.
 
-- **Enforcement.** `placeOrderTx` already holds `pg_advisory_xact_lock(tenant)`. Inside it, count
-  the date's non-cancelled party orders and their units, and refuse with 409 `DATE_FULL` when the
-  order would pass a cap. No second lock is needed.
+- **Enforcement.** `placeOrderTx` already holds `pg_advisory_xact_lock(tenant)`. Inside it, sum
+  the `orders.party` snapshots of the date's non-cancelled party orders, and refuse with 409
+  `DATE_FULL` when the new order would pass a cap. No second lock is needed.
 - **The date list.** `bookableDates()` gains an optional "fits" check, so the picker greys out full
   days. Checkout is the authority; the picker is only a hint.
 - **Holding a date.** An order whose sinal is unpaid holds its date until the Pix expires (30 min)
@@ -214,6 +220,19 @@ An order without a plan has no rows and behaves exactly as today.
   policy in words built by Core from the setting.
 - **Cancelling** goes through the existing transition, which needs a reason and a manager when money
   was captured. The admin suggests the refund the policy implies.
+- **Captured money is read from the charges, not the aggregate status.** Today the cancel path
+  (`admin/routes-orders.ts:660-680`) asks for a manager and refunds only when `payment.status` is in
+  `PAID_ONLINE`. Otherwise it cancels open attempts. With a plan, a paid sinal leaves the status
+  `pending`, so as written the path would skip the manager check and strand the sinal. For an
+  order with charges:
+  - "money captured" means any charge is `paid`, or any `pdv_payments` row is live;
+  - cancelling cancels the open charges' attempts and refunds the paid charges as the policy says;
+  - money the policy keeps stays recorded on its charge, so reports and a later manual refund see
+    it.
+
+  `autoRefundIfClosed` (`routes-orders.ts:367`) gets the same per-charge reading. F2's tests cover
+  cancel-after-sinal, inside and outside the refund window.
+
 - **Shoppers can't cancel themselves** in v1, as today. They ask the store, or the Vendedor asks for
   them.
 - **Legal review first.** The sinal's treatment needs a lawyer's read before launch: Código Civil
@@ -235,7 +254,7 @@ An order without a plan has no rows and behaves exactly as today.
 A `party_quote` tool calls the same quote route and builds the same cart. The Vendedor's
 cart-hash confirmation (`vendedor/gate.ts`) covers the party lines and the sinal amount. So "faz
 pra 40 pessoas, festa infantil" gets a Core-computed answer in chat, and the summary says what's
-due today and what's due later. This comes last because it is the Vendedor's V3 surface.
+due today and what's due later. It comes last because it needs F1 and F2 underneath it.
 
 ## 5. Merchant controls
 
@@ -265,7 +284,7 @@ due today and what's due later. This comes last because it is the Vendedor's V3 
 | F0    | Capacity per date; D−1 reminder for every encomenda; admin screen for encomenda settings               | Migration, sweeper pass, `messages.ts` text                                       |
 | F1    | Profiles, groups, calculator, party cart; paid in full                                                 | Kernel minor (`sdk:party` section), template migration for stores that turn it on |
 | F2    | `order_charges`, the sinal, balance by Pix and at the caixa, reminders with the balance, refund policy | Legal review; invariant review of the payment changes                             |
-| F3    | Vendedor `party_quote`; production per date                                                            | Vendedor V3                                                                       |
+| F3    | Vendedor `party_quote`; production per date                                                            | F1, F2                                                                            |
 
 F2 touches money and payments: after editing, `invariant-reviewer` runs on the diff (`CLAUDE.md`).
 

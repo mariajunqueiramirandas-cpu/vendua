@@ -245,7 +245,11 @@ the same WhatsApp. The opt-in adds an explicit yes from inside an authenticated 
 
 ### 5.3 The turn
 
-In the inbox consumer's transaction, under `withTenant(tenantId)`:
+In one inbox-consumer transaction that sets **both** RLS contexts. `withTenant`
+(`platform/db.ts:9-17`) sets only `vendua.tenant_id`, and `platform_wa_inbox` is control-scoped,
+so the transaction also runs `set_config('vendua.control', '1', true)`, as
+`modules/payments/jobs.ts:46` does. That keeps "consumed" atomic with the dispatch. A small helper,
+`withTenantAndControl`, keeps it in one place, and it is used only by this consumer:
 
 1. Insert the `copilot_messages` row (author `merchant`), with a new column `channel` set to
    `'whatsapp'` (`'admin'` for existing rows).

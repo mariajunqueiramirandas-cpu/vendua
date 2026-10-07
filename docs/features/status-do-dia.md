@@ -168,8 +168,16 @@ is open decision 6: attendants run the oven, but they only touch orders today. I
    `ui-defaults` renders "Saiu do forno · há N min".
 2. **Stock.** With `units` and a stock-tracked product, stock goes up by `units` through the
    existing stock path (`modules/stock.ts`).
-3. **Waitlist.** `wakeWaitlist` (`stock.ts:145`) runs either way. It marks the product's pending
-   `notify_requests` notified and writes the `waitlist.restocked` outbox row. Today only the
+3. **Waitlist.** It runs only when the product is orderable after steps 1–2: active, inside its
+   schedule, not marked sold out (manually or by `sold_out_until`), and with stock above zero or
+   untracked. `wakeWaitlist` marks every pending request notified, so waking it for a product that
+   is still unavailable would send a false "voltou" and swallow the real one later. A tap with no
+   `units` on a product whose tracked stock is still 0 is refused with 409 `NOT_AVAILABLE`, and the
+   admin asks "Quantas saíram?" instead of showing a badge for nothing. A tap on a product marked sold out
+   asks first: "Pão de queijo está esgotado. Voltar a vender?". The yes clears the mark through
+   the existing availability route and then wakes the waitlist. When it runs, `wakeWaitlist`
+   (`stock.ts:145`) marks the product's pending `notify_requests` notified and writes the
+   `waitlist.restocked` outbox row. Today only the
    Vendedor consumes that row, and only for shoppers with a recent thread. A second consumer
    queues a new shopper-asked kind, `product_back` (migration on the 0096 CHECK), for the other
    contacts. The same consumer covers ordinary restocks, so "avise-me" finally reaches everyone. It

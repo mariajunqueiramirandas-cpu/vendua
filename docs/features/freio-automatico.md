@@ -45,8 +45,8 @@ Paths are under `packages/core/` unless they start with `apps/`, `packages/` or 
 - **The promise is static.** At placement, `delivery.promisedFrom/To` is now plus the zone's
   `eta_min_minutes`/`eta_max_minutes`, or now plus `store_settings.prep_time_minutes`
   (`modules/place-order.ts:246-289`). The storefront shows the same static range
-  (`packages/kernel/src/rules/delivery.ts:36,59-60`, `sdk/blocks.tsx:185-197`).
-- **Busy signals don't change anything.** The "Movimento alto" flag (`demand_level`,
+  (`packages/kernel/src/rules/delivery.ts:36,59-60`, `packages/kernel/src/sdk/blocks.tsx:184-198`).
+- **Busy signals don't change anything.** The "Muitos pedidos agora" flag (`demand_level`,
   `/store/demand`, `admin/routes-store.ts:662-689`) only shows a notice. That notice quotes the
   static prep time (`modules/notices.ts:121-135`).
 - **Delays are manual.** The "Atrasou" button (`POST /orders/:id/delay`, `routes-orders.ts:803-864`)
@@ -88,10 +88,10 @@ Paths are under `packages/core/` unless they start with `apps/`, `packages/` or 
 | Piece                | Where                                                                                                                                      | Use                                               |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
 | Promise on the order | `orders.delivery` jsonb: `promisedFrom`, `promisedTo`, `etaMin`, `etaMax`, `delayMinutes` (`modules/orders.ts:56-75`)                      | Where the live promise is written                 |
-| Accept with prep     | `POST /orders/:id/transition` with `prepMinutes` re-promises (`admin/routes-orders.ts:685-702`)                                            | The second point where the promise is set         |
+| Accept with prep     | `POST /orders/:id/transition` with `prepMinutes` re-promises (`admin/routes-orders.ts:690-702`)                                            | The second point where the promise is set         |
 | Road duration        | `routing.ts` `RouteLeg {meters, seconds}`; kept on `carts.delivery_route` (0073), not on the order                                         | Drive time for the delivery promise               |
 | Kitchen tickets      | `GET /admin/v1/kitchen` (`routes-kitchen.ts:358`): `acceptedAt`, `startedAt`, `readyAt`, `prepMinutes` per ticket; `order_events` per step | The queue and its history                         |
-| Live storefront      | `emitAdminTx(…, 'store')` → `GET /storefront/v1/events` topics `store`/`surfaces` (`modules/storefront-live.ts:20-33`)                     | Brake changes reach every open storefront at once |
+| Live storefront      | `emitAdminTx(…, 'store')` → `GET /storefront/v1/events` topics `store`/`surfaces` (`modules/storefront-live.ts:21-38`)                     | Brake changes reach every open storefront at once |
 | Demand flag + notice | `demand_level`, `demand_until` (0093), the `high_demand` notice                                                                            | Becomes the visible Movimentado level             |
 | Delay message        | Event `delayed:<epoch>` in `store-whatsapp/messages.ts:27,298-304`, opt-outs, 6 h expiry                                                   | The late-order message, unchanged as a transport  |
 | Personal coupons     | `mintCouponTx` (`modules/coupons.ts:188`): `phone`, `maxRedemptions: 1`, `perPhoneLimit: 1`, `validDays`                                   | The apology coupon                                |
@@ -129,8 +129,11 @@ Inputs, read in one query per store:
 
 The model:
 
-1. `backlog = Σ max(0, p_i − elapsed_i) / c`, the minutes of work ahead, spread over the parallel
-   capacity.
+1. `backlog = Σ max(0, p_i − elapsed_i) / c` over the tickets **ahead** of the order being
+   promised, the minutes of work ahead spread over the parallel capacity. For a quote or a new
+   order, that is every open ticket. For an order already in the queue (on accept, or when the
+   sweeper re-predicts it), it is the tickets placed before it, never the order itself.
+   Otherwise its own prep counts twice.
 2. `ready_new = now + backlog + p_new`.
 3. **Delivery promise:** `ready_new + driveMinutes + dispatch_buffer`. The buffer is a store
    setting, 5 minutes by default.
@@ -144,7 +147,8 @@ The model:
 - The cart quote (`cart.ts:848-849`): `etaMin`/`etaMax` for the cart's address are computed with
   the backlog.
 - `placeOrderTx`: the promise is written with the backlog included.
-- Accept with prep: the merchant's prep replaces `p_new`, and the backlog still counts.
+- Accept with prep: the merchant's prep replaces `p_new`, and the backlog is the work ahead of this
+  order, excluding the order itself.
 - The `high_demand` notice: real numbers instead of the static prep.
 - The Vendedor's delivery quote (sales-agent B2), which reads the cart quote and so gets it for
   free.
