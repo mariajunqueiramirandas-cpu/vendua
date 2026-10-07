@@ -73,7 +73,7 @@ import { mountStore } from './routes-store.ts';
 import { mountTeam } from './routes-team.ts';
 import { mountWhatsapp } from './routes-whatsapp.ts';
 import { mountPrinting } from './routes-print.ts';
-import { MEDIA_QUOTA_BYTES, mediaBytesUsed, processImage } from './media.ts';
+import { MEDIA_QUOTA_BYTES, mediaBytesUsed, processedBytes, processImage } from './media.ts';
 import { isPushEndpoint, pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
 import { recordPushAttempt } from './workers.ts';
 import { getIntegration } from '../modules/integrations.ts';
@@ -679,11 +679,11 @@ export function mountAdmin(o: MountAdminOpts) {
     // decode + encode outside the claim tx: it's CPU, not data
     const img = await processImage(bytes);
     return o.idempotency(sql, async (_c, tx) => {
-      if ((await mediaBytesUsed(tx, tenant.id)) >= MEDIA_QUOTA_BYTES)
+      if ((await mediaBytesUsed(tx, tenant.id)) + processedBytes(img) > MEDIA_QUOTA_BYTES)
         throw new HttpError(
           413,
           'MEDIA_QUOTA',
-          'this store has used all of its photo storage — remove photos you no longer use',
+          'this store uploaded too many photos this month — try again in a few days',
         );
       const dom = dominant && /^#[0-9a-f]{6}$/.test(dominant) ? dominant : null;
       const row = (

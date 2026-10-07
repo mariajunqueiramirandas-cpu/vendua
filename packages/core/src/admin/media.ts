@@ -13,8 +13,10 @@ const QUALITY = 82;
 /** decode guard: a small file can still claim a huge canvas */
 const MAX_PIXELS = 20_000_000;
 const MAX_STORED = 2 * 1024 * 1024;
-/** per store, originals + srcset variants; nothing deletes media yet, so replaced photos count */
+/** per store per rolling window, originals + srcset variants: nothing deletes media yet, so a
+ *  lifetime cap would lock a busy store out for good, while this one still bounds growth */
 export const MEDIA_QUOTA_BYTES = 500 * 1024 * 1024;
+export const MEDIA_QUOTA_DAYS = 30;
 
 interface BunImage {
   metadata(): Promise<{ width: number; height: number; format: string }>;
@@ -73,13 +75,24 @@ export async function processImage(input: Uint8Array): Promise<ProcessedImage> {
   return { bytes, width, height, variants };
 }
 
-/** Bytes a store keeps in media (octet_length reads the TOAST header, not the data). */
+/** Bytes a store uploaded in the window (octet_length reads the TOAST header, not the data),
+ *  after taking the store's quota lock so parallel uploads can't each see the same total. */
 export async function mediaBytesUsed(tx: Sql, tenantId: string): Promise<number> {
+  await tx`select pg_advisory_xact_lock(hashtextextended(${`media-quota:${tenantId}`}, 0))`;
   const [row] = await tx<{ n: string }[]>`
+    with recent as (
+      select id, bytes from media_objects
+      where tenant_id = ${tenantId}
+        and created_at > now() - make_interval(days => ${MEDIA_QUOTA_DAYS})
+    )
     select (
-      coalesce((select sum(octet_length(bytes)) from media_objects where tenant_id = ${tenantId}), 0)
-      + coalesce((select sum(octet_length(bytes)) from media_variants where tenant_id = ${tenantId}), 0)
+      coalesce((select sum(octet_length(bytes)) from recent), 0)
+      + coalesce((select sum(octet_length(v.bytes)) from media_variants v
+                  where v.tenant_id = ${tenantId} and v.media_id in (select id from recent)), 0)
     )::text as n
   `;
   return Number(row!.n);
 }
+
+export const processedBytes = (img: ProcessedImage) =>
+  img.bytes.byteLength + img.variants.reduce((s, v) => s + v.bytes.byteLength, 0);

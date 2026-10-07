@@ -191,7 +191,11 @@ export function mountReports(d: AdminDeps) {
       `;
       const products = await tx`
         select coalesce(i.product_id::text, i.name) as key, (array_agg(i.name))[1] as name,
-               sum(i.qty)::int as qty, sum(i.line_total_cents)::int as "revenueCents",
+               sum(i.qty)::int as qty,
+               -- a partial refund comes off each line in proportion, as it does off the order
+               sum(case when o.total_cents > 0
+                        then round(i.line_total_cents::numeric * ${net(tx, 'o.')} / o.total_cents)
+                        else i.line_total_cents end)::int as "revenueCents",
                (select url from product_media m where m.product_id = i.product_id order by sort limit 1) as "imageUrl"
         from order_items i join orders o on o.id = i.order_id
         where o.tenant_id = ${t.id} and ${kept(tx, 'o.')}

@@ -7,7 +7,7 @@
 --   merchant_login_links.purpose   — 'email_change': the link that proves a member's new address
 --                                    (tenant_id + user_id say whose); 'login' links carry neither
 --   merchant_users.pending_email   — an address typed in Perfil, not yet proven
---   media_*_by_tenant              — the per-store media quota sums by tenant
+--   media_objects_by_tenant_time   — the per-store media quota sums a store's recent uploads
 
 create table if not exists merchant_login_failures (
   id bigint generated always as identity primary key,
@@ -42,6 +42,5 @@ create index if not exists merchant_login_links_by_user
 alter table merchant_users
   add column if not exists pending_email text check (char_length(pending_email) <= 200);
 
--- POST /media sums a store's stored bytes against its quota
-create index if not exists media_objects_by_tenant on media_objects (tenant_id);
-create index if not exists media_variants_by_tenant on media_variants (tenant_id);
+-- POST /media sums a store's recent uploads against its quota
+create index if not exists media_objects_by_tenant_time on media_objects (tenant_id, created_at);

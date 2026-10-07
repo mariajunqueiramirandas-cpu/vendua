@@ -664,6 +664,27 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(rep.body.series).toHaveLength(7);
     expect(rep.body.current.orders).toBeGreaterThanOrEqual(1);
     expect(rep.body.products[0].name).toBe('Pudim de Leite');
+    // a partial online refund comes off revenue (KPIs and products alike); a chargeback is not kept
+    const saved = await sql<{ id: string; payment: unknown }[]>`
+      select id, payment from orders where tenant_id = ${tenantId}`;
+    try {
+      await sql`
+        update orders set payment = payment || jsonb_build_object(
+          'status', 'partially_refunded', 'refundedCents', total_cents / 2)
+        where tenant_id = ${tenantId}`;
+      const half = await owner('GET', `/reports?from=${from}&to=${today}`);
+      expect(half.body.current.revenueCents).toBeLessThan(rep.body.current.revenueCents);
+      expect(half.body.current.orders).toBe(rep.body.current.orders);
+      expect(half.body.products[0].revenueCents).toBeLessThan(rep.body.products[0].revenueCents);
+      await sql`
+        update orders set payment = payment || '{"status":"charged_back"}'::jsonb
+        where tenant_id = ${tenantId}`;
+      const lost = await owner('GET', `/reports?from=${from}&to=${today}`);
+      expect(lost.body.current).toMatchObject({ revenueCents: 0, orders: 0 });
+    } finally {
+      for (const o of saved)
+        await sql`update orders set payment = ${sql.json(o.payment as never)} where id = ${o.id}`;
+    }
     expect((await owner('GET', '/reports?from=2020-01-01&to=2026-01-01')).status).toBe(400);
     const csv = await owner('GET', `/reports/orders.csv?from=${from}&to=${today}`);
     expect(csv.headers.get('content-type')).toContain('text/csv');
@@ -838,7 +859,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(withPhoto.body.product.dominant).toBe('#aabbcc');
   });
 
-  test('media: a store past its storage quota gets a stable 413', async () => {
+  test('media: a store past its upload quota gets a stable 413, until the window rolls', async () => {
     const png = Uint8Array.from(
       Buffer.from(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -866,6 +887,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
       expect((await owner('POST', '/media', png, { 'content-type': 'image/png' })).status).toBe(
         201,
       );
+      // the window rolls: uploads older than it free the allowance, so a store is never stuck
+      await sql`
+        update media_objects set created_at = now() - interval '31 days'
+        where id = any(${filler.map((f) => f.id)}::uuid[])
+      `;
+      const later = await call('POST', '/admin/v1/media', png, {
+        cookie,
+        'content-type': 'image/png',
+      });
+      expect(later.status).toBe(201);
     } finally {
       await sql`delete from media_objects where id = any(${filler.map((f) => f.id)}::uuid[])`;
     }
