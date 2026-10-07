@@ -30,9 +30,10 @@ Paths are under `packages/core/` unless they start with `apps/`, `packages/` or 
   inbound, history, LID mapping, outbound, pairing and health go through Postgres tables, as the
   store sessions' do. What the CRM gains: sealed credentials, a lease, pacing, deploys that don't
   drop the session, and Core free to run more than one instance.
-- **Two platform numbers, recommended.** "Venduá Vendas" for CRM outreach, and "Venduá Lojas" for
-  sign-in codes, notices and Duá. Today one number does cold outreach and sends every owner's
-  sign-in code. A restriction caused by the outreach would lock owners out.
+- **One Venduá number (decided 2026-10-07, the owner's call).** CRM outreach, sign-in codes,
+  notices and Duá share the number Venduá already has. The sender decides the path: merchant phones,
+  which are never leads today, go to Duá, and everyone else goes to the CRM. A second number later
+  is a row and a pairing, with no code (§4.5).
 - **Part B: Duá by WhatsApp.**
   - **Who's asking.** The sender's phone is matched to its memberships through
     `merchant_memberships_for_phone`, the same proof the WhatsApp OTP relies on, and the person
@@ -79,8 +80,9 @@ Duá:  Hoje: 38 pedidos, R$ 1.912,40. Sexta passada no mesmo horário: R$ 1.640,
   sticks until the person sends `#loja`.
 - **In the admin**, the Copilot screen shows the same conversation, and WhatsApp messages carry
   "pelo WhatsApp". A card applied by "SIM" shows as applied in both places.
-- **Turning it on:** Perfil → "Duá pelo WhatsApp", off by default. It shows the Venduá Lojas
-  number with a "salvar contato" link and a wa.me link that opens the chat with "oi".
+- **Turning it on:** Perfil → "Duá pelo WhatsApp", off by default. It shows Venduá's number,
+  the one that already sends the sign-in codes, with a "salvar contato" link and a wa.me link that
+  opens the chat with "oi".
 
 ### The Venduá team
 
@@ -142,14 +144,14 @@ keep their tables and behaviour exactly as they are. Platform sessions get their
 control scope (`control_access` RLS, written through `controlTx`), so no table loses its tenant key
 and no RLS policy changes:
 
-| Table                  | Mirrors             | Columns (sketch)                                                                                                                                                                 |
-| ---------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `platform_wa_sessions` | `store_whatsapp`    | `name` pk (`vendas`, `lojas`), `wanted`, `state`, `detail`, `pair_phone`, `pair_code`, `identity_phone`, `owner`, `lease_epoch`, `lease_until`, `history_scope`                  |
-| `platform_wa_auth`     | `store_wa_auth`     | `session`, `category`, `name`, `data` (sealed)                                                                                                                                   |
-| `platform_wa_outbox`   | `store_wa_messages` | `id`, `session`, `to_jid`, `body`, `media_id`, `purpose` (`otp`, `notice`, `crm`, `dua`), `dedupe_key` unique, `state`, `attempts`, `wa_id`, `expires_at`                        |
-| `platform_wa_inbox`    | `shopper_messages`  | `id`, `session`, `from_jid`, `alt_jid`, `push_name`, `body`, `media_id`, `provider_id` unique, `kind` (`message`, `history`, `lid_mapping`), `from_me`, `sent_at`, `consumed_at` |
-| `platform_wa_media`    | `shopper_media`     | `id`, `session`, `mime`, `seconds`, `bytes` (caps as shopper media), `expires_at`                                                                                                |
-| `platform_wa_probes`   | —                   | `id`, `session`, `phone`, `result`, `answered_at`, for `whatsappRegistered`                                                                                                      |
+| Table                  | Mirrors             | Columns (sketch)                                                                                                                                                                                       |
+| ---------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `platform_wa_sessions` | `store_whatsapp`    | `name` pk (one row, `vendua`; a second number would be a second row), `wanted`, `state`, `detail`, `pair_phone`, `pair_code`, `identity_phone`, `owner`, `lease_epoch`, `lease_until`, `history_scope` |
+| `platform_wa_auth`     | `store_wa_auth`     | `session`, `category`, `name`, `data` (sealed)                                                                                                                                                         |
+| `platform_wa_outbox`   | `store_wa_messages` | `id`, `session`, `to_jid`, `body`, `media_id`, `purpose` (`otp`, `notice`, `crm`, `dua`), `dedupe_key` unique, `state`, `attempts`, `wa_id`, `expires_at`                                              |
+| `platform_wa_inbox`    | `shopper_messages`  | `id`, `session`, `from_jid`, `alt_jid`, `push_name`, `body`, `media_id`, `provider_id` unique, `kind` (`message`, `history`, `lid_mapping`), `from_me`, `sent_at`, `consumed_at`                       |
+| `platform_wa_media`    | `shopper_media`     | `id`, `session`, `mime`, `seconds`, `bytes` (caps as shopper media), `expires_at`                                                                                                                      |
+| `platform_wa_probes`   | —                   | `id`, `session`, `phone`, `result`, `answered_at`, for `whatsappRegistered`                                                                                                                            |
 
 **In the gateway.** `Gateway` gains a `PlatformSession` adapter. It reuses connect, pair code,
 reconnect, sealing, lease and pacing from `store-whatsapp/session.ts` and `runtime.ts`. What
@@ -166,12 +168,12 @@ differs:
 callbacks:
 
 - `kind = 'lid_mapping'` → `adoptLidMappings`, unchanged.
-- `vendas` messages and history → `ingestInbound`, unchanged. It stays the only path into
-  `requestAgentTx` for the CRM agent, so the producer invariant holds. Merchant phones are still
-  not leads. Instead of being dropped silently, they get one fixed reply per day pointing to the
-  Lojas number and the app.
-- `lojas` messages → the Duá router (§5). A non-merchant sender gets a fixed reply (open
-  decision 5).
+- **Messages are routed by sender**, since one number serves everyone:
+  - A merchant phone (`isMerchantPhone`, the check `agent/inbound.ts:65-69` already makes) goes to
+    the Duá router (§5). When the person isn't eligible (Duá pelo WhatsApp off, role, or plan), they
+    get one fixed reply per day pointing to the app instead of today's silent drop.
+  - Everyone else, and all history, goes to `ingestInbound`, unchanged. It stays the only path into
+    `requestAgentTx` for the CRM agent, so the producer invariant holds.
 
 **Callers.** `sendWhatsApp(sql, wa, to, text)` becomes
 `enqueuePlatformWa(tx, { session, to, body, purpose, dedupeKey })`:
@@ -214,15 +216,23 @@ sends and doesn't change.
 4. **The rollback is a re-pair, not a flag flip.** Once the gateway writes new Signal keys, the old
    rows are stale. That's why the rehearsal comes first.
 
-### 4.5 The second number
+### 4.5 One number now, a second later
 
-With platform sessions, a second number is a row and a pairing. The recommendation:
+The owner decided on one number (2026-10-07). It is the number Venduá already has, so owners
+already have it saved from their sign-in codes.
 
-- **Vendas:** CRM outreach and lead conversations.
-- **Lojas:** OTPs, owner notices, invites and Duá.
+**The cost.** Cold outreach and every sign-in code share a number, so a restriction caused by
+outreach would also stop codes and Duá. Until a second number exists:
 
-Owners already have Lojas saved, because it sends their codes. Outreach risk stays on a number that
-can be lost without locking anyone out. That's open decision 2, the owner's call.
+- **Order of sends.** The pump sends `otp` > `dua` > `notice` > `crm`, so outreach never delays a
+  code.
+- **Outreach pacing.** The CRM's existing pacing stays, and the outreach volume cap should stay
+  conservative.
+- **Sign-in fallback.** "Entrar com e-mail" stays on the login screen.
+- **A restriction (403) is an incident.** It raises `channel.down whatsapp` and pages the team.
+
+**Splitting later.** With platform sessions, a second number is a second `platform_wa_sessions`
+row and a pairing, with no code: point `crm` sends at one and the rest at the other.
 
 ## 5. Part B: Duá by WhatsApp
 
@@ -306,7 +316,7 @@ goes back through the door the question came from, and the admin shows both.
 - The store's `copilot` daily budget applies unchanged. When it is spent, Duá says so and points to
   the app.
 - Proactive messages from Duá to owners (a morning summary, alerts) are out of scope. The existing
-  notices move to the Lojas number unchanged.
+  notices keep going from the same number, unchanged.
 
 ## 6. Controls
 
@@ -330,7 +340,7 @@ goes back through the door the question came from, and the admin shows both.
 | Phase | Ships                                                                                                        |
 | ----- | ------------------------------------------------------------------------------------------------------------ |
 | W0    | Platform sessions in the gateway; the CRM, OTPs and notices through the outbox and inbox; rehearsal; cutover |
-| W1    | The second number (if decided); OTPs and notices move to Lojas; merchant replies get the fixed answer        |
+| W1    | Routing by sender: merchant phones reach the Duá router, which gives the fixed answer until W2               |
 | W2    | Duá by text: identity, store choice, dispatch, replies, cards and "SIM"; the Perfil switch                   |
 | W3    | Voice notes                                                                                                  |
 
@@ -341,27 +351,30 @@ After each, `invariant-reviewer` runs on the diff (`CLAUDE.md`).
 
 1. ~~Amend ADR 0034 to add the WhatsApp door.~~ **Decided 2026-10-07:** yes, the owner's call.
    ADR 0034 is amended.
-2. **One platform number or two** (Vendas and Lojas). Two is recommended.
+2. ~~One platform number or two.~~ **Decided 2026-10-07: one**, the owner's call (§4.5).
 3. **Money cards by "SIM",** or app-only.
 4. **Attendants.** Today the HTTP gate is `manager`. Attendant-level routes exist (orders, kitchen,
    pause and resume), so a narrow attendant Duá is possible.
-5. **Non-merchants writing to Lojas:** a fixed reply, or hand them to the CRM as leads.
+5. ~~Non-merchants writing to a Lojas number.~~ Moot with one number: non-merchants reach the CRM,
+   as today.
 6. **Plan.** The same `copilot` feature, or its own. That's the owner's call; don't state it in copy.
 7. **QR pairing** for platform sessions, or pair code only like the stores.
 
 ## 10. Risks
 
-- **The number is restricted.** Today one number carries outreach and every sign-in code. W1's split
-  limits the damage, and "entrar com e-mail" stays available.
+- **The number is restricted.** One number carries outreach, every sign-in code and Duá, by the
+  owner's choice. A restriction stops all three until it's lifted or a second number is paired.
+  "Entrar com e-mail" keeps owners signing in, and §4.5 lists the mitigations.
 - **A one-way cutover.** Signal keys move with the session, so the rehearsal on a test number is not
   optional.
 - **Someone else holds the phone.** Whoever holds the owner's unlocked phone can talk to Duá.
   That's already true of the admin PWA logged in on that phone. The opt-in, immediate revocation,
   the money-card rule and "pelo Duá (WhatsApp)" in the audit log bound it.
-- **Unofficial client.** Both platform numbers already run on Baileys today. The move changes where
+- **Unofficial client.** Venduá's number already runs on Baileys today. The move changes where
   the session runs, not the exposure.
 
 ## Change log
 
 - 2026-10-07: first proposal.
 - 2026-10-07: the owner approved the WhatsApp door (open decision 1); ADR 0034 amended.
+- 2026-10-07: one Venduá number, the owner's call (open decision 2); routing is by sender.
