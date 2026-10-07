@@ -1,6 +1,7 @@
 # ADR 0034: Duá Copilot, Duá working for the store's people in the admin
 
-- Status: Accepted (built 2026-10-06, Core migration 0089)
+- Status: Accepted (built 2026-10-06, Core migration 0089); the WhatsApp door accepted
+  2026-10-07, not built
 - Date: 2026-10-06
 
 ## Context
@@ -27,6 +28,14 @@ decisions on 2026-10-06:
    `ai_conversations`. Cost is bounded per store per day by the budget key `copilot` in
    `agent_runtime.budgets`, which staff set in the CRM. No limit set means no cap, as for the
    other keys.
+
+Amended 2026-10-07, the owner's call: **Duá also answers by WhatsApp.** Managers and owners who
+turn it on in Perfil message a Venduá number by text or voice note and reach the same
+conversation, tools and cards. A card is applied by a "SIM" reply that Core matches against a
+closed grammar before the model sees it, through the same `decideTx` and the same role, expiry and
+basis checks as the tap. The model still applies nothing. The design, including the platform
+WhatsApp on the gateway it needs first, is
+[`features/dua-no-whatsapp.md`](../features/dua-no-whatsapp.md). It is not built yet.
 
 How it works:
 
@@ -67,7 +76,8 @@ How it works:
   | `coupon.create`     | a new coupon                      |
   | `coupon.update`     | activate, end date, use limit     |
 
-- **The tap is the only apply.** `POST /admin/v1/copilot/actions/:id {decision}` runs in the
+- **The tap is the only apply** (and, once the WhatsApp door is built, a "SIM" through the same
+  `decideTx`; see the 2026-10-07 amendment). `POST /admin/v1/copilot/actions/:id {decision}` runs in the
   request's idempotency claim. It locks the row and checks it is that person's (404 otherwise),
   still `proposed`, not past `expires_at` (30 minutes), and allowed for their role. It then runs
   the route for real, as the merchant named "<name> pelo Duá". Before that it re-reads the
