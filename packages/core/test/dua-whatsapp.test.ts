@@ -25,7 +25,7 @@ import {
   renderCards,
   toWhatsApp,
 } from '../src/platform-whatsapp/dua-text.ts';
-import { consumeRow, socketMessageToInbox } from '../src/platform-whatsapp/inbox.ts';
+import { claimInboxRow, consumeRow, socketMessageToInbox } from '../src/platform-whatsapp/inbox.ts';
 
 // Duá by WhatsApp (docs/features/dua-no-whatsapp.md §5): a merchant's message to Venduá's number
 // reaches their Copilot conversation; the reply and its cards go back as text; a "SIM" is matched
@@ -458,6 +458,34 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
       expect(r.next_attempt_at.getTime()).toBeGreaterThan(Date.now() + 9 * 60_000);
     }
     expect(await mailbox(s.tenantId)).toHaveLength(0);
+  });
+
+  test('one sender’s messages are claimed in order; another sender’s are not held up', async () => {
+    const session = `t${nonce.replace(/[^a-z0-9]/g, '')}`.slice(0, 20);
+    await sql`insert into platform_wa_sessions (name) values (${session})`;
+    try {
+      const put = async (ph: string, body: string, ago: number) =>
+        (
+          await sql<{ id: string }[]>`
+            insert into platform_wa_inbox (session, kind, from_jid, phone, body, created_at)
+            values (${session}, 'message', ${`55${ph}@s.whatsapp.net`}, ${`55${ph}`}, ${body},
+                    now() - ${ago} * interval '1 second')
+            returning id`
+        )[0]!.id;
+      const a = phone();
+      const b = phone();
+      const a1 = await put(a, 'áudio longo', 30);
+      const a2 = await put(a, 'e mais isso', 20);
+      const b1 = await put(b, 'oi', 10);
+      expect((await claimInboxRow(appSql, session))?.id).toBe(a1);
+      // a1 is in flight: a2 waits behind it, b1 goes ahead
+      expect((await claimInboxRow(appSql, session))?.id).toBe(b1);
+      expect(await claimInboxRow(appSql, session)).toBeNull();
+      await sql`update platform_wa_inbox set status = 'done' where id = ${a1}`;
+      expect((await claimInboxRow(appSql, session))?.id).toBe(a2);
+    } finally {
+      await sql`delete from platform_wa_sessions where name = ${session}`;
+    }
   });
 
   test('Core’s socket hands merchant messages to the inbox, and keeps everyone else', async () => {

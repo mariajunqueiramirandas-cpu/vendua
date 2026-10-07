@@ -24,16 +24,27 @@ export interface InboxDeps extends DuaDeps {
   jobsSql: Sql;
 }
 
-async function claim(sql: Sql): Promise<InboxRow | null> {
+/**
+ * The oldest due row, except a message whose sender has an older one still pending (in flight on
+ * another Core, deferred or retrying): one sender's messages run in order, so a slow voice note
+ * can't land after the text sent behind it. Different senders still run side by side.
+ */
+export async function claimInboxRow(sql: Sql, session?: string): Promise<InboxRow | null> {
   const [row] = await controlTx(
     sql,
     (tx) => tx<InboxRow[]>`
       update platform_wa_inbox set attempts = attempts + 1,
         next_attempt_at = now() + ${LEASE_MS} * interval '1 millisecond'
       where id = (
-        select id from platform_wa_inbox
-        where status = 'pending' and next_attempt_at <= now()
-        order by created_at, id limit 1
+        select i.id from platform_wa_inbox i
+        where i.status = 'pending' and i.next_attempt_at <= now()
+          and (${session ?? null}::text is null or i.session = ${session ?? null})
+          and not (i.kind = 'message' and exists (
+            select 1 from platform_wa_inbox o
+            where o.status = 'pending' and o.kind = 'message' and o.session = i.session
+              and coalesce(o.phone, o.from_jid) = coalesce(i.phone, i.from_jid)
+              and (o.created_at, o.id) < (i.created_at, i.id)))
+        order by i.created_at, i.id limit 1
         for update skip locked)
       returning id, session, kind, from_jid, alt_jid, phone, push_name, body, media_id,
                 provider_id, from_me, sent_at, pairs, attempts`,
@@ -112,7 +123,7 @@ export async function consumeRow(d: InboxDeps, row: InboxRow): Promise<void> {
 export async function consumeInboxOnce(d: InboxDeps, limit = 50): Promise<number> {
   let n = 0;
   for (; n < limit; n++) {
-    const row = await claim(d.sql);
+    const row = await claimInboxRow(d.sql);
     if (!row) break;
     await consumeRow(d, row);
   }
