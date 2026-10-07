@@ -4,6 +4,8 @@ import {
   Check,
   PencilSimple,
   Plus,
+  Printer,
+  QrCode,
   Receipt,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
@@ -21,19 +23,21 @@ import { when } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { isPlanRequired, useCan, useFeature } from '../../lib/session.ts';
-import { Button } from '../../ui/Button.tsx';
+import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
-import { Field, SavedStepper, TextInput } from '../../ui/fields.tsx';
+import { Field, SavedStepper, TextInput, Toggle } from '../../ui/fields.tsx';
 import { ArtStore } from '../../ui/illustrations.tsx';
 import { LockedPage, PlanLocked, reasonOf } from '../../ui/PlanLocked.tsx';
+import { tableName } from '../../ui/orderMode.ts';
 import { TableTile } from '../../ui/pdv/TableTile.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { Bone } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { isCode, pdvError, usePdvState } from './data.ts';
 import { PdvTop } from './parts.tsx';
+import { qrPrintPath, TableQrSheet } from './TableQr.tsx';
 
 // Mesas: the floor at a glance. A free table opens a comanda with one tap; a taken one shows its
 // total (Core's), how long it's been open and its rounds. Comandas without a table ("Comanda 12",
@@ -90,6 +94,7 @@ function Floor() {
   const [addOpen, setAddOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [edit, setEdit] = useState<PdvTable | null>(null);
+  const [qrId, setQrId] = useState<string | null>(null);
   const restore = useRestoreTable();
   // the removed tables, only while a manager edits the floor
   const removed = useQuery({
@@ -127,11 +132,25 @@ function Floor() {
   });
 
   const service = useMutation({
-    mutationFn: (bps: number) => api.pdv.settings(bps),
-    onSuccess: (r) =>
-      qc.setQueryData<PdvState>(qk.pdv.state, (s) => (s ? { ...s, serviceBps: r.serviceBps } : s)),
+    mutationFn: (bps: number) => api.pdv.settings({ serviceBps: bps }),
+    onSuccess: (r) => qc.setQueryData<PdvState>(qk.pdv.state, (s) => (s ? { ...s, ...r } : s)),
     onError: (e) => toast.error(pdvError(e)),
   });
+  // a switch the manager flips back the same way: no undo toast needed
+  const qrOrders = useMutation({
+    mutationFn: (on: boolean) => api.pdv.settings({ qrOrders: on }),
+    onSuccess: (r) => {
+      haptic.commit();
+      qc.setQueryData<PdvState>(qk.pdv.state, (s) => (s ? { ...s, ...r } : s));
+      toast(r.qrOrders ? 'Pedidos pelo QR ligados.' : 'Pedidos pelo QR desligados.');
+    },
+    onError: (e) => {
+      haptic.error();
+      toast.error(pdvError(e));
+    },
+  });
+  const qrOn = qrOrders.isPending ? !!qrOrders.variables : !!data?.qrOrders;
+  const qrTable = qrId ? (tables.find((t) => t.id === qrId) ?? null) : null;
 
   if (isPlanRequired(error))
     return (
@@ -178,21 +197,51 @@ function Floor() {
             </div>
 
             {editing ? (
-              <Card className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold">Taxa de serviço</p>
-                  <p className="t-caption text-muted">
-                    Entra nas comandas abertas daqui em diante. O cliente pode recusar.
-                  </p>
+              <Card className="mb-4 divide-y divide-line">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold">Taxa de serviço</p>
+                    <p className="t-caption text-muted">
+                      Entra nas comandas abertas daqui em diante. O cliente pode recusar.
+                    </p>
+                  </div>
+                  <SavedStepper
+                    label="taxa de serviço em porcentagem"
+                    value={Math.round(data.serviceBps / 100)}
+                    min={0}
+                    max={20}
+                    suffix="%"
+                    onSave={(v) => service.mutateAsync(v * 100).catch(() => undefined)}
+                  />
                 </div>
-                <SavedStepper
-                  label="taxa de serviço em porcentagem"
-                  value={Math.round(data.serviceBps / 100)}
-                  min={0}
-                  max={20}
-                  suffix="%"
-                  onSave={(v) => service.mutateAsync(v * 100).catch(() => undefined)}
-                />
+                <div className="px-4 py-2">
+                  <Toggle
+                    checked={qrOn}
+                    disabled={qrOrders.isPending}
+                    onChange={(v) => qrOrders.mutate(v)}
+                    label="Pedidos pelo QR da mesa"
+                    description="A equipe aceita cada pedido antes da cozinha. O cliente paga online ou na comanda."
+                  />
+                </div>
+                {tables.length ? (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold">QR das mesas</p>
+                      <p className="t-caption text-muted">
+                        Uma folha com o QR de cada mesa, pronta para imprimir e recortar.
+                      </p>
+                    </div>
+                    <ButtonLink
+                      to={qrPrintPath()}
+                      variant="secondary"
+                      size="sm"
+                      icon={<Printer />}
+                      className="min-h-11"
+                    >
+                      imprimir todos
+                    </ButtonLink>
+                  </div>
+                ) : null}
               </Card>
             ) : null}
 
@@ -218,12 +267,14 @@ function Floor() {
                 {tables.map((t) => {
                   const tab = byTable.get(t.id) ?? null;
                   return (
-                    <li key={t.id}>
+                    <li key={t.id} className="relative">
                       <TableTile
                         label={t.label}
                         tab={tab}
                         now={now}
                         editing={editing}
+                        // room under the tile's lines for the QR button
+                        className={editing ? 'pb-16' : ''}
                         onClick={() =>
                           editing
                             ? setEdit(t)
@@ -232,6 +283,18 @@ function Floor() {
                               : !open.isPending && open.mutate({ tableId: t.id })
                         }
                       />
+                      {editing ? (
+                        // beside the tile, not in it: the tile is a button already
+                        <button
+                          type="button"
+                          onClick={() => setQrId(t.id)}
+                          aria-label={`QR da ${tableName(t.label)}`}
+                          className="press t-caption absolute bottom-2 right-2 inline-flex min-h-11 items-center gap-1 rounded-full bg-sunken px-3 font-semibold hover:bg-press"
+                        >
+                          <QrCode weight="bold" className="size-4" aria-hidden />
+                          QR
+                        </button>
+                      ) : null}
                     </li>
                   );
                 })}
@@ -307,6 +370,7 @@ function Floor() {
       {manager ? (
         <>
           <AddTablesSheet open={addOpen} onOpenChange={setAddOpen} tables={tables} />
+          <TableQrSheet table={qrTable} qrOrders={qrOn} onClose={() => setQrId(null)} />
           <EditTableSheet
             table={edit}
             busy={!!(edit && byTable.get(edit.id))}

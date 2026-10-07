@@ -232,6 +232,8 @@ const PDV_ERRORS: Record<string, string> = {
   TOO_MANY_TABLES: 'Chegou ao limite de mesas da loja.',
   OVERPAY: 'O valor passa do que falta na comanda.',
   TAB_UNPAID: 'Ainda falta receber nessa comanda.',
+  TAB_HAS_PENDING:
+    'Um pedido pelo QR dessa mesa ainda espera alguém aceitar. Aceite ou cancele antes de fechar a comanda.',
   TAB_OVERPAID:
     'A comanda ficaria paga a mais. Um gerente estorna um pagamento e você recebe o valor certo.',
   PAYMENT_PDV: 'Esse pedido foi pago no caixa: o pagamento é do caixa.',

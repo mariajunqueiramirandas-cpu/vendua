@@ -34,8 +34,17 @@ type Topic =
   | 'pdv';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
-  'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity],
-  'order.changed': [['orders'], qk.home, qk.payments, ['customers'], ['reports'], qk.activity],
+  // an order from a table's QR lands on its comanda (ADR 0036): Mesas and the comanda follow it
+  'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity, ['pdv']],
+  'order.changed': [
+    ['orders'],
+    qk.home,
+    qk.payments,
+    ['customers'],
+    ['reports'],
+    qk.activity,
+    ['pdv'],
+  ],
   catalog: [['catalog'], qk.home, qk.share, qk.activity],
   store: [qk.store, qk.home, qk.payments, qk.activity],
   marketing: [qk.marketing, qk.home, qk.activity],

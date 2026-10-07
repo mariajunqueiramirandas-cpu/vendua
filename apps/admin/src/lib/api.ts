@@ -1997,6 +1997,8 @@ export interface PdvTable {
   id: string;
   label: string;
   sort: number;
+  /** what the table's printed QR opens: the store's origin with `?mesa=<signed token>` (ADR 0036) */
+  qrUrl: string;
 }
 export interface TabSummary {
   id: string;
@@ -2014,6 +2016,10 @@ export interface TabRound {
   orderId: string;
   number: number;
   state: OrderState;
+  /** 'table_qr': the customer ordered from the table's QR (ADR 0036) */
+  source: 'pdv' | 'table_qr';
+  /** paid online by the customer: listed, but outside the comanda's totals and what remains */
+  paidOnline: boolean;
   placedAt: string;
   totalCents: number;
   items: {
@@ -2082,6 +2088,12 @@ export interface PdvState {
   /** the open ones */
   tabs: TabSummary[];
   serviceBps: number;
+  /** customers order from the table's QR (the store's switch; ADR 0036) */
+  qrOrders: boolean;
+}
+export interface PdvSettings {
+  serviceBps: number;
+  qrOrders: boolean;
 }
 
 export const api = {
@@ -2757,7 +2769,9 @@ export const api = {
     tables: () => get<PdvTables>('/pdv/tables'),
     archiveTable: (id: string) => send<PdvTables>('DELETE', `/pdv/tables/${id}`),
     restoreTable: (id: string) => send<PdvTables>('POST', `/pdv/tables/${id}/restore`),
-    settings: (serviceBps: number) =>
-      send<{ serviceBps: number }>('PATCH', '/pdv/settings', { serviceBps }),
+    settings: (patch: { serviceBps?: number; qrOrders?: boolean }) =>
+      send<PdvSettings>('PATCH', '/pdv/settings', patch),
+    /** a new QR for this table: the printed one stops working at once */
+    tableQr: (id: string) => send<{ table: PdvTable }>('POST', `/pdv/tables/${id}/qr`),
   },
 };

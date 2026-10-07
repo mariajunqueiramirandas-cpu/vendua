@@ -557,8 +557,21 @@ export const TOPICS: Record<TopicId, Topic> = {
         ),
       },
       {
+        q: 'Como funcionam os pedidos pelo QR da mesa?',
+        a: (
+          <>
+            Cada mesa tem o seu QR: o cliente aponta a câmera, vê o cardápio e pede para aquela
+            mesa. O pedido chega em <strong>Pedidos</strong> e só vai para a cozinha quando alguém
+            da equipe aceita. O cliente paga online ou deixa na comanda, e o que foi pago online
+            aparece na comanda como <strong>pago online</strong>, fora do que falta receber. Para
+            imprimir os QR, abra <strong>Mesas</strong>, toque em <strong>editar mesas</strong> e em{' '}
+            <strong>imprimir todos</strong>.
+          </>
+        ),
+      },
+      {
         q: 'O que só gerentes fazem?',
-        a: 'Dar desconto, estornar um pagamento, cancelar uma comanda, criar e editar as mesas e mudar a taxa de serviço.',
+        a: 'Dar desconto, estornar um pagamento, cancelar uma comanda, criar e editar as mesas, mudar a taxa de serviço, ligar os pedidos pelo QR e gerar um QR novo para uma mesa.',
       },
     ],
   },
@@ -567,6 +580,7 @@ export const TOPICS: Record<TopicId, Topic> = {
 const BY_ROUTE: Partial<Record<RouteId, TopicId>> = {
   pdv: 'pdv',
   pdvMesas: 'pdv',
+  pdvQr: 'pdv',
   pdvComanda: 'pdv',
   pdvCaixa: 'pdv',
   pdvReport: 'pdv',

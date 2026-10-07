@@ -219,7 +219,8 @@ export function OrderDetail({
           <div className="min-w-0 flex-1">
             <p className="t-body-lg font-semibold">{order.customer.name}</p>
             <p className="t-body text-muted">
-              {phone(order.customer.phone)}
+              {/* an order from the table's QR asks for a first name only (ADR 0036) */}
+              {order.customer.phone ? phone(order.customer.phone) : 'sem celular'}
               {customer ? (
                 <>
                   {' · '}

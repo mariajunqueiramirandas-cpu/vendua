@@ -25,6 +25,7 @@ const Kitchen = screen(chunks.kitchen, (m) => m.default);
 const Pickup = screen(chunks.pickup, (m) => m.default);
 const PdvVender = screen(chunks.pdv, (m) => m.default);
 const PdvMesas = screen(chunks.pdvMesas, (m) => m.default);
+const PdvQr = screen(chunks.pdvQr, (m) => m.default);
 const PdvComanda = screen(chunks.pdvComanda, (m) => m.default);
 const PdvCaixa = screen(chunks.pdvCaixa, (m) => m.default);
 const PdvReport = screen(chunks.pdvReport, (m) => m.default);
@@ -189,6 +190,7 @@ export default function App() {
                   <Route path="cozinha/painel" element={<Pickup />} />
                   <Route path="pdv" element={<PdvVender />} />
                   <Route path="pdv/mesas" element={<PdvMesas />} />
+                  <Route path="pdv/mesas/qr" element={<PdvQr />} />
                   <Route path="pdv/comanda/:id" element={<PdvComanda />} />
                   <Route path="pdv/caixa" element={<PdvCaixa />} />
                   <Route path="pdv/caixa/:id" element={<PdvReport />} />

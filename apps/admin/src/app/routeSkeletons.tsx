@@ -98,6 +98,7 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
     </div>
   ),
   pdvMesas: () => page('Mesas', <TilesSkeleton count={8} />, { wide: true, subtitle: false }),
+  pdvQr: () => page('QR das mesas', <TilesSkeleton count={3} />),
   pdvComanda: () => page('Comanda', <DetailSkeleton />, { subtitle: false }),
   pdvCaixa: () =>
     page(

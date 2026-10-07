@@ -295,7 +295,7 @@ h1{font-size:34px;margin:0 0 4px}.m{font-size:13px}.it{padding:6px 0;border-bott
 .sub{font-size:13px;padding-left:22px}.in{font-weight:bold}.n{margin-top:8px;padding:6px;border:2px solid #000;font-size:15px;font-weight:bold}
 .t{margin-top:8px;font-size:16px;font-weight:bold;text-align:right}</style></head><body>
 <div class="m">${esc(storeName)}</div><h1>#${o.number}</h1>
-<div class="m">${esc(o.customer.name)} · ${esc(phone(o.customer.phone))}</div>
+<div class="m">${esc(o.customer.name)}${o.customer.phone ? ` · ${esc(phone(o.customer.phone))}` : ''}</div>
 <div class="m">${o.delivery.mode === 'delivery' ? `ENTREGA: ${esc(o.delivery.address ?? '')} ${esc(o.delivery.neighborhood ?? '')}` : o.delivery.mode === 'dine_in' ? (o.delivery.table ? esc(tableName(o.delivery.table).toUpperCase()) : 'CONSUMO NO LOCAL') : 'RETIRADA'}</div>
 ${o.scheduledFor ? `<div class="m">ENCOMENDA PARA ${esc(o.scheduledFor)}</div>` : ''}
 <div class="m">${new Date(o.placedAt).toLocaleString('pt-BR')}</div>

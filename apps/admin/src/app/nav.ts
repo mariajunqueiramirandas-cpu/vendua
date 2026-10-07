@@ -89,6 +89,7 @@ const DEEP: { match: RegExp; parent: string; title: string }[] = [
   // Vender, Mesas and Caixa are the PDV's own tabs; their drill-downs go one level down
   { match: /^\/pdv\/mesas$/, parent: '/pdv', title: 'Mesas' },
   { match: /^\/pdv\/caixa$/, parent: '/pdv', title: 'Caixa' },
+  { match: /^\/pdv\/mesas\/qr$/, parent: '/pdv/mesas', title: 'QR das mesas' },
   { match: /^\/pdv\/comanda\/[^/]+$/, parent: '/pdv/mesas', title: 'Comanda' },
   { match: /^\/pdv\/caixa\/[^/]+$/, parent: '/pdv/caixa', title: 'Fechamento' },
   { match: /^\/pedidos\/historico$/, parent: '/pedidos', title: 'Histórico' },

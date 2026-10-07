@@ -6,12 +6,13 @@ import {
   Percent,
   Plus,
   Prohibit,
+  QrCode,
   X,
   XCircle,
 } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   api,
   type PdvPayment,
@@ -155,6 +156,10 @@ function TabScreen() {
 
   const isOpen = tab.status === 'open';
   const live = tab.roundsList.filter((r) => r.state !== 'cancelled' && r.state !== 'refunded');
+  // Core leaves rounds paid online out of every figure below; the screen only says so
+  const online = live.filter((r) => r.paidOnline).length;
+  // a QR order the staff haven't accepted yet: listed, not owed, and it holds the comanda open
+  const waiting = live.filter((r) => r.source === 'table_qr' && r.state === 'placed');
   const activePays = tab.payments.filter((p) => !p.voided);
   const name = tableName(tab.label);
 
@@ -281,6 +286,13 @@ function TabScreen() {
                 <dt>Total</dt>
                 <dd className="tnum">{money(tab.totalCents)}</dd>
               </div>
+              {online ? (
+                <p className="t-caption text-muted">
+                  {online === 1
+                    ? 'A rodada paga online fica fora dessa conta.'
+                    : `As ${online} rodadas pagas online ficam fora dessa conta.`}
+                </p>
+              ) : null}
               {tab.paidCents ? (
                 <div className="flex justify-between text-success">
                   <dt>Pago</dt>
@@ -301,6 +313,34 @@ function TabScreen() {
                 {money(Math.abs(tab.remainingCents))}
               </p>
             </div>
+
+            {isOpen && waiting.length ? (
+              <Notice
+                tone="warning"
+                title={
+                  waiting.length === 1
+                    ? 'Um pedido pelo QR aguarda aceite'
+                    : `${waiting.length} pedidos pelo QR aguardam aceite`
+                }
+                action={
+                  <ButtonLink
+                    to={waiting.length === 1 ? `/pedidos/${waiting[0]!.orderId}` : '/pedidos'}
+                    variant="secondary"
+                    size="sm"
+                    className="min-h-11"
+                  >
+                    aceitar em Pedidos
+                  </ButtonLink>
+                }
+              >
+                {waiting.length === 1 ? 'Ele fica' : 'Eles ficam'} fora da conta até alguém aceitar.
+                A comanda só fecha depois que{' '}
+                {waiting.length === 1
+                  ? 'ele for aceito ou cancelado'
+                  : 'todos forem aceitos ou cancelados'}
+                .
+              </Notice>
+            ) : null}
 
             {isOpen && tab.remainingCents < 0 ? (
               <Notice tone="warning" title="A comanda ficou paga a mais">
@@ -377,6 +417,7 @@ function TabScreen() {
                 </Button>
                 <PrimaryAction
                   tab={tab}
+                  waiting={waiting.length > 0}
                   busy={close.isPending}
                   onPay={() => {
                     setPayAmount(null);
@@ -403,6 +444,7 @@ function TabScreen() {
           </Button>
           <PrimaryAction
             tab={tab}
+            waiting={waiting.length > 0}
             busy={close.isPending}
             onPay={() => {
               setPayAmount(null);
@@ -474,15 +516,24 @@ function Body({ children }: { children: React.ReactNode }) {
 /** "receber" while something remains; "fechar" when nothing does (all rounds cancelled). */
 function PrimaryAction({
   tab,
+  waiting,
   busy,
   onPay,
   onClose,
 }: {
   tab: TabDetail;
+  /** a QR order still waits for the staff: Core won't close the comanda (TAB_HAS_PENDING) */
+  waiting: boolean;
   busy: boolean;
   onPay: () => void;
   onClose: () => void;
 }) {
+  if (tab.remainingCents === 0 && waiting)
+    return (
+      <Button size="lg" className="flex-1" disabled>
+        aguardando aceite
+      </Button>
+    );
   if (tab.remainingCents === 0)
     return (
       <Button size="lg" className="flex-1" loading={busy} onClick={onClose}>
@@ -570,16 +621,44 @@ function Rounds({
         <ol className="space-y-3">
           {tab.roundsList.map((r) => {
             const gone = r.state === 'cancelled' || r.state === 'refunded';
-            const cancellable = tab.status === 'open' && !gone && r.state !== 'delivered';
+            const qr = r.source === 'table_qr';
+            // paid online: its money went through Mercado Pago, so undoing it is the order's refund
+            const cancellable =
+              tab.status === 'open' && !gone && r.state !== 'delivered' && !r.paidOnline;
             return (
               <li key={r.orderId}>
                 <Card className={cn('p-4', gone && 'opacity-60')}>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <p className="tnum font-display text-lg font-semibold">#{r.number}</p>
                     <StateChip state={r.state} mode="dine_in" />
+                    {qr ? (
+                      <span className="t-caption inline-flex h-6 items-center gap-1 rounded-full bg-sunken px-2 font-semibold">
+                        <QrCode weight="bold" className="size-3.5" aria-hidden />
+                        pelo QR
+                      </span>
+                    ) : null}
                     <span className="t-caption tnum text-muted">{clock(r.placedAt)}</span>
-                    <span className={cn('tnum ml-auto font-semibold', gone && 'line-through')}>
-                      {money(r.totalCents)}
+                    <span className="ml-auto flex flex-col items-end">
+                      <span
+                        className={cn(
+                          'tnum font-semibold',
+                          gone && 'line-through',
+                          (r.paidOnline || (qr && r.state === 'placed')) && !gone && 'text-muted',
+                        )}
+                      >
+                        {money(r.totalCents)}
+                      </span>
+                      {qr && r.state === 'placed' && !r.paidOnline ? (
+                        <span className="t-caption font-semibold text-warning">
+                          aguardando aceite
+                        </span>
+                      ) : null}
+                      {r.paidOnline && !gone ? (
+                        <span className="t-caption inline-flex items-center gap-1 font-semibold text-success">
+                          <CheckCircle weight="fill" className="size-3.5" aria-hidden />
+                          pago online
+                        </span>
+                      ) : null}
                     </span>
                   </div>
                   <ul className="t-body mt-2 space-y-1">
@@ -610,6 +689,26 @@ function Rounds({
                       </li>
                     ))}
                   </ul>
+                  {qr && r.state === 'placed' ? (
+                    <p className="t-caption mt-2 text-muted">
+                      O cliente pediu pelo QR. Fica fora da conta e da cozinha até alguém aceitar em{' '}
+                      <Link
+                        to={`/pedidos/${r.orderId}`}
+                        className="font-semibold text-ink underline underline-offset-2"
+                      >
+                        Pedidos
+                      </Link>
+                      {cancellable ? ', ou cancelar a rodada aqui' : ''}.
+                    </p>
+                  ) : null}
+                  {r.paidOnline && !gone && tab.status === 'open' && r.state !== 'delivered' ? (
+                    <Link
+                      to={`/pedidos/${r.orderId}`}
+                      className="t-label -mb-2 -ml-2 mt-2 inline-flex min-h-11 items-center rounded-md px-2 text-muted hover:text-ink"
+                    >
+                      abrir o pedido
+                    </Link>
+                  ) : null}
                   {cancellable ? (
                     <button
                       type="button"

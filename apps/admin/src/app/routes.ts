@@ -34,6 +34,7 @@ export const chunks = {
   pickup: once(() => import('../features/kitchen/Pickup.tsx')),
   pdv: once(() => import('../features/pdv/Vender.tsx')),
   pdvMesas: once(() => import('../features/pdv/Mesas.tsx')),
+  pdvQr: once(() => import('../features/pdv/MesasQr.tsx')),
   pdvComanda: once(() => import('../features/pdv/Comanda.tsx')),
   pdvCaixa: once(() => import('../features/pdv/Caixa.tsx')),
   pdvReport: once(() => import('../features/pdv/CaixaReport.tsx')),
@@ -98,6 +99,7 @@ export type RouteId =
   | 'pickup'
   | 'pdv'
   | 'pdvMesas'
+  | 'pdvQr'
   | 'pdvComanda'
   | 'pdvCaixa'
   | 'pdvReport'
@@ -213,6 +215,12 @@ const ROUTES: RouteDef[] = [
     id: 'pdvMesas',
     match: /^\/pdv\/mesas$/,
     chunk: chunks.pdvMesas,
+    data: (qc) => (pdv(qc) ? q(qc, qk.pdv.state, api.pdv.state) : Promise.resolve()),
+  },
+  {
+    id: 'pdvQr',
+    match: /^\/pdv\/mesas\/qr$/,
+    chunk: chunks.pdvQr,
     data: (qc) => (pdv(qc) ? q(qc, qk.pdv.state, api.pdv.state) : Promise.resolve()),
   },
   {
