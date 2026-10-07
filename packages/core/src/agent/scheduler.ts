@@ -324,8 +324,11 @@ export async function nextWorkAt(sql: Sql): Promise<Date | null> {
          where status = 'running'
            and coalesce(alive_at, started_at) > now() - make_interval(mins => ${RUN_LEASE_MIN}))
           + make_interval(mins => ${RUN_LEASE_MIN}),
-        (select min(updated_at) from lead_messages
-         where status = 'sending' and updated_at > now() - make_interval(mins => ${RUN_LEASE_MIN}))
+        (select min(updated_at) from lead_messages m
+         where m.status = 'sending' and m.updated_at > now() - make_interval(mins => ${RUN_LEASE_MIN})
+           and not exists (
+             select 1 from platform_wa_outbox o
+             where o.purpose = 'crm' and o.ref = m.id::text and o.settled_at is null))
           + make_interval(mins => ${RUN_LEASE_MIN}),
         (select min(created_at) from lead_messages
          where status = 'queued' and created_at > now() - interval '20 seconds')

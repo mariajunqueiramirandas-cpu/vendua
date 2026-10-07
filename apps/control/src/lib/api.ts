@@ -645,15 +645,12 @@ const apiBase = {
       method: 'PUT',
       body: JSON.stringify({ value }),
     }),
-  waQr: () =>
-    req<{
-      qr: string | null;
-      status: string;
-      /** the paired account, once the socket is open — null while unpaired */
-      me: { phone: string | null; name: string | null } | null;
-    }>('/wa/qr'),
+  waQr: () => req<WaQr>('/wa/qr'),
   waPairCode: (phone: string) =>
-    req<{ code: string }>('/wa/pair-code', { method: 'POST', body: JSON.stringify({ phone }) }),
+    req<{ code: string | null }>('/wa/pair-code', {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
+    }),
   waLogout: () => req<{ ok: true }>('/wa/logout', { method: 'POST' }),
   igStatus: () => req<IgStatus>('/ig/status'),
   igLoginStart: () => req<{ step: IgStep }>('/ig/login/start', { method: 'POST' }),
@@ -1657,6 +1654,20 @@ const fleetConsole = {
   aiEndpoints: (model: string) =>
     req<AiEndpointsView>(`/ai/endpoints?model=${encodeURIComponent(model)}`),
   aiUsage: (days: 7 | 30) => req<AiUsageView>(`/ai/usage?days=${days}`),
+};
+
+/** `GET /wa/qr`: the CRM's number. On the gateway (`transport: 'gateway'`) pairing is by code
+ *  only, so `qr` is always null and the session row's state, detail and code come along. */
+export type WaQr = {
+  qr: string | null;
+  status: string;
+  /** the paired account, once the socket is open — null while unpaired */
+  me: { phone: string | null; name: string | null } | null;
+  transport?: 'socket' | 'gateway';
+  state?: 'off' | 'connecting' | 'pairing' | 'open' | 'logged_out' | 'banned' | 'error';
+  detail?: string | null;
+  pairCode?: string | null;
+  pairCodeExpiresAt?: string | null;
 };
 
 export const api = Object.assign(apiBase, agentV2, fleet, {

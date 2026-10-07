@@ -51,6 +51,13 @@ async function team(tx: Sql, tenantId: string) {
   `;
 }
 
+async function duaManagers(tx: Sql, tenantId: string) {
+  const [row] = await tx<{ on: boolean }[]>`
+    select dua_whatsapp_managers as on from store_settings where tenant_id = ${tenantId}
+  `;
+  return row?.on ?? true;
+}
+
 /** Serializes owner removals/demotions per store: two owners removing each other in parallel
  *  would each count the other as the one left. Taken before reading the member row. */
 async function lockOwners(tx: Sql, tenantId: string) {
@@ -164,7 +171,38 @@ export function mountTeam(d: AdminDeps) {
 
   admin.get(
     '/team',
-    read('manager', async (tx, t) => ({ members: await team(tx, t.id) })),
+    read('manager', async (tx, t) => ({
+      members: await team(tx, t.id),
+      duaWhatsappManagers: await duaManagers(tx, t.id),
+    })),
+  );
+
+  // the owner's per-store switch: managers may talk to Duá by WhatsApp (default on)
+  admin.patch(
+    '/team/settings',
+    write('owner', async (tx, t, m, c) => {
+      const body = await bodyJson(c);
+      if (typeof body.duaWhatsappManagers !== 'boolean')
+        throw new HttpError(422, 'BAD_REQUEST', 'duaWhatsappManagers must be a boolean', {
+          field: 'duaWhatsappManagers',
+        });
+      const on = body.duaWhatsappManagers;
+      await tx`insert into store_settings (tenant_id) values (${t.id}) on conflict do nothing`;
+      const before = await duaManagers(tx, t.id);
+      await tx`update store_settings set dua_whatsapp_managers = ${on} where tenant_id = ${t.id}`;
+      if (before !== on)
+        await audit(tx, t.id, m, {
+          action: 'team.settings',
+          entity: 'member',
+          summary: on
+            ? 'ligou o Duá pelo WhatsApp para gerentes'
+            : 'desligou o Duá pelo WhatsApp para gerentes',
+          before: { duaWhatsappManagers: before },
+          after: { duaWhatsappManagers: on },
+        });
+      await emitAdminTx(tx, t.id, 'team');
+      return { status: 200, body: { duaWhatsappManagers: on } };
+    }),
   );
 
   // Invite = add the phone (and optionally an email), then tell the person: WhatsApp from the

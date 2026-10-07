@@ -1,4 +1,11 @@
-import { ArrowCounterClockwise, PaperPlaneRight, WifiSlash, X } from '@phosphor-icons/react';
+import {
+  ArrowCounterClockwise,
+  Microphone,
+  PaperPlaneRight,
+  WhatsappLogo,
+  WifiSlash,
+  X,
+} from '@phosphor-icons/react';
 import { useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
@@ -7,6 +14,7 @@ import {
   type CopilotAction,
   type CopilotActionKind,
   type CopilotItem,
+  type CopilotMessage,
   type CopilotView,
 } from '../../lib/api.ts';
 import { useLiveState } from '../../lib/live.ts';
@@ -215,6 +223,14 @@ type Chat = ReturnType<typeof useCopilot>;
 
 // on a wide page a bubble stops at 38rem, so a long reply stays easy to read
 const WIDTH = 'max-w-[min(84%,38rem)]!';
+
+/** a message that came or went by WhatsApp says so on its bubble (dua-no-whatsapp §2) */
+function channelTag(m: CopilotMessage) {
+  if (m.channel !== 'whatsapp') return {};
+  return m.voice
+    ? { tag: 'áudio pelo WhatsApp', tagIcon: <Microphone weight="bold" aria-hidden /> }
+    : { tag: 'pelo WhatsApp', tagIcon: <WhatsappLogo weight="bold" aria-hidden /> };
+}
 
 // ── the screen ──────────────────────────────────────────────────────────────
 
@@ -445,6 +461,7 @@ function Thread({ c, dock }: { c: Chat; dock?: boolean }) {
           align="start"
           time={msgTime(it.at)}
           signed={!prevDua}
+          {...channelTag(it)}
           className={WIDTH}
         >
           <DuaText text={it.text} />
@@ -453,7 +470,13 @@ function Thread({ c, dock }: { c: Chat; dock?: boolean }) {
       prevDua = true;
     } else {
       body = (
-        <Bubble voice="you" author="você" time={msgTime(it.at)} className={WIDTH}>
+        <Bubble
+          voice="you"
+          author="você"
+          time={msgTime(it.at)}
+          {...channelTag(it)}
+          className={WIDTH}
+        >
           {it.text}
         </Bubble>
       );

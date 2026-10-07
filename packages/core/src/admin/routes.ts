@@ -77,6 +77,7 @@ import { MEDIA_QUOTA_BYTES, mediaBytesUsed, processedBytes, processImage } from 
 import { isPushEndpoint, pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
 import { recordPushAttempt } from './workers.ts';
 import { getIntegration } from '../modules/integrations.ts';
+import { waIdentity } from '../agent/channels/whatsapp.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 
 const adminLog = log.child({ mod: 'admin' });
@@ -310,9 +311,10 @@ export function mountAdmin(o: MountAdminOpts) {
               prefs: Record<string, unknown>;
               email: string | null;
               pending_email: string | null;
+              dua_whatsapp_managers: boolean | null;
             }[]
           >`
-            select s.logo_url, u.prefs, u.email, u.pending_email from merchant_users u
+            select s.logo_url, u.prefs, u.email, u.pending_email, s.dua_whatsapp_managers from merchant_users u
               left join store_settings s on s.tenant_id = u.tenant_id
             where u.id = ${m.userId}
           `,
@@ -356,6 +358,14 @@ export function mountAdmin(o: MountAdminOpts) {
         name: AGENT_NAME,
         waiting: agent?.waiting ?? 0,
       },
+      // Perfil's "Duá pelo WhatsApp": owners and managers on a plan with the copilot
+      duaWhatsapp:
+        (m.role === 'owner' || m.role === 'manager') && plan.features.copilot
+          ? {
+              number: waIdentity()?.phone?.replace(/\D/g, '') || null,
+              allowed: m.role === 'owner' || (settings?.dua_whatsapp_managers ?? true),
+            }
+          : null,
     });
   });
 
@@ -963,6 +973,8 @@ const PREF_KEYS: Record<string, 'boolean' | 'number' | 'string' | 'list'> = {
   pushWaiting: 'boolean',
   whatsappAlerts: 'boolean',
   emailInvoices: 'boolean',
+  // Duá pelo WhatsApp: opt-in, absent = off
+  duaWhatsapp: 'boolean',
   theme: 'string',
   dismissedHints: 'list',
 };

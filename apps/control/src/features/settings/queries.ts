@@ -27,7 +27,15 @@ export const useChannelHealth = () =>
  * screen reloaded QR/status in the same sweep.
  */
 export const waQrKey = qk.waQr;
-export const useWaQr = () => useQuery({ queryKey: waQrKey(), queryFn: api.waQr, retry: false });
+export const useWaQr = () =>
+  useQuery({
+    queryKey: waQrKey(),
+    queryFn: api.waQr,
+    retry: false,
+    // the gateway writes its state and pair code to a row with no event of its own: poll until open
+    refetchInterval: (q) =>
+      q.state.data?.transport === 'gateway' && q.state.data.state !== 'open' ? 4000 : false,
+  });
 /** Same 'integrations' root — a sidecar state event (channel.health) refreshes it. */
 export const useIgStatus = () =>
   useQuery({ queryKey: qk.igStatus(), queryFn: api.igStatus, retry: false });

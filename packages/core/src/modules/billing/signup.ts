@@ -186,9 +186,11 @@ export async function startSignupOtp(
   });
   if (limited) throw new HttpError(429, 'RATE_LIMITED', 'too many codes — try again later');
   try {
+    // on the gateway it is an outbox row: answering only once it went out keeps today's 503
     await notify.whatsapp(
       phone,
       `Seu código para criar a loja na Venduá: ${code}\n\nVale por ${CODE_TTL_MIN} minutos.`,
+      { purpose: 'otp', dedupeKey: `otp:signup:${phone}:${crypto.randomUUID()}`, waitMs: 8000 },
     );
   } catch (err) {
     billingLog.warn({ err }, 'signup otp delivery failed');

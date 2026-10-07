@@ -56,6 +56,22 @@ export async function withTenant<T>(
   }) as Promise<T>;
 }
 
+/**
+ * withTenant that also opens the control scope, for the one place that must commit a store's
+ * rows and a platform row atomically: the platform WhatsApp inbox consumer (Duá by WhatsApp),
+ * which marks the inbox row consumed in the transaction that dispatches the turn.
+ */
+export async function withTenantAndControl<T>(
+  sql: Sql,
+  tenantId: string,
+  fn: (tx: Sql) => Promise<T>,
+): Promise<T> {
+  return withTenant(sql, tenantId, async (tx) => {
+    await tx`select set_config('vendua.control', '1', true)`;
+    return fn(tx);
+  });
+}
+
 interface MigrationRow {
   name: string;
 }

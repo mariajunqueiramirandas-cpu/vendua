@@ -5,7 +5,7 @@ import { errorMessage } from '@/lib/query.ts';
 import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { ConfirmButton } from '@/components/common.tsx';
-import { fmtPhone, type WaState } from './providers.ts';
+import { fmtPhone, WA_GATEWAY_STATE, type WaState } from './providers.ts';
 
 /**
  * Pairing panel for an active baileys driver. `resetSignal` bumps whenever the
@@ -13,6 +13,81 @@ import { fmtPhone, type WaState } from './providers.ts';
  * old socket and must go.
  */
 export function WhatsAppPairing({
+  wa,
+  resetSignal,
+  testing,
+  onReconnect,
+  onLogout,
+  loggingOut,
+}: {
+  wa: WaState;
+  resetSignal: number;
+  testing: boolean;
+  onReconnect: () => void;
+  onLogout: () => void;
+  loggingOut: boolean;
+}) {
+  if (wa.transport === 'gateway')
+    return (
+      <GatewayPairing
+        wa={wa}
+        resetSignal={resetSignal}
+        onLogout={onLogout}
+        loggingOut={loggingOut}
+      />
+    );
+  return (
+    <SocketPairing
+      wa={wa}
+      resetSignal={resetSignal}
+      testing={testing}
+      onReconnect={onReconnect}
+      onLogout={onLogout}
+      loggingOut={loggingOut}
+    />
+  );
+}
+
+const foot = 'text-xs text-sidebar-muted';
+const panel = 'mt-3 flex flex-col gap-2.5 rounded-lg bg-sidebar p-3 text-sidebar-foreground';
+
+function Connected({
+  wa,
+  note,
+  onLogout,
+  loggingOut,
+}: {
+  wa: WaState;
+  note: string;
+  onLogout: () => void;
+  loggingOut: boolean;
+}) {
+  return (
+    <>
+      <div className="text-[11px] font-medium tracking-wide text-agent uppercase">conectado</div>
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span className="text-base font-medium tnum">
+          {wa.me?.phone ? fmtPhone(wa.me.phone) : 'número pareado'}
+        </span>
+        {wa.me?.name && <span className="text-sm text-sidebar-muted">{wa.me.name}</span>}
+      </div>
+      <p className={foot}>{note}</p>
+      <div>
+        <ConfirmButton
+          size="sm"
+          variant="destructive-outline"
+          confirm="desconectar mesmo?"
+          disabled={loggingOut}
+          onConfirm={onLogout}
+        >
+          desconectar número
+        </ConfirmButton>
+      </div>
+    </>
+  );
+}
+
+function SocketPairing({
   wa,
   resetSignal,
   testing,
@@ -76,37 +151,15 @@ export function WhatsAppPairing({
     }
   };
 
-  const foot = 'text-xs text-sidebar-muted';
-
   return (
-    <div className="mt-3 flex flex-col gap-2.5 rounded-lg bg-sidebar p-3 text-sidebar-foreground">
+    <div className={panel}>
       {wa.status === 'open' ? (
-        <>
-          <div className="text-[11px] font-medium tracking-wide text-agent uppercase">
-            conectado
-          </div>
-          <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="text-base font-medium tnum">
-              {wa.me?.phone ? fmtPhone(wa.me.phone) : 'número pareado'}
-            </span>
-            {wa.me?.name && <span className="text-sm text-sidebar-muted">{wa.me.name}</span>}
-          </div>
-          <p className={foot}>
-            o agente já envia e recebe por esse número — desconectar libera o aparelho e emite um QR
-            novo.
-          </p>
-          <div>
-            <ConfirmButton
-              size="sm"
-              variant="destructive-outline"
-              confirm="desconectar mesmo?"
-              disabled={loggingOut}
-              onConfirm={onLogout}
-            >
-              desconectar número
-            </ConfirmButton>
-          </div>
-        </>
+        <Connected
+          wa={wa}
+          note="o agente já envia e recebe por esse número — desconectar libera o aparelho e emite um QR novo."
+          onLogout={onLogout}
+          loggingOut={loggingOut}
+        />
       ) : wa.status === 'off' ? (
         <>
           <div className="text-[11px] font-medium tracking-wide text-warning uppercase">
@@ -174,6 +227,143 @@ export function WhatsAppPairing({
           </div>
           <p className={foot}>QR e código expiram rápido — esta tela atualiza sozinha</p>
         </>
+      )}
+    </div>
+  );
+}
+
+const GATEWAY_NOTE: Partial<Record<NonNullable<WaState['state']>, string>> = {
+  connecting: 'o gateway está conectando — se o número foi desvinculado, pareie de novo.',
+  logged_out: 'o aparelho desvinculou o número — gere um código para parear de novo.',
+  banned: 'o whatsapp bloqueou este número — pareie outro número para voltar a enviar.',
+  error: 'o gateway não conseguiu conectar e tenta de novo sozinho — se continuar, pareie de novo.',
+};
+
+const fmtCode = (c: string) => (c.length === 8 ? `${c.slice(0, 4)}-${c.slice(4)}` : c);
+const fmtClock = (iso: string) =>
+  new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+/**
+ * The gateway's session row (dua-no-whatsapp §4): pair code only, never a QR. Asking for a code
+ * sets the row's pair phone; the gateway writes the code back and the GET polls it in.
+ */
+function GatewayPairing({
+  wa,
+  resetSignal,
+  onLogout,
+  loggingOut,
+}: {
+  wa: WaState;
+  resetSignal: number;
+  onLogout: () => void;
+  loggingOut: boolean;
+}) {
+  const [pairPhone, setPairPhone] = useState('');
+  // the POST's answer, shown until the next GET carries the row's own code
+  const [issued, setIssued] = useState<string | null>(null);
+  const [pairErr, setPairErr] = useState<string | null>(null);
+  const [pairBusy, setPairBusy] = useState(false);
+  const state = wa.state ?? 'off';
+
+  useEffect(() => {
+    setIssued(null);
+    setPairErr(null);
+  }, [resetSignal]);
+
+  useEffect(() => {
+    if (wa.pairCode || state === 'open' || state === 'banned') setIssued(null);
+  }, [wa.pairCode, state]);
+
+  const runPair = async () => {
+    setPairBusy(true);
+    setPairErr(null);
+    try {
+      setIssued((await api.waPairCode(pairPhone)).code);
+    } catch (e) {
+      setPairErr(errorMessage(e));
+    } finally {
+      setPairBusy(false);
+    }
+  };
+
+  if (state === 'open')
+    return (
+      <div className={panel}>
+        <Connected
+          wa={wa}
+          note="o agente, os códigos de acesso e o duá saem por esse número — desconectar libera o aparelho; para voltar, gere um código novo."
+          onLogout={onLogout}
+          loggingOut={loggingOut}
+        />
+      </div>
+    );
+
+  const code = wa.pairCode ?? issued;
+  const bad = state === 'logged_out' || state === 'banned' || state === 'error';
+  return (
+    <div className={panel}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span
+          className={`text-[11px] font-medium tracking-wide uppercase ${bad ? 'text-warning' : 'text-sidebar-muted'}`}
+        >
+          {WA_GATEWAY_STATE[state] ?? state}
+        </span>
+        {wa.detail && (
+          <code className="rounded bg-sidebar-accent px-1.5 py-px font-mono text-[11px] text-sidebar-muted">
+            {wa.detail}
+          </code>
+        )}
+      </div>
+      {GATEWAY_NOTE[state] && <p className={foot}>{GATEWAY_NOTE[state]}</p>}
+      <div className="text-sm font-medium">
+        parear — whatsapp → aparelhos conectados → conectar com número de telefone
+      </div>
+      <p className={foot}>o número precisa ser o da conta whatsapp no aparelho que vai parear:</p>
+      {code && (
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <code className="rounded-md bg-sidebar-accent px-2.5 py-1 font-mono text-lg tracking-[0.2em] text-agent">
+            {fmtCode(code)}
+          </code>
+          {wa.pairCode && wa.pairCodeExpiresAt && (
+            <span className={`${foot} tnum`}>vale até {fmtClock(wa.pairCodeExpiresAt)}</span>
+          )}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Input
+          inputMode="tel"
+          placeholder="DDI+DDD+número — 5511…"
+          value={pairPhone}
+          onChange={(e) => {
+            setPairPhone(e.target.value);
+            setIssued(null);
+          }}
+          className="border-sidebar-border bg-sidebar-accent text-sidebar-foreground placeholder:text-sidebar-muted"
+        />
+        <Button
+          variant="agent"
+          disabled={pairBusy}
+          onClick={() => void runPair()}
+          className="shrink-0"
+        >
+          {pairBusy ? <Loader2 className="animate-spin" /> : <Smartphone />}
+          {pairBusy ? 'gerando…' : code ? 'novo código' : 'gerar código'}
+        </Button>
+      </div>
+      {pairErr && <p className="text-xs text-destructive">{pairErr}</p>}
+      <p className={foot}>o código expira rápido — esta tela atualiza sozinha</p>
+      {state !== 'off' && (
+        <div>
+          <ConfirmButton
+            size="sm"
+            variant="destructive-outline"
+            confirm="desconectar mesmo?"
+            disabled={loggingOut}
+            onConfirm={onLogout}
+          >
+            desconectar número
+          </ConfirmButton>
+        </div>
       )}
     </div>
   );

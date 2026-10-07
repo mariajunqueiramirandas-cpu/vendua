@@ -1,10 +1,10 @@
 import { createHash, createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { sendWhatsApp } from '../agent/channels/whatsapp.ts';
 import { getIntegration } from '../modules/integrations.ts';
 import { normalizePhone } from '../modules/customer.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
+import { sendPlatformText } from '../platform-whatsapp/send.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE, windowCounter } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
@@ -113,7 +113,12 @@ export function whatsappOtpSender(sql: Sql): OtpSender {
       return;
     }
     if (!wa) throw new HttpError(503, 'OTP_UNAVAILABLE', 'code delivery is unavailable right now');
-    await sendWhatsApp(sql, wa, `55${phone}`, text);
+    await sendPlatformText(sql, wa, {
+      to: `55${phone}`,
+      text,
+      purpose: 'otp',
+      dedupeKey: `otp:${phone}:${crypto.randomUUID()}`,
+    });
   };
 }
 

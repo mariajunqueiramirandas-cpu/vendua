@@ -215,6 +215,8 @@ export interface Session {
       /** WhatsApp when an order waits past the accept target and no alert reached a device */
       whatsappAlerts?: boolean;
       emailInvoices?: boolean;
+      /** Duá pelo WhatsApp: opt-in, absent = off */
+      duaWhatsapp?: boolean;
       theme?: string;
       dismissedHints?: string[];
     };
@@ -227,6 +229,10 @@ export interface Session {
   plan: { id: string; name: string; features: PlanFeatures };
   /** the nav: Vendedor in the phone bar once on, its "precisa de você" count as the badge */
   vendedor?: { enabled: boolean; name: string; waiting: number };
+  /** Perfil's "Duá pelo WhatsApp": null unless owner/manager on a plan with the copilot.
+   *  `number` is Venduá's WhatsApp in international digits; `allowed` is false for a manager
+   *  whose owner turned it off for managers */
+  duaWhatsapp?: { number: string | null; allowed: boolean } | null;
 }
 
 export interface Order {
@@ -1876,6 +1882,10 @@ export interface CopilotMessage {
   author: 'merchant' | 'dua';
   text: string;
   at: string;
+  /** the door it came through; missing = 'admin' */
+  channel?: 'admin' | 'whatsapp';
+  /** a WhatsApp voice note (the text is its transcript) */
+  voice?: boolean;
 }
 
 export type CopilotItem =
@@ -2468,7 +2478,9 @@ export const api = {
   reports: (p: { period: string } | { from: string; to: string }) =>
     get<Reports>(`/reports?${new URLSearchParams(p)}`),
 
-  team: () => get<{ members: Member[] }>('/team'),
+  team: () => get<{ members: Member[]; duaWhatsappManagers?: boolean }>('/team'),
+  teamSettings: (p: { duaWhatsappManagers: boolean }) =>
+    send<{ duaWhatsappManagers: boolean }>('PATCH', '/team/settings', p),
   addMember: (m: { name: string; phone: string; role: Role; email?: string | null }) =>
     send<{ members: Member[]; invite: InviteResult; signInUrl: string }>('POST', '/team', m),
   resendInvite: (id: string) =>

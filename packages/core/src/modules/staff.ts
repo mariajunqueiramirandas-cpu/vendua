@@ -1,7 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { sendEmail } from '../agent/channels/email.ts';
-import { sendWhatsApp } from '../agent/channels/whatsapp.ts';
+import { sendPlatformText } from '../platform-whatsapp/send.ts';
 import { controlTx } from './control.ts';
 import {
   getIntegrationTx,
@@ -108,7 +108,14 @@ export async function notifyStaff(
     if (m.whatsapp) {
       out.push(
         wa
-          ? attempt('whatsapp', m.whatsapp, () => sendWhatsApp(sql, wa, m.whatsapp, text))
+          ? attempt('whatsapp', m.whatsapp, () =>
+              sendPlatformText(sql, wa, {
+                to: m.whatsapp,
+                text,
+                purpose: 'notice',
+                ...(notice.idemKey ? { dedupeKey: `notice:${notice.idemKey}:${m.whatsapp}` } : {}),
+              }),
+            )
           : Promise.resolve({
               name: m.name,
               channel: 'whatsapp',

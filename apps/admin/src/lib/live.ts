@@ -48,7 +48,8 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   catalog: [['catalog'], qk.home, qk.share, qk.activity],
   store: [qk.store, qk.home, qk.payments, qk.activity],
   marketing: [qk.marketing, qk.home, qk.activity],
-  team: [qk.team, qk.activity],
+  // the session carries Perfil's "Duá pelo WhatsApp", which the owner's switch in Equipe gates
+  team: [qk.team, qk.activity, qk.session],
   appearance: [qk.appearance, qk.activity],
   // storefront operations changed elsewhere (prep time, demand) show in Loja too
   surfaces: [qk.store],

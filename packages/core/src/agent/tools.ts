@@ -992,7 +992,7 @@ export async function executeTool(
           score !== null &&
           score >= (g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore)
         ) {
-          if ((await whatsappRegistered(input.whatsapp).catch(() => null)) === true) {
+          if ((await whatsappRegistered(input.whatsapp, sql).catch(() => null)) === true) {
             whatsappDerived = false;
             input.whatsapp_verified = true;
           }

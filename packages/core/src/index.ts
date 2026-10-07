@@ -18,6 +18,10 @@ import {
   onLidMapping,
 } from './agent/channels/whatsapp.ts';
 import { adoptLidMappings } from './modules/threads.ts';
+import { socketMessageToInbox, startPlatformInbox } from './platform-whatsapp/inbox.ts';
+import { startCrmSettle } from './platform-whatsapp/crm-settle.ts';
+import { startSocketPump } from './platform-whatsapp/socket-pump.ts';
+import { platformTransport } from './platform-whatsapp/transport.ts';
 import { startInstagramReconcile } from './agent/channels/instagram.ts';
 import { getIntegration } from './modules/integrations.ts';
 import { setBookingSecret } from './modules/meetings.ts';
@@ -162,6 +166,15 @@ const stopVendedor = startVendedorWorker(jobsSql, {
 // ingestInbound caps a body at 8000 chars: a longer WhatsApp message is cut, not dropped
 const waBody = (text: string) => (text.length > 8000 ? text.slice(0, 8000) : text);
 onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
+  // a merchant phone is Duá's (docs/features/dua-no-whatsapp.md), everyone else the CRM's
+  const m = {
+    jid,
+    text,
+    providerId,
+    ...(pushName ? { pushName } : {}),
+    ...(altJid ? { altJid } : {}),
+  };
+  if (await socketMessageToInbox(jobsSql, m)) return;
   await ingestInbound(jobsSql, {
     channel: 'whatsapp',
     from: jid,
@@ -192,9 +205,22 @@ onLidMapping(async (pairs) => {
     log.child({ mod: 'whatsapp' }).info({ count: ids.length }, 'lid leads re-keyed to phone');
   }
 });
-void getIntegration(jobsSql, 'whatsapp')
-  .then((i) => ensureSocket(jobsSql, i))
-  .catch((e) => log.child({ mod: 'whatsapp' }).error({ err: e }, 'socket start failed'));
+// Venduá's number: Core's socket until the cutover, then a platform session on the wa-gateway
+// (WA_PLATFORM_TRANSPORT). Either way its inbox is routed here, and Duá's replies go out its outbox.
+const waTransport = platformTransport();
+if (waTransport === 'socket')
+  void getIntegration(jobsSql, 'whatsapp')
+    .then((i) => ensureSocket(jobsSql, i))
+    .catch((e) => log.child({ mod: 'whatsapp' }).error({ err: e }, 'socket start failed'));
+const platformInbox = startPlatformInbox({
+  sql: jobsSql,
+  jobsSql,
+  media: mediaProviders(jobsSql),
+  origin: adminOrigin,
+});
+const socketPump = waTransport === 'socket' ? startSocketPump(jobsSql) : null;
+// CRM sends finish (lead state, cadence) when the gateway reports them sent
+const stopCrmSettle = waTransport === 'gateway' ? startCrmSettle(jobsSql) : null;
 // Instagram's live session sits in the ig-sidecar; this re-pushes the stored one after a sidecar restart.
 const stopInstagramReconcile = startInstagramReconcile(jobsSql);
 
@@ -253,6 +279,9 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     stopWebAnalyticsJobs();
     stopStoreWhatsappWatch();
     stopInstagramReconcile();
+    void platformInbox.stop();
+    void socketPump?.stop();
+    void stopCrmSettle?.();
     readCache.stop();
     void stopPushNotifier.then((stop) => stop()).catch(() => undefined);
     // event streams never finish on their own: requests get a few seconds, then the rest close
