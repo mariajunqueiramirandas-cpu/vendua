@@ -1,13 +1,11 @@
 import {
   ArrowCounterClockwise,
-  Bag,
   CalendarBlank,
   Check,
   CookingPot,
   DotsThree,
   HourglassMedium,
   Fire,
-  Moped,
   NotePencil,
   Prohibit,
   WarningOctagon,
@@ -15,6 +13,7 @@ import {
 import { memo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { KitchenItem, KitchenTicket } from '../../lib/api.ts';
 import { cn } from '../../ui/cn.ts';
+import { modeOf } from '../../ui/orderMode.ts';
 import {
   actionFor,
   allergySegments,
@@ -133,7 +132,8 @@ export const Ticket = memo(function Ticket(p: TicketProps) {
   const allergy = notesAllergy || t.items.some((i) => mentionsAllergy(i.note));
   const dimmed = !!p.focusKey && !t.items.some((i) => itemMatches(i, p.focusKey!));
   const waitingOn = [...new Set(others.filter((i) => !i.doneAt).map((i) => i.stationId))];
-  const ModeIcon = t.mode === 'delivery' ? Moped : Bag;
+  const mode = modeOf(t);
+  const ModeIcon = mode.Icon;
   const clockFace = time.urgency === 'scheduled' ? 'hoje' : stopwatch(time.elapsed);
   const sub =
     time.urgency === 'scheduled'
@@ -186,7 +186,7 @@ export const Ticket = memo(function Ticket(p: TicketProps) {
             <p className="t-label mt-1.5 flex min-w-0 items-center gap-1.5 text-muted">
               <ModeIcon weight="bold" className="size-4 shrink-0" aria-hidden />
               <span className="truncate">
-                {t.mode === 'delivery' ? 'Entrega' : 'Retirada'}
+                {mode.label}
                 {t.name ? ` · ${t.name}` : ''}
               </span>
             </p>

@@ -1,5 +1,6 @@
 import {
   ArrowRight,
+  CashRegister,
   ChatsCircle,
   CheckCircle,
   CookingPot,
@@ -26,7 +27,7 @@ import { cheapestWith, perMonth, PlanBadge } from './PlanCard.tsx';
 // A feature the store's plan doesn't open: the screen stays reachable and becomes the upsell.
 // Which plan has it comes from the public plan list (cheapest first), never from a hardcoded id.
 
-type Locked = Extract<PlanFeature, 'kds' | 'printing' | 'loyalty' | 'vendedor' | 'copilot'>;
+type Locked = Extract<PlanFeature, 'kds' | 'printing' | 'loyalty' | 'vendedor' | 'copilot' | 'pdv'>;
 
 // `g`: the article, so the sentences agree ("liberada" / "liberado")
 const COPY: Record<Locked, { name: string; g: 'a' | 'o'; Icon: Icon; points: string[] }> = {
@@ -68,6 +69,16 @@ const COPY: Record<Locked, { name: string; g: 'a' | 'o'; Icon: Icon; points: str
       'Vende por você no WhatsApp da loja e no site, com IA',
       'Monta o pedido, manda o Pix e chama você quando precisa',
       'Você ensina, testa e escolhe quando ele responde',
+    ],
+  },
+  pdv: {
+    name: 'O PDV',
+    g: 'o',
+    Icon: CashRegister,
+    points: [
+      'Venda no balcão com o mesmo cardápio da loja online',
+      'Comandas nas mesas, com taxa de serviço e conta dividida',
+      'O caixa do dia: abertura, sangria e fechamento conferido',
     ],
   },
   copilot: {

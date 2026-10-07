@@ -79,6 +79,18 @@ export interface StoreProfile {
   /** Kernel 1.21 — the store sends one WhatsApp reminder about a bag left full, to a shopper who
    *  ticked it at checkout (`api.cartReminder`). Absent = false. */
   cartReminder?: boolean;
+  /** Kernel 1.22 — the store takes orders from its tables' QR codes (ADR 0036): its plan and its
+   *  switch. Absent = false. */
+  dineIn?: { enabled: boolean };
+}
+
+/** Kernel 1.22 — the table a QR code names (`GET /storefront/v1/table`). `ordering: false` =
+ *  the menu can be browsed but checkout refuses: `off` (the store turned QR orders off),
+ *  `closed` / `paused` (the store's status). New reasons may appear. */
+export interface TableInfo {
+  label: string;
+  ordering: boolean;
+  reason: 'off' | 'closed' | 'paused' | null;
 }
 
 /** Kernel 1.18 — one message of the storefront chat. `core` = a card Core wrote (a summary, a
@@ -427,7 +439,8 @@ export interface Cart {
   totals: CartTotals;
   delivery:
     | ({
-        mode: 'pickup' | 'delivery';
+        /** Kernel 1.22 adds 'dine_in' (an order from a table's QR code: no fee, no minimum) */
+        mode: 'pickup' | 'delivery' | 'dine_in';
         neighborhood?: string;
         zoneId?: string | null;
         zoneName?: string | null;
@@ -444,11 +457,14 @@ export interface Cart {
 }
 
 export interface CheckoutInput {
-  customer: { name: string; phone: string };
-  delivery: { mode: 'pickup' | 'delivery' } & DeliveryAddress;
-  /** Kernel 1.7 adds 'card_online' (Mercado Pago's hosted checkout), 1.11 'meal_voucher' */
+  /** Kernel 1.22: `phone` is left out for an order at a table (only the name is asked) */
+  customer: { name: string; phone?: string };
+  /** Kernel 1.22 — `{ mode: 'dine_in', table: <the QR's token> }`: an order at a table */
+  delivery: { mode: 'pickup' | 'delivery' | 'dine_in'; table?: string } & DeliveryAddress;
+  /** Kernel 1.7 adds 'card_online' (Mercado Pago's hosted checkout), 1.11 'meal_voucher',
+   *  1.22 'tab' (at a table: paid with the table's comanda) */
   payment: {
-    method: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher';
+    method: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher' | 'tab';
     /** Kernel 1.17 — cash only: the note the shopper pays with ("troco para R$ 100,00"),
      *  integer cents. Core answers `INVALID_CHANGE` (`details.minCents`) below the total. */
     changeForCents?: number;
@@ -545,7 +561,8 @@ export interface OrderSummary {
   state: string;
   placedAt: string;
   scheduledFor: string | null;
-  mode: 'pickup' | 'delivery';
+  /** Kernel 1.22 adds 'dine_in' */
+  mode: 'pickup' | 'delivery' | 'dine_in';
   totalCents: number;
   items: { name: string; qty: number }[];
 }
@@ -566,7 +583,10 @@ export interface Order {
   state: string;
   customer: { name: string; phone: string };
   delivery: {
-    mode: 'pickup' | 'delivery';
+    /** Kernel 1.22 adds 'dine_in' (placed → … → ready → delivered, "servido") */
+    mode: 'pickup' | 'delivery' | 'dine_in';
+    /** Kernel 1.22 — dine_in: the table's label ("Mesa 5"); null at the counter */
+    table?: string | null;
     etaMin: number | null;
     etaMax: number | null;
     address: unknown;
@@ -718,7 +738,10 @@ export interface OrderTracking {
   state: string;
   storeName: string;
   delivery: {
-    mode: 'pickup' | 'delivery';
+    /** Kernel 1.22 adds 'dine_in' */
+    mode: 'pickup' | 'delivery' | 'dine_in';
+    /** Kernel 1.22 — dine_in: the table's label */
+    table?: string | null;
     promisedFrom: string | null;
     promisedTo: string | null;
     etaMin: number | null;
@@ -1159,6 +1182,10 @@ export function createApi(baseUrl = '') {
     },
 
     store: () => apiFetch<StoreProfile>(sf('/store')),
+    /** Kernel 1.22 — what a table's QR token names (404 TABLE_NOT_FOUND: bad, replaced or
+     *  removed). `VenduaProvider` reads `?mesa=` itself; see `useTable` */
+    table: (token: string) =>
+      apiFetch<{ table: TableInfo }>(sf(`/table?t=${encodeURIComponent(token.slice(0, 400))}`)),
     catalog: () =>
       apiFetch<{ categories: CatalogCategory[]; nextChangeAt?: string }>(sf('/catalog')),
     product: (slug: string) => apiFetch<{ product: ProductDetail }>(sf(`/products/${slug}`)),
@@ -1359,7 +1386,8 @@ export function createApi(baseUrl = '') {
         method: 'DELETE',
         headers: { ...auth(), 'idempotency-key': idemKey() },
       }).then((r) => r.cart),
-    setDelivery: (delivery: { mode: 'pickup' | 'delivery' } & DeliveryAddress) => {
+    /** Kernel 1.22: `{ mode: 'dine_in' }` at a table (no fee, no minimum in the totals) */
+    setDelivery: (delivery: { mode: 'pickup' | 'delivery' | 'dine_in' } & DeliveryAddress) => {
       // Bind the token at call time — a queued write must target the cart it was
       // issued for, not a session rotated by a completed checkout.
       const bound = current();
@@ -1380,20 +1408,22 @@ export function createApi(baseUrl = '') {
       const sent = current();
       const r = await apiFetch<{
         order: Order;
-        customerToken?: string;
-        customerTokenExpiresAt?: string;
+        /** null for a table's order (no phone): nothing to keep */
+        customerToken?: string | null;
+        customerTokenExpiresAt?: string | null;
       }>(co('/checkout'), {
         method: 'POST',
         // a verified token for this phone lets Core honour its personal (loyalty) coupons
         headers: {
           ...(sent ? { authorization: `Bearer ${sent}` } : {}),
-          ...customerHeader(input.customer.phone),
+          // a table order carries no phone: no customer token rides with it
+          ...(input.customer.phone ? customerHeader(input.customer.phone) : {}),
           'idempotency-key': idemKey(),
         },
         body: JSON.stringify(input),
       });
       // this device placed an order for the phone — it may read the phone's history
-      if (r.customerToken && r.customerTokenExpiresAt)
+      if (r.customerToken && r.customerTokenExpiresAt && input.customer.phone)
         rememberCustomer(input.customer.phone, {
           token: r.customerToken,
           expiresAt: r.customerTokenExpiresAt,
@@ -1660,6 +1690,13 @@ export const ERROR_CODES = [
   // Kernel 1.21 — the bag reminder: the store doesn't offer it; the phone isn't one
   'REMINDER_OFF',
   'INVALID_PHONE',
+  // Kernel 1.22 — ordering from a table's QR code: the token is bad or replaced; the store turned
+  // QR orders off; five of this table's orders still wait for the staff; the comanda changed
+  // under the order (try again)
+  'TABLE_NOT_FOUND',
+  'TABLE_ORDERS_OFF',
+  'TABLE_ORDERS_PENDING',
+  'TABLE_BUSY',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

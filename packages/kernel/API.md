@@ -69,7 +69,8 @@ Since 1.14, hooks that bind the rules (below) to the store's live data: `useCard
 `startsAt`/`endsAt` window and `blocking` follows `isBlocking`.
 
 Since 1.18, `useStoreChat` — the store's assistant on the site (below, "The store's assistant on
-the site").
+the site"). Since 1.22, `useTable` — the table whose QR code opened the store (below, "Ordering
+at the table").
 
 Hooks never compute prices or eligibility; every read exposes `refetch`. Since 1.6 the
 reads behind `useCatalog`, `useProduct`, `useStore`, `useDeliveryZones` and `useNotices` also refresh by
@@ -495,6 +496,50 @@ dietary? })` keep only products stating every tag in `dietary`, and a search mat
   offline. The bag and order pages load with their shape (`[data-vendua="cart-skeleton"]`,
   `[data-vendua="order-skeleton"]`) instead of a blank box.
 
+### Ordering at the table (Kernel 1.22)
+
+Additive — no storefront edit (ADR 0036). Checkout stays the Kernel's; store code only reads.
+
+- **The QR code.** A table's QR opens the store with `?mesa=<token>`. `VenduaProvider` reads it
+  once, asks Core (`GET /storefront/v1/table?t=` → `{ table: TableInfo }`), keeps the table for
+  the browser session (sessionStorage `vendua.table`; a new visit is not at the table), strips
+  the param and says "Você está na Mesa 5" — or why the table can't order now. A token Core
+  doesn't know (404 `TABLE_NOT_FOUND`: replaced or removed) is dropped with a gentle message; a
+  table kept earlier is asked again quietly on the next load. Api client: `table(token)`.
+- **`useTable()`** → `{ table: TableInfo | null, leave() }`. `TableInfo`: `label` (the store's
+  name for it, "Mesa 5"), `ordering` (false = the menu can be browsed, checkout refuses) and
+  `reason` (`off` | `closed` | `paused` | null; new reasons may appear). `leave()` is "não estou
+  na mesa". The token never reaches store code.
+- **`StoreProfile.dineIn`** (optional) — `{ enabled }`: the store takes table orders (its plan
+  and its switch). Absent = no.
+- **Checkout at a table** (a table set and `dineIn.enabled`): "Seus dados" asks only the name
+  (`checkout.AddressForm` gains optional `nameOnly`; no phone, no bag reminder); the delivery
+  step ("Mesa") offers one `DeliveryOption` with the new mode `dine_in` ("Na Mesa 5", already
+  chosen; the default shows it under "Seu pedido vai para") and "Não estou na mesa"
+  (`[data-vendua="table-leave"]`), and syncs `setDelivery({ mode: 'dine_in' })` — no fee, no
+  minimum, no address or pin; payment offers `tab` ("Pagar na mesa", on the table's comanda) and
+  the store's online methods only (Pix and card when Mercado Pago takes them now) — never cash,
+  card on delivery or meal voucher, so no change field — and no encomenda date. The order goes
+  as `delivery: { mode: 'dine_in', table: <token> }` with `customer: { name }`. `ERROR_CODES`
+  gain `TABLE_NOT_FOUND` (the table is dropped and checkout starts over), `TABLE_ORDERS_OFF`,
+  `TABLE_ORDERS_PENDING` (five of the table's orders still wait for the staff) and
+  `TABLE_BUSY` (409: the table's comanda changed in that instant — try again), each in
+  `ERROR_COPY`; `STORE_CLOSED` / `STORE_PAUSED` read as the table's. With a table kept but QR
+  orders off, checkout is the usual one with a note (`[data-vendua="table-note"]`); the sacola
+  hides "Calcular entrega" at a table. Without a table nothing changes.
+- **Types.** `Cart.delivery.mode`, `CheckoutInput.delivery.mode`, `Order.delivery.mode`,
+  `OrderTracking.delivery.mode`, `OrderSummary.mode`, `DeliveryOption.mode` and the
+  `setDelivery` argument gain `'dine_in'`; `Order.delivery.table` and
+  `OrderTracking.delivery.table` (optional, the table's label); `CheckoutInput.payment.method`
+  and `PaymentMethod.id` gain `'tab'`; `CheckoutInput.customer.phone` is optional (left out at a
+  table). An override switching on `DeliveryOption['mode']` or `PaymentMethod['id']` meets the
+  new values only at a store taking table orders.
+- **The order page.** A `dine_in` order walks placed → confirmed → preparing → ready →
+  delivered and reads "Servido" at the end (`orderStepLabel`, the new rule `orderStateLabel`;
+  `order.Timeline` gains optional `mode`); the default status and tracking pages show the table
+  (`[data-part="table"]`, "Na mesa · Mesa 5"), and `tab` reads "Pagar na mesa"
+  (`PAYMENT_METHOD_LABEL.tab`).
+
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's.
@@ -630,7 +675,8 @@ separate function a store may skip for its own voice. Additive — no storefront
 - `ORDER_STATE_LABEL` / `TERMINAL_ORDER_STATES` — order states in words; the ones that end it.
 - `orderPath` `(mode)` — `placed → confirmed → preparing → ready → [out_for_delivery →] delivered`.
 - `orderProgress` `(order)` — `{ steps, current, terminal, outcome }` along the order's path.
-- `orderStepLabel` `(state, mode)` — a step's short name (`Preparo`, `A caminho`, `Retirado`).
+- `orderStepLabel` `(state, mode)` — a step's short name (`Preparo`, `A caminho`, `Retirado`; 1.22: `Servido` for `dine_in`).
+- `orderStateLabel` `(state, mode?)` — 1.22: `ORDER_STATE_LABEL` for the order's mode (a `dine_in` order `delivered` reads `Servido`).
 - `PAYMENT_METHOD_LABEL` (alias `PAYMENT_LABEL`), `PAYMENT_METHOD_ORDER`, `PAYMENT_METHOD_DETAIL` — methods in the shopper's words, in checkout order.
 - `PAYMENT_STATUS_LABEL` — an online payment's status in words.
 - `REFUNDED_PAYMENT_STATUSES` — the payment statuses where money went back (`refunded`, `partially_refunded`).
@@ -831,7 +877,7 @@ an override, and K07 allows `@vendua/kernel/rules` in store code.
 `CartCoupon`, `CartSchedule`, `CouponCheck`, `DeliveryAddress`, `CepResult`, `ImportLine`,
 `ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo` (Kernel 1.7: `PaymentNext`;
 Kernel 1.12: `PaymentAdjustment`, `ModifierPricingRule`; Kernel 1.15: `DistancePricing`,
-`GeoPoint`, `LatLng`, `MapTiles`; Kernel 1.18: `StoreChat`, `StoreChatMessage`; Kernel 1.21: `DietaryBadge`, from the rules); every new DTO field
+`GeoPoint`, `LatLng`, `MapTiles`; Kernel 1.18: `StoreChat`, `StoreChatMessage`; Kernel 1.21: `DietaryBadge`, from the rules; Kernel 1.22: `TableInfo`); every new DTO field
 is optional so a Kernel 1.2 storefront still runs against an older Core. Slot prop types: `SlotProps`, `CheckoutStep`,
 `CustomerDraft`, `DeliveryOption`, `PaymentMethod`, `ModifierGroup`, `PaymentStatusKind` (1.7).
 

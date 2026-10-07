@@ -81,6 +81,7 @@ import {
   TERMINAL_STATES,
 } from './modules/orders.ts';
 import { placeOrderTx } from './modules/place-order.ts';
+import { readTableToken, tableForToken } from './modules/pdv/qr.ts';
 import { parseSelections } from './modules/combos.ts';
 import {
   mintCustomerToken,
@@ -344,7 +345,8 @@ const loadZones = loadZoneRows;
 /** The store's Pix for the storefront page — key, beneficiary and an amount-less copia e cola. */
 /** optional `paymentMethod` of the cart/quote previews */
 function paymentMethodParam(v: unknown): string | null {
-  if (v === undefined || v === null || v === '') return null;
+  // 'tab' (paid at the table, ADR 0036) has no discount or surcharge to preview
+  if (v === undefined || v === null || v === '' || v === 'tab') return null;
   if (!isPaymentMethod(v))
     throw new HttpError(422, 'INVALID_PAYMENT', 'paymentMethod is not a payment method', {
       field: 'paymentMethod',
@@ -626,23 +628,52 @@ export function createApp({
   const storefront = new Hono<{ Variables: { tenant: Tenant } }>();
   storefront.use('*', tenantMiddleware(resolver, { trustForwardedHost: trustProxy }));
 
+  // what a table's QR names, and whether it takes orders now (ADR 0036)
+  storefront.get('/table', async (c) => {
+    const tenant = c.get('tenant');
+    const token = (c.req.query('t') ?? '').slice(0, 200);
+    if (!readTableToken(sessionSecret, tenant.id, token))
+      throw new HttpError(404, 'TABLE_NOT_FOUND', 'this table QR is not valid anymore');
+    const out = await withTenant(sql, tenant.id, async (tx) => {
+      const [table, settings, plan] = await Promise.all([
+        tableForToken(tx, tenant.id, sessionSecret, token),
+        loadSettings(tx, tenant.id),
+        planHas(tx, tenant.id, 'pdv'),
+      ]);
+      const status = currentStatus(settings, new Date()).status;
+      const reason =
+        !plan || !(settings?.pdv_qr_orders ?? true)
+          ? ('off' as const)
+          : status === 'paused' || status === 'closed'
+            ? status
+            : null;
+      return { table: { label: table.label, ordering: reason === null, reason } };
+    });
+    c.header('cache-control', 'no-store');
+    return c.json(out);
+  });
+
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
-    const { settings, online, publicUrl, loyaltyOn, chat, cartReminder } = await cache.read(
+    const { settings, online, publicUrl, loyaltyOn, chat, cartReminder, dineIn } = await cache.read(
       tenant.id,
       'store',
       () =>
         withTenant(sql, tenant.id, async (tx) => {
-          const [settings, conn, publicUrl, loyaltyPlan, chat, cartReminder] = await Promise.all([
-            loadSettings(tx, tenant.id),
-            loadConnection(tx, tenant.id),
-            storeOrigin(tx, tenant, publicStoreDomain),
-            planHas(tx, tenant.id, 'loyalty'),
-            webChatProfile(tx, tenant.id),
-            cartReminderOffered(tx, tenant.id),
-          ]);
+          const [settings, conn, publicUrl, loyaltyPlan, chat, cartReminder, pdvPlan] =
+            await Promise.all([
+              loadSettings(tx, tenant.id),
+              loadConnection(tx, tenant.id),
+              storeOrigin(tx, tenant, publicStoreDomain),
+              planHas(tx, tenant.id, 'loyalty'),
+              webChatProfile(tx, tenant.id),
+              cartReminderOffered(tx, tenant.id),
+              planHas(tx, tenant.id, 'pdv'),
+            ]);
           return {
             settings,
+            // orders from the tables' QR codes (ADR 0036)
+            dineIn: pdvPlan && (settings?.pdv_qr_orders ?? true),
             online: storePaymentsPublic(
               conn,
               provider,
@@ -683,6 +714,7 @@ export function createApp({
       prepTimeMinutes: settings?.prep_time_minutes ?? 30,
       minOrderCents: settings?.min_order_cents ?? 0,
       pickupEnabled: settings?.pickup_enabled ?? true,
+      dineIn: { enabled: dineIn },
       deliveryEnabled: settings?.delivery_enabled ?? true,
       // ADR 0024: on only with the store's own pin — without it every address prices by zone
       distancePricing: (() => {
@@ -1131,11 +1163,19 @@ export function createApp({
         tenant.id,
         header ? verifyCustomerToken(sessionSecret, tenant.id, header) : null,
       );
+      // a table's comanda is locked ahead of checkout's own locks, as the PDV locks it (ADR 0036)
+      const table =
+        body.delivery.mode === 'dine_in'
+          ? await tableForToken(tx, tenant.id, sessionSecret, body.delivery.table, {
+              lockTab: true,
+            })
+          : null;
       let order: string;
       try {
         order = await placeOrderTx(tx, tenant.id, cartId, body, new Date(), provider, {
           provenPhone: known?.proven ? known.phone : null,
           route,
+          table,
         });
       } catch (err) {
         // the repriced lines must commit with the refusal (a thrown error rolls them back)
@@ -1149,7 +1189,13 @@ export function createApp({
       const view = await loadOrderView(tx, tenant.id, order, cartId);
       // Typing a phone proves nothing: the new token sees only this order until it is
       // delivered. A proven token for the same phone keeps its (delivered) anchor.
-      const phone = normalizePhone(body.customer.phone);
+      const phone = body.customer.phone ? normalizePhone(body.customer.phone) : '';
+      // a table order asks no phone: nothing to remember the customer by
+      if (!phone)
+        return {
+          status: 201,
+          body: { order: view, customerToken: null, customerTokenExpiresAt: null },
+        };
       const customer = mintCustomerToken(
         sessionSecret,
         tenant.id,

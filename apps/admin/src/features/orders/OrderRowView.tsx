@@ -1,14 +1,15 @@
-import { Bag, Moped } from '@phosphor-icons/react';
 import { Link } from 'react-router-dom';
 import type { OrderRow } from '../../lib/api.ts';
 import { money, when } from '../../lib/format.ts';
 import { cn } from '../../ui/cn.ts';
 import { paymentMeta } from '../../ui/PaymentChip.tsx';
+import { modeOf } from '../../ui/orderMode.ts';
 import { StateChip } from '../../ui/StateChip.tsx';
 import { usePreload } from '../../app/routes.ts';
 
 export function OrderRowView({ o }: { o: OrderRow }) {
   const preload = usePreload();
+  const Mode = modeOf(o).Icon;
   // paid is the norm in a list; only a payment that needs a look gets a word
   const pay =
     o.paymentStatus === 'paid'
@@ -26,11 +27,7 @@ export function OrderRowView({ o }: { o: OrderRow }) {
         <span className="min-w-0 flex-1">
           <span className="block truncate font-semibold">{o.name}</span>
           <span className="t-caption flex items-center gap-1.5 text-muted">
-            {o.mode === 'delivery' ? (
-              <Moped className="size-4 shrink-0" />
-            ) : (
-              <Bag className="size-4 shrink-0" />
-            )}
+            <Mode className="size-4 shrink-0" aria-label={modeOf(o).label} />
             <span className="truncate">
               {when(o.placedAt)} · {o.itemCount} {o.itemCount === 1 ? 'item' : 'itens'}
             </span>

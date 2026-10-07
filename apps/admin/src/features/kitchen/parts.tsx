@@ -1,7 +1,6 @@
 import {
   ArrowsIn,
   ArrowsOut,
-  Bag,
   CaretDown,
   CaretLeft,
   Check,
@@ -10,7 +9,6 @@ import {
   Keyboard,
   ListNumbers,
   Monitor,
-  Moped,
   Plus,
   SpeakerHigh,
   SpeakerSlash,
@@ -26,7 +24,7 @@ import type {
   KitchenStats,
   KitchenStation,
   KitchenTicket,
-  PayMethod,
+  OrderPayMethod,
 } from '../../lib/api.ts';
 import { useLiveState } from '../../lib/live.ts';
 import { readTheme, setTheme, type ThemePref } from '../../lib/theme.ts';
@@ -34,6 +32,7 @@ import { wakeLockSupported } from '../../lib/wakeLock.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Sparkline } from '../../ui/charts.tsx';
 import { cn } from '../../ui/cn.ts';
+import { modeOf } from '../../ui/orderMode.ts';
 import { Chips, CommitInput, Segmented, Toggle } from '../../ui/fields.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
@@ -346,7 +345,7 @@ export function Incoming({
 }
 
 // what the counter takes when the customer comes in: "Cobrar na retirada: dinheiro"
-const AT_COUNTER: Partial<Record<PayMethod, string>> = {
+const AT_COUNTER: Partial<Record<OrderPayMethod, string>> = {
   cash: 'dinheiro',
   card_on_delivery: 'cartão',
   meal_voucher: 'vale-refeição',
@@ -370,7 +369,8 @@ export function ReadyList({
       {tickets.map((t) => {
         const wait = t.readyAt ? now - Date.parse(t.readyAt) : 0;
         const slow = wait > 10 * 60_000;
-        const Icon = t.mode === 'delivery' ? Moped : Bag;
+        const mode = modeOf(t);
+        const Icon = mode.Icon;
         return (
           <li
             key={t.id}
@@ -391,8 +391,12 @@ export function ReadyList({
                   ) : null}
                 </p>
                 <p className={cn('t-caption mt-1', slow ? 'font-bold text-warning' : 'text-muted')}>
-                  {t.mode === 'delivery' ? 'esperando o entregador' : 'esperando o cliente'} ·{' '}
-                  {wait < 60_000 ? 'agora' : `há ${minutes(wait)}`}
+                  {t.mode === 'delivery'
+                    ? 'esperando o entregador'
+                    : t.mode === 'dine_in'
+                      ? `para servir · ${mode.label}`
+                      : 'esperando o cliente'}{' '}
+                  · {wait < 60_000 ? 'agora' : `há ${minutes(wait)}`}
                 </p>
               </div>
             </div>
@@ -407,7 +411,11 @@ export function ReadyList({
               className="press t-label mt-2 flex h-12 w-full items-center justify-center gap-2 rounded-sm bg-sunken hover:bg-hover"
             >
               <Check weight="bold" className="size-5" aria-hidden />
-              {t.mode === 'delivery' ? 'saiu para entrega' : 'retirado'}
+              {t.mode === 'delivery'
+                ? 'saiu para entrega'
+                : t.mode === 'dine_in'
+                  ? 'servido'
+                  : 'retirado'}
             </button>
           </li>
         );

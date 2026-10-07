@@ -187,7 +187,7 @@ export async function ordersByPhone(
       state: string;
       placed_at: Date;
       scheduled_for: string | null;
-      mode: 'pickup' | 'delivery';
+      mode: string;
       total_cents: number;
       items: { name: string; qty: number }[] | null;
     }[]
@@ -208,7 +208,8 @@ export async function ordersByPhone(
     state: r.state,
     placedAt: new Date(r.placed_at).toISOString(),
     scheduledFor: r.scheduled_for,
-    mode: r.mode,
+    // storefronts know two modes (Contract 2): a PDV's dine-in was handed over at the store
+    mode: r.mode === 'delivery' ? 'delivery' : 'pickup',
     totalCents: r.total_cents,
     items: r.items ?? [],
   }));

@@ -60,6 +60,7 @@ import { mountCopilot } from './routes-copilot.ts';
 import { mountCustomers } from './routes-customers.ts';
 import { mountHome } from './routes-home.ts';
 import { mountKitchen } from './routes-kitchen.ts';
+import { mountPdv } from './routes-pdv.ts';
 import { mountVendedor } from './routes-vendedor.ts';
 import { AGENT_NAME } from '../vendedor/settings.ts';
 import { mountMarketing } from './routes-marketing.ts';
@@ -788,6 +789,7 @@ export function mountAdmin(o: MountAdminOpts) {
   mountWhatsapp(deps);
   mountPrinting(deps);
   mountKitchen(deps);
+  mountPdv(deps);
   mountVendedor(deps);
   mountAccount(deps);
   mountAppearance(deps);

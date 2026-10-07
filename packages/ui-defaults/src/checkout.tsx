@@ -191,6 +191,7 @@ export function AddressForm({
   savedAddresses,
   savedAddressId,
   onPickAddress,
+  nameOnly,
 }: SlotProps['checkout.AddressForm']) {
   const err = (k: keyof typeof errors) => errors[k];
   const aria = (k: keyof typeof errors) =>
@@ -199,33 +200,39 @@ export function AddressForm({
     return (
       <fieldset className="v-fieldset" data-part="root">
         <legend className="v-legend">Seus dados</legend>
-        <Field id="checkout-name" label="Nome" error={err('name')}>
+        <Field id="checkout-name" label={nameOnly ? 'Seu nome' : 'Nome'} error={err('name')}>
           <input
             id="checkout-name"
             name="name"
             className="v-input"
             autoComplete="name"
-            maxLength={120}
+            maxLength={nameOnly ? 80 : 120}
             value={value.name}
             onChange={(e) => onChange({ name: e.target.value })}
             {...aria('name')}
           />
         </Field>
-        <Field id="checkout-phone" label="WhatsApp" error={err('phone')}>
-          <input
-            id="checkout-phone"
-            name="phone"
-            type="tel"
-            inputMode="tel"
-            className="v-input"
-            autoComplete="tel"
-            maxLength={20}
-            placeholder="(00) 00000-0000"
-            value={maskPhone(value.phone)}
-            onChange={(e) => onChange({ phone: maskPhone(e.target.value) })}
-            {...aria('phone')}
-          />
-        </Field>
+        {nameOnly ? (
+          <p className="v-muted" data-part="name-note">
+            A equipe chama você por esse nome.
+          </p>
+        ) : (
+          <Field id="checkout-phone" label="WhatsApp" error={err('phone')}>
+            <input
+              id="checkout-phone"
+              name="phone"
+              type="tel"
+              inputMode="tel"
+              className="v-input"
+              autoComplete="tel"
+              maxLength={20}
+              placeholder="(00) 00000-0000"
+              value={maskPhone(value.phone)}
+              onChange={(e) => onChange({ phone: maskPhone(e.target.value) })}
+              {...aria('phone')}
+            />
+          </Field>
+        )}
         <label className="v-check" data-part="remember">
           <input
             type="checkbox"
@@ -419,10 +426,18 @@ export function DeliveryOptions({
   selected,
   onSelect,
 }: SlotProps['checkout.DeliveryOptions']) {
+  // Kernel 1.22 — at a table the order goes to the table: one option, already chosen
+  const atTable = options.length > 0 && options.every((o) => o.mode === 'dine_in');
   return (
-    <fieldset className="v-fieldset" data-part="root">
-      <legend className="v-legend">Como você quer receber?</legend>
-      <div className="v-options" role="radiogroup" aria-label="Entrega ou retirada">
+    <fieldset className="v-fieldset" data-part="root" data-mode={atTable ? 'dine_in' : undefined}>
+      <legend className="v-legend">
+        {atTable ? 'Seu pedido vai para' : 'Como você quer receber?'}
+      </legend>
+      <div
+        className="v-options"
+        role="radiogroup"
+        aria-label={atTable ? 'Mesa' : 'Entrega ou retirada'}
+      >
         {options.map((o) => (
           <label
             key={o.mode}
@@ -658,6 +673,10 @@ export function SuccessPage({ order, currency }: SlotProps['checkout.SuccessPage
       ) : cardDue ? (
         <p className="v-success-next" data-part="next">
           Falta só o pagamento no cartão.
+        </p>
+      ) : order.delivery.mode === 'dine_in' ? (
+        <p className="v-success-next" data-part="next">
+          A equipe confirma o pedido e traz até a {order.delivery.table ?? 'mesa'}.
         </p>
       ) : order.payment.instructions ? (
         <p className="v-note" data-part="instructions">

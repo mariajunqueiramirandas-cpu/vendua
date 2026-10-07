@@ -157,10 +157,16 @@ export type PaymentStatus =
   | 'partially_refunded'
   | 'charged_back'
   | 'in_mediation';
+/** 'dine_in': taken by the staff at the PDV, on a table or at the counter (ADR 0035) */
+export type OrderMode = 'pickup' | 'delivery' | 'dine_in';
+/** what the counter takes (ADR 0035): its own five, not the storefront's */
+export type PdvMethod = 'cash' | 'pix' | 'credit' | 'debit' | 'voucher';
+/** an order's method: the storefront's, a counter one, several ('mixed') or its comanda ('tab') */
+export type OrderPayMethod = PayMethod | PdvMethod | 'mixed' | 'tab';
 export type MpStatus = 'not_connected' | 'connected' | 'expiring' | 'disconnected' | 'restricted';
 
 export type PlanFeature =
-  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor' | 'copilot';
+  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor' | 'copilot' | 'pdv';
 export type PlanFeatures = Record<PlanFeature, boolean>;
 
 export interface Plan {
@@ -227,7 +233,10 @@ export interface Order {
   state: OrderState;
   customer: { name: string; phone: string };
   delivery: {
-    mode: 'pickup' | 'delivery';
+    mode: OrderMode;
+    /** dine-in: the table's label (null at the counter) and its comanda */
+    table?: string | null;
+    tabId?: string | null;
     neighborhood?: string | null;
     address?: string | null;
     addressParts?: Record<string, string | null>;
@@ -246,8 +255,12 @@ export interface Order {
   payment: {
     /** 'sandbox' (offline methods) · 'mercadopago' | 'fake' (online) — branch on `online` */
     provider: string;
-    method: PayMethod;
+    method: OrderPayMethod;
     status: PaymentStatus;
+    /** provider 'pdv' with method 'mixed': what each method took */
+    pdv?: { method: PdvMethod; cents: number }[];
+    /** cash on delivery: the note the customer pays with */
+    changeForCents?: number | null;
     /** Mercado Pago handles it (webhook-confirmed); false = the merchant confirms by hand */
     online?: boolean;
     paidAt?: string | null;
@@ -335,9 +348,9 @@ export interface OrderRow {
   phone: string | null;
   totalCents: number;
   placedAt: string;
-  mode: 'pickup' | 'delivery';
+  mode: OrderMode;
   neighborhood: string | null;
-  paymentMethod: PayMethod;
+  paymentMethod: OrderPayMethod;
   paymentStatus: string;
   itemCount: number;
   scheduledFor: string | null;
@@ -365,7 +378,9 @@ export interface KitchenTicket {
   id: string;
   number: number;
   state: KitchenState;
-  mode: 'pickup' | 'delivery';
+  mode: OrderMode;
+  /** dine-in: the table's label */
+  table?: string | null;
   /** the customer's first name */
   name: string;
   notes: string | null;
@@ -378,7 +393,7 @@ export interface KitchenTicket {
   prepMinutes: number;
   rush: boolean;
   paid: boolean;
-  payMethod: PayMethod;
+  payMethod: OrderPayMethod;
   version: number;
   items: KitchenItem[];
 }
@@ -1871,6 +1886,218 @@ export interface CopilotView {
   busy: boolean;
 }
 
+// ── PDV (ADR 0035, docs/features/pdv.md): Core prices, splits and makes change ──
+
+export interface PdvLineIn {
+  productId: string;
+  qty: number;
+  modifiers?: { id: string; qty?: number }[];
+  comboSelections?: { slotId: string; productId: string; qty: number }[];
+  note?: string;
+}
+export interface PdvDiscountIn {
+  kind: 'fixed' | 'percent';
+  /** cents (fixed) or basis points (percent) */
+  value: number;
+  reason: string;
+}
+export interface PdvPaymentIn {
+  method: PdvMethod;
+  amountCents: number;
+  /** cash only: the notes handed over */
+  tenderedCents?: number;
+}
+export interface PdvQuoteLine {
+  productId: string;
+  name: string;
+  qty: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+  modifiers: { name: string; qty: number; priceDeltaCents: number }[];
+  combo: { slotName: string; name: string; qty: number }[];
+  note: string | null;
+}
+export interface PdvQuote {
+  lines: PdvQuoteLine[];
+  subtotalCents: number;
+  discountCents: number;
+  /** 0 without a delivery */
+  deliveryFeeCents?: number;
+  delivery?: PdvDeliveryQuote | null;
+  totalCents: number;
+}
+/** a phone order's address (docs/features/pdv.md, "Delivery from the counter") */
+export interface PdvDeliveryIn {
+  street: string;
+  number?: string;
+  complement?: string;
+  neighborhood: string;
+  reference?: string;
+  /** 8 digits */
+  cep?: string;
+  lat?: number;
+  lng?: number;
+  /** manager: a fee typed by hand, skips the zones */
+  feeCents?: number;
+}
+export interface PdvDeliveryQuote {
+  feeCents: number;
+  /** null with a hand-typed fee */
+  zoneName: string | null;
+  etaMin: number | null;
+  etaMax: number | null;
+  distanceKm: number | null;
+}
+export interface PdvCustomer {
+  name: string | null;
+  phone: string;
+  orders: number;
+  lastDelivery: {
+    street?: string | null;
+    number?: string | null;
+    complement?: string | null;
+    neighborhood?: string | null;
+    reference?: string | null;
+    cep?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+  } | null;
+}
+export interface PdvArchivedTable extends PdvTable {
+  archivedAt: string;
+}
+export interface PdvTables {
+  tables: PdvTable[];
+  /** newest first */
+  archived: PdvArchivedTable[];
+}
+/** 422 PRINTER_REQUIRED's details: the screen asks which one */
+export interface PdvPrinterChoice {
+  id: string;
+  name: string;
+}
+export interface PdvPayment {
+  id: string;
+  method: PdvMethod;
+  amountCents: number;
+  tenderedCents: number | null;
+  changeCents: number;
+  at: string;
+  by: string;
+  voided: boolean;
+}
+export interface PdvSale {
+  orderId: string;
+  number: number;
+  totalCents: number;
+  changeCents: number;
+  payments: PdvPayment[];
+}
+export interface PdvTable {
+  id: string;
+  label: string;
+  sort: number;
+  /** what the table's printed QR opens: the store's origin with `?mesa=<signed token>` (ADR 0036) */
+  qrUrl: string;
+}
+export interface TabSummary {
+  id: string;
+  label: string;
+  tableId: string | null;
+  openedAt: string;
+  openedBy: string;
+  customerName: string | null;
+  rounds: number;
+  subtotalCents: number;
+  totalCents: number;
+  paidCents: number;
+}
+export interface TabRound {
+  orderId: string;
+  number: number;
+  state: OrderState;
+  /** 'table_qr': the customer ordered from the table's QR (ADR 0036) */
+  source: 'pdv' | 'table_qr';
+  /** paid online by the customer: listed, but outside the comanda's totals and what remains */
+  paidOnline: boolean;
+  /** chose to pay online and hasn't yet: not owed here, and it holds the comanda open */
+  onlinePending: boolean;
+  placedAt: string;
+  totalCents: number;
+  items: {
+    name: string;
+    qty: number;
+    lineTotalCents: number;
+    modifiers: { name: string; qty: number }[];
+    note: string | null;
+  }[];
+}
+export interface TabDetail extends TabSummary {
+  status: 'open' | 'closed' | 'cancelled';
+  closedAt: string | null;
+  serviceBps: number;
+  serviceFee: boolean;
+  discount: { kind: 'fixed' | 'percent'; value: number; reason: string } | null;
+  discountCents: number;
+  serviceCents: number;
+  /** can go below 0 after a cancelled round */
+  remainingCents: number;
+  roundsList: TabRound[];
+  payments: PdvPayment[];
+  split: { ways: number; sharesCents: number[] } | null;
+}
+export type ByMethod<T> = Record<PdvMethod, T>;
+export interface CaixaDetail {
+  id: string;
+  openedAt: string;
+  openedBy: string;
+  openingCents: number;
+  movements: {
+    id: string;
+    kind: 'sangria' | 'suprimento';
+    amountCents: number;
+    reason: string;
+    by: string;
+    at: string;
+  }[];
+  /** cents null for attendants while it is open: the amounts would give the count away */
+  byMethod: ByMethod<{ count: number; cents: number | null }>;
+  salesCount: number;
+  changeCents: number;
+  serviceCents: number;
+  /** null for attendants: they close blind */
+  expected: ByMethod<number> | null;
+}
+export interface CaixaReport extends CaixaDetail {
+  closedAt: string;
+  closedBy: string;
+  counted: ByMethod<number>;
+  differences: ByMethod<number>;
+  notes: string | null;
+}
+export interface CaixaHistoryRow {
+  id: string;
+  openedAt: string;
+  closedAt: string;
+  openedBy: string;
+  closedBy: string;
+  totalCents: number;
+  differenceCents: number;
+}
+export interface PdvState {
+  caixa: CaixaDetail | null;
+  tables: PdvTable[];
+  /** the open ones */
+  tabs: TabSummary[];
+  serviceBps: number;
+  /** customers order from the table's QR (the store's switch; ADR 0036) */
+  qrOrders: boolean;
+}
+export interface PdvSettings {
+  serviceBps: number;
+  qrOrders: boolean;
+}
+
 export const api = {
   auth: {
     start: (phone: string) =>
@@ -2465,5 +2692,88 @@ export const api = {
         `/customers/${encodeURIComponent(phone)}/vendedor/facts`,
         { text },
       ),
+  },
+
+  pdv: {
+    state: () => get<PdvState>('/pdv/state'),
+    quote: (p: { lines: PdvLineIn[]; discount?: PdvDiscountIn; delivery?: PdvDeliveryIn }) =>
+      send<{ quote: PdvQuote }>('POST', '/pdv/quote', p),
+    sale: (p: {
+      lines: PdvLineIn[];
+      discount?: PdvDiscountIn;
+      mode: 'takeaway' | 'here' | 'delivery';
+      delivery?: PdvDeliveryIn;
+      customer?: { name?: string; phone?: string };
+      notes?: string;
+      payments: PdvPaymentIn[];
+      /** a delivery charged at the door: payments [] */
+      payLater?: { method: PdvMethod; changeForCents?: number };
+      quotedTotalCents: number;
+      serveNow?: boolean;
+    }) => send<{ order: Order; sale: PdvSale }>('POST', '/pdv/sales', p),
+    /** the name and last address this phone ordered with */
+    customer: (phone: string) =>
+      get<{ customer: PdvCustomer | null }>(`/pdv/customer?phone=${encodeURIComponent(phone)}`),
+    geocode: (p: { street: string; number?: string; neighborhood: string; cep?: string }) =>
+      get<{ point: { lat: number; lng: number; precision: string } | null }>(
+        `/pdv/geocode?${new URLSearchParams(
+          Object.entries(p).filter((e): e is [string, string] => !!e[1]),
+        ).toString()}`,
+      ),
+    printTab: (id: string, p: { printerId?: string; ways?: number }) =>
+      send<{ jobIds: string[] }>('POST', `/pdv/tabs/${id}/print`, p),
+    printCaixa: (id: string, p: { printerId?: string }) =>
+      send<{ jobIds: string[] }>('POST', `/pdv/caixa/${id}/print`, p),
+    /** the store's static Pix for this amount; null without a Pix key */
+    pix: (amountCents: number) =>
+      send<{ copyPaste: string | null }>('POST', '/pdv/pix', { amountCents }),
+    receive: (orderId: string, payments: PdvPaymentIn[]) =>
+      send<{ order: Order; changeCents: number }>('POST', `/pdv/orders/${orderId}/payments`, {
+        payments,
+      }),
+    openTab: (p: { tableId?: string; label?: string; customerName?: string }) =>
+      send<{ tab: TabDetail }>('POST', '/pdv/tabs', p),
+    tab: (id: string, ways?: number) =>
+      get<{ tab: TabDetail }>(`/pdv/tabs/${id}${ways ? `?ways=${ways}` : ''}`),
+    round: (id: string, p: { lines: PdvLineIn[]; notes?: string; serveNow?: boolean }) =>
+      send<{ tab: TabDetail; orderId: string }>('POST', `/pdv/tabs/${id}/rounds`, p),
+    updateTab: (
+      id: string,
+      patch: {
+        serviceFee?: boolean;
+        tableId?: string;
+        label?: string;
+        customerName?: string;
+        discount?: PdvDiscountIn | null;
+      },
+    ) => send<{ tab: TabDetail }>('PATCH', `/pdv/tabs/${id}`, patch),
+    payTab: (id: string, p: PdvPaymentIn) =>
+      send<{ tab: TabDetail; payment: PdvPayment }>('POST', `/pdv/tabs/${id}/payments`, p),
+    closeTab: (id: string) => send<{ tab: TabDetail }>('POST', `/pdv/tabs/${id}/close`),
+    cancelTab: (id: string, reason: string) =>
+      send<{ tab: TabDetail }>('POST', `/pdv/tabs/${id}/cancel`, { reason }),
+    voidPayment: (id: string, reason: string) =>
+      send<{ tab: TabDetail }>('POST', `/pdv/payments/${id}/void`, { reason }),
+    caixa: () => get<{ caixa: CaixaDetail | null }>('/pdv/caixa'),
+    openCaixa: (openingCents: number) =>
+      send<{ caixa: CaixaDetail }>('POST', '/pdv/caixa/open', { openingCents }),
+    movement: (p: { kind: 'sangria' | 'suprimento'; amountCents: number; reason: string }) =>
+      send<{ caixa: CaixaDetail }>('POST', '/pdv/caixa/movements', p),
+    closeCaixa: (p: { counted: ByMethod<number>; notes?: string }) =>
+      send<{ report: CaixaReport }>('POST', '/pdv/caixa/close', p),
+    history: () => get<{ sessions: CaixaHistoryRow[] }>('/pdv/caixa/history?limit=30'),
+    session: (id: string) =>
+      get<{ report: CaixaReport } | { caixa: CaixaDetail }>(`/pdv/caixa/${id}`),
+    addTables: (labels: string[]) =>
+      send<{ tables: PdvTable[] }>('POST', '/pdv/tables', { labels }),
+    updateTable: (id: string, patch: { label?: string; sort?: number }) =>
+      send<{ table: PdvTable }>('PATCH', `/pdv/tables/${id}`, patch),
+    tables: () => get<PdvTables>('/pdv/tables'),
+    archiveTable: (id: string) => send<PdvTables>('DELETE', `/pdv/tables/${id}`),
+    restoreTable: (id: string) => send<PdvTables>('POST', `/pdv/tables/${id}/restore`),
+    settings: (patch: { serviceBps?: number; qrOrders?: boolean }) =>
+      send<PdvSettings>('PATCH', '/pdv/settings', patch),
+    /** a new QR for this table: the printed one stops working at once */
+    tableQr: (id: string) => send<{ table: PdvTable }>('POST', `/pdv/tables/${id}/qr`),
   },
 };

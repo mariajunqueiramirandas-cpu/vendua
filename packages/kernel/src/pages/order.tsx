@@ -13,7 +13,7 @@ import {
 import { formatCents, LOCALE } from '../rules/format.ts';
 import { whatsappUrl } from '../rules/links.ts';
 import {
-  ORDER_STATE_LABEL,
+  orderStateLabel,
   PAYMENT_METHOD_LABEL,
   PIX_KEY_LABEL,
   REFUNDED_PAYMENT_STATUSES,
@@ -23,8 +23,8 @@ import { usePageTitle } from '../head.ts';
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 // "Recebido", "Em preparo": the state without repeating "Pedido" next to the number
-const stateWord = (state: string) =>
-  capitalize((ORDER_STATE_LABEL[state] ?? state).replace(/^Pedido /, ''));
+const stateWord = (state: string, mode?: Order['delivery']['mode']) =>
+  capitalize(orderStateLabel(state, mode).replace(/^Pedido /, ''));
 import { Slot } from '../slot.tsx';
 import { KLink } from '../sdk/sections.tsx';
 import { KERNEL_PATHS, resolvePaths } from '../config.ts';
@@ -357,7 +357,9 @@ export function OrderPage() {
   const time = timeZone ? { timeZone } : {};
   const shown = order ?? tracking;
   // Kernel 1.21: the state in the tab title ("Pedido #12 · Em preparo · Loja"), live
-  usePageTitle(shown ? `Pedido #${shown.number} · ${stateWord(shown.state)}` : null);
+  usePageTitle(
+    shown ? `Pedido #${shown.number} · ${stateWord(shown.state, shown.delivery.mode)}` : null,
+  );
   const talk = shown ? whatsappUrl(store?.whatsapp, `Oi! Sobre o pedido #${shown.number}.`) : null;
   const params = new URLSearchParams(search);
   const isNew = params.has('novo');
@@ -392,6 +394,7 @@ export function OrderPage() {
                   actor: '',
                   meta: {},
                 }))}
+                mode={tracking.delivery.mode}
                 {...time}
               />
             }
@@ -455,7 +458,14 @@ export function OrderPage() {
             order={order}
             currency={currency}
             {...time}
-            timeline={<Slot name="order.Timeline" events={order.timeline} {...time} />}
+            timeline={
+              <Slot
+                name="order.Timeline"
+                events={order.timeline}
+                mode={order.delivery.mode}
+                {...time}
+              />
+            }
             {...(order.delivery.mode === 'pickup' && store?.pickup ? { pickup: store.pickup } : {})}
           />
           {order.items?.length ? (
@@ -549,6 +559,7 @@ export function OrderHistoryPage() {
       placedAt: o.placedAt,
       totalCents: o.totalCents,
       items: (o.items ?? []).map((i) => ({ name: i.name, qty: i.qty })),
+      mode: o.delivery.mode,
       here: true,
     })),
     ...phone.orders.filter((o) => !localIds.has(o.id)).map((o) => ({ ...o, here: false })),
@@ -619,7 +630,7 @@ export function OrderHistoryPage() {
                     {formatCents(o.totalCents, currency)}
                   </span>
                   <span className="v-order-row-state" data-state={o.state}>
-                    {ORDER_STATE_LABEL[o.state] ?? o.state}
+                    {orderStateLabel(o.state, o.mode)}
                   </span>
                 </span>
               </>

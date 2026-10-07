@@ -31,6 +31,8 @@ export type AdminTopic =
   | 'printers'
   // the kitchen display: lines marked done, a rush flag, the stations (id = order id | 'stations')
   | 'kitchen'
+  // the PDV: a sale, a comanda, the caixa, the tables (id = comanda | caixa id | 'tables' | 'settings')
+  | 'pdv'
   // the Vendedor: a conversation moved (id = thread id), its settings or knowledge (id = 'settings' | 'knowledge')
   | 'vendedor'
   // Duá Copilot: a message or a proposal moved in one person's conversation (id = merchant user id)

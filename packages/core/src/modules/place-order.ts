@@ -13,12 +13,17 @@ import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts'
 import { offlinePayment, onlineOffer, onlinePayment } from './payments/store-payments.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 import { validateSchedule } from './preorder.ts';
+import { planHas } from './billing/plans.ts';
+import type { QrTable } from './pdv/qr.ts';
 import { recordStaffEventTx } from './staff-events.ts';
 import { drawStock, stockDemand } from './stock.ts';
 import { deriveStatus, type StoreSettingsRow } from './store.ts';
 
 /** R$ 10.000: no shopper pays a delivery with more than that in cash */
 export const MAX_CHANGE_CENTS = 1_000_000;
+
+/** QR orders a table may have waiting for the staff at once (ADR 0036) */
+export const MAX_PENDING_AT_TABLE = 5;
 
 /**
  * The one place an order is born (checkout invariant: at most one order per cart).
@@ -42,6 +47,8 @@ export async function placeOrderTx(
     source?: string;
     /** the Vendedor conversation that sold it */
     threadId?: string | null;
+    /** dine_in: the QR's table, its open comanda already locked (tableForToken) */
+    table?: QrTable | null;
   } = {},
 ): Promise<string> {
   // One pipelined batch. postgres.js sends a query when it is first executed, so the locks are
@@ -119,6 +126,21 @@ export async function placeOrderTx(
     { card: offer.online },
     route,
   );
+  const atTable = body.delivery.mode === 'dine_in';
+  const table = atTable ? (opts.table ?? null) : null;
+  if (atTable) {
+    if (!table) throw new HttpError(404, 'TABLE_NOT_FOUND', 'this table QR is not valid anymore');
+    if (!(settings?.pdv_qr_orders ?? true) || !(await planHas(tx, tenantId, 'pdv')))
+      throw new HttpError(
+        423,
+        'TABLE_ORDERS_OFF',
+        'this store is not taking orders from its tables',
+      );
+    if (body.payment.method === 'pix' && !(offer.online && offer.provider))
+      throw new HttpError(422, 'PAYMENT_METHOD_UNAVAILABLE', 'pix at a table is paid online', {
+        field: 'payment.method',
+      });
+  }
   const scheduledFor = validateSchedule(
     cart.schedule,
     body.scheduledFor ?? undefined,
@@ -140,7 +162,7 @@ export async function placeOrderTx(
           subtotal,
         )
       : 0;
-  const phone = normalizePhone(body.customer.phone);
+  const phone = body.customer.phone ? normalizePhone(body.customer.phone) : null;
 
   // coupon: re-evaluated with the phone (per-phone limits, first order, personal rewards)
   let discount = 0;
@@ -205,12 +227,14 @@ export async function placeOrderTx(
   // a store that isn't connected keeps today's static Pix from its own key
   const method = body.payment.method;
   const payment = {
-    ...(offer.online && offer.provider && (method === 'pix' || method === 'card_online')
-      ? onlinePayment(offer.provider, method, total)
-      : offlinePayment(settings, method, total, number)),
+    ...(method === 'tab'
+      ? { provider: 'pdv', method: 'tab', status: 'pending', online: false }
+      : offer.online && offer.provider && (method === 'pix' || method === 'card_online')
+        ? onlinePayment(offer.provider, method, total)
+        : offlinePayment(settings, method, total, number)),
     ...(changeFor !== null ? { changeForCents: changeFor } : {}),
   };
-  const source = opts.source ?? 'storefront';
+  const source = atTable ? 'table_qr' : (opts.source ?? 'storefront');
 
   const prep = settings?.prep_time_minutes ?? 30;
   const at = (min: number) => new Date(now.getTime() + min * 60_000).toISOString();
@@ -233,26 +257,88 @@ export async function placeOrderTx(
           promisedFrom: scheduledFor ? null : at(match.zone?.eta_min_minutes ?? prep),
           promisedTo: scheduledFor ? null : at(match.zone?.eta_max_minutes ?? prep),
         }
-      : {
-          mode: 'pickup' as const,
-          neighborhood: null,
-          address: null,
-          feeCents: 0,
-          etaMin: null,
-          etaMax: null,
-          promisedFrom: scheduledFor ? null : at(prep),
-          promisedTo: scheduledFor ? null : at(prep),
-        };
+      : atTable
+        ? {
+            mode: 'dine_in' as const,
+            neighborhood: null,
+            address: null,
+            feeCents: 0,
+            etaMin: null,
+            etaMax: null,
+            promisedFrom: at(prep),
+            promisedTo: at(prep),
+            table: table!.label,
+            tabId: null as string | null,
+          }
+        : {
+            mode: 'pickup' as const,
+            neighborhood: null,
+            address: null,
+            feeCents: 0,
+            etaMin: null,
+            etaMax: null,
+            promisedFrom: scheduledFor ? null : at(prep),
+            promisedTo: scheduledFor ? null : at(prep),
+          };
 
-  const customer = { name: body.customer.name.trim(), phone: body.customer.phone.trim() };
+  const customer = {
+    name: body.customer.name.trim().slice(0, atTable ? 80 : 200),
+    phone: body.customer.phone?.trim() ?? '',
+  };
+  // the table's comanda: the open one, or one opened by this first order (a waiter opening the
+  // same table at the same moment wins the index, and the order joins theirs)
+  let tabId: string | null = null;
+  if (table) {
+    tabId = table.tabId;
+    // a waiter may open (or close) the table's comanda at the same moment: the index lets one
+    // opening through; a comanda found that way is locked, and a closed one means open anew
+    for (let tries = 0; !tabId && tries < 3; tries++) {
+      const [opened] = await tx<{ id: string }[]>`
+        insert into pdv_tabs (tenant_id, table_id, label, service_bps, service_fee, opened_by)
+        values (${tenantId}, ${table.id}, ${table.label}, ${table.serviceBps}, ${table.serviceBps > 0},
+                'QR da mesa')
+        on conflict (tenant_id, table_id) where status = 'open' and table_id is not null do nothing
+        returning id
+      `;
+      tabId =
+        opened?.id ??
+        (
+          await tx<{ id: string; status: string }[]>`
+            select id, status from pdv_tabs
+            where tenant_id = ${tenantId} and table_id = ${table.id} and status = 'open'
+            for update
+          `
+        ).find((r) => r.status === 'open')?.id ??
+        null;
+    }
+    if (!tabId) throw new HttpError(409, 'TABLE_BUSY', 'the table changed — try again');
+    // a prank stops at the staff, who accept every QR order; this keeps the queue short
+    const waiting = (
+      await tx<{ n: number }[]>`
+        select count(*)::int as n from orders
+        where tenant_id = ${tenantId} and tab_id = ${tabId} and source = 'table_qr'
+          and state = 'placed'
+      `
+    )[0]!.n;
+    if (waiting >= MAX_PENDING_AT_TABLE)
+      throw new HttpError(
+        429,
+        'TABLE_ORDERS_PENDING',
+        'this table has orders waiting for the staff',
+        {
+          pending: waiting,
+        },
+      );
+    (delivery as { tabId?: string | null }).tabId = tabId;
+  }
   await tx`
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
-                        total_cents, coupon_code, notes, scheduled_for, source, thread_id)
+                        total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
-            ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null})
+            ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   const [store] = await Promise.all([
@@ -305,6 +391,8 @@ export async function placeOrderTx(
     `,
     // the merchant admin's live board rings on commit
     emitAdminTx(tx, tenantId, 'order.placed', orderId),
+    // a QR order lands on its table's comanda (ADR 0036)
+    tabId && emitAdminTx(tx, tenantId, 'pdv', tabId),
   ]);
 
   // staff events (ADR 0023) after the batch: each one is a savepoint, which must not interleave
