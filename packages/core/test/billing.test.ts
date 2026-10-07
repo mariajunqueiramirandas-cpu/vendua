@@ -617,6 +617,36 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(flagged.some((x) => x.startsWith('Fatura paga duas vezes'))).toBe(true);
   });
 
+  test('a cancelled plan’s Pix paid late activates nothing, whatever plan came after', async () => {
+    const s = await store('voidpix', 'mirim', 'bia@example.com');
+    await s.owner('POST', '/account/subscription', {
+      planId: 'mirim',
+      method: 'pix',
+      payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
+    });
+    const old = (await invoices(s.id))[0]!;
+    // scanned before the cancel; MP's webhook lands after a pricier plan was started
+    fake.settle(old.provider_payment_id, 'approved');
+    expect((await s.owner('POST', '/account/subscription/cancel', {})).status).toBe(200);
+    expect((await invoices(s.id))[0]!.status).toBe('void');
+    await s.owner('POST', '/account/subscription', {
+      planId: 'pangolim',
+      method: 'pix',
+      payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
+    });
+    const staffBefore = staff.length;
+    await hook(old.provider_payment_id);
+    await Bun.sleep(30);
+    expect((await invoices(s.id))[0]!.status).toBe('void');
+    expect((await sub(s.id)).status).toBe('pending');
+    expect((await settings(s.id)).billing_hold).toBe(true);
+    expect(
+      staff.slice(staffBefore).some((n) => n.subject.startsWith('Pix numa fatura cancelada')),
+    ).toBe(true);
+  });
+
   test('upgrade then downgrade before paying: Mirim, the invoice void, no site request', async () => {
     const s = await paidStore('updown2', 'mirim');
     const up = await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });

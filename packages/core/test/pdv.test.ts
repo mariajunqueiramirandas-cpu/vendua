@@ -551,6 +551,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
   });
 
   test('a cancelled counter sale takes its money out of the open caixa', async () => {
+    // the drawer's expected count drops with it: a manager's call, like a refund
+    expect(
+      (
+        await attendant('POST', `/orders/${saleOrder}/transition`, {
+          to: 'cancelled',
+          reason: 'cliente desistiu',
+        })
+      ).status,
+    ).toBe(403);
     const r = await owner('POST', `/orders/${saleOrder}/transition`, {
       to: 'cancelled',
       reason: 'cliente desistiu',
@@ -669,6 +678,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
       delivery: { mode: 'dine_in', table: 'Mesa 1' },
       payment: { provider: 'pdv', method: 'tab', status: 'pending' },
     });
+    // a redemption is keyed by phone: a table order without one is told so, not a 500
+    await sql`insert into coupons (tenant_id, code, kind, value) values (${tenantId}, 'MESA10', 'fixed', 100)`;
+    const sc = await cart();
+    expect((await shop('POST', '/checkout/v1/cart/coupon', { code: 'mesa10' }, sc)).status).toBe(
+      200,
+    );
+    const noPhone = await order(sc);
+    expect(noPhone.status).toBe(422);
+    expect(noPhone.body.error).toMatchObject({
+      code: 'INVALID_CUSTOMER',
+      details: { field: 'customer.phone' },
+    });
     const id = placed.body.order.id;
     const track = await shop('GET', `/checkout/v1/orders/${id}`, undefined, s1);
     expect(track.status).toBe(200);
@@ -733,9 +754,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
   });
 
   test('sangria and suprimento; attendants close blind; the report keeps the difference', async () => {
+    // only who sees the expected count is refused: a 422 would let an attendant probe it
     expect(
       (
-        await attendant('POST', '/pdv/caixa/movements', {
+        await owner('POST', '/pdv/caixa/movements', {
           kind: 'sangria',
           amountCents: 1_000_000,
           reason: 'banco',
@@ -788,6 +810,49 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     const one = await owner('GET', `/pdv/caixa/${close.body.report.id}`);
     expect(one.body.report.counted.cash).toBe(13_200);
     expect((await attendant('GET', '/pdv/caixa')).body.caixa).toBeNull();
+  });
+
+  test('a refunded counter sale leaves the drawer, even when its caixa was already counted', async () => {
+    expect((await owner('POST', '/pdv/caixa/open', { openingCents: 5000 })).status).toBe(201);
+    const cashSale = async () => {
+      const r = await attendant('POST', '/pdv/sales', {
+        lines: [{ productId: coke, qty: 1 }],
+        mode: 'here',
+        quotedTotalCents: 600,
+        payments: [{ method: 'cash', amountCents: 600 }],
+        serveNow: true,
+      });
+      expect(r.body.order.state).toBe('delivered');
+      return r.body.order.id as string;
+    };
+    const same = await cashSale();
+    expect((await owner('POST', `/orders/${same}/refund`, { reason: 'devolveu' })).status).toBe(
+      200,
+    );
+    const [v] = await sql<{ n: number }[]>`
+      select count(*)::int as n from pdv_payments where order_id = ${same} and voided_at is not null`;
+    expect(v!.n).toBe(1);
+
+    const earlier = await cashSale();
+    expect(
+      (
+        await owner('POST', '/pdv/caixa/close', {
+          counted: { cash: 5600, pix: 0, credit: 0, debit: 0 },
+        })
+      ).status,
+    ).toBe(200);
+    const next = await owner('POST', '/pdv/caixa/open', { openingCents: 1000 });
+    expect((await owner('POST', `/orders/${earlier}/refund`, { reason: 'devolveu' })).status).toBe(
+      200,
+    );
+    const moves = await sql<{ kind: string; amount_cents: number; session_id: string }[]>`
+      select kind, amount_cents, session_id from cash_movements where tenant_id = ${tenantId}
+        and reason like '%' || ${'pedido'} || '%' order by at desc limit 1`;
+    expect(moves[0]).toMatchObject({
+      kind: 'sangria',
+      amount_cents: 600,
+      session_id: next.body.caixa.id,
+    });
   });
 
   test('bad and foreign ids answer 4xx', async () => {
