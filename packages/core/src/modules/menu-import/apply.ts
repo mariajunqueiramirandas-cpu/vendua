@@ -123,7 +123,7 @@ export async function applyImport(
     // orders keep pointing at the old products, so they're archived, never deleted
     archived = (
       await tx`
-        update products set status = 'archived'
+        update products set status = 'archived', sold_out_until = null
         where tenant_id = ${tenantId} and status <> 'archived'
         returning id
       `
