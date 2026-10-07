@@ -1,4 +1,5 @@
 import io
+import http.client
 import json
 import threading
 import time
@@ -209,7 +210,15 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.post(url, wav_bytes(tone(1.0)), token=None), (401, {"error": "unauthorized"}))
         self.assertEqual(self.post(url, wav_bytes(tone(1.0)), token="nope"), (401, {"error": "unauthorized"}))
         self.assertEqual(self.post(url, wav_bytes(tone(6.0))), (413, {"error": "too_long"}))
-        self.assertEqual(self.post(url, b"\0" * 1_000_001), (413, {"error": "too_big"}))
+        # answered from content-length alone, then closed: sending the body would race the close
+        conn = http.client.HTTPConnection(urllib.parse.urlsplit(url).netloc, timeout=5)
+        conn.putrequest("POST", "/v1/transcribe")
+        conn.putheader("authorization", "Bearer s3cret")
+        conn.putheader("content-length", "1000001")
+        conn.endheaders()
+        r = conn.getresponse()
+        self.assertEqual((r.status, json.loads(r.read())), (413, {"error": "too_big"}))
+        conn.close()
         self.assertEqual(self.post(url, b""), (422, {"error": "empty"}))
 
     def test_phrases(self):
