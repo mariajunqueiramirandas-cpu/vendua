@@ -41,7 +41,7 @@ describe('validateSetting: agent_runtime.routes and agent_runtime.budgets', () =
               pricing: { inputPerMTok: 1, outputPerMTok: 5, cacheReadPerMTok: 0.1 },
               timeoutMs: 30_000,
             }),
-            route({ provider: 'anthropic', model: 'claude-haiku-4-5@2026' }),
+            route({ provider: 'anthropic', model: 'claude-haiku-5-5', effort: 'low' }),
           ],
           strong: [route({ provider: 'gemini', model: 'models/gemini-2.5-pro:latest' })],
         },
@@ -67,6 +67,34 @@ describe('validateSetting: agent_runtime.routes and agent_runtime.budgets', () =
       [{ default: { fast: [route({ model: 'a b' })] } }, 'default.fast.0.model'],
       [{ default: { fast: [route({ model: 'x'.repeat(201) })] } }, 'default.fast.0.model'],
       [{ default: { fast: [route({ zdr: 'yes' })] } }, 'default.fast.0.zdr'],
+      // anthropic always runs claude-haiku-5-5 at its own price; effort is the choice
+      [
+        { default: { fast: [route({ provider: 'anthropic', model: 'claude-opus-5-5' })] } },
+        'default.fast.0.model',
+      ],
+      [
+        {
+          default: {
+            fast: [
+              route({
+                provider: 'anthropic',
+                model: 'claude-haiku-5-5',
+                pricing: { inputPerMTok: 1, outputPerMTok: 5 },
+              }),
+            ],
+          },
+        },
+        'default.fast.0.pricing',
+      ],
+      [
+        {
+          default: {
+            fast: [route({ provider: 'anthropic', model: 'claude-haiku-5-5', effort: 'huge' })],
+          },
+        },
+        'default.fast.0.effort',
+      ],
+      [{ default: { fast: [route({ effort: 'low' })] } }, 'default.fast.0.effort'],
       [{ default: { fast: [route({ apiKey: 'k' })] } }, 'default.fast.0.apiKey'],
       [{ default: { fast: [route({ timeoutMs: 999 })] } }, 'default.fast.0.timeoutMs'],
       [{ default: { fast: [route({ timeoutMs: 1500.5 })] } }, 'default.fast.0.timeoutMs'],
@@ -666,7 +694,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     ).toBe('none');
     expect((await get({} as typeof env)).routes).toEqual({});
 
-    const value = { default: { strong: [route({ provider: 'anthropic', model: 'claude-x' })] } };
+    const value = {
+      default: { strong: [route({ provider: 'anthropic', model: 'claude-haiku-5-5' })] },
+    };
     const saved = await call('PUT', '/control/v1/settings/agent_runtime.routes', { value });
     expect(saved.status).toBe(200);
     const refused = await call('PUT', '/control/v1/settings/agent_runtime.routes', {

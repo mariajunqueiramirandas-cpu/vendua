@@ -9,6 +9,7 @@ export {
   createGateway,
   estimateCost,
   isRetryableStatus,
+  retryAfterMs,
   toolArgs,
   type BudgetScope,
   type FetchLike,
@@ -30,11 +31,6 @@ export {
   restoreText,
   type PiiVault,
 } from './pii.ts';
-export {
-  anthropicAdapter,
-  anthropicBody,
-  type AnthropicAdapterOpts,
-} from './adapters/anthropic.ts';
 export {
   openAiCompatibleAdapter,
   type OpenAiCompatibleOpts,

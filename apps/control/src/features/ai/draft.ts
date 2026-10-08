@@ -5,6 +5,7 @@ import type {
   AiModelsView,
   AiPricing,
   DirectProviderId,
+  ModelEffort,
   ModelProviderId,
   ModelRouteSetting,
   ModelRoutesSetting,
@@ -21,6 +22,10 @@ export const PROVIDERS: readonly ModelProviderId[] = [
   'gemini',
 ];
 export const DIRECT: readonly DirectProviderId[] = ['anthropic', 'openai', 'gemini'];
+/** Core runs every Anthropic route on this model, at its list price; effort is the choice */
+export const ANTHROPIC_MODEL = 'claude-haiku-5-5';
+export const EFFORTS: readonly ModelEffort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const DEFAULT_EFFORT: ModelEffort = 'medium';
 export const MAX_ROUTES = 5;
 const MODEL_RE = /^[A-Za-z0-9._/:@-]+$/;
 const PRICE_MAX = 1000;
@@ -35,6 +40,8 @@ export interface RouteDraft {
   zdr: boolean;
   /** OpenRouter endpoint tag; '' = OpenRouter's own routing */
   endpoint: string;
+  /** Anthropic only; '' = the default (medium) */
+  effort: string;
   inputPerMTok: string;
   outputPerMTok: string;
   cacheReadPerMTok: string;
@@ -82,6 +89,7 @@ export const emptyRoute = (): RouteDraft => ({
   model: '',
   zdr: true,
   endpoint: '',
+  effort: '',
   inputPerMTok: '',
   outputPerMTok: '',
   cacheReadPerMTok: '',
@@ -90,18 +98,24 @@ export const emptyRoute = (): RouteDraft => ({
 });
 export const emptyTiers = (): TierDraft => ({ fast: [], strong: [] });
 
-const routeFrom = (r: ModelRouteSetting): RouteDraft => ({
-  uid: uid(),
-  provider: r.provider,
-  model: r.model,
-  zdr: r.zdr === true,
-  endpoint: r.endpoint ?? '',
-  inputPerMTok: str(r.pricing?.inputPerMTok),
-  outputPerMTok: str(r.pricing?.outputPerMTok),
-  cacheReadPerMTok: str(r.pricing?.cacheReadPerMTok),
-  cacheWritePerMTok: str(r.pricing?.cacheWritePerMTok),
-  timeoutS: r.timeoutMs == null ? '' : String(r.timeoutMs / 1000),
-});
+const routeFrom = (r: ModelRouteSetting): RouteDraft => {
+  const anthropic = r.provider === 'anthropic';
+  // a route saved before the lock still runs the locked model: show and save that
+  const pricing = anthropic ? undefined : r.pricing;
+  return {
+    uid: uid(),
+    provider: r.provider,
+    model: anthropic ? ANTHROPIC_MODEL : r.model,
+    zdr: r.zdr === true,
+    endpoint: r.endpoint ?? '',
+    effort: anthropic && r.effort && EFFORTS.includes(r.effort) ? r.effort : '',
+    inputPerMTok: str(pricing?.inputPerMTok),
+    outputPerMTok: str(pricing?.outputPerMTok),
+    cacheReadPerMTok: str(pricing?.cacheReadPerMTok),
+    cacheWritePerMTok: str(pricing?.cacheWritePerMTok),
+    timeoutS: r.timeoutMs == null ? '' : String(r.timeoutMs / 1000),
+  };
+};
 const tiersFrom = (t: TierRoutesSetting | undefined): TierDraft => ({
   fast: (t?.fast ?? []).map(routeFrom),
   strong: (t?.strong ?? []).map(routeFrom),
@@ -122,7 +136,10 @@ function routeOut(d: RouteDraft): ModelRouteSetting {
     zdr: d.zdr,
   };
   if (filled(d.endpoint)) out.endpoint = d.endpoint.trim();
-  if (PRICE_FIELDS.some((f) => filled(d[f]))) {
+  if (d.provider === 'anthropic') {
+    out.model = ANTHROPIC_MODEL;
+    if (filled(d.effort)) out.effort = d.effort as ModelEffort;
+  } else if (PRICE_FIELDS.some((f) => filled(d[f]))) {
     out.pricing = { inputPerMTok: parse(d.inputPerMTok), outputPerMTok: parse(d.outputPerMTok) };
     if (filled(d.cacheReadPerMTok)) out.pricing.cacheReadPerMTok = parse(d.cacheReadPerMTok);
     if (filled(d.cacheWritePerMTok)) out.pricing.cacheWritePerMTok = parse(d.cacheWritePerMTok);
@@ -165,6 +182,7 @@ export const withProvider = (r: RouteDraft, provider: string): RouteDraft => ({
   ...emptyRoute(),
   uid: r.uid,
   provider,
+  model: provider === 'anthropic' ? ANTHROPIC_MODEL : '',
   zdr: provider === 'openrouter' || provider === '' ? r.zdr : false,
   timeoutS: r.timeoutS,
 });
@@ -349,7 +367,7 @@ export function routePaths(d: RoutesDraft): Set<string> {
       t[tier].forEach((_, i) => {
         const p = `${scope}.${tier}.${i}`;
         out.add(p);
-        for (const f of ['provider', 'model', 'zdr', 'endpoint', 'pricing', 'timeoutMs'])
+        for (const f of ['provider', 'model', 'zdr', 'endpoint', 'effort', 'pricing', 'timeoutMs'])
           out.add(`${p}.${f}`);
         for (const f of PRICE_FIELDS) out.add(`${p}.pricing.${f}`);
       });
@@ -379,8 +397,15 @@ export function validateRoutes(d: RoutesDraft): Errors {
           if (r.provider !== 'openrouter') errs[`${p}.endpoint`] = 'só em rotas da OpenRouter';
           else if (!validModelId(ep)) errs[`${p}.endpoint`] = 'provedor inválido';
         }
-        const anyPrice = PRICE_FIELDS.some((f) => filled(r[f]));
-        for (const f of PRICE_FIELDS) {
+        if (filled(r.effort)) {
+          if (r.provider !== 'anthropic') errs[`${p}.effort`] = 'só em rotas da Anthropic';
+          else if (!EFFORTS.includes(r.effort as ModelEffort))
+            errs[`${p}.effort`] = 'esforço inválido';
+        }
+        // the price fields are hidden there: Core prices Anthropic routes itself
+        const prices = r.provider === 'anthropic' ? [] : PRICE_FIELDS;
+        const anyPrice = prices.some((f) => filled(r[f]));
+        for (const f of prices) {
           const required = f === 'inputPerMTok' || f === 'outputPerMTok';
           if (!filled(r[f])) {
             if (anyPrice && required) errs[`${p}.pricing.${f}`] = 'obrigatório com preço';

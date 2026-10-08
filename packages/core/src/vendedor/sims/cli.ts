@@ -43,6 +43,7 @@ function throttled(a: ProviderAdapter, rpm: number, max: number): ProviderAdapte
   const gap = rpm > 0 ? Math.ceil(60_000 / rpm) : 0;
   return {
     id: a.id,
+    ...(a.outputTokens ? { outputTokens: a.outputTokens.bind(a) } : {}),
     async generate(req, signal) {
       if (max && used >= max) throw new Error(`SIM_MAX_REQUESTS (${max}) reached`);
       used++;

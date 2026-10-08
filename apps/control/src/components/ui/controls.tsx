@@ -80,16 +80,20 @@ export function Segmented<T extends string>({
   options,
   size = 'default',
   className,
+  label,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: readonly (readonly [T, ReactNode])[];
   size?: 'sm' | 'default' | undefined;
   className?: string | undefined;
+  /** the group's accessible name, when no visible label names it */
+  label?: string | undefined;
 }) {
   return (
     <div
       role="radiogroup"
+      aria-label={label}
       className={cn('inline-flex shrink-0 rounded-lg bg-secondary p-0.5', className)}
     >
       {options.map(([v, label]) => (
