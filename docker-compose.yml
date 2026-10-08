@@ -219,6 +219,12 @@ services:
       - traefik.http.routers.vendua-edge.entrypoints=websecure
       - traefik.http.routers.vendua-edge.priority=1
       - traefik.http.routers.vendua-edge.tls=true
+      # wildcard certificate over DNS-01: the `cloudflare` resolver in Dokploy's traefik.yml
+      # (docs/deploy/dokploy.md). Stores' own domains must reach the VPS directly, so the
+      # `*` record stays DNS only and Traefik, not Cloudflare, holds this certificate.
+      - traefik.http.routers.vendua-edge.tls.certresolver=cloudflare
+      - traefik.http.routers.vendua-edge.tls.domains[0].main=vendua.com.br
+      - traefik.http.routers.vendua-edge.tls.domains[0].sans=*.vendua.com.br
       - traefik.http.routers.vendua-edge.service=vendua-edge
       - traefik.http.routers.vendua-edge-http.service=vendua-edge
     restart: unless-stopped
