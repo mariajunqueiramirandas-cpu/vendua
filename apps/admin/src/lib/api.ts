@@ -1326,12 +1326,46 @@ export interface Account {
     purchase: boolean;
     edgeIpv4: string | null;
   };
-  siteRequest: {
-    id: string;
-    status: 'requested' | 'in_progress' | 'delivered' | 'cancelled';
-    brief: string | null;
-    createdAt: string;
-    updatedAt: string;
+  siteRequest: SiteRequest | null;
+}
+
+/** The brief Duá writes with the owner and the owner approves on his card (Core's spec.ts). */
+export interface DesignSpec {
+  version: 1;
+  /** one or two sentences: what the site should feel like */
+  summary: string;
+  brand: {
+    personality: string[];
+    palette: { primary: string | null; accents: string[]; notes: string | null };
+    typography: string;
+    references: { url: string; note: string }[];
+  };
+  experience: {
+    mustHave: string[];
+    differentials: string[];
+    motion: 'none' | 'subtle' | 'expressive';
+    avoid: string[];
+  };
+  copy: { tone: string; language: 'pt-BR' };
+}
+
+/** The site sob medida (Pangolim): the owner's request and, while it's built, where it stands. */
+export interface SiteRequest {
+  id: string;
+  status: 'requested' | 'in_progress' | 'delivered' | 'cancelled';
+  brief: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** the brief the owner approved on Duá's card (the adjusted one after the revision) */
+  spec: DesignSpec | null;
+  /** while building: ready by then (24 h from the approval) */
+  dueAt: string | null;
+  deliveredAt: string | null;
+  revisionsUsed: 0 | 1;
+  revisionsIncluded: 1;
+  building: {
+    kind: 'generate' | 'revision';
+    stage: 'fila' | 'construindo' | 'revisao' | 'publicando';
   } | null;
 }
 
@@ -1930,7 +1964,9 @@ export type CopilotActionKind =
   | 'product.update'
   | 'products.price'
   | 'coupon.create'
-  | 'coupon.update';
+  | 'coupon.update'
+  | 'site.build'
+  | 'site.revise';
 
 /** one line of a proposal's diff, formatted by Core (pt-BR); `from: null` is something new */
 export interface CopilotLine {
