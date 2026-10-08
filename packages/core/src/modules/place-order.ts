@@ -271,8 +271,8 @@ export async function placeOrderTx(
       : total === 0
         ? freePayment(method, now)
         : offer.online && offer.provider && (method === 'pix' || method === 'card_online')
-        ? onlinePayment(offer.provider, method, total)
-        : offlinePayment(settings, method, total, number)),
+          ? onlinePayment(offer.provider, method, total)
+          : offlinePayment(settings, method, total, number)),
     ...(changeFor !== null ? { changeForCents: changeFor } : {}),
   };
   const source = atTable ? 'table_qr' : (opts.source ?? 'storefront');
