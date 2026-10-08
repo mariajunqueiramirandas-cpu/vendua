@@ -52,7 +52,8 @@ export function normalizePixKey(key: string, type: PixKeyType): string | null {
     case 'email':
       // the DICT caps an email key at 77 characters, and the BR Code is ASCII with a two-digit
       // length per field: a longer key makes a code every bank refuses
-      return k.length <= 77 && /^[^\s@\x00-\x20\x7f-\uffff]{1,64}@[^\s@\x00-\x20\x7f-\uffff]{1,72}\.[a-z]{2,}$/i.test(k)
+      return k.length <= 77 &&
+        /^[^\s@\x00-\x20\x7f-\uffff]{1,64}@[^\s@\x00-\x20\x7f-\uffff]{1,72}\.[a-z]{2,}$/i.test(k)
         ? k.toLowerCase()
         : null;
     case 'phone': {
