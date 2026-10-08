@@ -92,7 +92,7 @@ describe('leadPatch', () => {
   });
   test('whatsapp writes carry the verified flag', () => {
     expect(leadPatch({ whatsapp: '5522999990000' })).toEqual({
-      whatsapp: '5522999990000',
+      whatsapp: '+5522999990000',
       whatsapp_verified: true,
     });
     expect(leadPatch({ whatsapp: null })).toEqual({ whatsapp: null, whatsapp_verified: false });

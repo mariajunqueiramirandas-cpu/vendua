@@ -11,7 +11,6 @@ import { addInboundMessage, type Channel, type InboundResult } from '../modules/
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { capLockTx, drain, releaseInboxTx } from './runner.ts';
 import { requestAgentTx } from './dispatch.ts';
-import { automationAllowedTx } from './policy.ts';
 import { retireWakeupsOnInboundTx } from './wakeups.ts';
 import { RETIRED_BY_INBOUND } from './sources.ts';
 import { log } from '../platform/log.ts';
@@ -102,13 +101,12 @@ export async function ingestInbound(
   });
   if (!res) return { ignored: 'histórico de contato sem lead' };
 
-  // Provider retry of an already-recorded message: no side effects again.
-  if (res.alreadySeen) return res;
-  emitControlEvent('thread.message', res.threadId);
-  if (res.leadCreated) emitControlEvent('lead.change', res.leadId);
-
   // history imports and own-account echoes are context only — never answered
   if (input.historical || input.direction === 'out') return res;
+  if (!res.alreadySeen) {
+    emitControlEvent('thread.message', res.threadId);
+    if (res.leadCreated) emitControlEvent('lead.change', res.leadId);
+  }
   // gate check + run insert in one tx: `for update of l, t` serializes with the
   // suppression writers so a suppression committed mid-flight is seen here
   const supersededThreads: string[] = [];
@@ -123,6 +121,24 @@ export async function ingestInbound(
       where t.id = ${res.threadId}
       for update of l, t
     `;
+    // A provider retry of a recorded message has no side effects again — unless the attempt
+    // that recorded it died before this tx: no inbox item names it and nothing came after it.
+    if (res.alreadySeen) {
+      const lost = await tx`
+        select 1 from lead_messages m
+        where m.id = ${res.messageId} and m.direction = 'in' and not m.historical
+          and m.created_at > now() - interval '1 day'
+          and not exists (
+            select 1 from lead_messages n
+            where n.thread_id = m.thread_id and n.id <> m.id and n.created_at >= m.created_at
+          )
+          and not exists (
+            select 1 from agent_inbox i
+            where i.lead_id = ${res.leadId} and i.payload->>'messageId' = ${res.messageId}
+          )
+      `;
+      if (!lost.length) return { runId: null, capFlagged: false, retired: [], startAt: null };
+    }
     // retire the agent's own unanswered outreach drafts — obsolete once the lead writes;
     // promises and staff asks survive, running runs untouched
     const drafts = await tx<{ id: string; thread_id: string }[]>`
@@ -176,9 +192,8 @@ export async function ingestInbound(
     ) {
       return { runId: null, capFlagged: false, retired: [], startAt: null };
     }
-    if (!(await automationAllowedTx(tx, 'reply')).ok) {
-      return { runId: null, capFlagged: false, retired: [], startAt: null };
-    }
+    // a preset/job switched off doesn't drop the request: the run parks at claim and the
+    // lead is answered once replies are back on
     // an active run drains the item between steps (burst coalescing); a channel mismatch
     // defers to a sweep-spawned run pinned to this channel. The dispatcher carries the
     // reply delay — and quiet hours, when the answer would go out live — into the start.

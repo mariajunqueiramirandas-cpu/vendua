@@ -187,6 +187,22 @@ export async function setNextActionTx(
   });
 }
 
+/** The agent's own pending dates and the callbacks it booked for the lead go — staff's stay. */
+export async function cancelAgentWakeupsTx(
+  tx: Sql,
+  leadId: string,
+  reason: string,
+): Promise<number> {
+  await tx`select pg_advisory_xact_lock(hashtext(${'wakeup:' + leadId}))`;
+  const rows = await tx`
+    update agent_wakeups set status = 'canceled', cancel_reason = ${reason}, updated_at = now()
+    where lead_id = ${leadId} and status = 'pending' and created_by = 'agent'
+    returning id
+  `;
+  if (rows.length) await syncNextActionTx(tx, leadId);
+  return rows.length;
+}
+
 /** After an agent send: book the follow-up cadence unless something is already on the
  *  lead's agenda (the agent's own date or a promise wins). */
 export async function scheduleCadenceTx(

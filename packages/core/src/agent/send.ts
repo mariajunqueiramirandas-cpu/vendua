@@ -22,6 +22,11 @@ import { sendInstagram } from './channels/instagram.ts';
 import { applyDeliveryEventTx } from './channels/email-inbound.ts';
 import { enqueuePlatformWaTx } from '../platform-whatsapp/outbox.ts';
 import { platformTransport } from '../platform-whatsapp/transport.ts';
+import { isMerchantPhone } from '../admin/phones.ts';
+import { e164Phone } from '../modules/leads.ts';
+import { log } from '../platform/log.ts';
+
+const sendLog = log.child({ mod: 'agent' });
 
 /**
  * Outbound dispatch: claim tx (row-lock → 'sending'), provider call outside
@@ -150,12 +155,29 @@ export async function dispatchMessage(
         wroteTid = msg.thread_id;
         return { fail: 'lead has no whatsapp' };
       }
+      // bare digits go out as-is: a number without its country code reaches someone else
+      if (!to.includes('@')) {
+        const e164 = e164Phone(to);
+        if (!e164) {
+          sendLog.warn({ messageId, leadId: lead.id }, 'whatsapp number without a country code');
+          await markMessageFailed(tx, messageId, 'número de whatsapp sem DDI');
+          wroteTid = msg.thread_id;
+          return { fail: 'número de whatsapp sem DDI' };
+        }
+        to = e164;
+      }
       // team numbers never get agent traffic — the net for leads created before
       // the number joined the team
       if (phoneIsIgnored(await blockedPhonesTx(tx), to, lead.whatsapp, lead.phone)) {
         await markMessageFailed(tx, messageId, 'número ignorado');
         wroteTid = msg.thread_id;
         return { fail: 'número ignorado' };
+      }
+      // a store owner gets their admin codes from this number and talks to Duá, not to sales
+      if (msg.author === 'agent' && (await isMerchantPhone(tx, to, lead.whatsapp, lead.phone))) {
+        await markMessageFailed(tx, messageId, 'número de lojista');
+        wroteTid = msg.thread_id;
+        return { fail: 'número de lojista' };
       }
       integration = await getIntegrationTx(tx, 'whatsapp');
     } else if (thread.channel === 'instagram') {

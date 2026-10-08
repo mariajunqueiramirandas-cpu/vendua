@@ -193,7 +193,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
       key: 'size',
       value: 'x',
     })) as { error?: string };
-    expect(ghost.error).toContain('no such lead');
+    // a run with no lead may touch only leads it created: refused before the lookup
+    expect(ghost.error).toContain('LEAD_MISMATCH');
   });
 
   test('contextFor renders a FATOS block for lead-bound runs', async () => {
