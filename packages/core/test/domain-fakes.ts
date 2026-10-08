@@ -215,6 +215,11 @@ export function fakeDnsHost(): FakeDnsHost {
       }
       return view(z);
     },
+    async findZone(host) {
+      record('findZone', [host]);
+      const z = zones.get(host);
+      return z ? view(z) : null;
+    },
     async zone(id) {
       record('zone', [id]);
       const z = byId(id);

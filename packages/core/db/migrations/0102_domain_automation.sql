@@ -20,6 +20,8 @@ alter table custom_domains
   -- the alias resolves to Venduá, so it gets a route and a certificate
   add column if not exists alias_ok boolean not null default false,
   add column if not exists zone_id text check (zone_id ~ '^[a-zA-Z0-9]{1,64}$'),
+  -- when a job claimed the name ('pending' zone_id) before asking Cloudflare for the zone
+  add column if not exists zone_claimed_at timestamptz,
   add column if not exists name_servers text[] not null default '{}'
     check (cardinality(name_servers) <= 8),
   -- [{type, name, value, priority?}]: what the zone holds besides Venduá's root and www

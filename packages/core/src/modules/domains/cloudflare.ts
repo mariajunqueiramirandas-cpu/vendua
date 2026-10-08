@@ -167,6 +167,8 @@ export function cloudflare(o: CloudflareOptions): DnsHost {
       }
     },
 
+    findZone: (host) => findZone(host.trim().toLowerCase()),
+
     async zone(id) {
       if (!ID.test(id)) return null;
       try {

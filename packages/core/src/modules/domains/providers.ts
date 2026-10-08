@@ -90,6 +90,8 @@ export interface DnsHost {
   /** the zone for `host` in Venduá's account, created when missing */
   ensureZone(host: string): Promise<Zone>;
   zone(id: string): Promise<Zone | null>;
+  /** the zone for `host` in Venduá's account, if there is one */
+  findZone(host: string): Promise<Zone | null>;
   /**
    * Makes the zone hold exactly: A (and AAAA) at '@' and 'www' pointing at the edge, plus
    * `records`. Every other record is removed. DNS-only (never proxied).

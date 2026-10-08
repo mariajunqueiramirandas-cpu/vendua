@@ -71,6 +71,7 @@ export interface CustomDomainRow {
   alias_host: string | null;
   alias_ok: boolean;
   zone_id: string | null;
+  zone_claimed_at: Date | null;
   name_servers: string[];
   records: unknown;
   records_confirmed_at: Date | null;

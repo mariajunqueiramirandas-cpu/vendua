@@ -523,6 +523,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     expect(await primaryOf(s.id)).toEqual([host]);
   });
 
+  test("repair: the owner's check brings a fixed domain back at once", async () => {
+    const { s, host, cd, at } = await connectLive('rpk');
+    dns.delete(host);
+    for (const m of [16, 32, 48]) await jobs(later(at, m * MIN));
+    expect((await row(cd.id))!.status).toBe('repairing');
+    pointCname(host, s.slug);
+    const res = await s.owner('POST', `/account/domains/${cd.id}/check`, {});
+    expect(res.body.customDomain.status).toBe('active');
+    expect(await primaryOf(s.id)).toEqual([host]);
+  });
+
   test('repair: an AAAA record that is not ours, added after go-live, counts as a miss', async () => {
     const { s, host, cd, at } = await connectLive('rp6');
     set(host, { aaaa: ['2001:db8::bad'] });
@@ -1215,5 +1226,45 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
       await sql`select status from domain_orders where custom_domain_id = ${id} and kind = 'renew'`
     )[0]!;
     expect(o.status).toBe('queued');
+  });
+
+  test('a domain removed while its zone is being created takes the zone with it', async () => {
+    const s = await paidStore('zrm');
+    const host = `zrm-${nonce}.com.br`;
+    const add = await s.owner('POST', '/account/domains', { host, method: 'ns' });
+    const id = add.body.customDomain.id;
+    await s.owner('PUT', `/account/domains/${id}/records`, { records: [], confirm: true });
+    const ensure = dnsHost.ensureZone;
+    dnsHost.ensureZone = async (h) => {
+      expect((await s.owner('DELETE', `/account/domains/${id}`)).status).toBe(200);
+      return ensure(h);
+    };
+    try {
+      await jobs(new Date());
+    } finally {
+      dnsHost.ensureZone = ensure;
+    }
+    expect(dnsHost.zones.has(host)).toBe(false);
+    expect(await row(id)).toBeUndefined();
+  });
+
+  test('a removed domain whose zone claim was left by a dead job waits, then finds the zone', async () => {
+    const s = await paidStore('zst');
+    const host = `zst-${nonce}.com.br`;
+    const id = (
+      await sql<{ id: string }[]>`
+        insert into custom_domains (tenant_id, host, verify_token, status, method, zone_id,
+          zone_claimed_at)
+        values (${s.id}, ${host}, ${'7'.repeat(32)}, 'removing', 'ns', 'pending', now())
+        returning id
+      `
+    )[0]!.id;
+    await dnsHost.ensureZone(host);
+    await jobs(new Date());
+    expect(await row(id)).toBeDefined();
+    expect(dnsHost.zones.has(host)).toBe(true);
+    await jobs(new Date(Date.now() + 11 * MIN));
+    expect(dnsHost.zones.has(host)).toBe(false);
+    expect(await row(id)).toBeUndefined();
   });
 });

@@ -38,6 +38,8 @@ const BATCH = 100;
 export const TLS_STUCK_MS = 60 * 60_000;
 /** consecutive failed re-checks (15 min apart) before a live domain goes under repair */
 export const REPAIR_AFTER = 3;
+/** a 'pending' zone claim older than this belongs to a job that died before writing the zone */
+export const ZONE_CLAIM_STALE_MS = 10 * 60_000;
 
 type Row = CustomDomainRow & { slug: string; tname: string };
 
@@ -111,7 +113,7 @@ export async function syncZones(sql: Sql, d: DomainJobDeps, now: Date) {
               await controlTx(
                 sql,
                 (tx) => tx`
-                  update custom_domains set zone_id = ${ZONE_CLAIMED}
+                  update custom_domains set zone_id = ${ZONE_CLAIMED}, zone_claimed_at = ${now}
                   where id = ${r.id} and zone_id is null and status = ${r.status}
                   returning id
                 `,
@@ -136,14 +138,30 @@ export async function syncZones(sql: Sql, d: DomainJobDeps, now: Date) {
       nameServers = zone.nameServers;
     }
     await dnsHost.syncRecords(zoneId, r.host, edge, (r.records ?? []) as DnsRecord[]);
-    await withTenant(sql, r.tenant_id, async (tx) => {
-      await tx`
+    // a row removed meanwhile still gets the zone id, so finishRemovals deletes the zone
+    const kept = await withTenant(sql, r.tenant_id, async (tx) => {
+      const u = await tx`
         update custom_domains set zone_id = ${zoneId}, name_servers = ${nameServers},
           records_synced_at = ${now}
-        where tenant_id = ${r.tenant_id} and id = ${r.id} and status <> 'removing'
+        where tenant_id = ${r.tenant_id} and id = ${r.id}
+          and (zone_id = ${ZONE_CLAIMED} or zone_id = ${zoneId})
+        returning id
       `;
-      await emitAdminTx(tx, r.tenant_id, 'billing');
+      if (u.length) await emitAdminTx(tx, r.tenant_id, 'billing');
+      return u.length > 0;
     });
+    if (kept || realZone(r.zone_id)) return;
+    // the row is gone, or a registration took the name: unless another row or that order now
+    // holds the name's zone, nobody tracks the one just created
+    const held = await controlTx(
+      sql,
+      (tx) => tx`
+        select 1 from custom_domains where host = ${r.host} and zone_id is not null
+        union all
+        select 1 from domain_orders where host = ${r.host} and status in ('queued', 'pending')
+      `,
+    );
+    if (!held.length) await dnsHost.deleteZone(zoneId);
   });
 }
 
@@ -236,62 +254,81 @@ export async function recheckLive(sql: Sql, d: DomainJobDeps, now: Date) {
       and (d.last_checked_at is null or d.last_checked_at <= ${due})
     `,
   );
-  await each(rows, 'recheck', async (r) => {
-    const ok = await stillPointing(r, d);
-    const target = cnameTarget(r.slug, d.storeDomain);
-    // a root's www may start (or stop) pointing at us after the domain went live
-    const aliasOk =
-      r.method === 'ns'
-        ? !!r.alias_host
-        : !!r.alias_host &&
-          (await pointsAt(r.alias_host, target, edgeIps(d))) &&
-          !(await certBlocker(r.alias_host, target));
-    const misses = ok ? 0 : r.miss_count + 1;
-    const next =
-      r.status === 'active' && misses >= REPAIR_AFTER
-        ? 'repairing'
-        : r.status === 'repairing' && ok
-          ? 'active'
-          : r.status;
-    const moved = await controlTx(sql, async (tx) => {
-      const row = (
-        await tx<CustomDomainRow[]>`
-          update custom_domains set miss_count = ${misses}, last_checked_at = ${now},
-            alias_ok = ${aliasOk}, status = ${next},
-            last_error = ${ok ? null : 'O domínio parou de apontar para a Venduá.'}
-          where id = ${r.id} and status = ${r.status}
-          returning *
-        `
-      )[0];
-      if (!row || next === r.status) return false;
-      if (next === 'repairing') {
-        await tx`select store_primary(${r.tenant_id}, ${platformHost(r.slug, d.storeDomain)})`;
-        await recordStaffEventTx(
-          tx,
-          'domain.repairing',
-          { storeName: r.tname, host: r.host },
-          {
-            tenantId: r.tenant_id,
-            dedupeKey: `domain.repairing:${r.id}:${now.toISOString().slice(0, 10)}`,
-          },
-        );
-      } else await tx`select store_primary(${r.tenant_id}, ${r.host})`;
-      await emitAdminTx(tx, r.tenant_id, 'billing');
-      await emitAdminTx(tx, r.tenant_id, 'store');
-      return true;
-    });
-    if (moved && next === 'repairing')
-      await tell(
-        d,
-        sql,
-        r.tenant_id,
+  await each(rows, 'recheck', (r) => recheckRow(sql, d, r, now));
+}
+
+/** The owner's "verificar agora" on a domain under repair: the re-check, now. */
+export async function recheckDomain(
+  sql: Sql,
+  d: DomainJobDeps,
+  tenantId: string,
+  id: string,
+  now: Date,
+) {
+  const r = (
+    await rowsWhere(
+      sql,
+      (tx) => tx`d.tenant_id = ${tenantId} and d.id = ${id} and d.status = 'repairing'`,
+    )
+  )[0];
+  if (r) await recheckRow(sql, d, r, now);
+}
+
+async function recheckRow(sql: Sql, d: DomainJobDeps, r: Row, now: Date) {
+  const ok = await stillPointing(r, d);
+  const target = cnameTarget(r.slug, d.storeDomain);
+  // a root's www may start (or stop) pointing at us after the domain went live
+  const aliasOk =
+    r.method === 'ns'
+      ? !!r.alias_host
+      : !!r.alias_host &&
+        (await pointsAt(r.alias_host, target, edgeIps(d))) &&
+        !(await certBlocker(r.alias_host, target));
+  const misses = ok ? 0 : r.miss_count + 1;
+  const next =
+    r.status === 'active' && misses >= REPAIR_AFTER
+      ? 'repairing'
+      : r.status === 'repairing' && ok
+        ? 'active'
+        : r.status;
+  const moved = await controlTx(sql, async (tx) => {
+    const row = (
+      await tx<CustomDomainRow[]>`
+        update custom_domains set miss_count = ${misses}, last_checked_at = ${now},
+          alias_ok = ${aliasOk}, status = ${next},
+          last_error = ${ok ? null : 'O domínio parou de apontar para a Venduá.'}
+        where id = ${r.id} and status = ${r.status}
+        returning *
+      `
+    )[0];
+    if (!row || next === r.status) return false;
+    if (next === 'repairing') {
+      await tx`select store_primary(${r.tenant_id}, ${platformHost(r.slug, d.storeDomain)})`;
+      await recordStaffEventTx(
+        tx,
+        'domain.repairing',
+        { storeName: r.tname, host: r.host },
         {
-          subject: `${r.host} parou de apontar para a Venduá`,
-          text: `O domínio ${r.host} parou de apontar para a Venduá. Enquanto isso, a loja continua no endereço Venduá (${platformHost(r.slug, d.storeDomain)}). Confira os registros em Conta → Domínio próprio.`,
+          tenantId: r.tenant_id,
+          dedupeKey: `domain.repairing:${r.id}:${now.toISOString().slice(0, 10)}`,
         },
-        `domain-repairing:${r.id}:${now.toISOString().slice(0, 10)}`,
       );
+    } else await tx`select store_primary(${r.tenant_id}, ${r.host})`;
+    await emitAdminTx(tx, r.tenant_id, 'billing');
+    await emitAdminTx(tx, r.tenant_id, 'store');
+    return true;
   });
+  if (moved && next === 'repairing')
+    await tell(
+      d,
+      sql,
+      r.tenant_id,
+      {
+        subject: `${r.host} parou de apontar para a Venduá`,
+        text: `O domínio ${r.host} parou de apontar para a Venduá. Enquanto isso, a loja continua no endereço Venduá (${platformHost(r.slug, d.storeDomain)}). Confira os registros em Conta → Domínio próprio.`,
+      },
+      `domain-repairing:${r.id}:${now.toISOString().slice(0, 10)}`,
+    );
 }
 
 /**
@@ -417,18 +454,27 @@ export async function settleLapsed(sql: Sql, d: DomainJobDeps, now: Date) {
 }
 
 /** Removed by the owner: the zone goes, then the row. */
-export async function finishRemovals(sql: Sql, d: DomainJobDeps) {
+export async function finishRemovals(sql: Sql, d: DomainJobDeps, now: Date) {
   const rows = await rowsWhere(sql, (tx) => tx`d.status = 'removing'`);
   await each(rows, 'remove', async (r) => {
+    // syncZones may still be creating this row's zone: it writes the id here when done
+    const claimed = r.zone_id === ZONE_CLAIMED;
+    if (
+      claimed &&
+      r.zone_claimed_at &&
+      now.getTime() - r.zone_claimed_at.getTime() < ZONE_CLAIM_STALE_MS
+    )
+      return;
     await controlTx(
       sql,
       (tx) =>
         tx`select unroute_custom_domain(${r.tenant_id}, ${r.host}, ${platformHost(r.slug, d.storeDomain)})`,
     );
-    const zoneId = realZone(r.zone_id);
-    if (zoneId) {
+    if (r.zone_id) {
       if (!d.providers.dnsHost) return;
-      await d.providers.dnsHost.deleteZone(zoneId);
+      // a claim whose job died may have created the zone: it holds the name, so it's this row's
+      const zoneId = claimed ? (await d.providers.dnsHost.findZone(r.host))?.id : r.zone_id;
+      if (zoneId) await d.providers.dnsHost.deleteZone(zoneId);
     }
     await withTenant(sql, r.tenant_id, async (tx) => {
       await tx`

@@ -45,7 +45,7 @@ export async function runDomainJobs(sql: Sql, d: DomainJobDeps, now: Date) {
     ['recheck', () => recheckLive(sql, d, now)],
     ['lapse', () => lapseAndRestore(sql, d, now)],
     ['lapsed', () => settleLapsed(sql, d, now)],
-    ['remove', () => finishRemovals(sql, d)],
+    ['remove', () => finishRemovals(sql, d, now)],
     ['rdap', () => refreshRdap(sql, d, now)],
     ['renewals.schedule', () => scheduleRenewals(sql, now)],
     ['renewals.run', () => runRenewals(sql, d, now)],

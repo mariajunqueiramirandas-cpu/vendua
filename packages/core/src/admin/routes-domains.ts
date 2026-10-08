@@ -21,6 +21,7 @@ import {
   labelFromQuery,
   suggestions,
 } from '../modules/domains/hosts.ts';
+import { recheckDomain } from '../modules/domains/lifecycle.ts';
 import { discoverRecords, parseRecords } from '../modules/domains/records.ts';
 import type { HolderAddress } from '../modules/domains/providers.ts';
 import { audit } from './audit.ts';
@@ -195,11 +196,20 @@ export function mountDomains(d: AdminDeps) {
     need(c, 'owner');
     const t = (c as AdminCtx).get('tenant');
     const id = uuidParam(c, 'id');
+    const now = new Date();
+    // under repair, the live re-check: back to active as soon as DNS points here again
+    await recheckDomain(
+      d.sql,
+      { providers: p, notify: d.notify, storeDomain: d.storeDomain },
+      t.id,
+      id,
+      now,
+    );
     await checkCustomDomain(d.sql, {
       tenantId: t.id,
       domainId: id,
       storeDomain: d.storeDomain,
-      now: new Date(),
+      now,
       manual: true,
       rdap: p.rdap,
       ...(p.edge ? { edgeIps: [p.edge.ipv4] } : {}),
