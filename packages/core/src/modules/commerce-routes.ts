@@ -69,6 +69,7 @@ import {
   type OrderView,
 } from './orders.ts';
 import { normalizePixKey, type PixKeyType } from './pix.ts';
+import { saveKitStepsTx } from './combos.ts';
 import { setStock } from './stock.ts';
 import { subscribeNotifyTx } from './storefront-platform.ts';
 import type { StoreSettingsRow } from './store.ts';
@@ -730,6 +731,7 @@ export function mountCommerce(d: Deps) {
       if (!Array.isArray(s.items) || s.items.length === 0 || s.items.length > 40)
         throw new HttpError(400, 'BAD_REQUEST', `slots[${i}].items must have 1–40 entries`);
       return {
+        id: typeof s.id === 'string' && UUID_RE.test(s.id) ? s.id : null,
         name: str(s.name, `slots[${i}].name`, 80),
         minSelect,
         maxSelect,
@@ -742,25 +744,24 @@ export function mountCommerce(d: Deps) {
     });
     const res = await claimTenant(c, t.id, async (tx) => {
       const id = await productIdOf(tx, t.id, c.req.param('product'));
-      await tx`delete from combo_slots where tenant_id = ${t.id} and product_id = ${id}`;
-      for (const [sort, s] of slots.entries()) {
-        const slotId = (
-          await tx<{ id: string }[]>`
-            insert into combo_slots (tenant_id, product_id, name, min_select, max_select, qty_per_item, sort)
-            values (${t.id}, ${id}, ${s.name}, ${s.minSelect}, ${s.maxSelect}, ${s.qtyPerItem}, ${sort})
-            returning id
-          `
-        )[0]!.id;
-        for (const [isort, it] of s.items.entries()) {
-          const itemId = await productIdOf(tx, t.id, it.ref);
-          if (itemId === id) throw new HttpError(400, 'BAD_REQUEST', 'a kit cannot contain itself');
-          await tx`
-            insert into combo_slot_items (tenant_id, slot_id, product_id, price_delta_cents, sort)
-            values (${t.id}, ${slotId}, ${itemId}, ${it.priceDeltaCents}, ${isort})
-            on conflict (slot_id, product_id) do nothing
-          `;
+      const steps = [];
+      for (const [i, s] of slots.entries()) {
+        const items = [];
+        for (const it of s.items) {
+          const productId = await productIdOf(tx, t.id, it.ref);
+          if (productId === id)
+            throw new HttpError(400, 'BAD_REQUEST', 'a kit cannot contain itself');
+          items.push({ productId, priceDeltaCents: it.priceDeltaCents });
         }
+        if (s.minSelect > new Set(items.map((x) => x.productId)).size * s.qtyPerItem)
+          throw new HttpError(
+            400,
+            'BAD_REQUEST',
+            `slots[${i}]: minSelect is more than its items offer`,
+          );
+        steps.push({ ...s, items });
       }
+      await saveKitStepsTx(tx, t.id, id, steps);
       await tx`update products set kind = ${slots.length ? 'combo' : 'simple'} where tenant_id = ${t.id} and id = ${id}`;
       await emitAdminTx(tx, t.id, 'catalog', id);
       return { status: 200, body: { product: await getProductByIdAny(tx, t.id, id) } };

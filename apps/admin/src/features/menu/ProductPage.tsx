@@ -1383,7 +1383,9 @@ function KitEditor({
     async (ss) => {
       const r = await api.setKit(
         p.id,
-        ss.map(({ name, minSelect, maxSelect, qtyPerItem, items }) => ({
+        // each step's id goes back: carts and past orders hold it, and Core keeps it on a save
+        ss.map(({ id, name, minSelect, maxSelect, qtyPerItem, items }) => ({
+          ...(id ? { id } : {}),
           name,
           minSelect,
           maxSelect,

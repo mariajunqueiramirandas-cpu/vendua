@@ -474,4 +474,67 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('catalog model gaps (db)', () =>
       ).body.error.code,
     ).toBe('INVALID_IMPORT');
   });
+
+  test('kits: editing the steps keeps their ids, so a bag holding the kit still checks out', async () => {
+    const mk = async (slugP: string, name: string) =>
+      (
+        await sql<{ id: string }[]>`
+          insert into products (tenant_id, category_id, slug, name, base_price_cents)
+          values (${tenantId}, ${categoryId}, ${slugP}, ${name}, 300) returning id
+        `
+      )[0]!.id;
+    const kit = await mk('kit-doces', 'Kit doces');
+    const a = await mk('doce-a', 'Brigadeiro');
+    const b = await mk('doce-b', 'Beijinho');
+    const step = (name: string, id?: string) => ({
+      ...(id ? { id } : {}),
+      name,
+      minSelect: name === 'Extras' ? 0 : 1,
+      maxSelect: 2,
+      qtyPerItem: 1,
+      items: [{ productId: a }, { productId: b, priceDeltaCents: 50 }],
+    });
+    const put = (slots: unknown[]) => admin('PUT', `/products/${kit}/kit`, { slots });
+    const first = await put([step('Doces')]);
+    expect(first.status).toBe(200);
+    const slotId = first.body.product.comboSlots[0].id;
+    const auth = await session();
+    const add = await addItem(auth, {
+      productId: kit,
+      qty: 1,
+      comboSelections: [{ slotId, productId: b, qty: 1 }],
+    });
+    expect(add.status).toBe(200);
+
+    // renamed with its id sent back, plus a new optional step
+    const renamed = await put([step('Docinhos', slotId), step('Extras')]);
+    expect(renamed.status).toBe(200);
+    const ids = renamed.body.product.comboSlots.map((x: any) => x.id);
+    expect(ids[0]).toBe(slotId);
+    // a client that sends no ids: an unchanged step at its place keeps its id
+    const again = await put([step('Docinhos'), step('Extras')]);
+    expect(again.body.product.comboSlots.map((x: any) => x.id)).toEqual(ids);
+
+    const placed = await call(
+      'POST',
+      '/checkout/v1/checkout',
+      {
+        customer: { name: 'Rita Alves', phone: '(22) 97777-6666' },
+        delivery: { mode: 'pickup' },
+        payment: { method: 'cash' },
+      },
+      auth,
+    );
+    expect(placed.status).toBe(201);
+
+    // a step or option group nobody can fill is refused, not saved
+    const four = await put([{ ...step('Doces'), minSelect: 4, maxSelect: 4 }]);
+    expect(four.status).toBe(422);
+    expect(four.body.error.details.field).toBe('slots[0].minSelect');
+    const opts = await admin('PUT', `/products/${a}/options`, {
+      groups: [{ name: 'Calda', minSelect: 2, maxSelect: 5, options: [{ name: 'Chocolate' }] }],
+    });
+    expect(opts.status).toBe(422);
+    expect(opts.body.error.details.field).toBe('groups[0].minSelect');
+  });
 });
