@@ -5,6 +5,7 @@ import { platformPublicKey } from '../payments/index.ts';
 import type { PaymentProvider } from '../payments/provider.ts';
 import { latestOrder, orderView } from '../domains/orders.ts';
 import type { DnsRecord, DomainProviders } from '../domains/providers.ts';
+import { siteRequestViewTx } from '../site-builder/tasks.ts';
 import {
   cnameTarget,
   txtName,
@@ -65,20 +66,6 @@ export async function accountView(
     await tx<CustomDomainRow[]>`
       select * from custom_domains where tenant_id = ${t.id} and status <> 'removing'
       order by created_at desc limit 1
-    `
-  )[0];
-  const site = (
-    await tx<
-      {
-        id: string;
-        status: string;
-        brief: string | null;
-        created_at: Date;
-        updated_at: Date;
-      }[]
-    >`
-      select id, status, brief, created_at, updated_at from site_requests where tenant_id = ${t.id}
-      order by (status in ('requested', 'in_progress')) desc, created_at desc limit 1
     `
   )[0];
   const storeSuffix = `.${o.storeDomain.toLowerCase()}`;
@@ -175,14 +162,6 @@ export async function accountView(
       purchase: !!(dp?.dnsHost && dp.edge && dp.registrar),
       edgeIpv4: dp?.edge?.ipv4 ?? null,
     },
-    siteRequest: site
-      ? {
-          id: site.id,
-          status: site.status,
-          brief: site.brief,
-          createdAt: site.created_at,
-          updatedAt: site.updated_at,
-        }
-      : null,
+    siteRequest: await siteRequestViewTx(tx, t.id),
   };
 }

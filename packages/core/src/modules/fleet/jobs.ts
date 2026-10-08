@@ -5,6 +5,7 @@ import { reconcileTx } from './deploy.ts';
 import { fleetLog } from './incidents.ts';
 import { runProbes } from './probe.ts';
 import { runProvisionings } from './provision.ts';
+import { pruneGithubDeliveriesTx, runSiteTasks } from '../site-builder/jobs.ts';
 
 // The Control Plane's loop (docs/architecture/08 "Reconciler"). Replica-safe: provisionings and
 // probes are claimed under leases, deployments move only from `pending`, and reconcile locks
@@ -41,6 +42,7 @@ export async function pruneHistory(d: FleetDeps) {
       delete from fleet_incidents
       where resolved_at < now() - make_interval(days => ${HISTORY_DAYS * 3})
     `;
+    await pruneGithubDeliveriesTx(tx);
   });
 }
 
@@ -59,6 +61,7 @@ export function startFleetJobs(d: FleetDeps): () => void {
       }
       await runProvisionings(d);
       await runProbes(d);
+      await runSiteTasks(d);
       if (now - lastPrune >= PRUNE_MS) {
         lastPrune = now;
         await pruneHistory(d);

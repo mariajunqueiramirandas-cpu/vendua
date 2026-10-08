@@ -28,6 +28,9 @@ Copy `.env.example` into the service's environment and fill it in:
 | `VENDUA_EDGE_SECRET`                       | the edge's key for Core's `/edge/v1/resolve` — required           |
 | `VENDUA_SYNC_SECRET`                       | domains-sync's key for Core's `/sync/v1` (own domains)            |
 | `DOMAINS_SYNC_DENY`                        | admin, CRM and site hosts domains-sync must never route           |
+| `VENDUA_SITE_ROUTINE_URL` / `_TOKEN`       | the site builder's Claude Code routine ([setup](site-builder.md)) |
+| `VENDUA_GITHUB_REPO` / `_TOKEN`            | the site builder merges PRs and reads the merged design           |
+| `VENDUA_GITHUB_WEBHOOK_SECRET`             | verifies GitHub's webhook at `/control/v1/github/webhook`         |
 | `VENDUA_EDGE_IPV4` / `VENDUA_EDGE_IPV6`    | the VPS's public addresses, written into hosted zones             |
 | `CLOUDFLARE_API_TOKEN` / `_ACCOUNT_ID`     | Cloudflare hosts delegated and included domains (Zone+DNS Edit)   |
 | `OPENPROVIDER_USERNAME` / `_PASSWORD`      | the Openprovider API user that registers Pangolim's `.com.br`     |

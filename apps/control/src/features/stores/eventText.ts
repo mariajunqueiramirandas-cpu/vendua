@@ -1,5 +1,5 @@
 import type { StoreEvent } from '@/lib/api.ts';
-import { fmtMoney } from '@/lib/format.ts';
+import { fmtDateTime, fmtMoney } from '@/lib/format.ts';
 
 const ORDER_STEP: Record<string, string> = {
   paid: 'pago',
@@ -59,6 +59,16 @@ const MONITOR: Record<string, string> = {
 };
 const METHOD: Record<string, string> = { pix: 'pix', card: 'cartão', cash: 'dinheiro' };
 
+// site sob medida (the builder's tasks); `kind` in the data is the task's: a new site or an ajuste
+const SITE: Record<string, [site: string, revision: string]> = {
+  'site.task_queued': ['site sob medida na fila', 'ajuste do site na fila'],
+  'site.ready': ['site sob medida para aprovar', 'ajuste do site para aprovar'],
+  'site.escalated': ['site sob medida travou', 'ajuste do site travou'],
+  'site.due_soon': ['site sob medida perto do prazo', 'ajuste do site perto do prazo'],
+  'site.overdue': ['site sob medida atrasado', 'ajuste do site atrasado'],
+  'site.delivered': ['site sob medida no ar', 'ajuste do site no ar'],
+};
+
 const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
 const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const money = (v: unknown) => (n(v) === null ? null : fmtMoney(n(v)));
@@ -101,8 +111,11 @@ export function eventTitle(e: StoreEvent): string {
       const c = INCIDENT[s(d.change) ?? ''];
       return c ? `incidente ${c}` : e.label;
     }
-    default:
+    default: {
+      const site = SITE[e.kind];
+      if (site) return site[d.kind === 'revision' ? 1 : 0];
       return e.label;
+    }
   }
 }
 
@@ -159,6 +172,14 @@ export function eventText(e: StoreEvent): string | null {
       return join(s(d.who), s(d.topic) !== 'geral' && s(d.topic), clip(s(d.message)));
     case 'store.request':
       return s(d.title);
+    case 'site.task_queued':
+    case 'site.due_soon':
+    case 'site.overdue':
+      return s(d.dueAt) && `prazo ${fmtDateTime(s(d.dueAt))}`;
+    case 'site.ready':
+      return 'CI verde — aprove no CRM para publicar';
+    case 'site.escalated':
+      return clip(s(d.reason));
     case 'agent.turn_failed':
       return clip(s(d.error));
     case 'vendedor.monitor':
@@ -168,4 +189,12 @@ export function eventText(e: StoreEvent): string | null {
     default:
       return null;
   }
+}
+
+/** A route inside the CRM the row opens, when the event is about one (a site task). */
+export function eventLink(e: StoreEvent): string | null {
+  const task = s(e.data.taskId);
+  return e.kind.startsWith('site.') && task && /^[0-9a-f-]{36}$/i.test(task)
+    ? `/lojas/sites/${task}`
+    : null;
 }

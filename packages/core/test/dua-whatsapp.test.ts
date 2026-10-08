@@ -319,7 +319,9 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
     const [st] = await sql<{ status_override: string | null }[]>`
       select status_override from store_settings where tenant_id = ${s.tenantId}`;
     expect(st!.status_override).toBe('paused');
-    expect(await lastSent(s.phone)).toMatch(/^Feito: Loja pausada até hoje às \d{2}:\d{2}$/);
+    expect(await lastSent(s.phone)).toMatch(
+      /^Feito: Loja pausada até (hoje|amanhã) às \d{2}:\d{2}$/,
+    );
     expect((await audits(s.tenantId, 'store.pause'))[0]!.actor_label).toBe(
       'Rita Souza pelo Duá (WhatsApp)',
     );

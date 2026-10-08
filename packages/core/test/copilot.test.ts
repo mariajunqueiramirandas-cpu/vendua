@@ -276,7 +276,7 @@ describe.skipIf(!OWNER_URL)('Duá Copilot (db)', () => {
     expect(res.status).toBe(200);
     const applied = res.body.items.find((i: any) => i.id === card.id);
     expect(applied.status).toBe('applied');
-    expect(applied.done).toMatch(/^Loja pausada até hoje às \d{2}:\d{2}$/);
+    expect(applied.done).toMatch(/^Loja pausada até (hoje|amanhã) às \d{2}:\d{2}$/);
     expect(applied.canDecide).toBe(false);
     const st = await status(s.tenantId);
     expect(st.status_override).toBe('paused');

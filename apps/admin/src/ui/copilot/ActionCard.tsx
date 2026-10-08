@@ -6,7 +6,9 @@ import {
   Clock,
   Coins,
   Lock,
+  MagicWand,
   Package,
+  PaintBrush,
   Pause,
   Play,
   Storefront,
@@ -30,7 +32,38 @@ const KIND_ICON: Record<CopilotActionKind, Icon> = {
   'products.price': Tag,
   'coupon.create': Ticket,
   'coupon.update': Ticket,
+  'site.build': MagicWand,
+  'site.revise': PaintBrush,
 };
+
+// what confirming means, where it's more than "this change happens"
+const CONFIRM_NOTE: Partial<Record<CopilotActionKind, string>> = {
+  'site.build':
+    'Confirmar aprova este briefing. É a sua única aprovação: o site fica pronto em até 1 dia.',
+  'site.revise': 'Confirmar usa o ajuste incluído. Ele fica pronto em até 1 dia.',
+};
+// who may confirm, when a manager can't
+const OWNER_ONLY: ReadonlySet<CopilotActionKind> = new Set(['site.build', 'site.revise']);
+
+/** "#7a2e3b · #f3e6d8": the colours themselves, beside their codes */
+const HEXES = /^#[0-9a-f]{6}(?: · #[0-9a-f]{6})*$/i;
+function Value({ text, struck }: { text: string; struck?: boolean }) {
+  if (!HEXES.test(text)) return <>{text}</>;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+      {text.split(' · ').map((h) => (
+        <span key={h} className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="size-4 shrink-0 rounded-full ring-1 ring-inset ring-line-strong"
+            style={{ background: h }}
+          />
+          <span className={cn(struck && 'line-through decoration-1')}>{h}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
 
 const CHIP =
   'inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[0.8125rem] font-semibold leading-[1.125rem]';
@@ -108,7 +141,7 @@ export function ActionCard({
                   <>
                     <del className="t-body text-muted decoration-1">
                       <span className="sr-only">de </span>
-                      {l.from}
+                      <Value text={l.from} struck />
                     </del>
                     <ArrowRight
                       weight="bold"
@@ -124,7 +157,7 @@ export function ActionCard({
                   )}
                 >
                   {l.from !== null ? <span className="sr-only">para </span> : null}
-                  {l.to}
+                  <Value text={l.to} />
                 </ins>
               </dd>
             </div>
@@ -181,13 +214,17 @@ function Outcome({
             </Button>
           ) : null}
         </div>
-        <p className="t-caption text-muted">Nada muda até você confirmar.</p>
+        <p className="t-caption text-muted">
+          {CONFIRM_NOTE[a.kind] ?? 'Nada muda até você confirmar.'}
+        </p>
       </footer>
     );
   if (a.status === 'proposed')
     return (
       <Band tone="muted" Icon={Lock}>
-        Só o dono ou um gerente confirma isso.
+        {OWNER_ONLY.has(a.kind)
+          ? 'Só o dono da loja confirma isso.'
+          : 'Só o dono ou um gerente confirma isso.'}
       </Band>
     );
   if (a.status === 'applied')

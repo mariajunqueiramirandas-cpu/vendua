@@ -82,6 +82,8 @@ const TOUCHES: Record<CopilotActionKind, QueryKey[]> = {
   'products.price': [['catalog'], qk.home],
   'coupon.create': [qk.marketing],
   'coupon.update': [qk.marketing],
+  'site.build': [qk.account],
+  'site.revise': [qk.account],
 };
 
 type ActionItem = { type: 'action' } & CopilotAction;
@@ -241,7 +243,21 @@ function channelTag(m: CopilotMessage) {
  */
 export default function Copilot() {
   const loc = useLocation();
-  const from = screenOf((loc.state as { from?: string } | null)?.from);
+  const state = loc.state as { from?: string; prompt?: string } | null;
+  const from = screenOf(state?.from);
+  // a screen can hand over a first message to start from (Conta: "Quero montar meu site…"): it
+  // waits in the composer, never sent by itself, and only once (not again on back or reload)
+  const [prompt] = useState(() => {
+    const p = typeof state?.prompt === 'string' ? state.prompt.slice(0, 2000) : '';
+    if (p)
+      try {
+        const h = window.history.state as { usr?: Record<string, unknown> } | null;
+        if (h?.usr) window.history.replaceState({ ...h, usr: { ...h.usr, prompt: undefined } }, '');
+      } catch {
+        /* the prefill stays: harmless */
+      }
+    return p;
+  });
   const c = useCopilot();
   const [sheet, setSheet] = useState(false);
   // only the first message is about the screen it came from
@@ -305,7 +321,7 @@ export default function Copilot() {
 
       <div className="sticky bottom-(--tabbar-h) z-20 md:bottom-0 md:px-8 md:pb-4">
         <div className="md:overflow-hidden md:rounded-lg md:depth-2">
-          <Composer id="copilot-msg" onSend={send} className="md:border-t-0" />
+          <Composer id="copilot-msg" onSend={send} initial={prompt} className="md:border-t-0" />
         </div>
       </div>
       <NewChatSheet open={sheet} onOpenChange={setSheet} reset={c.reset} />
@@ -543,20 +559,30 @@ function Composer({
   id,
   onSend,
   focus,
+  initial = '',
   className,
 }: {
   id: string;
   onSend: (text: string) => void;
   /** changes when the cursor should go here */
   focus?: number;
+  /** a message to start from: it waits here, with the cursor at its end */
+  initial?: string;
   className?: string;
 }) {
   const { online } = useLiveState();
-  const [text, setText] = useState('');
+  const [text, setText] = useState(initial);
   const field = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (focus) field.current?.focus();
   }, [focus]);
+  useEffect(() => {
+    const f = field.current;
+    if (!initial || !f) return;
+    f.focus({ preventScroll: true });
+    f.setSelectionRange(f.value.length, f.value.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the first render's
+  }, []);
   const send = () => {
     const t = text.trim();
     if (!t || !online) return;

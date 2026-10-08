@@ -1,5 +1,6 @@
 import type { MerchantNotify } from '../../admin/context.ts';
 import type { Sql } from '../../platform/db.ts';
+import { siteDepsFromEnv, type SiteDeps } from '../site-builder/deps.ts';
 import { notifyStaff, type StaffNotice } from '../staff.ts';
 
 // The Control Plane's collaborators, one object so tests swap the network and the clock.
@@ -19,6 +20,8 @@ export interface FleetDeps {
   now: () => Date;
   /** tests: confine the probe loop to these stores (a shared database has others) */
   only: string[] | null;
+  /** the site builder's routine, GitHub and webhook secret (site-builder/deps.ts) */
+  site: SiteDeps;
 }
 
 export function fleetDeps(
@@ -42,6 +45,7 @@ export function fleetDeps(
     staff: o.staff ?? ((n) => notifyStaff(sql, 'fleet', n)),
     now: o.now ?? (() => new Date()),
     only: o.only ?? null,
+    site: o.site ?? siteDepsFromEnv(),
   };
 }
 

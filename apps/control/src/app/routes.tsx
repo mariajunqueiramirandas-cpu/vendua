@@ -59,6 +59,8 @@ const AiModelsPage = lazy(() => import('@/features/ai/ModelsPage.tsx'));
 const AiVoicePage = lazy(() => import('@/features/ai/VoicePage.tsx'));
 const BillingPlansPage = lazy(() => import('@/features/stores/PlansPage.tsx'));
 const IncidentsPage = lazy(() => import('@/features/stores/IncidentsPage.tsx'));
+const SiteTasksPage = lazy(() => import('@/features/sites/SiteTasksPage.tsx'));
+const SiteTaskPage = lazy(() => import('@/features/sites/SiteTaskPage.tsx'));
 const FleetPage = lazy(() => import('@/features/fleet/FleetPage.tsx'));
 const SettingsPage = lazy(() => import('@/features/settings/SettingsPage.tsx'));
 const NotFoundPage = lazy(() => import('@/features/notfound/NotFoundPage.tsx'));
@@ -92,6 +94,7 @@ function chrome(path: string): { title: string; tabs?: PageTab[]; back?: string 
   if (path.startsWith('/inbox')) return { title: 'Inbox' };
   if (path.startsWith('/agenda')) return { title: 'Agenda' };
   if (path.startsWith('/agente')) return { title: 'Agente', tabs: AGENT_TABS };
+  if (path.startsWith('/lojas/sites/')) return { title: 'Site sob medida', back: '/lojas/sites' };
   if (/^\/lojas\/[0-9a-f-]{36}/.test(path)) return { title: 'Loja', back: '/lojas' };
   if (path.startsWith('/lojas')) return { title: 'Lojas', tabs: STORES_TABS };
   if (path.startsWith('/ia')) return { title: 'IA', tabs: AI_TABS };
@@ -151,6 +154,8 @@ export function AppRoutes() {
         <Route path="/lojas/planos" element={<BillingPlansPage />} />
         <Route path="/lojas/incidentes" element={<IncidentsPage />} />
         <Route path="/lojas/frota" element={<FleetPage />} />
+        <Route path="/lojas/sites" element={<SiteTasksPage />} />
+        <Route path="/lojas/sites/:id" element={<SiteTaskPage />} />
         <Route path="/lojas/:id" element={<StorePage />} />
         <Route path="/ia" element={<AiUsagePage />} />
         <Route path="/ia/modelos" element={<AiModelsPage />} />

@@ -20,9 +20,11 @@ import {
 import { deviceIdOr } from '../modules/payments/store-payments.ts';
 import { audit } from './audit.ts';
 import { oneOf, text, type AdminDeps, type Merchant } from './context.ts';
-import { handlers } from './handlers.ts';
+import { bodyOf, handlers, isReplay } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
+import { buildSiteTx, reviseSiteTx } from '../modules/site-builder/admin.ts';
+import { siteRequestViewTx } from '../modules/site-builder/tasks.ts';
 
 const METHODS = ['card', 'pix'] as const;
 const validPayerEmail = (v: unknown) => validEmail(v, 'payerEmail');
@@ -33,7 +35,7 @@ const payerDocumentOr = (v: unknown) =>
 // the Pangolim own domain and site request. Owner only; every write is idempotent (handlers.write).
 export function mountAccount(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   const view = (tx: Sql, t: Tenant) =>
     accountView(tx, t, { storeDomain: d.storeDomain, provider: d.provider, domains: d.domains });
@@ -232,6 +234,37 @@ export function mountAccount(d: AdminDeps) {
         brief,
       });
       return { status: 200, body: await view(tx, t) };
+    }),
+  );
+
+  // the site builder (Duá's cards replay these, and dry-run them: rows only, never HTTP)
+  admin.post(
+    '/account/site-request/build',
+    named('site.build').write('owner', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 32 * 1024);
+      const source = isReplay(c) ? 'copilot' : 'owner';
+      const task = await buildSiteTx(tx, t.id, { spec: body.spec, source });
+      await log(tx, t, m, 'site_request.build', 'aprovou o projeto do site sob medida', {
+        taskId: task.id,
+        source,
+      });
+      return { status: 201, body: await siteRequestViewTx(tx, t.id) };
+    }),
+  );
+
+  admin.post(
+    '/account/site-request/revision',
+    named('site.revise').write('owner', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 32 * 1024);
+      const note = text(body.note, 'note', 1000, 3);
+      const source = isReplay(c) ? 'copilot' : 'owner';
+      const task = await reviseSiteTx(tx, t.id, { note, spec: body.spec, source });
+      await log(tx, t, m, 'site_request.revise', 'pediu o ajuste do site sob medida', {
+        taskId: task.id,
+        note,
+        source,
+      });
+      return { status: 201, body: await siteRequestViewTx(tx, t.id) };
     }),
   );
 }

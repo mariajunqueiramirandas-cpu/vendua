@@ -18,7 +18,7 @@ import { SignupPanel } from './SignupPanel.tsx';
 import { PlanChangeDialog } from './PlanChangeDialog.tsx';
 import { FEATURES, trialLabel, usePlanEditors, type Change } from './planEdit.tsx';
 import { useControlPlans } from './queries.ts';
-import { STORES_TABS } from './tabs.ts';
+import { useStoresTabs } from './tabs.ts';
 
 const included = (p: ControlPlan) => FEATURES.filter((f) => p.features?.[f.key]);
 
@@ -88,6 +88,7 @@ function SheetSection({ title, children }: { title: string; children: ReactNode 
 const pct = (bps: number) => `${(bps / 100).toLocaleString('pt-BR')}%`;
 
 export default function PlansPage() {
+  const tabs = useStoresTabs();
   const query = useControlPlans();
   const [sp, setSp] = useSearchParams();
   const [change, setChange] = useState<Change | null>(null);
@@ -227,7 +228,7 @@ export default function PlansPage() {
   };
 
   return (
-    <Page title="Lojas" tabs={STORES_TABS}>
+    <Page title="Lojas" tabs={tabs}>
       {query.isError && !query.data ? (
         <ErrorState error={query.error} onRetry={() => void query.refetch()} />
       ) : (

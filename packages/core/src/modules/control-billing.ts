@@ -138,6 +138,9 @@ export function mountControlBilling(o: {
           sr_status: string | null;
           sr_brief: string | null;
           sr_note: string | null;
+          st_id: string | null;
+          st_status: string | null;
+          st_due: Date | null;
           inv_id: string | null;
           inv_number: number | null;
           inv_amount: number | null;
@@ -155,6 +158,7 @@ export function mountControlBilling(o: {
                dor.id as do_id, dor.host as do_host, dor.status as do_status,
                dor.last_error as do_error,
                sr.id as sr_id, sr.status as sr_status, sr.brief as sr_brief, sr.staff_note as sr_note,
+               st.id as st_id, st.status as st_status, st.due_at as st_due,
                inv.id as inv_id, inv.number as inv_number, inv.amount_cents as inv_amount,
                inv.kind as inv_kind, inv.period_start as inv_start, inv.due_at as inv_due
         from tenants t
@@ -179,6 +183,11 @@ export function mountControlBilling(o: {
             select id, status, brief, staff_note from site_requests where tenant_id = t.id
             order by (status in ('requested', 'in_progress')) desc, created_at desc limit 1
           ) sr on true
+          -- the site builder's task: the live one, else the latest
+          left join lateral (
+            select id, status, due_at from site_tasks where tenant_id = t.id
+            order by (status not in ('delivered', 'cancelled')) desc, created_at desc limit 1
+          ) st on true
           -- the oldest plan invoice still to pay: the one "marcar como pago" settles next
           left join lateral (
             select id, number, amount_cents, kind, period_start, due_at from invoices
@@ -222,6 +231,7 @@ export function mountControlBilling(o: {
           siteRequest: r.sr_id
             ? { id: r.sr_id, status: r.sr_status, brief: r.sr_brief, staffNote: r.sr_note }
             : null,
+          siteTask: r.st_id ? { id: r.st_id, status: r.st_status, dueAt: r.st_due } : null,
           openInvoice: r.inv_id
             ? {
                 id: r.inv_id,

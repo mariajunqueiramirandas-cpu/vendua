@@ -20,7 +20,7 @@ import {
   type StoreFilter,
   type StoreListRow,
 } from './storeRows.tsx';
-import { STORES_TABS } from './tabs.ts';
+import { useStoresTabs } from './tabs.ts';
 
 const FILTERS = Object.keys(MATCH) as StoreFilter[];
 
@@ -69,6 +69,7 @@ function SearchBox({ value, onCommit }: { value: string; onCommit: (v: string) =
 }
 
 export default function StoresPage() {
+  const tabs = useStoresTabs();
   const [sp, setSp] = useSearchParams();
   const navigate = useNavigate();
   const rawF = sp.get('f') ?? '';
@@ -240,7 +241,7 @@ export default function StoresPage() {
   }
 
   return (
-    <Page title="Lojas" count={all?.length} tabs={STORES_TABS} toolbar={toolbar}>
+    <Page title="Lojas" count={all?.length} tabs={tabs} toolbar={toolbar}>
       {body}
     </Page>
   );

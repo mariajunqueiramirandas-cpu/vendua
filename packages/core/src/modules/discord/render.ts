@@ -215,6 +215,68 @@ function storeRequest(ev: Ev<'store.request'>, ctx: RenderCtx): Rendered {
   };
 }
 
+// ── site sob medida ──────────────────────────────────────────────────────────
+
+type SiteEv =
+  | Ev<'site.task_queued'>
+  | Ev<'site.ready'>
+  | Ev<'site.escalated'>
+  | Ev<'site.due_soon'>
+  | Ev<'site.overdue'>
+  | Ev<'site.delivered'>;
+
+const SITE_KIND = { generate: 'site', revision: 'ajuste do site' } as const;
+
+function siteCard(
+  ev: SiteEv,
+  ctx: RenderCtx,
+  title: string,
+  description: string,
+  prUrl: string | null = null,
+): Rendered {
+  return {
+    card: card(
+      ev,
+      { title: `${esc(ev.data.storeName)} · ${title}`, description },
+      row(
+        prUrl ? linkButton('ver o PR', prUrl) : null,
+        linkButton('abrir no CRM', ctx.crm(`/lojas/sites/${ev.data.taskId}`)),
+      ),
+    ),
+  };
+}
+
+function siteQueued(ev: Ev<'site.task_queued'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return siteCard(ev, ctx, `${SITE_KIND[d.kind]} na fila`, `prazo ${ts(d.dueAt, 'R')}`);
+}
+
+function siteReady(ev: Ev<'site.ready'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  const title = `${SITE_KIND[d.kind]} pronto para aprovar`;
+  return siteCard(ev, ctx, title, 'o CI ficou verde', d.prUrl);
+}
+
+function siteEscalated(ev: Ev<'site.escalated'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return siteCard(ev, ctx, `${SITE_KIND[d.kind]} precisa da equipe`, quote(d.reason, 300, 5));
+}
+
+function siteDueSoon(ev: Ev<'site.due_soon'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return siteCard(ev, ctx, `${SITE_KIND[d.kind]} perto do prazo`, `prazo ${ts(d.dueAt, 'R')}`);
+}
+
+function siteOverdue(ev: Ev<'site.overdue'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return siteCard(ev, ctx, `${SITE_KIND[d.kind]} atrasado`, `o prazo era ${ts(d.dueAt, 'f')}`);
+}
+
+function siteDelivered(ev: Ev<'site.delivered'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return siteCard(ev, ctx, `${SITE_KIND[d.kind]} no ar`, `\`${esc(d.slug)}\``);
+}
+
 function billingManual(ev: Ev<'billing.manual'>, ctx: RenderCtx): Rendered {
   const d = ev.data;
   return {
@@ -1081,6 +1143,12 @@ const STANDALONE: Standalone = {
   'vendedor.monitor': vendedorMonitor,
   'merchant.help': merchantHelp,
   'store.request': storeRequest,
+  'site.task_queued': siteQueued,
+  'site.ready': siteReady,
+  'site.escalated': siteEscalated,
+  'site.due_soon': siteDueSoon,
+  'site.overdue': siteOverdue,
+  'site.delivered': siteDelivered,
   'billing.manual': billingManual,
   'lead.created': leadCreated,
   'lead.replied': leadReplied,

@@ -3,6 +3,7 @@ import { routeRole, runRoute, type Replay } from '../admin/handlers.ts';
 import { emitAdminTx } from '../admin/live.ts';
 import { storeTz } from '../admin/routes-orders.ts';
 import { loadSettings, statusOf } from '../admin/routes-store.ts';
+import { specLines, type DesignSpec } from '../modules/site-builder/spec.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
@@ -22,6 +23,8 @@ export const ACTION_KINDS = [
   'products.price',
   'coupon.create',
   'coupon.update',
+  'site.build',
+  'site.revise',
 ] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
@@ -97,6 +100,14 @@ export interface CouponUpdateInput {
   active?: boolean | undefined;
   endsAt?: string | null | undefined;
   maxRedemptions?: number | null | undefined;
+}
+
+export interface SiteBuildInput {
+  spec: DesignSpec;
+}
+export interface SiteReviseInput {
+  note: string;
+  spec: DesignSpec;
 }
 
 interface Ctx {
@@ -573,6 +584,85 @@ const couponUpdate: KindDef<CouponUpdateInput, CouponSnap | null> = {
     },
 };
 
+// ── the site sob medida: the owner's one approval is the brief, never the finished site ──
+
+interface SiteSnap {
+  id: string;
+  status: string;
+  specVersion: number;
+  revisionsUsed: number;
+  spec: DesignSpec | null;
+  /** the live task's deadline: shown on the card once confirmed, not part of the basis */
+  dueAt: Date | null;
+}
+
+async function siteSnap(tx: Sql, tenantId: string): Promise<SiteSnap | null> {
+  // the request the account screen shows: the open one, else the latest
+  const [r] = await tx<
+    {
+      id: string;
+      status: string;
+      spec_version: number;
+      revisions_used: number;
+      spec: DesignSpec | null;
+      due_at: Date | null;
+    }[]
+  >`
+    select r.id, r.status, r.spec_version, r.revisions_used, r.spec, t.due_at
+    from site_requests r
+    left join site_tasks t on t.site_request_id = r.id and t.tenant_id = r.tenant_id
+      and t.status not in ('delivered', 'cancelled')
+    where r.tenant_id = ${tenantId}
+    order by (r.status in ('requested', 'in_progress')) desc, r.created_at desc limit 1`;
+  return r
+    ? {
+        id: r.id,
+        status: r.status,
+        specVersion: r.spec_version,
+        revisionsUsed: r.revisions_used,
+        spec: r.spec,
+        dueAt: r.due_at,
+      }
+    : null;
+}
+
+const siteBasis = (b: SiteSnap | null) =>
+  b && { id: b.id, status: b.status, specVersion: b.specVersion, revisionsUsed: b.revisionsUsed };
+
+const ready = (what: string, after: SiteSnap | null, c: Ctx) =>
+  `Pronto: ${what} entra em produção e fica pronto ${after?.dueAt ? `até ${when(after.dueAt, c.tz)}` : 'em até 1 dia'}.`;
+
+const siteBuild: KindDef<SiteBuildInput, SiteSnap | null> = {
+  route: 'site.build',
+  money: () => false,
+  replay: async (_tx, _t, i) => ({ body: { spec: i.spec } }),
+  snapshot: (tx, t) => siteSnap(tx, t),
+  title: () => 'Montar o site sob medida',
+  lines: (_b, _a, i) => specLines(i.spec).map((l) => ({ label: l.label, from: null, to: l.to })),
+  done: (after, _i, c) => ready('o site', after, c),
+  link: () => '/conta',
+  basis: siteBasis,
+};
+
+const siteRevise: KindDef<SiteReviseInput, SiteSnap | null> = {
+  route: 'site.revise',
+  money: () => false,
+  replay: async (_tx, _t, i) => ({ body: { note: i.note, spec: i.spec } }),
+  snapshot: (tx, t) => siteSnap(tx, t),
+  title: () => 'Pedir o ajuste do site',
+  lines: (before, _a, i) => {
+    const old = new Map(before?.spec ? specLines(before.spec).map((l) => [l.label, l.to]) : []);
+    // the owner reads what changes, not the whole brief again
+    const changed = specLines(i.spec)
+      .filter((l) => old.get(l.label) !== l.to)
+      .map((l) => ({ label: l.label, from: old.get(l.label) ?? null, to: l.to }));
+    return [{ label: 'Ajuste', from: null, to: i.note }, ...changed];
+  },
+  done: (after, _i, c) => ready('o ajuste', after, c),
+  link: () => '/conta',
+  basis: siteBasis,
+};
+
 // the map is the registry the tools and the confirm route share
 const KINDS: Record<ActionKind, KindDef<never, unknown>> = {
   'store.pause': pause as KindDef<never, unknown>,
@@ -583,6 +673,8 @@ const KINDS: Record<ActionKind, KindDef<never, unknown>> = {
   'products.price': prices as KindDef<never, unknown>,
   'coupon.create': couponCreate as KindDef<never, unknown>,
   'coupon.update': couponUpdate as KindDef<never, unknown>,
+  'site.build': siteBuild as KindDef<never, unknown>,
+  'site.revise': siteRevise as KindDef<never, unknown>,
 };
 
 type Savepointable = { savepoint: <T>(fn: (sp: Sql) => Promise<T>) => Promise<T> };
@@ -695,6 +787,12 @@ export function refusal(e: HttpError): string {
       return 'Seu papel na equipe não permite essa mudança.';
     case 'PLAN_REQUIRED':
       return 'O plano da loja não inclui isso.';
+    case 'SITE_ALREADY_BUILDING':
+      return 'O site já está sendo construído.';
+    case 'REVISION_USED':
+      return 'O ajuste incluído já foi usado.';
+    case 'INVALID_SPEC':
+      return 'O briefing do cartão não passou na conferência da loja. Peça de novo ao Duá.';
     default:
       return 'A loja recusou essa mudança: algo mudou desde a proposta. Peça de novo ao Duá.';
   }

@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button.tsx';
 import { Card } from '@/components/ui/card.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { FilterChips } from '@/features/stores/bits.tsx';
-import { STORES_TABS } from '@/features/stores/tabs.ts';
+import { useStoresTabs } from '@/features/stores/tabs.ts';
 import { FleetAlerts, FleetProvisioning } from './FleetAlerts.tsx';
 import { COLUMNS, FleetMobileRow } from './FleetList.tsx';
 import { FleetSheet } from './FleetSheet.tsx';
@@ -53,6 +53,7 @@ function SearchBox({ value, onCommit }: { value: string; onCommit: (v: string) =
 }
 
 export default function FleetPage() {
+  const tabs = useStoresTabs();
   const [sp, setSp] = useSearchParams();
   const raw = sp.get('f') ?? '';
   const f = (raw in MATCH ? raw : '') as Filter;
@@ -131,7 +132,7 @@ export default function FleetPage() {
   );
 
   return (
-    <Page title="Lojas" count={all?.length} tabs={STORES_TABS} toolbar={toolbar}>
+    <Page title="Lojas" count={all?.length} tabs={tabs} toolbar={toolbar}>
       <div className="flex flex-col gap-3">
         <KpiStrip
           items={[

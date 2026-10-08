@@ -6,6 +6,7 @@ import { Fact } from '@/components/common.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Checkbox } from '@/components/ui/controls.tsx';
 import { Field, Select, Textarea } from '@/components/ui/input.tsx';
+import { SiteTaskCard } from '@/features/sites/SiteTaskCard.tsx';
 import {
   DOMAIN_STATUS,
   METHOD_LABEL,
@@ -255,6 +256,7 @@ function SiteRequest({ s }: { s: BillingStore }) {
   const dirty = status !== r.status || noteChanged;
   return (
     <SheetSection title="site sob medida" aside={<Tag map={SITE_STATUS} value={r.status} />}>
+      {s.siteTask && <SiteTaskCard task={s.siteTask} />}
       <Field label="o que o lojista pediu">
         <div className="max-h-48 overflow-auto rounded-md border bg-muted/60 px-2.5 py-2 text-sm whitespace-pre-wrap">
           {r.brief?.trim() || <span className="text-muted-foreground">sem descrição</span>}
