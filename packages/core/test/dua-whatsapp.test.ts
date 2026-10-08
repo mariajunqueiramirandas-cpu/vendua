@@ -565,6 +565,27 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
     ).toBe(false);
   });
 
+  test('a reply goes to the WhatsApp the owner writes from, whichever spelling the store holds', async () => {
+    // the store holds the 11-digit spelling; the sender row (the number they write from) the 10
+    const eleven = `2198${String(Date.now()).slice(-7)}`;
+    const ten = eleven.slice(0, 2) + eleven.slice(3);
+    const s = await store({ phone: eleven });
+    const jid = `55${ten}@s.whatsapp.net`;
+    await sql`
+      insert into platform_wa_dua_senders (phone, jid, window_start, window_count)
+      values (${ten}, ${jid}, now(), 0)`;
+    const to = await withTenant(appSql, s.tenantId, async (tx) => {
+      const [m] = await tx<{ id: string }[]>`
+        insert into copilot_messages (tenant_id, user_id, author, body, channel)
+        values (${s.tenantId}, ${s.userId}, 'dua', 'oi', 'whatsapp') returning id`;
+      await tx`select enqueue_dua_whatsapp(${m!.id}::uuid, 'oi')`;
+      return m!.id;
+    });
+    const [out] = await sql<{ to_jid: string }[]>`
+      select to_jid from platform_wa_outbox where ref = ${to}`;
+    expect(out!.to_jid).toBe(jid);
+  });
+
   test('a number an owner typed into Equipe, never signed in with a code, stays the CRM’s', async () => {
     const s = await store({ proven: false });
     expect(
