@@ -224,7 +224,8 @@ function MemberRow({
     onSuccess: (r) => {
       setMembers(qc, r.members);
       onResent({
-        member: m,
+        // an invitee's address waits unconfirmed: the invite still went to it
+        member: { ...m, email: m.email ?? m.pendingEmail ?? null },
         invite: r.invite,
         signInUrl: '/admin/',
         resent: true,

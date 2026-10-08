@@ -865,6 +865,8 @@ export interface Member {
   name: string;
   phone: string;
   email: string | null;
+  /** typed on the invite, waiting for its link to be opened (only then a way to sign in) */
+  pendingEmail?: string | null;
   role: Role;
   status: 'active' | 'revoked';
   createdAt: string;
