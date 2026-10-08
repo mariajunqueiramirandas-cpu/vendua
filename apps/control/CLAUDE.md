@@ -11,4 +11,4 @@
 - Prod: Core's Docker image builds `apps/control` and serves `dist/` at `/control/`
   (Dokploy compose; `crm` nginx proxies `/control` to core).
 - Visual and UI design work here is done by Opus 5.5: yourself if this session runs on Opus
-  5.5, otherwise a subagent spawned with `model: "opus"` — never a Sonnet subagent.
+  5.5 or Fable 5.1, otherwise a subagent spawned with `model: "opus"`, never Sonnet or Haiku.

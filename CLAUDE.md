@@ -83,62 +83,103 @@ the store's WhatsApp, its ingest, sweeper and admin views),
 
 ## Subagents
 
-Agents: `test-runner` and `invariant-reviewer` in this repo, `Explore` (read-only search),
-`Plan`, `general-purpose` (can edit). Only a subagent's final report enters your context.
+The repo defines no custom agents: spawn `general-purpose` (all tools; edits and runs commands),
+`Explore` (read-only search) or `Plan` (read-only design). `general-purpose` loads this file;
+`Explore` and `Plan` don't, so their brief carries every rule they need. Only a subagent's final
+report enters your context.
 
-No agent definition pins a model: **choose it yourself on every spawn** by passing `model` to
-the Agent tool; a spawn that leaves it out falls back to Sonnet 5.5. Subagents run at high
-effort: `test-runner` and `invariant-reviewer` set `effort: high`, and the built-in agents
-inherit the session's effort, which `.claude/settings.json` saves as high for Sonnet 5.5 and
-Opus 5.5.
+**Pass `model` and `effort` on every spawn.** Without `model` an agent runs on this session's
+model, `Explore` and `Plan` included. A task that fits several rows takes the highest one (a test
+that touches money is Opus work).
 
-- `model: "sonnet"` (Sonnet 5.5) for most work: search and research, running tests and checks,
-  reading logs, routine edits, reviewing ordinary changes.
-- `model: "opus"` (Opus 5.5) for:
-  - UI and frontend work: screens, components, layout, styling, responsive or dark-mode work and
-    visual polish in `apps/control`, `apps/admin`, `storefronts/*`, `packages/ui-defaults` or
-    `site/`. Never give UI work to a Sonnet subagent; if this session runs on Opus 5.5 you may do
-    it yourself.
-  - Business-critical logic: money, checkout and orders, payments, tenancy and RLS,
-    idempotency, auth, agent dispatch, Kernel exports, migrations. `invariant-reviewer` always
-    runs on Opus.
-  - Innovative work: a new design or architecture, or an open-ended problem with no precedent
-    in the repo.
+- `haiku`, `medium`: find where or how something is done; read a long log, doc or diff and pull
+  out what matters; run a suite, typecheck, build or e2e and report what failed.
+- `sonnet`, `high`: web and docs research; diagnosing a failure; routine edits to a settled
+  design; tests that follow an existing pattern; reviewing an ordinary change.
+- `opus`, `high`:
+  - UI and frontend: screens, components, layout, styling, responsive and dark mode, visual polish
+    in `apps/control`, `apps/admin`, `storefronts/*`, `packages/ui-defaults` or `site/`.
+  - Business-critical logic: money, checkout and orders, payments, tenancy and RLS, idempotency,
+    auth, agent dispatch, Kernel exports, migrations, and the invariant review.
+  - A new design or architecture, an open-ended problem with no precedent here, a long migration
+    or audit.
 
-Check these triggers mid-task too, not only at the start:
+Why:
 
-- About to run a suite, a multi-workspace `bun run check`, e2e or read a long log → `test-runner`
-  (Sonnet).
-- About to open a third file just to answer "where/how is X done" → `Explore` (Sonnet).
-- A change touches money, tenancy, idempotency, kernel exports or agent runs → after editing,
-  `invariant-reviewer` (Opus) on the diff.
-- Stuck on a failure after two attempts → one agent to investigate it cold while you continue.
+- Haiku 5.5 is the fastest model and costs about a twentieth of Sonnet. It is a good subagent for
+  bounded lookups and for runs whose output is the result. It is far behind on agentic coding and
+  can stop early on long tasks, so it never gets code changes that need judgment.
+- Sonnet 5.5 is strongest at well-scoped everyday work and bug fixing.
+- Opus 5.5 costs twice as much as Sonnet and is clearly stronger at open-ended work that needs
+  sustained judgment.
+- Opus-row work is done by Opus: yourself if this session runs on Opus 5.5 or Fable 5.1,
+  otherwise an `opus` agent. Never Sonnet or Haiku.
+- `high` effort: a subagent can't ask you anything, and below `high` Sonnet and Haiku sometimes
+  stop to check in or skip verification.
+- No `xhigh` or `max` unless the user asks: turns get much longer, and Sonnet at those levels
+  launches reviewer agents nobody asked for.
+- `fable` (Fable 5.1, 2.5× Opus) only when the user asks for it.
+
+Delegate work whose reading or output would flood this conversation, and independent pieces that
+can run at once. Keep iterative work with the user, steps that each need the previous step's
+details, and a few-edit change in this thread. Check these triggers mid-task too:
+
+- About to run a suite, a multi-workspace `bun run check`, e2e or read a long log → a
+  run-and-report agent (below).
+- About to open a third file just to answer "where/how is X done" → `Explore` on `haiku`.
+- A change touches money, tenancy, idempotency, kernel exports or agent runs → after editing, the
+  invariant review (below).
+- Stuck on a failure after two attempts → one agent investigates it cold (`sonnet`, or `opus` in
+  business-critical code) while you continue.
+
+Reviewer agents run for the invariant review, the fresh-eyes UI review below, or when the user
+asks. Don't add one to every change.
 
 Splitting a task that spans areas (e.g. Core route + admin screen + kernel export):
 
-- Research in parallel — one agent per area, all in one message — then decide the design yourself.
-- The UI part of a mixed task goes to a `general-purpose` agent on Opus (or to you, if you're on
-  Opus 5.5), with the API shape it will consume settled first.
-- Edits: do them yourself, or give parallel `general-purpose` agents disjoint file sets
-  (never two on one file); run the checks once all are back.
-- Don't split when each step needs the previous step's details, or the whole thing is a few edits.
+- Research in parallel, one agent per area, all in one message. Then decide the design yourself.
+- The UI part goes to Opus, with the API shape it will consume settled first.
+- Edits: do them yourself, or give parallel `general-purpose` agents disjoint file sets (never two
+  on one file). Run the checks once all are back.
 
-A subagent sees none of the conversation. Its brief needs the goal, exact paths, the
-constraints that apply (quote the invariant) and the answer format ("under 200 words,
-file:line refs"). Don't redo its search; verify a surprising claim with one targeted Read.
+A subagent sees none of the conversation. Its brief needs the goal and why, exact paths, the
+constraints that apply (quote the invariant), what it must not touch, the check that proves it
+done and the answer format ("under 200 words, file:line refs"). Ask for the check's output, not a
+claim that it passed: Haiku and Sonnet sometimes report a change done without running anything.
+Don't redo its search; verify a surprising claim with one targeted Read. Two standing briefs:
+
+- **Run-and-report** (`general-purpose`, `haiku`, `medium`):
+
+  > "Run `<command>` in `<dir>`. Don't edit files. Send the output to a scratchpad file and grep
+  > it. Report the command and the pass/fail counts. For each failure give file:line, the test
+  > name and the assertion or error line as printed. List environmental failures (DB down, port
+  > taken) separately."
+
+  Diagnose the failures yourself, or give them to a `sonnet` agent.
+
+- **Invariant review** (`general-purpose`, `opus`, `high`):
+
+  > "Review `git diff <base>...HEAD` plus uncommitted changes against 'Invariants (bugs if
+  > broken)' in CLAUDE.md. Don't edit files. Read line ranges only. Confirm each finding in the
+  > code. Report each violation as file:line — invariant — what is wrong — one-line fix, most
+  > severe first. Then list the invariants you checked and found fine."
 
 Running agents (learned the hard way on the site rebuild):
 
 - Parallel by default: every agent whose brief doesn't depend on another's result goes out in
-  the same message, in the background. Serial subagents cost the same and only buy a clean
-  context; go one at a time only when the next brief needs the last result.
+  the same message, in the background, and you keep working while they run. Serial subagents
+  cost the same and only buy a clean context; go one at a time only when the next brief needs
+  the last result.
 - For a fan-out under ~10 agents, call Agent directly rather than the Workflow tool: a workflow
   caps concurrent agents at CPUs − 2, which is 2 in a 4-CPU cloud container.
 - Design first, then delegate. Don't hand "build this screen/section from scratch" to an agent
   unless it has an approved reference: a mockup or study the user signed off, the design-spec
   section, the component API and the real content. Without one you get plausible, generic UI
-  and a second pass. Agents are strongest at reviewing and polishing existing work with fresh
-  eyes, so settle the design yourself (or with the user) and delegate the review.
+  and a second pass.
+  - Opus 5.5 without design direction falls back on a few default styles. "Avoid a generic look"
+    only swaps one default for another, so name the specific patterns to avoid.
+  - Agents are strongest at reviewing and polishing existing work with fresh eyes, so settle the
+    design yourself (or with the user) and delegate the review.
 - One owner per file. The brief says "edit ONLY these files; report anything else", and shared
   components get a single owner. Two agents on one file is a lost edit.
 - Context several agents share (decisions, voice, tokens, banned words) goes in one scratchpad
