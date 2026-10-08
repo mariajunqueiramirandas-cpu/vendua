@@ -8,6 +8,7 @@ import { suggestFor } from '../../../vendedor/suggest.ts';
 import { custom } from './fold.ts';
 import { handoffTx, HANDOFF_REASONS } from './handoff.ts';
 import { briefText, cartBrief, pack, productIdOf, thread, viewCart, type Ctx } from './shared.ts';
+import { phoneKeys } from '../../../store-whatsapp/text.ts';
 
 export const handoffTool = defineTool<
   { reason: (typeof HANDOFF_REASONS)[number]; summary: string },
@@ -233,7 +234,7 @@ export const offerIncentiveTool = defineTool<
     if (!cart?.items.length) throw new ToolError('Sacola vazia.');
     if (input.reason === 'first_order') {
       const [o] = await ctx.tx<{ n: number }[]>`
-        select count(*)::int as n from orders where tenant_id = ${ctx.tenantId} and customer_phone = ${t.phone ?? '-'}`;
+        select count(*)::int as n from orders where tenant_id = ${ctx.tenantId} and customer_phone = any(${phoneKeys(t.phone)})`;
       if ((o?.n ?? 0) > 0) return { content: 'Não é o primeiro pedido deste cliente: sem cupom.' };
     }
     const agent = await loadAgent(ctx.tx, ctx.tenantId);

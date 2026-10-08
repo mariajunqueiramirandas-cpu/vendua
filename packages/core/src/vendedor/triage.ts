@@ -13,6 +13,7 @@ import {
   type Thread,
   type ThreadClass,
 } from './threads.ts';
+import { phoneKeys } from '../store-whatsapp/text.ts';
 
 // Who Duá answers (ADR 0033). A new WhatsApp number is classified before Duá says anything:
 // deterministic signals first (an order, the merchant's setting), then — for the default setting —
@@ -114,7 +115,7 @@ export async function firstLookTx(
   // number never resolved (a LID-only chat ordering with the checkout's phone)
   const [o] = await tx<{ n: number }[]>`select count(*)::int as n from orders
     where tenant_id = ${t.tenantId}
-      and (thread_id = ${t.id} or (${t.phone}::text is not null and customer_phone = ${t.phone}))`;
+      and (thread_id = ${t.id} or customer_phone = any(${phoneKeys(t.phone)}))`;
   if ((o?.n ?? 0) > 0)
     return {
       kind: 'decided',

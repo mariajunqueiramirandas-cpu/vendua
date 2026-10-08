@@ -367,10 +367,15 @@ export async function menuChangePass(
 
 export async function sweepAll(sql: Sql, now = new Date(), hasModel = false): Promise<void> {
   for (const tenantId of await enabledStores(sql)) {
-    await recoveryPass(sql, tenantId, now);
-    await pixExpiryPass(sql, tenantId, now);
-    await monitorPass(sql, tenantId, now);
-    await menuChangePass(sql, tenantId, hasModel);
+    // one store's failure costs only its own touches this sweep
+    try {
+      await recoveryPass(sql, tenantId, now);
+      await pixExpiryPass(sql, tenantId, now);
+      await monitorPass(sql, tenantId, now);
+      await menuChangePass(sql, tenantId, hasModel);
+    } catch (err) {
+      sweepLog.error({ err, tenantId }, 'store sweep failed');
+    }
   }
   // catch up in batches: a busy hour's outbox is read in one sweep
   for (let i = 0; i < 10 && (await outboxPass(sql)) === 200; i++);

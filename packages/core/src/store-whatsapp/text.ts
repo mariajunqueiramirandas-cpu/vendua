@@ -46,6 +46,13 @@ export function phoneVariants(national: string): string[] {
   return [d];
 }
 
+/** The forms a thread's phone may be stored under elsewhere (orders, coupons): both 9th-digit
+ *  spellings of a Brazilian number; a foreign `+…` number only as itself; none for no number. */
+export function phoneKeys(phone: string | null | undefined): string[] {
+  if (!phone) return [];
+  return phone.startsWith('+') ? [phone] : phoneVariants(phone);
+}
+
 /** Same row → same WhatsApp message id, so a resend after a crash mid-send is deduplicated by
  *  WhatsApp instead of reaching the shopper twice. Same shape as baileys' own ids. */
 export function messageIdFor(rowId: string): string {

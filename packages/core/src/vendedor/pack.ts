@@ -16,6 +16,7 @@ import { vendedorDeps } from './deps.ts';
 import { liveRules, type CompiledGuard } from './knowledge.ts';
 import { introduction, loadAgent, type StoreAgentSettings } from './settings.ts';
 import { loadStoreSettings, storeStatus, type Thread } from './threads.ts';
+import { phoneKeys } from '../store-whatsapp/text.ts';
 
 // The store pack (sales-agent.md §4.9): what the Vendedor knows about the store, built by Core
 // and recorded in the log whenever its hash moves, so a turn can be replayed. The catalog goes
@@ -242,13 +243,47 @@ const firstName = (n: string | null | undefined) => {
   return f.length >= 2 && f.length <= 30 && f !== 'Cliente' ? f : null;
 };
 
+/** The addresses the card numbers 1–3, from the phone's last 30 orders (newest first):
+ *  `saved_address` N must resolve to the one the model was shown as N. */
+export function savedAddresses(
+  rows: { delivery: Record<string, unknown> | null }[],
+): { label: string; hasPin: boolean; delivery: Record<string, unknown> }[] {
+  const seen = new Set<string>();
+  const out: { label: string; hasPin: boolean; delivery: Record<string, unknown> }[] = [];
+  for (const r of rows) {
+    const d = r.delivery;
+    if (!d || d.mode !== 'delivery') continue;
+    const label = [
+      d.street && d.number ? `${String(d.street)}, ${String(d.number)}` : d.address,
+      d.neighborhood,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    out.push({
+      label: String(label).slice(0, 120),
+      hasPin: typeof d.lat === 'number',
+      delivery: d,
+    });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
 export async function customerCard(
   tx: Sql,
   tenantId: string,
   phone: string | null,
 ): Promise<CustomerCard | null> {
   if (!phone || phone.startsWith('+')) return null;
-  const orders = await ordersByPhone(tx, tenantId, phone, 30);
+  // either 9th-digit spelling: WhatsApp may know the number by the other one
+  const orders = (
+    await Promise.all(phoneKeys(phone).map((p) => ordersByPhone(tx, tenantId, p, 30)))
+  )
+    .flat()
+    .sort((a, b) => b.placedAt.localeCompare(a.placedAt))
+    .slice(0, 30);
   if (!orders.length) return null;
   const rows = await tx<
     {
@@ -259,7 +294,8 @@ export async function customerCard(
       placed_at: Date;
     }[]
   >`select customer, delivery, payment ->> 'method' as method, state, placed_at from orders
-    where tenant_id = ${tenantId} and customer_phone = ${phone} order by placed_at desc limit 30`;
+    where tenant_id = ${tenantId} and customer_phone = any(${phoneKeys(phone)})
+    order by placed_at desc limit 30`;
   const baskets = new Map<string, number>();
   for (const o of orders) {
     const key = o.items
@@ -273,22 +309,7 @@ export async function customerCard(
   const pays = new Map<string, number>();
   for (const r of rows) if (r.method) pays.set(r.method, (pays.get(r.method) ?? 0) + 1);
   const pay = [...pays.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] as PaymentMethod | undefined;
-  const seen = new Set<string>();
-  const addresses: CustomerCard['addresses'] = [];
-  for (const r of rows) {
-    const d = r.delivery;
-    if (!d || d.mode !== 'delivery') continue;
-    const label = [
-      d.street && d.number ? `${String(d.street)}, ${String(d.number)}` : d.address,
-      d.neighborhood,
-    ]
-      .filter(Boolean)
-      .join(' · ');
-    if (!label || seen.has(label)) continue;
-    seen.add(label);
-    addresses.push({ label: String(label).slice(0, 120), hasPin: typeof d.lat === 'number' });
-    if (addresses.length >= 3) break;
-  }
+  const addresses = savedAddresses(rows).map(({ label, hasPin }) => ({ label, hasPin }));
   const last = orders[0]!;
   return {
     firstName: firstName(rows[0]?.customer?.name),

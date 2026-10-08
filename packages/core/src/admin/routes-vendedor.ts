@@ -8,7 +8,7 @@ import {
 } from '../agent-host/agents/vendedor-onboarding/index.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { requireFeature } from '../modules/billing/plans.ts';
-import { HttpError, UUID_RE, bodyJson } from '../platform/http.ts';
+import { HttpError, UUID_RE, bodyJson, windowCounter } from '../platform/http.ts';
 import { vendedorDeps } from '../vendedor/deps.ts';
 import { menuGaps } from '../vendedor/gaps.ts';
 import { compileRule, describeGuard, fold } from '../vendedor/knowledge.ts';
@@ -35,6 +35,8 @@ import { emitAdminTx } from './live.ts';
 
 // The Vendedor's admin API (sales-agent-ux.md §2, §8). Roles: attendant works the inbox;
 // manager teaches and configures; owner turns it on and sets disclosure and money.
+
+const allowSuggestions = windowCounter({ windowMs: 60_000, max: 20 });
 
 function idParam(c: Context, name: string): string {
   const v = c.req.param(name) ?? '';
@@ -332,12 +334,16 @@ export function mountVendedor(d: AdminDeps) {
 
   /** Two or three replies for the store to tap, checked by the verifier (UX §3.3, F8). */
   admin.get('/vendedor/threads/:id/suggestions', async (c: AdminCtx) => {
-    need(c, 'attendant');
+    const m = need(c, 'attendant');
     const t = c.get('tenant');
     const id = idParam(c, 'id');
     const gateway = vendedorDeps().gateway;
     if (!gateway) return c.json({ replies: [] });
+    // each call is a model call: a GET escapes the gate's mutation limit
+    if (!allowSuggestions(`${t.id}|${m.userId}`))
+      throw new HttpError(429, 'RATE_LIMITED', 'too many suggestions — wait a minute');
     const lines = await withTenant(d.sql, t.id, async (tx) => {
+      await requireFeature(tx, t.id, 'vendedor');
       await mustThread(tx, t.id, id);
       return tx<{ author: string; body: string | null; transcript: string | null }[]>`
         select author, body, transcript from shopper_messages where tenant_id = ${t.id} and thread_id = ${id}

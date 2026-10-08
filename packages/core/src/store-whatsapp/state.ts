@@ -160,7 +160,8 @@ async function ackedLatelyTx(tx: Sql, tenantId: string, variants: string[]): Pro
   return rows.length > 0;
 }
 
-/** SAIR / VOLTAR from a shopper the store texted. Anything else is the store's conversation. */
+/** SAIR / VOLTAR from a shopper the store texted (a notice, or the Vendedor, whose nudges the
+ *  opt-out stops). Anything else is the store's conversation. */
 export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Promise<void> {
   if (!m.phone) return;
   const kw = optKeyword(m.text);
@@ -186,7 +187,7 @@ export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Pro
       await tx<{ phone: string }[]>`
         select phone from store_wa_messages
         where tenant_id = ${tenantId} and phone = any(${variants})
-          and kind = any(${NOTICE_KINDS as string[]}::text[])
+          and kind = any(${[...NOTICE_KINDS, 'chat']}::text[])
           and created_at > now() - ${KEYWORD_WINDOW}::interval
         order by created_at desc limit 1`
     )[0];

@@ -83,6 +83,21 @@ async function derive(d: IngestDeps, r: Row): Promise<Derived> {
     receipt: false,
   };
   if (r.author !== 'shopper' || (r.kind !== 'audio' && r.kind !== 'image')) return out;
+  // paid calls only for what ingestOne could dispatch; a held message is still derived (triage
+  // reads its transcript)
+  const skipped = await withTenant(d.sql, r.tenant_id, async (tx) => {
+    const [thread, agent] = await Promise.all([
+      mustThread(tx, r.tenant_id, r.thread_id),
+      loadAgent(tx, r.tenant_id),
+    ]);
+    return (
+      thread.owner === 'muted' ||
+      (!agent.enabled && thread.channel !== 'test') ||
+      thread.class === 'personal' ||
+      thread.class === 'other'
+    );
+  });
+  if (skipped) return out;
   const media = await withTenant(
     d.sql,
     r.tenant_id,

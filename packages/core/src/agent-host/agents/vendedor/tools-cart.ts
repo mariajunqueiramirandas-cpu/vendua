@@ -28,6 +28,8 @@ import {
   viewCart,
   type Ctx,
 } from './shared.ts';
+import { phoneKeys } from '../../../store-whatsapp/text.ts';
+import { savedAddresses } from '../../../vendedor/pack.ts';
 
 const opSchema = s.object({
   op: s.enum(['add', 'qty', 'remove', 'note']),
@@ -175,7 +177,7 @@ export const reorderTool = defineTool<
       throw new ToolError('Sem o número do cliente não dá para achar pedidos anteriores.');
     const [o] = await ctx.tx<{ id: string; number: number }[]>`
       select id, number from orders
-      where tenant_id = ${ctx.tenantId} and customer_phone = ${t.phone}
+      where tenant_id = ${ctx.tenantId} and customer_phone = any(${phoneKeys(t.phone)})
         and (${input.order ?? null}::int is null or number = ${input.order ?? null}::int)
       order by placed_at desc limit 1`;
     if (!o) throw new ToolError('Nenhum pedido anterior deste cliente com esse número.');
@@ -263,22 +265,11 @@ export const setFulfillmentTool = defineTool<
       delivery = { mode: 'delivery' };
       if (input.saved_address) {
         if (!t.phone) throw new ToolError('Sem endereços anteriores para este cliente.');
-        const rows = await ctx.tx<{ delivery: Record<string, unknown> }[]>`
-          select delivery from orders where tenant_id = ${ctx.tenantId} and customer_phone = ${t.phone}
-            and delivery ->> 'mode' = 'delivery' order by placed_at desc limit 30`;
-        const seen = new Set<string>();
-        const distinct = rows.filter((r) => {
-          const k = JSON.stringify([
-            r.delivery.street,
-            r.delivery.number,
-            r.delivery.address,
-            r.delivery.neighborhood,
-          ]);
-          if (seen.has(k)) return false;
-          seen.add(k);
-          return true;
-        });
-        const d = distinct[input.saved_address - 1]?.delivery;
+        // the rows the customer card numbered, so N is the address shown as N
+        const rows = await ctx.tx<{ delivery: Record<string, unknown> | null }[]>`
+          select delivery from orders where tenant_id = ${ctx.tenantId} and customer_phone = any(${phoneKeys(t.phone)})
+          order by placed_at desc limit 30`;
+        const d = savedAddresses(rows)[input.saved_address - 1]?.delivery;
         if (!d) throw new ToolError('Esse endereço salvo não existe.');
         for (const k of [
           'street',

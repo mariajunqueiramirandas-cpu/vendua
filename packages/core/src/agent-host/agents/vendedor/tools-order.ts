@@ -36,6 +36,7 @@ import {
   viewCart,
   type Ctx,
 } from './shared.ts';
+import { phoneKeys } from '../../../store-whatsapp/text.ts';
 
 /** Rolls a savepoint back on purpose: a dry run of the real checkout. */
 class DryRun extends Error {
@@ -372,7 +373,8 @@ export const placeOrderTool = defineTool<Record<string, never>, Sql>({
             ctx.tx,
             ctx.tenantId,
             cartId,
-            input,
+            // a total off the card's is refused before anything is written
+            { ...input, expectedTotalCents: summary.totalCents },
             ctx.now,
             vendedorDeps().provider,
             {
@@ -440,7 +442,7 @@ export const placeOrderTool = defineTool<Record<string, never>, Sql>({
     const method = t.checkout.payment?.method ?? 'pix';
     if (agent.settings.handoff.newCashCustomer && method === 'cash') {
       const [prior] = await ctx.tx<{ n: number }[]>`
-        select count(*)::int as n from orders where tenant_id = ${ctx.tenantId} and customer_phone = ${provenPhone ?? t.checkout.phone ?? ''}
+        select count(*)::int as n from orders where tenant_id = ${ctx.tenantId} and customer_phone = any(${phoneKeys(provenPhone ?? t.checkout.phone)})
           and id <> ${r.orderId}`;
       if (!prior?.n)
         await ctx.tx`update shopper_threads set waiting_since = coalesce(waiting_since, now()),
@@ -615,7 +617,7 @@ export const orderStatusTool = defineTool<{ number?: number | undefined }, Sql>(
     >`select id, number, state, total_cents, payment, delivery, placed_at from orders
       where tenant_id = ${ctx.tenantId}
         and (${input.number ?? null}::int is not null and number = ${input.number ?? null}::int
-             and customer_phone = ${t.phone ?? '-'}
+             and customer_phone = any(${phoneKeys(t.phone)})
           or ${input.number ?? null}::int is null and id = ${t.orderId ?? null}::uuid)
       limit 1`;
     if (!o) throw new ToolError('Pedido não encontrado para este cliente.');
