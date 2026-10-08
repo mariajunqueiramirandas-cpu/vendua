@@ -113,6 +113,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0035](adr/0035-pdv.md)                                | The PDV: counter sales, mesas with comandas, the caixa                                   |
 | [0036](adr/0036-qr-table-ordering.md)                  | Ordering from the table's QR code                                                        |
 | [0037](adr/0037-self-hosted-stt.md)                    | Shoppers' voice notes transcribed on our own hardware                                    |
+| [0038](adr/0038-included-domains.md)                   | Pangolim's domain bought, hosted and renewed by Venduá                                   |
 
 ## Conventions
 

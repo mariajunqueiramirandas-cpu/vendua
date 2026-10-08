@@ -548,8 +548,9 @@ number. **Stage gate: Early fleet → Growth.**
 - [ ] Core HA: multi-instance, managed Postgres or rehearsed failover,
       last-known-good serving ([16](architecture/16-operations-and-incidents.md)).
 - [ ] Edge ≥2 nodes; status page on separate infra.
-- [ ] Custom-domain automation incl. failure UX
-      ([12](architecture/12-domains-and-tls.md)).
+- [ ] Custom-domain automation incl. failure UX, and Pangolim's included `.com.br`
+      ([ADR 0038](adr/0038-included-domains.md), [12](architecture/12-domains-and-tls.md)).
+      Pangolim opens once its first two steps ship, ahead of the rest of this phase.
 - [ ] WhatsApp intake agent → DesignSpec (only after the generation pipeline
       is proven; intake automation is its own product).
 
