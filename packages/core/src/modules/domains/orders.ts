@@ -548,6 +548,8 @@ export async function runRenewals(sql: Sql, d: DomainJobDeps, now: Date) {
       // a renewal is paid each time it's asked: note the expiry first, and on a retry ask the
       // registrar whether the last attempt went through before renewing again
       const seen = await registrar.get(ref);
+      // without the expiry before asking, a lost answer couldn't be told from a refusal
+      if (!seen.expiresAt) throw new RegistrarError('expiry unknown', 'unavailable');
       let dom: RegistrarDomain;
       if (!o.expires_before) {
         await controlTx(

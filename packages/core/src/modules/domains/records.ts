@@ -64,6 +64,11 @@ export function parseRecords(raw: unknown): DnsRecord[] {
     )
       out.push(rec);
   });
+  // a CNAME can't share its name with any other record (another CNAME included)
+  out.forEach((r, i) => {
+    if (r.type === 'CNAME' && out.some((o, j) => j !== i && o.name === r.name))
+      throw bad(i, `${r.name} has a CNAME, so it can't have other records`);
+  });
   // the column holds 64 KB of jsonb text, which spaces out what JSON.stringify packs
   if (JSON.stringify(out).length > 56 * 1024)
     throw new HttpError(422, 'TOO_MANY_RECORDS', 'the records are too long altogether');

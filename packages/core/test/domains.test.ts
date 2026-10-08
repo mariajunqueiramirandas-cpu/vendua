@@ -85,6 +85,16 @@ describe('domain names (hosts.ts)', () => {
 
 describe('owner records (records.ts parseRecords)', () => {
   test("refuses Venduá's names, bad values and too many records", () => {
+    for (const other of [
+      { type: 'A', name: 'shop', value: '1.2.3.4' },
+      { type: 'CNAME', name: 'shop', value: 'b.example.com' },
+      { type: 'TXT', name: 'shop', value: 'x' },
+    ])
+      expect(
+        httpError(() =>
+          parseRecords([{ type: 'CNAME', name: 'shop', value: 'a.example.com' }, other]),
+        ),
+      ).toMatchObject({ code: 'INVALID_RECORD' });
     for (const value of ['::::', '1:2:3:4:5:6:7:8:9', '2001:db8::g'])
       expect(httpError(() => parseRecords([{ type: 'AAAA', name: 'v6', value }]))).toMatchObject({
         code: 'INVALID_RECORD',
@@ -454,7 +464,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     expect(got.status).toBe('pending_dns');
     expect(got.lastError).toContain('CAA');
 
-    set(host, { caa: [{ issue: 'letsencrypt.org' }] });
+    // the issuer is matched exactly, not as a substring
+    set(host, { caa: [{ issue: 'notletsencrypt.org' }] });
+    got = await check();
+    expect(got.status).toBe('pending_dns');
+    set(host, { caa: [{ issue: 'letsencrypt.org; validationmethods=http-01' }] });
     got = await check();
     expect(got.status).toBe('dns_ok');
     expect(got.lastError).toBeNull();
@@ -473,6 +487,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     expect(own.status).toBe(200);
     expect(own.body).toMatchObject({ tenant: { id: s.id }, primaryHost: host, redirect: null });
     expect((await call('GET', `/edge/v1/resolve?host=www.${host}`)).status).toBe(404);
+    // under repair, the alias that still works sends customers to the store's own address
+    await sql`update custom_domains set status = 'repairing' where host = ${host}`;
+    expect((await edge(`www.${host}`)).body.redirect).toEqual({
+      to: `https://${s.platform}`,
+      permanent: false,
+    });
   });
 
   test('repair: three misses 15 minutes apart → repairing on the platform host → back', async () => {
@@ -667,6 +687,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     const syncedAt = (await row(cd.id))!.records_synced_at as Date;
     expect(syncedAt.getTime()).toBe(T);
 
+    // one of the pair alone isn't a delegation
+    set(host, { ns: [CF_PAIR[0]!] });
+    const half = await s.owner('POST', `/account/domains/${cd.id}/check`, {});
+    expect(half.body.customDomain.status).toBe('pending_dns');
     set(host, { ns: CF_PAIR.map((n) => `${n.toUpperCase()}.`) });
     await jobs(later(T, 32 * MIN));
     acct = await account(s);
@@ -1167,5 +1191,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     const after = (await order(placed.body.domainOrder.id))!;
     expect(after.status).toBe('awaiting_payment');
     expect((after.updated_at as Date).getTime()).toBeGreaterThan(before.getTime());
+  });
+  test("a renewal isn't asked for while the registrar can't say when the domain expires", async () => {
+    registrar.registerAsync = false;
+    const s = await paidStore('nexp');
+    const host = `nexp${nonce}.com.br`;
+    const dom = await registrar.register({ host, holderHandle: 'VH000000-BR' });
+    registrar.domains.get(host)!.expiresAt = null;
+    const id = (
+      await sql<{ id: string }[]>`
+        insert into custom_domains (tenant_id, host, verify_token, status, source, method,
+          alias_host, alias_ok, registrar_ref, expires_at, zone_id, name_servers, activated_at,
+          records_synced_at)
+        values (${s.id}, ${host}, ${'6'.repeat(32)}, 'active', 'included', 'ns', ${`www.${host}`},
+          true, ${dom.ref}, ${new Date(Date.now() + 10 * DAY)}, 'znexp', ${CF_PAIR}, now(), now())
+        returning id
+      `
+    )[0]!.id;
+    set(host, { ns: CF_PAIR });
+    await jobs(new Date());
+    expect(calls('renew', dom.ref)).toHaveLength(0);
+    const o = (
+      await sql`select status from domain_orders where custom_domain_id = ${id} and kind = 'renew'`
+    )[0]!;
+    expect(o.status).toBe('queued');
   });
 });

@@ -201,7 +201,11 @@ export async function certBlocker(host: string, target: string): Promise<string 
       const caa = await settle(resolver.resolveCaa(name), []);
       const issuers = caa.flatMap((r) => (r.issue !== undefined ? [r.issue] : []));
       if (!caa.length) continue;
-      if (issuers.length && !issuers.some((v) => v.toLowerCase().includes('letsencrypt.org')))
+      // the issuer is the value's domain, before any `;` parameters
+      const allowed = issuers.some(
+        (v) => v.split(';')[0]!.trim().toLowerCase() === 'letsencrypt.org',
+      );
+      if (issuers.length && !allowed)
         return `O registro CAA de ${name} não permite a Let's Encrypt. Inclua "letsencrypt.org" nele ou apague-o.`;
       break;
     }
@@ -233,7 +237,9 @@ export async function delegated(host: string, nameServers: string[]): Promise<bo
   if (!resolver.resolveNs || !nameServers.length) return false;
   const got = (await settle(resolver.resolveNs(host), [] as string[])).map(bare);
   const want = nameServers.map(bare);
-  return got.length > 0 && got.every((n) => want.includes(n));
+  // exactly the assigned set: one of the pair alone isn't a delegation Cloudflare accepts
+  const g = new Set(got);
+  return g.size === new Set(want).size && want.every((n) => g.has(n));
 }
 
 async function checkDelegation(

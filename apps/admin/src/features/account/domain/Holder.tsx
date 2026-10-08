@@ -274,15 +274,15 @@ export function HolderForm({ a, host, onBack }: { a: Account; host: string; onBa
               />
             </Field>
           </Cell>
-          <Cell className="col-span-6 sm:col-span-4">{text('street', 'Rua', { max: 200 })}</Cell>
+          <Cell className="col-span-6 sm:col-span-4">{text('street', 'Rua', { max: 120 })}</Cell>
           <Cell className="col-span-2">{text('number', 'Número', { max: 20 })}</Cell>
           <Cell className="col-span-4">
-            {text('complement', 'Complemento', { max: 100, optional: true })}
+            {text('complement', 'Complemento', { max: 60, optional: true })}
           </Cell>
           <Cell className="col-span-6 sm:col-span-2">
-            {text('district', 'Bairro', { max: 100 })}
+            {text('district', 'Bairro', { max: 60 })}
           </Cell>
-          <Cell className="col-span-4 sm:col-span-3">{text('city', 'Cidade', { max: 100 })}</Cell>
+          <Cell className="col-span-4 sm:col-span-3">{text('city', 'Cidade', { max: 60 })}</Cell>
           <Cell className="col-span-2 sm:col-span-1">
             <Field label="UF" htmlFor="holder-state" error={errOf('state')}>
               <div onBlur={blur('state')}>
