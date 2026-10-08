@@ -120,7 +120,15 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
   }
 
   async function store(
-    o: { phone?: string; role?: string; on?: boolean; plan?: string; name?: string } = {},
+    o: {
+      phone?: string;
+      role?: string;
+      on?: boolean;
+      plan?: string;
+      name?: string;
+      /** false: the owner typed this number in, and its person never signed in with a code */
+      proven?: boolean;
+    } = {},
   ): Promise<Store> {
     const [t] = await sql<{ id: string }[]>`
       insert into tenants (slug, name, plan)
@@ -143,6 +151,10 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
       values (${tenantId}, 'Rita Souza', ${ph}, ${o.role ?? 'owner'},
               ${sql.json(o.on === false ? {} : { duaWhatsapp: true })})
       returning id`;
+    if (o.proven !== false)
+      await sql`
+        insert into merchant_sessions (tenant_id, user_id, secret_hash, expires_at, proof_kind, proof_subject)
+        values (${tenantId}, ${u!.id}, ${`h-${u!.id}`}, now() + interval '1 day', 'phone', ${ph})`;
     return { tenantId, userId: u!.id, phone: ph, productId: p!.id };
   }
 
@@ -551,5 +563,27 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
         providerId: `z-${nonce}`,
       }),
     ).toBe(false);
+  });
+
+  test('a number an owner typed into Equipe, never signed in with a code, stays the CRM’s', async () => {
+    const s = await store({ proven: false });
+    expect(
+      await socketMessageToInbox(appSql, {
+        jid: `55${s.phone}@s.whatsapp.net`,
+        text: 'oi',
+        providerId: `u-${nonce}`,
+      }),
+    ).toBe(false);
+    // once its person signs in with a WhatsApp code, the membership is theirs
+    await sql`
+      insert into merchant_sessions (tenant_id, user_id, secret_hash, expires_at, proof_kind, proof_subject)
+      values (${s.tenantId}, ${s.userId}, ${`p-${s.userId}`}, now() + interval '1 day', 'phone', ${s.phone})`;
+    expect(
+      await socketMessageToInbox(appSql, {
+        jid: `55${s.phone}@s.whatsapp.net`,
+        text: 'oi',
+        providerId: `v-${nonce}`,
+      }),
+    ).toBe(true);
   });
 });

@@ -10,7 +10,8 @@ export async function isMerchantPhone(
     if (!c || c.length > 40) continue;
     const p = normalizePhone(c);
     if (!/^\d{10,11}$/.test(p)) continue;
-    const rows = await sql`select 1 from merchant_memberships_for_phone(${p}) limit 1`;
+    // proven memberships only: a number an owner typed into Equipe stays a prospect to sales
+    const rows = await sql`select 1 from merchant_memberships_for_proven_phone(${p}) limit 1`;
     if (rows.length) return true;
   }
   return false;
