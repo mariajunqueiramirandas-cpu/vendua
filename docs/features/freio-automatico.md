@@ -264,7 +264,7 @@ default thresholds can be edited:
 | F3    | Atraso avisado: detection, `order_late_notices`, apology coupons and budget                                                           |
 | F4    | Capacity and prep learned from `order_events`; "agende para HH:MM" with P-022                                                         |
 
-F3 mints coupons, which is money: after editing, `invariant-reviewer` runs on the diff
+F3 mints coupons, which is money: after editing, the invariant review runs on the diff
 (`CLAUDE.md`).
 
 ## 8. Open decisions

@@ -346,7 +346,7 @@ goes back through the door the question came from, and the admin shows both.
 | W3    | Voice notes                                                                                                  |
 
 W0 changes the CRM agent's send path and the OTP. W2 adds a producer source and applies changes.
-After each, `invariant-reviewer` runs on the diff (`CLAUDE.md`).
+After each, the invariant review runs on the diff (`CLAUDE.md`).
 
 ## 9. Open decisions
 

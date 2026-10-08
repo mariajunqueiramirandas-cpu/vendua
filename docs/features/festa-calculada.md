@@ -292,7 +292,7 @@ due today and what's due later. It comes last because it needs F1 and F2 underne
 | F2    | `order_charges`, the sinal, balance by Pix and at the caixa, reminders with the balance, refund policy | Legal review; invariant review of the payment changes                             |
 | F3    | Vendedor `party_quote`; production per date                                                            | F1, F2                                                                            |
 
-F2 touches money and payments: after editing, `invariant-reviewer` runs on the diff (`CLAUDE.md`).
+F2 touches money and payments: after editing, the invariant review runs on the diff (`CLAUDE.md`).
 
 ## 8. Open decisions
 
