@@ -174,7 +174,7 @@ async function sendInvite(d: FleetDeps, p: ProvisioningRow, f: StoreFacts): Prom
     `Para cuidar dela (cardápio, horários, pedidos), entre no painel com este WhatsApp: ${admin}\n\n` +
     'A loja abre para pedidos assim que você ativar o plano no painel.';
   await d.notify
-    .whatsapp(f.owner.phone, text)
+    .whatsapp(f.owner.phone, text, { dedupeKey: `provision:${p.id}:invite` })
     .then(() => out.sent.push('whatsapp'))
     .catch((e) => out.errors.push(`whatsapp: ${e instanceof Error ? e.message : String(e)}`));
   if (f.owner.email)

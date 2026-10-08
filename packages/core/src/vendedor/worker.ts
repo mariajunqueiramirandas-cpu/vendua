@@ -37,8 +37,14 @@ export function startVendedorWorker(sql: Sql, o: VendedorWorkerOpts): () => Prom
     try {
       do {
         again = false;
-        while (!stopped && (await ingestPass(deps)) > 0);
-        await voicePass(sql, o.media);
+        // voice replies go out between batches: a steady inbound stream mustn't hold them back
+        let n: number;
+        do {
+          n = await ingestPass(deps);
+          await voicePass(sql, o.media).catch((err) =>
+            workerLog.error({ err }, 'voice pass failed'),
+          );
+        } while (!stopped && n > 0);
       } while (again && !stopped);
     } catch (err) {
       workerLog.error({ err }, 'ingest pass failed');
@@ -103,13 +109,22 @@ export function startVendedorWorker(sql: Sql, o: VendedorWorkerOpts): () => Prom
 
   const poll = setInterval(() => void drain(), POLL_MS);
   poll.unref?.();
+  // a pass that outlasts the interval is left to finish, not joined by a second one
+  let sweeping = false;
+  let playing = false;
   const sweep = setInterval(() => {
-    void sweepAll(sql, new Date(), !!o.gateway).catch((err) =>
-      workerLog.warn({ err }, 'vendedor sweep failed'),
-    );
-    void clienteOcultoPass(sql, o.gateway).catch((err) =>
-      workerLog.warn({ err }, 'cliente oculto pass failed'),
-    );
+    if (!sweeping) {
+      sweeping = true;
+      void sweepAll(sql, new Date(), !!o.gateway)
+        .catch((err) => workerLog.warn({ err }, 'vendedor sweep failed'))
+        .finally(() => (sweeping = false));
+    }
+    if (!playing) {
+      playing = true;
+      void clienteOcultoPass(sql, o.gateway)
+        .catch((err) => workerLog.warn({ err }, 'cliente oculto pass failed'))
+        .finally(() => (playing = false));
+    }
   }, SWEEP_MS);
   sweep.unref?.();
 

@@ -816,7 +816,7 @@ export function mountVendedor(d: AdminDeps) {
       const [open] =
         await tx`select id from vendedor_runs where tenant_id = ${t.id} and status in ('queued', 'running') limit 1`;
       if (!open)
-        await tx`insert into vendedor_runs (tenant_id, trigger) values (${t.id}, 'manual')`;
+        await tx`insert into vendedor_runs (tenant_id, trigger) values (${t.id}, 'manual') on conflict do nothing`;
       await audit(tx, t.id, m, {
         action: 'vendedor.cliente_oculto',
         entity: 'vendedor_runs',

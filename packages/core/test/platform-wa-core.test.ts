@@ -267,6 +267,49 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       expect(await message(m.messageId)).toMatchObject({ status: 'failed', error: 'boom' });
     });
 
+    test('a row whose settle keeps failing backs off, then is given up; newer rows still settle', async () => {
+      gateway();
+      const poison = `poison ${nonce}`;
+      const bad = await queued(poison);
+      await dispatchMessage(sql, bad.messageId);
+      const good = await queued();
+      await dispatchMessage(sql, good.messageId);
+      await sql.unsafe(`create or replace function test_settle_poison() returns trigger
+        language plpgsql as $$ begin raise exception 'poison'; end $$`);
+      await sql.unsafe(`create trigger test_settle_poison_${nonce} before update on lead_messages
+        for each row when (old.body = '${poison}') execute function test_settle_poison()`);
+      try {
+        await settleWhen(`crm:${bad.messageId}`, 'failed');
+        await settleWhen(`crm:${good.messageId}`, 'sent', `WP${nonce}`.toUpperCase());
+        const badRow = async () =>
+          (
+            await sql<
+              { settle_attempts: number; settle_retry_at: Date | null; settled_at: Date | null }[]
+            >`select settle_attempts, settle_retry_at, settled_at from platform_wa_outbox
+              where dedupe_key like ${`crm:${bad.messageId}%`}`
+          )[0]!;
+        await settleCrmOnce(sql);
+        expect((await message(good.messageId)).status).toBe('sent');
+        let b = await badRow();
+        expect(b.settle_attempts).toBe(1);
+        expect(b.settled_at).toBeNull();
+        expect(b.settle_retry_at!.getTime()).toBeGreaterThan(Date.now());
+        // backing off: the next pass doesn't take it
+        await settleCrmOnce(sql);
+        expect((await badRow()).settle_attempts).toBe(1);
+        await sql`update platform_wa_outbox set settle_attempts = 9, settle_retry_at = now()
+          where dedupe_key like ${`crm:${bad.messageId}%`}`;
+        await settleCrmOnce(sql);
+        b = await badRow();
+        expect(b.settle_attempts).toBe(10);
+        expect(b.settled_at).not.toBeNull();
+      } finally {
+        await sql.unsafe(`drop trigger if exists test_settle_poison_${nonce} on lead_messages`);
+        await sql.unsafe('drop function if exists test_settle_poison()');
+      }
+      await sql`update lead_messages set status = 'failed' where id = ${bad.messageId}`;
+    });
+
     test('a send the stranded sweep failed comes back as sent when the gateway sent it', async () => {
       gateway();
       const m = await queued();

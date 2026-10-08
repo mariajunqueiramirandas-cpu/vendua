@@ -16,7 +16,7 @@ import {
   maskDocument,
 } from '../src/modules/domains/hosts.ts';
 import { runDomainJobs } from '../src/modules/domains/jobs.ts';
-import type { DnsRecord } from '../src/modules/domains/providers.ts';
+import { RegistrarError, type DnsRecord } from '../src/modules/domains/providers.ts';
 import { parseRecords } from '../src/modules/domains/records.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { HttpError } from '../src/platform/http.ts';
@@ -1298,6 +1298,72 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     )[0]!;
     expect(o.status).toBe('renewed');
     expect(((await row(id))!.expires_at as Date).getTime()).toBe(before.getTime() + YEAR);
+  });
+
+  test("a claim taken late in a long tick isn't born expired, nor is its retry already due", async () => {
+    registrar.registerAsync = false;
+    const s = await paidStore('stal');
+    const host = `stal${nonce}.com.br`;
+    const placed = await s.owner('POST', '/account/domains/order', orderBody(host));
+    const id = placed.body.domainOrder.id;
+    // the tick started 15 minutes ago (its other steps were slow)
+    const stale = new Date(Date.now() - 15 * MIN);
+    const register = registrar.register;
+    let claimedUntil: Date | null = null;
+    registrar.register = async () => {
+      claimedUntil = (await order(id))!.claimed_until;
+      throw new RegistrarError('maintenance', 'unavailable');
+    };
+    try {
+      await jobs(stale);
+    } finally {
+      registrar.register = register;
+    }
+    expect(claimedUntil!.getTime()).toBeGreaterThan(Date.now() + 5 * MIN);
+    const o = (await order(id))!;
+    expect(o.status).toBe('queued');
+    expect((o.next_attempt_at as Date).getTime()).toBeGreaterThan(Date.now() + 4 * MIN);
+  });
+
+  test('a renewal whose claim another worker took meanwhile is not paid for here', async () => {
+    registrar.registerAsync = false;
+    const s = await paidStore('rsto');
+    const host = `rsto${nonce}.com.br`;
+    const dom = await registrar.register({ host, holderHandle: 'VH000000-BR' });
+    const expires = new Date(Date.now() + 20 * DAY);
+    registrar.domains.get(host)!.expiresAt = expires;
+    const id = (
+      await sql<{ id: string }[]>`
+        insert into custom_domains (tenant_id, host, verify_token, status, source, method,
+          alias_host, alias_ok, registrar_ref, expires_at, zone_id, name_servers, activated_at,
+          records_synced_at)
+        values (${s.id}, ${host}, ${'3'.repeat(32)}, 'active', 'included', 'ns', ${`www.${host}`},
+          true, ${dom.ref}, ${expires}, 'zrsto', ${CF_PAIR}, now(), now())
+        returning id
+      `
+    )[0]!.id;
+    set(host, { ns: CF_PAIR });
+    const get = registrar.get;
+    registrar.get = async (ref) => {
+      // a second replica re-claims the order while this one asks the registrar
+      if (ref === dom.ref)
+        await sql`
+          update domain_orders set attempts = attempts + 1
+          where custom_domain_id = ${id} and kind = 'renew'
+        `;
+      return get(ref);
+    };
+    try {
+      await jobs(new Date());
+    } finally {
+      registrar.get = get;
+    }
+    expect(calls('renew', dom.ref)).toHaveLength(0);
+    const o = (
+      await sql`select status, expires_before from domain_orders where custom_domain_id = ${id}`
+    )[0]!;
+    expect(o.status).toBe('queued');
+    expect(o.expires_before).toBeNull();
   });
 
   test('an order a worker is placing can be neither cancelled nor retried', async () => {

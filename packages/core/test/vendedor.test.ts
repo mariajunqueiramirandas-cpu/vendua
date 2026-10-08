@@ -17,7 +17,7 @@ import { pgMemory } from '../src/agent-host/store/memory.ts';
 import { PgActorStore } from '../src/agent-host/store/pg-store.ts';
 import { migrate, withTenant, type Sql } from '../src/platform/db.ts';
 import { configureVendedor } from '../src/vendedor/deps.ts';
-import { ingestPass } from '../src/vendedor/ingest.ts';
+import { claimPending, ingestPass } from '../src/vendedor/ingest.ts';
 import { vendedorTransport } from '../src/vendedor/transport.ts';
 
 // ADR 0031: the Vendedor end to end on Postgres, as vendua_app under RLS — the gateway's rows in,
@@ -141,6 +141,46 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     for (const id of tenants) await sql`delete from tenants where id = ${id}`;
     await sql.end();
     await (app as unknown as { end: () => Promise<void> }).end();
+  });
+
+  test("a thread's text waits while its earlier voice note is in flight on another Core", async () => {
+    const tenantId = await store();
+    const a = await thread(tenantId, '11933330001');
+    const b = await thread(tenantId, '11933330002');
+    // older than anything else pending, so these are what the claims below take
+    const msg = async (threadId: string, kind: string, secs: number) =>
+      (
+        await sql<{ id: string }[]>`
+          insert into shopper_messages (tenant_id, thread_id, author, kind, body, wa_id, ingest,
+            created_at)
+          values (${tenantId}, ${threadId}, 'shopper', ${kind}, ${kind === 'text' ? 'oi' : null},
+            ${`WA-ord-${threadId}-${secs}`}, 'pending',
+            now() - interval '20 years' + make_interval(secs => ${secs}))
+          returning id`
+      )[0]!.id;
+    const voice = await msg(a, 'audio', 1);
+    const text = await msg(a, 'text', 2);
+    const other = await msg(b, 'text', 3);
+    expect((await claimPending(app, 1)).map((r) => r.id)).toEqual([voice]);
+    // another replica: A's text stays behind the voice note, B's text goes
+    expect((await claimPending(app, 1)).map((r) => r.id)).toEqual([other]);
+    await sql`update shopper_messages set ingest = 'done' where id in ${sql([voice, other])}`;
+    expect((await claimPending(app, 1)).map((r) => r.id)).toEqual([text]);
+    await sql`update shopper_messages set ingest = 'done' where id = ${text}`;
+  });
+
+  test('a store has one open Cliente oculto run, however many Cores queue one', async () => {
+    const tenantId = await store();
+    const queue = () => sql`
+      insert into vendedor_runs (tenant_id, trigger) values (${tenantId}, 'menu_change')
+      on conflict do nothing`;
+    await Promise.all([queue(), queue()]);
+    const open = () =>
+      sql`select id from vendedor_runs where tenant_id = ${tenantId} and status in ('queued', 'running')`;
+    expect(await open()).toHaveLength(1);
+    await sql`update vendedor_runs set status = 'done' where tenant_id = ${tenantId}`;
+    await queue();
+    expect(await open()).toHaveLength(1);
   });
 
   test('takes a whole order: options, pickup, Pix, a summary card, a yes, one order', async () => {
@@ -514,7 +554,7 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
   test('recovery: one nudge per thread per day, only once the shopper stopped', async () => {
     const tenantId = await store();
     await sql`update store_agent set settings = settings || ${sql.json({ recovery: { enabled: true, delayMin: 5 } })} where tenant_id = ${tenantId}`;
-    const threadId = await thread(tenantId, '11913571357');
+    const threadId = await thread(tenantId, '11963571357');
     const { rt } = runtime([
       tools(call('cart_edit', { ops: [{ op: 'add', product: 'pizza-calabresa', options: [] }] })),
       reply('Qual borda?'),
@@ -532,7 +572,7 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     await settle(rt, tenantId);
     await sql`update shopper_threads set last_in_at = now() - interval '10 minutes', stage = 'building' where id = ${threadId}`;
     // SAIR stops it, under the spelling without the 9th digit too
-    await sql`insert into store_wa_optouts (tenant_id, phone) values (${tenantId}, '1113571357')`;
+    await sql`insert into store_wa_optouts (tenant_id, phone) values (${tenantId}, '1163571357')`;
     expect(await recoveryPass(app, tenantId)).toBe(0);
     await sql`delete from store_wa_optouts where tenant_id = ${tenantId}`;
     expect(await recoveryPass(app, tenantId)).toBe(1);

@@ -213,6 +213,18 @@ export async function mergeApproved(d: FleetDeps): Promise<number> {
     `,
   );
   for (const t of due) {
+    // the batch's GitHub calls can outlast one lease: each task's restarts while it's still
+    // unexpired (so no other Core has taken it)
+    const kept = await controlTx(
+      d.sql,
+      (tx) => tx`
+        update site_tasks set lease_until = now() + ${LEASE}::interval
+        where id = ${t.id} and status = 'approved' and lease_until > now()
+          and date_trunc('milliseconds', lease_until) = ${t.lease_until}
+        returning id
+      `,
+    );
+    if (!kept.length) continue;
     let merged: { sha: string | null } | null = null;
     let err: unknown = null;
     // GitHub's own word on the head, not the webhook's: a re-run that skipped jobs can say green

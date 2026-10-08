@@ -50,19 +50,33 @@ interface Row {
   ingest_attempts: number;
 }
 
+/**
+ * Due pending messages, except one whose thread has an older one still pending (in flight on
+ * another Core or retrying): a thread's messages are dispatched in order, so a slow voice note
+ * can't land after the text sent behind it.
+ */
 export async function claimPending(sql: Sql, limit = 10): Promise<Row[]> {
-  return controlTx(
-    sql,
-    (tx) => tx<Row[]>`
+  return controlTx(sql, async (tx) => {
+    // one whose handling kept killing the worker (no throw to fail it) would hold its thread
+    await tx`
+      update shopper_messages set ingest = 'failed', ingest_lease_until = null
+      where ingest = 'pending' and ingest_attempts >= ${MAX_ATTEMPTS}
+        and ingest_lease_until < now()`;
+    return tx<Row[]>`
       update shopper_messages m set ingest_lease_until = now() + make_interval(secs => ${LEASE_S}),
         ingest_attempts = m.ingest_attempts + 1
-      where m.id in (
-        select id from shopper_messages
-        where ingest = 'pending' and (ingest_lease_until is null or ingest_lease_until < now())
-        order by created_at limit ${limit} for update skip locked)
+      -- array() picks once; an IN subquery can be rescanned and claim past the limit
+      where m.id = any(array(
+        select s.id from shopper_messages s
+        where s.ingest = 'pending' and (s.ingest_lease_until is null or s.ingest_lease_until < now())
+          and not exists (
+            select 1 from shopper_messages o
+            where o.thread_id = s.thread_id and o.ingest = 'pending'
+              and (o.created_at, o.id) < (s.created_at, s.id))
+        order by s.created_at, s.id limit ${limit} for update skip locked))
       returning m.id, m.tenant_id, m.thread_id, m.author, m.kind, m.body, m.meta, m.quoted_wa_id,
-        m.wa_id, m.created_at, m.ingest_attempts`,
-  );
+        m.wa_id, m.created_at, m.ingest_attempts`;
+  });
 }
 
 interface Derived {
@@ -432,10 +446,24 @@ export async function presenceOne(sql: Sql, tenantId: string, threadId: string):
   });
 }
 
+/** The batch is handled one message at a time: each one's lease restarts when its turn comes. */
+async function renewLease(sql: Sql, r: Row): Promise<boolean> {
+  const kept = await controlTx(
+    sql,
+    (tx) => tx`
+      update shopper_messages set ingest_lease_until = now() + make_interval(secs => ${LEASE_S})
+      where id = ${r.id} and ingest = 'pending' and ingest_attempts = ${r.ingest_attempts}
+      returning id`,
+  );
+  return kept.length > 0;
+}
+
 export async function ingestPass(d: IngestDeps): Promise<number> {
   const rows = await claimPending(d.sql);
   for (const r of rows) {
     try {
+      // the lease lapsed while earlier messages were handled and another Core took this one
+      if (!(await renewLease(d.sql, r))) continue;
       await ingestOne(d, r);
     } catch (err) {
       ingestLog.error({ err, messageId: r.id, attempts: r.ingest_attempts }, 'ingest failed');
