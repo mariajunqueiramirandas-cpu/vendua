@@ -69,9 +69,14 @@ domains. Core retries the order daily for 7 days.
 **Venduá hosts the DNS.** An included domain's zone is created on Venduá's DNS host before the
 order, since the registry needs answering nameservers. A connected domain is delegated by its
 nameservers (registro.br's "Servidores DNS"); CNAME + TXT stays for a subdomain the owner can't
-delegate. The zone holds the root's A record, `www` and the redirect between them. Before
-delegation, Core reads the domain's current MX, SPF, DKIM and common mail names and copies them,
-and the admin offers mail presets, so moving nameservers never breaks the owner's email.
+delegate. The zone holds the root's A record, `www` and the redirect between them. A lookup can't
+list a zone (DKIM selectors, SRV and verification records aren't discoverable), so before
+showing our nameservers the admin builds an inventory: the records Core finds (MX, SPF, DMARC,
+the known DKIM selectors of the mail presets, common names), plus a paste of the old provider's
+zone export or records the owner adds. The owner reviews and confirms it. A domain signed with
+DNSSEC (RDAP shows `delegationSigned`) can't be delegated until its DS record is removed at
+registro.br, or the whole zone fails to resolve; the admin says so and Core re-checks. An owner
+who would rather keep their DNS points the root's A record and `www` at us instead.
 Nameservers pointing at us are the proof of control for a delegated domain.
 
 **TLS needs no staff step.** The edge polls Core for hosts to serve with certificates
