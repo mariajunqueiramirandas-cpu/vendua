@@ -487,7 +487,10 @@ export async function scheduleRenewals(sql: Sql, now: Date) {
         and d.expires_at < ${new Date(now.getTime() + RENEW_AHEAD_MS)}
         and not exists (
           select 1 from domain_orders o where o.custom_domain_id = d.id and o.kind = 'renew'
-            and (o.status in ('queued', 'pending') or o.done_at > ${new Date(now.getTime() - RENEW_AHEAD_MS)})
+            and (o.status in ('queued', 'pending')
+              or (o.status = 'renewed' and o.done_at > ${new Date(now.getTime() - RENEW_AHEAD_MS)})
+              -- a renewal that gave up is tried again the next day, not after the expiry
+              or (o.status = 'failed' and o.done_at > ${new Date(now.getTime() - DAY_MS)}))
         )
       limit ${BATCH}
     `,

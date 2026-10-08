@@ -503,6 +503,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     expect(await primaryOf(s.id)).toEqual([host]);
   });
 
+  test('repair: an AAAA record that is not ours, added after go-live, counts as a miss', async () => {
+    const { s, host, cd, at } = await connectLive('rp6');
+    set(host, { aaaa: ['2001:db8::bad'] });
+    for (const m of [16, 32, 48]) await jobs(later(at, m * MIN));
+    expect((await row(cd.id))!.status).toBe('repairing');
+    expect(await primaryOf(s.id)).toEqual([s.platform]);
+  });
+
   test('lapse: the plan loses the domain → redirect to the platform host; back → live again', async () => {
     const { s, host, cd } = await connectLive('lap');
     await sql`update tenants set plan = 'mirim' where id = ${s.id}`;
@@ -990,6 +998,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     expect(rf).toHaveLength(1);
     expect(rf[0]!.data).toMatchObject({ host: c.host });
     expect((await row(c.id))!.expires_at.getTime()).toBe(c.expires.getTime());
+    // …and is tried again the next day, well before the expiry
+    await jobs(later(T, DAY + 2 * 60 * MIN));
+    expect(calls('renew', c.ref)).toHaveLength(6);
+    expect((await row(c.id))!.expires_at.getTime()).toBe(c.expires.getTime() + YEAR);
   });
 
   test('CRM: store list shows the domain and the order; retry needs a key and a stuck order', async () => {

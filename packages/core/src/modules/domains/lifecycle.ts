@@ -217,9 +217,12 @@ export async function activateVerified(sql: Sql, d: DomainJobDeps, now: Date) {
 
 const edgeIps = (d: DomainJobDeps) => (d.providers.edge ? [d.providers.edge.ipv4] : []);
 
+/** Still ours: delegated, or pointing at us with nothing that sends visitors (IPv6) or the
+ *  certificate (CAA) elsewhere — the same bar as the first verification. */
 async function stillPointing(r: Row, d: DomainJobDeps) {
   if (r.method === 'ns') return delegated(r.host, r.name_servers);
-  return pointsAt(r.host, cnameTarget(r.slug, d.storeDomain), edgeIps(d));
+  const target = cnameTarget(r.slug, d.storeDomain);
+  return (await pointsAt(r.host, target, edgeIps(d))) && !(await certBlocker(r.host, target));
 }
 
 /** Live domains, every 15 minutes: still pointing at us? Three misses → repairing (the store's
