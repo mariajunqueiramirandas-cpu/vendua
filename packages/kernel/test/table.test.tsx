@@ -220,6 +220,8 @@ describe('checkout at a table', () => {
       customer: { name: 'Ana' },
       delivery: { mode: 'dine_in', table: TOKEN },
       payment: { method: 'tab' },
+      // no payment rules: the cart's total is the one on the button
+      expectedTotalCents: 1800,
     });
   });
 

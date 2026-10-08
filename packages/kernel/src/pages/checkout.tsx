@@ -878,9 +878,12 @@ export function CheckoutPage() {
         },
         ...(notes.trim() ? { notes: notes.trim().slice(0, NOTES_MAX) } : {}),
         ...(scheduledFor && !atTable ? { scheduledFor } : {}),
-        // the total on the button, Core's for this method: Core refuses (409 PRICES_CHANGED) an
-        // order whose total moved since. Not when the delivery didn't sync: the cart's fee is stale
-        ...(pricedTotals && !deliveryIssue ? { expectedTotalCents: pricedTotals.totalCents } : {}),
+        // the total on the button (Core's for this method, else the cart's while that loads): Core
+        // refuses (409 PRICES_CHANGED) an order whose total moved since. Not when the delivery
+        // didn't sync: the cart's fee is stale
+        ...(!pricing && !deliveryIssue
+          ? { expectedTotalCents: (pricedTotals ?? cart.totals).totalCents }
+          : {}),
       });
       placed.current = true;
       clearDraft();
