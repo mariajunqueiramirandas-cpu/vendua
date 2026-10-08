@@ -1,6 +1,7 @@
 # ADR 0010: Automated domains and TLS
 
-- Status: Proposed
+- Status: Proposed; amended by [ADR 0038](0038-included-domains.md) (Traefik issues custom-domain
+  certificates instead of Caddy; Venduá registers `.com.br` through a reseller)
 - Date: 2026-09-11
 
 ## Context

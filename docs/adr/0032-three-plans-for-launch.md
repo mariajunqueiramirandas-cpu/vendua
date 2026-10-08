@@ -42,7 +42,9 @@ Later the same day the owner added these decisions:
 - **Pangolim opens when own domains are built.** Staff open it in the CRM then. That work
   includes what happens to a live custom domain when a store loses the feature (a downgrade, an
   unpaid plan, a CRM toggle). Today host resolution doesn't check the plan; only activating a
-  domain does (403 `PLAN_REQUIRED`).
+  domain does (403 `PLAN_REQUIRED`). [ADR 0038](0038-included-domains.md) (2026-10-08) decides
+  it: Venduá buys and renews one `.com.br`, and a store that loses the feature keeps the domain
+  and goes back to its platform address.
 - **Self-serve signup opens only when it is ready:** the team turned it on in the CRM, and the
   platform WhatsApp, email and billing are set up. A new owner gets a welcome email. An
   unfinished signup is kept for 30 minutes.
