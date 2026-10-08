@@ -2313,6 +2313,8 @@ export const api = {
   endSession: (id: string) => send<{ ok: true }>('DELETE', `/me/sessions/${id}`),
   pushSubscribe: (sub: PushSubscriptionJSON) => send('POST', '/push/subscribe', sub),
   pushUnsubscribe: (endpoint: string) => send('POST', '/push/unsubscribe', { endpoint }),
+  pushRebind: (endpoint: string) =>
+    send<{ rebound: boolean }>('POST', '/push/rebind', { endpoint }),
 
   home: () => get<Home>('/home'),
   search: (q: string) => get<SearchResult>(`/search?q=${encodeURIComponent(q)}`),

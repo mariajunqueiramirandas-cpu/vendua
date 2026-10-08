@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { useQueryClient } from '@tanstack/react-query';
 import { awaitingCardReturn } from '../features/signup/progress.ts';
 import { trackPageview } from '../lib/analytics.ts';
+import { rebindPush } from '../lib/push.ts';
 import { ApiError } from '../lib/api.ts';
 import { clearPersisted } from '../lib/persist.ts';
 import { qk } from '../lib/query.ts';
@@ -84,6 +85,9 @@ export default function App() {
   const retorno = new URLSearchParams(loc.search).get('assinatura') === 'retorno';
   const toSignup = retorno && loc.pathname !== '/comecar' && awaitingCardReturn();
   const hasSession = !!q.data;
+  useEffect(() => {
+    if (hasSession) void rebindPush();
+  }, [hasSession]);
   useEffect(() => {
     if (!retorno || toSignup || loc.pathname === '/comecar' || !hasSession) return;
     for (const k of [qk.account, qk.store, qk.home]) void qc.invalidateQueries({ queryKey: k });

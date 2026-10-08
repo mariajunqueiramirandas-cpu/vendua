@@ -515,7 +515,8 @@ export function mountAdmin(o: MountAdminOpts) {
       // the device it ended stops getting the store's pushes too
       await tx`
         delete from push_subscriptions
-        where tenant_id = ${tenant.id} and user_id = ${m.userId} and session_id = ${id}
+        where tenant_id = ${tenant.id} and user_id = ${m.userId}
+          and (session_id = ${id} or session_id is null)
       `;
       forgetGate();
       return { status: 200, body: { ok: true } };
@@ -562,6 +563,24 @@ export function mountAdmin(o: MountAdminOpts) {
       const endpoint = text(body.endpoint, 'endpoint', 1000);
       await tx`delete from push_subscriptions where tenant_id = ${tenant.id} and endpoint = ${endpoint}`;
       return { status: 200, body: { subscribed: false } };
+    })(c);
+  });
+
+  // a subscription saved before pushes were tied to a session (null session_id) is claimed by
+  // the device's next sign-in: until then, ending any of the member's sessions drops it
+  admin.post('/push/rebind', async (c) => {
+    const m = c.get('merchant');
+    const tenant = c.get('tenant');
+    return o.idempotency(sql, async (c, tx) => {
+      const body = await bodyJson(c);
+      const endpoint = text(body.endpoint, 'endpoint', 1000);
+      const rows = await tx`
+        update push_subscriptions set session_id = ${m.sessionId}
+        where tenant_id = ${tenant.id} and user_id = ${m.userId} and endpoint = ${endpoint}
+          and session_id is null
+        returning id
+      `;
+      return { status: 200, body: { rebound: rows.length > 0 } };
     })(c);
   });
 

@@ -45,3 +45,10 @@ export async function disablePush() {
   await api.pushUnsubscribe(sub.endpoint).catch(() => undefined);
   await sub.unsubscribe();
 }
+
+/** Ties a subscription saved before pushes followed the session to this sign-in, so ending
+ *  this session elsewhere stops them. */
+export async function rebindPush() {
+  const sub = await currentSubscription().catch(() => null);
+  if (sub) await api.pushRebind(sub.endpoint).catch(() => undefined);
+}
