@@ -575,8 +575,16 @@ export async function bookMeetingTx(
     }
     // a booked call means the lead engaged — bump top-of-funnel leads to 'invited'
     const actor = input.source === 'staff' ? 'staff' : 'system';
-    if (lead.state === 'lead' || lead.state === 'contacted') {
-      await tx`update leads set state = 'invited', updated_at = now() where id = ${leadId}`;
+    // the lead was read without a lock: only move it if no one moved it since (e.g. to live)
+    const moved =
+      (lead.state === 'lead' || lead.state === 'contacted') &&
+      (
+        await tx`
+          update leads set state = 'invited', updated_at = now()
+          where id = ${leadId} and state = ${lead.state} returning id
+        `
+      ).length > 0;
+    if (moved) {
       await tx`
         insert into lead_state_history (lead_id, from_state, to_state, actor)
         values (${leadId}, ${lead.state}, 'invited', ${actor})
