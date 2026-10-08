@@ -423,6 +423,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
     expect(member).toMatchObject({ email: null, pendingEmail: daviMail });
     // the invite carries the link that proves it (opening it: sec-merchant-auth.test.ts, C1)
     expect(lastMail(daviMail)!.text).toMatch(/\/admin\/entrar\?link=[A-Za-z0-9_-]{43}/);
+    // and lasts long enough for someone who reads their email the next day
+    const [inviteLink] = await sql<{ hours: number }[]>`
+      select extract(epoch from expires_at - created_at)::int / 3600 as hours
+      from merchant_login_links where email = ${daviMail} order by created_at desc limit 1`;
+    expect(inviteLink!.hours).toBe(48);
 
     const replay = await owner(
       'POST',

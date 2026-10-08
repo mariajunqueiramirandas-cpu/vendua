@@ -42,6 +42,9 @@ type ActivityKind = keyof typeof ACTIVITY_KINDS;
 type Delivery = 'sent' | 'failed' | 'skipped';
 export type InviteResult = { whatsapp: Delivery; email: Delivery };
 
+/** the invitee may read the email days later, and until it's opened no other link goes to it */
+const INVITE_LINK_TTL_MIN = 48 * 60;
+
 async function team(tx: Sql, tenantId: string) {
   return tx`
     select id, name, phone, email, pending_email as "pendingEmail", role, status, created_at as "createdAt", last_seen_at as "lastSeenAt",
@@ -138,9 +141,10 @@ export function mountTeam(d: AdminDeps) {
               (sending = d.notify.email(
                 to,
                 subject,
-                `${intro}\n\nToque no link para confirmar este email e entrar no painel:\n\n${link}\n\nEle vale por 15 minutos e funciona uma vez. Depois disso, você também pode entrar com este email. Ou entre em ${url} com o número ${job.phone} — o código chega pelo WhatsApp. Se não foi com você, ignore este email.`,
+                `${intro}\n\nToque no link para confirmar este email e entrar no painel:\n\n${link}\n\nEle vale por 48 horas e funciona uma vez. Depois disso, você também pode entrar com este email. Ou entre em ${url} com o número ${job.phone} — o código chega pelo WhatsApp. Se não foi com você, ignore este email.`,
                 `admin-invite:${job.memberId}:${linkId}`,
               )),
+            INVITE_LINK_TTL_MIN,
           );
           if (!link.sent) throw new Error('too many links to this address');
           await sending;

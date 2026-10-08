@@ -289,6 +289,8 @@ export async function startEmailChange(
   who: { tenantId: string; userId: string; email: string },
   linkFor: (token: string) => string,
   send: LinkSender,
+  /** an invite's link waits for someone who may read their email days later */
+  ttlMin = LINK_TTL_MIN,
 ): Promise<{ sent: boolean; devLink?: string }> {
   const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
   const id = await authTx(sql, async (tx) => {
@@ -302,7 +304,7 @@ export async function startEmailChange(
     return (
       await tx<{ id: string }[]>`
         insert into merchant_login_links (email, token_hash, expires_at, purpose, tenant_id, user_id)
-        values (${who.email}, ${sha256(token)}, now() + make_interval(mins => ${LINK_TTL_MIN}),
+        values (${who.email}, ${sha256(token)}, now() + make_interval(mins => ${ttlMin}),
                 'email_change', ${who.tenantId}, ${who.userId})
         returning id
       `
