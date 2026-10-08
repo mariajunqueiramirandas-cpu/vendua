@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
+import postgres from 'postgres';
 import {
   createGateway,
   ProviderError,
@@ -9,7 +11,16 @@ import {
 } from '@vendua/agent-runtime';
 import { anthropicAdapter, anthropicBody } from '../src/agent-host/anthropic.ts';
 import { THINKING_HEADROOM } from '../src/platform/anthropic.ts';
-import { anthropicCostUsd, providerFor } from '../src/agent/llm.ts';
+import {
+  anthropicCostUsd,
+  LlmRefusalError,
+  providerFor,
+  setTestProvider,
+} from '../src/agent/llm.ts';
+import { enqueueRun, runOnce } from '../src/agent/runner.ts';
+import { controlTx } from '../src/modules/control.ts';
+import { insertLeadTx } from '../src/modules/leads.ts';
+import { migrate } from '../src/platform/db.ts';
 import { upsertIntegration, type IntegrationRow } from '../src/modules/integrations.ts';
 import type { Sql } from '../src/platform/db.ts';
 
@@ -456,8 +467,14 @@ describe('CRM anthropic driver', () => {
       json: message({ content: [], stop_reason: 'refusal', stop_details: null }),
     });
     globalThis.fetch = fetch as typeof globalThis.fetch;
-    const chat = providerFor(integration({})).chat({ system: 's', messages: [], tools: [] });
-    await expect(chat).rejects.toThrow('anthropic refusal');
+    const err = await providerFor(integration({}))
+      .chat({ system: 's', messages: [], tools: [] })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmRefusalError);
+    expect((err as LlmRefusalError).message).toBe('anthropic refusal');
+    // the declined call was billed: the run's ledger takes it (runner modelTurn)
+    expect((err as LlmRefusalError).billed).toMatchObject({ tokensIn: 10, tokensOut: 5 });
+    expect((err as LlmRefusalError).billed.costUsd).toBeCloseTo((10 * 0.1 + 5 * 0.5) / 1e6, 12);
   });
 });
 
@@ -473,5 +490,40 @@ describe('anthropic integration config', () => {
     expect(await save({ model: 'claude-opus-5-5' })).toEqual([422, 'config.model']);
     expect(await save({ effort: 'turbo' })).toEqual([422, 'config.effort']);
     expect(await save({ effort: 3 })).toEqual([422, 'config.effort']);
+  });
+});
+
+describe.skipIf(!process.env.TEST_DATABASE_URL)('CRM refusal (db)', () => {
+  const sql = postgres(process.env.TEST_DATABASE_URL!);
+
+  test("a refused model call fails the run and its bill lands on the run's cost", async () => {
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Recusa Lead' }));
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'triage', leadId: lead.body.lead.id }))!;
+    setTestProvider({
+      name: 'anthropic:claude-haiku-5-5',
+      chat: async () => {
+        throw new LlmRefusalError('anthropic refusal (cyber)', {
+          tokensIn: 20_000,
+          tokensOut: 40,
+          costUsd: 0.02,
+        });
+      },
+    });
+    try {
+      expect(await runOnce(sql)).toBe(true);
+    } finally {
+      setTestProvider(null);
+    }
+    const [run] = await sql<
+      { status: string; error: string; cost_cents: number; tokens_in: number }[]
+    >`select status, error, cost_cents, tokens_in from agent_runs where id = ${runId}`;
+    expect(run).toMatchObject({
+      status: 'failed',
+      error: 'anthropic refusal (cyber)',
+      cost_cents: 2,
+      tokens_in: 20_000,
+    });
   });
 });

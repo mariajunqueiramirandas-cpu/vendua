@@ -23,6 +23,7 @@ import {
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import {
   estimateModelCostUsd,
+  LlmRefusalError,
   providerFor,
   type AgentMessage,
   type AgentTool,
@@ -2054,11 +2055,22 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
 // One chat() turn: usage folds into the ledger and the turn journals verbatim.
 async function modelTurn(att: Attempt): Promise<void> {
   await refreshLeadGate(att);
-  const res = (att.res = await att.provider.chat({
-    system: att.system,
-    messages: att.messages,
-    tools: att.tools,
-  }));
+  let res: LlmResult;
+  try {
+    res = att.res = await att.provider.chat({
+      system: att.system,
+      messages: att.messages,
+      tools: att.tools,
+    });
+  } catch (e) {
+    // a declined call is still billed: failAttempt writes these totals with the failed run
+    if (e instanceof LlmRefusalError) {
+      att.tokensIn += e.billed.tokensIn;
+      att.tokensOut += e.billed.tokensOut;
+      att.costUsd += e.billed.costUsd;
+    }
+    throw e;
+  }
   att.tokensIn += res.tokensIn;
   att.tokensOut += res.tokensOut;
   // Provider-reported USD wins; else estimate from tokens × list rate.

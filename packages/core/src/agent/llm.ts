@@ -40,6 +40,17 @@ export interface LlmResult {
   costUsd: number | null;
 }
 
+/** The provider billed the call but declined to answer; `billed` belongs on the run's ledger. */
+export class LlmRefusalError extends Error {
+  override readonly name = 'LlmRefusalError';
+  constructor(
+    message: string,
+    readonly billed: { tokensIn: number; tokensOut: number; costUsd: number },
+  ) {
+    super(message);
+  }
+}
+
 export interface LlmProvider {
   name: string;
   chat(input: { system: string; messages: AgentMessage[]; tools: AgentTool[] }): Promise<LlmResult>;
@@ -457,8 +468,19 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
           input_schema: t.parameters as Anthropic.Tool.InputSchema,
         })),
       });
+      const u = {
+        input: res.usage.input_tokens,
+        cacheRead: res.usage.cache_read_input_tokens ?? 0,
+        cacheWrite: res.usage.cache_creation_input_tokens ?? 0,
+        output: res.usage.output_tokens,
+      };
+      const billed = {
+        tokensIn: u.input + u.cacheRead + u.cacheWrite,
+        tokensOut: u.output,
+        costUsd: anthropicCostUsd(model, u),
+      };
       const refusal = refusalOf(res);
-      if (refusal) throw new Error(`anthropic ${refusal}`);
+      if (refusal) throw new LlmRefusalError(`anthropic ${refusal}`, billed);
       let text = '';
       const toolCalls: ToolCall[] = [];
       for (const b of res.content) {
@@ -471,19 +493,7 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
           });
         }
       }
-      const u = {
-        input: res.usage.input_tokens,
-        cacheRead: res.usage.cache_read_input_tokens ?? 0,
-        cacheWrite: res.usage.cache_creation_input_tokens ?? 0,
-        output: res.usage.output_tokens,
-      };
-      return {
-        text: text || null,
-        toolCalls,
-        tokensIn: u.input + u.cacheRead + u.cacheWrite,
-        tokensOut: u.output,
-        costUsd: anthropicCostUsd(model, u),
-      };
+      return { text: text || null, toolCalls, ...billed };
     },
   };
 }
