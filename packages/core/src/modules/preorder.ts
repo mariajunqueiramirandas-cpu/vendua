@@ -40,8 +40,10 @@ export function bookableDates(
     // today (no lead time) only while the store still works today: open now, or opening later
     if (off === 0 && hours.windows.length > 0) {
       const s = deriveStatus({ ...hours, timezone: tz }, null, null, now, [...special]);
-      const back = s.status === 'closed' && s.resumesAt ? localDate(new Date(s.resumesAt), tz) : null;
-      const later = back !== null && iso(new Date(Date.UTC(back.y, back.m - 1, back.d, 12))) === date;
+      const back =
+        s.status === 'closed' && s.resumesAt ? localDate(new Date(s.resumesAt), tz) : null;
+      const later =
+        back !== null && iso(new Date(Date.UTC(back.y, back.m - 1, back.d, 12))) === date;
       if (s.status !== 'open' && !later) continue;
     }
     // a special day replaces the weekly hours, as deriveStatus reads them
