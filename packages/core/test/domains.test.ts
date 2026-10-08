@@ -85,6 +85,13 @@ describe('domain names (hosts.ts)', () => {
 
 describe('owner records (records.ts parseRecords)', () => {
   test("refuses Venduá's names, bad values and too many records", () => {
+    for (const value of ['::::', '1:2:3:4:5:6:7:8:9', '2001:db8::g'])
+      expect(httpError(() => parseRecords([{ type: 'AAAA', name: 'v6', value }]))).toMatchObject({
+        code: 'INVALID_RECORD',
+      });
+    expect(parseRecords([{ type: 'AAAA', name: 'v6', value: '2001:DB8::1' }])[0]!.value).toBe(
+      '2001:db8::1',
+    );
     expect(
       httpError(() => parseRecords([{ type: 'A', name: '@', value: '1.2.3.4' }])),
     ).toMatchObject({
@@ -1114,5 +1121,39 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     expect((await control('POST', `/control/v1/domain-orders/${id}/retry`)).status).toBe(409);
     await sql`update domain_orders set claimed_until = null where id = ${id}`;
     expect((await s.owner('POST', `/account/domains/order/${id}/cancel`, {})).status).toBe(200);
+  });
+  test("a root and its www can't be held by two stores, whichever column names them", async () => {
+    const a = await paidStore('pra');
+    const b = await paidStore('prb');
+    const root = `pair-${nonce}.com.br`;
+    await sql`
+      insert into custom_domains (tenant_id, host, verify_token, status, alias_host)
+      values (${a.id}, ${root}, ${'3'.repeat(32)}, 'active', ${`www.${root}`})
+    `;
+    const err = await sql`
+      insert into custom_domains (tenant_id, host, verify_token, status, alias_host)
+      values (${b.id}, ${`www.${root}`}, ${'4'.repeat(32)}, 'dns_ok', ${root})
+    `.then(
+      () => null,
+      (e: { code?: string }) => e,
+    );
+    expect(err?.code).toBe('23505');
+    // a claim still waiting for DNS holds nothing, so it may name the pair
+    await sql`
+      insert into custom_domains (tenant_id, host, verify_token, alias_host)
+      values (${b.id}, ${`www.${root}`}, ${'5'.repeat(32)}, ${root})
+    `;
+  });
+
+  test("an unpaid store's waiting order goes to the back of the line", async () => {
+    const s = await store('unpd', 'pangolim');
+    const host = `unpd${nonce}.com.br`;
+    const placed = await s.owner('POST', '/account/domains/order', orderBody(host));
+    expect(placed.body.domainOrder.status).toBe('awaiting_payment');
+    const before = (await order(placed.body.domainOrder.id))!.updated_at as Date;
+    await jobs(new Date(Date.now() + MIN));
+    const after = (await order(placed.body.domainOrder.id))!;
+    expect(after.status).toBe('awaiting_payment');
+    expect((after.updated_at as Date).getTime()).toBeGreaterThan(before.getTime());
   });
 });

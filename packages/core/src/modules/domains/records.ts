@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { HttpError } from '../../platform/http.ts';
 import { dnsResolver, settle } from '../billing/domains.ts';
 import type { DnsRecord, DnsRecordType } from './providers.ts';
@@ -11,7 +12,6 @@ const LABEL = /^(\*|_?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)$/;
 // targets may have underscore labels (Microsoft 365 DKIM: selector1-x._domainkey.x.onmicrosoft.com)
 const HOSTNAME = /^_?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\._?[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\.?$/;
 const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
-const IPV6 = /^[0-9a-f:]{2,39}$/;
 
 const bad = (i: number, why: string) =>
   new HttpError(422, 'INVALID_RECORD', why, { field: `records.${i}` });
@@ -40,8 +40,7 @@ export function parseRecords(raw: unknown): DnsRecord[] {
     if (!value || value.length > 2048) throw bad(i, 'value is required (up to 2048 characters)');
     const lower = value.toLowerCase();
     if (type === 'A' && !IPV4.test(value)) throw bad(i, 'an A record takes an IPv4 address');
-    if (type === 'AAAA' && (!IPV6.test(lower) || !lower.includes(':')))
-      throw bad(i, 'an AAAA record takes an IPv6 address');
+    if (type === 'AAAA' && isIP(lower) !== 6) throw bad(i, 'an AAAA record takes an IPv6 address');
     if ((type === 'CNAME' || type === 'MX') && !HOSTNAME.test(lower))
       throw bad(i, 'this record points at a host name');
     const rec: DnsRecord = {

@@ -170,11 +170,22 @@ export async function promoteAwaiting(sql: Sql, now: Date) {
   const rows = await controlTx(
     sql,
     (tx) => tx<OrderRow[]>`
-      select * from domain_orders where status = 'awaiting_payment' order by created_at limit ${BATCH}
+      select * from domain_orders where status = 'awaiting_payment'
+      order by updated_at limit ${BATCH}
     `,
   );
   for (const o of rows) {
-    if (!(await hasDomain(sql, o.tenant_id))) continue;
+    if (!(await hasDomain(sql, o.tenant_id))) {
+      // to the back of the line: stores that never pay don't keep the others from being looked at
+      await controlTx(
+        sql,
+        (tx) => tx`
+          update domain_orders set updated_at = ${now}
+          where id = ${o.id} and status = 'awaiting_payment'
+        `,
+      );
+      continue;
+    }
     await withTenant(sql, o.tenant_id, async (tx) => {
       const r = await tx`
         update domain_orders set status = 'queued', next_attempt_at = null, updated_at = ${now}
