@@ -10,7 +10,8 @@ configurada" and nothing breaks.
 1. **Claude GitHub App** installed on the repo (github.com/apps/claude). The routine's session
    uses it to follow its PR's CI.
 2. **Branch protection on `main`** (Settings → Branches, or a ruleset): require a pull request,
-   require the `check`, `conformance` and `storefront-isolation` checks, and turn on **Do not allow
+   require the `check` and `conformance` checks (not `storefront-isolation`: after a prettier
+   autofix it doesn't run on the final head; K05 in `conformance` covers it there), and turn on **Do not allow
    bypassing the above settings**. The routine pushes as your GitHub user. If you're an admin
    and bypass is allowed, nothing stops a push to `main`.
 3. **A fine-grained token** for Core (Settings → Developer settings → Fine-grained tokens), only
