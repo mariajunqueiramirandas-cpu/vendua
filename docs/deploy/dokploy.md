@@ -179,6 +179,14 @@ Once, before the `*` record goes DNS only:
    `echo | openssl s_client -connect 127.0.0.1:443 -servername x.vendua.com.br 2>/dev/null | openssl x509 -noout -issuer -ext subjectAltName`
    shows a Let's Encrypt issuer and `DNS:*.vendua.com.br` among the names (the subject carries
    only the apex). Then set the `*` record to DNS only.
+4. If a store still shows its own `CN=<slug>.vendua.com.br` certificate: Traefik serves an exact
+   SNI match before the wildcard, and it keeps serving every certificate in `acme.json` (the
+   `letsencrypt` resolver's, on the host, untouched by a compose redeploy) whether or not a router
+   still asks for it. Remove any `<slug>.vendua.com.br` entry from the Domains UI first, or its
+   router asks for the certificate again. Then, from the VPS:
+   `docker exec <domains-sync container> bun src/prune-acme.ts` lists the per-store certificates
+   (`painel.`/`crm.` in `DOMAINS_SYNC_DENY`, the apex and other domains stay); `--write` removes
+   them, keeping `acme.json.bak-<time>`; then `docker restart dokploy-traefik`.
 
 ### Own domains
 

@@ -69,6 +69,36 @@ export async function writeAtomic(file: string, content: string): Promise<void> 
   await rename(tmp, file);
 }
 
+/** True when Traefik loads `content` and it routes something, or it is comments only. A file
+ *  Traefik rejects (an older image wrote `routers: {}`) takes the whole file provider down with
+ *  it, Dokploy's redirect-to-https@file included. */
+export function isSound(content: string): boolean {
+  let doc: unknown;
+  try {
+    doc = Bun.YAML.parse(content);
+  } catch {
+    return false;
+  }
+  if (doc == null) return true;
+  const routers = (doc as { http?: { routers?: unknown } }).http?.routers;
+  return !!routers && typeof routers === 'object' && Object.keys(routers).length > 0;
+}
+
+/** Replaces an unsound file with the empty one. Needs no Core: such a file serves no routes
+ *  already, so this loses none, and it runs while Core is down or the secret is unset. */
+export async function repair(o: Pick<SyncOptions, 'out'> & RenderOptions): Promise<boolean> {
+  const content = await current(o.out);
+  if (content === null || isSound(content)) return false;
+  try {
+    await writeAtomic(o.out, renderConfig([], o));
+  } catch (e) {
+    log('error', `repair failed: ${(e as Error).message}`, { file: o.out });
+    return false;
+  }
+  log('warn', 'replaced a file Traefik rejects with the empty one', { file: o.out });
+  return true;
+}
+
 export function createSync(o: SyncOptions) {
   let lastDropped = '';
 
@@ -79,6 +109,7 @@ export function createSync(o: SyncOptions) {
     } catch (e) {
       const error = (e as Error).message;
       log('warn', 'sync failed; keeping the current file', { error });
+      await repair(o);
       return { status: 'failed', error };
     }
     const { hosts, dropped } = validateHosts(input, o);
