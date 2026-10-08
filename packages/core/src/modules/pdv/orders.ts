@@ -155,7 +155,8 @@ export function paidPayment(
   }));
   return {
     provider: 'pdv',
-    method: methods.length === 1 ? methods[0]! : 'mixed',
+    // nothing taken (a R$ 0 cortesia) reads as the counter's plain cash, not a "misto" with no parts
+    method: methods.length > 1 ? 'mixed' : (methods[0] ?? 'cash'),
     status: 'paid',
     online: false,
     paidAt: now.toISOString(),

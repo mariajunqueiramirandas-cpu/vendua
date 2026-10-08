@@ -404,7 +404,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     const free = await owner('POST', '/pdv/sales', { ...base, payments: [] });
     expect(free.status).toBe(201);
     expect(free.body.sale).toMatchObject({ totalCents: 0, changeCents: 0, payments: [] });
-    expect(free.body.order).toMatchObject({ totalCents: 0, payment: { status: 'paid' } });
+    expect(free.body.order).toMatchObject({
+      totalCents: 0,
+      payment: { status: 'paid', method: 'cash' },
+    });
     const [after] = await sql<{ n: number }[]>`
       select count(*)::int as n from pdv_payments where tenant_id = ${tenantId}`;
     expect(after!.n).toBe(before!.n);
@@ -629,6 +632,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
         })
       ).status,
     ).toBe(403);
+    // still open: its part payment doesn't say what paid the round, which reports as "tab"
+    const day = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
+    const rep = await owner('GET', `/reports?from=${day(-1)}&to=${day(1)}`);
+    const tabRow = rep.body.payments.find((p: any) => p.method === 'tab');
+    expect(tabRow).toMatchObject({ orders: 1, revenueCents: 2000 });
     const last = await attendant('POST', `/pdv/tabs/${t9}/payments`, {
       method: 'cash',
       amountCents: 1500,

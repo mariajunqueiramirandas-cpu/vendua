@@ -294,6 +294,8 @@ export function mountReports(d: AdminDeps) {
           from pdv_payments
           where tenant_id = ${t.id} and voided_at is null
             and tab_id in (select tab_id from o where payment ->> 'method' = 'tab')
+            -- an open comanda's part payments don't say yet what paid its rounds: they stay 'tab'
+            and tab_id in (select id from pdv_tabs where tenant_id = ${t.id} and status = 'closed')
           group by 1, 2
         ),
         tab_parts as (
