@@ -152,8 +152,9 @@ export async function startOtp(
       `;
     return false;
   });
-  if (limited)
-    throw new HttpError(429, 'RATE_LIMITED', 'too many codes for this phone — try again later');
+  // over the cap answers like any other start, with no code: only known phones store codes,
+  // so a 429 here would tell which phones have a store
+  if (limited) return { sent: true, expiresAt: expiresAt.toISOString() };
   // not awaited: a known phone must answer as fast as an unknown one (no enumeration by
   // timing); a failed delivery only shows in the log — the person asks for a new code
   if (known)
@@ -289,6 +290,8 @@ export async function startEmailChange(
   who: { tenantId: string; userId: string; email: string },
   linkFor: (token: string) => string,
   send: LinkSender,
+  /** an invite's link waits for someone who may read their email days later */
+  ttlMin = LINK_TTL_MIN,
 ): Promise<{ sent: boolean; devLink?: string }> {
   const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
   const id = await authTx(sql, async (tx) => {
@@ -302,7 +305,7 @@ export async function startEmailChange(
     return (
       await tx<{ id: string }[]>`
         insert into merchant_login_links (email, token_hash, expires_at, purpose, tenant_id, user_id)
-        values (${who.email}, ${sha256(token)}, now() + make_interval(mins => ${LINK_TTL_MIN}),
+        values (${who.email}, ${sha256(token)}, now() + make_interval(mins => ${ttlMin}),
                 'email_change', ${who.tenantId}, ${who.userId})
         returning id
       `
@@ -575,9 +578,11 @@ export function forgetGate() {
 
 export async function revokeSession(sql: Sql, tenantId: string, sessionId: string) {
   gateCache.delete(gateKey(tenantId, sessionId));
-  await withTenant(
-    sql,
-    tenantId,
-    (tx) => tx`update merchant_sessions set revoked_at = now() where id = ${sessionId}`,
-  );
+  // a signed-out device stops getting the store's pushes (orders, shopper previews) too
+  await withTenant(sql, tenantId, async (tx) => {
+    await Promise.all([
+      tx`update merchant_sessions set revoked_at = now() where id = ${sessionId}`.execute(),
+      tx`delete from push_subscriptions where tenant_id = ${tenantId} and session_id = ${sessionId}`.execute(),
+    ]);
+  });
 }

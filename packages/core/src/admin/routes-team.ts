@@ -3,7 +3,7 @@ import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import { audit, auditChanges } from './audit.ts';
-import { forgetGate, validAdminEmail, validAdminPhone } from './auth.ts';
+import { forgetGate, startEmailChange, validAdminEmail, validAdminPhone } from './auth.ts';
 import { ROLES, oneOf, text, type AdminCtx, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
@@ -42,9 +42,12 @@ type ActivityKind = keyof typeof ACTIVITY_KINDS;
 type Delivery = 'sent' | 'failed' | 'skipped';
 export type InviteResult = { whatsapp: Delivery; email: Delivery };
 
+/** the invitee may read the email days later, and until it's opened no other link goes to it */
+const INVITE_LINK_TTL_MIN = 48 * 60;
+
 async function team(tx: Sql, tenantId: string) {
   return tx`
-    select id, name, phone, email, role, status, created_at as "createdAt", last_seen_at as "lastSeenAt",
+    select id, name, phone, email, pending_email as "pendingEmail", role, status, created_at as "createdAt", last_seen_at as "lastSeenAt",
            invite_sent_at as "inviteSentAt", invite_channels as "inviteChannels", invite_error as "inviteError"
     from merchant_users where tenant_id = ${tenantId}
     order by status = 'revoked', case role when 'owner' then 0 when 'manager' then 1 else 2 end, name
@@ -78,6 +81,8 @@ type InviteJob = {
   name: string;
   phone: string;
   email: string | null;
+  /** the address waits in pending_email: the invite carries the link that proves it */
+  confirm?: boolean;
   inviter: string;
   store: string;
 };
@@ -86,6 +91,7 @@ type InviteJob = {
 function recorded(row: {
   invite_channels: string[];
   email: string | null;
+  pending_email: string | null;
   invite_sent_at: unknown;
   invite_error: string | null;
 }): InviteResult {
@@ -93,7 +99,13 @@ function recorded(row: {
   const ch = row.invite_channels ?? [];
   return {
     whatsapp: ch.includes('whatsapp') ? 'sent' : tried ? 'failed' : 'skipped',
-    email: !row.email ? 'skipped' : ch.includes('email') ? 'sent' : tried ? 'failed' : 'skipped',
+    email: !(row.email ?? row.pending_email)
+      ? 'skipped'
+      : ch.includes('email')
+        ? 'sent'
+        : tried
+          ? 'failed'
+          : 'skipped',
   };
 }
 
@@ -117,12 +129,32 @@ export function mountTeam(d: AdminDeps) {
     }
     if (job.email)
       try {
-        await d.notify.email(
-          job.email,
-          `Você entrou na equipe da ${job.store}`,
-          `${job.inviter} adicionou você à equipe da ${job.store} na Venduá.\n\nEntre em ${url} com o número ${job.phone} — o código chega pelo WhatsApp. Se não chegar, peça um link por este email.`,
-          `admin-invite:${job.memberId}:${Date.now()}`,
-        );
+        const subject = `Você entrou na equipe da ${job.store}`;
+        const intro = `${job.inviter} adicionou você à equipe da ${job.store} na Venduá.`;
+        if (job.confirm) {
+          let sending: Promise<void> | undefined;
+          const link = await startEmailChange(
+            sql,
+            { tenantId: (c as AdminCtx).get('tenant').id, userId: job.memberId, email: job.email },
+            (token) => `${url}entrar?link=${token}`,
+            (to, link, linkId) =>
+              (sending = d.notify.email(
+                to,
+                subject,
+                `${intro}\n\nToque no link para confirmar este email e entrar no painel:\n\n${link}\n\nEle vale por 48 horas e funciona uma vez. Depois disso, você também pode entrar com este email. Ou entre em ${url} com o número ${job.phone} — o código chega pelo WhatsApp. Se não foi com você, ignore este email.`,
+                `admin-invite:${job.memberId}:${linkId}`,
+              )),
+            INVITE_LINK_TTL_MIN,
+          );
+          if (!link.sent) throw new Error('too many links to this address');
+          await sending;
+        } else
+          await d.notify.email(
+            job.email,
+            subject,
+            `${intro}\n\nEntre em ${url} com o número ${job.phone} — o código chega pelo WhatsApp. Se não chegar, peça um link por este email.`,
+            `admin-invite:${job.memberId}:${Date.now()}`,
+          );
         out.email = 'sent';
       } catch (err) {
         errors.push(`email: ${(err as Error).message ?? 'failed'}`);
@@ -155,7 +187,7 @@ export function mountTeam(d: AdminDeps) {
         ? await withTenant(sql, t.id, async (tx) => {
             const row = (
               await tx<Parameters<typeof recorded>[0][]>`
-                select invite_channels, email, invite_sent_at, invite_error from merchant_users
+                select invite_channels, email, pending_email, invite_sent_at, invite_error from merchant_users
                 where tenant_id = ${t.id} and id = ${job.memberId}
               `
             )[0];
@@ -207,6 +239,8 @@ export function mountTeam(d: AdminDeps) {
 
   // Invite = add the phone (and optionally an email), then tell the person: WhatsApp from the
   // platform's number, and the email when given. They sign in with a code on their own phone.
+  // The email is a sign-in factor, so like Perfil's it waits in pending_email until the link the
+  // invite carries is opened; a re-added member's old address goes too (it may not be theirs now).
   admin.post(
     '/team',
     inviteRoute(
@@ -236,22 +270,17 @@ export function mountTeam(d: AdminDeps) {
           ? (
               await tx<{ id: string }[]>`
                 update merchant_users set name = ${name}, role = ${role}, status = 'active', invited_by = ${m.userId},
-                  email = ${email ?? tx`email`}, invite_sent_at = null, invite_channels = '{}', invite_error = null
+                  email = null, pending_email = ${email}, invite_sent_at = null, invite_channels = '{}', invite_error = null
                 where id = ${existing.id} returning id
               `
             )[0]!.id
           : (
               await tx<{ id: string }[]>`
-                insert into merchant_users (tenant_id, name, phone, email, role, invited_by)
+                insert into merchant_users (tenant_id, name, phone, pending_email, role, invited_by)
                 values (${t.id}, ${name}, ${phone}, ${email}, ${role}, ${m.userId})
                 returning id
               `
             )[0]!.id;
-        const stored = (
-          await tx<
-            { email: string | null }[]
-          >`select email from merchant_users where id = ${memberId}`
-        )[0]!;
         await audit(tx, t.id, m, {
           action: 'team.add',
           entity: 'member',
@@ -263,7 +292,8 @@ export function mountTeam(d: AdminDeps) {
           memberId,
           name,
           phone,
-          email: stored.email,
+          email,
+          confirm: true,
           inviter: m.name,
           store: t.name,
         };
@@ -278,8 +308,10 @@ export function mountTeam(d: AdminDeps) {
       write('owner', async (tx, t, m, c) => {
         const id = uuidParam(c, 'id');
         const cur = (
-          await tx<{ name: string; phone: string; email: string | null }[]>`
-            select name, phone, email from merchant_users
+          await tx<
+            { name: string; phone: string; email: string | null; pending_email: string | null }[]
+          >`
+            select name, phone, email, pending_email from merchant_users
             where tenant_id = ${t.id} and id = ${id} and status = 'active'
           `
         )[0];
@@ -303,7 +335,8 @@ export function mountTeam(d: AdminDeps) {
           memberId: id,
           name: cur.name,
           phone: cur.phone,
-          email: cur.email,
+          email: cur.pending_email ?? cur.email,
+          confirm: cur.pending_email !== null,
           inviter: m.name,
           store: t.name,
         };
@@ -312,65 +345,79 @@ export function mountTeam(d: AdminDeps) {
     ),
   );
 
+  // a role/removal change is visible only once the claim commits: clearing the gate cache inside
+  // the tx would let a request in that window cache the old row for GATE_TTL_MS
+  const thenForgetGate =
+    (h: ReturnType<typeof write>) =>
+    async (c: AdminCtx): Promise<Response> => {
+      try {
+        return await h(c);
+      } finally {
+        forgetGate();
+      }
+    };
+
   admin.patch(
     '/team/:id',
-    write('owner', async (tx, t, m, c) => {
-      const id = uuidParam(c, 'id');
-      const body = await bodyJson(c);
-      await lockOwners(tx, t.id);
-      const cur = (
-        await tx<{ name: string; role: keyof typeof ROLE_LABEL }[]>`
+    thenForgetGate(
+      write('owner', async (tx, t, m, c) => {
+        const id = uuidParam(c, 'id');
+        const body = await bodyJson(c);
+        await lockOwners(tx, t.id);
+        const cur = (
+          await tx<{ name: string; role: keyof typeof ROLE_LABEL }[]>`
           select name, role from merchant_users where tenant_id = ${t.id} and id = ${id} and status = 'active'
         `
-      )[0];
-      if (!cur) throw new HttpError(404, 'MEMBER_NOT_FOUND', 'member not found');
-      const role = body.role === undefined ? cur.role : oneOf(body.role, 'role', ROLES);
-      const name = body.name === undefined ? cur.name : text(body.name, 'name', 80, 2);
-      if (cur.role === 'owner' && role !== 'owner' && (await owners(tx, t.id, id)) === 0)
-        throw new HttpError(409, 'LAST_OWNER', 'the store needs at least one owner');
-      await tx`update merchant_users set role = ${role}, name = ${name} where id = ${id}`;
-      forgetGate();
-      await audit(tx, t.id, m, {
-        action: 'team.update',
-        entity: 'member',
-        entityId: id,
-        summary:
-          role !== cur.role
-            ? `mudou ${name} de ${ROLE_LABEL[cur.role]} para ${ROLE_LABEL[role]}`
-            : `renomeou ${cur.name} para ${name}`,
-      });
-      await emitAdminTx(tx, t.id, 'team');
-      return { status: 200, body: { members: await team(tx, t.id) } };
-    }),
+        )[0];
+        if (!cur) throw new HttpError(404, 'MEMBER_NOT_FOUND', 'member not found');
+        const role = body.role === undefined ? cur.role : oneOf(body.role, 'role', ROLES);
+        const name = body.name === undefined ? cur.name : text(body.name, 'name', 80, 2);
+        if (cur.role === 'owner' && role !== 'owner' && (await owners(tx, t.id, id)) === 0)
+          throw new HttpError(409, 'LAST_OWNER', 'the store needs at least one owner');
+        await tx`update merchant_users set role = ${role}, name = ${name} where id = ${id}`;
+        await audit(tx, t.id, m, {
+          action: 'team.update',
+          entity: 'member',
+          entityId: id,
+          summary:
+            role !== cur.role
+              ? `mudou ${name} de ${ROLE_LABEL[cur.role]} para ${ROLE_LABEL[role]}`
+              : `renomeou ${cur.name} para ${name}`,
+        });
+        await emitAdminTx(tx, t.id, 'team');
+        return { status: 200, body: { members: await team(tx, t.id) } };
+      }),
+    ),
   );
 
   admin.delete(
     '/team/:id',
-    write('owner', async (tx, t, m, c) => {
-      const id = uuidParam(c, 'id');
-      await lockOwners(tx, t.id);
-      const cur = (
-        await tx<{ name: string; role: string }[]>`
+    thenForgetGate(
+      write('owner', async (tx, t, m, c) => {
+        const id = uuidParam(c, 'id');
+        await lockOwners(tx, t.id);
+        const cur = (
+          await tx<{ name: string; role: string }[]>`
           select name, role from merchant_users where tenant_id = ${t.id} and id = ${id} and status = 'active'
         `
-      )[0];
-      if (!cur) throw new HttpError(404, 'MEMBER_NOT_FOUND', 'member not found');
-      if (cur.role === 'owner' && (await owners(tx, t.id, id)) === 0)
-        throw new HttpError(409, 'LAST_OWNER', 'the store needs at least one owner');
-      await tx`update merchant_users set status = 'revoked' where id = ${id}`;
-      forgetGate();
-      // access ends now, on every device
-      await tx`update merchant_sessions set revoked_at = now() where tenant_id = ${t.id} and user_id = ${id} and revoked_at is null`;
-      await tx`delete from push_subscriptions where tenant_id = ${t.id} and user_id = ${id}`;
-      await audit(tx, t.id, m, {
-        action: 'team.remove',
-        entity: 'member',
-        entityId: id,
-        summary: `removeu o acesso de ${cur.name}`,
-      });
-      await emitAdminTx(tx, t.id, 'team');
-      return { status: 200, body: { members: await team(tx, t.id) } };
-    }),
+        )[0];
+        if (!cur) throw new HttpError(404, 'MEMBER_NOT_FOUND', 'member not found');
+        if (cur.role === 'owner' && (await owners(tx, t.id, id)) === 0)
+          throw new HttpError(409, 'LAST_OWNER', 'the store needs at least one owner');
+        await tx`update merchant_users set status = 'revoked' where id = ${id}`;
+        // access ends now, on every device
+        await tx`update merchant_sessions set revoked_at = now() where tenant_id = ${t.id} and user_id = ${id} and revoked_at is null`;
+        await tx`delete from push_subscriptions where tenant_id = ${t.id} and user_id = ${id}`;
+        await audit(tx, t.id, m, {
+          action: 'team.remove',
+          entity: 'member',
+          entityId: id,
+          summary: `removeu o acesso de ${cur.name}`,
+        });
+        await emitAdminTx(tx, t.id, 'team');
+        return { status: 200, body: { members: await team(tx, t.id) } };
+      }),
+    ),
   );
 
   admin.get(
@@ -404,7 +451,7 @@ export function mountTeam(d: AdminDeps) {
       >`
         select id, actor_label as actor, action, entity, entity_id as "entityId", summary, at, before, after
         from audit_log where tenant_id = ${t.id}
-          ${Number.isInteger(before) && before > 0 ? tx`and id < ${before}` : tx``}
+          ${Number.isSafeInteger(before) && before > 0 ? tx`and id < ${before}` : tx``}
           ${entity ? tx`and entity = ${entity}` : tx``}
           ${kind ? tx`and entity = any(${ACTIVITY_KINDS[kind as ActivityKind]}::text[])` : tx``}
         order by id desc limit ${limit}

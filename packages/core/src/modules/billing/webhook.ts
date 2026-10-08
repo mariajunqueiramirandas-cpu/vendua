@@ -2,7 +2,7 @@ import type { AdminDeps } from '../../admin/context.ts';
 import { withTenant } from '../../platform/db.ts';
 import { UUID_RE } from '../../platform/http.ts';
 import { controlTx } from '../control.ts';
-import type { WebhookEvent } from '../payments/provider.ts';
+import { ProviderError, type WebhookEvent } from '../payments/provider.ts';
 import { billingLog } from './invoices.ts';
 import {
   recordCardCharge,
@@ -31,7 +31,8 @@ export async function handleBillingWebhook(
   };
   const now = new Date();
   if (event.kind === 'subscription') {
-    const ps = await d.provider.getSubscription(event.resourceId);
+    const ps = await readable(() => d.provider.getSubscription(event.resourceId));
+    if (!ps) return;
     const tenantId = await tenantForPreapproval(d, ps.id, ps.externalReference);
     if (!tenantId) return;
     await withEffects(base, (ctx) =>
@@ -40,9 +41,10 @@ export async function handleBillingWebhook(
     return;
   }
   if (event.kind === 'subscription_payment') {
-    const sp = await d.provider.getSubscriptionPayment(event.resourceId);
-    if (sp.status !== 'approved' && sp.status !== 'rejected') return;
-    const ps = await d.provider.getSubscription(sp.subscriptionId);
+    const sp = await readable(() => d.provider.getSubscriptionPayment(event.resourceId));
+    if (!sp || (sp.status !== 'approved' && sp.status !== 'rejected')) return;
+    const ps = await readable(() => d.provider.getSubscription(sp.subscriptionId));
+    if (!ps) return;
     const tenantId = await tenantForPreapproval(d, ps.id, ps.externalReference);
     if (!tenantId) return;
     await withEffects(base, (ctx) =>
@@ -64,7 +66,8 @@ export async function handleBillingWebhook(
     return;
   }
   if (event.kind === 'payment') {
-    const p = await d.provider.platformGetPayment(event.resourceId);
+    const p = await readable(() => d.provider.platformGetPayment(event.resourceId));
+    if (!p) return;
     const invoiceId = p.externalReference;
     if (!invoiceId || !UUID_RE.test(invoiceId)) return;
     // read back with Venduá's own token, so its external_reference is ours: the invoice id.
@@ -102,6 +105,19 @@ export async function handleBillingWebhook(
         ),
       ),
     );
+  }
+}
+
+/** What the event names, or null when MP won't hand it over (a bad or foreign id): nothing to
+ *  apply, and a retry gets the same answer. Our token failing or MP down still throws. */
+async function readable<T>(read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch (err) {
+    if (!(err instanceof ProviderError) || (err.code !== 'not_found' && err.code !== 'invalid'))
+      throw err;
+    billingLog.info({ code: err.code, err: err.message }, 'webhook names nothing we can read');
+    return null;
   }
 }
 

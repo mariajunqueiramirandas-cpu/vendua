@@ -106,9 +106,10 @@ export function tenantMiddleware(
   };
 }
 
-/** Constant-time string compare; hashing first hides the length too. */
+/** Constant-time string compare; hashing first hides the length too. An empty expected value
+ *  matches nothing (an unset secret must never open a gate to an empty header). */
 export function constantTimeEqual(a: string | undefined | null, b: string): boolean {
-  if (a == null) return false;
+  if (a == null || !b) return false;
   const ha = createHash('sha256').update(a).digest();
   const hb = createHash('sha256').update(b).digest();
   return timingSafeEqual(ha, hb) && a.length === b.length;
@@ -186,7 +187,7 @@ const inProgress = () =>
 // claimTx's own keys (the Vendedor's place_order); a client key can't occupy one
 const INTERNAL_KEY = /^vendedor:/;
 
-function checkKey(key: string | undefined | null, internal = false): asserts key is string {
+export function checkKey(key: string | undefined | null, internal = false): asserts key is string {
   if (!key) {
     throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
   }

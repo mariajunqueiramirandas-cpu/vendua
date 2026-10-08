@@ -14,6 +14,10 @@ import { log } from '../platform/log.ts';
 const settleLog = log.child({ mod: 'crm-settle' });
 const SWEEP_MS = 30_000;
 const BATCH = 50;
+// a row whose settle keeps failing waits longer each time (30 s doubling, up to an hour), so it
+// can't hold back the rows behind it; then it's given up, and the stranded-send sweep
+// (agent/runner.ts) fails its message
+const MAX_SETTLE_ATTEMPTS = 10;
 
 /** Settles what is due now; returns how many rows it finished. */
 export async function settleCrmOnce(sql: Sql): Promise<number> {
@@ -22,18 +26,36 @@ export async function settleCrmOnce(sql: Sql): Promise<number> {
     (tx) => tx<{ id: string }[]>`
       select id from platform_wa_outbox
       where purpose = 'crm' and settled_at is null and status in ('sent', 'failed', 'expired')
+        and (settle_retry_at is null or settle_retry_at <= now())
       order by created_at limit ${BATCH}`,
   );
   let n = 0;
   for (const { id } of due) {
-    // one row's error must not hold back the rest; it is retried on the next pass
+    // one row's error must not hold back the rest; it is retried later
     try {
       if (await settleOne(sql, id)) n++;
     } catch (err) {
       settleLog.error({ err, outboxId: id }, 'crm settle failed');
+      await backOff(sql, id).catch((e) =>
+        settleLog.error({ err: e, outboxId: id }, 'crm settle back-off failed'),
+      );
     }
   }
   return n;
+}
+
+async function backOff(sql: Sql, id: string) {
+  const [row] = await controlTx(
+    sql,
+    (tx) => tx<{ settled_at: Date | null }[]>`
+      update platform_wa_outbox set settle_attempts = settle_attempts + 1,
+        settle_retry_at = now() + least(interval '1 hour',
+          interval '30 seconds' * power(2, settle_attempts)),
+        settled_at = case when settle_attempts + 1 >= ${MAX_SETTLE_ATTEMPTS} then now() end
+      where id = ${id} and settled_at is null
+      returning settled_at`,
+  );
+  if (row?.settled_at) settleLog.error({ outboxId: id }, 'crm settle given up');
 }
 
 async function settleOne(sql: Sql, id: string): Promise<boolean> {

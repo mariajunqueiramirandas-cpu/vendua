@@ -266,9 +266,15 @@ export function BagBar({ settings }: SectionProps<typeof S.bagBar>) {
   );
 }
 
-export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>) {
+export function PurchasePanel(props: SectionProps<typeof S.purchasePanel>) {
   const { params } = usePageContext();
-  const slug = settings.product || params.slug || '';
+  const slug = props.settings.product || params.slug || '';
+  // /produto/a → /produto/b reuses the route's element: a fresh panel, so A's options, kit
+  // picks, qty and note never ride B's add
+  return <Purchase key={slug} slug={slug} {...props} />;
+}
+
+function Purchase({ settings, slug }: SectionProps<typeof S.purchasePanel> & { slug: string }) {
   const { product, loading, error, refetch } = useProduct(slug);
   const { store, status } = useStore();
   const { config } = useKernel();

@@ -15,6 +15,7 @@ import {
   type PromoSchedule,
 } from '../modules/catalog.ts';
 import { adjustStock, MAX_STOCK, setStock } from '../modules/stock.ts';
+import { saveKitStepsTx } from '../modules/combos.ts';
 import { audit } from './audit.ts';
 import {
   bool,
@@ -799,16 +800,22 @@ export function mountCatalog(d: AdminDeps) {
             });
           seen.add(o.id);
         }
+        const name = text(g.name, `groups[${gi}].name`, 60, 1);
+        // a group can't ask for more units than its options offer together
+        const most = parsed.reduce((n, o) => n + o.maxQty, 0);
+        if (minSelect > most)
+          throw new HttpError(
+            422,
+            'BAD_REQUEST',
+            `"${name}" asks for ${minSelect} but offers at most ${most}`,
+            { field: `groups[${gi}].minSelect` },
+          );
         return {
           id: typeof g.id === 'string' && UUID_RE.test(g.id) ? g.id : null,
-          name: text(g.name, `groups[${gi}].name`, 60, 1),
+          name,
           required: minSelect > 0,
           minSelect,
-          // a group can't ask for more units than its options offer together
-          maxSelect: Math.min(
-            maxSelect,
-            parsed.reduce((n, o) => n + o.maxQty, 0),
-          ),
+          maxSelect: Math.min(maxSelect, most),
           pricingRule: oneOf(g.pricingRule ?? 'sum', `groups[${gi}].pricingRule`, PRICING_RULES),
           options: parsed,
         };
@@ -908,45 +915,45 @@ export function mountCatalog(d: AdminDeps) {
           throw new HttpError(422, 'BAD_REQUEST', `"${String(s.name ?? '')}" needs 1–40 products`, {
             field: `slots[${i}].items`,
           });
+        const name = text(s.name, `slots[${i}].name`, 80, 1);
+        const qtyPerItem = int(s.qtyPerItem ?? 1, `slots[${i}].qtyPerItem`, 1, 99);
+        const items = (s.items as unknown[]).map((it) => {
+          const r = isObj(it) ? it : {};
+          if (typeof r.productId !== 'string' || !UUID_RE.test(r.productId))
+            throw new HttpError(422, 'BAD_REQUEST', 'kit items need a productId');
+          return {
+            productId: r.productId,
+            priceDeltaCents: int(r.priceDeltaCents ?? 0, 'priceDeltaCents', -100_000, 100_000),
+          };
+        });
+        // a step nobody can fill keeps the kit listed while every add fails
+        const most = new Set(items.map((x) => x.productId)).size * qtyPerItem;
+        if (minSelect > most)
+          throw new HttpError(
+            422,
+            'BAD_REQUEST',
+            `"${name}" asks for ${minSelect} but offers at most ${most}`,
+            { field: `slots[${i}].minSelect` },
+          );
         return {
-          name: text(s.name, `slots[${i}].name`, 80, 1),
+          id: typeof s.id === 'string' && UUID_RE.test(s.id) ? s.id : null,
+          name,
           minSelect,
           maxSelect,
-          qtyPerItem: int(s.qtyPerItem ?? 1, `slots[${i}].qtyPerItem`, 1, 99),
-          items: (s.items as unknown[]).map((it) => {
-            const r = isObj(it) ? it : {};
-            if (typeof r.productId !== 'string' || !UUID_RE.test(r.productId))
-              throw new HttpError(422, 'BAD_REQUEST', 'kit items need a productId');
-            return {
-              productId: r.productId,
-              priceDeltaCents: int(r.priceDeltaCents ?? 0, 'priceDeltaCents', -100_000, 100_000),
-            };
-          }),
+          qtyPerItem,
+          items,
         };
       });
       const p = await productRow(tx, t.id, id);
-      await tx`delete from combo_slots where tenant_id = ${t.id} and product_id = ${id}`;
-      for (const [sort, s] of slots.entries()) {
-        const slotId = (
-          await tx<{ id: string }[]>`
-            insert into combo_slots (tenant_id, product_id, name, min_select, max_select, qty_per_item, sort)
-            values (${t.id}, ${id}, ${s.name}, ${s.minSelect}, ${s.maxSelect}, ${s.qtyPerItem}, ${sort}) returning id
-          `
-        )[0]!.id;
-        for (const [isort, it] of s.items.entries()) {
-          if (it.productId === id)
-            throw new HttpError(422, 'BAD_REQUEST', 'a kit cannot contain itself');
-          const ok = (
-            await tx`select 1 from products where tenant_id = ${t.id} and id = ${it.productId} and deleted_at is null`
-          )[0];
-          if (!ok) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'a kit item no longer exists');
-          await tx`
-            insert into combo_slot_items (tenant_id, slot_id, product_id, price_delta_cents, sort)
-            values (${t.id}, ${slotId}, ${it.productId}, ${it.priceDeltaCents}, ${isort})
-            on conflict (slot_id, product_id) do nothing
-          `;
-        }
-      }
+      const picked = [...new Set(slots.flatMap((s) => s.items.map((x) => x.productId)))];
+      if (picked.includes(id))
+        throw new HttpError(422, 'BAD_REQUEST', 'a kit cannot contain itself');
+      const live = await tx<{ id: string }[]>`
+        select id from products where tenant_id = ${t.id} and id = any(${picked}::uuid[]) and deleted_at is null
+      `;
+      if (live.length < picked.length)
+        throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'a kit item no longer exists');
+      await saveKitStepsTx(tx, t.id, id, slots);
       await tx`update products set kind = ${slots.length ? 'combo' : 'simple'} where tenant_id = ${t.id} and id = ${id}`;
       await audit(tx, t.id, m, {
         action: 'product.kit',

@@ -38,12 +38,22 @@ export function threadPhoneForJid(jid: string | null | undefined): string | null
 }
 
 /** Brazilian mobiles may be registered with or without the 9th digit; WhatsApp only knows one.
- *  Both forms of a number, the one we were given first — `onWhatsApp` picks the live one. */
+ *  Both forms of a number, the one we were given first — `onWhatsApp` picks the live one. Only a
+ *  mobile that had an old 8-digit form (6–9 after the 9) has one: 9 + 1–5 dropped is a landline's
+ *  number, someone else (threads.ts contactDigits reads it the same way). */
 export function phoneVariants(national: string): string[] {
   const d = national.replace(/\D/g, '');
-  if (d.length === 11 && d[2] === '9') return [d, d.slice(0, 2) + d.slice(3)];
+  if (d.length === 11 && d[2] === '9' && /[6-9]/.test(d[3]!))
+    return [d, d.slice(0, 2) + d.slice(3)];
   if (d.length === 10 && /[6-9]/.test(d[2]!)) return [d, `${d.slice(0, 2)}9${d.slice(2)}`];
   return [d];
+}
+
+/** The forms a thread's phone may be stored under elsewhere (orders, coupons): both 9th-digit
+ *  spellings of a Brazilian number; a foreign `+…` number only as itself; none for no number. */
+export function phoneKeys(phone: string | null | undefined): string[] {
+  if (!phone) return [];
+  return phone.startsWith('+') ? [phone] : phoneVariants(phone);
 }
 
 /** Same row → same WhatsApp message id, so a resend after a crash mid-send is deduplicated by

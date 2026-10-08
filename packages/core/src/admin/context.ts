@@ -131,11 +131,13 @@ export function oneOf<T extends string>(v: unknown, name: string, allowed: reado
 
 export const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 export const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-/** A real calendar day: DATE_RE lets 2026-02-31 through, and Postgres answers it with a 500. */
+/** A real calendar day: DATE_RE lets 2026-02-31 and year 0 through, and Postgres answers them
+ *  with a 500. */
 export function isDate(v: unknown): v is string {
   return (
     typeof v === 'string' &&
     DATE_RE.test(v) &&
+    v >= '0001-01-01' &&
     new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v
   );
 }

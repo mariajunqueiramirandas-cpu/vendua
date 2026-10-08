@@ -43,7 +43,11 @@ export const vendedorTransport: Transport<Sql> = {
     const parts: { author: 'agent' | 'core'; kind: string; body: string; meta: object }[] = [];
     if (msg.text.trim())
       parts.push({ author: 'agent', kind: 'text', body: msg.text.slice(0, MAX_BODY), meta: {} });
-    for (const card of msg.cards)
+    // pending cards outlive a superseded turn: a summary the thread no longer holds is stale
+    const cards = msg.cards.filter(
+      (c) => c.kind !== 'summary' || (c.data as { id?: string }).id === thread.summary?.id,
+    );
+    for (const card of cards)
       for (const body of renderCard(card))
         parts.push({
           author: 'core',

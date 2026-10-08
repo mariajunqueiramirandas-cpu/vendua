@@ -3,6 +3,31 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.23.0
+
+Checkout and product-page fixes — additive; no storefront edit.
+
+- `CheckoutInput.expectedTotalCents` (optional, integer cents): the Kernel checkout sends the
+  total on the confirm button — Core's, priced for the chosen payment method — and Core answers
+  409 `PRICES_CHANGED` when its total moved since. That 409 now also asks Core for the method's
+  price again (not only the cart), so the shopper sees the new total before retrying. While
+  Core's price for a method without a rule loads, the cart's total (the one shown) is sent. Not
+  sent while the delivery didn't sync or while a method with a rule waits for Core's price.
+- The checkout's Idempotency-Key is kept in sessionStorage (`vendua.checkoutKey`, a hash of the
+  cart session + body, never the body) while an attempt's outcome is unknown: a reload after a
+  lost response retries with the same key and gets Core's first order back. Cleared once the
+  outcome is known.
+- `NOTIFY_LIMIT` is a known error code (with copy): Core caps "avise-me quando abrir" sign-ups per
+  store and per client network a day.
+- `sdk:purchase-panel` starts fresh on each product: `/produto/a` → `/produto/b` no longer carries
+  A's options, kit picks, qty or note into B's add (Core's 422 `INVALID_MODIFIER`).
+- A pickup-only store opened cold at `/checkout` starts on "Retirada" once its profile loads.
+- `api.product(slug)` encodes the slug as one path segment.
+- A font source's `weight`/`style` that `validateTokens` would refuse is dropped from the
+  `@font-face` rule, never written raw.
+- `ERROR_CODES` and `ERROR_COPY` gain `CART_FULL` (a bag holds at most 50 lines) and
+  `ORDER_TOO_LARGE` (an order over Core's ceiling).
+
 ## 1.22.1
 
 Checkout retries — patch; no storefront edit, no new export.

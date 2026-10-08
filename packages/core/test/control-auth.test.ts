@@ -25,6 +25,29 @@ describe('control staff key', () => {
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
+  test('empty secrets (CONTROL_SECRET= in an .env) open nothing to an empty key', async () => {
+    const app = createApp({
+      sql: postgres('postgres://localhost:1/vendua'),
+      sessionSecret: '',
+      controlSecret: '',
+      autoDrain: false,
+    });
+    const header = await app.request('/control/v1/session', {
+      headers: { 'x-vendua-control': '' },
+    });
+    expect(header.status).toBe(404);
+    expect((await loginOn(app, '', { 'x-forwarded-for': '10.0.0.2' })).status).toBe(404);
+  });
+
+  test('a multi-byte webhook header of the secret length is a 404, not a 500', async () => {
+    const res = await offline.request('/control/v1/webhooks/email', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-vendua-webhook': 'é'.repeat(64) },
+      body: '{}',
+    });
+    expect(res.status).not.toBe(500);
+  });
+
   test('header-authed /session does not mint a cookie', async () => {
     const res = await offline.request('/control/v1/session', {
       headers: { 'x-vendua-control': 'ctl-secret' },

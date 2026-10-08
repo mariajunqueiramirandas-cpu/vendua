@@ -1057,15 +1057,18 @@ export class Runtime<H = unknown> {
       events.push(...ctx.events.map((e) => ({ ...e, step: e.step ?? 'degrade' })));
       if (out?.text) {
         const transport = this.transports.get(def.transport)!;
-        const { outboxId } = await transport.send(tx, {
-          actorId: run.actor.id,
-          tenantId: run.actor.tenantId,
-          subject: run.actor.subject,
-          turnId: run.turnId,
-          step: 'degrade',
-          text: out.text,
-          cards: out.cards ?? [],
-        });
+        // in a savepoint: a send that fails must not abort the transaction turn.failed commits in
+        const { outboxId } = await tx.savepoint(() =>
+          transport.send(tx, {
+            actorId: run.actor.id,
+            tenantId: run.actor.tenantId,
+            subject: run.actor.subject,
+            turnId: run.turnId,
+            step: 'degrade',
+            text: out.text,
+            cards: out.cards ?? [],
+          }),
+        );
         events.push({
           type: 'message.sent',
           step: 'degrade',

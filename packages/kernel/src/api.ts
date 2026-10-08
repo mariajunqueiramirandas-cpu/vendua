@@ -474,6 +474,9 @@ export interface CheckoutInput {
   notes?: string;
   /** Kernel 1.2 — encomenda date, YYYY-MM-DD */
   scheduledFor?: string;
+  /** Kernel 1.23 — the total the shopper saw, integer cents, as Core priced it for this payment
+   *  method (never a client sum). Core answers 409 `PRICES_CHANGED` when its total differs. */
+  expectedTotalCents?: number;
 }
 
 export interface DeliveryZone {
@@ -928,6 +931,48 @@ function storeToken(token: string): boolean {
   }
 }
 
+// The checkout's Idempotency-Key, kept in this tab while an attempt's outcome is unknown: a
+// reload after a lost response retries the same cart + body with the same key, so Core replays
+// the order it placed. `of` is a hash of (session token, body) — the body holds the shopper's data.
+const CHECKOUT_KEY = 'vendua.checkoutKey';
+
+function hashOf(text: string): string {
+  // cyrb53: 53 bits, enough to tell one tab's checkout bodies apart
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+function readCheckoutKey(): { of: string; key: string } | null {
+  try {
+    const v = JSON.parse(storageOf('sessionStorage')?.getItem(CHECKOUT_KEY) ?? 'null') as unknown;
+    if (!v || typeof v !== 'object') return null;
+    const { of, key } = v as Record<string, unknown>;
+    return typeof of === 'string' && typeof key === 'string' && key.length <= 100
+      ? { of, key }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeCheckoutKey(k: { of: string; key: string } | null) {
+  try {
+    const s = storageOf('sessionStorage');
+    if (k) s?.setItem(CHECKOUT_KEY, JSON.stringify(k));
+    else s?.removeItem(CHECKOUT_KEY);
+  } catch {
+    /* private mode — the key lives in this page's memory only */
+  }
+}
+
 function forgetStoredToken() {
   for (const kind of ['localStorage', 'sessionStorage'] as const)
     try {
@@ -1192,7 +1237,8 @@ export function createApi(baseUrl = '') {
       apiFetch<{ table: TableInfo }>(sf(`/table?t=${encodeURIComponent(token.slice(0, 400))}`)),
     catalog: () =>
       apiFetch<{ categories: CatalogCategory[]; nextChangeAt?: string }>(sf('/catalog')),
-    product: (slug: string) => apiFetch<{ product: ProductDetail }>(sf(`/products/${slug}`)),
+    product: (slug: string) =>
+      apiFetch<{ product: ProductDetail }>(sf(`/products/${encodeURIComponent(slug)}`)),
     surfaces: (zoneMatched?: boolean) =>
       apiFetch<SurfacesEnvelope>(
         sf(`/surfaces${zoneMatched === undefined ? '' : `?zoneMatched=${zoneMatched}`}`),
@@ -1411,9 +1457,18 @@ export function createApi(baseUrl = '') {
       // the cart this order closes: its token is the order's tracking credential
       const sent = current();
       const body = JSON.stringify(input);
-      const of = `${sent ?? ''}\n${body}`;
-      if (checkoutKey?.of !== of) checkoutKey = { of, key: idemKey() };
+      const of = hashOf(`${sent ?? ''}\n${body}`);
+      if (checkoutKey?.of !== of) {
+        const kept = readCheckoutKey();
+        checkoutKey = kept?.of === of ? kept : { of, key: idemKey() };
+      }
       const attempt = checkoutKey;
+      storeCheckoutKey(attempt);
+      // the outcome is known: only this attempt's own key leaves storage
+      const settle = () => {
+        if (checkoutKey === attempt) checkoutKey = null;
+        if (readCheckoutKey()?.key === attempt.key) storeCheckoutKey(null);
+      };
       let r: {
         order: Order;
         /** null for a table's order (no phone): nothing to keep */
@@ -1437,10 +1492,10 @@ export function createApi(baseUrl = '') {
         const unknown =
           err instanceof ApiError &&
           (err.status === 0 || err.status >= 500 || err.code === 'IDEMPOTENCY_IN_PROGRESS');
-        if (!unknown && checkoutKey === attempt) checkoutKey = null;
+        if (!unknown) settle();
         throw err;
       }
-      if (checkoutKey === attempt) checkoutKey = null;
+      settle();
       // this device placed an order for the phone — it may read the phone's history
       if (r.customerToken && r.customerTokenExpiresAt && input.customer.phone)
         rememberCustomer(input.customer.phone, {
@@ -1716,6 +1771,11 @@ export const ERROR_CODES = [
   'TABLE_ORDERS_OFF',
   'TABLE_ORDERS_PENDING',
   'TABLE_BUSY',
+  // Kernel 1.23 — a bag holds at most 50 lines; an order over Core's ceiling (R$ 10 mi)
+  'CART_FULL',
+  'ORDER_TOO_LARGE',
+  // "avise-me quando abrir": a store's (or a network's) sign-ups for the day are used up
+  'NOTIFY_LIMIT',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

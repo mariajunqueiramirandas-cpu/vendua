@@ -382,6 +382,49 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     expect(cancel.body.tab.status).toBe('cancelled');
   });
 
+  test('reports split a counter sale and a comanda by what paid them', async () => {
+    const day = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
+    const r = await owner('GET', `/reports?from=${day(-1)}&to=${day(1)}`);
+    expect(r.status).toBe(200);
+    const by = Object.fromEntries(r.body.payments.map((p: any) => [p.method, p]));
+    expect(by.mixed).toBeUndefined();
+    expect(by.tab).toBeUndefined();
+    // the split sale: R$ 20 cash + R$ 12 pix; the comanda's round (R$ 20) was paid by credit
+    expect(by.cash).toMatchObject({ orders: 1, revenueCents: 2000 });
+    expect(by.pix).toMatchObject({ orders: 1, revenueCents: 1200 });
+    expect(by.credit).toMatchObject({ orders: 1, revenueCents: 2000 });
+  });
+
+  test('a R$ 0 courtesy sale takes no payment and touches no caixa', async () => {
+    const lines = [{ productId: coke, qty: 1 }];
+    const discount = { kind: 'percent', value: 10_000, reason: 'cortesia' };
+    const base = { lines, mode: 'here', discount, quotedTotalCents: 0 };
+    const [before] = await sql<{ n: number }[]>`
+      select count(*)::int as n from pdv_payments where tenant_id = ${tenantId}`;
+    const free = await owner('POST', '/pdv/sales', { ...base, payments: [] });
+    expect(free.status).toBe(201);
+    expect(free.body.sale).toMatchObject({ totalCents: 0, changeCents: 0, payments: [] });
+    expect(free.body.order).toMatchObject({
+      totalCents: 0,
+      payment: { status: 'paid', method: 'cash' },
+    });
+    const [after] = await sql<{ n: number }[]>`
+      select count(*)::int as n from pdv_payments where tenant_id = ${tenantId}`;
+    expect(after!.n).toBe(before!.n);
+    // a sale that costs something still needs its payments
+    const owed = await owner('POST', '/pdv/sales', {
+      lines,
+      mode: 'here',
+      quotedTotalCents: 600,
+      payments: [],
+    });
+    expect(owed.status).toBe(422);
+    expect(owed.body.error.code).toBe('PAYMENT_MISMATCH');
+    const none = await owner('POST', '/pdv/sales', { ...base, payments: undefined });
+    expect(none.status).toBe(422);
+    expect(none.body.error.code).toBe('INVALID_PAYMENT');
+  });
+
   test('an order from the storefront is received at the counter', async () => {
     const cart = (
       await sql<{ id: string }[]>`
@@ -568,6 +611,46 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     const [n] = await sql<{ n: number }[]>`
       select count(*)::int as n from pdv_payments where order_id = ${saleOrder} and voided_at is not null`;
     expect(n!.n).toBe(2);
+  });
+
+  test("a comanda's round: cancelling it once paid is a manager's; a refund takes its cash out", async () => {
+    const open = await attendant('POST', '/pdv/tabs', { label: 'Balcão 9' });
+    expect(open.status).toBe(201);
+    const t9 = open.body.tab.id;
+    await attendant('PATCH', `/pdv/tabs/${t9}`, { serviceFee: false });
+    const r = await attendant('POST', `/pdv/tabs/${t9}/rounds`, {
+      lines: [{ productId: burger, qty: 2 }],
+    });
+    expect(r.status).toBe(201);
+    await attendant('POST', `/pdv/tabs/${t9}/payments`, { method: 'cash', amountCents: 500 });
+    // money already taken on the comanda: the attendant can't cancel the round under it
+    expect(
+      (
+        await attendant('POST', `/orders/${r.body.orderId}/transition`, {
+          to: 'cancelled',
+          reason: 'errou',
+        })
+      ).status,
+    ).toBe(403);
+    // still open: its part payment doesn't say what paid the round, which reports as "tab"
+    const day = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
+    const rep = await owner('GET', `/reports?from=${day(-1)}&to=${day(1)}`);
+    const tabRow = rep.body.payments.find((p: any) => p.method === 'tab');
+    expect(tabRow).toMatchObject({ orders: 1, revenueCents: 2000 });
+    const last = await attendant('POST', `/pdv/tabs/${t9}/payments`, {
+      method: 'cash',
+      amountCents: 1500,
+    });
+    expect(last.body.tab.status).toBe('closed');
+    const refund = await owner('POST', `/orders/${r.body.orderId}/transition`, {
+      to: 'refunded',
+      reason: 'devolvido',
+    });
+    expect(refund.status).toBe(200);
+    const [m] = await sql<{ amount_cents: number }[]>`
+      select amount_cents from cash_movements
+      where tenant_id = ${tenantId} and kind = 'sangria' and reason like '%(comanda)'`;
+    expect(m!.amount_cents).toBe(2000);
   });
 
   test('the bill and the caixa print on the store printer; archived tables come back', async () => {

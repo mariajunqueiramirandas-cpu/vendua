@@ -120,7 +120,15 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
   }
 
   async function store(
-    o: { phone?: string; role?: string; on?: boolean; plan?: string; name?: string } = {},
+    o: {
+      phone?: string;
+      role?: string;
+      on?: boolean;
+      plan?: string;
+      name?: string;
+      /** false: the owner typed this number in, and its person never signed in with a code */
+      proven?: boolean;
+    } = {},
   ): Promise<Store> {
     const [t] = await sql<{ id: string }[]>`
       insert into tenants (slug, name, plan)
@@ -143,6 +151,10 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
       values (${tenantId}, 'Rita Souza', ${ph}, ${o.role ?? 'owner'},
               ${sql.json(o.on === false ? {} : { duaWhatsapp: true })})
       returning id`;
+    if (o.proven !== false)
+      await sql`
+        insert into merchant_sessions (tenant_id, user_id, secret_hash, expires_at, proof_kind, proof_subject)
+        values (${tenantId}, ${u!.id}, ${`h-${u!.id}`}, now() + interval '1 day', 'phone', ${ph})`;
     return { tenantId, userId: u!.id, phone: ph, productId: p!.id };
   }
 
@@ -367,6 +379,31 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
     expect(cards.map((c) => (c as { status: string }).status)).toEqual(['applied', 'declined']);
   });
 
+  test('past 20 cards, the rest go to the panel unnumbered', async () => {
+    const s = await store();
+    await inbound(s.phone, 'esgota o pudim');
+    const propose = call('propose_product_change', {
+      product: 'p1',
+      availability: 'sold_out_today',
+    });
+    const rt = runtime([
+      tools(call('menu')),
+      tools(...Array.from({ length: 21 }, () => propose)),
+      reply('Preparei.'),
+    ]);
+    await settle(rt, s.tenantId);
+    const out = (await lastSent(s.phone))!;
+    expect(out).toContain('20) *');
+    expect(out).not.toContain('21) *');
+    expect(out).toContain('Mais um cartão para conferir no painel');
+    const refs = await sql<{ wa_ref: number | null }[]>`
+      select wa_ref from copilot_actions where tenant_id = ${s.tenantId} order by created_at, id`;
+    expect(refs.map((r) => r.wa_ref)).toEqual([
+      ...Array.from({ length: 20 }, (_, i) => i + 1),
+      null,
+    ]);
+  });
+
   test('an “ok” after Duá moved on is a message for Duá, not a yes to the older card', async () => {
     const s = await store();
     const rt = runtime([
@@ -526,5 +563,48 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
         providerId: `z-${nonce}`,
       }),
     ).toBe(false);
+  });
+
+  test('a reply goes to the WhatsApp the owner writes from, whichever spelling the store holds', async () => {
+    // the store holds the 11-digit spelling; the sender row (the number they write from) the 10
+    const eleven = `2198${String(Date.now()).slice(-7)}`;
+    const ten = eleven.slice(0, 2) + eleven.slice(3);
+    const s = await store({ phone: eleven });
+    const jid = `55${ten}@s.whatsapp.net`;
+    await sql`
+      insert into platform_wa_dua_senders (phone, jid, window_start, window_count)
+      values (${ten}, ${jid}, now(), 0)`;
+    const to = await withTenant(appSql, s.tenantId, async (tx) => {
+      const [m] = await tx<{ id: string }[]>`
+        insert into copilot_messages (tenant_id, user_id, author, body, channel)
+        values (${s.tenantId}, ${s.userId}, 'dua', 'oi', 'whatsapp') returning id`;
+      await tx`select enqueue_dua_whatsapp(${m!.id}::uuid, 'oi')`;
+      return m!.id;
+    });
+    const [out] = await sql<{ to_jid: string }[]>`
+      select to_jid from platform_wa_outbox where ref = ${to}`;
+    expect(out!.to_jid).toBe(jid);
+  });
+
+  test('a number an owner typed into Equipe, never signed in with a code, stays the CRM’s', async () => {
+    const s = await store({ proven: false });
+    expect(
+      await socketMessageToInbox(appSql, {
+        jid: `55${s.phone}@s.whatsapp.net`,
+        text: 'oi',
+        providerId: `u-${nonce}`,
+      }),
+    ).toBe(false);
+    // once its person signs in with a WhatsApp code, the membership is theirs
+    await sql`
+      insert into merchant_sessions (tenant_id, user_id, secret_hash, expires_at, proof_kind, proof_subject)
+      values (${s.tenantId}, ${s.userId}, ${`p-${s.userId}`}, now() + interval '1 day', 'phone', ${s.phone})`;
+    expect(
+      await socketMessageToInbox(appSql, {
+        jid: `55${s.phone}@s.whatsapp.net`,
+        text: 'oi',
+        providerId: `v-${nonce}`,
+      }),
+    ).toBe(true);
   });
 });

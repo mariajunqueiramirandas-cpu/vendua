@@ -142,10 +142,11 @@ export async function recordBillingProblem(
   );
 }
 
-/** `later` for request paths: after the handler returns (its tx commits right after). */
-export const afterResponse = (fn: () => Promise<unknown>) => {
-  setTimeout(() => void fn().catch((err) => billingLog.warn({ err }, 'billing effect failed')), 0);
-};
+/** Queued effects, in order; one failing never stops the rest. Only ever after the tx committed. */
+export async function runEffects(effects: (() => Promise<unknown>)[]) {
+  for (const fn of effects)
+    await fn().catch((err) => billingLog.warn({ err }, 'billing effect failed'));
+}
 
 /** Run `work`, then its queued effects — for webhooks, jobs and signup (we own the tx). */
 export async function withEffects<T>(
@@ -154,8 +155,7 @@ export async function withEffects<T>(
 ): Promise<T> {
   const effects: (() => Promise<unknown>)[] = [];
   const out = await work({ ...base, later: (fn) => void effects.push(fn) });
-  for (const fn of effects)
-    await fn().catch((err) => billingLog.warn({ err }, 'billing effect failed'));
+  await runEffects(effects);
   return out;
 }
 
@@ -683,12 +683,13 @@ async function startUpgrade(
       pending_plan_id = null, pending_plan_at = null, updated_at = now()
     where tenant_id = ${sub.tenant_id}
   `;
-  // a downgrade that was waiting is dropped: the next charge is the current plan again
-  if (sub.pending_plan_id) {
-    await setChargeAmount(ctx, tx, sub, current.price_cents);
-    await repriceAhead(ctx, tx, { ...sub, pending_plan_id: null }, current, now);
-  }
   await upgradePix(ctx, tx, sub, inv, now);
+  // a downgrade that was waiting is dropped: the next charge is the current plan again. The
+  // assinatura's new amount goes last: a rollback after it would leave MP charging it unseen.
+  if (sub.pending_plan_id) {
+    await repriceAhead(ctx, tx, { ...sub, pending_plan_id: null }, current, now);
+    await setChargeAmount(ctx, tx, sub, current.price_cents);
+  }
 }
 
 export interface AiPackRow {
@@ -896,7 +897,10 @@ export async function changeSubscription(
   if (o.plan && !upgradeWaits && o.plan.id !== chargePlanId(sub)) {
     const target = o.plan;
     const current = await planOrThrow(tx, sub.plan_id);
-    const card = sub.method === 'card' && sub.provider_subscription_id;
+    // a card this same request drops for Pix isn't re-priced at MP: if the switch then fails, the
+    // rollback can't take back an amount MP already holds
+    const card =
+      sub.method === 'card' && sub.provider_subscription_id && (!o.method || o.method === 'card');
     const unpaid = sub.status === 'pending' || sub.status === 'trialing';
     const upgradeCents =
       !unpaid && sub.current_period_end && target.price_cents > current.price_cents
@@ -955,7 +959,6 @@ export async function changeSubscription(
     `;
     await reload();
     if (o.method === 'pix') {
-      await viaProvider(() => stopPreapproval(ctx, oldPreapproval, 'cancelled'));
       // unpaid card charges become the Pix invoice for the same period
       for (const inv of await unpaidAhead(tx, sub))
         await tx`
@@ -964,6 +967,8 @@ export async function changeSubscription(
         `;
       if (sub.status === 'pending') await beginPayment(ctx, tx, sub, o.key, o.now);
       else await viaProvider(() => ensureRenewal(ctx, tx, sub!, o.now));
+      // last: no rollback brings a cancelled card back, so the Pix that replaces it goes out first
+      await viaProvider(() => stopPreapproval(ctx, oldPreapproval, 'cancelled'));
     } else {
       // the card takes over: an unpaid Pix is withdrawn (one paid meanwhile still counts)
       for (const inv of await unpaidAhead(tx, sub)) {

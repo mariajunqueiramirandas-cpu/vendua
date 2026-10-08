@@ -22,6 +22,17 @@ const MON_0900 = new Date('2026-09-21T12:00:00Z'); // seg 09:00 BRT
 const cfg = (over: Record<string, unknown> = {}) => normalizeMeetingConfig({ ...over });
 
 describe('tz helpers', () => {
+  test('zonedInstant: a wall time a spring-forward skips moves forward, never to the day before', () => {
+    const d = (year: number, month: number, day: number) => ({ year, month, day, weekday: 0 });
+    // New York 2026-03-08 02:30 doesn't exist: 03:30 EDT
+    expect(zonedInstant('America/New_York', d(2026, 3, 8), 150).toISOString()).toBe(
+      '2026-03-08T07:30:00.000Z',
+    );
+    // São Paulo's last DST began at midnight 2018-11-04: that day starts at 01:00, not on the 3rd
+    expect(zonedInstant('America/Sao_Paulo', d(2018, 11, 4), 0).toISOString()).toBe(
+      '2018-11-04T03:00:00.000Z',
+    );
+  });
   test('zonedInstant: 09:00 São Paulo = 12:00 UTC (UTC-3)', () => {
     const t = zonedInstant('America/Sao_Paulo', { year: 2026, month: 9, day: 21, weekday: 1 }, 540);
     expect(t.toISOString()).toBe('2026-09-21T12:00:00.000Z');

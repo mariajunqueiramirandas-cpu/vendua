@@ -261,6 +261,42 @@ function timestampValue(v: unknown, field: string): string | null {
   return s;
 }
 
+/** A typed phone → +E.164: an explicit '+' keeps its country code, 10–11 digits are a BR
+ *  national number (a trunk 0 dropped), 12–13 starting 55 already carry it. Null when it
+ *  can't be placed (a jid, a foreign number with no '+') — sends refuse those. */
+export function e164Phone(raw: string): string | null {
+  if (raw.includes('@')) return null;
+  const d = raw.replace(/\D/g, '');
+  if (/^\s*\(?\+/.test(raw)) {
+    return d.length >= 8 && d.length <= 15 && d[0] !== '0' ? `+${d}` : null;
+  }
+  const n = d.replace(/^0(?=\d{10,11}$)/, '');
+  if (n.length === 10 || n.length === 11) return `+55${n}`;
+  if ((n.length === 12 || n.length === 13) && n.startsWith('55')) return `+${n}`;
+  return null;
+}
+
+// "(31) 98765-4321" stored as typed reaches WhatsApp as 31987654321, a Dutch number
+function normalizePhones(row: Record<string, unknown>): void {
+  for (const col of ['phone', 'whatsapp'] as const) {
+    const v = row[col];
+    if (typeof v === 'string' && v.trim()) row[col] = e164Phone(v) ?? v;
+  }
+}
+
+/** wakeups.ts WAKEUP_MIN_LEAD_MS — the `schedule` tool's floor */
+const AGENT_DATE_FLOOR_MS = 10 * 60_000;
+
+/** An agent-set date due now would wake the agent again at once — a loop bounded only by
+ *  the cost cap. Staff may set one that's due now. */
+export function agentDateFloor(at: string | null): void {
+  if (at !== null && new Date(at).getTime() < Date.now() + AGENT_DATE_FLOOR_MS) {
+    throw new HttpError(422, 'BAD_REQUEST', 'nextActionAt must be at least 10 minutes from now', {
+      field: 'nextActionAt',
+    });
+  }
+}
+
 export function leadInsert(body: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const field of Object.keys(LEAD_TEXT_FIELDS) as LeadTextField[]) {
@@ -268,6 +304,7 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
     const v = body[field];
     out[col] = v === undefined || v === null ? null : str(v, field, max);
   }
+  normalizePhones(out);
   if (!out.name?.toString().trim()) {
     throw new HttpError(422, 'INVALID_LEAD', 'name is required', { field: 'name' });
   }
@@ -303,6 +340,7 @@ export function leadPatch(
     const v = body[field];
     set[col] = v === null ? null : str(v, field, max);
   }
+  normalizePhones(set);
   if ('name' in set && !set.name?.toString().trim()) {
     throw new HttpError(422, 'INVALID_LEAD', 'name cannot be empty', { field: 'name' });
   }
@@ -319,6 +357,7 @@ export function leadPatch(
   if ('dealValueCents' in body) set.deal_value_cents = dealValue(body.dealValueCents);
   if ('nextActionAt' in body) {
     set.next_action_at = timestampValue(body.nextActionAt, 'nextActionAt');
+    if (actor === 'agent') agentDateFloor(set.next_action_at as string | null);
     // who set it — updateLead turns this into an agenda entry (ADR 0016)
     set.next_action_source =
       set.next_action_at === null
@@ -718,6 +757,8 @@ export async function createLead(
 export async function insertLeadTx(
   tx: Sql,
   fields: Record<string, unknown>,
+  /** who set next_action_at — an agent-created lead's date is the agent's own plan */
+  nextActionBy: 'staff' | 'agent' = 'staff',
 ): Promise<{ status: number; body: { lead: Lead } }> {
   const { next_action_at: nextAt, next_action_source: _src, ...cols } = fields;
   let rows = await tx<LeadRow[]>`insert into leads ${tx(cols)} returning *`;
@@ -728,7 +769,7 @@ export async function insertLeadTx(
   // a next-action date is an agenda entry (ADR 0016) — the column only mirrors it
   if (nextAt) {
     const { setNextActionTx } = await import('../agent/wakeups.ts');
-    await setNextActionTx(tx, rows[0]!.id, nextAt as string, 'staff');
+    await setNextActionTx(tx, rows[0]!.id, nextAt as string, nextActionBy);
     rows = await tx<LeadRow[]>`select * from leads where id = ${rows[0]!.id}`;
   }
   return { status: 201, body: { lead: leadJson(rows[0]!) } };
@@ -738,7 +779,7 @@ const CONTACT_COLS = ['whatsapp', 'phone', 'email', 'instagram'] as const;
 
 const contactKey = (col: (typeof CONTACT_COLS)[number], v: unknown): string => {
   const t = typeof v === 'string' ? v.trim().toLowerCase() : '';
-  if (col === 'whatsapp' || col === 'phone') return t.replace(/\D/g, '');
+  if (col === 'whatsapp' || col === 'phone') return (e164Phone(t) ?? t).replace(/\D/g, '');
   return col === 'instagram' ? t.replace(/^@/, '') : t;
 };
 
@@ -818,6 +859,13 @@ export async function updateLeadTx(
     // (scheduleWakeupTx, the wakeup sweep) — updating the lead first would invert that
     const { setNextActionTx } = await import('../agent/wakeups.ts');
     await setNextActionTx(tx, id, nextAction.at, nextAction.who);
+  }
+  // a live store's owner is a customer now, not a prospect: the sales agent stops and its
+  // own follow-ups go (staff can turn it back on); same agenda-first lock order as above
+  if (set.state === 'live' && cur.state !== 'live') {
+    if (!('agent_mode' in set)) set.agent_mode = 'off';
+    const { cancelAgentWakeupsTx } = await import('../agent/wakeups.ts');
+    await cancelAgentWakeupsTx(tx, id, 'loja no ar');
   }
   const rows = Object.keys(set).length
     ? await tx<LeadRow[]>`

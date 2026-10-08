@@ -347,7 +347,20 @@ function replay() {
       void send(r.steps);
 }
 
+/** Signed out or switched store: nothing held replays into the next session. */
+function forget() {
+  for (const h of held.values()) {
+    clearTimeout(h.timer);
+    dismiss(h.toast);
+  }
+  held.clear();
+  sending.clear();
+  changed();
+  persist();
+}
+
 if (typeof window !== 'undefined') {
+  window.addEventListener('vendua:signedout', forget);
   window.addEventListener('pagehide', () => flush(true));
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flush(false);

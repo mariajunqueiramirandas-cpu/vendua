@@ -7,6 +7,7 @@ import { migrate, withTenant } from '../src/platform/db.ts';
 import { normalizeUserCode } from '../src/modules/printing/devices.ts';
 import { Receipt, encodeText, wrap } from '../src/modules/printing/escpos.ts';
 import { claimDueJobsTx, enqueueOrderPrintTx } from '../src/modules/printing/jobs.ts';
+import { streamStateTx } from '../src/modules/printing/agent-routes.ts';
 import { LATE_AFTER_MS, renderOrderTicket } from '../src/modules/printing/ticket.ts';
 import type { OrderView } from '../src/modules/orders.ts';
 
@@ -246,6 +247,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
     const dec = new TextDecoder();
     const events: { event: string; data: any }[] = [];
     let buf = '';
+    let ended = false;
     void (async () => {
       try {
         for (;;) {
@@ -268,6 +270,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
       } catch {
         /* cancelled */
       }
+      ended = true;
     })();
     const next = async (name: string, ms = 5000) => {
       const deadline = Date.now() + ms;
@@ -281,6 +284,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
     return {
       next,
       events,
+      ended: () => ended,
       close: async () => {
         ctl.abort();
         await reader.cancel().catch(() => undefined);
@@ -696,5 +700,151 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
     } finally {
       await s.close();
     }
+  });
+  /** a fresh device of the store with one reported printer */
+  const pairDevice = async (name: string) => {
+    const pair = await call('POST', '/admin/v1/agent/pair', {
+      platform: 'windows',
+      name: `${name}-${nonce}`,
+      version: '0.1.0',
+    });
+    const ok = await owner('POST', '/printers/pairing', { code: pair.body.userCode });
+    expect(ok.status).toBe(200);
+    const got = await call('POST', '/admin/v1/agent/pair/poll', {
+      deviceCode: pair.body.deviceCode,
+    });
+    const tok = got.body.token as string;
+    const rep = await agent(tok)('PUT', '/printers', {
+      printers: [{ key: `spooler:${name}`, kind: 'spooler', name, address: name }],
+    });
+    expect(rep.status).toBe(200);
+    return { token: tok, deviceId: ok.body.deviceId as string, printerId: rep.body.printers[0].id };
+  };
+  const until = async (what: string, cond: () => boolean | Promise<boolean>) => {
+    for (let i = 0; i < 100 && !(await cond()); i++) await new Promise((r) => setTimeout(r, 25));
+    if (!(await cond())) throw new Error(`timed out: ${what}`);
+  };
+
+  test('a newer stream replaces the old one: only the newest claims jobs', async () => {
+    const dev = await pairDevice('ZOMBIE');
+    const old = await openStream(dev.token);
+    await old.next('hello');
+    const cur = await openStream(dev.token);
+    const later: Awaited<ReturnType<typeof openStream>>[] = [];
+    try {
+      await cur.next('hello');
+      // same process: the hub ends the old one as soon as the new one is up
+      await until('old stream closed', () => old.ended());
+      expect((await owner('POST', `/printers/${dev.printerId}/test`)).status).toBe(202);
+      expect((await cur.next('job')).printerId).toBe(dev.printerId);
+      expect(old.events.some((e) => e.event === 'job')).toBe(false);
+
+      // a newer stream on another Core process (only the row says so): the next delivery here
+      // ends this stream instead of handing the job into it
+      await sql`
+        update print_devices set connected_at = clock_timestamp() where id = ${dev.deviceId}`;
+      const t = await owner('POST', `/printers/${dev.printerId}/test`);
+      expect(t.status).toBe(202);
+      await until('superseded stream closed', () => cur.ended());
+      const [job] = await sql<{ status: string }[]>`
+        select status from print_jobs where id = ${t.body.jobId}`;
+      expect(job!.status).toBe('pending');
+
+      // reconnects never pile up into TOO_MANY_STREAMS
+      for (let i = 0; i < 4; i++) {
+        const s = await openStream(dev.token);
+        later.push(s);
+        await s.next('hello');
+      }
+      // the first reconnect picked up the job the superseded stream left pending
+      expect((await later[0]!.next('job')).id).toBe(t.body.jobId);
+      await until('older reconnects closed', () => later.slice(0, 3).every((s) => s.ended()));
+      expect(later[3]!.ended()).toBe(false);
+    } finally {
+      for (const s of [old, cur, ...later]) await s.close();
+    }
+  });
+
+  test('a beat ends a stream: revoked only when the credential is gone, not when the store is suspended', async () => {
+    const dev = await pairDevice('BEAT');
+    const s = await openStream(dev.token);
+    try {
+      await s.next('hello');
+      const [row] = await sql<{ token_hash: string; at: string }[]>`
+        select token_hash, connected_at::text as at from print_devices where id = ${dev.deviceId}`;
+      const state = (deviceId: string, hash: string, at: string) =>
+        withTenant(appSql, tenantId, (tx) => streamStateTx(tx, tenantId, deviceId, hash, at));
+      expect(await state(dev.deviceId, row!.token_hash, row!.at)).toBe('ok');
+      expect(await state(dev.deviceId, 'x'.repeat(64), row!.at)).toBe('revoked');
+      expect(await state(crypto.randomUUID(), row!.token_hash, row!.at)).toBe('revoked');
+      expect(await state(dev.deviceId, row!.token_hash, '2020-01-01 00:00:00+00')).toBe(
+        'superseded',
+      );
+      await sql`update tenants set status = 'suspended' where id = ${tenantId}`;
+      try {
+        expect(await state(dev.deviceId, row!.token_hash, row!.at)).toBe('inactive');
+      } finally {
+        await sql`update tenants set status = 'active' where id = ${tenantId}`;
+      }
+    } finally {
+      await s.close();
+    }
+  });
+
+  test('an automatic printer the last report missed still gets tickets; give-up is by age', async () => {
+    const dev = await pairDevice('MISSED');
+    expect((await owner('PATCH', `/printers/${dev.printerId}`, { auto: true })).status).toBe(200);
+    expect((await owner('PATCH', '/printers/settings', { printOn: 'confirmed' })).status).toBe(200);
+    // the agent reported before it found it (a scan not done, a USB permission after reboot)
+    expect((await agent(dev.token)('PUT', '/printers', { printers: [] })).status).toBe(200);
+    const [p] = await sql<{ present: boolean }[]>`
+      select present from printers where id = ${dev.printerId}`;
+    expect(p!.present).toBe(false);
+    const order = await placeOrder();
+    expect(
+      await withTenant(appSql, tenantId, (tx) =>
+        enqueueOrderPrintTx(tx, tenantId, order.id, 'confirmed'),
+      ),
+    ).toBe(1);
+    const [job] = await sql<{ id: string }[]>`
+      select id from print_jobs where order_id = ${order.id} and printer_id = ${dev.printerId}`;
+
+    const claim = () =>
+      withTenant(appSql, tenantId, (tx) => claimDueJobsTx(tx, tenantId, dev.deviceId));
+    expect((await claim()).map((j) => j.id)).toEqual([job!.id]);
+    // resent many times but first sent minutes ago: the agent may hold it behind a slow
+    // printer, so it is handed over again, not given up
+    await sql`
+      update print_jobs set attempts = 9, sent_at = now() - interval '2 minutes'
+      where id = ${job!.id}`;
+    expect((await claim()).map((j) => j.id)).toEqual([job!.id]);
+    const [kept] = await sql<{ status: string; attempts: number }[]>`
+      select status, attempts from print_jobs where id = ${job!.id}`;
+    expect(kept).toEqual({ status: 'sent', attempts: 10 });
+    // handed once into a stream that died, the agent back 20 minutes later: it gets it again
+    await sql`
+      update print_jobs set attempts = 1, first_sent_at = now() - interval '20 minutes',
+                            sent_at = now() - interval '20 minutes'
+      where id = ${job!.id}`;
+    expect((await claim()).map((j) => j.id)).toEqual([job!.id]);
+    // the same, but the device reconnected after the last send: it gets it once more
+    await sql`
+      update print_jobs set attempts = 9, first_sent_at = now() - interval '16 minutes',
+                            sent_at = now() - interval '2 minutes'
+      where id = ${job!.id}`;
+    await sql`
+      update print_devices set connected_at = now() - interval '1 minute'
+      where id = ${dev.deviceId}`;
+    expect((await claim()).map((j) => j.id)).toEqual([job!.id]);
+    await sql`update print_devices set connected_at = null where id = ${dev.deviceId}`;
+    // resent many times and unanswered a quarter of an hour after it first went out: given up
+    await sql`
+      update print_jobs set attempts = 9, first_sent_at = now() - interval '16 minutes',
+                            sent_at = now() - interval '2 minutes'
+      where id = ${job!.id}`;
+    expect(await claim()).toEqual([]);
+    const [gone] = await sql<{ status: string; error: string }[]>`
+      select status, error from print_jobs where id = ${job!.id}`;
+    expect(gone).toEqual({ status: 'failed', error: 'O aparelho não confirmou a impressão' });
   });
 });

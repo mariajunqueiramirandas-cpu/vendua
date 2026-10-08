@@ -17,6 +17,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   api,
+  withRetryScope,
   type CodePage,
   type PrintDevice,
   type Printer,
@@ -228,10 +229,10 @@ function Setup({ data, onCode }: { data: PrintersData; onCode: () => void }) {
 function WhenSection({ printOn }: { printOn: PrintersData['printOn'] }) {
   const qc = useQueryClient();
   const save = useMutation({
-    mutationFn: async (v: PrintersData['printOn']) => {
+    mutationFn: async (v: PrintersData['printOn'], ctx) => {
       const o = await optimistic<PrintersData>(qc, qk.printers, (d) => ({ ...d, printOn: v }));
       try {
-        return await api.printersSettings(v);
+        return await withRetryScope(ctx, () => api.printersSettings(v));
       } catch (e) {
         o.restore();
         throw e;

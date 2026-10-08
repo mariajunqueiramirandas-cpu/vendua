@@ -1,8 +1,10 @@
 import { createHash, createHmac, randomInt, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 import { foldSlug, type MerchantNotify } from '../../admin/context.ts';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { platformHost } from '../../platform/store-origin.ts';
+import { phoneVariants } from '../../store-whatsapp/text.ts';
 import { billingLog } from './invoices.ts';
 
 // Self-serve signup's own OTP: codes live in merchant_login_codes with purpose 'signup' (login
@@ -59,6 +61,12 @@ export const RESERVED_SLUGS = new Set([
   'cadastro',
   'static',
   'cdn',
+  // the storefront edge, Core, and the agents' mail domain (auto.<domain>, agent/channels/email.ts)
+  'edge',
+  'core',
+  'auto',
+  'smtp',
+  'webmail',
   'media',
   'dev',
   'staging',
@@ -139,25 +147,79 @@ export function segmentOr422(v: unknown): Segment | null {
   return s;
 }
 
-/** One free trial per owner phone (ADR 0025): has a store this phone owns ever trialed? */
+/** One lock per WhatsApp: both 9th-digit spellings of a number reach the same one. */
+export function phoneLockKey(phone: string): string {
+  return phoneVariants(phone).sort()[0]!;
+}
+
+/** One free trial per owner phone (ADR 0025): has a store this phone owns ever trialed? Under
+ *  either 9th-digit spelling, which are one WhatsApp. */
 export async function phoneHadTrial(sql: Sql, phone: string): Promise<boolean> {
-  return (await sql<{ used: boolean }[]>`select phone_had_trial(${phone}) as used`)[0]!.used;
+  return (
+    await sql<{ used: boolean }[]>`
+      select bool_or(phone_had_trial(p)) as used from unnest(${phoneVariants(phone)}::text[]) p
+    `
+  )[0]!.used;
 }
 
 /** signup codes per client IP per rolling day — each is a WhatsApp message we pay for */
 export const SIGNUP_CODES_PER_IP_DAY = Number(process.env.VENDUA_SIGNUP_OTP_PER_IP_DAY) || 30;
+/** signup codes platform-wide: they all leave from Venduá's own number, the one every merchant's
+ *  sign-in code and Duá depend on — a flood of codes to strangers gets it banned */
+export const SIGNUP_CODES_PER_HOUR = Number(process.env.VENDUA_SIGNUP_OTP_PER_HOUR) || 60;
+export const SIGNUP_CODES_PER_DAY = Number(process.env.VENDUA_SIGNUP_OTP_PER_DAY) || 300;
+
+/** The per-IP key: an IPv6 client is its /64 — one subscriber gets the whole prefix and can
+ *  rotate addresses inside it freely. IPv4 (and IPv4-mapped IPv6) stays the address. */
+export function ipRateKey(ip: string): string {
+  const bare = ip.replace(/%.*$/, '').toLowerCase();
+  if (isIP(bare) !== 6) return ip;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(bare);
+  if (mapped) return mapped[1]!;
+  const width = (gs: string[]) => gs.reduce((n, g) => n + (g.includes('.') ? 2 : 1), 0);
+  let groups = bare.split(':');
+  if (bare.includes('::')) {
+    const [head, tail] = bare.split('::') as [string, string];
+    const h = head ? head.split(':') : [];
+    const t = tail ? tail.split(':') : [];
+    groups = [...h, ...Array<string>(8 - width(h) - width(t)).fill('0'), ...t];
+  }
+  return `${groups
+    .slice(0, 4)
+    .map((g) => parseInt(g, 16).toString(16))
+    .join(':')}::/64`;
+}
 
 export async function startSignupOtp(
   sql: Sql,
   phone: string,
   notify: MerchantNotify,
-  o: { ip?: string; perIpDay?: number } = {},
+  o: { ip?: string; perIpDay?: number; perHour?: number; perDay?: number } = {},
 ): Promise<{ sent: boolean; expiresAt: string; devCode?: string }> {
   const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60_000);
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
   const limited = await authTx(sql, async (tx) => {
+    // the platform-wide ceiling binds every caller from the network (an in-process caller, with
+    // no client address, skips it as it skips the per-IP cap); the lock keeps replicas and
+    // parallel requests from each reading the count under the ceiling
     if (o.ip) {
-      const ipHash = sha256(`vendua.signup.ip|${o.ip}`);
+      await tx`select pg_advisory_xact_lock(hashtextextended('vendua.signup.otp', 0))`;
+      const sent = (
+        await tx<{ hour: number; day: number }[]>`
+          select (count(*) filter (where created_at > now() - interval '1 hour'))::int as hour,
+                 count(*)::int as day
+          from merchant_login_codes
+          where purpose = 'signup' and created_at > now() - interval '1 day'
+        `
+      )[0]!;
+      if (
+        sent.hour >= (o.perHour ?? SIGNUP_CODES_PER_HOUR) ||
+        sent.day >= (o.perDay ?? SIGNUP_CODES_PER_DAY)
+      ) {
+        billingLog.warn({ ...sent }, 'signup otp: platform-wide ceiling reached');
+        return true;
+      }
+      const ipHash = sha256(`vendua.signup.ip|${ipRateKey(o.ip)}`);
       await tx`select pg_advisory_xact_lock(hashtextextended(${ipHash}, 0))`;
       const today = (
         await tx<{ n: number }[]>`
@@ -170,11 +232,12 @@ export async function startSignupOtp(
         await tx`delete from signup_otp_sends where created_at < now() - interval '2 days'`;
       await tx`insert into signup_otp_sends (ip_hash) values (${ipHash})`;
     }
-    // the hourly cap counts every code the phone got, sign-in and signup alike
+    // the hourly cap counts every code the phone got, sign-in and signup alike, under
+    // either spelling
     const recent = (
       await tx<{ n: number }[]>`
         select count(*)::int as n from merchant_login_codes
-        where phone = ${phone} and created_at > now() - interval '1 hour'
+        where phone in ${tx(phoneVariants(phone))} and created_at > now() - interval '1 hour'
       `
     )[0]!.n;
     if (recent >= CODES_PER_HOUR) return true;

@@ -140,15 +140,18 @@ function tell(d: DomainJobDeps, sql: Sql, tenantId: string, msg: OwnerMessage, k
   );
 }
 
+/** A tick's `now` is when it started, and a tick can outlast a claim: leases count from the clock. */
+const fresh = (now: Date) => Math.max(now.getTime(), Date.now());
+
 /** Takes an order for one attempt: its next_attempt_at moves forward, so no other worker does. */
 async function claim(sql: Sql, o: OrderRow, now: Date): Promise<OrderRow | null> {
+  const until = new Date(fresh(now) + CLAIM_MS);
   return controlTx(
     sql,
     async (tx) =>
       (
         await tx<OrderRow[]>`
-          update domain_orders set next_attempt_at = ${new Date(now.getTime() + CLAIM_MS)},
-            claimed_until = ${new Date(now.getTime() + CLAIM_MS)},
+          update domain_orders set next_attempt_at = ${until}, claimed_until = ${until},
             attempts = attempts + 1, updated_at = ${now}
           where id = ${o.id} and status = ${o.status}
             and (next_attempt_at is null or next_attempt_at <= ${now})
@@ -242,7 +245,7 @@ async function retryLater(sql: Sql, o: OrderRow, now: Date, error: string | null
   await controlTx(
     sql,
     (tx) => tx`
-      update domain_orders set next_attempt_at = ${new Date(now.getTime() + wait)},
+      update domain_orders set next_attempt_at = ${new Date(fresh(now) + wait)},
         claimed_until = null, last_error = ${error}, updated_at = ${now}
       where ${mine(tx, o)}
     `,
@@ -322,10 +325,14 @@ export async function placeRegistrations(sql: Sql, d: DomainJobDeps, now: Date) 
         let handle = o.holder_handle;
         if (!handle) {
           handle = await registrar.createHolder(holderOf(o));
-          await controlTx(
+          const kept = await controlTx(
             sql,
-            (tx) => tx`update domain_orders set holder_handle = ${handle} where id = ${o.id}`,
+            (tx) => tx`
+              update domain_orders set holder_handle = ${handle} where ${mine(tx, o)} returning id
+            `,
           );
+          // the claim lapsed and another worker has the order now
+          if (!kept.length) continue;
         }
         dom = await registrar.register({ host: o.host, holderHandle: handle });
       }
@@ -552,12 +559,15 @@ export async function runRenewals(sql: Sql, d: DomainJobDeps, now: Date) {
       if (!seen.expiresAt) throw new RegistrarError('expiry unknown', 'unavailable');
       let dom: RegistrarDomain;
       if (!o.expires_before) {
-        await controlTx(
+        const kept = await controlTx(
           sql,
           (tx) => tx`
             update domain_orders set expires_before = ${seen.expiresAt} where ${mine(tx, o)}
+            returning id
           `,
         );
+        // another worker holds the order now: renewing here too would pay twice
+        if (!kept.length) continue;
         dom = await registrar.renew(ref, o.host);
       } else if (seen.expiresAt && seen.expiresAt > o.expires_before) dom = seen;
       else dom = await registrar.renew(ref, o.host);

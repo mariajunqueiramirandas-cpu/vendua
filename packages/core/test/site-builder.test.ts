@@ -685,6 +685,127 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
     expect(again.branch).toBe(`claude/site-${s.slug}--${id8(again.id)}`);
   });
 
+  test('a human takes over an escalated PR: their pushes count afresh and the green head is approved', async () => {
+    const { s, task } = await running();
+    await hook('pull_request', prPayload(task, 'opened', { sha: '1'.repeat(40) }));
+    for (let i = 1; i <= 5; i++) {
+      const sha = String(i).repeat(40);
+      if (i > 1) await hook('pull_request', prPayload(task, 'synchronize', { sha }));
+      await hook('workflow_run', runPayload(task, sha, 'failure'));
+    }
+    expect((await taskOf(s.id)).status).toBe('escalated');
+
+    const human = await ctl('POST', `/control/v1/site-tasks/${task.id}/human`);
+    expect(human.status).toBe(200);
+    expect(human.body.task).toMatchObject({
+      status: 'pr_open',
+      runner: 'human',
+      iterations: 0,
+      prNumber: 42,
+      escalatedReason: null,
+    });
+    // a red run on the human's push doesn't hand the task back
+    const red = '6'.repeat(40);
+    await hook('pull_request', prPayload(task, 'synchronize', { sha: red }));
+    await hook('workflow_run', runPayload(task, red, 'failure'));
+    expect(await taskOf(s.id)).toMatchObject({ status: 'pr_open', iterations: 1, ci: 'failure' });
+    const sha = '0'.repeat(40);
+    await hook('pull_request', prPayload(task, 'synchronize', { sha }));
+    expect((await hook('workflow_run', runPayload(task, sha, 'success'))).status).toBe(200);
+    expect((await staffEvents('site.ready', task.id)).length).toBe(1);
+    const ok = await ctl('POST', `/control/v1/site-tasks/${task.id}/approve`);
+    expect(ok.status).toBe(200);
+    expect(ok.body.task).toMatchObject({ status: 'approved', runner: 'human' });
+  });
+
+  test('a PR closed without merge escalates; reopening it, or a takeover, picks it up again', async () => {
+    const { s, task } = await running();
+    await hook('pull_request', prPayload(task, 'opened'));
+    await hook('pull_request', prPayload(task, 'closed'));
+    expect(await taskOf(s.id)).toMatchObject({
+      status: 'escalated',
+      escalated_reason: 'PR fechado sem merge',
+      pr_number: null,
+    });
+    expect((await hook('pull_request', prPayload(task, 'reopened'))).status).toBe(200);
+    expect(await taskOf(s.id)).toMatchObject({
+      status: 'pr_open',
+      pr_number: 42,
+      ci: 'pending',
+      escalated_reason: null,
+    });
+    await hook('pull_request', prPayload(task, 'closed'));
+    // the PR is closed: the human starts from the branch, and their PR moves the task
+    const human = await ctl('POST', `/control/v1/site-tasks/${task.id}/human`);
+    expect(human.body.task).toMatchObject({ status: 'running', runner: 'human' });
+    await hook('pull_request', prPayload(task, 'opened', { sha: '2'.repeat(40) }));
+    expect(await taskOf(s.id)).toMatchObject({ status: 'pr_open', head_sha: '2'.repeat(40) });
+  });
+
+  test('delivery waits for a build made after the merge, not any deployment of the bundle', async () => {
+    const { s, task } = await running();
+    await sql`
+      update site_tasks set status = 'merged', merge_sha = ${'e'.repeat(40)},
+        merged_at = now() - interval '1 minute',
+        design = ${sql.json({ templates: {}, tokens: null })}
+      where id = ${task.id}`;
+    await sql`
+      insert into storefront_ops (tenant_id, bundle) values (${s.id}, ${s.slug})
+      on conflict (tenant_id) do update set bundle = excluded.bundle`;
+    const release = async (commit: string, age: string) => {
+      const rid = crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+      releases.push(rid);
+      await sql`
+        insert into releases (id, bundle, tenant_slug, kernel_version, contract, commit,
+                              artifact_uri, manifest, qa_status, built_at, created_at)
+        values (${rid}, ${s.slug}, ${s.slug}, '1.12.0', 2, ${commit}, ${`file:///r/${rid}`},
+                ${sql.json({})}, 'passed', now() - ${age}::interval, now() - ${age}::interval)`;
+      return rid;
+    };
+    // a rollback to a build from before the merge, deployed after it
+    const old = await release('c'.repeat(40), '1 day');
+    await sql`
+      insert into deployments (tenant_id, release_id, kind, actor, status)
+      values (${s.id}, ${old}, 'rollback', 'staff', 'live')`;
+    expect(await deliverMerged(d)).toBe(0);
+    expect(await taskOf(s.id)).toMatchObject({ status: 'merged', design_applied_at: null });
+
+    const merged = await release('e'.repeat(40), '0 seconds');
+    await sql`
+      insert into deployments (tenant_id, release_id, kind, actor, status)
+      values (${s.id}, ${merged}, 'auto', 'control-plane', 'live')`;
+    expect(await deliverMerged(d)).toBe(1);
+    expect((await taskOf(s.id)).status).toBe('delivered');
+  });
+
+  test('cancelling a revision gives the owner their revision back', async () => {
+    const s = await store({ request: false });
+    const [req] = await sql<{ id: string }[]>`
+      insert into site_requests (tenant_id, status, brief) values (${s.id}, 'delivered', 'x')
+      returning id`;
+    const note = 'Troque a foto do topo por uma do bolo de cenoura';
+    expect(
+      (await admin('POST', '/account/site-request/revision', s.owner, { note, spec: SPEC })).status,
+    ).toBe(201);
+    const t = await taskOf(s.id);
+    const used = async () =>
+      (
+        await sql<{ status: string; revisions_used: number }[]>`
+          select status, revisions_used from site_requests where id = ${req!.id}`
+      )[0];
+    expect(await used()).toEqual({ status: 'in_progress', revisions_used: 1 });
+
+    await ctl('POST', `/control/v1/site-tasks/${t.id}/cancel`, { reason: 'pedido duplicado' });
+    expect(await used()).toEqual({ status: 'delivered', revisions_used: 0 });
+    // a retry builds the revision after all: it counts again
+    expect((await ctl('POST', `/control/v1/site-tasks/${t.id}/retry`)).status).toBe(200);
+    expect(await used()).toEqual({ status: 'in_progress', revisions_used: 1 });
+    await ctl('POST', `/control/v1/site-tasks/${t.id}/cancel`, { reason: 'pedido duplicado' });
+    expect(
+      (await admin('POST', '/account/site-request/revision', s.owner, { note, spec: SPEC })).status,
+    ).toBe(201);
+  });
+
   test('due soon and overdue each tell staff once', async () => {
     const s = await store();
     await admin('POST', '/account/site-request/build', s.owner, { spec: SPEC });
@@ -765,6 +886,20 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
     await mergeApproved(d);
     expect(merges.length).toBe(before);
     expect((await taskOf(s.id)).status).toBe('approved');
+
+    // the label event's later run skips check and conformance: it doesn't hide the green ones
+    await sql`update site_tasks set status = 'pr_open', ci = 'success' where id = ${task.id}`;
+    checks.set(sha, [
+      { id: 1, name: 'check', status: 'completed', conclusion: 'success' },
+      { id: 2, name: 'conformance', status: 'completed', conclusion: 'success' },
+      { id: 5, name: 'check', status: 'completed', conclusion: 'skipped' },
+      { id: 6, name: 'conformance', status: 'completed', conclusion: 'skipped' },
+      { id: 7, name: 'storefront-isolation', status: 'completed', conclusion: 'success' },
+    ]);
+    expect((await ctl('POST', `/control/v1/site-tasks/${task.id}/approve`)).status).toBe(200);
+    await mergeApproved(d);
+    expect(merges.length).toBe(before + 1);
+    expect((await taskOf(s.id)).status).not.toBe('pr_open');
   });
 
   test('slugs that look like suffixes get distinct branches', async () => {

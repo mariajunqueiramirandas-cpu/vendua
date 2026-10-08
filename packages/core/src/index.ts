@@ -52,7 +52,8 @@ const migrationUrl =
 const port = Number(process.env.PORT ?? 8787);
 // SESSION_SECRET signs cart session tokens and is the dev fallback for the control
 // gate — deployments must set it. CONTROL_SECRET is the staff key for /control/v1.
-const sessionSecret = process.env.SESSION_SECRET ?? crypto.randomUUID();
+// an empty value counts as unset: an empty HMAC key or staff key is no secret at all
+const sessionSecret = process.env.SESSION_SECRET || crypto.randomUUID();
 if (!process.env.SESSION_SECRET) {
   log.warn(
     'SESSION_SECRET unset — using a random per-boot secret. Sessions do not survive restarts and replicas disagree; set SESSION_SECRET in any shared environment.',
@@ -99,7 +100,7 @@ void readCache.ready();
 const app = createApp({
   sql,
   sessionSecret,
-  controlSecret: process.env.CONTROL_SECRET,
+  controlSecret: process.env.CONTROL_SECRET || undefined,
   adminHub,
   paymentProvider,
   notify,
@@ -151,7 +152,7 @@ const stopPushNotifier = startPushNotifier(jobsSql, adminHub);
 const stopAdminSweeper = startAdminSweeper(jobsSql, { notify, adminOrigin });
 
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
-setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
+setBookingSecret(process.env.CONTROL_SECRET || sessionSecret);
 
 // Scheduler (work loop + job loop over the durable pg queue, woken by LISTEN/NOTIFY) +
 // WhatsApp socket when the baileys driver is enabled.
@@ -242,7 +243,15 @@ onUnhandledError(unhandledErrorReporter(sql));
 // Hono compiles its router on the first request it matches (~15 ms with Core's routes): spend it
 // here rather than on a shopper's first request
 await app.request('http://localhost/healthz');
-const server = Bun.serve({ port, fetch: app.fetch, idleTimeout: 60 });
+// Routes cap their own bodies (32 KB by default, media 2 MB), but only once read: a chunked upload
+// with no length would be buffered whole first, up to Bun's 128 MB default. 4 MiB covers every
+// route's cap with room.
+const server = Bun.serve({
+  port,
+  fetch: app.fetch,
+  idleTimeout: 60,
+  maxRequestBodySize: 4 * 1024 * 1024,
+});
 log.info({ port }, 'listening');
 // One active store's storefront reads, in the background: their code compiles and their statements
 // are prepared on the connection the next request gets, so the first shopper after a deploy finds

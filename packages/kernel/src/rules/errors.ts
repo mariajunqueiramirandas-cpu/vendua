@@ -89,6 +89,16 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
     title: 'Esta mesa já tem pedidos esperando a equipe',
     body: 'Assim que a equipe aceitar os anteriores, você pode mandar outro.',
   },
+  // Kernel 1.23
+  CART_FULL: { title: 'Sua sacola está cheia', body: 'Finalize este pedido e faça outro.' },
+  ORDER_TOO_LARGE: {
+    title: 'Pedido grande demais para a loja',
+    body: 'Fale com a loja para combinar.',
+  },
+  NOTIFY_LIMIT: {
+    title: 'Não deu para anotar seu aviso agora',
+    body: 'Tente de novo amanhã ou fale com a loja.',
+  },
 };
 
 const FALLBACK = { title: 'Não foi possível concluir', body: 'Tente novamente em instantes.' };

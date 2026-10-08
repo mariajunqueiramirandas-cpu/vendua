@@ -503,6 +503,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('vendedor gateway (db)', () => {
     await sql`delete from store_wa_optouts where tenant_id = ${tenantId}`;
   });
 
+  test('SAIR after only Vendedor messages (a nudge, a reply) opts out too', async () => {
+    await sql`delete from store_wa_messages where tenant_id = ${tenantId} and kind = 'order'`;
+    await sql`
+      insert into store_wa_messages (tenant_id, kind, phone, jid, body, status, sent_at)
+      values (${tenantId}, 'chat', ${shopperPhone}, ${shopperJid}, 'Sua sacola ainda está aqui', 'sent', now())`;
+    world.last.inbound('notify', text(shopperJid, 'SAIR'));
+    await until(
+      async () =>
+        (await sql`select 1 from store_wa_optouts where tenant_id = ${tenantId}`).length > 0,
+    );
+    await sql`delete from store_wa_optouts where tenant_id = ${tenantId}`;
+  });
+
   test('pacing: replies skip the hourly ceiling, keep a gap per conversation, and share the line', async () => {
     gw = await startGateway({
       maxPerHour: 2,

@@ -40,6 +40,8 @@ export interface CheckoutInput {
   notes?: string;
   /** encomenda date, YYYY-MM-DD in the store's timezone */
   scheduledFor?: string;
+  /** the total Core showed the shopper; a different one now → 409 PRICES_CHANGED */
+  expectedTotalCents?: number | null;
 }
 
 export type ZoneRowLike = ZoneLike;
@@ -287,6 +289,13 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
         field: i.scheduledFor != null ? 'scheduledFor' : 'payment.changeForCents',
       });
   }
+  if (
+    i.expectedTotalCents != null &&
+    (!Number.isSafeInteger(i.expectedTotalCents) || i.expectedTotalCents < 0)
+  )
+    throw new HttpError(422, 'BAD_REQUEST', 'expectedTotalCents must be a whole number of cents', {
+      field: 'expectedTotalCents',
+    });
   if (i.delivery.mode === 'delivery') {
     const d = i.delivery;
     optional(d.neighborhood, 200, 'delivery.neighborhood');

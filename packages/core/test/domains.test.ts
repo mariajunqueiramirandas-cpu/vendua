@@ -16,7 +16,7 @@ import {
   maskDocument,
 } from '../src/modules/domains/hosts.ts';
 import { runDomainJobs } from '../src/modules/domains/jobs.ts';
-import type { DnsRecord } from '../src/modules/domains/providers.ts';
+import { RegistrarError, type DnsRecord } from '../src/modules/domains/providers.ts';
 import { parseRecords } from '../src/modules/domains/records.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { HttpError } from '../src/platform/http.ts';
@@ -188,10 +188,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
   const registrar = fakeRegistrar();
   const dnsHost = fakeDnsHost();
   const tls = { ok: false };
+  const rdap = fakeRdap();
   const providers = fakeProviders({
     registrar,
     dnsHost,
-    rdap: fakeRdap(),
+    rdap,
     probeTls: async () => tls.ok,
   });
   const app = createApp({
@@ -1141,6 +1142,131 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     expect(theirs.last_error).toContain('Outra loja');
   });
 
+  /** an ns domain whose owner confirmed an empty record list */
+  const delegate = async (s: Store, host: string) => {
+    const add = await s.owner('POST', '/account/domains', { host, method: 'ns' });
+    expect(add.status).toBe(201);
+    const id = add.body.customDomain.id as string;
+    await s.owner('PUT', `/account/domains/${id}/records`, { records: [], confirm: true });
+    return id;
+  };
+
+  test("a name that already delegates to Venduá's nameservers needs the owner to move them first", async () => {
+    // another store removed it; the registry still names Cloudflare's pair
+    const s = await paidStore('stale');
+    const host = `stale-${nonce}.com.br`;
+    tls.ok = false;
+    set(host, { ns: CF_PAIR });
+    const id = await delegate(s, host);
+    await jobs(new Date());
+    expect(dnsHost.zones.has(host)).toBe(false);
+    let r = (await row(id))!;
+    expect(r).toMatchObject({ status: 'failed', zone_id: null, name_servers: [] });
+    expect(r.last_error).toContain('já aponta para os servidores DNS da Venduá');
+    expect(
+      (await s.owner('POST', `/account/domains/${id}/check`, {})).body.customDomain.status,
+    ).toBe('failed');
+    expect(await syncHosts()).not.toContain(host);
+
+    // registro.br's record counts even while DNS doesn't answer
+    const viaRdap = `stale-rdap-${nonce}.com.br`;
+    rdap.map.set(viaRdap, {
+      registered: true,
+      expiresAt: null,
+      nameServers: [...CF_PAIR],
+      signed: false,
+    });
+    const s2 = await paidStore('stale2');
+    const id2 = await delegate(s2, viaRdap);
+    await jobs(new Date());
+    expect(dnsHost.zones.has(viaRdap)).toBe(false);
+    expect((await row(id2))!.status).toBe('failed');
+
+    // the owner moves the nameservers away, adds it again, then points them at the new zone
+    set(host, { ns: ['a.dns.br', 'b.dns.br'] });
+    const again = await s.owner('POST', '/account/domains', { host, method: 'ns' });
+    expect(again.status).toBe(200);
+    const T = Date.now();
+    await jobs(later(T, 0));
+    r = (await row(id))!;
+    expect(r.status).toBe('pending_dns');
+    expect(r.name_servers).toEqual(CF_PAIR);
+    expect(dnsHost.zones.has(host)).toBe(true);
+    set(host, { ns: CF_PAIR });
+    await jobs(later(T, 16 * MIN));
+    expect((await row(id))!.status).toBe('dns_ok');
+  });
+
+  test("an unproven zone claim doesn't keep the name from its owner, and gives its zone back", async () => {
+    const squat = await paidStore('sqt');
+    const host = `sqt-${nonce}.com.br`;
+    const sid = await delegate(squat, host);
+    await jobs(new Date());
+    const zone = dnsHost.zones.get(host)!;
+    expect((await row(sid))!.zone_id).toBe(zone.id);
+
+    // another delegation would need the same zone; a CNAME + TXT proof doesn't
+    const owner = await paidStore('own');
+    const ns = await owner.owner('POST', '/account/domains', { host, method: 'ns' });
+    expect(ns.status).toBe(409);
+    expect(ns.body.error.code).toBe('DOMAIN_TAKEN');
+    const add = await owner.owner('POST', '/account/domains', { host });
+    expect(add.status).toBe(201);
+    pointCname(host, owner.slug, add.body.customDomain.txtValue);
+    tls.ok = false;
+    await jobs(new Date());
+    expect((await account(owner)).customDomain.status).toBe('dns_ok');
+    // the claim lost, and its zone went with it
+    const lost = (await row(sid))!;
+    expect(lost).toMatchObject({ status: 'failed', zone_id: null, name_servers: [] });
+    expect(dnsHost.zones.has(host)).toBe(false);
+    expect(dnsHost.calls.some((c) => c.op === 'deleteZone' && c.args[0] === zone.id)).toBe(true);
+    // trying again doesn't bring it back
+    await squat.owner('POST', '/account/domains', { host, method: 'ns' });
+    expect((await row(sid))!.status).toBe('failed');
+  });
+
+  test('a delegation that gives up after a week frees the zone for the next store', async () => {
+    const a = await paidStore('wka');
+    const host = `wk-${nonce}.com.br`;
+    const aid = await delegate(a, host);
+    const T = Date.now();
+    await jobs(later(T, 0));
+    expect(dnsHost.zones.has(host)).toBe(true);
+    await sql`update custom_domains set created_at = now() - interval '8 days' where id = ${aid}`;
+    await jobs(later(T, 16 * MIN));
+    expect((await row(aid))!).toMatchObject({ status: 'failed', zone_id: null });
+    expect(dnsHost.zones.has(host)).toBe(false);
+
+    const b = await paidStore('wkb');
+    const bid = await delegate(b, host);
+    await jobs(later(T, 17 * MIN));
+    expect((await row(bid))!).toMatchObject({ status: 'pending_dns', name_servers: CF_PAIR });
+    // the first store's retry no longer takes the name back
+    await a.owner('POST', '/account/domains', { host, method: 'ns' });
+    expect((await row(aid))!.status).toBe('failed');
+  });
+
+  test('an owner who delegates after the week ran out keeps the zone, and the retry goes on', async () => {
+    const a = await paidStore('late');
+    const host = `late-${nonce}.com.br`;
+    const aid = await delegate(a, host);
+    const T = Date.now();
+    await jobs(later(T, 0));
+    expect(dnsHost.zones.has(host)).toBe(true);
+    // the week ran out; then the owner points the nameservers at the zone they were shown
+    await sql`update custom_domains set status = 'failed' where id = ${aid}`;
+    set(host, { ns: CF_PAIR });
+    await jobs(later(T, 16 * MIN));
+    expect((await row(aid))!).toMatchObject({ status: 'failed', name_servers: CF_PAIR });
+    expect(dnsHost.zones.has(host)).toBe(true);
+    // adding it again keeps that zone (a new one would see a delegation it can't tell apart)
+    expect((await a.owner('POST', '/account/domains', { host, method: 'ns' })).status).toBe(200);
+    await jobs(later(T, 17 * MIN));
+    expect((await row(aid))!.status).not.toMatch(/failed|pending_dns/);
+    expect((await row(aid))!.last_error).toBeNull();
+  });
+
   test('a renewal retried after the registrar already renewed is not paid again', async () => {
     registrar.registerAsync = false;
     const s = await paidStore('rtry');
@@ -1172,6 +1298,72 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     )[0]!;
     expect(o.status).toBe('renewed');
     expect(((await row(id))!.expires_at as Date).getTime()).toBe(before.getTime() + YEAR);
+  });
+
+  test("a claim taken late in a long tick isn't born expired, nor is its retry already due", async () => {
+    registrar.registerAsync = false;
+    const s = await paidStore('stal');
+    const host = `stal${nonce}.com.br`;
+    const placed = await s.owner('POST', '/account/domains/order', orderBody(host));
+    const id = placed.body.domainOrder.id;
+    // the tick started 15 minutes ago (its other steps were slow)
+    const stale = new Date(Date.now() - 15 * MIN);
+    const register = registrar.register;
+    let claimedUntil: Date | null = null;
+    registrar.register = async () => {
+      claimedUntil = (await order(id))!.claimed_until;
+      throw new RegistrarError('maintenance', 'unavailable');
+    };
+    try {
+      await jobs(stale);
+    } finally {
+      registrar.register = register;
+    }
+    expect(claimedUntil!.getTime()).toBeGreaterThan(Date.now() + 5 * MIN);
+    const o = (await order(id))!;
+    expect(o.status).toBe('queued');
+    expect((o.next_attempt_at as Date).getTime()).toBeGreaterThan(Date.now() + 4 * MIN);
+  });
+
+  test('a renewal whose claim another worker took meanwhile is not paid for here', async () => {
+    registrar.registerAsync = false;
+    const s = await paidStore('rsto');
+    const host = `rsto${nonce}.com.br`;
+    const dom = await registrar.register({ host, holderHandle: 'VH000000-BR' });
+    const expires = new Date(Date.now() + 20 * DAY);
+    registrar.domains.get(host)!.expiresAt = expires;
+    const id = (
+      await sql<{ id: string }[]>`
+        insert into custom_domains (tenant_id, host, verify_token, status, source, method,
+          alias_host, alias_ok, registrar_ref, expires_at, zone_id, name_servers, activated_at,
+          records_synced_at)
+        values (${s.id}, ${host}, ${'3'.repeat(32)}, 'active', 'included', 'ns', ${`www.${host}`},
+          true, ${dom.ref}, ${expires}, 'zrsto', ${CF_PAIR}, now(), now())
+        returning id
+      `
+    )[0]!.id;
+    set(host, { ns: CF_PAIR });
+    const get = registrar.get;
+    registrar.get = async (ref) => {
+      // a second replica re-claims the order while this one asks the registrar
+      if (ref === dom.ref)
+        await sql`
+          update domain_orders set attempts = attempts + 1
+          where custom_domain_id = ${id} and kind = 'renew'
+        `;
+      return get(ref);
+    };
+    try {
+      await jobs(new Date());
+    } finally {
+      registrar.get = get;
+    }
+    expect(calls('renew', dom.ref)).toHaveLength(0);
+    const o = (
+      await sql`select status, expires_before from domain_orders where custom_domain_id = ${id}`
+    )[0]!;
+    expect(o.status).toBe('queued');
+    expect(o.expires_before).toBeNull();
   });
 
   test('an order a worker is placing can be neither cancelled nor retried', async () => {

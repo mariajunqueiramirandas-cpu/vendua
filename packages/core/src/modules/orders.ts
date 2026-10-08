@@ -478,7 +478,7 @@ export async function transitionOrder(
     select state, delivery ->> 'mode' as mode, customer_phone, number,
       coalesce((payment ->> 'online')::boolean, false) as online, total_cents,
       exists (select 1 from store_whatsapp w where w.tenant_id = ${tenantId} and w.wanted) as whatsapp,
-      exists (select 1 from printers p where p.tenant_id = ${tenantId} and p.auto and p.present) as printers
+      exists (select 1 from printers p where p.tenant_id = ${tenantId} and p.auto) as printers
     from orders where tenant_id = ${tenantId} and id = ${orderId} for update
   `;
   const order = rows[0];
@@ -533,6 +533,27 @@ export async function transitionOrder(
           values (${tenantId}, ${caixa.id}, 'sangria', ${earlier.cents},
             ${`${to === 'cancelled' ? 'cancelamento' : 'estorno'} do pedido #${order.number}`}, ${by})
         `;
+      // a round of a closed comanda: the comanda's payments carry no order id, so the round's
+      // share of the cash it was paid with leaves this drawer (split as Relatórios splits it)
+      if (to === 'refunded') {
+        const [round] = await tx<{ cents: number }[]>`
+          select (o.total_cents::bigint
+                  * coalesce(sum(p.amount_cents) filter (where p.method = 'cash'), 0)
+                  / nullif(sum(p.amount_cents), 0))::int as cents
+          from orders o
+          join pdv_tabs t on t.tenant_id = o.tenant_id and t.id = o.tab_id and t.status = 'closed'
+          join pdv_payments p on p.tenant_id = o.tenant_id and p.tab_id = o.tab_id
+            and p.voided_at is null
+          where o.tenant_id = ${tenantId} and o.id = ${orderId} and o.payment ->> 'provider' = 'pdv'
+          group by o.total_cents
+        `;
+        if (round && round.cents > 0)
+          await tx`
+            insert into cash_movements (tenant_id, session_id, kind, amount_cents, reason, by_name)
+            values (${tenantId}, ${caixa.id}, 'sangria', ${round.cents},
+              ${`estorno do pedido #${order.number} (comanda)`}, ${by})
+          `;
+      }
     }
   }
   if (to === 'delivered') await mintLoyaltyRewards(tx, tenantId, order.customer_phone);

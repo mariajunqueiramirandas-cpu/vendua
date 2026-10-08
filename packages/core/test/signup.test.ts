@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { foldSlug, slugify } from '../src/admin/context.ts';
@@ -6,8 +7,10 @@ import { createApp } from '../src/app.ts';
 import { cpfCnpj, validDocument, validEmail } from '../src/modules/billing/input.ts';
 import { runBillingTick } from '../src/modules/billing/jobs.ts';
 import {
+  ipRateKey,
   normalizeSlug,
   readSignupToken,
+  RESERVED_SLUGS,
   signupToken,
   startSignupOtp,
 } from '../src/modules/billing/signup.ts';
@@ -17,6 +20,16 @@ import type { PixRequest } from '../src/modules/payments/provider.ts';
 import { migrate } from '../src/platform/db.ts';
 
 describe('signup units', () => {
+  test('the per-IP key is the address for IPv4, the /64 for IPv6', () => {
+    expect(ipRateKey('203.0.113.7')).toBe('203.0.113.7');
+    expect(ipRateKey('::ffff:203.0.113.7')).toBe('203.0.113.7');
+    expect(ipRateKey('2001:db8:1:2:aaaa::1')).toBe('2001:db8:1:2::/64');
+    expect(ipRateKey('2001:0DB8:0001:0002:ffff:1:2:3')).toBe('2001:db8:1:2::/64');
+    expect(ipRateKey('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(ipRateKey('2001:db8:1:3::1')).not.toBe(ipRateKey('2001:db8:1:2::1'));
+    expect(ipRateKey('unknown')).toBe('unknown');
+  });
+
   test('only an email Mercado Pago takes as the payer passes', () => {
     expect(validEmail('  Ana.Lima+doces@Gmail.com ', 'email')).toBe('ana.lima+doces@gmail.com');
     expect(validEmail('ana_lima@doces-da-ana.com.br', 'email')).toBe(
@@ -65,6 +78,11 @@ describe('signup units', () => {
     expect(normalizeSlug('  --Doces   da Maria-- ')).toBe('doces-da-maria');
     expect(normalizeSlug('!!!')).toBe('');
     expect(normalizeSlug('a'.repeat(50))).toHaveLength(40);
+  });
+
+  test("the platform's own hosts are reserved", () => {
+    for (const label of ['edge', 'core', 'auto', 'status', 'api', 'app', 'mail', 'cdn', 'crm'])
+      expect(RESERVED_SLUGS.has(label)).toBe(true);
   });
 
   test('& reads as "e", and slugify shares the same fold', () => {
@@ -729,21 +747,68 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(acct.body.siteRequest.status).toBe('requested');
   });
 
+  // the shared test database holds every run's codes: the platform-wide ceiling is its own test
+  const roomy = { perHour: 1e9, perDay: 1e9 };
+
   test('signup codes: a durable daily cap per IP', async () => {
     const ip = `203.0.113.${Math.floor(Math.random() * 250)}-${nonce}`;
     const notify = { whatsapp: async () => {}, email: async () => {} };
-    await startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2 });
-    await startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2 });
+    await startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2, ...roomy });
+    await startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2, ...roomy });
     await expect(
-      startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2 }),
+      startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2, ...roomy }),
     ).rejects.toMatchObject({
       status: 429,
     });
   });
 
+  test('signup codes: an IPv6 client is capped by its /64, not its address', async () => {
+    const net = `2001:db8:${(Date.now() % 0xffff).toString(16)}:${nonce.slice(0, 4)}`;
+    const notify = { whatsapp: async () => {}, email: async () => {} };
+    const o = { perIpDay: 1, ...roomy };
+    await startSignupOtp(appSql, mkPhone(), notify, { ip: `${net}::1`, ...o });
+    await expect(
+      startSignupOtp(appSql, mkPhone(), notify, { ip: `${net}:0:0:0:2`, ...o }),
+    ).rejects.toMatchObject({ status: 429, code: 'RATE_LIMITED' });
+    // another /64 is another client
+    await startSignupOtp(appSql, mkPhone(), notify, {
+      ip: `${net.replace('2001:db8', '2001:db9')}::1`,
+      ...o,
+    });
+  });
+
+  test('signup codes: past the platform-wide hourly or daily ceiling nothing is sent', async () => {
+    const sent: string[] = [];
+    const notify = {
+      whatsapp: async (to: string) => {
+        sent.push(to);
+      },
+      email: async () => {},
+    };
+    const phone = mkPhone();
+    const ip = `198.51.100.${Math.floor(Math.random() * 250)}-${nonce}`;
+    for (const ceiling of [
+      { perHour: 0, perDay: 1e9 },
+      { perHour: 1e9, perDay: 0 },
+    ])
+      await expect(startSignupOtp(appSql, phone, notify, { ip, ...ceiling })).rejects.toMatchObject(
+        { status: 429, code: 'RATE_LIMITED' },
+      );
+    expect(sent).toEqual([]);
+    const rows = await sql`select 1 from merchant_login_codes where phone = ${phone}`;
+    expect(rows).toHaveLength(0);
+    // the ceiling is checked before the IP's own count: refused codes don't spend the IP's day
+    const ipRows = await sql`
+      select 1 from signup_otp_sends
+      where ip_hash = ${createHash('sha256').update(`vendua.signup.ip|${ip}`).digest('hex')}
+    `;
+    expect(ipRows).toHaveLength(0);
+  });
+
   test('at most 3 stores per phone per day; billing off → 503', async () => {
     const other = createApp(deps);
-    const phone = mkPhone();
+    // a mobile number: it has a spelling without the 9th digit
+    const phone = `2199${mkPhone().slice(-7)}`;
     const token = (await verified(phone, other)).signupToken;
     // four at once: the per-phone lock lets exactly three through
     const res = await Promise.all(
@@ -754,6 +819,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     // the verified phone now sees its stores
     const again = await verified(phone, other);
     expect(again.existingStores).toHaveLength(3);
+    // the same WhatsApp spelled without its 9th digit is the same phone
+    const ten = `${phone.slice(0, 2)}${phone.slice(3)}`;
+    const viaTen = await signup(
+      (await verified(ten, other)).signupToken,
+      `signup-${nonce}-cap5`,
+      {},
+      other,
+    );
+    expect(viaTen.status).toBe(429);
 
     fake.platformConfigured = false;
     try {

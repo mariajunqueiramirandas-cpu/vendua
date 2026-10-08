@@ -95,7 +95,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
       emails.push({ to, text });
     },
   };
+  const otpSends: string[] = [];
   const otpSender = async (phone: string, text: string) => {
+    otpSends.push(phone);
     codes.set(phone, /(\d{6})/.exec(text)![1]!);
   };
   // a fresh app per test: the auth routes share one per-IP bucket
@@ -116,6 +118,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
   const attackerPhone = `2193${stamp}`;
   const victimPhone = `2192${stamp}`;
   const capPhone = `2191${stamp}`;
+  const busyPhone = `2194${stamp}`;
   const attackerMail = `sec-atk-${nonce}@exemplo.com`;
   const newMail = `sec-new-${nonce}@exemplo.com`;
   let storeX = '';
@@ -163,7 +166,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
   afterAll(async () => {
     await sql`delete from merchant_login_links where email in (${attackerMail}, ${newMail}, ${`outro-${newMail}`})`;
     await sql`delete from merchant_login_failures where phone in (${attackerPhone}, ${victimPhone}, ${capPhone})`;
-    await sql`delete from merchant_login_codes where phone in (${attackerPhone}, ${victimPhone}, ${capPhone})`;
+    await sql`delete from merchant_login_codes where phone in (${attackerPhone}, ${victimPhone}, ${capPhone}, ${busyPhone})`;
     if (storeX) await sql`delete from tenants where id in (${storeX}, ${storeY})`;
     if (appSql !== sql) await appSql.end();
     await sql.end();
@@ -190,8 +193,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
     );
     expect(invite.status).toBe(201);
 
-    // the email link proves the address only: the one row that carries it
+    // the typed address signs nobody in until the link the invite sent to it is opened
+    const sent = emails.length;
     await call('POST', '/auth/email/start', { email: attackerMail });
+    await Bun.sleep(20);
+    expect(emails.length).toBe(sent);
+    // and that link proves the address only: the one row that carries it
     const token = /link=([A-Za-z0-9_-]{43})/.exec(
       [...emails].reverse().find((e) => e.to === attackerMail)!.text,
     )![1]!;
@@ -293,6 +300,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
     expect(await verifyOtp(appSql, capPhone, right, 'stranger-10')).toBe(true);
   });
 
+  test("admin OTP: past the phone's hourly cap a member's phone answers like a stranger's, and gets no code", async () => {
+    await sql`insert into merchant_users (tenant_id, name, phone, role) values (${storeY}, 'Busy', ${busyPhone}, 'manager')`;
+    const stranger = `2195${stamp}`;
+    const call = client(mkApp());
+    const shape = (r: { status: number; body: any }) => [r.status, Object.keys(r.body).sort()];
+    for (let i = 0; i < 6; i++) {
+      const known = await call('POST', '/auth/otp/start', { phone: busyPhone });
+      const unknown = await call('POST', '/auth/otp/start', { phone: stranger });
+      expect(shape(known)).toEqual(shape(unknown));
+      expect(known.status).toBe(200);
+    }
+    await Bun.sleep(50);
+    expect(otpSends.filter((p) => p === busyPhone)).toHaveLength(5);
+    const stored = await sql<{ n: number }[]>`
+      select count(*)::int as n from merchant_login_codes where phone = ${busyPhone}
+    `;
+    expect(stored[0]!.n).toBe(5);
+  });
+
   test('a new email on /me waits for the link sent to it, then signs in and is audited', async () => {
     const call = client(mkApp());
     const atk = await otpSignIn(call, attackerPhone, storeX);
@@ -324,7 +350,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
       pendingEmail: null,
     });
     const audits = await sql<{ summary: string }[]>`
-      select summary from audit_log where tenant_id = ${storeX} and action = 'me.email' order by id
+      select summary from audit_log where tenant_id = ${storeX} and action = 'me.email'
+        and entity_id = (select id::text from merchant_users where tenant_id = ${storeX} and phone = ${attackerPhone})
+      order by id
     `;
     expect(audits.map((a) => a.summary)).toEqual(['cadastrou um e-mail de acesso']);
 
@@ -386,5 +414,58 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
     expect(rows.map((r) => r.endpoint)).toContain(
       'https://wns2-bl2p.notify.windows.com/w/?token=abc',
     );
+  });
+
+  test('push: signing out, or ending a session, stops that device getting pushes', async () => {
+    const call = client(mkApp());
+    const keys = { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) };
+    const endpointOf = (n: string) => `https://fcm.googleapis.com/fcm/send/${nonce}-out-${n}`;
+    const has = async (n: string) =>
+      (await sql`select 1 from push_subscriptions where endpoint = ${endpointOf(n)}`).length > 0;
+    const a = await otpSignIn(call, attackerPhone, storeX);
+    const b = await otpSignIn(call, capPhone, storeY);
+    for (const [n, cookie] of [
+      ['a', a],
+      ['b', b],
+    ] as const)
+      expect(
+        (await call('POST', '/push/subscribe', { endpoint: endpointOf(n), keys }, cookie)).status,
+      ).toBe(201);
+    // "encerrar sessão" (here, the session itself)
+    const [sa] = await sql<{ session_id: string }[]>`
+      select session_id from push_subscriptions where endpoint = ${endpointOf('a')}`;
+    expect((await call('DELETE', `/me/sessions/${sa!.session_id}`, undefined, a)).status).toBe(200);
+    expect(await has('a')).toBe(false);
+    expect(await has('b')).toBe(true);
+    // "sair"
+    expect((await call('POST', '/auth/logout', {}, b)).status).toBe(200);
+    expect(await has('b')).toBe(false);
+  });
+
+  test('push: a subscription saved before sessions is claimed by the next sign-in', async () => {
+    const call = client(mkApp());
+    const keys = { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) };
+    const ep = (n: string) => `https://fcm.googleapis.com/fcm/send/${nonce}-legacy-${n}`;
+    const a = await otpSignIn(call, attackerPhone, storeX);
+    for (const n of ['kept', 'stale'])
+      expect((await call('POST', '/push/subscribe', { endpoint: ep(n), keys }, a)).status).toBe(
+        201,
+      );
+    // as migration 0106 left them
+    await sql`update push_subscriptions set session_id = null where endpoint in ${sql([ep('kept'), ep('stale')])}`;
+    const r = await call('POST', '/push/rebind', { endpoint: ep('kept') }, a);
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ rebound: true });
+    // ending another of the member's sessions (another device) drops what no sign-in claimed,
+    // not the claimed one
+    const [s] = await sql<{ id: string }[]>`
+      insert into merchant_sessions (tenant_id, user_id, secret_hash, expires_at)
+      select tenant_id, user_id, 'other-device', now() + interval '1 day'
+      from push_subscriptions where endpoint = ${ep('kept')}
+      returning id`;
+    expect((await call('DELETE', `/me/sessions/${s!.id}`, undefined, a)).status).toBe(200);
+    const left = await sql<{ endpoint: string }[]>`
+      select endpoint from push_subscriptions where endpoint in ${sql([ep('kept'), ep('stale')])}`;
+    expect(left.map((x) => x.endpoint)).toEqual([ep('kept')]);
   });
 });

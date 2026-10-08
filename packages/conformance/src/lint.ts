@@ -7,7 +7,7 @@ import { SDK_SCHEMAS, catalogOf } from '@vendua/kernel/sdk-catalog';
 import { extractSchemas } from '@vendua/kernel/vite';
 import { runOwnership } from './ownership.ts';
 import type { CheckResult } from './report.ts';
-import { lines, literals, stripComments } from './source.ts';
+import { lineOf, lines, literals, stripComments } from './source.ts';
 import { KERNEL_IMPORT_ALLOW, run, sourceFiles } from './static.ts';
 
 // `vendua check` lint rules (04 — lint rules; 17 — Contract 2). Each rule is a
@@ -154,13 +154,29 @@ function k09(dir: string): CheckResult {
           msg: 'useCheckout() — checkout is a Kernel page; link with CheckoutButton',
         });
       if (
-        /\bmutations\s*\.\s*(add|addLine|updateQty|remove|setDelivery)\b/.test(text) ||
+        /\bmutations\s*\.\s*(add|addLine|updateQty|setNote|remove|setDelivery|applyCoupon|removeCoupon|importItems|share|reorder)\b/.test(
+          text,
+        ) ||
         /\.\s*mutations\b/.test(text)
       )
         found.push({ n, msg: 'cart mutation called directly — use AddToCart / QuantityStepper' });
       if (/\bnavigate\s*\(\s*[`'"]\/produto/.test(text)) found.push({ n, msg: PRODUCT_URL });
     }
-    for (const l of literals(stripComments(readFileSync(f, 'utf8'))))
+    const src = stripComments(readFileSync(f, 'utf8'));
+    // `const { mutations: m } = useCart()`, `{ mutations: { add } }`: whatever the binding is
+    // called later, taking it is the violation
+    for (const m of src.matchAll(/=\s*useCart\s*\(/g)) {
+      const head = src.slice(0, m.index);
+      const decl = [...head.matchAll(/\b(?:const|let|var)\b/g)].at(-1)?.index ?? 0;
+      const pattern = head.slice(decl);
+      const taken = pattern.includes(';') ? null : /\bmutations\b/.exec(pattern);
+      if (taken)
+        found.push({
+          n: lineOf(src, decl + taken.index),
+          msg: 'cart mutations taken from useCart() — use AddToCart / QuantityStepper',
+        });
+    }
+    for (const l of literals(src))
       if (l.raw.includes('/produto/')) found.push({ n: l.line, msg: PRODUCT_URL });
     for (const { n, msg } of found.sort((a, b) => a.n - b.n)) problems.push(`${rel}:${n}: ${msg}`);
   }
@@ -198,7 +214,13 @@ function k10(dir: string): CheckResult {
   const problems: string[] = [];
   const check = (where: string, css: string, offset = 0) => {
     for (const s of selectors(css)) {
-      if (/\.v-[a-z]/i.test(s.text) || /\[data-vendua/i.test(s.text))
+      if (
+        /\.v-[a-z]/i.test(s.text) ||
+        /\[data-vendua/i.test(s.text) ||
+        // [class^="v-"], [class*="v-btn"], [class~='v-card'], [class|="v"]
+        /\[\s*class\s*[~^$*]?=\s*['"]?[^\]'"]*(?<![\w-])v-/i.test(s.text) ||
+        /\[\s*class\s*\|=\s*['"]?v['"\s\]]/i.test(s.text)
+      )
         problems.push(
           `${where}:${s.line + offset}: '${s.text.replace(/\s+/g, ' ').slice(0, 80)}' — use [data-part] / --v-<component>-* (packages/kernel/API.md#styling-api)`,
         );

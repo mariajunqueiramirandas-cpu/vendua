@@ -105,6 +105,32 @@ export function isoDate(d: Date, tz?: string) {
   return dayKey(d, tz);
 }
 
+/** The instant `day` (YYYY-MM-DD) ends on the clock of `tz` (the device's when absent). */
+export function endOfDay(day: string, tz?: string) {
+  const wall = new Date(`${day}T23:59:59Z`);
+  if (!tz) return new Date(`${day}T23:59:59`).toISOString();
+  const offset = (at: Date) => {
+    const p: Record<string, number> = Object.fromEntries(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        hourCycle: 'h23',
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        second: 'numeric',
+      })
+        .formatToParts(at)
+        .map((x) => [x.type, Number(x.value)]),
+    );
+    return Date.UTC(p.year!, p.month! - 1, p.day, p.hour, p.minute, p.second) - at.getTime();
+  };
+  // twice: the offset at the guess may differ from the one at the answer (a DST change)
+  const guess = new Date(wall.getTime() - offset(wall));
+  return new Date(wall.getTime() - offset(guess)).toISOString();
+}
+
 export const plural = (n: number, one: string, many: string) => `${num(n)} ${n === 1 ? one : many}`;
 
 export function greeting(tz?: string) {

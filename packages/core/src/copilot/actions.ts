@@ -288,6 +288,8 @@ const pause: KindDef<PauseInput, StoreSnap> = {
       ? `Loja pausada até ${when(after.resumesAt, c.tz)}`
       : 'Loja pausada até você retomar',
   link: () => '/',
+  // a pause set meanwhile (say, "até retomar") is not replaced by an older card's
+  basis: (b) => ({ status: b.status, resumesAt: b.resumesAt }),
 };
 
 const resume: KindDef<Record<string, never>, StoreSnap> = {
@@ -308,6 +310,7 @@ const resume: KindDef<Record<string, never>, StoreSnap> = {
       ? 'A loja voltou a aceitar pedidos'
       : 'Pausa encerrada: a loja segue o horário de funcionamento',
   link: () => '/',
+  basis: (b) => ({ status: b.status, resumesAt: b.resumesAt }),
 };
 
 const DEMAND_WORD: Record<string, string> = {
@@ -496,7 +499,9 @@ const prices: KindDef<PriceInput, PriceSnap> = {
   done: (_after, i) =>
     `Preço de ${i.productIds.length} ${i.productIds.length === 1 ? 'produto' : 'produtos'} ${i.percent > 0 ? 'aumentado' : 'reduzido'}`,
   link: () => '/cardapio',
-  basis: (b) => b.map((p) => [p.id, p.priceCents]),
+  // by id: a product renamed meanwhile reorders the lines, not the prices the card was built on
+  basis: (b) =>
+    b.map((p) => [p.id, p.priceCents] as const).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
 };
 
 const couponCreate: KindDef<CouponInput, null> = {

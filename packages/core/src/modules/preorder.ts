@@ -1,6 +1,6 @@
 import { HttpError } from '../platform/http.ts';
 import { localParts } from '../platform/tz.ts';
-import { specialDayOn, type SpecialDay, type StoreHours } from './store.ts';
+import { deriveStatus, specialDayOn, type SpecialDay, type StoreHours } from './store.ts';
 
 // Encomendas: products that must be ordered N days ahead. Core owns the calendar —
 // which dates are bookable (lead time, open weekdays, special days, horizon) — the Kernel renders it.
@@ -29,13 +29,23 @@ export function bookableDates(
   now: Date,
   special: readonly SpecialDay[] = [],
 ): string[] {
-  const { y, m, d } = localDate(now, hours.timezone || 'America/Sao_Paulo');
+  const tz = hours.timezone || 'America/Sao_Paulo';
+  const { y, m, d } = localDate(now, tz);
   const openDays = new Set(hours.windows.flatMap((w) => w.days));
   const out: string[] = [];
   for (let off = Math.max(0, leadDays); off <= maxDays; off++) {
     // pure calendar arithmetic on the store's local date — UTC noon avoids DST edges
     const dt = new Date(Date.UTC(y, m - 1, d + off, 12));
     const date = iso(dt);
+    // today (no lead time) only while the store still works today: open now, or opening later
+    if (off === 0 && hours.windows.length > 0) {
+      const s = deriveStatus({ ...hours, timezone: tz }, null, null, now, [...special]);
+      const back =
+        s.status === 'closed' && s.resumesAt ? localDate(new Date(s.resumesAt), tz) : null;
+      const later =
+        back !== null && iso(new Date(Date.UTC(back.y, back.m - 1, back.d, 12))) === date;
+      if (s.status !== 'open' && !later) continue;
+    }
     // a special day replaces the weekly hours, as deriveStatus reads them
     const s = specialDayOn(special, date);
     if (s) {

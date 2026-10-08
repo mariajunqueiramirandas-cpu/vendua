@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, type Kpis, type Reports as R } from '../../lib/api.ts';
 import { dateShort, isoDate, money, moneyCompact, num, plural } from '../../lib/format.ts';
+import { useStoreQuery } from '../store/StatusPill.tsx';
 import { qk } from '../../lib/query.ts';
 import { ButtonLink } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
@@ -50,6 +51,7 @@ export default function Reports() {
   const p = params.get('periodo');
   const period = isPeriod(p) ? p : DEFAULT_PERIOD;
   const custom = { from: params.get('de') ?? '', to: params.get('ate') ?? '' };
+  const today = isoDate(new Date(), useStoreQuery().data?.hours.timezone);
   const update = (patch: Record<string, string | null>) =>
     setParams(
       (prev) => {
@@ -77,7 +79,6 @@ export default function Reports() {
     if (v !== 'custom')
       return update({ periodo: v === DEFAULT_PERIOD ? null : v, de: null, ate: null });
     // personalizado starts from what's on screen
-    const today = isoDate(new Date());
     update({
       periodo: 'custom',
       de: custom.from || shown?.from || today,
@@ -150,9 +151,7 @@ export default function Reports() {
                 summary={`${money(data.current.revenueCents)} em ${num(data.current.orders)} pedidos. Melhor dia: ${best(data)}.`}
                 format={money}
                 formatTick={moneyCompact}
-                highlightLast={
-                  ENDS_TODAY.has(data.range.period) || data.range.to === isoDate(new Date())
-                }
+                highlightLast={ENDS_TODAY.has(data.range.period) || data.range.to === today}
                 data={data.series.map((s) => ({
                   label: dateShort(s.date),
                   short: s.date.slice(8),

@@ -1,6 +1,7 @@
 import { defineTool, s, ToolError } from '@vendua/agent-runtime';
 import { getProductById } from '../../../modules/catalog.ts';
 import { searchCatalog } from '../../../modules/catalog-search.ts';
+import { loadCartRow } from '../../../modules/cart.ts';
 import { quoteDeliveryTx } from '../../../modules/cart-ops.ts';
 import { normalizeCep, viaCep } from '../../../modules/geo.ts';
 import type { Sql } from '../../../platform/db.ts';
@@ -238,6 +239,9 @@ export const quoteDeliveryTool = defineTool<
         );
       neighborhood = found.neighborhood;
     }
+    // a read tool runs in a read-only tx: no cartId, which would log a delivery_quoted row, so
+    // the cart's road leg is passed in by hand
+    const cart = t.cartId ? await loadCartRow(ctx.tx, ctx.tenantId, t.cartId) : undefined;
     const q = await core(() =>
       quoteDeliveryTx(
         ctx.tx,
@@ -246,7 +250,7 @@ export const quoteDeliveryTool = defineTool<
           ...(neighborhood ? { neighborhood } : {}),
           ...(lat !== undefined ? { lat, lng: lng! } : {}),
         },
-        { ...(t.cartId ? { cartId: t.cartId } : {}), route: null },
+        { route: cart?.delivery_route ?? null },
       ),
     );
     if (!q.eligible) {

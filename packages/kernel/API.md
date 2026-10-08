@@ -540,6 +540,15 @@ Additive — no storefront edit (ADR 0036). Checkout stays the Kernel's; store c
   (`[data-part="table"]`, "Na mesa · Mesa 5"), and `tab` reads "Pagar na mesa"
   (`PAYMENT_METHOD_LABEL.tab`).
 
+### The total the shopper saw (Kernel 1.23)
+
+Additive — no storefront edit. The number is Core's; the Kernel only echoes it.
+
+- `CheckoutInput.expectedTotalCents` (optional, integer cents): the total the shopper was shown,
+  as Core priced it for the chosen payment method (`GET /cart?paymentMethod=`), never a client
+  sum. Core answers 409 `PRICES_CHANGED` (`details.totalCents`) when its total differs; the
+  Kernel checkout then re-reads the cart and the method's price before the shopper retries.
+
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's.

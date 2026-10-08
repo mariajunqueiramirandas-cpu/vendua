@@ -171,7 +171,8 @@ export function mountSiteBuilder(o: {
       }
       if (t.status === 'cancelled')
         await tx`
-          update site_requests set status = 'in_progress', updated_at = now()
+          update site_requests set status = 'in_progress',
+            revisions_used = ${t.kind === 'revision' ? 1 : tx`revisions_used`}, updated_at = now()
           where id = ${t.site_request_id}
         `.catch((err: { code?: string }) => {
           if (err.code === '23505')
@@ -196,12 +197,16 @@ export function mountSiteBuilder(o: {
         throw new HttpError(409, 'SITE_TASK_BUSY', 'only a waiting or stuck task can be taken', {
           status: t.status,
         });
+      // an open PR stays the task's PR: the human pushes to it and staff approve it as usual,
+      // with a fresh budget of red runs
+      const status = t.pr_number !== null && t.merge_sha === null ? 'pr_open' : 'running';
       await tx`
-        update site_tasks set runner = 'human', status = 'running', escalated_reason = null,
-          lease_until = null, next_attempt_at = null, last_error = null, updated_at = now()
+        update site_tasks set runner = 'human', status = ${status}, iterations = 0,
+          escalated_reason = null, lease_until = null, next_attempt_at = null, last_error = null,
+          updated_at = now()
         where id = ${id}
       `;
-      await taskEventTx(tx, t, 'human', { branch: t.branch });
+      await taskEventTx(tx, t, 'human', { branch: t.branch, status });
       await emitAdminTx(tx, t.tenant_id, 'billing');
       return { status: 200, body: { task: await taskJsonTx(tx, id) } };
     });
@@ -230,10 +235,12 @@ export function mountSiteBuilder(o: {
           lease_until = null, updated_at = now()
         where id = ${id}
       `;
-      // a revision's site is already live: its request goes back to delivered
+      // a revision's site is already live: its request goes back to delivered, and the owner
+      // keeps the revision nothing was delivered for
       await tx`
         update site_requests
-        set status = ${t.kind === 'revision' ? 'delivered' : 'requested'}, updated_at = now()
+        set status = ${t.kind === 'revision' ? 'delivered' : 'requested'},
+          revisions_used = ${t.kind === 'revision' ? 0 : tx`revisions_used`}, updated_at = now()
         where id = ${t.site_request_id} and status = 'in_progress'
       `;
       await taskEventTx(tx, t, 'cancelled', { reason });
@@ -289,12 +296,16 @@ export function mountSiteBuilder(o: {
 const str = (v: unknown, max: number) =>
   typeof v === 'string' && v.length > 0 && v.length <= max ? v : null;
 
-async function taskByBranchTx(tx: Sql, branch: string | null): Promise<SiteTaskDbRow | null> {
+async function taskByBranchTx(
+  tx: Sql,
+  branch: string | null,
+  statuses: readonly string[] = LIVE_PR,
+): Promise<SiteTaskDbRow | null> {
   if (!branch) return null;
   return (
     (
       await tx<SiteTaskDbRow[]>`
-        select * from site_tasks where branch = ${branch} and status in ${tx(LIVE_PR)}
+        select * from site_tasks where branch = ${branch} and status in ${tx(statuses)}
         order by created_at desc limit 1 for update
       `
     )[0] ?? null
@@ -307,7 +318,12 @@ async function pullRequestTx(tx: Sql, p: Record<string, unknown>): Promise<strin
   const action = p.action;
   const pr = (p.pull_request ?? {}) as Record<string, unknown>;
   const head = (pr.head ?? {}) as Record<string, unknown>;
-  const t = await taskByBranchTx(tx, str(head.ref, 120));
+  // a PR (re)opened on an escalated task's branch hands it back to review
+  const t = await taskByBranchTx(
+    tx,
+    str(head.ref, 120),
+    action === 'opened' || action === 'reopened' ? [...LIVE_PR, 'escalated'] : LIVE_PR,
+  );
   if (!t) return null;
   const number = typeof pr.number === 'number' && Number.isInteger(pr.number) ? pr.number : null;
   const sha = str(head.sha, 64);
@@ -318,7 +334,7 @@ async function pullRequestTx(tx: Sql, p: Record<string, unknown>): Promise<strin
       await tx`
         update site_tasks set status = 'pr_open', pr_number = ${number}, pr_url = ${url},
           head_sha = ${sha}, ci = 'pending', approved_at = null, approved_by = null,
-          updated_at = now()
+          escalated_reason = null, updated_at = now()
         where id = ${t.id}
       `;
       await taskEventTx(tx, t, 'pr_opened', { number, url, sha });
@@ -349,6 +365,8 @@ async function pullRequestTx(tx: Sql, p: Record<string, unknown>): Promise<strin
         `;
         await taskEventTx(tx, t, 'merged', { sha: str(pr.merge_commit_sha, 64), by: 'github' });
       } else {
+        // no open PR any more: a takeover starts from the branch, a reopen restores it
+        await tx`update site_tasks set pr_number = null, ci = null where id = ${t.id}`;
         await escalateTx(tx, t, 'PR fechado sem merge', { number });
         return t.id;
       }

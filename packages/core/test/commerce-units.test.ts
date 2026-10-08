@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { crc16, normalizePixKey, pixPayload } from '../src/modules/pix.ts';
+import { phoneVariants } from '../src/store-whatsapp/text.ts';
 import {
   effectiveFee,
   foldName,
@@ -57,6 +58,13 @@ describe('pix BR Code', () => {
     expect(normalizePixKey('(22) 99999-0000', 'phone')).toBe('+5522999990000');
     expect(normalizePixKey('Loja@X.com', 'email')).toBe('loja@x.com');
     expect(normalizePixKey('12', 'cnpj')).toBeNull();
+    // the DICT's 77-character cap, ASCII only: a longer key makes a code no bank accepts
+    expect(normalizePixKey(`${'a'.repeat(64)}@${'b'.repeat(8)}.com.br`, 'email')).toBeNull();
+    expect(normalizePixKey('lojá@exemplo.com', 'email')).toBeNull();
+    const longest = normalizePixKey(`${'a'.repeat(64)}@${'b'.repeat(8)}.com`, 'email')!;
+    expect(longest).toHaveLength(77);
+    const code = pixPayload({ key: longest, keyType: 'email', beneficiary: 'Loja', city: 'Rio' });
+    expect(code.slice(6, 10)).toBe('2699');
   });
 });
 
@@ -321,6 +329,13 @@ describe('preorder calendar', () => {
       bookableDates({ ...hours, windows: [] }, 0, 0, new Date('2026-09-25T02:30:00Z')),
     ).toEqual(['2026-09-24']);
   });
+  test('today, with no lead time, only while the store still works today', () => {
+    // Thu 10:00 open → today is bookable; Thu 19:00, closed for the day → it starts tomorrow
+    expect(bookableDates(hours, 0, 1, now)).toEqual(['2026-09-24', '2026-09-25']);
+    expect(bookableDates(hours, 0, 1, new Date('2026-09-24T22:00:00Z'))).toEqual(['2026-09-25']);
+    // Thu 07:00, before opening: it still opens today
+    expect(bookableDates(hours, 0, 0, new Date('2026-09-24T10:00:00Z'))).toEqual(['2026-09-24']);
+  });
   test('schedule gate', () => {
     const v = scheduleView(
       [{ requiresPreorder: true, preorderLeadDays: 2 }],
@@ -548,5 +563,14 @@ describe('customer + address', () => {
       composeAddress({ mode: 'delivery', street: ' Rua A ', number: '10', complement: 'ap 3' }),
     ).toBe('Rua A, 10 — ap 3');
     expect(composeAddress({ mode: 'delivery', address: 'Rua B, 2' })).toBe('Rua B, 2');
+  });
+});
+
+describe('9th-digit spellings', () => {
+  test('only a mobile that had an old 8-digit form has two', () => {
+    expect(phoneVariants('11987654321')).toEqual(['11987654321', '1187654321']);
+    // 9 + 1–5 is a newer mobile: dropping the 9 is a landline's number, someone else
+    expect(phoneVariants('11941234567')).toEqual(['11941234567']);
+    expect(phoneVariants('1141234567')).toEqual(['1141234567']);
   });
 });

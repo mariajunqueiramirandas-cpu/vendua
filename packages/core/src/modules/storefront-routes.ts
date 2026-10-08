@@ -2,7 +2,7 @@ import { emitAdminTx } from '../admin/live.ts';
 import type { Context, Hono } from 'hono';
 import { TEMPLATE_MIGRATIONS } from '@vendua/templates';
 import { withTenant, type Sql } from '../platform/db.ts';
-import { HttpError, bodyJson, rateLimit } from '../platform/http.ts';
+import { HttpError, bodyJson, clientIp, rateLimit } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { claimControl } from './control.ts';
 import {
@@ -91,7 +91,9 @@ export function mountStorefrontPlatform(d: Deps) {
     '/notify-me',
     d.idempotency(sql, async (c, tx) => {
       const tenant = c.get('tenant') as Tenant;
-      return subscribeNotifyTx(tx, tenant.id, await bodyJson(c));
+      return subscribeNotifyTx(tx, tenant.id, await bodyJson(c), {
+        ip: clientIp(c, { trustForwardedFor: d.trustProxy, proxyHops: d.proxyHops ?? 0 }),
+      });
     }),
   );
 
@@ -385,13 +387,24 @@ export function mountStorefrontPlatform(d: Deps) {
     return reply(c, res);
   });
 
+  // an undo is dry unless asked otherwise, like a run: only the real one is claimed
   app.post('/control/v1/template-migrations/:id/rollback', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
     const scope = migrationScope(body);
+    const id = c.req.param('id');
+    if (body.dry !== false) {
+      return c.json({
+        dry: true,
+        report: await rollbackTemplateMigration(sql, id, { dry: true, ...scope }),
+      });
+    }
     const res = await claimControl(sql, requireIdemKey(c), async () => ({
       status: 200,
-      body: { report: await rollbackTemplateMigration(sql, c.req.param('id'), scope) },
+      body: {
+        dry: false,
+        report: await rollbackTemplateMigration(sql, id, { dry: false, ...scope }),
+      },
     }));
     return reply(c, res);
   });

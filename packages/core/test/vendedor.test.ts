@@ -17,7 +17,7 @@ import { pgMemory } from '../src/agent-host/store/memory.ts';
 import { PgActorStore } from '../src/agent-host/store/pg-store.ts';
 import { migrate, withTenant, type Sql } from '../src/platform/db.ts';
 import { configureVendedor } from '../src/vendedor/deps.ts';
-import { ingestPass } from '../src/vendedor/ingest.ts';
+import { claimPending, ingestPass } from '../src/vendedor/ingest.ts';
 import { vendedorTransport } from '../src/vendedor/transport.ts';
 
 // ADR 0031: the Vendedor end to end on Postgres, as vendua_app under RLS — the gateway's rows in,
@@ -143,6 +143,46 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     await (app as unknown as { end: () => Promise<void> }).end();
   });
 
+  test("a thread's text waits while its earlier voice note is in flight on another Core", async () => {
+    const tenantId = await store();
+    const a = await thread(tenantId, '11933330001');
+    const b = await thread(tenantId, '11933330002');
+    // older than anything else pending, so these are what the claims below take
+    const msg = async (threadId: string, kind: string, secs: number) =>
+      (
+        await sql<{ id: string }[]>`
+          insert into shopper_messages (tenant_id, thread_id, author, kind, body, wa_id, ingest,
+            created_at)
+          values (${tenantId}, ${threadId}, 'shopper', ${kind}, ${kind === 'text' ? 'oi' : null},
+            ${`WA-ord-${threadId}-${secs}`}, 'pending',
+            now() - interval '20 years' + make_interval(secs => ${secs}))
+          returning id`
+      )[0]!.id;
+    const voice = await msg(a, 'audio', 1);
+    const text = await msg(a, 'text', 2);
+    const other = await msg(b, 'text', 3);
+    expect((await claimPending(app, 1)).map((r) => r.id)).toEqual([voice]);
+    // another replica: A's text stays behind the voice note, B's text goes
+    expect((await claimPending(app, 1)).map((r) => r.id)).toEqual([other]);
+    await sql`update shopper_messages set ingest = 'done' where id in ${sql([voice, other])}`;
+    expect((await claimPending(app, 1)).map((r) => r.id)).toEqual([text]);
+    await sql`update shopper_messages set ingest = 'done' where id = ${text}`;
+  });
+
+  test('a store has one open Cliente oculto run, however many Cores queue one', async () => {
+    const tenantId = await store();
+    const queue = () => sql`
+      insert into vendedor_runs (tenant_id, trigger) values (${tenantId}, 'menu_change')
+      on conflict do nothing`;
+    await Promise.all([queue(), queue()]);
+    const open = () =>
+      sql`select id from vendedor_runs where tenant_id = ${tenantId} and status in ('queued', 'running')`;
+    expect(await open()).toHaveLength(1);
+    await sql`update vendedor_runs set status = 'done' where tenant_id = ${tenantId}`;
+    await queue();
+    expect(await open()).toHaveLength(1);
+  });
+
   test('takes a whole order: options, pickup, Pix, a summary card, a yes, one order', async () => {
     const tenantId = await store();
     const threadId = await thread(tenantId);
@@ -235,6 +275,35 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     expect(demand).toHaveLength(0);
   });
 
+  test('a quote once the shopper has a bag still answers: the read tool writes nothing', async () => {
+    const tenantId = await store();
+    await sql`update store_settings set delivery_enabled = true, distance_pricing = true,
+      delivery_base_fee_cents = 500, delivery_fee_per_km_cents = 100, delivery_max_km = 8,
+      latitude = -23.55, longitude = -46.63 where tenant_id = ${tenantId}`;
+    const threadId = await thread(tenantId, '11944442222');
+    const { rt } = runtime([
+      tools(call('get_product', { product: 'pizza-calabresa' })),
+      tools(
+        call('cart_edit', {
+          ops: [{ op: 'add', product: 'pizza-calabresa', options: [{ id: 'm1' }] }],
+        }),
+      ),
+      tools(call('quote_delivery', { use_pin: true })),
+      reply('Entrega: taxa {{entrega.taxa}}, prazo {{entrega.prazo}}.'),
+    ]);
+    await sql`insert into shopper_messages (tenant_id, thread_id, author, kind, meta, wa_id, ingest)
+      values (${tenantId}, ${threadId}, 'shopper', 'location', ${sql.json({ lat: -23.56, lng: -46.64 })},
+        ${`WA-loc-${Math.random().toString(36).slice(2, 8)}`}, 'pending')`;
+    await inbound(tenantId, threadId, 'uma calabresa com catupiry, quanto fica a entrega?');
+    await settle(rt, tenantId);
+    const [t] = await sql<
+      { cart_id: string | null }[]
+    >`select cart_id from shopper_threads where id = ${threadId}`;
+    expect(t!.cart_id).not.toBeNull();
+    const sent = (await outbox(tenantId)).map((m) => m.body);
+    expect(sent.at(-1)).toMatch(/^Entrega: taxa R\$ \d+,\d\d, prazo \d+–\d+ min\.$/);
+  });
+
   const shopperMessages = (threadId: string) =>
     sql<{ author: string; status: string; body: string | null }[]>`
       select author, status, body from shopper_messages where thread_id = ${threadId} order by created_at`;
@@ -323,6 +392,26 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
       { summary: unknown; stage: string }[]
     >`select summary, stage from shopper_threads where id = ${threadId}`;
     expect(t!.summary).toBeNull();
+  });
+
+  test('a checkout total off the card is refused with nothing written: a new card, a new yes', async () => {
+    const tenantId = await store();
+    const threadId = await thread(tenantId, '11933335555');
+    const { rt, adapter } = await toSummary(tenantId, threadId, [
+      tools(call('place_order')),
+      reply('O total mudou, vou mandar de novo.'),
+    ]);
+    // the card's hash still matches; only the total the shopper saw differs from the checkout's
+    await sql`update shopper_threads set summary = jsonb_set(summary, '{totalCents}', '1')
+      where id = ${threadId}`;
+    await inbound(tenantId, threadId, 'sim');
+    await settle(rt, tenantId);
+    expect((await sql`select 1 from orders where tenant_id = ${tenantId}`).length).toBe(0);
+    const [t] = await sql<
+      { summary: unknown }[]
+    >`select summary from shopper_threads where id = ${threadId}`;
+    expect(t!.summary).toBeNull();
+    expect(JSON.stringify(adapter.requests.at(-1)!.messages.at(-1))).toContain('Nada foi pedido');
   });
 
   test('a typed amount never reaches the shopper; the second try cites the ledger', async () => {
@@ -465,7 +554,7 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
   test('recovery: one nudge per thread per day, only once the shopper stopped', async () => {
     const tenantId = await store();
     await sql`update store_agent set settings = settings || ${sql.json({ recovery: { enabled: true, delayMin: 5 } })} where tenant_id = ${tenantId}`;
-    const threadId = await thread(tenantId, '11913571357');
+    const threadId = await thread(tenantId, '11963571357');
     const { rt } = runtime([
       tools(call('cart_edit', { ops: [{ op: 'add', product: 'pizza-calabresa', options: [] }] })),
       reply('Qual borda?'),
@@ -483,7 +572,7 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     await settle(rt, tenantId);
     await sql`update shopper_threads set last_in_at = now() - interval '10 minutes', stage = 'building' where id = ${threadId}`;
     // SAIR stops it, under the spelling without the 9th digit too
-    await sql`insert into store_wa_optouts (tenant_id, phone) values (${tenantId}, '1113571357')`;
+    await sql`insert into store_wa_optouts (tenant_id, phone) values (${tenantId}, '1163571357')`;
     expect(await recoveryPass(app, tenantId)).toBe(0);
     await sql`delete from store_wa_optouts where tenant_id = ${tenantId}`;
     expect(await recoveryPass(app, tenantId)).toBe(1);
@@ -794,5 +883,129 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
       author: 'agent',
       status: 'sent',
     });
+  });
+
+  test('a returning customer under the other 9th-digit spelling: history, addresses, no first-order coupon', async () => {
+    const tenantId = await store();
+    await sql`update store_settings set delivery_enabled = true where tenant_id = ${tenantId}`;
+    await sql`insert into delivery_zones (tenant_id, name, neighborhoods, fee_cents, eta_min_minutes, eta_max_minutes)
+      values (${tenantId}, 'Centro', ${sql.json(['Centro'])}, 500, 30, 50)`;
+    // the storefront stored the 11-digit form; WhatsApp knows the number by the 10-digit one
+    const stored = '11987651234';
+    const deliveries = [
+      { mode: 'delivery', street: 'Rua A', number: '1', neighborhood: 'Centro' },
+      // the same place as the card shows it, typed with a free-form line too
+      {
+        mode: 'delivery',
+        street: 'Rua A',
+        number: '1',
+        neighborhood: 'Centro',
+        address: 'Rua A 1',
+      },
+      { mode: 'delivery', street: 'Rua B', number: '2', neighborhood: 'Centro' },
+    ];
+    for (const [i, d] of deliveries.entries()) {
+      const [cart] = await sql<{ id: string }[]>`
+        insert into carts (tenant_id, session_hash) values (${tenantId}, ${`vd-9-${tenantId}-${i}`}) returning id`;
+      await sql`insert into orders (tenant_id, cart_id, number, customer, customer_phone, delivery, payment,
+          state, subtotal_cents, total_cents, placed_at)
+        values (${tenantId}, ${cart!.id}, ${i + 1}, ${sql.json({ name: 'Bia', phone: stored })}, ${stored},
+          ${sql.json(d)}, ${sql.json({ provider: 'sandbox', method: 'pix', status: 'paid' })},
+          'delivered', 4200, 4700, now() - ${`${i + 1} days`}::interval)`;
+    }
+    const threadId = await thread(tenantId, '1187651234');
+    const { rt, adapter } = runtime([
+      tools(call('get_product', { product: 'pizza-calabresa' })),
+      tools(
+        call('cart_edit', {
+          ops: [{ op: 'add', product: 'pizza-calabresa', options: [{ id: 'm1' }] }],
+        }),
+      ),
+      tools(
+        call('set_fulfillment', { mode: 'delivery', saved_address: 2 }),
+        call('offer_incentive', { reason: 'first_order' }),
+      ),
+      reply('Anotei!'),
+    ]);
+    await inbound(tenantId, threadId, 'uma calabresa com catupiry, entrega no de sempre');
+    await settle(rt, tenantId);
+    const last = JSON.stringify(adapter.requests.at(-1));
+    expect(last).toContain('CLIENTE: Bia · 3 pedido(s) aqui');
+    expect(last).toContain('1) Rua A, 1 · Centro · 2) Rua B, 2 · Centro');
+    expect(last).toContain('Não é o primeiro pedido deste cliente');
+    const [cart] = await sql<{ delivery: { street?: string } }[]>`
+      select c.delivery from carts c join shopper_threads t on t.cart_id = c.id where t.id = ${threadId}`;
+    expect(cart!.delivery.street).toBe('Rua B');
+  });
+
+  test('a muted conversation never pays for transcription', async () => {
+    const tenantId = await store();
+    let heard = 0;
+    const media = {
+      transcribe: async () => (heard++, { text: 'uma calabresa', confidence: 0.9 }),
+      speak: async () => null,
+    };
+    const voiceNote = async (threadId: string) => {
+      const [m] = await sql<{ id: string }[]>`
+        insert into shopper_messages (tenant_id, thread_id, author, kind, wa_id, ingest)
+        values (${tenantId}, ${threadId}, 'shopper', 'audio', ${`WA-a-${threadId}`}, 'pending') returning id`;
+      await sql`insert into shopper_media (tenant_id, message_id, mime, bytes)
+        values (${tenantId}, ${m!.id}, 'audio/ogg', ${Buffer.from([1, 2, 3])})`;
+      await ingestPass({ sql: app, media: media as never, gateway: null });
+    };
+    const muted = await thread(tenantId, '11922221111');
+    await sql`update shopper_threads set owner = 'muted' where id = ${muted}`;
+    await voiceNote(muted);
+    expect(heard).toBe(0);
+    await voiceNote(await thread(tenantId, '11922221112'));
+    expect(heard).toBe(1);
+  });
+
+  test('a summary card the thread no longer holds never goes out', async () => {
+    const tenantId = await store();
+    const threadId = await thread(tenantId, '11933334444');
+    const card = (id: string) => ({
+      kind: 'summary',
+      data: {
+        id,
+        lines: [{ text: '1x Pizza Calabresa', totalCents: 4200 }],
+        subtotalCents: 4200,
+        feeCents: 0,
+        discountCents: 0,
+        discountLabel: null,
+        adjustmentCents: 0,
+        totalCents: 4200,
+        mode: 'pickup',
+        address: null,
+        eta: null,
+        payment: 'Pix',
+        changeForCents: null,
+        scheduledFor: null,
+        unusual: [],
+        test: false,
+      },
+    });
+    const send = (step: string) =>
+      withTenant(app, tenantId, (tx) =>
+        vendedorTransport.send({ host: tx } as never, {
+          actorId: 'a',
+          tenantId,
+          subject: { kind: 'shopper_thread', id: threadId },
+          turnId: 't',
+          step,
+          text: 'Confere?',
+          cards: [card('old'), card('new')] as never,
+        }),
+      );
+    const cards = () =>
+      sql<{ data: { id: string } }[]>`select meta -> 'data' as data from shopper_messages
+        where thread_id = ${threadId} and meta ->> 'card' = 'summary' order by created_at`;
+
+    await send('s1');
+    expect(await cards()).toHaveLength(0);
+    await sql`update shopper_threads set summary = ${sql.json({ id: 'new', hash: 'h', totalCents: 4200, messageId: null, sentAt: null })}
+      where id = ${threadId}`;
+    await send('s2');
+    expect((await cards()).map((c) => c.data.id)).toEqual(['new']);
   });
 });

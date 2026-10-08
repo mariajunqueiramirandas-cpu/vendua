@@ -6,13 +6,16 @@ import { LeaseLost, wipeAuth, type Fence } from './auth-store.ts';
 import { enqueueTextTx, optInAck, optOutAck } from './messages.ts';
 import { NOTICE_KINDS } from './proactive.ts';
 import type { Inbound, Receipt, StateUpdate } from './session.ts';
-import { optKeyword, phoneVariants } from './text.ts';
+import { jidForPhone, optKeyword, phoneVariants } from './text.ts';
 
 // The gateway's writes. Every one is fenced on the store's lease (owner + epoch) and runs in the
 // store's own tenant transaction, so the side effects (admin stream, staff card) commit with it.
 
 /** a keyword only counts from someone this store texted lately (an order, a reminder, "abrimos") */
 const KEYWORD_WINDOW = '90 days';
+const CONTACT_KINDS = [...NOTICE_KINDS, 'chat'];
+/** store_wa_optouts.jid's check */
+const JID = /^[0-9:.]{1,40}@(s\.whatsapp\.net|lid)$/;
 const RETENTION = '30 days';
 const ACK_WINDOW = '10 minutes';
 
@@ -151,21 +154,38 @@ export async function finishWipe(
 
 /** A shopper flipping SAIR/VOLTAR gets one acknowledgement per window: the setting still
  *  changes every time, but the store's number doesn't answer each flip. */
-async function ackedLatelyTx(tx: Sql, tenantId: string, variants: string[]): Promise<boolean> {
+async function ackedLatelyTx(tx: Sql, tenantId: string, to: Addresses): Promise<boolean> {
   const rows = await tx`
     select 1 from store_wa_messages
-    where tenant_id = ${tenantId} and phone = any(${variants}) and kind in ('opt_in', 'opt_out')
+    where tenant_id = ${tenantId} and (phone = any(${to.phones}::text[]) or jid = any(${to.jids}::text[]))
+      and kind in ('opt_in', 'opt_out')
       and created_at > now() - ${ACK_WINDOW}::interval
     limit 1`;
   return rows.length > 0;
 }
 
-/** SAIR / VOLTAR from a shopper the store texted. Anything else is the store's conversation. */
+interface Addresses {
+  phones: string[];
+  jids: string[];
+}
+
+/** SAIR / VOLTAR from a shopper the store texted (a notice, or the Vendedor, whose nudges the
+ *  opt-out stops). Anything else is the store's conversation. */
 export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Promise<void> {
-  if (!m.phone) return;
   const kw = optKeyword(m.text);
   if (!kw) return;
-  const variants = phoneVariants(m.phone);
+  // a shopper whose WhatsApp hides their number is known by the chat's address
+  // (with a number, its jids too: an opt-out taken while it was hidden moves to the number's jid)
+  const jids = (xs: (string | null | undefined)[]) =>
+    [...new Set(xs)].filter((j): j is string => !!j && JID.test(j));
+  const to: Addresses = m.phone
+    ? {
+        phones: phoneVariants(m.phone),
+        jids: jids([...phoneVariants(m.phone).map(jidForPhone), m.jid]),
+      }
+    : { phones: [], jids: jids([m.jid]) };
+  if (!to.phones.length && !to.jids.length) return;
+  const addresses = [...to.phones, ...to.jids];
   await withTenant(sql, tenantId, async (tx) => {
     const store = (
       await tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`
@@ -173,33 +193,53 @@ export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Pro
     const name = store?.name ?? 'loja';
     if (kw === 'in') {
       // the opt-out itself is the proof: it outlives the message history it came from
-      const removed = await tx<{ phone: string }[]>`
-        delete from store_wa_optouts where tenant_id = ${tenantId} and phone = any(${variants})
-        returning phone`;
+      const removed = await tx<{ phone: string | null; jid: string | null }[]>`
+        delete from store_wa_optouts
+        where tenant_id = ${tenantId}
+          and (phone = any(${to.phones}::text[]) or jid = any(${to.jids}::text[]))
+        returning phone, jid`;
       if (!removed.length) return;
-      if (!(await ackedLatelyTx(tx, tenantId, variants)))
-        await enqueueTextTx(tx, tenantId, 'opt_in', removed[0]!.phone, optInAck(name));
+      if (!(await ackedLatelyTx(tx, tenantId, to)))
+        await enqueueTextTx(
+          tx,
+          tenantId,
+          'opt_in',
+          removed[0]!.phone,
+          optInAck(name),
+          removed[0]!.jid,
+        );
       await emitAdminTx(tx, tenantId, 'whatsapp', 'optout');
       return;
     }
+    // the queue keeps 30 days of rows; older contacts within the window are in store_wa_contacts
     const known = (
-      await tx<{ phone: string }[]>`
-        select phone from store_wa_messages
-        where tenant_id = ${tenantId} and phone = any(${variants})
-          and kind = any(${NOTICE_KINDS as string[]}::text[])
-          and created_at > now() - ${KEYWORD_WINDOW}::interval
-        order by created_at desc limit 1`
+      await tx<{ address: string }[]>`
+        select address from (
+          select coalesce(phone, jid) as address, created_at as at from store_wa_messages
+          where tenant_id = ${tenantId}
+            and (phone = any(${to.phones}::text[]) or jid = any(${to.jids}::text[]))
+            and kind = any(${CONTACT_KINDS}::text[])
+          union all
+          select address, last_at from store_wa_contacts
+          where tenant_id = ${tenantId} and address = any(${addresses}::text[])
+        ) c
+        where at > now() - ${KEYWORD_WINDOW}::interval
+        order by at desc limit 1`
     )[0];
     if (!known) return;
+    // the spelling the store texted (the contact may be on record by its jid)
+    const phone = m.phone ? (/^\d{10,11}$/.test(known.address) ? known.address : m.phone) : null;
+    const jid = phone ? null : to.jids[0]!;
     const added = await tx`
-      insert into store_wa_optouts (tenant_id, phone) values (${tenantId}, ${known.phone})
-      on conflict do nothing returning phone`;
+      insert into store_wa_optouts (tenant_id, phone, jid) values (${tenantId}, ${phone}, ${jid})
+      on conflict do nothing returning tenant_id`;
     if (!added.length) return;
     await tx`update store_wa_messages set status = 'skipped', error = 'opted_out', lease_until = null
-             where tenant_id = ${tenantId} and phone = any(${variants})
+             where tenant_id = ${tenantId}
+               and (phone = any(${to.phones}::text[]) or jid = any(${to.jids}::text[]))
                and kind = any(${NOTICE_KINDS as string[]}::text[]) and status = 'pending'`;
-    if (!(await ackedLatelyTx(tx, tenantId, variants)))
-      await enqueueTextTx(tx, tenantId, 'opt_out', known.phone, optOutAck(name));
+    if (!(await ackedLatelyTx(tx, tenantId, to)))
+      await enqueueTextTx(tx, tenantId, 'opt_out', phone, optOutAck(name), jid);
     await emitAdminTx(tx, tenantId, 'whatsapp', 'optout');
   });
 }
@@ -279,6 +319,18 @@ export async function housekeeping(sql: Sql): Promise<{ expired: number; deleted
     if (replies.length)
       await tx`update shopper_messages set status = 'failed'
                where id = any(${replies}::uuid[]) and status = 'queued'`;
+    // a SAIR counts for KEYWORD_WINDOW after the last contact, longer than the rows live
+    await tx`
+      insert into store_wa_contacts (tenant_id, address, last_at)
+      select m.tenant_id, a.address, max(m.created_at)
+      from store_wa_messages m
+      cross join lateral (values (m.phone), (m.jid)) a (address)
+      where m.created_at < now() - ${RETENTION}::interval
+        and m.kind = any(${CONTACT_KINDS}::text[]) and a.address is not null
+      group by m.tenant_id, a.address
+      on conflict (tenant_id, address)
+        do update set last_at = greatest(store_wa_contacts.last_at, excluded.last_at)`;
+    await tx`delete from store_wa_contacts where last_at < now() - ${KEYWORD_WINDOW}::interval`;
     const deleted = await tx`
       delete from store_wa_messages where created_at < now() - ${RETENTION}::interval`;
     await tx`delete from wa_gateways where seen_at < now() - interval '1 day'`;

@@ -3,10 +3,12 @@
 // a PR labelled `storefront:<slug>` may only touch `storefronts/<slug>/**`.
 // CI: `check-storefront-paths.mjs [--base <ref>]` — labels+diff from $GITHUB_EVENT_PATH.
 // Local: `check-storefront-paths.mjs --slug <slug> --files f1 f2 …`
+// It also holds storefronts/<slug>/package.json to <slug>: the release a store builds is
+// adopted by the tenant its package names, so a rename would take over another store's site.
 // Exit 0 = pass, 1 = violations/usage error.
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const LABEL_PREFIX = 'storefront:';
 // `platform` label: deliberate escape hatch for platform-wide changes — the label is the audit
@@ -129,5 +131,23 @@ if (violations.length > 0) {
   console.error(`storefront:${slug} PRs may only touch ${allowed}** — offending paths:`);
   for (const f of violations) console.error(`  ${f}`);
   process.exit(1);
+}
+// the same derivation as `vendua release` (packages/cli/src/fleet.ts)
+const pkgPath = `${allowed}package.json`;
+if (existsSync(pkgPath)) {
+  let pkg;
+  try {
+    pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  } catch {
+    fail(`${pkgPath} is not valid JSON`);
+  }
+  const name =
+    typeof pkg?.name === 'string' ? pkg.name.replace(/^@vendua\/(storefront-)?/, '') : null;
+  const tenant = pkg?.vendua?.tenant ?? name;
+  if (name !== slug || tenant !== slug)
+    fail(
+      `${pkgPath} must build for '${slug}': name '@vendua/storefront-${slug}' and no other vendua.tenant` +
+        ` (found name ${JSON.stringify(pkg?.name)}, tenant ${JSON.stringify(tenant)})`,
+    );
 }
 console.log(`storefront:${slug}: all ${files.length} changed file(s) under ${allowed}`);

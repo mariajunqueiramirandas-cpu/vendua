@@ -152,6 +152,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store-open notice (db)', () => 
     expect(await pending(s.id)).toEqual([]);
   });
 
+  test('two sweeps at once share the ceiling, not each fill it', async () => {
+    const s = await store();
+    await sql`
+      insert into store_wa_messages (tenant_id, kind, phone, body, status, sent_at)
+      select ${s.id}, 'store_open', ${phone(0)}, 'x', 'sent', now() from generate_series(1, 58)`;
+    for (const k of [1, 2, 3, 4]) await subscribe(s.host, `2198${stamp}${k}`);
+    const woken = await Promise.all([wake(s.id, '12:00'), wake(s.id, '12:00')]);
+    expect(woken[0]! + woken[1]!).toBe(2);
+    expect(await notices(s.id)).toHaveLength(60);
+  });
+
   test('a Vendedor store: one message, and its outbox pass sends no second', async () => {
     const s = await store({ vendedor: true });
     await subscribe(s.host, phone(9));

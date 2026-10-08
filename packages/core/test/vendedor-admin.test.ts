@@ -4,6 +4,7 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { createSession } from '../src/admin/auth.ts';
 import { migrate } from '../src/platform/db.ts';
+import { configureVendedor, vendedorDeps } from '../src/vendedor/deps.ts';
 
 // The Vendedor's admin API (ADR 0031): roles, bounded writes, stable 4xx on bad ids, and each
 // action's effect on the floor and the mailbox.
@@ -270,5 +271,28 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('vendedor admin API (db)', () =>
     expect(
       (await manager('DELETE', `/customers/${phone}/vendedor/facts/preferencia.massa`)).status,
     ).toBe(404);
+  });
+
+  test('suggested replies: only on a plan with the Vendedor, and a few a minute per person', async () => {
+    const before = vendedorDeps().gateway;
+    configureVendedor({
+      gateway: { generate: async () => ({ text: '{"replies":["Já te respondo!"]}' }) } as never,
+    });
+    try {
+      const path = `/vendedor/threads/${threadId}/suggestions`;
+      const [t] = await sql<{ plan: string }[]>`select plan from tenants where id = ${tenantId}`;
+      await sql`update tenants set plan = 'mirim' where id = ${tenantId}`;
+      expect((await attendant('GET', path)).status).toBe(403);
+      await sql`update tenants set plan = ${t!.plan} where id = ${tenantId}`;
+      const first = await attendant('GET', path);
+      expect(first).toMatchObject({ status: 200, body: { replies: ['Já te respondo!'] } });
+      let status = 200;
+      for (let i = 0; i < 25 && status === 200; i++) status = (await attendant('GET', path)).status;
+      expect(status).toBe(429);
+      // per person: the manager still gets theirs
+      expect((await manager('GET', path)).status).toBe(200);
+    } finally {
+      configureVendedor({ gateway: before });
+    }
   });
 });

@@ -223,6 +223,20 @@ export function offlinePayment(
   };
 }
 
+/** A coupon that covered the whole order: nothing to charge (MP refuses a R$ 0 payment, and a
+ *  static Pix with no amount would ask the shopper to type one). */
+export function freePayment(method: string, now: Date) {
+  return {
+    provider: 'sandbox',
+    method,
+    status: 'paid',
+    online: false,
+    instructions: 'Nada a pagar: o desconto cobriu o pedido.',
+    pix: null,
+    paidAt: now.toISOString(),
+  };
+}
+
 export function onlinePayment(
   provider: ProviderName,
   method: 'pix' | 'card_online',

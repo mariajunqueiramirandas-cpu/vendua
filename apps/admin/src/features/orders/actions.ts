@@ -10,6 +10,7 @@ import { PAY_LABEL, payError } from '../../ui/PaymentChip.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { holdAction, transitionOptions } from './transition.ts';
+import { useStoreQuery } from '../store/StatusPill.tsx';
 
 type OrderData = { customer: unknown; order: Order };
 
@@ -26,6 +27,8 @@ export function useTransition() {
  */
 export function useDelay(storeName: string) {
   const qc = useQueryClient();
+  // the times the shopper is told are the store's clock, not this device's
+  const tz = useStoreQuery().data?.hours.timezone;
   const swap = (o: Order) => {
     qc.setQueryData<Board>(qk.board, (b) =>
       b ? { ...b, orders: b.orders.map((x) => (x.id === o.id ? o : x)) } : b,
@@ -52,7 +55,7 @@ export function useDelay(storeName: string) {
     const idem = crypto.randomUUID();
     holdAction(
       `delay-${order.id}`,
-      `#${order.number}: novo horário ${clock(guess.delivery.promisedTo!)}`,
+      `#${order.number}: novo horário ${clock(guess.delivery.promisedTo!, tz)}`,
       (keepalive) => {
         const sent = api.delay(order.id, minutes, idem, { keepalive });
         if (keepalive) return void sent.catch(() => undefined);
@@ -65,7 +68,8 @@ export function useDelay(storeName: string) {
                 ms: 8000,
                 action: {
                   label: 'avisar',
-                  run: () => window.open(delayWhatsappUrl(o, storeName), '_blank', 'noreferrer'),
+                  run: () =>
+                    window.open(delayWhatsappUrl(o, storeName, tz), '_blank', 'noreferrer'),
                 },
               });
           })
@@ -81,14 +85,14 @@ export function useDelay(storeName: string) {
   };
 }
 
-function delayWhatsappUrl(o: Order, storeName: string) {
+function delayWhatsappUrl(o: Order, storeName: string, tz?: string) {
   const d = o.delivery;
   const when =
     d.mode !== 'delivery'
-      ? `fica pronto por volta das ${clock(d.promisedTo!)}`
+      ? `fica pronto por volta das ${clock(d.promisedTo!, tz)}`
       : d.promisedFrom && d.promisedFrom !== d.promisedTo
-        ? `chega entre ${clock(d.promisedFrom)} e ${clock(d.promisedTo!)}`
-        : `chega por volta das ${clock(d.promisedTo!)}`;
+        ? `chega entre ${clock(d.promisedFrom, tz)} e ${clock(d.promisedTo!, tz)}`
+        : `chega por volta das ${clock(d.promisedTo!, tz)}`;
   return (
     whatsappUrl(
       o.customer.phone,
@@ -276,7 +280,7 @@ const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 /** 80 mm kitchen ticket: big number, items, notes; the browser's print dialog. */
-export function printTicket(o: Order, storeName: string) {
+export function printTicket(o: Order, storeName: string, tz?: string) {
   const items = o.items
     .map(
       (i) =>
@@ -298,7 +302,7 @@ h1{font-size:34px;margin:0 0 4px}.m{font-size:13px}.it{padding:6px 0;border-bott
 <div class="m">${esc(o.customer.name)}${o.customer.phone ? ` · ${esc(phone(o.customer.phone))}` : ''}</div>
 <div class="m">${o.delivery.mode === 'delivery' ? `ENTREGA: ${esc(o.delivery.address ?? '')} ${esc(o.delivery.neighborhood ?? '')}` : o.delivery.mode === 'dine_in' ? (o.delivery.table ? esc(tableName(o.delivery.table).toUpperCase()) : 'CONSUMO NO LOCAL') : 'RETIRADA'}</div>
 ${o.scheduledFor ? `<div class="m">ENCOMENDA PARA ${esc(o.scheduledFor)}</div>` : ''}
-<div class="m">${new Date(o.placedAt).toLocaleString('pt-BR')}</div>
+<div class="m">${new Date(o.placedAt).toLocaleString('pt-BR', { timeZone: tz })}</div>
 <div style="margin-top:8px">${items}</div>
 ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
 <div class="t">${esc(money(o.totalCents))} · ${esc(PAY_LABEL[o.payment.method] ?? o.payment.method)}${
@@ -320,6 +324,7 @@ ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
 export function usePrintOrder(storeName: string) {
   const qc = useQueryClient();
   const open = useFeature('printing');
+  const tz = useStoreQuery().data?.hours.timezone;
   const { data } = useQuery({
     queryKey: qk.printers,
     queryFn: api.printers,
@@ -343,7 +348,7 @@ export function usePrintOrder(storeName: string) {
     onError: (e) => toast.error(messageOf(e)),
   });
   return {
-    print: (o: Order) => (viaPrinter ? send.mutate({ order: o }) : printTicket(o, storeName)),
+    print: (o: Order) => (viaPrinter ? send.mutate({ order: o }) : printTicket(o, storeName, tz)),
     /** one printer the merchant picked, whatever prints automatically */
     printTo: (o: Order, printerId: string) => send.mutate({ order: o, printerId }),
     /** where a ticket can go now; a choice is offered once there's more than one */

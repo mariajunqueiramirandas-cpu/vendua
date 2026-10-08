@@ -725,9 +725,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('platform whatsapp: gateway (db)
   test('cutover: copies the socket login sealed, refuses a second time without --force', async () => {
     const creds = { registered: true, noiseKey: { private: Buffer.from([9, 8, 7]) } };
     const asJsonb = (v: unknown) => JSON.parse(JSON.stringify(v, BufferJSON.replacer));
-    await sql`insert into wa_auth_state (account_id, category, name, data) values
+    const seed = () => sql`insert into wa_auth_state (account_id, category, name, data) values
       (${account}, 'creds', 'main', ${sql.json(asJsonb(creds))}),
       (${account}, 'session', '5511987654321.0', ${sql.json(asJsonb({ k: Buffer.from('s') }))})`;
+    await seed();
     const opts = { accountId: account, session: S2, codec: BufferJSON, sealSecret: 's' };
     expect((await cutover(appSql, { ...opts, force: false })).copied).toBe(2);
     const store = platformAuthStore(appSql, S2, { owner: 'none', epoch: 0 }, BufferJSON, 's');
@@ -740,6 +741,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('platform whatsapp: gateway (db)
     )[0]!;
     expect(r.wanted).toBe(true);
     expect(r.state).toBe('connecting');
+    // the plaintext login is gone with the copy
+    expect((await sql`select 1 from wa_auth_state where account_id = ${account}`).length).toBe(0);
+    await expect(cutover(appSql, { ...opts, force: false })).rejects.toThrow(/no login/);
+    await seed();
     await expect(cutover(appSql, { ...opts, force: false })).rejects.toThrow(/--force/);
     expect((await cutover(appSql, { ...opts, force: true })).copied).toBe(2);
   });

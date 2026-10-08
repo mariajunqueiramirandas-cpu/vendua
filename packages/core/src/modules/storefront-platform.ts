@@ -12,10 +12,12 @@ import {
   type TemplateMigration,
   type TemplateSet,
 } from '@vendua/templates';
+import { createHash } from 'node:crypto';
 import { emitAdminTx } from '../admin/live.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
-import { HttpError } from '../platform/http.ts';
+import { HttpError, UUID_RE } from '../platform/http.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
+import { ipRateKey } from './billing/signup.ts';
 import { optedOutTx } from '../store-whatsapp/messages.ts';
 import { phoneVariants } from '../store-whatsapp/text.ts';
 import {
@@ -121,7 +123,10 @@ export async function rollbackTemplateTx(
   `;
   if (!rows[0] || target >= cur.version)
     throw new HttpError(404, 'TEMPLATE_NOT_FOUND', `no earlier version ${target} for ${page}`);
-  const saved = await saveTemplateTx(tx, tenantId, page, rows[0].template, `rollback:${target}`);
+  // saveTemplateTx takes the page lock after this read: an edit in between is a conflict
+  const saved = await saveTemplateTx(tx, tenantId, page, rows[0].template, `rollback:${target}`, {
+    expectVersion: cur.version,
+  });
   return { ...saved, restored: target };
 }
 
@@ -360,11 +365,12 @@ export async function runTemplateMigration(
 }
 
 /** Rolls back every page a migration applied for the given stores — only where
- *  the migration's version is still current (a later edit wins over the undo). */
+ *  the migration's version is still current (a later edit wins over the undo). A dry run
+ *  reports what it would do and writes nothing. */
 export async function rollbackTemplateMigration(
   sql: Sql,
   migrationId: string,
-  opts: { ring?: Ring; tenants?: string[] },
+  opts: { dry?: boolean; ring?: Ring; tenants?: string[] },
 ): Promise<MigrationReportRow[]> {
   const tenants = await sql<{ id: string; slug: string }[]>`
     select id, slug from tenants where status = 'active' order by slug
@@ -381,6 +387,8 @@ export async function rollbackTemplateMigration(
         order by page, created_at desc
       `;
       for (const r of runs) {
+        // locked before the check, as a migration does, so an edit can't land between the two
+        if (!opts.dry) await tx`select pg_advisory_xact_lock(hashtext(${`tpl:${t.id}:${r.page}`}))`;
         const cur = await currentTemplateTx(tx, t.id, r.page as PageId);
         if (!cur || cur.version !== r.to_version) {
           report.push({
@@ -389,6 +397,17 @@ export async function rollbackTemplateMigration(
             page: r.page,
             status: 'skipped',
             reason: 'template changed after the migration — leaving it',
+          });
+          continue;
+        }
+        if (opts.dry) {
+          report.push({
+            tenant: t.slug,
+            ring: ops.ring,
+            page: r.page,
+            status: 'applied',
+            reason: `would roll back to v${r.from_version}`,
+            fromVersion: r.to_version,
           });
           continue;
         }
@@ -415,11 +434,16 @@ export async function rollbackTemplateMigration(
 // ── notify-me ────────────────────────────────────────────────────────────────
 
 const STORE_OPEN_PER_PHONE = '7 days';
+/** new "store open" subscriptions a day, per store and per client network: each one is a message
+ *  the store's own WhatsApp will send to a number anyone could have typed */
+export const STORE_OPEN_SUBS_PER_DAY = 50;
+export const STORE_OPEN_SUBS_PER_IP_DAY = 5;
 
 export async function subscribeNotifyTx(
   tx: Sql,
   tenantId: string,
   body: Record<string, unknown>,
+  o: { ip?: string } = {},
 ): Promise<{ status: number; body: { subscribed: true } }> {
   const subject = body.subject;
   if (subject !== 'store' && subject !== 'product')
@@ -431,16 +455,30 @@ export async function subscribeNotifyTx(
     throw new HttpError(400, 'INVALID_NOTIFY', 'phone must be a Brazilian number with DDD');
   let productId: string | null = null;
   if (subject === 'product') {
-    if (typeof body.productId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.productId))
+    if (typeof body.productId !== 'string' || !UUID_RE.test(body.productId))
       throw new HttpError(400, 'INVALID_NOTIFY', 'productId required for product subscriptions');
     const hit =
       await tx`select 1 from products where tenant_id = ${tenantId} and id = ${body.productId}`;
     if (!hit[0]) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
     productId = body.productId;
   }
-  // Anyone can type any number: one "store open" message per number a week, and the same answer
-  // whether or not this request will ever reach it.
+  // Anyone can type any number: a ceiling per store and per client network a day, checked before
+  // anything about the number; then one "store open" message per number a week, with the same
+  // answer whether or not this request will ever reach it.
+  let ipHash: string | null = null;
   if (subject === 'store') {
+    if (o.ip && o.ip !== 'local')
+      ipHash = createHash('sha256')
+        .update(`vendua.notify.ip|${ipRateKey(o.ip)}`)
+        .digest('hex');
+    // parallel requests (or replicas) can't each read the count under the ceiling
+    await tx`select pg_advisory_xact_lock(hashtextextended(${`notify-store:${tenantId}`}, 0))`;
+    const [today] = await tx<{ total: number; mine: number }[]>`
+      select count(*)::int as total, count(*) filter (where ip_hash = ${ipHash})::int as mine
+      from notify_requests
+      where tenant_id = ${tenantId} and subject = 'store' and created_at > now() - interval '1 day'`;
+    if (today!.total >= STORE_OPEN_SUBS_PER_DAY || today!.mine >= STORE_OPEN_SUBS_PER_IP_DAY)
+      throw new HttpError(429, 'NOTIFY_LIMIT', 'too many sign-ups for this notice today');
     const [capped] = await tx`
       select 1 from notify_requests
       where tenant_id = ${tenantId} and subject = 'store' and contact = any(${phoneVariants(contact)})
@@ -449,8 +487,8 @@ export async function subscribeNotifyTx(
     if (capped) return { status: 201, body: { subscribed: true } };
   }
   await tx`
-    insert into notify_requests (tenant_id, subject, product_id, channel, contact)
-    values (${tenantId}, ${subject}, ${productId}, 'whatsapp', ${contact})
+    insert into notify_requests (tenant_id, subject, product_id, channel, contact, ip_hash)
+    values (${tenantId}, ${subject}, ${productId}, 'whatsapp', ${contact}, ${ipHash})
     on conflict do nothing
   `;
   await emitAdminTx(tx, tenantId, 'marketing');

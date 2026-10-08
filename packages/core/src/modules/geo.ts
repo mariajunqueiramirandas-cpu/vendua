@@ -323,6 +323,11 @@ const CEP_CACHE_MAX = 2000;
 const cepCache = new Map<string, { at: number; value: CepResult | null }>();
 
 /** ViaCEP with a bounded LRU; `null` = unknown CEP. Throws only on transport failure. */
+/** ViaCEP is free and shared by every store: the process asks it at most this many a minute
+ *  (cache hits are free) */
+export const CEP_PER_MIN = 300;
+let cepWindow = { at: 0, n: 0 };
+
 export const viaCep: CepLookup = async (cep) => {
   const hit = cepCache.get(cep);
   if (hit && Date.now() - hit.at < 7 * 86_400_000) {
@@ -330,6 +335,8 @@ export const viaCep: CepLookup = async (cep) => {
     cepCache.set(cep, hit);
     return hit.value;
   }
+  if (Date.now() - cepWindow.at >= 60_000) cepWindow = { at: Date.now(), n: 0 };
+  if (++cepWindow.n > CEP_PER_MIN) throw new Error('viacep budget spent');
   const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`, {
     signal: AbortSignal.timeout(3500),
   });

@@ -10,7 +10,12 @@ import { enqueueOrderPrintTx } from './printing/jobs.ts';
 import { normalizePhone } from './customer.ts';
 import { effectiveFee, routeMatches, validCoords, type RouteQuote } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
-import { offlinePayment, onlineOffer, onlinePayment } from './payments/store-payments.ts';
+import {
+  freePayment,
+  offlinePayment,
+  onlineOffer,
+  onlinePayment,
+} from './payments/store-payments.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 import { validateSchedule } from './preorder.ts';
 import { planHas } from './billing/plans.ts';
@@ -21,6 +26,8 @@ import { deriveStatus, type StoreSettingsRow } from './store.ts';
 
 /** R$ 10.000: no shopper pays a delivery with more than that in cash */
 export const MAX_CHANGE_CENTS = 1_000_000;
+/** orders' money columns are int4: a cart of many priciest lines must stop at a 422 first */
+export const MAX_ORDER_CENTS = 1_000_000_000;
 
 /** QR orders a table may have waiting for the staff at once (ADR 0036) */
 export const MAX_PENDING_AT_TABLE = 5;
@@ -82,7 +89,20 @@ export async function placeOrderTx(
   // Re-validate modifier ids / kit picks against current defs — nothing retired slips through
   // underpriced. The order number rides along: numbering relies on the advisory lock above (else
   // two checkouts read the same max), and only this function inserts orders.
-  const [found, number] = await Promise.all([
+  // Every product the order touches, kit picks included, locked first in one id-ordered pass
+  // (sent ahead of the read below): locking the cart's products here and the picks later in
+  // drawStock let a cancel or a stock edit, each locking in id order, deadlock with a checkout.
+  const touched = [
+    ...new Set(
+      cart.items.flatMap((i) => [i.productId, ...i.comboSelections.map((c) => c.productId)]),
+    ),
+  ];
+  const lockAll = tx`
+    select 1 from products where tenant_id = ${tenantId} and id = any(${touched}::uuid[])
+    order by id for update
+  `.execute();
+  const [, found, number] = await Promise.all([
+    lockAll,
     getProductsById(
       tx,
       tenantId,
@@ -197,7 +217,25 @@ export async function placeOrderTx(
     }
   }
 
-  await drawStock(
+  // from the locked settings row, before the payment is built: Pix/MP charge the adjusted total
+  const paymentAdjustment = Math.max(
+    paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, body.payment.method)),
+    -(subtotal + deliveryFee - discount),
+  );
+  const total = subtotal + deliveryFee - discount + paymentAdjustment;
+  if (subtotal > MAX_ORDER_CENTS || total > MAX_ORDER_CENTS)
+    throw new HttpError(422, 'ORDER_TOO_LARGE', 'this order is larger than a store can take', {
+      maxCents: MAX_ORDER_CENTS,
+    });
+  // a fee, coupon or payment adjustment that moved since the shopper's screen: nothing is written
+  // yet, so the caller's committed refusal carries no side effect
+  if (body.expectedTotalCents != null && body.expectedTotalCents !== total)
+    throw new HttpError(409, 'PRICES_CHANGED', 'the total changed — review the order', {
+      totalCents: total,
+      expectedTotalCents: body.expectedTotalCents,
+    });
+
+  const stockDrawn = await drawStock(
     tx,
     tenantId,
     stockDemand(
@@ -206,12 +244,6 @@ export async function placeOrderTx(
   );
 
   const orderId = crypto.randomUUID();
-  // from the locked settings row, before the payment is built: Pix/MP charge the adjusted total
-  const paymentAdjustment = Math.max(
-    paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, body.payment.method)),
-    -(subtotal + deliveryFee - discount),
-  );
-  const total = subtotal + deliveryFee - discount + paymentAdjustment;
   const changeFor = body.payment.changeForCents ?? null;
   if (changeFor !== null) {
     if (
@@ -236,9 +268,11 @@ export async function placeOrderTx(
   const payment = {
     ...(method === 'tab'
       ? { provider: 'pdv', method: 'tab', status: 'pending', online: false }
-      : offer.online && offer.provider && (method === 'pix' || method === 'card_online')
-        ? onlinePayment(offer.provider, method, total)
-        : offlinePayment(settings, method, total, number)),
+      : total === 0
+        ? freePayment(method, now)
+        : offer.online && offer.provider && (method === 'pix' || method === 'card_online')
+          ? onlinePayment(offer.provider, method, total)
+          : offlinePayment(settings, method, total, number)),
     ...(changeFor !== null ? { changeForCents: changeFor } : {}),
   };
   const source = atTable ? 'table_qr' : (opts.source ?? 'storefront');
@@ -341,11 +375,13 @@ export async function placeOrderTx(
   await tx`
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
-                        total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id)
+                        total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id,
+                        stock_drawn)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
-            ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId})
+            ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId},
+            ${tx.json(stockDrawn)})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   const [store] = await Promise.all([
@@ -355,7 +391,7 @@ export async function placeOrderTx(
       select name,
         (select count(*) from (select 1 from orders where tenant_id = ${tenantId} limit 2) o)::int as orders,
         exists (select 1 from store_whatsapp where tenant_id = ${tenantId} and wanted) as whatsapp,
-        exists (select 1 from printers where tenant_id = ${tenantId} and auto and present) as printers
+        exists (select 1 from printers where tenant_id = ${tenantId} and auto) as printers
       from tenants where id = ${tenantId}
     `.then((rows) => rows[0]),
     ...cart.items.map(

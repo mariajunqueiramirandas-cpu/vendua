@@ -21,7 +21,12 @@ export const PRINT_CHANNEL = 'vendua_print';
 export const ONLINE_WINDOW_S = 70;
 /** a job handed to an agent that hasn't answered by now is handed over again */
 const RESEND_AFTER_S = 60;
-const MAX_ATTEMPTS = 5;
+/** a job is given up only when both hold: handed over this many times (an agent that was offline
+ *  gets it again on reconnect, it isn't failed for the time it was away) and unanswered this long
+ *  since it first reached the agent (more than its own retries and result reports take: it may sit
+ *  behind a slow printer, resends alone don't fail it) */
+const GIVE_UP_ATTEMPTS = 5;
+const GIVE_UP_AFTER_S = 15 * 60;
 const BATCH = 20;
 
 export type PrinterKind = 'spooler' | 'tcp' | 'serial' | 'usb' | 'bluetooth';
@@ -176,7 +181,9 @@ export async function queueJobsTx(
 /**
  * Queue this order's ticket on every automatic printer: on arrival when the store prints then,
  * and on accept always — an order that arrived before the store switched to "assim que chega"
- * still prints once, and one already printed on arrival is skipped by the unique index.
+ * still prints once, and one already printed on arrival is skipped by the unique index. A printer
+ * the agent's last report missed still gets it: a report can miss one that is there (a scan not
+ * done yet, a USB permission), and a ticket that never prints shows in printTrouble.
  * Call inside the tenant transaction that commits the step, after any Promise.all batch: it runs
  * in a savepoint and never throws, so a printing bug can't block an order.
  */
@@ -193,7 +200,7 @@ export async function enqueueOrderPrintTx(
       const printers = await sp<{ id: string }[]>`
         select p.id from printers p
         left join store_settings s on s.tenant_id = p.tenant_id
-        where p.tenant_id = ${tenantId} and p.auto and p.present
+        where p.tenant_id = ${tenantId} and p.auto
           and (${trigger} = 'confirmed' or coalesce(s.print_on, 'confirmed') = 'placed')`;
       if (printers.length === 0 || !(await planHas(sp, tenantId, 'printing'))) return 0;
       const ids = await queueJobsTx(
@@ -245,8 +252,12 @@ export async function claimDueJobsTx(
     update print_jobs set status = 'failed', finished_at = now(),
            error = 'O aparelho não confirmou a impressão'
     where tenant_id = ${tenantId} and device_id = ${deviceId} and status = 'sent'
-      and attempts >= ${MAX_ATTEMPTS}
-      and sent_at < now() - make_interval(secs => ${RESEND_AFTER_S})`;
+      and attempts >= ${GIVE_UP_ATTEMPTS}
+      and coalesce(first_sent_at, sent_at) < now() - make_interval(secs => ${GIVE_UP_AFTER_S})
+      and sent_at < now() - make_interval(secs => ${RESEND_AFTER_S})
+      -- a device that was away gets each one once more before its silence counts
+      and sent_at >= coalesce((select d.connected_at from print_devices d
+                               where d.tenant_id = ${tenantId} and d.id = ${deviceId}), '-infinity')`;
   const due = await tx<
     {
       id: string;
@@ -309,7 +320,8 @@ export async function claimDueJobsTx(
   }
   if (out.length > 0)
     await tx`
-      update print_jobs set status = 'sent', attempts = attempts + 1, sent_at = now()
+      update print_jobs set status = 'sent', attempts = attempts + 1, sent_at = now(),
+             first_sent_at = coalesce(first_sent_at, now())
       where tenant_id = ${tenantId} and id = any(${out.map((j) => j.id)}::uuid[])`;
   for (const b of broken)
     await tx`

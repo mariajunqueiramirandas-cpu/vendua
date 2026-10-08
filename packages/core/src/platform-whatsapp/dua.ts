@@ -96,14 +96,16 @@ function nationalOf(phone: string | null): string | null {
   return /^\d{10,11}$/.test(n) ? n : null;
 }
 
-/** The stores this number signs in to, trying the 9th-digit forms (the one cross-tenant read). */
+/** The stores this number signs in to, trying the 9th-digit forms (the one cross-tenant read).
+ *  Only memberships whose person proved the phone (a WhatsApp code sign-in): an owner typing
+ *  someone's number into Equipe must not make that person's messages the store's. */
 export async function membershipsOf(sql: Sql, phone: string | null): Promise<Membership[]> {
   const national = nationalOf(phone);
   if (!national) return [];
   const out: Membership[] = [];
   for (const v of phoneVariants(national)) {
     const rows = await sql<Omit<Membership, 'phone'>[]>`
-      select tenant_id, name, user_id, role from merchant_memberships_for_phone(${v})`;
+      select tenant_id, name, user_id, role from merchant_memberships_for_proven_phone(${v})`;
     for (const r of rows)
       if (!out.some((m) => m.user_id === r.user_id)) out.push({ ...r, phone: v });
   }

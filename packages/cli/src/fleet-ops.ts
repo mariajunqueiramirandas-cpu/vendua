@@ -39,6 +39,8 @@ export interface StoreDetail extends Storefront {
 
 /** The most recent deployments Core sends with a store; a rollback target older than that is not seen. */
 const DEPLOYMENT_WINDOW = 30;
+/** …and the newest releases of its bundle */
+const RELEASE_WINDOW = 20;
 
 export interface DryRun {
   tenant: string;
@@ -94,7 +96,8 @@ export function planPromote(d: StoreDetail, release: string, force: boolean): Dr
   return plan;
 }
 
-/** Mirrors Core's rollback (rollbackTx): the newest earlier release that was ever live. */
+/** Mirrors Core's rollback (rollbackTx): the newest earlier release of the store's bundle that
+ *  was ever live. */
 export function planRollback(d: StoreDetail): DryRun {
   const plan: DryRun = {
     tenant: d.slug,
@@ -110,12 +113,17 @@ export function planRollback(d: StoreDetail): DryRun {
     plan.refused = 'NOTHING_TO_ROLL_BACK: esta loja não tem versão no ar';
     return plan;
   }
-  plan.to =
-    d.deployments.find((x) => x.status === 'live' && x.release !== plan.from)?.release ?? null;
+  const onBundle = new Set(d.releases.map((r) => r.id));
+  const earlier = d.deployments.filter((x) => x.status === 'live' && x.release !== plan.from);
+  plan.to = earlier.find((x) => onBundle.has(x.release))?.release ?? null;
   if (!plan.to) {
-    plan.refused = 'NO_PREVIOUS_RELEASE: nenhuma versão anterior esteve no ar aqui';
+    plan.refused = `NO_PREVIOUS_RELEASE: nenhuma versão anterior do pacote ${d.bundle} esteve no ar aqui`;
     if (d.deployments.length >= DEPLOYMENT_WINDOW)
       plan.notes.push(`só as últimas ${DEPLOYMENT_WINDOW} implantações foram conferidas`);
+    if (earlier.length && d.releases.length >= RELEASE_WINDOW)
+      plan.notes.push(
+        `só as ${RELEASE_WINDOW} versões mais recentes do pacote ${d.bundle} foram conferidas`,
+      );
   }
   return plan;
 }

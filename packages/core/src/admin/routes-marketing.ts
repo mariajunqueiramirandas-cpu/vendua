@@ -49,7 +49,9 @@ function loyaltyView(p: StoredLoyalty | null) {
 function date(v: unknown, name: string): Date | null {
   if (v === undefined || v === null || v === '') return null;
   const d = new Date(text(v, name, 40));
-  if (Number.isNaN(d.getTime()))
+  // postgres.js sends years past 9999 as +010000, which Postgres rejects
+  const y = d.getUTCFullYear();
+  if (Number.isNaN(d.getTime()) || y < 2000 || y > 9999)
     throw new HttpError(422, 'BAD_REQUEST', `${name} must be a date`, { field: name });
   return d;
 }
@@ -283,6 +285,15 @@ export function mountMarketing(d: AdminDeps) {
         throw new HttpError(422, 'BAD_REQUEST', 'the card needs 2–50 stamps and a reward', {
           field: 'program',
         });
+      // the reward is minted as a coupon: the same bounds, checked now rather than at a delivery
+      if (program && program.reward.kind !== 'free_delivery') {
+        const v = program.reward.value;
+        const [lo, hi] = program.reward.kind === 'percent' ? [1, 100] : [1, 10_000_000];
+        if (!Number.isInteger(v) || v < lo || v > hi)
+          throw new HttpError(422, 'BAD_REQUEST', `the reward must be a whole ${lo}–${hi}`, {
+            field: 'program.reward.value',
+          });
+      }
       // switching it off is always allowed: a plan without loyalty only blocks turning it on
       if (program) await requireFeature(tx, t.id, 'loyalty');
       await tx`update store_settings set loyalty = ${program ? tx.json(program as never) : null} where tenant_id = ${t.id}`;

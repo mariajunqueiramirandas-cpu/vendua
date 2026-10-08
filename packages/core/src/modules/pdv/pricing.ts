@@ -179,9 +179,10 @@ export function parsePayment(v: unknown, field = 'payment'): PdvPaymentIn {
   return { method: method as PdvMethod, amountCents: amount as number, tenderedCents: tendered };
 }
 
-export function parsePayments(v: unknown): PdvPaymentIn[] {
-  if (!Array.isArray(v) || v.length === 0 || v.length > MAX_PAYMENTS)
-    throw bad('INVALID_PAYMENT', `payments must hold 1–${MAX_PAYMENTS} entries`, {
+/** `min` 0: a sale whose total comes to R$ 0 (a courtesy) takes no payment at all. */
+export function parsePayments(v: unknown, min = 1): PdvPaymentIn[] {
+  if (!Array.isArray(v) || v.length < min || v.length > MAX_PAYMENTS)
+    throw bad('INVALID_PAYMENT', `payments must hold ${min}–${MAX_PAYMENTS} entries`, {
       field: 'payments',
     });
   return v.map((p, i) => parsePayment(p, `payments[${i}]`));

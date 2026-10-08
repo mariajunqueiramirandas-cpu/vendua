@@ -1,6 +1,8 @@
 import { emitAdminTx } from '../../admin/live.ts';
 import type { Sql } from '../../platform/db.ts';
+import { HttpError } from '../../platform/http.ts';
 import { transitionOrder, type OrderState } from '../orders.ts';
+import { MAX_ORDER_CENTS } from '../place-order.ts';
 import { enqueueOrderPrintTx } from '../printing/jobs.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { drawStock, stockDemand } from '../stock.ts';
@@ -45,7 +47,11 @@ export async function insertPdvOrderTx(
   tenantId: string,
   o: PdvOrderIn,
 ): Promise<{ id: string; number: number }> {
-  await drawStock(
+  if (o.subtotalCents > MAX_ORDER_CENTS || o.totalCents > MAX_ORDER_CENTS)
+    throw new HttpError(422, 'ORDER_TOO_LARGE', 'this sale is larger than a store can take', {
+      maxCents: MAX_ORDER_CENTS,
+    });
+  const stockDrawn = await drawStock(
     tx,
     tenantId,
     stockDemand(o.lines.map((l) => ({ productId: l.productId, qty: l.qty, combo: l.price.picks }))),
@@ -71,17 +77,17 @@ export async function insertPdvOrderTx(
   await tx`
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
-                        total_cents, coupon_code, notes, scheduled_for, source, tab_id)
+                        total_cents, coupon_code, notes, scheduled_for, source, tab_id, stock_drawn)
     values (${id}, ${tenantId}, null, ${number},
             ${tx.json({ name: o.customer.name, phone: o.customer.phone ?? '' })}, ${o.customer.phone},
             ${tx.json(delivery as never)}, ${tx.json(o.payment as never)}, 'placed',
             ${o.subtotalCents}, ${o.delivery?.feeCents ?? 0}, ${o.discountCents}, 0, ${o.totalCents}, null, ${o.notes}, null,
-            'pdv', ${o.tabId})
+            'pdv', ${o.tabId}, ${tx.json(stockDrawn)})
   `;
   const [store] = await Promise.all([
     tx<{ name: string; printers: boolean }[]>`
       select name,
-        exists (select 1 from printers where tenant_id = ${tenantId} and auto and present) as printers
+        exists (select 1 from printers where tenant_id = ${tenantId} and auto) as printers
       from tenants where id = ${tenantId}
     `.then((rows) => rows[0]),
     ...o.lines.map(
@@ -149,7 +155,8 @@ export function paidPayment(
   }));
   return {
     provider: 'pdv',
-    method: methods.length === 1 ? methods[0]! : 'mixed',
+    // nothing taken (a R$ 0 cortesia) reads as the counter's plain cash, not a "misto" with no parts
+    method: methods.length > 1 ? 'mixed' : (methods[0] ?? 'cash'),
     status: 'paid',
     online: false,
     paidAt: now.toISOString(),

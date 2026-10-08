@@ -415,6 +415,45 @@ describe.skipIf(!OWNER_URL)('Duá Copilot (db)', () => {
     expect(after.base_price_cents).toBe(6300);
   });
 
+  test('a stale pause or resume card never undoes a newer pause', async () => {
+    const s = shared;
+    await sql`update store_settings set status_override = null, resumes_at = null where tenant_id = ${s.tenantId}`;
+    const short = await propose(s, 'store.pause', { minutes: 30 });
+    // the owner pauses "até retomar" on the home screen before tapping the older card
+    await as(s.owner)('POST', '/store/pause', { for: 'indefinite' });
+    const a = await as(s.owner)('POST', `/copilot/actions/${short.id}`, { decision: 'confirm' });
+    expect(a.body.items.find((i: any) => i.id === short.id).status).toBe('failed');
+    expect(await status(s.tenantId)).toEqual({ status_override: 'paused', resumes_at: null });
+
+    const resume = await propose(s, 'store.resume', {});
+    await as(s.owner)('POST', '/store/pause', { for: 'minutes', minutes: 60 });
+    const b = await as(s.owner)('POST', `/copilot/actions/${resume.id}`, { decision: 'confirm' });
+    expect(b.body.items.find((i: any) => i.id === resume.id).status).toBe('failed');
+    expect((await status(s.tenantId)).status_override).toBe('paused');
+    await sql`update store_settings set status_override = null, resumes_at = null where tenant_id = ${s.tenantId}`;
+  });
+
+  test('a price card survives a product renamed meanwhile', async () => {
+    const s = shared;
+    const [c] = await sql<{ id: string }[]>`
+      select id from categories where tenant_id = ${s.tenantId} limit 1`;
+    const ids = (
+      await sql<{ id: string }[]>`
+        insert into products (tenant_id, category_id, slug, name, base_price_cents)
+        values (${s.tenantId}, ${c!.id}, ${`a-${nonce}`}, 'Brigadeiro', 1000),
+               (${s.tenantId}, ${c!.id}, ${`b-${nonce}`}, 'Cocada', 2000)
+        returning id`
+    ).map((r) => r.id);
+    const p = await propose(s, 'products.price', { productIds: ids, percent: 10 });
+    expect(p.lines.map((l) => l.label)).toEqual(['Brigadeiro', 'Cocada']);
+    await sql`update products set name = 'Torta' where id = ${ids[0]!}`;
+    const r = await as(s.owner)('POST', `/copilot/actions/${p.id}`, { decision: 'confirm' });
+    expect(r.body.items.find((i: any) => i.id === p.id).status).toBe('applied');
+    const prices = await sql<{ base_price_cents: number }[]>`
+      select base_price_cents from products where id = any(${ids}::uuid[]) order by base_price_cents`;
+    expect(prices.map((x) => x.base_price_cents)).toEqual([1100, 2200]);
+  });
+
   test('an impossible date is a 400 on the route and a tool error for Duá', async () => {
     const s = shared;
     const bad = await as(s.owner)('GET', '/reports?from=2026-02-31&to=2026-03-02');

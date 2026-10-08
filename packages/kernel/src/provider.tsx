@@ -78,6 +78,9 @@ function tokensToVars(tokens: StorefrontTokens): Record<string, string> {
   return vars;
 }
 
+// @vendua/templates' validateTokens rule, again at the point the value is written
+const FONT_WEIGHT = /^\d{3}( \d{3})?$|^(normal|bold)$/;
+
 const tableTaken = new WeakSet<VenduaApi>();
 
 const EMPTY_BUNDLE: StorefrontBundle = { sections: {}, snapshot: { templates: {}, tokens: null } };
@@ -344,8 +347,11 @@ export function VenduaProvider({
         (s) =>
           `@font-face{font-family:${JSON.stringify(s.family)};` +
           `src:url(${JSON.stringify(s.src)});font-display:swap;` +
-          (s.weight != null ? `font-weight:${s.weight};` : '') +
-          (s.style ? `font-style:${s.style};` : '') +
+          // raw in the rule: a value the token validator would refuse is dropped
+          (s.weight != null && FONT_WEIGHT.test(String(s.weight))
+            ? `font-weight:${s.weight};`
+            : '') +
+          (s.style === 'normal' || s.style === 'italic' ? `font-style:${s.style};` : '') +
           '}',
       )
       .join('');

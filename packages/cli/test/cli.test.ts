@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { planPromote, planRollback, resolveRelease, type StoreDetail } from '../src/fleet-ops.ts';
+import { bundleOf } from '../src/release.ts';
 
 const R2 = 'b'.repeat(20);
 const R1 = 'a1'.repeat(10);
@@ -91,6 +92,15 @@ describe('fleet dry-run plans mirror Core', () => {
     expect(planRollback(only).refused).toContain('NO_PREVIOUS_RELEASE');
   });
 
+  test('rollback stays on the bundle the store runs now', () => {
+    const other = 'd'.repeat(20); // a release of the bundle it left: not among its releases
+    const live = (release: string) => ({ release, status: 'live', kind: 'promote' });
+    const moved = detail({ deployments: [live(R2), live(other), live(R1)] });
+    expect(planRollback(moved).to).toBe(R1);
+    const first = detail({ deployments: [live(R2), live(other)] });
+    expect(planRollback(first).refused).toContain('NO_PREVIOUS_RELEASE');
+  });
+
   test('a release prefix resolves among the store releases', () => {
     expect(resolveRelease(detail().releases, R1.slice(0, 6))).toBe(R1);
     expect(resolveRelease(detail().releases, 'f'.repeat(20))).toBe('f'.repeat(20));
@@ -100,6 +110,7 @@ describe('fleet dry-run plans mirror Core', () => {
 // ── the CLI against a fake Core: flags are checked before any call, a dry run never writes ──
 
 const writes: string[] = [];
+const templateCalls: string[] = [];
 let reads = 0;
 let listFails = false;
 let server: ReturnType<typeof Bun.serve>;
@@ -112,9 +123,15 @@ const notFound = (code: string) => json(404, { error: { code, message: 'nope' } 
 beforeAll(() => {
   server = Bun.serve({
     port: 0,
-    fetch(req) {
+    async fetch(req) {
       const url = new URL(req.url);
       const path = url.pathname;
+      if (path.startsWith('/control/v1/template-migrations/')) {
+        const body = (await req.json()) as { dry?: boolean };
+        const key = req.headers.get('idempotency-key');
+        templateCalls.push(`${path} dry=${body.dry} key=${key ? 'yes' : 'no'}`);
+        return json(200, { report: [] });
+      }
       if (req.method !== 'GET') {
         writes.push(`${req.method} ${path}`);
         return json(201, { deployment: { id: 'd1' } });
@@ -312,6 +329,40 @@ describe('vendua fleet', () => {
     await cli('fleet', 'promote', 'quero-pudim', R1);
     expect(writes).toEqual(['POST /control/v1/fleet/storefronts/quero-pudim/promote']);
     writes.length = 0;
+  });
+});
+
+describe('templates rollback', () => {
+  test('needs a scope, previews by default and writes only with --apply', async () => {
+    const bare = await cli('templates', 'rollback', 'm1');
+    expect(bare.code).toBe(2);
+    expect(bare.stderr).toContain('--all');
+    expect(templateCalls).toEqual([]);
+
+    const dry = await cli('templates', 'rollback', 'm1', '--ring', 'canary');
+    expect(dry.code).toBe(0);
+    expect(dry.stdout).toContain('dry run');
+    expect(await cli('templates', 'rollback', 'm1', '--all', '--apply')).toMatchObject({ code: 0 });
+    expect(templateCalls).toEqual([
+      '/control/v1/template-migrations/m1/rollback dry=true key=no',
+      '/control/v1/template-migrations/m1/rollback dry=false key=yes',
+    ]);
+  });
+});
+
+describe('release bundles', () => {
+  const store = (dir: string, tenant: string) => ({
+    dir: `/repo/storefronts/${dir}`,
+    rel: `storefronts/${dir}`,
+    slug: dir,
+    tenant,
+  });
+
+  test("a store's bundle builds for the tenant it is named after", () => {
+    expect(bundleOf('/repo', store('quero-pudim', 'quero-pudim'))).toBe('quero-pudim');
+    expect(() => bundleOf('/repo', store('quero-pudim', 'brasa'))).toThrow("must be 'quero-pudim'");
+    // platform-owned dirs build for their demo store
+    expect(bundleOf('/repo', store('_template', 'loja-modelo'))).toBe('_template');
   });
 });
 

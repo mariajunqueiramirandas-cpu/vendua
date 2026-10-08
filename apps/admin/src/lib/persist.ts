@@ -59,7 +59,19 @@ export function clearPersisted() {
 /** Sign out / switch store: nothing of this session may outlive it. */
 export async function resetClient(qc: QueryClient) {
   qc.clear();
+  forgetMoves();
   await clearPersisted();
+}
+
+// features/orders/transition.ts keeps unanswered order moves (whole orders, shopper data
+// included) here; the event drops the ones it still holds in memory, if it's loaded
+function forgetMoves() {
+  try {
+    localStorage.removeItem('vendua.moves');
+  } catch {
+    /* private mode */
+  }
+  window.dispatchEvent(new CustomEvent('vendua:signedout'));
 }
 
 // the plan payer's CPF/CNPJ never reaches the disk: the cached account only keeps that one is on
@@ -105,5 +117,8 @@ export function persistCache(qc: QueryClient) {
       save();
     }
   });
-  window.addEventListener('vendua:unauthenticated', () => void clearPersisted());
+  window.addEventListener('vendua:unauthenticated', () => {
+    forgetMoves();
+    void clearPersisted();
+  });
 }

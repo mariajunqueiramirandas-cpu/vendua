@@ -364,7 +364,8 @@ export function mountPdv(d: AdminDeps) {
         throw new HttpError(422, 'INVALID_PAYMENT', 'a sale paid later takes no payments now', {
           field: 'payments',
         });
-      const payments: PdvPaymentIn[] = later ? [] : parsePayments(body.payments);
+      // none only when the total is 0: the sum check below holds every other sale to its total
+      const payments: PdvPaymentIn[] = later ? [] : parsePayments(body.payments, 0);
       const quoted = int(body.quotedTotalCents, 'quotedTotalCents', 0, MAX_CENTS);
       const serveNow =
         body.serveNow === undefined || delivery ? false : bool(body.serveNow, 'serveNow');

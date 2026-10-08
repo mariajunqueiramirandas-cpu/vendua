@@ -5,7 +5,7 @@ import { die } from './paths.ts';
 
 // `vendua templates list`
 // `vendua templates migrate <id> [--apply] [--ring canary|early|stable] [--tenant slug]… [--report f]`
-// `vendua templates rollback <id> [--ring …] [--tenant slug]…`
+// `vendua templates rollback <id> (--ring … | --tenant slug… | --all) [--apply]`
 // Template migrations run in Core against each store's live templates (17 —
 // template migrations). Without --apply it's a dry run: the per-store report of
 // what would be applied, skipped or conflicted, and nothing written.
@@ -34,7 +34,7 @@ function table(rows: Row[]): string {
 const FLAGS: Record<string, FlagSpec> = {
   list: {},
   migrate: { bool: ['--apply'], value: ['--ring', '--tenant', '--report'] },
-  rollback: { value: ['--ring', '--tenant'] },
+  rollback: { bool: ['--apply', '--all'], value: ['--ring', '--tenant'] },
 };
 
 export async function cmdTemplates(args: string[]): Promise<never> {
@@ -87,13 +87,25 @@ export async function cmdTemplates(args: string[]): Promise<never> {
       process.exit(r.report.some((x) => x.status === 'conflict') ? 1 : 0);
     }
     if (sub === 'rollback') {
+      // an undo across the whole fleet is never the default
+      if (!ring && !tenants.length && !p.has('--all'))
+        die('templates rollback needs --ring <r>, --tenant <slug> or --all', 2);
+      const apply = p.has('--apply');
       const r = await control<{ report: Row[] }>(
         'POST',
         `/control/v1/template-migrations/${id}/rollback`,
-        scope,
-        `tpl-rollback:${id}:${ring ?? 'all'}:${Date.now()}`,
+        { dry: !apply, ...scope },
+        apply
+          ? `tpl-rollback:${id}:${ring ?? 'all'}:${tenants.join(',')}:${Date.now()}`
+          : undefined,
       );
-      console.log(table(r.report));
+      console.log(
+        [
+          `# Template rollback \`${id}\` — ${apply ? 'applied' : 'dry run'}${ring ? ` (ring ${ring})` : ''}`,
+          '',
+          table(r.report),
+        ].join('\n'),
+      );
       process.exit(0);
     }
     die(`unknown templates subcommand '${sub}' (list | migrate | rollback)`, 2);

@@ -12,14 +12,19 @@ import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { OrderRowView } from './OrderRowView.tsx';
+import { useStoreQuery } from '../store/StatusPill.tsx';
 
 const WEEK = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 
 /** Encomendas as a month calendar: tap a day for its orders (§8 Pedidos). */
 export default function Scheduled() {
-  const today = isoDate(new Date());
-  const [month, setMonth] = useState(() => today.slice(0, 7));
-  const [day, setDay] = useState(today);
+  // the store's today, not the device's
+  const today = isoDate(new Date(), useStoreQuery().data?.hours.timezone);
+  // untouched, they follow `today`, which moves once the store's timezone loads
+  const [pickedMonth, setMonth] = useState<string | null>(null);
+  const [pickedDay, setDay] = useState<string | null>(null);
+  const month = pickedMonth ?? today.slice(0, 7);
+  const day = pickedDay ?? today;
   const [y, m] = month.split('-').map(Number) as [number, number];
   const first = new Date(y, m - 1, 1);
   const last = new Date(y, m, 0);

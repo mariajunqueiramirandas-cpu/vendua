@@ -135,15 +135,16 @@ function useCopilot() {
   const [outgoing, setOutgoing] = useState<Outgoing[]>([]);
 
   const sendM = useMutation({
-    mutationFn: (o: { text: string; screen: string | undefined }) =>
-      api.copilot.send(o.text, o.screen),
+    mutationFn: (o: { text: string; screen: string | undefined; key: string }) =>
+      api.copilot.send(o.text, o.screen, o.key),
   });
   const send = (text: string, screen: string | undefined, key: string = crypto.randomUUID()) => {
     setOutgoing((o) => [
       ...o.filter((x) => x.key !== key),
       { key, text, screen, at: Date.now(), failed: false },
     ]);
-    sendM.mutateAsync({ text, screen }).then(
+    // the bubble's key is the request's: retrying a bubble that reached Core replays it
+    sendM.mutateAsync({ text, screen, key }).then(
       (v) => {
         put(v);
         setOutgoing((o) => o.filter((x) => x.key !== key));

@@ -3,7 +3,15 @@ import { planAccess } from '../modules/billing/plans.ts';
 import { getCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
 import { withTenant, type Sql } from '../platform/db.ts';
-import { HttpError, UUID_RE, bodyJson, clientIp, windowCounter } from '../platform/http.ts';
+import {
+  HttpError,
+  UUID_RE,
+  bodyJson,
+  checkKey,
+  clientIp,
+  idempotencyFingerprint,
+  windowCounter,
+} from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
@@ -504,6 +512,12 @@ export function mountAdmin(o: MountAdminOpts) {
         update merchant_sessions set revoked_at = now()
         where tenant_id = ${tenant.id} and user_id = ${m.userId} and id = ${id}
       `;
+      // the device it ended stops getting the store's pushes too
+      await tx`
+        delete from push_subscriptions
+        where tenant_id = ${tenant.id} and user_id = ${m.userId}
+          and (session_id = ${id} or session_id is null)
+      `;
       forgetGate();
       return { status: 200, body: { ok: true } };
     })(c);
@@ -524,10 +538,11 @@ export function mountAdmin(o: MountAdminOpts) {
       const p256dh = text(keys.p256dh, 'keys.p256dh', 200, 20);
       const auth = text(keys.auth, 'keys.auth', 100, 8);
       await tx`
-        insert into push_subscriptions (tenant_id, user_id, endpoint, p256dh, auth)
-        values (${tenant.id}, ${m.userId}, ${endpoint}, ${p256dh}, ${auth})
+        insert into push_subscriptions (tenant_id, user_id, session_id, endpoint, p256dh, auth)
+        values (${tenant.id}, ${m.userId}, ${m.sessionId}, ${endpoint}, ${p256dh}, ${auth})
         on conflict (tenant_id, endpoint) do update set user_id = excluded.user_id,
-          p256dh = excluded.p256dh, auth = excluded.auth, last_error = null
+          session_id = excluded.session_id, p256dh = excluded.p256dh, auth = excluded.auth,
+          last_error = null
       `;
       // a browser re-subscribes with a fresh endpoint now and then: keep the newest few
       await tx`
@@ -548,6 +563,24 @@ export function mountAdmin(o: MountAdminOpts) {
       const endpoint = text(body.endpoint, 'endpoint', 1000);
       await tx`delete from push_subscriptions where tenant_id = ${tenant.id} and endpoint = ${endpoint}`;
       return { status: 200, body: { subscribed: false } };
+    })(c);
+  });
+
+  // a subscription saved before pushes were tied to a session (null session_id) is claimed by
+  // the device's next sign-in: until then, ending any of the member's sessions drops it
+  admin.post('/push/rebind', async (c) => {
+    const m = c.get('merchant');
+    const tenant = c.get('tenant');
+    return o.idempotency(sql, async (c, tx) => {
+      const body = await bodyJson(c);
+      const endpoint = text(body.endpoint, 'endpoint', 1000);
+      const rows = await tx`
+        update push_subscriptions set session_id = ${m.sessionId}
+        where tenant_id = ${tenant.id} and user_id = ${m.userId} and endpoint = ${endpoint}
+          and session_id is null
+        returning id
+      `;
+      return { status: 200, body: { rebound: rows.length > 0 } };
     })(c);
   });
 
@@ -664,16 +697,16 @@ export function mountAdmin(o: MountAdminOpts) {
     if (!['image/webp', 'image/jpeg', 'image/png'].includes(mime))
       throw new HttpError(415, 'UNSUPPORTED_MEDIA', 'send a webp, jpeg or png image');
     const key = c.req.header('idempotency-key');
-    if (!key)
-      throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
-    if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
-    // a retry replays the stored answer before the body is read or decoded again
+    checkKey(key);
+    // a retry replays the stored answer before the body is read or decoded again — only to the
+    // caller and route that stored it (claim's own rule); anyone else falls through to its 422
     const done = await withTenant(
       sql,
       tenant.id,
       (tx) => tx<{ response: unknown; status_code: number }[]>`
         select response, status_code from idempotency_keys
         where tenant_id = ${tenant.id} and key = ${key} and response is not null
+          and (fingerprint is null or fingerprint = ${idempotencyFingerprint(c)})
       `,
     );
     if (done[0])
@@ -855,10 +888,12 @@ export function mountAdmin(o: MountAdminOpts) {
   admin.post('/help', async (c) => {
     const tenant = c.get('tenant');
     const m = c.get('merchant');
-    return o.idempotency(sql, async (c, tx) => {
+    let ask: { topic: string; message: string } | null = null;
+    const res = await o.idempotency(sql, async (c, tx) => {
       const body = await bodyJson(c);
       const message = text(body.message, 'message', 2000, 3);
       const topic = optText(body.topic, 'topic', 60) ?? 'geral';
+      ask = { topic, message };
       await audit(tx, tenant.id, m, {
         action: 'help.request',
         entity: 'help',
@@ -878,16 +913,18 @@ export function mountAdmin(o: MountAdminOpts) {
         },
         { tenantId: tenant.id },
       );
-      // delivery happens after the claim commits; the staff channel never blocks the reply
-      queueMicrotask(() => {
-        void notifyStaff(sql, null, {
-          subject: `Ajuda: ${tenant.name} (${topic})`,
-          body: `${m.name} · ${formatPhone(m.phone)} · ${m.role}\n\n${message}`,
-          idemKey: `admin-help:${tenant.id}:${Date.now()}`,
-        }).catch((err) => adminLog.warn({ err }, 'help notify failed'));
-      });
       return { status: 201, body: { sent: true } };
     })(c);
+    // only once the claim committed (a microtask ran at the handler's next await, before commit,
+    // and reached the team for a request that then rolled back); never on a replay
+    const sent = ask as { topic: string; message: string } | null;
+    if (sent && res.status === 201)
+      void notifyStaff(sql, null, {
+        subject: `Ajuda: ${tenant.name} (${sent.topic})`,
+        body: `${m.name} · ${formatPhone(m.phone)} · ${m.role}\n\n${sent.message}`,
+        idemKey: `admin-help:${tenant.id}:${Date.now()}`,
+      }).catch((err) => adminLog.warn({ err }, 'help notify failed'));
+    return res;
   });
 
   mountHome(deps);

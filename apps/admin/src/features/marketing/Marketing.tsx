@@ -22,7 +22,7 @@ import {
   type LoyaltyProgram,
   type Marketing as M,
 } from '../../lib/api.ts';
-import { dateShort, isoDate, money, phone, plural } from '../../lib/format.ts';
+import { dateShort, endOfDay, isoDate, money, phone, plural } from '../../lib/format.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -52,6 +52,7 @@ import { PlanLocked } from '../../ui/PlanLocked.tsx';
 import { isPlanRequired, useFeature } from '../../lib/session.ts';
 import { toast } from '../../ui/Toast.tsx';
 import { shareCard } from './shareCard.ts';
+import { useStoreQuery } from '../store/StatusPill.tsx';
 
 export default function Marketing() {
   const { data, error, refetch } = useQuery({ queryKey: qk.marketing, queryFn: api.marketing });
@@ -340,8 +341,7 @@ function Coupons({ coupons }: { coupons: Coupon[] }) {
 }
 
 /** The day a coupon ends, as the date field shows it (the store's day, not UTC's). */
-const endDay = (iso: string | null) => (iso ? isoDate(new Date(iso)) : '');
-const endOf = (day: string) => new Date(`${day}T23:59:59`).toISOString();
+const endDay = (iso: string | null, tz?: string) => (iso ? isoDate(new Date(iso), tz) : '');
 
 const couponError = (e: unknown) =>
   e instanceof ApiError && e.code === 'COUPON_ARCHIVED'
@@ -365,6 +365,7 @@ function CouponEditSheet({
   onDelete: (c: Coupon) => void;
 }) {
   const save = useSaveState();
+  const tz = useStoreQuery().data?.hours.timezone;
   const [copying, setCopying] = useState(false);
   const [code, setCode] = useState('');
   const [err, setErr] = useState<string | null>(null);
@@ -503,10 +504,10 @@ function CouponEditSheet({
             <TextInput
               id="cp-ends"
               type="date"
-              value={endDay(k.endsAt)}
-              min={isoDate(new Date())}
+              value={endDay(k.endsAt, tz)}
+              min={isoDate(new Date(), tz)}
               onChange={(e) =>
-                void patch({ endsAt: e.target.value ? endOf(e.target.value) : null })
+                void patch({ endsAt: e.target.value ? endOfDay(e.target.value, tz) : null })
               }
             />
           </Field>
@@ -550,6 +551,7 @@ function CouponSheet({
   onOpenChange: (v: boolean) => void;
 }) {
   const qc = useQueryClient();
+  const tz = useStoreQuery().data?.hours.timezone;
   const [code, setCode] = useState('');
   const [kind, setKind] = useState<Coupon['kind']>('percent');
   const [pct, setPct] = useState(10);
@@ -568,7 +570,7 @@ function CouponSheet({
         ...(min ? { minSubtotalCents: min } : {}),
         firstOrderOnly: first,
         ...(once ? { perPhoneLimit: 1 } : {}),
-        ...(until ? { endsAt: new Date(`${until}T23:59:59`).toISOString() } : {}),
+        ...(until ? { endsAt: endOfDay(until, tz) } : {}),
       }),
     onSuccess: (r) => {
       qc.setQueryData(qk.marketing, (m: M | undefined) => (m ? { ...m, coupons: r.coupons } : m));

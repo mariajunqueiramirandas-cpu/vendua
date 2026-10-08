@@ -353,7 +353,8 @@ export default function Profile() {
             className="mt-3 text-danger"
             icon={<SignOut />}
             onClick={async () => {
-              await api.auth.logout();
+              await disablePush().catch(() => undefined);
+              await api.auth.logout().catch(() => undefined);
               await resetClient(qc);
               window.location.assign('/admin/entrar');
             }}

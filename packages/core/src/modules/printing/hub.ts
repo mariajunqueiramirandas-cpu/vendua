@@ -2,7 +2,7 @@ import type { Sql } from '../../platform/db.ts';
 import { log } from '../../platform/log.ts';
 import { PRINT_CHANNEL } from './jobs.ts';
 
-export type DeviceSignal = 'job' | 'config' | 'revoked' | 'resync';
+export type DeviceSignal = 'job' | 'config' | 'revoked' | 'resync' | 'superseded';
 
 const hubLog = log.child({ mod: 'print-hub' });
 
@@ -38,6 +38,11 @@ export class PrintHub {
 
   streams(deviceId: string): number {
     return this.listeners.get(deviceId)?.size ?? 0;
+  }
+
+  /** Tell this device's other streams in this process that a newer one may have replaced them. */
+  supersede(deviceId: string, keep: (s: DeviceSignal) => void) {
+    for (const fn of this.listeners.get(deviceId) ?? []) if (fn !== keep) fn('superseded');
   }
 
   async subscribe(deviceId: string, fn: (s: DeviceSignal) => void): Promise<() => void> {

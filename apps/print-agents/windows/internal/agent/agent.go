@@ -35,8 +35,12 @@ type Options struct {
 	Log     *slog.Logger
 	// Headless renews expired pairing codes by itself: nobody can click.
 	Headless bool
-	// ScanOnStart probes the LAN for network printers once at startup.
+	// ScanOnStart probes the LAN for network printers at startup, and holds
+	// back the first printer report until that scan is done.
 	ScanOnStart bool
+	// RescanEvery repeats the network scan (default 5 min) so a printer
+	// switched on after the agent still shows up.
+	RescanEvery time.Duration
 	// UpdateURL is the version.json to poll; empty disables update checks.
 	UpdateURL string
 
@@ -88,6 +92,9 @@ func New(o Options) *Agent {
 	}
 	if o.RateLimitWait == 0 {
 		o.RateLimitWait = 60 * time.Second
+	}
+	if o.RescanEvery == 0 {
+		o.RescanEvery = 5 * time.Minute
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
@@ -519,18 +526,31 @@ func (a *Agent) setPrinters(ps []api.Printer) {
 }
 
 func (a *Agent) scanLoop(ctx context.Context) {
+	tick := time.NewTicker(a.o.RescanEvery)
+	defer tick.Stop()
 	for {
+		periodic := false
 		select {
 		case <-ctx.Done():
 			return
 		case <-a.scanNow:
+		case <-tick.C:
+			periodic = true
 		}
-		a.setScanning(true)
-		if err := a.o.Discoverer.ScanNetwork(ctx); err != nil && ctx.Err() == nil {
+		if !periodic {
+			a.setScanning(true)
+		}
+		changed, err := a.o.Discoverer.ScanNetwork(ctx)
+		if err != nil && ctx.Err() == nil {
 			a.log.Warn("network scan failed", "err", err)
 		}
-		a.setScanning(false)
-		signal(a.reportNow)
+		if !periodic {
+			a.setScanning(false)
+		}
+		// a periodic scan that found the same printers has nothing to tell Core
+		if !periodic || changed {
+			signal(a.reportNow)
+		}
 	}
 }
 
@@ -543,6 +563,10 @@ func (a *Agent) reportPrintersLoop(ctx context.Context) {
 		}
 		tok := a.token()
 		if tok == "" {
+			continue
+		}
+		// the scan signals again when it ends
+		if a.o.ScanOnStart && !a.o.Discoverer.NetworkScanned() {
 			continue
 		}
 		found := a.o.Discoverer.Collect(ctx)

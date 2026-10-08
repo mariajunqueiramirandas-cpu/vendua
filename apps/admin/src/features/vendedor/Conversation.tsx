@@ -215,10 +215,13 @@ export function ConversationPane({
     },
     onError: fail,
   });
-  const reply = useMutation({ mutationFn: (text: string) => api.vendedor.reply(id, text) });
-  const send = (text: string, key = `${Date.now()}-${Math.random()}`) => {
+  const reply = useMutation({
+    mutationFn: (v: { text: string; key: string }) => api.vendedor.reply(id, v.text, v.key),
+  });
+  // the bubble's key is the request's: a retried bubble that reached Core is replayed, not resent
+  const send = (text: string, key: string = crypto.randomUUID()) => {
     setOutgoing((o) => [...o.filter((x) => x.key !== key), { key, text, failed: false }]);
-    reply.mutateAsync(text).then(
+    reply.mutateAsync({ text, key }).then(
       (r) => {
         put(r);
         setOutgoing((o) => o.filter((x) => x.key !== key));

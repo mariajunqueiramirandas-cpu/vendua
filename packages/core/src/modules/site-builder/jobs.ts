@@ -213,6 +213,18 @@ export async function mergeApproved(d: FleetDeps): Promise<number> {
     `,
   );
   for (const t of due) {
+    // the batch's GitHub calls can outlast one lease: each task's restarts while it's still
+    // unexpired (so no other Core has taken it)
+    const kept = await controlTx(
+      d.sql,
+      (tx) => tx`
+        update site_tasks set lease_until = now() + ${LEASE}::interval
+        where id = ${t.id} and status = 'approved' and lease_until > now()
+          and date_trunc('milliseconds', lease_until) = ${t.lease_until}
+        returning id
+      `,
+    );
+    if (!kept.length) continue;
     let merged: { sha: string | null } | null = null;
     let err: unknown = null;
     // GitHub's own word on the head, not the webhook's: a re-run that skipped jobs can say green
@@ -398,6 +410,11 @@ export async function deliverMerged(d: FleetDeps): Promise<number> {
           select dp.id, dp.status from deployments dp join releases r on r.id = dp.release_id
           where dp.tenant_id = s.tenant_id and r.bundle = t.slug
             and dp.started_at >= s.merged_at and dp.status in ('pending', 'live')
+            -- a build made and first registered after the merge: not a promote or rollback of
+            -- one the store had, nor an image of an earlier main published late. Not
+            -- r.commit = merge_sha: GIT_COMMIT is optional ('unknown'), and a deploy of a later
+            -- main carries the merge under another commit
+            and r.built_at >= s.merged_at and r.created_at >= s.merged_at
           order by dp.started_at desc limit 1
         ) dp on true
       where s.status = 'merged' and s.design is not null ${scoped(tx, d, 's.tenant_id')}
