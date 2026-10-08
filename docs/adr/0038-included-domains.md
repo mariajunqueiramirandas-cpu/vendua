@@ -43,9 +43,12 @@ renewed by Venduá at Venduá's cost. Other endings aren't sold. A domain the ow
 connected, not bought, and its renewal stays the owner's.
 
 **The holder is the store's CNPJ; the owner's CPF is the fallback.** It comes from
-`subscriptions.payer_document`, and the owner confirms it at purchase. Choosing a CPF shows that
-the name and part of the number become public. The merchant always holds the domain; Venduá is
-never the holder (as ADR 0010 said).
+`subscriptions.payer_document`, and the owner confirms it at purchase. The registry checks the
+holder's name and address against the Receita Federal's record, so a CNPJ's legal name and
+address are filled in from its public record and the owner confirms them. Choosing a CPF shows
+that the name and part of the number become public. Venduá's own CNPJ is the billing and
+technical contact. The merchant always holds the domain; Venduá is never the holder (as ADR 0010
+said).
 
 **The owner picks the name any time; the order is placed at the first payment.** The admin
 searches names live through RDAP and suggests some from the store's name and slug. The choice is
@@ -54,30 +57,36 @@ places it, and a choice made after that payment is placed at once. Availability 
 at placement; a name taken in between asks the owner to pick again. A trial never buys a domain,
 as ADR 0025's paid-only rule already holds for `customDomain`.
 
-**A registrar adapter.** Core speaks to the reseller through one interface (`available`,
-`register`, `orderStatus`, `renew`, `setNameservers`). The reseller is chosen after one real test
-registration through its API that confirms: the alphanumeric CNPJ is accepted, what the move
-does to the holder's other domains' renewals, and the provider name owners select in
-registro.br. Openprovider and CentralNic Reseller both take the document as an API field;
-OpenSRS no longer takes `.br` transfers in. The order is polled by a job until it is registered
-or fails, with a staff event either way.
+**The reseller is Openprovider** (decided 2026-10-08), behind one adapter interface
+(`available`, `register`, `orderStatus`, `renew`, `setNameservers`). It has free signup, no
+volume commitment, a prepaid balance and a REST API; membership starts at about US$ 49 a year.
+CentralNic Reseller wants 100 domains in the first year and signed contracts; OpenSRS no longer
+takes `.br` transfers in. Before Core relies on it, one real test registration through the API
+confirms: the alphanumeric CNPJ is accepted, the `.com.br` price, what the move does to the
+holder's other domains' renewals, and the provider name owners select in registro.br. The order
+is polled by a job until it is registered or fails, with a staff event either way.
 
 **A provider conflict is guided, then retried.** On "belongs to another provider" the admin shows
 the registro.br steps with the reseller's provider name and says it moves all that document's
 domains. Core retries the order daily for 7 days.
 
-**Venduá hosts the DNS.** An included domain's zone is created on Venduá's DNS host before the
-order, since the registry needs answering nameservers. A connected domain is delegated by its
-nameservers (registro.br's "Servidores DNS"); CNAME + TXT stays for a subdomain the owner can't
-delegate. The zone holds the root's A record, `www` and the redirect between them. A lookup can't
-list a zone (DKIM selectors, SRV and verification records aren't discoverable), so before
-showing our nameservers the admin builds an inventory: the records Core finds (MX, SPF, DMARC,
-the known DKIM selectors of the mail presets, common names), plus a paste of the old provider's
-zone export or records the owner adds. The owner reviews and confirms it. A domain signed with
-DNSSEC (RDAP shows `delegationSigned`) can't be delegated until its DS record is removed at
-registro.br, or the whole zone fails to resolve; the admin says so and Core re-checks. An owner
-who would rather keep their DNS points the root's A record and `www` at us instead.
-Nameservers pointing at us are the proof of control for a delegated domain.
+**Venduá hosts the DNS on Cloudflare** (decided 2026-10-08): one Cloudflare account, zones created
+through its API, records DNS-only so traffic reaches the edge and Traefik issues the certificate.
+Cloudflare refuses a zone for a name that isn't registered yet (error 1049), and the registry needs
+answering nameservers before it registers, so an included domain is registered with a zone on
+Openprovider's DNS (the root's A record), then gets its Cloudflare zone, and Core moves its
+nameservers to the pair Cloudflare assigned through the reseller's API. Core reads that pair from
+each zone rather than assuming one. A connected domain is delegated by its nameservers
+(registro.br's "Servidores DNS"); CNAME + TXT stays for a subdomain the owner can't delegate. The
+zone holds the root's A record, `www` and the redirect between them. A lookup can't list a zone
+(DKIM selectors, SRV and verification records aren't discoverable), so before showing our
+nameservers the admin builds an inventory: the records Core finds (MX, SPF, DMARC, the known DKIM
+selectors of the mail presets, common names), plus a paste of the old provider's zone export or
+records the owner adds. The owner reviews and confirms it. A domain signed with DNSSEC (RDAP shows
+`delegationSigned`) can't be delegated until its DS record is removed at registro.br, or the whole
+zone fails to resolve; the admin says so and Core re-checks. An owner who would rather keep their
+DNS points the root's A record and `www` at us instead. Nameservers pointing at us are the proof of
+control for a delegated domain.
 
 **TLS needs no staff step.** The edge polls Core for hosts to serve with certificates
 (`GET /edge/v1/custom-hosts`: verified, active or repairing) and writes them as routers with
@@ -145,8 +154,10 @@ Staff open Pangolim after (2).
 
 ## Open
 
-- Which reseller (after the test registration) and which DNS host. Both need an account and
-  credentials from the owner.
+- The owner opens the Openprovider account (membership, prepaid balance, an API user) and a
+  Cloudflare API token scoped to this account's zones and DNS. Both go into Core's environment,
+  never into the repo.
+- The test registration above, before the purchase screen ships.
 
 ## Links
 
@@ -157,4 +168,6 @@ Staff open Pangolim after (2).
   [CentralNic Reseller: .com.br](https://kb.centralnicreseller.com/domains/tlds/com.br),
   [Registro.br: EPP](https://registro.br/tecnologia/provedores-de-hospedagem/epp/),
   [Hostinger: "outro provedor"](https://www.hostinger.com/br/support/?p=1858),
-  [Dokploy `traefik-setup.ts`](https://github.com/Dokploy/dokploy/blob/canary/packages/server/src/setup/traefik-setup.ts)
+  [Dokploy `traefik-setup.ts`](https://github.com/Dokploy/dokploy/blob/canary/packages/server/src/setup/traefik-setup.ts),
+  [Openprovider vs. CentralNic Reseller](https://www.openprovider.com/blog/openprovider-vs-centralnic),
+  [Cloudflare: cannot add a domain](https://developers.cloudflare.com/dns/zone-setups/troubleshooting/cannot-add-domain/)
