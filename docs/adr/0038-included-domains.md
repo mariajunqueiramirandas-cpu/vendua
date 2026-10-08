@@ -53,12 +53,15 @@ are pre-filled from its public record. Choosing a CPF shows that the name and pa
 become public. Venduá's own CNPJ is the billing and technical contact. The merchant always holds the
 domain; Venduá is never the holder (as ADR 0010 said).
 
-**The owner picks the name any time; the order is placed at the first payment.** The admin
-searches names live through RDAP and suggests some from the store's name and slug. The choice is
-kept as an order `awaiting_payment`. The paid first invoice of a plan with `customDomain`
-places it, and a choice made after that payment is placed at once. Availability is checked again
-at placement; a name taken in between asks the owner to pick again. A trial never buys a domain,
-as ADR 0025's paid-only rule already holds for `customDomain`.
+**The owner picks the name any time; the order is placed at the first payment.** The admin searches
+names live through RDAP and suggests some from the store's name and slug. The choice is kept as an
+order `awaiting_payment`. The paid first invoice of a plan with `customDomain` places it, and a
+choice made after that payment is placed at once. Availability is checked again at placement; a name
+taken in between asks the owner to pick again. A trial never buys a domain, as ADR 0025's paid-only
+rule already holds for `customDomain`. A first payment by card can still be refunded or charged back
+after the domain is bought. Venduá accepts that risk rather than delay the purchase: one
+registration is a small cost next to a month of the plan, the reversal leaves the store unpaid, so
+the domain lapses and is never renewed, and the order records the loss with a staff event.
 
 **The reseller is Openprovider** (decided 2026-10-08), behind one adapter interface
 (`available`, `register`, `orderStatus`, `renew`, `setNameservers`). It has free signup, no
@@ -81,15 +84,16 @@ Openprovider's DNS (the root's A record), then gets its Cloudflare zone, and Cor
 nameservers to the pair Cloudflare assigned through the reseller's API. Core reads that pair from
 each zone rather than assuming one. A connected domain is delegated by its nameservers
 (registro.br's "Servidores DNS"); CNAME + TXT stays for a subdomain the owner can't delegate. The
-zone holds the root's A record, `www` and the redirect between them. A lookup can't list a zone
-(DKIM selectors, SRV and verification records aren't discoverable), so before showing our
-nameservers the admin builds an inventory: the records Core finds (MX, SPF, DMARC, the known DKIM
-selectors of the mail presets, common names), plus a paste of the old provider's zone export or
-records the owner adds. The owner reviews and confirms it. A domain signed with DNSSEC (RDAP shows
-`delegationSigned`) can't be delegated until its DS record is removed at registro.br, or the whole
-zone fails to resolve; the admin says so and Core re-checks. An owner who would rather keep their
-DNS points the root's A record and `www` at us instead. Nameservers pointing at us are the proof of
-control for a delegated domain.
+zone holds A records for the root and `www`. DNS can't redirect, so both names are custom hosts in
+Core, each with its own route and certificate, and the edge answers the one that isn't primary with
+a redirect to the one that is. A lookup can't list a zone (DKIM selectors, SRV and verification
+records aren't discoverable), so before showing our nameservers the admin builds an inventory: the
+records Core finds (MX, SPF, DMARC, the known DKIM selectors of the mail presets, common names),
+plus a paste of the old provider's zone export or records the owner adds. The owner reviews and
+confirms it. A domain signed with DNSSEC (RDAP shows `delegationSigned`) can't be delegated until
+its DS record is removed at registro.br, or the whole zone fails to resolve; the admin says so and
+Core re-checks. An owner who would rather keep their DNS points the root's A record and `www` at us
+instead. Nameservers pointing at us are the proof of control for a delegated domain.
 
 **TLS needs no staff step.** A `domains-sync` sidecar, on the internal network only with no route
 from Traefik, polls Core for hosts to serve with certificates (`GET /sync/v1/custom-hosts`,
@@ -113,9 +117,11 @@ the merchant's: renewal stops at the end of the paid period; notices go out 30, 
 expiry with the steps to set the provider to "Nenhum (0)" and renew at registro.br; the store's
 primary address goes back to `<slug>.vendua.com.br`; the domain turns `lapsed` and keeps its route
 and certificate (the sidecar emits lapsed hosts too), and the edge answers every request on it with
-a redirect to that address instead of the store, until the owner moves the nameservers or the domain
-expires; then Core drops the host and its zone. An active domain whose DNS stops pointing at us
-turns `repairing`; the store keeps selling on its platform host.
+a redirect to that address instead of the store, until the owner moves the nameservers away, or the
+domain is gone for good: past expiry, the registry still lets the holder restore it (18 days at
+Openprovider), so the route and zone stay until RDAP shows the name free. Then Core drops the host
+and its zone. An active domain whose DNS stops pointing at us turns `repairing`; the store keeps
+selling on its platform host.
 
 **Data.** `custom_domains` gains `source` (`included` | `connected`), `method` (`ns` | `cname`),
 `expires_at` and `registrar_ref`, and its states grow to cover ordering, issuing, repairing and
