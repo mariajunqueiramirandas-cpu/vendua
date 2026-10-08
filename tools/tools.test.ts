@@ -96,22 +96,30 @@ describe('mapFiles', () => {
   });
 
   test('a single storefront change runs conformance for that slug, not the ci-smoke scaffold', () => {
-    const r = mapFiles(['storefronts/acme/routes/index.tsx']);
+    const r = mapFiles(['storefronts/acme/routes/index.tsx'], undefined, () => true);
     expect(r.conformance).toBe(true);
     expect(r.smoke).toBe(false);
     expect(r.storefronts).toEqual(['acme']);
   });
 
   test('storefronts lists touched slugs, sorted and deduplicated, never _-prefixed dirs', () => {
-    const r = mapFiles([
-      'storefronts/zeta/a.ts',
-      'storefronts/acme/b.ts',
-      'storefronts/acme/c/d.ts',
-      'storefronts/_template/routes/index.tsx',
-    ]);
+    const r = mapFiles(
+      [
+        'storefronts/zeta/a.ts',
+        'storefronts/acme/b.ts',
+        'storefronts/acme/c/d.ts',
+        'storefronts/_template/routes/index.tsx',
+      ],
+      undefined,
+      () => true,
+    );
     expect(r.storefronts).toEqual(['acme', 'zeta']);
     expect(mapFiles(['storefronts/_template/routes/index.tsx']).storefronts).toEqual([]);
     expect(mapFiles(['docs/roadmap.md']).storefronts).toEqual([]);
+  });
+
+  test('a deleted storefront is not checked', () => {
+    expect(mapFiles(['storefronts/gone/a.ts'], undefined, () => false).storefronts).toEqual([]);
   });
 
   test('allStorefronts expands to every non-underscore storefront with a package.json', () => {

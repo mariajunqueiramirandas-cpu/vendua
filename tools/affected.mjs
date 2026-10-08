@@ -77,7 +77,11 @@ const EDGE_INPUTS = new Set([
   'storefronts/_template',
 ]);
 
-export function mapFiles(files, listAll = listStorefronts) {
+export function mapFiles(
+  files,
+  listAll = listStorefronts,
+  exists = (slug) => existsSync(join('storefronts', slug, 'package.json')),
+) {
   const packages = new Set();
   let allStorefronts = false;
   let ciChanged = false;
@@ -115,6 +119,8 @@ export function mapFiles(files, listAll = listStorefronts) {
         .filter((p) => p.startsWith('storefronts/'))
         .map((p) => p.slice('storefronts/'.length))
         .filter((slug) => !slug.startsWith('_'))
+        // a deleted storefront still shows up in the diff
+        .filter(exists)
         .sort();
   const smoke = ciChanged || allStorefronts || [...CONFORMANCE_INPUTS].some(touches);
   return {
