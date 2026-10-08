@@ -356,6 +356,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront platform (db)', () =
       },
     );
     expect(bad.status).toBe(400);
+    // 36 hex digits aren't a uuid: a stable 400, not Postgres' cast error
+    const notUuid = await pub(
+      'POST',
+      '/checkout/v1/notify-me',
+      { subject: 'product', phone: '22999990000', productId: '0'.repeat(36) },
+      { 'idempotency-key': `${nonce}-n4` },
+    );
+    expect(notUuid.status).toBe(400);
     const subs = await withTenant(
       sql,
       tenantId,

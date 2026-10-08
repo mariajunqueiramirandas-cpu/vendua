@@ -884,6 +884,8 @@ export interface AddedLine {
   lineTotalCents: number;
 }
 
+export const MAX_CART_LINES = 50;
+
 /** Validates, freezes the price and merges into the cart; throws the client's typed error. */
 export async function insertLine(
   tx: Sql,
@@ -945,6 +947,12 @@ export async function insertLine(
     }
     throw err;
   }
+  // each note makes its own line: uncapped, a script grows one cart (and the order the kitchen
+  // gets) without bound. A merge into a line already there is always fine; the throw rolls back.
+  if (existing.length >= MAX_CART_LINES && !existing.some((e) => e.id === written.id))
+    throw new HttpError(422, 'CART_FULL', `a bag holds at most ${MAX_CART_LINES} lines`, {
+      maxLines: MAX_CART_LINES,
+    });
   return {
     itemId: written.id,
     qty: input.qty,

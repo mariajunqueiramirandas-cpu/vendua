@@ -50,24 +50,29 @@ async function lockStock(tx: Sql, tenantId: string, ids: string[]) {
   return new Map(rows.map((r) => [r.id, { name: r.name, stock: r.stock_quantity }]));
 }
 
-/** Check-and-draw inside the checkout tx; throws OUT_OF_STOCK before touching anything. */
-export async function drawStock(tx: Sql, tenantId: string, demand: Map<string, number>) {
+/** Check-and-draw inside the checkout tx; throws OUT_OF_STOCK before touching anything.
+ *  Returns what it drew (tracked products only) for the order's `stock_drawn`. */
+export async function drawStock(
+  tx: Sql,
+  tenantId: string,
+  demand: Map<string, number>,
+): Promise<Record<string, number>> {
   const ids = [...demand.keys()];
-  if (ids.length === 0) return;
+  if (ids.length === 0) return {};
   const stock = await lockStock(tx, tenantId, ids);
   const short = shortfall(demand, stock);
   if (short) throw short;
+  const drawn = [...demand].filter(([id]) => stock.get(id)?.stock != null);
   // the rows are locked above; the updates go out as one batch
   await Promise.all(
-    [...demand]
-      .filter(([id]) => stock.get(id)?.stock != null)
-      .map(
-        ([id, need]) => tx`
-          update products set stock_quantity = stock_quantity - ${need}
-          where tenant_id = ${tenantId} and id = ${id}
-        `,
-      ),
+    drawn.map(
+      ([id, need]) => tx`
+        update products set stock_quantity = stock_quantity - ${need}
+        where tenant_id = ${tenantId} and id = ${id}
+      `,
+    ),
   );
+  return Object.fromEntries(drawn);
 }
 
 /** Best-effort early check (add/patch) so the customer hears about it before checkout.
@@ -156,18 +161,28 @@ export async function wakeWaitlist(tx: Sql, tenantId: string, productId: string)
   return woken.length;
 }
 
-/** Returns an order's drawn stock (cancellation). Untracked products stay untracked. */
+/** Returns an order's drawn stock (cancellation): exactly what checkout drew, so a product
+ *  tracked only after the sale isn't credited units it never gave. Untracked stays untracked. */
 export async function restoreStock(tx: Sql, tenantId: string, orderId: string): Promise<void> {
-  const lines = await tx<
-    { product_id: string | null; qty: number; combo: { productId: string; qty: number }[] }[]
-  >`
-    select product_id, qty, combo from order_items where tenant_id = ${tenantId} and order_id = ${orderId}
+  const [order] = await tx<{ stock_drawn: Record<string, number> | null }[]>`
+    select stock_drawn from orders where tenant_id = ${tenantId} and id = ${orderId}
   `;
-  const demand = stockDemand(
-    lines
-      .filter((l) => l.product_id)
-      .map((l) => ({ productId: l.product_id!, qty: l.qty, combo: l.combo })),
-  );
+  let demand: Map<string, number>;
+  if (order?.stock_drawn) {
+    demand = new Map(Object.entries(order.stock_drawn));
+  } else {
+    // an order placed before stock_drawn existed: its lines are the best record
+    const lines = await tx<
+      { product_id: string | null; qty: number; combo: { productId: string; qty: number }[] }[]
+    >`
+      select product_id, qty, combo from order_items where tenant_id = ${tenantId} and order_id = ${orderId}
+    `;
+    demand = stockDemand(
+      lines
+        .filter((l) => l.product_id)
+        .map((l) => ({ productId: l.product_id!, qty: l.qty, combo: l.combo })),
+    );
+  }
   // id order, like checkout and the Estoque batch, so concurrent row locks never deadlock
   for (const [id, n] of [...demand].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const before = (

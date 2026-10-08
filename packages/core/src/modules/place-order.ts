@@ -21,6 +21,8 @@ import { deriveStatus, type StoreSettingsRow } from './store.ts';
 
 /** R$ 10.000: no shopper pays a delivery with more than that in cash */
 export const MAX_CHANGE_CENTS = 1_000_000;
+/** orders' money columns are int4: a cart of many priciest lines must stop at a 422 first */
+export const MAX_ORDER_CENTS = 1_000_000_000;
 
 /** QR orders a table may have waiting for the staff at once (ADR 0036) */
 export const MAX_PENDING_AT_TABLE = 5;
@@ -197,7 +199,25 @@ export async function placeOrderTx(
     }
   }
 
-  await drawStock(
+  // from the locked settings row, before the payment is built: Pix/MP charge the adjusted total
+  const paymentAdjustment = Math.max(
+    paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, body.payment.method)),
+    -(subtotal + deliveryFee - discount),
+  );
+  const total = subtotal + deliveryFee - discount + paymentAdjustment;
+  if (subtotal > MAX_ORDER_CENTS || total > MAX_ORDER_CENTS)
+    throw new HttpError(422, 'ORDER_TOO_LARGE', 'this order is larger than a store can take', {
+      maxCents: MAX_ORDER_CENTS,
+    });
+  // a fee, coupon or payment adjustment that moved since the shopper's screen: nothing is written
+  // yet, so the caller's committed refusal carries no side effect
+  if (body.expectedTotalCents != null && body.expectedTotalCents !== total)
+    throw new HttpError(409, 'PRICES_CHANGED', 'the total changed — review the order', {
+      totalCents: total,
+      expectedTotalCents: body.expectedTotalCents,
+    });
+
+  const stockDrawn = await drawStock(
     tx,
     tenantId,
     stockDemand(
@@ -206,12 +226,6 @@ export async function placeOrderTx(
   );
 
   const orderId = crypto.randomUUID();
-  // from the locked settings row, before the payment is built: Pix/MP charge the adjusted total
-  const paymentAdjustment = Math.max(
-    paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, body.payment.method)),
-    -(subtotal + deliveryFee - discount),
-  );
-  const total = subtotal + deliveryFee - discount + paymentAdjustment;
   const changeFor = body.payment.changeForCents ?? null;
   if (changeFor !== null) {
     if (
@@ -341,11 +355,13 @@ export async function placeOrderTx(
   await tx`
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
-                        total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id)
+                        total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id,
+                        stock_drawn)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
-            ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId})
+            ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId},
+            ${tx.json(stockDrawn)})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   const [store] = await Promise.all([

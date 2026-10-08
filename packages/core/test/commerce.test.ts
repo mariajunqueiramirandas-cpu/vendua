@@ -651,6 +651,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
       (await sql`select stock_quantity from products where id = ${ids.pudim!}`)[0]!.stock_quantity,
     ).toBe(3);
 
+    // tracked only after the sale: the cancel gives back nothing it never took
+    expect(
+      (await sql`select stock_quantity from products where id = ${ids.coco!}`)[0]!.stock_quantity,
+    ).toBeNull();
+    const untracked = await session();
+    await call('POST', '/checkout/v1/cart/items', { productId: ids.coco, qty: 2 }, untracked);
+    const o2 = await call(
+      'POST',
+      '/checkout/v1/checkout',
+      {
+        customer: { name: 'Cris', phone: '21977776666' },
+        delivery: { mode: 'pickup' },
+        payment: { method: 'cash' },
+      },
+      untracked,
+    );
+    await sql`update products set stock_quantity = 10 where id = ${ids.coco!}`;
+    await ctl('POST', `/orders/${o2.body.order.id}/transition`, { to: 'cancelled' });
+    expect(
+      (await sql`select stock_quantity from products where id = ${ids.coco!}`)[0]!.stock_quantity,
+    ).toBe(10);
+    await sql`update products set stock_quantity = null where id = ${ids.coco!}`;
+
     const w = await call('POST', '/storefront/v1/waitlist', {
       productId: ids.maracuja,
       phone: '21966665555',
@@ -786,5 +809,63 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
         where tenant_id = ${tenantId}
       `;
     }
+  });
+  test('a bag stops at 50 lines; checkout refuses a total the shopper did not see', async () => {
+    const auth = await session();
+    for (let i = 0; i < 50; i++)
+      expect(
+        (
+          await call(
+            'POST',
+            '/checkout/v1/cart/items',
+            { productId: ids.coco, qty: 1, note: `n${i}` },
+            auth,
+          )
+        ).status,
+      ).toBe(200);
+    const full = await call(
+      'POST',
+      '/checkout/v1/cart/items',
+      { productId: ids.coco, qty: 1, note: 'one more' },
+      auth,
+    );
+    expect(full.status).toBe(422);
+    expect(full.body.error.code).toBe('CART_FULL');
+    // a merge into a line already there still works
+    expect(
+      (
+        await call(
+          'POST',
+          '/checkout/v1/cart/items',
+          { productId: ids.coco, qty: 1, note: 'n0' },
+          auth,
+        )
+      ).status,
+    ).toBe(200);
+
+    const small = await session();
+    await call('POST', '/checkout/v1/cart/items', { productId: ids.coco, qty: 1 }, small);
+    const body = {
+      customer: { name: 'Lia', phone: '21955554444' },
+      delivery: { mode: 'pickup' },
+      payment: { method: 'cash' },
+    };
+    const stale = await call(
+      'POST',
+      '/checkout/v1/checkout',
+      { ...body, expectedTotalCents: 1000 },
+      small,
+    );
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe('PRICES_CHANGED');
+    expect(stale.body.error.details).toMatchObject({ totalCents: 1500, expectedTotalCents: 1000 });
+    const ok = await call(
+      'POST',
+      '/checkout/v1/checkout',
+      { ...body, expectedTotalCents: 1500 },
+      small,
+    );
+    expect(ok.status).toBe(201);
+    expect(ok.body.order.totalCents).toBe(1500);
   });
 });

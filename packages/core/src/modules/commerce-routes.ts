@@ -533,13 +533,18 @@ export function mountCommerce(d: Deps) {
       const anchor = await verifyByOrder(tx, tenant.id, phone, number);
       // one answer for "no such order" and "not this phone" — no enumeration signal
       if (!anchor) {
-        // own tx: the throw below rolls this one back (the phone's advisory lock is still held)
-        await withTenant(sql, tenant.id, (t2) => recordSessionFailure(t2, tenant.id, phone));
-        throw new HttpError(
-          404,
-          'CUSTOMER_NOT_VERIFIED',
-          'no order with that number for this phone',
-        );
+        // answered, not thrown: the failure row commits with the claim. A second tx here would
+        // hold two pool connections per guess and starve the pool under parallel wrong guesses.
+        await recordSessionFailure(tx, tenant.id, phone);
+        return {
+          status: 404,
+          body: {
+            error: {
+              code: 'CUSTOMER_NOT_VERIFIED',
+              message: 'no order with that number for this phone',
+            },
+          },
+        };
       }
       const t = mintCustomerToken(sessionSecret, tenant.id, phone, anchor);
       return { status: 201, body: { customerToken: t.token, expiresAt: t.expiresAt, phone } };

@@ -14,7 +14,7 @@ import {
 } from '@vendua/templates';
 import { emitAdminTx } from '../admin/live.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
-import { HttpError } from '../platform/http.ts';
+import { HttpError, UUID_RE } from '../platform/http.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 import { optedOutTx } from '../store-whatsapp/messages.ts';
 import { phoneVariants } from '../store-whatsapp/text.ts';
@@ -431,7 +431,7 @@ export async function subscribeNotifyTx(
     throw new HttpError(400, 'INVALID_NOTIFY', 'phone must be a Brazilian number with DDD');
   let productId: string | null = null;
   if (subject === 'product') {
-    if (typeof body.productId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.productId))
+    if (typeof body.productId !== 'string' || !UUID_RE.test(body.productId))
       throw new HttpError(400, 'INVALID_NOTIFY', 'productId required for product subscriptions');
     const hit =
       await tx`select 1 from products where tenant_id = ${tenantId} and id = ${body.productId}`;
