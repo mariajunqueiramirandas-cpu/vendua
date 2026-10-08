@@ -27,6 +27,8 @@ export function useTransition() {
  */
 export function useDelay(storeName: string) {
   const qc = useQueryClient();
+  // the times the shopper is told are the store's clock, not this device's
+  const tz = useStoreQuery().data?.hours.timezone;
   const swap = (o: Order) => {
     qc.setQueryData<Board>(qk.board, (b) =>
       b ? { ...b, orders: b.orders.map((x) => (x.id === o.id ? o : x)) } : b,
@@ -53,7 +55,7 @@ export function useDelay(storeName: string) {
     const idem = crypto.randomUUID();
     holdAction(
       `delay-${order.id}`,
-      `#${order.number}: novo horário ${clock(guess.delivery.promisedTo!)}`,
+      `#${order.number}: novo horário ${clock(guess.delivery.promisedTo!, tz)}`,
       (keepalive) => {
         const sent = api.delay(order.id, minutes, idem, { keepalive });
         if (keepalive) return void sent.catch(() => undefined);
@@ -66,7 +68,8 @@ export function useDelay(storeName: string) {
                 ms: 8000,
                 action: {
                   label: 'avisar',
-                  run: () => window.open(delayWhatsappUrl(o, storeName), '_blank', 'noreferrer'),
+                  run: () =>
+                    window.open(delayWhatsappUrl(o, storeName, tz), '_blank', 'noreferrer'),
                 },
               });
           })
@@ -82,14 +85,14 @@ export function useDelay(storeName: string) {
   };
 }
 
-function delayWhatsappUrl(o: Order, storeName: string) {
+function delayWhatsappUrl(o: Order, storeName: string, tz?: string) {
   const d = o.delivery;
   const when =
     d.mode !== 'delivery'
-      ? `fica pronto por volta das ${clock(d.promisedTo!)}`
+      ? `fica pronto por volta das ${clock(d.promisedTo!, tz)}`
       : d.promisedFrom && d.promisedFrom !== d.promisedTo
-        ? `chega entre ${clock(d.promisedFrom)} e ${clock(d.promisedTo!)}`
-        : `chega por volta das ${clock(d.promisedTo!)}`;
+        ? `chega entre ${clock(d.promisedFrom, tz)} e ${clock(d.promisedTo!, tz)}`
+        : `chega por volta das ${clock(d.promisedTo!, tz)}`;
   return (
     whatsappUrl(
       o.customer.phone,
