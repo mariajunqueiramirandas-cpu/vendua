@@ -9,7 +9,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { whatsappDigits } from '@vendua/kernel/rules';
-import { api, type Category, type StoreView } from '../../lib/api.ts';
+import { api, withRetryScope, type Category, type StoreView } from '../../lib/api.ts';
 import { money, phone as fmtPhone } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { qk, useMutation } from '../../lib/query.ts';
@@ -563,12 +563,12 @@ export function ProductsStep({
     void qc.invalidateQueries({ queryKey: qk.home });
   };
   const add = useMutation({
-    mutationFn: async () => {
-      const r = await api.createProduct({
-        name: name.trim(),
-        priceCents: price ?? 0,
-        categoryId: await category(),
-      });
+    mutationFn: async (_: void, ctx) => {
+      const categoryId = await category();
+      // past that await the retry scope is gone: back in it, a retry reuses the product's key
+      const r = await withRetryScope(ctx, () =>
+        api.createProduct({ name: name.trim(), priceCents: price ?? 0, categoryId }),
+      );
       // the product exists once created: a failed photo must not leave the form to create it twice
       let photoFailed = false;
       if (photo)
@@ -768,7 +768,12 @@ function PasteList({
     return () => clearTimeout(h);
   }, [text]);
   const run = useMutation({
-    mutationFn: async () => api.importProducts(text.trim().slice(0, 20_000), await category()),
+    mutationFn: async (_: void, ctx) => {
+      const categoryId = await category();
+      return withRetryScope(ctx, () =>
+        api.importProducts(text.trim().slice(0, 20_000), categoryId),
+      );
+    },
     onSuccess: (r) => onDone(r.created),
     onError: (e) => toast.error(messageOf(e)),
   });

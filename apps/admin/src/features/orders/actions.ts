@@ -10,6 +10,7 @@ import { PAY_LABEL, payError } from '../../ui/PaymentChip.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { holdAction, transitionOptions } from './transition.ts';
+import { useStoreQuery } from '../store/StatusPill.tsx';
 
 type OrderData = { customer: unknown; order: Order };
 
@@ -276,7 +277,7 @@ const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 /** 80 mm kitchen ticket: big number, items, notes; the browser's print dialog. */
-export function printTicket(o: Order, storeName: string) {
+export function printTicket(o: Order, storeName: string, tz?: string) {
   const items = o.items
     .map(
       (i) =>
@@ -298,7 +299,7 @@ h1{font-size:34px;margin:0 0 4px}.m{font-size:13px}.it{padding:6px 0;border-bott
 <div class="m">${esc(o.customer.name)}${o.customer.phone ? ` · ${esc(phone(o.customer.phone))}` : ''}</div>
 <div class="m">${o.delivery.mode === 'delivery' ? `ENTREGA: ${esc(o.delivery.address ?? '')} ${esc(o.delivery.neighborhood ?? '')}` : o.delivery.mode === 'dine_in' ? (o.delivery.table ? esc(tableName(o.delivery.table).toUpperCase()) : 'CONSUMO NO LOCAL') : 'RETIRADA'}</div>
 ${o.scheduledFor ? `<div class="m">ENCOMENDA PARA ${esc(o.scheduledFor)}</div>` : ''}
-<div class="m">${new Date(o.placedAt).toLocaleString('pt-BR')}</div>
+<div class="m">${new Date(o.placedAt).toLocaleString('pt-BR', { timeZone: tz })}</div>
 <div style="margin-top:8px">${items}</div>
 ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
 <div class="t">${esc(money(o.totalCents))} · ${esc(PAY_LABEL[o.payment.method] ?? o.payment.method)}${
@@ -320,6 +321,7 @@ ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
 export function usePrintOrder(storeName: string) {
   const qc = useQueryClient();
   const open = useFeature('printing');
+  const tz = useStoreQuery().data?.hours.timezone;
   const { data } = useQuery({
     queryKey: qk.printers,
     queryFn: api.printers,
@@ -343,7 +345,7 @@ export function usePrintOrder(storeName: string) {
     onError: (e) => toast.error(messageOf(e)),
   });
   return {
-    print: (o: Order) => (viaPrinter ? send.mutate({ order: o }) : printTicket(o, storeName)),
+    print: (o: Order) => (viaPrinter ? send.mutate({ order: o }) : printTicket(o, storeName, tz)),
     /** one printer the merchant picked, whatever prints automatically */
     printTo: (o: Order, printerId: string) => send.mutate({ order: o, printerId }),
     /** where a ticket can go now; a choice is offered once there's more than one */

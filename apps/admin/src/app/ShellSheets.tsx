@@ -8,6 +8,7 @@ import type { NAV } from './nav.ts';
 import { intent } from './routes.ts';
 import { NavLock, UserMenu } from './Shell.tsx';
 import { resetClient } from '../lib/persist.ts';
+import { disablePush } from '../lib/push.ts';
 
 export /** "Mais": large tiles with a live hint each (§3.1). */
 function MoreSheet({
@@ -112,6 +113,8 @@ export function SwitchStoreSheet({
               type="button"
               disabled={st.id === s.store.id}
               onClick={async () => {
+                // the device's subscription belongs to the store being left
+                await disablePush().catch(() => undefined);
                 await api.switchStore(st.id);
                 await resetClient(qc);
                 window.location.assign('/admin/');

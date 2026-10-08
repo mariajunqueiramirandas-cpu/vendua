@@ -2,7 +2,7 @@ import { Lightning } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, type EnsaioView } from '../../lib/api.ts';
+import { api, withRetryScope, type EnsaioView } from '../../lib/api.ts';
 import { when } from '../../lib/format.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
@@ -63,7 +63,7 @@ export default function Ensaio() {
   });
 
   const teach = useMutation({
-    mutationFn: async ({ d, v }: { d: Disagreement; v: TeachValues }) => {
+    mutationFn: async ({ d, v }: { d: Disagreement; v: TeachValues }, ctx) => {
       // "dismissed" takes it off the list without counting it as agreement; a 'different'
       // verdict would leave the card here after the lesson (ensaioView)
       if (v.kind === 'answer')
@@ -74,7 +74,8 @@ export default function Ensaio() {
           answer: v.answer,
         });
       await api.vendedor.teach({ kind: 'rule', text: v.answer });
-      return api.vendedor.verdict(d.draftId, { verdict: 'dismissed' });
+      // after an await: re-enter the retry scope so a retry reuses this request's key
+      return withRetryScope(ctx, () => api.vendedor.verdict(d.draftId, { verdict: 'dismissed' }));
     },
     onSuccess: (view, { v }) => {
       qc.setQueryData(qk.vendedor.ensaio, view);

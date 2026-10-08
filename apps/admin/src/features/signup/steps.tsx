@@ -15,6 +15,7 @@ import { money, phone as fmtPhone } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { parseDocument } from '../../lib/parse.ts';
 import { resetClient } from '../../lib/persist.ts';
+import { disablePush } from '../../lib/push.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
@@ -572,6 +573,7 @@ export function ExistingStep({ d, go, verified }: FlowProps & { verified: Verifi
       const sess = qc.getQueryData<Session>(qk.session);
       // already signed in with this phone: switching is enough
       if (sess?.stores.some((x) => x.id === s.id)) {
+        await disablePush().catch(() => undefined);
         await api.switchStore(s.id);
         await resetClient(qc);
         window.location.assign('/admin/');

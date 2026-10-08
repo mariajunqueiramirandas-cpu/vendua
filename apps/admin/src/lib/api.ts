@@ -2707,8 +2707,12 @@ export const api = {
   copilot: {
     view: () => get<CopilotView>('/copilot'),
     /** `screen`: the admin path the person is on, so Duá knows what "este pedido" is */
-    send: (text: string, screen?: string) =>
-      send<CopilotView>('POST', '/copilot/messages', screen ? { text, screen } : { text }),
+    send: (text: string, screen?: string, idem?: string) =>
+      req<CopilotView>('/copilot/messages', {
+        method: 'POST',
+        body: JSON.stringify(screen ? { text, screen } : { text }),
+        ...(idem ? { idem } : {}),
+      }),
     decide: (id: string, decision: 'confirm' | 'decline') =>
       send<CopilotView>('POST', `/copilot/actions/${encodeURIComponent(id)}`, { decision }),
     /** "nova conversa": Duá forgets this person's chat; what was applied stays */
@@ -2737,9 +2741,12 @@ export const api = {
       send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/take`, {}),
     release: (threadId: string) =>
       send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/release`, {}),
-    reply: (threadId: string, text: string) =>
-      send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/reply`, {
-        text,
+    /** `idem`: the bubble's key, so retrying a failed bubble never sends the reply twice */
+    reply: (threadId: string, text: string, idem?: string) =>
+      req<ThreadDetail>(`/vendedor/threads/${encodeURIComponent(threadId)}/reply`, {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+        ...(idem ? { idem } : {}),
       }),
     /** "não é cliente" */
     mute: (threadId: string) =>

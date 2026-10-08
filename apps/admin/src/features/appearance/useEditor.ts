@@ -4,6 +4,7 @@ import type { ComponentType } from '@vendua/templates';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
+  withRetryScope,
   type Appearance as AppearanceData,
   type PageTemplate,
   type StoreTokens,
@@ -373,9 +374,12 @@ export function useEditor(data: AppearanceData, storeId: string) {
   // ── publish ──────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<'idle' | 'publishing' | 'live'>('idle');
   const publish = useMutation({
-    mutationFn: async () => {
-      for (const t of dirtyTpls) await api.savePage(t, drafts[t], base[t].version);
-      if (tokensDirty && tokens) await api.saveTokens(tokens);
+    mutationFn: async (_: void, ctx) => {
+      // each save re-enters the retry scope (lost at the previous await): a retry replays the
+      // pages already saved instead of failing on their old version
+      for (const t of dirtyTpls)
+        await withRetryScope(ctx, () => api.savePage(t, drafts[t], base[t].version));
+      if (tokensDirty && tokens) await withRetryScope(ctx, () => api.saveTokens(tokens));
       return { colours: tokensDirty };
     },
     onMutate: () => setPhase('publishing'),

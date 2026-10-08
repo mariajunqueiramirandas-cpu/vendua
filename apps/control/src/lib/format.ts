@@ -4,6 +4,24 @@ import { formatCents } from '@vendua/kernel/rules';
 export const fmtMoney = (cents: number | null | undefined) =>
   cents == null ? '—' : formatCents(cents);
 
+/**
+ * pt-BR typed amount → cents, or null: "1.500" and "1.500,00" are R$ 1.500, "49,90" and "49.90"
+ * R$ 49,90 (a separator followed by 1–2 digits is the decimal one). Mirrors apps/admin's parseMoney.
+ */
+export function parseMoney(input: string): number | null {
+  let s = input.replace(/r\$|\s/gi, '');
+  if (!/^\d[\d.,]*$/.test(s)) return null;
+  const lastSep = Math.max(s.lastIndexOf(','), s.lastIndexOf('.'));
+  if (lastSep >= 0 && s.length - lastSep - 1 <= 2) {
+    const intPart = s.slice(0, lastSep).replace(/[.,]/g, '');
+    s = `${intPart || '0'}.${s.slice(lastSep + 1).padEnd(2, '0')}`;
+  } else {
+    s = s.replace(/[.,]/g, '');
+  }
+  const n = Math.round(Number(s) * 100);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
 /** Agent spend is metered in USD (model/tool pricing), unlike BRL deal values — don't use fmtMoney. */
 const usdFmt = (max: number) =>
   new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: max });

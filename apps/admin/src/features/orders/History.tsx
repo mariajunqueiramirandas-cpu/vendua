@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, type PayMethod } from '../../lib/api.ts';
 import { isoDate } from '../../lib/format.ts';
+import { useStoreQuery } from '../store/StatusPill.tsx';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -80,6 +81,7 @@ export default function History() {
   const [f, setF] = useFilters();
   const [q, setQ] = useState(f.q);
   const [sheet, setSheet] = useState(false);
+  const tz = useStoreQuery().data?.hours.timezone;
   useEffect(() => {
     const t = setTimeout(() => q.trim() !== f.q && setF({ q: q.trim() }), 250);
     return () => clearTimeout(t);
@@ -93,6 +95,7 @@ export default function History() {
           new Date(
             Date.now() - (f.period === 'hoje' ? 0 : f.period === '7d' ? 6 : 29) * 86_400_000,
           ),
+          tz,
         );
   const params = {
     q: f.q,

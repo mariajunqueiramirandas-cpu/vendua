@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check } from 'lucide-react';
 import { api } from '@/lib/api.ts';
+import { parseMoney } from '@/lib/format.ts';
 import { useDebounced } from '@/lib/hooks.ts';
 import { AGENT_GOALS, AGENT_MODES } from '@/lib/labels.ts';
 import { errorMessage, qk } from '@/lib/query.ts';
@@ -102,6 +103,8 @@ export function NewLeadSheet({
 
   const submit = async (openAfter: boolean) => {
     if (!f.name.trim()) return;
+    const deal = f.deal.trim() ? parseMoney(f.deal) : null;
+    if (f.deal.trim() && deal === null) return setErr('valor do negócio inválido — ex.: 1.500,00');
     setErr('');
     try {
       const wa = f.whatsapp.replace(/[^\d+]/g, '');
@@ -114,7 +117,7 @@ export function NewLeadSheet({
         city: f.city || null,
         segment: f.segment || null,
         source: f.source || null,
-        dealValueCents: f.deal ? Math.round(Number(f.deal.replace(',', '.')) * 100) : null,
+        dealValueCents: deal,
         agentMode: mode,
         ...(mode === 'off' ? { automation: false } : { agentGoal: goal }),
       });

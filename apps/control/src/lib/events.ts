@@ -35,6 +35,8 @@ const QUIET_MS = 300;
 
 const subs = new Set<Sub>();
 let source: EventSource | null = null;
+let retry: ReturnType<typeof setTimeout> | undefined;
+let failures = 0;
 
 function dispatch(e: ControlEvent): void {
   for (const s of subs) {
@@ -59,7 +61,7 @@ function dispatch(e: ControlEvent): void {
 }
 
 function open(): void {
-  if (source || typeof EventSource === 'undefined') return;
+  if (source || !subs.size || typeof EventSource === 'undefined') return;
   const es = new EventSource('/control/v1/events');
   for (const type of [
     'thread.message',
@@ -78,12 +80,25 @@ function open(): void {
       }
     });
   }
-  es.addEventListener('sync', () => dispatch({ id: 0, type: 'sync' }));
-  // 'error' needs no handling — EventSource retries on its own.
+  es.addEventListener('sync', () => {
+    failures = 0;
+    dispatch({ id: 0, type: 'sync' });
+  });
+  // EventSource retries a dropped stream on its own, but one Core refused (a 502 mid-deploy) is
+  // closed for good: reopen it, quick at first, easing off to a minute. Core's `sync` on the new
+  // connection makes the views refetch what they missed.
+  es.onerror = () => {
+    if (source !== es || es.readyState !== EventSource.CLOSED) return;
+    source = null;
+    clearTimeout(retry);
+    retry = setTimeout(open, Math.min(60_000, 2000 * 2 ** failures++));
+  };
   source = es;
 }
 
 function close(): void {
+  clearTimeout(retry);
+  retry = undefined;
   source?.close();
   source = null;
 }

@@ -68,6 +68,7 @@ function useSeen(open: boolean) {
 }
 import { StoreAvatar } from './StoreAvatar.tsx';
 import { resetClient } from '../lib/persist.ts';
+import { disablePush } from '../lib/push.ts';
 
 function usePlacedCount() {
   // orders are pushed over the stream; a slow safety net stays for the one screen that can't miss
@@ -596,6 +597,7 @@ export function UserMenu() {
         aria-label="sair"
         title="sair"
         onClick={async () => {
+          await disablePush().catch(() => undefined);
           await api.auth.logout().catch(() => undefined);
           await resetClient(qc);
           window.location.assign('/admin/entrar');
