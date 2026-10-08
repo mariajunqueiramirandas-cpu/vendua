@@ -243,7 +243,15 @@ onUnhandledError(unhandledErrorReporter(sql));
 // Hono compiles its router on the first request it matches (~15 ms with Core's routes): spend it
 // here rather than on a shopper's first request
 await app.request('http://localhost/healthz');
-const server = Bun.serve({ port, fetch: app.fetch, idleTimeout: 60 });
+// Routes cap their own bodies (32 KB by default, media 2 MB), but only once read: a chunked upload
+// with no length would be buffered whole first, up to Bun's 128 MB default. 4 MiB covers every
+// route's cap with room.
+const server = Bun.serve({
+  port,
+  fetch: app.fetch,
+  idleTimeout: 60,
+  maxRequestBodySize: 4 * 1024 * 1024,
+});
 log.info({ port }, 'listening');
 // One active store's storefront reads, in the background: their code compiles and their statements
 // are prepared on the connection the next request gets, so the first shopper after a deploy finds
