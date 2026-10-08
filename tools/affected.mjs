@@ -1,10 +1,13 @@
 #!/usr/bin/env bun
 // Maps a git diff to the workspaces it affects (affected graph from
 // docs/architecture/06-monorepo.md). Prints
-// `{"packages": [<workspace dirs>], "allStorefronts": <bool>, "coreTests": <bool>, "conformance": <bool>, "adminGate": <bool>, "edgeSmoke": <bool>}`
+// `{"packages": [<workspace dirs>], "allStorefronts": <bool>, "storefronts": [<slugs>], "coreTests": <bool>, "conformance": <bool>, "smoke": <bool>, "adminGate": <bool>, "edgeSmoke": <bool>}`
 // — `packages` lists directories consumers `cd` into; `allStorefronts: true` expands
-// to every `storefronts/*/` dir; `coreTests` /
-// `conformance` gate the CI jobs of the same name; `adminGate` gates the merchant admin's
+// to every `storefronts/*/` dir; `storefronts` lists the slugs to check/qa (touched ones, or every
+// non-`_` storefront with a package.json when `allStorefronts`); `coreTests` /
+// `conformance` gate the CI jobs of the same name (`conformance` is also true when `storefronts` is
+// non-empty); `smoke` is the old `conformance` rule (template/shared/CI changes) and gates the
+// fresh `ci-smoke` scaffold; `adminGate` gates the merchant admin's
 // screenshot/axe job (it runs against Core + the Kernel's section catalog); `edgeSmoke` gates
 // the Control Plane smoke (Core + the edge + `vendua release` serving the `_template` build).
 // `packages/agent-runtime` is a Core dependency (not a storefront one): touching it flips
@@ -13,6 +16,22 @@
 // Consumed by the `check` job's Builds step in .github/workflows/ci.yml.
 
 import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+// every deployable storefront: a dir under storefronts/ with a package.json, `_`-prefixed ones
+// (_template and friends) are platform-owned and covered by `smoke`
+function listStorefronts(root = 'storefronts') {
+  try {
+    return readdirSync(root, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && !d.name.startsWith('_'))
+      .filter((d) => existsSync(join(root, d.name, 'package.json')))
+      .map((d) => d.name)
+      .sort();
+  } catch {
+    return [];
+  }
+}
 
 const SHARED_PACKAGES = new Set([
   'kernel',
@@ -58,7 +77,7 @@ const EDGE_INPUTS = new Set([
   'storefronts/_template',
 ]);
 
-export function mapFiles(files) {
+export function mapFiles(files, listAll = listStorefronts) {
   const packages = new Set();
   let allStorefronts = false;
   let ciChanged = false;
@@ -90,11 +109,21 @@ export function mapFiles(files) {
     // docs/, tools/, .github/, other root files → no workspace affected
   }
   const touches = (dir) => packages.has(dir);
+  const storefronts = allStorefronts
+    ? listAll()
+    : [...packages]
+        .filter((p) => p.startsWith('storefronts/'))
+        .map((p) => p.slice('storefronts/'.length))
+        .filter((slug) => !slug.startsWith('_'))
+        .sort();
+  const smoke = ciChanged || allStorefronts || [...CONFORMANCE_INPUTS].some(touches);
   return {
     packages: [...packages].sort(),
     allStorefronts,
+    storefronts,
     coreTests: ciChanged || rootChanged || [...CORE_TEST_INPUTS].some(touches),
-    conformance: ciChanged || allStorefronts || [...CONFORMANCE_INPUTS].some(touches),
+    conformance: smoke || storefronts.length > 0,
+    smoke,
     adminGate: ciChanged || rootChanged || [...ADMIN_INPUTS].some(touches),
     edgeSmoke: ciChanged || rootChanged || [...EDGE_INPUTS].some(touches),
   };

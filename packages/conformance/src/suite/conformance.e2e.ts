@@ -1187,21 +1187,30 @@ test('[Q11] token restyle: every Kernel default and every var(--v-*) rule follow
     ).toBeGreaterThanOrEqual(0.9);
 });
 
-test('[artifacts] screenshots at 390/1440 for the QA report', async ({ page }) => {
+test('[artifacts] screenshots at 390/1440 for the QA report', async ({ page, request }) => {
   mkdirSync(SHOTS, { recursive: true });
+  const shoot = async (name: string, w: number, url: string) => {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.goto(url);
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(800);
+    await page.screenshot({ path: join(SHOTS, `${name}-${w}.png`), fullPage: false });
+  };
   const shots: [QaHost, string][] = [
     [OPEN, 'home'],
     [PAUSED, 'paused'],
     [CLOSED, 'closed'],
     [EDGE, 'edge'],
   ];
-  for (const [host, name] of shots) {
-    for (const w of [390, 1440]) {
-      await page.setViewportSize({ width: w, height: 900 });
-      await page.goto(base(host));
-      await page.waitForLoadState('networkidle').catch(() => {});
-      await page.waitForTimeout(800);
-      await page.screenshot({ path: join(SHOTS, `${name}-${w}.png`), fullPage: false });
-    }
+  for (const [host, name] of shots) for (const w of [390, 1440]) await shoot(name, w, base(host));
+
+  // catalog + one product page, found the way the C-series does; a store without either still
+  // gets its other shots
+  const products = await getCatalog(request, OPEN);
+  const { path: catalogPath } = await discoverProductLinks(page, products, O);
+  if (catalogPath) for (const w of [390, 1440]) await shoot('catalog', w, `${O}${catalogPath}`);
+  if (await gotoProductPage(page, catalogPath, SIMPLE_PRODUCT, O)) {
+    const productUrl = page.url();
+    for (const w of [390, 1440]) await shoot('product', w, productUrl);
   }
 });

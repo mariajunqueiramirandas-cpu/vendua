@@ -212,6 +212,7 @@ jobs:
   # exit criterion: scaffold a fresh storefront, boot Postgres + Core, run the conformance e2e through the preview proxy
   conformance:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
@@ -231,9 +232,13 @@ jobs:
           base="$BASE_REF"
           if [ -z "$base" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "smoke=true" >> "$GITHUB_OUTPUT"
+            echo "storefronts=$(for d in storefronts/*/; do s="$(basename "$d")"; case "$s" in _*) ;; *) [ -f "$d/package.json" ] && printf '%s ' "$s";; esac; done)" >> "$GITHUB_OUTPUT"
           else
             affected="$(bun tools/affected.mjs --base "origin/$base")" # a failed diff fails the step, never a silent skip
             echo "run=$(echo "$affected" | jq -r '.conformance')" >> "$GITHUB_OUTPUT"
+            echo "smoke=$(echo "$affected" | jq -r '.smoke')" >> "$GITHUB_OUTPUT"
+            echo "storefronts=$(echo "$affected" | jq -r '.storefronts | join(" ")')" >> "$GITHUB_OUTPUT"
           fi
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
@@ -256,12 +261,47 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         uses: ./.github/actions/playwright-chromium
       - name: Scaffold + check + qa (exit criterion)
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && steps.scope.outputs.smoke == 'true'
         run: |
           bunx vendua scaffold ci-smoke
           bun install
           bunx vendua check ci-smoke
           bunx vendua qa ci-smoke
+      # the storefronts this diff touches (every one on main pushes): static K-rules, K05 (the PR
+      # touches only its own storefront dir) and the conformance e2e; every slug runs before the step fails
+      - name: Affected storefronts (check + K05 + qa)
+        if: steps.scope.outputs.run == 'true' && steps.scope.outputs.storefronts != ''
+        env:
+          STOREFRONTS: ${{ steps.scope.outputs.storefronts }}
+          BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: |
+          failed=""
+          for slug in $STOREFRONTS; do
+            echo "::group::$slug"
+            ok=1
+            bunx vendua check "$slug" || ok=0
+            # K05 judges a store's own PR (labelled storefront:<slug>); a platform PR touches more by design
+            if [ "$EVENT_NAME" = "pull_request" ] && [[ " $PR_LABELS " == *" storefront:$slug "* ]]; then
+              bunx vendua-conformance k05 "$slug" "origin/$BASE_REF" || ok=0
+            fi
+            bunx vendua qa "$slug" || ok=0
+            echo "::endgroup::"
+            if [ "$ok" = 1 ]; then echo "PASS $slug"; else echo "FAIL $slug"; failed="$failed $slug"; fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::storefront conformance failed:$failed"
+            exit 1
+          fi
+      - name: Upload qa-report
+        if: always() && steps.scope.outputs.run == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qa-report
+          path: storefronts/*/qa-report
+          retention-days: 7
+          if-no-files-found: ignore
 
   # Control Plane smoke (Phase 4): a staff invite provisions a store, the `_template` build is
   # published as a release, a real edge serves it with vendua-state, Core's probes verify it
