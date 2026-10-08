@@ -640,6 +640,31 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
     expect(again.status).toBe(201);
     expect(again.headers.get('x-idempotent-replay')).toBe('true');
     expect(again.body.id).toBe(res.body.id);
+    // a key another route stored (or a reserved one) is never replayed here
+    const pushKey = `${mediaKey}-push`;
+    await owner(
+      'POST',
+      '/push/subscribe',
+      {
+        endpoint: `https://fcm.googleapis.com/fcm/send/${mediaKey}`,
+        keys: { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) },
+      },
+      { 'idempotency-key': pushKey },
+    );
+    const foreign = await owner('POST', '/media', new Uint8Array([1]), {
+      'content-type': 'image/jpeg',
+      'idempotency-key': pushKey,
+    });
+    expect(foreign.headers.get('x-idempotent-replay')).toBeNull();
+    expect(foreign.status).not.toBe(201);
+    expect(
+      (
+        await owner('POST', '/media', new Uint8Array([1]), {
+          'content-type': 'image/jpeg',
+          'idempotency-key': 'vendedor:x',
+        })
+      ).status,
+    ).toBe(400);
     expect(
       (
         await owner('POST', '/media', withExif, {
