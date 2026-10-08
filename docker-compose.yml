@@ -211,11 +211,15 @@ services:
       - traefik.docker.network=dokploy-network
       - traefik.http.services.vendua-edge.loadbalancer.server.port=8080
       - traefik.http.routers.vendua-edge-http.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
+      # the rule is v3 regex syntax: pinned, or a Traefik whose core.defaultRuleSyntax is v2 never
+      # matches it and every store 404s
+      - traefik.http.routers.vendua-edge-http.ruleSyntax=v3
       - traefik.http.routers.vendua-edge-http.entrypoints=web
       - traefik.http.routers.vendua-edge-http.priority=1
       - traefik.http.routers.vendua-edge-http.middlewares=vendua-edge-https
       - traefik.http.middlewares.vendua-edge-https.redirectscheme.scheme=https
       - traefik.http.routers.vendua-edge.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
+      - traefik.http.routers.vendua-edge.ruleSyntax=v3
       - traefik.http.routers.vendua-edge.entrypoints=websecure
       - traefik.http.routers.vendua-edge.priority=1
       - traefik.http.routers.vendua-edge.tls=true

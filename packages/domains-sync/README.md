@@ -13,8 +13,14 @@ the edge's Docker service at priority 2 (the store wildcard is 1, Dokploy's host
 - Hosts are checked again here, whatever Core sent: lower-case DNS names only (≥ 2 labels, an
   alphabetic or `xn--` TLD, ≤ 253 chars), never the store domain or a name under it (the wildcard
   serves those), never a `DOMAINS_SYNC_DENY` host or `localhost`; at most 5000. Drops are logged.
+- A file Traefik would reject (an older image wrote `routers: {}`, which takes the whole file
+  provider down, Dokploy's `redirect-to-https@file` included) is replaced with the empty one at
+  start and on every failed fetch, with or without Core: it routed nothing anyway.
 - Without `VENDUA_SYNC_SECRET` it logs that and idles instead of exiting, so the container
   doesn't crash-loop.
+- `bun src/prune-acme.ts [--write]` (by hand, inside the container) drops the per-store
+  `<slug>.<VENDUA_STORE_DOMAIN>` certificates left in `/traefik-dynamic/acme.json` that hide the
+  wildcard ([deploy doc](../../docs/deploy/dokploy.md#wildcard-certificate)).
 
 **Why it isn't part of the edge.** Whoever writes this file can route any host, the admin's and
 the CRM's included. The edge faces the internet; this process has no inbound route, talks only

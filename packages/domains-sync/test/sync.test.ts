@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { renderConfig, routerName } from '../src/render.ts';
-import { createSync, type FetchImpl, type SyncOptions } from '../src/sync.ts';
+import { createSync, isSound, repair, type FetchImpl, type SyncOptions } from '../src/sync.ts';
 
 process.env.DOMAINS_SYNC_QUIET = '1';
 
@@ -151,5 +151,44 @@ describe('tick', () => {
         resolver: 'letsencrypt',
       }),
     );
+  });
+});
+
+describe('repair', () => {
+  const opts = () => ({
+    out,
+    storeDomain: 'vendua.com.br',
+    deny: [],
+    service: 'vendua-edge@docker',
+    middleware: 'vendua-edge-https@docker',
+    resolver: 'letsencrypt',
+  });
+
+  test('isSound: comments only or routers present; never an empty or unparsable file', () => {
+    expect(isSound(renderConfig([], opts()))).toBe(true);
+    expect(isSound(renderConfig(['loja.com.br'], opts()))).toBe(true);
+    expect(isSound('# old\nhttp:\n  routers: {}\n')).toBe(false);
+    expect(isSound('http: {}\n')).toBe(false);
+    expect(isSound('http:\n  routers:\n')).toBe(false);
+    expect(isSound('http: [\n')).toBe(false);
+  });
+
+  test('a file an older image left is replaced while Core is down', async () => {
+    const tick = sync();
+    await tick();
+    writeFileSync(out, '# old\nhttp:\n  routers: {}\n');
+    answer = () => new Response('boom', { status: 503 });
+    expect((await tick()).status).toBe('failed');
+    expect(readFileSync(out, 'utf8')).toBe(renderConfig([], opts()));
+  });
+
+  test('a sound file, or none, is left alone', async () => {
+    expect(await repair(opts())).toBe(false);
+    expect(existsSync(out)).toBe(false);
+    const tick = sync();
+    await tick();
+    const ino = statSync(out).ino;
+    expect(await repair(opts())).toBe(false);
+    expect(statSync(out).ino).toBe(ino);
   });
 });
