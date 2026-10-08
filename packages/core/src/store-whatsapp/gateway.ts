@@ -432,7 +432,7 @@ export class Gateway {
         phoneForJid(m.jid) ??
         phoneForJid(m.alt) ??
         (m.jid.endsWith('@lid') ? phoneForJid(await m.pnForLid(m.jid)) : null);
-      await handleInbound(sql, tenantId, { phone, text: m.text, id: m.id });
+      await handleInbound(sql, tenantId, { phone, jid: m.jid, text: m.text, id: m.id });
       this.pump(tenantId);
       return;
     }
@@ -472,7 +472,13 @@ export class Gateway {
       }
     }
     if (m.fromMe || !m.text) return;
-    await handleInbound(sql, tenantId, { phone: phoneForJid(pn), text: m.text, id: m.id });
+    await handleInbound(sql, tenantId, {
+      phone: phoneForJid(pn),
+      // a chat row is addressed to the thread's address
+      jid: pn ?? lid ?? m.jid,
+      text: m.text,
+      id: m.id,
+    });
     this.pump(tenantId);
   }
 

@@ -31,6 +31,8 @@ export interface StateUpdate {
 export interface Inbound {
   /** national digits when the sender's number is known, else null */
   phone: string | null;
+  /** the chat's address, what a SAIR is kept by when the number is hidden */
+  jid?: string | null;
   text: string;
   id: string;
 }
@@ -50,8 +52,8 @@ export interface WaInbound {
   content: ChatContent | null;
   /** the PN jid behind a LID, from the device's own mapping */
   pnForLid(lid: string): Promise<string | null>;
-  /** the media bytes (audio, image), bounded */
-  download(): Promise<Uint8Array>;
+  /** the media bytes (audio, image): refused past `maxBytes`, aborted on a timeout */
+  download(maxBytes: number): Promise<Uint8Array>;
   /** the normalized message, for readers with their own rules (platform sessions) */
   message?: unknown;
   timestamp?: unknown;
@@ -160,8 +162,19 @@ export interface WaRuntime {
     syncHistory?: () => boolean;
   }): Promise<WaSocket>;
   normalize(message: unknown): unknown;
-  /** a media message's bytes (baileys `downloadMediaMessage`, re-upload on expired links) */
-  download(message: WaMessage, sock: WaSocket, logger: Logger): Promise<Uint8Array>;
+  /** a media message's decrypted bytes, from WhatsApp's own CDN only (re-upload on expired
+   *  links); stops reading past `maxBytes` and when `signal` aborts */
+  download(
+    message: WaMessage,
+    sock: WaSocket,
+    logger: Logger,
+    limits: MediaLimits,
+  ): Promise<Uint8Array>;
+}
+
+export interface MediaLimits {
+  maxBytes: number;
+  signal: AbortSignal;
 }
 
 export interface SessionHooks {
@@ -226,6 +239,8 @@ export const PAIR_WINDOW_MS = 200_000;
 /** consecutive failed connections before the state says error (it keeps retrying) */
 const ERROR_AFTER_FAILURES = 6;
 const JID_CACHE_MAX = 2_000;
+/** a "not on WhatsApp" answer can be a hiccup: ask again after this */
+const JID_MISS_TTL_MS = 5 * 60_000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const PRESENCE_TIMEOUT_MS = 5_000;
 /** WhatsApp forgets a presence subscription after a while; renewing more often is noise */
@@ -277,7 +292,8 @@ export class StoreSession {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pairing: { phone: string; issued: boolean } | null = null;
   private credsTail: Promise<void> = Promise.resolve();
-  private jids = new Map<string, string | null>();
+  /** null = not on WhatsApp, until `missUntil` */
+  private jids = new Map<string, { jid: string | null; missUntil: number }>();
   private subscribed = new Map<string, number>();
   private historyWaits = new Set<PendingHistory>();
 
@@ -610,8 +626,18 @@ export class StoreSession {
         content: parseContent(content),
         pnForLid: async (lid) =>
           userJid(await sock.signalRepository?.lidMapping?.getPNForLID(lid).catch(() => null)),
-        download: () =>
-          bounded(this.runtime.download(m, sock, this.log), DOWNLOAD_TIMEOUT_MS, 'media download'),
+        download: (maxBytes) => {
+          const ac = new AbortController();
+          return bounded(
+            this.runtime.download(m, sock, this.log, { maxBytes, signal: ac.signal }),
+            DOWNLOAD_TIMEOUT_MS,
+            'media download',
+            () => {
+              ac.abort();
+              return new Error(`media download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`);
+            },
+          );
+        },
         message: content,
         timestamp: m.messageTimestamp,
       });
@@ -620,7 +646,8 @@ export class StoreSession {
 
   /** The jid WhatsApp knows this number by (9th-digit variants), cached; null = not on WhatsApp. */
   async resolveJid(phone: string): Promise<string | null> {
-    if (this.jids.has(phone)) return this.jids.get(phone)!;
+    const known = this.jids.get(phone);
+    if (known && (known.jid || known.missUntil > Date.now())) return known.jid;
     const sock = this.sock;
     if (!sock || this.stateNow !== 'open') throw new SessionClosed(this.stateNow);
     // a foreign number ('+…', a Vendedor conversation) has one form
@@ -633,7 +660,7 @@ export class StoreSession {
     if (res === undefined) throw new Error('onWhatsApp returned nothing');
     const hit = res.find((r) => r.exists)?.jid ?? null;
     if (this.jids.size >= JID_CACHE_MAX) this.jids.clear();
-    this.jids.set(phone, hit);
+    this.jids.set(phone, { jid: hit, missUntil: hit ? 0 : Date.now() + JID_MISS_TTL_MS });
     return hit;
   }
 

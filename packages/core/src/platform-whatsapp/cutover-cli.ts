@@ -72,6 +72,8 @@ export async function cutover(
       const batch = sealed.slice(i, i + 500).map((r) => ({ session: o.session, ...r }));
       await tx`insert into platform_wa_auth ${tx(batch as never, 'session', 'category', 'name', 'data')}`;
     }
+    // the plaintext copy is a working login for the number: it goes once the sealed one is in
+    await tx`delete from wa_auth_state where account_id = ${o.accountId}`;
     await tx`
       update platform_wa_sessions set wanted = true, state = 'connecting', detail = null,
         pair_code = null, pair_code_expires_at = null, pair_requested_at = null,

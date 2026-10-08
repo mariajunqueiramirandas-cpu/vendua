@@ -408,6 +408,10 @@ export function mountCustomers(d: AdminDeps) {
         where tenant_id = ${t.id} and (phone = any(${variants}::text[]) or jid = any(${jids}::text[]))
       `;
       await tx`
+        delete from store_wa_contacts
+        where tenant_id = ${t.id} and address = any(${[...variants, ...jids]}::text[])
+      `;
+      await tx`
         delete from notify_requests
         where tenant_id = ${t.id} and regexp_replace(contact, '\\D', '', 'g') in (${phone}, ${'55' + phone})
       `;

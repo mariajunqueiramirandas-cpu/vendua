@@ -17,6 +17,7 @@ import { threadPhoneForJid } from './text.ts';
 // Core's ingest wakes on it (the shopper_messages trigger). Fenced on the lease like every write.
 
 export const SHOPPER_CHANNEL = 'vendua_shopper';
+const AUDIOS_PER_MINUTE = 6;
 
 export async function agentEnabled(sql: Sql, tenantId: string): Promise<boolean> {
   return withTenant(sql, tenantId, async (tx) => {
@@ -50,7 +51,7 @@ export async function storeChatMessage(
   tenantId: string,
   fence: Fence,
   m: ChatMessage,
-  download: () => Promise<Uint8Array>,
+  download: (maxBytes: number) => Promise<Uint8Array>,
 ): Promise<ChatStored> {
   const addrs = addressesOf(m);
   const media = m.content.media;
@@ -71,14 +72,15 @@ export async function storeChatMessage(
           and address = any(${addrs}) and class = 'personal' limit 1`;
       if (personal.length) return 'personal' as const;
     }
-    if (media?.type !== 'image') return null;
+    if (!media) return null;
     const recent = await tx<{ n: number }[]>`
       select count(*)::int as n from shopper_media d
         join shopper_messages msg on msg.id = d.message_id
         join shopper_threads t on t.id = msg.thread_id
       where d.tenant_id = ${tenantId} and t.channel = 'whatsapp' and t.address = any(${addrs})
-        and msg.kind = 'image' and d.created_at > now() - interval '1 minute'`;
-    return recent[0]!.n >= IMAGES_PER_MINUTE ? ('rate' as const) : null;
+        and msg.kind = ${media.type} and d.created_at > now() - interval '1 minute'`;
+    const max = media.type === 'image' ? IMAGES_PER_MINUTE : AUDIOS_PER_MINUTE;
+    return recent[0]!.n >= max ? ('rate' as const) : null;
   });
   if (pre === 'duplicate' || pre === 'ours' || pre === 'personal')
     return { stored: false, reason: pre };
@@ -94,7 +96,7 @@ export async function storeChatMessage(
     else if ((media.size ?? 0) > cap) skipped = 'too_big';
     else {
       try {
-        const got = await download();
+        const got = await download(cap);
         if (!got.byteLength) skipped = 'empty';
         else if (got.byteLength > cap) skipped = 'too_big';
         else bytes = Buffer.from(got.buffer, got.byteOffset, got.byteLength);
@@ -125,8 +127,14 @@ export async function storeChatMessage(
     // marked personal while this message was downloading
     if (found?.class === 'personal' && !command)
       return { stored: false, reason: 'personal' } as const;
-    if (found && found.address !== want)
+    if (found && found.address !== want) {
       await tx`update shopper_threads set address = ${want} where id = ${found.id}`;
+      // a SAIR kept by the old address follows the conversation
+      await tx`update store_wa_optouts set jid = ${want}
+               where tenant_id = ${tenantId} and jid = ${found.address}
+                 and not exists (select 1 from store_wa_optouts o
+                                 where o.tenant_id = ${tenantId} and o.jid = ${want})`;
+    }
     const thread = (
       await tx<{ id: string }[]>`
         insert into shopper_threads (tenant_id, channel, address, phone, profile_name,

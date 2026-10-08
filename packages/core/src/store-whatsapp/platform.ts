@@ -115,6 +115,8 @@ const HOUSEKEEPING_MS = 10 * 60_000;
 const SEND_LEASE = '2 minutes';
 const PROBE_MAX_AGE = '30 seconds';
 const LIDS_MAX = 20_000;
+/** voice notes downloaded per sender per minute: anyone can text Venduá's number */
+const AUDIOS_PER_MINUTE = 6;
 const PURPOSES = ['otp', 'dua', 'notice', 'crm'];
 
 const NEEDS_SOCKET = `(
@@ -163,6 +165,8 @@ export class PlatformGateway {
   private unlisten: (() => Promise<void>) | null = null;
   private lastHousekeeping = 0;
   private renewedAt = Date.now();
+  /** sender jid → download times in the last minute */
+  private audioTimes = new Map<string, number[]>();
   private log: Logger;
   private o: Required<
     Omit<PlatformGatewayOptions, 'id' | 'log' | 'sessions' | 'reconnectDelay'>
@@ -384,6 +388,16 @@ export class PlatformGateway {
     this.owned.set(name, owned);
   }
 
+  private audioAllowed(jid: string): boolean {
+    const now = Date.now();
+    if (this.audioTimes.size >= LIDS_MAX) this.audioTimes.clear();
+    const recent = (this.audioTimes.get(jid) ?? []).filter((t) => t > now - 60_000);
+    if (recent.length >= AUDIOS_PER_MINUTE) return false;
+    recent.push(now);
+    this.audioTimes.set(jid, recent);
+    return true;
+  }
+
   private async inbound(name: string, o: Owned, m: WaInbound): Promise<void> {
     if (m.fromMe) return;
     const body = waText(m.message ?? null);
@@ -398,10 +412,11 @@ export class PlatformGateway {
       (audio.seconds ?? 0) <= MAX_AUDIO_SECONDS &&
       (audio.size ?? 0) <= MAX_MEDIA_BYTES &&
       // an 'append' replay of a note already stored is not downloaded again
-      !(await inboxHas(this.o.sql, name, 'message', m.id))
+      !(await inboxHas(this.o.sql, name, 'message', m.id)) &&
+      this.audioAllowed(dm.jid)
     ) {
       try {
-        const got = await m.download();
+        const got = await m.download(MAX_MEDIA_BYTES);
         if (got.byteLength > 0 && got.byteLength <= MAX_MEDIA_BYTES)
           media = { mime: audio.mime, bytes: got, seconds: audio.seconds };
         else fetchFailed = true;

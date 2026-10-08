@@ -2,7 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 import { localParts } from '../platform/tz.ts';
-import { phoneVariants } from './text.ts';
+import { jidForPhone, phoneVariants } from './text.ts';
 
 // Order updates a store sends its shoppers from its own WhatsApp. Core renders every word and
 // figure here (money is Core's), queues the row in the order's own transaction, and the gateway
@@ -76,9 +76,11 @@ const hhmm = (iso: string, tz: string) => {
 
 const ddmm = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
 
+/** The shopper-typed first name, or '' when it could carry a link or WhatsApp formatting: the
+ *  store's own number would send it verbatim. */
 export function firstName(name: string): string {
-  const first = name.trim().split(/\s+/)[0] ?? '';
-  return first.slice(0, 40);
+  const first = (name.trim().split(/\s+/)[0] ?? '').slice(0, 40);
+  return /[.\/@:_*~`\d]/.test(first) ? '' : first;
 }
 
 /** steps after which there is nothing left to follow — the link only shows the order */
@@ -189,9 +191,13 @@ export async function previewOriginTx(tx: Sql, tenantId: string): Promise<string
 }
 
 export async function optedOutTx(tx: Sql, tenantId: string, phone: string): Promise<boolean> {
+  const variants = phoneVariants(phone);
+  // a SAIR kept by the chat's address, from before WhatsApp told us the number
+  const jids = variants.map((p) => jidForPhone(p)).filter((j): j is string => !!j);
   const rows = await tx`
     select 1 from store_wa_optouts
-    where tenant_id = ${tenantId} and phone = any(${phoneVariants(phone)}) limit 1`;
+    where tenant_id = ${tenantId} and (phone = any(${variants}) or jid = any(${jids}::text[]))
+    limit 1`;
   return rows.length > 0;
 }
 
@@ -320,12 +326,13 @@ export async function enqueueTextTx(
   tx: Sql,
   tenantId: string,
   kind: 'opt_out' | 'opt_in' | 'test',
-  phone: string,
+  phone: string | null,
   body: string,
+  jid: string | null = null,
 ): Promise<string> {
   const rows = await tx<{ id: string }[]>`
-    insert into store_wa_messages (tenant_id, kind, phone, body, expires_at)
-    values (${tenantId}, ${kind}, ${phone}, ${body}, now() + interval '30 minutes')
+    insert into store_wa_messages (tenant_id, kind, phone, jid, body, expires_at)
+    values (${tenantId}, ${kind}, ${phone}, ${jid}, ${body}, now() + interval '30 minutes')
     returning id`;
   return rows[0]!.id;
 }
