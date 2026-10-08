@@ -125,8 +125,8 @@ details, and a few-edit change in this thread. Check these triggers mid-task too
 - About to run a suite, a multi-workspace `bun run check`, e2e or read a long log → a
   run-and-report agent (below).
 - About to open a third file just to answer "where/how is X done" → `Explore` on `haiku`.
-- A change touches money, tenancy, idempotency, kernel exports or agent runs → after editing, the
-  invariant review (below).
+- A change touches anything "Invariants (bugs if broken)" covers → after editing, the invariant
+  review (below).
 - Stuck on a failure after two attempts → one agent investigates it cold (`sonnet`, or `opus` in
   business-critical code) while you continue.
 
