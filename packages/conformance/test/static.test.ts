@@ -674,6 +674,8 @@ describe('K09 / K11 / K03 extensions', () => {
         'export const j = <p>fetch failed, try again</p>;',
         'export const k = `fetch ${n}`;',
         'export const l = `${fetch}`;',
+        'export const m = "globalThis[\'fetch\']";',
+        "export const n = <p>use window['fetch'] never</p>;",
       ].join('\n'),
     });
     const k03 = (await runStatic(dir)).find((r) => r.id === 'K03')!;

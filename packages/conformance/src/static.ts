@@ -296,7 +296,8 @@ function k03(dir: string): CheckResult {
       if (
         /(?<![\w$.-])fetch\b(?!\s*:)/.test(bare[i]!) ||
         /\b(?:window|globalThis|self)\s*\??\.\s*fetch\b/.test(bare[i]!) ||
-        /\[\s*['"`]fetch['"`]\s*\]/.test(code[i]!)
+        // the quoted name is a string, so `bare` blanked it: the bracket must be code's own
+        [...code[i]!.matchAll(/\[\s*['"`]fetch['"`]\s*\]/g)].some((m) => bare[i]![m.index] === '[')
       )
         problems.push(`${loc}: direct fetch() — use @vendua/kernel api`);
       if (/\baxios\b/.test(line)) problems.push(`${loc}: axios — use @vendua/kernel api`);
