@@ -501,8 +501,10 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
       { id: string }[]
     >`select id from products where tenant_id = ${tenantId} limit 1`;
     const restocked = async () => {
-      await sql`insert into outbox (tenant_id, topic, payload) values
-        (${tenantId}, 'waitlist.restocked', ${sql.json({ productId: p!.id, contacts: ['5511924682468'] })})`;
+      // backdated: the pass reads rows older than Date.now(), whole ms, and created_at has µs
+      await sql`insert into outbox (tenant_id, topic, payload, created_at) values
+        (${tenantId}, 'waitlist.restocked', ${sql.json({ productId: p!.id, contacts: ['5511924682468'] })},
+         now() - interval '1 second')`;
       while ((await outboxPass(app, { lagMs: 0 })) === 200);
       await outboxPass(app, { lagMs: 0 });
     };
