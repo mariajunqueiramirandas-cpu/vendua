@@ -254,7 +254,10 @@ export async function claimDueJobsTx(
     where tenant_id = ${tenantId} and device_id = ${deviceId} and status = 'sent'
       and attempts >= ${GIVE_UP_ATTEMPTS}
       and coalesce(first_sent_at, sent_at) < now() - make_interval(secs => ${GIVE_UP_AFTER_S})
-      and sent_at < now() - make_interval(secs => ${RESEND_AFTER_S})`;
+      and sent_at < now() - make_interval(secs => ${RESEND_AFTER_S})
+      -- a device that was away gets each one once more before its silence counts
+      and sent_at >= coalesce((select d.connected_at from print_devices d
+                               where d.tenant_id = ${tenantId} and d.id = ${deviceId}), '-infinity')`;
   const due = await tx<
     {
       id: string;

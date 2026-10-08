@@ -8,6 +8,7 @@ import {
   cnameTarget,
   delegated,
   delegatedAlready,
+  delegatedSure,
   DNS_RECHECK_MS,
   pointsAt,
   type CustomDomainRow,
@@ -504,7 +505,8 @@ export async function finishRemovals(sql: Sql, d: DomainJobDeps, now: Date) {
       return;
     // an owner who delegated to this row's zone after the week ran out keeps it: "verificar" (or
     // adding the domain again) then finds the delegation, which a new zone would refuse
-    if (!removing && !claimed && (await delegated(r.host, r.name_servers))) return;
+    // (or when DNS didn't answer: a lost zone takes its records with it)
+    if (!removing && !claimed && (await delegatedSure(r.host, r.name_servers)) !== false) return;
     if (removing)
       await controlTx(
         sql,

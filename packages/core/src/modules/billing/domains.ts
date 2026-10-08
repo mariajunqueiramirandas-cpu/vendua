@@ -244,6 +244,24 @@ export async function delegated(host: string, nameServers: string[]): Promise<bo
   return g.size === new Set(want).size && want.every((n) => g.has(n));
 }
 
+/** `delegated`, but null when DNS didn't answer (timeout, SERVFAIL): only NXDOMAIN or NODATA
+ *  is a confirmed "no", which is what deleting a zone needs. */
+export async function delegatedSure(host: string, nameServers: string[]): Promise<boolean | null> {
+  if (!resolver.resolveNs || !nameServers.length) return false;
+  const got = await settle(
+    resolver
+      .resolveNs(host)
+      .catch((e: { code?: string }) =>
+        e?.code === 'ENOTFOUND' || e?.code === 'ENODATA' ? ([] as string[]) : null,
+      ),
+    null,
+  );
+  if (!got) return null;
+  const g = new Set(got.map(bare));
+  const want = nameServers.map(bare);
+  return g.size === new Set(want).size && want.every((n) => g.has(n));
+}
+
 /**
  * Does the domain already name every one of `nameServers` (the registry's record, or DNS)?
  * Cloudflare gives every zone in an account the same pair, so a delegation that is there before a

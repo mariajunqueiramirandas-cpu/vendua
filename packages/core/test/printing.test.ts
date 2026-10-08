@@ -827,6 +827,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
                             sent_at = now() - interval '20 minutes'
       where id = ${job!.id}`;
     expect((await claim()).map((j) => j.id)).toEqual([job!.id]);
+    // the same, but the device reconnected after the last send: it gets it once more
+    await sql`
+      update print_jobs set attempts = 9, first_sent_at = now() - interval '16 minutes',
+                            sent_at = now() - interval '2 minutes'
+      where id = ${job!.id}`;
+    await sql`
+      update print_devices set connected_at = now() - interval '1 minute'
+      where id = ${dev.deviceId}`;
+    expect((await claim()).map((j) => j.id)).toEqual([job!.id]);
+    await sql`update print_devices set connected_at = null where id = ${dev.deviceId}`;
     // resent many times and unanswered a quarter of an hour after it first went out: given up
     await sql`
       update print_jobs set attempts = 9, first_sent_at = now() - interval '16 minutes',
