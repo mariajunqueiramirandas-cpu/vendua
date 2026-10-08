@@ -122,12 +122,13 @@ In Dokploy, assign a domain to each web service (port 80):
   and which release it is (`/edge/v1/resolve`, cached 30 s and served stale while Core is down),
   serves that release's files from the artifact store and injects the store's state and live
   design into the page; unknown hosts get the "loja não encontrada" 404. Exact hosts in the
-  Domains UI (`admin`, `crm`, `site`) outrank the wildcard. TLS: the router sets `tls=true`
-  with no resolver, so Traefik needs the wildcard certificate itself — either a DNS-01 resolver
-  on Dokploy's Traefik for `*.vendua.com.br` (then add
-  `traefik.http.routers.vendua-edge.tls.certresolver=<name>` and
-  `tls.domains[0].main=vendua.com.br` / `tls.domains[0].sans=*.vendua.com.br`), or Cloudflare
-  proxying with SSL mode "Full". DNS: one wildcard record `*.vendua.com.br` → the VPS; new
+  Domains UI (`admin`, `crm`, `site`) outrank the wildcard. TLS: the router takes the wildcard
+  certificate from the `cloudflare` DNS-01 resolver on Dokploy's Traefik
+  ([Wildcard certificate](#wildcard-certificate)); without that resolver Traefik serves its
+  default certificate. Keep `*.vendua.com.br` **DNS only** in
+  Cloudflare: proxied, Core sees Cloudflare's IPs as every client (one shared rate-limit bucket)
+  and stores' own domains that CNAME to `<slug>.vendua.com.br` land on Cloudflare, which has no
+  zone or certificate for them. DNS: one wildcard record `*.vendua.com.br` → the VPS; new
   stores need nothing else. A store's own domain (`pudim.com.br`) needs no Domains UI step either:
   `domains-sync` routes it ([Own domains](#own-domains)).
 
@@ -152,6 +153,32 @@ update domains set is_primary = (host = 'pudim.example.com')
 ```
 
 (Exec into the `db` container or use Dokploy's database console.)
+
+### Wildcard certificate
+
+Once, before the `*` record goes DNS only:
+
+1. A Cloudflare API token with **Zone → DNS → Edit** and **Zone → Zone → Read** on
+   `vendua.com.br`.
+2. Dokploy's Traefik config (`traefik.yml`), beside the existing `letsencrypt` resolver:
+
+   ```yaml
+   certificatesResolvers:
+     cloudflare:
+       acme:
+         email: suporte@vendua.com.br
+         storage: /etc/dokploy/traefik/dynamic/acme-cf.json
+         dnsChallenge:
+           provider: cloudflare
+   ```
+
+   and `CF_DNS_API_TOKEN=<token>` in Traefik's environment. Reload Traefik.
+
+3. Deploy; the `edge` router's labels ask that resolver for `vendua.com.br` + `*.vendua.com.br`.
+   Check from the VPS:
+   `echo | openssl s_client -connect 127.0.0.1:443 -servername x.vendua.com.br 2>/dev/null | openssl x509 -noout -issuer -ext subjectAltName`
+   shows a Let's Encrypt issuer and `DNS:*.vendua.com.br` among the names (the subject carries
+   only the apex). Then set the `*` record to DNS only.
 
 ### Own domains
 
