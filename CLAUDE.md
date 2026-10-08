@@ -88,7 +88,8 @@ The repo defines no custom agents: spawn `general-purpose` (all tools; edits and
 `Explore` and `Plan` don't, so their brief carries every rule they need. Only a subagent's final
 report enters your context.
 
-**Pass `model` and `effort` on every spawn.** Without `model` an agent runs on this session's
+**Pass `model` and `effort` on every spawn** (the Agent tool takes `effort` from Claude Code
+2.1.292; on an older install, pass `model` alone). Without `model` an agent runs on this session's
 model, `Explore` and `Plan` included. A task that fits several rows takes the highest one (a test
 that touches money is Opus work).
 
