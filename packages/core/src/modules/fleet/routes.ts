@@ -124,7 +124,9 @@ export function mountFleet(o: {
       if (!tenant) {
         // an alias of a live domain, or a lapsed one: the edge redirects (ADR 0038)
         const r = await customRedirect(tx, hostname, d.storeDomain);
-        return r ? { host, tenant: r.tenant, primaryHost: host, release: null, redirect: r.redirect } : null;
+        return r
+          ? { host, tenant: r.tenant, primaryHost: host, release: null, redirect: r.redirect }
+          : null;
       }
       const ops = (
         await tx<{ bundle: string; live_release_id: string | null }[]>`
