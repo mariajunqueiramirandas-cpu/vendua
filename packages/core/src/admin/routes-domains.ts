@@ -273,7 +273,6 @@ export function mountDomains(d: AdminDeps) {
     write('owner', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
       const body = await bodyJson(c, 64 * 1024);
-      const records = parseRecords(body.records);
       const row = (
         await tx<CustomDomainRow[]>`
           select * from custom_domains where tenant_id = ${t.id} and id = ${id}
@@ -283,6 +282,7 @@ export function mountDomains(d: AdminDeps) {
       if (!row) throw new HttpError(404, 'DOMAIN_NOT_FOUND', 'domain not found');
       if (row.method !== 'ns')
         throw new HttpError(409, 'NOT_HOSTED', 'Venduá does not host this domain’s records');
+      const records = parseRecords(body.records, row.host);
       await tx`
         update custom_domains set records = ${tx.json(records as never)},
           records_updated_at = now(),

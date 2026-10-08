@@ -84,6 +84,8 @@ describe('domain names (hosts.ts)', () => {
 });
 
 describe('owner records (records.ts parseRecords)', () => {
+  const parse = (r: unknown) => parseRecords(r, 'loja.com.br');
+
   test("refuses Venduá's names, bad values and too many records", () => {
     for (const other of [
       { type: 'A', name: 'shop', value: '1.2.3.4' },
@@ -91,50 +93,46 @@ describe('owner records (records.ts parseRecords)', () => {
       { type: 'TXT', name: 'shop', value: 'x' },
     ])
       expect(
-        httpError(() =>
-          parseRecords([{ type: 'CNAME', name: 'shop', value: 'a.example.com' }, other]),
-        ),
+        httpError(() => parse([{ type: 'CNAME', name: 'shop', value: 'a.example.com' }, other])),
       ).toMatchObject({ code: 'INVALID_RECORD' });
     for (const value of ['::::', '1:2:3:4:5:6:7:8:9', '2001:db8::g'])
-      expect(httpError(() => parseRecords([{ type: 'AAAA', name: 'v6', value }]))).toMatchObject({
+      expect(httpError(() => parse([{ type: 'AAAA', name: 'v6', value }]))).toMatchObject({
         code: 'INVALID_RECORD',
       });
-    expect(parseRecords([{ type: 'AAAA', name: 'v6', value: '2001:DB8::1' }])[0]!.value).toBe(
+    expect(parse([{ type: 'AAAA', name: 'v6', value: '2001:DB8::1' }])[0]!.value).toBe(
       '2001:db8::1',
     );
-    expect(
-      httpError(() => parseRecords([{ type: 'A', name: '@', value: '1.2.3.4' }])),
-    ).toMatchObject({
+    expect(httpError(() => parse([{ type: 'A', name: '@', value: '1.2.3.4' }]))).toMatchObject({
       status: 422,
       code: 'INVALID_RECORD',
       details: { field: 'records.0' },
     });
     expect(
       httpError(() =>
-        parseRecords([
+        parse([
           { type: 'TXT', name: '@', value: 'ok' },
           { type: 'CNAME', name: 'www', value: 'x.example.com' },
         ]),
       ),
     ).toMatchObject({ code: 'INVALID_RECORD', details: { field: 'records.1' } });
-    expect(
-      httpError(() => parseRecords([{ type: 'A', name: 'mail', value: '300.1.1.1' }])).code,
-    ).toBe('INVALID_RECORD');
-    expect(httpError(() => parseRecords([{ type: 'SRV', name: 'x', value: 'y' }])).code).toBe(
+    expect(httpError(() => parse([{ type: 'A', name: 'mail', value: '300.1.1.1' }])).code).toBe(
       'INVALID_RECORD',
     );
-    expect(httpError(() => parseRecords('nope')).code).toBe('INVALID_RECORD');
+    expect(httpError(() => parse([{ type: 'SRV', name: 'x', value: 'y' }])).code).toBe(
+      'INVALID_RECORD',
+    );
+    expect(httpError(() => parse('nope')).code).toBe('INVALID_RECORD');
     const many = Array.from({ length: 51 }, (_, i) => ({ type: 'TXT', name: `t${i}`, value: 'x' }));
-    expect(httpError(() => parseRecords(many))).toMatchObject({
+    expect(httpError(() => parse(many))).toMatchObject({
       status: 422,
       code: 'TOO_MANY_RECORDS',
     });
-    expect(parseRecords(many.slice(0, 50))).toHaveLength(50);
+    expect(parse(many.slice(0, 50))).toHaveLength(50);
   });
 
   test('normalizes names, MX priority and values; dedupes', () => {
     expect(
-      parseRecords([
+      parse([
         { type: 'mx', name: '@', value: 'MX.Google.com.' },
         { type: 'MX', name: '', value: 'mx.google.com', priority: 10 },
         { type: 'MX', name: '@', value: 'alt.google.com', priority: 5 },
@@ -149,9 +147,29 @@ describe('owner records (records.ts parseRecords)', () => {
       { type: 'A', name: 'mail', value: '203.0.113.9' },
     ]);
     expect(
-      httpError(() => parseRecords([{ type: 'MX', name: '@', value: 'mx.x.com', priority: -1 }]))
-        .code,
+      httpError(() => parse([{ type: 'MX', name: '@', value: 'mx.x.com', priority: -1 }])).code,
     ).toBe('INVALID_RECORD');
+  });
+
+  test('names are read relative to the domain, so its own root and www stay protected', () => {
+    for (const name of ['loja.com.br', 'loja.com.br.', 'www.loja.com.br', 'WWW.Loja.com.br.'])
+      expect(httpError(() => parse([{ type: 'A', name, value: '1.2.3.4' }])).code).toBe(
+        'INVALID_RECORD',
+      );
+    expect(
+      httpError(() =>
+        parse([
+          { type: 'CNAME', name: 'shop.loja.com.br', value: 'a.example.com' },
+          { type: 'TXT', name: 'shop', value: 'x' },
+        ]),
+      ).code,
+    ).toBe('INVALID_RECORD');
+    expect(
+      parse([
+        { type: 'MX', name: 'loja.com.br.', value: 'mx.x.com' },
+        { type: 'TXT', name: '_dmarc.loja.com.br', value: 'v=DMARC1' },
+      ]).map((r) => r.name),
+    ).toEqual(['@', '_dmarc']);
   });
 });
 
@@ -590,7 +608,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     expect((await row(cd.id))!.status).toBe('lapsed');
     dns.delete(host);
     dns.delete(`www.${host}`);
+    // a lookup that fails once or twice isn't the domain moving: three days in a row is
     await jobs(later(T, 2 * DAY + 2 * MIN));
+    await jobs(later(T, 3 * DAY + 3 * MIN));
+    expect((await row(cd.id))!.status).toBe('lapsed');
+    await jobs(later(T, 4 * DAY + 4 * MIN));
     expect(await row(cd.id)).toBeUndefined();
     expect((await edge(host)).status).toBe(404);
     expect(await syncHosts()).not.toContain(host);

@@ -38,6 +38,8 @@ const BATCH = 100;
 export const TLS_STUCK_MS = 60 * 60_000;
 /** consecutive failed re-checks (15 min apart) before a live domain goes under repair */
 export const REPAIR_AFTER = 3;
+/** consecutive daily misses before a lapsed domain counts as moved away (zone and row go) */
+export const LAPSED_GONE_AFTER = 3;
 /** a 'pending' zone claim older than this belongs to a job that died before writing the zone */
 export const ZONE_CLAIM_STALE_MS = 10 * 60_000;
 
@@ -409,7 +411,11 @@ export async function settleLapsed(sql: Sql, d: DomainJobDeps, now: Date) {
     (tx) => tx`d.status = 'lapsed' and (d.last_checked_at is null or d.last_checked_at <= ${due})`,
   );
   await each(rows, 'lapsed', async (r) => {
-    let gone = !(await stillPointing(r, d));
+    // a failed lookup reads as "not pointing", so moving away takes LAPSED_GONE_AFTER daily
+    // misses in a row; the registry freeing the name is definite
+    const pointing = await stillPointing(r, d);
+    const misses = pointing ? 0 : r.miss_count + 1;
+    let gone = misses >= LAPSED_GONE_AFTER;
     if (!gone && r.source === 'included') {
       const info = await d.providers.rdap(r.host);
       gone = info !== null && !info.registered;
@@ -425,7 +431,10 @@ export async function settleLapsed(sql: Sql, d: DomainJobDeps, now: Date) {
     }
     await controlTx(
       sql,
-      (tx) => tx`update custom_domains set last_checked_at = ${now} where id = ${r.id}`,
+      (tx) => tx`
+        update custom_domains set last_checked_at = ${now}, miss_count = ${misses}
+        where id = ${r.id} and status = 'lapsed'
+      `,
     );
     if (r.source !== 'included' || !r.expires_at) return;
     const left = Math.ceil((r.expires_at.getTime() - now.getTime()) / DAY_MS);

@@ -20,8 +20,9 @@ function validName(name: string) {
   return name === '@' || (name.length <= 200 && name.split('.').every((l) => LABEL.test(l)));
 }
 
-/** The records an owner sent, checked and normalized; 422 names the first bad one. */
-export function parseRecords(raw: unknown): DnsRecord[] {
+/** The records an owner sent, checked and normalized; 422 names the first bad one. Names are
+ *  relative to `host` (`www.host` and `host.` are `www` and `@`), as the zone will read them. */
+export function parseRecords(raw: unknown, host: string): DnsRecord[] {
   if (!Array.isArray(raw)) throw new HttpError(422, 'INVALID_RECORD', 'records must be a list');
   if (raw.length > MAX_RECORDS)
     throw new HttpError(422, 'TOO_MANY_RECORDS', `at most ${MAX_RECORDS} records`);
@@ -30,8 +31,10 @@ export function parseRecords(raw: unknown): DnsRecord[] {
     const x = (r ?? {}) as Record<string, unknown>;
     const type = typeof x.type === 'string' ? (x.type.toUpperCase() as DnsRecordType) : null;
     if (!type || !TYPES.includes(type)) throw bad(i, 'type must be A, AAAA, CNAME, MX or TXT');
-    const name =
+    let name =
       typeof x.name === 'string' ? x.name.trim().toLowerCase().replace(/\.$/, '') || '@' : '@';
+    if (name === host) name = '@';
+    else if (name.endsWith(`.${host}`)) name = name.slice(0, -host.length - 1);
     if (!validName(name)) throw bad(i, 'name must be @ or a name like mail or _dmarc');
     if ((name === '@' || name === 'www') && type !== 'MX' && type !== 'TXT')
       throw bad(i, '@ and www point at the store; they are set by Venduá');
@@ -152,5 +155,5 @@ export async function discoverRecords(host: string): Promise<DnsRecord[]> {
     }),
   );
   await Promise.all(NAMES.map((n) => address(`${n}.${host}`, n)));
-  return parseRecords(out.slice(0, MAX_RECORDS));
+  return parseRecords(out.slice(0, MAX_RECORDS), host);
 }

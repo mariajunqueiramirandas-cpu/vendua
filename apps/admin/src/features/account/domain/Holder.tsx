@@ -44,6 +44,10 @@ const KEYS = new Set<string>([
   'state',
 ]);
 
+// the API's limits; the CNPJ record can be longer, so a pre-filled value is cut to fit
+const MAX = { name: 200, street: 120, number: 20, complement: 60, district: 60, city: 60 };
+const fit = (k: keyof typeof MAX, v: string) => v.trim().slice(0, MAX[k]).trim();
+
 const cepMask = (v: string) => {
   const d = v.replace(/\D/g, '').slice(0, 8);
   return d.length > 5 ? `${d.slice(0, 5)}-${d.slice(5)}` : d;
@@ -107,14 +111,14 @@ export function HolderForm({ a, host, onBack }: { a: Account; host: string; onBa
   useEffect(() => {
     if (!found) return;
     const fill: Partial<F> = {
-      ...(found.name ? { name: found.name } : {}),
+      ...(found.name ? { name: fit('name', found.name) } : {}),
       ...(found.address
         ? {
-            street: found.address.street,
-            number: found.address.number,
-            complement: found.address.complement ?? '',
-            district: found.address.district,
-            city: found.address.city,
+            street: fit('street', found.address.street),
+            number: fit('number', found.address.number),
+            complement: fit('complement', found.address.complement ?? ''),
+            district: fit('district', found.address.district),
+            city: fit('city', found.address.city),
             state: found.address.state,
             postalCode: cepMask(found.address.postalCode),
           }
@@ -236,7 +240,7 @@ export function HolderForm({ a, host, onBack }: { a: Account; host: string; onBa
           onChange={(v) => set('document', v)}
         />
       </Field>
-      {text('name', company ? 'Razão social' : 'Nome completo', { max: 200, auto: 'words' })}
+      {text('name', company ? 'Razão social' : 'Nome completo', { max: MAX.name, auto: 'words' })}
       <div className="grid gap-5 sm:grid-cols-2">
         <Field label="E-mail" htmlFor="holder-email" error={errOf('email')}>
           <TextInput
@@ -274,15 +278,19 @@ export function HolderForm({ a, host, onBack }: { a: Account; host: string; onBa
               />
             </Field>
           </Cell>
-          <Cell className="col-span-6 sm:col-span-4">{text('street', 'Rua', { max: 120 })}</Cell>
-          <Cell className="col-span-2">{text('number', 'Número', { max: 20 })}</Cell>
+          <Cell className="col-span-6 sm:col-span-4">
+            {text('street', 'Rua', { max: MAX.street })}
+          </Cell>
+          <Cell className="col-span-2">{text('number', 'Número', { max: MAX.number })}</Cell>
           <Cell className="col-span-4">
-            {text('complement', 'Complemento', { max: 60, optional: true })}
+            {text('complement', 'Complemento', { max: MAX.complement, optional: true })}
           </Cell>
           <Cell className="col-span-6 sm:col-span-2">
-            {text('district', 'Bairro', { max: 60 })}
+            {text('district', 'Bairro', { max: MAX.district })}
           </Cell>
-          <Cell className="col-span-4 sm:col-span-3">{text('city', 'Cidade', { max: 60 })}</Cell>
+          <Cell className="col-span-4 sm:col-span-3">
+            {text('city', 'Cidade', { max: MAX.city })}
+          </Cell>
           <Cell className="col-span-2 sm:col-span-1">
             <Field label="UF" htmlFor="holder-state" error={errOf('state')}>
               <div onBlur={blur('state')}>
