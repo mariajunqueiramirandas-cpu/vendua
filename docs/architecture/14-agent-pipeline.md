@@ -1,7 +1,7 @@
 # 14 — Agent Pipeline
 
 > Status: Proposed · Last reviewed: 2026-09-11
-> Decision: [ADR 0012](../adr/0012-agent-agnostic-pipeline.md)
+> Decision: [ADR 0012](../adr/0012-agent-agnostic-pipeline.md) · Study: [running it on cloud Claude Code](../research/storefront-builder-claude-code-2026-10/README.md)
 
 The pipeline that turns a customer conversation into a deployed storefront.
 Design rule: **agents are interchangeable labor behind a PR interface** — the
