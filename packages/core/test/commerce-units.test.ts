@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { crc16, normalizePixKey, pixPayload } from '../src/modules/pix.ts';
+import { phoneVariants } from '../src/store-whatsapp/text.ts';
 import {
   effectiveFee,
   foldName,
@@ -562,5 +563,14 @@ describe('customer + address', () => {
       composeAddress({ mode: 'delivery', street: ' Rua A ', number: '10', complement: 'ap 3' }),
     ).toBe('Rua A, 10 — ap 3');
     expect(composeAddress({ mode: 'delivery', address: 'Rua B, 2' })).toBe('Rua B, 2');
+  });
+});
+
+describe('9th-digit spellings', () => {
+  test('only a mobile that had an old 8-digit form has two', () => {
+    expect(phoneVariants('11987654321')).toEqual(['11987654321', '1187654321']);
+    // 9 + 1–5 is a newer mobile: dropping the 9 is a landline's number, someone else
+    expect(phoneVariants('11941234567')).toEqual(['11941234567']);
+    expect(phoneVariants('1141234567')).toEqual(['1141234567']);
   });
 });

@@ -7,7 +7,8 @@
 create or replace function br_phone_variants(p text) returns text[]
 language sql immutable as $$
   select case
-    when length(p) = 11 and substr(p, 3, 1) = '9' then array[p, substr(p, 1, 2) || substr(p, 4)]
+    when length(p) = 11 and substr(p, 3, 1) = '9' and substr(p, 4, 1) between '6' and '9'
+      then array[p, substr(p, 1, 2) || substr(p, 4)]
     when length(p) = 10 and substr(p, 3, 1) between '6' and '9'
       then array[p, substr(p, 1, 2) || '9' || substr(p, 3)]
     else array[p]
