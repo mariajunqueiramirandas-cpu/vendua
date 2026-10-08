@@ -53,6 +53,9 @@ create unique index if not exists custom_domains_verified_host on custom_domains
 create unique index if not exists custom_domains_alias_host on custom_domains (alias_host)
   where alias_host is not null
     and status in ('ordering', 'dns_ok', 'active', 'repairing', 'lapsed', 'removing');
+-- one zone per name in Venduá's Cloudflare account: the row that created it owns it
+create unique index if not exists custom_domains_zone_host on custom_domains (host)
+  where zone_id is not null;
 create index if not exists custom_domains_by_alias on custom_domains (alias_host)
   where alias_host is not null;
 create index if not exists custom_domains_by_status on custom_domains (status);
@@ -83,6 +86,10 @@ create table if not exists domain_orders (
   holder_handle text check (char_length(holder_handle) <= 64),
   attempts int not null default 0 check (attempts >= 0),
   next_attempt_at timestamptz,
+  -- a worker is at the registrar's door until then: the owner can't cancel or retry meanwhile
+  claimed_until timestamptz,
+  -- a renewal: the registry expiry before it was asked, so a retry can tell it already went through
+  expires_before timestamptz,
   conflict_since timestamptz,
   last_error text check (char_length(last_error) <= 300),
   -- what the registrar charged Venduá, in that currency's minor unit

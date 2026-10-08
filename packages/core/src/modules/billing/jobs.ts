@@ -794,7 +794,7 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
 /** pending_dns domains, each at most every DNS_RECHECK_MS */
 export async function runDomainChecks(
   sql: Sql,
-  o: { storeDomain?: string; rdap?: Rdap },
+  o: { storeDomain?: string; rdap?: Rdap; edgeIps?: readonly string[] },
   now: Date,
 ) {
   const storeDomain = o.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br';
@@ -814,14 +814,21 @@ export async function runDomainChecks(
       storeDomain,
       now,
       ...(o.rdap ? { rdap: o.rdap } : {}),
+      ...(o.edgeIps ? { edgeIps: o.edgeIps } : {}),
     });
   });
-  // a claim that gave up a week ago is gone: it never held the host, it only clutters
-  await controlTx(
-    sql,
-    (tx) => tx`
+  // a claim that gave up a week ago is gone: it never held the host, it only clutters (one with
+  // a Cloudflare zone leaves through the domain jobs, which delete the zone first)
+  const stale = new Date(now.getTime() - DNS_GIVE_UP_MS);
+  await controlTx(sql, async (tx) => {
+    await tx`
+      update custom_domains set status = 'removing'
+      where status = 'failed' and zone_id is not null
+        and coalesce(last_checked_at, created_at) < ${stale}
+    `;
+    await tx`
       delete from custom_domains
-      where status = 'failed' and coalesce(last_checked_at, created_at) < ${new Date(now.getTime() - DNS_GIVE_UP_MS)}
-    `,
-  );
+      where status = 'failed' and zone_id is null and coalesce(last_checked_at, created_at) < ${stale}
+    `;
+  });
 }

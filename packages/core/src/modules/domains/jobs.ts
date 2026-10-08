@@ -30,7 +30,16 @@ export async function runDomainJobs(sql: Sql, d: DomainJobDeps, now: Date) {
     ['zones', () => syncZones(sql, d, now)],
     [
       'dns',
-      () => runDomainChecks(sql, { storeDomain: d.storeDomain, rdap: d.providers.rdap }, now),
+      () =>
+        runDomainChecks(
+          sql,
+          {
+            storeDomain: d.storeDomain,
+            rdap: d.providers.rdap,
+            edgeIps: d.providers.edge ? [d.providers.edge.ipv4] : [],
+          },
+          now,
+        ),
     ],
     ['activate', () => activateVerified(sql, d, now)],
     ['recheck', () => recheckLive(sql, d, now)],

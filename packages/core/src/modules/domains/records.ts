@@ -8,7 +8,8 @@ import type { DnsRecord, DnsRecordType } from './providers.ts';
 export const MAX_RECORDS = 50;
 const TYPES: readonly DnsRecordType[] = ['A', 'AAAA', 'CNAME', 'MX', 'TXT'];
 const LABEL = /^(\*|_?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)$/;
-const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\.?$/;
+// targets may have underscore labels (Microsoft 365 DKIM: selector1-x._domainkey.x.onmicrosoft.com)
+const HOSTNAME = /^_?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\._?[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\.?$/;
 const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 const IPV6 = /^[0-9a-f:]{2,39}$/;
 
@@ -64,6 +65,9 @@ export function parseRecords(raw: unknown): DnsRecord[] {
     )
       out.push(rec);
   });
+  // the column holds 64 KB of jsonb text, which spaces out what JSON.stringify packs
+  if (JSON.stringify(out).length > 56 * 1024)
+    throw new HttpError(422, 'TOO_MANY_RECORDS', 'the records are too long altogether');
   return out;
 }
 

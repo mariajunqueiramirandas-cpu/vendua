@@ -49,6 +49,8 @@ export interface OrderRow {
   holder_handle: string | null;
   attempts: number;
   next_attempt_at: Date | null;
+  claimed_until: Date | null;
+  expires_before: Date | null;
   conflict_since: Date | null;
   last_error: string | null;
   cost_cents: number | null;
@@ -146,9 +148,11 @@ async function claim(sql: Sql, o: OrderRow, now: Date): Promise<OrderRow | null>
       (
         await tx<OrderRow[]>`
           update domain_orders set next_attempt_at = ${new Date(now.getTime() + CLAIM_MS)},
+            claimed_until = ${new Date(now.getTime() + CLAIM_MS)},
             attempts = attempts + 1, updated_at = ${now}
           where id = ${o.id} and status = ${o.status}
             and (next_attempt_at is null or next_attempt_at <= ${now})
+            and (claimed_until is null or claimed_until <= ${now})
           returning *
         `
       )[0] ?? null,
@@ -156,6 +160,10 @@ async function claim(sql: Sql, o: OrderRow, now: Date): Promise<OrderRow | null>
 }
 
 const due = (tx: Sql, now: Date) => tx`(next_attempt_at is null or next_attempt_at <= ${now})`;
+
+/** Still the attempt this worker claimed: nobody cancelled, retried or re-claimed it meanwhile. */
+const mine = (tx: Sql, o: OrderRow) =>
+  tx`id = ${o.id} and status = ${o.status} and attempts = ${o.attempts}`;
 
 /** awaiting_payment → queued once the plan has the domain and is paid (or is the team's). */
 export async function promoteAwaiting(sql: Sql, now: Date) {
@@ -189,8 +197,8 @@ async function failOrder(
   const done = await controlTx(sql, async (tx) => {
     const r = await tx`
       update domain_orders set status = 'failed', last_error = ${error}, next_attempt_at = null,
-        done_at = ${now}, updated_at = ${now}
-      where id = ${o.id} and status in ('queued', 'pending', 'conflict')
+        claimed_until = null, done_at = ${now}, updated_at = ${now}
+      where ${mine(tx, o)}
       returning id
     `;
     if (!r.length) return false;
@@ -212,7 +220,7 @@ async function failOrder(
       o.tenant_id,
       {
         subject: `Não conseguimos registrar ${o.host}`,
-        text: `${error} Veja em Conta → Domínio próprio.`,
+        text: `Não conseguimos registrar ${o.host}. ${error} Veja em Conta → Domínio próprio.`,
       },
       `domain-order-failed:${o.id}`,
     );
@@ -224,8 +232,8 @@ async function retryLater(sql: Sql, o: OrderRow, now: Date, error: string | null
     sql,
     (tx) => tx`
       update domain_orders set next_attempt_at = ${new Date(now.getTime() + wait)},
-        last_error = ${error}, updated_at = ${now}
-      where id = ${o.id}
+        claimed_until = null, last_error = ${error}, updated_at = ${now}
+      where ${mine(tx, o)}
     `,
   );
 }
@@ -235,13 +243,14 @@ async function conflictOrder(sql: Sql, d: DomainJobDeps, o: OrderRow, now: Date)
   if (now.getTime() - since.getTime() > CONFLICT_DAYS * DAY_MS)
     return failOrder(sql, d, o, now, ORDER_ERRORS.conflict, 'conflict');
   const first = await controlTx(sql, async (tx) => {
-    await tx`
+    const r = await tx`
       update domain_orders set status = 'conflict', conflict_since = ${since},
-        last_error = ${ORDER_ERRORS.conflict},
+        last_error = ${ORDER_ERRORS.conflict}, claimed_until = null,
         next_attempt_at = ${new Date(now.getTime() + DAY_MS)}, updated_at = ${now}
-      where id = ${o.id}
+      where ${mine(tx, o)}
+      returning id
     `;
-    if (o.conflict_since) return false;
+    if (!r.length || o.conflict_since) return false;
     await recordStaffEventTx(
       tx,
       'domain.order_failed',
@@ -311,14 +320,24 @@ export async function placeRegistrations(sql: Sql, d: DomainJobDeps, now: Date) 
       }
       const placed = dom;
       await controlTx(sql, async (tx) => {
-        await tx`
+        const r = await tx`
           update domain_orders set status = 'pending', registrar_ref = ${placed.ref},
             placed_at = coalesce(placed_at, ${now}), next_attempt_at = ${now},
-            conflict_since = null, last_error = null, updated_at = ${now},
+            claimed_until = null, conflict_since = null, last_error = null, updated_at = ${now},
             cost_cents = coalesce(cost_cents, ${price?.cents ?? null}),
             cost_currency = coalesce(cost_currency, ${price?.currency ?? null})
-          where id = ${o.id}
+          where ${mine(tx, o)}
+          returning id
         `;
+        if (!r.length) {
+          // can't happen while cancel and retry respect the claim; if it does, the domain is
+          // Venduá's at the registrar and nothing here points at it
+          domainLog.error(
+            { order: o.id, ref: placed.ref },
+            'domain registered for a changed order',
+          );
+          return;
+        }
         await tx`
           update custom_domains set registrar_ref = ${placed.ref},
             expires_at = coalesce(${placed.expiresAt}, expires_at)
@@ -334,7 +353,11 @@ export async function placeRegistrations(sql: Sql, d: DomainJobDeps, now: Date) 
       });
     } catch (err) {
       const kind = err instanceof RegistrarError ? err.kind : 'other';
-      domainLog.warn({ err, order: o.id, kind }, 'domain registration failed');
+      // the registrar's message may echo the holder's data: log only what kind of failure it was
+      domainLog.warn(
+        { order: o.id, kind, error: err instanceof RegistrarError ? undefined : String(err) },
+        'domain registration failed',
+      );
       if (kind === 'conflict') await conflictOrder(sql, d, o, now);
       else if (kind === 'taken') await failOrder(sql, d, o, now, ORDER_ERRORS.taken, 'error');
       else if (kind === 'invalid') await failOrder(sql, d, o, now, ORDER_ERRORS.invalid, 'error');
@@ -373,21 +396,33 @@ export async function pollRegistrations(sql: Sql, d: DomainJobDeps, now: Date) {
           await controlTx(
             sql,
             (tx) => tx`
-              update domain_orders set next_attempt_at = ${new Date(now.getTime() + POLL_MS)}
-              where id = ${o.id}
+              update domain_orders set next_attempt_at = ${new Date(now.getTime() + POLL_MS)},
+                claimed_until = null
+              where ${mine(tx, o)}
             `,
           );
         continue;
       }
-      // registered: Cloudflare takes it now, then the registrar points it there
+      // registered: Cloudflare takes it now, then the registrar points it there. The store now
+      // holds the name at the registry, so an unverified claim another store made on its zone
+      // gives way (it could never have proved the domain).
+      await controlTx(
+        sql,
+        (tx) => tx`
+          update custom_domains set status = 'failed', zone_id = null, name_servers = '{}',
+            last_error = 'Outra loja comprovou que é dona deste domínio.'
+          where host = ${o.host} and id <> ${o.custom_domain_id} and zone_id is not null
+            and status in ('pending_dns', 'failed')
+        `,
+      );
       const zone = await dnsHost.ensureZone(o.host);
       await dnsHost.syncRecords(zone.id, o.host, edge, []);
       await registrar.setNameservers(o.registrar_ref, o.host, zone.nameServers);
       const done = await controlTx(sql, async (tx) => {
         const r = await tx`
           update domain_orders set status = 'registered', done_at = ${now}, next_attempt_at = null,
-            last_error = null, updated_at = ${now}
-          where id = ${o.id} and status = 'pending'
+            claimed_until = null, last_error = null, updated_at = ${now}
+          where ${mine(tx, o)}
           returning id
         `;
         if (!r.length) return false;
@@ -421,7 +456,10 @@ export async function pollRegistrations(sql: Sql, d: DomainJobDeps, now: Date) {
         );
     } catch (err) {
       // the registry, Cloudflare or the registrar answered badly: poll again in a while
-      domainLog.warn({ err, order: o.id }, 'domain registration poll failed');
+      domainLog.warn(
+        { order: o.id, kind: err instanceof RegistrarError ? err.kind : 'other' },
+        'domain registration poll failed',
+      );
       await retryLater(sql, o, now, null);
     }
   }
@@ -493,13 +531,28 @@ export async function runRenewals(sql: Sql, d: DomainJobDeps, now: Date) {
       continue;
     }
     try {
-      const dom = await registrar.renew(ref, o.host);
+      // a renewal is paid each time it's asked: note the expiry first, and on a retry ask the
+      // registrar whether the last attempt went through before renewing again
+      const seen = await registrar.get(ref);
+      let dom: RegistrarDomain;
+      if (!o.expires_before) {
+        await controlTx(
+          sql,
+          (tx) => tx`
+            update domain_orders set expires_before = ${seen.expiresAt} where ${mine(tx, o)}
+          `,
+        );
+        dom = await registrar.renew(ref, o.host);
+      } else if (seen.expiresAt && seen.expiresAt > o.expires_before) dom = seen;
+      else dom = await registrar.renew(ref, o.host);
       await controlTx(sql, async (tx) => {
-        await tx`
+        const r = await tx`
           update domain_orders set status = 'renewed', done_at = ${now}, next_attempt_at = null,
-            registrar_ref = ${ref}, updated_at = ${now}
-          where id = ${o.id}
+            claimed_until = null, registrar_ref = ${ref}, updated_at = ${now}
+          where ${mine(tx, o)}
+          returning id
         `;
+        if (!r.length) return;
         await tx`
           update custom_domains set expires_at = coalesce(${dom.expiresAt}, expires_at)
           where id = ${o.custom_domain_id}
@@ -517,7 +570,10 @@ export async function runRenewals(sql: Sql, d: DomainJobDeps, now: Date) {
         await emitAdminTx(tx, o.tenant_id, 'billing');
       });
     } catch (err) {
-      domainLog.warn({ err, order: o.id }, 'domain renewal failed');
+      domainLog.warn(
+        { order: o.id, kind: err instanceof RegistrarError ? err.kind : 'other' },
+        'domain renewal failed',
+      );
       if (o.attempts >= 5) await failOrder(sql, d, o, now, ORDER_ERRORS.other, 'error');
       else await retryLater(sql, o, now, null);
     }

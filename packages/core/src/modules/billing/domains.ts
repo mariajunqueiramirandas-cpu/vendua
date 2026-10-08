@@ -19,7 +19,9 @@ export interface DnsResolver {
   resolve4(host: string): Promise<string[]>;
   resolveTxt(host: string): Promise<string[][]>;
   resolve6?(host: string): Promise<string[]>;
-  resolveCaa?(host: string): Promise<{ issue?: string | undefined; issuewild?: string | undefined }[]>;
+  resolveCaa?(
+    host: string,
+  ): Promise<{ issue?: string | undefined; issuewild?: string | undefined }[]>;
   resolveNs?(host: string): Promise<string[]>;
   resolveMx?(host: string): Promise<{ exchange: string; priority: number }[]>;
 }
@@ -116,17 +118,25 @@ export function newVerifyToken() {
 
 /**
  * Is the host another store's (a live store host, or a claim that holds it: verified, ordered,
- * live, under repair or lapsed — as a domain or as its www./root alias)? A claim still waiting
- * for DNS doesn't hold the host: whoever proves it first gets it.
+ * live, under repair or lapsed — as a domain or as its www./root alias — or one that has a zone
+ * in Venduá's Cloudflare account)? Any other claim still waiting for DNS doesn't hold the host:
+ * whoever proves it first gets it. `registering`: a store buying the name at the registry proves
+ * it there, so an unverified zone claim doesn't stop it.
  */
-export async function hostTaken(sql: Sql, host: string, tenantId: string) {
+export async function hostTaken(
+  sql: Sql,
+  host: string,
+  tenantId: string,
+  o: { registering?: boolean } = {},
+) {
   return controlTx(sql, async (tx) => {
     const live = await tx`select 1 from domains where host = ${host} and tenant_id <> ${tenantId}`;
     if (live.length) return true;
+    // a zone in Venduá's Cloudflare account holds its name too, verified or not
     const claimed = await tx`
       select 1 from custom_domains
       where (host = ${host} or alias_host = ${host}) and tenant_id <> ${tenantId}
-        and status in ${tx(HELD_STATUSES)}
+        and (status in ${tx(HELD_STATUSES)} or (${!o.registering} and status = 'pending_dns' and zone_id is not null and host = ${host}))
     `;
     return claimed.length > 0;
   });
@@ -153,15 +163,21 @@ export const settle = <T>(p: Promise<T>, fallback: T, ms = LOOKUP_TIMEOUT_MS) =>
 
 const bare = (h: string) => h.toLowerCase().replace(/\.$/, '');
 
-/** Does `host` reach the platform host `target` (a CNAME to it, or exactly its A addresses)? */
-export async function pointsAt(host: string, target: string): Promise<boolean> {
+/** Does `host` reach the platform host `target` (a CNAME to it, or A records that are all its
+ *  addresses or the edge's own, `edgeIps`)? */
+export async function pointsAt(
+  host: string,
+  target: string,
+  edgeIps: readonly string[] = [],
+): Promise<boolean> {
   const cnames = await settle(resolver.resolveCname(host), [] as string[]);
   if (cnames.map(bare).some((c) => c === target || c.endsWith(`.${target}`))) return true;
   const [mine, theirs] = await Promise.all([
     settle(resolver.resolve4(host), [] as string[]),
     settle(resolver.resolve4(target), [] as string[]),
   ]);
-  return mine.length > 0 && theirs.length > 0 && mine.every((a) => theirs.includes(a));
+  const ours = [...theirs, ...edgeIps];
+  return mine.length > 0 && ours.length > 0 && mine.every((a) => ours.includes(a));
 }
 
 /**
@@ -197,9 +213,10 @@ export async function lookupDns(
   host: string,
   target: string,
   token: string,
+  edgeIps: readonly string[] = [],
 ): Promise<{ ok: boolean; error: string | null }> {
   const [pointed, txts] = await Promise.all([
-    pointsAt(host, target),
+    pointsAt(host, target, edgeIps),
     settle(resolver.resolveTxt(txtName(host)), [] as string[][]),
   ]);
   const verified = txts.map((chunks) => chunks.join('')).includes(txtValue(token));
@@ -254,6 +271,8 @@ export async function checkCustomDomain(
     now: Date;
     manual?: boolean;
     rdap?: Rdap;
+    /** the VPS's public addresses: A records straight at them count as pointing */
+    edgeIps?: readonly string[];
   },
 ): Promise<CustomDomainRow | null> {
   const found = await withTenant(sql, o.tenantId, async (tx) => {
@@ -281,10 +300,10 @@ export async function checkCustomDomain(
     // the zone holds www too: delegation covers both names
     aliasOk = d.ok && !!found.alias_host;
   } else {
-    res = await lookupDns(found.host, target, found.verify_token);
+    res = await lookupDns(found.host, target, found.verify_token, o.edgeIps);
     if (res.ok && found.alias_host)
       aliasOk =
-        (await pointsAt(found.alias_host, target)) &&
+        (await pointsAt(found.alias_host, target, o.edgeIps)) &&
         !(await certBlocker(found.alias_host, target)) &&
         !(await hostTaken(sql, found.alias_host, o.tenantId));
   }

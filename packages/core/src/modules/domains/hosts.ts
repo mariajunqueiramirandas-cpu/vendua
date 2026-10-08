@@ -54,6 +54,7 @@ function suffixOf(host: string): string {
 
 /** `loja.com.br` → true; `www.loja.com.br`, `pedidos.loja.com.br`, `com.br` → false */
 export function isRoot(host: string): boolean {
+  if (SECOND_LEVEL.has(host)) return false;
   const suffix = suffixOf(host);
   const rest = host.slice(0, host.length - suffix.length - 1);
   return rest.length > 0 && !rest.includes('.');

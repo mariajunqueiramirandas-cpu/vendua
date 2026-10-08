@@ -61,12 +61,15 @@ export function mountDomainRoutes(o: {
     if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
     const res = await claimControl(sql, key, async (tx) => {
       const o = (
-        await tx<{ tenant_id: string; status: string; custom_domain_id: string | null }[]>`
-          select tenant_id, status, custom_domain_id from domain_orders where id = ${id} for update
+        await tx<{ tenant_id: string; status: string; claimed_until: Date | null }[]>`
+          select tenant_id, status, claimed_until from domain_orders where id = ${id} for update
         `
       )[0];
       if (!o) throw new HttpError(404, 'NOT_FOUND', 'order not found');
-      if (o.status !== 'conflict' && o.status !== 'failed')
+      if (
+        (o.status !== 'conflict' && o.status !== 'failed') ||
+        (o.claimed_until && o.claimed_until > new Date())
+      )
         throw new HttpError(409, 'ORDER_BUSY', 'only a conflict or a failed order is retried', {
           status: o.status,
         });

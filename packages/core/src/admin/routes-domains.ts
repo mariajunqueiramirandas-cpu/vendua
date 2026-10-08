@@ -173,34 +173,39 @@ export function mountDomains(d: AdminDeps) {
     }),
   );
 
-  admin.post(
-    '/account/domains/:id/check',
-    write('owner', async (tx, t, m, c) => {
-      const id = uuidParam(c, 'id');
-      const row = (
-        await tx<{ host: string }[]>`
-          select host from custom_domains where tenant_id = ${t.id} and id = ${id}
-        `
-      )[0];
-      if (!row) throw new HttpError(404, 'DOMAIN_NOT_FOUND', 'domain not found');
-      // its own tx (DNS answers can take seconds); the result lands before we read the view
-      await checkCustomDomain(d.sql, {
-        tenantId: t.id,
-        domainId: id,
-        storeDomain: d.storeDomain,
-        now: new Date(),
-        manual: true,
-        rdap: p.rdap,
-      });
-      await audit(tx, t.id, m, {
-        action: 'domain.check',
-        entity: 'custom_domain',
-        entityId: id,
-        summary: `verificou o domínio ${row.host}`,
-      });
-      return { status: 200, body: await view(tx, t) };
-    }),
-  );
+  // DNS and RDAP answers can take seconds: the check runs first, with no transaction open, and
+  // the idempotent write only records it and returns the view
+  const checked = write('owner', async (tx, t, m, c) => {
+    const id = uuidParam(c, 'id');
+    const row = (
+      await tx<{ host: string }[]>`
+        select host from custom_domains where tenant_id = ${t.id} and id = ${id}
+      `
+    )[0];
+    if (!row) throw new HttpError(404, 'DOMAIN_NOT_FOUND', 'domain not found');
+    await audit(tx, t.id, m, {
+      action: 'domain.check',
+      entity: 'custom_domain',
+      entityId: id,
+      summary: `verificou o domínio ${row.host}`,
+    });
+    return { status: 200, body: await view(tx, t) };
+  });
+  admin.post('/account/domains/:id/check', async (c) => {
+    need(c, 'owner');
+    const t = (c as AdminCtx).get('tenant');
+    const id = uuidParam(c, 'id');
+    await checkCustomDomain(d.sql, {
+      tenantId: t.id,
+      domainId: id,
+      storeDomain: d.storeDomain,
+      now: new Date(),
+      manual: true,
+      rdap: p.rdap,
+      ...(p.edge ? { edgeIps: [p.edge.ipv4] } : {}),
+    });
+    return checked(c as AdminCtx);
+  });
 
   admin.delete(
     '/account/domains/:id',
@@ -311,7 +316,7 @@ export function mountDomains(d: AdminDeps) {
       const free = found.get(h) ?? null;
       results.push({
         host: h,
-        available: free && (await hostTaken(d.sql, h, t.id)) ? false : free,
+        available: free && (await hostTaken(d.sql, h, t.id, { registering: true })) ? false : free,
       });
     }
     c.header('cache-control', 'no-store');
@@ -370,9 +375,15 @@ export function mountDomains(d: AdminDeps) {
             and status in ('awaiting_payment', 'queued', 'pending', 'conflict')
         `
       ).length;
-      if (open || (cur && cur.status !== 'pending_dns' && cur.status !== 'failed'))
+      if (
+        open ||
+        (cur && ((cur.status !== 'pending_dns' && cur.status !== 'failed') || cur.zone_id))
+      )
         throw new HttpError(409, 'DOMAIN_EXISTS', 'the store already has its own domain');
-      if ((await hostTaken(d.sql, host, t.id)) || (await hostTaken(d.sql, `www.${host}`, t.id)))
+      if (
+        (await hostTaken(d.sql, host, t.id, { registering: true })) ||
+        (await hostTaken(d.sql, `www.${host}`, t.id, { registering: true }))
+      )
         throw new HttpError(409, 'DOMAIN_TAKEN', 'this domain is in use by another store', {
           field: 'host',
         });
@@ -432,16 +443,16 @@ export function mountDomains(d: AdminDeps) {
             host: string;
             status: string;
             custom_domain_id: string | null;
-            next_attempt_at: Date | null;
+            claimed_until: Date | null;
           }[]
         >`
-          select id, host, status, custom_domain_id, next_attempt_at from domain_orders
+          select id, host, status, custom_domain_id, claimed_until from domain_orders
           where tenant_id = ${t.id} and id = ${id} and kind = 'register' for update
         `
       )[0];
       if (!o) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
-      // a queued order a worker took is already at the registrar's door
-      const busy = o.status === 'queued' && o.next_attempt_at && o.next_attempt_at > new Date();
+      // an order a worker took is at the registrar's door: what it gets back must land
+      const busy = o.claimed_until !== null && o.claimed_until > new Date();
       if (!from.includes(o.status) || busy)
         throw new HttpError(409, 'ORDER_BUSY', 'the order can’t change now', { status: o.status });
       await apply(tx, o);
