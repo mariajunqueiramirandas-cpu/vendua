@@ -77,12 +77,10 @@ const HEADER = [
  *  with an ACME certificate and a `web` router redirecting to HTTPS, both to the edge. Same
  *  input, same bytes. */
 export function renderConfig(hosts: readonly string[], o: RenderOptions): string {
-  const lines = [...HEADER, 'http:'];
-  if (hosts.length === 0) {
-    lines.push('  routers: {}');
-    return `${lines.join('\n')}\n`;
-  }
-  lines.push('  routers:');
+  // Traefik rejects an empty `routers: {}` ("cannot be a standalone element"), and one bad file
+  // drops the whole file provider (Dokploy's redirect-to-https@file with it): no hosts, no keys.
+  if (hosts.length === 0) return `${[...HEADER, '# No custom domains yet.'].join('\n')}\n`;
+  const lines = [...HEADER, 'http:', '  routers:'];
   for (const host of [...hosts].sort()) {
     const name = routerName(host);
     const rule = q(`Host(\`${host}\`)`);
