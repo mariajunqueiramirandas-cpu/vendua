@@ -95,6 +95,10 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
     title: 'Pedido grande demais para a loja',
     body: 'Fale com a loja para combinar.',
   },
+  NOTIFY_LIMIT: {
+    title: 'Não deu para anotar seu aviso agora',
+    body: 'Tente de novo amanhã ou fale com a loja.',
+  },
 };
 
 const FALLBACK = { title: 'Não foi possível concluir', body: 'Tente novamente em instantes.' };

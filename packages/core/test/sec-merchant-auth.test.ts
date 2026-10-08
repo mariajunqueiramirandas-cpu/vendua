@@ -447,7 +447,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
     const keys = { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) };
     const ep = (n: string) => `https://fcm.googleapis.com/fcm/send/${nonce}-legacy-${n}`;
     const a = await otpSignIn(call, attackerPhone, storeX);
-    const other = await otpSignIn(call, attackerPhone, storeX);
     for (const n of ['kept', 'stale'])
       expect((await call('POST', '/push/subscribe', { endpoint: ep(n), keys }, a)).status).toBe(
         201,
@@ -457,14 +456,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
     const r = await call('POST', '/push/rebind', { endpoint: ep('kept') }, a);
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ rebound: true });
-    // ending another of the member's sessions drops what no sign-in claimed, not the claimed one
+    // ending another of the member's sessions (another device) drops what no sign-in claimed,
+    // not the claimed one
     const [s] = await sql<{ id: string }[]>`
-      select id from merchant_sessions where tenant_id = ${storeX} and revoked_at is null
-      order by created_at desc limit 1`;
+      insert into merchant_sessions (tenant_id, user_id, secret_hash, expires_at)
+      select tenant_id, user_id, 'other-device', now() + interval '1 day'
+      from push_subscriptions where endpoint = ${ep('kept')}
+      returning id`;
     expect((await call('DELETE', `/me/sessions/${s!.id}`, undefined, a)).status).toBe(200);
     const left = await sql<{ endpoint: string }[]>`
       select endpoint from push_subscriptions where endpoint in ${sql([ep('kept'), ep('stale')])}`;
     expect(left.map((x) => x.endpoint)).toEqual([ep('kept')]);
-    void other;
   });
 });

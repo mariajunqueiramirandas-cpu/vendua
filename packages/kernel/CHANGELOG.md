@@ -17,6 +17,8 @@ Checkout and product-page fixes — additive; no storefront edit.
   cart session + body, never the body) while an attempt's outcome is unknown: a reload after a
   lost response retries with the same key and gets Core's first order back. Cleared once the
   outcome is known.
+- `NOTIFY_LIMIT` is a known error code (with copy): Core caps "avise-me quando abrir" sign-ups per
+  store and per client network a day.
 - `sdk:purchase-panel` starts fresh on each product: `/produto/a` → `/produto/b` no longer carries
   A's options, kit picks, qty or note into B's add (Core's 422 `INVALID_MODIFIER`).
 - A pickup-only store opened cold at `/checkout` starts on "Retirada" once its profile loads.

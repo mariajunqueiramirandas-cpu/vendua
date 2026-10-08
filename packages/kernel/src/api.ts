@@ -1774,6 +1774,8 @@ export const ERROR_CODES = [
   // Kernel 1.23 — a bag holds at most 50 lines; an order over Core's ceiling (R$ 10 mi)
   'CART_FULL',
   'ORDER_TOO_LARGE',
+  // "avise-me quando abrir": a store's (or a network's) sign-ups for the day are used up
+  'NOTIFY_LIMIT',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
