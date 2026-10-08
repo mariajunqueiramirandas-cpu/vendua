@@ -25,6 +25,42 @@ export interface GitHubClient {
   listDir(path: string, ref: string): Promise<string[] | null>;
   /** a file's text at `ref`; null when it doesn't exist */
   readFile(path: string, ref: string): Promise<string | null>;
+  /** the check runs reported on a commit (first 100) */
+  checkRuns(sha: string): Promise<CheckRun[]>;
+}
+
+export interface CheckRun {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+}
+
+const RED = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure']);
+/** the jobs of ci.yml a storefront PR must pass; a labeled re-run skips them */
+export const REQUIRED_CHECKS = ['check', 'conformance'] as const;
+
+/** Whether a head may be merged: the latest run of each check finished, none red, and the
+ *  required ones green. Null = mergeable; otherwise why not, and whether it is still running. */
+export function checksVerdict(runs: CheckRun[]): { reason: string; pending: boolean } | null {
+  const latest = new Map<string, CheckRun>();
+  for (const r of runs) {
+    const cur = latest.get(r.name);
+    if (!cur || r.id > cur.id) latest.set(r.name, r);
+  }
+  const running = [...latest.values()].filter((r) => r.status !== 'completed');
+  if (running.length)
+    return {
+      reason: `checks em andamento: ${running.map((r) => r.name).join(', ')}`,
+      pending: true,
+    };
+  const red = [...latest.values()].filter((r) => r.conclusion && RED.has(r.conclusion));
+  if (red.length)
+    return { reason: `checks vermelhos: ${red.map((r) => r.name).join(', ')}`, pending: false };
+  const missing = REQUIRED_CHECKS.filter((n) => latest.get(n)?.conclusion !== 'success');
+  if (missing.length)
+    return { reason: `checks sem sucesso: ${missing.join(', ')}`, pending: false };
+  return null;
 }
 
 export function githubClient(o: {
@@ -80,6 +116,25 @@ export function githubClient(o: {
         .filter((e) => e && typeof e === 'object' && (e as { type?: unknown }).type === 'file')
         .map((e) => String((e as { name?: unknown }).name ?? ''))
         .filter(Boolean);
+    },
+    async checkRuns(sha) {
+      const res = await call(`/commits/${encodeURIComponent(sha)}/check-runs?per_page=100`);
+      if (!res.ok) return fail(res, 'check-runs');
+      const body = (await res.json()) as { check_runs?: unknown };
+      if (!Array.isArray(body.check_runs)) return [];
+      return body.check_runs.flatMap((r) => {
+        const o = (r ?? {}) as Record<string, unknown>;
+        return typeof o.id === 'number' && typeof o.name === 'string'
+          ? [
+              {
+                id: o.id,
+                name: o.name,
+                status: String(o.status ?? ''),
+                conclusion: typeof o.conclusion === 'string' ? o.conclusion : null,
+              },
+            ]
+          : [];
+      });
     },
     async readFile(path, ref) {
       const res = await call(contentsPath(path, ref), {

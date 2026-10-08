@@ -153,7 +153,7 @@ export function mountSiteBuilder(o: {
         });
       const store = await storeOfTx(tx, t.tenant_id);
       const attempt = t.attempt + 1;
-      const branch = branchFor(store.slug, t.kind, attempt);
+      const branch = branchFor(store.slug, t.kind, t.id, attempt);
       try {
         await tx`
           update site_tasks set status = 'queued', runner = 'claude_routine', attempt = ${attempt},
@@ -220,6 +220,11 @@ export function mountSiteBuilder(o: {
         throw new HttpError(409, 'SITE_TASK_DONE', 'this task can no longer be cancelled', {
           status: t.status,
         });
+      // a fire or a merge may be in flight: its result would land on a cancelled task
+      if (t.status === 'firing' || t.status === 'approved')
+        throw new HttpError(409, 'SITE_TASK_BUSY', 'wait for the fire or the merge to finish', {
+          status: t.status,
+        });
       await tx`
         update site_tasks set status = 'cancelled', escalated_reason = ${reason},
           lease_until = null, updated_at = now()
@@ -252,9 +257,21 @@ export function mountSiteBuilder(o: {
       throw new HttpError(400, 'BAD_REQUEST', 'missing delivery or event header');
     if (event !== 'pull_request' && event !== 'workflow_run') return c.body(null, 204);
     const payload = parseJsonObject(raw);
-    const repo = deps.github?.repo.toLowerCase();
-    const from = (payload.repository as { full_name?: unknown } | undefined)?.full_name;
-    if (repo && (typeof from !== 'string' || from.toLowerCase() !== repo)) return c.body(null, 204);
+    const fullName = (v: unknown) =>
+      typeof (v as { full_name?: unknown } | undefined)?.full_name === 'string'
+        ? ((v as { full_name: string }).full_name.toLowerCase() as string)
+        : null;
+    const base = fullName(payload.repository);
+    const repo = deps.github?.repo.toLowerCase() ?? base;
+    if (!repo || base !== repo) return c.body(null, 204);
+    // a fork's branch may carry one of ours by name: only the repository's own branches count
+    const head =
+      event === 'pull_request'
+        ? fullName(((payload.pull_request ?? {}) as { head?: { repo?: unknown } }).head?.repo)
+        : fullName(
+            (payload.workflow_run as { head_repository?: unknown } | undefined)?.head_repository,
+          );
+    if (head !== repo) return c.body(null, 204);
     const handled = await controlTx(sql, async (tx) => {
       const fresh = await tx`
         insert into github_deliveries (delivery_id, event) values (${delivery}, ${event})
@@ -356,8 +373,21 @@ async function workflowRunTx(tx: Sql, p: Record<string, unknown>): Promise<strin
   const sha = str(run.head_sha, 64);
   if (!t || !sha || sha !== t.head_sha) return null;
   const conclusion = run.conclusion;
+  const runId = typeof run.id === 'number' ? run.id : null;
+  const attempt = typeof run.run_attempt === 'number' ? run.run_attempt : 1;
   if (conclusion === 'success') {
     if (t.ci === 'success') return null;
+    // a red sha turns green only by re-running that same run: another run of ci.yml on the
+    // sha (a label added) skips the jobs that failed and concludes success anyway
+    const red = await tx<{ run_id: string | null }[]>`
+      select detail->>'runId' as run_id from site_task_events
+      where task_id = ${t.id} and kind = 'ci_failure' and detail->>'sha' = ${sha}
+    `;
+    if (
+      red.length &&
+      !(attempt > 1 && red.some((r) => runId !== null && r.run_id === String(runId)))
+    )
+      return null;
     await tx`update site_tasks set ci = 'success', updated_at = now() where id = ${t.id}`;
     await taskEventTx(tx, t, 'ci_success', { sha });
     if (t.status === 'pr_open') {
@@ -381,7 +411,8 @@ async function workflowRunTx(tx: Sql, p: Record<string, unknown>): Promise<strin
     update site_tasks set ci = 'failure', iterations = ${iterations}, updated_at = now()
     where id = ${t.id}
   `;
-  if (!seen.length) await taskEventTx(tx, t, 'ci_failure', { sha, conclusion, iterations });
+  if (!seen.length || runId !== null)
+    await taskEventTx(tx, t, 'ci_failure', { sha, runId, conclusion, iterations });
   if (iterations > MAX_FIX_PUSHES)
     await escalateTx(tx, t, `não ficou verde em ${MAX_FIX_PUSHES} tentativas`, { sha });
   return t.id;

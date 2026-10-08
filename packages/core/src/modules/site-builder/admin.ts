@@ -62,6 +62,7 @@ export async function reviseSiteTx(
   tenantId: string,
   o: { note: string; spec: unknown; source: SiteSource },
 ): Promise<SiteTaskDbRow> {
+  await requireFeature(tx, tenantId, 'customSite');
   const spec = specOr422(o.spec);
   const req = (
     await tx<{ id: string; status: string; revisions_used: number }[]>`

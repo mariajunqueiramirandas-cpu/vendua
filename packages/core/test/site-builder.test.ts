@@ -51,6 +51,16 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
   let fireStatus = 200;
   const merges: { path: string; body: Record<string, unknown> }[] = [];
   const files = new Map<string, string>();
+  const checks = new Map<
+    string,
+    { id: number; name: string; status: string; conclusion: string | null }[]
+  >();
+  const green = (sha: string) =>
+    checks.set(sha, [
+      { id: 1, name: 'check', status: 'completed', conclusion: 'success' },
+      { id: 2, name: 'conformance', status: 'completed', conclusion: 'success' },
+      { id: 3, name: 'storefront-isolation', status: 'completed', conclusion: 'success' },
+    ]);
   const dirs = new Map<string, string[]>();
   const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -68,6 +78,8 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
         merges.push({ path: url.pathname, body: JSON.parse(String(init.body)) });
         return Response.json({ sha: 'f'.repeat(40), merged: true });
       }
+      const cr = /^\/repos\/acme\/stores\/commits\/([0-9a-f]+)\/check-runs$/.exec(url.pathname);
+      if (cr) return Response.json({ check_runs: checks.get(cr[1]!) ?? [] });
       const m = /^\/repos\/acme\/stores\/contents\/(.+)$/.exec(url.pathname);
       if (m) {
         const key = `${decodeURIComponent(m[1]!)}@${url.searchParams.get('ref')}`;
@@ -199,8 +211,10 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
     requestId: string | null;
   }
 
-  async function store(o: { plan?: string; request?: boolean } = {}): Promise<Store> {
-    const slug = `sb-${nonce}-${tenants.length}`;
+  async function store(
+    o: { plan?: string; request?: boolean; slug?: string } = {},
+  ): Promise<Store> {
+    const slug = o.slug ?? `sb-${nonce}-${tenants.length}`;
     const [t] = await sql<{ id: string }[]>`
       insert into tenants (slug, name, plan) values (${slug}, ${`Doce ${tenants.length}`},
         ${o.plan ?? 'pangolim'}) returning id`;
@@ -251,21 +265,35 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
     pull_request: {
       number: 42,
       html_url: 'https://github.com/acme/stores/pull/42',
-      head: { ref: task.branch, sha: extra.sha ?? 'a'.repeat(40) },
+      head: {
+        ref: task.branch,
+        sha: extra.sha ?? 'a'.repeat(40),
+        repo: { full_name: extra.fork ?? 'acme/stores' },
+      },
       merged: extra.merged ?? false,
       merge_commit_sha: extra.mergeSha ?? null,
     },
   });
-  const runPayload = (task: any, sha: string, conclusion: string) => ({
+  let runIds = 1000;
+  const runPayload = (
+    task: any,
+    sha: string,
+    conclusion: string,
+    o: { id?: number; attempt?: number; fork?: string } = {},
+  ) => ({
     action: 'completed',
     repository: { full_name: 'acme/stores' },
     workflow_run: {
+      id: o.id ?? ++runIds,
+      run_attempt: o.attempt ?? 1,
       path: '.github/workflows/ci.yml',
       head_branch: task.branch,
       head_sha: sha,
+      head_repository: { full_name: o.fork ?? 'acme/stores' },
       conclusion,
     },
   });
+  const id8 = (id: string) => id.slice(0, 8);
 
   // ── the owner's doors ─────────────────────────────────────────────────────
 
@@ -302,7 +330,7 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
       kind: 'generate',
       source: 'owner',
       status: 'queued',
-      branch: `claude/site-${s.slug}`,
+      branch: `claude/site-${s.slug}--${id8(rows[0].id)}`,
     });
     expect((await staffEvents('site.task_queued', rows[0].id)).length).toBe(1);
 
@@ -341,7 +369,7 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
       taskId: task.id,
       kind: 'generate',
       slug: s.slug,
-      branch: `claude/site-${s.slug}`,
+      branch: `claude/site-${s.slug}--${id8(task.id)}`,
       base: 'main',
       label: `storefront:${s.slug}`,
       marker: `vendua-task:${task.id}`,
@@ -460,6 +488,18 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
       'revisao',
     );
 
+    // GitHub's check runs are asked first: none reported yet → back to the PR, nothing merged
+    const before = merges.length;
+    await mergeApproved(d);
+    expect(merges.length).toBe(before);
+    expect(await taskOf(s.id)).toMatchObject({
+      status: 'pr_open',
+      ci: 'failure',
+      approved_by: null,
+    });
+    await sql`update site_tasks set ci = 'success' where id = ${task.id}`;
+    green(sha);
+    await ctl('POST', `/control/v1/site-tasks/${task.id}/approve`, { by: 'Vini' });
     await mergeApproved(d);
     expect(merges.at(-1)).toEqual({
       path: '/repos/acme/stores/pulls/42/merge',
@@ -566,9 +606,10 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
       building: { kind: 'revision', stage: 'fila' },
     });
     const revTask = await taskOf(s.id);
+    expect(revTask.id).not.toBe(task.id);
     expect(revTask).toMatchObject({
       kind: 'revision',
-      branch: `claude/site-${s.slug}-ajuste`,
+      branch: `claude/site-${s.slug}-ajuste--${id8(revTask.id)}`,
       note: 'Troque a foto do topo por uma do bolo de cenoura',
     });
     const twice = await admin('POST', '/account/site-request/revision', s.owner, {
@@ -608,13 +649,19 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
     expect(detail.body.events.map((e: any) => e.kind)).toEqual(['queued']);
 
     expect((await ctl('POST', `/control/v1/site-tasks/${t.id}/retry`)).status).toBe(409);
+    for (const busy of ['firing', 'approved']) {
+      await sql`update site_tasks set status = ${busy} where id = ${t.id}`;
+      const r = await ctl('POST', `/control/v1/site-tasks/${t.id}/cancel`, { reason: 'desistiu' });
+      expect(r.status).toBe(409);
+      expect(JSON.stringify(r.body)).toContain('SITE_TASK_BUSY');
+    }
     await sql`update site_tasks set status = 'escalated' where id = ${t.id}`;
     const retried = await ctl('POST', `/control/v1/site-tasks/${t.id}/retry`);
     expect(retried.status).toBe(200);
     expect(retried.body.task).toMatchObject({
       status: 'queued',
       attempt: 2,
-      branch: `claude/site-${s.slug}-2`,
+      branch: `claude/site-${s.slug}--${id8(t.id)}-2`,
     });
 
     const human = await ctl('POST', `/control/v1/site-tasks/${t.id}/human`);
@@ -633,7 +680,9 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
     expect(
       (await admin('POST', '/account/site-request/build', s.owner, { spec: SPEC })).status,
     ).toBe(201);
-    expect((await taskOf(s.id)).branch).toBe(`claude/site-${s.slug}-3`);
+    const again = await taskOf(s.id);
+    expect(again.id).not.toBe(t.id);
+    expect(again.branch).toBe(`claude/site-${s.slug}--${id8(again.id)}`);
   });
 
   test('due soon and overdue each tell staff once', async () => {
@@ -652,6 +701,110 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
     await deadlines(d);
     expect((await staffEvents('site.overdue', t.id)).length).toBe(1);
     expect((await staffEvents('site.due_soon', t.id)).length).toBe(1);
+  });
+
+  test('a labeled re-run that skipped the failed jobs never turns a red sha green', async () => {
+    const { task } = await running();
+    const sha = '7'.repeat(40);
+    await hook('pull_request', prPayload(task, 'opened', { sha }));
+    await hook('workflow_run', runPayload(task, sha, 'failure', { id: 77 }));
+    // another run of ci.yml on the same sha (a label added): everything skipped but isolation
+    expect((await hook('workflow_run', runPayload(task, sha, 'success', { id: 78 }))).status).toBe(
+      204,
+    );
+    // a first attempt of the failed run id can't be a re-run either
+    expect(
+      (await hook('workflow_run', runPayload(task, sha, 'success', { id: 77, attempt: 1 }))).status,
+    ).toBe(204);
+    expect((await taskOf(task.tenant_id)).ci).toBe('failure');
+    expect((await staffEvents('site.ready', task.id)).length).toBe(0);
+    // re-running the failed run itself can
+    expect(
+      (await hook('workflow_run', runPayload(task, sha, 'success', { id: 77, attempt: 2 }))).status,
+    ).toBe(200);
+    expect((await taskOf(task.tenant_id)).ci).toBe('success');
+  });
+
+  test('the merge gate refuses a head GitHub reports red or still running', async () => {
+    const { s, task } = await running();
+    const sha = '8'.repeat(40);
+    await hook('pull_request', prPayload(task, 'opened', { sha }));
+    await hook('workflow_run', runPayload(task, sha, 'success'));
+    const before = merges.length;
+
+    // an older red run of check, superseded by a green one, doesn't count; isolation red does
+    checks.set(sha, [
+      { id: 1, name: 'check', status: 'completed', conclusion: 'failure' },
+      { id: 4, name: 'check', status: 'completed', conclusion: 'success' },
+      { id: 2, name: 'conformance', status: 'completed', conclusion: 'success' },
+      { id: 3, name: 'storefront-isolation', status: 'completed', conclusion: 'failure' },
+    ]);
+    expect((await ctl('POST', `/control/v1/site-tasks/${task.id}/approve`)).status).toBe(200);
+    await mergeApproved(d);
+    let t = await taskOf(s.id);
+    expect(t).toMatchObject({ status: 'pr_open', ci: 'failure' });
+    expect(t.last_error).toContain('storefront-isolation');
+
+    await sql`update site_tasks set ci = 'success' where id = ${task.id}`;
+    checks.set(sha, [
+      { id: 1, name: 'check', status: 'completed', conclusion: 'success' },
+      { id: 2, name: 'conformance', status: 'in_progress', conclusion: null },
+    ]);
+    expect((await ctl('POST', `/control/v1/site-tasks/${task.id}/approve`)).status).toBe(200);
+    await mergeApproved(d);
+    t = await taskOf(s.id);
+    expect(t).toMatchObject({ status: 'pr_open', ci: 'pending' });
+    expect(merges.length).toBe(before);
+    const ev =
+      await sql`select 1 from site_task_events where task_id = ${task.id} and kind = 'merge_gate'`;
+    expect(ev.length).toBe(2);
+
+    // an approved row whose ci isn't green is never claimed
+    await sql`update site_tasks set status = 'approved', ci = 'pending' where id = ${task.id}`;
+    green(sha);
+    await mergeApproved(d);
+    expect(merges.length).toBe(before);
+    expect((await taskOf(s.id)).status).toBe('approved');
+  });
+
+  test('slugs that look like suffixes get distinct branches', async () => {
+    const a = await store({ slug: `sbx-${nonce}` });
+    const b = await store({ slug: `sbx-${nonce}-ajuste` });
+    const c = await store({ slug: `sbx-${nonce}-2` });
+    for (const x of [a, b, c])
+      expect(
+        (await admin('POST', '/account/site-request/build', x.owner, { spec: SPEC })).status,
+      ).toBe(201);
+    const branches = await sql<{ branch: string }[]>`
+      select branch from site_tasks where tenant_id in ${sql([a.id, b.id, c.id])}`;
+    expect(new Set(branches.map((r) => r.branch)).size).toBe(3);
+    // a revision of a and a build of b can't share one either
+    for (const r of branches) expect(r.branch).toMatch(/--[0-9a-f]{8}$/);
+  });
+
+  test('events from a fork are ignored', async () => {
+    const { task } = await running();
+    const fork = await hook('pull_request', prPayload(task, 'opened', { fork: 'evil/stores' }));
+    expect(fork.status).toBe(204);
+    expect((await taskOf(task.tenant_id)).status).toBe('running');
+    await hook('pull_request', prPayload(task, 'opened', { sha: '9'.repeat(40) }));
+    const run = await hook(
+      'workflow_run',
+      runPayload(task, '9'.repeat(40), 'success', { fork: 'evil/stores' }),
+    );
+    expect(run.status).toBe(204);
+    expect((await taskOf(task.tenant_id)).ci).toBe('pending');
+  });
+
+  test('a revision needs the plan', async () => {
+    const s = await store({ plan: 'mirim', request: false });
+    await sql`insert into site_requests (tenant_id, status, brief) values (${s.id}, 'delivered', 'x')`;
+    const r = await admin('POST', '/account/site-request/revision', s.owner, {
+      note: 'Mude a cor do botão',
+      spec: SPEC,
+    });
+    expect(r.status).toBe(403);
+    expect(JSON.stringify(r.body)).toContain('PLAN_REQUIRED');
   });
 
   test('RLS: one store cannot read another store’s site tasks', async () => {

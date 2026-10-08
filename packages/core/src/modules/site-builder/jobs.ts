@@ -7,7 +7,7 @@ import { emitControlEvent } from '../control-events.ts';
 import { scoped, type FleetDeps } from '../fleet/deps.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { saveTemplateTx, saveTokensTx } from '../storefront-platform.ts';
-import { GitHubError } from './github.ts';
+import { GitHubError, checksVerdict } from './github.ts';
 import { FireError, type FireTask } from './runners.ts';
 import {
   MAX_FIX_PUSHES,
@@ -202,7 +202,7 @@ export async function mergeApproved(d: FleetDeps): Promise<number> {
       update site_tasks set lease_until = now() + ${LEASE}::interval
       where id in (
         select id from site_tasks
-        where status = 'approved'
+        where status = 'approved' and ci = 'success'
           and (next_attempt_at is null or next_attempt_at <= now())
           and (lease_until is null or lease_until < now())
           ${scoped(tx, d, 'tenant_id')}
@@ -215,9 +215,12 @@ export async function mergeApproved(d: FleetDeps): Promise<number> {
   for (const t of due) {
     let merged: { sha: string | null } | null = null;
     let err: unknown = null;
+    // GitHub's own word on the head, not the webhook's: a re-run that skipped jobs can say green
+    let gate: { reason: string; pending: boolean } | null = null;
     if (t.pr_number && t.head_sha) {
       try {
-        merged = await gh.merge(t.pr_number, t.head_sha);
+        gate = checksVerdict(await gh.checkRuns(t.head_sha));
+        if (!gate) merged = await gh.merge(t.pr_number, t.head_sha);
       } catch (e) {
         err = e;
       }
@@ -236,6 +239,15 @@ export async function mergeApproved(d: FleetDeps): Promise<number> {
           where id = ${t.id}
         `;
         await taskEventTx(tx, cur, 'merged', { sha: merged.sha, by: 'core' });
+        await emitAdminTx(tx, cur.tenant_id, 'billing');
+      } else if (gate) {
+        await tx`
+          update site_tasks set status = 'pr_open', ci = ${gate.pending ? 'pending' : 'failure'},
+            approved_at = null, approved_by = null, lease_until = null,
+            last_error = ${gate.reason.slice(0, 500)}, updated_at = now()
+          where id = ${t.id}
+        `;
+        await taskEventTx(tx, cur, 'merge_gate', { reason: gate.reason.slice(0, 300) });
         await emitAdminTx(tx, cur.tenant_id, 'billing');
       } else if (err instanceof GitHubError && (err.status === 405 || err.status === 409)) {
         await tx`

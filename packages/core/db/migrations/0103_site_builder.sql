@@ -62,8 +62,9 @@ create unique index if not exists site_tasks_one_live on site_tasks (site_reques
 create index if not exists site_tasks_by_tenant on site_tasks (tenant_id, created_at desc);
 create index if not exists site_tasks_open on site_tasks (due_at)
   where status not in ('delivered', 'cancelled');
-create index if not exists site_tasks_by_branch on site_tasks (branch)
-  where status in ('running', 'pr_open', 'approved');
+-- GitHub's events find a task by branch: never two live tasks on one
+create unique index if not exists site_tasks_live_branch on site_tasks (branch)
+  where status not in ('delivered', 'cancelled');
 
 create table if not exists site_task_events (
   id bigint generated always as identity primary key,

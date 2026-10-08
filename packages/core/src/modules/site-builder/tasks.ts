@@ -70,9 +70,12 @@ export interface SiteDesign {
   tokens: unknown;
 }
 
-/** the git branch a task's agent pushes: attempt 1 has none of the suffix */
-export function branchFor(slug: string, kind: SiteTaskKind, attempt: number): string {
-  const base = `claude/site-${slug}${kind === 'revision' ? '-ajuste' : ''}`;
+/**
+ * The git branch a task's agent pushes. The task id makes it unambiguous across stores (a slug
+ * may itself end in "-ajuste" or "-2"); a retry adds its attempt.
+ */
+export function branchFor(slug: string, kind: SiteTaskKind, taskId: string, attempt = 1): string {
+  const base = `claude/site-${slug}${kind === 'revision' ? '-ajuste' : ''}--${taskId.slice(0, 8)}`;
   return attempt > 1 ? `${base}-${attempt}` : base;
 }
 
@@ -126,23 +129,15 @@ export async function requestSiteTaskTx(
   if (live.length)
     throw new HttpError(409, 'SITE_ALREADY_BUILDING', 'this site is already being built');
   const store = await storeOfTx(tx, o.tenantId);
-  // attempts count per store and kind, so a new task never reuses an old task's branch
-  const prev = (
-    await tx<{ n: number }[]>`
-      select coalesce(max(attempt), 0)::int as n from site_tasks
-      where tenant_id = ${o.tenantId} and kind = ${o.kind}
-    `
-  )[0]!.n;
-  const attempt = prev + 1;
+  const id = crypto.randomUUID();
   let row: SiteTaskDbRow | undefined;
   try {
     row = (
       await tx<SiteTaskDbRow[]>`
-        insert into site_tasks (tenant_id, site_request_id, kind, source, spec, note, attempt,
-                                branch, due_at)
-        values (${o.tenantId}, ${o.siteRequestId}, ${o.kind}, ${o.source},
-                ${tx.json(o.spec as never)}, ${o.note ?? null}, ${attempt},
-                ${branchFor(store.slug, o.kind, attempt)},
+        insert into site_tasks (id, tenant_id, site_request_id, kind, source, spec, note, branch,
+                                due_at)
+        values (${id}, ${o.tenantId}, ${o.siteRequestId}, ${o.kind}, ${o.source},
+                ${tx.json(o.spec as never)}, ${o.note ?? null}, ${branchFor(store.slug, o.kind, id)},
                 now() + make_interval(secs => ${DELIVERY_MS / 1000}))
         returning *
       `
