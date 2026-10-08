@@ -94,13 +94,17 @@ function tzOffsetMs(instant: Date, tz: string): number {
 }
 
 // instant for wall time `minutes`-after-midnight on `date` in `tz` — one
-// correction pass lands slots straddling a DST jump on the right minute
+// correction pass lands slots straddling a DST jump on the right minute. A wall time a
+// spring-forward skips (02:30 in New York, 00:00 in São Paulo's old DST) moves forward past the
+// gap, never an hour back onto the day before.
 export function zonedInstant(tz: string, date: LocalDate, minutes: number): Date {
   const guess = Date.UTC(date.year, date.month - 1, date.day, 0, minutes);
+  const wallOf = (t: number) => t + tzOffsetMs(new Date(t), tz);
   let t = guess - tzOffsetMs(new Date(guess), tz);
-  const second = tzOffsetMs(new Date(t), tz);
-  const corrected = guess - second;
-  if (corrected !== t) t = corrected;
+  if (wallOf(t) !== guess) {
+    const corrected = guess - tzOffsetMs(new Date(t), tz);
+    t = wallOf(corrected) === guess ? corrected : Math.max(t, corrected);
+  }
   return new Date(t);
 }
 
