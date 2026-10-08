@@ -40,12 +40,15 @@ export interface Lkg {
   at: number;
 }
 
-/** Last-known-good key: these three GETs keep serving their last 200 while Core is down. */
+/** Last-known-good key: these three GETs keep serving their last 200 while Core is down. Only
+ *  the exact queries the loader and Kernel send are kept — Core ignores unknown params, so any
+ *  other query would let a client fill the cache with copies of one answer. */
 export function lkgKey(host: string, url: URL): string | null {
   const p = url.pathname;
-  if (p === '/storefront/v1/state') return `${host}${p}${url.search}`;
-  if (p === '/storefront/v1/surfaces' && !url.search) return `${host}${p}`;
-  if (p === '/v1/v.js') return `*${p}${url.search}`;
+  const q = url.search;
+  if (p === '/storefront/v1/state' && (q === '' || q === '?templates=1')) return `${host}${p}${q}`;
+  if (p === '/storefront/v1/surfaces' && q === '') return `${host}${p}`;
+  if (p === '/v1/v.js' && q === '') return `*${p}`;
   return null;
 }
 

@@ -5,7 +5,7 @@ import type { Server } from 'bun';
 import { openArtifactStore, type ArtifactStore } from '../src/artifacts.ts';
 import type { FetchImpl, Route } from '../src/core.ts';
 import { createManifest, uploadRelease, type StorefrontManifest } from '../src/manifest.ts';
-import { createEdge, type Edge, type EdgeOptions } from '../src/server.ts';
+import { MAX_REQUEST_BODY_BYTES, createEdge, type Edge, type EdgeOptions } from '../src/server.ts';
 
 process.env.VENDUA_EDGE_QUIET = '1';
 
@@ -231,7 +231,12 @@ export async function harness(opts: Partial<EdgeOptions> = {}): Promise<Harness>
       ...o,
     });
   const serve = (edge: Edge) =>
-    Bun.serve({ port: 0, idleTimeout: 0, fetch: (req, srv) => edge.fetch(req, srv) });
+    Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
+      fetch: (req, srv) => edge.fetch(req, srv),
+    });
   const h: Harness = {
     core,
     store,

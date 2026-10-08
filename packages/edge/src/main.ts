@@ -1,6 +1,6 @@
 import { openArtifactStore } from './artifacts.ts';
 import { log } from './log.ts';
-import { createEdge } from './server.ts';
+import { MAX_REQUEST_BODY_BYTES, createEdge } from './server.ts';
 
 const env = process.env;
 const num = (v: string | undefined, d: number) => (v && Number.isFinite(+v) ? +v : d);
@@ -23,6 +23,7 @@ const edge = createEdge({
 
 const server = Bun.serve({
   port: num(env.PORT, 8080),
+  maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
   fetch: (req, srv) => edge.fetch(req, srv),
 });
 

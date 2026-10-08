@@ -1,7 +1,13 @@
-/** Insertion-ordered map that drops its least recently used key past `max`. */
+/** Insertion-ordered map that drops its least recently used key past `max` entries, or past
+ *  `maxWeight` when given a `weigh` (a value heavier than that alone is not stored). */
 export class Lru<K, V> {
   private map = new Map<K, V>();
-  constructor(private readonly max: number) {}
+  private weight = 0;
+  constructor(
+    private readonly max: number,
+    private readonly weigh: (v: V) => number = () => 0,
+    private readonly maxWeight = Infinity,
+  ) {}
   get size() {
     return this.map.size;
   }
@@ -17,12 +23,19 @@ export class Lru<K, V> {
     return this.map.get(key);
   }
   set(key: K, value: V): void {
-    this.map.delete(key);
+    const w = this.weigh(value);
+    if (w > this.maxWeight) return;
+    this.delete(key);
     this.map.set(key, value);
-    while (this.map.size > this.max) this.map.delete(this.map.keys().next().value as K);
+    this.weight += w;
+    while (this.map.size > this.max || this.weight > this.maxWeight)
+      this.delete(this.map.keys().next().value as K);
   }
   delete(key: K): void {
+    const v = this.map.get(key);
+    if (v === undefined) return;
     this.map.delete(key);
+    this.weight -= this.weigh(v);
   }
   entries(): [K, V][] {
     return [...this.map.entries()];
