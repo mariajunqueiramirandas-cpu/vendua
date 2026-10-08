@@ -371,7 +371,7 @@ export async function placeOrderTx(
       select name,
         (select count(*) from (select 1 from orders where tenant_id = ${tenantId} limit 2) o)::int as orders,
         exists (select 1 from store_whatsapp where tenant_id = ${tenantId} and wanted) as whatsapp,
-        exists (select 1 from printers where tenant_id = ${tenantId} and auto and present) as printers
+        exists (select 1 from printers where tenant_id = ${tenantId} and auto) as printers
       from tenants where id = ${tenantId}
     `.then((rows) => rows[0]),
     ...cart.items.map(

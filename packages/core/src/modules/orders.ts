@@ -478,7 +478,7 @@ export async function transitionOrder(
     select state, delivery ->> 'mode' as mode, customer_phone, number,
       coalesce((payment ->> 'online')::boolean, false) as online, total_cents,
       exists (select 1 from store_whatsapp w where w.tenant_id = ${tenantId} and w.wanted) as whatsapp,
-      exists (select 1 from printers p where p.tenant_id = ${tenantId} and p.auto and p.present) as printers
+      exists (select 1 from printers p where p.tenant_id = ${tenantId} and p.auto) as printers
     from orders where tenant_id = ${tenantId} and id = ${orderId} for update
   `;
   const order = rows[0];

@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 sealed interface PairingUi {
     data object Idle : PairingUi
@@ -161,7 +162,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun apiBase(): String = g.apiBase()
 
     fun setApiBase(value: String?) {
-        g.store.apiBase = value
+        val next = value?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
+        if (next != null && next.toHttpUrlOrNull()?.isHttps != true) {
+            _messages.tryEmit("Endereço inválido: use https://…")
+            return
+        }
+        val before = g.apiBase()
+        g.store.apiBase = next
+        // the token belongs to the server that issued it: never send it to another one
+        if (g.apiBase() != before) {
+            cancelPairing()
+            g.onUnpaired()
+        }
         _messages.tryEmit("Servidor: ${g.apiBase()}")
     }
 

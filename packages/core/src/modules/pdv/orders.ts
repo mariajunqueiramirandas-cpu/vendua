@@ -87,7 +87,7 @@ export async function insertPdvOrderTx(
   const [store] = await Promise.all([
     tx<{ name: string; printers: boolean }[]>`
       select name,
-        exists (select 1 from printers where tenant_id = ${tenantId} and auto and present) as printers
+        exists (select 1 from printers where tenant_id = ${tenantId} and auto) as printers
       from tenants where id = ${tenantId}
     `.then((rows) => rows[0]),
     ...o.lines.map(
