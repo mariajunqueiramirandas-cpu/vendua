@@ -328,6 +328,13 @@ describe('preorder calendar', () => {
       bookableDates({ ...hours, windows: [] }, 0, 0, new Date('2026-09-25T02:30:00Z')),
     ).toEqual(['2026-09-24']);
   });
+  test('today, with no lead time, only while the store still works today', () => {
+    // Thu 10:00 open → today is bookable; Thu 19:00, closed for the day → it starts tomorrow
+    expect(bookableDates(hours, 0, 1, now)).toEqual(['2026-09-24', '2026-09-25']);
+    expect(bookableDates(hours, 0, 1, new Date('2026-09-24T22:00:00Z'))).toEqual(['2026-09-25']);
+    // Thu 07:00, before opening: it still opens today
+    expect(bookableDates(hours, 0, 0, new Date('2026-09-24T10:00:00Z'))).toEqual(['2026-09-24']);
+  });
   test('schedule gate', () => {
     const v = scheduleView(
       [{ requiresPreorder: true, preorderLeadDays: 2 }],
