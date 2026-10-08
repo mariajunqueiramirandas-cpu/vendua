@@ -4,7 +4,7 @@ import { SLOT_ALIASES, SLOT_KEYS } from '@vendua/kernel/config';
 import { COMPAT_MATRIX } from '@vendua/templates';
 import { runLint } from './lint.ts';
 import type { CheckResult } from './report.ts';
-import { stripComments } from './source.ts';
+import { literals, stripComments } from './source.ts';
 
 export const SUPPORTED_CONTRACTS = [...new Set(COMPAT_MATRIX.map((r) => r.contract))];
 
@@ -244,6 +244,38 @@ function k02(dir: string): CheckResult {
   return pass(id, title);
 }
 
+/** Comment-stripped source with string contents, template text and JSX text blanked (lines and
+ *  columns kept): copy that says "fetch" isn't a call. `${…}` inside templates stays code. */
+function codeOnly(src: string): string {
+  const out = stripComments(src).split('');
+  const blank = (from: number, to: number) => {
+    for (let i = from; i < to; i++) if (out[i] !== '\n') out[i] = ' ';
+  };
+  const clean = out.join('');
+  for (const l of literals(clean)) {
+    if (l.quote !== '`') {
+      blank(l.start + 1, l.end - 1);
+      continue;
+    }
+    let depth = 0;
+    for (let i = l.start + 1; i < l.end - 1; i++) {
+      if (depth === 0 && clean[i] === '$' && clean[i + 1] === '{') {
+        depth = 1;
+        i++;
+      } else if (depth > 0) {
+        if (clean[i] === '{') depth++;
+        else if (clean[i] === '}') depth--;
+      } else if (out[i] !== '\n') out[i] = ' ';
+    }
+  }
+  // JSX text, by the same guess as K12's jsxTexts
+  for (const m of clean.matchAll(/>([^<>{}]+)</g)) {
+    if (/[;=()]|=>|&&/.test(m[1]!)) continue;
+    blank(m.index + 1, m.index + 1 + m[1]!.length);
+  }
+  return out.join('');
+}
+
 function k03(dir: string): CheckResult {
   const id = 'K03';
   const title =
@@ -254,6 +286,7 @@ function k03(dir: string): CheckResult {
     const rel = file.slice(dir.length + 1);
     const src = readFileSync(file, 'utf8');
     const code = stripComments(src).split('\n');
+    const bare = codeOnly(src).split('\n');
     const lines = src.split('\n');
     lines.forEach((line, i) => {
       const loc = `${rel}:${i + 1}`;
@@ -261,8 +294,8 @@ function k03(dir: string): CheckResult {
       if (trimmed.startsWith('//') || trimmed.startsWith('*')) return;
       // any reference, not only a call: window.fetch, fetch.call, const f = fetch, globalThis['fetch']
       if (
-        /(?<![\w$.-])fetch\b(?!\s*:)/.test(code[i]!) ||
-        /\b(?:window|globalThis|self)\s*\??\.\s*fetch\b/.test(code[i]!) ||
+        /(?<![\w$.-])fetch\b(?!\s*:)/.test(bare[i]!) ||
+        /\b(?:window|globalThis|self)\s*\??\.\s*fetch\b/.test(bare[i]!) ||
         /\[\s*['"`]fetch['"`]\s*\]/.test(code[i]!)
       )
         problems.push(`${loc}: direct fetch() — use @vendua/kernel api`);

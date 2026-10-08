@@ -670,12 +670,16 @@ describe('K09 / K11 / K03 extensions', () => {
         'export const f = <img fetchPriority="high" src="/a.png" />;',
         'export const g = () => api.fetch();',
         "export const h = 'x'; // we never fetch here",
+        "export const i = 'fetch';",
+        'export const j = <p>fetch failed, try again</p>;',
+        'export const k = `fetch ${n}`;',
+        'export const l = `${fetch}`;',
       ].join('\n'),
     });
     const k03 = (await runStatic(dir)).find((r) => r.id === 'K03')!;
     expect(k03.status).toBe('fail');
     const rows = k03.detail!.split('\n').filter((r) => r.startsWith('sections/net.tsx'));
-    expect(rows.map((r) => r.split(':')[1])).toEqual(['1', '2', '3', '4']);
+    expect(rows.map((r) => r.split(':')[1])).toEqual(['1', '2', '3', '4', '12']);
   });
 
   test('Q07 uses the templates package contrast pairs, not its own list', () => {
