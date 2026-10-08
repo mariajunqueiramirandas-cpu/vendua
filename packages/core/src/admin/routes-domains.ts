@@ -129,12 +129,11 @@ export function mountDomains(d: AdminDeps) {
       if (order || cur?.source === 'included')
         throw new HttpError(409, 'DOMAIN_INCLUDED', 'the store has a domain Venduá registers');
       if (cur?.host === host && cur.method === method) {
-        // trying again after giving up: a fresh week to set the DNS (same TXT token); a
-        // delegation starts over with a new zone, checked like the first
+        // trying again after giving up: a fresh week to set the DNS (same TXT token, and the
+        // zone the row still holds: its owner may have delegated to it late)
         if (cur.status === 'failed' && !(await hostTaken(d.sql, host, t.id, { method })))
           await tx`
-            update custom_domains set status = 'pending_dns', created_at = now(), last_error = null,
-              zone_id = null, name_servers = '{}', records_synced_at = null
+            update custom_domains set status = 'pending_dns', created_at = now(), last_error = null
             where id = ${cur.id}
           `;
         return { status: 200, body: await view(tx, t) };

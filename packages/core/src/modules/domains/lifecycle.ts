@@ -502,6 +502,9 @@ export async function finishRemovals(sql: Sql, d: DomainJobDeps, now: Date) {
       now.getTime() - r.zone_claimed_at.getTime() < ZONE_CLAIM_STALE_MS
     )
       return;
+    // an owner who delegated to this row's zone after the week ran out keeps it: "verificar" (or
+    // adding the domain again) then finds the delegation, which a new zone would refuse
+    if (!removing && !claimed && (await delegated(r.host, r.name_servers))) return;
     if (removing)
       await controlTx(
         sql,

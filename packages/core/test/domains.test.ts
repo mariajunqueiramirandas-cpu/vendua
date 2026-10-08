@@ -1247,6 +1247,26 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     expect((await row(aid))!.status).toBe('failed');
   });
 
+  test('an owner who delegates after the week ran out keeps the zone, and the retry goes on', async () => {
+    const a = await paidStore('late');
+    const host = `late-${nonce}.com.br`;
+    const aid = await delegate(a, host);
+    const T = Date.now();
+    await jobs(later(T, 0));
+    expect(dnsHost.zones.has(host)).toBe(true);
+    // the week ran out; then the owner points the nameservers at the zone they were shown
+    await sql`update custom_domains set status = 'failed' where id = ${aid}`;
+    set(host, { ns: CF_PAIR });
+    await jobs(later(T, 16 * MIN));
+    expect((await row(aid))!).toMatchObject({ status: 'failed', name_servers: CF_PAIR });
+    expect(dnsHost.zones.has(host)).toBe(true);
+    // adding it again keeps that zone (a new one would see a delegation it can't tell apart)
+    expect((await a.owner('POST', '/account/domains', { host, method: 'ns' })).status).toBe(200);
+    await jobs(later(T, 17 * MIN));
+    expect((await row(aid))!.status).not.toMatch(/failed|pending_dns/);
+    expect((await row(aid))!.last_error).toBeNull();
+  });
+
   test('a renewal retried after the registrar already renewed is not paid again', async () => {
     registrar.registerAsync = false;
     const s = await paidStore('rtry');

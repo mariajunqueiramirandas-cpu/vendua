@@ -245,9 +245,10 @@ export async function delegated(host: string, nameServers: string[]): Promise<bo
 }
 
 /**
- * Does the domain already name any of `nameServers` (the registry's record, or DNS)? Cloudflare
- * gives every zone in an account the same pair, so a delegation that is there before a row's zone
- * holds anything is someone else's — a domain another store removed — not proof of control.
+ * Does the domain already name every one of `nameServers` (the registry's record, or DNS)?
+ * Cloudflare gives every zone in an account the same pair, so a delegation that is there before a
+ * row's zone holds anything is someone else's — a domain another store removed — not proof of
+ * control. One shared name alone (Cloudflare draws them from a pool) is someone else's account.
  */
 export async function delegatedAlready(
   host: string,
@@ -260,7 +261,9 @@ export async function delegatedAlready(
     rdap ? rdap(host).catch(() => null) : null,
     resolver.resolveNs ? settle(resolver.resolveNs(host), [] as string[]) : [],
   ]);
-  return [...(info?.nameServers ?? []), ...got].some((n) => want.has(bare(n)));
+  const names = (list: string[]) => new Set(list.map(bare));
+  const all = (g: Set<string>) => [...want].every((n) => g.has(n));
+  return all(names(info?.nameServers ?? [])) || all(names(got));
 }
 
 async function checkDelegation(
