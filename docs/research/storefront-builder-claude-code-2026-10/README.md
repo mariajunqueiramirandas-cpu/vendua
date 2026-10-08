@@ -28,6 +28,9 @@ under the Agent SDK in our own container, which reports `total_cost_usd` and enf
 - The owner approves only the brief, as Duá's copilot card. Staff are the one gate on the site.
 - The site is delivered in 1 day.
 - One revision is included.
+- The 1 day counts weekends.
+- The routine runs on the owner's own claude.ai account.
+- The pilot runs without a cost figure per run.
 
 §1 and §8 cover what these decisions change.
 
@@ -233,8 +236,8 @@ are targets to measure in build step 3:
 
 - The reconciler raises `site_due_soon` 8 hours before `due_at` on any task not yet approved, as
   a `recordStaffEventTx`. Escalations raise one at once.
-- Escalations and approvals need someone on staff every day, weekends included, or the promise
-  needs business-day wording. Venduá's copy has to say which (see Decisions).
+- The 1 day counts weekends (decided 2026-10-08), so escalations and approvals need someone on
+  staff every day. The due-soon and escalation events are what page them.
 
 **One revision is included** (decided 2026-10-08). After delivery the owner can ask Duá for
 changes once:
@@ -270,18 +273,22 @@ After staff approval:
 5. **Agent SDK runner** when cost has to be a measured number (Phase 6 exit) or fires approach
    the routine's limits. Same skill, same webhook, `cost_cents` filled.
 
-## Decisions for the user
+## Decisions
 
-- **Whose account runs the routine.** Commits, PRs and usage are that claude.ai account's. A
-  dedicated Venduá bot seat with its own GitHub user, and branch protection so it can't push to
-  `main`, is cleaner than a founder's personal account.
-- **Accepting no per-store cost figure in the pilot.** Routines bill to the subscription, so
-  "cost per launched storefront" (the Phase 6 exit) is only measurable after step 5.
-- **Whether "1 day" counts weekends.** If it does, an escalation or approval on a Sunday needs
-  someone on staff. If it doesn't, the copy says "1 dia útil".
+Taken by the owner on 2026-10-08:
 
-Decided 2026-10-08: Duá writes the DesignSpec from the brief; the owner approves only the brief,
-never the site; delivery in 1 day; 1 revision included.
+- **Spec:** Duá writes the DesignSpec from the brief (§1).
+- **Approval:** the owner approves only the brief, as Duá's card, never the site. Staff are the
+  one human gate (§8).
+- **Delivery:** 1 day, weekends included (§8).
+- **Revisions:** one is included (§8).
+- **Account:** the routine runs on the owner's own claude.ai account. Commits, PRs and usage
+  carry that account's name and GitHub user. Branch protection on `main` (a PR and green CI
+  required, enforced for admins too) keeps the routine's pushes on `claude/` branches, since
+  GitHub applies the rules to the connected account.
+- **Cost:** the pilot runs without a cost figure per run, so routine usage shows only on the
+  subscription. "Cost per launched storefront", Phase 6's exit, becomes measurable with the
+  Agent SDK runner (build step 5).
 
 ## Risks
 
