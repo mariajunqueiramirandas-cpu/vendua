@@ -12,7 +12,7 @@ import { Panel } from '@/components/ui/card.tsx';
 import { SEVERITY, Tag } from './bits.tsx';
 import { IncidentSheet } from './IncidentSheet.tsx';
 import { useIncidents } from './queries.ts';
-import { STORES_TABS } from './tabs.ts';
+import { useStoresTabs } from './tabs.ts';
 
 const RANK = { outage: 0, degraded: 1, info: 2 } as const;
 
@@ -97,6 +97,7 @@ function MobileRow({ i }: { i: Incident }) {
 }
 
 export default function IncidentsPage() {
+  const tabs = useStoresTabs();
   const query = useIncidents();
   const [sp, setSp] = useSearchParams();
   const setParam = (k: string, v: string | null) =>
@@ -193,7 +194,7 @@ export default function IncidentsPage() {
   return (
     <Page
       title="Lojas"
-      tabs={STORES_TABS}
+      tabs={tabs}
       actions={
         <Button size="sm" onClick={() => setParam('novo', '1')}>
           <Siren /> novo incidente

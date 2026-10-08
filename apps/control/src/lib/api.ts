@@ -931,6 +931,8 @@ export interface BillingStore {
     brief: string | null;
     staffNote?: string | null | undefined;
   } | null;
+  /** the site builder's task: the live one, else the latest */
+  siteTask?: { id: string; status: SiteTaskStatus; dueAt: string } | null | undefined;
   /** the oldest plan invoice still to pay — "marcar como pago" settles it */
   openInvoice?: {
     id: string;
@@ -1691,8 +1693,96 @@ export type WaQr = {
   pairCodeExpiresAt?: string | null;
 };
 
+// ── site sob medida: the builder's tasks (/site-tasks) ──
+
+export type SiteTaskStatus =
+  | 'queued'
+  | 'firing'
+  | 'running'
+  | 'pr_open'
+  | 'approved'
+  | 'merged'
+  | 'delivered'
+  | 'escalated'
+  | 'cancelled';
+export type SiteTaskKind = 'generate' | 'revision';
+export type SiteMotion = 'none' | 'subtle' | 'expressive';
+
+/** Duá's brief for the build (Core validates it; version 1) */
+export interface DesignSpec {
+  version: number;
+  summary: string;
+  brand: {
+    personality: string[];
+    palette: { primary: string | null; accents: string[]; notes: string | null };
+    typography: string;
+    references: { url: string; note: string }[];
+  };
+  experience: {
+    mustHave: string[];
+    differentials: string[];
+    motion: SiteMotion;
+    avoid: string[];
+  };
+  copy: { tone: string; language: string };
+}
+
+export interface SiteTask {
+  id: string;
+  tenantId: string;
+  storeName: string;
+  slug: string;
+  kind: SiteTaskKind;
+  status: SiteTaskStatus;
+  runner: 'claude_routine' | 'human';
+  attempt: number;
+  branch: string;
+  sessionUrl: string | null;
+  prNumber: number | null;
+  prUrl: string | null;
+  ci: 'pending' | 'success' | 'failure' | null;
+  /** failed CI runs on distinct shas; past 4 the task escalates */
+  iterations: number;
+  dueAt: string;
+  /** why it escalated — or, once cancelled, the staff's reason */
+  escalatedReason: string | null;
+  approvedBy: string | null;
+  createdAt: string;
+  firedAt: string | null;
+  mergedAt: string | null;
+  deliveredAt: string | null;
+  spec: DesignSpec;
+  /** the owner's revision request (kind 'revision') */
+  note: string | null;
+}
+
+export interface SiteTaskEvent {
+  at: string;
+  kind: string;
+  detail: Record<string, unknown>;
+}
+
+const siteTasks = {
+  siteTasks: (status: 'open' | 'all') => req<{ tasks: SiteTask[] }>(`/site-tasks?status=${status}`),
+  siteTask: (id: string) =>
+    req<{ task: SiteTask; events: SiteTaskEvent[] }>(`/site-tasks/${encodeURIComponent(id)}`),
+  /** pr_open + ci success only; the merge job takes it from there */
+  approveSiteTask: (id: string) =>
+    req<{ task: SiteTask }>(`/site-tasks/${encodeURIComponent(id)}/approve`, { method: 'POST' }),
+  retrySiteTask: (id: string) =>
+    req<{ task: SiteTask }>(`/site-tasks/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
+  takeSiteTask: (id: string) =>
+    req<{ task: SiteTask }>(`/site-tasks/${encodeURIComponent(id)}/human`, { method: 'POST' }),
+  cancelSiteTask: (id: string, reason: string) =>
+    req<{ task: SiteTask }>(`/site-tasks/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+};
+
 export const api = Object.assign(apiBase, agentV2, fleet, {
   ...controlPlane,
+  ...siteTasks,
   ...menuImports,
   ...fleetConsole,
 });

@@ -12,7 +12,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-export type BadgeKey = 'drafts' | 'overdue';
+export type BadgeKey = 'drafts' | 'overdue' | 'sites';
 
 export interface Hub {
   to: string;
@@ -26,7 +26,7 @@ export interface Hub {
 /** The fleet console: what the sidebar and the tab bar lead with. */
 export const HUBS: Hub[] = [
   { to: '/', label: 'Visão', icon: LayoutDashboard, k: 'h' },
-  { to: '/lojas', label: 'Lojas', icon: Store, k: 'l' },
+  { to: '/lojas', label: 'Lojas', icon: Store, k: 'l', badge: 'sites' },
   { to: '/ia', label: 'IA', icon: Sparkles, k: 'd' },
 ];
 
@@ -56,6 +56,8 @@ export const DESTINATIONS: { to: string; label: string; group: string }[] = [
   { to: '/lojas?f=atencao', label: 'Lojas com cobrança pendente', group: 'Lojas' },
   { to: '/lojas?f=dominios', label: 'Domínios para ativar', group: 'Lojas' },
   { to: '/lojas?f=sites', label: 'Pedidos de site', group: 'Lojas' },
+  { to: '/lojas/sites', label: 'Sites sob medida', group: 'Lojas' },
+  { to: '/lojas/sites?v=todos', label: 'Sites sob medida (todos)', group: 'Lojas' },
   { to: '/lojas/planos', label: 'Planos de assinatura', group: 'Lojas' },
   { to: '/lojas/incidentes', label: 'Incidentes', group: 'Lojas' },
   { to: '/lojas/frota', label: 'Frota (versões, sondas, alertas)', group: 'Lojas' },

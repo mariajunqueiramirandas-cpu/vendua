@@ -46,3 +46,13 @@ export function useStoredState<T>(key: string, initial: T) {
   }, [key, v]);
   return [v, setV] as const;
 }
+
+/** The clock, re-read every `ms` — for countdowns (a re-render, not a refetch). */
+export function useNow(ms = 30_000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(t);
+  }, [ms]);
+  return now;
+}

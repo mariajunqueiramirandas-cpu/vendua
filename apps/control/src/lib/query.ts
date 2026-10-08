@@ -44,6 +44,8 @@ export const qk = {
   billingStores: () => ['billing-stores'] as const,
   // under billingStores, so invalidating the list refreshes it too
   billingStore: (tenantId: string) => ['billing-stores', tenantId] as const,
+  siteTasks: (status: 'open' | 'all') => ['site-tasks', status] as const,
+  siteTask: (id: string) => ['site-task', id] as const,
   controlPlans: () => ['control-plans'] as const,
   aiPacks: () => ['ai-packs'] as const,
   signupReadiness: () => ['signup-readiness'] as const,

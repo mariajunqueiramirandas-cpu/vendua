@@ -52,7 +52,7 @@ export function AppShell({ onLogout, children }: { onLogout: () => void; childre
   const [collapsed, setCollapsed] = useStoredState('vendua-control-rail', false);
   const [installEvt, setInstallEvt] = useState<BeforeInstallPromptEvent | null>(null);
   const badges = useBadges();
-  useAttentionCount(badges.drafts + badges.overdue);
+  useAttentionCount(badges.drafts + badges.overdue + badges.sites);
   const llmDriver = useLlmDriver();
   const nav = useNavigate();
 
@@ -414,7 +414,7 @@ function TabBar({ badges }: { badges: Record<string, number> }) {
       aria-label="seções"
       className="pb-safe px-safe flex shrink-0 border-t bg-background/85 backdrop-blur-xl backdrop-saturate-150 md:hidden kb:hidden"
     >
-      {HUBS.map((h) => tab(h, 0))}
+      {HUBS.map((h) => tab(h, h.badge ? (badges[h.badge] ?? 0) : 0))}
       {tab(SALES_GROUP, salesBadge(badges), inSales)}
     </nav>
   );

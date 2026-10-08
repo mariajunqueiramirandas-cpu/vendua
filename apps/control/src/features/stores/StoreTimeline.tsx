@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import {
   Bot,
@@ -19,7 +20,7 @@ import { EmptyState, ErrorState, LoadingRows } from '@/components/common.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { Select } from '@/components/ui/input.tsx';
-import { eventText, eventTitle } from './eventText.ts';
+import { eventLink, eventText, eventTitle } from './eventText.ts';
 
 const CATEGORIES = [
   ['', 'tudo'],
@@ -50,11 +51,18 @@ const TONE: Record<StoreEvent['severity'], string> = {
 function Item({ e }: { e: StoreEvent }) {
   const Icon = ICON[e.category] ?? History;
   const text = eventText(e);
+  const to = eventLink(e);
   return (
     <li className="flex items-start gap-2.5 px-3 py-2">
       <Icon className={cn('mt-0.5 size-4 shrink-0', TONE[e.severity])} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="text-sm">{eventTitle(e)}</span>
+        {to ? (
+          <Link to={to} className="w-fit text-sm underline-offset-4 hover:underline">
+            {eventTitle(e)}
+          </Link>
+        ) : (
+          <span className="text-sm">{eventTitle(e)}</span>
+        )}
         {text && <span className="text-xs break-words text-muted-foreground">{text}</span>}
       </div>
       <span

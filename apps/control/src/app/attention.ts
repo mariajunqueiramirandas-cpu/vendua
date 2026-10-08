@@ -7,8 +7,8 @@ type BadgeNavigator = Navigator & {
 
 const BASE_TITLE = typeof document === 'undefined' ? '' : document.title;
 
-/** What needs the team (drafts to review + overdue tasks) on the tab title and, installed, the
- *  app icon — so a backgrounded CRM still says "3 for you". */
+/** What needs the team (drafts to review, overdue tasks, site tasks to unblock or approve) on
+ *  the tab title and, installed, the app icon — so a backgrounded CRM still says "3 for you". */
 export function useAttentionCount(n: number) {
   useEffect(() => {
     document.title = n > 0 ? `(${n > 99 ? '99+' : n}) ${BASE_TITLE}` : BASE_TITLE;

@@ -42,6 +42,10 @@ const REFRESH: Record<Exclude<ControlEventType, 'sync'>, string[]> = {
     'lead',
     // a store's row carries its probe and open incidents
     'customers',
+    // ref 'site': the site builder's tasks (and the store page's request panel)
+    'site-tasks',
+    'site-task',
+    'billing-stores',
   ],
 };
 
