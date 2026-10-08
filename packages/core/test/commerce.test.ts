@@ -810,6 +810,39 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
       `;
     }
   });
+  test("a coupon's per-phone limit holds under either 9th-digit spelling", async () => {
+    expect(
+      (
+        await ctl('POST', '/coupons', {
+          code: 'UMAVEZ',
+          kind: 'fixed',
+          value: 100,
+          perPhoneLimit: 1,
+        })
+      ).status,
+    ).toBe(201);
+    const order = async (phone: string) => {
+      const auth = await session();
+      await call('POST', '/checkout/v1/cart/items', { productId: ids.coco, qty: 1 }, auth);
+      await call('POST', '/checkout/v1/cart/coupon', { code: 'UMAVEZ' }, auth);
+      return call(
+        'POST',
+        '/checkout/v1/checkout',
+        {
+          customer: { name: 'Edu', phone },
+          delivery: { mode: 'pickup' },
+          payment: { method: 'cash' },
+        },
+        auth,
+      );
+    };
+    expect((await order('21987651234')).status).toBe(201);
+    // the same WhatsApp typed without the 9th digit is the same customer
+    const again = await order('2187651234');
+    expect(again.status).toBe(422);
+    expect(again.body.error.code).toBe('COUPON_ALREADY_USED');
+  });
+
   test('a coupon that covers the whole order leaves nothing to charge', async () => {
     expect(
       (await ctl('POST', '/coupons', { code: 'TUDO', kind: 'percent', value: 100 })).status,

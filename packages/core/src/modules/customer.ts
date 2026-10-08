@@ -3,6 +3,7 @@ import { planHas } from './billing/plans.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { couponLabel, mintCouponTx, type CouponRow } from './coupons.ts';
+import { phoneVariants } from '../store-whatsapp/text.ts';
 import type { LoyaltyProgram, StoreSettingsRow } from './store.ts';
 
 // "Sem senha, sem cadastro" (roadmap 2a/2c). Anyone can type any phone at checkout, so a
@@ -268,14 +269,14 @@ async function stampCounts(
   const earned = (
     await tx<{ n: number }[]>`
       select count(*)::int as n from orders
-      where tenant_id = ${tenantId} and customer_phone = ${phone} and state = 'delivered'
-        and subtotal_cents >= ${program.minOrderCents}
+      where tenant_id = ${tenantId} and customer_phone = any(${phoneVariants(phone)})
+        and state = 'delivered' and subtotal_cents >= ${program.minOrderCents}
     `
   )[0]!.n;
   const minted = (
     await tx<{ n: number }[]>`
       select count(*)::int as n from coupons
-      where tenant_id = ${tenantId} and source = 'loyalty' and phone = ${phone}
+      where tenant_id = ${tenantId} and source = 'loyalty' and phone = any(${phoneVariants(phone)})
     `
   )[0]!.n;
   return { earned, minted };
@@ -314,7 +315,8 @@ export async function loyaltyCard(
           }[]
         >`
     select c.code, c.kind, c.value, c.label, c.ends_at from coupons c
-    where c.tenant_id = ${tenantId} and c.source = 'loyalty' and c.phone = ${phone} and c.active
+    where c.tenant_id = ${tenantId} and c.source = 'loyalty' and c.phone = any(${phoneVariants(phone)})
+      and c.active
       and (c.ends_at is null or c.ends_at > ${now})
       and not exists (
         select 1 from coupon_redemptions r join orders o on o.id = r.order_id
@@ -353,7 +355,9 @@ export async function mintLoyaltyRewards(
   // a plan without loyalty keeps the program for later but stamps and mints nothing now
   if (!program || !(await planHas(tx, tenantId, 'loyalty'))) return [];
   // serialize per phone — two deliveries landing together must not double-mint
-  await tx`select pg_advisory_xact_lock(hashtextextended(${`loyalty|${tenantId}|${phone}`}, 0))`;
+  // one lock for both 9th-digit spellings: they count the same stamps
+  const key = phoneVariants(phone).sort()[0]!;
+  await tx`select pg_advisory_xact_lock(hashtextextended(${`loyalty|${tenantId}|${key}`}, 0))`;
   const { earned, minted } = await stampCounts(tx, tenantId, phone, program);
   const codes: string[] = [];
   for (let n = minted; (n + 1) * program.stampsRequired <= earned; n++) {
