@@ -810,6 +810,31 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
       `;
     }
   });
+  test('a coupon that covers the whole order leaves nothing to charge', async () => {
+    expect(
+      (await ctl('POST', '/coupons', { code: 'TUDO', kind: 'percent', value: 100 })).status,
+    ).toBe(201);
+    const auth = await session();
+    await call('POST', '/checkout/v1/cart/items', { productId: ids.coco, qty: 1 }, auth);
+    expect((await call('POST', '/checkout/v1/cart/coupon', { code: 'TUDO' }, auth)).status).toBe(
+      200,
+    );
+    const o = await call(
+      'POST',
+      '/checkout/v1/checkout',
+      {
+        customer: { name: 'Gil', phone: '21944443333' },
+        delivery: { mode: 'pickup' },
+        payment: { method: 'pix' },
+      },
+      auth,
+    );
+    expect(o.status).toBe(201);
+    expect(o.body.order.totalCents).toBe(0);
+    // no open-amount Pix, no R$ 0 charge at Mercado Pago
+    expect(o.body.order.payment).toMatchObject({ status: 'paid', online: false, pix: null });
+  });
+
   test('a bag stops at 50 lines; checkout refuses a total the shopper did not see', async () => {
     const auth = await session();
     for (let i = 0; i < 50; i++)

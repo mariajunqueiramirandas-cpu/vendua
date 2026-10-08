@@ -10,7 +10,12 @@ import { enqueueOrderPrintTx } from './printing/jobs.ts';
 import { normalizePhone } from './customer.ts';
 import { effectiveFee, routeMatches, validCoords, type RouteQuote } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
-import { offlinePayment, onlineOffer, onlinePayment } from './payments/store-payments.ts';
+import {
+  freePayment,
+  offlinePayment,
+  onlineOffer,
+  onlinePayment,
+} from './payments/store-payments.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 import { validateSchedule } from './preorder.ts';
 import { planHas } from './billing/plans.ts';
@@ -84,7 +89,20 @@ export async function placeOrderTx(
   // Re-validate modifier ids / kit picks against current defs — nothing retired slips through
   // underpriced. The order number rides along: numbering relies on the advisory lock above (else
   // two checkouts read the same max), and only this function inserts orders.
-  const [found, number] = await Promise.all([
+  // Every product the order touches, kit picks included, locked first in one id-ordered pass
+  // (sent ahead of the read below): locking the cart's products here and the picks later in
+  // drawStock let a cancel or a stock edit, each locking in id order, deadlock with a checkout.
+  const touched = [
+    ...new Set(
+      cart.items.flatMap((i) => [i.productId, ...i.comboSelections.map((c) => c.productId)]),
+    ),
+  ];
+  const lockAll = tx`
+    select 1 from products where tenant_id = ${tenantId} and id = any(${touched}::uuid[])
+    order by id for update
+  `.execute();
+  const [, found, number] = await Promise.all([
+    lockAll,
     getProductsById(
       tx,
       tenantId,
@@ -250,7 +268,9 @@ export async function placeOrderTx(
   const payment = {
     ...(method === 'tab'
       ? { provider: 'pdv', method: 'tab', status: 'pending', online: false }
-      : offer.online && offer.provider && (method === 'pix' || method === 'card_online')
+      : total === 0
+        ? freePayment(method, now)
+        : offer.online && offer.provider && (method === 'pix' || method === 'card_online')
         ? onlinePayment(offer.provider, method, total)
         : offlinePayment(settings, method, total, number)),
     ...(changeFor !== null ? { changeForCents: changeFor } : {}),
