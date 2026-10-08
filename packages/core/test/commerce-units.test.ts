@@ -57,6 +57,13 @@ describe('pix BR Code', () => {
     expect(normalizePixKey('(22) 99999-0000', 'phone')).toBe('+5522999990000');
     expect(normalizePixKey('Loja@X.com', 'email')).toBe('loja@x.com');
     expect(normalizePixKey('12', 'cnpj')).toBeNull();
+    // the DICT's 77-character cap, ASCII only: a longer key makes a code no bank accepts
+    expect(normalizePixKey(`${'a'.repeat(64)}@${'b'.repeat(8)}.com.br`, 'email')).toBeNull();
+    expect(normalizePixKey('lojá@exemplo.com', 'email')).toBeNull();
+    const longest = normalizePixKey(`${'a'.repeat(64)}@${'b'.repeat(8)}.com`, 'email')!;
+    expect(longest).toHaveLength(77);
+    const code = pixPayload({ key: longest, keyType: 'email', beneficiary: 'Loja', city: 'Rio' });
+    expect(code.slice(6, 10)).toBe('2699');
   });
 });
 
