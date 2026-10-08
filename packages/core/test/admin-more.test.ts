@@ -418,6 +418,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
     expect(member.inviteChannels).toEqual(['whatsapp', 'email']);
     expect(member.inviteSentAt).toBeTruthy();
     expect(member.inviteError).toBeNull();
+    // the typed address is a sign-in factor only once the link in the invite is opened;
+    const daviMail = `ta-d-${nonce}@exemplo.com`;
+    expect(member).toMatchObject({ email: null, pendingEmail: daviMail });
+    // the invite carries the link that proves it (opening it: sec-merchant-auth.test.ts, C1)
+    expect(lastMail(daviMail)!.text).toMatch(/\/admin\/entrar\?link=[A-Za-z0-9_-]{43}/);
 
     const replay = await owner(
       'POST',
@@ -450,6 +455,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
     expect((await owner('POST', `/team/${crypto.randomUUID()}/invite`)).status).toBe(404);
     const t = await owner('GET', '/team');
     expect(t.body.members.find((x: any) => x.id === fm.id).inviteChannels).toEqual(['whatsapp']);
+    // back after leaving: the old address isn't carried over (it may not be theirs any more)
+    await sql`update merchant_users set status = 'revoked' where tenant_id = ${tenantId} and phone = ${phone}`;
+    const back = await owner('POST', '/team', { name: 'Davi Atendente', phone, role: 'attendant' });
+    expect(back.status).toBe(201);
+    expect(back.body.invite.email).toBe('skipped');
+    expect(back.body.members.find((x: any) => x.phone === phone)).toMatchObject({
+      email: null,
+      pendingEmail: null,
+    });
     // these two must not get alert WhatsApps later
     await sql`update merchant_users set status = 'revoked' where tenant_id = ${tenantId} and phone in (${phone}, ${lost})`;
   });

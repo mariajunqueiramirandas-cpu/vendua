@@ -89,6 +89,7 @@ function range(c: Context, tz: string) {
     throw new HttpError(400, 'BAD_REQUEST', `the range must be 1–${MAX_DAYS} days`);
   const prevTo = new Date(Date.parse(from) - 86_400_000).toISOString().slice(0, 10);
   const prevFrom = new Date(Date.parse(from) - days * 86_400_000).toISOString().slice(0, 10);
+  if (!isDate(prevFrom)) throw new HttpError(400, 'BAD_REQUEST', 'from is out of range');
   return { period: 'custom', from, to, days, prevFrom, prevTo };
 }
 
@@ -278,12 +279,45 @@ export function mountReports(d: AdminDeps) {
         ) x
         group by lower(nb) order by quotes desc, neighborhood limit 10
       `;
+      // a counter sale split across methods counts under each of them (its payment.pdv split), and
+      // a comanda round under what its comanda was paid with, pro rata (the leftover cent to the
+      // largest), so neither shows up as "mixed" or "tab"; an open comanda's rounds stay "tab"
       const payments = await tx`
-        select payment ->> 'method' as method, count(*)::int as orders, sum(${net(tx)})::int as "revenueCents"
-        from orders
-        where tenant_id = ${t.id} and ${kept(tx)}
-          and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
-        group by 1 order by orders desc
+        with o as (
+          select id, tab_id, payment, ${net(tx)}::bigint as cents from orders
+          where tenant_id = ${t.id} and ${kept(tx)}
+            and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+        ),
+        tab_pay as (
+          select tab_id, method, sum(amount_cents)::bigint as paid,
+                 (sum(sum(amount_cents)) over (partition by tab_id))::bigint as tab_paid
+          from pdv_payments
+          where tenant_id = ${t.id} and voided_at is null
+            and tab_id in (select tab_id from o where payment ->> 'method' = 'tab')
+          group by 1, 2
+        ),
+        tab_parts as (
+          select o.id, tp.method, o.cents, tp.paid, o.cents * tp.paid / tp.tab_paid as base
+          from o join tab_pay tp on tp.tab_id = o.tab_id
+          where o.payment ->> 'method' = 'tab'
+        ),
+        parts as (
+          select o.id, x.method, x.cents::bigint as cents
+          from o cross join jsonb_to_recordset(
+            case jsonb_typeof(o.payment -> 'pdv') when 'array' then o.payment -> 'pdv' else '[]' end
+          ) as x(method text, cents int)
+          where o.payment ->> 'method' = 'mixed' and (o.payment -> 'pdv' -> 0) is not null
+          union all
+          select id, method, base + case when row_number() over (partition by id order by paid desc, method) = 1
+                                         then cents - sum(base) over (partition by id) else 0 end
+          from tab_parts
+          union all
+          select o.id, o.payment ->> 'method', o.cents from o
+          where not (o.payment ->> 'method' = 'mixed' and (o.payment -> 'pdv' -> 0) is not null)
+            and not exists (select 1 from tab_parts tp where tp.id = o.id)
+        )
+        select method, count(distinct id)::int as orders, sum(cents)::int as "revenueCents"
+        from parts group by 1 order by orders desc, method
       `;
       const coupons = await tx`
         select o.coupon_code as code, count(*)::int as orders, sum(o.discount_cents)::int as "discountCents",

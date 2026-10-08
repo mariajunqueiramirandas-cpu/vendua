@@ -190,8 +190,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
     );
     expect(invite.status).toBe(201);
 
-    // the email link proves the address only: the one row that carries it
+    // the typed address signs nobody in until the link the invite sent to it is opened
+    const sent = emails.length;
     await call('POST', '/auth/email/start', { email: attackerMail });
+    await Bun.sleep(20);
+    expect(emails.length).toBe(sent);
+    // and that link proves the address only: the one row that carries it
     const token = /link=([A-Za-z0-9_-]{43})/.exec(
       [...emails].reverse().find((e) => e.to === attackerMail)!.text,
     )![1]!;
@@ -324,7 +328,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
       pendingEmail: null,
     });
     const audits = await sql<{ summary: string }[]>`
-      select summary from audit_log where tenant_id = ${storeX} and action = 'me.email' order by id
+      select summary from audit_log where tenant_id = ${storeX} and action = 'me.email'
+        and entity_id = (select id::text from merchant_users where tenant_id = ${storeX} and phone = ${attackerPhone})
+      order by id
     `;
     expect(audits.map((a) => a.summary)).toEqual(['cadastrou um e-mail de acesso']);
 

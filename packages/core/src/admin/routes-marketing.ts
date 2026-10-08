@@ -49,7 +49,9 @@ function loyaltyView(p: StoredLoyalty | null) {
 function date(v: unknown, name: string): Date | null {
   if (v === undefined || v === null || v === '') return null;
   const d = new Date(text(v, name, 40));
-  if (Number.isNaN(d.getTime()))
+  // postgres.js sends years past 9999 as +010000, which Postgres rejects
+  const y = d.getUTCFullYear();
+  if (Number.isNaN(d.getTime()) || y < 2000 || y > 9999)
     throw new HttpError(422, 'BAD_REQUEST', `${name} must be a date`, { field: name });
   return d;
 }

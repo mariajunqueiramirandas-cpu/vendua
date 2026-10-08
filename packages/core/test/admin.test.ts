@@ -603,6 +603,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     const hist = await owner('GET', '/orders?q=joana');
     expect(hist.body.orders[0].id).toBe(orderId);
     expect((await owner('GET', '/orders?from=bad')).status).toBe(400);
+    // year 0 matches YYYY-MM-DD but Postgres has no such date: a 400, not a 500
+    expect((await owner('GET', '/orders?from=0000-01-01')).status).toBe(400);
+    expect((await owner('GET', '/orders/scheduled?from=0000-01-01&to=0000-01-31')).status).toBe(
+      400,
+    );
     const search = await owner('GET', '/search?q=joana');
     expect(search.body.orders).toHaveLength(1);
     expect(search.body.customers[0].phone).toBe('22988887777');
@@ -686,6 +691,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
         await sql`update orders set payment = ${sql.json(o.payment as never)} where id = ${o.id}`;
     }
     expect((await owner('GET', '/reports?from=2020-01-01&to=2026-01-01')).status).toBe(400);
+    expect((await owner('GET', '/reports?from=0000-01-01&to=0000-01-02')).status).toBe(400);
+    expect((await owner('GET', '/reports/orders.csv?from=0000-01-01&to=0000-01-02')).status).toBe(
+      400,
+    );
+    // the comparison range would start before year 1
+    expect((await owner('GET', '/reports?from=0001-01-02&to=0001-01-05')).status).toBe(400);
+    expect((await owner('GET', '/reports?from=9999-12-01&to=9999-12-31')).status).toBe(200);
     const csv = await owner('GET', `/reports/orders.csv?from=${from}&to=${today}`);
     expect(csv.headers.get('content-type')).toContain('text/csv');
     expect(csv.body).toContain('Joana Lima');
@@ -693,6 +705,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     const cp = await owner('POST', '/coupons', { code: 'bemvindo', kind: 'percent', value: 10 });
     expect(cp.status).toBe(201);
     expect(cp.body.coupons[0].code).toBe('BEMVINDO');
+    for (const endsAt of ['+010000-01-01T00:00:00Z', '0001-01-01T00:00:00Z']) {
+      const far = await owner('POST', '/coupons', {
+        code: 'LONGE',
+        kind: 'fixed',
+        value: 100,
+        endsAt,
+      });
+      expect(far.status).toBe(422);
+      expect(far.body.error.details.field).toBe('endsAt');
+    }
     expect(
       (await owner('POST', '/coupons', { code: 'BEMVINDO', kind: 'fixed', value: 100 })).body.error
         .code,
@@ -778,6 +800,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect((await caio('GET', '/orders/board')).status).toBe(401);
 
     const log = await owner('GET', '/activity');
+    // past bigint: no 500, the cursor is just ignored
+    expect((await owner('GET', '/activity?before=1e20')).status).toBe(200);
     const summaries = log.body.entries.map((e: any) => e.summary);
     expect(summaries.some((s: string) => s.includes('removeu o acesso de Caio'))).toBe(true);
     expect(summaries.some((s: string) => s.startsWith('pausou a loja'))).toBe(true);
