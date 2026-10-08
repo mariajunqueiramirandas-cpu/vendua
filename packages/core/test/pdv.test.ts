@@ -610,6 +610,41 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     expect(n!.n).toBe(2);
   });
 
+  test("a comanda's round: cancelling it once paid is a manager's; a refund takes its cash out", async () => {
+    const open = await attendant('POST', '/pdv/tabs', { label: 'Balcão 9' });
+    expect(open.status).toBe(201);
+    const t9 = open.body.tab.id;
+    await attendant('PATCH', `/pdv/tabs/${t9}`, { serviceFee: false });
+    const r = await attendant('POST', `/pdv/tabs/${t9}/rounds`, {
+      lines: [{ productId: burger, qty: 2 }],
+    });
+    expect(r.status).toBe(201);
+    await attendant('POST', `/pdv/tabs/${t9}/payments`, { method: 'cash', amountCents: 500 });
+    // money already taken on the comanda: the attendant can't cancel the round under it
+    expect(
+      (
+        await attendant('POST', `/orders/${r.body.orderId}/transition`, {
+          to: 'cancelled',
+          reason: 'errou',
+        })
+      ).status,
+    ).toBe(403);
+    const last = await attendant('POST', `/pdv/tabs/${t9}/payments`, {
+      method: 'cash',
+      amountCents: 1500,
+    });
+    expect(last.body.tab.status).toBe('closed');
+    const refund = await owner('POST', `/orders/${r.body.orderId}/transition`, {
+      to: 'refunded',
+      reason: 'devolvido',
+    });
+    expect(refund.status).toBe(200);
+    const [m] = await sql<{ amount_cents: number }[]>`
+      select amount_cents from cash_movements
+      where tenant_id = ${tenantId} and kind = 'sangria' and reason like '%(comanda)'`;
+    expect(m!.amount_cents).toBe(2000);
+  });
+
   test('the bill and the caixa print on the store printer; archived tables come back', async () => {
     expect((await attendant('POST', `/pdv/tabs/${comanda7}/print`, {})).status).toBe(409);
     const [device] = await sql<{ id: string }[]>`

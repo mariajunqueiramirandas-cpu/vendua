@@ -662,7 +662,8 @@ export function mountOrders(d: AdminDeps) {
                   select state, delivery ->> 'mode' as mode, payment,
                     exists (
                       select 1 from pdv_payments p
-                      where p.tenant_id = ${t0.id} and p.order_id = ${id} and p.voided_at is null
+                      where p.tenant_id = ${t0.id} and p.voided_at is null
+                        and (p.order_id = ${id} or p.tab_id = orders.tab_id)
                     ) as counter_paid
                   from orders where tenant_id = ${t0.id} and id = ${id}
                 `
