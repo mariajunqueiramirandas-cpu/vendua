@@ -15,7 +15,7 @@ Dokploy, which issues its certificate.
 Pangolim includes one `.com.br` that Venduá registers through a reseller API (holder: the store's
 CNPJ, else the owner's CPF) at the first payment, and renews while the plan has it. Venduá hosts
 the zone of included domains and of connected ones (nameserver delegation; CNAME + TXT for
-subdomains). Certificates come from Dokploy's Traefik through a route file the edge writes, not
+subdomains). Certificates come from Dokploy's Traefik through a route file a sidecar writes, not
 from Caddy on-demand TLS; only Core-verified hosts reach it, so no `ask` endpoint. Where the
 sections below disagree, ADR 0038 wins.
 

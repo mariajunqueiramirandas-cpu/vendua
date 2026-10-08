@@ -88,14 +88,20 @@ zone fails to resolve; the admin says so and Core re-checks. An owner who would 
 DNS points the root's A record and `www` at us instead. Nameservers pointing at us are the proof of
 control for a delegated domain.
 
-**TLS needs no staff step.** The edge polls Core for hosts to serve with certificates
-(`GET /edge/v1/custom-hosts`: verified, active or repairing) and writes them as routers with
-`certResolver: letsencrypt` into `/etc/dokploy/traefik/dynamic/vendua-custom-domains.yml`
-(bind-mounted, rewritten by rename only when it changes). Only hosts Core verified reach the
-file, which is what ADR 0010's `ask` endpoint was for. A Core job probes `https://<host>` and,
-on a valid certificate, calls `activate_custom_domain()`; the CRM button stays as an override.
-Before a host is verified Core also checks AAAA (none, or ours) and CAA (none, or one allowing
-Let's Encrypt).
+**TLS needs no staff step.** A `domains-sync` sidecar, on the internal network only with no route
+from Traefik, polls Core for hosts to serve with certificates (`GET /sync/v1/custom-hosts`,
+read-only under a secret of its own, like the edge's: verified, active or repairing) and is the only
+process that writes `/etc/dokploy/traefik/dynamic/vendua-custom-domains.yml` (bind-mounted,
+rewritten by rename only when it changes). The internet-facing edge never gets that mount: a
+compromised edge must not be able to route the admin's or the CRM's host. The sidecar renders every
+host through one fixed template and drops any host that fails Core's host pattern, falls under the
+store domain or is one of the platform's own hosts. Each host gets a `websecure` router with the
+`letsencrypt` resolver, a `web` router redirecting to HTTPS, `service: vendua-edge@docker` (the file
+provider doesn't see Docker services unless named) and a low explicit priority, so it can never
+outrank a Dokploy host. Only hosts Core verified reach the file, which is what ADR 0010's `ask`
+endpoint was for. A Core job probes `https://<host>` and, on a valid certificate, calls
+`activate_custom_domain()`; the CRM button stays as an override. Before a host is verified Core also
+checks AAAA (none, or ours) and CAA (none, or one allowing Let's Encrypt).
 
 **Renewal and lapse.** While the store's plan has `customDomain` and is in good standing, Core
 renews 30 days before expiry. A daily RDAP pass records expiry and nameservers for every domain.
