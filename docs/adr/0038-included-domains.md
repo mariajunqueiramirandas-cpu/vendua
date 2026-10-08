@@ -42,13 +42,16 @@ domain.
 renewed by Venduá at Venduá's cost. Other endings aren't sold. A domain the owner already has is
 connected, not bought, and its renewal stays the owner's.
 
-**The holder is the store's CNPJ; the owner's CPF is the fallback.** It comes from
-`subscriptions.payer_document`, and the owner confirms it at purchase. The registry checks the
-holder's name and address against the Receita Federal's record, so a CNPJ's legal name and
-address are filled in from its public record and the owner confirms them. Choosing a CPF shows
-that the name and part of the number become public. Venduá's own CNPJ is the billing and
-technical contact. The merchant always holds the domain; Venduá is never the holder (as ADR 0010
-said).
+**The holder is the store's CNPJ; the owner's CPF is the fallback.** The holder is its own record,
+not the billing data: `subscriptions.payer_document` is whoever pays the plan and only pre-fills the
+form. At purchase a user with the `owner` role enters or confirms the holder's document, legal name
+and address, and states that the holder authorizes the registration; the order keeps that
+confirmation (who, when) beside the holder data. A `.br` holder can't be edited later, only
+transferred by registro.br's procedure, so this step can't be skipped. The registry checks the
+holder's name and address against the Receita Federal's record, so a CNPJ's legal name and address
+are pre-filled from its public record. Choosing a CPF shows that the name and part of the number
+become public. Venduá's own CNPJ is the billing and technical contact. The merchant always holds the
+domain; Venduá is never the holder (as ADR 0010 said).
 
 **The owner picks the name any time; the order is placed at the first payment.** The admin
 searches names live through RDAP and suggests some from the store's name and slug. The choice is
@@ -90,8 +93,8 @@ control for a delegated domain.
 
 **TLS needs no staff step.** A `domains-sync` sidecar, on the internal network only with no route
 from Traefik, polls Core for hosts to serve with certificates (`GET /sync/v1/custom-hosts`,
-read-only under a secret of its own, like the edge's: verified, active or repairing) and is the only
-process that writes `/etc/dokploy/traefik/dynamic/vendua-custom-domains.yml` (bind-mounted,
+read-only under a secret of its own, like the edge's: verified, active, repairing or lapsed) and is
+the only process that writes `/etc/dokploy/traefik/dynamic/vendua-custom-domains.yml` (bind-mounted,
 rewritten by rename only when it changes). The internet-facing edge never gets that mount: a
 compromised edge must not be able to route the admin's or the CRM's host. The sidecar renders every
 host through one fixed template and drops any host that fails Core's host pattern, falls under the
@@ -105,21 +108,22 @@ checks AAAA (none, or ours) and CAA (none, or one allowing Let's Encrypt).
 
 **Renewal and lapse.** While the store's plan has `customDomain` and is in good standing, Core
 renews 30 days before expiry. A daily RDAP pass records expiry and nameservers for every domain.
-When the store loses the feature (downgrade, unpaid plan, CRM toggle) or leaves, the domain
-stays the merchant's: renewal stops at the end of the paid period; notices go out 30, 7 and 1
-days before expiry with the steps to set the provider to "Nenhum (0)" and renew at registro.br;
-the store's primary address goes back to `<slug>.vendua.com.br`; the zone keeps answering, with
-the domain redirecting to that address, until the owner moves the nameservers or the domain
-expires. An active domain whose DNS stops pointing at us turns `repairing`; the store keeps
-selling on its platform host.
+When the store loses the feature (downgrade, unpaid plan, CRM toggle) or leaves, the domain stays
+the merchant's: renewal stops at the end of the paid period; notices go out 30, 7 and 1 days before
+expiry with the steps to set the provider to "Nenhum (0)" and renew at registro.br; the store's
+primary address goes back to `<slug>.vendua.com.br`; the domain turns `lapsed` and keeps its route
+and certificate (the sidecar emits lapsed hosts too), and the edge answers every request on it with
+a redirect to that address instead of the store, until the owner moves the nameservers or the domain
+expires; then Core drops the host and its zone. An active domain whose DNS stops pointing at us
+turns `repairing`; the store keeps selling on its platform host.
 
 **Data.** `custom_domains` gains `source` (`included` | `connected`), `method` (`ns` | `cname`),
 `expires_at` and `registrar_ref`, and its states grow to cover ordering, issuing, repairing and
-lapsed. A `domain_orders` table (RLS) records each register and renew: host, holder document and
-kind, status, reseller reference and error, and cost in integer cents. The buy endpoint takes an
-`Idempotency-Key`, and one store has at most one open order. What staff should hear (ordered,
-registered, failed, renewal failed, lapsing) is `recordStaffEventTx` in the transaction that
-changed it.
+lapsed. A `domain_orders` table (RLS) records each register and renew: host, holder document, kind,
+legal name, address and who confirmed them when, status, reseller reference and error, and cost in
+integer cents. The buy endpoint takes an `Idempotency-Key`, and one store has at most one open
+order. What staff should hear (ordered, registered, failed, renewal failed, lapsing) is
+`recordStaffEventTx` in the transaction that changed it.
 
 **Build order.** (1) automated TLS and DNS hosting with delegation, which connected domains use
 too; (2) the registrar adapter, orders and the purchase screen; (3) renewals, RDAP and lapse.
