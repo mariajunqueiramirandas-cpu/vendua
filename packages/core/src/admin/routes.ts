@@ -504,6 +504,11 @@ export function mountAdmin(o: MountAdminOpts) {
         update merchant_sessions set revoked_at = now()
         where tenant_id = ${tenant.id} and user_id = ${m.userId} and id = ${id}
       `;
+      // the device it ended stops getting the store's pushes too
+      await tx`
+        delete from push_subscriptions
+        where tenant_id = ${tenant.id} and user_id = ${m.userId} and session_id = ${id}
+      `;
       forgetGate();
       return { status: 200, body: { ok: true } };
     })(c);
@@ -524,10 +529,11 @@ export function mountAdmin(o: MountAdminOpts) {
       const p256dh = text(keys.p256dh, 'keys.p256dh', 200, 20);
       const auth = text(keys.auth, 'keys.auth', 100, 8);
       await tx`
-        insert into push_subscriptions (tenant_id, user_id, endpoint, p256dh, auth)
-        values (${tenant.id}, ${m.userId}, ${endpoint}, ${p256dh}, ${auth})
+        insert into push_subscriptions (tenant_id, user_id, session_id, endpoint, p256dh, auth)
+        values (${tenant.id}, ${m.userId}, ${m.sessionId}, ${endpoint}, ${p256dh}, ${auth})
         on conflict (tenant_id, endpoint) do update set user_id = excluded.user_id,
-          p256dh = excluded.p256dh, auth = excluded.auth, last_error = null
+          session_id = excluded.session_id, p256dh = excluded.p256dh, auth = excluded.auth,
+          last_error = null
       `;
       // a browser re-subscribes with a fresh endpoint now and then: keep the newest few
       await tx`

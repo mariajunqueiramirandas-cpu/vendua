@@ -387,4 +387,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant auth hardening (db)', 
       'https://wns2-bl2p.notify.windows.com/w/?token=abc',
     );
   });
+
+  test('push: signing out, or ending a session, stops that device getting pushes', async () => {
+    const call = client(mkApp());
+    const keys = { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) };
+    const endpointOf = (n: string) => `https://fcm.googleapis.com/fcm/send/${nonce}-out-${n}`;
+    const has = async (n: string) =>
+      (await sql`select 1 from push_subscriptions where endpoint = ${endpointOf(n)}`).length > 0;
+    const a = await otpSignIn(call, attackerPhone, storeX);
+    const b = await otpSignIn(call, capPhone, storeY);
+    for (const [n, cookie] of [
+      ['a', a],
+      ['b', b],
+    ] as const)
+      expect(
+        (await call('POST', '/push/subscribe', { endpoint: endpointOf(n), keys }, cookie)).status,
+      ).toBe(201);
+    // "encerrar sessão" (here, the session itself)
+    const [sa] = await sql<{ session_id: string }[]>`
+      select session_id from push_subscriptions where endpoint = ${endpointOf('a')}`;
+    expect((await call('DELETE', `/me/sessions/${sa!.session_id}`, undefined, a)).status).toBe(200);
+    expect(await has('a')).toBe(false);
+    expect(await has('b')).toBe(true);
+    // "sair"
+    expect((await call('POST', '/auth/logout', {}, b)).status).toBe(200);
+    expect(await has('b')).toBe(false);
+  });
 });

@@ -575,9 +575,11 @@ export function forgetGate() {
 
 export async function revokeSession(sql: Sql, tenantId: string, sessionId: string) {
   gateCache.delete(gateKey(tenantId, sessionId));
-  await withTenant(
-    sql,
-    tenantId,
-    (tx) => tx`update merchant_sessions set revoked_at = now() where id = ${sessionId}`,
-  );
+  // a signed-out device stops getting the store's pushes (orders, shopper previews) too
+  await withTenant(sql, tenantId, async (tx) => {
+    await Promise.all([
+      tx`update merchant_sessions set revoked_at = now() where id = ${sessionId}`.execute(),
+      tx`delete from push_subscriptions where tenant_id = ${tenantId} and session_id = ${sessionId}`.execute(),
+    ]);
+  });
 }
