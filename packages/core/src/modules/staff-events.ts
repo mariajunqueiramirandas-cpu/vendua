@@ -259,6 +259,15 @@ export interface StaffEventMap {
     detail: Opt<string>;
   };
   'domain.ready': { storeName: Name; host: string };
+  'domain.live': { storeName: Name; host: string };
+  'domain.tls_stuck': { storeName: Name; host: string };
+  'domain.repairing': { storeName: Name; host: string };
+  'domain.lapsed': { storeName: Name; host: string };
+  'domain.ordered': { storeName: Name; host: string };
+  'domain.registered': { storeName: Name; host: string };
+  'domain.order_failed': { storeName: Name; host: string; reason: 'conflict' | 'error' };
+  'domain.renewed': { storeName: Name; host: string; until: Opt<string> };
+  'domain.renewal_failed': { storeName: Name; host: string };
   // frota
   'release.published': {
     releaseId: Id;
@@ -564,6 +573,60 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'silent',
     severity: 'success',
     label: 'domínio próprio pronto',
+  },
+  'domain.live': {
+    category: 'assinaturas',
+    level: 'silent',
+    severity: 'success',
+    label: 'domínio próprio no ar',
+  },
+  'domain.tls_stuck': {
+    category: 'assinaturas',
+    level: 'normal',
+    severity: 'warning',
+    label: 'certificado do domínio próprio travado',
+  },
+  'domain.repairing': {
+    category: 'assinaturas',
+    level: 'normal',
+    severity: 'warning',
+    label: 'domínio próprio parou de apontar para a Venduá',
+  },
+  'domain.lapsed': {
+    category: 'assinaturas',
+    level: 'silent',
+    severity: 'info',
+    label: 'domínio próprio desligado (plano sem domínio)',
+  },
+  'domain.ordered': {
+    category: 'assinaturas',
+    level: 'silent',
+    severity: 'info',
+    label: 'domínio pedido ao registrador',
+  },
+  'domain.registered': {
+    category: 'assinaturas',
+    level: 'silent',
+    severity: 'success',
+    label: 'domínio registrado',
+  },
+  'domain.order_failed': {
+    category: 'assinaturas',
+    level: 'normal',
+    severity: 'warning',
+    label: 'registro de domínio falhou',
+  },
+  'domain.renewed': {
+    category: 'assinaturas',
+    level: 'silent',
+    severity: 'success',
+    label: 'domínio renovado',
+  },
+  'domain.renewal_failed': {
+    category: 'assinaturas',
+    level: 'normal',
+    severity: 'critical',
+    label: 'renovação de domínio falhou',
   },
   'release.published': {
     category: 'frota',

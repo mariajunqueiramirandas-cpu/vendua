@@ -1144,7 +1144,49 @@ export interface Incident {
 
 export type SubscriptionStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'cancelled';
 export type InvoiceStatus = 'open' | 'paid' | 'failed' | 'void';
-export type DomainStatus = 'active' | 'pending_dns' | 'dns_ok' | 'failed';
+/** a custom domain's state (ADR 0038); `removing` never reaches the admin */
+export type CustomDomainStatus =
+  'ordering' | 'pending_dns' | 'dns_ok' | 'active' | 'repairing' | 'lapsed' | 'failed';
+/** an address of the store: the platform one is always `active` */
+export type DomainStatus = CustomDomainStatus;
+
+export type DnsRecordType = 'A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT';
+/** an owner record in a zone Venduá hosts. name: '@' or relative ('mail', '_dmarc');
+ *  '@' and 'www' A/AAAA/CNAME are Venduá's and refused */
+export interface DnsRecord {
+  type: DnsRecordType;
+  name: string;
+  value: string;
+  priority?: number;
+}
+
+export interface HolderAddress {
+  street: string;
+  number: string;
+  complement?: string;
+  district: string;
+  city: string;
+  /** UF */
+  state: string;
+  /** 8 digits */
+  postalCode: string;
+}
+
+export type DomainOrderStatus =
+  'awaiting_payment' | 'queued' | 'pending' | 'registered' | 'conflict' | 'failed' | 'cancelled';
+
+export interface DomainOrderInput {
+  /** label.com.br */
+  host: string;
+  holder: {
+    document: string;
+    name: string;
+    email: string;
+    phone: string;
+    address: HolderAddress;
+  };
+  authorize: true;
+}
 
 export interface ChecklistItem {
   /** profile | hours | delivery | pix | menu | first_order */
@@ -1231,17 +1273,59 @@ export interface Account {
   aiPacks: AiPack[];
   invoices: Invoice[];
   address: string;
-  domains: { host: string; kind: 'store' | 'custom'; status: DomainStatus; primary: boolean }[];
+  domains: {
+    host: string;
+    kind: 'store' | 'custom';
+    status: CustomDomainStatus;
+    primary: boolean;
+  }[];
   customDomain: {
     id: string;
     host: string;
-    status: 'pending_dns' | 'dns_ok' | 'active' | 'failed';
+    status: CustomDomainStatus;
+    source: 'connected' | 'included';
+    method: 'cname' | 'ns';
+    /** the www./root counterpart, served too (redirects to host) */
+    aliasHost: string | null;
+    /** method cname: the CNAME target (or A records at `domainOptions.edgeIpv4`) */
     cnameTarget: string;
     txtName: string;
     txtValue: string;
+    /** method ns: the pair to set at the registry, [] until the zone exists */
+    nameServers: string[];
+    /** method ns: the owner's records copied into the zone */
+    records: DnsRecord[];
+    /** method ns: the owner confirmed the list (the zone is then created) */
+    recordsConfirmed: boolean;
+    /** method ns: a DS record at registro.br blocks the delegation */
+    dnssecSigned: boolean;
+    /** registry expiry when known */
+    expiresAt: string | null;
     lastCheckedAt: string | null;
     lastError: string | null;
   } | null;
+  /** the latest register order: open, or finished in the last 30 days */
+  domainOrder: {
+    id: string;
+    host: string;
+    status: DomainOrderStatus;
+    /** document masked: '12.345.678/0001-**' */
+    holder: { kind: 'cnpj' | 'cpf'; document: string; name: string };
+    createdAt: string;
+    placedAt: string | null;
+    conflictSince: string | null;
+    /** human pt-BR */
+    lastError: string | null;
+    /** the provider owners pick in registro.br's "Alterar provedor" */
+    providerName: string | null;
+  } | null;
+  domainOptions: {
+    /** owners can point their nameservers at Venduá */
+    delegation: boolean;
+    /** a .com.br can be registered with the plan */
+    purchase: boolean;
+    edgeIpv4: string | null;
+  };
   siteRequest: {
     id: string;
     status: 'requested' | 'in_progress' | 'delivered' | 'cancelled';
@@ -2518,9 +2602,37 @@ export const api = {
       priceCents: pack.priceCents,
       conversations: pack.conversations,
     }),
-  addDomain: (host: string) => send<Account>('POST', '/account/domains', { host }),
+  addDomain: (host: string, method?: 'cname' | 'ns') =>
+    send<Account>('POST', '/account/domains', method ? { host, method } : { host }),
   checkDomain: (id: string) => send<Account>('POST', `/account/domains/${id}/check`),
   removeDomain: (id: string) => send<Account>('DELETE', `/account/domains/${id}`),
+  /** the records Core finds on the domain's current DNS (read-only) */
+  discoverDomainRecords: (id: string) =>
+    send<{ records: DnsRecord[] }>('POST', `/account/domains/${id}/discover`),
+  saveDomainRecords: (id: string, records: DnsRecord[], confirm?: boolean) =>
+    send<Account>(
+      'PUT',
+      `/account/domains/${id}/records`,
+      confirm ? { records, confirm: true } : { records },
+    ),
+  searchDomains: (q: string) =>
+    get<{
+      query: string;
+      /** available: null = couldn't tell */
+      results: { host: string; available: boolean | null }[];
+      purchase: boolean;
+    }>(`/account/domains/search?q=${encodeURIComponent(q)}`),
+  /** a CNPJ's public record, to pre-fill the holder (a CPF answers nulls) */
+  domainHolder: (document: string) =>
+    get<{
+      kind: 'cnpj' | 'cpf';
+      document: string;
+      name: string | null;
+      address: HolderAddress | null;
+    }>(`/account/domains/holder?document=${encodeURIComponent(document)}`),
+  orderDomain: (body: DomainOrderInput) => send<Account>('POST', '/account/domains/order', body),
+  cancelDomainOrder: (id: string) => send<Account>('POST', `/account/domains/order/${id}/cancel`),
+  retryDomainOrder: (id: string) => send<Account>('POST', `/account/domains/order/${id}/retry`),
   requestSite: (brief: string) => send<Account>('POST', '/account/site-request', { brief }),
   updateSiteRequest: (brief: string) => send<Account>('PATCH', '/account/site-request', { brief }),
 

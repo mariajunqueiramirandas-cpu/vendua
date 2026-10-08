@@ -19,6 +19,10 @@ content-addressed release artifacts (docs/architecture/07-deployment-and-hosting
 - `/checkout/v1`, `/storefront/v1` and `/v1` proxy to Core (streamed, SSE included). The last
   good `/storefront/v1/state`, `/storefront/v1/surfaces` and `/v1/v.js` are served with
   `x-vendua-edge-stale: 1` while Core errors.
+- A route with `redirect: { to, permanent }` (ADR 0038: a custom domain's `www.`/root alias →
+  its host, 301; a lapsed domain → the store's platform address, 302) answers every GET/HEAD on
+  that host with a redirect to `to` + the request's path and query, before any release lookup.
+  `to` must be a bare `https://<host>` or the whole route is refused as malformed.
 - Routes, states and those API bodies are snapshotted to `<cacheDir>/snapshot.json`, so a
   restart during a Core outage keeps serving.
 - `GET /_edge/healthz` → `{ ok, routes, core: 'ok' | 'down' }`.

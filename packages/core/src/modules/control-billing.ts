@@ -128,6 +128,12 @@ export function mountControlBilling(o: {
           cd_id: string | null;
           cd_host: string | null;
           cd_status: string | null;
+          cd_source: string | null;
+          cd_method: string | null;
+          do_id: string | null;
+          do_host: string | null;
+          do_status: string | null;
+          do_error: string | null;
           sr_id: string | null;
           sr_status: string | null;
           sr_brief: string | null;
@@ -145,6 +151,9 @@ export function mountControlBilling(o: {
                s.trial_ends_at as sub_trial_end,
                pc.status as mp,
                cd.id as cd_id, cd.host as cd_host, cd.status as cd_status,
+               cd.source as cd_source, cd.method as cd_method,
+               dor.id as do_id, dor.host as do_host, dor.status as do_status,
+               dor.last_error as do_error,
                sr.id as sr_id, sr.status as sr_status, sr.brief as sr_brief, sr.staff_note as sr_note,
                inv.id as inv_id, inv.number as inv_number, inv.amount_cents as inv_amount,
                inv.kind as inv_kind, inv.period_start as inv_start, inv.due_at as inv_due
@@ -153,9 +162,19 @@ export function mountControlBilling(o: {
           left join subscriptions s on s.tenant_id = t.id
           left join payment_connections pc on pc.tenant_id = t.id
           left join lateral (
-            select id, host, status from custom_domains where tenant_id = t.id
+            select id, host, status, source, method from custom_domains
+            where tenant_id = t.id and status <> 'removing'
             order by created_at desc limit 1
           ) cd on true
+          left join lateral (
+            select id, host, status, last_error from domain_orders
+            where tenant_id = t.id and kind = 'register'
+              and (status in ('awaiting_payment', 'queued', 'pending', 'conflict', 'failed')
+                or updated_at > now() - interval '30 days')
+            order by (status in ('awaiting_payment', 'queued', 'pending', 'conflict', 'failed')) desc,
+              created_at desc
+            limit 1
+          ) dor on true
           left join lateral (
             select id, status, brief, staff_note from site_requests where tenant_id = t.id
             order by (status in ('requested', 'in_progress')) desc, created_at desc limit 1
@@ -188,7 +207,18 @@ export function mountControlBilling(o: {
               }
             : null,
           mercadoPago: r.mp,
-          customDomain: r.cd_id ? { id: r.cd_id, host: r.cd_host, status: r.cd_status } : null,
+          customDomain: r.cd_id
+            ? {
+                id: r.cd_id,
+                host: r.cd_host,
+                status: r.cd_status,
+                source: r.cd_source,
+                method: r.cd_method,
+              }
+            : null,
+          domainOrder: r.do_id
+            ? { id: r.do_id, host: r.do_host, status: r.do_status, lastError: r.do_error }
+            : null,
           siteRequest: r.sr_id
             ? { id: r.sr_id, status: r.sr_status, brief: r.sr_brief, staffNote: r.sr_note }
             : null,

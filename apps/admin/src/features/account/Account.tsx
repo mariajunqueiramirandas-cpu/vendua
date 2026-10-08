@@ -1,15 +1,11 @@
 import {
   ArrowSquareOut,
-  ArrowsClockwise,
   ChatCircleDots,
   CheckCircle,
   Clock,
-  Copy,
   CreditCard,
   Gift,
-  Globe,
   IdentificationCard,
-  type Icon,
   Info,
   MagicWand,
   PixLogo,
@@ -19,13 +15,12 @@ import {
   XCircle,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   api,
   ApiError,
   type Account as AccountData,
-  type DomainStatus,
   type AiPack,
   type Invoice,
   type Plan,
@@ -39,7 +34,6 @@ import { can, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Divided, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { copyText, CopyValue } from '../../ui/CopyValue.tsx';
 import { DuaNote, ErrorState, messageOf, Skeleton } from '../../ui/feedback.tsx';
 import {
   CommitInput,
@@ -70,73 +64,18 @@ import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { DOCUMENT_ERR, PAYER_EMAIL_RE } from '../auth/pending.ts';
 import { DocumentGate, needsDocument } from './DocumentGate.tsx';
+import { Addresses } from './domain/Addresses.tsx';
+import { CustomDomain } from './domain/CustomDomain.tsx';
+import { Callout, Chip, hostOf, Progress, useAccountWrite } from './domain/kit.tsx';
 
 type Sub = NonNullable<AccountData['subscription']>;
 type Method = 'card' | 'pix';
 
 const METHOD_LABEL: Record<Method, string> = { card: 'cartão', pix: 'Pix' };
-/** a host that wraps at its dots, never inside a word */
-const Host = ({ h }: { h: string }) => (
-  <>
-    {h.split('.').map((part, i) => (
-      <span key={i}>
-        {i ? '.' : ''}
-        {part}
-        <wbr />
-      </span>
-    ))}
-  </>
-);
-const hostOf = (url: string) => url.replace(/^https?:\/\//, '').replace(/\/$/, '');
 const monthOf = (iso: string) =>
   new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' })
     .format(new Date(iso.length === 10 ? `${iso}T12:00:00` : iso))
     .replace(' de ', ' ');
-
-/** Every account write answers with the whole account: put it in place, refresh what shows it. */
-function useAccountWrite<V>(
-  fn: (v: V) => Promise<AccountData>,
-  done?: (a: AccountData, v: V) => void,
-) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: fn,
-    onSuccess: (a, v) => {
-      qc.setQueryData(qk.account, a);
-      // the plan opens and closes screens (session.plan.features): the locks follow
-      void qc.invalidateQueries({ queryKey: qk.session });
-      void qc.invalidateQueries({ queryKey: qk.home });
-      void qc.invalidateQueries({ queryKey: qk.store });
-      done?.(a, v);
-    },
-    onError: (e) => toast.error(messageOf(e)),
-  });
-}
-
-// ── chips: color + icon + word (§4.2) ───────────────────────────────────────
-
-type Tone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
-const TONE: Record<Tone, string> = {
-  success: 'bg-success-soft text-success',
-  warning: 'bg-warning-soft text-warning',
-  danger: 'bg-danger-soft text-danger',
-  info: 'bg-info-soft text-info',
-  neutral: 'bg-sunken text-muted',
-};
-
-function Chip({ tone, icon: I, children }: { tone: Tone; icon: Icon; children: ReactNode }) {
-  return (
-    <span
-      className={cn(
-        't-caption inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 font-semibold',
-        TONE[tone],
-      )}
-    >
-      <I weight="bold" className="size-4" aria-hidden />
-      {children}
-    </span>
-  );
-}
 
 function SubChip({ s }: { s: Sub }) {
   if (s.status === 'trialing' && !s.cancelAtPeriodEnd)
@@ -248,53 +187,6 @@ function InvoiceChip({ i }: { i: Invoice }) {
     <Chip tone="warning" icon={Clock}>
       em aberto
     </Chip>
-  );
-}
-
-const DOMAIN: Record<DomainStatus, { tone: Tone; icon: Icon; label: string }> = {
-  active: { tone: 'success', icon: CheckCircle, label: 'no ar' },
-  pending_dns: { tone: 'warning', icon: Clock, label: 'esperando o DNS' },
-  dns_ok: { tone: 'info', icon: ArrowsClockwise, label: 'ativando' },
-  failed: { tone: 'danger', icon: WarningCircle, label: 'com problema' },
-};
-
-function DomainChip({ status }: { status: DomainStatus }) {
-  const m = DOMAIN[status];
-  return (
-    <Chip tone={m.tone} icon={m.icon}>
-      {m.label}
-    </Chip>
-  );
-}
-
-/** A banner that needs the merchant: what happened, and the one thing to do. */
-function Callout({
-  tone,
-  icon: I,
-  title,
-  children,
-  action,
-}: {
-  tone: Exclude<Tone, 'neutral'>;
-  icon: Icon;
-  title: ReactNode;
-  children?: ReactNode;
-  action?: ReactNode;
-}) {
-  return (
-    <div
-      className={cn('flex flex-col gap-3 rounded-lg p-4 sm:flex-row sm:items-center', TONE[tone])}
-      role={tone === 'danger' ? 'alert' : 'status'}
-    >
-      <div className="flex min-w-0 flex-1 gap-3">
-        <I weight="fill" className="mt-0.5 size-6 shrink-0" aria-hidden />
-        <div className="min-w-0 text-ink">
-          <p className="font-semibold">{title}</p>
-          {children ? <p className="t-body mt-0.5 text-muted">{children}</p> : null}
-        </div>
-      </div>
-      {action ? <div className="shrink-0 sm:ml-2">{action}</div> : null}
-    </div>
   );
 }
 
@@ -483,7 +375,8 @@ function AccountView({ a }: { a: AccountData }) {
         <Addresses a={a} />
       </Section>
 
-      {a.plan.features.customDomain ? (
+      {/* a lapsed domain stays in view after the plan loses the feature: it's still the owner's */}
+      {a.plan.features.customDomain || a.customDomain ? (
         <Section
           title="Domínio próprio"
           id="dominio"
@@ -1551,317 +1444,6 @@ function InvoiceSheet({
         </div>
       )}
     </Sheet>
-  );
-}
-
-// ── addresses and the custom domain ─────────────────────────────────────────
-
-function Addresses({ a }: { a: AccountData }) {
-  const list = a.domains.length
-    ? a.domains
-    : [
-        {
-          host: hostOf(a.address),
-          kind: 'store' as const,
-          status: 'active' as const,
-          primary: true,
-        },
-      ];
-  return (
-    <Card>
-      <Divided>
-        {list.map((d) => {
-          const url = `https://${d.host}`;
-          return (
-            <div key={d.host} className="flex items-start gap-3 p-4">
-              <Globe className="mt-0.5 size-6 shrink-0 text-muted" aria-hidden />
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                  {d.status === 'active' ? (
-                    <a
-                      href={url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="min-w-0 break-words font-semibold underline underline-offset-2"
-                    >
-                      <Host h={d.host} />
-                    </a>
-                  ) : (
-                    <span className="min-w-0 break-words font-semibold">
-                      <Host h={d.host} />
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                  <DomainChip status={d.status} />
-                  <span className="t-caption text-muted">
-                    {d.kind === 'store' ? 'endereço Venduá' : 'domínio próprio'}
-                    {d.primary && a.domains.length > 1 ? ' · principal' : ''}
-                  </span>
-                </div>
-              </div>
-              {d.status === 'active' ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="shrink-0"
-                  icon={<Copy />}
-                  aria-label={`copiar ${d.host}`}
-                  onClick={() => void copyText(url).then((ok) => ok && toast('Endereço copiado'))}
-                >
-                  copiar
-                </Button>
-              ) : null}
-            </div>
-          );
-        })}
-      </Divided>
-    </Card>
-  );
-}
-
-const cleanHost = (v: string) =>
-  v
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, '')
-    .replace(/[/?#].*$/, '')
-    .replace(/\.$/, '');
-
-function CustomDomain({ a }: { a: AccountData }) {
-  const d = a.customDomain;
-  const [host, setHost] = useState('');
-  const [err, setErr] = useState<string | null>(null);
-  const qc = useQueryClient();
-  const add = useMutation({
-    mutationFn: (h: string) => api.addDomain(h),
-    onSuccess: (n) => {
-      qc.setQueryData(qk.account, n);
-      setHost('');
-      toast('Domínio adicionado. Agora é criar os registros.');
-    },
-    onError: (e) =>
-      setErr(
-        e instanceof ApiError && e.code === 'INVALID_DOMAIN'
-          ? 'Esse domínio não pode ser usado. Confira, como www.sualoja.com.br.'
-          : messageOf(e),
-      ),
-  });
-  if (!d)
-    return (
-      <Card className="p-5">
-        <form
-          noValidate
-          onSubmit={(e) => {
-            e.preventDefault();
-            const h = cleanHost(host);
-            if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(h))
-              return setErr('Digite o endereço, como www.sualoja.com.br.');
-            setErr(null);
-            add.mutate(h);
-          }}
-          className="space-y-4"
-        >
-          <p className="t-body text-muted">
-            Tem um domínio? Conecte aqui. Se ainda não tem, dá para registrar um no Registro.br ou
-            em outro site de domínios.
-          </p>
-          <Field label="Seu domínio" htmlFor="custom-host" error={err}>
-            <TextInput
-              id="custom-host"
-              inputMode="url"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              maxLength={253}
-              placeholder="www.sualoja.com.br"
-              value={host}
-              aria-invalid={err ? true : undefined}
-              onChange={(e) => setHost(e.target.value)}
-            />
-          </Field>
-          <Button type="submit" loading={add.isPending} icon={<Globe />}>
-            conectar domínio
-          </Button>
-        </form>
-      </Card>
-    );
-  return <DomainSetup d={d} />;
-}
-
-const DOMAIN_STEPS = ['Criar os registros', 'DNS conferido', 'No ar'];
-const stepIndex = (s: DomainStatus) => (s === 'active' ? 2 : s === 'dns_ok' ? 1 : 0);
-
-function Progress({ steps, at, failed }: { steps: string[]; at: number; failed?: boolean }) {
-  return (
-    <ol
-      className="grid gap-2"
-      style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}
-    >
-      {steps.map((t, i) => {
-        const done = i < at || (i === at && i === steps.length - 1);
-        const now = i === at && !done;
-        return (
-          <li key={t} className="min-w-0" aria-current={now ? 'step' : undefined}>
-            <span
-              className={cn(
-                'block h-1.5 rounded-full',
-                done
-                  ? 'bg-success'
-                  : now
-                    ? failed
-                      ? 'bg-danger'
-                      : 'bg-[var(--chart)]'
-                    : 'bg-line-strong',
-              )}
-            />
-            <span
-              className={cn(
-                't-caption mt-1.5 block',
-                done || now ? 'font-semibold text-ink' : 'text-muted',
-              )}
-            >
-              {t}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-function DomainSetup({ d }: { d: NonNullable<AccountData['customDomain']> }) {
-  const check = useAccountWrite(
-    () => api.checkDomain(d.id),
-    (n) => {
-      const s = n.customDomain?.status;
-      toast(
-        s === 'pending_dns' || s === 'failed'
-          ? 'Ainda não achamos os registros. Pode levar algumas horas.'
-          : 'DNS conferido ✓',
-        { tone: s === 'pending_dns' || s === 'failed' ? 'info' : 'ok' },
-      );
-    },
-  );
-  const remove = useAccountWrite(
-    () => api.removeDomain(d.id),
-    () => toast('Domínio removido'),
-  );
-  const [removing, setRemoving] = useState(false);
-  const needsDns = d.status === 'pending_dns' || d.status === 'failed';
-  return (
-    <Card className="space-y-5 p-5">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Globe className="size-6 shrink-0 text-muted" aria-hidden />
-        <p className="min-w-0 flex-1 break-words font-display text-lg font-semibold">
-          <Host h={d.host} />
-        </p>
-        <DomainChip status={d.status} />
-      </div>
-      <Progress steps={DOMAIN_STEPS} at={stepIndex(d.status)} failed={d.status === 'failed'} />
-
-      {d.status === 'active' ? (
-        <p className="t-body">
-          Pronto: a loja está no ar em{' '}
-          <a
-            href={`https://${d.host}`}
-            target="_blank"
-            rel="noreferrer"
-            className="font-semibold underline underline-offset-2"
-          >
-            {d.host}
-          </a>
-          .
-        </p>
-      ) : d.status === 'dns_ok' ? (
-        <p className="t-body rounded-md bg-info-soft p-3">
-          Os registros estão certos ✓. Agora a equipe Venduá ativa o certificado de segurança, e o
-          endereço entra no ar. Não precisa fazer mais nada.
-        </p>
-      ) : (
-        <>
-          {d.status === 'failed' ? (
-            <Callout tone="danger" icon={WarningCircle} title="Não conseguimos confirmar o DNS">
-              {d.lastError ?? 'Confira se os dois registros abaixo estão iguais no seu provedor.'}
-            </Callout>
-          ) : null}
-          <div>
-            <p className="font-semibold">Crie estes dois registros</p>
-            <p className="t-body mt-0.5 text-muted">
-              No painel de onde você comprou o domínio (Registro.br, GoDaddy, Hostinger…), procure
-              por DNS ou zona de DNS e adicione:
-            </p>
-          </div>
-          <div className="space-y-3">
-            <DnsRecord type="CNAME" name={d.host} value={d.cnameTarget} />
-            <DnsRecord type="TXT" name={d.txtName} value={d.txtValue} />
-          </div>
-          <p className="t-caption text-muted">
-            Depois de salvar, pode levar algumas horas até a internet toda enxergar.
-          </p>
-        </>
-      )}
-
-      {needsDns || d.status === 'dns_ok' ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant={needsDns ? 'primary' : 'secondary'}
-            icon={<ArrowsClockwise />}
-            loading={check.isPending}
-            onClick={() => check.mutate(undefined)}
-          >
-            {d.status === 'failed' ? 'tentar de novo' : 'verificar agora'}
-          </Button>
-          {d.lastCheckedAt ? (
-            <span className="t-caption text-muted">conferido {ago(d.lastCheckedAt)}</span>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div className="border-t border-line pt-4">
-        {removing ? (
-          <div className="space-y-2">
-            <p className="t-body text-muted">
-              A loja sai de {d.host} e continua no endereço Venduá.
-            </p>
-            <HoldButton onConfirm={() => remove.mutate(undefined)} disabled={remove.isPending}>
-              segure para remover o domínio
-            </HoldButton>
-            <Button variant="ghost" block onClick={() => setRemoving(false)}>
-              deixar como está
-            </Button>
-          </div>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="!text-danger"
-            onClick={() => setRemoving(true)}
-          >
-            remover domínio
-          </Button>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function DnsRecord({ type, name, value }: { type: string; name: string; value: string }) {
-  return (
-    <div className="rounded-md ring-1 ring-line">
-      <p className="t-caption flex items-center gap-2 border-b border-line px-3 py-2 font-semibold">
-        <span className="rounded-sm bg-sunken px-1.5 py-0.5 font-mono">{type}</span>
-        registro {type}
-      </p>
-      <div className="grid gap-3 p-3 sm:grid-cols-2">
-        <CopyValue label="Nome" value={name} copied="Nome copiado" />
-        <CopyValue
-          label={type === 'CNAME' ? 'Aponta para' : 'Valor'}
-          value={value}
-          copied="Valor copiado"
-        />
-      </div>
-    </div>
   );
 }
 

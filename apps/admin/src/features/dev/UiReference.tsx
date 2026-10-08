@@ -67,6 +67,9 @@ import { HelpButton } from '../../ui/Page.tsx';
 import { PlatformStatus } from '../help/status.tsx';
 import type { CopilotAction, SummaryCardData } from '../../lib/api.ts';
 import { ActionCard, DuaText } from '../../ui/copilot/index.ts';
+import { Progress, RadioRows } from '../account/domain/kit.tsx';
+import { DnsRecordView, NameServers } from '../account/domain/Records.tsx';
+import { DOMAIN, DomainChip, type Domain } from '../account/domain/status.tsx';
 import {
   ActionReceipt,
   AgentGuide,
@@ -873,6 +876,7 @@ export default function UiReference() {
         </div>
       </Block>
       <VendedorReference />
+      <DomainReference />
       <Sheet
         open={sheet}
         onOpenChange={setSheet}
@@ -1045,6 +1049,71 @@ const LONG: SummaryCardData = {
 };
 
 const QUICK_REPLY = 'Seu pedido já saiu para entrega!';
+
+const NS_DOMAIN: Domain = {
+  id: 'd1',
+  host: 'forno-da-vila.com.br',
+  status: 'pending_dns',
+  source: 'connected',
+  method: 'ns',
+  aliasHost: 'www.forno-da-vila.com.br',
+  cnameTarget: '',
+  txtName: '',
+  txtValue: '',
+  nameServers: ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'],
+  records: [],
+  recordsConfirmed: true,
+  dnssecSigned: true,
+  expiresAt: null,
+  lastCheckedAt: null,
+  lastError: null,
+};
+
+/** Domínio próprio (ADR 0038): its states, steps, the way in and what the owner copies */
+function DomainReference() {
+  const [path, setPath] = useState<'register' | 'connect'>('register');
+  return (
+    <Block title="Domínio próprio">
+      <div className="space-y-5">
+        <div className="flex flex-wrap gap-2">
+          {(Object.keys(DOMAIN) as (keyof typeof DOMAIN)[]).map((s) => (
+            <DomainChip key={s} status={s} />
+          ))}
+        </div>
+        <Card className="grid gap-5 p-5 md:grid-cols-3">
+          <Progress steps={['Criar os registros', 'DNS conferido', 'No ar']} at={1} />
+          <Progress steps={['Conferir registros', 'Trocar servidores', 'No ar']} at={1} failed />
+          <Progress steps={['Registro', 'Configuração', 'No ar']} at={2} />
+        </Card>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card className="space-y-4 p-5">
+            <RadioRows
+              label="Domínio próprio"
+              value={path}
+              onChange={setPath}
+              options={[
+                {
+                  value: 'register',
+                  title: 'Registrar um domínio novo',
+                  detail: 'Incluso no seu plano. Fica no nome da sua empresa.',
+                },
+                { value: 'connect', title: 'Já tenho um domínio' },
+              ]}
+            />
+            <DnsRecordView
+              type="CNAME"
+              name="www.forno-da-vila.com.br"
+              value="lojas.vendua.com.br"
+            />
+          </Card>
+          <Card className="p-5">
+            <NameServers d={NS_DOMAIN} />
+          </Card>
+        </div>
+      </div>
+    </Block>
+  );
+}
 
 function VendedorReference() {
   const [owner, setOwner] = useState(false);

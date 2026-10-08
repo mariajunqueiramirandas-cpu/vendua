@@ -63,6 +63,16 @@ const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
 const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const money = (v: unknown) => (n(v) === null ? null : fmtMoney(n(v)));
 const clip = (v: string | null, max = 140) => (v && v.length > max ? `${v.slice(0, max - 1)}…` : v);
+/** 'YYYY-MM-DD' (or an ISO instant) as a local day with its year — renewals run a year out */
+const day = (v: string | null) => {
+  const m = v?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return new Date(+m[1]!, +m[2]! - 1, +m[3]!).toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+};
 const join = (...parts: (string | null | undefined | false)[]) =>
   parts.filter(Boolean).join(' · ') || null;
 
@@ -124,8 +134,19 @@ export function eventText(e: StoreEvent): string | null {
     case 'billing.manual':
       return join(money(d.amountCents), s(d.plan));
     case 'domain.ready':
+    case 'domain.live':
+    case 'domain.tls_stuck':
+    case 'domain.repairing':
+    case 'domain.lapsed':
+    case 'domain.ordered':
+    case 'domain.registered':
+    case 'domain.renewal_failed':
     case 'store.live':
       return s(d.host);
+    case 'domain.order_failed':
+      return join(s(d.host), d.reason === 'conflict' && 'conflito de provedor');
+    case 'domain.renewed':
+      return join(s(d.host), day(s(d.until)) && `até ${day(s(d.until))}`);
     case 'deployment.failed':
       return clip(s(d.reason));
     case 'deployment.manual':

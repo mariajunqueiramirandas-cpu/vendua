@@ -2,6 +2,7 @@ import type { MerchantNotify } from '../../admin/context.ts';
 import { emitAdminTx } from '../../admin/live.ts';
 import { withTenant, type Sql } from '../../platform/db.ts';
 import { controlTx } from '../control.ts';
+import type { Rdap } from '../domains/providers.ts';
 import type { PaymentProvider } from '../payments/provider.ts';
 import { checkCustomDomain, DNS_GIVE_UP_MS, DNS_RECHECK_MS } from './domains.ts';
 import {
@@ -60,9 +61,9 @@ export interface BillingJobOpts {
   storeDomain?: string;
 }
 
-// Invoices and renewals, reminders, holds, DNS checks — every 10 minutes. Each step picks its
-// candidates across stores (controlTx), then re-checks under the store's own lock, so two
-// Core instances ticking together do each thing once.
+// Invoices and renewals, reminders, holds — every 10 minutes (custom-domain checks run in
+// modules/domains/jobs.ts). Each step picks its candidates across stores (controlTx), then
+// re-checks under the store's own lock, so two Core instances ticking together do each thing once.
 export function startBillingJobs(sql: Sql, o: BillingJobOpts): () => void {
   let running = false;
   const tick = async () => {
@@ -76,25 +77,11 @@ export function startBillingJobs(sql: Sql, o: BillingJobOpts): () => void {
       running = false;
     }
   };
-  let checking = false;
-  const dnsTick = async () => {
-    if (checking) return;
-    checking = true;
-    try {
-      await runDomainChecks(sql, o, new Date());
-    } catch (err) {
-      billingLog.error({ err }, 'custom-domain checks failed');
-    } finally {
-      checking = false;
-    }
-  };
   const first = setTimeout(() => void tick(), 30_000);
   const every = setInterval(() => void tick(), TICK_MS);
-  const dnsEvery = setInterval(() => void dnsTick(), DNS_RECHECK_MS);
   return () => {
     clearTimeout(first);
     clearInterval(every);
-    clearInterval(dnsEvery);
   };
 }
 
@@ -805,7 +792,11 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
 }
 
 /** pending_dns domains, each at most every DNS_RECHECK_MS */
-export async function runDomainChecks(sql: Sql, o: BillingJobOpts, now: Date) {
+export async function runDomainChecks(
+  sql: Sql,
+  o: { storeDomain?: string; rdap?: Rdap },
+  now: Date,
+) {
   const storeDomain = o.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br';
   const rows = await controlTx(
     sql,
@@ -817,7 +808,13 @@ export async function runDomainChecks(sql: Sql, o: BillingJobOpts, now: Date) {
     `,
   );
   await each(rows, 'dns', async (r) => {
-    await checkCustomDomain(sql, { tenantId: r.tenant_id, domainId: r.id, storeDomain, now });
+    await checkCustomDomain(sql, {
+      tenantId: r.tenant_id,
+      domainId: r.id,
+      storeDomain,
+      now,
+      ...(o.rdap ? { rdap: o.rdap } : {}),
+    });
   });
   // a claim that gave up a week ago is gone: it never held the host, it only clutters
   await controlTx(

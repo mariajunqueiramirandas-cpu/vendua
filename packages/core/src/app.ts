@@ -226,6 +226,9 @@ import type { MerchantNotify } from './admin/context.ts';
 import { platformNotify } from './admin/notify.ts';
 import { fleetDeps, type FleetDeps } from './modules/fleet/deps.ts';
 import { mountFleet } from './modules/fleet/routes.ts';
+import { domainProvidersFromEnv } from './modules/domains/config.ts';
+import type { DomainProviders } from './modules/domains/providers.ts';
+import { mountDomainRoutes } from './modules/domains/routes.ts';
 import { mountImportsControl } from './modules/menu-import/routes-control.ts';
 import { createPaymentProvider, type PaymentProvider } from './modules/payments/index.ts';
 import { storePaymentsPublic } from './modules/payments/store-payments.ts';
@@ -284,6 +287,11 @@ export interface AppDeps {
   fleet?: FleetDeps | undefined;
   /** the edge's key for /edge/v1 (default VENDUA_EDGE_SECRET) */
   edgeSecret?: string | undefined;
+  /** the registrar, DNS host, RDAP and TLS probe behind own domains (default: from env); tests
+   *  pass fakes */
+  domains?: DomainProviders | undefined;
+  /** domains-sync's key for /sync/v1 (default VENDUA_SYNC_SECRET) */
+  syncSecret?: string | undefined;
   /** Discord's network for the bot's control routes (default: fetch); tests swap it */
   discordFetch?: DiscordFetch | undefined;
   /** public storefront reads kept in memory (index.ts passes the notify-driven one); the
@@ -536,7 +544,10 @@ export function createApp({
   edgeSecret,
   discordFetch,
   readCache,
+  domains,
+  syncSecret,
 }: AppDeps) {
+  const domainProviders = domains ?? domainProvidersFromEnv();
   const cache = readCache ?? new StoreReadCache(sql, { strict: true });
   const provider = paymentProvider ?? createPaymentProvider();
   const geocode = geocoder ?? nominatimGeocoder();
@@ -3116,6 +3127,7 @@ export function createApp({
       }),
     edgeSecret,
   });
+  mountDomainRoutes({ app, sql, controlGate, syncSecret });
 
   mountStorefrontPlatform({
     app,
@@ -3247,6 +3259,7 @@ export function createApp({
     signupReady: signupReady ?? (() => signupReadiness(sql, provider)),
     publicOrigin: adminOrigin,
     geocode,
+    domains: domainProviders,
   });
   app.route('/admin/v1', admin);
   app.get('/admin', (c) => c.redirect('/admin/'));

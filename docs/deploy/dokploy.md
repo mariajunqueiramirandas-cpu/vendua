@@ -26,6 +26,13 @@ Copy `.env.example` into the service's environment and fill it in:
 | `SEED_DOMAINS`                             | `slug:public-domain` per storefront — registers real domains      |
 | `VENDUA_PROXY_HOPS`                        | XFF trusted suffix length — `1` for the Traefik→edge/nginx chain  |
 | `VENDUA_EDGE_SECRET`                       | the edge's key for Core's `/edge/v1/resolve` — required           |
+| `VENDUA_SYNC_SECRET`                       | domains-sync's key for Core's `/sync/v1` (own domains)            |
+| `DOMAINS_SYNC_DENY`                        | admin, CRM and site hosts domains-sync must never route           |
+| `VENDUA_EDGE_IPV4` / `VENDUA_EDGE_IPV6`    | the VPS's public addresses, written into hosted zones             |
+| `CLOUDFLARE_API_TOKEN` / `_ACCOUNT_ID`     | Cloudflare hosts delegated and included domains (Zone+DNS Edit)   |
+| `OPENPROVIDER_USERNAME` / `_PASSWORD`      | the Openprovider API user that registers Pangolim's `.com.br`     |
+| `OPENPROVIDER_CONTACT_HANDLE`              | Venduá's Openprovider contact: admin/tech/billing of each domain  |
+| `OPENPROVIDER_PROVIDER_NAME`               | the provider name owners pick at registro.br (conflict steps)     |
 | `VENDUA_ARTIFACTS`                         | release store: unset = the `artifacts` volume; `s3://bucket/pfx`  |
 | `S3_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY`  | with an `s3://` store: R2/MinIO credentials                       |
 | `S3_ENDPOINT` / `S3_REGION`                | with an `s3://` store: the endpoint (R2: account URL), region     |
@@ -118,8 +125,8 @@ In Dokploy, assign a domain to each web service (port 80):
   `traefik.http.routers.vendua-edge.tls.certresolver=<name>` and
   `tls.domains[0].main=vendua.com.br` / `tls.domains[0].sans=*.vendua.com.br`), or Cloudflare
   proxying with SSL mode "Full". DNS: one wildcard record `*.vendua.com.br` → the VPS; new
-  stores need nothing else. A domain outside the wildcard (`pudim.com.br`) goes on `edge` in the
-  Domains UI (port 8080), plus its `domains` row.
+  stores need nothing else. A store's own domain (`pudim.com.br`) needs no Domains UI step either:
+  `domains-sync` routes it ([Own domains](#own-domains)).
 
 Store links (share, QR, "ver loja") always use the store's **primary** domain
 row, then any public row, then `<slug>.<VENDUA_STORE_DOMAIN>` — never a URL
@@ -143,17 +150,38 @@ update domains set is_primary = (host = 'pudim.example.com')
 
 (Exec into the `db` container or use Dokploy's database console.)
 
-### PRO+ custom domains
+### Own domains
 
-A PRO+ owner adds their domain in the admin (Conta → Endereços) and follows the DNS steps
-shown there: a CNAME to `<slug>.<VENDUA_STORE_DOMAIN>` and a TXT `_vendua.<host>` with their
-verification value. Core checks DNS every 15 minutes; when both match the domain turns
-`dns_ok` and staff get an email. Then, in this order:
+Pangolim stores get their own domain with no staff step ([ADR 0038](../adr/0038-included-domains.md)).
+In the admin (Conta → Domínio próprio) the owner either connects a domain they have, with a CNAME
+(or A records) to `<slug>.<VENDUA_STORE_DOMAIN>` plus a TXT `_vendua.<host>`, or by pointing its
+nameservers at a Cloudflare zone Venduá hosts; or has Venduá register a `.com.br` in the store's
+name (placed at the plan's first payment). Core checks DNS every 15 minutes. Once it verifies,
+**domains-sync** writes a Traefik router for the host (and its `www.`/root alias) into
+`/etc/dokploy/traefik/dynamic/vendua-custom-domains.yml`, Traefik gets a Let's Encrypt certificate
+over HTTP-01, and Core's job probes `https://<host>` and switches the host on. A live domain that
+stops pointing at Venduá goes under repair (links move to the platform host); a store that loses
+the plan's domain gets a redirect to its platform host.
 
-1. Dokploy → `edge` → Domains → add the host (port 8080, HTTPS on, Let's Encrypt).
-2. Wait for the certificate (open `https://<host>` — the "loja não encontrada" page is fine).
-3. CRM → Lojas → the store → "Ativar domínio". Core adds it to `domains` as the primary host,
-   so every link the admin builds moves to it.
+Setup, once:
+
+1. `VENDUA_SYNC_SECRET` (`openssl rand -hex 32`) on the compose; `DOMAINS_SYNC_DENY` = the admin,
+   CRM and site hosts. `TRAEFIK_DYNAMIC_DIR` only if Dokploy's dynamic directory isn't
+   `/etc/dokploy/traefik/dynamic` (`docker inspect dokploy-traefik` shows the mount). Redeploy;
+   `domains-sync` logs each write.
+2. `VENDUA_EDGE_IPV4` (and `VENDUA_EDGE_IPV6` if the VPS has one) = the addresses
+   `*.<VENDUA_STORE_DOMAIN>` resolves to. Owners with A records point at the IPv4, so keep it stable
+   (a floating IP).
+3. Cloudflare: an API token with **Zone → Zone → Edit** and **Zone → DNS → Edit** on the account's
+   zones (plus account-level zone creation), and the account id. Records are written DNS-only.
+4. Openprovider: membership with prepaid balance, an API user, and a contact handle for Venduá
+   (admin/tech/billing of every domain). Do one real `.com.br` registration through the API first
+   and fill `OPENPROVIDER_PROVIDER_NAME` with the provider name shown at registro.br.
+
+Without Cloudflare + IPv4 only the CNAME method is offered; without Openprovider nothing is sold.
+The probe goes to `https://<host>` from the Core container: if the VPS can't reach its own public
+IP, the host stays "ativando" and a `domain.tls_stuck` event arrives after an hour; CRM → Lojas →
+the store → "ativar domínio" switches it on by hand after you open `https://<host>`.
 
 Signup reserves the admin's label (`painel`) and the other platform names from store slugs.
 

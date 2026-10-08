@@ -38,6 +38,18 @@ services:
       VENDUA_PROXY_HOPS: ${VENDUA_PROXY_HOPS:-1}
       # Control Plane (docs/architecture/08): the edge's key for /edge/v1/resolve — same value below.
       VENDUA_EDGE_SECRET: ${VENDUA_EDGE_SECRET:?set VENDUA_EDGE_SECRET in .env}
+      # Own domains (ADR 0038): domains-sync's key for /sync/v1 (same value below), the VPS's
+      # public addresses for hosted zones, Cloudflare (DNS host) and Openprovider (.com.br
+      # registrar). Unset Cloudflare/IPv4 = no delegation; unset Openprovider = no purchase.
+      VENDUA_SYNC_SECRET: ${VENDUA_SYNC_SECRET:-}
+      VENDUA_EDGE_IPV4: ${VENDUA_EDGE_IPV4:-}
+      VENDUA_EDGE_IPV6: ${VENDUA_EDGE_IPV6:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      OPENPROVIDER_USERNAME: ${OPENPROVIDER_USERNAME:-}
+      OPENPROVIDER_PASSWORD: ${OPENPROVIDER_PASSWORD:-}
+      OPENPROVIDER_CONTACT_HANDLE: ${OPENPROVIDER_CONTACT_HANDLE:-}
+      OPENPROVIDER_PROVIDER_NAME: ${OPENPROVIDER_PROVIDER_NAME:-}
       # Synthetic probes verify deployments and watch every live host (default on in production).
       VENDUA_PROBES: ${VENDUA_PROBES:-1}
       # unset = probe https://<host> (DNS + TLS + edge); http://edge:8080 = through the edge only
@@ -138,8 +150,8 @@ services:
 
   # Every store, one service (docs/architecture/07): the edge maps Host → store → release through
   # Core, serves that release's immutable files from the artifact store and injects vendua-state.
-  # New stores and releases need no compose change; only a PRO+ store's own domain is added in
-  # Dokploy's Domains UI (service edge, port 8080) — see docs/deploy/dokploy.md.
+  # New stores, releases and own domains need no compose change: domains-sync (below) routes the
+  # stores' own domains to this service — see docs/deploy/dokploy.md.
   edge:
     build:
       context: .
@@ -185,6 +197,27 @@ services:
       - traefik.http.routers.vendua-edge.tls=true
       - traefik.http.routers.vendua-edge.service=vendua-edge
       - traefik.http.routers.vendua-edge-http.service=vendua-edge
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Writes the Traefik dynamic file that routes verified custom domains to the edge (ADR 0038).
+  # Internal network only, no labels: nothing reaches it, and the internet-facing edge never gets
+  # this mount. Without VENDUA_SYNC_SECRET it idles.
+  domains-sync:
+    build:
+      context: .
+      dockerfile: packages/domains-sync/Dockerfile
+    environment:
+      VENDUA_CORE_URL: http://core:8787
+      VENDUA_SYNC_SECRET: ${VENDUA_SYNC_SECRET:-}
+      VENDUA_STORE_DOMAIN: ${VENDUA_STORE_DOMAIN:-vendua.com.br}
+      # the platform's own hosts (admin, CRM, site), comma-separated: never routed from the file
+      DOMAINS_SYNC_DENY: ${DOMAINS_SYNC_DENY:-}
+    volumes:
+      - ${TRAEFIK_DYNAMIC_DIR:-/etc/dokploy/traefik/dynamic}:/traefik-dynamic
+    networks: [default]
     restart: unless-stopped
     logging:
       driver: json-file

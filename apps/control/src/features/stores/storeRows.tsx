@@ -3,7 +3,7 @@ import { cn } from '@/lib/cn.ts';
 import { fmtDay, fmtMoney } from '@/lib/format.ts';
 import { RiskChips } from '@/features/overview/risk.tsx';
 import type { Column } from '@/components/DataList.tsx';
-import { DOMAIN_STATUS, SITE_STATUS, StoreLink, Tag } from './bits.tsx';
+import { DOMAIN_STATUS, ORDER_STATUS, SITE_STATUS, StoreLink, Tag } from './bits.tsx';
 import { AiMeter, LastOrder, SubChip } from './fleetBits.tsx';
 
 /** A store from `/customers`, with its `/billing/stores` row when that has loaded. */
@@ -22,6 +22,12 @@ export const isActionFilter = (f: StoreFilter): f is ActionFilter =>
 const subIs = (r: StoreListRow, ...st: string[]) => st.includes(r.c.subscription?.status ?? '');
 export const siteOpen = (b: BillingStore | null | undefined) =>
   b?.siteRequest?.status === 'requested' || b?.siteRequest?.status === 'in_progress';
+/** a certificate that may be stuck, DNS that broke, or a registrar order that needs a retry */
+export const domainToDo = (b: BillingStore | null | undefined) =>
+  b?.customDomain?.status === 'dns_ok' ||
+  b?.customDomain?.status === 'repairing' ||
+  b?.domainOrder?.status === 'conflict' ||
+  b?.domainOrder?.status === 'failed';
 
 export const MATCH: Record<StoreFilter, (r: StoreListRow) => boolean> = {
   '': () => true,
@@ -30,7 +36,7 @@ export const MATCH: Record<StoreFilter, (r: StoreListRow) => boolean> = {
   inadimplentes: (r) => subIs(r, 'past_due'),
   canceladas: (r) => subIs(r, 'cancelled'),
   atencao: (r) => subIs(r, 'pending', 'past_due'),
-  dominios: (r) => r.b?.customDomain?.status === 'dns_ok',
+  dominios: (r) => domainToDo(r.b),
   sites: (r) => siteOpen(r.b),
 };
 
@@ -63,11 +69,20 @@ export function Pending({
   }
   if (f === 'dominios') {
     const d = r.b?.customDomain;
-    if (!d) return <Muted />;
+    const o = r.b?.domainOrder;
+    // a failed order is the pending thing even when an older domain row exists
+    const order = o && (o.status === 'conflict' || o.status === 'failed');
+    if (!d && !order) return <Muted />;
     return (
       <span className="flex max-w-[14rem] min-w-0 items-center gap-1.5 lg:max-w-[18rem]">
-        <Tag map={DOMAIN_STATUS} value={d.status} />
-        <span className="min-w-0 truncate text-xs text-muted-foreground">{d.host}</span>
+        {order ? (
+          <Tag map={ORDER_STATUS} value={o.status} />
+        ) : (
+          <Tag map={DOMAIN_STATUS} value={d?.status} />
+        )}
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
+          {order ? o.host : d?.host}
+        </span>
       </span>
     );
   }

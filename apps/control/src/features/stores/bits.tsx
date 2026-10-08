@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type {
   CustomDomainStatus,
+  DomainOrderStatus,
   IncidentSeverity,
   MpStatus,
   SiteRequestStatus,
@@ -31,10 +32,23 @@ export const MP_STATUS: Record<MpStatus, Tone> = {
 };
 
 export const DOMAIN_STATUS: Record<CustomDomainStatus, Tone> = {
+  ordering: { label: 'registrando', variant: 'default' },
   pending_dns: { label: 'aguardando dns', variant: 'default' },
-  dns_ok: { label: 'dns ok · ativar', variant: 'warn' },
+  dns_ok: { label: 'emitindo certificado', variant: 'warn' },
   active: { label: 'ativo', variant: 'live' },
+  repairing: { label: 'dns quebrado', variant: 'bad' },
+  lapsed: { label: 'desligado · plano', variant: 'default' },
   failed: { label: 'falhou', variant: 'bad' },
+};
+
+export const ORDER_STATUS: Record<DomainOrderStatus, Tone> = {
+  awaiting_payment: { label: 'esperando pagamento', variant: 'default' },
+  queued: { label: 'no registrador', variant: 'default' },
+  pending: { label: 'no registrador', variant: 'default' },
+  registered: { label: 'registrado', variant: 'default' },
+  conflict: { label: 'conflito de provedor', variant: 'warn' },
+  failed: { label: 'falhou', variant: 'bad' },
+  cancelled: { label: 'cancelado', variant: 'default' },
 };
 
 export const SITE_STATUSES = [

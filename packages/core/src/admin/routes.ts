@@ -55,6 +55,7 @@ import { mountPrintAgent } from '../modules/printing/agent-routes.ts';
 import { publicIncidents, statusProbeHosts } from '../modules/incidents.ts';
 import { mountImports } from '../modules/menu-import/routes.ts';
 import { mountAccount } from './routes-account.ts';
+import { mountDomains } from './routes-domains.ts';
 import { mountAppearance } from './routes-appearance.ts';
 import { mountCatalog } from './routes-catalog.ts';
 import { mountCopilot } from './routes-copilot.ts';
@@ -100,6 +101,7 @@ export interface MountAdminOpts {
   publicOrigin: (c: Context) => string;
   geocode: AdminDeps['geocode'];
   signupReady: AdminDeps['signupReady'];
+  domains: AdminDeps['domains'];
 }
 
 const STREAM_HEARTBEAT_MS = 20_000;
@@ -263,6 +265,7 @@ export function mountAdmin(o: MountAdminOpts) {
     publicOrigin: o.publicOrigin,
     geocode: o.geocode,
     signupReady: o.signupReady,
+    domains: o.domains,
   };
   mountPaymentsPublic(admin, shared);
   mountSignup(admin, shared);
@@ -903,6 +906,7 @@ export function mountAdmin(o: MountAdminOpts) {
   mountPdv(deps);
   mountVendedor(deps);
   mountAccount(deps);
+  mountDomains(deps);
   mountAppearance(deps);
   mountImports(deps);
   mountCopilot(deps);

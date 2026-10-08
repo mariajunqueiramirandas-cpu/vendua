@@ -1,6 +1,6 @@
 # ADR 0038: Pangolim's domain is bought, hosted and renewed by Venduá
 
-- Status: Accepted (decided 2026-10-08; not built yet)
+- Status: Accepted (implemented 2026-10-08: migration 0102, `modules/domains`, `packages/domains-sync`)
 - Date: 2026-10-08
 - Amends: [ADR 0010](0010-automated-domains-tls.md) (TLS issuer, registration),
   [ADR 0032](0032-three-plans-for-launch.md) (what opens Pangolim)
@@ -178,7 +178,7 @@ Staff open Pangolim after (2).
 ## Links
 
 - [architecture/12-domains-and-tls](../architecture/12-domains-and-tls.md),
-  [deploy/dokploy.md](../deploy/dokploy.md#pro-custom-domains)
+  [deploy/dokploy.md](../deploy/dokploy.md#own-domains)
 - [OpenSRS: .BR domain policies](https://support.opensrs.com/support/solutions/articles/201000063494--br-domain-policies),
   [Openprovider: .com.br](https://www.openprovider.com/domains/tlds/com-br),
   [CentralNic Reseller: .com.br](https://kb.centralnicreseller.com/domains/tlds/com.br),
