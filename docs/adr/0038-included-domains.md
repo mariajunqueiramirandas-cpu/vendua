@@ -1,6 +1,6 @@
 # ADR 0038: Pangolim's domain is bought, hosted and renewed by Venduá
 
-- Status: Accepted (decided 2026-10-08; not built yet)
+- Status: Accepted (implemented 2026-10-08: migration 0102, `modules/domains`, `packages/domains-sync`)
 - Date: 2026-10-08
 - Amends: [ADR 0010](0010-automated-domains-tls.md) (TLS issuer, registration),
   [ADR 0032](0032-three-plans-for-launch.md) (what opens Pangolim)
@@ -168,6 +168,22 @@ Staff open Pangolim after (2).
 - **Cloudflare for SaaS**: a root domain on registro.br's DNS can't point at it; the escape hatch
   for a second edge node.
 
+## Implementation notes (2026-10-08)
+
+- **One zone per name, owned by one row.** A row claims its name in the table before Cloudflare is
+  called, so a zone is only ever adopted by the row that claimed it. A store whose name another
+  store's unverified zone claims gets `DOMAIN_TAKEN` for up to a week; a store that registers the
+  name at the registry evicts such a claim.
+- **Orders are leased.** A worker claims an order (`claimed_until`) before calling the registrar;
+  cancel and retry wait for the lease, and every write after the call checks it still holds it.
+  A renewal notes the expiry before it asks and, on a retry, reads it first, so a lost answer
+  never pays for a second year.
+- **The owner can remove a live connected domain.** It leaves through the jobs: off the
+  resolver, its zone deleted, then the row. An included domain can't be removed.
+- **A lapsed domain that gets its plan back** is checked from scratch (`pending_dns`).
+- **Registrar errors are told apart by their text** (another provider, taken, invalid): the test
+  registration has to confirm Openprovider's wording.
+
 ## Open
 
 - The owner opens the Openprovider account (membership, prepaid balance, an API user) and a
@@ -178,7 +194,7 @@ Staff open Pangolim after (2).
 ## Links
 
 - [architecture/12-domains-and-tls](../architecture/12-domains-and-tls.md),
-  [deploy/dokploy.md](../deploy/dokploy.md#pro-custom-domains)
+  [deploy/dokploy.md](../deploy/dokploy.md#own-domains)
 - [OpenSRS: .BR domain policies](https://support.opensrs.com/support/solutions/articles/201000063494--br-domain-policies),
   [Openprovider: .com.br](https://www.openprovider.com/domains/tlds/com-br),
   [CentralNic Reseller: .com.br](https://kb.centralnicreseller.com/domains/tlds/com.br),

@@ -9,6 +9,9 @@ export interface Route {
   tenant: { id: string; slug: string; status: string };
   primaryHost: string;
   release: { id: string; bundle: string; uri: string; fallback: boolean } | null;
+  /** Set for a custom domain's alias (→ its host, permanent) or a lapsed domain (→ the store's
+   *  platform address, temporary): every GET/HEAD on the host is answered with this redirect. */
+  redirect?: { to: string; permanent: boolean } | null;
 }
 
 export type RouteValue = Route | 'unknown';
@@ -41,19 +44,49 @@ export interface CoreClientOptions {
   health: CoreHealth;
 }
 
+const REDIRECT_HOST_RE =
+  /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/** `https://<host>` and nothing else (the edge appends the request's path and query), as its
+ *  origin; undefined when the field is malformed. */
+function parseRedirect(x: unknown): Route['redirect'] | undefined {
+  if (x === undefined || x === null) return null;
+  const r = x as { to?: unknown; permanent?: unknown };
+  if (typeof r !== 'object' || typeof r.to !== 'string' || typeof r.permanent !== 'boolean')
+    return undefined;
+  if (r.to.length > 300 || /[?#\s\\]/.test(r.to)) return undefined;
+  let u: URL;
+  try {
+    u = new URL(r.to);
+  } catch {
+    return undefined;
+  }
+  if (
+    u.protocol !== 'https:' ||
+    u.username ||
+    u.password ||
+    (u.pathname !== '/' && u.pathname !== '') ||
+    !REDIRECT_HOST_RE.test(u.hostname)
+  )
+    return undefined;
+  return { to: u.origin, permanent: r.permanent };
+}
+
 function parseRoute(x: unknown): Route {
   const r = x as Route;
   const rel = r?.release;
+  const redirect = parseRedirect(r?.redirect);
   if (
     !r ||
     typeof r.host !== 'string' ||
     typeof r.primaryHost !== 'string' ||
     typeof r.tenant?.slug !== 'string' ||
     (rel !== null &&
-      (typeof rel !== 'object' || !RELEASE_RE.test(rel.id) || !BUNDLE_RE.test(rel.bundle)))
+      (typeof rel !== 'object' || !RELEASE_RE.test(rel.id) || !BUNDLE_RE.test(rel.bundle))) ||
+    redirect === undefined
   )
     throw new CoreError('malformed resolve response');
-  return r;
+  return { ...r, redirect };
 }
 
 export function coreClient(o: CoreClientOptions) {

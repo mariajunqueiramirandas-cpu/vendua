@@ -79,6 +79,16 @@ export function useActivateDomain() {
   });
 }
 
+export function useRetryDomainOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.retryDomainOrder(id),
+    onSuccess: () => toast.success('pedido de domínio de volta na fila'),
+    onError: (e) => toast.error(`não reenviou: ${errorMessage(e)}`),
+    onSettled: () => void qc.invalidateQueries({ queryKey: qk.billingStores() }),
+  });
+}
+
 export function usePatchSiteRequest() {
   const qc = useQueryClient();
   return useMutation({

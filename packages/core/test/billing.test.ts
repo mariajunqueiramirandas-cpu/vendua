@@ -1043,7 +1043,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(fake.payments.get(row.provider_payment_id)!.status).toBe('pending');
   });
 
-  test('Pangolim domain: add → DNS check → dns_ok (team told once) → CRM activates', async () => {
+  test('Pangolim domain: add → DNS check → dns_ok (team told once) → CRM activates → removed', async () => {
     const s = await paidStore('dom', 'pangolim');
     const other = await paidStore('dom2', 'pangolim');
     const host = `loja-${nonce}.example.com`;
@@ -1094,7 +1094,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(chk.body.customDomain.status).toBe('dns_ok');
     await runDomainChecks(appSql, jobOpts, new Date(Date.now() + 60 * 60_000));
     await s.owner('POST', `/account/domains/${cd.id}/check`, {});
-    expect(staff.slice(staffBefore).filter((n) => n.subject.includes(host))).toHaveLength(1);
+    // the team hears it once, on Discord; nobody has to switch anything on by hand any more
+    expect(staff.slice(staffBefore).filter((n) => n.subject.includes(host))).toHaveLength(0);
+    const ready = await sql`
+      select 1 from staff_events where kind = 'domain.ready' and tenant_id = ${s.id}
+    `;
+    expect(ready).toHaveLength(1);
     // the store whose TXT verified wins; the rival claim is lost, and the host is now taken
     const lost = await other.owner('GET', '/account');
     expect(lost.body.customDomain).toMatchObject({ host, status: 'failed' });
@@ -1127,8 +1132,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       status: 'active',
       primary: true,
     });
+    // a live domain can be removed by its owner: it leaves through the domain jobs
     const del = await s.owner('DELETE', `/account/domains/${cd.id}`);
-    expect(del.body.error.code).toBe('DOMAIN_ACTIVE');
+    expect(del.status).toBe(200);
+    expect(del.body.customDomain).toBeNull();
 
     // a domain that never resolves gives up after 7 days
     const add2 = await other.owner('POST', '/account/domains', {

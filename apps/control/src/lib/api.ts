@@ -886,7 +886,10 @@ const agentV2 = {
 
 export type SubscriptionStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'cancelled';
 export type MpStatus = 'connected' | 'expiring' | 'disconnected' | 'restricted';
-export type CustomDomainStatus = 'pending_dns' | 'dns_ok' | 'active' | 'failed';
+export type CustomDomainStatus =
+  'ordering' | 'pending_dns' | 'dns_ok' | 'active' | 'repairing' | 'lapsed' | 'failed';
+export type DomainOrderStatus =
+  'awaiting_payment' | 'queued' | 'pending' | 'registered' | 'conflict' | 'failed' | 'cancelled';
 export type SiteRequestStatus = 'requested' | 'in_progress' | 'delivered' | 'cancelled';
 export type IncidentSeverity = 'info' | 'degraded' | 'outage';
 
@@ -906,7 +909,22 @@ export interface BillingStore {
     trialEndsAt: string | null;
   } | null;
   mercadoPago: MpStatus | null;
-  customDomain: { id: string; host: string; status: CustomDomainStatus } | null;
+  customDomain: {
+    id: string;
+    host: string;
+    status: CustomDomainStatus;
+    /** included = registered by Venduá with the plan; connected = the merchant's own */
+    source: 'connected' | 'included';
+    /** ns = delegated to Venduá's nameservers; cname = records at the merchant's provider */
+    method: 'cname' | 'ns';
+  } | null;
+  /** the latest registrar order for an included domain */
+  domainOrder: {
+    id: string;
+    host: string;
+    status: DomainOrderStatus;
+    lastError: string | null;
+  } | null;
   siteRequest: {
     id: string;
     status: SiteRequestStatus;
@@ -1019,6 +1037,9 @@ const fleet = {
     req<{ ok: boolean }>(`/billing/invoices/${id}/mark-paid`, { method: 'POST' }),
   activateDomain: (id: string) =>
     req<{ ok: boolean }>(`/custom-domains/${id}/activate`, { method: 'POST' }),
+  /** conflict/failed → queued */
+  retryDomainOrder: (id: string) =>
+    req<{ ok: true }>(`/domain-orders/${id}/retry`, { method: 'POST' }),
   patchSiteRequest: (id: string, patch: { status: SiteRequestStatus; staffNote?: string }) =>
     req<{ ok: boolean }>(`/site-requests/${id}`, {
       method: 'PATCH',

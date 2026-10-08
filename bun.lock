@@ -184,6 +184,14 @@
         "typescript": "6.0.3",
       },
     },
+    "packages/domains-sync": {
+      "name": "@vendua/domains-sync",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@types/bun": "1.4.2",
+        "typescript": "6.0.3",
+      },
+    },
     "packages/edge": {
       "name": "@vendua/edge",
       "version": "0.0.0",
@@ -783,6 +791,8 @@
     "@vendua/control": ["@vendua/control@workspace:apps/control"],
 
     "@vendua/core": ["@vendua/core@workspace:packages/core"],
+
+    "@vendua/domains-sync": ["@vendua/domains-sync@workspace:packages/domains-sync"],
 
     "@vendua/edge": ["@vendua/edge@workspace:packages/edge"],
 

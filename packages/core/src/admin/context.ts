@@ -5,6 +5,7 @@ import { HttpError } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import type { SignupReadiness } from '../modules/billing/signup-gate.ts';
+import type { DomainProviders } from '../modules/domains/providers.ts';
 import type { AdminHub } from './live.ts';
 
 export type Role = 'owner' | 'manager' | 'attendant';
@@ -41,6 +42,8 @@ export interface AdminDeps {
   geocode: Geocoder;
   /** may a visitor sign up now (modules/billing/signup-gate.ts) */
   signupReady: () => Promise<SignupReadiness>;
+  /** the registrar, DNS host and probes behind own domains (ADR 0038) */
+  domains: DomainProviders;
 }
 
 /** How a platform WhatsApp message rides the outbox once the number is on the gateway (ignored

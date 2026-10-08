@@ -1,6 +1,6 @@
 # 12 — Domains and TLS
 
-> Status: Accepted — default hostnames implemented (Phase 4), custom-domain automation and included domains decided (ADR 0038), not built · Last reviewed: 2026-10-08
+> Status: Accepted — default hostnames implemented (Phase 4), own domains automated and included `.com.br` built (ADR 0038, 2026-10-08) · Last reviewed: 2026-10-08
 > Decisions: [ADR 0010](../adr/0010-automated-domains-tls.md), [ADR 0038](../adr/0038-included-domains.md), [ADR 0021](../adr/0021-self-serve-signup-and-plan-billing.md), [ADR 0022](../adr/0022-control-plane-v0-and-edge.md)
 
 **Where it stands (2026-09-30).** The default hostname path is live and fully automated: one

@@ -1,0 +1,4 @@
+# Build context for packages/domains-sync/Dockerfile (context = repo root): only the sidecar's sources.
+*
+!packages/domains-sync/package.json
+!packages/domains-sync/src

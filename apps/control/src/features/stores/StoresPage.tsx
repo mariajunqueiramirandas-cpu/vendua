@@ -109,7 +109,8 @@ export default function StoresPage() {
         (!needle ||
           r.c.name.toLowerCase().includes(needle) ||
           r.c.slug.includes(needle) ||
-          !!r.b?.customDomain?.host.includes(needle)),
+          !!r.b?.customDomain?.host.includes(needle) ||
+          !!r.b?.domainOrder?.host.includes(needle)),
     );
     if (sort === 'nome') return out.sort((a, b) => a.c.name.localeCompare(b.c.name, 'pt-BR'));
     if (sort) {

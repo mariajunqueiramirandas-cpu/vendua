@@ -3,7 +3,15 @@ import { isPublicHost, storeOrigin } from '../../platform/store-origin.ts';
 import type { Tenant } from '../../platform/tenancy.ts';
 import { platformPublicKey } from '../payments/index.ts';
 import type { PaymentProvider } from '../payments/provider.ts';
-import { cnameTarget, txtName, txtValue, type CustomDomainRow } from './domains.ts';
+import { latestOrder, orderView } from '../domains/orders.ts';
+import type { DnsRecord, DomainProviders } from '../domains/providers.ts';
+import {
+  cnameTarget,
+  txtName,
+  txtValue,
+  type CustomDomainRow,
+  type CustomDomainStatus,
+} from './domains.ts';
 import { invoiceView, type InvoiceRow } from './invoices.ts';
 import { aiAllowanceTx } from './ai-allowance.ts';
 import { publicPlans, tenantPlan } from './plans.ts';
@@ -14,7 +22,7 @@ import { publicAiPacks, upgradeLive, type SubRow } from './subscriptions.ts';
 export async function accountView(
   tx: Sql,
   t: Pick<Tenant, 'id' | 'slug'>,
-  o: { storeDomain: string; provider: PaymentProvider; now?: Date },
+  o: { storeDomain: string; provider: PaymentProvider; domains?: DomainProviders; now?: Date },
 ) {
   const now = o.now ?? new Date();
   const tenant = (
@@ -55,7 +63,8 @@ export async function accountView(
   `;
   const custom = (
     await tx<CustomDomainRow[]>`
-      select * from custom_domains where tenant_id = ${t.id} order by created_at desc limit 1
+      select * from custom_domains where tenant_id = ${t.id} and status <> 'removing'
+      order by created_at desc limit 1
     `
   )[0];
   const site = (
@@ -76,7 +85,7 @@ export async function accountView(
   const domains: {
     host: string;
     kind: 'store' | 'custom';
-    status: 'active' | 'pending_dns' | 'dns_ok' | 'failed';
+    status: Exclude<CustomDomainStatus, 'removing'>;
     primary: boolean;
   }[] = hosts
     .filter((h) => isPublicHost(h.host))
@@ -86,8 +95,17 @@ export async function accountView(
       status: 'active',
       primary: h.is_primary,
     }));
+  for (const x of domains)
+    if (custom && x.host === custom.host && custom.status !== 'removing') x.status = custom.status;
   if (custom && custom.status !== 'active' && !domains.some((x) => x.host === custom.host))
-    domains.push({ host: custom.host, kind: 'custom', status: custom.status, primary: false });
+    domains.push({
+      host: custom.host,
+      kind: 'custom',
+      status: custom.status as Exclude<CustomDomainStatus, 'removing'>,
+      primary: false,
+    });
+  const order = await latestOrder(tx, t.id, now);
+  const dp = o.domains;
 
   return {
     plan: { ...(await tenantPlan(tx, t.id)), since: sub?.created_at ?? tenant.created_at },
@@ -136,13 +154,27 @@ export async function accountView(
           id: custom.id,
           host: custom.host,
           status: custom.status,
+          source: custom.source,
+          method: custom.method,
+          aliasHost: custom.alias_host,
           cnameTarget: cnameTarget(t.slug, o.storeDomain),
           txtName: txtName(custom.host),
           txtValue: txtValue(custom.verify_token),
+          nameServers: custom.name_servers,
+          records: (custom.records ?? []) as DnsRecord[],
+          recordsConfirmed: custom.records_confirmed_at !== null,
+          dnssecSigned: custom.dnssec_signed,
+          expiresAt: custom.expires_at,
           lastCheckedAt: custom.last_checked_at,
           lastError: custom.last_error,
         }
       : null,
+    domainOrder: order ? orderView(order, dp?.providerName ?? null) : null,
+    domainOptions: {
+      delegation: !!(dp?.dnsHost && dp.edge),
+      purchase: !!(dp?.dnsHost && dp.edge && dp.registrar),
+      edgeIpv4: dp?.edge?.ipv4 ?? null,
+    },
     siteRequest: site
       ? {
           id: site.id,

@@ -10,13 +10,19 @@ import {
   DOMAIN_STATUS,
   METHOD_LABEL,
   MP_STATUS,
+  ORDER_STATUS,
   SheetSection,
   SITE_STATUS,
   SITE_STATUSES,
   SUB_STATUS,
   Tag,
 } from './bits.tsx';
-import { useActivateDomain, useMarkInvoicePaid, usePatchSiteRequest } from './queries.ts';
+import {
+  useActivateDomain,
+  useMarkInvoicePaid,
+  usePatchSiteRequest,
+  useRetryDomainOrder,
+} from './queries.ts';
 
 const NOTE_MAX = 500;
 
@@ -105,13 +111,17 @@ function OpenInvoice({
   );
 }
 
+const SOURCE_LABEL = { included: 'incluso no plano', connected: 'do lojista' } as const;
+const METHOD_META = { ns: 'servidores Venduá', cname: 'registros no provedor' } as const;
+
 function Domain({ s }: { s: BillingStore }) {
   const d = s.customDomain;
+  const o = s.domainOrder;
   const [certOk, setCertOk] = useState(false);
   const activate = useActivateDomain();
   useEffect(() => setCertOk(false), [d?.id]);
 
-  if (!d) {
+  if (!d && !o) {
     return (
       <SheetSection title="domínio próprio">
         <p className="text-sm text-muted-foreground">nenhum domínio cadastrado</p>
@@ -119,27 +129,37 @@ function Domain({ s }: { s: BillingStore }) {
     );
   }
   return (
-    <SheetSection title="domínio próprio" aside={<Tag map={DOMAIN_STATUS} value={d.status} />}>
-      <div className="flex min-w-0 items-center gap-2 text-sm">
-        <Globe className="size-4 shrink-0 text-muted-foreground" />
-        {d.status === 'active' ? (
-          <a
-            href={`https://${d.host}`}
-            target="_blank"
-            rel="noreferrer"
-            className="min-w-0 truncate font-medium hover:underline"
-          >
-            {d.host}
-          </a>
-        ) : (
-          <span className="min-w-0 truncate font-medium">{d.host}</span>
-        )}
-      </div>
+    <SheetSection
+      title="domínio próprio"
+      aside={d ? <Tag map={DOMAIN_STATUS} value={d.status} /> : null}
+    >
+      {d && (
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            <Globe className="size-4 shrink-0 text-muted-foreground" />
+            {d.status === 'active' ? (
+              <a
+                href={`https://${d.host}`}
+                target="_blank"
+                rel="noreferrer"
+                className="min-w-0 truncate font-medium hover:underline"
+              >
+                {d.host}
+              </a>
+            ) : (
+              <span className="min-w-0 truncate font-medium">{d.host}</span>
+            )}
+          </div>
+          <p className="pl-6 text-xs text-muted-foreground">
+            {[SOURCE_LABEL[d.source], METHOD_META[d.method]].filter(Boolean).join(' · ')}
+          </p>
+        </div>
+      )}
 
-      {d.status === 'dns_ok' && (
+      {d?.status === 'dns_ok' && (
         <div className="flex flex-col gap-3 rounded-lg border bg-card p-3 shadow-card">
           <p className="text-sm">
-            Adicione o domínio no Dokploy/Traefik com certificado, depois ative aqui.
+            o certificado é emitido sozinho em alguns minutos; ative à mão só se travar
           </p>
           <label className="flex cursor-pointer items-start gap-2.5 text-sm">
             <Checkbox
@@ -147,8 +167,8 @@ function Domain({ s }: { s: BillingStore }) {
               onCheckedChange={(v) => setCertOk(v === true)}
               className="mt-0.5"
             />
-            <span>
-              <span className="font-medium">{d.host}</span> já está no Traefik com certificado
+            <span className="min-w-0 break-words">
+              <span className="font-medium">https://{d.host}</span> já abre com certificado válido
             </span>
           </label>
           <Button
@@ -160,17 +180,56 @@ function Domain({ s }: { s: BillingStore }) {
           </Button>
         </div>
       )}
-      {d.status === 'pending_dns' && (
+      {d?.status === 'pending_dns' && (
         <p className="text-xs text-muted-foreground">
           o DNS do lojista ainda não foi confirmado — nada a fazer aqui por enquanto
         </p>
       )}
-      {d.status === 'failed' && (
+      {d?.status === 'repairing' && (
+        <p className="text-xs text-destructive-foreground">
+          o domínio parou de apontar para a Venduá — a loja segue no endereço Venduá; o lojista foi
+          avisado
+        </p>
+      )}
+      {d?.status === 'lapsed' && (
+        <p className="text-xs text-muted-foreground">
+          o plano perdeu o domínio próprio; o endereço redireciona para o da Venduá
+        </p>
+      )}
+      {d?.status === 'failed' && (
         <p className="text-xs text-destructive-foreground">
           a verificação de DNS falhou — o lojista precisa conferir os registros no painel dele
         </p>
       )}
+      {o && <DomainOrder o={o} />}
     </SheetSection>
+  );
+}
+
+/** The registrar order behind an included domain; conflict/failed go back to the queue by hand. */
+function DomainOrder({ o }: { o: NonNullable<BillingStore['domainOrder']> }) {
+  const retry = useRetryDomainOrder();
+  const stuck = o.status === 'conflict' || o.status === 'failed';
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border bg-card p-3 shadow-card">
+      <div className="flex min-w-0 items-center gap-2 text-sm">
+        <span className="shrink-0 text-xs text-muted-foreground">registro</span>
+        <span className="min-w-0 truncate font-medium">{o.host}</span>
+        <Tag map={ORDER_STATUS} value={o.status} className="ml-auto shrink-0" />
+      </div>
+      {o.lastError && <p className="text-xs break-words text-muted-foreground">{o.lastError}</p>}
+      {stuck && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="self-start max-md:w-full"
+          disabled={retry.isPending}
+          onClick={() => retry.mutate(o.id)}
+        >
+          {retry.isPending ? 'reenviando…' : 'tentar de novo'}
+        </Button>
+      )}
+    </div>
   );
 }
 

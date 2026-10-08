@@ -16,7 +16,7 @@ import { StoreLink } from './bits.tsx';
 import { LastOrder, SubChip } from './fleetBits.tsx';
 import { isStoreId, useBillingStore, useCustomer } from './queries.ts';
 import { Spark } from './Spark.tsx';
-import { siteOpen } from './storeRows.tsx';
+import { domainToDo, siteOpen } from './storeRows.tsx';
 import { AiPanel, ChannelsPanel, InvoicesPanel, UsersPanel } from './storePanels.tsx';
 import { StoreTimeline } from './StoreTimeline.tsx';
 
@@ -192,7 +192,7 @@ export default function StorePage() {
   const s = d.store;
   const b = billing.data;
   // on one column, a store with something to settle shows that before its charts
-  const toDo = !!(s.openInvoice || b?.customDomain?.status === 'dns_ok' || siteOpen(b));
+  const toDo = !!(s.openInvoice || domainToDo(b) || siteOpen(b));
   return (
     <Page
       back="/lojas"

@@ -29,6 +29,8 @@ import { platformNotify } from './admin/notify.ts';
 import { createPaymentProvider } from './modules/payments/index.ts';
 import { startPaymentJobs } from './modules/payments/jobs.ts';
 import { startBillingJobs } from './modules/billing/jobs.ts';
+import { domainProvidersFromEnv } from './modules/domains/config.ts';
+import { startDomainJobs } from './modules/domains/jobs.ts';
 import { signupAccessCode } from './modules/billing/signup.ts';
 import { fleetDeps } from './modules/fleet/deps.ts';
 import { startFleetJobs } from './modules/fleet/jobs.ts';
@@ -117,6 +119,13 @@ const stopBillingJobs = startBillingJobs(jobsSql, {
   provider: paymentProvider,
   notify,
   adminOrigin,
+  storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+});
+
+// own domains (ADR 0038): DNS checks, certificates, repair and lapse, .com.br registrations
+const stopDomainJobs = startDomainJobs(jobsSql, {
+  providers: domainProvidersFromEnv(),
+  notify,
   storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
 });
 
@@ -275,6 +284,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     stopAdminSweeper();
     stopPaymentJobs();
     stopBillingJobs();
+    stopDomainJobs();
     stopFleetJobs();
     stopMenuImportJobs();
     stopWebAnalyticsJobs();
