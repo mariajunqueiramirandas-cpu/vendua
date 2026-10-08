@@ -11,6 +11,9 @@ Core's side is `packages/core/src/agent-host/`), `apps/control` (staff CRM conso
 the store's WhatsApp, its ingest, sweeper and admin views),
 `apps/admin` (merchant admin PWA at `/admin/`, API `/admin/v1`),
 `apps/print-agents` (Windows Go + Android Kotlin printing agents, ADR 0027),
+`packages/core/src/modules/site-builder/` + `.claude/skills/storefront-generate/` (Pangolim's site, ADR
+0039: Duá's spec card → a cloud Claude Code routine → PR → CI → staff approval; `requestSiteTaskTx` is
+the only producer of `site_tasks`),
 `storefronts/*`, `site/`. `docs/README.md` has the architecture.
 
 ## Invariants (bugs if broken)

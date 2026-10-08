@@ -1,6 +1,6 @@
 # The storefront builder on cloud Claude Code
 
-> Status: Study · 2026-10-08 · Feeds Phase 6 ([roadmap](../../roadmap.md#phase-6--generation-pilot-weeks-2230)),
+> Status: Study · 2026-10-08 · Built: [ADR 0039](../../adr/0039-site-builder-on-claude-code.md), setup in [deploy/site-builder](../../deploy/site-builder.md) · Feeds Phase 6 ([roadmap](../../roadmap.md#phase-6--generation-pilot-weeks-2230)),
 > [ADR 0012](../../adr/0012-agent-agnostic-pipeline.md), [14 — Agent pipeline](../../architecture/14-agent-pipeline.md)
 
 **A cloud Claude Code routine, fired by Core, can be the generation agent for the Pangolim "site

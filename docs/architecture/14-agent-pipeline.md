@@ -1,6 +1,6 @@
 # 14 — Agent Pipeline
 
-> Status: Proposed · Last reviewed: 2026-09-11
+> Status: Built for Pangolim's site ([ADR 0039](../adr/0039-site-builder-on-claude-code.md)) · Last reviewed: 2026-10-08
 > Decision: [ADR 0012](../adr/0012-agent-agnostic-pipeline.md) · Study: [running it on cloud Claude Code](../research/storefront-builder-claude-code-2026-10/README.md)
 
 The pipeline that turns a customer conversation into a deployed storefront.
