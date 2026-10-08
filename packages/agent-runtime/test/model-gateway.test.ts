@@ -5,6 +5,7 @@ import {
   BudgetExceededError,
   NoRouteError,
   NoZdrRouteError,
+  ProviderError,
   createGateway,
   createPiiVault,
   openAiCompatibleAdapter,
@@ -270,6 +271,40 @@ describe('metering', () => {
     expect(seen!.maxOutputTokens).toBe(500 + 8000);
     expect(a.requests[0]!.maxTokens).toBe(500);
     expect(a.requests[0]!.effort).toBe('high');
+  });
+
+  test('a route that billed but answered unusably adds its usage to the one that lands', async () => {
+    const billed = { inputTokens: 300, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    const refusing: ProviderAdapter = {
+      id: 'a',
+      generate: async () => {
+        throw new ProviderError('a: refusal', {
+          retryable: false,
+          usage: { ...billed, costUsd: 0.001 },
+        });
+      },
+    };
+    const b = scriptedAdapter(
+      [{ text: 'ok', usage: { inputTokens: 100, outputTokens: 10, costUsd: 0.002 } }],
+      'b',
+    );
+    let after: Usage | undefined;
+    const gw = createGateway({
+      adapters: [refusing, b],
+      routes: resolver([route('a', { pricing }), route('b', { pricing })]),
+    });
+    const res = await gw.generate(request(), {
+      meter: {
+        before: () => {},
+        after: (u) => {
+          after = u;
+        },
+      },
+    });
+    expect(res.text).toBe('ok');
+    expect(res.usage).toMatchObject({ inputTokens: 400, outputTokens: 10 });
+    expect(res.usage.costUsd).toBeCloseTo(0.003, 12);
+    expect(after).toEqual(res.usage);
   });
 
   test('a budget refusal never reaches the provider', async () => {

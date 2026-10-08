@@ -304,6 +304,9 @@ describe('agent-host anthropic adapter', () => {
     expect(refused.calls).toHaveLength(2);
     expect(backup.calls).toHaveLength(1);
     expect(res).toMatchObject({ text: 'Claro!', provider: 'backup', finish: 'stop' });
+    // the declined call was billed too: its tokens ride on the response that landed
+    expect(res.usage).toMatchObject({ inputTokens: 20, outputTokens: 10 });
+    expect(res.usage.costUsd).toBeCloseTo((2 * (10 * 0.1 + 5 * 0.5)) / 1e6, 12);
   });
 
   test('max_tokens maps to length', async () => {

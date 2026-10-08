@@ -9,6 +9,7 @@ import {
   type ProviderAdapter,
   type ProviderRequest,
   type ToolCall,
+  type Usage,
 } from '@vendua/agent-runtime';
 import {
   ANTHROPIC_LONG_PRICING,
@@ -161,6 +162,19 @@ export function anthropicBody(
 export const outputTokens = (req: ProviderRequest) =>
   req.maxTokens + THINKING_HEADROOM[req.effort ?? DEFAULT_EFFORT];
 
+/** priced here, not by the route: the route's model and price may name another model */
+function usageOf(u: Anthropic.Usage): Usage {
+  const tokens = {
+    inputTokens: u.input_tokens,
+    outputTokens: u.output_tokens,
+    cacheReadTokens: u.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+  };
+  const prompt = tokens.inputTokens + tokens.cacheReadTokens + tokens.cacheWriteTokens;
+  const pricing = prompt > LONG_PROMPT_TOKENS ? ANTHROPIC_LONG_PRICING : ANTHROPIC_PRICING;
+  return { ...tokens, costUsd: costUsd(tokens, pricing) };
+}
+
 function providerError(id: string, err: unknown): unknown {
   if (err instanceof Anthropic.APIConnectionTimeoutError) {
     return new ProviderError(`${id}: timeout`, { retryable: true, cause: err });
@@ -204,9 +218,11 @@ export function anthropicAdapter(opts: AnthropicAdapterOpts): ProviderAdapter {
         if (signal.aborted) throw signal.reason ?? err;
         throw providerError(id, err);
       }
-      // the provider answered and declined: not its health, so the gateway tries the next route
+      const usage = usageOf(msg.usage);
+      // the provider answered and declined: not its health, so the gateway tries the next route,
+      // and the declined call's bill rides on the response that lands
       const refusal = refusalOf(msg);
-      if (refusal) throw new ProviderError(`${id}: ${refusal}`, { retryable: false });
+      if (refusal) throw new ProviderError(`${id}: ${refusal}`, { retryable: false, usage });
 
       const toolCalls: ToolCall[] = [];
       let text = '';
@@ -216,25 +232,10 @@ export function anthropicAdapter(opts: AnthropicAdapterOpts): ProviderAdapter {
           toolCalls.push({ id: b.id, name: b.name, args: (b.input ?? {}) as Json });
         }
       }
-      const u = msg.usage;
-      const usage = {
-        inputTokens: u.input_tokens,
-        outputTokens: u.output_tokens,
-        cacheReadTokens: u.cache_read_input_tokens ?? 0,
-        cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
-      };
-      const prompt = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
       return {
         text,
         toolCalls,
-        // priced here, not by the route: the route's model and price may name another model
-        usage: {
-          ...usage,
-          costUsd: costUsd(
-            usage,
-            prompt > LONG_PROMPT_TOKENS ? ANTHROPIC_LONG_PRICING : ANTHROPIC_PRICING,
-          ),
-        },
+        usage,
         provider: id,
         model: msg.model || ANTHROPIC_MODEL,
         latencyMs: Date.now() - t0,

@@ -1,10 +1,12 @@
-import type {
-  ChatMessage,
-  Json,
-  JsonObject,
-  ModelRequest,
-  ModelResponse,
-  Usage,
+import {
+  addUsage,
+  ZERO_USAGE,
+  type ChatMessage,
+  type Json,
+  type JsonObject,
+  type ModelRequest,
+  type ModelResponse,
+  type Usage,
 } from '../types.ts';
 import { CircuitBreaker, LatencyTracker, type BreakerOpts } from './breaker.ts';
 import { createPiiVault, redactRequest, restoreResponse } from './pii.ts';
@@ -30,16 +32,25 @@ export class ProviderError extends Error {
   readonly status: number | undefined;
   readonly retryable: boolean;
   readonly retryAfterMs: number | undefined;
+  /** What the provider billed for a call it answered but the gateway can't use (a refusal). */
+  readonly usage: Usage | undefined;
 
   constructor(
     message: string,
-    opts: { status?: number; retryable?: boolean; retryAfterMs?: number; cause?: unknown } = {},
+    opts: {
+      status?: number;
+      retryable?: boolean;
+      retryAfterMs?: number;
+      usage?: Usage;
+      cause?: unknown;
+    } = {},
   ) {
     super(message, opts.cause === undefined ? undefined : { cause: opts.cause });
     this.status = opts.status;
     this.retryable =
       opts.retryable ?? (opts.status === undefined ? true : isRetryableStatus(opts.status));
     this.retryAfterMs = opts.retryAfterMs;
+    this.usage = opts.usage;
   }
 }
 
@@ -353,6 +364,8 @@ export function createGateway(opts: GatewayOpts): ModelGateway {
       );
 
       const failures: RouteFailure[] = [];
+      // billed by a route that answered unusably: the response that does land carries it
+      let unused: Usage | null = null;
       for (const route of routes) {
         const adapter = adapters.get(route.provider);
         if (!adapter) {
@@ -378,12 +391,14 @@ export function createGateway(opts: GatewayOpts): ModelGateway {
               gen,
             );
             breaker.success(route.provider);
-            const res = finish(out, route, hedged, started);
+            let res = finish(out, route, hedged, started);
+            if (unused) res = { ...res, usage: addUsage(res.usage, unused) };
             await gen.meter?.after(res.usage);
             return restoreResponse(res, vault);
           } catch (e) {
             if (gen.signal?.aborted) throw gen.signal.reason ?? e;
             const err = toProviderError(e);
+            if (err.usage) unused = addUsage(unused ?? ZERO_USAGE, err.usage);
             // a 4xx means the provider answered: it's our request, not its health
             if (err.retryable) breaker.failure(route.provider);
             else breaker.success(route.provider);
