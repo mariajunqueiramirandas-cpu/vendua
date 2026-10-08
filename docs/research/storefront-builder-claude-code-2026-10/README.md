@@ -22,6 +22,15 @@ interface, the agent's instructions live in a committed skill, and the same skil
 under the Agent SDK in our own container, which reports `total_cost_usd` and enforces
 `maxBudgetUsd`.
 
+**Decided 2026-10-08:**
+
+- Duá writes the DesignSpec from the brief.
+- The owner approves only the brief, as Duá's copilot card. Staff are the one gate on the site.
+- The site is delivered in 1 day.
+- One revision is included.
+
+§1 and §8 cover what these decisions change.
+
 ## What exists today
 
 | Piece                                                  | State                                                                                                                                                                                                                                            |
@@ -65,8 +74,9 @@ Hence the runner seam below.
 
 ```
 admin: owner's brief (site_requests, exists)
-  → CRM: staff turn brief + photos into a DesignSpec (validated in Core)      [new]
-  → Core: agent_tasks row {kind: generate, runner: claude_routine}            [new]
+  → Duá drafts a DesignSpec from it, shown as a copilot card                  [new]
+  → owner applies the card (decideTx): spec saved, request in_progress,
+    agent_tasks row {kind: generate, runner: claude_routine}, 24 h clock starts [new]
   → Core job: fire the routine once, store session id + URL                   [new]
   → cloud session (skill storefront-generate):
        read task → vendua scaffold <slug> → sections/templates/tokens
@@ -75,27 +85,43 @@ admin: owner's brief (site_requests, exists)
   → GitHub webhook → Core: pr_opened, each check_suite result, iterations     [new]
   → CI judge: K01–K15 + K05 + conformance e2e on THIS store + screenshots     [gap]
   → red: session fixes (≤ 4 pushes); 5th red → escalated, staff take over
-  → green: CRM shows PR, screenshots, preview → staff approve → owner approves
+  → green: CRM shows PR + screenshots → staff approve (the one human gate)
   → merge → deploy publishes the release → bundle switch → promote → probe
   → site_requests: delivered; recordStaffEventTx "site no ar"
 ```
 
-### 1. DesignSpec from the brief
+### 1. DesignSpec from the brief: Duá writes it, the owner approves it
 
 The brief is 2000 chars of free text. The spec in [14](../../architecture/14-agent-pipeline.md)
-needs brand, references, assets and must-haves. For the pilot, staff write it in a CRM form
-(prefilled from the brief, the store's logo, its catalog photos and segment). It's stored
-versioned on the task and validated by a schema in Core. Intake automation (Dua or the WhatsApp
-agent writing the spec) stays Phase 7, as the roadmap already says.
+needs brand, references, assets and must-haves. **Duá writes it** (decided 2026-10-08). Every
+Pangolim store already has Duá Copilot ([ADR 0034](../../adr/0034-dua-copilot.md)), and its rule
+fits as is: Duá proposes, a person applies. Duá reads the brief, the store's segment, logo and
+catalog photos, and asks the owner what's missing (references, things to avoid). It then
+proposes the spec as a copilot card that says, in pt-BR, what the site will be. **This card is
+the owner's only approval** (decided 2026-10-08). The owner approves the brief, not the finished
+site.
+
+Applying the card goes through the copilot's `decideTx`, and that one transaction:
+
+- validates the spec against the schema in Core;
+- saves it versioned on the request;
+- moves `site_requests` to `in_progress`;
+- calls `requestAgentTaskTx`, which starts the 24-hour clock (§8).
+
+A refusal is recorded on the card like any other.
+
+This pulls "intake agent → DesignSpec" forward from Phase 7. That is only safe because the
+owner's tap is the gate and the spec is validated, so a bad spec costs one run, not a live
+site. The roadmap line should move.
 
 ### 2. `agent_tasks` and the runner seam
 
 One table, the Control Plane queue that [08](../../architecture/08-control-plane.md) sketches:
-`id, tenant_id, kind (generate | redesign | codemod_fix), storefront, spec, runner, status
+`id, tenant_id, kind (generate | revision | codemod_fix), storefront, spec, runner, status
 (queued | firing | running | pr_open | green | escalated | approved | merged | failed), external_ref,
 session_url, branch, pr_number, iterations, cost_cents (nullable), started_at, finished_at`, with
 `tenant_id` + RLS like every table. It has one producer, `requestAgentTaskTx`, called inside the
-transaction that moves the `site_requests` row to `in_progress`. That mirrors the
+transaction where the owner applies Duá's card (§1). That mirrors the
 one-producer rule of ADR 0016/0030.
 
 ```ts
@@ -187,12 +213,42 @@ Before any agent run, CI must judge **the store the PR changes**, not a fresh sc
 This is worth doing even without agents: today a human PR to `quero-pudim` isn't
 conformance-tested either.
 
-### 8. Approval and delivery
+### 8. Approval, the 24-hour promise and the revision
 
-The owner is buying "their" site and must see it before it's live. Screenshots are enough for
-staff; the owner needs a URL. That needs **preview releases**: CI publishes the PR's build as a
-release that isn't promoted, and the edge serves it on a preview host such as
-`<slug>--pr-<n>.preview.vendua.com.br`. That's the one new edge piece. After approval:
+**The owner doesn't approve the site** (decided 2026-10-08). They approved the brief (§1), and
+the site goes live when it's ready. The one human gate is staff, in the CRM, on the green PR's
+screenshots at 375 and 1280. That is the human gate ADR 0012 requires at launch, and the "at
+most one human approval gate" in Phase 6's exit. Preview releases aren't needed for launch.
+
+**Delivery is 1 day** (decided 2026-10-08): 24 hours from the owner applying the card to the
+store serving its new bundle. Core keeps the deadline on the task (`due_at`). The timings below
+are targets to measure in build step 3:
+
+| Step                                     | Budget        |
+| ---------------------------------------- | ------------- |
+| Fire → green PR (≤ 4 fix rounds)         | ~3 h          |
+| Staff review                             | ≤ 8 h         |
+| Merge → deploy → release → promote       | ~1 h          |
+| Slack for an escalation a human finishes | the remainder |
+
+- The reconciler raises `site_due_soon` 8 hours before `due_at` on any task not yet approved, as
+  a `recordStaffEventTx`. Escalations raise one at once.
+- Escalations and approvals need someone on staff every day, weekends included, or the promise
+  needs business-day wording. Venduá's copy has to say which (see Decisions).
+
+**One revision is included** (decided 2026-10-08). After delivery the owner can ask Duá for
+changes once:
+
+1. Duá turns the request into a spec diff, shown as a card.
+2. Applying the card opens a `revision` task on the store's own bundle. It takes the same path
+   and has the same 24-hour clock (an assumption to confirm).
+3. `site_requests.revisions_used` counts it.
+
+A second request is refused by Core, not by Duá's wording. After the included revision, the
+store's own settings still work: Aparência for copy, images and section order, and tokens for
+colours and fonts.
+
+After staff approval:
 
 - merge → deploy → `release publish` gives the bundle a passed release;
 - `PATCH /control/v1/fleet/storefronts/<slug> {bundle}` switches the store off `_template`
@@ -209,7 +265,8 @@ release that isn't promoted, and the edge serves it on a preview host such as
    through it; prove the state machine with a hand-made PR.
 3. **Skill + routine + environment** (§3–5), run on Venduá-owned canary stores. Measure
    iterations-to-green and wall time, and read the subscription usage per run by hand.
-4. **Preview releases + owner approval** (§8). Then the first Pangolim store.
+4. **Duá's DesignSpec card + the 24-hour clock + the revision** (§1, §8). Then the first
+   Pangolim store.
 5. **Agent SDK runner** when cost has to be a measured number (Phase 6 exit) or fires approach
    the routine's limits. Same skill, same webhook, `cost_cents` filled.
 
@@ -220,11 +277,11 @@ release that isn't promoted, and the edge serves it on a preview host such as
   `main`, is cleaner than a founder's personal account.
 - **Accepting no per-store cost figure in the pilot.** Routines bill to the subscription, so
   "cost per launched storefront" (the Phase 6 exit) is only measurable after step 5.
-- **Who writes the DesignSpec in the pilot:** staff in the CRM (proposed), or Dua from the brief.
-- **What the owner approves:** a preview URL (needs §8's edge work) or screenshots only for the
-  first stores.
-- **The Pangolim promise.** It's sold as "a site made by our agent". Delivery time and how many
-  revision rounds are included are the user's call.
+- **Whether "1 day" counts weekends.** If it does, an escalation or approval on a Sunday needs
+  someone on staff. If it doesn't, the copy says "1 dia útil".
+
+Decided 2026-10-08: Duá writes the DesignSpec from the brief; the owner approves only the brief,
+never the site; delivery in 1 day; 1 revision included.
 
 ## Risks
 
@@ -236,5 +293,8 @@ release that isn't promoted, and the edge serves it on a preview host such as
   enforced (CI). One store's pattern can leak into another through the agent reading it. This
   gets more likely as the fleet grows and is fixed by sharding or the SDK runner's sparse
   checkout.
+- **The 24-hour promise vs non-convergence.** A spec that never goes green turns into human work
+  against a clock. Iterations-to-green from build step 3 says whether 24 hours holds before any
+  store is sold on it.
 - **Variance and non-convergence.** These are [14](../../architecture/14-agent-pipeline.md#honest-risks-with-agents)'s risks, unchanged: rich specs,
   `_template` as the reference, the iteration cap, the human gate.
