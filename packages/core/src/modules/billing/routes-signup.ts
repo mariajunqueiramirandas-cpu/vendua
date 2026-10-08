@@ -12,6 +12,7 @@ import { withTenant, type Sql } from '../../platform/db.ts';
 import { HttpError, bodyJson, clientIp, windowCounter } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
 import { platformHost, storeOrigin } from '../../platform/store-origin.ts';
+import { phoneVariants } from '../../store-whatsapp/text.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { mountBillingDev } from './dev-routes.ts';
 import { validDocument, validEmail } from './input.ts';
@@ -31,6 +32,7 @@ import {
   segmentOr422,
   signupAccessCode,
   phoneHadTrial,
+  phoneLockKey,
   signupToken,
   slugStatus,
   startSignupOtp,
@@ -181,9 +183,6 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       });
 
     let owned = await ownedStore(sql, phone, slug);
-    // one trial per owner phone; a replay of this very signup finds its store first
-    const trialUsed = () =>
-      new HttpError(409, 'TRIAL_USED', 'this phone already had its free trial', { field: 'trial' });
     // a replay or a resumed signup may only ask again for the plan the store already holds
     openOr409(
       plan,
@@ -191,6 +190,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     );
     // a replay of a store already made goes through even if signup closed since
     if (!owned) await signupOpenOr503(d, 'create');
+    // one trial per owner phone; a replay of this very signup finds its store first
     if (!owned && trial && (await phoneHadTrial(sql, phone))) throw trialUsed();
     if (!owned) {
       if ((await slugStatus(sql, slug, d.storeDomain)).reason === 'taken')
@@ -199,10 +199,13 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
         // count + create under one per-phone lock, so parallel signups can't all pass the cap
         await sql.begin(async (t) => {
           const tx = t as unknown as Sql;
-          await tx`select pg_advisory_xact_lock(hashtextextended(${`signup:${phone}`}, 0))`;
+          // both 9th-digit spellings are one WhatsApp: one lock, one count
+          await tx`select pg_advisory_xact_lock(hashtextextended(${`signup:${phoneLockKey(phone)}`}, 0))`;
           const recent = (
             await tx<{ n: number }[]>`
-              select count(*)::int as n from merchant_memberships_for_phone(${phone}) m
+              select count(distinct m.tenant_id)::int as n
+              from unnest(${phoneVariants(phone)}::text[]) p
+                cross join lateral merchant_memberships_for_phone(p) m
                 join tenants t on t.id = m.tenant_id
               where m.role = 'owner' and t.created_at > now() - interval '24 hours'
             `
@@ -297,6 +300,8 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       document,
       ownerName,
       manual,
+      trial,
+      phone,
     }).catch(async (err: unknown) => {
       // the store exists but its first charge didn't go out: the team hears MP's own reason
       // (the owner only sees "try again"), once per store and kind — the owner's retries add nothing
@@ -445,6 +450,9 @@ async function sendWelcome(
   );
 }
 
+const trialUsed = () =>
+  new HttpError(409, 'TRIAL_USED', 'this phone already had its free trial', { field: 'trial' });
+
 async function ownedStore(sql: Sql, phone: string, slug: string) {
   return (
     (await membershipsFor(sql, phone)).find((m) => m.slug === slug && m.role === 'owner') ?? null
@@ -463,6 +471,9 @@ async function ensureFirstCharge(
     document: string;
     ownerName: string;
     manual: boolean;
+    trial: boolean;
+    /** the verified owner phone */
+    phone: string;
   },
 ): Promise<PayNext> {
   const origin = d.publicOrigin(c);
@@ -479,6 +490,9 @@ async function ensureFirstCharge(
     { sql: d.sql, provider: d.provider, notify: d.notify, origin, deviceId },
     (ctx) =>
       withTenant(d.sql, owner.tenant_id, async (tx) => {
+        // the order the first try took (phone, then plan): two signups can't both start a trial
+        if (o.trial)
+          await tx`select pg_advisory_xact_lock(hashtextextended(${`signup:${phoneLockKey(o.phone)}`}, 0))`;
         const sub = await lockSub(tx, owner.tenant_id);
         if (!sub) {
           // a resumed signup (its first charge failed before): the plan is reread under the
@@ -490,6 +504,30 @@ async function ensureFirstCharge(
               field: 'planId',
             });
           openOr409(plan, await heldPlans(tx, owner.tenant_id));
+          // a store whose first charge failed, tried again as a trial, gets the trial
+          if (o.trial) {
+            if (plan.trial_days <= 0)
+              throw new HttpError(422, 'TRIAL_UNAVAILABLE', 'this plan has no free trial', {
+                field: 'trial',
+              });
+            if (await phoneHadTrial(tx, o.phone)) throw trialUsed();
+            const next = await startTrial(tx, owner.tenant_id, {
+              plan,
+              payerEmail: o.email,
+              payerDocument: o.document,
+              provider: d.provider.name,
+              now,
+              phone: o.phone,
+            });
+            await audit(tx, owner.tenant_id, actor, {
+              action: 'store.signup',
+              entity: 'account',
+              entityId: owner.tenant_id,
+              summary: `criou a loja no plano ${plan.name}, com ${plan.trial_days} dias de teste grátis`,
+              after: { planId: plan.id, trialEndsAt: next.kind === 'trial' ? next.endsAt : null },
+            });
+            return next;
+          }
           const next = await startSubscription(ctx, tx, owner.tenant_id, {
             plan,
             method: o.method,

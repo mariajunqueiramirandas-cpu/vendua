@@ -215,6 +215,37 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
     expect(paid.body.next.kind).toBe('pix');
   });
 
+  test('both 9th-digit spellings of a number are one phone: one trial', async () => {
+    const eight = String(Date.now() + ++seq * 37).slice(-7);
+    const eleven = `2198${eight}`;
+    const ten = `218${eight}`;
+    const { signupToken } = await verified(eleven);
+    expect((await signup(signupToken, `trial-${nonce}-nine`)).status).toBe(201);
+    const v = await verified(ten);
+    expect(v.trialEligible).toBe(false);
+    const r = await signup(v.signupToken, `trial-${nonce}-nine2`);
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe('TRIAL_USED');
+  });
+
+  test('a signup whose first charge failed, tried again as a trial, starts the trial', async () => {
+    const phone = mkPhone();
+    const { signupToken } = await verified(phone);
+    const slug = `trial-${nonce}-resumed`;
+    fake.revoked.add('platform');
+    try {
+      const failed = await signup(signupToken, slug, { trial: false, method: 'pix' });
+      expect(failed.status).toBe(503);
+    } finally {
+      fake.revoked.delete('platform');
+    }
+    const r = await signup(signupToken, slug);
+    expect(r.status).toBe(201);
+    expect(r.body.next.kind).toBe('trial');
+    expect(await sub(r.body.store.id)).toMatchObject({ status: 'trialing', trial_phone: phone });
+    expect((await verified(phone)).trialEligible).toBe(false);
+  });
+
   test('the phone that took the trial keeps it taken, whatever its role becomes', async () => {
     const t = await trialStore('role');
     await sql`update merchant_users set role = 'manager' where tenant_id = ${t.id} and phone = ${t.phone}`;

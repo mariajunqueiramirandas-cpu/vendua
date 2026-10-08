@@ -3,6 +3,7 @@ import { foldSlug, type MerchantNotify } from '../../admin/context.ts';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { platformHost } from '../../platform/store-origin.ts';
+import { phoneVariants } from '../../store-whatsapp/text.ts';
 import { billingLog } from './invoices.ts';
 
 // Self-serve signup's own OTP: codes live in merchant_login_codes with purpose 'signup' (login
@@ -59,6 +60,12 @@ export const RESERVED_SLUGS = new Set([
   'cadastro',
   'static',
   'cdn',
+  // the storefront edge, Core, and the agents' mail domain (auto.<domain>, agent/channels/email.ts)
+  'edge',
+  'core',
+  'auto',
+  'smtp',
+  'webmail',
   'media',
   'dev',
   'staging',
@@ -139,9 +146,19 @@ export function segmentOr422(v: unknown): Segment | null {
   return s;
 }
 
-/** One free trial per owner phone (ADR 0025): has a store this phone owns ever trialed? */
+/** One lock per WhatsApp: both 9th-digit spellings of a number reach the same one. */
+export function phoneLockKey(phone: string): string {
+  return phoneVariants(phone).sort()[0]!;
+}
+
+/** One free trial per owner phone (ADR 0025): has a store this phone owns ever trialed? Under
+ *  either 9th-digit spelling, which are one WhatsApp. */
 export async function phoneHadTrial(sql: Sql, phone: string): Promise<boolean> {
-  return (await sql<{ used: boolean }[]>`select phone_had_trial(${phone}) as used`)[0]!.used;
+  return (
+    await sql<{ used: boolean }[]>`
+      select bool_or(phone_had_trial(p)) as used from unnest(${phoneVariants(phone)}::text[]) p
+    `
+  )[0]!.used;
 }
 
 /** signup codes per client IP per rolling day — each is a WhatsApp message we pay for */
@@ -170,11 +187,12 @@ export async function startSignupOtp(
         await tx`delete from signup_otp_sends where created_at < now() - interval '2 days'`;
       await tx`insert into signup_otp_sends (ip_hash) values (${ipHash})`;
     }
-    // the hourly cap counts every code the phone got, sign-in and signup alike
+    // the hourly cap counts every code the phone got, sign-in and signup alike, under
+    // either spelling
     const recent = (
       await tx<{ n: number }[]>`
         select count(*)::int as n from merchant_login_codes
-        where phone = ${phone} and created_at > now() - interval '1 hour'
+        where phone in ${tx(phoneVariants(phone))} and created_at > now() - interval '1 hour'
       `
     )[0]!.n;
     if (recent >= CODES_PER_HOUR) return true;

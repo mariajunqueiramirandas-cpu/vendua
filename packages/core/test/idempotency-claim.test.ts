@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
 import postgres from 'postgres';
-import { withTenant } from '../src/platform/db.ts';
+import { join } from 'node:path';
+import { migrate, withTenant } from '../src/platform/db.ts';
 import { claimTx, errorJson, HttpError, idempotency } from '../src/platform/http.ts';
 import type { Tenant } from '../src/platform/tenancy.ts';
 
@@ -62,6 +63,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('idempotency claim under concurr
   };
 
   beforeAll(async () => {
+    // a fresh database may reach this file before any file that migrates it
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
     const slug = `claim-${crypto.randomUUID().slice(0, 8)}`;
     tenantId = (
       await sql<

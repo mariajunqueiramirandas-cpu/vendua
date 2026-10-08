@@ -385,13 +385,24 @@ export function mountStorefrontPlatform(d: Deps) {
     return reply(c, res);
   });
 
+  // an undo is dry unless asked otherwise, like a run: only the real one is claimed
   app.post('/control/v1/template-migrations/:id/rollback', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
     const scope = migrationScope(body);
+    const id = c.req.param('id');
+    if (body.dry !== false) {
+      return c.json({
+        dry: true,
+        report: await rollbackTemplateMigration(sql, id, { dry: true, ...scope }),
+      });
+    }
     const res = await claimControl(sql, requireIdemKey(c), async () => ({
       status: 200,
-      body: { report: await rollbackTemplateMigration(sql, c.req.param('id'), scope) },
+      body: {
+        dry: false,
+        report: await rollbackTemplateMigration(sql, id, { dry: false, ...scope }),
+      },
     }));
     return reply(c, res);
   });

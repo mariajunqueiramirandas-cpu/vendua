@@ -50,6 +50,11 @@ async function gitCommit(root: string): Promise<string> {
 export function bundleOf(root: string, s: FleetStore): string {
   const bundle = relative(join(root, 'storefronts'), s.dir).split(sep).join('/');
   if (!BUNDLE_RE.test(bundle)) throw new Error(`'${bundle}' is not a valid bundle name`);
+  // Core gives a bundle to the store it is named after; `_` dirs are platform-owned
+  if (!bundle.startsWith('_') && s.tenant !== bundle)
+    throw new Error(
+      `${s.rel}: builds for tenant '${s.tenant}' — a store's package name and vendua.tenant must be '${bundle}'`,
+    );
   return bundle;
 }
 

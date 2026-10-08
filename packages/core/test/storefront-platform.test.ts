@@ -6,8 +6,10 @@ import { createApp } from '../src/app.ts';
 import { withTenant } from '../src/platform/db.ts';
 import { migrate } from '../src/platform/db.ts';
 import {
+  currentTemplateTx,
   rollbackTemplateMigration,
   runTemplateMigration,
+  saveTemplateTx,
 } from '../src/modules/storefront-platform.ts';
 
 // DB-backed — opt-in via TEST_DATABASE_URL.
@@ -314,6 +316,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront platform (db)', () =
     const again = await runTemplateMigration(sql, m, { dry: false, ...only });
     expect(again[0]).toMatchObject({ status: 'skipped' });
 
+    const preview = await rollbackTemplateMigration(sql, m.id, { dry: true, ...only });
+    expect(preview[0]).toMatchObject({ status: 'applied', fromVersion: 4 });
+    expect(preview[0]!.toVersion).toBeUndefined();
     const undo = await rollbackTemplateMigration(sql, m.id, only);
     expect(undo[0]).toMatchObject({ status: 'applied', toVersion: 5 });
     const cur = await withTenant(
@@ -325,6 +330,34 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront platform (db)', () =
         order by version desc limit 1`,
     );
     expect(cur[0]!.template.sections.map((s) => s.type)).not.toContain('sdk:reviews');
+
+    // an edit that holds the page lock while a rollback waits on it is kept
+    expect((await runTemplateMigration(sql, m, { dry: false, ...only }))[0]).toMatchObject({
+      status: 'applied',
+      toVersion: 6,
+    });
+    let unlock!: () => void;
+    const gate = new Promise<void>((r) => (unlock = r));
+    let onLock!: () => void;
+    const lockHeld = new Promise<void>((r) => (onLock = r));
+    const edit = withTenant(sql, tenantId, async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext(${`tpl:${tenantId}:product`}))`;
+      onLock();
+      await gate;
+      const now = await currentTemplateTx(tx, tenantId, 'product');
+      await saveTemplateTx(tx, tenantId, 'product', now!.template, 'merchant');
+    });
+    await lockHeld;
+    const racing = rollbackTemplateMigration(sql, m.id, only);
+    await Bun.sleep(150);
+    unlock();
+    await edit;
+    expect((await racing)[0]).toMatchObject({ status: 'skipped' });
+    const kept = await withTenant(sql, tenantId, (tx) =>
+      currentTemplateTx(tx, tenantId, 'product'),
+    );
+    expect(kept!.version).toBe(7);
+    expect(kept!.template.sections.map((s) => s.type)).toContain('sdk:reviews');
   });
 
   test('notify-me + analytics beacon', async () => {

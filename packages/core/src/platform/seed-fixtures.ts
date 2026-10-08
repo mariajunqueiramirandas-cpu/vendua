@@ -10,6 +10,10 @@ import { instagramHandle, whatsappDigits } from '../modules/store.ts';
 
 const slog = log.child({ mod: 'seed' });
 
+// it deletes and recreates stores by slug, and signup lets a real store take any of those slugs
+if (process.env.NODE_ENV === 'production')
+  throw new Error('seed:fixtures is for CI and dev databases — refusing with NODE_ENV=production');
+
 const url = process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
 const sql = createSql(url);
 const REPO = join(import.meta.dir, '../../../..');

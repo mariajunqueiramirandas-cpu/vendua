@@ -332,6 +332,34 @@ describe('check-storefront-paths', () => {
     expect(r.status).toBe(1);
   });
 
+  test("a store's package.json can't build for another tenant", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sf-paths-'));
+    const pkg = (body: object) => {
+      mkdirSync(join(dir, 'storefronts/acme'), { recursive: true });
+      writeFileSync(join(dir, 'storefronts/acme/package.json'), JSON.stringify(body));
+    };
+    const check = () =>
+      spawnSync(
+        'bun',
+        [checker, '--slug', 'storefront:acme', '--files', 'storefronts/acme/package.json'],
+        { encoding: 'utf8', cwd: dir },
+      );
+    try {
+      pkg({ name: '@vendua/storefront-acme' });
+      expect(check().status).toBe(0);
+      pkg({ name: '@vendua/storefront-acme', vendua: { tenant: 'acme' } });
+      expect(check().status).toBe(0);
+      pkg({ name: '@vendua/storefront-rival' });
+      expect(check().status).toBe(1);
+      pkg({ name: '@vendua/storefront-acme', vendua: { tenant: 'rival' } });
+      const r = check();
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('"rival"');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("'platform' label is the deliberate bypass for fleet-wide changes", () => {
     const r = run([
       '--slug',

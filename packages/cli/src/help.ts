@@ -109,17 +109,19 @@ vendua codemod rehearse <id> [--report <file>]
     list: `  vendua templates list
   vendua templates migrate <id> [--apply] [--ring r] [--tenant slug]… [--report f]
                            dry-run (default) or apply a template migration in Core
-  vendua templates rollback <id> [--ring r] [--tenant slug]…`,
+  vendua templates rollback <id> (--ring r | --tenant slug… | --all) [--apply]
+                           dry-run (default) or apply a migration's undo`,
     full: `vendua templates list
 vendua templates migrate <id> [--apply] [--ring r] [--tenant slug]… [--report <file>]
-vendua templates rollback <id> [--ring r] [--tenant slug]…
+vendua templates rollback <id> (--ring r | --tenant slug… | --all) [--apply]
 
 Template migrations run in Core against each store's live templates.
 
   list        the migrations Core knows
   migrate     a dry run by default: the per-store report of what would be applied, skipped or
               conflicted, and nothing written; --apply writes it
-  rollback    undo a migration
+  rollback    undo a migration: a dry run by default, like migrate; it needs a scope
+              (--ring, --tenant or --all for every store)
   --ring r    only stores in this ring (canary | early | stable)
   --tenant s  only this store; repeat to name several
 

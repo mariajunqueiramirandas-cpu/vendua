@@ -8,6 +8,7 @@ import { runBillingTick } from '../src/modules/billing/jobs.ts';
 import {
   normalizeSlug,
   readSignupToken,
+  RESERVED_SLUGS,
   signupToken,
   startSignupOtp,
 } from '../src/modules/billing/signup.ts';
@@ -65,6 +66,11 @@ describe('signup units', () => {
     expect(normalizeSlug('  --Doces   da Maria-- ')).toBe('doces-da-maria');
     expect(normalizeSlug('!!!')).toBe('');
     expect(normalizeSlug('a'.repeat(50))).toHaveLength(40);
+  });
+
+  test("the platform's own hosts are reserved", () => {
+    for (const label of ['edge', 'core', 'auto', 'status', 'api', 'app', 'mail', 'cdn', 'crm'])
+      expect(RESERVED_SLUGS.has(label)).toBe(true);
   });
 
   test('& reads as "e", and slugify shares the same fold', () => {
@@ -743,7 +749,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
 
   test('at most 3 stores per phone per day; billing off → 503', async () => {
     const other = createApp(deps);
-    const phone = mkPhone();
+    // a mobile number: it has a spelling without the 9th digit
+    const phone = `2199${mkPhone().slice(-7)}`;
     const token = (await verified(phone, other)).signupToken;
     // four at once: the per-phone lock lets exactly three through
     const res = await Promise.all(
@@ -754,6 +761,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     // the verified phone now sees its stores
     const again = await verified(phone, other);
     expect(again.existingStores).toHaveLength(3);
+    // the same WhatsApp spelled without its 9th digit is the same phone
+    const ten = `${phone.slice(0, 2)}${phone.slice(3)}`;
+    const viaTen = await signup(
+      (await verified(ten, other)).signupToken,
+      `signup-${nonce}-cap5`,
+      {},
+      other,
+    );
+    expect(viaTen.status).toBe(429);
 
     fake.platformConfigured = false;
     try {

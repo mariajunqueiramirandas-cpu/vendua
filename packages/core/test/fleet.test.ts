@@ -110,7 +110,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
   afterAll(async () => {
     if (created.length) await sql`delete from tenants where id in ${sql(created)}`;
     await sql`delete from leads where email like ${`%@${nonce}.test`}`;
-    await sql`delete from releases where bundle in (${bundle}, ${ownBundle})`;
+    await sql`delete from releases where bundle in (${bundle}, ${ownBundle}, ${tenants.b.slug})`;
     await sql.end();
   });
 
@@ -485,22 +485,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
 
   test('a bundle built for a store becomes its bundle, unless staff chose one', async () => {
     d.probes = false;
+    // another store's bundle whose package.json names this tenant takes nothing over
+    expect((await ops(tenants.b)).bundle).toBe(bundle);
+    expect((await publish(manifest(rid(), { b: ownBundle, tenant: tenants.b.slug }))).status).toBe(
+      201,
+    );
+    expect((await ops(tenants.b)).bundle).toBe(bundle);
+
     const own = rid();
-    await publish(manifest(own, { b: ownBundle, tenant: tenants.b.slug }));
+    await publish(manifest(own, { b: tenants.b.slug, tenant: tenants.b.slug }));
     expect(await ops(tenants.b)).toMatchObject({
-      bundle: ownBundle,
+      bundle: tenants.b.slug,
       live_release_id: own,
       release_policy: 'auto',
     });
     const back = await ctl('PATCH', `/control/v1/fleet/storefronts/${tenants.b.slug}`, { bundle });
     expect(back.status).toBe(200);
     expect((await ops(tenants.b)).bundle).toBe(bundle);
-    await publish(manifest(rid(), { b: ownBundle, tenant: tenants.b.slug }));
+    await publish(manifest(rid(), { b: tenants.b.slug, tenant: tenants.b.slug }));
     expect((await ops(tenants.b)).bundle).toBe(bundle);
     expect(
       (await ctl('PATCH', `/control/v1/fleet/storefronts/${tenants.b.slug}`, { bundle: 'zz-none' }))
         .status,
     ).toBe(409);
+
+    // B's newest earlier live release is on the bundle it left: a rollback stays on this one
+    const live = (await ops(tenants.b)).live_release_id;
+    const rb = await ctl('POST', `/control/v1/fleet/storefronts/${tenants.b.slug}/rollback`, {});
+    expect(rb.status).toBe(201);
+    const now = (await ops(tenants.b)).live_release_id!;
+    expect([live, own]).not.toContain(now);
+    const [target] = await sql<{ bundle: string }[]>`select bundle from releases where id = ${now}`;
+    expect(target!.bundle).toBe(bundle);
   });
 
   const waitFor = async (check: () => Promise<boolean>) => {

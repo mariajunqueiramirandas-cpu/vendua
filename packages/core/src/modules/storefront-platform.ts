@@ -121,7 +121,10 @@ export async function rollbackTemplateTx(
   `;
   if (!rows[0] || target >= cur.version)
     throw new HttpError(404, 'TEMPLATE_NOT_FOUND', `no earlier version ${target} for ${page}`);
-  const saved = await saveTemplateTx(tx, tenantId, page, rows[0].template, `rollback:${target}`);
+  // saveTemplateTx takes the page lock after this read: an edit in between is a conflict
+  const saved = await saveTemplateTx(tx, tenantId, page, rows[0].template, `rollback:${target}`, {
+    expectVersion: cur.version,
+  });
   return { ...saved, restored: target };
 }
 
@@ -360,11 +363,12 @@ export async function runTemplateMigration(
 }
 
 /** Rolls back every page a migration applied for the given stores — only where
- *  the migration's version is still current (a later edit wins over the undo). */
+ *  the migration's version is still current (a later edit wins over the undo). A dry run
+ *  reports what it would do and writes nothing. */
 export async function rollbackTemplateMigration(
   sql: Sql,
   migrationId: string,
-  opts: { ring?: Ring; tenants?: string[] },
+  opts: { dry?: boolean; ring?: Ring; tenants?: string[] },
 ): Promise<MigrationReportRow[]> {
   const tenants = await sql<{ id: string; slug: string }[]>`
     select id, slug from tenants where status = 'active' order by slug
@@ -381,6 +385,8 @@ export async function rollbackTemplateMigration(
         order by page, created_at desc
       `;
       for (const r of runs) {
+        // locked before the check, as a migration does, so an edit can't land between the two
+        if (!opts.dry) await tx`select pg_advisory_xact_lock(hashtext(${`tpl:${t.id}:${r.page}`}))`;
         const cur = await currentTemplateTx(tx, t.id, r.page as PageId);
         if (!cur || cur.version !== r.to_version) {
           report.push({
@@ -389,6 +395,17 @@ export async function rollbackTemplateMigration(
             page: r.page,
             status: 'skipped',
             reason: 'template changed after the migration — leaving it',
+          });
+          continue;
+        }
+        if (opts.dry) {
+          report.push({
+            tenant: t.slug,
+            ring: ops.ring,
+            page: r.page,
+            status: 'applied',
+            reason: `would roll back to v${r.from_version}`,
+            fromVersion: r.to_version,
           });
           continue;
         }
