@@ -176,8 +176,9 @@ Once, before the `*` record goes DNS only:
 
 3. Deploy; the `edge` router's labels ask that resolver for `vendua.com.br` + `*.vendua.com.br`.
    Check from the VPS:
-   `echo | openssl s_client -connect 127.0.0.1:443 -servername x.vendua.com.br 2>/dev/null | openssl x509 -noout -issuer -subject`
-   shows Let's Encrypt and `*.vendua.com.br`. Then set the `*` record to DNS only.
+   `echo | openssl s_client -connect 127.0.0.1:443 -servername x.vendua.com.br 2>/dev/null | openssl x509 -noout -issuer -ext subjectAltName`
+   shows a Let's Encrypt issuer and `DNS:*.vendua.com.br` among the names (the subject carries
+   only the apex). Then set the `*` record to DNS only.
 
 ### Own domains
 
