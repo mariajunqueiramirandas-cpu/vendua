@@ -2,7 +2,7 @@ import { emitAdminTx } from '../admin/live.ts';
 import type { Context, Hono } from 'hono';
 import { TEMPLATE_MIGRATIONS } from '@vendua/templates';
 import { withTenant, type Sql } from '../platform/db.ts';
-import { HttpError, bodyJson, rateLimit } from '../platform/http.ts';
+import { HttpError, bodyJson, clientIp, rateLimit } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { claimControl } from './control.ts';
 import {
@@ -91,7 +91,9 @@ export function mountStorefrontPlatform(d: Deps) {
     '/notify-me',
     d.idempotency(sql, async (c, tx) => {
       const tenant = c.get('tenant') as Tenant;
-      return subscribeNotifyTx(tx, tenant.id, await bodyJson(c));
+      return subscribeNotifyTx(tx, tenant.id, await bodyJson(c), {
+        ip: clientIp(c, { trustForwardedFor: d.trustProxy, proxyHops: d.proxyHops ?? 0 }),
+      });
     }),
   );
 

@@ -152,8 +152,9 @@ export async function startOtp(
       `;
     return false;
   });
-  if (limited)
-    throw new HttpError(429, 'RATE_LIMITED', 'too many codes for this phone — try again later');
+  // over the cap answers like any other start, with no code: only known phones store codes,
+  // so a 429 here would tell which phones have a store
+  if (limited) return { sent: true, expiresAt: expiresAt.toISOString() };
   // not awaited: a known phone must answer as fast as an unknown one (no enumeration by
   // timing); a failed delivery only shows in the log — the person asks for a new code
   if (known)

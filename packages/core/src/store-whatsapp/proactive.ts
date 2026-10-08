@@ -32,12 +32,15 @@ export async function waLinkedTx(tx: Sql, tenantId: string): Promise<boolean> {
   return !!row?.ok;
 }
 
-/** How many more of this kind may be queued now. */
+/** How many more of this kind may be queued now. Holds the store's proactive lock until the
+ *  caller's transaction ends, so it must queue in that same transaction: two sweeps (replicas)
+ *  computing the room together would each fill the whole ceiling. */
 export async function proactiveRoomTx(
   tx: Sql,
   tenantId: string,
   kind: ProactiveKind,
 ): Promise<number> {
+  await tx`select pg_advisory_xact_lock(hashtextextended(${`proactive:${tenantId}`}, 0))`;
   const [r] = await tx<{ same: number; busy: number }[]>`
     select count(*) filter (where kind = ${kind})::int as same,
            count(*) filter (where kind <> 'chat')::int as busy

@@ -4,7 +4,7 @@ import postgres from 'postgres';
 import { sweepAdmin } from '../src/admin/workers.ts';
 import { createApp } from '../src/app.ts';
 import { migrate, withTenant } from '../src/platform/db.ts';
-import { wakeStoreWaitlist } from '../src/modules/storefront-platform.ts';
+import { subscribeNotifyTx, wakeStoreWaitlist } from '../src/modules/storefront-platform.ts';
 
 // "Avise-me quando abrir" (Kernel 1.21): a closed store's subscribers hear once it opens — by
 // its hours or a resume — from the store's own WhatsApp, then they're cleared (qol2-open-notice
@@ -150,5 +150,37 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('closed-store notify (db)', () =
     await sweepAdmin(sql);
     expect(await pending(c.id)).toEqual([]);
     expect(await opened(c.id)).toEqual(['22999990004']);
+  });
+
+  test('anyone can type any number: a ceiling per client network and per store a day', async () => {
+    const f = await store('flood', { override: 'closed' });
+    const join = (phone: string, ip?: string) =>
+      withTenant(sql, f.id, (tx) =>
+        subscribeNotifyTx(tx, f.id, { subject: 'store', phone }, ip ? { ip } : {}),
+      );
+    const refused = { status: 429, code: 'NOTIFY_LIMIT' };
+    // five from one IPv6 /64, whatever address inside it; the sixth is refused
+    for (let i = 1; i <= 5; i++) await join(`2298888000${i}`, `2001:db8:77:1::${i}`);
+    await expect(join('22988880006', '2001:db8:77:1:ffff::9')).rejects.toMatchObject(refused);
+    // the same answer for a number already waiting: nothing about the number is told
+    await expect(join('22988880001', '2001:db8:77:1::1')).rejects.toMatchObject(refused);
+    expect(await join('22988880006', '198.51.100.7')).toEqual({
+      status: 201,
+      body: { subscribed: true },
+    });
+    expect(await pending(f.id)).toHaveLength(6);
+
+    // the store's own day: 50 new subscriptions, then nobody — from the storefront route too
+    await sql`
+      insert into notify_requests (tenant_id, subject, channel, contact)
+      select ${f.id}, 'store', 'whatsapp', '2297777' || lpad(g::text, 4, '0')
+      from generate_series(1, 44) g`;
+    await expect(join('22988880007', '198.51.100.8')).rejects.toMatchObject(refused);
+    const viaRoute = await subscribe(f.host, '22988880007');
+    expect(viaRoute.status).toBe(429);
+    expect(((await viaRoute.json()) as any).error.code).toBe('NOTIFY_LIMIT');
+    // the day passes
+    await sql`update notify_requests set created_at = now() - interval '25 hours' where tenant_id = ${f.id}`;
+    expect((await subscribe(f.host, '22988880007')).status).toBe(201);
   });
 });
