@@ -20,8 +20,11 @@ const WEEK = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 export default function Scheduled() {
   // the store's today, not the device's
   const today = isoDate(new Date(), useStoreQuery().data?.hours.timezone);
-  const [month, setMonth] = useState(() => today.slice(0, 7));
-  const [day, setDay] = useState(today);
+  // untouched, they follow `today`, which moves once the store's timezone loads
+  const [pickedMonth, setMonth] = useState<string | null>(null);
+  const [pickedDay, setDay] = useState<string | null>(null);
+  const month = pickedMonth ?? today.slice(0, 7);
+  const day = pickedDay ?? today;
   const [y, m] = month.split('-').map(Number) as [number, number];
   const first = new Date(y, m - 1, 1);
   const last = new Date(y, m, 0);
