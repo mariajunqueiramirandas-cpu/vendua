@@ -10,6 +10,8 @@ export const BUSY_MS = 2 * 60_000;
 const SHOWN = 60;
 /** what a WhatsApp reply's cards may take of its 4000 characters */
 const CARDS_ROOM = 3200;
+/** the highest "SIM n" (copilot_actions.wa_ref is 1..20) */
+const MAX_WA_CARDS = 20;
 
 export interface MessageView {
   id: string;
@@ -155,7 +157,7 @@ async function forwardToWhatsApp(sql: Sql, tenantId: string, messageId: string, 
       },
     );
   // as many cards as fit whole; the rest stay in the panel, with no number to answer "SIM" to
-  let shown: CardRow[] = [...cards];
+  let shown: CardRow[] = cards.slice(0, MAX_WA_CARDS);
   while (shown.length && render(shown).length > CARDS_ROOM) shown = shown.slice(0, -1);
   for (const [i, c] of shown.entries())
     if (c.wa_ref == null) {

@@ -21,6 +21,8 @@ import { dispatchTx } from '../src/agent-host/dispatch.ts';
 import { forgetSubjectTx } from '../src/agent-host/forget.ts';
 import { hostHooks } from '../src/agent-host/hooks.ts';
 import { hostOnlineQa } from '../src/agent-host/qa.ts';
+import { COPILOT_AGENT_ID } from '../src/agent-host/agents/copilot/shared.ts';
+import { ONBOARDING_AGENT_ID } from '../src/agent-host/agents/vendedor-onboarding/index.ts';
 import { registerAgent } from '../src/agent-host/registry.ts';
 import { ensurePartitions, startAgentRuntime, WAKE_CHANNEL } from '../src/agent-host/scheduler.ts';
 import { pgMemory } from '../src/agent-host/store/memory.ts';
@@ -525,6 +527,30 @@ describe.skipIf(!OWNER_URL)('agent runtime v3 on Postgres', () => {
     expect(alerts).toHaveLength(1);
     expect(alerts[0]!.data.mean).toBeCloseTo(0.2);
     await sql`delete from staff_events where kind = 'agent.qa_alert' and tenant_id = ${tenantId}`;
+
+    // the owner's interview (and Copilot) is not a shopper conversation: never sampled
+    const sampled = (() => {
+      throw new Error('sampled');
+    }) as unknown as Sql;
+    for (const agentId of [ONBOARDING_AGENT_ID, COPILOT_AGENT_ID])
+      await qa.turnEnded({ host: sampled } as never, {
+        actorId,
+        tenantId,
+        agentId,
+        subject: { kind: 'merchant_user', id: 'u1' },
+        turnId: 't1',
+        version: 'v',
+        state: { repliedSinceLastInput: true } as never,
+      });
+
+    // erasing the conversation erases the QA actor too: its log holds the transcript it scored
+    expect(
+      await withTenant(app, tenantId, (tx) =>
+        forgetSubjectTx(tx, tenantId, { kind: 'thread', id: 'qa' }),
+      ),
+    ).toBe(1);
+    expect(await sql`select 1 from agent_actors where id = ${sample!.actor_id}`).toHaveLength(0);
+    expect(await events(sample!.actor_id)).toHaveLength(0);
   });
 
   test('review fixes: stray rows leave the default partition; stale stages, unknown stores and byte limits are refused', async () => {

@@ -367,6 +367,31 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
     expect(cards.map((c) => (c as { status: string }).status)).toEqual(['applied', 'declined']);
   });
 
+  test('past 20 cards, the rest go to the panel unnumbered', async () => {
+    const s = await store();
+    await inbound(s.phone, 'esgota o pudim');
+    const propose = call('propose_product_change', {
+      product: 'p1',
+      availability: 'sold_out_today',
+    });
+    const rt = runtime([
+      tools(call('menu')),
+      tools(...Array.from({ length: 21 }, () => propose)),
+      reply('Preparei.'),
+    ]);
+    await settle(rt, s.tenantId);
+    const out = (await lastSent(s.phone))!;
+    expect(out).toContain('20) *');
+    expect(out).not.toContain('21) *');
+    expect(out).toContain('Mais um cartão para conferir no painel');
+    const refs = await sql<{ wa_ref: number | null }[]>`
+      select wa_ref from copilot_actions where tenant_id = ${s.tenantId} order by created_at, id`;
+    expect(refs.map((r) => r.wa_ref)).toEqual([
+      ...Array.from({ length: 20 }, (_, i) => i + 1),
+      null,
+    ]);
+  });
+
   test('an “ok” after Duá moved on is a message for Duá, not a yes to the older card', async () => {
     const s = await store();
     const rt = runtime([
