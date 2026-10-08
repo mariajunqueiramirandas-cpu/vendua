@@ -8,12 +8,14 @@ import {
   UUID_RE,
   bodyJson,
   boundedText,
+  clientIp,
   parseJsonObject,
   rateLimit,
   sessionCartId,
   str,
   uuidParam,
   verifySessionToken,
+  windowCounter,
 } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
@@ -54,6 +56,7 @@ import {
 import { normalizeCep, parsePolygon, resolveZone, type CepLookup, type LatLng } from './geo.ts';
 import type { Geocoder } from './geocode.ts';
 import type { OrderHub } from './order-live.ts';
+import type { LiveSlots } from './storefront-live.ts';
 import {
   ORDER_STATES,
   TERMINAL_STATES,
@@ -108,6 +111,8 @@ interface Deps {
   /** address → approximate point for the checkout's pin map (ADR 0024) */
   geocode: Geocoder;
   orderHub: OrderHub;
+  /** open order streams and long-polls — each re-reads the order on every wake */
+  orderWatch: LiveSlots;
   provider: PaymentProvider;
   /** `https://<admin host>` — Mercado Pago's notification_url base */
   publicOrigin: (c: Context) => string;
@@ -120,6 +125,9 @@ const CUSTOMER_HEADER = 'x-vendua-customer';
 const STREAM_HEARTBEAT_MS = 20_000;
 const STREAM_RECHECK_MS = 15_000;
 const STREAM_MAX_MS = 10 * 60_000;
+/** a shopper's tabs and devices; more is a flood re-reading one order on every wake */
+export const MAX_WATCHERS_PER_ORDER = 5;
+export const CEP_PER_IP_PER_MIN = 20;
 
 /** Phase 2 commerce surfaces (roadmap 2a–2c): public reads, checkout mutations, staff admin. */
 export function mountCommerce(d: Deps) {
@@ -130,13 +138,21 @@ export function mountCommerce(d: Deps) {
       { trustForwardedFor: d.trustProxy, proxyHops: d.proxyHops ?? 0 },
     );
 
+  const ipOf = (c: Context) =>
+    clientIp(c, { trustForwardedFor: d.trustProxy, proxyHops: d.proxyHops ?? 0 });
+
   // ── storefront (public reads) ──────────────────────────────────────────────
 
+  // ViaCEP is shared by every store: one client (across stores) gets a share of it (the
+  // process-wide budget is viaCep's, spent on cache misses only)
+  const cepByIp = windowCounter({ windowMs: 60_000, max: CEP_PER_IP_PER_MIN });
   storefront.use('/cep/*', limiter(30));
   storefront.get('/cep/:cep', async (c) => {
     const tenant = c.get('tenant');
     const cep = normalizeCep(c.req.param('cep'));
     if (!cep) throw new HttpError(400, 'INVALID_CEP', 'cep must have 8 digits');
+    if (!cepByIp(ipOf(c)))
+      throw new HttpError(429, 'RATE_LIMITED', 'too many requests — retry later');
     let found;
     try {
       found = await d.cepLookup(cep);
@@ -174,13 +190,16 @@ export function mountCommerce(d: Deps) {
       if (v && v.length > max) throw new HttpError(400, 'BAD_REQUEST', `${k} is too long`);
       return v || null;
     };
-    const point = await d.geocode({
-      cep: q('cep', 12),
-      street: q('street', 120),
-      number: q('number', 10),
-      city: q('city', 80),
-      state: q('state', 40),
-    });
+    const point = await d.geocode(
+      {
+        cep: q('cep', 12),
+        street: q('street', 120),
+        number: q('number', 10),
+        city: q('city', 80),
+        state: q('state', 40),
+      },
+      ipOf(c),
+    );
     if (point) c.header('cache-control', 'public, max-age=86400');
     return c.json({ point });
   });
@@ -372,6 +391,7 @@ export function mountCommerce(d: Deps) {
       withTenant(sql, tenant.id, (tx) => readStorefrontOrder(tx, tenant.id, orderId, access));
     // 404 before the stream opens — a stream is only for an order this session owns
     const first = await read();
+    const release = d.orderWatch.take(ipOf(c), orderId);
     const lastId = Number(c.req.header('last-event-id'));
     const res = streamSSE(c, async (stream) => {
       let sent = Number.isInteger(lastId) && lastId > 0 ? lastId : 0;
@@ -405,18 +425,23 @@ export function mountCommerce(d: Deps) {
           }
         });
       };
-      const unsubscribe = await d.orderHub.subscribe(orderId, refresh);
+      let unsubscribe = () => {};
       const beat = setInterval(() => void stream.write(':ka\n\n'), STREAM_HEARTBEAT_MS);
       const recheck = setInterval(refresh, STREAM_RECHECK_MS);
       const lifetime = setTimeout(finish, STREAM_MAX_MS);
-      // re-read after subscribing: a change between `first` and now isn't lost
-      await push(first);
-      refresh();
-      await done;
-      unsubscribe();
-      clearInterval(beat);
-      clearInterval(recheck);
-      clearTimeout(lifetime);
+      try {
+        unsubscribe = await d.orderHub.subscribe(orderId, refresh);
+        // re-read after subscribing: a change between `first` and now isn't lost
+        await push(first);
+        refresh();
+        await done;
+      } finally {
+        release();
+        unsubscribe();
+        clearInterval(beat);
+        clearInterval(recheck);
+        clearTimeout(lifetime);
+      }
     });
     c.header('cache-control', 'no-cache, no-transform');
     c.header('x-accel-buffering', 'no');

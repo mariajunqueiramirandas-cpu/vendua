@@ -109,7 +109,7 @@ import { pixPayload, type PixKeyType } from './modules/pix.ts';
 import { bookableDates } from './modules/preorder.ts';
 import { mountWebChat, webChatProfile } from './vendedor/web-chat.ts';
 import { cartReminderOffered, mountCartReminder } from './modules/cart-reminder.ts';
-import { mountCommerce } from './modules/commerce-routes.ts';
+import { MAX_WATCHERS_PER_ORDER, mountCommerce } from './modules/commerce-routes.ts';
 import {
   agentGoal,
   bulkLeadPatch,
@@ -220,7 +220,12 @@ import { validAdminPhone, whatsappOtpSender, type OtpSender } from './admin/auth
 import type { AdminApp } from './admin/context.ts';
 import { AdminHub } from './admin/live.ts';
 import { PresenceTracker } from './modules/presence.ts';
-import { mountStorefrontEvents } from './modules/storefront-live.ts';
+import {
+  MAX_STOREFRONT_STREAMS,
+  MAX_STREAMS_PER_IP,
+  liveSlots,
+  mountStorefrontEvents,
+} from './modules/storefront-live.ts';
 import { mountAdmin } from './admin/routes.ts';
 import type { MerchantNotify } from './admin/context.ts';
 import { platformNotify } from './admin/notify.ts';
@@ -1017,6 +1022,17 @@ export function createApp({
     ),
   );
 
+  const checkoutIpFlags = {
+    trustForwardedFor: trustProxy,
+    proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
+  };
+  // order SSE streams and long-polls share these; one order's watchers are a shopper's tabs
+  const orderWatch = liveSlots({
+    max: MAX_STOREFRONT_STREAMS,
+    perIp: MAX_STREAMS_PER_IP,
+    perKey: MAX_WATCHERS_PER_ORDER,
+  });
+
   checkout.post('/session', async (c) => {
     const tenant = c.get('tenant');
     // Re-attach a Bearer token whose cart is still open; a spent one mints fresh.
@@ -1264,13 +1280,18 @@ export function createApp({
     )
       throw new HttpError(400, 'BAD_REQUEST', 'wait must be 1–25 and since a version');
     let order = await read();
-    const deadline = Date.now() + waitS * 1000;
-    while (order.version <= since && !TERMINAL_STATES.has(order.state) && Date.now() < deadline) {
-      // 5s slices: a NOTIFY landing between the read and the subscribe costs ≤5s, not the whole wait
-      await orderHub.wait(orderId, Math.min(5000, deadline - Date.now()), c.req.raw.signal);
-      if (c.req.raw.signal.aborted) break;
-      const v = await withTenant(sql, tenant.id, (tx) => orderVersion(tx, tenant.id, orderId));
-      if (v > since) order = await read();
+    const release = orderWatch.take(clientIp(c, checkoutIpFlags), orderId);
+    try {
+      const deadline = Date.now() + waitS * 1000;
+      while (order.version <= since && !TERMINAL_STATES.has(order.state) && Date.now() < deadline) {
+        // 5s slices: a NOTIFY landing between the read and the subscribe costs ≤5s, not the whole wait
+        await orderHub.wait(orderId, Math.min(5000, deadline - Date.now()), c.req.raw.signal);
+        if (c.req.raw.signal.aborted) break;
+        const v = await withTenant(sql, tenant.id, (tx) => orderVersion(tx, tenant.id, orderId));
+        if (v > since) order = await read();
+      }
+    } finally {
+      release();
     }
     c.header('cache-control', 'no-store');
     return c.json({ order, changed: order.version > since });
@@ -3080,6 +3101,7 @@ export function createApp({
     cepLookup: cepLookup ?? viaCep,
     geocode,
     orderHub,
+    orderWatch,
     provider,
     publicOrigin: (c) => adminOrigin(c),
     storeDomain: publicStoreDomain,

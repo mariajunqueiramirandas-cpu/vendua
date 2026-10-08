@@ -127,6 +127,11 @@ const net = (tx: Sql, a = '') =>
     `(${a}total_cents - least(${a}total_cents, coalesce((${a}payment ->> 'refundedCents')::int, 0)))`,
   );
 
+// the store's days as an `at` range, so analytics_events' (tenant_id, at) index serves it
+export const eventsBetween = (tx: Sql, tz: string, from: string, to: string) =>
+  tx`at >= ${from}::date::timestamp at time zone ${tz}
+     and at < (${to}::date + 1)::timestamp at time zone ${tz}`;
+
 async function kpis(tx: Sql, tenantId: string, tz: string, from: string, to: string) {
   return (
     await tx<
@@ -221,7 +226,7 @@ export function mountReports(d: AdminDeps) {
             count(distinct session_id) filter (where name = 'order_placed')::int as orders
           from analytics_events
           where tenant_id = ${t.id}
-            and (at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+            and ${eventsBetween(tx, tz, r.from, r.to)}
         `
       )[0]!;
       const orderZones = await tx<
@@ -243,7 +248,7 @@ export function mountReports(d: AdminDeps) {
           select distinct session_id, props ->> 'zone' as zone from analytics_events
           where tenant_id = ${t.id} and name = 'delivery_quoted' and (props ->> 'eligible')::boolean
             and props ->> 'zone' is not null
-            and (at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+            and ${eventsBetween(tx, tz, r.from, r.to)}
         )
         select q.zone, count(*)::int as quotes,
                count(o.id) filter (where ${kept(tx, 'o.')})::int as converted
@@ -275,7 +280,7 @@ export function mountReports(d: AdminDeps) {
           select session_id, at, trim(props ->> 'neighborhood') as nb from analytics_events
           where tenant_id = ${t.id} and name = 'delivery_quoted' and not (props ->> 'eligible')::boolean
             and coalesce(trim(props ->> 'neighborhood'), '') <> ''
-            and (at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+            and ${eventsBetween(tx, tz, r.from, r.to)}
         ) x
         group by lower(nb) order by quotes desc, neighborhood limit 10
       `;

@@ -544,9 +544,11 @@ async function whatsappFallback(sql: Sql, tenantId: string, opts: AlertOpts) {
 }
 
 /** Once a minute: "esgotado hoje" ends at midnight, a timed pause clears its row, "muitos
- *  pedidos agora" ends, a missed new-order alert falls back to WhatsApp. */
+ *  pedidos agora" ends, a missed new-order alert falls back to WhatsApp; hourly, retention. */
 export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
   const tenants = await sql<{ id: string }[]>`select id from tenants where status = 'active'`;
+  const prune = Date.now() >= nextPruneAt;
+  if (prune) nextPruneAt = Date.now() + PRUNE_EVERY_MS;
   for (const t of tenants) {
     // one store's bad row must not stall the sweep for every store after it
     try {
@@ -568,7 +570,44 @@ export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
     await cartReminderPass(sql, t.id).catch((err) =>
       workLog.warn({ err, tenantId: t.id }, 'bag reminder pass failed'),
     );
+    if (prune)
+      await pruneTenant(sql, t.id).catch((err) =>
+        workLog.warn({ err, tenantId: t.id }, 'retention prune failed'),
+      );
   }
+}
+
+const PRUNE_EVERY_MS = 60 * 60_000;
+const PRUNE_BATCH = 1000;
+let nextPruneAt = 0;
+
+/** Retention: funnel events past 13 months (web analytics' horizon), and carts that never held a
+ *  line after 14 quiet days — every storefront session mints one. A cart an order, a Vendedor
+ *  thread or a reminder points at stays. Batched: a backlog drains over a few passes. */
+export async function pruneTenant(sql: Sql, tenantId: string) {
+  await withTenant(sql, tenantId, async (tx) => {
+    await tx`
+      delete from analytics_events where id in (
+        select id from analytics_events
+        where tenant_id = ${tenantId} and at < now() - interval '13 months'
+        limit ${PRUNE_BATCH}
+      )
+    `;
+    await tx`
+      delete from carts where id in (
+        select c.id from carts c
+        where c.tenant_id = ${tenantId} and c.status = 'open'
+          and c.updated_at < now() - interval '14 days'
+          and not exists (select 1 from cart_items i where i.cart_id = c.id)
+          and not exists (select 1 from orders o where o.cart_id = c.id)
+          and not exists (select 1 from shopper_threads t where t.cart_id = c.id)
+          and not exists (select 1 from cart_reminders r where r.cart_id = c.id)
+        limit ${PRUNE_BATCH}
+      )
+      -- re-read on the row itself: a line added while this waited touched updated_at
+      and updated_at < now() - interval '14 days'
+    `;
+  });
 }
 
 async function sweepTenant(sql: Sql, tenantId: string) {

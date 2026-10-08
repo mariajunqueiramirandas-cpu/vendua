@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
+import { MAX_WATCHERS_PER_ORDER } from '../src/modules/commerce-routes.ts';
 import { migrate } from '../src/platform/db.ts';
 
 // Phase 2 end to end over HTTP: every roadmap 2a–2c item against a real Postgres.
@@ -559,6 +560,48 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
       headers: { host, ...other },
     });
     expect(denied.status).toBe(404);
+  });
+
+  test('live order: one order holds at most MAX_WATCHERS_PER_ORDER streams and long-polls', async () => {
+    const headers = { host, authorization: `Bearer ${orderToken}` };
+    const open: { a: AbortController; res: Response }[] = [];
+    for (let i = 0; i < MAX_WATCHERS_PER_ORDER; i++) {
+      const a = new AbortController();
+      const res = await app.request(`http://${host}/checkout/v1/orders/${orderId}/events`, {
+        headers,
+        signal: a.signal,
+      });
+      expect(res.status).toBe(200);
+      open.push({ a, res });
+    }
+    const over = await app.request(`http://${host}/checkout/v1/orders/${orderId}/events`, {
+      headers,
+    });
+    expect(over.status).toBe(503);
+    expect(((await over.json()) as any).error.code).toBe('STREAM_UNAVAILABLE');
+    // the long-poll shares the order's slots; a plain read doesn't take one
+    const poll = await call('GET', `/checkout/v1/orders/${orderId}?since=99&wait=1`, undefined, {
+      authorization: `Bearer ${orderToken}`,
+    });
+    expect(poll.status).toBe(503);
+    const plain = await call('GET', `/checkout/v1/orders/${orderId}`, undefined, {
+      authorization: `Bearer ${orderToken}`,
+    });
+    expect(plain.status).toBe(200);
+    for (const o of open) {
+      o.a.abort();
+      await o.res.body?.cancel().catch(() => {});
+    }
+    let again = 503;
+    for (let i = 0; i < 100 && again !== 200; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      again = (
+        await call('GET', `/checkout/v1/orders/${orderId}?since=99&wait=1`, undefined, {
+          authorization: `Bearer ${orderToken}`,
+        })
+      ).status;
+    }
+    expect(again).toBe(200);
   });
 
   test('customer: orders by phone need a token for that phone; verification by order number', async () => {

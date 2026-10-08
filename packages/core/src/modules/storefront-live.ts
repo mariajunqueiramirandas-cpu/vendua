@@ -40,11 +40,56 @@ export function storefrontTopics(e: AdminEvent): StorefrontTopic[] {
 // a script opening hundreds shouldn't take the process cap, but mobile carriers put many
 // shoppers behind one address (CGNAT) — and a refused stream only falls back to polling
 export const MAX_STREAMS_PER_IP = 100;
+/** one store's flood stays in that store instead of filling the process cap for all */
+export const MAX_STREAMS_PER_TENANT = 500;
 
-let open = 0;
-const openByIp = new Map<string, number>();
+/** Open-connection caps per process, per client IP and per key (a store, an order). `take`
+ *  throws 503 (process or key full: clients fall back to polling) or 429 (this IP), else
+ *  returns the release. */
+export function liveSlots(caps: { max: number; perIp: number; perKey: number }) {
+  let open = 0;
+  const byIp = new Map<string, number>();
+  const byKey = new Map<string, number>();
+  const drop = (m: Map<string, number>, k: string) => {
+    const left = (m.get(k) ?? 1) - 1;
+    if (left > 0) m.set(k, left);
+    else m.delete(k);
+  };
+  return {
+    count: () => open,
+    take(ip: string, key: string): () => void {
+      if (open >= caps.max)
+        throw new HttpError(503, 'STREAM_UNAVAILABLE', 'too many live connections, poll instead');
+      const mine = byIp.get(ip) ?? 0;
+      if (mine >= caps.perIp)
+        throw new HttpError(429, 'RATE_LIMITED', 'too many live connections from this address');
+      const theirs = byKey.get(key) ?? 0;
+      if (theirs >= caps.perKey)
+        throw new HttpError(503, 'STREAM_UNAVAILABLE', 'too many live connections, poll instead');
+      open++;
+      byIp.set(ip, mine + 1);
+      byKey.set(key, theirs + 1);
+      let held = true;
+      return () => {
+        if (!held) return;
+        held = false;
+        open--;
+        drop(byIp, ip);
+        drop(byKey, key);
+      };
+    },
+  };
+}
+
+export type LiveSlots = ReturnType<typeof liveSlots>;
+
+const slots = liveSlots({
+  max: MAX_STOREFRONT_STREAMS,
+  perIp: MAX_STREAMS_PER_IP,
+  perKey: MAX_STREAMS_PER_TENANT,
+});
 export function storefrontStreamCount() {
-  return open;
+  return slots.count();
 }
 
 export function mountStorefrontEvents(
@@ -55,14 +100,7 @@ export function mountStorefrontEvents(
 ) {
   storefront.get('/events', async (c) => {
     const tenant = c.get('tenant');
-    if (open >= MAX_STOREFRONT_STREAMS)
-      throw new HttpError(503, 'STREAM_UNAVAILABLE', 'too many live connections, poll instead');
-    const ip = clientIp(c, ipFlags);
-    const mine = openByIp.get(ip) ?? 0;
-    if (mine >= MAX_STREAMS_PER_IP)
-      throw new HttpError(429, 'RATE_LIMITED', 'too many live connections from this address');
-    open++;
-    openByIp.set(ip, mine + 1);
+    const release = slots.take(clientIp(c, ipFlags), tenant.id);
     const res = streamSSE(c, async (stream) => {
       let finish!: () => void;
       const done = new Promise<void>((r) => (finish = r));
@@ -92,10 +130,7 @@ export function mountStorefrontEvents(
       try {
         await done;
       } finally {
-        open--;
-        const left = (openByIp.get(ip) ?? 1) - 1;
-        if (left > 0) openByIp.set(ip, left);
-        else openByIp.delete(ip);
+        release();
         leave();
         unsubscribe();
         clearInterval(beat);
