@@ -187,10 +187,7 @@ const inProgress = () =>
 // claimTx's own keys (the Vendedor's place_order); a client key can't occupy one
 const INTERNAL_KEY = /^vendedor:/;
 
-export function checkKey(
-  key: string | undefined | null,
-  internal = false,
-): asserts key is string {
+export function checkKey(key: string | undefined | null, internal = false): asserts key is string {
   if (!key) {
     throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
   }
