@@ -262,6 +262,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: Core-derived fields (db)
   });
 
   test('loyalty: an unnamed reward is named like a coupon, everywhere it shows', async () => {
+    // a reward no coupon could hold (it would fail at the delivery that mints it) is refused now
+    for (const reward of [
+      { kind: 'fixed', value: 12.5 },
+      { kind: 'percent', value: 150 },
+      { kind: 'fixed', value: 20_000_000 },
+    ]) {
+      const bad = await owner('PUT', '/loyalty', {
+        program: { stampsRequired: 2, minOrderCents: 0, reward, rewardValidDays: 30 },
+      });
+      expect(bad.status).toBe(422);
+      expect(bad.body.error.details.field).toBe('program.reward.value');
+    }
     const put = await owner('PUT', '/loyalty', {
       program: {
         stampsRequired: 2,

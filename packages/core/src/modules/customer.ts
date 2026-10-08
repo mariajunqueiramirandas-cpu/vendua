@@ -363,10 +363,12 @@ export async function mintLoyaltyRewards(
       {
         prefix: 'FIEL',
         kind: program.reward.kind,
+        // within the coupon's bounds whatever was stored: a mint that throws here would stop the
+        // order from ever reaching delivered
         value:
           program.reward.kind === 'percent'
-            ? Math.min(100, Math.max(1, program.reward.value))
-            : program.reward.value,
+            ? Math.min(100, Math.max(1, Math.round(program.reward.value)))
+            : Math.min(10_000_000, Math.max(0, Math.round(program.reward.value))),
         label: program.reward.label,
         maxRedemptions: 1,
         perPhoneLimit: 1,
