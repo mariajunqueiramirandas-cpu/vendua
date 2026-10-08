@@ -21,9 +21,11 @@ export const PRINT_CHANNEL = 'vendua_print';
 export const ONLINE_WINDOW_S = 70;
 /** a job handed to an agent that hasn't answered by now is handed over again */
 const RESEND_AFTER_S = 60;
-/** unanswered this long after it first reached the agent (more than the agent's own retries and
- * result reports take), a job is given up; resends alone don't count, it may sit behind a slow
- * printer */
+/** a job is given up only when both hold: handed over this many times (an agent that was offline
+ *  gets it again on reconnect, it isn't failed for the time it was away) and unanswered this long
+ *  since it first reached the agent (more than its own retries and result reports take: it may sit
+ *  behind a slow printer, resends alone don't fail it) */
+const GIVE_UP_ATTEMPTS = 5;
 const GIVE_UP_AFTER_S = 15 * 60;
 const BATCH = 20;
 
@@ -250,6 +252,7 @@ export async function claimDueJobsTx(
     update print_jobs set status = 'failed', finished_at = now(),
            error = 'O aparelho não confirmou a impressão'
     where tenant_id = ${tenantId} and device_id = ${deviceId} and status = 'sent'
+      and attempts >= ${GIVE_UP_ATTEMPTS}
       and coalesce(first_sent_at, sent_at) < now() - make_interval(secs => ${GIVE_UP_AFTER_S})
       and sent_at < now() - make_interval(secs => ${RESEND_AFTER_S})`;
   const due = await tx<

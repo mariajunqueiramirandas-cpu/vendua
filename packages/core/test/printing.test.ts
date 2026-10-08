@@ -821,9 +821,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('printing (db)', () => {
     const [kept] = await sql<{ status: string; attempts: number }[]>`
       select status, attempts from print_jobs where id = ${job!.id}`;
     expect(kept).toEqual({ status: 'sent', attempts: 10 });
-    // unanswered a quarter of an hour after it first went out: given up
+    // handed once into a stream that died, the agent back 20 minutes later: it gets it again
     await sql`
-      update print_jobs set first_sent_at = now() - interval '16 minutes',
+      update print_jobs set attempts = 1, first_sent_at = now() - interval '20 minutes',
+                            sent_at = now() - interval '20 minutes'
+      where id = ${job!.id}`;
+    expect((await claim()).map((j) => j.id)).toEqual([job!.id]);
+    // resent many times and unanswered a quarter of an hour after it first went out: given up
+    await sql`
+      update print_jobs set attempts = 9, first_sent_at = now() - interval '16 minutes',
                             sent_at = now() - interval '2 minutes'
       where id = ${job!.id}`;
     expect(await claim()).toEqual([]);
