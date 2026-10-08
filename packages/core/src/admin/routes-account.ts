@@ -6,7 +6,6 @@ import { accountView } from '../modules/billing/account.ts';
 import { validDocument, validEmail } from '../modules/billing/input.ts';
 import { heldPlans, publicPlanOr422, requireFeature } from '../modules/billing/plans.ts';
 import {
-  afterResponse,
   buyAiPack,
   cancelSubscription,
   lockBilling,
@@ -14,12 +13,13 @@ import {
   openSiteRequest,
   reissuePix,
   resumeSubscription,
+  runEffects,
   startSubscription,
   type BillingCtx,
 } from '../modules/billing/subscriptions.ts';
 import { deviceIdOr } from '../modules/payments/store-payments.ts';
 import { audit } from './audit.ts';
-import { oneOf, text, type AdminDeps, type Merchant } from './context.ts';
+import { oneOf, text, type AdminCtx, type AdminDeps, type Merchant, type Role } from './context.ts';
 import { bodyOf, handlers, isReplay } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
@@ -36,6 +36,18 @@ const payerDocumentOr = (v: unknown) =>
 export function mountAccount(d: AdminDeps) {
   const { admin } = d;
   const { read, write, named } = handlers(d);
+  const queues = new WeakMap<Context, BillingCtx['later']>();
+  // a billing write's effects (a superseded Pix cancelled at MP, the owner's messages) wait for
+  // the claim tx to commit; a handler that throws rolls them back with its rows
+  const billingWrite =
+    (role: Role, fn: Parameters<typeof write>[1]) =>
+    async (c: AdminCtx): Promise<Response> => {
+      const effects: (() => Promise<unknown>)[] = [];
+      queues.set(c, (e) => void effects.push(e));
+      const res = await write(role, fn)(c);
+      void runEffects(effects);
+      return res;
+    };
 
   const view = (tx: Sql, t: Tenant) =>
     accountView(tx, t, { storeDomain: d.storeDomain, provider: d.provider, domains: d.domains });
@@ -44,7 +56,11 @@ export function mountAccount(d: AdminDeps) {
     provider: d.provider,
     notify: d.notify,
     origin: d.publicOrigin(c),
-    later: afterResponse,
+    later:
+      queues.get(c) ??
+      (() => {
+        throw new Error('billing effects need billingWrite');
+      }),
     deviceId: deviceIdOr(c.req.header('x-vendua-device')),
   });
   const billingOn = () => {
@@ -62,7 +78,7 @@ export function mountAccount(d: AdminDeps) {
 
   admin.post(
     '/account/subscription',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       const body = await bodyJson(c);
       const plan = await publicPlanOr422(tx, body.planId, await heldPlans(tx, t.id));
@@ -88,7 +104,7 @@ export function mountAccount(d: AdminDeps) {
 
   admin.patch(
     '/account/subscription',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       const body = await bodyJson(c);
       const plan =
@@ -141,7 +157,7 @@ export function mountAccount(d: AdminDeps) {
 
   admin.post(
     '/account/subscription/cancel',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       await cancelSubscription(ctxFor(c), tx, t.id);
       await log(tx, t, m, 'subscription.cancel', 'cancelou o plano (vale até o fim do período)');
@@ -151,7 +167,7 @@ export function mountAccount(d: AdminDeps) {
 
   admin.post(
     '/account/subscription/resume',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       await resumeSubscription(ctxFor(c), tx, t.id, new Date());
       await log(tx, t, m, 'subscription.resume', 'desfez o cancelamento do plano');
@@ -161,7 +177,7 @@ export function mountAccount(d: AdminDeps) {
 
   admin.post(
     '/account/invoices/:id/pix',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       const id = uuidParam(c, 'id');
       const inv = await reissuePix(ctxFor(c), tx, t.id, id, new Date());
@@ -178,7 +194,7 @@ export function mountAccount(d: AdminDeps) {
   // the Vendedor's extra conversations (ADR 0032): a one-off Pix, credited when it is paid
   admin.post(
     '/account/ai-packs',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       const body = await bodyJson(c, 1024);
       const inv = await buyAiPack(ctxFor(c), tx, t.id, body.packId, new Date(), {
@@ -199,7 +215,7 @@ export function mountAccount(d: AdminDeps) {
   // ── Pangolim: a site made by our agent ───────────────────────────────────
   admin.post(
     '/account/site-request',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       await requireFeature(tx, t.id, 'customSite');
       const body = await bodyJson(c);
       const brief = text(body.brief, 'brief', 2000, 3);
