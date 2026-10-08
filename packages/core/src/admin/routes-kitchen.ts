@@ -136,9 +136,11 @@ async function ticketsTx(
           : tx`and o.state = any(${BOARD})
                and (o.scheduled_for is null or o.scheduled_for <= (now() at time zone ${which.tz})::date)`
       }
-    order by o.placed_at
+    order by o.placed_at desc
     limit 200`;
   if (rows.length === 0) return [];
+  // the newest 200, oldest first: tickets left open for days never push a new one off the screen
+  rows.reverse();
   const ids = rows.map((r) => r.id);
 
   // the tickets' events and items go out together

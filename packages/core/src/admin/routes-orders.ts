@@ -92,6 +92,9 @@ export function orderListColumns(tx: Sql) {
   `;
 }
 
+const BOARD_ACTIVE_MAX = 300;
+const BOARD_DONE_MAX = 100;
+
 function views(tx: Sql, tenantId: string, ids: { id: string }[]): Promise<OrderView[]> {
   return loadOrderViews(
     tx,
@@ -290,9 +293,12 @@ async function recordRefund(
     }
   }
   const amount = refund.amountCents > 0 ? refund.amountCents : r.amount_cents;
+  // a webhook's reconcile may already have approved this reservation (it sets no provider id):
+  // MP's slower synchronous "pending" never takes that back
   await tx`
     update payment_refunds set provider_refund_id = ${refundId}, amount_cents = ${amount},
-      status = ${refund.status}, updated_at = now()
+      status = case when status = 'approved' then status else ${refund.status} end,
+      updated_at = now()
     where id = ${r.id} and provider_refund_id is null
   `;
   const approved = (
@@ -466,14 +472,21 @@ export function mountOrders(d: AdminDeps) {
       const tz = settings?.tz || 'America/Sao_Paulo';
       // the board's orders (with their views) and the upcoming count go out together
       const [orders, [upcoming]] = await Promise.all([
+        // each part capped on its own, newest kept: a busy day's finished sales (a counter sale
+        // is delivered at once) must never push a new order off the board
         tx<{ id: string }[]>`
-          select id from orders
-          where tenant_id = ${t.id} and (
-            (state = any(${ACTIVE}) and (scheduled_for is null or scheduled_for <= (now() at time zone ${tz})::date))
-            or (state = any(${DONE}) and (updated_at at time zone ${tz})::date = (now() at time zone ${tz})::date)
-          )
+          select id from (
+            (select id, placed_at from orders
+             where tenant_id = ${t.id} and state = any(${ACTIVE})
+               and (scheduled_for is null or scheduled_for <= (now() at time zone ${tz})::date)
+             order by placed_at desc limit ${BOARD_ACTIVE_MAX})
+            union all
+            (select id, placed_at from orders
+             where tenant_id = ${t.id} and state = any(${DONE})
+               and (updated_at at time zone ${tz})::date = (now() at time zone ${tz})::date
+             order by placed_at desc limit ${BOARD_DONE_MAX})
+          ) b
           order by placed_at
-          limit 200
         `.then((ids) => views(tx, t.id, ids)),
         tx<{ n: number }[]>`
           select count(*)::int as n from orders
@@ -503,7 +516,9 @@ export function mountOrders(d: AdminDeps) {
       if ((from && !isDate(from)) || (to && !isDate(to)))
         throw new HttpError(400, 'BAD_REQUEST', 'from/to must be YYYY-MM-DD');
       const before = c.req.query('before');
-      if (before && Number.isNaN(Date.parse(before)))
+      const beforeAt = before ? Date.parse(before) : 0;
+      // postgres refuses years past 9999 (and Date.parse takes ±YYYYYY): a 400, not a 500
+      if (before && !(beforeAt > 0 && beforeAt < Date.UTC(10000, 0, 1)))
         throw new HttpError(400, 'BAD_REQUEST', 'before must be a timestamp');
       const filter = <T extends string>(name: string, allowed: readonly T[]): T | undefined => {
         const v = c.req.query(name);

@@ -611,6 +611,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     const search = await owner('GET', '/search?q=joana');
     expect(search.body.orders).toHaveLength(1);
     expect(search.body.customers[0].phone).toBe('22988887777');
+    // a timestamp past year 9999 parses in JS but not in Postgres
+    expect((await owner('GET', '/orders?before=%2B010000-01-01T00:00:00Z')).status).toBe(400);
+
+    // a busy day: 210 counter sales already delivered must not push a new order off the board
+    const copy = (state: string, from: number, n: number, placed: string) => sql<{ id: string }[]>`
+      insert into orders (tenant_id, number, customer, customer_phone, delivery, payment, state,
+                          subtotal_cents, total_cents, source, placed_at, updated_at)
+      select tenant_id, ${from} + g, customer, customer_phone, delivery, payment, ${state},
+             subtotal_cents, total_cents, 'pdv', now() - ${placed}::interval, now()
+      from orders, generate_series(1, ${n}) g where id = ${orderId}
+      returning id`;
+    await copy('delivered', 90000, 210, '1 hour');
+    const [fresh] = await copy('placed', 91000, 1, '0 seconds');
+    const busy = await owner('GET', '/orders/board');
+    expect(busy.body.orders.map((o: any) => o.id)).toContain(fresh!.id);
+    await sql`delete from orders where tenant_id = ${tenantId} and number >= 90000`;
   });
 
   test('pagamentos: turning a method off stops it at checkout', async () => {
