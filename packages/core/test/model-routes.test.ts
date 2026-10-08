@@ -18,4 +18,38 @@ describe('routesFrom', () => {
       'a/two',
     ]);
   });
+
+  test('anthropic routes run and price claude-haiku-5-5; effort only where it is valid', () => {
+    const setting = {
+      default: {
+        fast: [
+          {
+            provider: 'anthropic',
+            model: 'claude-opus-5',
+            zdr: true,
+            effort: 'high',
+            pricing: { inputPerMTok: 5, outputPerMTok: 25 },
+          },
+          { provider: 'anthropic', model: 'claude-haiku-5-5', zdr: true, effort: 'huge' },
+          { provider: 'openrouter', model: 'a/one', zdr: true, effort: 'high' },
+        ],
+      },
+    } as never;
+    expect(routesFrom(setting, 't', 'vendedor', 'fast')).toEqual([
+      {
+        provider: 'anthropic',
+        model: 'claude-haiku-5-5',
+        zdr: true,
+        effort: 'high',
+        pricing: { inputPerMTok: 0.1, outputPerMTok: 0.5 },
+      },
+      {
+        provider: 'anthropic',
+        model: 'claude-haiku-5-5',
+        zdr: true,
+        pricing: { inputPerMTok: 0.1, outputPerMTok: 0.5 },
+      },
+      { provider: 'openrouter', model: 'a/one', zdr: true },
+    ]);
+  });
 });

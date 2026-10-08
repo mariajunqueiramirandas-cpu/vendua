@@ -20,6 +20,7 @@
     "import:probe": "bun src/modules/menu-import/probe-cli.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.132.1",
     "@openrouter/sdk": "1.3.2",
     "@vendua/agent-runtime": "workspace:*",
     "@vendua/loader": "workspace:*",

@@ -1,3 +1,4 @@
+import { ANTHROPIC_MODEL, EFFORTS, isEffort } from '../platform/anthropic.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
@@ -152,6 +153,8 @@ export async function upsertIntegration(
     throw new HttpError(422, 'BAD_REQUEST', 'config must be an object', { field: 'config' });
   }
   if (kind === 'discord' && input.config) validateDiscordConfig(input.config);
+  if (kind === 'llm' && driver === 'anthropic' && input.config)
+    validateAnthropicConfig(input.config);
   const secretRef =
     input.secretRef === undefined || input.secretRef === null
       ? null
@@ -414,6 +417,16 @@ export async function getPitch(sql: Sql): Promise<Pitch> {
   return { ...DEFAULT_PITCH, ...stored };
 }
 
+// the CRM agent's anthropic driver: the model is fixed, effort is the choice
+function validateAnthropicConfig(config: Record<string, unknown>) {
+  const bad = (field: string, why: string) =>
+    new HttpError(422, 'BAD_REQUEST', `config.${field} ${why}`, { field: `config.${field}` });
+  if (config.model !== undefined && config.model !== ANTHROPIC_MODEL)
+    throw bad('model', `is fixed: anthropic runs ${ANTHROPIC_MODEL} (leave it out)`);
+  if (config.effort !== undefined && !isEffort(config.effort))
+    throw bad('effort', `must be ${EFFORTS.join(' | ')}`);
+}
+
 // ── agent_runtime.routes / agent_runtime.budgets (Agent Runtime v3, read by agent-host/models.ts
 // and agent-host/spend.ts): staff edit them in the CRM's IA hub, so every shape is checked here
 const RUNTIME_KEY = /^[a-z0-9_-]{1,60}$/;
@@ -429,12 +442,23 @@ const plainObject = (v: unknown): v is Record<string, unknown> =>
 function validateRoute(r: unknown, at: string, bad: Bad) {
   if (!plainObject(r)) throw bad(at, 'must be a route object');
   for (const k of Object.keys(r))
-    if (!['provider', 'model', 'zdr', 'endpoint', 'pricing', 'timeoutMs'].includes(k))
+    if (!['provider', 'model', 'zdr', 'endpoint', 'effort', 'pricing', 'timeoutMs'].includes(k))
       throw bad(`${at}.${k}`, 'is not a route field');
   if (!ROUTE_PROVIDERS.includes(r.provider as string))
     throw bad(`${at}.provider`, `must be ${ROUTE_PROVIDERS.join(' | ')}`);
   if (typeof r.model !== 'string' || !ROUTE_MODEL.test(r.model))
     throw bad(`${at}.model`, 'must be 1–200 characters of A–Z a–z 0–9 . _ / : @ -');
+  if (r.provider === 'anthropic') {
+    // models.ts runs and prices every anthropic route as ANTHROPIC_MODEL; say so instead
+    if (r.model !== ANTHROPIC_MODEL)
+      throw bad(`${at}.model`, `is fixed for anthropic: ${ANTHROPIC_MODEL}`);
+    if (r.pricing !== undefined)
+      throw bad(`${at}.pricing`, 'is fixed for anthropic (leave it out)');
+  }
+  if (r.effort !== undefined) {
+    if (r.provider !== 'anthropic') throw bad(`${at}.effort`, 'is only for the anthropic provider');
+    if (!isEffort(r.effort)) throw bad(`${at}.effort`, `must be ${EFFORTS.join(' | ')}`);
+  }
   // a per-route choice since 2026-10-05 (default on in the CRM), but never left implicit
   if (typeof r.zdr !== 'boolean') throw bad(`${at}.zdr`, 'must be true or false');
   if (r.endpoint !== undefined) {

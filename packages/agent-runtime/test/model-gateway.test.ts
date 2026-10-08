@@ -5,7 +5,6 @@ import {
   BudgetExceededError,
   NoRouteError,
   NoZdrRouteError,
-  anthropicAdapter,
   createGateway,
   createPiiVault,
   openAiCompatibleAdapter,
@@ -361,116 +360,6 @@ function fakeFetch(json: unknown, status = 200) {
   };
   return { fetch, calls };
 }
-
-describe('anthropic adapter', () => {
-  test('cache breakpoints, volatile placement and tool mapping', async () => {
-    const { fetch, calls } = fakeFetch({
-      model: 'claude-x',
-      content: [
-        { type: 'text', text: 'Vou buscar.' },
-        { type: 'tool_use', id: 'tu_1', name: 'search', input: { q: 'bolo' } },
-      ],
-      stop_reason: 'tool_use',
-      usage: {
-        input_tokens: 50,
-        output_tokens: 20,
-        cache_read_input_tokens: 4000,
-        cache_creation_input_tokens: 300,
-      },
-    });
-    const adapter = anthropicAdapter({ apiKey: 'k', fetch });
-    const gw = createGateway({ adapters: [adapter], routes: resolver([route('anthropic')]) });
-    const res = await gw.generate(
-      request({
-        system: [
-          { id: 's1', tier: 'static', text: 'S1', cache: true },
-          { id: 's2', tier: 'static', text: 'S2', cache: true },
-          { id: 't1', tier: 'tenant', text: 'T1', cache: true },
-          { id: 'u1', tier: 'subject', text: 'U1', cache: true },
-          { id: 'c1', tier: 'conversation', text: 'C1', cache: false },
-        ],
-        messages: [
-          { role: 'user', parts: [{ type: 'text', text: 'quero bolo' }] },
-          {
-            role: 'assistant',
-            text: '',
-            toolCalls: [{ id: 'c0', name: 'search', args: { q: 'bolo' } }],
-          },
-          { role: 'tool', callId: 'c0', name: 'search', content: '[]', isError: false },
-        ],
-      }),
-    );
-    const { url, init, body } = calls[0]!;
-    expect(url).toBe('https://api.anthropic.com/v1/messages');
-    expect((init.headers as Record<string, string>)['x-api-key']).toBe('k');
-    expect(body.model).toBe('anthropic-m');
-    expect(body.max_tokens).toBe(500);
-    expect(body.system.map((b: any) => Boolean(b.cache_control))).toEqual([
-      false,
-      true,
-      true,
-      true,
-      false,
-    ]);
-    const last = body.messages.at(-1);
-    expect(last.role).toBe('user');
-    expect(last.content).toEqual([
-      {
-        type: 'tool_result',
-        tool_use_id: 'c0',
-        content: '[]',
-        cache_control: { type: 'ephemeral' },
-      },
-      { type: 'text', text: 'AGORA: sexta 10h' },
-    ]);
-    expect(body.messages[1]).toEqual({
-      role: 'assistant',
-      content: [{ type: 'tool_use', id: 'c0', name: 'search', input: { q: 'bolo' } }],
-    });
-    expect(JSON.stringify(body).match(/cache_control/g)).toHaveLength(4);
-    expect(body.tools[0]).toEqual({
-      name: 'search',
-      description: 'busca',
-      input_schema: { type: 'object' },
-    });
-
-    expect(res.finish).toBe('tool_calls');
-    expect(res.toolCalls).toEqual([{ id: 'tu_1', name: 'search', args: { q: 'bolo' } }]);
-    expect(res.usage).toMatchObject({
-      inputTokens: 50,
-      outputTokens: 20,
-      cacheReadTokens: 4000,
-      cacheWriteTokens: 300,
-    });
-  });
-
-  test('volatile becomes its own user turn after an assistant message; errors carry status', async () => {
-    const { fetch, calls } = fakeFetch({ error: { type: 'overloaded_error' } }, 529);
-    const adapter = anthropicAdapter({ apiKey: 'k', fetch });
-    const err = await adapter
-      .generate(
-        {
-          model: 'm',
-          system: [],
-          messages: [{ role: 'assistant', text: 'Oi!', toolCalls: [] }],
-          volatile: 'AGORA',
-          tools: [],
-          maxTokens: 10,
-        },
-        new AbortController().signal,
-      )
-      .catch((e: unknown) => e);
-    expect(calls[0]!.body.messages).toEqual([
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'Oi!', cache_control: { type: 'ephemeral' } }],
-      },
-      { role: 'user', content: [{ type: 'text', text: 'AGORA' }] },
-    ]);
-    expect(calls[0]!.body.system).toBeUndefined();
-    expect(err).toMatchObject({ status: 529, retryable: true });
-  });
-});
 
 describe('openai-compatible adapter', () => {
   test('request shape and parse of tool calls and usage', async () => {

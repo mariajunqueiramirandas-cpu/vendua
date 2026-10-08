@@ -17,8 +17,18 @@ export type Driver = {
     hint?: string;
     /** stored as a JSON number — the driver reads `typeof config.x === 'number'` */
     number?: boolean;
+    /** shown, never sent: the driver always uses the placeholder (Core rejects any other value) */
+    locked?: boolean;
+    /** a choice among these values instead of free text; the placeholder is the default */
+    options?: readonly (readonly [value: string, label: string])[];
   }[];
 };
+
+/** the config a save sends: locked fields are the driver's, not the row's */
+export function configOut(drv: Driver | undefined, config: Record<string, string | number>) {
+  const locked = new Set(drv?.fields?.filter((f) => f.locked).map((f) => f.key));
+  return Object.fromEntries(Object.entries(config).filter(([k]) => !locked.has(k)));
+}
 
 export type Kind = { key: string; label: string; sub: string; drivers: Driver[] };
 
@@ -59,7 +69,28 @@ export const KINDS: Kind[] = [
         hint: 'direto na API da Anthropic',
         secret: true,
         secretName: 'ANTHROPIC_API_KEY',
-        fields: [{ key: 'model', label: 'modelo', placeholder: 'claude-sonnet-4-5' }],
+        fields: [
+          {
+            key: 'model',
+            label: 'modelo',
+            placeholder: 'claude-haiku-5-5',
+            locked: true,
+            hint: 'fixo: toda chamada direta à Anthropic usa este modelo',
+          },
+          {
+            key: 'effort',
+            label: 'esforço',
+            placeholder: 'medium',
+            options: [
+              ['low', 'baixo'],
+              ['medium', 'médio'],
+              ['high', 'alto'],
+              ['xhigh', 'extra'],
+              ['max', 'máximo'],
+            ],
+            hint: 'quanto o modelo pensa antes de responder: mais esforço, mais tokens e mais demora',
+          },
+        ],
       },
       {
         d: 'openai',

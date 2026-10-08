@@ -95,7 +95,8 @@ export class BudgetExceededError extends Error {
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
-function retryAfterMs(headers: Headers): number | undefined {
+/** A Retry-After header (seconds or an HTTP date) in ms, capped at 90 s. */
+export function retryAfterMs(headers: Headers): number | undefined {
   const raw = headers.get('retry-after');
   if (!raw) return undefined;
   const secs = Number(raw);
@@ -362,6 +363,7 @@ export function createGateway(opts: GatewayOpts): ModelGateway {
                 model: route.model,
                 zdr: route.zdr === true,
                 ...(route.endpoint ? { endpoint: route.endpoint } : {}),
+                ...(route.effort ? { effort: route.effort } : {}),
               },
               gen,
             );

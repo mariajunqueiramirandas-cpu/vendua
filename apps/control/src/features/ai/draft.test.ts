@@ -138,3 +138,55 @@ describe('endpoint on a route', () => {
     expect(routePaths(d).has('default.fast.0.endpoint')).toBe(true);
   });
 });
+
+describe('anthropic routes', () => {
+  test('a route saved before the lock loads and saves as claude-haiku-5-5, without a price', () => {
+    const d = routesFromView({
+      default: {
+        fast: [
+          {
+            provider: 'anthropic',
+            model: 'claude-opus-5',
+            zdr: false,
+            effort: 'high',
+            pricing: { inputPerMTok: 5, outputPerMTok: 25 },
+            timeoutMs: 30_000,
+          },
+        ],
+      },
+    });
+    expect(d.default.fast[0]).toMatchObject({
+      model: 'claude-haiku-5-5',
+      effort: 'high',
+      inputPerMTok: '',
+    });
+    expect(routesOut(d)).toEqual({
+      default: {
+        fast: [
+          {
+            provider: 'anthropic',
+            model: 'claude-haiku-5-5',
+            zdr: false,
+            effort: 'high',
+            timeoutMs: 30_000,
+          },
+        ],
+      },
+    });
+    expect(validateRoutes(d)).toEqual({});
+  });
+
+  test('switching to anthropic fills the model; effort is anthropic-only', () => {
+    const r = withProvider({ ...emptyRoute(), provider: 'openrouter', model: 'm/x' }, 'anthropic');
+    expect([r.model, r.effort]).toEqual(['claude-haiku-5-5', '']);
+    const d = routesFromView({});
+    d.default.fast = [r];
+    // no effort chosen: Core's default (medium) applies
+    expect(routesOut(d).default.fast[0]).not.toHaveProperty('effort');
+    d.default.fast = [{ ...r, provider: 'openrouter', model: 'm/x', effort: 'low' }];
+    expect(validateRoutes(d)['default.fast.0.effort']).toBeDefined();
+    d.default.fast = [{ ...r, effort: 'turbo' }];
+    expect(validateRoutes(d)['default.fast.0.effort']).toBeDefined();
+    expect(routePaths(d).has('default.fast.0.effort')).toBe(true);
+  });
+});

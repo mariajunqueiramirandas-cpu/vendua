@@ -1525,6 +1525,7 @@ export interface CustomerDetail {
 
 export type ModelTier = 'fast' | 'strong';
 export type ModelProviderId = 'anthropic' | 'openrouter' | 'openai' | 'gemini';
+export type ModelEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export interface ModelRouteSetting {
   provider: ModelProviderId;
   model: string;
@@ -1533,6 +1534,9 @@ export interface ModelRouteSetting {
   /** OpenRouter only: pin this endpoint's tag (`deepinfra/turbo`), no OpenRouter fallbacks;
    *  absent = OpenRouter's own routing */
   endpoint?: string;
+  /** Anthropic only: how much the model reasons before answering; absent = medium */
+  effort?: ModelEffort;
+  /** not on Anthropic routes: Core prices them as the model it locks them to */
   pricing?: {
     inputPerMTok: number;
     outputPerMTok: number;

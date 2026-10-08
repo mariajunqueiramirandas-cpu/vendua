@@ -1,5 +1,4 @@
 import {
-  anthropicAdapter,
   createGateway,
   openAiCompatibleAdapter,
   type ModelGateway,
@@ -9,14 +8,16 @@ import {
   type Tier,
 } from '@vendua/agent-runtime';
 import { controlTx } from '../modules/control.ts';
+import { ANTHROPIC_MODEL, ANTHROPIC_PRICING, isEffort } from '../platform/anthropic.ts';
 import type { Sql } from '../platform/db.ts';
+import { anthropicAdapter } from './anthropic.ts';
 
 /**
  * Model routes, set by staff in `control_settings` key `agent_runtime.routes`:
  *   { "default": { "fast": [route…], "strong": [route…] },
  *     "agents":  { "<agentId>": { "fast": […] } },
  *     "tenants": { "<tenantId>": { "strong": […] } } }
- * a route is { provider, model, zdr, endpoint?, pricing?, timeoutMs? }. The most specific list wins. `zdr`
+ * a route is { provider, model, zdr, endpoint?, effort?, pricing?, timeoutMs? }. The most specific list wins. `zdr`
  * (zero data retention) is staff's per-route choice since 2026-10-05 (default on in the CRM):
  * OpenRouter enforces it per request when on; on a direct provider it's the account's contract.
  * With no setting, `AGENT_MODEL_ROUTES` (same JSON) is the fallback.
@@ -41,16 +42,28 @@ export function routesFrom(
     setting.agents?.[agentId]?.[tier] ??
     setting.default?.[tier] ??
     []
-  ).filter(
-    (r) =>
-      r &&
-      typeof r.provider === 'string' &&
-      typeof r.model === 'string' &&
-      // AGENT_MODEL_ROUTES never goes through validateSetting: a route that doesn't say whether
-      // it wants zero retention isn't guessed at
-      typeof r.zdr === 'boolean' &&
-      (r.endpoint === undefined || typeof r.endpoint === 'string'),
-  );
+  )
+    .filter(
+      (r) =>
+        r &&
+        typeof r.provider === 'string' &&
+        typeof r.model === 'string' &&
+        // AGENT_MODEL_ROUTES never goes through validateSetting: a route that doesn't say whether
+        // it wants zero retention isn't guessed at
+        typeof r.zdr === 'boolean' &&
+        (r.endpoint === undefined || typeof r.endpoint === 'string'),
+    )
+    .map((r) => {
+      const { effort, ...rest } = r;
+      if (r.provider !== 'anthropic') return rest;
+      // the adapter runs ANTHROPIC_MODEL whatever the route says: price the estimate by it too
+      return {
+        ...rest,
+        model: ANTHROPIC_MODEL,
+        pricing: ANTHROPIC_PRICING,
+        ...(isEffort(effort) ? { effort } : {}),
+      };
+    });
 }
 
 export function settingRoutes(sql: Sql): RouteResolver {

@@ -1,15 +1,23 @@
 import { useId, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, ShieldAlert, Trash2 } from 'lucide-react';
-import { ApiError, type DirectProviderId, type ModelProviderId } from '@/lib/api.ts';
+import { ArrowDown, ArrowUp, ChevronDown, Lock, ShieldAlert, Trash2 } from 'lucide-react';
+import {
+  ApiError,
+  type DirectProviderId,
+  type ModelEffort,
+  type ModelProviderId,
+} from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { rel } from '@/lib/format.ts';
 import { Button } from '@/components/ui/button.tsx';
-import { Switch } from '@/components/ui/controls.tsx';
+import { Segmented, Switch } from '@/components/ui/controls.tsx';
 import { Input, Select } from '@/components/ui/input.tsx';
 import {
+  ANTHROPIC_MODEL,
   bestValueEndpoint,
   catalogOptions,
+  DEFAULT_EFFORT,
   DIRECT,
+  EFFORTS,
   endpointAllowed,
   PRICE_FIELDS,
   priceDrifted,
@@ -37,6 +45,14 @@ const PRICE_LABEL: Record<PriceField, string> = {
   outputPerMTok: 'saída',
   cacheReadPerMTok: 'cache, leitura',
   cacheWritePerMTok: 'cache, escrita',
+};
+
+const EFFORT_LABEL: Record<ModelEffort, string> = {
+  low: 'baixo',
+  medium: 'médio',
+  high: 'alto',
+  xhigh: 'extra',
+  max: 'máximo',
 };
 
 const isDirect = (p: string) => DIRECT.includes(p as DirectProviderId);
@@ -80,6 +96,66 @@ function ZdrSwitch({
   );
 }
 
+/** Anthropic routes: Core runs every call on ANTHROPIC_MODEL, so the id is shown, not picked. */
+function LockedModel() {
+  return (
+    <div className="relative" title="toda chamada direta à Anthropic usa este modelo">
+      <Input
+        readOnly
+        value={ANTHROPIC_MODEL}
+        aria-label="modelo (fixo)"
+        className="bg-secondary pr-14 font-mono text-[13px] shadow-none md:text-xs"
+      />
+      <span className="pointer-events-none absolute top-1/2 right-2.5 flex -translate-y-1/2 items-center gap-1 text-xs text-muted-foreground">
+        <Lock className="size-3" aria-hidden />
+        fixo
+      </span>
+    </div>
+  );
+}
+
+function EffortField({
+  value,
+  error,
+  onChange,
+}: {
+  value: string;
+  error: string | undefined;
+  onChange: (v: ModelEffort) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2.5">
+        <span className="text-xs font-medium" aria-hidden>
+          esforço
+        </span>
+        <div className="no-scrollbar -mx-1 overflow-x-auto px-1">
+          <Segmented
+            size="sm"
+            label="esforço"
+            value={(value || DEFAULT_EFFORT) as ModelEffort}
+            onChange={onChange}
+            options={EFFORTS.map(
+              (e) =>
+                [
+                  e,
+                  <span key={e} title={e}>
+                    {EFFORT_LABEL[e]}
+                  </span>,
+                ] as const,
+            )}
+          />
+        </div>
+      </div>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        quanto o modelo pensa antes de responder: mais esforço, respostas mais cuidadosas, com mais
+        tokens e mais demora. Sem escolha, médio.
+      </p>
+      <FieldMsg>{error}</FieldMsg>
+    </div>
+  );
+}
+
 function pickerFooter(provider: string, zdr: boolean, opts: ModelOption[], fetchedAt: string) {
   const n = opts.length;
   if (provider === 'openrouter')
@@ -118,6 +194,7 @@ export function RouteRow({
     model: useFieldError('routes', `${path}.model`),
     zdr: useFieldError('routes', `${path}.zdr`),
     endpoint: useFieldError('routes', `${path}.endpoint`),
+    effort: useFieldError('routes', `${path}.effort`),
     pricing: useFieldError('routes', `${path}.pricing`),
     timeout: useFieldError('routes', `${path}.timeoutMs`),
     inputPerMTok: useFieldError('routes', `${path}.pricing.inputPerMTok`),
@@ -133,6 +210,7 @@ export function RouteRow({
   const set = (patch: Partial<RouteDraft>) => onChange({ ...r, ...patch });
   const known = PROVIDERS.includes(r.provider as ModelProviderId);
   const viaOpenRouter = r.provider === 'openrouter';
+  const locked = r.provider === 'anthropic';
   const catalogQ = useAiCatalog();
   const catalog = known ? catalogQ.data : undefined;
   const options = useMemo(
@@ -161,9 +239,10 @@ export function RouteRow({
   const priced = r.inputPerMTok.trim() || r.outputPerMTok.trim();
   const timeout = r.timeoutS.trim() ? `tempo limite ${r.timeoutS} s` : 'tempo limite padrão';
   // with a catalog pick the price line sits under the model; the toggle only says what's inside
-  const summary = picked
-    ? timeout
-    : [priced ? fmtPricePair(r.inputPerMTok, r.outputPerMTok) : 'sem preço', timeout].join(', ');
+  const summary =
+    picked || locked
+      ? timeout
+      : [priced ? fmtPricePair(r.inputPerMTok, r.outputPerMTok) : 'sem preço', timeout].join(', ');
 
   return (
     <li
@@ -228,6 +307,8 @@ export function RouteRow({
             <div className="flex h-10 items-center rounded-md border border-dashed px-2.5 text-xs text-muted-foreground md:h-8">
               escolha o provedor primeiro
             </div>
+          ) : locked ? (
+            <LockedModel />
           ) : catalog && options ? (
             <ModelPicker
               options={options}
@@ -272,7 +353,9 @@ export function RouteRow({
         {picked && (
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground tnum">
             <span>
-              {fmtPricePair(r.inputPerMTok, r.outputPerMTok)}
+              {locked
+                ? fmtPricePair(picked.pricing.inputPerMTok, picked.pricing.outputPerMTok)
+                : fmtPricePair(r.inputPerMTok, r.outputPerMTok)}
               {picked.contextLength ? ` · ${fmtContext(picked.contextLength)} de contexto` : ''}
               {picked.zdrProviders
                 ? ` · ${picked.zdrProviders} ${picked.zdrProviders === 1 ? 'provedor' : 'provedores'} com retenção zero`
@@ -280,6 +363,9 @@ export function RouteRow({
             </span>
             {!picked.verified && <UnverifiedMark />}
           </p>
+        )}
+        {locked && (
+          <EffortField value={r.effort} error={err.effort} onChange={(v) => set({ effort: v })} />
         )}
         {viaOpenRouter && model && !gone && !endpointsMissing && (
           <div className="flex flex-col gap-1">
@@ -411,13 +497,15 @@ export function RouteRow({
           <ChevronDown
             className={cn('size-3.5 shrink-0 transition-transform', !showExtras && '-rotate-90')}
           />
-          <span className="shrink-0 font-medium whitespace-nowrap">preço e tempo limite</span>
+          <span className="shrink-0 font-medium whitespace-nowrap">
+            {locked ? 'tempo limite' : 'preço e tempo limite'}
+          </span>
           {!showExtras && <span className="truncate tnum">{summary}</span>}
         </button>
         {showExtras && (
           <div className="flex flex-col gap-2">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-              {PRICE_FIELDS.map((f) => (
+              {(locked ? [] : PRICE_FIELDS).map((f) => (
                 <NumField
                   key={f}
                   label={PRICE_LABEL[f]}
@@ -437,11 +525,17 @@ export function RouteRow({
             </div>
             <FieldMsg>{err.pricing}</FieldMsg>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              {viaOpenRouter
-                ? 'Preço em US$ por 1 milhão de tokens, preenchido ao escolher o modelo. O gasto registrado é o que a OpenRouter informa em cada chamada; este preço serve para estimar o gasto antes da chamada e caso ela não informe.'
-                : 'Preço em US$ por 1 milhão de tokens: vem da lista ao escolher o modelo; para um id digitado, preencha à mão. Vale quando o provedor não informa o custo e para estimar o gasto antes de cada chamada; sem preço, essas chamadas contam zero no orçamento.'}{' '}
-              Cache vazio usa 10% (leitura) e 125% (escrita) do preço de entrada. Tempo limite vazio
-              usa o padrão do servidor.
+              {locked ? (
+                `O gasto sai do preço de tabela do ${ANTHROPIC_MODEL}, calculado pelo servidor. Tempo limite vazio usa o padrão do servidor.`
+              ) : (
+                <>
+                  {viaOpenRouter
+                    ? 'Preço em US$ por 1 milhão de tokens, preenchido ao escolher o modelo. O gasto registrado é o que a OpenRouter informa em cada chamada; este preço serve para estimar o gasto antes da chamada e caso ela não informe.'
+                    : 'Preço em US$ por 1 milhão de tokens: vem da lista ao escolher o modelo; para um id digitado, preencha à mão. Vale quando o provedor não informa o custo e para estimar o gasto antes de cada chamada; sem preço, essas chamadas contam zero no orçamento.'}{' '}
+                  Cache vazio usa 10% (leitura) e 125% (escrita) do preço de entrada. Tempo limite
+                  vazio usa o padrão do servidor.
+                </>
+              )}
             </p>
           </div>
         )}
