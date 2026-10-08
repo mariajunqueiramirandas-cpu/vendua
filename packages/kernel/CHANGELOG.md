@@ -22,6 +22,8 @@ Checkout and product-page fixes — additive; no storefront edit.
 - `api.product(slug)` encodes the slug as one path segment.
 - A font source's `weight`/`style` that `validateTokens` would refuse is dropped from the
   `@font-face` rule, never written raw.
+- `ERROR_CODES` and `ERROR_COPY` gain `CART_FULL` (a bag holds at most 50 lines) and
+  `ORDER_TOO_LARGE` (an order over Core's ceiling).
 
 ## 1.22.1
 

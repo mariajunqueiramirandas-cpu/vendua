@@ -1771,6 +1771,9 @@ export const ERROR_CODES = [
   'TABLE_ORDERS_OFF',
   'TABLE_ORDERS_PENDING',
   'TABLE_BUSY',
+  // Kernel 1.23 — a bag holds at most 50 lines; an order over Core's ceiling (R$ 10 mi)
+  'CART_FULL',
+  'ORDER_TOO_LARGE',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
