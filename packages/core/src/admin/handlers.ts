@@ -48,6 +48,11 @@ function replayContext(r: Replay): Context {
   return { req, [REPLAY]: r } as unknown as Context;
 }
 
+/** Whether the handler runs as a Copilot replay (a card applied or dry-run), not an HTTP request. */
+export function isReplay(c: Context): boolean {
+  return REPLAY in (c as object);
+}
+
 /** The request's JSON body, or a replay's: what a handler Copilot can run reads instead of bodyJson. */
 export async function bodyOf(c: Context, max?: number): Promise<Record<string, unknown>> {
   const r = (c as unknown as { [REPLAY]?: Replay })[REPLAY];

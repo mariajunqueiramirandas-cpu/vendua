@@ -23,7 +23,7 @@ import { refused, todayIn, who, type Ctx } from './shared.ts';
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-async function propose(ctx: Ctx, kind: ActionKind, input: unknown) {
+export async function propose(ctx: Ctx, kind: ActionKind, input: unknown) {
   const w = await who(ctx);
   try {
     const p = await proposeTx(ctx.tx, {

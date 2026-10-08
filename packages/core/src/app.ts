@@ -226,6 +226,7 @@ import type { MerchantNotify } from './admin/context.ts';
 import { platformNotify } from './admin/notify.ts';
 import { fleetDeps, type FleetDeps } from './modules/fleet/deps.ts';
 import { mountFleet } from './modules/fleet/routes.ts';
+import { mountSiteBuilder } from './modules/site-builder/routes.ts';
 import { domainProvidersFromEnv } from './modules/domains/config.ts';
 import type { DomainProviders } from './modules/domains/providers.ts';
 import { mountDomainRoutes } from './modules/domains/routes.ts';
@@ -3114,19 +3115,16 @@ export function createApp({
   });
   mountImportsControl({ app, sql, controlGate });
   mountDiscord({ app, sql, controlGate, kickDrain, fetch: discordFetch });
-  mountFleet({
-    app,
-    sql,
-    controlGate,
-    deps:
-      fleet ??
-      fleetDeps(sql, {
-        storeDomain: publicStoreDomain,
-        adminHost: adminDomain ?? null,
-        notify: merchantNotify,
-      }),
-    edgeSecret,
-  });
+  const fleetD =
+    fleet ??
+    fleetDeps(sql, {
+      storeDomain: publicStoreDomain,
+      adminHost: adminDomain ?? null,
+      notify: merchantNotify,
+    });
+  mountFleet({ app, sql, controlGate, deps: fleetD, edgeSecret });
+  // site sob medida: the CRM's queue and GitHub's webhook (signed, so no controlGate)
+  mountSiteBuilder({ app, sql, controlGate, deps: fleetD.site });
   mountDomainRoutes({ app, sql, controlGate, syncSecret });
 
   mountStorefrontPlatform({

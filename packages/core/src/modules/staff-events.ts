@@ -56,6 +56,7 @@ export type Severity = (typeof SEVERITIES)[number];
 type Id = string;
 type Name = string;
 type Opt<T> = T | null;
+type SiteKind = 'generate' | 'revision';
 
 export type OrderStep =
   | 'paid'
@@ -137,6 +138,13 @@ export interface StaffEventMap {
     contact: Opt<string>;
   };
   'store.request': { storeName: Name; title: string; detail: Opt<string> };
+  // site sob medida (the site builder): one task's way from Duá's card to the store's site
+  'site.task_queued': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; dueAt: string };
+  'site.ready': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; prUrl: Opt<string> };
+  'site.escalated': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; reason: string };
+  'site.due_soon': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; dueAt: string };
+  'site.overdue': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; dueAt: string };
+  'site.delivered': { storeName: Name; slug: string; taskId: Id; kind: SiteKind };
   'billing.manual': {
     storeName: Name;
     invoiceId: Id;
@@ -441,6 +449,48 @@ export const STAFF_EVENT_KINDS: Catalog = {
     severity: 'info',
     label: 'pedido de uma loja',
     hint: 'site sob medida e outros pedidos que a equipe atende',
+  },
+  'site.task_queued': {
+    category: 'atendimento',
+    level: 'normal',
+    severity: 'info',
+    label: 'site sob medida na fila',
+    hint: 'o lojista aplicou o cartão do Duá: o site (ou o ajuste) começou a ser feito',
+  },
+  'site.ready': {
+    category: 'atendimento',
+    level: 'ping',
+    severity: 'info',
+    label: 'site sob medida para aprovar',
+    hint: 'o PR ficou verde — aprove no CRM para publicar',
+  },
+  'site.escalated': {
+    category: 'atendimento',
+    level: 'ping',
+    severity: 'warning',
+    label: 'site sob medida travou',
+    hint: 'o disparo falhou, o CI não ficou verde ou o PR fechou — a equipe assume',
+  },
+  'site.due_soon': {
+    category: 'atendimento',
+    level: 'ping',
+    severity: 'warning',
+    label: 'site sob medida perto do prazo',
+    hint: 'faltam menos de 8 horas para o prazo de 1 dia',
+  },
+  'site.overdue': {
+    category: 'atendimento',
+    level: 'ping',
+    severity: 'critical',
+    label: 'site sob medida atrasado',
+    hint: 'o prazo de 1 dia passou e o site não está no ar',
+  },
+  'site.delivered': {
+    category: 'atendimento',
+    level: 'normal',
+    severity: 'success',
+    label: 'site sob medida no ar',
+    hint: 'o design do PR aprovado foi publicado na loja',
   },
   'billing.manual': {
     category: 'atendimento',
