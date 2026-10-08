@@ -185,8 +185,10 @@ Once, before the `*` record goes DNS only:
    still asks for it. Remove any `<slug>.vendua.com.br` entry from the Domains UI first, or its
    router asks for the certificate again. Then, from the VPS:
    `docker exec <domains-sync container> bun src/prune-acme.ts` lists the per-store certificates
-   (`painel.`/`crm.` in `DOMAINS_SYNC_DENY`, the apex and other domains stay); `--write` removes
-   them, keeping `acme.json.bak-<time>`; then `docker restart dokploy-traefik`.
+   (`painel.`/`crm.` in `DOMAINS_SYNC_DENY`, the apex and other domains stay). Traefik rewrites
+   `acme.json` from memory on every issue or renewal and would put them back, so stop it around
+   the write (a few seconds of downtime): `docker stop dokploy-traefik`, the same command with
+   `--write` (it keeps `acme.json.bak-<time>`), `docker start dokploy-traefik`.
 
 ### Own domains
 

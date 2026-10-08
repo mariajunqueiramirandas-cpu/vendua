@@ -3,8 +3,12 @@
 // SNI match before a wildcard and loads every stored certificate whether or not a router still
 // asks for it, so those leftovers hide the `*.<store domain>` certificate until removed.
 //
+// Traefik rewrites acme.json from memory on every issue or renewal, so it is stopped around the
+// write (domains-sync keeps running: its mount is the host directory):
 //   docker exec <domains-sync container> bun src/prune-acme.ts            # dry run
-//   docker exec <domains-sync container> bun src/prune-acme.ts --write    # then restart Traefik
+//   docker stop dokploy-traefik
+//   docker exec <domains-sync container> bun src/prune-acme.ts --write
+//   docker start dokploy-traefik
 import { chmod, readFile, rename, writeFile } from 'node:fs/promises';
 
 interface AcmeCert {
@@ -66,6 +70,6 @@ if (import.meta.main) {
     await writeFile(`${file}.tmp`, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
     await chmod(`${file}.tmp`, 0o600);
     await rename(`${file}.tmp`, file);
-    console.log(`backup at ${backup}; restart Traefik now so it reloads ${file}`);
+    console.log(`backup at ${backup}; start Traefik again`);
   }
 }
