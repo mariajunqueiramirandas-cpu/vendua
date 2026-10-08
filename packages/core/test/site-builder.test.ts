@@ -886,6 +886,20 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
     await mergeApproved(d);
     expect(merges.length).toBe(before);
     expect((await taskOf(s.id)).status).toBe('approved');
+
+    // the label event's later run skips check and conformance: it doesn't hide the green ones
+    await sql`update site_tasks set status = 'pr_open', ci = 'success' where id = ${task.id}`;
+    checks.set(sha, [
+      { id: 1, name: 'check', status: 'completed', conclusion: 'success' },
+      { id: 2, name: 'conformance', status: 'completed', conclusion: 'success' },
+      { id: 5, name: 'check', status: 'completed', conclusion: 'skipped' },
+      { id: 6, name: 'conformance', status: 'completed', conclusion: 'skipped' },
+      { id: 7, name: 'storefront-isolation', status: 'completed', conclusion: 'success' },
+    ]);
+    expect((await ctl('POST', `/control/v1/site-tasks/${task.id}/approve`)).status).toBe(200);
+    await mergeApproved(d);
+    expect(merges.length).toBe(before + 1);
+    expect((await taskOf(s.id)).status).not.toBe('pr_open');
   });
 
   test('slugs that look like suffixes get distinct branches', async () => {

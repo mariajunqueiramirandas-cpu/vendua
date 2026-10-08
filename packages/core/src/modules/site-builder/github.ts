@@ -44,9 +44,13 @@ export const REQUIRED_CHECKS = ['check', 'conformance'] as const;
  *  required ones green. Null = mergeable; otherwise why not, and whether it is still running. */
 export function checksVerdict(runs: CheckRun[]): { reason: string; pending: boolean } | null {
   const latest = new Map<string, CheckRun>();
+  // the label event's run skips every required job (ci.yml) and comes after the PR's own run:
+  // a skipped run never hides one that ran
+  const skipped = (r: CheckRun) => r.conclusion === 'skipped';
   for (const r of runs) {
     const cur = latest.get(r.name);
-    if (!cur || r.id > cur.id) latest.set(r.name, r);
+    if (!cur || (skipped(cur) && !skipped(r)) || (skipped(cur) === skipped(r) && r.id > cur.id))
+      latest.set(r.name, r);
   }
   const running = [...latest.values()].filter((r) => r.status !== 'completed');
   if (running.length)
