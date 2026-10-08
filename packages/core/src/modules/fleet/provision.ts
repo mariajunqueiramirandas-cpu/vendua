@@ -1,6 +1,7 @@
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { platformHost, storeOrigin } from '../../platform/store-origin.ts';
+import { phoneVariants } from '../../store-whatsapp/text.ts';
 import { controlTx } from '../control.ts';
 import { emitControlEvent } from '../control-events.ts';
 import { addActivity } from '../activities.ts';
@@ -93,17 +94,20 @@ async function factsTx(tx: Sql, d: FleetDeps, tenantId: string): Promise<StoreFa
   };
 }
 
-/** A self-serve signup whose phone or email is already a lead graduates that lead. */
+/** A self-serve signup whose phone is already a lead graduates that lead. Only the phone: signup
+ *  proved it with a code, while its email is whatever was typed (anyone's lead could be taken). */
 async function linkLeadTx(tx: Sql, p: ProvisioningRow, f: StoreFacts): Promise<string | null> {
   if (p.lead_id || !f.owner) return p.lead_id;
   const digits = f.owner.phone.replace(/\D/g, '');
+  if (digits.length < 10) return null;
+  // either 9th-digit spelling, against the lead's phone or its WhatsApp (stored +55…)
   const lead = (
     await tx<{ id: string }[]>`
-      select id from leads
-      where tenant_id is null and archived_at is null and (
-        (length(${digits}) >= 10
-          and right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), length(${digits})) = ${digits})
-        or (${f.owner.email ?? ''} <> '' and lower(email) = lower(${f.owner.email ?? ''})))
+      select id from leads l
+      where tenant_id is null and archived_at is null and exists (
+        select 1 from unnest(${phoneVariants(digits)}::text[]) v
+        where right(regexp_replace(coalesce(l.phone, ''), '\\D', '', 'g'), length(v)) = v
+           or right(regexp_replace(coalesce(l.whatsapp, ''), '\\D', '', 'g'), length(v)) = v)
       order by updated_at desc limit 1
     `
   )[0];

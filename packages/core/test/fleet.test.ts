@@ -679,6 +679,41 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
     const l = (await sql<{ state: string }[]>`select state from leads where id = ${lead}`)[0]!;
     expect(l.state).toBe('live');
 
+    // the email typed at signup proves nothing: a lead known only by it stays in the pipeline
+    const ana = (
+      await sql<{ id: string }[]>`
+        insert into leads (name, phone, email, state)
+        values ('Dona Ana', '+5521911112222', ${`ana@${nonce}.test`}, 'lead') returning id
+      `
+    )[0]!.id;
+    const slug2 = `fs2-${nonce}`;
+    const t2 = (
+      await sql<{ id: string }[]>`
+        select provision_store(${slug2}, 'Outra Loja', 'mirim', ${`${slug2}.${storeDomain}`},
+                               'Alguém', ${`219${String(Date.now() + 7).slice(-8)}`},
+                               ${`ana@${nonce}.test`}) as id
+      `
+    )[0]!.id;
+    created.push(t2);
+    await sql`update storefront_ops set bundle = ${bundle} where tenant_id = ${t2}`;
+    const p2 = (
+      await sql<{ id: string }[]>`select id from provisionings where tenant_id = ${t2}`
+    )[0]!;
+    await advance(d, p2.id);
+    await waitFor(async () =>
+      Boolean((await sql`select 1 from provisionings where id = ${p2.id} and state = 'live'`)[0]),
+    );
+    expect(
+      (
+        await sql<
+          { lead_id: string | null }[]
+        >`select lead_id from provisionings where id = ${p2.id}`
+      )[0]!.lead_id,
+    ).toBeNull();
+    expect(
+      (await sql<{ state: string }[]>`select state from leads where id = ${ana}`)[0]!.state,
+    ).toBe('lead');
+
     // the 10-argument form is staff-only
     const denied = await sql`
       select provision_store('x-denied', 'X', 'mirim', 'x-denied.test', 'X', '11999990000',
