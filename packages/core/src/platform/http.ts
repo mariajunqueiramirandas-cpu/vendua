@@ -106,9 +106,10 @@ export function tenantMiddleware(
   };
 }
 
-/** Constant-time string compare; hashing first hides the length too. */
+/** Constant-time string compare; hashing first hides the length too. An empty expected value
+ *  matches nothing (an unset secret must never open a gate to an empty header). */
 export function constantTimeEqual(a: string | undefined | null, b: string): boolean {
-  if (a == null) return false;
+  if (a == null || !b) return false;
   const ha = createHash('sha256').update(a).digest();
   const hb = createHash('sha256').update(b).digest();
   return timingSafeEqual(ha, hb) && a.length === b.length;

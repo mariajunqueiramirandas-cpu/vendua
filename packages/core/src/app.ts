@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { planHas } from './modules/billing/plans.ts';
 import { signupReadiness, type SignupReadiness } from './modules/billing/signup-gate.ts';
 import { agentSettingTx, automationAllowedTx, explainAutonomyTx } from './agent/policy.ts';
@@ -1279,7 +1279,7 @@ export function createApp({
   // /control/v1: staff-gated internal surface — X-Vendua-Control key or
   // vendua_control cookie; 404 (not 401) keeps it invisible to scans.
   const CONTROL_COOKIE = 'vendua_control';
-  const staffSecret = controlSecret ?? sessionSecret;
+  const staffSecret = controlSecret || sessionSecret;
   const controlIpFlags = {
     trustForwardedFor: trustProxy,
     proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
@@ -2887,13 +2887,9 @@ export function createApp({
   const webhookSecret =
     process.env.VENDUA_WEBHOOK_SECRET ||
     createHmac('sha256', staffSecret).update('vendua.webhook').digest('hex');
-  // Constant-time compare — a leaked timing delta would make the shared
-  // secret byte-by-byte guessable.
-  const webhookSecretBytes = Buffer.from(webhookSecret, 'utf8');
-  const webhookSecretOk = (h: string | undefined) =>
-    h != null &&
-    h.length === webhookSecret.length &&
-    timingSafeEqual(Buffer.from(h, 'utf8'), webhookSecretBytes);
+  // Constant-time compare of digests: no timing delta, no length leak, and a multi-byte header
+  // of the right character count can't make timingSafeEqual throw (a 500)
+  const webhookSecretOk = (h: string | undefined) => constantTimeEqual(h, webhookSecret);
   // Cap inbound — an accepted message writes rows and launches an LLM run.
   let webhookBucket = { count: 0, resetAt: 0 };
   app.post('/control/v1/webhooks/:channel', async (c) => {

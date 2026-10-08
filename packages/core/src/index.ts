@@ -52,7 +52,8 @@ const migrationUrl =
 const port = Number(process.env.PORT ?? 8787);
 // SESSION_SECRET signs cart session tokens and is the dev fallback for the control
 // gate — deployments must set it. CONTROL_SECRET is the staff key for /control/v1.
-const sessionSecret = process.env.SESSION_SECRET ?? crypto.randomUUID();
+// an empty value counts as unset: an empty HMAC key or staff key is no secret at all
+const sessionSecret = process.env.SESSION_SECRET || crypto.randomUUID();
 if (!process.env.SESSION_SECRET) {
   log.warn(
     'SESSION_SECRET unset — using a random per-boot secret. Sessions do not survive restarts and replicas disagree; set SESSION_SECRET in any shared environment.',
@@ -99,7 +100,7 @@ void readCache.ready();
 const app = createApp({
   sql,
   sessionSecret,
-  controlSecret: process.env.CONTROL_SECRET,
+  controlSecret: process.env.CONTROL_SECRET || undefined,
   adminHub,
   paymentProvider,
   notify,
@@ -151,7 +152,7 @@ const stopPushNotifier = startPushNotifier(jobsSql, adminHub);
 const stopAdminSweeper = startAdminSweeper(jobsSql, { notify, adminOrigin });
 
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
-setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
+setBookingSecret(process.env.CONTROL_SECRET || sessionSecret);
 
 // Scheduler (work loop + job loop over the durable pg queue, woken by LISTEN/NOTIFY) +
 // WhatsApp socket when the baileys driver is enabled.
