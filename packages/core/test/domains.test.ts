@@ -188,10 +188,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
   const registrar = fakeRegistrar();
   const dnsHost = fakeDnsHost();
   const tls = { ok: false };
+  const rdap = fakeRdap();
   const providers = fakeProviders({
     registrar,
     dnsHost,
-    rdap: fakeRdap(),
+    rdap,
     probeTls: async () => tls.ok,
   });
   const app = createApp({
@@ -1139,6 +1140,111 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     const theirs = (await row(bid))!;
     expect(theirs.zone_id).toBeNull();
     expect(theirs.last_error).toContain('Outra loja');
+  });
+
+  /** an ns domain whose owner confirmed an empty record list */
+  const delegate = async (s: Store, host: string) => {
+    const add = await s.owner('POST', '/account/domains', { host, method: 'ns' });
+    expect(add.status).toBe(201);
+    const id = add.body.customDomain.id as string;
+    await s.owner('PUT', `/account/domains/${id}/records`, { records: [], confirm: true });
+    return id;
+  };
+
+  test("a name that already delegates to Venduá's nameservers needs the owner to move them first", async () => {
+    // another store removed it; the registry still names Cloudflare's pair
+    const s = await paidStore('stale');
+    const host = `stale-${nonce}.com.br`;
+    tls.ok = false;
+    set(host, { ns: CF_PAIR });
+    const id = await delegate(s, host);
+    await jobs(new Date());
+    expect(dnsHost.zones.has(host)).toBe(false);
+    let r = (await row(id))!;
+    expect(r).toMatchObject({ status: 'failed', zone_id: null, name_servers: [] });
+    expect(r.last_error).toContain('já aponta para os servidores DNS da Venduá');
+    expect(
+      (await s.owner('POST', `/account/domains/${id}/check`, {})).body.customDomain.status,
+    ).toBe('failed');
+    expect(await syncHosts()).not.toContain(host);
+
+    // registro.br's record counts even while DNS doesn't answer
+    const viaRdap = `stale-rdap-${nonce}.com.br`;
+    rdap.map.set(viaRdap, {
+      registered: true,
+      expiresAt: null,
+      nameServers: [...CF_PAIR],
+      signed: false,
+    });
+    const s2 = await paidStore('stale2');
+    const id2 = await delegate(s2, viaRdap);
+    await jobs(new Date());
+    expect(dnsHost.zones.has(viaRdap)).toBe(false);
+    expect((await row(id2))!.status).toBe('failed');
+
+    // the owner moves the nameservers away, adds it again, then points them at the new zone
+    set(host, { ns: ['a.dns.br', 'b.dns.br'] });
+    const again = await s.owner('POST', '/account/domains', { host, method: 'ns' });
+    expect(again.status).toBe(200);
+    const T = Date.now();
+    await jobs(later(T, 0));
+    r = (await row(id))!;
+    expect(r.status).toBe('pending_dns');
+    expect(r.name_servers).toEqual(CF_PAIR);
+    expect(dnsHost.zones.has(host)).toBe(true);
+    set(host, { ns: CF_PAIR });
+    await jobs(later(T, 16 * MIN));
+    expect((await row(id))!.status).toBe('dns_ok');
+  });
+
+  test("an unproven zone claim doesn't keep the name from its owner, and gives its zone back", async () => {
+    const squat = await paidStore('sqt');
+    const host = `sqt-${nonce}.com.br`;
+    const sid = await delegate(squat, host);
+    await jobs(new Date());
+    const zone = dnsHost.zones.get(host)!;
+    expect((await row(sid))!.zone_id).toBe(zone.id);
+
+    // another delegation would need the same zone; a CNAME + TXT proof doesn't
+    const owner = await paidStore('own');
+    const ns = await owner.owner('POST', '/account/domains', { host, method: 'ns' });
+    expect(ns.status).toBe(409);
+    expect(ns.body.error.code).toBe('DOMAIN_TAKEN');
+    const add = await owner.owner('POST', '/account/domains', { host });
+    expect(add.status).toBe(201);
+    pointCname(host, owner.slug, add.body.customDomain.txtValue);
+    tls.ok = false;
+    await jobs(new Date());
+    expect((await account(owner)).customDomain.status).toBe('dns_ok');
+    // the claim lost, and its zone went with it
+    const lost = (await row(sid))!;
+    expect(lost).toMatchObject({ status: 'failed', zone_id: null, name_servers: [] });
+    expect(dnsHost.zones.has(host)).toBe(false);
+    expect(dnsHost.calls.some((c) => c.op === 'deleteZone' && c.args[0] === zone.id)).toBe(true);
+    // trying again doesn't bring it back
+    await squat.owner('POST', '/account/domains', { host, method: 'ns' });
+    expect((await row(sid))!.status).toBe('failed');
+  });
+
+  test('a delegation that gives up after a week frees the zone for the next store', async () => {
+    const a = await paidStore('wka');
+    const host = `wk-${nonce}.com.br`;
+    const aid = await delegate(a, host);
+    const T = Date.now();
+    await jobs(later(T, 0));
+    expect(dnsHost.zones.has(host)).toBe(true);
+    await sql`update custom_domains set created_at = now() - interval '8 days' where id = ${aid}`;
+    await jobs(later(T, 16 * MIN));
+    expect((await row(aid))!).toMatchObject({ status: 'failed', zone_id: null });
+    expect(dnsHost.zones.has(host)).toBe(false);
+
+    const b = await paidStore('wkb');
+    const bid = await delegate(b, host);
+    await jobs(later(T, 17 * MIN));
+    expect((await row(bid))!).toMatchObject({ status: 'pending_dns', name_servers: CF_PAIR });
+    // the first store's retry no longer takes the name back
+    await a.owner('POST', '/account/domains', { host, method: 'ns' });
+    expect((await row(aid))!.status).toBe('failed');
   });
 
   test('a renewal retried after the registrar already renewed is not paid again', async () => {

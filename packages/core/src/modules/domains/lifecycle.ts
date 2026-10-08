@@ -7,6 +7,7 @@ import {
   certBlocker,
   cnameTarget,
   delegated,
+  delegatedAlready,
   DNS_RECHECK_MS,
   pointsAt,
   type CustomDomainRow,
@@ -83,6 +84,9 @@ const RENEW_STEPS =
 export const ZONE_CLAIMED = 'pending';
 export const realZone = (id: string | null) => (id && id !== ZONE_CLAIMED ? id : null);
 
+export const DELEGATED_ELSEWHERE =
+  'Este domínio já aponta para os servidores DNS da Venduá. Para provar que ele é seu, troque os servidores DNS no Registro.br pelos do seu provedor e adicione o domínio de novo.';
+
 /**
  * Hosted zones: create one for a delegated domain once its owner confirmed the records, and push
  * record edits to it. The row claims the name first (one zone per name, unique in the table), so
@@ -136,6 +140,21 @@ export async function syncZones(sql: Sql, d: DomainJobDeps, now: Date) {
         if (!claimed) return;
       }
       const zone = await dnsHost.ensureZone(r.host);
+      if (await delegatedAlready(r.host, zone.nameServers, d.providers.rdap)) {
+        // none of this row's records are in the zone yet, and only its claim holds the name
+        await dnsHost.deleteZone(zone.id);
+        await withTenant(sql, r.tenant_id, async (tx) => {
+          const u = await tx`
+            update custom_domains set zone_id = null, zone_claimed_at = null, name_servers = '{}',
+              status = case when status = 'removing' then status else 'failed' end,
+              last_error = ${DELEGATED_ELSEWHERE}, last_checked_at = ${now}
+            where tenant_id = ${r.tenant_id} and id = ${r.id} and zone_id = ${ZONE_CLAIMED}
+            returning id
+          `;
+          if (u.length) await emitAdminTx(tx, r.tenant_id, 'billing');
+        });
+        return;
+      }
       zoneId = zone.id;
       nameServers = zone.nameServers;
     }
@@ -462,10 +481,19 @@ export async function settleLapsed(sql: Sql, d: DomainJobDeps, now: Date) {
   });
 }
 
-/** Removed by the owner: the zone goes, then the row. */
+/** Removed by the owner: the zone goes, then the row. A connected domain that failed (never
+ *  delegated in time, or another store proved it) gives its zone back the same way and keeps the
+ *  row, so an unproven claim doesn't hold the name. */
 export async function finishRemovals(sql: Sql, d: DomainJobDeps, now: Date) {
-  const rows = await rowsWhere(sql, (tx) => tx`d.status = 'removing'`);
+  const rows = await rowsWhere(
+    sql,
+    (tx) => tx`
+      d.status = 'removing'
+      or (d.status = 'failed' and d.source = 'connected' and d.zone_id is not null)
+    `,
+  );
   await each(rows, 'remove', async (r) => {
+    const removing = r.status === 'removing';
     // syncZones may still be creating this row's zone: it writes the id here when done
     const claimed = r.zone_id === ZONE_CLAIMED;
     if (
@@ -474,16 +502,30 @@ export async function finishRemovals(sql: Sql, d: DomainJobDeps, now: Date) {
       now.getTime() - r.zone_claimed_at.getTime() < ZONE_CLAIM_STALE_MS
     )
       return;
-    await controlTx(
-      sql,
-      (tx) =>
-        tx`select unroute_custom_domain(${r.tenant_id}, ${r.host}, ${platformHost(r.slug, d.storeDomain)})`,
-    );
+    if (removing)
+      await controlTx(
+        sql,
+        (tx) =>
+          tx`select unroute_custom_domain(${r.tenant_id}, ${r.host}, ${platformHost(r.slug, d.storeDomain)})`,
+      );
     if (r.zone_id) {
       if (!d.providers.dnsHost) return;
       // a claim whose job died may have created the zone: it holds the name, so it's this row's
       const zoneId = claimed ? (await d.providers.dnsHost.findZone(r.host))?.id : r.zone_id;
       if (zoneId) await d.providers.dnsHost.deleteZone(zoneId);
+    }
+    if (!removing) {
+      await withTenant(sql, r.tenant_id, async (tx) => {
+        const u = await tx`
+          update custom_domains set zone_id = null, zone_claimed_at = null, name_servers = '{}',
+            records_synced_at = null
+          where tenant_id = ${r.tenant_id} and id = ${r.id} and status = 'failed'
+            and zone_id = ${r.zone_id}
+          returning id
+        `;
+        if (u.length) await emitAdminTx(tx, r.tenant_id, 'billing');
+      });
+      return;
     }
     await withTenant(sql, r.tenant_id, async (tx) => {
       await tx`

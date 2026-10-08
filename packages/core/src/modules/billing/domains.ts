@@ -119,16 +119,17 @@ export function newVerifyToken() {
 
 /**
  * Is the host another store's (a live store host, or a claim that holds it: verified, ordered,
- * live, under repair or lapsed — as a domain or as its www./root alias — or one that has a zone
- * in Venduá's Cloudflare account)? Any other claim still waiting for DNS doesn't hold the host:
- * whoever proves it first gets it. `registering`: a store buying the name at the registry proves
- * it there, so an unverified zone claim doesn't stop it.
+ * live, under repair or lapsed — as a domain or as its www./root alias — or, for a store that
+ * would delegate it, one that has a zone in Venduá's Cloudflare account)? Any other claim still
+ * waiting for DNS doesn't hold the host: whoever proves it first gets it. An unverified zone claim
+ * only stops another delegation (one zone per name); a store that proves the name with a CNAME
+ * and TXT (`method: 'cname'`) or buys it at the registry (`registering`) gets past it.
  */
 export async function hostTaken(
   sql: Sql,
   host: string,
   tenantId: string,
-  o: { registering?: boolean } = {},
+  o: { registering?: boolean; method?: 'cname' | 'ns' } = {},
 ) {
   return controlTx(sql, async (tx) => {
     const live = await tx`select 1 from domains where host = ${host} and tenant_id <> ${tenantId}`;
@@ -137,7 +138,7 @@ export async function hostTaken(
     const claimed = await tx`
       select 1 from custom_domains
       where (host = ${host} or alias_host = ${host}) and tenant_id <> ${tenantId}
-        and (status in ${tx(HELD_STATUSES)} or (${!o.registering} and status = 'pending_dns' and zone_id is not null and host = ${host}))
+        and (status in ${tx(HELD_STATUSES)} or (${!o.registering && o.method !== 'cname'} and status = 'pending_dns' and zone_id is not null and host = ${host}))
     `;
     return claimed.length > 0;
   });
@@ -243,6 +244,25 @@ export async function delegated(host: string, nameServers: string[]): Promise<bo
   return g.size === new Set(want).size && want.every((n) => g.has(n));
 }
 
+/**
+ * Does the domain already name any of `nameServers` (the registry's record, or DNS)? Cloudflare
+ * gives every zone in an account the same pair, so a delegation that is there before a row's zone
+ * holds anything is someone else's — a domain another store removed — not proof of control.
+ */
+export async function delegatedAlready(
+  host: string,
+  nameServers: string[],
+  rdap: Rdap | undefined,
+): Promise<boolean> {
+  const want = new Set(nameServers.map(bare));
+  if (!want.size) return false;
+  const [info, got] = await Promise.all([
+    rdap ? rdap(host).catch(() => null) : null,
+    resolver.resolveNs ? settle(resolver.resolveNs(host), [] as string[]) : [],
+  ]);
+  return [...(info?.nameServers ?? []), ...got].some((n) => want.has(bare(n)));
+}
+
 async function checkDelegation(
   row: CustomDomainRow,
   rdap: Rdap | undefined,
@@ -294,7 +314,7 @@ export async function checkCustomDomain(
   if (!found) return null;
   if (found.status !== 'pending_dns' && found.status !== 'failed') return found;
   if (found.status === 'failed' && !o.manual) return found;
-  if (await hostTaken(sql, found.host, o.tenantId))
+  if (await hostTaken(sql, found.host, o.tenantId, { method: found.method }))
     return (await markLost(sql, o.tenantId, o.domainId, o.now)) ?? found;
   const target = cnameTarget(found.slug, o.storeDomain);
   let res: { ok: boolean; error: string | null };
@@ -312,7 +332,7 @@ export async function checkCustomDomain(
       aliasOk =
         (await pointsAt(found.alias_host, target, o.edgeIps)) &&
         !(await certBlocker(found.alias_host, target)) &&
-        !(await hostTaken(sql, found.alias_host, o.tenantId));
+        !(await hostTaken(sql, found.alias_host, o.tenantId, { method: found.method }));
   }
   const expired = o.now.getTime() - found.created_at.getTime() > DNS_GIVE_UP_MS;
   const status = res.ok

@@ -129,17 +129,19 @@ export function mountDomains(d: AdminDeps) {
       if (order || cur?.source === 'included')
         throw new HttpError(409, 'DOMAIN_INCLUDED', 'the store has a domain Venduá registers');
       if (cur?.host === host && cur.method === method) {
-        // trying again after giving up: a fresh week to set the DNS (same TXT token)
-        if (cur.status === 'failed' && !(await hostTaken(d.sql, host, t.id)))
+        // trying again after giving up: a fresh week to set the DNS (same TXT token); a
+        // delegation starts over with a new zone, checked like the first
+        if (cur.status === 'failed' && !(await hostTaken(d.sql, host, t.id, { method })))
           await tx`
-            update custom_domains set status = 'pending_dns', created_at = now(), last_error = null
+            update custom_domains set status = 'pending_dns', created_at = now(), last_error = null,
+              zone_id = null, name_servers = '{}', records_synced_at = null
             where id = ${cur.id}
           `;
         return { status: 200, body: await view(tx, t) };
       }
       if (cur && ((cur.status !== 'pending_dns' && cur.status !== 'failed') || cur.zone_id))
         throw new HttpError(409, 'DOMAIN_ACTIVE', 'the store already serves its own domain');
-      if (await hostTaken(d.sql, host, t.id))
+      if (await hostTaken(d.sql, host, t.id, { method }))
         throw new HttpError(409, 'DOMAIN_TAKEN', 'this domain is in use by another store', {
           field: 'host',
         });
