@@ -4,6 +4,7 @@ import { SLOT_ALIASES, SLOT_KEYS } from '@vendua/kernel/config';
 import { COMPAT_MATRIX } from '@vendua/templates';
 import { runLint } from './lint.ts';
 import type { CheckResult } from './report.ts';
+import { stripComments } from './source.ts';
 
 export const SUPPORTED_CONTRACTS = [...new Set(COMPAT_MATRIX.map((r) => r.contract))];
 
@@ -251,12 +252,19 @@ function k03(dir: string): CheckResult {
 
   for (const file of sourceFiles(dir)) {
     const rel = file.slice(dir.length + 1);
-    const lines = readFileSync(file, 'utf8').split('\n');
+    const src = readFileSync(file, 'utf8');
+    const code = stripComments(src).split('\n');
+    const lines = src.split('\n');
     lines.forEach((line, i) => {
       const loc = `${rel}:${i + 1}`;
       const trimmed = line.trim();
       if (trimmed.startsWith('//') || trimmed.startsWith('*')) return;
-      if (/\bfetch\s*\(/.test(line))
+      // any reference, not only a call: window.fetch, fetch.call, const f = fetch, globalThis['fetch']
+      if (
+        /(?<![\w$.-])fetch\b(?!\s*:)/.test(code[i]!) ||
+        /\b(?:window|globalThis|self)\s*\??\.\s*fetch\b/.test(code[i]!) ||
+        /\[\s*['"`]fetch['"`]\s*\]/.test(code[i]!)
+      )
         problems.push(`${loc}: direct fetch() — use @vendua/kernel api`);
       if (/\baxios\b/.test(line)) problems.push(`${loc}: axios — use @vendua/kernel api`);
       if (/\bXMLHttpRequest\b/.test(line))

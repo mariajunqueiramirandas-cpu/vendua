@@ -391,3 +391,23 @@ describe('slots, aliases, consent', () => {
     expect(track!('add_to_cart' as `custom.${string}`)).toBe(false);
   });
 });
+
+test("a font source's weight or style that isn't one is dropped, never written into the rule", async () => {
+  mockCore();
+  const srcs = [
+    { family: 'Brand', src: '/a.woff2', weight: '700', style: 'italic' as const },
+    {
+      family: 'Brand',
+      src: '/b.woff2',
+      weight: '400;}body{display:none',
+      style: 'normal;}*{color:red' as never,
+    },
+  ];
+  m = await mount({ config: { tokens: { ...TOKENS, font: { ...TOKENS.font, srcs } } } });
+  const css = $('style[data-vendua="fonts"]')?.textContent ?? '';
+  expect(css).toContain('font-weight:700;');
+  expect(css).toContain('font-style:italic;');
+  expect(css).not.toContain('display:none');
+  expect(css).not.toContain('color:red');
+  expect(css.match(/@font-face/g)?.length).toBe(2);
+});

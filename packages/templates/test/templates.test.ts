@@ -220,6 +220,20 @@ describe('tokens', () => {
     const inj = validateTokens({ ...TOKENS, radius: { ...TOKENS.radius, sm: '2px;} body{x' } });
     expect(inj.ok).toBe(false);
   });
+
+  test("a font source's weight and style can't break out of its @font-face", () => {
+    const font = (src: Record<string, unknown>) =>
+      validateTokens({
+        ...TOKENS,
+        font: { ...TOKENS.font, srcs: [{ family: 'Brand', src: '/f.woff2', ...src }] },
+      }).ok;
+    for (const weight of [400, '700', '300 800', 'normal', 'bold'])
+      expect(font({ weight })).toBe(true);
+    expect(font({ style: 'italic' })).toBe(true);
+    for (const weight of ['400;}body{display:none', 'bolder', 4000, 400.5, ''])
+      expect(font({ weight })).toBe(false);
+    for (const style of ['oblique', 'normal;}*{color:red', 1]) expect(font({ style })).toBe(false);
+  });
 });
 
 describe('findArea ordering', () => {

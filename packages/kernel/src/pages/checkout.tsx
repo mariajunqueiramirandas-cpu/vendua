@@ -322,6 +322,10 @@ export function CheckoutPage() {
         : 'pickup',
   );
   const deliveryMode: DeliveryOption['mode'] = atTable ? 'dine_in' : mode;
+  // chosen before the store was read: a pickup-only store starts on Retirada once it is
+  useEffect(() => {
+    if (!deliveryOk && mode === 'delivery') setMode('pickup');
+  }, [deliveryOk, mode]);
   const [pay, setPay] = useState<PaymentMethod['id']>(
     () => restored?.pay ?? (currentTable() ? 'tab' : 'pix'),
   );
@@ -874,6 +878,9 @@ export function CheckoutPage() {
         },
         ...(notes.trim() ? { notes: notes.trim().slice(0, NOTES_MAX) } : {}),
         ...(scheduledFor && !atTable ? { scheduledFor } : {}),
+        // the total on the button, Core's for this method: Core refuses (409 PRICES_CHANGED) an
+        // order whose total moved since. Not when the delivery didn't sync: the cart's fee is stale
+        ...(pricedTotals && !deliveryIssue ? { expectedTotalCents: pricedTotals.totalCents } : {}),
       });
       placed.current = true;
       clearDraft();
@@ -924,6 +931,11 @@ export function CheckoutPage() {
             pay === 'cash' ? changeFor : null,
           ),
         );
+      // Core's new total for this method, asked again even when the cart's own totals held
+      if (code === 'PRICES_CHANGED') {
+        setPriced(null);
+        setPriceTry((n) => n + 1);
+      }
       if (isCouponError(code))
         setCouponError(
           couponMessage(code, (err as { details?: Record<string, unknown> }).details, currency),
