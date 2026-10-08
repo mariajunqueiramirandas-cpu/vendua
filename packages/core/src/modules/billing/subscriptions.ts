@@ -897,7 +897,10 @@ export async function changeSubscription(
   if (o.plan && !upgradeWaits && o.plan.id !== chargePlanId(sub)) {
     const target = o.plan;
     const current = await planOrThrow(tx, sub.plan_id);
-    const card = sub.method === 'card' && sub.provider_subscription_id;
+    // a card this same request drops for Pix isn't re-priced at MP: if the switch then fails, the
+    // rollback can't take back an amount MP already holds
+    const card =
+      sub.method === 'card' && sub.provider_subscription_id && (!o.method || o.method === 'card');
     const unpaid = sub.status === 'pending' || sub.status === 'trialing';
     const upgradeCents =
       !unpaid && sub.current_period_end && target.price_cents > current.price_cents

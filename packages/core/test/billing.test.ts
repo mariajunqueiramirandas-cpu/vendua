@@ -523,6 +523,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(r2.status).toBe(503);
     expect(fake.subscriptions.get(pre)!.status).not.toBe('cancelled');
 
+    // a plan change in the same request doesn't re-price the card it drops (a pending store's
+    // plan applies at once, and its first Pix fails)
+    const amount = fake.subscriptions.get(pre)!.amountCents;
+    await sql`update subscriptions set status = 'pending' where tenant_id = ${s.id}`;
+    const r3 = await pixDown(() =>
+      s.owner('PATCH', '/account/subscription', { method: 'pix', planId: 'bandeira' }),
+    );
+    expect(r3.status).toBe(503);
+    expect(fake.subscriptions.get(pre)!.amountCents).toBe(amount);
+    await sql`update subscriptions set status = 'active' where tenant_id = ${s.id}`;
+
     const ok = await s.owner('PATCH', '/account/subscription', { method: 'pix' });
     expect(ok.status).toBe(200);
     expect(fake.subscriptions.get(pre)!.status).toBe('cancelled');
