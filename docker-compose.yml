@@ -50,6 +50,25 @@ services:
       OPENPROVIDER_PASSWORD: ${OPENPROVIDER_PASSWORD:-}
       OPENPROVIDER_CONTACT_HANDLE: ${OPENPROVIDER_CONTACT_HANDLE:-}
       OPENPROVIDER_PROVIDER_NAME: ${OPENPROVIDER_PROVIDER_NAME:-}
+      # unset = Openprovider's production API; its OTE sandbox URL for a staging stack
+      OPENPROVIDER_URL: ${OPENPROVIDER_URL:-}
+      # Site builder (ADR 0039, docs/deploy/site-builder.md): the Claude Code routine that builds
+      # sites, and the GitHub repo whose PRs staff approval merges. Unset = tasks wait / merge by hand.
+      VENDUA_SITE_ROUTINE_URL: ${VENDUA_SITE_ROUTINE_URL:-}
+      VENDUA_SITE_ROUTINE_TOKEN: ${VENDUA_SITE_ROUTINE_TOKEN:-}
+      VENDUA_GITHUB_REPO: ${VENDUA_GITHUB_REPO:-}
+      VENDUA_GITHUB_TOKEN: ${VENDUA_GITHUB_TOKEN:-}
+      VENDUA_GITHUB_WEBHOOK_SECRET: ${VENDUA_GITHUB_WEBHOOK_SECRET:-}
+      # Venduá's own WhatsApp number: Core's socket (default) or `gateway` after the cutover
+      # (platform-whatsapp/cutover-cli.ts).
+      WA_PLATFORM_TRANSPORT: ${WA_PLATFORM_TRANSPORT:-}
+      # Postgres pool sizes (default 10 each); unset/empty = default.
+      DB_POOL_MAX: ${DB_POOL_MAX:-}
+      DB_JOBS_POOL_MAX: ${DB_JOBS_POOL_MAX:-}
+      # signup codes sent from Venduá's number: per IP per day / platform per hour / per day (30/60/300)
+      VENDUA_SIGNUP_OTP_PER_IP_DAY: ${VENDUA_SIGNUP_OTP_PER_IP_DAY:-}
+      VENDUA_SIGNUP_OTP_PER_HOUR: ${VENDUA_SIGNUP_OTP_PER_HOUR:-}
+      VENDUA_SIGNUP_OTP_PER_DAY: ${VENDUA_SIGNUP_OTP_PER_DAY:-}
       # Synthetic probes verify deployments and watch every live host (default on in production).
       VENDUA_PROBES: ${VENDUA_PROBES:-1}
       # unset = probe https://<host> (DNS + TLS + edge); http://edge:8080 = through the edge only
@@ -102,6 +121,8 @@ services:
       AGENT_MODEL_ROUTES: ${AGENT_MODEL_ROUTES:-}
       # Delivery by road distance (ADR 0024); unset = straight line × 1.3.
       ORS_API_KEY: ${ORS_API_KEY:-}
+      # a self-hosted OpenRouteService; unset = api.openrouteservice.org
+      ORS_URL: ${ORS_URL:-}
       # Pin maps: geocoder and raster tiles; unset = OSM's public Nominatim and tiles.
       NOMINATIM_URL: ${NOMINATIM_URL:-}
       NOMINATIM_USER_AGENT: ${NOMINATIM_USER_AGENT:-}
@@ -165,6 +186,9 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_REGION: ${S3_REGION:-auto}
+      # how long a Host → store route / a store's state is cached (ms, default 30000 each)
+      VENDUA_EDGE_ROUTE_TTL_MS: ${VENDUA_EDGE_ROUTE_TTL_MS:-}
+      VENDUA_EDGE_STATE_TTL_MS: ${VENDUA_EDGE_STATE_TTL_MS:-}
     volumes:
       - artifacts:/var/lib/vendua/artifacts:ro
       # route/state snapshot + verified files: a restart during a Core outage keeps serving
@@ -215,6 +239,9 @@ services:
       VENDUA_STORE_DOMAIN: ${VENDUA_STORE_DOMAIN:-vendua.com.br}
       # the platform's own hosts (admin, CRM, site), comma-separated: never routed from the file
       DOMAINS_SYNC_DENY: ${DOMAINS_SYNC_DENY:-}
+      # Traefik's certificate resolver for those routes (default letsencrypt, Dokploy's)
+      DOMAINS_SYNC_RESOLVER: ${DOMAINS_SYNC_RESOLVER:-}
+      DOMAINS_SYNC_INTERVAL_MS: ${DOMAINS_SYNC_INTERVAL_MS:-}
     volumes:
       - ${TRAEFIK_DYNAMIC_DIR:-/etc/dokploy/traefik/dynamic}:/traefik-dynamic
     networks: [default]
@@ -270,6 +297,16 @@ services:
       # per store: pause between messages (plus jitter) and an hourly ceiling
       WA_MIN_SEND_GAP_MS: ${WA_MIN_SEND_GAP_MS:-1500}
       WA_MAX_PER_HOUR: ${WA_MAX_PER_HOUR:-200}
+      # per store: gap between messages in one chat / between conversations (ms)
+      WA_CHAT_GAP_MS: ${WA_CHAT_GAP_MS:-1500}
+      WA_CONVERSATION_GAP_MS: ${WA_CONVERSATION_GAP_MS:-250}
+      # Venduá's own number: 0 = this gateway leaves it alone; pacing of its messages (ms)
+      WA_PLATFORM_SESSIONS: ${WA_PLATFORM_SESSIONS:-}
+      WA_PLATFORM_MIN_SEND_GAP_MS: ${WA_PLATFORM_MIN_SEND_GAP_MS:-1500}
+      # the version this gateway records in wa_gateways
+      VENDUA_VERSION: ${GIT_COMMIT:-}
+      DB_POOL_MAX: ${DB_POOL_MAX:-}
+      DB_JOBS_POOL_MAX: ${DB_JOBS_POOL_MAX:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       BAILEYS_LOG_LEVEL: ${BAILEYS_LOG_LEVEL:-warn}
     depends_on:
@@ -326,11 +363,22 @@ services:
       args:
         # parakeet-tdt-0.6b-v3-ptbr = the Brazilian Portuguese fine-tune (ADR 0037)
         STT_MODEL: ${STT_MODEL:-parakeet-tdt-0.6b-v3}
+        # release = the compiled model from GitHub; compile = build it here from the fp32 export
+        STT_FROM: ${STT_FROM:-release}
+        # auto = from this host's CPU; 1 when the image runs on CPUs without VNNI
+        STT_REDUCE_RANGE: ${STT_REDUCE_RANGE:-auto}
     cpus: ${STT_CPUS:-2}
     mem_limit: ${STT_MEM_LIMIT:-3g}
     environment:
       STT_SECRET: ${STT_SECRET:-}
+      # defaults spelled out: the service parses these with int()/float(), so empty would crash it.
+      # Threads follow `cpus` (STT_CPUS); STT_THREADS has no safe empty value, so it isn't passed.
       STT_MAX_BATCH: ${STT_MAX_BATCH:-8}
+      STT_MAX_WAIT_MS: ${STT_MAX_WAIT_MS:-0}
+      STT_MAX_QUEUE: ${STT_MAX_QUEUE:-64}
+      STT_MAX_SECONDS: ${STT_MAX_SECONDS:-200}
+      STT_MAX_BYTES: ${STT_MAX_BYTES:-10485760}
+      STT_REQUEST_TIMEOUT_S: ${STT_REQUEST_TIMEOUT_S:-120}
       LOG_LEVEL: ${STT_LOG_LEVEL:-info}
     healthcheck:
       test:
