@@ -10,6 +10,7 @@ import {
   isEffort,
   LONG_PROMPT_TOKENS,
   refusalOf,
+  THINKING_HEADROOM,
 } from '../platform/anthropic.ts';
 
 export interface ToolCall {
@@ -445,7 +446,7 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
       // caches the run's growing conversation turn to turn
       const res = await client.messages.create({
         model,
-        max_tokens: 16_000,
+        max_tokens: 16_000 + THINKING_HEADROOM[effort],
         output_config: { effort },
         cache_control: { type: 'ephemeral' },
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],

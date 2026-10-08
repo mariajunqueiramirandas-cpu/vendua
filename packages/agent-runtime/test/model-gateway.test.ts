@@ -249,6 +249,29 @@ describe('metering', () => {
     expect(res.usage.costUsd).toBe(seen.after!.costUsd);
   });
 
+  test("the estimate takes the adapter's output limit when it bills past maxTokens", async () => {
+    const a = {
+      ...scriptedAdapter([{ text: 'ok' }], 'a'),
+      outputTokens: (req: { maxTokens: number; effort?: string }) =>
+        req.maxTokens + (req.effort === 'high' ? 8000 : 1000),
+    };
+    let seen: CostEstimate | undefined;
+    const meter = {
+      before: (e: CostEstimate) => {
+        seen = e;
+      },
+      after: () => {},
+    };
+    const gw = createGateway({
+      adapters: [a],
+      routes: resolver([route('a', { pricing, effort: 'high' })]),
+    });
+    await gw.generate(request(), { meter });
+    expect(seen!.maxOutputTokens).toBe(500 + 8000);
+    expect(a.requests[0]!.maxTokens).toBe(500);
+    expect(a.requests[0]!.effort).toBe('high');
+  });
+
   test('a budget refusal never reaches the provider', async () => {
     const a = scriptedAdapter([{ text: 'x' }], 'a');
     const gw = createGateway({ adapters: [a], routes: resolver([route('a', { pricing })]) });

@@ -18,7 +18,7 @@ import {
   DEFAULT_EFFORT,
   LONG_PROMPT_TOKENS,
   refusalOf,
-  type Effort,
+  THINKING_HEADROOM,
 } from '../platform/anthropic.ts';
 
 // The runtime's model gateway on the Anthropic SDK. It lives in Core because the runtime takes no
@@ -52,16 +52,6 @@ interface Turn {
 const MAX_BREAKPOINTS = 4;
 const EPHEMERAL: Anthropic.CacheControlEphemeral = { type: 'ephemeral' };
 const IMAGE_TYPES = new Set<string>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
-// Haiku 5.5 always thinks and the thinking counts toward max_tokens, while a request's maxTokens is
-// sized for the visible reply (the supervisor's is 120: cut off before its verdict, it would pass
-// everything). On top of it, by effort:
-export const THINKING_HEADROOM: Record<Effort, number> = {
-  low: 2_048,
-  medium: 4_096,
-  high: 8_192,
-  xhigh: 16_384,
-  max: 32_000,
-};
 
 function partBlock(p: Part): Block | null {
   if (p.type === 'text') return p.text ? { type: 'text', text: p.text } : null;
@@ -141,11 +131,10 @@ export function anthropicBody(
   const cached = system.flatMap((b, i) => (b.cache ? [i] : []));
   const keep = new Set(cached.slice(-(MAX_BREAKPOINTS - (conversationBreakpoint ? 1 : 0))));
 
-  const effort = req.effort ?? DEFAULT_EFFORT;
   return {
     model: ANTHROPIC_MODEL,
-    max_tokens: req.maxTokens + THINKING_HEADROOM[effort],
-    output_config: { effort },
+    max_tokens: outputTokens(req),
+    output_config: { effort: req.effort ?? DEFAULT_EFFORT },
     ...(system.length
       ? {
           system: system.map((b, i) => ({
@@ -167,6 +156,10 @@ export function anthropicBody(
       : {}),
   };
 }
+
+/** the reply's limit plus room for the thinking Haiku 5.5 always does first */
+export const outputTokens = (req: ProviderRequest) =>
+  req.maxTokens + THINKING_HEADROOM[req.effort ?? DEFAULT_EFFORT];
 
 function providerError(id: string, err: unknown): unknown {
   if (err instanceof Anthropic.APIConnectionTimeoutError) {
@@ -200,6 +193,7 @@ export function anthropicAdapter(opts: AnthropicAdapterOpts): ProviderAdapter {
   });
   return {
     id,
+    outputTokens,
     async generate(req, signal): Promise<ModelResponse> {
       const t0 = Date.now();
       let msg: Anthropic.Message;

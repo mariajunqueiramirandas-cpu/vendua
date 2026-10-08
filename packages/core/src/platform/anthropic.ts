@@ -12,6 +12,19 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const satisf
 export const DEFAULT_EFFORT: Effort = 'medium';
 export const isEffort = (v: unknown): v is Effort => EFFORTS.includes(v as Effort);
 
+/**
+ * Haiku 5.5 always thinks and the thinking counts toward max_tokens, while a caller's limit is
+ * sized for the visible reply (the supervisor's is 120: cut off before its verdict, it would pass
+ * everything). Added on top of that limit, by effort.
+ */
+export const THINKING_HEADROOM: Record<Effort, number> = {
+  low: 2_048,
+  medium: 4_096,
+  high: 8_192,
+  xhigh: 16_384,
+  max: 32_000,
+};
+
 /** List price in US$ per 1M tokens; a prompt over 100K tokens bills at the long card. */
 export const ANTHROPIC_PRICING = { inputPerMTok: 0.1, outputPerMTok: 0.5 };
 export const ANTHROPIC_LONG_PRICING = { inputPerMTok: 0.5, outputPerMTok: 2.5 };

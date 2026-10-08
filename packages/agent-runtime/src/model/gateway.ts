@@ -340,7 +340,17 @@ export function createGateway(opts: GatewayOpts): ModelGateway {
       const vault = createPiiVault();
       const base = redactRequest(rest, vault);
       const pricingRoute = routes.find((r) => breaker.state(r.provider) !== 'open') ?? routes[0]!;
-      await gen.meter?.before(estimateCost(base, pricingRoute.pricing));
+      const outputTokens = adapters.get(pricingRoute.provider)?.outputTokens?.({
+        ...base,
+        model: pricingRoute.model,
+        ...(pricingRoute.effort ? { effort: pricingRoute.effort } : {}),
+      });
+      await gen.meter?.before(
+        estimateCost(
+          outputTokens === undefined ? base : { ...base, maxTokens: outputTokens },
+          pricingRoute.pricing,
+        ),
+      );
 
       const failures: RouteFailure[] = [];
       for (const route of routes) {

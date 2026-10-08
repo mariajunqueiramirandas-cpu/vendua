@@ -7,7 +7,8 @@ import {
   type ProviderRequest,
   type RouteResolver,
 } from '@vendua/agent-runtime';
-import { anthropicAdapter, anthropicBody, THINKING_HEADROOM } from '../src/agent-host/anthropic.ts';
+import { anthropicAdapter, anthropicBody } from '../src/agent-host/anthropic.ts';
+import { THINKING_HEADROOM } from '../src/platform/anthropic.ts';
 import { anthropicCostUsd, providerFor } from '../src/agent/llm.ts';
 import { upsertIntegration, type IntegrationRow } from '../src/modules/integrations.ts';
 import type { Sql } from '../src/platform/db.ts';
@@ -179,7 +180,16 @@ describe('agent-host anthropic adapter', () => {
       adapters: [anthropicAdapter({ apiKey: 'k', fetch })],
       routes: resolver([{ ...route, effort: 'low' }]),
     });
-    await gw.generate(request({ temperature: 0 }));
+    let estimated = 0;
+    const meter = {
+      before: (e: { maxOutputTokens: number }) => {
+        estimated = e.maxOutputTokens;
+      },
+      after: () => {},
+    };
+    await gw.generate(request({ temperature: 0 }), { meter });
+    // the budget check sees what Anthropic may bill, thinking included
+    expect(estimated).toBe(500 + THINKING_HEADROOM.low);
     expect(calls[0]!.body).toMatchObject({
       model: 'claude-haiku-5-5',
       max_tokens: 500 + THINKING_HEADROOM.low,
@@ -387,7 +397,7 @@ describe('CRM anthropic driver', () => {
     expect(headers.get('x-api-key')).toBe('sk-ant-crm');
     expect(body).toMatchObject({
       model: 'claude-haiku-5-5',
-      max_tokens: 16_000,
+      max_tokens: 16_000 + THINKING_HEADROOM.medium,
       output_config: { effort: 'medium' },
       cache_control: { type: 'ephemeral' },
       system: [{ type: 'text', text: 'Você é o SDR.', cache_control: { type: 'ephemeral' } }],
@@ -418,9 +428,10 @@ describe('CRM anthropic driver', () => {
     const chat = { system: 's', messages: [{ role: 'user' as const, content: 'oi' }], tools: [] };
     await providerFor(integration({ effort: 'xhigh' })).chat(chat);
     await providerFor(integration({ effort: 'turbo' })).chat(chat);
-    expect(calls.map((c) => c.body.output_config)).toEqual([
-      { effort: 'xhigh' },
-      { effort: 'medium' },
+    // the reply keeps its 16K on top of the effort's thinking room
+    expect(calls.map((c) => [c.body.output_config, c.body.max_tokens])).toEqual([
+      [{ effort: 'xhigh' }, 16_000 + THINKING_HEADROOM.xhigh],
+      [{ effort: 'medium' }, 16_000 + THINKING_HEADROOM.medium],
     ]);
   });
 

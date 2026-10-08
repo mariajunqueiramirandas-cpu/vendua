@@ -44,6 +44,11 @@ export interface ProviderRequest extends Omit<ModelRequest, 'meta' | 'tier'> {
 export interface ProviderAdapter {
   readonly id: string;
   generate(req: ProviderRequest, signal: AbortSignal): Promise<ModelResponse>;
+  /**
+   * The most output tokens a call for `req` may bill, when it isn't `req.maxTokens` (a provider
+   * that thinks on top of the reply). The pre-call estimate uses it.
+   */
+  outputTokens?(req: ProviderRequest): number;
 }
 
 export interface RouteResolver {
