@@ -311,7 +311,8 @@ export function mountDiscord(o: {
         interactions_endpoint_url?: string | null;
       }>('GET', '/applications/@me'),
       client.request<{ id: string; name: string }[]>('GET', '/users/@me/guilds'),
-      client.request<{ avatar?: string | null }>('GET', '/users/@me'),
+      // only the avatar needs it: a failed read skips the avatar, never the connection
+      client.request<{ avatar?: string | null }>('GET', '/users/@me').catch(() => null),
     ]).catch(discordFail);
     const inGuild = (id: unknown) => guilds.some((g) => g.id === id);
     if (wanted && !inGuild(wanted))
@@ -358,10 +359,11 @@ export function mountDiscord(o: {
       }
     }
     // Duá's face on a bot and app still wearing Discord's default; a picture the team chose stays
-    if (!bot.avatar || !me.icon) {
+    const needsAvatar = !!bot && !bot.avatar;
+    if (needsAvatar || !me.icon) {
       try {
         const image = `data:image/png;base64,${Buffer.from(await Bun.file(AVATAR_PNG).arrayBuffer()).toString('base64')}`;
-        if (!bot.avatar) await client.request('PATCH', '/users/@me', { avatar: image });
+        if (needsAvatar) await client.request('PATCH', '/users/@me', { avatar: image });
         if (!me.icon) await client.request('PATCH', '/applications/@me', { icon: image });
       } catch (e) {
         rlog.warn({ err: e instanceof Error ? e.message : String(e) }, 'bot avatar not set');
