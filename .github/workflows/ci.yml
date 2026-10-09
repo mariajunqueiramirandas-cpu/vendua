@@ -124,7 +124,8 @@ jobs:
       - run: python -m unittest discover -s tests -t . -v
 
   # validates the merge ref (PR) / pushed commit (main) — the code that lands. Three runners at once:
-  # the typecheck, the unit tests and the builds; `check` below reports them under the old name.
+  # the typecheck, the unit tests and the builds (+ Core's typecheck, the one long tsc, on its own
+  # CPUs); `check` below reports them under the old name.
   check-parts:
     name: check (${{ matrix.part }})
     runs-on: ubuntu-latest
@@ -149,7 +150,10 @@ jobs:
         if: matrix.part == 'typecheck'
         # every workspace dir with a `check` script, one per CPU at once — new packages need zero CI
         # edits (tools/workspaces.mjs, also `bun run check`)
-        run: bun tools/workspaces.mjs check
+        run: bun tools/workspaces.mjs check --skip packages/core
+      - name: Typecheck packages/core
+        if: matrix.part == 'builds'
+        run: cd packages/core && bun run check
       - name: Isolation tools tests
         if: matrix.part == 'unit'
         run: bun test tools/
@@ -342,7 +346,8 @@ jobs:
         run: |
           bunx vendua scaffold ci-smoke
           bun install
-          bunx vendua check ci-smoke
+          # static checks aren't sharded: each store's run on one shard (ci-smoke's on 1), the e2e on every one
+          if [ "${{ matrix.shard }}" = 1 ]; then bunx vendua check ci-smoke; fi
           bunx vendua qa ci-smoke
       # the storefronts this diff touches (every one on main pushes): static K-rules, K05 (the PR
       # touches only its own storefront dir) and the conformance e2e; every slug runs before the step fails
@@ -354,15 +359,19 @@ jobs:
           PR_LABELS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.labels || join(github.event.pull_request.labels.*.name, ' ') }}
         run: |
           failed=""
+          i=1 # ci-smoke is 0
           for slug in $STOREFRONTS; do
             echo "::group::$slug"
             ok=1
-            bunx vendua check "$slug" || ok=0
-            # K05 judges a store's own PR (labelled storefront:<slug>); a platform PR touches more by design.
-            # After a prettier autofix the only run on the head is the dispatch one, which carries the PR's labels
-            if [ -n "$BASE_REF" ] && [[ " $PR_LABELS " == *" storefront:$slug "* ]]; then
-              bunx vendua-conformance k05 "$slug" "origin/$BASE_REF" || ok=0
+            if [ $((i % 3 + 1)) = "${{ matrix.shard }}" ]; then
+              bunx vendua check "$slug" || ok=0
+              # K05 judges a store's own PR (labelled storefront:<slug>); a platform PR touches more by design.
+              # After a prettier autofix the only run on the head is the dispatch one, which carries the PR's labels
+              if [ -n "$BASE_REF" ] && [[ " $PR_LABELS " == *" storefront:$slug "* ]]; then
+                bunx vendua-conformance k05 "$slug" "origin/$BASE_REF" || ok=0
+              fi
             fi
+            i=$((i + 1))
             bunx vendua qa "$slug" || ok=0
             echo "::endgroup::"
             if [ "$ok" = 1 ]; then echo "PASS $slug"; else echo "FAIL $slug"; failed="$failed $slug"; fi

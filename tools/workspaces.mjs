@@ -1,7 +1,7 @@
 // Runs a script in every workspace that has one: what CI's `check` job did in two shell loops,
 // now shared with the root package.json (`bun run check`, `bun run test`).
-//   bun tools/workspaces.mjs check [--keep-going] [--list] [--jobs N]
-//   bun tools/workspaces.mjs test  [--keep-going] [--list] [--jobs N] [--core]
+//   bun tools/workspaces.mjs check [--keep-going] [--list] [--jobs N] [--skip DIR]...
+//   bun tools/workspaces.mjs test  [--keep-going] [--list] [--jobs N] [--skip DIR]... [--core]
 //
 // check: `bun run check` in every dir of `packages/* site apps/* storefronts/*` whose package.json
 //        has a `check` script, so a new package needs no CI edit.
@@ -11,6 +11,7 @@
 // --jobs N runs N workspaces at once (default: one per CPU), each one's output printed whole when it
 // ends. Like CI's `bash -e`, the first failure stops the run with that command's exit code (the
 // workspaces still running are stopped); --keep-going runs everything and fails at the end.
+// --skip DIR leaves a workspace out (CI typechecks packages/core in another job, where it has the CPUs).
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
@@ -63,12 +64,13 @@ function hasScript(root, dir, name) {
 }
 
 /** The workspace dirs `kind` runs in, in run order. */
-export function select(kind, { root = ROOT, core = false } = {}) {
+export function select(kind, { root = ROOT, core = false, skip = [] } = {}) {
   const spec = KINDS[kind];
   const dirs = [];
   for (const glob of spec.globs)
     for (const dir of expand(root, glob)) {
       if (kind === 'test' && dir === 'packages/core' && !core) continue;
+      if (skip.includes(dir)) continue;
       if (!isDir(join(root, dir)) || !existsSync(join(root, dir, 'package.json'))) continue;
       if (hasScript(root, dir, spec.script)) dirs.push(dir);
     }
@@ -107,9 +109,9 @@ function runOne(kind, root, dir, buffer, children) {
 
 export async function runAll(
   kind,
-  { root = ROOT, core = false, keepGoing = false, list = false, jobs = 1 } = {},
+  { root = ROOT, core = false, keepGoing = false, list = false, jobs = 1, skip = [] } = {},
 ) {
-  const dirs = select(kind, { root, core });
+  const dirs = select(kind, { root, core, skip });
   if (list) {
     for (const d of dirs) console.log(d);
     return 0;
@@ -164,12 +166,17 @@ export async function runAll(
 export async function main(argv = process.argv.slice(2)) {
   const [kind, ...rest] = argv;
   const flags = [];
+  const skip = [];
   let jobs = availableParallelism();
   let bad;
   for (let i = 0; i < rest.length; i++) {
     const f = rest[i];
     const jobsArg = f === '--jobs' ? rest[++i] : f.startsWith('--jobs=') ? f.slice(7) : null;
-    if (jobsArg !== null) {
+    const skipArg = f === '--skip' ? rest[++i] : f.startsWith('--skip=') ? f.slice(7) : null;
+    if (skipArg !== null) {
+      if (skipArg) skip.push(skipArg.replace(/\/+$/, ''));
+      else bad ??= f;
+    } else if (jobsArg !== null) {
       jobs = Number(jobsArg);
       if (!Number.isInteger(jobs) || jobs < 1) bad ??= `${f}${f === '--jobs' ? ` ${jobsArg}` : ''}`;
     } else flags.push(f);
@@ -178,7 +185,7 @@ export async function main(argv = process.argv.slice(2)) {
   bad ??= flags.find((f) => !known.includes(f));
   if (!KINDS[kind] || bad) {
     console.error(
-      `${bad ? `unknown flag '${bad}'` : `unknown command '${kind ?? ''}'`}\nusage: bun tools/workspaces.mjs check [--keep-going] [--list] [--jobs N]\n       bun tools/workspaces.mjs test  [--keep-going] [--list] [--jobs N] [--core]`,
+      `${bad ? `unknown flag '${bad}'` : `unknown command '${kind ?? ''}'`}\nusage: bun tools/workspaces.mjs check [--keep-going] [--list] [--jobs N] [--skip DIR]...\n       bun tools/workspaces.mjs test  [--keep-going] [--list] [--jobs N] [--skip DIR]... [--core]`,
     );
     return 2;
   }
@@ -187,6 +194,7 @@ export async function main(argv = process.argv.slice(2)) {
     list: flags.includes('--list'),
     core: flags.includes('--core'),
     jobs,
+    skip,
   });
 }
 

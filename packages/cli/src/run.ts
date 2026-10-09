@@ -13,7 +13,12 @@ function conformanceBin(root: string): string | null {
   return Bun.which('vendua-conformance');
 }
 
-async function conformance(root: string, mode: 'static' | 'e2e', dir: string): Promise<number> {
+async function conformance(
+  root: string,
+  mode: 'static' | 'e2e',
+  dir: string,
+  extra: string[] = [],
+): Promise<number> {
   const bin = conformanceBin(root);
   if (!bin) {
     console.log(
@@ -22,7 +27,7 @@ async function conformance(root: string, mode: 'static' | 'e2e', dir: string): P
     );
     return 0;
   }
-  return run([bin, mode, relative(root, dir)], root);
+  return run([bin, mode, relative(root, dir), ...extra], root);
 }
 
 export async function cmdDev(slug: string | undefined, root: string): Promise<never> {
@@ -46,5 +51,6 @@ export async function cmdQa(slug: string | undefined, root: string): Promise<nev
   const dir = storefrontDir(root, slug);
   const build = await run(['bun', 'run', 'build'], dir);
   if (build !== 0) process.exit(build);
-  process.exit(await conformance(root, 'e2e', dir));
+  // just built: the e2e runner would build it again
+  process.exit(await conformance(root, 'e2e', dir, ['--prebuilt']));
 }

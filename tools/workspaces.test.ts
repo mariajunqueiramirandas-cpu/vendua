@@ -51,6 +51,15 @@ describe('select', () => {
     ]);
   });
 
+  test('--skip leaves a workspace out', () => {
+    expect(select('check', { root, skip: ['packages/core', 'site'] })).toEqual([
+      'packages/a',
+      'apps/web',
+      'storefronts/_t',
+      'storefronts/shop',
+    ]);
+  });
+
   test('test: packages and apps/status with a test script, core only when asked', () => {
     expect(select('test', { root })).toEqual(['packages/a', 'apps/status']);
     expect(select('test', { root, core: true })).toEqual([
@@ -146,6 +155,12 @@ describe('runAll', () => {
     expect(await main(['check', '--list', '--jobs', '3'])).toBe(0);
   });
 
+  test('--skip takes a directory', async () => {
+    expect(await main(['check', '--skip'])).toBe(2);
+    expect(await main(['check', '--skip='])).toBe(2);
+    expect(await main(['check', '--list', '--skip', 'packages/core/', '--skip=site'])).toBe(0);
+  });
+
   test('test runs `bun test`, not the package’s test script', async () => {
     const root = tree({
       'packages/a': { test: 'touch script-ran' },
@@ -171,6 +186,9 @@ describe('the CI job and the root package.json use it', () => {
 
   test('ci.yml calls the same script instead of its own loops', () => {
     expect(ci).toContain('run: bun tools/workspaces.mjs check');
+    // the one it skips is typechecked in the builds part
+    expect(ci).toContain('bun tools/workspaces.mjs check --skip packages/core');
+    expect(ci).toContain('cd packages/core && bun run check');
     expect(ci).toContain('run: bun tools/workspaces.mjs test');
     expect(ci).not.toContain('for dir in packages/*');
   });
