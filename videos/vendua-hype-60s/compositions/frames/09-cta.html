@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: 'Space Grotesk';
+          src: url('assets/fonts/space-grotesk-latin-wght-normal.woff2') format('woff2');
+          font-weight: 300 700;
+        }
+        @font-face {
+          font-family: 'Figtree';
+          src: url('assets/fonts/figtree-latin-wght-normal.woff2') format('woff2');
+          font-weight: 300 900;
+        }
+        #stage {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+          background: radial-gradient(1200px 900px at 50% 38%, #123c32 0%, #0a100d 70%);
+          color: #f7f4ea;
+        }
+        .f9-cam,
+        .f9-g,
+        .f9-breath {
+          position: absolute;
+          inset: 0;
+        }
+        .f9-g2 {
+          opacity: 0;
+          visibility: hidden;
+        }
+
+        /* ── g1: headline ── */
+        .f9-head {
+          position: absolute;
+          left: 84px;
+          top: 340px;
+          font:
+            700 216px/0.9 'Space Grotesk',
+            system-ui,
+            sans-serif;
+          letter-spacing: -0.045em;
+          color: #f7f4ea;
+          white-space: nowrap;
+        }
+        .f9-hl {
+          display: block;
+          width: max-content;
+          transform-origin: 0 60%;
+          opacity: 0;
+        }
+        #f9-h3 {
+          margin-top: 0.1em;
+        }
+        .f9-mark {
+          position: relative;
+          display: inline-block;
+          isolation: isolate;
+          padding: 0 0.12em;
+          margin-left: -0.06em;
+        }
+        .f9-mark-t {
+          position: relative;
+        }
+        .f9-mark-bg {
+          position: absolute;
+          inset: 0.1em 0 -0.17em;
+          border-radius: 0.12em;
+          background: #d9f875;
+          transform: scaleX(0);
+          transform-origin: 0 50%;
+        }
+
+        /* ── the button → disc → the logo's check (one element, shared by both groups) ── */
+        .f9-btn {
+          position: absolute;
+          left: 540px;
+          top: 1150px;
+          width: 820px;
+          height: 150px;
+          border-radius: 999px;
+          background: #d9f875;
+          color: #123c32;
+          opacity: 0;
+          overflow: hidden;
+        }
+        .f9-btn-in {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          display: flex;
+          align-items: center;
+          gap: 26px;
+          transform: translate(-50%, -50%);
+          font:
+            800 64px/1 'Figtree',
+            system-ui,
+            sans-serif;
+          letter-spacing: -0.02em;
+          white-space: nowrap;
+        }
+        .f9-arrow {
+          display: block;
+          width: 58px;
+          height: 40px;
+        }
+        .f9-flash {
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          background: #fffdf8;
+          opacity: 0;
+        }
+        .f9-bcheck {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: 150px;
+          height: 150px;
+          margin: -75px 0 0 -75px;
+          display: block;
+        }
+        .f9-finger {
+          position: absolute;
+          left: 700px;
+          top: 1110px;
+          width: 92px;
+          height: 92px;
+          border-radius: 50%;
+          background: radial-gradient(circle at 42% 38%, #fffdf8 0%, #f7f4ea 55%, #e4dfcf 100%);
+          box-shadow:
+            0 0 0 5px rgb(247 244 234 / 0.35),
+            0 18px 40px rgb(0 0 0 / 0.45);
+          opacity: 0;
+        }
+
+        /* ── g2: end card ── */
+        .f9-logo {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 1080px;
+          height: 1920px;
+          transform-origin: 540px 965px;
+        }
+        .f9-ring {
+          position: absolute;
+          left: 190px;
+          top: 969px;
+          width: 240px;
+          height: 240px;
+          margin: -120px 0 0 -120px;
+          border-radius: 50%;
+          border: 9px solid #d9f875;
+          opacity: 0;
+        }
+        .f9-anchor {
+          position: absolute;
+          left: 0;
+          width: 100%;
+          top: 965px;
+          height: 0;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          box-sizing: border-box;
+          padding-right: 30px; /* optical centring: the dot and acute make the word right-heavy */
+        }
+        .f9-lock {
+          display: flex;
+          align-items: center;
+          gap: 0.06em;
+          font-size: 182px;
+          flex: none;
+        }
+        .f9-check {
+          display: block;
+          width: 1em;
+          height: 1em;
+          flex: none;
+          margin-top: 0.06em;
+          visibility: hidden;
+        }
+        .f9-word {
+          position: relative;
+          display: block;
+          font:
+            700 1em/0.8 'Space Grotesk',
+            system-ui,
+            sans-serif;
+          letter-spacing: -0.035em;
+          white-space: nowrap;
+          color: #f7f4ea;
+          opacity: 0;
+        }
+        .f9-l {
+          position: relative;
+          display: inline-block;
+        }
+        .f9-acute {
+          position: absolute;
+          left: 0.24em;
+          top: -0.19em;
+          width: 0.1em;
+          height: 0.2em;
+          border-radius: 0.05em;
+          background: currentColor;
+          transform: rotate(38deg);
+        }
+        .f9-dot {
+          color: #d9f875;
+        }
+        .f9-dua {
+          position: absolute;
+          left: 640px;
+          top: 495px;
+          width: 300px;
+          height: 300px;
+          border-radius: 50%;
+          overflow: hidden;
+          background: #d9f875;
+          opacity: 0;
+        }
+        .f9-dua img {
+          position: absolute;
+          left: 14px;
+          top: 34px;
+          width: 272px;
+          height: 272px;
+          display: block;
+          max-width: none;
+        }
+        .f9-url {
+          position: absolute;
+          left: 64px;
+          right: 64px;
+          top: 1125px;
+          text-align: center;
+          font:
+            800 92px/1 'Figtree',
+            system-ui,
+            sans-serif;
+          letter-spacing: -0.01em;
+          color: #f7f4ea;
+          opacity: 0;
+        }
+        .f9-sub {
+          position: absolute;
+          left: 64px;
+          right: 64px;
+          top: 1252px;
+          text-align: center;
+          font:
+            700 60px/1 'Figtree',
+            system-ui,
+            sans-serif;
+          color: #b9c6bf;
+          opacity: 0;
+        }
+        .f9-sub-hi {
+          color: #d9f875;
+        }
+        .f9-grain {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          opacity: 0.07;
+          mix-blend-mode: overlay;
+          pointer-events: none;
+        }
+      </style>
+
+      <div id="stage" data-composition-id="09-cta" data-width="1080" data-height="1920">
+        <div class="f9-cam" id="f9-cam">
+          <div class="f9-g f9-g1" id="f9-g1">
+            <div class="f9-head">
+              <span class="f9-hl" id="f9-h1">Crie sua</span>
+              <span class="f9-hl" id="f9-h2">loja</span>
+              <span class="f9-hl" id="f9-h3"
+                ><span class="f9-mark" id="f9-mark"
+                  ><span class="f9-mark-bg" id="f9-mark-bg"></span><span class="f9-mark-t">hoje.</span></span
+                ></span
+              >
+            </div>
+          </div>
+
+          <div class="f9-g f9-g2" id="f9-g2">
+            <div class="f9-breath" id="f9-breath">
+              <div class="f9-logo" id="f9-logo">
+                <div class="f9-ring" id="f9-ring"></div>
+                <div class="f9-dua" id="f9-dua">
+                  <img src="assets/dua/avatar-feliz.webp" alt="" />
+                </div>
+                <div class="f9-anchor">
+                  <div class="f9-lock" id="f9-lock">
+                    <svg class="f9-check" id="f9-check" viewBox="0 0 128 128" aria-hidden="true">
+                      <path
+                        d="M32 48 L61 88 L98 34"
+                        fill="none"
+                        stroke="#d9f875"
+                        stroke-width="17"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                    <span class="f9-word" id="f9-word"
+                      ><span class="f9-l">v</span><span class="f9-l">e</span
+                      ><span class="f9-l">n</span><span class="f9-l">d</span
+                      ><span class="f9-l">u</span
+                      ><span class="f9-l">a<i class="f9-acute"></i></span
+                      ><span class="f9-l f9-dot">.</span></span
+                    >
+                  </div>
+                </div>
+              </div>
+              <div class="f9-url" id="f9-url">vendua.com.br</div>
+              <div class="f9-sub" id="f9-sub"><span class="f9-sub-hi">14 dias grátis</span> no Bandeira</div>
+            </div>
+          </div>
+
+          <div class="f9-btn" id="f9-btn">
+            <div class="f9-btn-in" id="f9-btn-in">
+              <span>Criar minha loja</span>
+              <svg class="f9-arrow" id="f9-arrow" viewBox="0 0 58 40" aria-hidden="true">
+                <path
+                  d="M4 20 H50 M34 5 L52 20 L34 35"
+                  fill="none"
+                  stroke="#123c32"
+                  stroke-width="7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </div>
+            <div class="f9-flash" id="f9-flash"></div>
+            <svg class="f9-bcheck" id="f9-bcheck" viewBox="0 0 128 128" aria-hidden="true">
+              <path
+                id="f9-bcheck-path"
+                d="M32 48 L61 88 L98 34"
+                fill="none"
+                stroke="#d9f875"
+                stroke-width="17"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="f9-finger" id="f9-finger"></div>
+        </div>
+
+        <svg class="f9-grain" viewBox="0 0 1080 1920" preserveAspectRatio="none" aria-hidden="true">
+          <filter id="f9-noise">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.9"
+              numOctaves="2"
+              stitchTiles="stitch"
+            />
+          </filter>
+          <rect width="1080" height="1920" filter="url(#f9-noise)" />
+        </svg>
+      </div>
+
+      <script>
+        (function () {
+          window.__timelines = window.__timelines || {};
+          const DUR = 7.5;
+          const B = 0.46875;
+          const E = B / 2;
+          const T_HOJE = B; // 0.46875
+          const T_BTN = 2 * B; // 0.9375
+          const T_TAP = 4 * B; // 1.875
+          const T_CARD = 6 * B; // 2.8125
+          const T_URL = 8 * B; // 3.75
+          const T_SUB = 9 * B; // 4.21875
+          const T_STAB = 12 * B; // 5.625
+          const CHECK_LEN = 116;
+          // where the lockup's check sits on the stage (measured from the rendered end card)
+          const DEST_X = 190 - 540;
+          const DEST_Y = 969 - 1150;
+          const DEST_S = 182 / 150;
+
+          gsap.set('#f9-cam', { x: 8, y: -5, rotation: 0.6 });
+          gsap.set('#f9-btn', { xPercent: -50, yPercent: -50 });
+          gsap.set('#f9-bcheck-path', { strokeDasharray: CHECK_LEN, strokeDashoffset: CHECK_LEN });
+          gsap.set('#f9-bcheck', { opacity: 0 });
+
+          const tl = gsap.timeline({ paused: true });
+
+          // ── the drop: shake ──
+          const shake = [
+            [8, -5, 0.6],
+            [-7, 6, -0.5],
+            [6, -6, 0.45],
+            [-5, 4, -0.35],
+            [4, -3, 0.25],
+            [-3, 2, -0.15],
+            [2, -1, 0.08],
+          ];
+          shake.forEach((s, i) => tl.set('#f9-cam', { x: s[0], y: s[1], rotation: s[2] }, i * 0.034));
+          tl.set('#f9-cam', { x: 0, y: 0, rotation: 0 }, shake.length * 0.034);
+
+          // ── g1 · headline slams; t=0 is already mid-slam ──
+          tl.fromTo(
+            '#f9-h1',
+            { opacity: 0.75, scale: 1.1, filter: 'blur(8px)' },
+            { opacity: 1, scale: 1, filter: 'blur(0px)', duration: 0.13, ease: 'power4.out' },
+            0,
+          );
+          const slam = (sel, at) =>
+            tl.fromTo(
+              sel,
+              { opacity: 0, scale: 1.18, filter: 'blur(14px)' },
+              { opacity: 1, scale: 1, filter: 'blur(0px)', duration: 0.16, ease: 'power4.out' },
+              at - 0.06,
+            );
+          slam('#f9-h2', E);
+          slam('#f9-h3', T_HOJE);
+          tl.to('#f9-mark-bg', { scaleX: 1, duration: 0.18, ease: 'power3.out' }, T_HOJE + 0.02);
+          tl.set('#f9-mark', { color: '#123c32' }, T_HOJE + 0.08);
+          // slow drift on the headline block while the button plays
+          tl.fromTo(
+            '.f9-head',
+            { scale: 1, transformOrigin: '0% 0%' },
+            { scale: 1.03, duration: T_CARD - 0.4, ease: 'none' },
+            0,
+          );
+
+          // ── the button whips up ──
+          tl.fromTo(
+            '#f9-btn',
+            { opacity: 1, y: 520, skewY: 4, filter: 'blur(10px)' },
+            {
+              y: 0,
+              skewY: 0,
+              filter: 'blur(0px)',
+              duration: 0.28,
+              ease: 'expo.out',
+              immediateRender: false,
+            },
+            T_BTN - 0.09,
+          );
+          tl.set('#f9-btn', { opacity: 0 }, 0);
+          tl.set('#f9-btn', { opacity: 1 }, T_BTN - 0.09);
+          // the arrow nudges on the beats
+          [T_BTN + B, T_BTN + 1.5 * B].forEach((at) => {
+            tl.fromTo(
+              '#f9-arrow',
+              { x: 0 },
+              { x: 14, duration: 0.08, ease: 'power2.out', immediateRender: false },
+              at - 0.04,
+            );
+            tl.to('#f9-arrow', { x: 0, duration: 0.18, ease: 'power2.in' }, at + 0.05);
+          });
+
+          // ── the fingertip taps it ──
+          tl.fromTo(
+            '#f9-finger',
+            { opacity: 0, x: 300, y: 520, scale: 1.25 },
+            { opacity: 1, x: 0, y: 0, scale: 1, duration: 0.4, ease: 'power3.out', immediateRender: false },
+            T_TAP - 0.5,
+          );
+          tl.to('#f9-finger', { scale: 0.8, duration: 0.07, ease: 'power2.in' }, T_TAP - 0.07);
+          tl.to('#f9-btn', { scale: 0.94, duration: 0.07, ease: 'power2.in' }, T_TAP - 0.07);
+          tl.set('#f9-flash', { opacity: 0.85 }, T_TAP);
+          tl.to('#f9-flash', { opacity: 0, duration: 0.2, ease: 'power2.out' }, T_TAP + 0.03);
+          tl.to('#f9-finger', { scale: 1, duration: 0.14, ease: 'power2.out' }, T_TAP + 0.02);
+          tl.to(
+            '#f9-finger',
+            { x: 90, y: 150, autoAlpha: 0, duration: 0.12, ease: 'power2.in' },
+            T_TAP + 0.06,
+          );
+          // punch-in on the tap, easing back over the bar
+          tl.fromTo('#f9-g1', { scale: 1 }, { scale: 1.04, duration: 0.12, ease: 'power2.out' }, T_TAP);
+          tl.to('#f9-g1', { scale: 1, duration: 0.6, ease: 'power2.inOut' }, T_TAP + 0.12);
+
+          // ── morph: pill → forest disc with the lime check ──
+          const T_M = T_TAP + 0.05;
+          tl.to('#f9-btn-in', { opacity: 0, scale: 0.85, duration: 0.09, ease: 'power2.in' }, T_M);
+          tl.to(
+            '#f9-btn',
+            {
+              width: 150,
+              scale: 1,
+              duration: 0.25,
+              ease: 'expo.inOut',
+            },
+            T_M,
+          );
+          tl.set('#f9-btn', { backgroundColor: '#123c32' }, T_M + 0.07);
+          tl.set('#f9-bcheck', { opacity: 1 }, T_M + 0.14);
+          tl.to(
+            '#f9-bcheck-path',
+            { strokeDashoffset: 0, duration: 0.24, ease: 'power2.out' },
+            T_M + 0.14,
+          );
+          tl.fromTo(
+            '#f9-btn',
+            { scale: 1 },
+            { scale: 1.12, duration: 0.1, ease: 'power2.out', immediateRender: false },
+            T_M + 0.25,
+          );
+          tl.to('#f9-btn', { scale: 1, duration: 0.11, ease: 'back.out(3)' }, T_M + 0.35);
+
+          // ── into the end card: headline whips out, the disc carries its check to the logo ──
+          const T_OUT = T_CARD - 0.42;
+          tl.to(
+            '.f9-head',
+            { y: -1250, skewY: -6, filter: 'blur(12px)', duration: 0.26, ease: 'expo.in' },
+            T_OUT,
+          );
+          tl.to(
+            '#f9-btn',
+            { x: DEST_X, y: DEST_Y, scale: DEST_S, duration: 0.42, ease: 'expo.inOut' },
+            T_OUT,
+          );
+          tl.to(
+            '#f9-btn',
+            { backgroundColor: 'rgba(18,60,50,0)', duration: 0.18, ease: 'power1.in' },
+            T_CARD - 0.2,
+          );
+          tl.set('#f9-g1', { autoAlpha: 0 }, T_CARD);
+          tl.set('#f9-btn', { opacity: 0 }, T_CARD);
+
+          // ── g2 · end card ──
+          tl.set('#f9-g2', { autoAlpha: 1 }, T_CARD);
+          tl.set('#f9-check', { visibility: 'visible' }, T_CARD);
+          tl.fromTo(
+            '#f9-word',
+            { opacity: 0, x: -60, filter: 'blur(14px)', scale: 1.1 },
+            { opacity: 1, x: 0, filter: 'blur(0px)', scale: 1, duration: 0.2, ease: 'power4.out', immediateRender: false },
+            T_CARD - 0.04,
+          );
+          // Duá rises onto his disc on the next beat
+          tl.fromTo(
+            '#f9-dua',
+            { opacity: 0, scale: 0.4, rotation: -10 },
+            { opacity: 1, scale: 1, rotation: 0, duration: 0.42, ease: 'back.out(1.8)', immediateRender: false },
+            T_CARD + B - 0.08,
+          );
+
+          // slow breath over the whole card
+          tl.fromTo(
+            '#f9-breath',
+            { scale: 1, transformOrigin: '540px 1065px' },
+            { scale: 1.012, duration: DUR - T_CARD, ease: 'sine.inOut', immediateRender: false },
+            T_CARD,
+          );
+
+          const soft = (sel, at) =>
+            tl.fromTo(
+              sel,
+              { opacity: 0, scale: 1.08, filter: 'blur(10px)' },
+              { opacity: 1, scale: 1, filter: 'blur(0px)', duration: 0.22, ease: 'power3.out', immediateRender: false },
+              at - 0.06,
+            );
+          soft('#f9-url', T_URL);
+          soft('#f9-sub', T_SUB);
+
+          // ── the final stab: one lime ring, the logo punches 1.04 → 1 ──
+          tl.fromTo(
+            '#f9-ring',
+            { opacity: 1, scale: 0.9 },
+            { opacity: 0, scale: 3, duration: 0.6, ease: 'power2.out', immediateRender: false },
+            T_STAB,
+          );
+          tl.fromTo(
+            '#f9-logo',
+            { scale: 1.04 },
+            { scale: 1, duration: 0.45, ease: 'power3.out', immediateRender: false },
+            T_STAB,
+          );
+
+          tl.set({}, {}, DUR);
+          window.__timelines['09-cta'] = tl;
+          tl.seek(0);
+        })();
+      </script>
+    </template>
+  </body>
+</html>
