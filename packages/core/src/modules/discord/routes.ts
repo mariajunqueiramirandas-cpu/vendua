@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import type { Context, Hono } from 'hono';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError, bodyJson, boundedText, parseJsonObject } from '../../platform/http.ts';
@@ -19,6 +20,7 @@ import {
   CHANNEL_KEYS,
   DEFAULT_TOKEN_ENV,
   SNOWFLAKE_RE,
+  artLink,
   channelFor,
   discordContext,
   discordSettingOf,
@@ -54,6 +56,8 @@ export const CHANNEL_NAMES: Record<StaffCategory, string> = {
 };
 const CATEGORY_NAME = 'Venduá';
 const ENDPOINT_PATH = '/control/v1/discord/interactions';
+// Duá's head on a lime disc: the bot's avatar and the app's icon (served with the CRM too)
+const AVATAR_PNG = join(import.meta.dir, '../../../../../apps/control/public/discord/avatar.png');
 
 export function inviteUrl(applicationId: string, guildId: string | null): string {
   const q = new URLSearchParams({
@@ -71,6 +75,7 @@ interface DiscordChannel {
   type: number;
   parent_id?: string | null;
   position?: number;
+  permission_overwrites?: { id: string; type: number; allow: string; deny: string }[];
 }
 
 export function mountDiscord(o: {
@@ -299,12 +304,16 @@ export function mountDiscord(o: {
         `coloque o token do bot em ${tokenEnv} no ambiente do Core e reinicie`,
       );
     const client = discordClient(token, o.fetch);
-    const [me, guilds] = await Promise.all([
-      client.request<{ id: string; verify_key: string; interactions_endpoint_url?: string | null }>(
-        'GET',
-        '/applications/@me',
-      ),
+    const [me, guilds, bot] = await Promise.all([
+      client.request<{
+        id: string;
+        verify_key: string;
+        icon?: string | null;
+        interactions_endpoint_url?: string | null;
+      }>('GET', '/applications/@me'),
       client.request<{ id: string; name: string }[]>('GET', '/users/@me/guilds'),
+      // only the avatar needs it: a failed read skips the avatar, never the connection
+      client.request<{ avatar?: string | null }>('GET', '/users/@me').catch(() => null),
     ]).catch(discordFail);
     const inGuild = (id: unknown) => guilds.some((g) => g.id === id);
     if (wanted && !inGuild(wanted))
@@ -350,6 +359,17 @@ export function mountDiscord(o: {
         rlog.warn({ err: endpointError, endpointUrl }, 'interactions url not accepted');
       }
     }
+    // Duá's face on a bot and app still wearing Discord's default; a picture the team chose stays
+    const needsAvatar = !!bot && !bot.avatar;
+    if (needsAvatar || !me.icon) {
+      try {
+        const image = `data:image/png;base64,${Buffer.from(await Bun.file(AVATAR_PNG).arrayBuffer()).toString('base64')}`;
+        if (needsAvatar) await client.request('PATCH', '/users/@me', { avatar: image });
+        if (!me.icon) await client.request('PATCH', '/applications/@me', { icon: image });
+      } catch (e) {
+        rlog.warn({ err: e instanceof Error ? e.message : String(e) }, 'bot avatar not set');
+      }
+    }
     return c.json({
       applicationId: me.id,
       guildId,
@@ -366,33 +386,55 @@ export function mountDiscord(o: {
     const key = idemKey(c, 'setup');
     const body = await bodyJson(c);
     const ctx = await ready();
-    const roleId =
-      typeof body.staffRoleId === 'string' && SNOWFLAKE_RE.test(body.staffRoleId)
-        ? body.staffRoleId
-        : ctx.setting.staffRoleId;
-    if (!roleId)
-      throw new HttpError(
-        422,
-        'BAD_REQUEST',
-        'escolha o cargo da equipe antes de criar os canais',
-        {
-          field: 'staffRoleId',
-        },
-      );
+    // absent: the saved role; '' or null: explicitly none (the channels open to the server)
+    const asked = body.staffRoleId;
+    if (
+      asked !== undefined &&
+      asked !== null &&
+      asked !== '' &&
+      (typeof asked !== 'string' || !SNOWFLAKE_RE.test(asked))
+    )
+      throw new HttpError(422, 'BAD_REQUEST', 'staffRoleId must be a Discord role id', {
+        field: 'staffRoleId',
+      });
+    const roleId: string | null =
+      asked === undefined ? ctx.setting.staffRoleId : (asked as string | null) || null;
     const client = clientFor(ctx);
     const g = ctx.app.app.guildId;
     const res = await claimControl(sql, key, async (tx) => {
       try {
         const me = await client.request<{ id: string }>('GET', '/users/@me');
+        // with a team role the category is private to it; without one (a fresh server has no
+        // roles) the whole server sees it — the server is the team's own
         const overwrites = [
-          { id: g, type: 0, allow: '0', deny: String(VIEW) },
-          { id: roleId, type: 0, allow: String(VIEW + SEND + HISTORY), deny: '0' },
+          ...(roleId
+            ? [
+                { id: g, type: 0, allow: '0', deny: String(VIEW) },
+                { id: roleId, type: 0, allow: String(VIEW + SEND + HISTORY), deny: '0' },
+              ]
+            : []),
           { id: me.id, type: 1, allow: String(VIEW + SEND + EMBED + HISTORY), deny: '0' },
         ];
         const existing = await client.request<DiscordChannel[]>('GET', `/guilds/${g}/channels`);
+        // a role picked after the channels were made public: lock what already exists
+        // The bot owns these channels' permissions: what Discord has (not what the CRM saved)
+        // must be exactly what this run would set, or it's reset — a role saved before this
+        // click, "sem cargo" over a private category, or an old role still allowed in.
+        // Bitfields outgrow 2^53, so they compare as BigInt.
+        const key = (w: { id: string; allow: string; deny: string }) =>
+          `${w.id}:${BigInt(w.allow || '0')}:${BigInt(w.deny || '0')}`;
+        const wanted = overwrites.map(key).sort().join(',');
+        const lock = async (ch: DiscordChannel) => {
+          const has = (ch.permission_overwrites ?? []).map(key).sort().join(',');
+          if (has !== wanted)
+            await client.request('PATCH', `/channels/${ch.id}`, {
+              permission_overwrites: overwrites,
+            });
+        };
         let parent = existing.find(
           (ch) => ch.type === 4 && ch.name.toLowerCase() === CATEGORY_NAME.toLowerCase(),
         );
+        if (parent) await lock(parent);
         parent ??= await client.request<DiscordChannel>('POST', `/guilds/${g}/channels`, {
           name: CATEGORY_NAME,
           type: 4,
@@ -414,7 +456,7 @@ export function mountDiscord(o: {
               permission_overwrites: overwrites,
             });
             created.push(name);
-          }
+          } else await lock(ch);
           channels[cat] = ch.id;
         }
         const stored = await getSettingTx<Record<string, unknown>>(tx, 'discord', {});
@@ -464,6 +506,7 @@ export function mountDiscord(o: {
                     .map((k) => `${CATEGORY_META[k].emoji} ${k}`)
                     .join(', ')}`,
                   color: COLORS.success,
+                  thumbnail: { url: artLink(ctx.crmBase, 'sucesso') },
                 },
               ],
               allowed_mentions: { parse: [] },

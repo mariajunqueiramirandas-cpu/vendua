@@ -1,0 +1,166 @@
+<!doctype html>
+<!--
+  Instagram Story (1080×1920): the official launch is weeks away, printed as order #1's comanda.
+  `bun brand/social/render.ts` writes story-lancamento.png. Noite tokens from
+  site/src/lib/styles/theme.css. The ticket follows Core's renderOrderTicket (store, #number in
+  double size, the mode in double height, Previsão, `1x` items with `+` lines, OBSERVAÇÃO) and the
+  site's Paper.svelte edges. Duá is brand/mascote/sucesso.webp, never mirrored. No date and no
+  price: the owner hasn't set them.
+-->
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: 'Figtree';
+        font-weight: 300 900;
+        src: url(../../site/node_modules/@fontsource-variable/figtree/files/figtree-latin-wght-normal.woff2)
+          format('woff2');
+      }
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-weight: 300 700;
+        src: url(../../site/node_modules/@fontsource-variable/space-grotesk/files/space-grotesk-latin-wght-normal.woff2)
+          format('woff2');
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+      }
+      body {
+        position: relative;
+        background:
+          radial-gradient(760px 620px at 78% 44%, rgb(217 248 117 / 0.16), transparent 70%),
+          radial-gradient(900px 700px at 20% 0%, #131d18, transparent 70%), #0a100d;
+        color: #f7f4ea;
+        font-family: 'Figtree', system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ── the shout ── */
+      h1 {
+        position: absolute;
+        left: 58px;
+        top: 262px;
+        font:
+          700 196px/0.88 'Space Grotesk',
+          sans-serif;
+        letter-spacing: -0.055em;
+        color: #d9f875;
+      }
+
+      /* ── order #1's comanda, fresh off the printer ── */
+      .ticket {
+        --tooth: 14px;
+        --lh: 1.36em;
+        position: absolute;
+        left: 478px;
+        top: 680px;
+        width: 548px;
+        padding: calc(var(--tooth) + 26px) 34px calc(var(--tooth) + 30px);
+        background: linear-gradient(170deg, #fbf8ee 0%, #f1ecdd 100%);
+        color: #1a211d;
+        font-size: 25px;
+        font-weight: 500;
+        line-height: var(--lh);
+        font-variant-numeric: tabular-nums;
+        rotate: -3deg;
+        filter: drop-shadow(0 40px 60px rgb(0 0 0 / 0.55));
+        mask:
+          conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) top / var(--tooth)
+            51% repeat-x,
+          conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom /
+            var(--tooth) 51% repeat-x;
+      }
+      .ln {
+        display: block;
+        min-height: var(--lh);
+      }
+      .c {
+        text-align: center;
+      }
+      .b {
+        font-weight: 750;
+      }
+      .ind {
+        padding-left: 3ch;
+      }
+      .tall {
+        min-height: calc(var(--lh) * 2);
+      }
+      .tall > .g {
+        display: inline-block;
+        transform: scaleY(1.85);
+        transform-origin: 50% 0;
+        padding-top: 0.08em;
+      }
+      .big {
+        font-size: 2em;
+        line-height: var(--lh);
+        letter-spacing: 0.02em;
+      }
+      .rule {
+        display: block;
+        height: var(--lh);
+        background: linear-gradient(90deg, currentColor 55%, transparent 0) 0 50% / 0.55em 2px
+          repeat-x;
+      }
+
+      /* ── Duá celebrating on a lit disc, in front of the ticket ── */
+      .disc {
+        position: absolute;
+        left: -190px;
+        top: 860px;
+        width: 860px;
+        height: 860px;
+        border-radius: 50%;
+        background: radial-gradient(
+          circle,
+          rgb(217 248 117 / 0.95) 0%,
+          rgb(217 248 117 / 0.55) 34%,
+          rgb(217 248 117 / 0) 68%
+        );
+      }
+      .dua {
+        position: absolute;
+        left: -52px;
+        top: 1000px;
+        width: 540px;
+        filter: drop-shadow(0 18px 30px rgb(0 0 0 / 0.45));
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Tá saindo<br />do forno.</h1>
+
+    <div class="ticket" aria-label="Comanda do pedido #1: o lançamento oficial do Venduá">
+      <span class="ln c">Venduá</span>
+      <span class="ln c b big">#1</span>
+      <span class="ln c b tall"><span class="g">LANÇAMENTO OFICIAL</span></span>
+      <span class="rule"></span>
+      <span class="ln b">Para: você e a sua loja</span>
+      <span class="ln b tall"><span class="g">Previsão: próximas semanas</span></span>
+      <span class="rule"></span>
+      <span class="ln b tall"><span class="g">1x Loja online</span></span>
+      <span class="ln b tall"><span class="g">1x Pedidos no celular</span></span>
+      <span class="ln b tall"><span class="g">1x Pix</span></span>
+      <span class="ln b tall"><span class="g">1x Tela da cozinha</span></span>
+      <span class="ln b tall"><span class="g">1x Duá</span></span>
+      <span class="ln ind">+ vendedor com IA</span>
+      <span class="ln ind">+ no WhatsApp da loja</span>
+      <span class="rule"></span>
+      <span class="ln b">OBSERVAÇÃO:</span>
+      <span class="ln tall"><span class="g">Capricha, que é lançamento!</span></span>
+    </div>
+
+    <div class="disc"></div>
+    <img class="dua" src="../mascote/sucesso.webp" alt="" />
+  </body>
+</html>

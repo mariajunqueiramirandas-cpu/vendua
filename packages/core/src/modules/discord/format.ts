@@ -18,6 +18,7 @@ export interface Embed {
   author?: { name: string; url?: string };
   footer?: { text: string };
   fields?: EmbedField[];
+  thumbnail?: { url: string };
 }
 
 export interface Button {

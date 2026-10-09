@@ -312,18 +312,62 @@ async function taskByBranchTx(
   );
 }
 
+const MARKER = /^vendua-task:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$/im;
+
+/** A cloud session may push the branch it was given instead of the task's. The PR's
+ *  `vendua-task:<id>` line still names the task, which then follows that branch (CI runs and
+ *  the merge find it by branch). Only a task with no PR yet, and only a PR into `main` from a
+ *  `claude/` branch carrying that store's label: GitHub adds the label after `opened`, so the
+ *  `labeled` event adopts too. A reopened PR is never adopted: after a retry it is the old code. */
+async function adoptByMarkerTx(
+  tx: Sql,
+  pr: Record<string, unknown>,
+  branch: string,
+): Promise<SiteTaskDbRow | null> {
+  const id = MARKER.exec(str(pr.body, 65536) ?? '')?.[1]?.toLowerCase();
+  if (!id || !branch.startsWith('claude/')) return null;
+  if ((pr.base as { ref?: unknown } | undefined)?.ref !== 'main') return null;
+  const labels = Array.isArray(pr.labels)
+    ? pr.labels.map((l) => (l as { name?: unknown } | null)?.name)
+    : [];
+  // two deliveries adopting one branch for two tasks would trip site_tasks_live_branch
+  await tx`select pg_advisory_xact_lock(hashtext(${`site-branch:${branch}`}))`;
+  const taken = await tx`
+    select 1 from site_tasks where branch = ${branch} and status not in ('delivered', 'cancelled')
+  `;
+  if (taken.length) return null;
+  const t = (
+    await tx<SiteTaskDbRow[]>`
+      select * from site_tasks
+      where id = ${id} and status in ('running', 'escalated') and pr_number is null
+      for update
+    `
+  )[0];
+  if (!t) return null;
+  const { slug } = await storeOfTx(tx, t.tenant_id);
+  if (!labels.includes(`storefront:${slug}`)) return null;
+  await tx`update site_tasks set branch = ${branch}, updated_at = now() where id = ${t.id}`;
+  await taskEventTx(tx, t, 'branch_adopted', { from: t.branch, to: branch });
+  return { ...t, branch };
+}
+
 /** pull_request: opened/reopened → pr_open; synchronize → new head; closed → merged or
  *  escalated. Returns the task id when it moved one. */
 async function pullRequestTx(tx: Sql, p: Record<string, unknown>): Promise<string | null> {
-  const action = p.action;
   const pr = (p.pull_request ?? {}) as Record<string, unknown>;
   const head = (pr.head ?? {}) as Record<string, unknown>;
+  const branch = str(head.ref, 120);
+  let action = p.action;
   // a PR (re)opened on an escalated task's branch hands it back to review
-  const t = await taskByBranchTx(
+  let t = await taskByBranchTx(
     tx,
-    str(head.ref, 120),
+    branch,
     action === 'opened' || action === 'reopened' ? [...LIVE_PR, 'escalated'] : LIVE_PR,
   );
+  if (!t && branch && (action === 'opened' || action === 'labeled')) {
+    t = await adoptByMarkerTx(tx, pr, branch);
+    if (t) action = 'opened';
+  }
   if (!t) return null;
   const number = typeof pr.number === 'number' && Number.isInteger(pr.number) ? pr.number : null;
   const sha = str(head.sha, 64);

@@ -265,12 +265,15 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
       number: 42,
       html_url: 'https://github.com/acme/stores/pull/42',
       head: {
-        ref: task.branch,
+        ref: extra.ref ?? task.branch,
         sha: extra.sha ?? 'a'.repeat(40),
         repo: { full_name: extra.fork ?? 'acme/stores' },
       },
       merged: extra.merged ?? false,
       merge_commit_sha: extra.mergeSha ?? null,
+      body: extra.body ?? null,
+      base: { ref: extra.base ?? 'main' },
+      labels: ((extra.labels as string[] | undefined) ?? []).map((name) => ({ name })),
     },
   });
   let runIds = 1000;
@@ -442,6 +445,45 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
     // an event we don't follow, and a branch no task has
     expect((await hook('push', { ref: 'x' })).status).toBe(204);
     expect((await hook('pull_request', prPayload({ branch: 'other' }, 'opened'))).status).toBe(204);
+  });
+
+  test("a PR from the session's own branch is found by its marker, and the task follows it", async () => {
+    const { s, task } = await running();
+    const ref = `claude/session-${id8(task.id)}`;
+    const body = `vendua-task:${task.id}\n\nTokens quentes, seções da casa.`;
+    const labels = [`storefront:${s.slug}`];
+    const sha = 'c'.repeat(40);
+    const pr = (action: string, extra: Record<string, unknown> = {}) =>
+      hook('pull_request', prPayload(task, action, { ref, body, sha, labels, ...extra }));
+    // nobody's without the marker, another store's label, another base, a non-claude branch,
+    // or a reopen (after a retry the reopened PR is the old attempt)
+    expect((await pr('opened', { body: null })).status).toBe(204);
+    expect((await pr('opened', { labels: ['storefront:rival'] })).status).toBe(204);
+    expect((await pr('opened', { base: 'release' })).status).toBe(204);
+    expect((await pr('opened', { ref: `site-${id8(task.id)}` })).status).toBe(204);
+    expect((await pr('reopened')).status).toBe(204);
+    // GitHub opens the PR before the label lands: `opened` without it waits for `labeled`
+    expect((await pr('opened', { labels: [] })).status).toBe(204);
+    expect((await taskOf(task.tenant_id)).status).toBe('running');
+    expect((await pr('labeled')).status).toBe(200);
+    expect(await taskOf(task.tenant_id)).toMatchObject({
+      status: 'pr_open',
+      branch: ref,
+      pr_number: 42,
+      head_sha: sha,
+    });
+    const adopted = await sql<{ detail: any }[]>`
+      select detail from site_task_events where task_id = ${task.id} and kind = 'branch_adopted'`;
+    expect(adopted.map((e) => e.detail)).toEqual([{ from: task.branch, to: ref }]);
+    // CI on that branch now reaches the task
+    expect((await hook('workflow_run', runPayload({ branch: ref }, sha, 'success'))).status).toBe(
+      200,
+    );
+    expect((await taskOf(task.tenant_id)).ci).toBe('success');
+
+    // a task that already has its PR is never taken over by another PR naming it
+    expect((await pr('opened', { ref: `${ref}-x`, sha: 'd'.repeat(40) })).status).toBe(204);
+    expect(await taskOf(task.tenant_id)).toMatchObject({ branch: ref, head_sha: sha });
   });
 
   test('five red CI runs on distinct shas escalate; a stale sha is ignored', async () => {
