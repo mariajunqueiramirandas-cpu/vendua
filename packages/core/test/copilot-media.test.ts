@@ -142,7 +142,7 @@ describe.skipIf(!OWNER_URL)('Duá Copilot voice and photos (db)', () => {
   const mailbox = () =>
     sql<{ payload: { kind: string; text: string; messageId: string }; dedupe_key: string }[]>`
       select m.payload, m.dedupe_key from agent_mailbox m join agent_actors a on a.id = m.actor_id
-      where m.tenant_id = ${tenantId} and a.agent_id = 'copilot' order by m.id`;
+      where m.tenant_id = ${tenantId} and a.agent_id = 'copilot' order by m.created_at, m.id`;
 
   test('the screen learns what this Core can take', async () => {
     const v = await as(owner)('GET', '/copilot');

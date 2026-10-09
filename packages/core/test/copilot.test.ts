@@ -586,7 +586,7 @@ describe.skipIf(!OWNER_URL)('Duá Copilot (db)', () => {
 
     await propose(s, 'store.operations', { demand: 'high' });
     const cleared = await as(s.owner)('DELETE', '/copilot');
-    expect(cleared.body).toEqual({ items: [], busy: false });
+    expect(cleared.body).toMatchObject({ items: [], busy: false });
     expect(await sql`select 1 from copilot_actions where tenant_id = ${s.tenantId}`).toHaveLength(
       0,
     );

@@ -1,7 +1,10 @@
 import {
   ArrowCounterClockwise,
+  Camera,
   Microphone,
   PaperPlaneRight,
+  Trash,
+  WarningCircle,
   WhatsappLogo,
   WifiSlash,
   X,
@@ -11,9 +14,11 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   api,
+  ApiError,
   type CopilotAction,
   type CopilotActionKind,
   type CopilotItem,
+  type CopilotMediaIn,
   type CopilotMessage,
   type CopilotView,
 } from '../../lib/api.ts';
@@ -30,12 +35,25 @@ import { HelpButton } from '../../ui/Page.tsx';
 import { LockedPage, PlanLocked, reasonOf } from '../../ui/PlanLocked.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { ChatSkeleton } from '../../ui/skeletons.tsx';
+import { Spinner } from '../../ui/Spinner.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { Bubble, DayMark } from '../../ui/vendedor/Bubble.tsx';
 import { Typing } from '../../ui/vendedor/MiniChat.tsx';
 import { PersonaAvatar } from '../../ui/vendedor/PersonaAvatar.tsx';
 import { dayLabel, msgTime, useFollow } from '../../ui/vendedor/thread.ts';
 import { SELLER_EDGE } from '../../ui/vendedor/tones.ts';
+import {
+  base64,
+  canRecord,
+  clock,
+  mediaError,
+  shrinkPhoto,
+  tooBig,
+  VOICE_MAX_S,
+  type Photo,
+  type Voice,
+} from './media.ts';
+import { useRecorder } from './useRecorder.ts';
 
 // Duá Copilot (ADR 0034): a manager or owner asks Duá about the store, or asks for a change, and
 // he prepares it as a card that only "confirmar" applies. One chat, two homes: the /copiloto
@@ -157,6 +175,18 @@ function useCopilot() {
     );
   };
 
+  // a voice message or a photo: Core hears or reads it inside the request, then Duá answers
+  const mediaM = useMutation({
+    mutationFn: (o: { body: CopilotMediaIn; key: string }) => api.copilot.sendMedia(o.body, o.key),
+  });
+  const sendMedia = (body: CopilotMediaIn, screen: string | undefined, key: string) =>
+    mediaM
+      .mutateAsync({ body: screen ? { ...body, screen } : body, key })
+      .then(put, (e: unknown) => {
+        if (isPlanRequired(e)) void qc.invalidateQueries({ queryKey: qk.session });
+        throw e;
+      });
+
   const decideM = useMutation({
     mutationFn: (d: { id: string; decision: Decision }) => api.copilot.decide(d.id, d.decision),
     onSuccess: (v, d) => {
@@ -193,7 +223,7 @@ function useCopilot() {
       ),
   );
   const asked = askedAt(view);
-  const sending = shown.some((o) => !o.failed);
+  const sending = shown.some((o) => !o.failed) || mediaM.isPending;
   // ticks only while a threshold (the hint, the end of the dots) is still ahead
   const now = useNow(sending || (asked !== null && Date.now() - asked < WAIT_MS + 5_000));
   const age = asked === null ? null : now - asked;
@@ -207,6 +237,7 @@ function useCopilot() {
     locked: !open || isPlanRequired(q.error),
     outgoing: shown,
     send,
+    sendMedia,
     retry: (o: Outgoing) => send(o.text, o.screen, o.key),
     decide: (id: string, decision: Decision) => {
       if (!decideM.isPending) decideM.mutate({ id, decision });
@@ -227,9 +258,13 @@ type Chat = ReturnType<typeof useCopilot>;
 // on a wide page a bubble stops at 38rem, so a long reply stays easy to read
 const WIDTH = 'max-w-[min(84%,38rem)]!';
 
-/** a message that came or went by WhatsApp says so on its bubble (dua-no-whatsapp §2) */
+/** a message that came or went by WhatsApp says so on its bubble (dua-no-whatsapp §2); a voice
+ * message sent from here says it was one (its text is the transcript) */
 function channelTag(m: CopilotMessage) {
-  if (m.channel !== 'whatsapp') return {};
+  if (m.channel !== 'whatsapp')
+    return m.voice
+      ? { tag: 'mensagem de voz', tagIcon: <Microphone weight="bold" aria-hidden /> }
+      : {};
   return m.voice
     ? { tag: 'áudio pelo WhatsApp', tagIcon: <Microphone weight="bold" aria-hidden /> }
     : { tag: 'pelo WhatsApp', tagIcon: <WhatsappLogo weight="bold" aria-hidden /> };
@@ -281,6 +316,11 @@ export default function Copilot() {
     fromUsed.current = true;
     c.send(text, screen);
   };
+  // a retry of a voice or photo that never left resends the same screen
+  const sendMedia = (body: CopilotMediaIn, key: string) =>
+    c.sendMedia(body, fromUsed.current ? undefined : from, key).then(() => {
+      fromUsed.current = true;
+    });
   const hasChat = !!c.view?.items.length;
 
   return (
@@ -322,7 +362,14 @@ export default function Copilot() {
 
       <div className="sticky bottom-(--tabbar-h) z-20 md:bottom-0 md:px-8 md:pb-4">
         <div className="md:overflow-hidden md:rounded-lg md:depth-2">
-          <Composer id="copilot-msg" onSend={send} initial={prompt} className="md:border-t-0" />
+          <Composer
+            id="copilot-msg"
+            onSend={send}
+            onMedia={sendMedia}
+            media={c.view?.media}
+            initial={prompt}
+            className="md:border-t-0"
+          />
         </div>
       </div>
       <NewChatSheet open={sheet} onOpenChange={setSheet} reset={c.reset} />
@@ -387,7 +434,13 @@ export function CopilotDock({ onClose, focus }: { onClose: () => void; focus: nu
               <Thread c={c} dock />
             )}
           </div>
-          <Composer id="copilot-dock-msg" onSend={(t) => c.send(t, screen)} focus={focus} />
+          <Composer
+            id="copilot-dock-msg"
+            onSend={(t) => c.send(t, screen)}
+            onMedia={(b, key) => c.sendMedia(b, screen, key)}
+            media={c.view?.media}
+            focus={focus}
+          />
         </>
       )}
       <NewChatSheet open={sheet} onOpenChange={setSheet} reset={c.reset} />
@@ -494,6 +547,7 @@ function Thread({ c, dock }: { c: Chat; dock?: boolean }) {
           {...channelTag(it)}
           className={WIDTH}
         >
+          {it.image ? <SentPhoto src={it.image} caption={!!it.text} /> : null}
           {it.text}
         </Bubble>
       );
@@ -552,19 +606,47 @@ function Thread({ c, dock }: { c: Chat; dock?: boolean }) {
   );
 }
 
+/** a photo the person sent, above its caption: a tap opens it whole in a new tab */
+function SentPhoto({ src, caption }: { src: string; caption: boolean }) {
+  return (
+    <a
+      href={src}
+      target="_blank"
+      rel="noopener"
+      className={cn('-mx-1 block w-60 max-w-full rounded-xl', caption && 'mb-1.5')}
+    >
+      <img
+        src={src}
+        alt="Foto enviada"
+        loading="lazy"
+        decoding="async"
+        className="block aspect-square w-full rounded-xl bg-sunken object-cover"
+      />
+    </a>
+  );
+}
+
 /**
  * Floor's owner composer: a growing field (Enter sends, Shift+Enter breaks the line, never
- * mid-composition) and the send button. Offline it waits, and says so.
+ * mid-composition) and the send button. Offline it waits, and says so. When Core takes them, a
+ * photo (the text becomes its caption) and a voice message: with nothing typed the mic is the
+ * main button, as on WhatsApp, and recording takes over the row until it's sent or thrown away.
  */
 function Composer({
   id,
   onSend,
+  onMedia,
+  media,
   focus,
   initial = '',
   className,
 }: {
   id: string;
   onSend: (text: string) => void;
+  /** a voice message or a photo; settles once Core has it (and rejects with its error) */
+  onMedia?: ((body: CopilotMediaIn, key: string) => Promise<unknown>) | undefined;
+  /** what Core takes besides text */
+  media?: CopilotView['media'] | undefined;
   /** changes when the cursor should go here */
   focus?: number;
   /** a message to start from: it waits here, with the cursor at its end */
@@ -573,7 +655,23 @@ function Composer({
 }) {
   const { online } = useLiveState();
   const [text, setText] = useState(initial);
+  const [photo, setPhoto] = useState<Photo | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  /** a voice message that didn't go: it waits to be sent again or thrown away */
+  const [held, setHeld] = useState<Voice | null>(null);
+  const [pending, setPending] = useState<'voice' | 'image' | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  // a retry after a dropped connection resends under the same key (Core replays, never twice);
+  // anything else is a new request
+  const attempt = useRef<{ of: Blob; text: string; key: string } | null>(null);
+  const box = useRef<HTMLElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const main = useRef<HTMLButtonElement>(null);
+  const go = useRef<HTMLButtonElement>(null);
+  const photoNow = useRef(photo);
+  photoNow.current = photo;
+  useEffect(() => () => void (photoNow.current && URL.revokeObjectURL(photoNow.current.url)), []);
   useEffect(() => {
     if (focus) field.current?.focus();
   }, [focus]);
@@ -584,59 +682,327 @@ function Composer({
     f.setSelectionRange(f.value.length, f.value.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the first render's
   }, []);
+
+  const canVoice = !!onMedia && !!media?.voice && canRecord();
+  const canPhoto = !!onMedia && !!media?.image;
+
+  const deliver = async (
+    kind: 'voice' | 'image',
+    blob: Blob,
+    body: (data: string) => CopilotMediaIn,
+    caption = '',
+  ) => {
+    if (!onMedia) return false;
+    setNote(null);
+    setPending(kind);
+    const a = attempt.current;
+    const key = a && a.of === blob && a.text === caption ? a.key : crypto.randomUUID();
+    attempt.current = { of: blob, text: caption, key };
+    try {
+      await onMedia(body(await base64(blob)), key);
+      attempt.current = null;
+      return true;
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 0)) attempt.current = null;
+      setNote(mediaError(e));
+      return false;
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const sendVoice = async (v: Voice) => {
+    if (tooBig(v.blob)) {
+      setNote('O áudio ficou grande demais. Grave um mais curto.');
+      return;
+    }
+    setHeld(null);
+    const ok = await deliver('voice', v.blob, (data) => ({
+      kind: 'voice',
+      mime: v.mime,
+      data,
+      seconds: v.seconds,
+    }));
+    if (!ok) setHeld(v);
+  };
+
+  const rec = useRecorder({ max: VOICE_MAX_S, onDone: (v) => void sendVoice(v) });
+
+  const sendPhoto = async (p: Photo) => {
+    const caption = text.trim();
+    const ok = await deliver(
+      'image',
+      p.blob,
+      (data) => ({ kind: 'image', mime: p.mime, data, ...(caption ? { text: caption } : {}) }),
+      caption,
+    );
+    if (!ok) return;
+    URL.revokeObjectURL(p.url);
+    setPhoto(null);
+    setText('');
+  };
+
+  const pick = async (file: File | undefined) => {
+    if (!file) return;
+    setNote(null);
+    rec.clearError();
+    setPreparing(true);
+    try {
+      const p = await shrinkPhoto(file);
+      setPhoto((old) => {
+        if (old) URL.revokeObjectURL(old.url);
+        return p;
+      });
+      field.current?.focus({ preventScroll: true });
+    } catch (e) {
+      setNote(mediaError(e));
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  const dropPhoto = () => {
+    if (photo) URL.revokeObjectURL(photo.url);
+    setPhoto(null);
+    setNote(null);
+    field.current?.focus({ preventScroll: true });
+  };
+
   const send = () => {
+    if (!online || pending) return;
+    if (photo) return void sendPhoto(photo);
     const t = text.trim();
-    if (!t || !online) return;
+    if (!t) return;
     onSend(t);
     setText('');
   };
+
+  const mode =
+    rec.state === 'recording'
+      ? 'recording'
+      : pending === 'voice'
+        ? 'hearing'
+        : held
+          ? 'held'
+          : 'form';
+  // the button that was tapped is gone when the row changes: focus goes to the new row's own
+  // (never away from somewhere else the person moved it)
+  const lastMode = useRef(mode);
+  useEffect(() => {
+    if (lastMode.current === mode) return;
+    lastMode.current = mode;
+    const el = document.activeElement;
+    if (el && el !== document.body) return;
+    (mode === 'form' ? main : go).current?.focus({ preventScroll: true });
+  }, [mode]);
+
+  const problem = rec.error ?? note;
+  const said =
+    mode === 'recording'
+      ? 'Gravando mensagem de voz. Até 2 minutos.'
+      : pending === 'voice'
+        ? 'Ouvindo…'
+        : pending === 'image'
+          ? 'Vendo a foto…'
+          : (problem ?? '');
+  const micFirst = canVoice && !text.trim() && !photo;
+  const rowCls =
+    'flex h-12 min-w-0 flex-1 items-center gap-2.5 rounded-md bg-surface px-3.5 ring-1 ring-inset ring-line-strong';
+
   return (
     <section
+      ref={box}
       aria-label="mensagem para o Duá"
       className={cn('glass flex flex-col gap-2 border-t border-line px-3.5 pb-4 pt-3', className)}
     >
+      <p className="sr-only" aria-live="polite">
+        {said}
+      </p>
       {!online ? (
         <p className="t-caption flex items-center gap-1.5 text-muted" role="status">
           <WifiSlash weight="bold" className="size-4 shrink-0" aria-hidden />
           Sem conexão. Dá para mandar assim que a internet voltar.
         </p>
       ) : null}
-      <form
-        className="flex items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-      >
-        <label className="sr-only" htmlFor={id}>
-          sua mensagem para o Duá
-        </label>
-        <textarea
-          ref={field}
-          id={id}
-          rows={1}
-          value={text}
-          maxLength={2000}
-          disabled={!online}
-          onChange={(e) => setText(e.target.value)}
+      {problem && mode !== 'recording' && mode !== 'hearing' && !pending ? (
+        <p className="t-caption flex items-start gap-1.5 font-semibold text-danger">
+          <WarningCircle weight="bold" className="mt-px size-4 shrink-0" aria-hidden />
+          {problem}
+        </p>
+      ) : null}
+      {photo ? (
+        <div className="flex items-center gap-3">
+          <div className="relative shrink-0">
+            <img
+              src={photo.url}
+              alt="Foto escolhida"
+              className="size-16 rounded-md bg-sunken object-cover ring-1 ring-line"
+            />
+            {pending === 'image' ? (
+              <span className="absolute inset-0 grid place-items-center rounded-md bg-surface/70 text-ink">
+                <Spinner />
+              </span>
+            ) : (
+              <button
+                type="button"
+                aria-label="Tirar a foto"
+                title="Tirar a foto"
+                onClick={dropPhoto}
+                className="press absolute -right-2 -top-2 grid size-7 place-items-center rounded-full bg-ink text-surface depth-1 after:absolute after:-inset-2 after:content-['']"
+              >
+                <X weight="bold" className="size-3.5" aria-hidden />
+              </button>
+            )}
+          </div>
+          <p className="t-caption min-w-0 text-muted">
+            {pending === 'image' ? 'Vendo a foto…' : 'Escreva uma legenda, se quiser.'}
+          </p>
+        </div>
+      ) : null}
+
+      {mode === 'recording' ? (
+        <div
+          className="flex items-center gap-2"
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            if (e.key === 'Escape') {
               e.preventDefault();
-              send();
+              rec.cancel();
             }
           }}
-          placeholder="Pergunte ou peça uma mudança…"
-          className="t-body-lg field-sizing-content max-h-40 min-h-12 min-w-0 flex-1 resize-none rounded-md bg-surface px-3.5 py-2.5 text-ink ring-1 ring-inset ring-line-strong placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
-        />
-        <IconButton
-          type="submit"
-          label="enviar"
-          variant="primary"
-          disabled={!text.trim() || !online}
         >
-          <PaperPlaneRight weight="fill" />
-        </IconButton>
-      </form>
+          <IconButton label="Cancelar gravação" onClick={rec.cancel}>
+            <Trash weight="bold" />
+          </IconButton>
+          <div className={rowCls}>
+            <span
+              aria-hidden
+              className="animate-pulse-dot size-2.5 shrink-0 rounded-full bg-danger motion-reduce:animate-none"
+            />
+            <span className="t-body-lg font-semibold tabular-nums text-ink">
+              {clock(rec.elapsed)}
+            </span>
+            <span className="t-caption truncate text-muted">
+              Gravando · até {clock(VOICE_MAX_S)}
+            </span>
+          </div>
+          <IconButton ref={go} label="Enviar" variant="primary" onClick={rec.send}>
+            <PaperPlaneRight weight="fill" />
+          </IconButton>
+        </div>
+      ) : mode === 'hearing' ? (
+        <div className="flex items-center gap-2">
+          <div className={cn(rowCls, 'text-muted')}>
+            <Spinner className="text-ink" />
+            <span className="t-body-lg">Ouvindo…</span>
+          </div>
+        </div>
+      ) : mode === 'held' && held ? (
+        <div className="flex items-center gap-2">
+          <IconButton
+            label="Descartar o áudio"
+            onClick={() => {
+              setHeld(null);
+              setNote(null);
+              attempt.current = null;
+            }}
+          >
+            <Trash weight="bold" />
+          </IconButton>
+          <div className={rowCls}>
+            <Microphone weight="bold" className="size-5 shrink-0 text-muted" aria-hidden />
+            <span className="t-body-lg truncate text-ink">
+              Mensagem de voz · <span className="tabular-nums">{clock(held.seconds)}</span>
+            </span>
+          </div>
+          <IconButton
+            ref={go}
+            label="Enviar"
+            variant="primary"
+            disabled={!online}
+            onClick={() => void sendVoice(held)}
+          >
+            <PaperPlaneRight weight="fill" />
+          </IconButton>
+        </div>
+      ) : (
+        <form
+          className="flex items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
+          }}
+        >
+          {canPhoto ? (
+            <>
+              <IconButton
+                label="Enviar foto"
+                disabled={!online || !!pending}
+                aria-busy={preparing || undefined}
+                onClick={() => picker.current?.click()}
+              >
+                {preparing ? <Spinner /> : <Camera weight="bold" />}
+              </IconButton>
+              <input
+                ref={picker}
+                type="file"
+                accept="image/*"
+                hidden
+                tabIndex={-1}
+                onChange={(e) => {
+                  void pick(e.target.files?.[0]);
+                  e.target.value = '';
+                }}
+              />
+            </>
+          ) : null}
+          <label className="sr-only" htmlFor={id}>
+            {photo ? 'legenda da foto' : 'sua mensagem para o Duá'}
+          </label>
+          <textarea
+            ref={field}
+            id={id}
+            rows={1}
+            value={text}
+            maxLength={2000}
+            disabled={!online || pending === 'image'}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            placeholder={photo ? 'Legenda (opcional)…' : 'Pergunte ou peça uma mudança…'}
+            className="t-body-lg field-sizing-content max-h-40 min-h-12 min-w-0 flex-1 resize-none rounded-md bg-surface px-3.5 py-2.5 text-ink ring-1 ring-inset ring-line-strong placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
+          />
+          {micFirst ? (
+            <IconButton
+              ref={main}
+              label="Gravar mensagem de voz"
+              variant="primary"
+              disabled={!online}
+              aria-busy={rec.state === 'asking' || undefined}
+              onClick={() => {
+                setNote(null);
+                rec.start();
+              }}
+            >
+              <Microphone weight="fill" />
+            </IconButton>
+          ) : (
+            <IconButton
+              ref={main}
+              type="submit"
+              label="Enviar"
+              variant="primary"
+              disabled={(!text.trim() && !photo) || !online || !!pending}
+              aria-busy={pending === 'image' || undefined}
+            >
+              <PaperPlaneRight weight="fill" />
+            </IconButton>
+          )}
+        </form>
+      )}
     </section>
   );
 }

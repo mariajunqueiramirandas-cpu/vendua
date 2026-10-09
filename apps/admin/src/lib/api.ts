@@ -2010,8 +2010,10 @@ export interface CopilotMessage {
   at: string;
   /** the door it came through; missing = 'admin' */
   channel?: 'admin' | 'whatsapp';
-  /** a WhatsApp voice note (the text is its transcript) */
+  /** a voice message, WhatsApp or the admin's (the text is its transcript) */
   voice?: boolean;
+  /** a photo the person sent: a same-origin URL (cookie auth); the text is its caption */
+  image: string | null;
 }
 
 export type CopilotItem =
@@ -2022,7 +2024,21 @@ export interface CopilotView {
   items: CopilotItem[];
   /** Duá is working on the last message (Core stops saying so after 2 min) */
   busy: boolean;
+  /** what this Core takes besides text; absent = text only */
+  media?: { voice: boolean; image: boolean };
 }
+
+/** a voice message or a photo for Duá: the bytes as base64 (no `data:` prefix), ≤ 2 MB decoded */
+export type CopilotMediaIn =
+  | { kind: 'voice'; mime: string; data: string; seconds?: number; screen?: string }
+  | {
+      kind: 'image';
+      mime: 'image/jpeg' | 'image/png' | 'image/webp';
+      data: string;
+      /** the caption */
+      text?: string;
+      screen?: string;
+    };
 
 // ── PDV (ADR 0035, docs/features/pdv.md): Core prices, splits and makes change ──
 
@@ -2721,6 +2737,14 @@ export const api = {
       req<CopilotView>('/copilot/messages', {
         method: 'POST',
         body: JSON.stringify(screen ? { text, screen } : { text }),
+        ...(idem ? { idem } : {}),
+      }),
+    /** Core hears the voice or reads the photo inside the request: it may take a while */
+    sendMedia: (body: CopilotMediaIn, idem?: string) =>
+      req<CopilotView>('/copilot/messages/media', {
+        method: 'POST',
+        body: JSON.stringify(body),
+        timeoutMs: 60_000,
         ...(idem ? { idem } : {}),
       }),
     decide: (id: string, decision: 'confirm' | 'decline') =>
