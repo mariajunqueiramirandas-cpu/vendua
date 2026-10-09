@@ -65,7 +65,7 @@ export function refused(e: unknown): never {
   if (e instanceof HttpError) {
     if (e.code === 'FORBIDDEN')
       throw new ToolError(
-        'BLOQUEADO: o papel desta pessoa na equipe não permite isso. Diga que só o dono ou um gerente pode.',
+        `BLOQUEADO: o papel desta pessoa na equipe não permite isso. Diga que só ${(e.details as { need?: string } | undefined)?.need === 'owner' ? 'o dono' : 'o dono ou um gerente'} pode.`,
       );
     if (e.code === 'PLAN_REQUIRED')
       throw new ToolError('BLOQUEADO: o plano da loja não inclui isso.');
@@ -93,6 +93,13 @@ export function money(ctx: Ctx, id: string, cents: number): string {
 export function pct(ctx: Ctx, id: string, value: number, signed = false): string {
   const v = Math.round(value);
   ctx.figure(id, { value: v, text: `${signed && v > 0 ? '+' : ''}${v}%`, kind: 'text' });
+  return `{{${id}}}`;
+}
+
+/** Basis points Core stores (a fee, a surcharge), to the hundredth as the screen shows them. */
+export function bps(ctx: Ctx, id: string, value: number, signed = false): string {
+  const n = (value / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+  ctx.figure(id, { value, text: `${signed && value > 0 ? '+' : ''}${n}%`, kind: 'text' });
   return `{{${id}}}`;
 }
 

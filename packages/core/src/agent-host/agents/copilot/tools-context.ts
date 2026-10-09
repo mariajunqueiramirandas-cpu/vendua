@@ -4,7 +4,7 @@ import type { OrderListRow } from '../../../admin/routes-orders.ts';
 import type { Sql } from '../../../platform/db.ts';
 import { addDays, localDateOf } from '../../../platform/tz.ts';
 import { guideText } from './guide.ts';
-import { adminRead, at, mins, money, pct, todayIn, who, type Ctx, type Who } from './shared.ts';
+import { adminRead, at, bps, mins, money, todayIn, who, type Ctx, type Who } from './shared.ts';
 
 // load_context (ADR 0034, amended 2026-10-09): everything about the store that the always-on
 // brief only names, read on demand through the admin's own named routes (the screen's numbers,
@@ -209,7 +209,7 @@ const pagamentos: Topic = async (ctx, w) => {
     .filter(([, a]) => a.percentBps || a.fixedCents)
     .map(([m, a], i) => {
       const parts = [
-        a.percentBps ? pct(ctx, `pag.ajuste${i}.pct`, a.percentBps / 100, true) : '',
+        a.percentBps ? bps(ctx, `pag.ajuste${i}.pct`, a.percentBps, true) : '',
         a.fixedCents ? money(ctx, `pag.ajuste${i}.fixo`, a.fixedCents) : '',
       ].filter(Boolean);
       return `${METHOD[m] ?? m} ${parts.join(' + ')}`;
@@ -272,9 +272,12 @@ const marketing: Topic = async (ctx, w) => {
       ? `Cartão fidelidade: ligado · ${l.stampsRequired} selos dão ${l.reward.label ?? l.reward.kind}${l.minOrderCents ? ` · selo só em pedido acima de ${money(ctx, 'fidelidade.minimo', l.minOrderCents)}` : ''} · prêmio vale ${l.rewardValidDays} dias · ${v.loyalty.issued} prêmios dados, ${v.loyalty.redeemed} usados.`
       : 'Cartão fidelidade: desligado.',
   ];
-  const a = v.announcement as { text?: string; enabled?: boolean } | string | null;
-  const text = typeof a === 'string' ? a : a && a.enabled !== false ? (a.text ?? null) : null;
-  out.push(text ? `Aviso no topo da loja: "${clip(text)}".` : 'Aviso no topo da loja: nenhum.');
+  const a = v.announcement as { title: string; body?: string } | null;
+  out.push(
+    a?.title
+      ? `Aviso no topo da loja: "${clip(a.title)}"${a.body ? ` — ${clip(a.body)}` : ''}.`
+      : 'Aviso no topo da loja: nenhum.',
+  );
   if (v.waitlist.length)
     out.push(
       `Lista de espera (avisar quando voltar): ${v.waitlist
@@ -582,7 +585,7 @@ const pdv: Topic = async (ctx, w) => {
             : ''
         }.`
       : 'Caixa: fechado.',
-    `Mesas: ${v.tables.length} · taxa de serviço ${v.serviceBps ? pct(ctx, 'pdv.servico', v.serviceBps / 100) : 'nenhuma'} · pedidos pelo QR da mesa: ${yes(v.qrOrders)}.`,
+    `Mesas: ${v.tables.length} · taxa de serviço ${v.serviceBps ? bps(ctx, 'pdv.servico', v.serviceBps) : 'nenhuma'} · pedidos pelo QR da mesa: ${yes(v.qrOrders)}.`,
   ];
   if (v.tabs.length)
     out.push(
@@ -710,7 +713,7 @@ const conta: Topic = async (ctx, w) => {
   const v = await adminRead<Account>(ctx, w, 'account');
   const sub = v.subscription;
   const out = [
-    `Plano: ${v.plan.name}${v.plan.priceCents ? ` · ${money(ctx, 'conta.plano', v.plan.priceCents)} por mês` : ''}${v.plan.feeBps ? ` · taxa por pedido online ${pct(ctx, 'conta.taxa', v.plan.feeBps / 100)}` : ''}.`,
+    `Plano: ${v.plan.name}${v.plan.priceCents ? ` · ${money(ctx, 'conta.plano', v.plan.priceCents)} por mês` : ''}${v.plan.feeBps ? ` · taxa por pedido online ${bps(ctx, 'conta.taxa', v.plan.feeBps)}` : ''}.`,
     sub
       ? `Assinatura: ${SUB[sub.status] ?? sub.status}${sub.method ? ` · paga por ${sub.method === 'pix' ? 'Pix' : 'cartão'}` : ''}${sub.trialEndsAt ? ` · teste até ${at(ctx, 'conta.teste', day(sub.trialEndsAt), w.tz, true)}` : ''}${sub.currentPeriodEnd ? ` · período atual até ${at(ctx, 'conta.periodo', day(sub.currentPeriodEnd), w.tz, true)}` : ''}${sub.cancelAtPeriodEnd ? ' · cancela no fim do período' : ''}${sub.pendingPlan ? ` · muda para ${sub.pendingPlan.name} no próximo período` : ''}.`
       : 'Assinatura: nenhuma.',

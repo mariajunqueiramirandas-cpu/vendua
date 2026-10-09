@@ -45,16 +45,18 @@ export interface Brief {
   setupMissing: string[];
   specialDays: { date: string; label: string | null; closed: boolean }[];
   site: string | null;
-  /** turn-scoped: rendered in the volatile lines, not the cached tier */
-  live: {
-    status: string;
-    demandHigh: boolean;
-    waiting: number;
-    inProgress: number;
-    scheduled: number;
-    pixToCheck: number;
-    ordersEver: number;
-  };
+}
+
+/** What changes by the minute: the volatile line, loaded with the person so the brief's
+ *  payload (logged when its hash moves) stays the same turn after turn. */
+export interface Live {
+  status: string;
+  demandHigh: boolean;
+  waiting: number;
+  inProgress: number;
+  scheduled: number;
+  pixToCheck: number;
+  ordersEver: boolean;
 }
 
 const STORE_DOMAIN = () => process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br';
@@ -65,22 +67,13 @@ export async function storeBrief(tx: Sql, tenantId: string, now: Date): Promise<
   if (!t) return null;
   const s = await loadSettings(tx, tenantId);
   const tz = s.hours?.timezone || 'America/Sao_Paulo';
-  const [
-    url,
-    plan,
-    agent,
-    { checklist, orders: ordersEver },
-    [catalog],
-    categories,
-    [counts],
-    team,
-    [mp],
-  ] = await Promise.all([
-    storeOrigin(tx, { id: tenantId, slug: t.slug }, STORE_DOMAIN()),
-    tenantPlan(tx, tenantId),
-    loadAgent(tx, tenantId),
-    setupChecklist(tx, tenantId, s),
-    tx<Brief['catalog'][]>`
+  const [url, plan, agent, { checklist }, [catalog], categories, [counts], team, [mp]] =
+    await Promise.all([
+      storeOrigin(tx, { id: tenantId, slug: t.slug }, STORE_DOMAIN()),
+      tenantPlan(tx, tenantId),
+      loadAgent(tx, tenantId),
+      setupChecklist(tx, tenantId, s),
+      tx<Brief['catalog'][]>`
       select count(*) filter (where p.status <> 'archived')::int as products,
              count(*) filter (where p.status = 'archived')::int as hidden,
              count(*) filter (where p.status = 'sold_out'
@@ -91,22 +84,18 @@ export async function storeBrief(tx: Sql, tenantId: string, now: Date): Promise<
              count(*) filter (where p.status <> 'archived' and exists (
                select 1 from modifier_groups g where g.product_id = p.id))::int as "withOptions"
       from products p where p.tenant_id = ${tenantId} and p.deleted_at is null`,
-    tx<{ name: string }[]>`
+      tx<{ name: string }[]>`
       select name from categories where tenant_id = ${tenantId} order by sort, name limit 25`,
-    tx<
-      {
-        zones: number;
-        coupons: number;
-        printers: number;
-        tables: number;
-        waiting: number;
-        inProgress: number;
-        scheduled: number;
-        pixToCheck: number;
-        site: string | null;
-        wa: boolean;
-      }[]
-    >`
+      tx<
+        {
+          zones: number;
+          coupons: number;
+          printers: number;
+          tables: number;
+          site: string | null;
+          wa: boolean;
+        }[]
+      >`
       select
         (select count(*) from delivery_zones where tenant_id = ${tenantId} and active)::int as zones,
         (select count(*) from coupons where tenant_id = ${tenantId} and active
@@ -114,27 +103,16 @@ export async function storeBrief(tx: Sql, tenantId: string, now: Date): Promise<
            and (ends_at is null or ends_at > now()))::int as coupons,
         (select count(*) from printers where tenant_id = ${tenantId})::int as printers,
         (select count(*) from pdv_tables where tenant_id = ${tenantId} and archived_at is null)::int as tables,
-        (select count(*) from orders where tenant_id = ${tenantId} and state = 'placed'
-           and (scheduled_for is null or scheduled_for <= (now() at time zone ${tz})::date))::int as waiting,
-        (select count(*) from orders where tenant_id = ${tenantId}
-           and state in ('confirmed', 'preparing', 'ready', 'out_for_delivery'))::int as "inProgress",
-        (select count(*) from orders where tenant_id = ${tenantId}
-           and scheduled_for > (now() at time zone ${tz})::date
-           and state not in ('cancelled', 'refunded', 'delivered'))::int as scheduled,
-        (select count(*) from orders where tenant_id = ${tenantId} and payment ->> 'method' = 'pix'
-           and payment ->> 'status' = 'pending' and coalesce((payment ->> 'online')::boolean, false) = false
-           and state not in ('cancelled', 'refunded') and placed_at > now() - interval '3 days')::int as "pixToCheck",
         (select status from site_requests where tenant_id = ${tenantId}
            order by created_at desc limit 1) as site,
         exists (select 1 from store_whatsapp where tenant_id = ${tenantId} and state = 'open') as wa
     `,
-    tx<{ role: 'owner' | 'manager' | 'attendant'; n: number }[]>`
+      tx<{ role: 'owner' | 'manager' | 'attendant'; n: number }[]>`
       select role, count(*)::int as n from merchant_users
       where tenant_id = ${tenantId} and status = 'active' group by role`,
-    tx<{ status: string }[]>`
-      select status from payment_connections where tenant_id = ${tenantId} and provider = 'mercadopago'`,
-  ]);
-  const st = statusOf(s);
+      tx<{ status: string }[]>`
+      select status from payment_connections where tenant_id = ${tenantId}`,
+    ]);
   const roles = { owner: 0, manager: 0, attendant: 0 };
   for (const r of team) roles[r.role] = r.n;
   const vendedor: Brief['vendedor'] = !plan.features.vendedor
@@ -185,16 +163,27 @@ export async function storeBrief(tx: Sql, tenantId: string, now: Date): Promise<
       .slice(0, 6)
       .map((d) => ({ date: d.date, label: d.label ?? null, closed: d.closed })),
     site: counts!.site,
-    live: {
-      status: st.status,
-      demandHigh: demandOf(s).level === 'high',
-      waiting: counts!.waiting,
-      inProgress: counts!.inProgress,
-      scheduled: counts!.scheduled,
-      pixToCheck: counts!.pixToCheck,
-      ordersEver,
-    },
   };
+}
+
+export async function storeLive(tx: Sql, tenantId: string): Promise<Live> {
+  const s = await loadSettings(tx, tenantId);
+  const tz = s.hours?.timezone || 'America/Sao_Paulo';
+  // Início's own predicates: its waiting count, and its "Pix para conferir" window
+  const [r] = await tx<Omit<Live, 'status' | 'demandHigh'>[]>`
+    select
+      (select count(*) from orders where tenant_id = ${tenantId} and state = 'placed'
+         and (scheduled_for is null or scheduled_for <= (now() at time zone ${tz})::date))::int as waiting,
+      (select count(*) from orders where tenant_id = ${tenantId}
+         and state in ('confirmed', 'preparing', 'ready', 'out_for_delivery'))::int as "inProgress",
+      (select count(*) from orders where tenant_id = ${tenantId}
+         and scheduled_for > (now() at time zone ${tz})::date
+         and state not in ('cancelled', 'refunded', 'delivered'))::int as scheduled,
+      (select count(*) from orders where tenant_id = ${tenantId} and payment ->> 'method' = 'pix'
+         and payment ->> 'status' = 'pending' and coalesce((payment ->> 'online')::boolean, false) = false
+         and state not in ('cancelled', 'refunded') and placed_at > now() - interval '3 days')::int as "pixToCheck",
+      exists (select 1 from orders where tenant_id = ${tenantId}) as "ordersEver"`;
+  return { status: statusOf(s).status, demandHigh: demandOf(s).level === 'high', ...r! };
 }
 
 const METHOD: Record<string, string> = {
@@ -276,8 +265,7 @@ const STATUS: Record<string, string> = {
 };
 
 /** Turn-scoped lines after AGORA: what's happening in the store as this turn starts. */
-export function liveText(b: Brief): string {
-  const l = b.live;
+export function liveText(l: Live): string {
   const parts = [
     `LOJA AGORA: ${STATUS[l.status] ?? l.status}${l.demandHigh ? ', com aviso de muitos pedidos' : ''}`,
     `${l.waiting} pedidos esperando aceite`,

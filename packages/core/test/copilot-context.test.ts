@@ -125,10 +125,11 @@ describe.skipIf(!OWNER_URL)('Duá Copilot context (db)', () => {
     tenantId = t!.id;
     await sql`
       insert into store_settings (tenant_id, hours, prep_time_minutes, min_order_cents, currency,
-                                  vocabulary, pickup_enabled, delivery_enabled, city, pix_key, pix_key_type,
+                                  vocabulary, pickup_enabled, delivery_enabled, city, pix_key, pix_key_type, promo, payment_adjustments,
                                   special_days)
       values (${tenantId}, ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '00:00' }] })},
-              25, 2000, 'BRL', ${sql.json({})}, true, true, 'Niterói', 'pix@quero.test', 'email',
+              25, 2000, 'BRL', ${sql.json({})}, true, true, 'Niterói', 'pix@quero.test', 'email', ${sql.json({ title: 'Pudim novo' })},
+              ${sql.json({ card_on_delivery: { percentBps: 499 } })},
               ${sql.json([{ date: '2099-12-25', closed: true, label: 'Natal' }])})`;
     await sql`
       insert into delivery_zones (tenant_id, name, neighborhoods, fee_cents, eta_min_minutes, eta_max_minutes)
@@ -200,7 +201,7 @@ describe.skipIf(!OWNER_URL)('Duá Copilot context (db)', () => {
 
   test('every topic loads through its route as the owner, with figures for money', async () => {
     await request('DELETE', '/copilot', owner);
-    const { rt } = runtime([
+    const { rt, adapter } = runtime([
       tools(call('load_context', { topics: ['loja', 'entrega', 'pagamentos', 'marketing'] })),
       tools(call('load_context', { topics: ['encomendas', 'vendedor', 'whatsapp', 'equipe'] })),
       tools(call('load_context', { topics: ['atividade', 'pdv', 'impressoras', 'aparencia'] })),
@@ -235,6 +236,10 @@ describe.skipIf(!OWNER_URL)('Duá Copilot context (db)', () => {
     expect(first).toContain('Pedido mínimo da loja: {{entrega.minimo}}');
     expect(first).toContain('Chave Pix: cadastrada (tipo email');
     expect(first).toContain('Cartão fidelidade: desligado.');
+    expect(first).toContain('Aviso no topo da loja: "Pudim novo".');
+    // a fee is the screen's, to the hundredth, never rounded
+    expect(first).toContain('cartão na entrega {{pag.ajuste0.pct}}');
+    expect(JSON.stringify(adapter.requests.at(-1))).toContain('{{pag.ajuste0.pct}} = +4,99%');
     expect(second).toContain('## vendedor');
     expect(second).toContain('- Rita Souza · dono');
     expect(second).toContain('- Caio Reis · gerente');
@@ -258,6 +263,7 @@ describe.skipIf(!OWNER_URL)('Duá Copilot context (db)', () => {
     expect(system).toContain('Como gerente');
     const result = JSON.stringify(adapter.requests[1]);
     expect(result).toContain('## conta\\nBLOQUEADO');
+    expect(result).toContain('Diga que só o dono pode.');
     expect(result).toContain('- Caio Reis · gerente');
   });
 

@@ -4,7 +4,7 @@ import { PROPOSE_TOOLS } from './tools-propose.ts';
 import { READ_TOOLS } from './tools-read.ts';
 import { SITE_TOOLS } from './tools-site.ts';
 import { CONTEXT_TOOLS, TOPIC_LINES } from './tools-context.ts';
-import { briefText, liveText, storeBrief, type Brief } from './brief.ts';
+import { briefText, liveText, storeBrief, storeLive, type Brief, type Live } from './brief.ts';
 import { COPILOT_AGENT_ID, COPILOT_SUBJECT } from './shared.ts';
 
 export { COPILOT_AGENT_ID, COPILOT_SUBJECT } from './shared.ts';
@@ -127,8 +127,8 @@ export const copilot = defineAgent<Sql>({
     },
   ],
   volatile: (ctx) => {
-    const b = ctx.tenant as unknown as Brief | null;
-    return b?.live ? liveText(b) : '';
+    const live = (ctx.subject as unknown as { live?: Live } | null)?.live;
+    return live ? liveText(live) : '';
   },
   tools: [...READ_TOOLS, ...CONTEXT_TOOLS, ...PROPOSE_TOOLS, ...SITE_TOOLS],
   guards: {
@@ -157,7 +157,7 @@ export const copilot = defineAgent<Sql>({
           where m.tenant_id = ${tenantId} and m.user_id = u.id and m.author = 'merchant'
           order by m.created_at desc limit 1) last on true
         where u.tenant_id = ${tenantId} and u.id = ${subject.id}`;
-      return (r ?? null) as unknown as Json;
+      return (r ? { ...r, live: await storeLive(tx, tenantId) } : null) as unknown as Json;
     },
   },
   degrade: async () => ({

@@ -137,8 +137,10 @@ team, the WhatsApp or the Vendedor got "não sei".
   state, coupons, loyalty, the banner, the team by role, printers, tables, special days in the
   next 14 days, the custom site and what setup is missing. It is the tenant tier's block (cached
   with the tier). What changes by the minute (open/paused/closed, orders waiting, in progress,
-  preorders ahead, Pix to check) is the `LOJA AGORA` volatile line. The brief holds no amount and
-  no clock time, which the `grounded` guard lets out only as ledger figures.
+  preorders ahead, Pix to check) is read with the person (`load.subject`), so the brief's payload
+  and its `context.loaded` entry change only when the store does, and rendered as the `LOJA AGORA`
+  volatile line. The brief holds no amount and no clock time, which the `grounded` guard lets out
+  only as ledger figures.
 - **On demand**: `load_context({ topics })`, 1 to 4 per call, through newly named admin reads:
   `loja`, `entrega` (`store`), `pagamentos` (`payments`), `marketing` (`marketing`),
   `encomendas` (`orders.scheduled`), `vendedor` (`vendedor`, `vendedor.settings`,
