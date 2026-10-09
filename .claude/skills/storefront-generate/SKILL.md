@@ -136,13 +136,15 @@ bunx vendua-conformance k05 <slug> origin/<base>
 CHROMIUM=/opt/pw-browsers/chromium bunx vendua qa <slug>
 ```
 
-All three must pass. Then open the screenshots in `storefronts/<slug>/qa-report/screenshots/`
-(home, catalog and product at 390 and 1440) and look at them as the owner would: does it match
-the spec's idea? Nothing overflowing, nothing illegible, nothing generic? Then hand the same
-screenshots and the brief file to one fresh Opus agent to review (it edits nothing and reports
-each problem as screenshot — what is wrong — which file). Send each section's fixes back to its
-owner (SendMessage) or make them yourself, and re-run until you'd ship it. `qa-report/` is
-git-ignored; never commit it.
+All three must pass. `.claude/settings.json` blocks reading `qa-report/`, so copy the
+screenshots out after each QA run:
+`rm -rf <scratchpad>/shots && cp -r storefronts/<slug>/qa-report/screenshots <scratchpad>/shots`.
+Open them there (home, catalog and product at 390 and 1440) and look at them as the owner
+would: does it match the spec's idea? Nothing overflowing, nothing illegible, nothing generic?
+Then hand `<scratchpad>/shots` and the brief file to one fresh Opus agent to review (it edits
+nothing and reports each problem as screenshot — what is wrong — which file). Send each
+section's fixes back to its owner (SendMessage) or make them yourself, and re-run until you'd
+ship it. `qa-report/` is git-ignored; never commit it.
 
 ## 5. Open the PR
 
