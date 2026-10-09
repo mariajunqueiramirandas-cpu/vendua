@@ -7,7 +7,6 @@ import { migrate } from '../src/platform/db.ts';
 import { fleetDeps, type FleetDeps } from '../src/modules/fleet/deps.ts';
 import { advance } from '../src/modules/fleet/provision.ts';
 import { runProbes } from '../src/modules/fleet/probe.ts';
-import type { StaffNotice } from '../src/modules/staff.ts';
 
 // The Control Plane end to end against Postgres, with a fake edge behind the probes.
 describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
@@ -53,7 +52,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
     }
   }) as typeof fetch;
 
-  const staffNotices: StaffNotice[] = [];
+  // what the team hears: staff events (ADR 0023), one per change
+  const staffEvents = (kind: string, tenantId: string) =>
+    sql<{ data: Record<string, unknown> }[]>`
+      select data from staff_events where kind = ${kind} and tenant_id = ${tenantId} order by id
+    `;
   const sent: { channel: string; to: string; text: string }[] = [];
   const notify: MerchantNotify = {
     whatsapp: async (to, text) => void sent.push({ channel: 'whatsapp', to, text }),
@@ -66,7 +69,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
     probeOrigin: 'http://edge.test',
     fetch: fakeFetch,
     notify,
-    staff: async (n) => void staffNotices.push(n),
   });
   const created: string[] = [];
   d.only = created;
@@ -311,7 +313,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
   });
 
   test('a release that fails its probes rolls back, pins the store and opens incidents', async () => {
-    staffNotices.length = 0;
     await publish(manifest(r3));
     // the edge serves r3 on A and its page is broken
     edge.set(tenants.a.host, { release: r3, pageDown: true });
@@ -338,7 +339,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
       order by kind
     `;
     expect(open.map((i) => i.kind)).toEqual(['deployment_failed', 'probe_failing']);
-    expect(staffNotices.length).toBeGreaterThanOrEqual(2);
+    expect((await staffEvents('incident.opened', tenants.a.id)).length).toBeGreaterThanOrEqual(2);
 
     // the edge serves r2 again: the rollback verifies and the probe incident resolves itself
     edge.set(tenants.a.host, { release: r2 });
@@ -348,7 +349,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
       select kind from fleet_incidents where tenant_id = ${tenants.a.id} and resolved_at is null
     `;
     expect(still.map((i) => i.kind)).toEqual(['deployment_failed']);
-    expect(staffNotices.some((n) => n.subject.startsWith('Resolvido'))).toBe(true);
+    expect(
+      (await staffEvents('incident.updated', tenants.a.id)).some(
+        (e) => e.data.change === 'resolved',
+      ),
+    ).toBe(true);
     const history = await sql<{ ok: boolean }[]>`
       select ok from health_checks where host = ${tenants.a.host} order by at
     `;
@@ -590,7 +595,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
       select to_state from lead_state_history where lead_id = ${lead} order by at
     `;
     expect(moves.map((m) => m.to_state)).toEqual(['invited', 'live']);
-    expect(staffNotices.some((n) => n.subject === 'Loja no ar: Doces da Ana')).toBe(true);
+    expect((await staffEvents('store.live', p.tenantId)).map((e) => e.data.storeName)).toEqual([
+      'Doces da Ana',
+    ]);
 
     const list = (await (
       await ctl('GET', `/control/v1/fleet/provisionings?leadId=${lead}`, undefined, false)

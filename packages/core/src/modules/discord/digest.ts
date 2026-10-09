@@ -1,16 +1,85 @@
 import type { Sql } from '../../platform/db.ts';
 import { anchorTx } from '../../agent/schedule-anchors.ts';
 import { controlTx } from '../control.ts';
-import { digestReportTx } from '../digest.ts';
 import { getIntegrationTx, getSettingTx } from '../integrations.ts';
 import { recordStaffEvent, type DailyDigest } from '../staff-events.ts';
 import { discordAppOf, discordSettingOf } from './config.ts';
 
-// The daily summary (`discord-digest` job): CRM and agent numbers from their own tables (the
-// email digest's rollup), commerce, billing and system numbers from the staff event log of the
-// last 24 hours — staff never need a cross-tenant query on orders for it.
+// The daily summary (`discord-digest` job), the team's only one: CRM and agent numbers from
+// their own tables, commerce, billing and system numbers from the staff event log of the last
+// 24 hours — staff never need a cross-tenant query on orders for it.
 
 type N = { n: number };
+
+export interface DigestReport {
+  /** local date (guardrails.timezone) this digest covers. */
+  date: string;
+  newLeads: number;
+  repliesIn: number;
+  meetingsBooked: number;
+  meetingsNext24h: number;
+  agentRuns: number;
+  costCents: number;
+  pendingDrafts: number;
+  openTasks: number;
+}
+
+/** The CRM and agent side of the summary: the last 24 hours on the board. */
+export async function digestReportTx(tx: Sql, date: string): Promise<DigestReport> {
+  const one = async (q: Promise<{ n: number }[]>) => (await q)[0]!.n;
+  const [newLeads, repliesIn, meetingsBooked, meetingsNext24h, runs, pendingDrafts, openTasks] =
+    await Promise.all([
+      one(
+        tx<{ n: number }[]>`
+          select count(*)::int as n from leads
+          where created_at > now() - interval '24 hours' and archived_at is null
+        `,
+      ),
+      one(
+        tx<{ n: number }[]>`
+          select count(*)::int as n from lead_messages
+          where direction = 'in' and created_at > now() - interval '24 hours'
+        `,
+      ),
+      one(
+        tx<{ n: number }[]>`
+          select count(*)::int as n from meetings
+          where created_at > now() - interval '24 hours'
+        `,
+      ),
+      one(
+        tx<{ n: number }[]>`
+          select count(*)::int as n from meetings
+          where status = 'scheduled' and starts_at between now() and now() + interval '24 hours'
+        `,
+      ),
+      tx<{ runs: number; cost_cents: number }[]>`
+        select count(*)::int as runs, coalesce(sum(cost_cents), 0)::int as cost_cents
+        from agent_runs where created_at > now() - interval '24 hours'
+      `.then((r) => r[0]!),
+      one(
+        tx<{ n: number }[]>`
+          select count(*)::int as n from lead_messages where status = 'draft'
+        `,
+      ),
+      one(
+        tx<{ n: number }[]>`
+          select count(*)::int as n from lead_tasks where done_at is null
+        `,
+      ),
+    ]);
+  return {
+    date,
+    newLeads,
+    repliesIn,
+    meetingsBooked,
+    meetingsNext24h,
+    agentRuns: runs.runs,
+    costCents: runs.cost_cents,
+    pendingDrafts,
+    openTasks,
+  };
+}
 
 export async function computeDigest(sql: Sql, date: string): Promise<DailyDigest> {
   return controlTx(sql, async (tx) => {

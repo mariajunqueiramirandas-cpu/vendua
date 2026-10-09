@@ -6,7 +6,6 @@ import { createSession, membershipsFor } from '../src/admin/auth.ts';
 import { pushExhausted } from '../src/admin/workers.ts';
 import { aiAllowanceTx, claimAiConversationTx } from '../src/modules/billing/ai-allowance.ts';
 import { planHas, requireFeature } from '../src/modules/billing/plans.ts';
-import { billingStaff } from '../src/modules/billing/subscriptions.ts';
 import { handleBillingWebhook } from '../src/modules/billing/webhook.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { enqueueOrderPrintTx } from '../src/modules/printing/jobs.ts';
@@ -56,7 +55,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
   const aiPlan = `pt_${nonce}_ai`;
   const tempPack = `pt_${nonce}_pack`;
   let idem = 0;
-  const originalStaff = billingStaff.notify;
 
   const call = async (
     method: string,
@@ -149,7 +147,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
 
   beforeAll(async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
-    billingStaff.notify = async () => {};
     await sql`
       insert into plans (id, name, price_cents, features, public, sort, ai_conversations,
                          ai_trial_conversations)
@@ -165,7 +162,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
   });
 
   afterAll(async () => {
-    billingStaff.notify = originalStaff;
     // the catalog is shared with every other test: the launch plan leads again
     await sql`update plans set recommended = false where recommended and id <> 'bandeira'`;
     await sql`update plans set recommended = true where id = 'bandeira'`;

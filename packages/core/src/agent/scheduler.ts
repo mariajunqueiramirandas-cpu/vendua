@@ -1,6 +1,5 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
-import { digestConfigTx, digestNextAtTx, sweepDigest } from '../modules/digest.ts';
 import {
   deliverStaffEvents,
   discordEnabledTx,
@@ -149,18 +148,6 @@ export const JOBS: readonly ScheduledJob[] = [
       return a.level !== 'off' && a.jobs.strategist;
     },
     run: sweepStrategist,
-  },
-  {
-    name: 'digest',
-    label: 'resumo diário por e-mail',
-    cadence: async (tx) => `todo dia às ${hh((await digestConfigTx(tx)).hour)}`,
-    nextAt: digestNextAtTx,
-    wakesOn: on('control_settings'),
-    enabled: async (tx) => {
-      const d = await digestConfigTx(tx);
-      return d.enabled && Boolean(d.to);
-    },
-    run: sweepDigest,
   },
   {
     name: 'pipeline-snapshot',

@@ -3,7 +3,6 @@ import { emitAdminTx } from '../../admin/live.ts';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { recordStaffEventTx, type StaffEventMap } from '../staff-events.ts';
-import { notifyStaff, type StaffNotice } from '../staff.ts';
 import {
   ProviderError,
   type PaymentProvider,
@@ -99,11 +98,6 @@ export interface BillingCtx {
   deviceId?: string | null;
 }
 
-/** Tests swap this to see staff notices; production goes through notifyStaff. */
-export const billingStaff = {
-  notify: (sql: Sql, notice: StaffNotice): Promise<unknown> => notifyStaff(sql, null, notice),
-};
-
 async function storeName(tx: Sql, tenantId: string) {
   return (
     (await tx<{ name: string }[]>`select name from tenants where id = ${tenantId}`)[0]?.name ??
@@ -126,18 +120,20 @@ export async function recordManualInvoice(tx: Sql, inv: InvoiceRow, planName: st
   );
 }
 
-/** One event per `key` (an invoice, a period, a payment): a replay or a sweep adds nothing. */
+/** One event per `key` (an invoice, a period, a payment): a replay or a sweep adds nothing.
+ *  `title` names the case when the problem kind alone is too broad (a Pix paid twice). */
 export async function recordBillingProblem(
   tx: Sql,
   tenantId: string,
   problem: StaffEventMap['billing.problem']['problem'],
   detail: string,
   key: string,
+  title?: string,
 ) {
   await recordStaffEventTx(
     tx,
     'billing.problem',
-    { storeName: await storeName(tx, tenantId), problem, detail },
+    { storeName: await storeName(tx, tenantId), problem, detail, ...(title ? { title } : {}) },
     { tenantId, dedupeKey: `billing.problem:${tenantId}:${problem}:${key}` },
   );
 }
@@ -1079,14 +1075,14 @@ export async function markInvoicePaid(
         >`select name, slug from tenants where id = ${tenantId}`
       )[0];
       const body = `A fatura ${inv.number} (pacote de conversas do Duá, ${formatBRL(inv.amount_cents)}) da loja ${t?.name} (${t?.slug}) foi paga quando o plano já não tinha o Duá. As conversas não entraram: devolva pelo Mercado Pago.`;
-      ctx.later(() =>
-        billingStaff.notify(ctx.sql, {
-          subject: `Pacote do Duá pago sem o Duá: ${t?.name ?? tenantId}`,
-          body,
-          idemKey: `invoice-pack-unusable:${inv.id}`,
-        }),
+      await recordBillingProblem(
+        tx,
+        tenantId,
+        'pix_mismatch',
+        body,
+        `pack-unusable:${inv.id}`,
+        'Pacote do Duá pago sem o Duá',
       );
-      await recordBillingProblem(tx, tenantId, 'pix_mismatch', body, `pack-unusable:${inv.id}`);
     }
   } else if (inv.kind === 'upgrade') {
     if (upgradeLive(sub, { ...inv, status: 'open' }, paidAt))
@@ -1098,14 +1094,14 @@ export async function markInvoicePaid(
         >`select name, slug from tenants where id = ${tenantId}`
       )[0];
       const body = `A fatura ${inv.number} (diferença de plano, ${formatBRL(inv.amount_cents)}) da loja ${t?.name} (${t?.slug}) foi paga depois de cancelada ou vencida. O plano não mudou: devolva pelo Mercado Pago.`;
-      ctx.later(() =>
-        billingStaff.notify(ctx.sql, {
-          subject: `Upgrade pago fora do prazo: ${t?.name ?? tenantId}`,
-          body,
-          idemKey: `invoice-upgrade-late:${inv.id}`,
-        }),
+      await recordBillingProblem(
+        tx,
+        tenantId,
+        'pix_mismatch',
+        body,
+        `upgrade-late:${inv.id}`,
+        'Upgrade pago fora do prazo',
       );
-      await recordBillingProblem(tx, tenantId, 'pix_mismatch', body, `upgrade-late:${inv.id}`);
     }
   } else if (sub.status === 'pending' || sub.status === 'cancelled') {
     await activate(ctx, tx, sub, inv, paidAt);
@@ -1257,13 +1253,6 @@ export async function openSiteRequest(
       { name: string; slug: string }[]
     >`select name, slug from tenants where id = ${tenantId}`
   )[0];
-  ctx.later(() =>
-    billingStaff.notify(ctx.sql, {
-      subject: `Site sob medida: ${t?.name ?? tenantId}`,
-      body: `A loja ${t?.name} (${t?.slug}) tem um plano com site sob medida e um pedido de site aberto.${brief ? `\n\n${brief}` : ''}`,
-      idemKey: `site-request:${row.id}`,
-    }),
-  );
   await recordStaffEventTx(
     tx,
     'store.request',
@@ -1491,14 +1480,12 @@ export async function settlePixPayment(
       { name: string; slug: string }[]
     >`select name, slug from tenants where id = ${tenantId}`
   )[0];
-  const flag = async (subject: string, body: string, key: string) => {
-    ctx.later(() => billingStaff.notify(ctx.sql, { subject, body, idemKey: key }));
-    await recordBillingProblem(tx, tenantId, 'pix_mismatch', body, key);
-  };
+  const flag = (title: string, body: string, key: string) =>
+    recordBillingProblem(tx, tenantId, 'pix_mismatch', body, key, title);
   if (inv.status === 'paid') {
     if (inv.provider_payment_id !== pay.id)
       await flag(
-        `Fatura paga duas vezes: ${t?.name ?? tenantId}`,
+        'Fatura paga duas vezes',
         `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) já estava paga e recebeu outro Pix (${pay.id}, ${formatBRL(pay.amountCents)}). Confira e devolva pelo Mercado Pago.`,
         `invoice-dup:${pay.id}`,
       );
@@ -1509,7 +1496,7 @@ export async function settlePixPayment(
   // their own late payments (markInvoicePaid).
   if (inv.status === 'void' && inv.kind !== 'upgrade' && inv.kind !== 'ai_pack') {
     await flag(
-      `Pix numa fatura cancelada: ${t?.name ?? tenantId}`,
+      'Pix numa fatura cancelada',
       `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) estava cancelada e recebeu um Pix (${pay.id}, ${formatBRL(pay.amountCents)}). Nada foi ativado: devolva pelo Mercado Pago ou acerte com a loja.`,
       `invoice-void:${pay.id}`,
     );
@@ -1521,7 +1508,7 @@ export async function settlePixPayment(
     if (!inv.short_payments.includes(pay.id))
       await tx`update invoices set short_payments = array_append(short_payments, ${pay.id}) where id = ${inv.id}`;
     await flag(
-      `Pix com valor menor: ${t?.name ?? tenantId}`,
+      'Pix com valor menor',
       `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) é de ${formatBRL(inv.amount_cents)} e recebeu ${formatBRL(pay.amountCents)} (Pix ${pay.id}, emitido antes de uma mudança de preço). A fatura continua em aberto: devolva esse Pix pelo Mercado Pago ou acerte a diferença.`,
       `invoice-amount:${pay.id}`,
     );
@@ -1530,7 +1517,7 @@ export async function settlePixPayment(
   }
   if (pay.amountCents > inv.amount_cents)
     await flag(
-      `Pix com valor diferente: ${t?.name ?? tenantId}`,
+      'Pix com valor diferente',
       `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) era de ${formatBRL(inv.amount_cents)} e foi paga com ${formatBRL(pay.amountCents)} (Pix ${pay.id}). A fatura foi dada como paga; devolva a diferença pelo Mercado Pago.`,
       `invoice-amount:${pay.id}`,
     );

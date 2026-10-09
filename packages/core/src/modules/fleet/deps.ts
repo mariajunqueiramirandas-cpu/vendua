@@ -1,7 +1,6 @@
 import type { MerchantNotify } from '../../admin/context.ts';
 import type { Sql } from '../../platform/db.ts';
 import { siteDepsFromEnv, type SiteDeps } from '../site-builder/deps.ts';
-import { notifyStaff, type StaffNotice } from '../staff.ts';
 
 // The Control Plane's collaborators, one object so tests swap the network and the clock.
 export interface FleetDeps {
@@ -16,7 +15,6 @@ export interface FleetDeps {
   fetch: typeof fetch;
   /** the store owner's invite */
   notify: MerchantNotify;
-  staff: (notice: StaffNotice) => Promise<unknown>;
   now: () => Date;
   /** tests: confine the probe loop to these stores (a shared database has others) */
   only: string[] | null;
@@ -42,7 +40,6 @@ export function fleetDeps(
     probeOrigin: o.probeOrigin ?? (env.VENDUA_PROBE_ORIGIN?.replace(/\/+$/, '') || null),
     fetch: o.fetch ?? fetch,
     notify: o.notify,
-    staff: o.staff ?? ((n) => notifyStaff(sql, 'fleet', n)),
     now: o.now ?? (() => new Date()),
     only: o.only ?? null,
     site: o.site ?? siteDepsFromEnv(),

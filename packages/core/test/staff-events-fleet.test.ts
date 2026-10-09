@@ -12,7 +12,6 @@ import { ackIncident, openIncidentTx } from '../src/modules/fleet/incidents.ts';
 import { runProbes } from '../src/modules/fleet/probe.ts';
 import { advance } from '../src/modules/fleet/provision.ts';
 import { getIntegration, upsertIntegration } from '../src/modules/integrations.ts';
-import type { StaffNotice } from '../src/modules/staff.ts';
 import {
   bootVersion,
   recordBoot,
@@ -110,7 +109,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       }
     }) as typeof fetch;
 
-    const staffNotices: StaffNotice[] = [];
     const notify: MerchantNotify = {
       whatsapp: async () => undefined,
       email: async () => undefined,
@@ -122,7 +120,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       probeOrigin: 'http://edge.test',
       fetch: fakeFetch,
       notify,
-      staff: async (n) => void staffNotices.push(n),
     });
     const created: string[] = [];
     d.only = created;
@@ -379,9 +376,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         severity: 'success',
         data: { by: null, summary: 'a sonda voltou a passar' },
       });
-      // the staff email/WhatsApp alerts are unchanged
-      expect(staffNotices.some((n) => n.subject.startsWith('Atenção:'))).toBe(true);
-      expect(staffNotices.some((n) => n.subject.startsWith('Resolvido:'))).toBe(true);
       d.probes = false;
     });
 

@@ -631,7 +631,10 @@ function billingProblem(ev: Ev<'billing.problem'>, ctx: RenderCtx): Rendered {
   return {
     card: card(
       ev,
-      { title: `${PROBLEM[d.problem]} · ${esc(d.storeName)}`, description: esc(d.detail) },
+      {
+        title: `${d.title ? esc(d.title) : PROBLEM[d.problem]} · ${esc(d.storeName)}`,
+        description: esc(d.detail),
+      },
       row(linkButton('planos no CRM', ctx.crm('/lojas/planos'))),
     ),
   };

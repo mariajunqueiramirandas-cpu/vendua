@@ -110,7 +110,6 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
     probes: false,
     fetch: fakeFetch,
     notify,
-    staff: async () => {},
     site,
   });
   d.only = [];
