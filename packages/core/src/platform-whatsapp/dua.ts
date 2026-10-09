@@ -1,8 +1,14 @@
+import type { ModelGateway } from '@vendua/agent-runtime';
 import type { Merchant, Role } from '../admin/context.ts';
 import { emitAdminTx } from '../admin/live.ts';
-import { dispatchTx } from '../agent-host/dispatch.ts';
-import { COPILOT_AGENT_ID, COPILOT_SUBJECT } from '../agent-host/agents/copilot/shared.ts';
 import { decideTx } from '../copilot/actions.ts';
+import {
+  copilotInboundTx,
+  hearVoice,
+  seePhoto,
+  takeMediaCallTx,
+  type Heard,
+} from '../copilot/media.ts';
 import { planHas } from '../modules/billing/plans.ts';
 import { controlTx } from '../modules/control.ts';
 import { normalizePhone } from '../modules/customer.ts';
@@ -11,15 +17,9 @@ import { HttpError } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { phoneVariants } from '../store-whatsapp/text.ts';
+
 import type { MediaProviders } from '../vendedor/media.ts';
-import {
-  AUDIO_NOT_FETCHED,
-  DUA,
-  HEARD_UNSURE,
-  LOW_CONFIDENCE,
-  parseChoice,
-  parseReply,
-} from './dua-text.ts';
+import { AUDIO_NOT_FETCHED, DUA, parseChoice, parseReply } from './dua-text.ts';
 import { enqueuePlatformWaTx } from './outbox.ts';
 import { platformTransport } from './transport.ts';
 
@@ -52,6 +52,8 @@ export interface DuaDeps {
   /** the request pool's role (vendua_app): every read here runs under RLS */
   sql: Sql;
   media?: Pick<MediaProviders, 'transcribe'> | null;
+  /** reads the photos people send (copilot/media.ts); none means text and voice only */
+  gateway?: ModelGateway | null;
   /** the admin's origin (https://<VENDUA_ADMIN_HOST>), for links in fixed answers */
   origin?: string | null;
 }
@@ -456,12 +458,10 @@ async function decideByReply(
 
 type Savepointable = { savepoint: <T>(fn: (sp: Sql) => Promise<T>) => Promise<T> };
 
-interface Heard {
-  text: string;
-  voice: boolean;
-}
-
-/** The words of the message: typed, or a voice note transcribed with the store's names as hints. */
+/**
+ * The words of the message: typed, a voice note transcribed, or a photo read (copilot/media.ts,
+ * the admin's own path), all with the store's names as hints.
+ */
 async function hear(
   d: DuaDeps,
   row: InboxRow,
@@ -469,6 +469,7 @@ async function hear(
   body: string,
 ): Promise<Heard | DuaOutcome> {
   const audioTag = body.startsWith('[áudio');
+  const imageTag = body.startsWith('[imagem');
   if (!row.media_id) {
     // Core's socket never downloads; the gateway marks a note it couldn't fetch, and keeps none
     // of one past the caps
@@ -476,30 +477,47 @@ async function hear(
       return answer(d, row, 'voice', DUA.textOnly);
     if (body.startsWith(AUDIO_NOT_FETCHED)) return answer(d, row, 'voice', DUA.voiceUnheard);
     if (audioTag) return answer(d, row, 'voice', DUA.voiceTooLong);
+    if (imageTag && d.gateway && platformTransport() !== 'socket')
+      return answer(d, row, 'media', DUA.photoUnseen);
     if (!body || /^\[(imagem|vídeo|documento|figurinha)/.test(body))
-      return answer(d, row, 'media', DUA.mediaOnly);
-    return { text: body.slice(0, MAX_BODY), voice: false };
+      return answer(
+        d,
+        row,
+        'media',
+        d.gateway && platformTransport() !== 'socket' ? DUA.mediaKinds : DUA.mediaOnly,
+      );
+    return {
+      kind: 'text',
+      input: body.slice(0, MAX_BODY),
+      shown: body.slice(0, MAX_BODY),
+      photo: null,
+    };
   }
-  if (!d.media) return answer(d, row, 'voice', DUA.textOnly);
-  const [note] = await controlTx(
+  const [file] = await controlTx(
     d.sql,
     (tx) => tx<{ bytes: Uint8Array; mime: string }[]>`
       select bytes, mime from platform_wa_media where id = ${row.media_id}`,
   );
-  if (!note) return answer(d, row, 'voice', DUA.voiceUnheard);
-  const phrases = await withTenant(
-    d.sql,
-    e.tenant_id,
-    (tx) => tx<{ name: string }[]>`
-      select name from products where tenant_id = ${e.tenant_id} order by name limit 200`,
-  )
-    .then((rows) => rows.map((r) => r.name))
-    .catch(() => [] as string[]);
-  const t = await d.media.transcribe(note.bytes, note.mime, { phrases });
-  const said = t?.text.trim();
-  if (!said) return answer(d, row, 'voice', DUA.voiceUnheard);
-  const unsure = t!.confidence == null || t!.confidence < LOW_CONFIDENCE;
-  return { text: `${unsure ? `${HEARD_UNSURE} ` : ''}${said}`.slice(0, MAX_BODY), voice: true };
+  const photo = file ? file.mime.startsWith('image/') : imageTag;
+  if (photo ? !d.gateway : !d.media)
+    return answer(d, row, 'media', photo ? DUA.mediaOnly : DUA.textOnly);
+  if (!file) return answer(d, row, 'media', photo ? DUA.photoUnseen : DUA.voiceUnheard);
+  // each one is a paid call: the same daily room as the admin's
+  const room = await withTenant(d.sql, e.tenant_id, (tx) =>
+    takeMediaCallTx(tx, e.tenant_id, e.user_id, photo ? 'image' : 'voice'),
+  );
+  if (!room) return answer(d, row, 'media', DUA.mediaCap);
+  if (photo) {
+    const caption = body.replace(/^\[imagem\]\s*/, '');
+    const seen = await seePhoto(d.gateway!, e.tenant_id, file.bytes, caption).catch((err) => {
+      // a file that isn't an image we can decode reads as unseen
+      if (err instanceof HttpError) return null;
+      throw err;
+    });
+    return seen ?? answer(d, row, 'media', DUA.photoUnseen);
+  }
+  const heard = await hearVoice(d.sql, d.media!, e.tenant_id, file.bytes, file.mime);
+  return heard ?? answer(d, row, 'voice', DUA.voiceUnheard);
 }
 
 /** The message joins the person's Copilot conversation: one mailbox row, in this transaction. */
@@ -510,31 +528,16 @@ async function dispatchTurn(
   heard: Heard,
 ): Promise<DuaOutcome> {
   await withTenant(d.sql, e.tenant_id, async (tx) => {
-    const shown = heard.text.replace(`${HEARD_UNSURE} `, '');
-    const [msg] = await tx<{ id: string }[]>`
-      insert into copilot_messages (tenant_id, user_id, author, body, channel, kind)
-      values (${e.tenant_id}, ${e.user_id}, 'merchant', ${shown}, 'whatsapp',
-              ${heard.voice ? 'voice' : 'text'})
-      returning id`;
-    await dispatchTx(tx, {
-      actor: {
-        tenantId: e.tenant_id,
-        agentId: COPILOT_AGENT_ID,
-        subject: { kind: COPILOT_SUBJECT, id: e.user_id },
-      },
-      kind: 'message.inbound',
+    await copilotInboundTx(tx, {
+      tenantId: e.tenant_id,
+      userId: e.user_id,
+      channel: 'whatsapp',
+      heard,
       source: `whatsapp:${e.user_id}`,
       dedupeKey: `copilot-wa:${row.id}`,
-      payload: {
-        messageId: msg!.id,
-        kind: heard.voice ? 'voice' : 'text',
-        text: heard.text,
-        at: new Date().toISOString(),
-      },
     });
-    await emitAdminTx(tx, e.tenant_id, 'copilot', e.user_id);
     await inControlScope(tx, () => markDoneTx(tx, row.id));
   });
-  duaLog.info({ tenantId: e.tenant_id, voice: heard.voice }, 'dua whatsapp message');
+  duaLog.info({ tenantId: e.tenant_id, kind: heard.kind }, 'dua whatsapp message');
   return { route: 'done' };
 }

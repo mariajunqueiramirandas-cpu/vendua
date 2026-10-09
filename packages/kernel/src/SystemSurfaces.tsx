@@ -18,7 +18,7 @@ import type { Notice, NoticeAction, SurfacesEnvelope } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
 import { attachToastRegion, subscribeToastHost, toastHost } from './toast-layer.ts';
 import { blockSheet } from './transitions.tsx';
-import { CHAT_MAX_LENGTH, chatLink, useStoreChat } from './chat.ts';
+import { CHAT_MAX_LENGTH, CHAT_VOICE_MAX_SECONDS, chatLink, useStoreChat } from './chat.ts';
 import { reducedMotion, SPRING, springEasing } from './spring.ts';
 
 // Server-driven surfaces at fixed mount points (05-system-surfaces.md): banner
@@ -172,6 +172,10 @@ function ChatSurface({
       onOpen={() => setOpen(true)}
       onClose={() => setOpen(false)}
       onSend={chat.send}
+      media={chat.media}
+      onSendVoice={chat.sendVoice}
+      onSendPhoto={chat.sendPhoto}
+      maxVoiceSeconds={CHAT_VOICE_MAX_SECONDS}
       sending={chat.sending}
       {...(chat.message ? { error: chat.message } : {})}
       unread={open ? 0 : Math.max(0, replies - (seen ?? replies))}

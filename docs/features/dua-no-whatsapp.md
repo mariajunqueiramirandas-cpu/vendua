@@ -46,6 +46,9 @@ Paths are under `packages/core/` unless they start with `apps/`, `packages/` or 
     same `decideTx` the admin tap uses.
 - **Voice notes** reuse the self-hosted STT the Vendedor uses (`vendedor/media.ts`), which takes no
   tenant.
+- **Photos** (added 2026-10-09): the gateway downloads them as it does voice notes (5 MB, 6 media
+  per sender a minute), and Duá gets the same reading the admin's photos get
+  ([ADR 0034](../adr/0034-dua-copilot.md), "Added 2026-10-09").
 
 ## 1. Why
 

@@ -21,6 +21,8 @@ export interface MessageView {
   /** the door it came through: Duá by WhatsApp shows in the admin too */
   channel: 'admin' | 'whatsapp';
   voice: boolean;
+  /** a photo the person sent, served to them alone (GET /admin/v1/copilot/media/:id) */
+  image: string | null;
 }
 
 export type CopilotItem = ({ type: 'message' } & MessageView) | ({ type: 'action' } & ActionView);
@@ -29,6 +31,8 @@ export type CopilotItem = ({ type: 'message' } & MessageView) | ({ type: 'action
 export interface CopilotView {
   items: CopilotItem[];
   busy: boolean;
+  /** what this Core can take besides text (the routes fill it in) */
+  media?: { voice: boolean; image: boolean };
 }
 
 interface MessageRow {
@@ -36,7 +40,8 @@ interface MessageRow {
   author: 'merchant' | 'dua';
   body: string;
   channel: 'admin' | 'whatsapp';
-  kind: 'text' | 'voice';
+  kind: 'text' | 'voice' | 'image';
+  media_id: string | null;
   created_at: Date;
 }
 
@@ -60,9 +65,10 @@ interface ActionRow {
 export async function copilotView(tx: Sql, tenantId: string, m: Merchant): Promise<CopilotView> {
   const messages = (
     await tx<MessageRow[]>`
-      select id, author, body, channel, kind, created_at from copilot_messages
-      where tenant_id = ${tenantId} and user_id = ${m.userId}
-      order by created_at desc, id desc limit ${SHOWN}`
+      select c.id, c.author, c.body, c.channel, c.kind, d.id as media_id, c.created_at
+      from copilot_messages c left join copilot_media d on d.message_id = c.id
+      where c.tenant_id = ${tenantId} and c.user_id = ${m.userId}
+      order by c.created_at desc, c.id desc limit ${SHOWN}`
   ).reverse();
   const since = messages[0]?.created_at ?? new Date();
   const actions = await tx<ActionRow[]>`
@@ -108,6 +114,7 @@ export async function copilotView(tx: Sql, tenantId: string, m: Merchant): Promi
       at: msg.created_at.toISOString(),
       channel: msg.channel,
       voice: msg.kind === 'voice',
+      image: msg.media_id ? `/admin/v1/copilot/media/${msg.media_id}` : null,
     });
     for (const a of byMessage.get(msg.id) ?? []) items.push(card(a));
   }

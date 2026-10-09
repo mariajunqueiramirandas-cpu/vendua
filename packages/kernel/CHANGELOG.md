@@ -3,6 +3,24 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.24.0
+
+Voice messages and photos in the store chat — additive; no storefront edit, no new runtime
+export.
+
+- `StoreChat.media` / `StoreProfile.chat.media` (`{ voice, image }`, absent = text only) and
+  `StoreChatMessage.kind` (`'text' | 'voice' | 'image'`, absent = text); types `StoreChatMedia`,
+  `StoreChatMediaKinds`.
+- `api.sendChatMedia(media, { idempotencyKey? })` → `POST /checkout/v1/chat` with
+  `{ kind: 'voice', mime, data, seconds? }` or `{ kind: 'image', mime, data, text? }` (base64).
+- `useStoreChat` gains `media`, `sendVoice(blob, seconds)` and `sendPhoto(blob, caption?)`:
+  base64 in the Kernel, ≤ 2 MB checked before sending, the same never-throw and same-key retry
+  as `send`, and failures worded for a voice message or a photo.
+- `system.Chat` takes optional `media`, `onSendVoice`, `onSendPhoto` and `maxVoiceSeconds`; the
+  default records (mic while the field is empty, 60 s cap) and attaches a photo shrunk to
+  1600 px JPEG with the text as caption; new parts listed in API.md.
+- `ERROR_CODES` gains `UNSUPPORTED_MEDIA`; `ERROR_COPY` gains it and `PAYLOAD_TOO_LARGE`.
+
 ## 1.23.0
 
 Checkout and product-page fixes — additive; no storefront edit.

@@ -1,3 +1,5 @@
+import type { ModelGateway } from '@vendua/agent-runtime';
+import type { MediaProviders } from '../vendedor/media.ts';
 import type { Context, Hono } from 'hono';
 import type { Geocoder } from '../modules/geocode.ts';
 import type { Sql } from '../platform/db.ts';
@@ -47,6 +49,13 @@ export interface AdminDeps {
   domains: DomainProviders;
   /** the Control Plane: Aparência's site switch moves the store between bundles (ADR 0040) */
   fleet: FleetDeps;
+  /** Duá Copilot's ears and eyes: voice messages transcribed, photos read (copilot/media.ts) */
+  copilotMedia: CopilotMediaDeps;
+}
+
+export interface CopilotMediaDeps {
+  media: MediaProviders | null;
+  gateway: ModelGateway | null;
 }
 
 /** How a platform WhatsApp message rides the outbox once the number is on the gateway (ignored

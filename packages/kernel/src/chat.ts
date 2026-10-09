@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
-import { ApiError, idemKey, type StoreChat, type StoreChatMessage, type VenduaApi } from './api.ts';
+import {
+  ApiError,
+  idemKey,
+  type StoreChat,
+  type StoreChatMedia,
+  type StoreChatMediaKinds,
+  type StoreChatMessage,
+  type VenduaApi,
+} from './api.ts';
 import { useKernel, invalidateQuery } from './provider.tsx';
 import { useStore, type QueryError } from './hooks.ts';
 import { errorCopy } from './rules/errors.ts';
@@ -15,6 +23,20 @@ import { errorCopy } from './rules/errors.ts';
 export const CHAT_POLL_MS = { pending: 2000, open: 12000, pendingMax: 120_000 };
 /** Core's bound on a message */
 export const CHAT_MAX_LENGTH = 1000;
+/** Kernel 1.24 — Core's bound on a voice message's or photo's bytes (decoded) */
+export const CHAT_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
+/** Kernel 1.24 — the longest voice message the default chat records */
+export const CHAT_VOICE_MAX_SECONDS = 60;
+const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+type ImageMime = (typeof IMAGE_MIMES)[number];
+const TEXT_ONLY: StoreChatMediaKinds = { voice: false, image: false };
+
+type SendKind = 'text' | 'voice' | 'image';
+/** what a send carries; a media send's bytes are encoded just before posting */
+type Outgoing =
+  | { kind: 'text'; text: string }
+  | { kind: 'voice'; blob: Blob; seconds: number }
+  | { kind: 'image'; blob: Blob; text: string };
 
 interface ChatState {
   view: StoreChat | null;
@@ -22,6 +44,8 @@ interface ChatState {
   error: QueryError | undefined;
   sending: boolean;
   sendError: QueryError | undefined;
+  /** what the last send carried: its failure reads in its words */
+  sendKind: SendKind;
 }
 
 const toError = (err: unknown): QueryError =>
@@ -40,6 +64,7 @@ class ChatFeed {
     error: undefined,
     sending: false,
     sendError: undefined,
+    sendKind: 'text',
   };
   private listeners = new Set<() => void>();
   private holders = 0;
@@ -48,7 +73,8 @@ class ChatFeed {
   private inflight: Promise<void> | null = null;
   private known: Set<string> | null = null;
   private wasPending = false;
-  private retry: { text: string; key: string } | null = null;
+  /** the send that may have landed, by what it carried: the same send retries with its key */
+  private retry: { kind: SendKind; text: string; blob: Blob | null; key: string } | null = null;
   private onVisible = () => {
     if (!hidden() && this.holders > 0 && (this.live > 0 || this.waiting())) void this.refresh();
   };
@@ -158,21 +184,60 @@ class ChatFeed {
     );
   }
 
-  async send(raw: string): Promise<boolean> {
+  send(raw: string): Promise<boolean> {
     const text = raw.trim();
-    if (!text) return false;
+    if (!text) return Promise.resolve(false);
     if (text.length > CHAT_MAX_LENGTH) {
       this.set({
+        sendKind: 'text',
         sendError: { code: 'BAD_REQUEST', message: 'text must have 1–1000 characters' },
       });
-      return false;
+      return Promise.resolve(false);
     }
+    return this.post({ kind: 'text', text });
+  }
+
+  sendVoice(blob: Blob, seconds: number): Promise<boolean> {
+    if (!blob || blob.size === 0) return Promise.resolve(false);
+    return this.post({ kind: 'voice', blob, seconds });
+  }
+
+  sendPhoto(blob: Blob, caption?: string): Promise<boolean> {
+    if (!blob || blob.size === 0) return Promise.resolve(false);
+    const text = (caption ?? '').trim();
+    if (text.length > CHAT_MAX_LENGTH) {
+      this.set({
+        sendKind: 'image',
+        sendError: { code: 'BAD_REQUEST', message: 'text must have up to 1000 characters' },
+      });
+      return Promise.resolve(false);
+    }
+    return this.post({ kind: 'image', blob, text });
+  }
+
+  private async post(out: Outgoing): Promise<boolean> {
     if (this.state.sending) return false;
-    const key = this.retry?.text === text ? this.retry.key : idemKey();
+    const refuse = (code: string, message: string) => {
+      this.set({ sendKind: out.kind, sendError: { code, message } });
+      return false;
+    };
+    if (out.kind !== 'text') {
+      if (out.blob.size > CHAT_MEDIA_MAX_BYTES)
+        return refuse('PAYLOAD_TOO_LARGE', 'media must be at most 2 MB');
+      if (out.kind === 'image' && !IMAGE_MIMES.includes(out.blob.type as ImageMime))
+        return refuse('UNSUPPORTED_MEDIA', 'photos are JPEG, PNG or WebP');
+    }
+    const text = out.kind === 'voice' ? '' : out.text;
+    const blob = out.kind === 'text' ? null : out.blob;
+    const r = this.retry;
+    const key = r && r.kind === out.kind && r.text === text && r.blob === blob ? r.key : idemKey();
     const before = this.api.sessionToken;
-    this.set({ sending: true, sendError: undefined });
+    this.set({ sending: true, sendError: undefined, sendKind: out.kind });
     try {
-      const view = await this.api.sendChat(text, { idempotencyKey: key });
+      const view =
+        out.kind === 'text'
+          ? await this.api.sendChat(out.text, { idempotencyKey: key })
+          : await this.api.sendChatMedia(await mediaBody(out), { idempotencyKey: key });
       this.retry = null;
       // the send started (or rotated) the cart session: the page's cart is a new one
       if (this.api.sessionToken !== before) this.refreshCart();
@@ -182,12 +247,41 @@ class ChatFeed {
       return true;
     } catch (err) {
       const e = toError(err);
-      this.retry = mayHaveLanded(e) ? { text, key } : null;
+      this.retry = mayHaveLanded(e) ? { kind: out.kind, text, blob, key } : null;
       this.set({ sending: false, sendError: e });
       if (e.code === 'CHAT_UNAVAILABLE') this.refreshStore();
       return false;
     }
   }
+}
+
+/** a voice message's or photo's body for Core: the bytes as base64 */
+async function mediaBody(out: Exclude<Outgoing, { kind: 'text' }>): Promise<StoreChatMedia> {
+  const data = await base64(out.blob);
+  if (out.kind === 'voice') {
+    const seconds = Math.round(out.seconds);
+    return {
+      kind: 'voice',
+      mime: out.blob.type || 'audio/webm',
+      data,
+      ...(Number.isFinite(seconds) && seconds > 0 ? { seconds } : {}),
+    };
+  }
+  return {
+    kind: 'image',
+    mime: out.blob.type as ImageMime,
+    data,
+    ...(out.text ? { text: out.text } : {}),
+  };
+}
+
+async function base64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = '';
+  // in chunks: one String.fromCharCode over 2 MB of arguments overflows the stack
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
 }
 
 const hidden = () => globalThis.document?.visibilityState === 'hidden';
@@ -199,8 +293,23 @@ function feedFor(api: VenduaApi): ChatFeed {
   return f;
 }
 
-/** A chat failure in words (`ERROR_COPY`, title and body). */
-export function chatErrorWords(code: string): string {
+/** A chat failure in words (`ERROR_COPY`, title and body); a voice message's or photo's own. */
+export function chatErrorWords(code: string, kind: SendKind = 'text'): string {
+  if (kind !== 'text') {
+    const voice = kind === 'voice';
+    if (code === 'PAYLOAD_TOO_LARGE')
+      return voice
+        ? 'Áudio grande demais. Grave um mais curto.'
+        : 'Foto grande demais. Escolha outra.';
+    if (code === 'UNSUPPORTED_MEDIA')
+      return voice
+        ? 'Não deu para enviar esse áudio. Escreva sua mensagem.'
+        : 'Formato de foto não aceito. Envie JPG, PNG ou WebP.';
+    if (code === 'BAD_REQUEST')
+      return voice
+        ? 'Não deu para enviar o áudio. Grave de novo.'
+        : 'Não deu para enviar a foto. Tente outra.';
+  }
   if (code === 'BAD_REQUEST') return `Escreva uma mensagem de até ${CHAT_MAX_LENGTH} caracteres.`;
   const c = errorCopy(code);
   return c.body ? `${c.title}. ${c.body}` : `${c.title}.`;
@@ -212,7 +321,8 @@ export function chatErrorWords(code: string): string {
  * in front of the shopper: the Kernel then reads it every few seconds (every 2 s while a reply is
  * pending, which it also does with the chat closed). When the Vendedor's turn lands the Kernel
  * rereads the cart, so `useCart()` shows what it changed. Never throws: `send` resolves false
- * and `error`/`message` say why.
+ * and `error`/`message` say why. Kernel 1.24: `sendVoice` / `sendPhoto` send a voice message or a
+ * photo (base64-encoded here) when `media` says Core takes it, with the same semantics.
  */
 export function useStoreChat(opts: { live?: boolean } = {}): {
   /** the store has the chat on (`StoreProfile.chat`) */
@@ -224,6 +334,13 @@ export function useStoreChat(opts: { live?: boolean } = {}): {
   pending: boolean;
   /** resolves true once Core took the message; starts the cart session when there is none */
   send: (text: string) => Promise<boolean>;
+  /** Kernel 1.24 — what the chat takes besides text (Core's word; text only until it says) */
+  media: StoreChatMediaKinds;
+  /** Kernel 1.24 — a recorded voice message (`MediaRecorder`'s blob, its type the mime) and its
+   *  length; same promise, key reuse and errors as `send` */
+  sendVoice: (audio: Blob, seconds: number) => Promise<boolean>;
+  /** Kernel 1.24 — a photo (JPEG, PNG or WebP, at most 2 MB) with an optional caption */
+  sendPhoto: (image: Blob, caption?: string) => Promise<boolean>;
   sending: boolean;
   /** the last send failure (cleared by the next send) or read failure */
   error: QueryError | undefined;
@@ -244,6 +361,16 @@ export function useStoreChat(opts: { live?: boolean } = {}): {
     (text: string) => (on ? feed.send(text) : Promise.resolve(false)),
     [feed, on],
   );
+  const sendVoice = useCallback(
+    (audio: Blob, seconds: number) =>
+      on ? feed.sendVoice(audio, seconds) : Promise.resolve(false),
+    [feed, on],
+  );
+  const sendPhoto = useCallback(
+    (image: Blob, caption?: string) =>
+      on ? feed.sendPhoto(image, caption) : Promise.resolve(false),
+    [feed, on],
+  );
   const refetch = useCallback(() => void feed.refresh(), [feed]);
   const error = s.sendError ?? s.error;
   const available = on && s.view?.available !== false;
@@ -254,9 +381,12 @@ export function useStoreChat(opts: { live?: boolean } = {}): {
     messages: s.view?.messages ?? [],
     pending: !!s.view?.pending,
     send,
+    media: available ? (s.view?.media ?? profile!.media ?? TEXT_ONLY) : TEXT_ONLY,
+    sendVoice,
+    sendPhoto,
     sending: s.sending,
     error,
-    message: error ? chatErrorWords(error.code) : null,
+    message: error ? chatErrorWords(error.code, s.sendError ? s.sendKind : 'text') : null,
     loading: on && !s.loaded,
     refetch,
   };

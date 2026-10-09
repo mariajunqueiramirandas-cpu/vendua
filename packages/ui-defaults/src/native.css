@@ -816,7 +816,126 @@
       padding-bottom: 12px;
     }
   }
+  /* Kernel 1.24 — voice messages and photos: the tag in a sent message, the composer's photo
+     button, the attached photo and the recording row */
+  .v-chat-media {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    white-space: normal;
+  }
+  .v-chat-media:not(:last-child) {
+    margin-bottom: 4px;
+  }
+  .v-chat-media svg {
+    flex: none;
+  }
+  .v-chat-icon-btn {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--v-color-muted, #6e6a64);
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .v-chat-icon-btn:active {
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 8%, transparent);
+  }
+  .v-chat-icon-btn[aria-busy='true'] {
+    opacity: 0.6;
+    cursor: progress;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .v-chat-icon-btn:hover {
+      color: var(--v-color-text, #1c1b1a);
+    }
+  }
+  .v-chat-attachment {
+    flex-basis: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 6px 4px 6px 6px;
+    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 12%, transparent);
+    border-radius: var(--v-radius-md, 10px);
+    background: var(--v-color-surface, #fff);
+  }
+  .v-chat-attachment-thumb {
+    flex: none;
+    width: 48px;
+    height: 48px;
+    border-radius: calc(var(--v-radius-md, 10px) - 4px);
+    object-fit: cover;
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 6%, transparent);
+  }
+  .v-chat-attachment-label {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .v-chat-attachment-hint {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--v-color-muted, #6e6a64);
+  }
+  .v-chat-recording {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 44px;
+  }
+  .v-chat-rec-dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    margin: 0 4px;
+    border-radius: 50%;
+    background: var(--v-color-danger, #a33b32);
+    animation: v-chat-rec 1.2s ease-in-out infinite;
+  }
+  .v-chat-rec-glyph {
+    flex: none;
+    display: grid;
+    color: var(--v-color-muted, #6e6a64);
+  }
+  @keyframes v-chat-rec {
+    50% {
+      opacity: 0.3;
+      transform: scale(0.8);
+    }
+  }
+  .v-chat-rec-time {
+    flex: 1;
+    min-width: 0;
+    font-size: 16px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .v-chat-rec-max {
+    font-weight: 400;
+    color: var(--v-color-muted, #6e6a64);
+  }
   @media (prefers-reduced-motion: reduce) {
+    .v-chat-rec-dot {
+      animation: none;
+    }
     .v-chat-launcher,
     .v-chat-panel {
       animation: v-fade-in 120ms ease both;
