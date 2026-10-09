@@ -30,11 +30,10 @@ describe('normalizeStaff', () => {
       }),
     ).toEqual({
       members: [{ name: 'Ana', email: 'ana@vendua.app', whatsapp: '+5511999990000' }],
-      events: { handoff: true, meeting: true, fleet: true },
     });
   });
 
-  test('email-only and whatsapp-only people are fine; events toggle', () => {
+  test('email-only and whatsapp-only people are fine; the retired events toggles are dropped', () => {
     const cfg = normalizeStaff({
       members: [{ email: 'a@b.co' }, { whatsapp: '11999990000' }],
       events: { meeting: false },
@@ -43,7 +42,7 @@ describe('normalizeStaff', () => {
       ['a@b.co', ''],
       ['', '+5511999990000'],
     ]);
-    expect(cfg.events).toEqual({ handoff: true, meeting: false, fleet: true });
+    expect(cfg).not.toHaveProperty('events');
   });
 
   test('rejects bad shapes', () => {
@@ -54,10 +53,6 @@ describe('normalizeStaff', () => {
       'BAD_REQUEST',
     );
     expect(code(() => validateSetting('staff', { members: [{ whatsapp: '12' }] }))).toBe(
-      'BAD_REQUEST',
-    );
-    expect(code(() => validateSetting('staff', { events: { spam: true } }))).toBe('BAD_REQUEST');
-    expect(code(() => validateSetting('staff', { events: { handoff: 'yes' } }))).toBe(
       'BAD_REQUEST',
     );
     expect(validateSetting('staff', {})).toBeUndefined();

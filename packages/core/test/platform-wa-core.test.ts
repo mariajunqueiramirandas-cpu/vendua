@@ -15,7 +15,6 @@ import { startSignupOtp } from '../src/modules/billing/signup.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { getIntegration } from '../src/modules/integrations.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
-import { notifyStaff } from '../src/modules/staff.ts';
 import { composeMessageTx } from '../src/modules/threads.ts';
 import { settleCrmOnce } from '../src/platform-whatsapp/crm-settle.ts';
 import { enqueuePlatformWa } from '../src/platform-whatsapp/outbox.ts';
@@ -175,27 +174,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       select purpose from platform_wa_outbox where to_jid = ${`55${phone}`} and dedupe_key like 'notice:%'`;
       expect(loose.map((r) => r.purpose)).toEqual(['notice']);
       await sql`delete from platform_wa_outbox where to_jid = ${`55${phone}`}`;
-
-      const [before] = await sql`select value from control_settings where key = 'staff'`;
-      const wa = `55${phone11()}`;
-      try {
-        await sql`
-        insert into control_settings (key, value)
-        values ('staff', ${sql.json({ members: [{ name: 'Ana', email: '', whatsapp: wa }] } as never)})
-        on conflict (key) do update set value = excluded.value`;
-        const out = await notifyStaff(sql, null, {
-          subject: 'Teste',
-          body: 'corpo',
-          idemKey: `staff-${nonce}`,
-        });
-        expect(out).toEqual([{ name: 'Ana', channel: 'whatsapp', to: wa, ok: true }]);
-        const rows = await rowsLike(`notice:staff-${nonce}:`);
-        expect(rows.map((r) => [r.purpose, r.to_jid])).toEqual([['notice', wa]]);
-      } finally {
-        if (before)
-          await sql`update control_settings set value = ${sql.json(before.value as never)} where key = 'staff'`;
-        else await sql`delete from control_settings where key = 'staff'`;
-      }
     });
 
     const queued = async (

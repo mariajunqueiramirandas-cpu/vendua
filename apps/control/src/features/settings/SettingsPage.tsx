@@ -208,9 +208,7 @@ export default function SettingsPage() {
           <div hidden={area !== 'relatorios'}>
             <ReportsArea
               forecast={obj(settings.forecast)}
-              digest={obj(settings.digest)}
               saveForecast={save('forecast')}
-              saveDigest={save('digest')}
               saving={savingKey}
             />
           </div>

@@ -1,8 +1,5 @@
 import { HttpError } from '../platform/http.ts';
 
-export const STAFF_EVENTS = ['handoff', 'meeting', 'fleet'] as const;
-export type StaffEvent = (typeof STAFF_EVENTS)[number];
-
 export interface StaffMember {
   name: string;
   email: string;
@@ -13,13 +10,7 @@ export interface StaffMember {
 
 export interface StaffConfig {
   members: StaffMember[];
-  events: Record<StaffEvent, boolean>;
 }
-
-export const DEFAULT_STAFF: StaffConfig = {
-  members: [],
-  events: { handoff: true, meeting: true, fleet: true },
-};
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DISCORD_ID_RE = /^\d{17,20}$/;
@@ -69,17 +60,6 @@ export function normalizeStaff(value: unknown): StaffConfig {
       throw bad(`members.${i}`, 'needs an email, a whatsapp or a discord id');
     return { name, email, whatsapp, ...(discord ? { discord } : {}) };
   });
-  const rawEvents = v.events ?? {};
-  if (!rawEvents || typeof rawEvents !== 'object' || Array.isArray(rawEvents)) {
-    throw bad('events', 'must be an object');
-  }
-  const events = { ...DEFAULT_STAFF.events };
-  for (const [k, on] of Object.entries(rawEvents)) {
-    if (!(STAFF_EVENTS as readonly string[]).includes(k)) {
-      throw bad(`events.${k}`, `unknown event — must be one of: ${STAFF_EVENTS.join(', ')}`);
-    }
-    if (typeof on !== 'boolean') throw bad(`events.${k}`, 'must be a boolean');
-    events[k as StaffEvent] = on;
-  }
-  return { members, events };
+  // a stored `events` (the retired email/WhatsApp toggles) is dropped on the next save
+  return { members };
 }
