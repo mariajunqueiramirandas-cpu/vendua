@@ -364,7 +364,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
   const calls: Call[] = [];
   const failNext: { status: number; body: Record<string, unknown> }[] = [];
   let msgSeq = 0;
-  let channelsInGuild: { id: string; name: string; type: number; parent_id?: string | null }[] = [];
+  let channelsInGuild: {
+    id: string;
+    name: string;
+    type: number;
+    parent_id?: string | null;
+    permission_overwrites?: { id: string; allow: string; deny: string }[];
+  }[] = [];
   let botGuilds = [{ id: GUILD, name: 'Venduá' }];
   const fakeDiscord = async (url: string, init: RequestInit) => {
     const u = new URL(url);
@@ -379,8 +385,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
     if (method === 'PATCH' && /^\/channels\/\d+\/messages\/\d+$/.test(path))
       return Response.json({ id: path.split('/').at(-1) });
     if (method === 'PUT' && path.endsWith('/commands')) return Response.json([]);
-    if (method === 'PATCH' && /^\/channels\/\d+$/.test(path))
-      return Response.json({ id: path.split('/').at(-1) });
+    if (method === 'PATCH' && /^\/channels\/\d+$/.test(path)) {
+      const ch = channelsInGuild.find((x) => x.id === path.split('/').at(-1));
+      if (ch) ch.permission_overwrites = body!.permission_overwrites as never;
+      return Response.json(ch ?? {});
+    }
     if (path === '/users/@me') return Response.json({ id: BOT_USER, username: 'vendua' });
     if (path === '/users/@me/guilds') return Response.json(botGuilds);
     if (path === '/applications/@me' && method === 'GET')
@@ -397,6 +406,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
         name: String(body!.name),
         type: Number(body!.type),
         parent_id: (body!.parent_id as string | undefined) ?? null,
+        permission_overwrites: body!.permission_overwrites as never,
       };
       channelsInGuild.push(ch);
       return Response.json(ch);
@@ -1041,6 +1051,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
     expect(patches).toHaveLength(9);
     const ow = patches[0]!.body!.permission_overwrites as { id: string; deny: string }[];
     expect(ow.find((w) => w.id === GUILD)!.deny).toBe(String(1 << 10));
+    // already private to that role: nothing to change
+    calls.length = 0;
+    await ctl('POST', '/control/v1/discord/setup', { staffRoleId: ROLE });
+    expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+    // an explicit "sem cargo" opens them again, even with a role saved
+    calls.length = 0;
+    await ctl('POST', '/control/v1/discord/setup', { staffRoleId: '' });
+    const opened = calls.filter((c) => c.method === 'PATCH');
+    expect(opened).toHaveLength(9);
+    expect((opened[0]!.body!.permission_overwrites as { id: string }[]).map((w) => w.id)).toEqual([
+      BOT_USER,
+    ]);
+    expect((await ctl('POST', '/control/v1/discord/setup', { staffRoleId: 'x' })).status).toBe(422);
+    // the rest of the test expects the team role back
+    await ctl('POST', '/control/v1/discord/setup', { staffRoleId: ROLE });
 
     calls.length = 0;
     const t = await ctl('POST', '/control/v1/discord/test');

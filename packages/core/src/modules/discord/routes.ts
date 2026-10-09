@@ -75,6 +75,7 @@ interface DiscordChannel {
   type: number;
   parent_id?: string | null;
   position?: number;
+  permission_overwrites?: { id: string; type: number; allow: string; deny: string }[];
 }
 
 export function mountDiscord(o: {
@@ -385,10 +386,19 @@ export function mountDiscord(o: {
     const key = idemKey(c, 'setup');
     const body = await bodyJson(c);
     const ctx = await ready();
-    const roleId =
-      typeof body.staffRoleId === 'string' && SNOWFLAKE_RE.test(body.staffRoleId)
-        ? body.staffRoleId
-        : ctx.setting.staffRoleId;
+    // absent: the saved role; '' or null: explicitly none (the channels open to the server)
+    const asked = body.staffRoleId;
+    if (
+      asked !== undefined &&
+      asked !== null &&
+      asked !== '' &&
+      (typeof asked !== 'string' || !SNOWFLAKE_RE.test(asked))
+    )
+      throw new HttpError(422, 'BAD_REQUEST', 'staffRoleId must be a Discord role id', {
+        field: 'staffRoleId',
+      });
+    const roleId: string | null =
+      asked === undefined ? ctx.setting.staffRoleId : (asked as string | null) || null;
     const client = clientFor(ctx);
     const g = ctx.app.app.guildId;
     const res = await claimControl(sql, key, async (tx) => {
@@ -407,8 +417,18 @@ export function mountDiscord(o: {
         ];
         const existing = await client.request<DiscordChannel[]>('GET', `/guilds/${g}/channels`);
         // a role picked after the channels were made public: lock what already exists
+        // what Discord has, not what the CRM saved, decides: a role saved before this click, or
+        // "sem cargo" over a private category, still gets the channels' privacy changed
+        // permission bitfields outgrow 2^53: BigInt, or the low bits get lost
+        const has = (bits: string | undefined, bit: number) =>
+          (BigInt(bits || '0') & BigInt(bit)) !== BigInt(0);
         const lock = async (ch: DiscordChannel) => {
-          if (roleId && roleId !== ctx.setting.staffRoleId)
+          const ow = ch.permission_overwrites ?? [];
+          const closed = ow.some((w) => w.id === g && has(w.deny, VIEW));
+          const right = roleId
+            ? closed && ow.some((w) => w.id === roleId && has(w.allow, VIEW))
+            : !closed;
+          if (!right)
             await client.request('PATCH', `/channels/${ch.id}`, {
               permission_overwrites: overwrites,
             });
@@ -446,7 +466,7 @@ export function mountDiscord(o: {
         const next = {
           ...stored,
           channels: { ...prev.channels, ...channels },
-          staffRoleId: roleId ?? null,
+          staffRoleId: roleId,
         };
         await tx`
           insert into control_settings (key, value) values ('discord', ${tx.json(next as never)})
