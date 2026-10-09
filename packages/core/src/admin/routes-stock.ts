@@ -4,6 +4,7 @@ import { MAX_COST_CENTS } from '../modules/pricing-calc.ts';
 import {
   ADJUST_REASONS,
   adjustAddonStock,
+  byBytes,
   MAX_STOCK,
   setAddonStock,
   type AdjustReason,
@@ -120,7 +121,7 @@ async function listAddons(tx: Sql, tenantId: string, only?: string): Promise<Adm
 }
 
 function addonKey(v: unknown, field: string): string {
-  if (typeof v !== 'string' || v.length < 1 || v.length > 80)
+  if (typeof v !== 'string' || v.length < 1 || v.length > 80 || v.includes('\u0000'))
     throw new HttpError(422, 'BAD_REQUEST', `${field} must be an adicional's key`, { field });
   return v;
 }
@@ -157,7 +158,13 @@ export function mountStock(d: AdminDeps) {
       if (!Object.keys(next).length) throw new HttpError(422, 'BAD_REQUEST', 'nothing to change');
       const [before] = await listAddons(tx, t.id, key);
       if (!before) throw new HttpError(404, 'ADDON_NOT_FOUND', 'no adicional by that name');
-      await setAddonStock(tx, t.id, key, next, m.name);
+      const set = await setAddonStock(tx, t.id, key, next, m.name);
+      if (set === 'not_counted')
+        throw new HttpError(409, 'ADDON_NOT_COUNTED', 'start counting this adicional first', {
+          field: 'stockQuantity',
+        });
+      if (set === 'not_found')
+        throw new HttpError(404, 'ADDON_NOT_FOUND', 'no adicional by that name');
       const [addon] = await listAddons(tx, t.id, key);
       await audit(tx, t.id, m, {
         action: 'addon.stock',
@@ -210,7 +217,7 @@ export function mountStock(d: AdminDeps) {
         reasons.set(key, reasons.has(key) && reasons.get(key) !== reason ? 'adjust' : reason);
       });
       // key order, the same as checkout's row locks
-      const keys = [...adds.keys()].filter((k) => adds.get(k) !== 0).sort();
+      const keys = [...adds.keys()].filter((k) => adds.get(k) !== 0).sort(byBytes);
       const stock: Record<string, number> = {};
       const before: Record<string, number> = {};
       for (const key of keys) {
@@ -254,16 +261,12 @@ export function mountStock(d: AdminDeps) {
       if (productId !== undefined && !UUID_RE.test(productId))
         throw new HttpError(422, 'BAD_REQUEST', 'productId must be an id', { field: 'productId' });
       if (key !== undefined) addonKey(key, 'addonKey');
+      // the cursor is the last row's id: its time is read back at full precision
       const cursor = c.req.query('before');
-      let after: { at: string; id: string } | null = null;
-      if (cursor) {
-        const [at, id] = cursor.split('|');
-        if (!at || !id || !UUID_RE.test(id) || Number.isNaN(Date.parse(at)))
-          throw new HttpError(422, 'BAD_REQUEST', 'before is not a cursor from this list', {
-            field: 'before',
-          });
-        after = { at, id };
-      }
+      if (cursor !== undefined && !UUID_RE.test(cursor))
+        throw new HttpError(422, 'BAD_REQUEST', 'before is not a cursor from this list', {
+          field: 'before',
+        });
       const rows = await tx<
         {
           id: string;
@@ -281,7 +284,12 @@ export function mountStock(d: AdminDeps) {
           left join orders o on o.tenant_id = s.tenant_id and o.id = s.order_id
         where s.tenant_id = ${t.id}
           and ${productId !== undefined ? tx`s.product_id = ${productId}` : tx`s.addon_key = ${key!}`}
-          ${after ? tx`and (s.created_at, s.id) < (${after.at}::timestamptz, ${after.id}::uuid)` : tx``}
+          ${
+            cursor
+              ? tx`and (s.created_at, s.id) < (select c.created_at, c.id from stock_movements c
+                                                 where c.tenant_id = ${t.id} and c.id = ${cursor})`
+              : tx``
+          }
         order by s.created_at desc, s.id desc
         limit ${MOVES_PAGE + 1}
       `;
@@ -297,8 +305,7 @@ export function mountStock(d: AdminDeps) {
           order: r.order_id && r.number != null ? { id: r.order_id, number: r.number } : null,
           by: r.actor_label,
         })),
-        next:
-          rows.length > MOVES_PAGE && last ? `${last.created_at.toISOString()}|${last.id}` : null,
+        next: rows.length > MOVES_PAGE && last ? last.id : null,
       };
     }),
   );

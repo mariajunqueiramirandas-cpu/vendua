@@ -365,6 +365,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('stock manager (db)', () => {
       `?productId=nope`,
       `?productId=${ids.burger}&addonKey=x`,
       `?addonKey=${encodeURIComponent(key)}&before=garbage`,
+      `?addonKey=${encodeURIComponent(key)}&before=2020|${ids.burger}`,
+      `?addonKey=${encodeURIComponent('a\u0000b')}`,
     ])
       expect((await owner('GET', `/stock/movements${q}`)).status).toBe(422);
 

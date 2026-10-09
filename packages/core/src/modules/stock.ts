@@ -155,7 +155,7 @@ async function addonDemandOf(
     ? await tx<{ key: string; name: string; stock_quantity: number }[]>`
         select key, name, stock_quantity from addon_stock
         where tenant_id = ${tenantId} and key = any(${keys}::text[])
-        order by key ${lock ? tx`for update` : tx``}
+        order by key collate "C" ${lock ? tx`for update` : tx``}
       `
     : [];
   const stock = new Map(rows.map((r) => [r.key, { name: r.name, stock: r.stock_quantity }]));
@@ -290,6 +290,9 @@ function countMove(before: number | null, after: number | null, reason: MoveReas
 
 export const MAX_STOCK = 1_000_000;
 
+/** Addon keys in the order Postgres's `collate "C"` sorts them (UTF-8 bytes), the lock order. */
+export const byBytes = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+
 /** What a merchant's relative change is: a −/+ tap, a delivery, or a loss. */
 export const ADJUST_REASONS = ['adjust', 'delivery', 'loss'] as const;
 export type AdjustReason = (typeof ADJUST_REASONS)[number];
@@ -380,9 +383,7 @@ export async function restoreStock(tx: Sql, tenantId: string, orderId: string): 
       await wakeWaitlist(tx, tenantId, id);
   }
   // then the adicionais, in key order; one no longer counted stays uncounted
-  const addons = Object.entries(order?.addon_stock_drawn ?? {}).sort(([a], [b]) =>
-    a < b ? -1 : a > b ? 1 : 0,
-  );
+  const addons = Object.entries(order?.addon_stock_drawn ?? {}).sort(([a], [b]) => byBytes(a, b));
   for (const [key, n] of addons) {
     const row = (
       await tx<{ stock_quantity: number }[]>`
@@ -410,23 +411,20 @@ export async function setAddonStock(
     costCents?: number | null;
   },
   by: string | null,
-): Promise<void> {
-  const cur = (
+): Promise<'ok' | 'not_counted' | 'not_found'> {
+  let cur = (
     await tx<{ stock_quantity: number }[]>`
       select stock_quantity from addon_stock where tenant_id = ${tenantId} and key = ${key} for update
     `
   )[0];
   if (next.stockQuantity === null) {
-    if (!cur) return;
+    if (!cur) return 'ok';
     await tx`delete from addon_stock where tenant_id = ${tenantId} and key = ${key}`;
     await logMoves(tx, tenantId, [{ addonKey: key, ...countMove(cur.stock_quantity, null), by }]);
-    return;
+    return 'ok';
   }
   if (!cur) {
-    if (next.stockQuantity === undefined)
-      throw new HttpError(409, 'ADDON_NOT_COUNTED', 'start counting this adicional first', {
-        field: 'stockQuantity',
-      });
+    if (next.stockQuantity === undefined) return 'not_counted';
     // the display name: the spelling most of the store's options use
     const name = (
       await tx<{ name: string }[]>`
@@ -434,14 +432,24 @@ export async function setAddonStock(
         group by name order by count(*) desc, name limit 1
       `
     )[0]?.name;
-    if (!name) throw new HttpError(404, 'ADDON_NOT_FOUND', 'no adicional by that name');
-    await tx`
+    if (!name) return 'not_found';
+    const started = await tx`
       insert into addon_stock (tenant_id, key, name, stock_quantity, low_stock_threshold, cost_cents)
       values (${tenantId}, ${key}, ${name.slice(0, 80)}, ${next.stockQuantity},
               ${next.lowStockThreshold ?? null}, ${next.costCents ?? null})
+      on conflict (tenant_id, key) do nothing
+      returning 1
     `;
-    await logMoves(tx, tenantId, [{ addonKey: key, ...countMove(null, next.stockQuantity), by }]);
-    return;
+    if (started.length) {
+      await logMoves(tx, tenantId, [{ addonKey: key, ...countMove(null, next.stockQuantity), by }]);
+      return 'ok';
+    }
+    // another request started counting it meanwhile: this one is a count on top
+    cur = (
+      await tx<{ stock_quantity: number }[]>`
+        select stock_quantity from addon_stock where tenant_id = ${tenantId} and key = ${key} for update
+      `
+    )[0]!;
   }
   await tx`
     update addon_stock set
@@ -455,6 +463,7 @@ export async function setAddonStock(
     await logMoves(tx, tenantId, [
       { addonKey: key, ...countMove(cur.stock_quantity, next.stockQuantity), by },
     ]);
+  return 'ok';
 }
 
 /** Relative change to a counted adicional, floored at 0; null = not counted (left alone). */

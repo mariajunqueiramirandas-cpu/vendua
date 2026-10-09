@@ -2,6 +2,7 @@ import {
   ArrowDown,
   ArrowsDownUp,
   ArrowUp,
+  Calculator,
   CalendarBlank,
   Clock,
   Copy,
@@ -31,6 +32,7 @@ import {
   type KitSlot,
   type OptionGroup,
   type OptionItem,
+  type PricingDefaults,
   type PricingRule,
   type ProductDetail,
 } from '../../lib/api.ts';
@@ -64,6 +66,7 @@ import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
 import { availability } from '../../ui/ProductTile.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { pct, PricingSheet } from './PricingSheet.tsx';
 import { PromoEditor } from './PromoEditor.tsx';
 import { outsideNow } from './schedule.ts';
 import { ScheduleEditor } from './ScheduleEditor.tsx';
@@ -120,7 +123,11 @@ function Editor({
   const nav = useNavigate();
   const field = useSaveState();
   const put = (next: ProductDetail) => {
-    qc.setQueryData(qk.product(p.id), { product: next });
+    // keeps pricingDefaults, which only GET /products/:id carries
+    qc.setQueryData<{ product: ProductDetail; pricingDefaults: PricingDefaults | null }>(
+      qk.product(p.id),
+      (d) => ({ pricingDefaults: null, ...d, product: next }),
+    );
     void qc.invalidateQueries({ queryKey: qk.catalog });
   };
   // fields save independently: only the newest reply may paint, an older one asks for the truth
@@ -182,6 +189,7 @@ function Editor({
     },
     onError: (e) => toast.error(messageOf(e)),
   });
+  const [pricing, setPricing] = useState(false);
   const a = availability(p);
   const tracked = p.stockQuantity !== null;
   const promo = p.promoSchedule ?? null;
@@ -299,6 +307,7 @@ function Editor({
                 />
               </Field>
             </div>
+            <CostLine p={p} onOpen={() => setPricing(true)} />
             <Field
               label="Descrição"
               optional
@@ -583,7 +592,46 @@ function Editor({
           </p>
         </div>
       </div>
+      <PricingSheet product={pricing ? p : null} onClose={() => setPricing(false)} />
     </PageBody>
+  );
+}
+
+/** Under the price: what one costs and what's left (Core's marginBp), or the way to work it out. */
+function CostLine({ p, onOpen }: { p: ProductDetail; onOpen: () => void }) {
+  const cost = p.costCents ?? null;
+  const margin = p.marginBp ?? null;
+  const target = p.pricing?.marginBp ?? null;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="press t-caption -mx-2 -mt-2 flex min-h-11 w-[calc(100%+1rem)] items-center gap-2 rounded-sm px-2 text-left hover:bg-hover"
+    >
+      <Calculator className="size-4.5 shrink-0 text-muted" aria-hidden />
+      {cost !== null ? (
+        <span className="min-w-0 flex-1">
+          <span className="text-muted">custo </span>
+          <span className="tnum font-semibold">{money(cost)}</span>
+          {margin !== null ? (
+            <>
+              <span className="text-muted"> · </span>
+              <span
+                className={cn(
+                  'tnum font-semibold',
+                  margin < 0 ? 'text-danger' : target !== null && margin < target && 'text-warning',
+                )}
+              >
+                margem {pct(margin)}
+              </span>
+            </>
+          ) : null}
+        </span>
+      ) : (
+        <span className="min-w-0 flex-1 text-muted">quanto cobrar?</span>
+      )}
+      <span className="font-semibold text-primary">calcular</span>
+    </button>
   );
 }
 

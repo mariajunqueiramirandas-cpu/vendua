@@ -468,6 +468,72 @@ export interface Product {
   mediaCount: number;
   groupCount: number;
   waiting: number;
+  // optional: a cache saved (lib/persist.ts) before Core sent them lacks them; read as null
+  /** unit cost; null = not stated */
+  costCents?: number | null;
+  /** the pricing calculator's saved inputs */
+  pricing?: Pricing | null;
+  /** Core: real margin at the current price after fee and tax; null without a cost or a price */
+  marginBp?: number | null;
+  /** Core: the price that reaches pricing.marginBp; null without pricing */
+  suggestedPriceCents?: number | null;
+}
+
+/** The precificação calculator's inputs. Percentages are basis points (1% = 100). */
+export interface Pricing {
+  lines: { label: string; cents: number }[];
+  /** maquininha / app de entrega */
+  feeBp: number;
+  taxBp: number;
+  /** the margin the merchant wants */
+  marginBp: number;
+}
+/** the percentages the store last saved on any product; null = never saved */
+export type PricingDefaults = Pick<Pricing, 'feeBp' | 'taxBp' | 'marginBp'>;
+
+/** why a count moved: the −/+ taps, "chegou mais", "perdi" */
+export type StockReason = 'adjust' | 'delivery' | 'loss';
+
+/** An adicional counted by name across the store (every "Bacon extra" draws from one count). */
+export interface Addon {
+  /** identity: Core's normalized name, sent back as-is */
+  key: string;
+  name: string;
+  tracked: boolean;
+  stockQuantity: number | null;
+  lowStockThreshold: number | null;
+  lowStock: boolean;
+  costCents: number | null;
+  /** 'sold_out' when counted at 0, or every option with this name is marked esgotado */
+  status: 'active' | 'sold_out';
+  priceDeltaCents: number;
+  /** products that offer it; 0 = counted but no longer offered */
+  productCount: number;
+  /** up to 5 */
+  products: { id: string; name: string }[];
+}
+
+export interface StockMovement {
+  id: string;
+  at: string;
+  reason: 'sale' | 'cancel' | 'delivery' | 'count' | 'adjust' | 'loss' | 'start' | 'stop';
+  /** signed units */
+  delta: number;
+  /** the count after it; null on 'stop' */
+  after: number | null;
+  order: { id: string; number: number } | null;
+  /** who in the team; null when the system did it (sales, cancels) */
+  by: string | null;
+}
+
+export interface StockOverview {
+  /** Σ cost × count over counted items with a cost */
+  valueCents: number;
+  costedItems: number;
+  /** counted items without a cost: the value leaves them out */
+  uncostedItems: number;
+  /** units sold in the last 7 days, by product id and by adicional key */
+  sold7d: { products: Record<string, number>; addons: Record<string, number> };
 }
 
 export type DietaryTag =
@@ -2403,7 +2469,8 @@ export const api = {
     send<{ stations: KitchenStation[] }>('PUT', '/kitchen/stations', { stations }),
 
   catalog: () => get<{ categories: Category[] }>('/catalog'),
-  product: (id: string) => get<{ product: ProductDetail }>(`/products/${id}`),
+  product: (id: string) =>
+    get<{ product: ProductDetail; pricingDefaults: PricingDefaults | null }>(`/products/${id}`),
   createProduct: (p: {
     name: string;
     categoryId: string;
@@ -2426,12 +2493,36 @@ export const api = {
     send('PUT', '/products/order', { categoryId, ids }),
   /** relative changes (+5, −2): a sale drawn meanwhile still counts; Core floors at 0 */
   // keepalive: the Estoque screen sends its last taps as the app closes
-  adjustStock: (changes: { productId: string; add: number }[]) =>
+  adjustStock: (changes: { productId: string; add: number; reason?: StockReason }[]) =>
     req<{ stock: Record<string, number>; waitlistWoken: number }>('/products/stock', {
       method: 'POST',
       body: JSON.stringify({ changes }),
       keepalive: true,
     }),
+  addons: () => get<{ addons: Addon[] }>('/stock/addons'),
+  /** stockQuantity: a number starts counting (or sets the count); null stops (forgets threshold and cost) */
+  updateAddon: (body: {
+    key: string;
+    stockQuantity?: number | null;
+    lowStockThreshold?: number | null;
+    costCents?: number | null;
+  }) => send<{ addon: Addon }>('PATCH', '/stock/addons', body),
+  // keepalive, as adjustStock: the last taps leave with the app
+  adjustAddons: (changes: { key: string; add: number; reason?: StockReason }[]) =>
+    req<{ stock: Record<string, number> }>('/stock/addons/adjust', {
+      method: 'POST',
+      body: JSON.stringify({ changes }),
+      keepalive: true,
+    }),
+  /** 30 per page, newest first; `next` goes back as `before` */
+  stockMovements: (of: { productId: string } | { addonKey: string }, before?: string) => {
+    const q = new URLSearchParams(
+      'productId' in of ? { productId: of.productId } : { addonKey: of.addonKey },
+    );
+    if (before) q.set('before', before);
+    return get<{ movements: StockMovement[]; next: string | null }>(`/stock/movements?${q}`);
+  },
+  stockOverview: () => get<StockOverview>('/stock/overview'),
   bulk: (ids: string[], action: string, extra: Record<string, unknown> = {}) =>
     send<{ updated: number; before?: BulkBefore[]; waitlistWoken?: number }>(
       'POST',

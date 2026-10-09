@@ -19,6 +19,11 @@ export const qk = {
   kitchen: ['orders', 'kitchen'] as const,
   catalog: ['catalog'] as const,
   product: (id: string) => ['catalog', 'product', id] as const,
+  // Estoque's reads sit under 'catalog': a sale, a cancel or a catalog write refreshes them
+  addons: ['catalog', 'addons'] as const,
+  stockOverview: ['catalog', 'stock-overview'] as const,
+  /** subject: `p:<productId>` or `a:<addonKey>` */
+  stockMoves: (subject: string) => ['catalog', 'stock-moves', subject] as const,
   store: ['store'] as const,
   onboarding: ['onboarding'] as const,
   payments: ['payments'] as const,
