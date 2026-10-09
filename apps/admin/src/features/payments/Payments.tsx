@@ -67,6 +67,18 @@ export default function Payments() {
     );
   // the month only tells something once money can arrive through Mercado Pago
   const showMonth = data && (data.mercadoPago.status !== 'not_connected' || data.month.count > 0);
+  const pixSection = data ? (
+    <Section
+      title="Sua chave Pix"
+      hint={
+        mpLive(data.mercadoPago)
+          ? 'Fica de reserva: se o Mercado Pago sair do ar para a sua loja, o Pix volta para esta chave.'
+          : 'O Pix que aparece na sua loja, com o valor do pedido já preenchido.'
+      }
+    >
+      <PixCard data={data} canEdit={owner} />
+    </Section>
+  ) : null;
   return (
     <PageBody wide>
       <PageHeader title="Pagamentos" subtitle="Como sua loja recebe." />
@@ -77,15 +89,18 @@ export default function Payments() {
           <div className="space-y-8">
             <Review data={data} />
             <Awaiting data={data} />
+            {/* where the money arrives; Mercado Pago first once it's live, the key then being its backup */}
+            {mpLive(data.mercadoPago) ? null : pixSection}
             <MercadoPagoCard data={data} owner={owner} />
+            {mpLive(data.mercadoPago) ? pixSection : null}
+          </div>
+          <div className="space-y-8">
             <Section
               title="Formas de pagamento"
               hint={owner ? undefined : 'Só quem é dono da loja muda isto.'}
             >
               <Methods data={data} canEdit={owner} />
             </Section>
-          </div>
-          <div className="space-y-8">
             {showMonth ? (
               <Section
                 title="Este mês"
@@ -94,16 +109,6 @@ export default function Payments() {
                 <MonthCard data={data} />
               </Section>
             ) : null}
-            <Section
-              title="Sua chave Pix"
-              hint={
-                mpLive(data.mercadoPago)
-                  ? 'Fica de reserva: se o Mercado Pago sair do ar para a sua loja, o Pix volta para esta chave.'
-                  : 'O Pix que aparece na sua loja, com o valor do pedido já preenchido.'
-              }
-            >
-              <PixCard data={data} canEdit={owner} />
-            </Section>
             <Section title="Últimos 30 dias">
               <Card className="p-5">
                 <RankBars

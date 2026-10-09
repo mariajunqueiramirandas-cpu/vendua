@@ -130,8 +130,8 @@ function StoreEditor({ s }: { s: StoreView }) {
             // the page's order on a phone (one column)
             ['horarios', 'Horários'],
             ['mensagens', 'Mensagens'],
-            ['entrega', 'Entrega e retirada'],
             ['perfil', 'Perfil'],
+            ['entrega', 'Entrega e retirada'],
           ].map(([id, label]) => (
             <li key={id}>
               <a
@@ -181,10 +181,10 @@ function StoreEditor({ s }: { s: StoreView }) {
               </Field>
             </Card>
           </Section>
+          <Profile s={s} patch={patch} run={run} />
         </div>
         <div className="space-y-8">
           <Delivery s={s} patch={patch} run={run} />
-          <Profile s={s} patch={patch} run={run} />
         </div>
       </div>
     </PageBody>
