@@ -204,6 +204,9 @@ export type {
   // Kernel 1.18
   StoreChat,
   StoreChatMessage,
+  // Kernel 1.24
+  StoreChatMedia,
+  StoreChatMediaKinds,
   // Kernel 1.21
   OrderTracking,
   // Kernel 1.22

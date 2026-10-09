@@ -701,7 +701,7 @@ export function createApp({
               loadConnection(tx, tenant.id),
               storeOrigin(tx, tenant, publicStoreDomain),
               planHas(tx, tenant.id, 'loyalty'),
-              webChatProfile(tx, tenant.id),
+              webChatProfile(tx, tenant.id, ears.media),
               cartReminderOffered(tx, tenant.id),
               planHas(tx, tenant.id, 'pdv'),
             ]);

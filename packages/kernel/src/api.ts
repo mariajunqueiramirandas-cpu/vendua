@@ -76,7 +76,13 @@ export interface StoreProfile {
   distancePricing?: DistancePricing | null;
   /** Kernel 1.18 — the store's own assistant (the Vendedor) chats on the site: its name and how
    *  it introduces itself, in Core's words. null/absent = the merchant didn't turn it on. */
-  chat?: { name: string; intro: string } | null;
+  chat?: {
+    name: string;
+    intro: string;
+    /** Kernel 1.24 — what the chat takes besides text, so a shopper without a cart session
+     *  sees it before the first read (`StoreChat.media` wins once read). Absent = text only. */
+    media?: StoreChatMediaKinds;
+  } | null;
   /** Kernel 1.21 — the store sends one WhatsApp reminder about a bag left full, to a shopper who
    *  ticked it at checkout (`api.cartReminder`). Absent = false. */
   cartReminder?: boolean;
@@ -102,7 +108,29 @@ export interface StoreChatMessage {
   body: string;
   at: string;
   card: string | null;
+  /** Kernel 1.24 — a voice message (`body` = its transcript, '' until Core heard it) or a photo
+   *  (`body` = its caption, '' when none; the photo itself isn't served back). Absent = text. */
+  kind?: 'text' | 'voice' | 'image';
 }
+
+/** Kernel 1.24 — what the chat takes besides text. */
+export interface StoreChatMediaKinds {
+  voice: boolean;
+  image: boolean;
+}
+
+/** Kernel 1.24 — a voice message or a photo for `api.sendChatMedia`: the bytes as base64 in
+ *  `data` (no `data:` prefix), at most 2 MB decoded. `mime` of a voice message is the recorder's
+ *  (`audio/webm;codecs=opus`, `audio/ogg;codecs=opus`, `audio/mp4`, …); `text` is a photo's
+ *  caption. */
+export type StoreChatMedia =
+  | { kind: 'voice'; mime: string; data: string; seconds?: number }
+  | {
+      kind: 'image';
+      mime: 'image/jpeg' | 'image/png' | 'image/webp';
+      data: string;
+      text?: string;
+    };
 
 /** Kernel 1.18 — the chat bound to this tab's cart session (`GET /checkout/v1/chat`). */
 export interface StoreChat {
@@ -114,6 +142,8 @@ export interface StoreChat {
   messages: StoreChatMessage[];
   /** a reply is on its way */
   pending: boolean;
+  /** Kernel 1.24 — what this Core takes besides text; absent (an older Core) = text only */
+  media?: StoreChatMediaKinds;
 }
 
 /** Kernel 1.15 — a point on the map. */
@@ -1529,6 +1559,17 @@ export function createApi(baseUrl = '') {
         body: JSON.stringify({ text }),
       });
     },
+    /** Kernel 1.24 — a voice message or a photo in the chat (`StoreChat.media` says which Core
+     *  takes); like `sendChat`, starts the cart session when there is none and takes the same
+     *  `idempotencyKey` on a retry. 413 PAYLOAD_TOO_LARGE, 415 UNSUPPORTED_MEDIA. */
+    sendChatMedia: async (media: StoreChatMedia, opts: { idempotencyKey?: string } = {}) => {
+      await ensureSessionNow();
+      return apiFetch<StoreChat>(co('/chat'), {
+        method: 'POST',
+        headers: { ...auth(), 'idempotency-key': opts.idempotencyKey ?? idemKey() },
+        body: JSON.stringify(media),
+      });
+    },
     order: (id: string) => {
       const bearer = orderBearer(id);
       return apiFetch<{ order: Order }>(co(`/orders/${id}`), {
@@ -1761,6 +1802,9 @@ export const ERROR_CODES = [
   'EMAIL_FETCH_FAILED',
   // Kernel 1.18 — the store has no storefront chat (off, or turned off since the page loaded)
   'CHAT_UNAVAILABLE',
+  // Kernel 1.24 — a voice message or photo in a format Core doesn't take (too large is
+  // PAYLOAD_TOO_LARGE, above)
+  'UNSUPPORTED_MEDIA',
   // Kernel 1.21 — the bag reminder: the store doesn't offer it; the phone isn't one
   'REMINDER_OFF',
   'INVALID_PHONE',

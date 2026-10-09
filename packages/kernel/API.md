@@ -549,6 +549,39 @@ Additive — no storefront edit. The number is Core's; the Kernel only echoes it
   sum. Core answers 409 `PRICES_CHANGED` (`details.totalCents`) when its total differs; the
   Kernel checkout then re-reads the cart and the method's price before the shopper retries.
 
+### Voice messages and photos in the store chat (Kernel 1.24)
+
+Additive — no storefront edit, no new runtime export. The shopper records a voice message or
+sends a photo to the store's assistant (1.18) as on WhatsApp; Core transcribes and reads them
+(the Vendedor gets the transcript and the reading). The Kernel only encodes and sends.
+
+- `StoreChat.media` (`{ voice, image }`, absent on an older Core = text only) says what this Core
+  takes; `StoreProfile.chat.media` (same shape, optional) answers before the cart session exists
+  (the chat isn't read without one). `StoreChatMessage.kind` (`'text' | 'voice' | 'image'`,
+  absent = text): a voice message's `body` is its transcript, '' until Core heard it; a photo's
+  is its caption ('' when none) — the photo itself isn't served back.
+- Client: `api.sendChatMedia(media, { idempotencyKey? })` → `POST /checkout/v1/chat` like
+  `sendChat` (starts the cart session when there is none), `media: StoreChatMedia` =
+  `{ kind: 'voice', mime, data, seconds? }` | `{ kind: 'image', mime: 'image/jpeg' | 'image/png'
+| 'image/webp', data, text? }`, `data` the bytes as base64 (no `data:` prefix), at most 2 MB
+  decoded. Core refuses with 413 `PAYLOAD_TOO_LARGE` and 415 `UNSUPPORTED_MEDIA` (now in
+  `ERROR_CODES`, both with `ERROR_COPY`) besides the text errors.
+- `useStoreChat()` gains `media` (Core's word; text only until it says), `sendVoice(blob,
+seconds)` (a `MediaRecorder` blob; its type is the mime) and `sendPhoto(blob, caption?)`.
+  Same semantics as `send`: never throws, resolves whether Core took it, and a send that may
+  have landed retries with the same Idempotency-Key when called again with the same blob. Over
+  2 MB, or a photo that isn't JPEG/PNG/WebP, is refused before sending; `message` words a media
+  failure as such ("Foto grande demais. Escolha outra.").
+- Slot `system.Chat` gains optional `media`, `onSendVoice(blob, seconds)`, `onSendPhoto(blob,
+caption?)` (promises like `onSend`) and `maxVoiceSeconds` (60); a custom slot that ignores
+  them stays text-only. The default: a photo button and, while the field is empty and no photo
+  is attached, a mic in place of send (only where `MediaRecorder` exists and Core takes voice).
+  Recording shows a pulsing dot, the time against the 60 s cap (it sends itself there), discard
+  and send; a take under 0.7 s is dropped, and one whose send failed stays to retry. A photo is
+  shrunk in the browser (≤ 1600 px, JPEG — which also drops its metadata) and waits as a chip
+  with ×; the typed text goes as its caption. A denied mic or an unreadable photo is a short line
+  in the error row. Sent messages show "Mensagem de voz" / "Foto" over the transcript or caption.
+
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's.
@@ -858,6 +891,15 @@ run by one author), `author`, `body`, `link` (a same-origin URL in a message), `
 `typing` (the "digitando…" row), `error`, `composer`, `send`, `count` (characters left, near
 the limit) and `note`; the field is `textarea[name="chat-message"]`.
 
+Parts added in Kernel 1.24, inside `[data-vendua="chat"]`: `media` (the "Mensagem de voz" /
+"Foto" tag in a message's body, `data-kind` voice | image; the `message` carries the same
+`data-kind`), `photo` (the composer's photo button; its file field is
+`input[name="chat-photo"]`), `mic` (record, in place of `send` while the field is empty),
+`attachment` (the photo waiting to go, `data-kind="image"`) and `attachment-remove`,
+`recording` (`data-state` recording | held — a take whose send failed), `recording-dot`,
+`recording-time`, `recording-cancel` and `recording-send`; the `composer` has `data-state`
+voice | photo while one is in it.
+
 Parts added in Kernel 1.21: `dietary` (the tag list in `catalog.ProductCard` and
 `sdk:purchase-panel`; each `li` has `data-kind` diet | spicy | allergen and `data-tag`), `share`
 (`sdk:purchase-panel`), in `sdk:catalog-grid` `diet-filter` (chips: `button[aria-pressed]` with
@@ -886,7 +928,7 @@ an override, and K07 allows `@vendua/kernel/rules` in store code.
 `CartCoupon`, `CartSchedule`, `CouponCheck`, `DeliveryAddress`, `CepResult`, `ImportLine`,
 `ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo` (Kernel 1.7: `PaymentNext`;
 Kernel 1.12: `PaymentAdjustment`, `ModifierPricingRule`; Kernel 1.15: `DistancePricing`,
-`GeoPoint`, `LatLng`, `MapTiles`; Kernel 1.18: `StoreChat`, `StoreChatMessage`; Kernel 1.21: `DietaryBadge`, from the rules; Kernel 1.22: `TableInfo`); every new DTO field
+`GeoPoint`, `LatLng`, `MapTiles`; Kernel 1.18: `StoreChat`, `StoreChatMessage`; Kernel 1.24: `StoreChatMedia`, `StoreChatMediaKinds`; Kernel 1.21: `DietaryBadge`, from the rules; Kernel 1.22: `TableInfo`); every new DTO field
 is optional so a Kernel 1.2 storefront still runs against an older Core. Slot prop types: `SlotProps`, `CheckoutStep`,
 `CustomerDraft`, `DeliveryOption`, `PaymentMethod`, `ModifierGroup`, `PaymentStatusKind` (1.7).
 

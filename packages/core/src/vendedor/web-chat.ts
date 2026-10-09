@@ -47,13 +47,17 @@ async function chatAvailable(tx: Sql, tenantId: string) {
   };
 }
 
-/** For the store profile: whether the page shows the chat, and how the Vendedor introduces itself. */
+/** For the store profile: whether the page shows the chat, how the Vendedor introduces itself,
+ *  and what it takes besides text (the page knows before the shopper has a cart session). */
 export async function webChatProfile(
   tx: Sql,
   tenantId: string,
-): Promise<{ name: string; intro: string } | null> {
+  media: Pick<MediaProviders, 'canTranscribe'> | null = null,
+): Promise<{ name: string; intro: string; media: { voice: boolean; image: boolean } } | null> {
   const a = await chatAvailable(tx, tenantId);
-  return a.on ? { name: a.name, intro: a.intro } : null;
+  if (!a.on) return null;
+  const voice = !!media && ((await media.canTranscribe?.()) ?? true);
+  return { name: a.name, intro: a.intro, media: { voice, image: true } };
 }
 
 async function threadFor(tx: Sql, tenantId: string, cartId: string): Promise<string> {

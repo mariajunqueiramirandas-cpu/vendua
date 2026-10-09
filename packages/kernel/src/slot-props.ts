@@ -18,6 +18,7 @@ import type {
   LatLng,
   MapTiles,
   StoreChatMessage,
+  StoreChatMediaKinds,
 } from './api.ts';
 import type { ConsentPurpose } from './config.ts';
 import type { Vocabulary } from './rules/copy.ts';
@@ -155,6 +156,17 @@ export interface SlotProps {
     resolveLink?: (url: string) => string | null;
     /** the store's name, for its people's own messages (`author: 'merchant'`) */
     storeName?: string;
+    /** Kernel 1.24 — what the chat takes besides text (absent = text only): show a mic / a
+     *  photo button only for what's true */
+    media?: StoreChatMediaKinds;
+    /** Kernel 1.24 — send a recorded voice message (its blob's type is the mime) and its length
+     *  in seconds; resolves like `onSend` */
+    onSendVoice?: (audio: Blob, seconds: number) => Promise<boolean>;
+    /** Kernel 1.24 — send a photo (JPEG, PNG or WebP, at most 2 MB) with an optional caption;
+     *  resolves like `onSend` */
+    onSendPhoto?: (image: Blob, caption?: string) => Promise<boolean>;
+    /** Kernel 1.24 — the longest voice message to record (60) */
+    maxVoiceSeconds?: number;
   } & StoreTime &
     StoreWords;
   'checkout.Layout': {

@@ -4,6 +4,7 @@ import {
   useId,
   useRef,
   useState,
+  type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -12,10 +13,19 @@ import type { SlotProps, StoreChatMessage } from '@vendua/kernel';
 import { DEFAULT_VOCABULARY, formatTime } from '@vendua/kernel/rules';
 import { DUA_FACE } from './dua.ts';
 import { zoneOr } from './format.ts';
+import {
+  MicError,
+  canRecord,
+  clock,
+  shrinkPhoto,
+  startRecording,
+  type Recording,
+} from './chat-media.ts';
 
 // system.Chat — the store's assistant on the site (Kernel 1.18): a launcher in the bottom
 // corner and the conversation as a modal dialog. The Kernel reads, polls and sends; this only
-// shows it, keeps focus where it belongs and announces replies.
+// shows it, keeps focus where it belongs and announces replies. Kernel 1.24: a voice message
+// (the mic, while the field is empty) and a photo (the composer's text is its caption).
 
 type Props = SlotProps['system.Chat'];
 
@@ -55,6 +65,41 @@ function Face() {
   return <img className="v-chat-face" src={DUA_FACE} alt="" width={40} height={40} />;
 }
 
+function Glyph({ d, size = 22 }: { d: string; size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" focusable="false">
+      <path
+        d={d}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+const MIC =
+  'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3ZM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21';
+const PHOTO =
+  'M4 8.5A2.5 2.5 0 0 1 6.5 6h1.6l1.4-2h5l1.4 2h1.6A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5ZM12 16a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Z';
+const CROSS = 'M6 6l12 12M18 6 6 18';
+const TRASH = 'M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12';
+
+/** what a voice message or a photo looked like when sent: the shopper's photo isn't served back */
+function MediaTag({ kind }: { kind: 'voice' | 'image' }) {
+  return (
+    <span className="v-chat-media" data-part="media" data-kind={kind}>
+      <Glyph d={kind === 'voice' ? MIC : PHOTO} size={16} />
+      {kind === 'voice' ? 'Mensagem de voz' : 'Foto'}
+    </span>
+  );
+}
+
+/** the composer's voice message: being recorded, or recorded and not sent yet (a failed send) */
+type Voice =
+  { phase: 'starting' } | { phase: 'recording' } | { phase: 'held'; blob: Blob; seconds: number };
+
 function SendIcon() {
   return (
     <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
@@ -86,6 +131,10 @@ export function StoreChat({
   storeName,
   timeZone,
   vocabulary,
+  media,
+  onSendVoice,
+  onSendPhoto,
+  maxVoiceSeconds = 60,
 }: Props) {
   const id = useId();
   const launcherRef = useRef<HTMLButtonElement>(null);
@@ -96,6 +145,24 @@ export function StoreChat({
   const wasOpen = useRef(false);
   const [text, setText] = useState('');
   const [announce, setAnnounce] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+  const recSendRef = useRef<HTMLButtonElement>(null);
+  const recording = useRef<Recording | null>(null);
+  const startedAt = useRef(0);
+  /** the chat is open and mounted: a mic that opens after that is closed again at once */
+  const live = useRef(open);
+  live.current = open;
+  const [voice, setVoice] = useState<Voice | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [photo, setPhoto] = useState<{ blob: Blob; url: string } | null>(null);
+  const [reading, setReading] = useState(false);
+  /** a line of this UI's own (the mic refused, a photo it can't open); the Kernel's `error` else */
+  const [note, setNote] = useState<string | null>(null);
+  // MediaRecorder exists only in the browser: decided after mount, so server HTML matches
+  const [recorder, setRecorder] = useState(false);
+  useEffect(() => setRecorder(canRecord()), []);
+  const voiceOn = !!(media?.voice && onSendVoice && recorder);
+  const photoOn = !!(media?.image && onSendPhoto);
   const zone = zoneOr(timeZone);
   const yourBag = (vocabulary ?? DEFAULT_VOCABULARY).yourBag.toLocaleLowerCase('pt-BR');
 
@@ -124,6 +191,116 @@ export function StoreChat({
     }
     wasOpen.current = open;
   }, [open]);
+
+  const cancelVoice = () => {
+    recording.current?.cancel();
+    recording.current = null;
+    setVoice(null);
+  };
+  const sendTake = async (blob: Blob, seconds: number) => {
+    setVoice({ phase: 'held', blob, seconds });
+    if (await onSendVoice!(blob, seconds)) setVoice(null);
+  };
+  const finishVoice = async () => {
+    const r = recording.current;
+    if (!r) return;
+    recording.current = null;
+    const take = await r.stop();
+    if (take) await sendTake(take.blob, take.seconds);
+    else setVoice(null);
+  };
+  const startVoice = async () => {
+    if (voice || sending) return;
+    setNote(null);
+    setVoice({ phase: 'starting' });
+    try {
+      const r = await startRecording();
+      if (!live.current) {
+        r.cancel();
+        setVoice(null);
+        return;
+      }
+      recording.current = r;
+      startedAt.current = Date.now();
+      setElapsed(0);
+      setVoice({ phase: 'recording' });
+    } catch (err) {
+      setVoice(null);
+      setNote(
+        err instanceof MicError && err.reason === 'denied'
+          ? 'Permita o uso do microfone para gravar um áudio.'
+          : 'Não deu para usar o microfone. Escreva sua mensagem.',
+      );
+    }
+  };
+
+  // the clock while recording; at the cap the take goes by itself
+  const finishRef = useRef(finishVoice);
+  finishRef.current = finishVoice;
+  const isRecording = voice?.phase === 'recording';
+  useEffect(() => {
+    if (!isRecording) return;
+    const t = setInterval(() => {
+      const s = (Date.now() - startedAt.current) / 1000;
+      setElapsed(s);
+      if (s >= maxVoiceSeconds) void finishRef.current();
+    }, 250);
+    return () => clearInterval(t);
+  }, [isRecording, maxVoiceSeconds]);
+
+  // the recording row takes the field's place: focus follows it there and back
+  const hasVoice = !!voice;
+  const hadVoice = useRef(false);
+  useEffect(() => {
+    if (hasVoice) recSendRef.current?.focus({ preventScroll: true });
+    else if (hadVoice.current && open) inputRef.current?.focus({ preventScroll: true });
+    hadVoice.current = hasVoice;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasVoice]);
+
+  // closing the chat (or leaving the page) drops a recording and frees the mic
+  useEffect(() => {
+    if (!open && recording.current) cancelVoice();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  useEffect(
+    () => () => {
+      live.current = false;
+      recording.current?.cancel();
+    },
+    [],
+  );
+  const photoUrl = photo?.url;
+  useEffect(() => (photoUrl ? () => URL.revokeObjectURL(photoUrl) : undefined), [photoUrl]);
+
+  const pickPhoto = () => {
+    if (reading) return;
+    setNote(null);
+    fileRef.current?.click();
+  };
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.type && !file.type.startsWith('image/')) {
+      setNote('Escolha uma foto.');
+      return;
+    }
+    setReading(true);
+    try {
+      const blob = await shrinkPhoto(file);
+      setPhoto({ blob, url: URL.createObjectURL(blob) });
+    } catch {
+      setNote('Não deu para abrir essa foto. Tente outra.');
+    } finally {
+      setReading(false);
+    }
+    inputRef.current?.focus({ preventScroll: true });
+  };
+  const removePhoto = () => {
+    setPhoto(null);
+    inputRef.current?.focus({ preventScroll: true });
+  };
 
   // the newest message in view
   const last = messages[messages.length - 1];
@@ -159,7 +336,17 @@ export function StoreChat({
 
   const submit = async (e?: FormEvent) => {
     e?.preventDefault();
-    if (sending || !text.trim()) return;
+    if (sending || reading || voice) return;
+    if (photo && onSendPhoto) {
+      setNote(null);
+      if (await onSendPhoto(photo.blob, text.trim() || undefined)) {
+        setText('');
+        setPhoto(null);
+      }
+      return;
+    }
+    if (!text.trim()) return;
+    setNote(null);
     if (await onSend(text)) setText('');
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -170,6 +357,9 @@ export function StoreChat({
   };
   const empty = !text.trim();
   const left = maxLength - text.length;
+  const showMic = voiceOn && empty && !photo;
+  const line = note ?? error;
+  const shown = voice?.phase === 'held' ? voice.seconds : elapsed;
 
   return (
     <div
@@ -284,6 +474,7 @@ export function StoreChat({
               const start = !prev || run(prev.author) !== run(m.author) || i === 0;
               const end = !next || run(next.author) !== run(m.author);
               const showAuthor = start && !(i === 0 && run(m.author) === 'agent');
+              const kind = m.kind === 'voice' || m.kind === 'image' ? m.kind : null;
               return (
                 <li
                   key={m.id}
@@ -291,6 +482,7 @@ export function StoreChat({
                   data-part="message"
                   data-author={side(m.author)}
                   data-card={m.card ?? undefined}
+                  data-kind={kind ?? undefined}
                   data-run={start ? 'start' : end ? 'end' : undefined}
                 >
                   <span className={showAuthor ? 'v-chat-author' : 'v-sr'} data-part="author">
@@ -298,7 +490,8 @@ export function StoreChat({
                     <span className="v-sr">:</span>
                   </span>
                   <p className="v-chat-bubble" data-part="body">
-                    <Body text={m.body} resolveLink={resolveLink} />
+                    {kind ? <MediaTag kind={kind} /> : null}
+                    {m.body ? <Body text={m.body} resolveLink={resolveLink} /> : null}
                   </p>
                   <time className={end ? 'v-chat-time' : 'v-sr'} data-part="time" dateTime={m.at}>
                     {formatTime(m.at, zone)}
@@ -319,44 +512,164 @@ export function StoreChat({
               </li>
             ) : null}
           </ol>
-          {error ? (
+          {line ? (
             <p className="v-chat-error" data-part="error" role="alert">
-              {error}
+              {line}
             </p>
           ) : null}
-          <form className="v-chat-composer" data-part="composer" onSubmit={submit}>
-            <label className="v-sr" htmlFor={`${id}-input`}>
-              Mensagem para {assistant.name}
-            </label>
-            <textarea
-              ref={inputRef}
-              id={`${id}-input`}
-              className="v-chat-input"
-              name="chat-message"
-              rows={1}
-              maxLength={maxLength}
-              value={text}
-              placeholder="Escreva sua mensagem"
-              enterKeyHint="send"
-              autoComplete="off"
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={onKey}
-            />
-            <button
-              type="submit"
-              className="v-chat-send"
-              data-part="send"
-              aria-label="Enviar mensagem"
-              aria-disabled={empty || sending || undefined}
-              aria-busy={sending || undefined}
-            >
-              <SendIcon />
-            </button>
-            {left <= 100 ? (
-              <span className="v-chat-count" data-part="count">
-                {left === 1 ? 'Resta 1 caractere' : `Restam ${left} caracteres`}
-              </span>
+          <form
+            className="v-chat-composer"
+            data-part="composer"
+            data-state={voice ? 'voice' : photo ? 'photo' : undefined}
+            onSubmit={submit}
+          >
+            {photo && !voice ? (
+              <div className="v-chat-attachment" data-part="attachment" data-kind="image">
+                <img className="v-chat-attachment-thumb" src={photo.url} alt="" />
+                <span className="v-chat-attachment-label">
+                  Foto
+                  <span className="v-chat-attachment-hint">A mensagem vai como legenda</span>
+                </span>
+                <button
+                  type="button"
+                  className="v-chat-icon-btn"
+                  data-part="attachment-remove"
+                  aria-label="Remover foto"
+                  onClick={removePhoto}
+                >
+                  <Glyph d={CROSS} size={20} />
+                </button>
+              </div>
             ) : null}
+            {voice ? (
+              <div
+                className="v-chat-recording"
+                data-part="recording"
+                data-state={voice.phase === 'held' ? 'held' : 'recording'}
+                role="group"
+                aria-label={
+                  voice.phase === 'held'
+                    ? 'Mensagem de voz não enviada'
+                    : 'Gravando mensagem de voz'
+                }
+              >
+                <button
+                  type="button"
+                  className="v-chat-icon-btn"
+                  data-part="recording-cancel"
+                  aria-label="Descartar áudio"
+                  onClick={cancelVoice}
+                >
+                  <Glyph d={TRASH} size={20} />
+                </button>
+                {voice.phase === 'held' ? (
+                  <span className="v-chat-rec-glyph" aria-hidden="true">
+                    <Glyph d={MIC} size={18} />
+                  </span>
+                ) : (
+                  <span className="v-chat-rec-dot" data-part="recording-dot" aria-hidden="true" />
+                )}
+                <span className="v-chat-rec-time" data-part="recording-time">
+                  <span className="v-sr">
+                    {voice.phase === 'held' ? 'Áudio de ' : 'Gravando: '}
+                  </span>
+                  {clock(shown)}
+                  {voice.phase === 'held' ? null : (
+                    <span className="v-chat-rec-max" aria-hidden="true">
+                      {' '}
+                      / {clock(maxVoiceSeconds)}
+                    </span>
+                  )}
+                </span>
+                <button
+                  ref={recSendRef}
+                  type="button"
+                  className="v-chat-send"
+                  data-part="recording-send"
+                  aria-label="Enviar mensagem de voz"
+                  aria-disabled={voice.phase === 'starting' || sending || undefined}
+                  aria-busy={sending || undefined}
+                  onClick={() => {
+                    if (sending) return;
+                    if (voice.phase === 'held') void sendTake(voice.blob, voice.seconds);
+                    else if (voice.phase === 'recording') void finishVoice();
+                  }}
+                >
+                  <SendIcon />
+                </button>
+              </div>
+            ) : (
+              <>
+                {photoOn ? (
+                  <>
+                    <button
+                      type="button"
+                      className="v-chat-icon-btn v-chat-photo"
+                      data-part="photo"
+                      aria-label={photo ? 'Trocar foto' : 'Enviar foto'}
+                      aria-busy={reading || undefined}
+                      onClick={pickPhoto}
+                    >
+                      <Glyph d={PHOTO} />
+                    </button>
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      name="chat-photo"
+                      accept="image/*"
+                      hidden
+                      tabIndex={-1}
+                      onChange={onFile}
+                    />
+                  </>
+                ) : null}
+                <label className="v-sr" htmlFor={`${id}-input`}>
+                  {photo ? 'Legenda da foto' : `Mensagem para ${assistant.name}`}
+                </label>
+                <textarea
+                  ref={inputRef}
+                  id={`${id}-input`}
+                  className="v-chat-input"
+                  name="chat-message"
+                  rows={1}
+                  maxLength={maxLength}
+                  value={text}
+                  placeholder={photo ? 'Legenda (opcional)' : 'Escreva sua mensagem'}
+                  enterKeyHint="send"
+                  autoComplete="off"
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={onKey}
+                />
+                {showMic ? (
+                  <button
+                    type="button"
+                    className="v-chat-send"
+                    data-part="mic"
+                    aria-label="Gravar mensagem de voz"
+                    aria-disabled={sending || undefined}
+                    onClick={() => void startVoice()}
+                  >
+                    <Glyph d={MIC} />
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    className="v-chat-send"
+                    data-part="send"
+                    aria-label={photo ? 'Enviar foto' : 'Enviar mensagem'}
+                    aria-disabled={(empty && !photo) || sending || reading || undefined}
+                    aria-busy={sending || undefined}
+                  >
+                    <SendIcon />
+                  </button>
+                )}
+                {left <= 100 ? (
+                  <span className="v-chat-count" data-part="count">
+                    {left === 1 ? 'Resta 1 caractere' : `Restam ${left} caracteres`}
+                  </span>
+                ) : null}
+              </>
+            )}
           </form>
           <p className="v-chat-note" data-part="note" id={`${id}-note`}>
             {assistant.name} pode montar {yourBag} com você. O pedido só sai quando você finaliza.

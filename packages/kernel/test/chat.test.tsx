@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { act } from 'react';
 import { STORE, flush, mockCore, mount, type Mounted } from './harness.tsx';
-import { useCart } from '../src/index.ts';
+import { useCart, useStoreChat } from '../src/index.ts';
 import { CHAT_POLL_MS, chatLink } from '../src/chat.ts';
 
 // Kernel 1.18 — the store's assistant (the Vendedor) on the site: a system surface over the
@@ -24,7 +24,14 @@ const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 const CHAT = { name: 'Bia', intro: 'Bia, assistente virtual da Loja Teste' };
 
-type Msg = { id: string; author: string; body: string; at: string; card: string | null };
+type Msg = {
+  id: string;
+  author: string;
+  body: string;
+  at: string;
+  card: string | null;
+  kind?: string;
+};
 interface Fake {
   calls: { method: string; path: string; headers: Record<string, string>; body?: unknown }[];
   messages: Msg[];
@@ -34,6 +41,10 @@ interface Fake {
   items: number;
   chatOn: boolean;
   post?: () => Response | null;
+  /** Kernel 1.24 — what Core says the chat takes (absent = an older Core) */
+  media?: { voice: boolean; image: boolean };
+  /** …and what the store profile says, before any read */
+  profileMedia?: { voice: boolean; image: boolean };
 }
 
 function cart(items: number) {
@@ -80,6 +91,7 @@ function fakeCore(over: Partial<Fake> = {}): Fake {
     ...(f.chatOn ? CHAT : { name: null, intro: null }),
     messages: f.messages,
     pending: f.pending,
+    ...(f.media ? { media: f.media } : {}),
   });
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://shop.test');
@@ -93,7 +105,11 @@ function fakeCore(over: Partial<Fake> = {}): Fake {
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
     f.calls.push({ method, path: url.pathname, headers, body });
     const p = url.pathname;
-    if (p === '/storefront/v1/store') return json(200, { ...STORE, chat: f.chatOn ? CHAT : null });
+    if (p === '/storefront/v1/store')
+      return json(200, {
+        ...STORE,
+        chat: f.chatOn ? { ...CHAT, ...(f.profileMedia ? { media: f.profileMedia } : {}) } : null,
+      });
     if (p === '/checkout/v1/cart') return json(200, { cart: cart(f.items) });
     if (p === '/checkout/v1/chat' && method === 'GET') {
       if (!headers.authorization)
@@ -114,9 +130,10 @@ function fakeCore(over: Partial<Fake> = {}): Fake {
         {
           id: `s${f.messages.length}`,
           author: 'shopper',
-          body: body.text,
+          body: body.kind === 'voice' ? '' : (body.text ?? ''),
           at: '2026-10-03T12:00:00Z',
           card: null,
+          ...(body.kind ? { kind: body.kind } : {}),
         },
       ];
       f.pending = true;
@@ -385,5 +402,208 @@ describe('store chat (Kernel 1.18)', () => {
     expect(settled).toBeGreaterThan(1);
     await act(() => new Promise((r) => setTimeout(r, 200)));
     expect(reads()).toBe(settled);
+  });
+});
+
+// Kernel 1.24 — voice messages and photos: base64 in the Kernel, the same send semantics as text.
+let probe: ReturnType<typeof useStoreChat> | null = null;
+function Probe() {
+  probe = useStoreChat();
+  return null;
+}
+const posts = (f: Fake) =>
+  f.calls.filter((c) => c.method === 'POST' && c.path === '/checkout/v1/chat');
+const bytes = (...b: number[]) => new Uint8Array(b);
+
+describe('store chat media (Kernel 1.24)', () => {
+  afterEach(() => {
+    probe = null;
+    setSystemTime();
+  });
+
+  test('a voice message and a photo go as base64 with their kind, each with its own key', async () => {
+    const f = fakeCore({ media: { voice: true, image: true }, reply: null });
+    m = await mount({ path: '/', session: 'tok', children: <Probe /> });
+    await until(() => probe!.media.voice);
+    expect(probe!.media).toEqual({ voice: true, image: true });
+    let ok = false;
+    await act(async () => {
+      ok = await probe!.sendVoice(
+        new Blob([bytes(1, 2, 3, 250)], { type: 'audio/webm;codecs=opus' }),
+        3.4,
+      );
+    });
+    expect(ok).toBe(true);
+    await act(async () => {
+      ok = await probe!.sendPhoto(
+        new Blob([bytes(255, 216, 255)], { type: 'image/jpeg' }),
+        '  de chocolate ',
+      );
+    });
+    expect(ok).toBe(true);
+    const [voice, photo] = posts(f);
+    expect(voice!.body).toEqual({
+      kind: 'voice',
+      mime: 'audio/webm;codecs=opus',
+      data: btoa(String.fromCharCode(1, 2, 3, 250)),
+      seconds: 3,
+    });
+    expect(photo!.body).toEqual({
+      kind: 'image',
+      mime: 'image/jpeg',
+      data: btoa(String.fromCharCode(255, 216, 255)),
+      text: 'de chocolate',
+    });
+    expect(voice!.headers['idempotency-key']).toBeTruthy();
+    expect(voice!.headers['idempotency-key']).not.toBe(photo!.headers['idempotency-key']);
+    expect(voice!.headers.authorization).toBe('Bearer tok');
+    expect(probe!.messages.map((x) => x.kind)).toEqual(['voice', 'image']);
+  });
+
+  test('a photo send that may have landed retries with the same key; another photo takes a new one', async () => {
+    let fail = true;
+    const f = fakeCore({
+      media: { voice: true, image: true },
+      reply: null,
+      post: () => {
+        if (!fail) return null;
+        fail = false;
+        throw new TypeError('offline');
+      },
+    });
+    m = await mount({ path: '/', session: 'tok', children: <Probe /> });
+    await until(() => probe!.media.image);
+    const shot = new Blob([bytes(1, 2)], { type: 'image/png' });
+    let ok = true;
+    await act(async () => {
+      ok = await probe!.sendPhoto(shot);
+    });
+    expect(ok).toBe(false);
+    expect(probe!.message).toContain('Sem conexão com a loja');
+    await act(async () => {
+      ok = await probe!.sendPhoto(shot);
+    });
+    expect(ok).toBe(true);
+    await act(async () => {
+      await probe!.sendPhoto(new Blob([bytes(3)], { type: 'image/png' }));
+    });
+    const keys = posts(f).map((c) => c.headers['idempotency-key']);
+    expect(keys).toHaveLength(3);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[2]).not.toBe(keys[1]);
+    expect(posts(f)[0]!.body).toEqual({ kind: 'image', mime: 'image/png', data: btoa('\x01\x02') });
+  });
+
+  test('too large or not a photo is refused before sending, in words; Core’s 415 too', async () => {
+    const f = fakeCore({
+      media: { voice: true, image: true },
+      reply: null,
+      post: () => json(415, { error: { code: 'UNSUPPORTED_MEDIA', message: 'no' } }),
+    });
+    m = await mount({ path: '/', session: 'tok', children: <Probe /> });
+    await until(() => probe!.media.image);
+    await act(async () => {
+      await probe!.sendPhoto(
+        new Blob([new Uint8Array(2 * 1024 * 1024 + 1)], { type: 'image/jpeg' }),
+      );
+    });
+    expect(probe!.error?.code).toBe('PAYLOAD_TOO_LARGE');
+    expect(probe!.message).toBe('Foto grande demais. Escolha outra.');
+    await act(async () => {
+      await probe!.sendPhoto(new Blob([bytes(1)], { type: 'image/gif' }));
+    });
+    expect(probe!.error?.code).toBe('UNSUPPORTED_MEDIA');
+    expect(posts(f)).toHaveLength(0);
+    await act(async () => {
+      await probe!.sendVoice(new Blob([bytes(1)], { type: 'audio/x-weird' }), 2);
+    });
+    expect(posts(f)).toHaveLength(1);
+    expect(probe!.message).toBe('Não deu para enviar esse áudio. Escreva sua mensagem.');
+  });
+
+  test('text only until Core says otherwise; the store profile answers before a session', async () => {
+    const f = fakeCore({ profileMedia: { voice: true, image: false } });
+    m = await mount({ path: '/', children: <Probe /> });
+    await until(() => probe!.available);
+    expect(chatReads(f)).toBe(0);
+    expect(probe!.media).toEqual({ voice: true, image: false });
+    m.unmount();
+    probe = null;
+    fakeCore();
+    m = await mount({ path: '/', session: 'tok', children: <Probe /> });
+    await until(() => !probe!.loading);
+    expect(probe!.media).toEqual({ voice: false, image: false });
+  });
+
+  test('the default chat records a voice message and sends it', async () => {
+    const G = globalThis as Record<string, unknown>;
+    const had = { MediaRecorder: G.MediaRecorder, mediaDevices: navigator.mediaDevices };
+    const stopped: string[] = [];
+    class FakeRecorder {
+      static isTypeSupported = (t: string) => t === 'audio/ogg;codecs=opus';
+      state = 'inactive';
+      mimeType: string;
+      ondataavailable: ((e: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      constructor(_s: unknown, o: { mimeType?: string; audioBitsPerSecond?: number }) {
+        this.mimeType = o.mimeType ?? '';
+        expect(o.audioBitsPerSecond).toBe(32000);
+      }
+      start() {
+        this.state = 'recording';
+      }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob([bytes(7, 7)], { type: this.mimeType }) });
+        queueMicrotask(() => this.onstop?.());
+      }
+    }
+    G.MediaRecorder = FakeRecorder;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => ({ getTracks: () => [{ stop: () => stopped.push('track') }] }),
+      },
+    });
+    try {
+      const f = fakeCore({ media: { voice: true, image: true }, reply: null });
+      m = await mount({ path: '/', session: 'tok' });
+      await click($('[data-vendua="chat"] [data-part="launcher"]'));
+      await until(() => !!$('[data-vendua="chat"] [data-part="mic"]'));
+      const mic = $('[data-vendua="chat"] [data-part="mic"]')!;
+      expect(mic.getAttribute('aria-label')).toBe('Gravar mensagem de voz');
+      expect($('[data-vendua="chat"] [data-part="photo"]')!.getAttribute('aria-label')).toBe(
+        'Enviar foto',
+      );
+      await click(mic);
+      await flush();
+      expect($('[data-vendua="chat"] [data-part="recording"]')).not.toBeNull();
+      expect($('[data-vendua="chat"] [data-part="recording-time"]')!.textContent).toContain('0:00');
+      setSystemTime(new Date(Date.now() + 4200));
+      await click($('[data-vendua="chat"] [data-part="recording-send"]'));
+      await until(() => posts(f).length === 1);
+      await flush();
+      expect(posts(f)[0]!.body).toEqual({
+        kind: 'voice',
+        mime: 'audio/ogg;codecs=opus',
+        data: btoa('\x07\x07'),
+        seconds: 4,
+      });
+      expect(stopped).toEqual(['track']);
+      expect($('[data-vendua="chat"] [data-part="recording"]')).toBeNull();
+      expect(
+        $('[data-vendua="chat"] [data-part="message"][data-kind="voice"]')!.textContent,
+      ).toContain('Mensagem de voz');
+      // typing turns the mic into send
+      await type($<HTMLTextAreaElement>('textarea[name="chat-message"]')!, 'oi');
+      expect($('[data-vendua="chat"] [data-part="mic"]')).toBeNull();
+      expect($('[data-vendua="chat"] [data-part="send"]')).not.toBeNull();
+    } finally {
+      G.MediaRecorder = had.MediaRecorder;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: had.mediaDevices,
+      });
+    }
   });
 });

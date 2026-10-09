@@ -75,6 +75,9 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
     title: 'O chat da loja está desligado agora',
     body: 'Você ainda pode fazer o pedido pelo site.',
   },
+  // Kernel 1.24 — a voice message or photo the chat (or any upload) can't take
+  PAYLOAD_TOO_LARGE: { title: 'Arquivo grande demais', body: 'Envie um arquivo menor.' },
+  UNSUPPORTED_MEDIA: { title: 'Formato de arquivo não aceito' },
   // Kernel 1.22 — ordering from a table's QR code
   TABLE_NOT_FOUND: {
     title: 'Esse QR code não vale mais',

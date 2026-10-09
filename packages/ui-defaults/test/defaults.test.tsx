@@ -438,5 +438,13 @@ describe('slot defaults', () => {
     expect(tags(html)).toContain('Bia está digitando…');
     expect(tags(html)).toContain('Bia pode montar seu carrinho com você.');
     expect(html).toContain('data-part="unread"');
+    // Kernel 1.24 — a photo shows its tag and caption, a voice message not yet heard its tag
+    expect(html).toContain('data-kind="image"');
+    expect(tags(html)).toContain('FotoTem esse de chocolate também?');
+    expect(html).toMatch(/data-kind="voice"[^>]*>.*Mensagem de voz<\/span><\/p>/);
+    expect(html).toContain('aria-label="Enviar foto"');
+    expect(html).toContain('name="chat-photo"');
+    // the mic waits for the browser (no MediaRecorder on the server)
+    expect(html).not.toContain('data-part="mic"');
   });
 });

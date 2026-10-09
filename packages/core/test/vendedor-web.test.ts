@@ -93,6 +93,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('the storefront chat (db)', () =
     expect((await call('GET', '/storefront/v1/store')).body.chat).toMatchObject({
       name: 'Duá',
       intro: expect.stringMatching(/^o Duá, assistente virtual da /),
+      // no transcription route here: photos only
+      media: { voice: false, image: true },
     });
     expect((await call('POST', '/checkout/v1/chat', { text: 'oi' })).status).toBe(401);
     expect((await call('POST', '/checkout/v1/chat', { text: '' }, session)).status).toBe(422);
