@@ -324,7 +324,7 @@ export function mountPdv(d: AdminDeps) {
             beneficiary: s.pix_beneficiary ?? '',
             city: s.pix_city ?? s.city ?? '',
           },
-          { amountCents: amount, txid: 'PDV' },
+          { amountCents: amount },
         ),
       };
     }),
