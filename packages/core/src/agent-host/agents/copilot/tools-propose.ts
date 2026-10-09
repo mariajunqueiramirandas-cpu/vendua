@@ -181,6 +181,9 @@ const MIN_COUPON_LIFE_MS = 30 * 60_000;
  */
 async function endsAtOf(ctx: Ctx, raw: string): Promise<string> {
   const day = DAY.exec(raw);
+  // a calendar date that exists: 2026-02-31 must not roll into March
+  if (day && !isDate(raw))
+    throw new ToolError('endsAt é uma data AAAA-MM-DD que existe, ou um horário ISO com fuso.');
   const at = day
     ? zonedInstant(
         (await who(ctx)).tz,

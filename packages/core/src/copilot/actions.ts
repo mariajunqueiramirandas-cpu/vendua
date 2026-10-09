@@ -758,33 +758,31 @@ export async function proposeTx(
   return { id: row!.id, title, lines };
 }
 
-/** What a proposal changes: two open cards for the same thing would compete for one tap. */
-function targetOf(kind: ActionKind, input: unknown): string {
+/**
+ * What a proposal changes, one atom per thing it touches (a product's price, a coupon's end, a
+ * day): two open cards sharing an atom would compete, the tap on one breaking the other's basis.
+ */
+function targetsOf(kind: ActionKind, input: unknown): string[] {
   const i = (input ?? {}) as Record<string, unknown>;
-  // what it changes, so a sold-out card and a price card for one product both stand
-  const fields = (id: string) =>
-    Object.keys(i)
-      .filter((k) => k !== id)
-      .sort()
-      .join(',');
+  const fields = (id: string) => Object.keys(i).filter((k) => k !== id);
   switch (kind) {
     case 'store.pause':
     case 'store.resume':
-      return 'store.status';
+      return ['store.status'];
     case 'store.operations':
-      return `operations:${fields('')}`;
+      return fields('').map((f) => `operations:${f}`);
     case 'store.special_day':
-      return `day:${String(i.date)}`;
+      return [`day:${String(i.date)}`];
     case 'product.update':
-      return `product:${String(i.productId)}:${fields('productId')}`;
+      return fields('productId').map((f) => `product:${String(i.productId)}:${f}`);
     case 'products.price':
-      return `prices:${[...((i.productIds as string[] | undefined) ?? [])].sort().join(',')}`;
+      return ((i.productIds as string[] | undefined) ?? []).map((id) => `product:${id}:priceCents`);
     case 'coupon.create':
-      return `code:${String(i.code).toUpperCase()}`;
+      return [`code:${String(i.code).toUpperCase()}`];
     case 'coupon.update':
-      return `coupon:${String(i.couponId)}:${fields('couponId')}`;
+      return fields('couponId').map((f) => `coupon:${String(i.couponId)}:${f}`);
     default:
-      return kind;
+      return [kind];
   }
 }
 
@@ -798,12 +796,14 @@ async function supersedeTx(
   kind: ActionKind,
   input: unknown,
 ) {
-  const target = targetOf(kind, input);
+  const target = new Set(targetsOf(kind, input));
   const open = await tx<{ id: string; kind: ActionKind; input: unknown }[]>`
     select id, kind, input from copilot_actions
     where tenant_id = ${tenantId} and user_id = ${userId} and status = 'proposed'
       and expires_at > now()`;
-  const stale = open.filter((a) => targetOf(a.kind, a.input) === target).map((a) => a.id);
+  const stale = open
+    .filter((a) => targetsOf(a.kind, a.input).some((t) => target.has(t)))
+    .map((a) => a.id);
   if (stale.length)
     await tx`
       update copilot_actions set status = 'expired', error = ${SUPERSEDED}, decided_at = now()

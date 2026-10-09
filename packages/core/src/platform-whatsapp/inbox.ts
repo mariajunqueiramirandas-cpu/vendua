@@ -202,7 +202,8 @@ export async function socketMessageToInbox(
     f &&
     (f.type === 'image' || (f.seconds ?? 0) <= MAX_AUDIO_SECONDS) &&
     (f.size ?? 0) <= cap &&
-    !(await inboxHasProvider(sql, m.providerId))
+    !(await inboxHasProvider(sql, m.providerId)) &&
+    mediaAllowed(phone)
   ) {
     try {
       const bytes = await f.download(cap);
@@ -234,6 +235,20 @@ export async function socketMessageToInbox(
       returning id`;
     if (!inserted.length && mediaId) await tx`delete from platform_wa_media where id = ${mediaId}`;
   });
+  return true;
+}
+
+/** voice notes and photos fetched per sender a minute, as the gateway allows (this process) */
+const MEDIA_PER_MINUTE = 6;
+const SENDERS_MAX = 20_000;
+const mediaTimes = new Map<string, number[]>();
+function mediaAllowed(phone: string): boolean {
+  const now = Date.now();
+  if (mediaTimes.size >= SENDERS_MAX) mediaTimes.clear();
+  const recent = (mediaTimes.get(phone) ?? []).filter((t) => t > now - 60_000);
+  if (recent.length >= MEDIA_PER_MINUTE) return false;
+  recent.push(now);
+  mediaTimes.set(phone, recent);
   return true;
 }
 

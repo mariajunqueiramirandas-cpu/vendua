@@ -247,6 +247,10 @@ describe.skipIf(!OWNER_URL)('Duá Copilot (db)', () => {
         }),
       ),
       tools(call('propose_coupon', { code: 'pudim10', kind: 'percent', value: 10, endsAt: ymd })),
+      // a date that doesn't exist is refused, never rolled into another day
+      tools(
+        call('propose_coupon', { code: 'fev31', kind: 'percent', value: 10, endsAt: '2030-02-31' }),
+      ),
       // asked again for the same code: the newer card retires the older one
       tools(call('propose_coupon', { code: 'PUDIM10', kind: 'percent', value: 15 })),
       reply('Preparei o cupom. Confere no cartão e confirma.'),
@@ -264,10 +268,39 @@ describe.skipIf(!OWNER_URL)('Duá Copilot (db)', () => {
     // a bare date is the end of that day in the store's calendar, never UTC midnight
     expect(rows[0]!.input.endsAt).toBe(zonedInstant(tz, day, 23 * 60 + 59).toISOString());
     // the ledger names the card; its values stay on the card, and the tap is how it applies
+    expect(JSON.stringify(adapter.requests.at(3))).toContain('que existe');
     const told = JSON.stringify(adapter.requests.at(2));
     expect(told).toContain('o cartão \\"Criar um cupom\\" já mostra cada valor');
     expect(told).toContain('tocando em Confirmar');
     expect(told).not.toContain('Agora não');
+    await as(s.owner)('DELETE', '/copilot');
+  });
+
+  test('a newer card retires an open one that touches the same thing, and only that', async () => {
+    const s = shared;
+    await as(s.owner)('DELETE', '/copilot');
+    const a = await propose(s, 'product.update', {
+      productId: s.productId,
+      availability: 'sold_out_today',
+    });
+    const b = await propose(s, 'product.update', { productId: s.productId, priceCents: 4990 });
+    // sold out + stock overlaps the first card; the price card stands
+    const c = await propose(s, 'product.update', {
+      productId: s.productId,
+      availability: 'sold_out',
+      stockQuantity: 0,
+    });
+    // a percentage over this product overlaps the price card
+    const d = await propose(s, 'products.price', { productIds: [s.productId], percent: 10 });
+    const status = async (id: string) =>
+      (await sql<{ status: string }[]>`select status from copilot_actions where id = ${id}`)[0]!
+        .status;
+    expect([
+      await status(a.id),
+      await status(b.id),
+      await status(c.id),
+      await status(d.id),
+    ]).toEqual(['expired', 'expired', 'proposed', 'proposed']);
     await as(s.owner)('DELETE', '/copilot');
   });
 
