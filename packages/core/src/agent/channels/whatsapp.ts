@@ -7,6 +7,9 @@ import { log } from '../../platform/log.ts';
 import { probeWhatsApp } from '../../platform-whatsapp/probe.ts';
 import { cachedPlatformIdentity, cachedPlatformState } from '../../platform-whatsapp/session.ts';
 import { platformTransport, VENDUA_SESSION } from '../../platform-whatsapp/transport.ts';
+import { parseContent } from '../../store-whatsapp/content.ts';
+import { baileysRuntime } from '../../store-whatsapp/runtime.ts';
+import type { WaMessage, WaRuntime, WaSocket } from '../../store-whatsapp/session.ts';
 
 const waLog = log.child({ mod: 'whatsapp' });
 
@@ -205,6 +208,16 @@ function pairingConfirmed(creds: { registered?: boolean; account?: unknown }): b
   return !!creds.registered || !!creds.account;
 }
 
+/** A voice note or photo on an inbound message: fetched only when a handler asks for it. */
+export interface InboundMedia {
+  type: 'audio' | 'image';
+  mime: string;
+  seconds: number | null;
+  size: number | null;
+  /** the decrypted bytes, never more than `maxBytes`; throws on a failed or slow fetch */
+  download(maxBytes: number): Promise<Uint8Array>;
+}
+
 type MessageHandler = (
   jid: string,
   text: string,
@@ -212,7 +225,12 @@ type MessageHandler = (
   pushName?: string,
   /** sender's complementary address (LID↔PN) so persistence converges a contact first seen under the other alias */
   altJid?: string,
+  media?: InboundMedia,
 ) => Promise<void>;
+
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+// the wa-gateway's own downloader (WhatsApp's CDN only, capped, re-upload on an expired link)
+let mediaRuntime: Promise<WaRuntime> | null = null;
 
 const handlers: MessageHandler[] = [];
 export function onInboundMessage(fn: MessageHandler) {
@@ -551,7 +569,8 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
         for (const m of messages) {
           const key = m.key;
           if (!key || key.fromMe || !key.id) continue;
-          const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
+          const content = baileys.normalizeMessageContent(m.message) ?? m.message;
+          const text = extractText(content);
           if (!text) continue;
           // DMs only — group/broadcast JIDs would mint a lead per participant
           const dm = await resolveDmJid(key.remoteJid, key.remoteJidAlt, lookup);
@@ -563,10 +582,35 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
           if (key.remoteJid)
             rememberUnread(dm, { remoteJid: key.remoteJid, id: key.id, fromMe: false });
           const id = key.id;
+          const file = parseContent(content)?.media ?? null;
+          const media: InboundMedia | undefined = file
+            ? {
+                ...file,
+                download: async (maxBytes) => {
+                  // a failed load is tried again on the next note, not remembered
+                  const rt = await (mediaRuntime ??= baileysRuntime(waLog).catch((e) => {
+                    mediaRuntime = null;
+                    throw e;
+                  }));
+                  const ac = new AbortController();
+                  const timer = setTimeout(() => ac.abort(), DOWNLOAD_TIMEOUT_MS);
+                  try {
+                    return await rt.download(
+                      m as unknown as WaMessage,
+                      sock as unknown as WaSocket,
+                      waLog,
+                      { maxBytes, signal: ac.signal },
+                    );
+                  } finally {
+                    clearTimeout(timer);
+                  }
+                },
+              }
+            : undefined;
           for (const fn of handlers) {
             void (async () => {
               try {
-                await fn(dm.jid, text, id, m.pushName, dm.alias);
+                await fn(dm.jid, text, id, m.pushName, dm.alias, media);
               } catch (e) {
                 waLog.warn({ err: e, id }, 'inbound message ingest failed');
               }

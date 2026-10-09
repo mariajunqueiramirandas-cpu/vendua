@@ -15,6 +15,7 @@ import {
   type ProductInput,
   type SpecialDayInput,
 } from '../../../copilot/actions.ts';
+import { zonedInstant } from '../../../platform/tz.ts';
 import { refused, todayIn, who, type Ctx } from './shared.ts';
 
 // Duá never changes the store: each of these writes a proposal the merchant confirms on its card
@@ -34,13 +35,13 @@ export async function propose(ctx: Ctx, kind: ActionKind, input: unknown) {
       input,
     });
     const ref = `proposta.${p.id.slice(0, 8)}`;
-    ctx.figure(ref, {
-      value: p.id,
-      text: `${p.title}: ${p.lines.map((l) => (l.from ? `${l.label} ${l.from} → ${l.to}` : `${l.label} ${l.to}`)).join('; ')}`,
-      kind: 'text',
-    });
+    // the card itself shows every value: the ledger names it, so a reply can point at it without
+    // pasting the whole card into a sentence
+    ctx.figure(ref, { value: p.id, text: p.title, kind: 'text' });
+    const byWhatsApp =
+      (ctx.state.context.subject as { channel?: string } | null)?.channel === 'whatsapp';
     return {
-      content: `Proposta pronta: um cartão "${p.title}" aparece na conversa com Confirmar e Agora não. Nada mudou ainda. Para resumir o cartão, cite {{${ref}}}.`,
+      content: `Proposta pronta: o cartão "${p.title}" já mostra cada valor que muda. Nada mudou ainda: só a pessoa aplica, ${byWhatsApp ? 'respondendo SIM aqui no WhatsApp (preço e cupom, só no painel)' : 'tocando em Confirmar no cartão'}. Diga em uma frase o que preparou, sem repetir os valores do cartão; se quiser nomeá-lo, cite {{${ref}}}.`,
       data: { action: p.id, kind },
     };
   } catch (e) {
@@ -170,11 +171,44 @@ export const proposePricesTool = defineTool<{ products: string[]; percent: numbe
 });
 
 const CODE = /^[A-Za-z0-9_-]{3,32}$/;
+const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+/** a coupon that ends within minutes of being proposed is a mistake, not a coupon */
+const MIN_COUPON_LIFE_MS = 30 * 60_000;
+
+/**
+ * A coupon's end as the model wrote it: a bare date is the end of that day in the store's
+ * calendar (never UTC midnight, the evening before there); one already past is refused.
+ */
+async function endsAtOf(ctx: Ctx, raw: string): Promise<string> {
+  const day = DAY.exec(raw);
+  // a calendar date that exists: 2026-02-31 must not roll into March
+  if (day && !isDate(raw))
+    throw new ToolError('endsAt é uma data AAAA-MM-DD que existe, ou um horário ISO com fuso.');
+  const at = day
+    ? zonedInstant(
+        (await who(ctx)).tz,
+        {
+          year: +day[1]!,
+          month: +day[2]!,
+          day: +day[3]!,
+          weekday: new Date(Date.UTC(+day[1]!, +day[2]! - 1, +day[3]!)).getUTCDay(),
+        },
+        23 * 60 + 59,
+      )
+    : new Date(raw);
+  if (Number.isNaN(at.getTime()))
+    throw new ToolError('endsAt é uma data AAAA-MM-DD ou um horário ISO com fuso.');
+  if (at.getTime() < ctx.now.getTime() + MIN_COUPON_LIFE_MS)
+    throw new ToolError(
+      'Essa validade já passou ou acaba em minutos. Pergunte à pessoa até quando o cupom vale.',
+    );
+  return at.toISOString();
+}
 
 export const proposeCouponTool = defineTool<CouponInput, Sql>({
   name: 'propose_coupon',
   description:
-    'Prepara um cupom novo. code: 3 a 32 letras/números; kind: percent (value 1–100), fixed (value em centavos) ou free_delivery (value 0). Opcionais: minSubtotalCents, maxDiscountCents, endsAt (ISO com fuso), maxRedemptions, perPhoneLimit, firstOrderOnly, label.',
+    'Prepara um cupom novo. code: 3 a 32 letras/números; kind: percent (value 1–100), fixed (value em centavos) ou free_delivery (value 0). Opcionais: minSubtotalCents, maxDiscountCents, endsAt (AAAA-MM-DD = vale até o fim desse dia; ou ISO com fuso; sem endsAt o cupom não acaba), maxRedemptions, perPhoneLimit, firstOrderOnly, label.',
   effect: 'write',
   input: s.object({
     code: s.string({ min: 3, max: 32 }),
@@ -188,11 +222,11 @@ export const proposeCouponTool = defineTool<CouponInput, Sql>({
     perPhoneLimit: s.int({ min: 1, max: 1000 }).optional(),
     firstOrderOnly: s.boolean().optional(),
   }),
-  run: (ctx: Ctx, input) => {
+  run: async (ctx: Ctx, input) => {
     if (!CODE.test(input.code)) throw new ToolError('code: só letras, números, _ e -.');
-    if (input.endsAt && Number.isNaN(Date.parse(input.endsAt)))
-      throw new ToolError('endsAt precisa ser uma data ISO.');
-    return propose(ctx, 'coupon.create', { ...input, code: input.code.toUpperCase() });
+    const c: CouponInput = { ...input, code: input.code.toUpperCase() };
+    if (input.endsAt) c.endsAt = await endsAtOf(ctx, input.endsAt);
+    return propose(ctx, 'coupon.create', c);
   },
 });
 
@@ -208,7 +242,7 @@ export const proposeCouponChangeTool = defineTool<
 >({
   name: 'propose_coupon_change',
   description:
-    'Prepara mudança num cupom pelo código curto (c2): desativar/reativar (active), nova validade (endsAt ISO; noEnd=true tira a data) ou limite de usos (maxRedemptions).',
+    'Prepara mudança num cupom pelo código curto (c2): desativar/reativar (active), nova validade (endsAt AAAA-MM-DD = até o fim desse dia, ou ISO com fuso; noEnd=true tira a data) ou limite de usos (maxRedemptions).',
   effect: 'write',
   input: s.object({
     coupon: s.string({ min: 1, max: 20 }),
@@ -217,15 +251,11 @@ export const proposeCouponChangeTool = defineTool<
     noEnd: s.boolean().optional(),
     maxRedemptions: s.int({ min: 1, max: 1_000_000 }).optional(),
   }),
-  run: (ctx: Ctx, input) => {
+  run: async (ctx: Ctx, input) => {
     const p: CouponUpdateInput = { couponId: ctx.resolve(input.coupon, 'coupon') };
     if (input.active !== undefined) p.active = input.active;
     if (input.noEnd) p.endsAt = null;
-    else if (input.endsAt !== undefined) {
-      if (Number.isNaN(Date.parse(input.endsAt)))
-        throw new ToolError('endsAt precisa ser uma data ISO.');
-      p.endsAt = input.endsAt;
-    }
+    else if (input.endsAt !== undefined) p.endsAt = await endsAtOf(ctx, input.endsAt);
     if (input.maxRedemptions !== undefined) p.maxRedemptions = input.maxRedemptions;
     if (Object.keys(p).length === 1)
       throw new ToolError('Diga o que mudar: active, endsAt ou maxRedemptions.');

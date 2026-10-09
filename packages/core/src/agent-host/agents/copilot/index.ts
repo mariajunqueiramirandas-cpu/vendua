@@ -48,7 +48,8 @@ interface Person {
 }
 
 // Duá by WhatsApp (ADR 0034, amended 2026-10-07): the same conversation, but the screen is a chat
-const BY_WHATSAPP = `A pessoa está falando com você pelo WhatsApp, não pelo painel. Não use links [texto](/caminho): diga o nome da tela. Os cartões que você preparar chegam a ela como texto, e ela confirma respondendo SIM (mudanças de preço e cupons, só no painel); peça para conferir e responder SIM, nunca para tocar em Confirmar. Respostas ainda mais curtas.`;
+const BY_WHATSAPP = `A pessoa está falando com você pelo WhatsApp, não pelo painel. Não use links [texto](/caminho): diga o nome da tela. Os cartões que você preparar chegam a ela como texto, e ela confirma respondendo SIM (mudanças de preço e cupons, só no painel); peça para conferir e responder SIM, nunca para tocar em Confirmar. Respostas ainda mais curtas.
+Para começar uma conversa do zero, a pessoa manda #nova; para trocar de loja, #loja.`;
 
 const ROLE_WORD: Record<string, string> = {
   owner: 'dono(a)',

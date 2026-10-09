@@ -1,5 +1,4 @@
 import { dispatchTx } from '../agent-host/dispatch.ts';
-import { forgetSubjectTx } from '../agent-host/forget.ts';
 import { COPILOT_AGENT_ID, COPILOT_SUBJECT } from '../agent-host/agents/copilot/shared.ts';
 import { decideTx } from '../copilot/actions.ts';
 import {
@@ -10,7 +9,7 @@ import {
   seePhoto,
   type Heard,
 } from '../copilot/media.ts';
-import { copilotView } from '../copilot/view.ts';
+import { copilotView, resetConversationTx } from '../copilot/view.ts';
 import { requireFeature } from '../modules/billing/plans.ts';
 import { mediaUpload } from '../modules/media-upload.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
@@ -187,11 +186,7 @@ export function mountCopilot(d: AdminDeps) {
   admin.delete(
     '/copilot',
     write('manager', async (tx, t, m) => {
-      const subject = { kind: COPILOT_SUBJECT, id: m.userId };
-      await forgetSubjectTx(tx, t.id, subject, `${COPILOT_SUBJECT}:${m.userId}`);
-      await tx`delete from copilot_actions where tenant_id = ${t.id} and user_id = ${m.userId}`;
-      await tx`delete from copilot_messages where tenant_id = ${t.id} and user_id = ${m.userId}`;
-      await emitAdminTx(tx, t.id, 'copilot', m.userId);
+      await resetConversationTx(tx, t.id, m.userId);
       return { status: 200, body: await view(tx, t, m) };
     }),
   );

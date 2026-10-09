@@ -417,7 +417,7 @@ function DuaWhatsappSection({
           }
           description={
             dua.allowed
-              ? `Escrevendo ou por áudio, do seu número ${phone(myPhone)}.`
+              ? `Escrevendo, por áudio ou com foto, do seu número ${phone(myPhone)}.`
               : 'O dono da loja desligou o Duá pelo WhatsApp para gerentes.'
           }
         />
@@ -458,6 +458,7 @@ function DuaWhatsappSection({
             <ul className="t-caption list-disc space-y-1 pl-5 text-muted">
               <li>Quando o Duá preparar uma mudança, responda SIM para aplicar.</li>
               <li>Mudanças de preço e desconto continuam só pelo painel.</li>
+              <li>Para começar uma conversa do zero, mande #nova.</li>
             </ul>
           </div>
         ) : null}

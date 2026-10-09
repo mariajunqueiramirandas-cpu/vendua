@@ -6,6 +6,9 @@ import { log } from '../platform/log.ts';
 import { AlreadyConsumed, membershipsOf, routeToDua, type DuaDeps, type InboxRow } from './dua.ts';
 import { refreshPlatformSession } from './session.ts';
 import { VENDUA_SESSION } from './transport.ts';
+import type { InboundMedia } from '../agent/channels/whatsapp.ts';
+import { MAX_AUDIO_SECONDS, MAX_IMAGE_BYTES, MAX_MEDIA_BYTES } from '../store-whatsapp/content.ts';
+import { AUDIO_NOT_FETCHED } from './dua-text.ts';
 
 // Core's side of platform_wa_inbox: what reaches Venduá's number, from the gateway (or, before the
 // cutover, merchant messages from Core's own socket). One number serves everyone, so each message
@@ -177,20 +180,85 @@ export function startPlatformInbox(d: InboxDeps, o: { tickMs?: number } = {}) {
  */
 export async function socketMessageToInbox(
   sql: Sql,
-  m: { jid: string; text: string; providerId: string | null; pushName?: string; altJid?: string },
+  m: {
+    jid: string;
+    text: string;
+    providerId: string | null;
+    pushName?: string;
+    altJid?: string;
+    media?: InboundMedia;
+  },
 ): Promise<boolean> {
   const phone = m.jid.endsWith('@s.whatsapp.net') ? m.jid.split('@')[0]!.split(':')[0]! : null;
   if (!phone || !/^\d{10,15}$/.test(phone)) return false;
   if (!(await membershipsOf(sql, phone)).length) return false;
-  await controlTx(
-    sql,
-    (tx) => tx`
+  // Duá hears voice notes and reads photos (the gateway's caps): fetched only for the store's
+  // people, never for a lead's media
+  let file: { mime: string; bytes: Uint8Array; seconds: number | null } | null = null;
+  let body = m.text;
+  const f = m.media;
+  const cap = f?.type === 'image' ? MAX_IMAGE_BYTES : MAX_MEDIA_BYTES;
+  const fits =
+    !!f && (f.type === 'image' || (f.seconds ?? 0) <= MAX_AUDIO_SECONDS) && (f.size ?? 0) <= cap;
+  if (f && fits && !(await inboxHasProvider(sql, m.providerId))) {
+    // past the minute's room a note within the caps asks to be sent again, never "too long"
+    if (!mediaAllowed(phone)) {
+      if (f.type === 'audio') body = AUDIO_NOT_FETCHED;
+    } else
+      try {
+        const bytes = await f.download(cap);
+        if (bytes.byteLength > 0 && bytes.byteLength <= cap)
+          file = { mime: f.mime, bytes, seconds: f.seconds };
+        else if (f.type === 'audio') body = AUDIO_NOT_FETCHED;
+      } catch (err) {
+        inboxLog.warn({ err, type: f.type }, 'media not downloaded');
+        if (f.type === 'audio') body = AUDIO_NOT_FETCHED;
+      }
+  }
+  await controlTx(sql, async (tx) => {
+    const mediaId = file
+      ? (
+          await tx<{ id: string }[]>`
+            insert into platform_wa_media (session, mime, bytes, seconds)
+            values (${VENDUA_SESSION}, ${file.mime}, ${Buffer.from(file.bytes)},
+                    ${file.seconds == null ? null : Math.max(0, Math.min(600, Math.round(file.seconds)))})
+            returning id`
+        )[0]!.id
+      : null;
+    const inserted = await tx`
       insert into platform_wa_inbox (session, kind, from_jid, alt_jid, phone, push_name, body,
-                                     provider_id, sent_at)
+                                     media_id, provider_id, sent_at)
       values (${VENDUA_SESSION}, 'message', ${m.jid.slice(0, 120)}, ${m.altJid?.slice(0, 120) ?? null},
-              ${phone}, ${m.pushName?.slice(0, 100) ?? null}, ${waBody(m.text)},
+              ${phone}, ${m.pushName?.slice(0, 100) ?? null}, ${waBody(body)}, ${mediaId},
               ${m.providerId?.slice(0, 128) ?? null}, now())
-      on conflict (session, kind, provider_id) where provider_id is not null do nothing`,
-  );
+      on conflict (session, kind, provider_id) where provider_id is not null do nothing
+      returning id`;
+    if (!inserted.length && mediaId) await tx`delete from platform_wa_media where id = ${mediaId}`;
+  });
   return true;
+}
+
+/** voice notes and photos fetched per sender a minute, as the gateway allows (this process) */
+const MEDIA_PER_MINUTE = 6;
+const SENDERS_MAX = 20_000;
+const mediaTimes = new Map<string, number[]>();
+function mediaAllowed(phone: string): boolean {
+  const now = Date.now();
+  if (mediaTimes.size >= SENDERS_MAX) mediaTimes.clear();
+  const recent = (mediaTimes.get(phone) ?? []).filter((t) => t > now - 60_000);
+  if (recent.length >= MEDIA_PER_MINUTE) return false;
+  recent.push(now);
+  mediaTimes.set(phone, recent);
+  return true;
+}
+
+/** a replay of a message already in the inbox isn't downloaded again */
+async function inboxHasProvider(sql: Sql, providerId: string | null): Promise<boolean> {
+  if (!providerId) return false;
+  const rows = await controlTx(
+    sql,
+    (tx) => tx`select 1 from platform_wa_inbox
+      where session = ${VENDUA_SESSION} and kind = 'message' and provider_id = ${providerId.slice(0, 128)}`,
+  );
+  return rows.length > 0;
 }

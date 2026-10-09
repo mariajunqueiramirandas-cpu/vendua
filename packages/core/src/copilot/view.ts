@@ -1,6 +1,8 @@
 import type { FencedTx, OutboundMessage, Transport } from '@vendua/agent-runtime';
 import { roleAtLeast, type Merchant, type Role } from '../admin/context.ts';
 import { emitAdminTx } from '../admin/live.ts';
+import { forgetSubjectTx } from '../agent-host/forget.ts';
+import { COPILOT_SUBJECT } from '../agent-host/agents/copilot/shared.ts';
 import type { Sql } from '../platform/db.ts';
 import { DUA, renderCards, toWhatsApp } from '../platform-whatsapp/dua-text.ts';
 import type { ActionKind, ActionStatus, ActionView, Line } from './actions.ts';
@@ -60,6 +62,18 @@ interface ActionRow {
   created_at: Date;
   decided_at: Date | null;
   expires_at: Date;
+}
+
+/**
+ * "Nova conversa", from the admin or "#nova" by WhatsApp: what Duá remembers of this person's
+ * conversation goes; what was applied stays applied (and in "Quem mudou o quê").
+ */
+export async function resetConversationTx(tx: Sql, tenantId: string, userId: string) {
+  const subject = { kind: COPILOT_SUBJECT, id: userId };
+  await forgetSubjectTx(tx, tenantId, subject, `${COPILOT_SUBJECT}:${userId}`);
+  await tx`delete from copilot_actions where tenant_id = ${tenantId} and user_id = ${userId}`;
+  await tx`delete from copilot_messages where tenant_id = ${tenantId} and user_id = ${userId}`;
+  await emitAdminTx(tx, tenantId, 'copilot', userId);
 }
 
 export async function copilotView(tx: Sql, tenantId: string, m: Merchant): Promise<CopilotView> {

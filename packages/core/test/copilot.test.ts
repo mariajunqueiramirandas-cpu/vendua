@@ -17,6 +17,7 @@ import { proposeTx } from '../src/copilot/actions.ts';
 import { copilotTransport } from '../src/copilot/view.ts';
 import { HttpError } from '../src/platform/http.ts';
 import { migrate, withTenant, type Sql } from '../src/platform/db.ts';
+import { addDays, localDateOf, zonedInstant } from '../src/platform/tz.ts';
 
 // ADR 0034: Duá Copilot end to end on Postgres, as vendua_app under RLS — a message from the
 // admin, a scripted turn with the real tools, a proposal that changed nothing, the tap that
@@ -228,6 +229,79 @@ describe.skipIf(!OWNER_URL)('Duá Copilot (db)', () => {
     expect(rows[0]!.source).toBe(`admin:${s.ownerId}`);
     expect(rows[0]!.dedupe_key).toBe(`copilot:${r.body.items[0].id}`);
     expect(rows[0]!.subject_id).toBe(s.ownerId);
+  });
+
+  test('a coupon’s end is the store’s own day, and one already past is refused', async () => {
+    const s = shared;
+    await as(s.owner)('DELETE', '/copilot');
+    const tz = 'America/Sao_Paulo';
+    const day = addDays(localDateOf(new Date(), tz), 10);
+    const ymd = `${day.year}-${String(day.month).padStart(2, '0')}-${String(day.day).padStart(2, '0')}`;
+    const { rt, adapter } = runtime([
+      tools(
+        call('propose_coupon', {
+          code: 'ontem10',
+          kind: 'percent',
+          value: 10,
+          endsAt: new Date(Date.now() - 60_000).toISOString(),
+        }),
+      ),
+      tools(call('propose_coupon', { code: 'pudim10', kind: 'percent', value: 10, endsAt: ymd })),
+      // a date that doesn't exist is refused, never rolled into another day
+      tools(
+        call('propose_coupon', { code: 'fev31', kind: 'percent', value: 10, endsAt: '2030-02-31' }),
+      ),
+      // asked again for the same code: the newer card retires the older one
+      tools(call('propose_coupon', { code: 'PUDIM10', kind: 'percent', value: 15 })),
+      reply('Preparei o cupom. Confere no cartão e confirma.'),
+    ]);
+    await as(s.owner)('POST', '/copilot/messages', { text: 'cria um cupom de 10% por 10 dias' });
+    await settle(rt, s.tenantId);
+    expect(JSON.stringify(adapter.requests.at(1))).toContain('Essa validade já passou');
+    const rows = await sql<{ input: { code: string; endsAt: string }; status: string }[]>`
+      select input, status from copilot_actions
+      where tenant_id = ${s.tenantId} and kind = 'coupon.create' order by created_at, id`;
+    expect(rows.map((r) => [r.input.code, r.status])).toEqual([
+      ['PUDIM10', 'expired'],
+      ['PUDIM10', 'proposed'],
+    ]);
+    // a bare date is the end of that day in the store's calendar, never UTC midnight
+    expect(rows[0]!.input.endsAt).toBe(zonedInstant(tz, day, 23 * 60 + 59).toISOString());
+    // the ledger names the card; its values stay on the card, and the tap is how it applies
+    expect(JSON.stringify(adapter.requests.at(3))).toContain('que existe');
+    const told = JSON.stringify(adapter.requests.at(2));
+    expect(told).toContain('o cartão \\"Criar um cupom\\" já mostra cada valor');
+    expect(told).toContain('tocando em Confirmar');
+    expect(told).not.toContain('Agora não');
+    await as(s.owner)('DELETE', '/copilot');
+  });
+
+  test('a newer card retires an open one that touches the same thing, and only that', async () => {
+    const s = shared;
+    await as(s.owner)('DELETE', '/copilot');
+    const a = await propose(s, 'product.update', {
+      productId: s.productId,
+      availability: 'sold_out_today',
+    });
+    const b = await propose(s, 'product.update', { productId: s.productId, priceCents: 4990 });
+    // sold out + stock overlaps the first card; the price card stands
+    const c = await propose(s, 'product.update', {
+      productId: s.productId,
+      availability: 'sold_out',
+      stockQuantity: 0,
+    });
+    // a percentage over this product overlaps the price card
+    const d = await propose(s, 'products.price', { productIds: [s.productId], percent: 10 });
+    const status = async (id: string) =>
+      (await sql<{ status: string }[]>`select status from copilot_actions where id = ${id}`)[0]!
+        .status;
+    expect([
+      await status(a.id),
+      await status(b.id),
+      await status(c.id),
+      await status(d.id),
+    ]).toEqual(['expired', 'expired', 'proposed', 'proposed']);
+    await as(s.owner)('DELETE', '/copilot');
   });
 
   test('a turn reads through the admin routes and proposes a pause that changes nothing', async () => {

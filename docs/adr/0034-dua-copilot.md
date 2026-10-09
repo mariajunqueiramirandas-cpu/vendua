@@ -115,6 +115,17 @@ the WhatsApp door uses too, now that the platform gateway also downloads photos)
   `GET /copilot` says what this Core can take (`media: { voice, image }`), so the mic shows only
   with a transcription route configured.
 
+Fixed 2026-10-09 after the first real WhatsApp use:
+
+- A proposal's ledger figure is the card's title only, and the tool tells Duá how this person
+  applies it (Confirmar in the admin, SIM by WhatsApp). Citing it used to paste the whole card,
+  every line, into Duá's sentence.
+- A newer proposal for the same thing (the same coupon code, the same product field, the same day,
+  the store's status) retires the person's older open card ("Trocado por um cartão mais novo"), so
+  two cards never compete for one tap.
+- A coupon's `endsAt` given as a bare date is the end of that day in the store's calendar; an end
+  already past, or within 30 minutes, is refused at the proposal.
+
 ## Consequences and known risks
 
 - The route registry is module-level: last mount wins. Production mounts one admin app per
