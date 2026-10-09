@@ -13,7 +13,6 @@ import {
 } from '../src/agent/scheduler.ts';
 import { fireDueWakeups, nextWakeupAtTx } from '../src/agent/wakeups.ts';
 import { controlTx } from '../src/modules/control.ts';
-import { digestNextAtTx } from '../src/modules/digest.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
@@ -69,7 +68,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         events.length = 0;
         await sql`update agent_runs set alive_at = now() where id = ${run!.id}`;
         await sql`update leads set name = name where id = ${leadId}`;
-        await sql`insert into control_settings (key, value) values ('digest_state', '{}'::jsonb)
+        await sql`insert into control_settings (key, value) values ('test_runtime_state', '{}'::jsonb)
                 on conflict (key) do update set value = control_settings.value`;
         // a marker change after them proves the quiet ones had time to arrive
         await sql`update leads set agent_paused_at = null where id = ${leadId}`;
@@ -100,10 +99,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         expect(work).not.toBeNull();
         expect(work!.getTime()).toBeGreaterThan(Date.now());
         expect(work!.getTime()).toBeLessThanOrEqual(soon.getTime());
-
-        // the digest is always somewhere in the future or due now — never null
-        const digest = await controlTx(sql, (tx) => digestNextAtTx(tx));
-        expect(digest.getTime()).toBeGreaterThan(Date.now() - 1000);
       } finally {
         await cleanup(leadId);
       }

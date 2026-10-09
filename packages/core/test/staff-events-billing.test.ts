@@ -5,7 +5,6 @@ import { createApp } from '../src/app.ts';
 import { createSession, membershipsFor } from '../src/admin/auth.ts';
 import { setDnsResolver } from '../src/modules/billing/domains.ts';
 import { runBillingTick, runDomainChecks } from '../src/modules/billing/jobs.ts';
-import { billingStaff } from '../src/modules/billing/subscriptions.ts';
 import { handleBillingWebhook } from '../src/modules/billing/webhook.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { migrate } from '../src/platform/db.ts';
@@ -31,7 +30,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
   // provider ids are process-local counters; start past anything another run left behind
   (fake as unknown as { seq: number }).seq = Math.floor(Math.random() * 1e9);
   const wa: { phone: string; text: string }[] = [];
-  const staff: string[] = [];
   const notify = {
     whatsapp: async (phone: string, text: string) => void wa.push({ phone, text }),
     email: async () => {},
@@ -61,7 +59,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
   let idem = 0;
   let phones = 0;
   const mkPhone = () => `219${String(Date.now() + ++phones * 17).slice(-8)}`;
-  const originalStaff = billingStaff.notify;
 
   const call = async (
     method: string,
@@ -157,11 +154,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
     // these run billing on the top plan, which launches closed to new stores (ADR 0032)
     await sql`update plans set available = true where id = 'pangolim'`;
-    billingStaff.notify = async (_sql, n) => void staff.push(n.subject);
   });
 
   afterAll(async () => {
-    billingStaff.notify = originalStaff;
     setDnsResolver(null);
     if (created.length) await sql`delete from tenants where id in ${sql(created)}`;
     if (appSql !== sql) await appSql.end();
@@ -498,9 +493,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
       `billing.problem:${o.id}:pix_mismatch:invoice-amount:${oldPix}`,
       `billing.problem:${o.id}:pix_mismatch:invoice-dup:${oldPix}`,
     ]);
-    // the team's email/WhatsApp notices still go out
-    expect(staff.some((x) => x.startsWith('Pix com valor menor'))).toBe(true);
-    expect(staff.some((x) => x.startsWith('Fatura paga duas vezes'))).toBe(true);
+    // each case keeps its own title on the card
+    expect(odd.map((e) => e.data.title)).toEqual(['Pix com valor menor', 'Fatura paga duas vezes']);
   });
 
   test('Pangolim: the site request and the verified custom domain reach the team once', async () => {

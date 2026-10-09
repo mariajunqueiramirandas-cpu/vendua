@@ -102,7 +102,7 @@ export function eventTitle(e: StoreEvent): string {
     case 'payments.connection':
       return d.connected ? 'Mercado Pago conectado' : 'Mercado Pago desconectado';
     case 'billing.problem':
-      return PROBLEM[s(d.problem) ?? ''] ?? e.label;
+      return s(d.title) ?? PROBLEM[s(d.problem) ?? ''] ?? e.label;
     case 'store.first_order':
       return 'primeiro pedido';
     case 'vendedor.monitor':

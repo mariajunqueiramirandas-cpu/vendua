@@ -265,6 +265,8 @@ export interface StaffEventMap {
     storeName: Name;
     problem: 'card_rejected' | 'past_due' | 'cancelled' | 'trial_ended' | 'pix_mismatch' | 'other';
     detail: Opt<string>;
+    /** the specific case, when `problem` is broader ("Fatura paga duas vezes") */
+    title?: string;
   };
   'domain.ready': { storeName: Name; host: string };
   'domain.live': { storeName: Name; host: string };

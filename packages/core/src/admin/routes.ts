@@ -12,10 +12,8 @@ import {
   idempotencyFingerprint,
   windowCounter,
 } from '../platform/http.ts';
-import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
-import { notifyStaff } from '../modules/staff.ts';
 import { audit } from './audit.ts';
 import {
   ADMIN_COOKIE,
@@ -88,8 +86,6 @@ import { recordPushAttempt } from './workers.ts';
 import { getIntegration } from '../modules/integrations.ts';
 import { waIdentity } from '../agent/channels/whatsapp.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
-
-const adminLog = log.child({ mod: 'admin' });
 
 export interface MountAdminOpts {
   app: Hono<{ Variables: { tenant: Tenant } }>;
@@ -888,12 +884,10 @@ export function mountAdmin(o: MountAdminOpts) {
   admin.post('/help', async (c) => {
     const tenant = c.get('tenant');
     const m = c.get('merchant');
-    let ask: { topic: string; message: string } | null = null;
-    const res = await o.idempotency(sql, async (c, tx) => {
+    return o.idempotency(sql, async (c, tx) => {
       const body = await bodyJson(c);
       const message = text(body.message, 'message', 2000, 3);
       const topic = optText(body.topic, 'topic', 60) ?? 'geral';
-      ask = { topic, message };
       await audit(tx, tenant.id, m, {
         action: 'help.request',
         entity: 'help',
@@ -915,16 +909,6 @@ export function mountAdmin(o: MountAdminOpts) {
       );
       return { status: 201, body: { sent: true } };
     })(c);
-    // only once the claim committed (a microtask ran at the handler's next await, before commit,
-    // and reached the team for a request that then rolled back); never on a replay
-    const sent = ask as { topic: string; message: string } | null;
-    if (sent && res.status === 201)
-      void notifyStaff(sql, null, {
-        subject: `Ajuda: ${tenant.name} (${sent.topic})`,
-        body: `${m.name} · ${formatPhone(m.phone)} · ${m.role}\n\n${sent.message}`,
-        idemKey: `admin-help:${tenant.id}:${Date.now()}`,
-      }).catch((err) => adminLog.warn({ err }, 'help notify failed'));
-    return res;
   });
 
   mountHome(deps);

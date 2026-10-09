@@ -9,13 +9,7 @@ import { updateLead } from '../leads.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import type { FleetDeps } from './deps.ts';
 import { lockOpsTx, pendingTx, reconcileTx } from './deploy.ts';
-import {
-  alertStaff,
-  fleetLog,
-  openIncidentTx,
-  resolveIncidentTx,
-  type IncidentRow,
-} from './incidents.ts';
+import { fleetLog, openIncidentTx, resolveIncidentTx } from './incidents.ts';
 import { latestPassedTx } from './releases.ts';
 
 // The provisioner (docs/architecture/08 "Provisioner"): a state machine per store, never a
@@ -201,8 +195,6 @@ interface Pass {
   facts: StoreFacts | null;
   send: boolean;
   leadMoves: { leadId: string; state: 'invited' | 'live'; note?: string }[];
-  alerts: IncidentRow[];
-  wentLive: boolean;
 }
 
 /** One transaction of steps; stops when the owner's invite has to go out (`send`). */
@@ -212,8 +204,6 @@ async function pass(d: FleetDeps, id: string, invite: Invite | null): Promise<Pa
     facts: null,
     send: false,
     leadMoves: [],
-    alerts: [],
-    wentLive: false,
   };
   out.row = await controlTx(d.sql, async (tx) => {
     let p = (
@@ -257,7 +247,6 @@ async function pass(d: FleetDeps, id: string, invite: Invite | null): Promise<Pa
         if (leadId && p.source === 'invite' && step.next === 'live')
           out.leadMoves.push({ leadId, state: 'invited' });
         if (step.next === 'live') {
-          out.wentLive = true;
           await recordStaffEventTx(
             tx,
             'store.live',
@@ -271,13 +260,7 @@ async function pass(d: FleetDeps, id: string, invite: Invite | null): Promise<Pa
             { tenantId: p.tenant_id, dedupeKey: `onboarding:${p.tenant_id}:live` },
           );
           if (leadId) out.leadMoves.push({ leadId, state: 'live', note: facts.origin });
-          const closed = await resolveIncidentTx(
-            tx,
-            'provisioning_stuck',
-            p.id,
-            'a loja ficou no ar',
-          );
-          if (closed) out.alerts.push(closed);
+          await resolveIncidentTx(tx, 'provisioning_stuck', p.id, 'a loja ficou no ar');
         }
         continue;
       }
@@ -295,13 +278,12 @@ async function pass(d: FleetDeps, id: string, invite: Invite | null): Promise<Pa
       break;
     }
     if (p.state !== 'live' && d.now().getTime() - p.created_at.getTime() > STUCK_AFTER_MS) {
-      const opened = await openIncidentTx(tx, {
+      await openIncidentTx(tx, {
         tenantId: p.tenant_id,
         kind: 'provisioning_stuck',
         subject: p.id,
         summary: `${facts.slug}: a loja não ficou no ar em 30 min (${p.state}${p.last_error ? `: ${p.last_error}` : ''})`,
       });
-      if (opened) out.alerts.push(opened);
     }
     await tx`update provisionings set lease_until = null where id = ${p.id}`;
     return p;
@@ -316,18 +298,7 @@ export async function advance(d: FleetDeps, id: string): Promise<ProvisioningRow
     passes.push(await pass(d, id, await sendInvite(d, passes[0]!.row, passes[0]!.facts)));
   const row = passes.at(-1)!.row;
   for (const p of passes) {
-    for (const a of p.alerts) alertStaff(d, a, a.resolved_at !== null);
     for (const m of p.leadMoves) await moveLead(d, id, m.leadId, m.state, m.note);
-    if (p.wentLive && p.facts) {
-      const f = p.facts;
-      void d
-        .staff({
-          subject: `Loja no ar: ${f.name}`,
-          body: `${f.name} está no ar em ${f.origin} (${row?.source === 'invite' ? 'convite da equipe' : 'cadastro próprio'}).`,
-          idemKey: `provision:${id}:live`,
-        })
-        .catch((err) => fleetLog.warn({ err }, 'staff alert failed'));
-    }
   }
   if (row) emitControlEvent('fleet.change', row.tenant_id);
   return row;

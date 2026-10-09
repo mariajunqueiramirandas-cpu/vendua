@@ -118,10 +118,11 @@ Weekly `strategist` run reads segmentStats + agent_memory and proposes
 disabled draft briefs (`propose_brief` tool); the board shows a `proposta`
 chip with one-click `aprovar`.
 
-### 11. Daily staff digest — shipped (PR #71)
+### 11. Daily staff digest — shipped (PR #71), moved to Discord
 
-`sweepDigest` + atomic `digest_state` claim + `digest` settings key sends the
-once-a-day Resend summary (new leads, replies, meetings, spend).
+`sweepDigest` + atomic `digest_state` claim + `digest` settings key sent the
+once-a-day Resend summary (new leads, replies, meetings, spend). Retired
+2026-10-09: the summary is the `discord-digest` job (ADR 0023).
 
 ### 12. Channel health monitoring — shipped (PR #71)
 

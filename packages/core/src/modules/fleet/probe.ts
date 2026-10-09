@@ -10,13 +10,7 @@ import {
   VERIFY_TIMEOUT_MS,
   type DeploymentRow,
 } from './deploy.ts';
-import {
-  alertStaff,
-  fleetLog,
-  openIncidentTx,
-  resolveIncidentTx,
-  type IncidentRow,
-} from './incidents.ts';
+import { fleetLog, openIncidentTx, resolveIncidentTx } from './incidents.ts';
 
 // Synthetic probes per live hostname (docs/architecture/16 "Health model"): the page with its
 // injected state, the loader, the state API and a checkout session. The page's
@@ -176,22 +170,15 @@ async function syncTargets(d: FleetDeps) {
   });
 }
 
-interface Alert {
-  row: IncidentRow;
-  resolved: boolean;
-  quiet: boolean;
-}
-
 /** One probe's outcome: the probe row, history on failures and recoveries, verification of a
- *  pending deployment, incidents. */
+ *  pending deployment, incidents (each records its own staff event). */
 async function recordTx(
   d: FleetDeps,
   row: ProbeRow,
   r: ProbeResult,
   degraded: boolean,
-): Promise<{ alerts: Alert[]; changed: boolean }> {
+): Promise<{ changed: boolean }> {
   return controlTx(d.sql, async (tx) => {
-    const alerts: Alert[] = [];
     const now = d.now();
     const failures = r.ok ? 0 : row.failures + 1;
     const failingSince = r.ok ? null : (row.failing_since ?? now);
@@ -227,8 +214,7 @@ async function recordTx(
         `
       )[0]!.n;
       if (pageFailures >= VERIFY_FAILURES) {
-        const { incident } = await failDeploymentTx(tx, d, pending, error ?? 'a página falhou');
-        if (incident) alerts.push({ row: incident, resolved: false, quiet: false });
+        await failDeploymentTx(tx, d, pending, error ?? 'a página falhou');
         pending = await pendingTx(tx, row.tenant_id);
       }
     }
@@ -244,7 +230,7 @@ async function recordTx(
     `;
     if (!r.ok && failures >= INCIDENT_AFTER) {
       const critical = now.getTime() - failingSince!.getTime() >= CRITICAL_AFTER_MS;
-      const opened = await openIncidentTx(tx, {
+      await openIncidentTx(tx, {
         tenantId: row.tenant_id,
         kind: 'probe_failing',
         subject: row.host,
@@ -252,19 +238,10 @@ async function recordTx(
         summary: `${row.host} não passa na sonda (${error})`,
         detail: { checks: r.checks },
       });
-      if (opened) alerts.push({ row: opened, resolved: false, quiet: degraded });
     }
-    if (recovered) {
-      const closed = await resolveIncidentTx(
-        tx,
-        'probe_failing',
-        row.host,
-        'a sonda voltou a passar',
-      );
-      if (closed) alerts.push({ row: closed, resolved: true, quiet: degraded });
-    }
+    if (recovered)
+      await resolveIncidentTx(tx, 'probe_failing', row.host, 'a sonda voltou a passar');
     return {
-      alerts,
       changed: status !== row.status || r.release !== row.last_release_id || !r.ok,
     };
   });
@@ -273,7 +250,7 @@ async function recordTx(
 /** Half the fleet failing at once is the edge or Core, not N stores: one fleet incident, and
  *  per-store alerts and automatic rollbacks hold off until it clears. Only hosts probed in the
  *  last few minutes count — a row nobody probes anymore says nothing about now. */
-async function fleetDegraded(d: FleetDeps): Promise<{ degraded: boolean; alerts: Alert[] }> {
+async function fleetDegraded(d: FleetDeps): Promise<{ degraded: boolean; changed: boolean }> {
   return controlTx(d.sql, async (tx) => {
     const { total, failing } = (
       await tx<{ total: number; failing: number }[]>`
@@ -291,10 +268,10 @@ async function fleetDegraded(d: FleetDeps): Promise<{ degraded: boolean; alerts:
         severity: 'critical',
         summary: `${failing} de ${total} endereços falhando na sonda — edge ou Core fora?`,
       });
-      return { degraded, alerts: row ? [{ row, resolved: false, quiet: false }] : [] };
+      return { degraded, changed: row !== null };
     }
     const row = await resolveIncidentTx(tx, 'fleet_degraded', 'fleet', 'a frota voltou');
-    return { degraded, alerts: row ? [{ row, resolved: true, quiet: false }] : [] };
+    return { degraded, changed: row !== null };
   });
 }
 
@@ -307,18 +284,12 @@ async function pool<T>(items: T[], n: number, work: (t: T) => Promise<void>) {
   );
 }
 
-function deliver(d: FleetDeps, alerts: Alert[]) {
-  for (const a of alerts) if (!a.quiet) alertStaff(d, a.row, a.resolved);
-}
-
 async function probeRows(d: FleetDeps, rows: ProbeRow[], degraded: boolean) {
   let changed = false;
   await pool(rows, CONCURRENCY, async (row) => {
     try {
       const r = await probeHost(d, row.host, row.checkout_token);
-      const out = await recordTx(d, row, r, degraded);
-      deliver(d, out.alerts);
-      changed ||= out.changed;
+      changed = (await recordTx(d, row, r, degraded)).changed || changed;
     } catch (err) {
       fleetLog.warn({ err, host: row.host }, 'probe record failed');
     }
@@ -341,23 +312,16 @@ async function expirePending(d: FleetDeps, degraded: boolean): Promise<boolean> 
   );
   for (const { id, tenant_id } of stale) {
     try {
-      const alerts = await controlTx(d.sql, async (tx) => {
+      await controlTx(d.sql, async (tx) => {
         await lockOpsTx(tx, tenant_id);
         const dep = (
           await tx<DeploymentRow[]>`
             select * from deployments where id = ${id} and status = 'pending'
           `
         )[0];
-        if (!dep) return [];
-        const { incident } = await failDeploymentTx(
-          tx,
-          d,
-          dep,
-          'nenhuma sonda viu esta versão no ar em 5 minutos',
-        );
-        return incident ? [{ row: incident, resolved: false, quiet: false }] : [];
+        if (dep)
+          await failDeploymentTx(tx, d, dep, 'nenhuma sonda viu esta versão no ar em 5 minutos');
       });
-      deliver(d, alerts);
     } catch (err) {
       fleetLog.warn({ err, deployment: id }, 'expiring a deployment failed');
     }
@@ -384,12 +348,10 @@ export async function runProbes(d: FleetDeps): Promise<{ probed: number }> {
     `,
   );
   const before = await fleetDegraded(d);
-  deliver(d, before.alerts);
   let changed = await probeRows(d, rows, before.degraded);
   const after = await fleetDegraded(d);
-  deliver(d, after.alerts);
   changed = (await expirePending(d, after.degraded)) || changed;
-  if (changed || before.alerts.length || after.alerts.length) emitControlEvent('fleet.change');
+  if (changed || before.changed || after.changed) emitControlEvent('fleet.change');
   return { probed: rows.length };
 }
 
@@ -404,8 +366,7 @@ export async function probeStoreNow(d: FleetDeps, tenantId: string) {
   const results: { host: string; result: ProbeResult }[] = [];
   for (const row of rows) {
     const result = await probeHost(d, row.host, row.checkout_token);
-    const out = await recordTx(d, row, result, degraded);
-    deliver(d, out.alerts);
+    await recordTx(d, row, result, degraded);
     results.push({ host: row.host, result });
   }
   emitControlEvent('fleet.change', tenantId);
