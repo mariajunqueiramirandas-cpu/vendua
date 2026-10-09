@@ -53,6 +53,29 @@ export default function Help() {
             <Skeleton className="h-[76px] rounded-lg" />
           )}
         </Section>
+        {/* the answers before the way to ask */}
+        <Section
+          title="Perguntas rápidas"
+          hint="Em qualquer tela, toque em ajuda para ver as dúvidas dela."
+        >
+          <div className="space-y-3">
+            <div className="scroll-row -mx-4 px-4 md:mx-0 md:px-0">
+              <Chips
+                label="assunto das perguntas"
+                value={topic_}
+                onChange={setTopicId}
+                className="w-max flex-nowrap! md:w-auto md:flex-wrap!"
+                options={(Object.keys(TOPICS) as TopicId[]).map((t) => ({
+                  value: t,
+                  label: TOPICS[t].title,
+                }))}
+              />
+            </div>
+            <Card className="overflow-hidden">
+              <TopicAnswers key={topic_} topic={TOPICS[topic_]} first={null} />
+            </Card>
+          </div>
+        </Section>
         <Card className="flex flex-col items-center gap-4 p-6 text-center sm:flex-row sm:text-left">
           <Mascote pose="avatar-ajuda" size={128} className="w-32 shrink-0" />
           <div className="flex-1">
@@ -104,28 +127,6 @@ export default function Help() {
               enviar para a Venduá
             </Button>
           </Card>
-        </Section>
-        <Section
-          title="Perguntas rápidas"
-          hint="Em qualquer tela, toque em ajuda para ver as dúvidas dela."
-        >
-          <div className="space-y-3">
-            <div className="scroll-row -mx-4 px-4 md:mx-0 md:px-0">
-              <Chips
-                label="assunto das perguntas"
-                value={topic_}
-                onChange={setTopicId}
-                className="w-max flex-nowrap! md:w-auto md:flex-wrap!"
-                options={(Object.keys(TOPICS) as TopicId[]).map((t) => ({
-                  value: t,
-                  label: TOPICS[t].title,
-                }))}
-              />
-            </div>
-            <Card className="overflow-hidden">
-              <TopicAnswers key={topic_} topic={TOPICS[topic_]} first={null} />
-            </Card>
-          </div>
         </Section>
       </div>
     </PageBody>
