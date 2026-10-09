@@ -4,9 +4,10 @@ import { HttpError } from '../platform/http.ts';
 // A voice message or a photo sent to Duá as JSON (`data` in base64): the admin's Copilot and the
 // store chat on the site. The bytes are checked here; what they say is read later.
 
-/** what a browser's MediaRecorder writes, and the files phones share */
+/** what a browser's MediaRecorder writes, and the files phones share (spaces already removed, so
+ *  the value also fits shopper_media's mime check) */
 const VOICE_MIME =
-  /^audio\/(webm|ogg|mp4|mpeg|wav|x-wav|aac|x-m4a)(\s*;\s*codecs="?[a-z0-9.,' -]{1,40}"?)?$/i;
+  /^audio\/(webm|ogg|mp4|mpeg|wav|x-wav|aac|x-m4a)(;codecs="?[a-z0-9.,']{1,40}"?)?$/;
 const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 
@@ -30,7 +31,7 @@ export function mediaUpload(
 ): MediaUpload {
   const kind = body.kind;
   if (kind !== 'voice' && kind !== 'image') throw bad('kind', 'kind must be voice or image');
-  const mime = typeof body.mime === 'string' ? body.mime.trim().toLowerCase() : '';
+  const mime = typeof body.mime === 'string' ? body.mime.replace(/\s+/g, '').toLowerCase() : '';
   if (kind === 'voice' ? !VOICE_MIME.test(mime) : !IMAGE_MIMES.includes(mime))
     throw new HttpError(
       415,

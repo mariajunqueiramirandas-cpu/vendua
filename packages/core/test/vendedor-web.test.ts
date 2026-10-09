@@ -190,7 +190,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('the storefront chat (db)', () =
     ).toString('base64');
     const voice = {
       kind: 'voice',
-      mime: 'audio/webm;codecs=opus',
+      // stored without the spaces: shopper_media's mime check would refuse them
+      mime: 'audio/webm; codecs=opus',
       data: btoa('OggS fake'),
       seconds: 2,
     };

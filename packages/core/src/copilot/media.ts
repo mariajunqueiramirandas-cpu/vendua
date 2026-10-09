@@ -77,17 +77,16 @@ export async function seePhoto(
   const r = await readStaffPhoto(gateway, tenantId, photo, 'image/webp');
   if (!r) return null;
   const said = caption.trim().slice(0, MAX_TEXT);
-  const reading = [
-    PHOTO_TAG,
-    `O que mostra: ${r.description}`,
-    r.text ? `Texto na foto:\n${r.text}` : 'Sem texto legível.',
-    '[fim da foto]',
-  ].join('\n');
-  // the caption is the person's ask: it survives a long reading whole
-  const room = MAX_INPUT - said.length - 1;
+  // the photo's own words can't open or close the reading, so nothing in it passes for the ask
+  const inert = (t: string) => t.replace(/\[\s*(fim da foto|foto enviada)/gi, '($1');
+  const head = [PHOTO_TAG, `O que mostra: ${inert(r.description)}`];
+  const tail = ['[fim da foto]', ...(said ? [said] : [])];
+  // the caption is the person's ask and the marker frames it: the photo's text gives way
+  const room = MAX_INPUT - [...head, ...tail].join('\n').length - 'Texto na foto:\n'.length - 2;
+  const text = inert(r.text).slice(0, Math.max(0, room));
   return {
     kind: 'image',
-    input: (said ? `${reading.slice(0, room)}\n${said}` : reading).slice(0, MAX_INPUT),
+    input: [...head, text ? `Texto na foto:\n${text}` : 'Sem texto legível.', ...tail].join('\n'),
     shown: said,
     photo,
   };
