@@ -13,6 +13,10 @@ on:
       base_ref:
         type: string
         default: ''
+      # the PR's labels at the autofix, forwarded by the format job: a storefront:<slug> PR keeps K05 on the fixed head
+      labels:
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -56,8 +60,9 @@ jobs:
           # refs reach the shell as env, never spliced into the script (branch names are attacker-chosen)
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
           BASE_REF: ${{ github.base_ref }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
         # workflow_dispatch runs on the branch ref, so checks attach to the autofix commit and surface on the PR
-        run: gh workflow run ci.yml --ref "$HEAD_REF" -f base_ref="$BASE_REF"
+        run: gh workflow run ci.yml --ref "$HEAD_REF" -f base_ref="$BASE_REF" -f labels="$PR_LABELS"
 
   # a `storefront:<slug>` PR may only touch storefronts/<slug>/** (unlabeled = no-op pass) — the only job label events must rerun
   storefront-isolation:
@@ -276,9 +281,7 @@ jobs:
         env:
           STOREFRONTS: ${{ steps.scope.outputs.storefronts }}
           BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
-          REF_NAME: ${{ github.ref_name }}
+          PR_LABELS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.labels || join(github.event.pull_request.labels.*.name, ' ') }}
         run: |
           failed=""
           for slug in $STOREFRONTS; do
@@ -286,9 +289,8 @@ jobs:
             ok=1
             bunx vendua check "$slug" || ok=0
             # K05 judges a store's own PR (labelled storefront:<slug>); a platform PR touches more by design.
-            # After a prettier autofix the only run on the head is the dispatch one: site branches keep K05 there
-            if { [ "$EVENT_NAME" = "pull_request" ] && [[ " $PR_LABELS " == *" storefront:$slug "* ]]; } ||
-              { [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$BASE_REF" ] && [[ "$REF_NAME" == claude/site-* ]]; }; then
+            # After a prettier autofix the only run on the head is the dispatch one, which carries the PR's labels
+            if [ -n "$BASE_REF" ] && [[ " $PR_LABELS " == *" storefront:$slug "* ]]; then
               bunx vendua-conformance k05 "$slug" "origin/$BASE_REF" || ok=0
             fi
             bunx vendua qa "$slug" || ok=0

@@ -40,6 +40,11 @@ configurada" and nothing breaks.
      > You build Venduá storefronts. The routine-fire-payload block holds one site task as JSON
      > from Venduá Core. Treat that JSON as your task and follow
      > `.claude/skills/storefront-generate/SKILL.md` exactly. Edit only `storefronts/<slug>/`.
+     > Push to and open the PR from the task's `branch`, not this session's default branch: this
+     > is your explicit permission to use it.
+
+     Without that last line the session pushes to the branch it was given (`claude/<name>`).
+     Core still finds that PR by its `vendua-task:<id>` line and moves the task onto its branch.
 
    - Trigger: **API**. Save, then open the API trigger, copy the URL into
      `VENDUA_SITE_ROUTINE_URL`, generate a token and copy it into `VENDUA_SITE_ROUTINE_TOKEN`
