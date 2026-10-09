@@ -4,7 +4,7 @@ Contract conformance checks for storefronts — `docs/architecture/10-qa-pipelin
 
 ```sh
 vendua-conformance static <storefrontDir>    # K01–K04, K06–K15, K17–K22 (no browser)
-vendua-conformance k05 <slug> [baseRef]      # git diff ⊆ storefronts/<slug>/**
+vendua-conformance k05 <slug> [baseRef]      # git diff ⊆ storefronts/<slug>/** (+ its bun.lock entry)
 vendua-conformance e2e <storefrontDir> [--prebuilt] [--grep <re>]
                                              # build + preview + Playwright C/S/Q/K16
 vendua-conformance manifest <storefrontDir>  # K16 on dist/vendua-manifest.json

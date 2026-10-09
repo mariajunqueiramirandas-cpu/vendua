@@ -5,10 +5,13 @@
 // Local: `check-storefront-paths.mjs --slug <slug> --files f1 f2 …`
 // It also holds storefronts/<slug>/package.json to <slug>: the release a store builds is
 // adopted by the tenant its package names, so a rename would take over another store's site.
+// bun.lock is the one path outside the folder it accepts, and only when the lock change is the
+// store's own workspace entry (packages/conformance/src/lockfile.ts).
 // Exit 0 = pass, 1 = violations/usage error.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { storefrontLockViolation } from '../packages/conformance/src/lockfile.ts';
 
 const LABEL_PREFIX = 'storefront:';
 // `platform` label: deliberate escape hatch for platform-wide changes — the label is the audit
@@ -127,9 +130,17 @@ files ??= changedFiles(opts.base ?? 'origin/main');
 
 const allowed = `storefronts/${slug}/`;
 const violations = files.filter((f) => !f.startsWith(allowed));
+const lockIdx = violations.indexOf('bun.lock');
+let lockWhy = null;
+if (lockIdx !== -1) {
+  lockWhy = storefrontLockViolation(slug, opts.base ?? 'origin/main');
+  if (lockWhy === null) violations.splice(lockIdx, 1);
+}
 if (violations.length > 0) {
-  console.error(`storefront:${slug} PRs may only touch ${allowed}** — offending paths:`);
-  for (const f of violations) console.error(`  ${f}`);
+  console.error(
+    `storefront:${slug} PRs may only touch ${allowed}** (and bun.lock's entry for it) — offending paths:`,
+  );
+  for (const f of violations) console.error(`  ${f}${f === 'bun.lock' ? ` — ${lockWhy}` : ''}`);
   process.exit(1);
 }
 // the same derivation as `vendua release` (packages/cli/src/fleet.ts)
@@ -150,4 +161,6 @@ if (existsSync(pkgPath)) {
         ` (found name ${JSON.stringify(pkg?.name)}, tenant ${JSON.stringify(tenant)})`,
     );
 }
-console.log(`storefront:${slug}: all ${files.length} changed file(s) under ${allowed}`);
+console.log(
+  `storefront:${slug}: all ${files.length} changed file(s) under ${allowed}${lockIdx !== -1 ? ' (plus its bun.lock entry)' : ''}`,
+);

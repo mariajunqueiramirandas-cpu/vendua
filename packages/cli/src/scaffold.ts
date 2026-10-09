@@ -120,7 +120,9 @@ export async function cmdScaffold(slug: string | undefined, root: string): Promi
   console.log(`registered dev tenant '${slug}' for localhost:${port} and 127.0.0.1:${port}`);
   console.log('');
   console.log('next steps:');
-  console.log('  bun install                  # register the workspace + lockfile');
+  console.log(
+    '  bun install                  # register the workspace; commit bun.lock with the store',
+  );
   console.log(`  bunx vendua dev ${slug}      # → http://localhost:${port}`);
 }
 

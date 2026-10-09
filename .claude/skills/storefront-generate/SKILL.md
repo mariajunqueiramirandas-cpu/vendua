@@ -24,7 +24,9 @@ note, assets {logo, photos[]}, branch, base, label, marker, maxFixPushes, dueAt`
 ## 1. Rules that CI enforces (a red run costs one of your 4 fix pushes)
 
 - Edit only `storefronts/<slug>/**`. Nothing else, ever: not packages, not docs, not other
-  stores (the `storefront-isolation` job and K05 fail the PR).
+  stores (the `storefront-isolation` job and K05 fail the PR). The one exception is
+  `bun.lock`: commit the entry `bun install` writes for your store (CI installs with
+  `--frozen-lockfile`), never edit it by hand. Any other lock change fails both checks.
 - Read only: `docs/architecture/03-storefront-contract.md`, `docs/architecture/17-page-composition.md`,
   `docs/architecture/04-extensions-and-overrides.md`, `packages/kernel/API.md`,
   `packages/kernel/src/**` (to check a signature), `storefronts/_template/**`,
@@ -65,7 +67,7 @@ already on this store).
 ```sh
 bunx vendua scaffold <slug>
 bun install
-git add storefronts/<slug> && git commit -m "Scaffold <slug> from _template"
+git add storefronts/<slug> bun.lock && git commit -m "Scaffold <slug> from _template"
 ```
 
 Commit the untouched scaffold first: it's green, so the diff you're judged on is your

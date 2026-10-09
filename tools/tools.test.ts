@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { mapFiles } from './affected.mjs';
@@ -370,5 +370,104 @@ describe('check-storefront-paths', () => {
     ]);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('platform');
+  });
+});
+
+// A new store's `bun install` registers its workspace in bun.lock; that entry may ride on its PR
+describe('bun.lock on a store PR', () => {
+  const tools = import.meta.dir;
+  const realLock = readFileSync(join(tools, '../bun.lock'), 'utf8');
+  type Lock = {
+    workspaces: Record<string, Record<string, unknown>>;
+    packages: Record<string, unknown>;
+  };
+  const withStore = (slug: string, extra: (l: Lock) => void = () => {}) => {
+    const lock = Bun.JSONC.parse(realLock) as Lock;
+    const name = `@vendua/storefront-${slug}`;
+    lock.workspaces[`storefronts/${slug}`] = { ...lock.workspaces['storefronts/_template'], name };
+    lock.packages[name] = [`${name}@workspace:storefronts/${slug}`];
+    extra(lock);
+    return JSON.stringify(lock, null, 2);
+  };
+  const git = (cwd: string, ...args: string[]) => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(r.stderr);
+    return r.stdout;
+  };
+  // a repo whose `main` has the real lock and whose HEAD adds storefronts/acme with `headLock`
+  const repo = (headLock: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'sf-lock-'));
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'config', 'user.email', 't@t');
+    git(dir, 'config', 'user.name', 't');
+    writeFileSync(join(dir, 'bun.lock'), realLock);
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-qm', 'base');
+    git(dir, 'checkout', '-qb', 'store');
+    mkdirSync(join(dir, 'storefronts/acme'), { recursive: true });
+    writeFileSync(
+      join(dir, 'storefronts/acme/package.json'),
+      JSON.stringify({ name: '@vendua/storefront-acme' }),
+    );
+    writeFileSync(join(dir, 'bun.lock'), headLock);
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-qm', 'scaffold');
+    return dir;
+  };
+  const paths = (dir: string, slug = 'acme') =>
+    spawnSync(
+      'bun',
+      [
+        join(tools, 'check-storefront-paths.mjs'),
+        '--slug',
+        `storefront:${slug}`,
+        '--base',
+        'main',
+        '--files',
+        ...git(dir, 'diff', '--name-only', 'main...HEAD').split('\n').filter(Boolean),
+      ],
+      { cwd: dir, encoding: 'utf8' },
+    );
+  const affected = (dir: string) =>
+    JSON.parse(
+      spawnSync('bun', [join(tools, 'affected.mjs'), '--base', 'main'], {
+        cwd: dir,
+        encoding: 'utf8',
+      }).stdout,
+    );
+  const dirs: string[] = [];
+  afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
+
+  test("the store's own workspace entry passes and only rebuilds that store", () => {
+    const dir = repo(withStore('acme'));
+    dirs.push(dir);
+    const r = paths(dir);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('bun.lock entry');
+    const a = affected(dir);
+    expect(a.allStorefronts).toBe(false);
+    expect(a.storefronts).toEqual(['acme']);
+    expect(a.coreTests).toBe(false);
+  });
+
+  test('a new third-party package in the lock fails and stays fleet-wide', () => {
+    const dir = repo(
+      withStore('acme', (l) => {
+        l.packages['left-pad'] = ['left-pad@1.3.0', '', {}, 'sha512-x'];
+      }),
+    );
+    dirs.push(dir);
+    const r = paths(dir);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('bun.lock — bun.lock changes more than');
+    expect(affected(dir).allStorefronts).toBe(true);
+  });
+
+  test("another store's entry fails on this store's PR", () => {
+    const dir = repo(withStore('acme', (l) => void (l.workspaces['storefronts/rival'] = {})));
+    dirs.push(dir);
+    const r = paths(dir);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("other stores' entries: rival");
   });
 });
