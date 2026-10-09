@@ -170,3 +170,15 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
   total match on every screen.
 - In-frame screen swaps between two text-heavy screenshots must be near-cuts (opacity over ≤0.06 s,
   with the slide on `y`): a 0.2 s dissolve reads as two chats printed on top of each other.
+
+## Findings from vendua-hype-60s (the 60 s Stories ad, music and SFX synthesized in code)
+
+- The runtime hides an inactive frame by setting `visibility: hidden` on its clip wrapper. A child
+  set to `visibility: visible` (CSS or `tl.set`) overrides that and shows during other frames.
+  Show elements with `visibility: inherit`. Snapshots of single frames never catch it; the
+  assembled video does (`content_overlap` naming another frame's ids in `hyperframes check`).
+- No provider needed for audio: `vendua-hype-60s/scripts/synth.py` (numpy/scipy) writes the 128 BPM
+  track and every SFX on the storyboard's anchors, and `scripts/master.sh` masters it to −14 LUFS.
+- `STORYBOARD.md` frontmatter `canvas` must be strict JSON (`{"w": 1080, "h": 1920, "fps": 30}`):
+  otherwise `assemble-index.mjs` quietly falls back to 1920×1080.
+- Contrast ✗ on slot-reel digits mid-spin and on exit-whip blur are motion samples, not bugs.
