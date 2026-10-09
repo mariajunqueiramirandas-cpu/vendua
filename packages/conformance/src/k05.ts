@@ -1,3 +1,4 @@
+import { storefrontLockViolation } from './lockfile.ts';
 import type { CheckResult } from './report.ts';
 
 export async function runK05(slug: string, baseRef?: string): Promise<CheckResult[]> {
@@ -31,13 +32,18 @@ export async function runK05(slug: string, baseRef?: string): Promise<CheckResul
     .filter(Boolean);
   const allowed = `storefronts/${slug}/`;
   const offenders = files.filter((f) => !f.startsWith(allowed));
-  if (offenders.length) {
+  // a new store's `bun install` registers its workspace in bun.lock; that entry alone may ride along
+  const lockWhy = offenders.includes('bun.lock') ? storefrontLockViolation(slug, base) : null;
+  const outside = offenders
+    .filter((f) => f !== 'bun.lock' || lockWhy !== null)
+    .map((f) => (f === 'bun.lock' ? `bun.lock — ${lockWhy}` : f));
+  if (outside.length) {
     return [
       {
         id,
         title,
         status: 'fail',
-        detail: `${offenders.length} changed path(s) outside ${allowed}\n${offenders.join('\n')}`,
+        detail: `${outside.length} changed path(s) outside ${allowed}\n${outside.join('\n')}`,
       },
     ];
   }
@@ -46,7 +52,7 @@ export async function runK05(slug: string, baseRef?: string): Promise<CheckResul
       id,
       title,
       status: 'pass',
-      detail: `${files.length} changed file(s), all under ${allowed}`,
+      detail: `${files.length} changed file(s), all under ${allowed}${offenders.length ? ' (plus its bun.lock entry)' : ''}`,
     },
   ];
 }

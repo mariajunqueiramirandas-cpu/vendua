@@ -9,7 +9,10 @@ the root `package.json` exposes: `workspaces.mjs` (`check` / `test`),
 
 ## check-storefront-paths.mjs
 
-A PR labelled `storefront:<slug>` may only touch `storefronts/<slug>/**`.
+A PR labelled `storefront:<slug>` may only touch `storefronts/<slug>/**`, plus
+`bun.lock` when its change (merge base → HEAD) is only that store's own workspace
+entry and self-link, which `bun install` writes for a new store
+(`packages/conformance/src/lockfile.ts`, shared with K05 and `affected.mjs`).
 Zero `storefront:` labels → no-op pass; two different slugs → fail (a PR
 belongs to one storefront). Exit 0 pass / 1 failure with violations listed.
 

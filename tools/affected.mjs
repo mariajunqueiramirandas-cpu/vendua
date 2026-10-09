@@ -12,12 +12,15 @@
 // the Control Plane smoke (Core + the edge + `vendua release` serving the `_template` build).
 // `packages/agent-runtime` is a Core dependency (not a storefront one): touching it flips
 // `coreTests`, `conformance`, `adminGate` and `edgeSmoke` like a Core change, never `allStorefronts`.
+// A bun.lock change that only touches stores' own workspace entries (a new store's `bun install`)
+// maps to those stores, not to every storefront and Core (packages/conformance/src/lockfile.ts).
 //   bun tools/affected.mjs [--base <ref>]     (default base: origin/main)
 // Consumed by the `check` job's Builds step in .github/workflows/ci.yml.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { storefrontLockScopeSince } from '../packages/conformance/src/lockfile.ts';
 
 // every deployable storefront: a dir under storefronts/ with a package.json, `_`-prefixed ones
 // (_template and friends) are platform-owned and covered by `smoke`
@@ -163,5 +166,11 @@ if (import.meta.main) {
     );
     process.exit(1);
   }
-  console.log(JSON.stringify(mapFiles(out.split('\n').filter(Boolean)), null, 2));
+  let files = out.split('\n').filter(Boolean);
+  const scope = files.includes('bun.lock') ? storefrontLockScopeSince(base) : null;
+  if (scope)
+    files = files
+      .filter((f) => f !== 'bun.lock')
+      .concat(scope.map((slug) => `storefronts/${slug}/package.json`));
+  console.log(JSON.stringify(mapFiles(files), null, 2));
 }

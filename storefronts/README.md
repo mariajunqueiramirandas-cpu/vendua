@@ -24,4 +24,5 @@ Reserved directories:
   always green (Phase 1).
 
 Isolation is enforced, not conventional: a `storefront:<slug>` PR may only
-touch `storefronts/<slug>/**` (changed-path CI check, Phase 1).
+touch `storefronts/<slug>/**`, plus the store's own workspace entry in `bun.lock`
+that `bun install` writes (changed-path CI check, Phase 1).
