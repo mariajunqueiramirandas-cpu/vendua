@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "page": "product",
+  "sections": [
+    {
+      "id": "purchase",
+      "type": "sdk:purchase-panel",
+      "settings": {
+        "variant": "split"
+      },
+      "blocks": {
+        "media": [
+          {
+            "id": "media",
+            "type": "store:dish-media"
+          }
+        ],
+        "after-price": [
+          {
+            "id": "stock",
+            "type": "sdk:stock-counter"
+          }
+        ],
+        "after-cta": [
+          {
+            "id": "notify",
+            "type": "sdk:notify-me"
+          }
+        ]
+      }
+    },
+    {
+      "id": "more",
+      "type": "store:menu-rail",
+      "settings": {
+        "title": "Peça também",
+        "limit": 8
+      }
+    }
+  ]
+}

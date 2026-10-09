@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "page": "catalog",
+  "sections": [{ "id": "menu", "type": "store:menu", "settings": { "title": "Cardápio" } }]
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "page": "home",
+  "sections": [
+    { "id": "hero", "type": "store:menu-hero" },
+    {
+      "id": "featured",
+      "type": "store:menu-rail",
+      "settings": { "title": "Destaques", "limit": 8 }
+    },
+    { "id": "menu", "type": "store:menu" }
+  ]
+}
