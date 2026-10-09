@@ -1,0 +1,1184 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: "Space Grotesk";
+          src: url("assets/fonts/space-grotesk-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 700;
+        }
+        @font-face {
+          font-family: "Figtree";
+          src: url("assets/fonts/figtree-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 900;
+        }
+        #stage {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+          background: #0a100d;
+          font-family: "Figtree", system-ui, sans-serif;
+          color: #f7f4ea;
+        }
+        .f6-layer {
+          position: absolute;
+          inset: 0;
+        }
+        #f6-bg {
+          background: radial-gradient(1200px 900px at 50% 38%, #123c32 0%, #0a100d 70%);
+        }
+        #f6-cam,
+        #f6-jolt {
+          transform-origin: 50% 50%;
+        }
+        .f6-grp {
+          position: absolute;
+          inset: 0;
+          visibility: hidden;
+        }
+
+        /* headlines */
+        .f6-hl {
+          position: absolute;
+          left: 64px;
+          top: 262px;
+          font-family: "Space Grotesk", system-ui, sans-serif;
+          font-weight: 700;
+          letter-spacing: -0.045em;
+          line-height: 0.9;
+          color: #f7f4ea;
+          white-space: nowrap;
+          transform-origin: 0% 0%;
+        }
+        .f6-ln {
+          display: block;
+          width: max-content;
+          height: 0.9em;
+          transform-origin: 0% 60%;
+          opacity: 0;
+        }
+        .f6-mkw {
+          position: relative;
+          display: inline-block;
+          z-index: 0;
+        }
+        .f6-mk {
+          position: absolute;
+          left: -0.08em;
+          right: -0.06em;
+          top: 0.04em;
+          bottom: -0.12em;
+          border-radius: 0.12em;
+          background: #d9f875;
+          transform-origin: 0% 50%;
+          transform: scaleX(0);
+          z-index: -1;
+        }
+
+        /* phone (frame.md, prefixed) */
+        .f6-phone {
+          width: var(--pw);
+          aspect-ratio: 600/1290;
+          position: absolute;
+        }
+        .f6-phone-body {
+          position: absolute;
+          inset: 0;
+          padding: calc(var(--pw) * 0.032);
+          border-radius: calc(var(--pw) * 0.16);
+          background: linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%);
+          box-shadow:
+            inset 0 0 0 2px rgb(255 255 255 / 0.16),
+            0 0 0 1px rgb(255 255 255 / 0.06),
+            0 40px 90px rgb(0 0 0 / 0.55);
+        }
+        .f6-phone-screen {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
+          border-radius: calc(var(--pw) * 0.13);
+          background: #0a100d;
+        }
+        .f6-phone-island {
+          position: absolute;
+          z-index: 5;
+          top: calc(var(--pw) * 0.026);
+          left: 50%;
+          width: 30%;
+          height: calc(var(--pw) * 0.074);
+          transform: translateX(-50%);
+          border-radius: 999px;
+          background: #050807;
+        }
+
+        /* S1 — seu dia */
+        #f6-p1wrap {
+          position: absolute;
+          left: 290px;
+          top: 640px;
+          width: 500px;
+          height: 1075px;
+          perspective: 2400px;
+        }
+        #f6-p1 {
+          left: 0;
+          top: 0;
+          transform-origin: 50% 40%;
+        }
+        #f6-scroll {
+          position: relative;
+          width: 100%;
+        }
+        #f6-scroll > img {
+          width: 100%;
+          display: block;
+        }
+        .f6-ring {
+          position: absolute;
+          border-radius: 16px;
+          border: 5px solid #d9f875;
+          box-shadow: 0 0 0 8px rgb(217 248 117 / 0.16);
+          opacity: 0;
+        }
+        #f6-ring1 {
+          left: 8.6%;
+          top: 41%;
+          width: 68.5%;
+          height: 5.9%;
+        }
+        #f6-ring2 {
+          left: 9.6%;
+          top: 60.4%;
+          width: 80.8%;
+          height: 19%;
+          border-radius: 26px;
+        }
+        .f6-chip {
+          position: absolute;
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 20px 30px 22px;
+          border-radius: 20px;
+          background: #d9f875;
+          color: #123c32;
+          font: 700 40px/1 "Figtree", sans-serif;
+          letter-spacing: -0.01em;
+          white-space: nowrap;
+          box-shadow: 0 24px 60px rgb(0 0 0 / 0.5);
+          opacity: 0;
+        }
+        .f6-chip svg {
+          width: 30px;
+          height: 30px;
+          flex: none;
+        }
+        #f6-c1 {
+          right: 40px;
+          top: 1118px;
+          transform-origin: 30% 0%;
+        }
+        #f6-c2 {
+          left: 44px;
+          top: 1392px;
+          transform-origin: 30% 50%;
+        }
+        #f6-c3 {
+          right: 56px;
+          top: 1468px;
+          transform-origin: 70% 0%;
+        }
+
+        /* S2 — kitchen board (after site/src/lib/demos/cozinha) */
+        #f6-tabwrap {
+          position: absolute;
+          left: 60px;
+          top: 770px;
+          width: 960px;
+          height: 620px;
+          perspective: 2400px;
+        }
+        #f6-tab {
+          position: absolute;
+          inset: 0;
+          padding: 18px;
+          border-radius: 38px;
+          background: linear-gradient(150deg, #1c4a3e 0%, #0d2f27 45%, #08211b 100%);
+          box-shadow:
+            inset 0 0 0 2px rgb(255 255 255 / 0.1),
+            0 0 0 1px rgb(255 255 255 / 0.05),
+            0 50px 110px rgb(0 0 0 / 0.6);
+          transform-origin: 50% 60%;
+        }
+        .f6-tcam {
+          position: absolute;
+          left: 7px;
+          top: 50%;
+          width: 6px;
+          height: 6px;
+          margin-top: -3px;
+          border-radius: 50%;
+          background: #26302b;
+        }
+        .f6-scr {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
+          border-radius: 20px;
+          background: #f7f4ea;
+          color: #123c32;
+          font-family: "Figtree", sans-serif;
+        }
+        .f6-top {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          height: 62px;
+          padding: 0 20px;
+          border-bottom: 1px solid rgb(18 60 50 / 0.12);
+          background: rgb(255 253 248 / 0.7);
+        }
+        .f6-ttl {
+          font: 600 27px/1 "Space Grotesk", sans-serif;
+          letter-spacing: -0.015em;
+        }
+        .f6-station {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          height: 38px;
+          padding: 0 16px;
+          border-radius: 999px;
+          background: #fffdf8;
+          box-shadow: inset 0 0 0 1px rgb(18 60 50 / 0.2);
+          font: 600 18px/1 "Figtree", sans-serif;
+        }
+        .f6-stack {
+          width: 14px;
+          height: 14px;
+          border-radius: 3px;
+          box-shadow:
+            inset 0 0 0 2px currentColor,
+            3px -3px 0 -1px #fffdf8,
+            4px -4px 0 0 currentColor;
+        }
+        .f6-cols {
+          position: relative;
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 14px;
+          height: calc(100% - 62px);
+          padding: 16px;
+          box-sizing: border-box;
+        }
+        .f6-col {
+          border-radius: 18px;
+          background: rgb(18 60 50 / 0.045);
+          box-shadow: inset 0 0 0 1px rgb(18 60 50 / 0.07);
+        }
+        .f6-col-h {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          height: 52px;
+          padding: 0 14px;
+          font: 700 21px/1 "Figtree", sans-serif;
+        }
+        .f6-cnt {
+          display: grid;
+          place-items: center;
+          min-width: 30px;
+          height: 30px;
+          padding: 0 6px;
+          box-sizing: border-box;
+          border-radius: 999px;
+          font: 700 17px/1 "Space Grotesk", sans-serif;
+        }
+        .f6-cnt-novo {
+          background: #d9f875;
+          color: #123c32;
+        }
+        .f6-cnt-prep {
+          background: #fff0d6;
+          color: #9a5200;
+        }
+        .f6-cnt-ok {
+          background: #ddf3e6;
+          color: #1f7a4d;
+        }
+        .f6-tk {
+          position: absolute;
+          left: 26px;
+          top: 68px;
+          width: 268px;
+          overflow: hidden;
+          border-radius: 15px;
+          background: #fffdf8;
+          box-shadow:
+            0 0 0 1px rgb(18 60 50 / 0.12),
+            0 6px 16px rgb(18 60 50 / 0.1);
+          transform-origin: 50% 0%;
+        }
+        .f6-fuse {
+          height: 6px;
+          background: #efe9d8;
+        }
+        .f6-fuse span {
+          display: block;
+          height: 100%;
+          background: #1f7a4d;
+        }
+        .f6-tk-h {
+          display: flex;
+          align-items: baseline;
+          gap: 8px;
+          padding: 12px 14px 12px;
+        }
+        .f6-tk-n {
+          font: 600 32px/1 "Space Grotesk", sans-serif;
+          letter-spacing: -0.02em;
+        }
+        .f6-tk-who {
+          flex: 1;
+          font: 600 19px/1 "Figtree", sans-serif;
+          color: #4f6a5e;
+        }
+        .f6-tag {
+          align-self: center;
+          padding: 6px 11px;
+          border-radius: 999px;
+          background: #d9f875;
+          font: 700 14px/1 "Figtree", sans-serif;
+        }
+        .f6-it {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 9px 14px;
+          border-top: 1px solid rgb(18 60 50 / 0.12);
+        }
+        .f6-q {
+          display: grid;
+          place-items: center;
+          flex: none;
+          min-width: 38px;
+          height: 38px;
+          border-radius: 9px;
+          background: #efe9d8;
+          font: 700 18px/1 "Space Grotesk", sans-serif;
+        }
+        .f6-q.f6-many {
+          background: #123c32;
+          color: #fffdf8;
+        }
+        .f6-nm {
+          padding-top: 3px;
+          font: 700 18px/1.2 "Figtree", sans-serif;
+        }
+        .f6-tk-f {
+          position: relative;
+          height: 50px;
+          margin: 0;
+          padding: 9px;
+          border-top: 1px solid rgb(18 60 50 / 0.12);
+        }
+        .f6-act {
+          position: absolute;
+          inset: 9px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          border-radius: 10px;
+          font: 700 18px/1 "Figtree", sans-serif;
+        }
+        .f6-act svg {
+          width: 20px;
+          height: 20px;
+        }
+        .f6-a-start {
+          background: #fff0d6;
+          color: #9a5200;
+        }
+        .f6-a-quiet {
+          background: #efe9d8;
+          box-shadow: inset 0 0 0 1px rgb(18 60 50 / 0.2);
+        }
+        .f6-a-ok {
+          background: #ddf3e6;
+          color: #1f7a4d;
+          font-size: 16px;
+        }
+        .f6-flash {
+          position: absolute;
+          inset: 0;
+          border-radius: 15px;
+          box-shadow: inset 0 0 0 4px #d9f875;
+          background: rgb(240 252 201 / 0.55);
+          opacity: 0;
+        }
+
+        /* S3 — printer + receipt */
+        #f6-prn {
+          position: absolute;
+          left: 150px;
+          top: 712px;
+          width: 780px;
+          height: 210px;
+          transform-origin: 50% 100%;
+        }
+        .f6-lid {
+          position: absolute;
+          left: 30px;
+          right: 30px;
+          top: 0;
+          height: 74px;
+          border-radius: 44px 44px 8px 8px;
+          background: linear-gradient(180deg, #1d4a3e 0%, #123c32 100%);
+          box-shadow: inset 0 2px 0 rgb(255 255 255 / 0.12);
+        }
+        .f6-front {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 64px;
+          bottom: 0;
+          border-radius: 26px 26px 34px 34px;
+          background: linear-gradient(170deg, #17201b 0%, #0d1411 60%, #070b09 100%);
+          box-shadow:
+            inset 0 0 0 2px rgb(255 255 255 / 0.08),
+            0 40px 90px rgb(0 0 0 / 0.6);
+        }
+        .f6-led {
+          position: absolute;
+          right: 56px;
+          top: 40px;
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          background: #d9f875;
+          box-shadow: 0 0 14px rgb(217 248 117 / 0.6);
+        }
+        .f6-btn {
+          position: absolute;
+          right: 92px;
+          top: 34px;
+          width: 54px;
+          height: 26px;
+          border-radius: 13px;
+          background: #1b2621;
+          box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.07);
+        }
+        .f6-prnmark {
+          position: absolute;
+          left: 52px;
+          top: 30px;
+          width: 34px;
+          height: 34px;
+        }
+        .f6-slot {
+          position: absolute;
+          left: 40px;
+          right: 40px;
+          bottom: 22px;
+          height: 14px;
+          border-radius: 7px;
+          background: #020403;
+          box-shadow: inset 0 3px 4px rgb(0 0 0 / 0.9);
+        }
+        #f6-clip {
+          position: absolute;
+          left: 200px;
+          top: 908px;
+          width: 680px;
+          height: 0;
+          transform-origin: 50% 0%;
+        }
+        #f6-pc {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 0;
+          bottom: 16px;
+          overflow: hidden;
+        }
+        #f6-paperwrap {
+          position: absolute;
+          left: 0;
+          top: 908px;
+          width: 1080px;
+          height: 700px;
+          pointer-events: none;
+        }
+        #f6-paper {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 0;
+          height: 508px;
+          box-sizing: border-box;
+          padding: 26px 34px 0;
+          background: #fffdf8;
+          color: #123c32;
+          font: 500 30px/1 "Figtree", sans-serif;
+          font-variant-numeric: tabular-nums;
+          letter-spacing: 0.01em;
+        }
+        #f6-paper::before {
+          content: "";
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 0;
+          height: 26px;
+          background: linear-gradient(180deg, rgb(10 16 13 / 0.18), rgb(10 16 13 / 0));
+        }
+        .f6-zig {
+          position: absolute;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          height: 16px;
+          background:
+            linear-gradient(135deg, #fffdf8 50%, transparent 50%) 0 0 / 40px 16px repeat-x,
+            linear-gradient(225deg, #fffdf8 50%, transparent 50%) 0 0 / 40px 16px repeat-x;
+        }
+        .f6-r {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          white-space: nowrap;
+          opacity: 0;
+        }
+        .f6-r0 {
+          height: 48px;
+          justify-content: center;
+          font: 700 34px/1 "Space Grotesk", sans-serif;
+          letter-spacing: -0.02em;
+        }
+        .f6-r1,
+        .f6-r2 {
+          height: 42px;
+          justify-content: center;
+          color: #4f6a5e;
+        }
+        .f6-ri {
+          height: 46px;
+        }
+        .f6-sep {
+          height: 26px;
+          background: repeating-linear-gradient(90deg, rgb(18 60 50 / 0.45) 0 10px, transparent 10px 18px) 0 50% / 100% 2px no-repeat;
+        }
+        .f6-tot {
+          position: relative;
+          height: 58px;
+          font-weight: 800;
+          font-size: 34px;
+          z-index: 0;
+        }
+        #f6-totmk {
+          position: absolute;
+          left: -14px;
+          right: -14px;
+          top: 2px;
+          bottom: 2px;
+          border-radius: 10px;
+          background: #d9f875;
+          transform-origin: 0% 50%;
+          transform: scaleX(0);
+          z-index: -1;
+        }
+
+        /* S4 — loyalty card */
+        #f6-cardwrap {
+          position: absolute;
+          left: 100px;
+          top: 690px;
+          width: 880px;
+          height: 520px;
+          perspective: 2400px;
+        }
+        #f6-card {
+          position: absolute;
+          inset: 0;
+          box-sizing: border-box;
+          padding: 44px 50px;
+          border-radius: 32px;
+          background: #fffdf8;
+          color: #123c32;
+          box-shadow:
+            0 0 0 1px rgb(18 60 50 / 0.12),
+            0 50px 110px rgb(0 0 0 / 0.55);
+          transform-origin: 50% 50%;
+        }
+        .f6-ch {
+          display: flex;
+          align-items: center;
+          gap: 22px;
+        }
+        .f6-bn {
+          display: grid;
+          place-items: center;
+          flex: none;
+          width: 86px;
+          height: 86px;
+          border-radius: 50%;
+          background: #d9f875;
+          box-shadow: 0 0 0 4px #fffdf8, 0 0 0 7px #d9f875;
+          font: 700 32px/1 "Space Grotesk", sans-serif;
+          letter-spacing: -0.03em;
+        }
+        .f6-cn {
+          font: 700 46px/1 "Space Grotesk", sans-serif;
+          letter-spacing: -0.03em;
+        }
+        .f6-cs {
+          margin-top: 8px;
+          font: 600 28px/1 "Figtree", sans-serif;
+          color: #4f6a5e;
+        }
+        .f6-grid {
+          display: grid;
+          grid-template-columns: repeat(5, 112px);
+          grid-auto-rows: 112px;
+          justify-content: space-between;
+          row-gap: 34px;
+          margin-top: 48px;
+        }
+        .f6-slot5 {
+          position: relative;
+          border-radius: 50%;
+          box-shadow: inset 0 0 0 3px rgb(18 60 50 / 0.18);
+          background: #f7f4ea;
+        }
+        .f6-stamp {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          border-radius: 50%;
+          background: #d9f875;
+          box-shadow: inset 0 0 0 3px rgb(18 60 50 / 0.12);
+          opacity: 0;
+        }
+        .f6-stamp svg {
+          width: 74px;
+          height: 74px;
+        }
+        .f6-shock {
+          position: absolute;
+          inset: -6px;
+          border-radius: 50%;
+          border: 5px solid #d9f875;
+          opacity: 0;
+        }
+        #f6-under {
+          position: absolute;
+          left: 64px;
+          right: 64px;
+          top: 1268px;
+          height: 140px;
+        }
+        .f6-cnt4 {
+          position: absolute;
+          left: 0;
+          top: 0;
+          font: 700 120px/1 "Space Grotesk", sans-serif;
+          letter-spacing: -0.045em;
+          color: #f7f4ea;
+          opacity: 0;
+          transform-origin: 0% 60%;
+        }
+        .f6-cnt4 span {
+          color: #b9c6bf;
+          font-size: 0.5em;
+          letter-spacing: -0.02em;
+        }
+        #f6-volta {
+          position: absolute;
+          left: 0;
+          top: 6px;
+          font: 700 104px/1 "Space Grotesk", sans-serif;
+          letter-spacing: -0.045em;
+          color: #f7f4ea;
+          white-space: nowrap;
+          opacity: 0;
+          transform-origin: 0% 60%;
+        }
+
+        /* wipe + grain */
+        #f6-wipe {
+          position: absolute;
+          left: 0;
+          top: -10%;
+          width: 1700px;
+          height: 120%;
+          background: #d9f875;
+          transform: translateX(-2200px) skewX(-12deg);
+        }
+        .f6-grain {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          opacity: 0.07;
+          mix-blend-mode: overlay;
+          pointer-events: none;
+        }
+      </style>
+
+      <div id="stage" data-composition-id="06-smart" data-width="1080" data-height="1920">
+        <div id="f6-bg" class="f6-layer"></div>
+
+        <div id="f6-cam" class="f6-layer">
+          <div id="f6-jolt" class="f6-layer">
+            <!-- S1 · seu dia -->
+            <div id="f6-g1" class="f6-grp">
+              <div id="f6-p1wrap">
+                <div id="f6-p1" class="f6-phone" style="--pw: 500px">
+                  <div class="f6-phone-body">
+                    <div class="f6-phone-screen">
+                      <span class="f6-phone-island"></span>
+                      <div id="f6-scroll">
+                        <img src="assets/screens/seuDia-noite-750.webp" alt="" />
+                        <div id="f6-ring1" class="f6-ring"></div>
+                        <div id="f6-ring2" class="f6-ring"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="f6-c1" class="f6-chip">
+                <svg viewBox="0 0 30 30"><path d="M15 4 L28 26 L2 26 Z" fill="#123c32" /></svg>151% vs. semana passada
+              </div>
+              <div id="f6-c2" class="f6-chip">Campeão: fatia de cenoura</div>
+              <div id="f6-c3" class="f6-chip">Pico às 18h</div>
+              <div id="f6-h1" class="f6-hl" style="font-size: 168px">
+                <span id="f6-h1a" class="f6-ln">Seu dia,</span>
+                <span id="f6-h1b" class="f6-ln"
+                  ><span class="f6-mkw"><span id="f6-mk1" class="f6-mk"></span>resumido.</span></span
+                >
+              </div>
+            </div>
+
+            <!-- S2 · tela da cozinha -->
+            <div id="f6-g2" class="f6-grp">
+              <div id="f6-tabwrap">
+                <div id="f6-tab">
+                  <span class="f6-tcam"></span>
+                  <div class="f6-scr">
+                    <div class="f6-top">
+                      <span class="f6-ttl">Cozinha</span>
+                      <span class="f6-station"><span class="f6-stack"></span>Tudo</span>
+                    </div>
+                    <div class="f6-cols">
+                      <div class="f6-col">
+                        <div class="f6-col-h">
+                          Novos
+                          <span class="f6-cnt f6-cnt-novo"><span id="f6-n0">1</span></span>
+                        </div>
+                      </div>
+                      <div class="f6-col">
+                        <div class="f6-col-h">
+                          Preparo
+                          <span class="f6-cnt f6-cnt-prep"><span id="f6-n1">0</span></span>
+                        </div>
+                      </div>
+                      <div class="f6-col">
+                        <div class="f6-col-h">
+                          Prontos
+                          <span class="f6-cnt f6-cnt-ok"><span id="f6-n2">0</span></span>
+                        </div>
+                      </div>
+
+                      <div id="f6-t28" class="f6-tk">
+                        <div class="f6-fuse"><span id="f6-fuse28" style="width: 8%"></span></div>
+                        <div class="f6-tk-h">
+                          <span class="f6-tk-n">#28</span><span class="f6-tk-who">Mariana</span>
+                        </div>
+                        <div class="f6-it">
+                          <span class="f6-q f6-many">2×</span><span class="f6-nm">Bolo de milho cremoso</span>
+                        </div>
+                        <div class="f6-tk-f">
+                          <span id="f6-a28a" class="f6-act f6-a-start">começar</span>
+                          <span id="f6-a28b" class="f6-act f6-a-quiet" style="opacity: 0"
+                            ><svg viewBox="0 0 24 24">
+                              <path d="M5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" /></svg
+                            >pronto</span
+                          >
+                          <span id="f6-a28c" class="f6-act f6-a-ok" style="opacity: 0">esperando o entregador</span>
+                        </div>
+                        <div id="f6-flash28" class="f6-flash"></div>
+                      </div>
+
+                      <div id="f6-t29" class="f6-tk">
+                        <div class="f6-fuse"><span style="width: 10%"></span></div>
+                        <div class="f6-tk-h">
+                          <span class="f6-tk-n">#29</span><span class="f6-tk-who">Luiz</span
+                          ><span class="f6-tag">novo</span>
+                        </div>
+                        <div class="f6-it">
+                          <span class="f6-q">1×</span><span class="f6-nm">Bolo de laranja com calda</span>
+                        </div>
+                        <div class="f6-it">
+                          <span class="f6-q f6-many">2×</span><span class="f6-nm">Bolo de milho cremoso</span>
+                        </div>
+                        <div class="f6-it">
+                          <span class="f6-q f6-many">2×</span><span class="f6-nm">Bolo de chocolate molhadinho</span>
+                        </div>
+                        <div class="f6-tk-f">
+                          <span class="f6-act f6-a-start">começar</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="f6-h2" class="f6-hl" style="font-size: 168px">
+                <span id="f6-h2a" class="f6-ln">Tela da</span>
+                <span id="f6-h2b" class="f6-ln">cozinha.</span>
+              </div>
+            </div>
+
+            <!-- S3 · comanda impressa -->
+            <div id="f6-g3" class="f6-grp">
+              <div id="f6-paperwrap">
+                <div id="f6-clip" style="top: 0">
+                  <div id="f6-pc">
+                  <div id="f6-paper">
+                    <div class="f6-r f6-r0">Bolos da Nena</div>
+                    <div class="f6-r f6-r1">Pedido #29 · entrega</div>
+                    <div class="f6-r f6-r2">Luiz Fernando</div>
+                    <div class="f6-r f6-sep"></div>
+                    <div class="f6-r f6-ri"><span>1× Bolo de laranja com calda</span><span>R$ 38,00</span></div>
+                    <div class="f6-r f6-ri"><span>2× Bolo de milho cremoso</span><span>R$ 80,00</span></div>
+                    <div class="f6-r f6-ri"><span>2× Bolo de chocolate molhadinho</span><span>R$ 96,00</span></div>
+                    <div class="f6-r f6-ri"><span>Entrega</span><span>R$ 5,00</span></div>
+                    <div class="f6-r f6-sep"></div>
+                    <div class="f6-r f6-tot"><span id="f6-totmk"></span><span>Total</span><span>R$ 219,00</span></div>
+                  </div>
+                  </div>
+                  <div class="f6-zig"></div>
+                </div>
+              </div>
+              <div id="f6-prn">
+                <div class="f6-lid"></div>
+                <div class="f6-front">
+                  <svg class="f6-prnmark" viewBox="0 0 128 128">
+                    <path d="M32 48 L61 88 L98 34" fill="none" stroke="#d9f875" stroke-width="17" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <span class="f6-btn"></span>
+                  <span class="f6-led"></span>
+                  <span class="f6-slot"></span>
+                </div>
+              </div>
+              <div id="f6-h3" class="f6-hl" style="font-size: 150px">
+                <span id="f6-h3a" class="f6-ln">Comanda</span>
+                <span id="f6-h3b" class="f6-ln">impressa</span>
+                <span id="f6-h3c" class="f6-ln"
+                  ><span class="f6-mkw"><span id="f6-mk3" class="f6-mk"></span>sozinha.</span></span
+                >
+              </div>
+            </div>
+
+            <!-- S4 · cartão fidelidade -->
+            <div id="f6-g4" class="f6-grp">
+              <div id="f6-g4in" class="f6-layer">
+                <div id="f6-cardwrap">
+                  <div id="f6-card">
+                    <div class="f6-ch">
+                      <span class="f6-bn">BN</span>
+                      <div>
+                        <div class="f6-cn">Bolos da Nena</div>
+                        <div class="f6-cs">Cartão fidelidade</div>
+                      </div>
+                    </div>
+                    <div class="f6-grid" id="f6-grid"></div>
+                  </div>
+                </div>
+                <div id="f6-under">
+                  <div id="f6-k1" class="f6-cnt4">1<span>/10</span></div>
+                  <div id="f6-k2" class="f6-cnt4">2<span>/10</span></div>
+                  <div id="f6-k3" class="f6-cnt4">3<span>/10</span></div>
+                  <div id="f6-k4" class="f6-cnt4">4<span>/10</span></div>
+                  <div id="f6-k5" class="f6-cnt4">5<span>/10</span></div>
+                  <div id="f6-k6" class="f6-cnt4">6<span>/10</span></div>
+                  <div id="f6-volta">Cliente que volta.</div>
+                </div>
+                <div id="f6-h4" class="f6-hl" style="font-size: 168px">
+                  <span id="f6-h4a" class="f6-ln">Cartão</span>
+                  <span id="f6-h4b" class="f6-ln">fidelidade.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="f6-wipe"></div>
+        <svg class="f6-grain" xmlns="http://www.w3.org/2000/svg">
+          <filter id="f6-noise">
+            <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" />
+          </filter>
+          <rect width="100%" height="100%" filter="url(#f6-noise)" />
+        </svg>
+      </div>
+
+      <script>
+        (function () {
+          window.__timelines = window.__timelines || {};
+          const tl = gsap.timeline({ paused: true });
+          const B = 0.46875; // beat
+          const E = B / 2; // eighth
+          const S = B / 4; // sixteenth
+          const BAR = 1.875;
+          const T1 = 0,
+            T2 = BAR,
+            T3 = 2 * BAR,
+            T4 = 3 * BAR;
+          const CHECK =
+            '<svg viewBox="0 0 128 128"><path d="M32 48 L61 88 L98 34" fill="none" stroke="#123c32" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+          // loyalty-card slots (built before any tween targets them)
+          const grid = document.getElementById("f6-grid");
+          for (let i = 0; i < 10; i++) {
+            const s = document.createElement("div");
+            s.className = "f6-slot5";
+            s.innerHTML =
+              '<div class="f6-shock" id="f6-sh' + i + '"></div><div class="f6-stamp" id="f6-st' + i + '">' + CHECK + "</div>";
+            grid.appendChild(s);
+          }
+
+          function slam(sel, at, from) {
+            tl.fromTo(
+              sel,
+              { opacity: 0, scale: from || 1.18, filter: "blur(14px)" },
+              { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.16, ease: "power4.out" },
+              at - 0.06,
+            );
+          }
+          function marker(mk, textSel, at) {
+            tl.fromTo(textSel, { color: "#f7f4ea" }, { color: "#123c32", duration: 0.16, ease: "power2.in", immediateRender: false }, at + 0.02);
+            tl.to(mk, { scaleX: 1, duration: 0.18, ease: "power3.out" }, at);
+          }
+          function punch(at, amt) {
+            tl.fromTo("#f6-cam", { scale: amt }, { scale: 1, duration: 0.55, ease: "power3.out", immediateRender: false }, at);
+          }
+          // lime band crossing the stage, covering it exactly on `at`
+          function wipe(at) {
+            tl.fromTo(
+              "#f6-wipe",
+              { x: -1945, skewX: -12 },
+              { x: 1325, skewX: -12, duration: 0.24, ease: "none", immediateRender: false },
+              at - 0.12,
+            );
+          }
+
+          // group visibility (0 ms cuts)
+          tl.set("#f6-g1", { visibility: "visible" }, 0);
+          tl.set("#f6-g1", { visibility: "hidden" }, T2);
+          tl.set("#f6-g2", { visibility: "visible" }, T2);
+          tl.set("#f6-g2", { visibility: "hidden" }, T3);
+          tl.set("#f6-g3", { visibility: "visible" }, T3);
+          tl.set("#f6-g3", { visibility: "hidden" }, T4);
+          tl.set("#f6-g4", { visibility: "visible" }, T4);
+
+          // ── S1 · 0–1.875 · seu dia, resumido ──────────────────────────
+          tl.fromTo("#f6-cam", { scale: 1.05 }, { scale: 1, duration: 0.5, ease: "power3.out" }, 0);
+          tl.fromTo(
+            "#f6-h1a",
+            { opacity: 0.55, scale: 1.08, filter: "blur(6px)" },
+            { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.1, ease: "power4.out" },
+            0,
+          );
+          slam("#f6-h1b", T1 + E);
+          marker("#f6-mk1", "#f6-h1b", T1 + E + 0.12);
+          tl.fromTo("#f6-h1", { scale: 1 }, { scale: 1.025, duration: 1.6, ease: "sine.inOut" }, 0.2);
+          // phone whips up into place, then drifts in 3D
+          tl.fromTo(
+            "#f6-p1",
+            { y: 200, skewY: 3, filter: "blur(5px)" },
+            { y: 0, skewY: 0, filter: "blur(0px)", duration: 0.3, ease: "expo.out" },
+            0,
+          );
+          tl.fromTo(
+            "#f6-p1",
+            { rotationY: -10, rotationX: 6, scale: 1 },
+            { rotationY: 7, rotationX: 2, scale: 1.035, duration: 1.85, ease: "sine.inOut" },
+            0,
+          );
+                    // callout pops on beats
+          const chips = [
+            ["#f6-c1", -3, "#f6-ring1"],
+            ["#f6-c2", 2.5, "#f6-ring2"],
+            ["#f6-c3", -2, null],
+          ];
+          chips.forEach(function (c, i) {
+            const at = T1 + (i + 1) * B;
+            tl.fromTo(
+              c[0],
+              { opacity: 0, scale: 0.35, rotation: c[1] * 5, filter: "blur(8px)" },
+              { opacity: 1, scale: 1, rotation: c[1], filter: "blur(0px)", duration: 0.26, ease: "back.out(2.2)" },
+              at - 0.07,
+            );
+            tl.to(c[0], { y: -8 - i * 3, duration: 1.3 - i * 0.4, ease: "sine.inOut" }, at + 0.2);
+            if (c[2]) {
+              tl.fromTo(
+                c[2],
+                { opacity: 0, scale: 1.18 },
+                { opacity: 1, scale: 1, duration: 0.2, ease: "power3.out" },
+                at - 0.04,
+              );
+            }
+            tl.fromTo("#f6-p1wrap", { scale: 1.025 }, { scale: 1, duration: 0.3, ease: "power3.out", immediateRender: false }, at);
+          });
+          tl.set("#f6-ring1", { opacity: 0.35 }, T1 + 2 * B);
+          tl.fromTo("#f6-ring2", { scale: 1.06 }, { scale: 1, duration: 0.25, ease: "power3.out", immediateRender: false }, T1 + 3 * B);
+
+          // ── S2 · 1.875–3.75 · tela da cozinha ─────────────────────────
+          wipe(T2);
+          punch(T2, 1.05);
+          slam("#f6-h2a", T2);
+          slam("#f6-h2b", T2 + E);
+          tl.fromTo("#f6-h2", { scale: 1 }, { scale: 1.025, duration: 1.6, ease: "sine.inOut" }, T2 + 0.2);
+          tl.fromTo(
+            "#f6-tab",
+            { y: 180, rotationX: 14, rotationY: -6, scale: 0.94, filter: "blur(6px)" },
+            { y: 0, rotationX: 8, rotationY: -3, scale: 1, filter: "blur(0px)", duration: 0.32, ease: "expo.out" },
+            T2,
+          );
+          tl.to("#f6-tab", { rotationX: 3, rotationY: 4, scale: 1.03, duration: 1.5, ease: "sine.inOut" }, T2 + 0.32);
+          tl.set("#f6-t29", { opacity: 0 }, T2);
+          // #28 in Novos, already there
+          tl.fromTo("#f6-t28", { x: 0, y: -40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.2, ease: "power3.out" }, T2);
+          tl.to("#f6-fuse28", { width: "46%", duration: 1.4, ease: "none" }, T2);
+          const COL = 302;
+          // #28 → Preparo
+          const M1 = T2 + B;
+          tl.to("#f6-t28", { x: COL, duration: 0.26, ease: "power3.inOut" }, M1 - 0.16);
+          tl.fromTo("#f6-t28", { rotation: 0 }, { rotation: 3, duration: 0.13, ease: "power2.out", yoyo: true, repeat: 1, immediateRender: false }, M1 - 0.16);
+          tl.set("#f6-n0", { textContent: "0" }, M1);
+          tl.set("#f6-n1", { textContent: "1" }, M1);
+          tl.set("#f6-a28a", { opacity: 0 }, M1);
+          tl.set("#f6-a28b", { opacity: 1 }, M1);
+          tl.fromTo("#f6-tab", { y: 6 }, { y: 0, duration: 0.2, ease: "power2.out", immediateRender: false }, M1);
+          // #29 lands in Novos
+          const M2 = T2 + 2 * B;
+          tl.fromTo(
+            "#f6-t29",
+            { opacity: 0, y: -360, scale: 1.08, filter: "blur(8px)" },
+            { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.24, ease: "back.out(1.4)" },
+            M2 - 0.1,
+          );
+          tl.set("#f6-n0", { textContent: "1" }, M2);
+          tl.fromTo("#f6-tab", { y: 8 }, { y: 0, duration: 0.22, ease: "power2.out", immediateRender: false }, M2);
+          // #28 → Prontos
+          const M3 = T2 + 3 * B;
+          tl.to("#f6-t28", { x: 2 * COL, duration: 0.26, ease: "power3.inOut" }, M3 - 0.16);
+          tl.fromTo("#f6-t28", { rotation: 0 }, { rotation: 3, duration: 0.13, ease: "power2.out", yoyo: true, repeat: 1, immediateRender: false }, M3 - 0.16);
+          tl.set("#f6-n1", { textContent: "0" }, M3);
+          tl.set("#f6-n2", { textContent: "1" }, M3);
+          tl.set("#f6-a28b", { opacity: 0 }, M3);
+          tl.set("#f6-a28c", { opacity: 1 }, M3);
+          tl.set("#f6-fuse28", { width: "100%" }, M3);
+          tl.fromTo("#f6-flash28", { opacity: 1 }, { opacity: 0, duration: 0.45, ease: "power2.in", immediateRender: false }, M3 + 0.05);
+          tl.fromTo("#f6-t28", { scale: 1.06 }, { scale: 1, duration: 0.25, ease: "power3.out", immediateRender: false }, M3);
+
+          // ── S3 · 3.75–5.625 · comanda impressa sozinha ────────────────
+          wipe(T3);
+          punch(T3, 1.05);
+          slam("#f6-h3a", T3);
+          slam("#f6-h3b", T3 + E);
+          slam("#f6-h3c", T3 + B);
+          marker("#f6-mk3", "#f6-h3c", T3 + B + 0.1);
+          tl.fromTo("#f6-h3", { scale: 1 }, { scale: 1.025, duration: 1.6, ease: "sine.inOut" }, T3 + 0.2);
+          tl.fromTo(
+            "#f6-prn",
+            { y: -220, filter: "blur(8px)" },
+            { y: 0, filter: "blur(0px)", duration: 0.26, ease: "expo.out" },
+            T3,
+          );
+          // rows: heights must match the CSS above
+          const rowH = [48, 42, 42, 26, 46, 46, 46, 46, 26, 58];
+          const rows = document.querySelectorAll("#f6-paper .f6-r");
+          let acc = 26;
+          tl.set("#f6-clip", { height: 0 }, T3);
+          rowH.forEach(function (h, i) {
+            acc += h;
+            const at = T3 + i * S;
+            tl.to("#f6-clip", { height: acc + 16, duration: 0.08, ease: "power2.out" }, at);
+            tl.fromTo(rows[i], { opacity: 0, filter: "blur(4px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.07, ease: "none" }, at);
+            if (i > 2) tl.fromTo("#f6-prn", { y: i % 2 ? -4 : 4 }, { y: 0, duration: 0.08, ease: "power1.out", immediateRender: false }, at);
+          });
+          // tear off: the tail feeds out on 34.9
+          const TEAR = 4.9;
+          tl.to("#f6-clip", { height: acc + 26 + 16, duration: 0.1, ease: "power2.out" }, TEAR);
+          tl.fromTo("#f6-clip", { rotation: 0 }, { rotation: -1.6, duration: 0.6, ease: "sine.inOut", immediateRender: false }, TEAR);
+          tl.fromTo("#f6-prn", { scale: 1.03 }, { scale: 1, duration: 0.2, ease: "power3.out", immediateRender: false }, TEAR);
+          // total gets the marker on the beat
+          const TOT = T3 + 3 * B;
+          tl.to("#f6-totmk", { scaleX: 1, duration: 0.18, ease: "power3.out" }, TOT - 0.02);
+          punch(TOT, 1.03);
+
+          // ── S4 · 5.625–7.5 · cartão fidelidade ────────────────────────
+          wipe(T4);
+          punch(T4, 1.05);
+          slam("#f6-h4a", T4);
+          slam("#f6-h4b", T4 + E);
+          tl.fromTo("#f6-h4", { scale: 1 }, { scale: 1.025, duration: 1.6, ease: "sine.inOut" }, T4 + 0.2);
+          tl.fromTo(
+            "#f6-card",
+            { y: 240, rotationX: 18, rotationZ: -4, scale: 0.92, filter: "blur(8px)" },
+            { y: 0, rotationX: 6, rotationZ: -1.5, scale: 1, filter: "blur(0px)", duration: 0.3, ease: "expo.out" },
+            T4 - 0.06,
+          );
+          tl.to("#f6-card", { rotationX: 0, rotationY: 5, rotationZ: 1, duration: 1.5, ease: "sine.inOut" }, T4 + 0.25);
+          for (let i = 0; i < 7; i++) {
+            const at = T4 + i * E;
+            tl.fromTo(
+              "#f6-st" + i,
+              { opacity: 0, scale: 1.7, rotation: -18 + i * 5 },
+              { opacity: 1, scale: 1, rotation: 0, duration: 0.12, ease: "power4.in" },
+              at - 0.12,
+            );
+            tl.fromTo(
+              "#f6-sh" + i,
+              { opacity: 1, scale: 1 },
+              { opacity: 0, scale: 1.7, duration: 0.36, ease: "power2.out", immediateRender: false },
+              at,
+            );
+            tl.fromTo(
+              "#f6-cardwrap",
+              { y: 10, scale: 0.985 },
+              { y: 0, scale: 1, duration: 0.2, ease: "power3.out", immediateRender: false },
+              at,
+            );
+            if (i < 6) {
+              const k = "#f6-k" + (i + 1);
+              if (i > 0) tl.set("#f6-k" + i, { opacity: 0 }, at);
+              tl.set(k, { opacity: 1 }, at);
+              tl.fromTo(k, { scale: 1.14 }, { scale: 1, duration: 0.16, ease: "power3.out", immediateRender: false }, at);
+            }
+          }
+          const VOLTA = T4 + 6 * E; // 7.03125
+          tl.set("#f6-k6", { opacity: 0 }, VOLTA - 0.06);
+          slam("#f6-volta", VOLTA, 1.22);
+          punch(VOLTA, 1.04);
+          // exit whip up and out
+          const EXIT = 7.35;
+          tl.to("#f6-g4in", { y: -1300, skewY: -5, filter: "blur(18px)", duration: 0.12, ease: "power2.in" }, EXIT);
+          tl.set("#f6-g4", { visibility: "hidden" }, 7.5);
+
+          tl.set({}, {}, 7.5);
+          tl.seek(0);
+          window.__timelines["06-smart"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>
