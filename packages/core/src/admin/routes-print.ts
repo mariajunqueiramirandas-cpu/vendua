@@ -67,12 +67,12 @@ async function overview(tx: Sql, tenantId: string) {
 
 export function mountPrinting(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   // attendants read it too: the order screen asks whether there's a printer to send to
   admin.get(
     '/printers',
-    read('attendant', (tx, t) => overview(tx, t.id)),
+    named('printers').read('attendant', (tx, t) => overview(tx, t.id)),
   );
 
   admin.patch(

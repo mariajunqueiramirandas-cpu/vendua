@@ -82,11 +82,11 @@ async function nextMorning(tx: Sql, tenantId: string): Promise<Date> {
 
 export function mountVendedor(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   admin.get(
     '/vendedor',
-    read('attendant', async (tx, t) => homeView(tx, t.id)),
+    named('vendedor').read('attendant', async (tx, t) => homeView(tx, t.id)),
   );
 
   // ── conversations ─────────────────────────────────────────────────────────
@@ -433,7 +433,7 @@ export function mountVendedor(d: AdminDeps) {
 
   admin.get(
     '/vendedor/settings',
-    read('manager', async (tx, t) => settingsView(tx, t.id)),
+    named('vendedor.settings').read('manager', async (tx, t) => settingsView(tx, t.id)),
   );
 
   admin.patch(
@@ -661,7 +661,7 @@ export function mountVendedor(d: AdminDeps) {
   // ── teaching ──────────────────────────────────────────────────────────────
   admin.get(
     '/vendedor/knowledge',
-    read('manager', async (tx, t) => knowledgeView(tx, t.id)),
+    named('vendedor.knowledge').read('manager', async (tx, t) => knowledgeView(tx, t.id)),
   );
 
   admin.get(
@@ -829,7 +829,7 @@ export function mountVendedor(d: AdminDeps) {
 
   admin.get(
     '/vendedor/resultados',
-    read('manager', async (tx, t, _m, c) => {
+    named('vendedor.results').read('manager', async (tx, t, _m, c) => {
       const period = oneOf(c.req.query('period') ?? '7d', 'period', [
         'today',
         '7d',

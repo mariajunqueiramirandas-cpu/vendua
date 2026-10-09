@@ -111,7 +111,7 @@ function recorded(row: {
 
 export function mountTeam(d: AdminDeps) {
   const { admin, sql } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   // Sends after the claim tx commits (so a rolled-back add never messages anyone) and records
   // the outcome on the member row. The claim's stored response carries only the job; a replay
@@ -203,7 +203,7 @@ export function mountTeam(d: AdminDeps) {
 
   admin.get(
     '/team',
-    read('manager', async (tx, t) => ({
+    named('team').read('manager', async (tx, t) => ({
       members: await team(tx, t.id),
       duaWhatsappManagers: await duaManagers(tx, t.id),
     })),
@@ -422,7 +422,7 @@ export function mountTeam(d: AdminDeps) {
 
   admin.get(
     '/activity',
-    read('manager', async (tx, t, _m, c) => {
+    named('activity').read('manager', async (tx, t, _m, c) => {
       const before = Number(c.req.query('before'));
       const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50) || 50));
       const entity = c.req.query('entity');

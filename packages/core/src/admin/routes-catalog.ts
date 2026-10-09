@@ -321,7 +321,9 @@ export function mountCatalog(d: AdminDeps) {
 
   admin.get(
     '/products/:id',
-    read('manager', async (tx, t, _m, c) => productDetail(tx, t.id, uuidParam(c, 'id'))),
+    named('product').read('manager', async (tx, t, _m, c) =>
+      productDetail(tx, t.id, uuidParam(c, 'id')),
+    ),
   );
 
   // ── categories ───────────────────────────────────────────────────────────

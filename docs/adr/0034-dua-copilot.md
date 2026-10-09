@@ -126,6 +126,35 @@ Fixed 2026-10-09 after the first real WhatsApp use:
 - A coupon's `endsAt` given as a bare date is the end of that day in the store's calendar; an end
   already past, or within 30 minutes, is refused at the proposal.
 
+Added 2026-10-09: **Duá knows the whole store.** Until now he knew the store's name and what eight
+read tools returned when he thought to call them, so questions about delivery areas, payments, the
+team, the WhatsApp or the Vendedor got "não sei".
+
+- **Always on** (`agents/copilot/brief.ts`): `load.tenant` reads a brief at the start of every
+  turn in a few counts and switches: segment, city, link, the plan and what it includes, the
+  catalog (products, categories by name, sold out, running low, hidden, with options), delivery
+  and pickup, payment methods, Pix key set, Mercado Pago, the store's WhatsApp and the Vendedor's
+  state, coupons, loyalty, the banner, the team by role, printers, tables, special days in the
+  next 14 days, the custom site and what setup is missing. It is the tenant tier's block (cached
+  with the tier). What changes by the minute (open/paused/closed, orders waiting, in progress,
+  preorders ahead, Pix to check) is read with the person (`load.subject`), so the brief's payload
+  and its `context.loaded` entry change only when the store does, and rendered as the `LOJA AGORA`
+  volatile line. The brief holds no amount and no clock time, which the `grounded` guard lets out
+  only as ledger figures.
+- **On demand**: `load_context({ topics })`, 1 to 4 per call, through newly named admin reads:
+  `loja`, `entrega` (`store`), `pagamentos` (`payments`), `marketing` (`marketing`),
+  `encomendas` (`orders.scheduled`), `vendedor` (`vendedor`, `vendedor.settings`,
+  `vendedor.knowledge`, `vendedor.results`), `whatsapp`, `equipe` (`team`), `atividade`
+  (`activity`), `pdv`, `impressoras` (`printers`), `aparencia` (`appearance`), `conta`
+  (`account`, owner only) and `painel`, a how-to of every admin screen (`agents/copilot/guide.ts`,
+  kept with the admin's Ajuda; a test fails on a topic missing from it). `product_details`
+  (`product`) gives one product whole: options and their prices, schedule, promotion, kit, 30-day
+  sales. Each topic runs as the person: one the role can't see answers "BLOQUEADO" alone and the
+  others still load. Money and times are ledger figures, and an activity line is one figure,
+  since its before → after can be a price. Shoppers' phones, the Pix key, the payer's document,
+  team phones and e-mails and the WhatsApp pairing code are read by the routes but never formatted
+  into what Duá reads.
+
 ## Consequences and known risks
 
 - The route registry is module-level: last mount wins. Production mounts one admin app per

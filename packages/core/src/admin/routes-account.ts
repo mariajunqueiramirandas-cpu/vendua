@@ -73,7 +73,7 @@ export function mountAccount(d: AdminDeps) {
 
   admin.get(
     '/account',
-    read('owner', (tx, t) => view(tx, t)),
+    named('account').read('owner', (tx, t) => view(tx, t)),
   );
 
   admin.post(

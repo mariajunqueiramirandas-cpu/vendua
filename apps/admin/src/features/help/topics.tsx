@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import type { RouteId } from '../../app/routes.ts';
 
 // Per-screen help: short how-tos for what each screen really does. When a screen gains or loses
-// a feature, its entry here changes in the same commit — never describe what isn't built.
+// a feature, its entry here changes in the same commit — never describe what isn't built. Duá
+// reads the same how-tos from packages/core/src/agent-host/agents/copilot/guide.ts: change both.
 
 export interface Topic {
   title: string;
