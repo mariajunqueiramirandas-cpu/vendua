@@ -923,6 +923,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
         app: { ok: boolean };
       };
       expect(ov.app.ok).toBe(true);
+
+      // kicked from that server: the stale id is dropped, so the panel asks for an invite again
+      botGuilds = [];
+      const kicked = await ctl('POST', '/control/v1/discord/connect', {});
+      expect(((await kicked.json()) as { guildId: string | null }).guildId).toBeNull();
+      expect((await config()).config).toEqual({ applicationId: APP, publicKey });
     } finally {
       botGuilds = [{ id: GUILD, name: 'Venduá' }];
       await sql`update control_integrations

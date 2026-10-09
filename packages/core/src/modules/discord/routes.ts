@@ -318,7 +318,7 @@ export function mountDiscord(o: {
     const current = typeof g0 === 'string' && SNOWFLAKE_RE.test(g0) ? g0 : null;
     const guildId =
       wanted ??
-      (current && inGuild(current) ? current : guilds.length === 1 ? guilds[0]!.id : current);
+      (current && inGuild(current) ? current : guilds.length === 1 ? guilds[0]!.id : null);
 
     const res = await upsertIntegration(
       sql,
