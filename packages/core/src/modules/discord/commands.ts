@@ -7,6 +7,7 @@ import { getSettingTx } from '../integrations.ts';
 import { CATEGORY_META, STAFF_CATEGORIES, type StaffCategory } from '../staff-events.ts';
 import {
   channelFor,
+  artLink,
   crmLink,
   mutedUntil,
   updateDiscordState,
@@ -740,7 +741,7 @@ async function resumo(c: CommandCtx, opts: Opt[] | undefined): Promise<Interacti
       created_at: new Date(),
     },
     report,
-    { crm: (p) => crm(c, p) },
+    { crm: (p) => crm(c, p), art: (pose) => artLink(c.ctx.crmBase, pose) },
   );
   if (optValue(opts, 'publicar') === true)
     return { type: 4, data: fitMessage({ ...msg, allowed_mentions: { parse: [] } }) };

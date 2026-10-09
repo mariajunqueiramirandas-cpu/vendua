@@ -105,7 +105,9 @@ export default function Home() {
       <div className="-mt-1 mb-1 flex justify-end md:-mt-4">
         <HelpButton className="-mr-2" />
       </div>
-      <div className="grid gap-5 lg:grid-cols-[2fr_1fr] lg:items-start lg:gap-6">
+      {/* minmax(0, …) tracks: an `auto` column grows to its widest item's min-content, so a
+          longer name or total on the day pushed the phone layout past the screen */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
         <div className="contents space-y-5 lg:block lg:space-y-6">
           {data ? <Hero data={data} /> : <Skeleton className="h-[340px] rounded-xl" delay={0} />}
           <Section title="Agora na loja" className="order-3 lg:order-none">

@@ -17,7 +17,7 @@ import {
   providerFor,
   setTestProvider,
 } from '../src/agent/llm.ts';
-import { enqueueRun, runOnce } from '../src/agent/runner.ts';
+import { drainsSettled, enqueueRun, runOnce } from '../src/agent/runner.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
@@ -512,7 +512,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('CRM refusal (db)', () => {
       },
     });
     try {
-      expect(await runOnce(sql)).toBe(true);
+      // another file's app may drain the queue in the background and claim this run first:
+      // whoever runs it uses the same provider, so the row is what's asserted, not the claim
+      await drainsSettled();
+      await runOnce(sql);
+      await drainsSettled();
     } finally {
       setTestProvider(null);
     }

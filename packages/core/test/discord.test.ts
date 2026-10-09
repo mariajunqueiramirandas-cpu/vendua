@@ -272,6 +272,43 @@ describe('discord cards', () => {
     );
   });
 
+  test("Duá's art marks the moments, not the routine", () => {
+    const withArt = rctx({ art: (p) => `https://crm.test/control/discord/${p}.webp` });
+    const thumb = (r: { card: { embeds?: { thumbnail?: { url: string } }[] } }) =>
+      r.card.embeds![0]!.thumbnail?.url ?? null;
+    const opened = ev(
+      'incident.opened',
+      {
+        incidentId: 'i2',
+        kind: 'probe_failing',
+        severity: 'warning',
+        subject: 'loja.test',
+        summary: 'sonda falhando',
+        storeName: 'Loja',
+      },
+      { anchor: 'incident:i2', severity: 'warning' },
+    );
+    expect(thumb(render(opened, [opened], withArt))).toEndWith('/discord/erro.webp');
+    const res = ev(
+      'incident.updated',
+      { incidentId: 'i2', change: 'resolved', by: null, summary: null },
+      { anchor: 'incident:i2', severity: 'success' },
+    );
+    expect(thumb(render(res, [opened, res], withArt))).toEndWith('/discord/sucesso.webp');
+    // no art function (old callers), no thumbnail
+    expect(thumb(render(opened, [opened], rctx()))).toBeNull();
+    const replied = ev('lead.replied', {
+      leadId: 'l1',
+      leadName: 'Ana',
+      business: null,
+      channel: 'whatsapp',
+      threadId: 't1',
+      messageId: 'm1',
+      excerpt: 'oi',
+    });
+    expect(thumb(render(replied, [replied], withArt))).toBeNull();
+  });
+
   test('every kind renders inside the limits', () => {
     const kinds: [StaffEventKind, unknown][] = [
       [
@@ -327,7 +364,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
   const calls: Call[] = [];
   const failNext: { status: number; body: Record<string, unknown> }[] = [];
   let msgSeq = 0;
-  let channelsInGuild: { id: string; name: string; type: number; parent_id?: string | null }[] = [];
+  let channelsInGuild: {
+    id: string;
+    name: string;
+    type: number;
+    parent_id?: string | null;
+    permission_overwrites?: { id: string; allow: string; deny: string }[];
+  }[] = [];
   let botGuilds = [{ id: GUILD, name: 'Venduá' }];
   const fakeDiscord = async (url: string, init: RequestInit) => {
     const u = new URL(url);
@@ -342,6 +385,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
     if (method === 'PATCH' && /^\/channels\/\d+\/messages\/\d+$/.test(path))
       return Response.json({ id: path.split('/').at(-1) });
     if (method === 'PUT' && path.endsWith('/commands')) return Response.json([]);
+    if (method === 'PATCH' && /^\/channels\/\d+$/.test(path)) {
+      const ch = channelsInGuild.find((x) => x.id === path.split('/').at(-1));
+      if (ch) ch.permission_overwrites = body!.permission_overwrites as never;
+      return Response.json(ch ?? {});
+    }
     if (path === '/users/@me') return Response.json({ id: BOT_USER, username: 'vendua' });
     if (path === '/users/@me/guilds') return Response.json(botGuilds);
     if (path === '/applications/@me' && method === 'GET')
@@ -358,6 +406,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
         name: String(body!.name),
         type: Number(body!.type),
         parent_id: (body!.parent_id as string | undefined) ?? null,
+        permission_overwrites: body!.permission_overwrites as never,
       };
       channelsInGuild.push(ch);
       return Response.json(ch);
@@ -907,6 +956,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
       expect(j.endpoint.url).toEndWith('/control/v1/discord/interactions');
       const patch = calls.find((c) => c.method === 'PATCH' && c.path === '/applications/@me')!;
       expect(patch.body).toEqual({ interactions_endpoint_url: j.endpoint.url });
+      // a bot still on Discord's default picture gets Duá's, as avatar and app icon
+      const avatar = calls.find((c) => c.method === 'PATCH' && c.path === '/users/@me')!;
+      expect(String(avatar.body!.avatar)).toStartWith('data:image/png;base64,iVBOR');
+      const icon = calls.find((c) => c.method === 'PATCH' && c.body?.icon)!;
+      expect(icon.path).toBe('/applications/@me');
       expect(await config()).toEqual({ config: { applicationId: APP, publicKey }, enabled: true });
 
       const stranger = await ctl('POST', '/control/v1/discord/connect', {
@@ -979,6 +1033,50 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
     // a second run only fills what is missing
     const again = await ctl('POST', '/control/v1/discord/setup', { staffRoleId: ROLE });
     expect(((await again.json()) as { created: string[] }).created).toHaveLength(0);
+
+    // a fresh server has no roles: the channels are made for the whole server, nobody is pinged
+    await sql`update control_settings set value = value - 'staffRoleId' where key = 'discord'`;
+    channelsInGuild = [];
+    calls.length = 0;
+    const open = await ctl('POST', '/control/v1/discord/setup', {});
+    expect(open.status).toBe(200);
+    const openCat = calls.find((c) => c.method === 'POST' && c.body?.type === 4)!;
+    const openOw = openCat.body!.permission_overwrites as { id: string }[];
+    expect(openOw.map((w) => w.id)).toEqual([BOT_USER]);
+    // picking a role later locks what already exists
+    calls.length = 0;
+    const locked = await ctl('POST', '/control/v1/discord/setup', { staffRoleId: ROLE });
+    expect(((await locked.json()) as { created: string[] }).created).toHaveLength(0);
+    const patches = calls.filter((c) => c.method === 'PATCH');
+    expect(patches).toHaveLength(9);
+    const ow = patches[0]!.body!.permission_overwrites as { id: string; deny: string }[];
+    expect(ow.find((w) => w.id === GUILD)!.deny).toBe(String(1 << 10));
+    // already private to that role: nothing to change
+    calls.length = 0;
+    await ctl('POST', '/control/v1/discord/setup', { staffRoleId: ROLE });
+    expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+    // an old role still let into one channel is shut out
+    const crmCh = channelsInGuild.find((c) => c.name === 'crm')!;
+    crmCh.permission_overwrites = [
+      ...crmCh.permission_overwrites!,
+      { id: '400000000000000099', allow: String(1 << 10), deny: '0' },
+    ];
+    calls.length = 0;
+    await ctl('POST', '/control/v1/discord/setup', { staffRoleId: ROLE });
+    expect(calls.filter((c) => c.method === 'PATCH').map((c) => c.path)).toEqual([
+      `/channels/${crmCh.id}`,
+    ]);
+    // an explicit "sem cargo" opens them again, even with a role saved
+    calls.length = 0;
+    await ctl('POST', '/control/v1/discord/setup', { staffRoleId: '' });
+    const opened = calls.filter((c) => c.method === 'PATCH');
+    expect(opened).toHaveLength(9);
+    expect((opened[0]!.body!.permission_overwrites as { id: string }[]).map((w) => w.id)).toEqual([
+      BOT_USER,
+    ]);
+    expect((await ctl('POST', '/control/v1/discord/setup', { staffRoleId: 'x' })).status).toBe(422);
+    // the rest of the test expects the team role back
+    await ctl('POST', '/control/v1/discord/setup', { staffRoleId: ROLE });
 
     calls.length = 0;
     const t = await ctl('POST', '/control/v1/discord/test');

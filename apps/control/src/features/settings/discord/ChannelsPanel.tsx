@@ -104,14 +104,18 @@ export function ChannelsPanel({ d }: { d: DiscordOverview }) {
           className="sm:max-w-xs sm:flex-1"
           label="cargo da equipe"
           htmlFor="dc-role"
-          hint="é mencionado nos avisos urgentes e é quem vê os canais criados pelo bot"
+          hint={
+            guild.data && !guild.data.roles.length
+              ? 'o servidor ainda não tem cargos — crie um em Configurações do servidor → Cargos'
+              : 'é mencionado nos avisos urgentes e é quem vê os canais criados pelo bot'
+          }
         >
           <Select
             id="dc-role"
             value={edit.staffRoleId}
             onChange={(e) => setEdit({ ...edit, staffRoleId: e.target.value })}
           >
-            <option value="">— escolha —</option>
+            <option value="">— sem cargo —</option>
             {(guild.data?.roles ?? []).map((r) => (
               <option key={r.id} value={r.id}>
                 @{r.name}
@@ -122,7 +126,7 @@ export function ChannelsPanel({ d }: { d: DiscordOverview }) {
         <div className="flex flex-col gap-1">
           <Button
             variant={mapped ? 'outline' : 'default'}
-            disabled={!edit.staffRoleId || setup.isPending}
+            disabled={setup.isPending}
             onClick={() => setup.mutate(edit.staffRoleId)}
           >
             {setup.isPending ? <Loader2 className="animate-spin" /> : <Sparkles />}
@@ -130,8 +134,9 @@ export function ChannelsPanel({ d }: { d: DiscordOverview }) {
           </Button>
         </div>
         <p className="text-xs text-muted-foreground sm:flex-1 sm:pb-1.5">
-          cria a categoria “Venduá”, privada para o cargo, com um canal por assunto — e já liga tudo
-          aqui. Rodar de novo só completa o que faltar.
+          {edit.staffRoleId
+            ? 'cria a categoria “Venduá”, privada para o cargo, com um canal por assunto — e já liga tudo aqui. Rodar de novo só completa o que faltar.'
+            : 'sem cargo, os canais ficam visíveis para todo o servidor e ninguém é mencionado. Escolha um cargo depois e rode de novo para fechá-los.'}
         </p>
       </div>
 
