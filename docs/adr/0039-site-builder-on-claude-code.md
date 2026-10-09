@@ -41,7 +41,10 @@ How it's built:
   `storefront:<slug>` on a branch carrying the task id, and at most four fix pushes. A human who
   takes a task over pushes to the same branch, and Core can't tell the difference.
 - **Core learns from GitHub, not from the runner.** An HMAC-verified webhook (deduped per
-  delivery, same-repo only) moves tasks on PR and CI events. A head is green only if nothing
+  delivery, same-repo only) moves tasks on PR and CI events. It finds a task by branch, or, for
+  a PR opened on another branch (the cloud session's own), by the PR's `vendua-task:<id>` line
+  while the task has no PR yet (a new PR into `main` from a `claude/` branch, with that store's
+  label); the task then follows that branch. A head is green only if nothing
   failed on it before, and the merge asks GitHub's check runs first. Five red runs escalate.
 - **CI is the judge.** The conformance job runs `vendua check` and `vendua qa` on every storefront
   a diff touches, K05 on a store's own PR, and uploads the QA screenshots that staff review.

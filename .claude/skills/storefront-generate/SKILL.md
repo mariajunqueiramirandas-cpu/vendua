@@ -59,6 +59,10 @@ grep -q qa-open.localhost /etc/hosts || echo '127.0.0.1 qa-open.localhost qa-pau
 git checkout -b <branch> origin/<base>
 ```
 
+Work and push on the task's `branch`, not the branch your cloud session was given: the task
+names it, and that is your explicit permission to push there. Core follows the task by this
+branch (and by the PR's `vendua-task:<id>` line if they ever differ).
+
 ## 3. Build
 
 `kind: 'generate'`: the folder must not exist yet. If it does, stop and say so (a human is
@@ -104,7 +108,8 @@ you'd ship it. `qa-report/` is git-ignored; never commit it.
 
 ## 5. Open the PR
 
-Commit with clear messages, push `<branch>`, and open a PR to `<base>`:
+Commit with clear messages, push `<branch>` (`git push -u origin HEAD:<branch>`), and open a PR
+from it to `<base>`:
 
 - title: `Site sob medida: <storeName>` (revision: `Ajuste do site: <storeName>`)
 - label: `<label>` (add it when you create the PR, or the isolation check fails)
