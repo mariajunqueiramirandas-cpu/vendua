@@ -21,7 +21,7 @@ export default function Story({ settings: s }: SectionProps<typeof schema>) {
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter(Boolean);
-  if (!s.title && paragraphs.length === 0) return null;
+  if (!s.title && paragraphs.length === 0 && !s.quote) return null;
 
   return (
     <section id="historia" className="story" aria-labelledby={titleId}>
