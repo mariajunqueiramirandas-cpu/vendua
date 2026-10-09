@@ -417,18 +417,16 @@ export function mountDiscord(o: {
         ];
         const existing = await client.request<DiscordChannel[]>('GET', `/guilds/${g}/channels`);
         // a role picked after the channels were made public: lock what already exists
-        // what Discord has, not what the CRM saved, decides: a role saved before this click, or
-        // "sem cargo" over a private category, still gets the channels' privacy changed
-        // permission bitfields outgrow 2^53: BigInt, or the low bits get lost
-        const has = (bits: string | undefined, bit: number) =>
-          (BigInt(bits || '0') & BigInt(bit)) !== BigInt(0);
+        // The bot owns these channels' permissions: what Discord has (not what the CRM saved)
+        // must be exactly what this run would set, or it's reset — a role saved before this
+        // click, "sem cargo" over a private category, or an old role still allowed in.
+        // Bitfields outgrow 2^53, so they compare as BigInt.
+        const key = (w: { id: string; allow: string; deny: string }) =>
+          `${w.id}:${BigInt(w.allow || '0')}:${BigInt(w.deny || '0')}`;
+        const wanted = overwrites.map(key).sort().join(',');
         const lock = async (ch: DiscordChannel) => {
-          const ow = ch.permission_overwrites ?? [];
-          const closed = ow.some((w) => w.id === g && has(w.deny, VIEW));
-          const right = roleId
-            ? closed && ow.some((w) => w.id === roleId && has(w.allow, VIEW))
-            : !closed;
-          if (!right)
+          const has = (ch.permission_overwrites ?? []).map(key).sort().join(',');
+          if (has !== wanted)
             await client.request('PATCH', `/channels/${ch.id}`, {
               permission_overwrites: overwrites,
             });

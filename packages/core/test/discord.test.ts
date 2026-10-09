@@ -1055,6 +1055,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
     calls.length = 0;
     await ctl('POST', '/control/v1/discord/setup', { staffRoleId: ROLE });
     expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+    // an old role still let into one channel is shut out
+    const crmCh = channelsInGuild.find((c) => c.name === 'crm')!;
+    crmCh.permission_overwrites = [
+      ...crmCh.permission_overwrites!,
+      { id: '400000000000000099', allow: String(1 << 10), deny: '0' },
+    ];
+    calls.length = 0;
+    await ctl('POST', '/control/v1/discord/setup', { staffRoleId: ROLE });
+    expect(calls.filter((c) => c.method === 'PATCH').map((c) => c.path)).toEqual([
+      `/channels/${crmCh.id}`,
+    ]);
     // an explicit "sem cargo" opens them again, even with a role saved
     calls.length = 0;
     await ctl('POST', '/control/v1/discord/setup', { staffRoleId: '' });
