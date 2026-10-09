@@ -5,7 +5,7 @@ import { transitionOrder, type OrderState } from '../orders.ts';
 import { MAX_ORDER_CENTS } from '../place-order.ts';
 import { enqueueOrderPrintTx } from '../printing/jobs.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
-import { drawStock, stockDemand } from '../stock.ts';
+import { drawAddonStock, drawStock, modifierDemand, stockDemand } from '../stock.ts';
 import type { PdvMethod, PricedPdvLine } from './pricing.ts';
 
 /**
@@ -51,17 +51,30 @@ export async function insertPdvOrderTx(
     throw new HttpError(422, 'ORDER_TOO_LARGE', 'this sale is larger than a store can take', {
       maxCents: MAX_ORDER_CENTS,
     });
+  const id = crypto.randomUUID();
   const stockDrawn = await drawStock(
     tx,
     tenantId,
     stockDemand(o.lines.map((l) => ({ productId: l.productId, qty: l.qty, combo: l.price.picks }))),
+    id,
+  );
+  const addonsDrawn = await drawAddonStock(
+    tx,
+    tenantId,
+    modifierDemand(
+      o.lines.map((l) => ({
+        qty: l.qty,
+        modifierIds: l.price.modifierIds,
+        modifierQty: l.price.modifierQty,
+      })),
+    ),
+    id,
   );
   const number = (
     await tx<{ n: number }[]>`
       select coalesce(max(number), 0) + 1 as n from orders where tenant_id = ${tenantId}
     `
   )[0]!.n;
-  const id = crypto.randomUUID();
   const promised = o.serveNow ? null : new Date(Date.now() + o.prepMinutes * 60_000).toISOString();
   const delivery = o.delivery ?? {
     mode: o.mode,
@@ -77,12 +90,14 @@ export async function insertPdvOrderTx(
   await tx`
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
-                        total_cents, coupon_code, notes, scheduled_for, source, tab_id, stock_drawn)
+                        total_cents, coupon_code, notes, scheduled_for, source, tab_id, stock_drawn,
+                        addon_stock_drawn)
     values (${id}, ${tenantId}, null, ${number},
             ${tx.json({ name: o.customer.name, phone: o.customer.phone ?? '' })}, ${o.customer.phone},
             ${tx.json(delivery as never)}, ${tx.json(o.payment as never)}, 'placed',
             ${o.subtotalCents}, ${o.delivery?.feeCents ?? 0}, ${o.discountCents}, 0, ${o.totalCents}, null, ${o.notes}, null,
-            'pdv', ${o.tabId}, ${tx.json(stockDrawn)})
+            'pdv', ${o.tabId}, ${tx.json(stockDrawn)},
+            ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null})
   `;
   const [store] = await Promise.all([
     tx<{ name: string; printers: boolean }[]>`

@@ -569,8 +569,12 @@ async function loadGroups(
         sort: number;
       }[]
     >`
-      select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.max_qty, m.description,
-             m.image_url, m.sort
+      select m.id, m.group_id, m.name, m.price_delta_cents,
+             -- a counted adicional at 0 reads sold out wherever it's offered
+             case when exists (select 1 from addon_stock a where a.tenant_id = m.tenant_id
+                                 and a.key = m.stock_key and a.stock_quantity = 0)
+                  then 'sold_out' else m.status end as status,
+             m.max_qty, m.description, m.image_url, m.sort
       from modifiers m join modifier_groups g on g.id = m.group_id
       where m.tenant_id = ${tenantId} and g.product_id = any(${ids as string[]}::uuid[])
       order by g.product_id, m.sort, m.name ${lock}

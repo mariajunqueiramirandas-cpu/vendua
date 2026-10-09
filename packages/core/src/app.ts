@@ -328,6 +328,7 @@ const CATALOG_DEPS = [
   'product_media',
   'modifier_groups',
   'modifiers',
+  'addon_stock',
   'combo_slots',
   'combo_slot_items',
 ];
