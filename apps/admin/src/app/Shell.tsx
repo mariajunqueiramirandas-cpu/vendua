@@ -39,7 +39,7 @@ import { onHelp } from '../ui/help.ts';
 import { toast, Toaster } from '../ui/Toast.tsx';
 import { PersonaAvatar } from '../ui/vendedor/PersonaAvatar.tsx';
 import { dockKeys, useDockOpen, useMedia, WIDE } from './dock.ts';
-import { moreOf, navFor } from './nav.ts';
+import { barOf, moreOf, navFor, sectionsOf } from './nav.ts';
 import { chunks, intent, screen, warmUp } from './routes.ts';
 import { useScrollMemory, useTabNav } from './nativeFeel.ts';
 import { useKeyboard } from '../ui/keyboard.ts';
@@ -83,7 +83,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const vendedorOn = !!session.vendedor?.enabled;
   const waiting = session.vendedor?.waiting ?? 0;
   const items = navFor(vendedorOn).filter((n) => can(role, n.min));
-  const primary = items.filter((n) => n.primary);
+  const primary = barOf(items);
   const more = moreOf(items, vendedorOn);
   const [moreOpen, setMoreOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -262,53 +262,68 @@ export function Shell({ children }: { children: ReactNode }) {
           ) : null}
         </div>
         <nav aria-label="principal" className="flex-1 overflow-y-auto px-3 py-2 lg:px-4">
-          <ul className="space-y-1">
-            {/* the button above is Copiloto's way in on the rail */}
-            {items
-              .filter((n) => !(copilot && n.to === '/copiloto'))
-              .map((n) => (
-                <li key={n.to}>
-                  <NavLink
-                    to={n.to}
-                    end={n.to === '/'}
-                    onClick={tab(n.to)}
-                    {...intent(qc, n.to)}
-                    className={({ isActive }) =>
-                      cn(
-                        'group relative flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 py-1.5 transition-colors lg:flex-row lg:justify-start lg:gap-3 lg:px-3',
-                        isActive
-                          ? 'bg-surface text-ink depth-1'
-                          : 'text-muted hover:bg-hover hover:text-ink',
-                      )
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        <n.Icon
-                          weight="duotone"
-                          className={cn(
-                            'size-6 shrink-0',
-                            isActive && '[&_*[opacity]]:fill-(--spark) [&_*[opacity]]:opacity-100',
-                          )}
-                        />
-                        <span className="t-caption text-center leading-tight lg:t-body lg:font-semibold">
-                          {n.label}
-                        </span>
-                        {badge(n.to) ? (
-                          <NavBadge
-                            n={badge(n.to)}
-                            to={n.to}
-                            className="absolute right-2 top-1 lg:static lg:ml-auto"
+          {/* the button above is Copiloto's way in on the rail */}
+          {sectionsOf(items.filter((n) => !(copilot && n.to === '/copiloto'))).map((g, i) => (
+            <section
+              key={g.id}
+              aria-labelledby={g.label ? `nav-${g.id}` : undefined}
+              className={cn(i > 0 && 'mt-3 border-t border-line pt-3 lg:mt-4 lg:border-0 lg:pt-0')}
+            >
+              {g.label ? (
+                <h2
+                  id={`nav-${g.id}`}
+                  className="t-caption sr-only mb-1 px-3 font-semibold uppercase tracking-wide text-muted lg:not-sr-only lg:block"
+                >
+                  {g.label}
+                </h2>
+              ) : null}
+              <ul className="space-y-1">
+                {g.items.map((n) => (
+                  <li key={n.to}>
+                    <NavLink
+                      to={n.to}
+                      end={n.to === '/'}
+                      onClick={tab(n.to)}
+                      {...intent(qc, n.to)}
+                      className={({ isActive }) =>
+                        cn(
+                          'group relative flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 py-1.5 transition-colors lg:flex-row lg:justify-start lg:gap-3 lg:px-3',
+                          isActive
+                            ? 'bg-surface text-ink depth-1'
+                            : 'text-muted hover:bg-hover hover:text-ink',
+                        )
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          <n.Icon
+                            weight="duotone"
+                            className={cn(
+                              'size-6 shrink-0',
+                              isActive &&
+                                '[&_*[opacity]]:fill-(--spark) [&_*[opacity]]:opacity-100',
+                            )}
                           />
-                        ) : n.feature && !featureOpen(session, n.feature) ? (
-                          <NavLock className="absolute right-2 top-1.5 lg:static lg:ml-auto" />
-                        ) : null}
-                      </>
-                    )}
-                  </NavLink>
-                </li>
-              ))}
-          </ul>
+                          <span className="t-caption text-center leading-tight lg:t-body lg:font-semibold">
+                            {n.label}
+                          </span>
+                          {badge(n.to) ? (
+                            <NavBadge
+                              n={badge(n.to)}
+                              to={n.to}
+                              className="absolute right-2 top-1 lg:static lg:ml-auto"
+                            />
+                          ) : n.feature && !featureOpen(session, n.feature) ? (
+                            <NavLock className="absolute right-2 top-1.5 lg:static lg:ml-auto" />
+                          ) : null}
+                        </>
+                      )}
+                    </NavLink>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
         </nav>
         <div className="space-y-2 border-t border-line p-3 lg:p-4">
           <StatusPill block rail />

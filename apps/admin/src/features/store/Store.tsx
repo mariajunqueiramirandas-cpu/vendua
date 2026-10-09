@@ -127,10 +127,11 @@ function StoreEditor({ s }: { s: StoreView }) {
       <nav aria-label="seções" className="scroll-row -mx-4 mb-6 px-4 md:-mx-8 md:px-8">
         <ul className="flex w-max gap-2">
           {[
+            // the page's order on a phone (one column)
             ['horarios', 'Horários'],
-            ['entrega', 'Entrega e retirada'],
-            ['perfil', 'Perfil'],
             ['mensagens', 'Mensagens'],
+            ['perfil', 'Perfil'],
+            ['entrega', 'Entrega e retirada'],
           ].map(([id, label]) => (
             <li key={id}>
               <a
@@ -178,22 +179,12 @@ function StoreEditor({ s }: { s: StoreView }) {
                   onCommit={(v) => patch({ messages: { closed: v || null } })}
                 />
               </Field>
-              <Toggle
-                checked={s.operations.demand === 'high'}
-                onChange={(v) => patch({ operations: { demand: v ? 'high' : 'normal' } })}
-                label={
-                  <span className="inline-flex items-center gap-2">
-                    <Fire className="size-5 text-warning" /> Muitos pedidos agora
-                  </span>
-                }
-                description={`Avisa na loja que o preparo está levando mais que os ~${s.operations.prepTimeMinutes} min de sempre.`}
-              />
             </Card>
           </Section>
+          <Profile s={s} patch={patch} run={run} />
         </div>
         <div className="space-y-8">
           <Delivery s={s} patch={patch} run={run} />
-          <Profile s={s} patch={patch} run={run} />
         </div>
       </div>
     </PageBody>
@@ -728,6 +719,18 @@ function Delivery({
               onCommit={(v) => patch({ operations: { minOrderCents: v ?? 0 } })}
             />
           </Field>
+        </div>
+        <div className="border-t border-line pt-2">
+          <Toggle
+            checked={o.demand === 'high'}
+            onChange={(v) => patch({ operations: { demand: v ? 'high' : 'normal' } })}
+            label={
+              <span className="inline-flex items-center gap-2">
+                <Fire className="size-5 text-warning" /> Muitos pedidos agora
+              </span>
+            }
+            description={`Avisa na loja que o preparo está levando mais que os ~${o.prepTimeMinutes} min de sempre.`}
+          />
         </div>
       </Card>
 

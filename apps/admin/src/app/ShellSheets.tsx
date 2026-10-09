@@ -4,13 +4,13 @@ import { api, type Incident } from '../lib/api.ts';
 import { qk } from '../lib/query.ts';
 import { featureOpen, ROLE_LABEL, useSession } from '../lib/session.ts';
 import { Sheet } from '../ui/Sheet.tsx';
-import type { NAV } from './nav.ts';
+import type { NavSection } from './nav.ts';
 import { intent } from './routes.ts';
 import { NavLock, UserMenu } from './Shell.tsx';
 import { resetClient } from '../lib/persist.ts';
 import { disablePush } from '../lib/push.ts';
 
-export /** "Mais": large tiles with a live hint each (§3.1). */
+export /** "Mais": large tiles with a live hint each (§3.1), under the sidebar's headings. */
 function MoreSheet({
   open,
   onOpenChange,
@@ -18,7 +18,7 @@ function MoreSheet({
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  items: typeof NAV;
+  items: NavSection[];
 }) {
   const qc = useQueryClient();
   const session = useSession();
@@ -51,30 +51,44 @@ function MoreSheet({
   };
   return (
     <Sheet open={open} onOpenChange={onOpenChange} title="Mais">
-      <ul className="grid grid-cols-2 gap-3 pb-2 pt-1">
-        {items.map((n) => (
-          <li key={n.to}>
-            <NavLink
-              to={n.to}
-              {...intent(qc, n.to)}
-              className="press relative flex min-h-28 flex-col justify-between rounded-lg bg-sunken p-4 hover:bg-press active:bg-press"
-            >
-              <n.Icon weight="duotone" className="size-8" />
-              {n.feature && !featureOpen(session, n.feature) ? (
-                <NavLock quiet className="absolute right-4 top-4" />
-              ) : null}
-              <span>
-                <span className="block font-semibold">{n.label}</span>
-                {n.feature && !featureOpen(session, n.feature) ? (
-                  <span className="t-caption block text-muted">fora do seu plano</span>
-                ) : hint(n.to) ? (
-                  <span className="t-caption block text-muted">{hint(n.to)}</span>
-                ) : null}
-              </span>
-            </NavLink>
-          </li>
+      <div className="space-y-5 pb-2 pt-1">
+        {items.map((g) => (
+          <section key={g.id} aria-labelledby={g.label ? `more-${g.id}` : undefined}>
+            {g.label ? (
+              <h3
+                id={`more-${g.id}`}
+                className="t-caption mb-2 px-1 font-semibold uppercase tracking-wide text-muted"
+              >
+                {g.label}
+              </h3>
+            ) : null}
+            <ul className="grid grid-cols-2 gap-3">
+              {g.items.map((n) => (
+                <li key={n.to}>
+                  <NavLink
+                    to={n.to}
+                    {...intent(qc, n.to)}
+                    className="press relative flex min-h-28 flex-col justify-between rounded-lg bg-sunken p-4 hover:bg-press active:bg-press"
+                  >
+                    <n.Icon weight="duotone" className="size-8" />
+                    {n.feature && !featureOpen(session, n.feature) ? (
+                      <NavLock quiet className="absolute right-4 top-4" />
+                    ) : null}
+                    <span>
+                      <span className="block font-semibold">{n.label}</span>
+                      {n.feature && !featureOpen(session, n.feature) ? (
+                        <span className="t-caption block text-muted">fora do seu plano</span>
+                      ) : hint(n.to) ? (
+                        <span className="t-caption block text-muted">{hint(n.to)}</span>
+                      ) : null}
+                    </span>
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </section>
         ))}
-      </ul>
+      </div>
       <div className="mt-3 border-t border-line pt-3">
         <UserMenu />
       </div>

@@ -131,14 +131,6 @@ export default function Profile() {
             </Field>
           </Card>
         </Section>
-        {s.duaWhatsapp ? (
-          <DuaWhatsappSection
-            dua={s.duaWhatsapp}
-            on={prefs.duaWhatsapp === true}
-            myPhone={s.user.phone}
-            onChange={(v) => void setPref({ duaWhatsapp: v })}
-          />
-        ) : null}
         <Section title="Pedido novo" hint="Como o painel te chama quando chega um pedido.">
           <Card className="space-y-4 p-5">
             <Toggle
@@ -286,6 +278,14 @@ export default function Profile() {
           </Card>
         </Section>
         <AlertsSection manager={manager} />
+        {s.duaWhatsapp ? (
+          <DuaWhatsappSection
+            dua={s.duaWhatsapp}
+            on={prefs.duaWhatsapp === true}
+            myPhone={s.user.phone}
+            onChange={(v) => void setPref({ duaWhatsapp: v })}
+          />
+        ) : null}
         <Section title="Aparência do painel" hint="Auto segue o claro ou escuro do celular.">
           <Card className="p-5">
             <Segmented

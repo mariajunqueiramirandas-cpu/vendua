@@ -69,13 +69,14 @@ export default function Marketing() {
         <SectionsSkeleton columns={2} />
       ) : (
         <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
+          {/* offers to customers first (on phones too), spreading the word beside them */}
           <div className="space-y-8">
-            <Share />
             <Coupons coupons={data.coupons} />
-          </div>
-          <div className="space-y-8">
             <Loyalty data={data} />
             <Waitlist data={data} />
+          </div>
+          <div className="space-y-8">
+            <Share />
             <Announcement data={data} />
           </div>
         </div>
