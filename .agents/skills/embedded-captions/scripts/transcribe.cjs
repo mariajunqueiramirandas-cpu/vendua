@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /*
  * transcribe.cjs — word-level transcription via hyperframes' native Whisper
- * (replaces the Python ElevenLabs Scribe path; no Python, no API key).
+ * (no Python, no API key).
  *
  *   node transcribe.cjs <project-dir> [model] [language]
  * Reads:  <project>/source.mp4 (audio track)

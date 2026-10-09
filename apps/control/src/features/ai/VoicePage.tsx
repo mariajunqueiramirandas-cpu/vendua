@@ -26,18 +26,16 @@ import { AI_TABS } from './tabs.ts';
 // order (vendedor/media.ts); with none saved, the self-hosted STT sidecar is used when it's on.
 
 const MAX_ROUTES = 5;
-const PROVIDERS: MediaProviderId[] = ['sidecar', 'openai', 'elevenlabs'];
+const PROVIDERS: MediaProviderId[] = ['sidecar', 'openai'];
 const LABEL: Record<MediaProviderId, string> = {
   sidecar: 'servidor da Venduá',
   openai: 'OpenAI',
-  elevenlabs: 'ElevenLabs',
 };
 /** the provider picker's words: short, so it fits a phone's row */
 const OPTION: Record<MediaProviderId, string> = { ...LABEL, sidecar: 'Venduá' };
 const SUGGESTED: Record<MediaProviderId, string> = {
   sidecar: 'parakeet-tdt-0.6b-v3',
   openai: 'gpt-4o-transcribe',
-  elevenlabs: 'scribe_v1',
 };
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,80}$/;
 

@@ -7,7 +7,7 @@
 
 The Vendedor ([ADR 0031](0031-vendedor.md)) reads a shopper's voice note as its transcript.
 `vendedor/media.ts` sends the audio to whichever cloud route staff list in
-`agent_runtime.media_routes` (OpenAI or ElevenLabs). With no route set, the agent is told it
+`agent_runtime.media_routes` (OpenAI). With no route set, the agent is told it
 couldn't understand the audio and asks the shopper to type. Every note is a per-minute charge
 and a shopper's voice on a third party's servers. `zdr` only records what staff believe that
 account's retention terms are.

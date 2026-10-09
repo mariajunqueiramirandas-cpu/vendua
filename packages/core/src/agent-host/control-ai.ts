@@ -116,14 +116,7 @@ export function mountAgentRuntimeAi(o: {
       routes: rows[0]?.value ?? {},
       saved: rows.length > 0,
       sidecar,
-      providers: [
-        { id: 'openai', configured: !!env.OPENAI_API_KEY, secretName: 'OPENAI_API_KEY' },
-        {
-          id: 'elevenlabs',
-          configured: !!env.ELEVENLABS_API_KEY,
-          secretName: 'ELEVENLABS_API_KEY',
-        },
-      ],
+      providers: [{ id: 'openai', configured: !!env.OPENAI_API_KEY, secretName: 'OPENAI_API_KEY' }],
     });
   });
 

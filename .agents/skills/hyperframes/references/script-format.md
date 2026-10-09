@@ -23,8 +23,7 @@ A header block, then one section per spoken line.
 ```markdown
 # SCRIPT — acme-launch
 
-**Voice:** Rachel (ElevenLabs)
-**Voice settings:** stability 0.35 · similarity 0.75 · style 0.20
+**Voice:** am_michael (Kokoro)
 **Voice direction:** Confident, warm, a little playful.
 
 ---

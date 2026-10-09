@@ -5,8 +5,8 @@
 #   python videos/tools/measure.py loop   bed.mp3 99.4 1.629 # bar-aligned loop points with matching harmony
 #
 # `tempo` scans a BPM range (default 90-180: below it, half-tempo wins on most beds) against the
-# onset flux; trust a result that lands on a round number (ElevenLabs Music honours the BPM in its
-# prompt). `loop` needs the BPM and a downbeat time.
+# onset flux; trust a result that lands on a round number (a music generator that honours the BPM
+# in its prompt). `loop` needs the BPM and a downbeat time.
 import subprocess
 import sys
 
