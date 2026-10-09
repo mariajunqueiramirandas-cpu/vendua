@@ -21,7 +21,7 @@ import { validateSchedule } from './preorder.ts';
 import { planHas } from './billing/plans.ts';
 import type { QrTable } from './pdv/qr.ts';
 import { recordStaffEventTx } from './staff-events.ts';
-import { drawStock, stockDemand } from './stock.ts';
+import { drawAddonStock, drawStock, modifierDemand, stockDemand } from './stock.ts';
 import { deriveStatus, type StoreSettingsRow } from './store.ts';
 
 /** R$ 10.000: no shopper pays a delivery with more than that in cash */
@@ -235,15 +235,17 @@ export async function placeOrderTx(
       expectedTotalCents: body.expectedTotalCents,
     });
 
+  const orderId = crypto.randomUUID();
   const stockDrawn = await drawStock(
     tx,
     tenantId,
     stockDemand(
       cart.items.map((i) => ({ productId: i.productId, qty: i.qty, combo: i.comboSelections })),
     ),
+    orderId,
   );
+  const addonsDrawn = await drawAddonStock(tx, tenantId, modifierDemand(cart.items), orderId);
 
-  const orderId = crypto.randomUUID();
   const changeFor = body.payment.changeForCents ?? null;
   if (changeFor !== null) {
     if (
@@ -376,12 +378,12 @@ export async function placeOrderTx(
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
                         total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id,
-                        stock_drawn)
+                        stock_drawn, addon_stock_drawn)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
             ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId},
-            ${tx.json(stockDrawn)})
+            ${tx.json(stockDrawn)}, ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   const [store] = await Promise.all([

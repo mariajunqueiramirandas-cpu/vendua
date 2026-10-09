@@ -76,6 +76,7 @@ import { mountOnboarding } from './routes-onboarding.ts';
 import { mountOrders } from './routes-orders.ts';
 import { mountPayments } from './routes-payments.ts';
 import { mountReports } from './routes-reports.ts';
+import { mountStock } from './routes-stock.ts';
 import { mountStore } from './routes-store.ts';
 import { mountTeam } from './routes-team.ts';
 import { mountWhatsapp } from './routes-whatsapp.ts';
@@ -925,6 +926,7 @@ export function mountAdmin(o: MountAdminOpts) {
   mountOnboarding(deps);
   mountOrders(deps);
   mountCatalog(deps);
+  mountStock(deps);
   mountStore(deps);
   mountPayments(deps);
   mountCustomers(deps);

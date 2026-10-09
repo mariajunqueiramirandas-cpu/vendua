@@ -14,7 +14,22 @@ import {
   type AvailabilitySchedule,
   type PromoSchedule,
 } from '../modules/catalog.ts';
-import { adjustStock, MAX_STOCK, setStock } from '../modules/stock.ts';
+import {
+  costOf,
+  MAX_COST_CENTS,
+  marginBpAt,
+  parsePricing,
+  suggestedPriceCents,
+  type Pricing,
+  type PricingDefaults,
+} from '../modules/pricing-calc.ts';
+import {
+  ADJUST_REASONS,
+  adjustStock,
+  MAX_STOCK,
+  setStock,
+  type AdjustReason,
+} from '../modules/stock.ts';
 import { saveKitStepsTx } from '../modules/combos.ts';
 import { audit } from './audit.ts';
 import {
@@ -93,6 +108,14 @@ export interface AdminProductRow {
   mediaCount: number;
   groupCount: number;
   waiting: number;
+  /** unit cost; null = not stated */
+  costCents: number | null;
+  /** the pricing calculator's saved inputs */
+  pricing: Pricing | null;
+  /** what the current price really leaves after cost, fee and tax; null without a cost */
+  marginBp: number | null;
+  /** the price that reaches pricing.marginBp; null without pricing */
+  suggestedPriceCents: number | null;
 }
 
 const productCols = (tx: Sql) => tx`
@@ -108,7 +131,8 @@ const productCols = (tx: Sql) => tx`
    where m.product_id = p.id order by m.sort, m.id limit 1) as dominant,
   (select count(*)::int from product_media m where m.product_id = p.id) as "mediaCount",
   (select count(*)::int from modifier_groups g where g.product_id = p.id) as "groupCount",
-  (select count(*)::int from notify_requests n where n.product_id = p.id and n.notified_at is null) as waiting
+  (select count(*)::int from notify_requests n where n.product_id = p.id and n.notified_at is null) as waiting,
+  p.cost_cents as "costCents", p.pricing
 `;
 
 /** availableNow and promoNow from the schedules, in the store's timezone; Core's stock calls */
@@ -120,6 +144,8 @@ async function withNow(tx: Sql, tenantId: string, rows: AdminProductRow[]) {
   for (const r of rows) {
     r.liveStatus = liveStatus(r.status, r.stockQuantity) as AdminProductRow['liveStatus'];
     r.lowStock = isLowStock(r.stockQuantity, r.lowStockThreshold);
+    r.marginBp = r.costCents == null ? null : marginBpAt(r.priceCents, r.costCents, r.pricing);
+    r.suggestedPriceCents = r.pricing ? suggestedPriceCents(costOf(r.pricing), r.pricing) : null;
     r.availableNow = scheduleOpen(r.availabilitySchedule, now, tz);
     r.promoNow =
       !!r.promoSchedule &&
@@ -142,7 +168,7 @@ async function productRow(tx: Sql, tenantId: string, id: string): Promise<AdminP
 
 async function productDetail(tx: Sql, tenantId: string, id: string) {
   // independent reads in one batch; only a kit's slots wait for the product's kind
-  const [product, groups, options, gallery, [sales], storefront] = await Promise.all([
+  const [product, groups, options, gallery, [sales], storefront, [settings]] = await Promise.all([
     productRow(tx, tenantId, id),
     tx<
       {
@@ -186,6 +212,10 @@ async function productDetail(tx: Sql, tenantId: string, id: string) {
     `,
     // what the shopper sees now — the storefront's own summary, schedules in Core's words
     storefrontPreview(tx, tenantId, id),
+    // the calculator's percentages for a product that has none saved yet
+    tx<{ pricing_defaults: PricingDefaults | null }[]>`
+      select pricing_defaults from store_settings where tenant_id = ${tenantId}
+    `,
   ]);
   return {
     product: {
@@ -214,6 +244,7 @@ async function productDetail(tx: Sql, tenantId: string, id: string) {
       sales30: sales!,
       storefront: storefront!,
     },
+    pricingDefaults: settings?.pricing_defaults ?? null,
   };
 }
 
@@ -508,6 +539,39 @@ export function mountCatalog(d: AdminDeps) {
         set.base_price_cents = int(body.priceCents, 'priceCents', 0, MAX_PRICE);
         changes.push('preço');
       }
+      if (body.pricing !== undefined && body.costCents !== undefined)
+        throw new HttpError(422, 'BAD_REQUEST', 'send pricing or costCents, not both', {
+          field: 'costCents',
+        });
+      if (body.pricing !== undefined) {
+        const pricing = body.pricing === null ? null : parsePricing(body.pricing);
+        set.pricing = pricing ? tx.json(pricing as never) : null;
+        set.cost_cents = pricing ? costOf(pricing) : null;
+        if (pricing) {
+          const defaults: PricingDefaults = {
+            feeBp: pricing.feeBp,
+            taxBp: pricing.taxBp,
+            marginBp: pricing.marginBp,
+          };
+          await tx`
+            insert into store_settings (tenant_id, pricing_defaults) values (${t.id}, ${tx.json(defaults)})
+            on conflict (tenant_id) do update set pricing_defaults = excluded.pricing_defaults
+          `;
+        }
+        changes.push('custo e precificação');
+      }
+      if (body.costCents !== undefined) {
+        const cost =
+          body.costCents === null ? null : int(body.costCents, 'costCents', 0, MAX_COST_CENTS);
+        set.cost_cents = cost;
+        // a typed cost replaces the calculator's lines; its percentages stay
+        if (before.pricing)
+          set.pricing =
+            cost === null
+              ? null
+              : tx.json({ ...before.pricing, lines: [{ label: 'Custo', cents: cost }] } as never);
+        changes.push('custo');
+      }
       if (body.compareAtPriceCents !== undefined) {
         set.compare_at_price_cents = compareAt(
           body.compareAtPriceCents,
@@ -589,11 +653,17 @@ export function mountCatalog(d: AdminDeps) {
       if (lowStockThreshold !== undefined) changes.push('alerta de estoque');
       let woken = 0;
       if (status !== undefined || stockQuantity !== undefined || lowStockThreshold !== undefined) {
-        const r = await setStock(tx, t.id, id, {
-          ...(stockQuantity !== undefined ? { stockQuantity } : {}),
-          ...(lowStockThreshold !== undefined ? { lowStockThreshold } : {}),
-          ...(status !== undefined ? { status } : {}),
-        });
+        const r = await setStock(
+          tx,
+          t.id,
+          id,
+          {
+            ...(stockQuantity !== undefined ? { stockQuantity } : {}),
+            ...(lowStockThreshold !== undefined ? { lowStockThreshold } : {}),
+            ...(status !== undefined ? { status } : {}),
+          },
+          { by: m.name },
+        );
         woken = r.waiting;
         if (soldOutUntil !== undefined)
           await tx`update products set sold_out_until = ${soldOutUntil} where tenant_id = ${t.id} and id = ${id}`;
@@ -612,6 +682,7 @@ export function mountCatalog(d: AdminDeps) {
           'status',
           'stockQuantity',
           'categoryId',
+          'costCents',
         ]),
         after: pick(after, [
           'name',
@@ -620,6 +691,7 @@ export function mountCatalog(d: AdminDeps) {
           'status',
           'stockQuantity',
           'categoryId',
+          'costCents',
         ]),
       });
       await emitAdminTx(tx, t.id, 'catalog', id);
@@ -1078,7 +1150,8 @@ export function mountCatalog(d: AdminDeps) {
             ? null
             : int(body.stockQuantity, 'stockQuantity', 0, MAX_STOCK);
         before = rows.map((r) => ({ id: r.id, stockQuantity: r.stockQuantity }));
-        for (const id of live) woken += (await setStock(tx, t.id, id, { stockQuantity })).waiting;
+        for (const id of live)
+          woken += (await setStock(tx, t.id, id, { stockQuantity }, { by: m.name })).waiting;
         summary =
           stockQuantity === null
             ? `parou de contar o estoque de ${n}`
@@ -1191,14 +1264,18 @@ export function mountCatalog(d: AdminDeps) {
           field: 'changes',
         });
       const adds = new Map<string, number>();
+      // one reason per product: a delivery and a tap on the same row in one batch read as taps
+      const reasons = new Map<string, AdjustReason>();
       body.changes.forEach((x: unknown, i: number) => {
         if (!isObj(x) || typeof x.productId !== 'string' || !UUID_RE.test(x.productId))
           throw new HttpError(422, 'BAD_REQUEST', `changes[${i}].productId must be an id`, {
             field: `changes[${i}].productId`,
           });
         const add = int(x.add, `changes[${i}].add`, -MAX_STOCK, MAX_STOCK);
+        const reason = oneOf(x.reason ?? 'adjust', `changes[${i}].reason`, ADJUST_REASONS);
         const id = x.productId.toLowerCase();
         adds.set(id, (adds.get(id) ?? 0) + add);
+        reasons.set(id, reasons.has(id) && reasons.get(id) !== reason ? 'adjust' : reason);
       });
       // id order, the same as checkout's row locks, so the two never deadlock
       const ids = [...adds.keys()].filter((id) => adds.get(id) !== 0).sort();
@@ -1206,7 +1283,10 @@ export function mountCatalog(d: AdminDeps) {
       const before: Record<string, number> = {};
       let woken = 0;
       for (const id of ids) {
-        const r = await adjustStock(tx, t.id, id, adds.get(id)!);
+        const r = await adjustStock(tx, t.id, id, adds.get(id)!, {
+          reason: reasons.get(id)!,
+          by: m.name,
+        });
         if (!r) continue;
         before[id] = r.before;
         stock[id] = r.after;

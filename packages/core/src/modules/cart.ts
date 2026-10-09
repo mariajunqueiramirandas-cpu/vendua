@@ -33,7 +33,7 @@ import {
 } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
 import { scheduleView, type ScheduleView } from './preorder.ts';
-import { assertStock, stockDemand } from './stock.ts';
+import { assertAddonStock, assertStock, modifierDemand, stockDemand } from './stock.ts';
 import type { StoreSettingsRow } from './store.ts';
 
 /**
@@ -564,8 +564,12 @@ async function priceItems(
   const [mods, picks] = await Promise.all([
     modifierIds.length
       ? tx<{ id: string; status: string }[]>`
-          select id, status from modifiers
-          where tenant_id = ${tenantId} and id = any(${modifierIds}::uuid[])
+          select m.id,
+                 case when exists (select 1 from addon_stock a where a.tenant_id = m.tenant_id
+                                     and a.key = m.stock_key and a.stock_quantity = 0)
+                      then 'sold_out' else m.status end as status
+          from modifiers m
+          where m.tenant_id = ${tenantId} and m.id = any(${modifierIds}::uuid[])
         `
       : [],
     pickIds.length
@@ -922,6 +926,12 @@ export async function insertLine(
       [product.id, { name: product.name, stock: product.stockQuantity }],
     ]),
   );
+  if (modifierIds.length)
+    await assertAddonStock(
+      tx,
+      tenantId,
+      modifierDemand([...existing.map(addonLine), { qty: input.qty, modifierIds, modifierQty }]),
+    );
 
   // same product + modifier set + kit composition + note merges into one line; merged
   // qty capped by CHECK (qty <= 99) → INVALID_QTY like PATCH
@@ -1018,6 +1028,13 @@ export async function assertLineQty(
     ),
     stockOf(lines),
   );
+  const line = lines.find((l) => l.id === itemId);
+  if (line?.modifier_ids.length)
+    await assertAddonStock(
+      tx,
+      tenantId,
+      modifierDemand(lines.map((l) => addonLine(l.id === itemId ? { ...l, qty } : l))),
+    );
 }
 
 /** The cart's lines with their products' stock: assertStock reads only kit picks beyond them. */
@@ -1028,15 +1045,24 @@ function loadStockLines(tx: Sql, tenantId: string, cartId: string) {
       product_id: string;
       qty: number;
       combo_selections: ComboSelection[];
+      modifier_ids: string[];
+      modifier_qty: ModifierQty;
       name: string;
       stock_quantity: number | null;
     }[]
   >`
-    select ci.id, ci.product_id, ci.qty, ci.combo_selections, p.name, p.stock_quantity
+    select ci.id, ci.product_id, ci.qty, ci.combo_selections, ci.modifier_ids, ci.modifier_qty,
+           p.name, p.stock_quantity
     from cart_items ci join products p on p.id = ci.product_id
     where ci.tenant_id = ${tenantId} and ci.cart_id = ${cartId}
   `;
 }
+
+const addonLine = (l: { qty: number; modifier_ids: string[]; modifier_qty: ModifierQty }) => ({
+  qty: l.qty,
+  modifierIds: l.modifier_ids,
+  modifierQty: l.modifier_qty,
+});
 
 const stockOf = (lines: { product_id: string; name: string; stock_quantity: number | null }[]) =>
   new Map(lines.map((l) => [l.product_id, { name: l.name, stock: l.stock_quantity }]));

@@ -122,6 +122,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront read cache (db)', ()
       'product_media',
       'modifier_groups',
       'modifiers',
+      'addon_stock',
       'combo_slots',
       'combo_slot_items',
       'notify_requests',
