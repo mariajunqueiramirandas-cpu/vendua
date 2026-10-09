@@ -1,6 +1,6 @@
 // CI/fleet fixtures — NOT the dev seed (that one is blank: `bun run seed`). Fills quero-pudim with a menu, zones, coupons, Pix and
 // loyalty, plus the canary tenants that `vendua train` / template migrations run over. Idempotent wipe+recreate (orders/carts preserved).
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readTemplatesDir } from '@vendua/templates/node';
 import { createSql } from './db.ts';
@@ -370,6 +370,34 @@ TENANTS.push({
     tagline: 'A base de todo vendua scaffold',
   }))(quero.settings),
 });
+
+// A store the site builder generates (ADR 0039) lands as storefronts/<slug>/ in its own PR, which
+// may touch nothing else, so it can't add itself above. It gets the same fixture menu, on the
+// dev hosts `vendua new` registers for its port, so the fleet trains it like any other store.
+const covered = new Set(TENANTS.map((t) => t.storefront));
+const { owner: _owner, ...generated } = quero;
+for (const dir of readdirSync(join(REPO, 'storefronts'), { withFileTypes: true })) {
+  const rel = `storefronts/${dir.name}`;
+  if (!dir.isDirectory() || covered.has(rel) || !existsSync(join(REPO, rel, 'package.json')))
+    continue;
+  const vite = join(REPO, rel, 'vite.config.ts');
+  const port = existsSync(vite)
+    ? /\bport:\s*(\d+)/.exec(readFileSync(vite, 'utf8'))?.[1]
+    : undefined;
+  if (!port) {
+    slog.warn({ storefront: rel }, 'no dev port in vite.config.ts: no fixture tenant');
+    continue;
+  }
+  TENANTS.push({
+    ...generated,
+    slug: dir.name,
+    name: dir.name,
+    hosts: [`${dir.name}.localhost`, `localhost:${port}`, `127.0.0.1:${port}`],
+    storefront: rel,
+    ring: 'stable',
+    settings: (({ promo: _promo, ...rest }) => rest)(quero.settings),
+  });
+}
 
 // demo storefronts removed from the repo; drop their tenants from already-seeded DBs (FKs cascade)
 await sql`delete from tenants where slug in ('brasa', 'forn', 'example-quero-pudim')`;
