@@ -328,6 +328,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
   const failNext: { status: number; body: Record<string, unknown> }[] = [];
   let msgSeq = 0;
   let channelsInGuild: { id: string; name: string; type: number; parent_id?: string | null }[] = [];
+  let botGuilds = [{ id: GUILD, name: 'Venduá' }];
   const fakeDiscord = async (url: string, init: RequestInit) => {
     const u = new URL(url);
     const path = u.pathname.replace('/api/v10', '');
@@ -342,6 +343,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
       return Response.json({ id: path.split('/').at(-1) });
     if (method === 'PUT' && path.endsWith('/commands')) return Response.json([]);
     if (path === '/users/@me') return Response.json({ id: BOT_USER, username: 'vendua' });
+    if (path === '/users/@me/guilds') return Response.json(botGuilds);
+    if (path === '/applications/@me' && method === 'GET')
+      return Response.json({ id: APP, verify_key: publicKey, interactions_endpoint_url: null });
+    if (path === '/applications/@me' && method === 'PATCH') return Response.json({ id: APP });
     if (path === `/guilds/${GUILD}`) return Response.json({ id: GUILD, name: 'Venduá' });
     if (path === `/guilds/${GUILD}/roles`)
       return Response.json([{ id: ROLE, name: 'equipe', color: 0, managed: false, position: 2 }]);
@@ -871,6 +876,74 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
     expect(await until()).toBe(at);
     expect(again.data.content).toBe(first.data.content);
     await sql`update control_settings set value = '{}' where key = 'discord_state'`;
+  });
+
+  test('connect: the token alone fills the app, finds the server and sets the endpoint', async () => {
+    const config = () =>
+      sql<{ config: Record<string, string>; enabled: boolean }[]>`
+        select config, enabled from control_integrations where kind = 'discord' and driver = 'bot'
+      `.then((r) => r[0]!);
+    await sql`update control_integrations set config = '{}', enabled = false
+              where kind = 'discord' and driver = 'bot'`;
+    try {
+      // invited to two servers: nothing is guessed until one is picked
+      botGuilds = [
+        { id: GUILD, name: 'Venduá' },
+        { id: '100000000000000009', name: 'outro' },
+      ];
+      const r = await ctl('POST', '/control/v1/discord/connect', {});
+      expect(r.status).toBe(200);
+      const j = (await r.json()) as {
+        guildId: string | null;
+        guilds: unknown[];
+        invite: string;
+        endpoint: { url: string; ok: boolean };
+      };
+      expect(j.guildId).toBeNull();
+      expect(j.guilds).toHaveLength(2);
+      expect(j.invite).toContain(`client_id=${APP}`);
+      expect(j.invite).not.toContain('guild_id');
+      expect(j.endpoint.ok).toBe(true);
+      expect(j.endpoint.url).toEndWith('/control/v1/discord/interactions');
+      const patch = calls.find((c) => c.method === 'PATCH' && c.path === '/applications/@me')!;
+      expect(patch.body).toEqual({ interactions_endpoint_url: j.endpoint.url });
+      expect(await config()).toEqual({ config: { applicationId: APP, publicKey }, enabled: true });
+
+      const stranger = await ctl('POST', '/control/v1/discord/connect', {
+        guildId: '100000000000000010',
+      });
+      expect(stranger.status).toBe(422);
+
+      botGuilds = [{ id: GUILD, name: 'Venduá' }];
+      const once = await ctl('POST', '/control/v1/discord/connect', {});
+      expect(((await once.json()) as { guildId: string }).guildId).toBe(GUILD);
+      expect((await config()).config).toEqual({ applicationId: APP, publicKey, guildId: GUILD });
+
+      const ov = (await (await ctl('GET', '/control/v1/discord')).json()) as {
+        app: { ok: boolean };
+      };
+      expect(ov.app.ok).toBe(true);
+    } finally {
+      botGuilds = [{ id: GUILD, name: 'Venduá' }];
+      await sql`update control_integrations
+                set config = ${sql.json({ applicationId: APP, guildId: GUILD, publicKey })},
+                    enabled = true
+                where kind = 'discord' and driver = 'bot'`;
+    }
+  });
+
+  test('connect: no token in the environment is a clear 422', async () => {
+    const saved = [process.env.DISCORD_TEST_TOKEN, process.env.DISCORD_BOT_TOKEN];
+    delete process.env.DISCORD_TEST_TOKEN;
+    delete process.env.DISCORD_BOT_TOKEN;
+    try {
+      const r = await ctl('POST', '/control/v1/discord/connect', {});
+      expect(r.status).toBe(422);
+      expect(calls).toHaveLength(0);
+    } finally {
+      process.env.DISCORD_TEST_TOKEN = saved[0]!;
+      if (saved[1] !== undefined) process.env.DISCORD_BOT_TOKEN = saved[1];
+    }
   });
 
   test('CRM: overview, setup channels, test, mutes and the digest', async () => {

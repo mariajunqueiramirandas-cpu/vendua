@@ -46,6 +46,21 @@ export function useSaveDiscordConnection() {
   });
 }
 
+/** Reads the app from the token, picks the server the bot is in, sets the interactions URL. */
+export function useDiscordConnect() {
+  const refresh = useRefresh();
+  return useMutation({
+    mutationFn: (guildId?: string) => api.discordConnect(guildId),
+    onSuccess: (r) => {
+      if (!r.endpoint.ok) toast.error('conectado, mas o Discord recusou a URL de interações');
+      else if (r.guildId) toast.success('discord conectado');
+      else if (!r.guilds.length) toast.success('conectado — agora adicione o bot ao servidor');
+    },
+    onError: (e) => toast.error(`discord: ${errorMessage(e)}`),
+    onSettled: () => refresh(),
+  });
+}
+
 export function useSaveDiscordSetting() {
   const refresh = useRefresh();
   return useMutation({

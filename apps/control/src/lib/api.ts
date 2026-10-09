@@ -255,6 +255,7 @@ export interface DiscordOverview {
     tokenPresent: boolean;
     invite: string | null;
     endpointPath: string;
+    endpointUrl: string;
   };
   setting: DiscordSetting;
   state: {
@@ -274,6 +275,13 @@ export interface DiscordOverview {
   };
   failures: { kind: string; error: string | null; at: string }[];
   team: { members: number; linked: number };
+}
+export interface DiscordConnect {
+  applicationId: string;
+  guildId: string | null;
+  guilds: { id: string; name: string }[];
+  invite: string;
+  endpoint: { url: string; ok: boolean; error: string | null };
 }
 export interface DiscordGuild {
   guild: { id: string; name: string };
@@ -678,6 +686,11 @@ const apiBase = {
 
   discord: () => req<DiscordOverview>('/discord'),
   discordGuild: () => req<DiscordGuild>('/discord/guild'),
+  discordConnect: (guildId?: string) =>
+    req<DiscordConnect>('/discord/connect', {
+      method: 'POST',
+      body: JSON.stringify(guildId ? { guildId } : {}),
+    }),
   discordSetup: (staffRoleId: string) =>
     req<{ channels: Record<string, string>; created: string[] }>('/discord/setup', {
       method: 'POST',
