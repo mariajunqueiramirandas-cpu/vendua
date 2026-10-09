@@ -175,6 +175,9 @@ const FRIENDLY: Record<string, string> = {
     'A loja abre para pedidos assim que o primeiro pagamento do plano for confirmado. Veja em Conta e plano.',
   INVALID_PIX: 'Essa chave Pix não parece certa. Confira o tipo e a chave.',
   INVALID_TOKENS: 'Essas cores ficam difíceis de ler. Ajuste o contraste.',
+  STORE_PINNED:
+    'A equipe Venduá travou a versão do seu site por enquanto. Fale com a gente para trocar.',
+  NO_CUSTOM_SITE: 'A sua loja ainda não tem um site sob medida para trocar.',
   TEMPLATE_VERSION_CONFLICT: 'Alguém mudou essa página agora há pouco. Recarregamos a versão nova.',
   CONFIRMATION_MISMATCH: 'Os números não conferem. Digite os 4 últimos dígitos do celular.',
   NOTHING_TO_IMPORT: 'Não achamos linhas como "Nome - 12,50". Confira o texto colado.',

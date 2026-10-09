@@ -14,6 +14,7 @@ import {
 } from '@vendua/templates';
 import { createHash } from 'node:crypto';
 import { emitAdminTx } from '../admin/live.ts';
+import { DEFAULT_BUNDLE } from './fleet/deps.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE } from '../platform/http.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
@@ -42,10 +43,30 @@ export function assertPage(page: string): PageId {
 
 // ── templates ────────────────────────────────────────────────────────────────
 
-export async function currentTemplatesTx(tx: Sql, tenantId: string): Promise<TemplateSet> {
+// A saved design belongs to the bundle it was made for (ADR 0040): reads and writes default to
+// the bundle the store runs, so switching bundles brings that bundle's layout and colors along.
+function bundleSql(tx: Sql, tenantId: string, bundle?: string) {
+  return bundle
+    ? tx`${bundle}`
+    : tx`coalesce((select bundle from storefront_ops where tenant_id = ${tenantId}), ${DEFAULT_BUNDLE})`;
+}
+
+export async function storeBundleTx(tx: Sql, tenantId: string): Promise<string> {
+  const row = (
+    await tx<{ bundle: string }[]>`select bundle from storefront_ops where tenant_id = ${tenantId}`
+  )[0];
+  return row?.bundle ?? DEFAULT_BUNDLE;
+}
+
+export async function currentTemplatesTx(
+  tx: Sql,
+  tenantId: string,
+  bundle?: string,
+): Promise<TemplateSet> {
   const rows = await tx<{ page: string; template: PageTemplate }[]>`
     select distinct on (page) page, template
-    from storefront_templates where tenant_id = ${tenantId}
+    from storefront_templates
+    where tenant_id = ${tenantId} and bundle = ${bundleSql(tx, tenantId, bundle)}
     order by page, version desc
   `;
   const out: TemplateSet = {};
@@ -57,10 +78,11 @@ export async function currentTemplateTx(
   tx: Sql,
   tenantId: string,
   page: PageId,
+  bundle?: string,
 ): Promise<{ version: number; template: PageTemplate } | null> {
   const rows = await tx<{ version: number; template: PageTemplate }[]>`
     select version, template from storefront_templates
-    where tenant_id = ${tenantId} and page = ${page}
+    where tenant_id = ${tenantId} and page = ${page} and bundle = ${bundleSql(tx, tenantId, bundle)}
     order by version desc limit 1
   `;
   return rows[0] ?? null;
@@ -74,7 +96,7 @@ export async function saveTemplateTx(
   page: PageId,
   input: unknown,
   source: string,
-  opts: { trackRemovals?: boolean; expectVersion?: number } = {},
+  opts: { trackRemovals?: boolean; expectVersion?: number; bundle?: string } = {},
 ): Promise<{ version: number; template: PageTemplate }> {
   const valid = validateTemplate(input, page);
   if (!valid.ok)
@@ -83,7 +105,8 @@ export async function saveTemplateTx(
     });
   // serialize writers per (tenant, page) — version numbers must not collide
   await tx`select pg_advisory_xact_lock(hashtext(${`tpl:${tenantId}:${page}`}))`;
-  const cur = await currentTemplateTx(tx, tenantId, page);
+  const bundle = opts.bundle ?? (await storeBundleTx(tx, tenantId));
+  const cur = await currentTemplateTx(tx, tenantId, page, bundle);
   if (opts.expectVersion !== undefined && (cur?.version ?? 0) !== opts.expectVersion)
     throw new HttpError(409, 'TEMPLATE_VERSION_CONFLICT', 'template changed since it was read', {
       current: cur?.version ?? 0,
@@ -91,10 +114,18 @@ export async function saveTemplateTx(
   const template = opts.trackRemovals
     ? withRemovals(cur?.template ?? null, valid.template)
     : valid.template;
-  const version = (cur?.version ?? 0) + 1;
+  // versions count across bundles: (tenant, page, version) stays unique
+  const last = (
+    await tx<{ version: number | null }[]>`
+      select max(version) as version from storefront_templates
+      where tenant_id = ${tenantId} and page = ${page}
+    `
+  )[0]?.version;
+  const version = (last ?? 0) + 1;
   await tx`
-    insert into storefront_templates (tenant_id, page, version, template, source)
-    values (${tenantId}, ${page}, ${version}, ${tx.json(template as never)}, ${source.slice(0, 120)})
+    insert into storefront_templates (tenant_id, page, version, template, source, bundle)
+    values (${tenantId}, ${page}, ${version}, ${tx.json(template as never)}, ${source.slice(0, 120)},
+            ${bundle})
   `;
   return { version, template };
 }
@@ -102,7 +133,7 @@ export async function saveTemplateTx(
 export async function templateHistoryTx(tx: Sql, tenantId: string, page: PageId) {
   return tx<{ version: number; source: string; created_at: string }[]>`
     select version, source, created_at from storefront_templates
-    where tenant_id = ${tenantId} and page = ${page}
+    where tenant_id = ${tenantId} and page = ${page} and bundle = ${bundleSql(tx, tenantId)}
     order by version desc limit 50
   `;
 }
@@ -114,18 +145,23 @@ export async function rollbackTemplateTx(
   page: PageId,
   toVersion?: number,
 ): Promise<{ version: number; template: PageTemplate; restored: number }> {
-  const cur = await currentTemplateTx(tx, tenantId, page);
+  const bundle = await storeBundleTx(tx, tenantId);
+  const cur = await currentTemplateTx(tx, tenantId, page, bundle);
   if (!cur) throw new HttpError(404, 'TEMPLATE_NOT_FOUND', `no template for ${page}`);
-  const target = toVersion ?? cur.version - 1;
-  const rows = await tx<{ template: PageTemplate }[]>`
-    select template from storefront_templates
-    where tenant_id = ${tenantId} and page = ${page} and version = ${target}
+  // the newest earlier version of this bundle: version numbers skip the other bundle's
+  const rows = await tx<{ version: number; template: PageTemplate }[]>`
+    select version, template from storefront_templates
+    where tenant_id = ${tenantId} and page = ${page} and bundle = ${bundle}
+      and ${toVersion === undefined ? tx`version < ${cur.version}` : tx`version = ${toVersion}`}
+    order by version desc limit 1
   `;
+  const target = rows[0]?.version ?? toVersion ?? cur.version - 1;
   if (!rows[0] || target >= cur.version)
     throw new HttpError(404, 'TEMPLATE_NOT_FOUND', `no earlier version ${target} for ${page}`);
   // saveTemplateTx takes the page lock after this read: an edit in between is a conflict
   const saved = await saveTemplateTx(tx, tenantId, page, rows[0].template, `rollback:${target}`, {
     expectVersion: cur.version,
+    bundle,
   });
   return { ...saved, restored: target };
 }
@@ -135,9 +171,11 @@ export async function rollbackTemplateTx(
 export async function currentTokensTx(
   tx: Sql,
   tenantId: string,
+  bundle?: string,
 ): Promise<{ version: number; tokens: StorefrontTokens } | null> {
   const rows = await tx<{ version: number; tokens: StorefrontTokens }[]>`
-    select version, tokens from storefront_tokens where tenant_id = ${tenantId}
+    select version, tokens from storefront_tokens
+    where tenant_id = ${tenantId} and bundle = ${bundleSql(tx, tenantId, bundle)}
     order by version desc limit 1
   `;
   return rows[0] ?? null;
@@ -153,25 +191,41 @@ export function appliesLiveTokens(kernelVersion: string | null): boolean {
 /** A token edit is a design update: validated (incl. WCAG AA) and versioned — no storefront
  *  code changes. Live at the next page load on Kernel 1.10+; an older live build queues a
  *  rebuild on the outbox (`vendua train --pending`). */
-export async function saveTokensTx(tx: Sql, tenantId: string, input: unknown, source: string) {
+export async function saveTokensTx(
+  tx: Sql,
+  tenantId: string,
+  input: unknown,
+  source: string,
+  opts: { bundle?: string } = {},
+) {
   const valid = validateTokens(input);
   if (!valid.ok)
     throw new HttpError(422, 'INVALID_TOKENS', 'tokens failed validation', {
       errors: valid.errors.slice(0, 20),
     });
   await tx`select pg_advisory_xact_lock(hashtext(${`tok:${tenantId}`}))`;
-  const cur = await currentTokensTx(tx, tenantId);
-  const version = (cur?.version ?? 0) + 1;
-  await tx`
-    insert into storefront_tokens (tenant_id, version, tokens, source)
-    values (${tenantId}, ${version}, ${tx.json(valid.tokens as never)}, ${source.slice(0, 120)})
-  `;
   const live = (
-    await tx<{ live_kernel_version: string | null }[]>`
-      select live_kernel_version from storefront_ops where tenant_id = ${tenantId}
+    await tx<{ bundle: string; live_kernel_version: string | null }[]>`
+      select bundle, live_kernel_version from storefront_ops where tenant_id = ${tenantId}
     `
   )[0];
-  if (!appliesLiveTokens(live?.live_kernel_version ?? null))
+  const bundle = opts.bundle ?? live?.bundle ?? DEFAULT_BUNDLE;
+  const last = (
+    await tx<{ version: number | null }[]>`
+      select max(version) as version from storefront_tokens where tenant_id = ${tenantId}
+    `
+  )[0]?.version;
+  const version = (last ?? 0) + 1;
+  await tx`
+    insert into storefront_tokens (tenant_id, version, tokens, source, bundle)
+    values (${tenantId}, ${version}, ${tx.json(valid.tokens as never)}, ${source.slice(0, 120)},
+            ${bundle})
+  `;
+  // only the bundle the store runs is on screen: a save for the other one waits for the switch
+  if (
+    bundle === (live?.bundle ?? DEFAULT_BUNDLE) &&
+    !appliesLiveTokens(live?.live_kernel_version ?? null)
+  )
     await tx`
       insert into outbox (tenant_id, topic, payload)
       values (${tenantId}, 'storefront.rebuild_requested', ${tx.json({ reason: 'tokens', version })})
@@ -322,10 +376,12 @@ export async function runTemplateMigration(
       const ops = await opsTx(tx, t.id);
       if (opts.ring && ops.ring !== opts.ring) return;
       const build = await latestBuildTx(tx, t.id);
+      // the design on screen: the other bundle's waits for a rerun after the store switches
+      const bundle = await storeBundleTx(tx, t.id);
       for (const page of m.pages) {
         // a real run locks the page first so a concurrent edit can't slip between read and write
         if (!opts.dry) await tx`select pg_advisory_xact_lock(hashtext(${`tpl:${t.id}:${page}`}))`;
-        const cur = await currentTemplateTx(tx, t.id, page);
+        const cur = await currentTemplateTx(tx, t.id, page, bundle);
         if (!cur) {
           report.push({
             tenant: t.slug,
@@ -349,7 +405,9 @@ export async function runTemplateMigration(
           ...(out.status !== 'applied' ? { reason: out.reason } : {}),
         };
         if (out.status === 'applied' && !opts.dry) {
-          const saved = await saveTemplateTx(tx, t.id, page, out.template, `migration:${m.id}`);
+          const saved = await saveTemplateTx(tx, t.id, page, out.template, `migration:${m.id}`, {
+            bundle,
+          });
           row.toVersion = saved.version;
         }
         if (!opts.dry)
@@ -382,9 +440,14 @@ export async function rollbackTemplateMigration(
       const ops = await opsTx(tx, t.id);
       if (opts.ring && ops.ring !== opts.ring) return;
       const runs = await tx<{ page: string; to_version: number; from_version: number }[]>`
-        select distinct on (page) page, to_version, from_version from template_migration_runs
-        where tenant_id = ${t.id} and migration_id = ${migrationId} and status = 'applied'
-        order by page, created_at desc
+        select distinct on (r.page) r.page, r.to_version, r.from_version
+        from template_migration_runs r
+          join storefront_templates st on st.tenant_id = r.tenant_id and st.page = r.page
+            and st.version = r.to_version
+        where r.tenant_id = ${t.id} and r.migration_id = ${migrationId} and r.status = 'applied'
+          -- the run on the design on screen: a rerun after a bundle switch is the other side's
+          and st.bundle = ${bundleSql(tx, t.id)}
+        order by r.page, r.created_at desc
       `;
       for (const r of runs) {
         // locked before the check, as a migration does, so an edit can't land between the two

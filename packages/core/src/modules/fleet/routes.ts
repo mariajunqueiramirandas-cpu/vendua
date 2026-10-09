@@ -22,6 +22,7 @@ import {
   reconcileBundleTx,
   reconcileTx,
   rollbackTx,
+  setBundleTx,
 } from './deploy.ts';
 import { ackIncident, incidentJson, type IncidentRow } from './incidents.ts';
 import { probeStoreNow } from './probe.ts';
@@ -276,15 +277,7 @@ export function mountFleet(o: {
     const res = await claimControl(sql, key, async (tx) => {
       const t = await tenantBySlug(tx, slug);
       const ops = await lockOpsTx(tx, t.id);
-      if (bundle !== undefined && bundle !== ops.bundle) {
-        if (!(await latestPassedTx(tx, bundle)))
-          throw new HttpError(409, 'BUNDLE_HAS_NO_RELEASE', `no passed release of ${bundle} yet`);
-        await tx`
-          update storefront_ops set bundle = ${bundle}, bundle_locked = true,
-            release_policy = 'auto', pinned_reason = null, updated_at = now()
-          where tenant_id = ${t.id}
-        `;
-      }
+      if (bundle !== undefined) await setBundleTx(tx, t.id, bundle);
       if (ring !== undefined)
         await tx`update storefront_ops set ring = ${ring as string}, updated_at = now()
                  where tenant_id = ${t.id}`;

@@ -287,6 +287,20 @@ function siteDelivered(ev: Ev<'site.delivered'>, ctx: RenderCtx): Rendered {
   return siteCard(ev, ctx, `${SITE_KIND[d.kind]} no ar`, `\`${esc(d.slug)}\``, null, 'publicar');
 }
 
+function siteModeChanged(ev: Ev<'site.mode_changed'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return {
+    card: card(
+      ev,
+      {
+        title: `${esc(d.storeName)} ${d.mode === 'custom' ? 'voltou para o site sob medida' : 'trocou para o modelo padrão'}`,
+        description: `\`${esc(d.slug)}\` · trocado pelo lojista na Aparência`,
+      },
+      row(linkButton('frota no CRM', ctx.crm('/lojas/frota'))),
+    ),
+  };
+}
+
 function billingManual(ev: Ev<'billing.manual'>, ctx: RenderCtx): Rendered {
   const d = ev.data;
   return {
@@ -1176,6 +1190,7 @@ const STANDALONE: Standalone = {
   'site.due_soon': siteDueSoon,
   'site.overdue': siteOverdue,
   'site.delivered': siteDelivered,
+  'site.mode_changed': siteModeChanged,
   'billing.manual': billingManual,
   'lead.created': leadCreated,
   'lead.replied': leadReplied,

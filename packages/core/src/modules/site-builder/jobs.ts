@@ -452,17 +452,22 @@ async function applyAndDeliverTx(
   )[0];
   if (!t || t.status !== 'merged' || !t.design) return false;
   if (!t.design_applied_at) {
+    // the store's own bundle: the design is that bundle's, whichever one the store runs now
+    const bundle = (
+      await tx<{ slug: string }[]>`select slug from tenants where id = ${t.tenant_id}`
+    )[0]!.slug;
     const pages: string[] = [];
     for (const [page, template] of Object.entries(t.design.templates)) {
       const same = (
         await tx<{ same: boolean }[]>`
           select template = ${tx.json(template as never)}::jsonb as same
-          from storefront_templates where tenant_id = ${t.tenant_id} and page = ${page}
+          from storefront_templates
+          where tenant_id = ${t.tenant_id} and page = ${page} and bundle = ${bundle}
           order by version desc limit 1
         `
       )[0]?.same;
       if (same) continue;
-      await saveTemplateTx(tx, t.tenant_id, page as never, template, 'site sob medida');
+      await saveTemplateTx(tx, t.tenant_id, page as never, template, 'site sob medida', { bundle });
       pages.push(page);
     }
     let tokens = false;
@@ -470,12 +475,12 @@ async function applyAndDeliverTx(
       const same = (
         await tx<{ same: boolean }[]>`
           select tokens = ${tx.json(t.design.tokens as never)}::jsonb as same
-          from storefront_tokens where tenant_id = ${t.tenant_id}
+          from storefront_tokens where tenant_id = ${t.tenant_id} and bundle = ${bundle}
           order by version desc limit 1
         `
       )[0]?.same;
       if (!same) {
-        await saveTokensTx(tx, t.tenant_id, t.design.tokens, 'site sob medida');
+        await saveTokensTx(tx, t.tenant_id, t.design.tokens, 'site sob medida', { bundle });
         tokens = true;
       }
     }

@@ -106,6 +106,7 @@ export interface MountAdminOpts {
   geocode: AdminDeps['geocode'];
   signupReady: AdminDeps['signupReady'];
   domains: AdminDeps['domains'];
+  fleet: AdminDeps['fleet'];
 }
 
 const STREAM_HEARTBEAT_MS = 20_000;
@@ -270,6 +271,7 @@ export function mountAdmin(o: MountAdminOpts) {
     geocode: o.geocode,
     signupReady: o.signupReady,
     domains: o.domains,
+    fleet: o.fleet,
   };
   mountPaymentsPublic(admin, shared);
   mountSignup(admin, shared);

@@ -1407,7 +1407,11 @@ export interface Appearance {
   tokens: { version: number; tokens: StoreTokens } | null;
   publish: { state: 'publishing' | 'live'; since: string | null; lastBuildAt: string | null };
   sections: Record<string, unknown>;
+  /** the store has a site sob medida: which one it shows (null = no choice to make) */
+  site: { mode: SiteMode } | null;
 }
+
+export type SiteMode = 'custom' | 'template';
 
 export interface SearchResult {
   orders: {
@@ -2696,6 +2700,8 @@ export const api = {
     }),
   saveTokens: (tokens: StoreTokens) =>
     send<{ version: number }>('PUT', '/appearance/tokens', { tokens }),
+  setSite: (mode: SiteMode) =>
+    send<{ site: { mode: SiteMode } }>('PUT', '/appearance/site', { mode }),
 
   startImport: (url: string) =>
     send<{ id: string; platform: string | null }>('POST', '/imports', { url }),

@@ -145,6 +145,7 @@ export interface StaffEventMap {
   'site.due_soon': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; dueAt: string };
   'site.overdue': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; dueAt: string };
   'site.delivered': { storeName: Name; slug: string; taskId: Id; kind: SiteKind };
+  'site.mode_changed': { storeName: Name; slug: string; mode: 'custom' | 'template' };
   'billing.manual': {
     storeName: Name;
     invoiceId: Id;
@@ -493,6 +494,13 @@ export const STAFF_EVENT_KINDS: Catalog = {
     severity: 'success',
     label: 'site sob medida no ar',
     hint: 'o design do PR aprovado foi publicado na loja',
+  },
+  'site.mode_changed': {
+    category: 'atendimento',
+    level: 'normal',
+    severity: 'info',
+    label: 'loja trocou de site',
+    hint: 'o lojista alternou entre o site sob medida e o modelo padrão na Aparência',
   },
   'billing.manual': {
     category: 'atendimento',

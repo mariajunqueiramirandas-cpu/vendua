@@ -1,4 +1,8 @@
 import { HttpError, bodyJson } from '../platform/http.ts';
+import { DEFAULT_BUNDLE } from '../modules/fleet/deps.ts';
+import { lockOpsTx, reconcileTx, setBundleTx, siteModeTx } from '../modules/fleet/deploy.ts';
+import { inControlScope } from '../platform/db.ts';
+import { recordStaffEventTx } from '../modules/staff-events.ts';
 import {
   assertPage,
   currentTemplatesTx,
@@ -7,6 +11,7 @@ import {
   rollbackTemplateTx,
   saveTemplateTx,
   saveTokensTx,
+  storeBundleTx,
   templateHistoryTx,
 } from '../modules/storefront-platform.ts';
 import { audit } from './audit.ts';
@@ -35,13 +40,16 @@ export function mountAppearance(d: AdminDeps) {
   admin.get(
     '/appearance',
     read('manager', async (tx, t) => {
+      const bundle = await storeBundleTx(tx, t.id);
       const rows = await tx<
         { page: string; version: number; template: unknown; source: string; created_at: string }[]
       >`
         select distinct on (page) page, version, template, source, created_at from storefront_templates
-        where tenant_id = ${t.id} order by page, version desc
+        where tenant_id = ${t.id} and bundle = ${bundle} order by page, version desc
       `;
-      const tokens = await currentTokensTx(tx, t.id);
+      const tokens = await currentTokensTx(tx, t.id, bundle);
+      // releases are platform data: read with the control scope open for that one read
+      const site = await inControlScope(tx, () => siteModeTx(tx, t.id, t.slug));
       const pending = await tx<{ id: number; created_at: string }[]>`
         select id, created_at from outbox
         where tenant_id = ${t.id} and topic = 'storefront.rebuild_requested' and published_at is null
@@ -76,6 +84,61 @@ export function mountAppearance(d: AdminDeps) {
           lastBuildAt: build?.recordedAt ?? null,
         },
         sections: build?.sections ?? {},
+        site,
+      };
+    }),
+  );
+
+  // Site sob medida ↔ modelo padrão: the store moves to that bundle's newest release and shows
+  // the layout and colors saved for it, edits on each side kept (ADR 0040)
+  admin.put(
+    '/appearance/site',
+    write('manager', async (tx, t, m, c) => {
+      const body = await bodyJson(c);
+      const mode = body.mode;
+      if (mode !== 'custom' && mode !== 'template')
+        throw new HttpError(422, 'BAD_REQUEST', "mode must be 'custom' or 'template'", {
+          field: 'mode',
+        });
+      // releases and deployments are the Control Plane's: the scope is open only for those
+      // statements, and they commit with this store's rows and the idempotency claim
+      const out = await inControlScope(tx, async () => {
+        // the ops row lock first: two switches at once take turns, and the second is a no-op
+        const ops = await lockOpsTx(tx, t.id);
+        const site = await siteModeTx(tx, t.id, t.slug);
+        if (!site)
+          throw new HttpError(409, 'NO_CUSTOM_SITE', 'this store has no site sob medida to switch');
+        if (site.mode === mode) return null;
+        // a pin is staff holding a release (a rollback pins): the owner can't switch past it
+        if (ops.release_policy === 'pinned')
+          throw new HttpError(409, 'STORE_PINNED', "the team pinned this store's version");
+        await setBundleTx(tx, t.id, mode === 'custom' ? t.slug : DEFAULT_BUNDLE);
+        return reconcileTx(tx, d.fleet, t.id, {
+          actor: 'lojista',
+          reason:
+            mode === 'custom'
+              ? 'o lojista voltou para o site sob medida'
+              : 'o lojista trocou para o modelo padrão',
+        }).then((dep) => ({ dep }));
+      });
+      if (!out) return { status: 200, body: { site: { mode }, deployment: null } };
+      const { dep } = out;
+      await audit(tx, t.id, m, {
+        action: 'appearance.site',
+        entity: 'site',
+        summary:
+          mode === 'custom' ? 'voltou para o site sob medida' : 'trocou para o modelo padrão',
+      });
+      await recordStaffEventTx(
+        tx,
+        'site.mode_changed',
+        { storeName: t.name, slug: t.slug, mode },
+        { tenantId: t.id },
+      );
+      await emitAdminTx(tx, t.id, 'appearance');
+      return {
+        status: 200,
+        body: { site: { mode }, deployment: dep ? { id: dep.id, status: dep.status } : null },
       };
     }),
   );
