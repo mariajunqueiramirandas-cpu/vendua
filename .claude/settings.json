@@ -1,6 +1,6 @@
 {
   "env": {
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000"
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "600000"
   },
   "modelSettings": {
     "claude-sonnet-5-5": {
