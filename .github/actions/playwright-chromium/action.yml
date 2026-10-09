@@ -8,12 +8,15 @@ runs:
   using: composite
   steps:
     # packages/conformance pins @playwright/test; a bare `bunx playwright` at the root resolves
-    # whatever version npm serves, whose browser build the tests wouldn't use
+    # whatever version npm serves, whose browser build the tests wouldn't use. Read from its
+    # package.json: `playwright --version` took 8 s beside a booting Core.
     - name: Playwright version
       id: version
       shell: bash
       working-directory: packages/conformance
-      run: echo "v=$(bunx playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      run: |
+        v="$(jq -er .version node_modules/@playwright/test/package.json)"
+        echo "v=$v" >> "$GITHUB_OUTPUT"
     - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ~/.cache/ms-playwright
