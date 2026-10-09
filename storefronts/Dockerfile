@@ -22,6 +22,7 @@ COPY apps/admin/package.json apps/admin/package.json
 COPY site/package.json site/package.json
 # New storefronts go here — one COPY per workspace package.json.
 COPY storefronts/quero-pudim/package.json storefronts/quero-pudim/package.json
+COPY storefronts/quero-pudim-gourmet/package.json storefronts/quero-pudim-gourmet/package.json
 COPY storefronts/_template/package.json storefronts/_template/package.json
 RUN --mount=type=cache,id=vendua-bun,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
