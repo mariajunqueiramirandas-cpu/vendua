@@ -835,8 +835,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       expect(pending).toHaveLength(1);
       expect(pending[0]!.payload.params?.channel).toBe('email');
       // the survivor isn't stranded — the sweep spawns a run for it
-      // (the restart the canceled request must not get)
-      await sweepOrphanInbox(sql);
+      // (the restart the canceled request must not get); room past other files' leftover mail,
+      // which the default 10 serves oldest-first
+      await sweepOrphanInbox(sql, 1000, { inspect: 1000 });
       const runs = await runsFor(leadId);
       expect(runs).toHaveLength(2);
       expect(runs[1]!.status).toBe('queued');

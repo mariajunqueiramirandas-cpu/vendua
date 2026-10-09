@@ -145,6 +145,7 @@ describe('mapFiles', () => {
     for (const f of [
       '.github/workflows/ci.yml',
       '.github/actions/playwright-chromium/action.yml',
+      '.github/scripts/core-ready.sh',
       'bun.lock',
     ]) {
       const r = mapFiles([f]);
