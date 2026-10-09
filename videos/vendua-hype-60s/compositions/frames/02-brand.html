@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: 'Space Grotesk';
+          src: url('assets/fonts/space-grotesk-latin-wght-normal.woff2') format('woff2');
+          font-weight: 300 700;
+        }
+        @font-face {
+          font-family: 'Figtree';
+          src: url('assets/fonts/figtree-latin-wght-normal.woff2') format('woff2');
+          font-weight: 300 900;
+        }
+        #stage {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+          background: #d9f875;
+          color: #123c32;
+        }
+        .f2-push,
+        .f2-cam {
+          position: absolute;
+          inset: 0;
+        }
+        .f2-anchor {
+          position: absolute;
+          left: 0;
+          width: 100%;
+          top: var(--f2-y, 820px);
+          height: 0;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+        }
+        .f2-lock {
+          display: flex;
+          align-items: center;
+          gap: 0.06em;
+          font-size: 250px;
+          flex: none;
+        }
+        .f2-check {
+          display: block;
+          width: 1em;
+          height: 1em;
+          flex: none;
+          /* sits on the letters' optical middle, not the line box's */
+          margin-top: 0.06em;
+        }
+        .f2-check path {
+          stroke: #123c32;
+        }
+        .f2-word {
+          position: relative;
+          isolation: isolate;
+          display: block;
+          font:
+            700 1em/0.8 'Space Grotesk',
+            system-ui,
+            sans-serif;
+          letter-spacing: -0.035em;
+          white-space: nowrap;
+        }
+        .f2-l {
+          position: relative;
+          display: inline-block;
+        }
+        .f2-acute {
+          position: absolute;
+          left: 0.24em;
+          top: -0.19em;
+          width: 0.1em;
+          height: 0.2em;
+          border-radius: 0.05em;
+          background: currentColor;
+        }
+        /* Duá's box: only its bottom edge clips, at the top of the lowercase, so he climbs out from
+           behind the name; his lower body fades out before the cut so he stands behind it */
+        .f2-peek {
+          position: absolute;
+          z-index: -1;
+          left: 0.3em;
+          bottom: var(--f2-cut, 0.47em);
+          width: 2.9em;
+          height: 2.6em;
+          overflow: hidden;
+          -webkit-mask-image: linear-gradient(
+            to top,
+            transparent 0.02em,
+            rgb(0 0 0 / 0.45) 0.14em,
+            #000 0.4em
+          );
+          mask-image: linear-gradient(
+            to top,
+            transparent 0.02em,
+            rgb(0 0 0 / 0.45) 0.14em,
+            #000 0.4em
+          );
+        }
+        .f2-duck {
+          position: absolute;
+          inset: 0;
+        }
+        .f2-dua {
+          position: absolute;
+          left: 0.16em;
+          bottom: -0.32em;
+          width: 2.3em;
+          height: 2.3em;
+          display: block;
+          max-width: none;
+          filter: drop-shadow(0 0.04em 0.06em rgb(18 60 50 / 0.35));
+        }
+        .f2-tag {
+          position: absolute;
+          left: 64px;
+          right: 64px;
+          top: 1068px;
+          text-align: center;
+          font:
+            800 92px/1.05 'Figtree',
+            system-ui,
+            sans-serif;
+          letter-spacing: -0.02em;
+          color: #123c32;
+        }
+        .f2-tl {
+          display: block;
+          width: max-content;
+          margin: 0 auto;
+          opacity: 0;
+        }
+        .f2-viva {
+          position: relative;
+          display: inline-block;
+          isolation: isolate;
+          padding: 0 0.12em;
+          margin: 0 -0.06em;
+        }
+        .f2-viva-bg {
+          position: absolute;
+          z-index: -1;
+          inset: 0.06em 0;
+          border-radius: 0.14em;
+          background: #123c32;
+          transform: scaleX(0);
+          transform-origin: 0 50%;
+        }
+        .f2-grain {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          opacity: 0.07;
+          mix-blend-mode: overlay;
+          pointer-events: none;
+        }
+      </style>
+
+      <div id="stage" data-composition-id="02-brand" data-width="1080" data-height="1920">
+        <div class="f2-push" id="f2-push">
+          <div class="f2-cam" id="f2-cam">
+            <div class="f2-anchor">
+              <div class="f2-lock" id="f2-lock">
+                <svg class="f2-check" viewBox="0 0 128 128" aria-hidden="true">
+                  <path
+                    id="f2-check-path"
+                    d="M32 48 L61 88 L98 34"
+                    fill="none"
+                    stroke-width="17"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <span class="f2-word">
+                  <span class="f2-peek"
+                    ><span class="f2-duck" id="f2-duck"
+                      ><img
+                        class="f2-dua"
+                        id="f2-dua"
+                        src="assets/dua/avatar-ola.webp"
+                        alt="" /></span
+                  ></span>
+                  <span class="f2-l">v</span><span class="f2-l">e</span><span class="f2-l">n</span
+                  ><span class="f2-l">d</span><span class="f2-l">u</span
+                  ><span class="f2-l">a<i class="f2-acute" id="f2-acute"></i></span
+                  ><span class="f2-l f2-dot" id="f2-dot">.</span>
+                </span>
+              </div>
+            </div>
+            <div class="f2-tag">
+              <span class="f2-tl" id="f2-tl1"
+                >Sua loja
+                <span class="f2-viva" id="f2-viva"
+                  ><span class="f2-viva-bg" id="f2-viva-bg"></span>viva</span
+                ></span
+              >
+              <span class="f2-tl" id="f2-tl2">na palma da mão.</span>
+            </div>
+          </div>
+        </div>
+        <svg class="f2-grain" viewBox="0 0 1080 1920" preserveAspectRatio="none" aria-hidden="true">
+          <filter id="f2-noise">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.9"
+              numOctaves="2"
+              stitchTiles="stitch"
+            />
+          </filter>
+          <rect width="1080" height="1920" filter="url(#f2-noise)" />
+        </svg>
+      </div>
+
+      <script>
+        (function () {
+          window.__timelines = window.__timelines || {};
+          const DUR = 3.75;
+          const S16 = 0.1171875;
+          const BEAT = 0.46875;
+          const FS = 250; // the word's font size, px
+          const CHECK_SHIFT = -(1 + 0.06) * FS * 0.5; // centres the word alone before the check arrives
+          const LOCK_SCALE = 0.73;
+          const CHECK_LEN = 116;
+          const q = (s) => document.querySelectorAll(s);
+          const letters = q('.f2-l:not(.f2-dot)');
+
+          // ── base state (also what t=0 shows: lime stage, "v" landing); set outside the timeline so
+          // frame 0 renders it, and the timeline's tweens record these as their start values ──
+          gsap.set('#f2-lock', { x: CHECK_SHIFT, scale: 1, transformOrigin: '50% 50%' });
+          gsap.set(letters, { y: 0, transformOrigin: '50% 100%' });
+          gsap.set(Array.prototype.slice.call(letters, 1), { autoAlpha: 0 });
+          gsap.set(letters[0], { autoAlpha: 1, scaleY: 0.84, scaleX: 1.07 });
+          gsap.set('#f2-dot', { scale: 0, transformOrigin: '50% 85%' });
+          gsap.set('#f2-acute', { autoAlpha: 0, x: -0.3 * FS, y: -1.4 * FS, rotation: -40 });
+          gsap.set('#f2-check-path', {
+            strokeDasharray: CHECK_LEN,
+            strokeDashoffset: CHECK_LEN,
+            autoAlpha: 0,
+          });
+          gsap.set('#f2-duck', { yPercent: 100 });
+          gsap.set('#f2-dua', { transformOrigin: '50% 100%', rotation: 0, yPercent: 0 });
+          gsap.set('#f2-cam', { x: 8, y: -5, rotation: 0.6 });
+
+          const tl = gsap.timeline({ paused: true });
+
+          // ── slow 3 % push on the whole stage ──
+          tl.fromTo('#f2-push', { scale: 1 }, { scale: 1.03, duration: DUR, ease: 'none' }, 0);
+
+          // ── the downbeat: shake (deterministic offsets) ──
+          const shake = [
+            [8, -5, 0.6],
+            [-7, 6, -0.5],
+            [6, -6, 0.45],
+            [-5, 4, -0.35],
+            [4, -3, 0.25],
+            [-3, 2, -0.15],
+            [2, -1, 0.08],
+          ];
+          shake.forEach((s, i) => {
+            tl.set('#f2-cam', { x: s[0], y: s[1], rotation: s[2] }, i * 0.034);
+          });
+          tl.set('#f2-cam', { x: 0, y: 0, rotation: 0 }, shake.length * 0.034);
+
+          // ── v-e-n-d-u-a stamp in, one per sixteenth, dropping from y−120 with a hard stop ──
+          letters.forEach((el, i) => {
+            const at = i * S16;
+            if (i > 0) {
+              tl.set(el, { autoAlpha: 1 }, at - 0.075);
+              tl.fromTo(
+                el,
+                { y: -120, filter: 'blur(6px)' },
+                {
+                  y: 0,
+                  filter: 'blur(0px)',
+                  duration: 0.075,
+                  ease: 'power3.in',
+                  immediateRender: false,
+                },
+                at - 0.075,
+              );
+              tl.set(el, { scaleY: 0.84, scaleX: 1.07 }, at);
+            }
+            tl.to(el, { scaleY: 1, scaleX: 1, duration: 0.16, ease: 'power2.out' }, at + 0.001);
+          });
+          // the period pops one sixteenth after the "a"
+          tl.to('#f2-dot', { scale: 1, duration: 0.24, ease: 'back.out(3)' }, 6 * S16 - 0.02);
+
+          // ── beat 3: the accent drops onto the "a" with a bounce; the check draws itself ──
+          const T_ACC = 2 * BEAT; // 0.9375
+          tl.set('#f2-acute', { autoAlpha: 1 }, T_ACC - 0.13);
+          tl.to(
+            '#f2-acute',
+            { x: 0, y: 0, rotation: 38, duration: 0.13, ease: 'power3.in' },
+            T_ACC - 0.13,
+          );
+          tl.to('#f2-acute', { y: -0.13 * FS, duration: 0.1, ease: 'power2.out' }, T_ACC);
+          tl.to('#f2-acute', { y: 0, duration: 0.085, ease: 'power2.in' }, T_ACC + 0.1);
+          tl.to('#f2-acute', { y: -0.04 * FS, duration: 0.045, ease: 'power2.out' }, T_ACC + 0.19);
+          tl.to('#f2-acute', { y: 0, duration: 0.05, ease: 'power2.in' }, T_ACC + 0.24);
+
+          // the lockup makes room for the mark, then the check draws left of the word
+          tl.to(
+            '#f2-lock',
+            { x: -14, scale: LOCK_SCALE, duration: 0.5, ease: 'expo.out' },
+            T_ACC - 0.1,
+          );
+          // fades in with the draw so the round cap never shows as a lone dot
+          tl.fromTo(
+            '#f2-check-path',
+            { autoAlpha: 0 },
+            { autoAlpha: 1, duration: 0.09, ease: 'power1.in', immediateRender: false },
+            T_ACC,
+          );
+          tl.to(
+            '#f2-check-path',
+            { strokeDashoffset: 0, duration: 1.25 - T_ACC, ease: 'power3.out' },
+            T_ACC,
+          );
+
+          // ── bar 3 (1.875): Duá climbs out from behind the letters; tagline slams ──
+          const T_BAR3 = 4 * BEAT; // 1.875
+          tl.fromTo(
+            '#f2-duck',
+            { yPercent: 100 },
+            { yPercent: 0, duration: 0.55, ease: 'back.out(1.25)' },
+            T_BAR3 - 0.06,
+          );
+          tl.fromTo(
+            '#f2-dua',
+            { rotation: -7 },
+            { rotation: 0, duration: 0.6, ease: 'power2.out' },
+            T_BAR3 - 0.06,
+          );
+          // punch-in on the downbeat, easing back over the bar
+          tl.fromTo(
+            '#f2-cam',
+            { scale: 1 },
+            { scale: 1.04, duration: BEAT, ease: 'power2.out' },
+            T_BAR3,
+          );
+          tl.to(
+            '#f2-cam',
+            { scale: 1, duration: DUR - T_BAR3 - BEAT, ease: 'power1.inOut' },
+            T_BAR3 + BEAT,
+          );
+
+          const slam = (sel, at) =>
+            tl.fromTo(
+              sel,
+              { opacity: 0, scale: 1.18, filter: 'blur(14px)' },
+              { opacity: 1, scale: 1, filter: 'blur(0px)', duration: 0.16, ease: 'power4.out' },
+              at - 0.06,
+            );
+          slam('#f2-tl1', T_BAR3);
+          slam('#f2-tl2', T_BAR3 + BEAT); // 2.34375
+
+          // ── 2.8125: "viva" gets the inverse marker (forest block, lime word); Duá says oi ──
+          const T_VIVA = 6 * BEAT; // 2.8125
+          tl.to('#f2-viva-bg', { scaleX: 1, duration: 0.18, ease: 'power3.out' }, T_VIVA - 0.04);
+          tl.set('#f2-viva', { color: '#d9f875' }, T_VIVA + 0.02);
+          // two little hops, leaning toward the name
+          tl.to(
+            '#f2-dua',
+            { yPercent: -6, rotation: 3, duration: 0.13, ease: 'power2.out' },
+            T_VIVA - 0.06,
+          );
+          tl.to(
+            '#f2-dua',
+            { yPercent: 0, rotation: 0, duration: 0.14, ease: 'power2.in' },
+            T_VIVA + 0.07,
+          );
+          tl.to(
+            '#f2-dua',
+            { yPercent: -4, rotation: 2, duration: 0.12, ease: 'power2.out' },
+            T_VIVA + BEAT - 0.06,
+          );
+          tl.to(
+            '#f2-dua',
+            { yPercent: 0, rotation: 0, duration: 0.14, ease: 'power2.in' },
+            T_VIVA + BEAT + 0.06,
+          );
+
+          tl.set({}, {}, DUR);
+          window.__timelines['02-brand'] = tl;
+          tl.seek(0);
+        })();
+      </script>
+    </template>
+  </body>
+</html>

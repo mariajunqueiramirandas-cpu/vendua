@@ -1,0 +1,1050 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: "Space Grotesk";
+          src: url("assets/fonts/space-grotesk-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 700;
+        }
+        @font-face {
+          font-family: "Figtree";
+          src: url("assets/fonts/figtree-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 900;
+        }
+        #stage {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+          background: #0a100d;
+          font-family: "Figtree", system-ui, sans-serif;
+          -webkit-font-smoothing: antialiased;
+        }
+        #f5-g2,
+        #f5-av {
+          visibility: hidden;
+          opacity: 0;
+        }
+        #f5-h2,
+        #f5-s1,
+        #f5-s2 {
+          opacity: 0;
+        }
+        #f5-punch {
+          transform-origin: 50% 42%;
+        }
+        .f5-im {
+          display: block;
+          width: 100%;
+          height: 100%;
+          background: center / 100% 100% no-repeat;
+        }
+        .f5-im-ola {
+          background-image: url("assets/dua/avatar-ola.webp");
+        }
+        .f5-im-pensando {
+          background-image: url("assets/dua/avatar-pensando.webp");
+        }
+        .f5-im-feliz {
+          background-image: url("assets/dua/avatar-feliz.webp");
+        }
+        .f5-layer {
+          position: absolute;
+          inset: 0;
+        }
+        .f5-bg-night {
+          background: radial-gradient(1200px 900px at 50% 38%, #123c32 0%, #0a100d 70%);
+        }
+        .f5-bg-lime {
+          background: #d9f875;
+        }
+        .f5-grain {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          opacity: 0.07;
+          mix-blend-mode: overlay;
+          pointer-events: none;
+          z-index: 50;
+        }
+
+        /* ── g1: lime drop ── */
+        .f5-head {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 268px;
+          text-align: center;
+          transform-origin: 50% 100%;
+        }
+        .f5-hl {
+          display: block;
+          font: 700 206px/0.9 "Space Grotesk", system-ui, sans-serif;
+          letter-spacing: -0.045em;
+          color: #123c32;
+          white-space: nowrap;
+        }
+        .f5-hl > span {
+          display: inline-block;
+        }
+        .f5-sub {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 1318px;
+          text-align: center;
+        }
+        .f5-sl {
+          display: block;
+          font: 700 58px/1.14 "Figtree", system-ui, sans-serif;
+          letter-spacing: -0.01em;
+          color: #123c32;
+          white-space: nowrap;
+        }
+        .f5-sl > span {
+          display: inline-block;
+        }
+        .f5-ring {
+          position: absolute;
+          left: 260px;
+          top: 712px;
+          width: 560px;
+          height: 560px;
+          border-radius: 50%;
+          border: 10px solid #123c32;
+          box-sizing: border-box;
+        }
+        .f5-hero {
+          position: absolute;
+          left: 260px;
+          top: 712px;
+          width: 560px;
+          height: 560px;
+          border-radius: 50%;
+          overflow: hidden;
+          background: #f7f4ea;
+          box-shadow: 0 0 0 14px #123c32;
+          z-index: 20;
+        }
+        .f5-hero img,
+        .f5-av img,
+        .f5-face img {
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+
+        /* ── g2: chat ── */
+        .f5-verbs {
+          position: absolute;
+          left: 64px;
+          right: 64px;
+          top: 262px;
+          height: 256px;
+        }
+        .f5-verb {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          visibility: hidden;
+        }
+        .f5-verb > span {
+          display: inline-block;
+          position: relative;
+          font: 700 172px/0.9 "Space Grotesk", system-ui, sans-serif;
+          letter-spacing: -0.045em;
+          color: #f7f4ea;
+          white-space: nowrap;
+        }
+        .f5-verb.f5-sm > span {
+          font-size: 136px;
+        }
+        .f5-mk {
+          color: #123c32 !important;
+          padding: 0.04em 0.14em 0.1em;
+        }
+        .f5-mk-bg {
+          position: absolute;
+          inset: 0;
+          background: #d9f875;
+          border-radius: 0.1em;
+          transform-origin: 0 50%;
+        }
+        .f5-mk-tx {
+          position: relative;
+        }
+
+        .f5-phone-wrap {
+          position: absolute;
+          left: 230px;
+          top: 560px;
+        }
+        .f5-phone {
+          --pw: 620px;
+          width: var(--pw);
+          aspect-ratio: 600/1290;
+          position: absolute;
+        }
+        .f5-phone-body {
+          position: absolute;
+          inset: 0;
+          padding: calc(var(--pw) * 0.032);
+          border-radius: calc(var(--pw) * 0.16);
+          background: linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%);
+          box-shadow:
+            inset 0 0 0 2px rgb(255 255 255 / 0.16),
+            0 0 0 1px rgb(255 255 255 / 0.06),
+            0 40px 90px rgb(0 0 0 / 0.55);
+        }
+        .f5-phone-screen {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
+          border-radius: calc(var(--pw) * 0.13);
+          background: #efe9d8;
+        }
+        .f5-phone-island {
+          position: absolute;
+          z-index: 5;
+          top: calc(var(--pw) * 0.026);
+          left: 50%;
+          width: 30%;
+          height: calc(var(--pw) * 0.074);
+          transform: translateX(-50%);
+          border-radius: 999px;
+          background: #050807;
+        }
+
+        .f5-top {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 0;
+          height: 176px;
+          background: #0d2f27;
+          color: #f7f4ea;
+          z-index: 3;
+        }
+        .f5-clock {
+          position: absolute;
+          left: 54px;
+          top: 24px;
+          font: 650 25px/1 "Figtree", system-ui, sans-serif;
+          font-variant-numeric: tabular-nums;
+        }
+        .f5-clock > span {
+          position: absolute;
+          left: 0;
+          top: 0;
+          visibility: hidden;
+        }
+        .f5-batt {
+          position: absolute;
+          right: 52px;
+          top: 26px;
+          width: 38px;
+          height: 19px;
+          border-radius: 6px;
+          border: 2px solid rgb(247 244 234 / 0.6);
+          box-sizing: border-box;
+          padding: 2px;
+        }
+        .f5-batt::before {
+          content: "";
+          display: block;
+          width: 72%;
+          height: 100%;
+          border-radius: 2px;
+          background: #f7f4ea;
+        }
+        .f5-back {
+          position: absolute;
+          left: 28px;
+          top: 108px;
+          width: 22px;
+          height: 22px;
+          border-left: 4px solid #f7f4ea;
+          border-bottom: 4px solid #f7f4ea;
+          transform: rotate(45deg);
+          opacity: 0.9;
+        }
+        .f5-av {
+          position: absolute;
+          left: 62px;
+          top: 84px;
+          width: 72px;
+          height: 72px;
+          border-radius: 50%;
+          overflow: hidden;
+          background: #d9f875;
+        }
+        .f5-who {
+          position: absolute;
+          left: 152px;
+          top: 88px;
+          line-height: 1.15;
+        }
+        .f5-who strong {
+          display: block;
+          font: 700 31px/1.15 "Figtree", system-ui, sans-serif;
+          letter-spacing: -0.005em;
+        }
+        .f5-st {
+          position: relative;
+          display: block;
+          height: 30px;
+          font: 500 24px/1.25 "Figtree", system-ui, sans-serif;
+        }
+        .f5-st > span {
+          position: absolute;
+          left: 0;
+          top: 0;
+          white-space: nowrap;
+        }
+        .f5-st-on {
+          color: #b9c6bf;
+        }
+        .f5-st-ty {
+          color: #d9f875;
+          visibility: hidden;
+        }
+
+        .f5-view {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 176px;
+          height: 796px;
+          overflow: hidden;
+          background: #efe9d8;
+        }
+        .f5-log {
+          position: absolute;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          display: flex;
+          flex-direction: column;
+          padding: 18px 22px 10px;
+          color: #123c32;
+        }
+        .f5-day {
+          align-self: center;
+          margin: 0 0 14px;
+          padding: 6px 18px;
+          border-radius: 999px;
+          background: #fffdf8;
+          color: #4f6a5e;
+          font: 600 21px/1.2 "Figtree", system-ui, sans-serif;
+        }
+        .f5-slot {
+          display: grid;
+          grid-template-rows: 0fr;
+        }
+        .f5-in {
+          min-height: 0;
+        }
+        .f5-row {
+          display: flex;
+          padding-bottom: 12px;
+        }
+        .f5-row.f5-d {
+          justify-content: flex-start;
+          padding-left: 74px;
+        }
+        .f5-row.f5-m {
+          justify-content: flex-end;
+        }
+        .f5-b {
+          position: relative;
+          max-width: 450px;
+          padding: 13px 20px 9px;
+          border-radius: 30px;
+          font: 500 30px/1.3 "Figtree", system-ui, sans-serif;
+          opacity: 0;
+        }
+        .f5-d .f5-b {
+          background: #f0fcc9;
+          box-shadow: inset 0 0 0 1.5px #c8e772;
+          border-bottom-left-radius: 10px;
+          transform-origin: 0 100%;
+        }
+        .f5-m .f5-b {
+          background: #123c32;
+          color: #fffdf8;
+          border-bottom-right-radius: 10px;
+          transform-origin: 100% 100%;
+        }
+        .f5-b p {
+          margin: 0;
+        }
+        .f5-b time {
+          display: block;
+          text-align: right;
+          margin-top: 2px;
+          font: 500 19px/1 "Figtree", system-ui, sans-serif;
+          opacity: 0.68;
+          font-variant-numeric: tabular-nums;
+        }
+        .f5-face {
+          position: absolute;
+          left: -72px;
+          bottom: 0;
+          width: 60px;
+          height: 60px;
+          border-radius: 50%;
+          overflow: hidden;
+          background: #f0fcc9;
+          box-shadow: inset 0 0 0 1.5px #c8e772;
+          visibility: hidden;
+        }
+        .f5-typing {
+          display: flex;
+          gap: 9px;
+          padding: 24px 26px;
+        }
+        .f5-dot {
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          background: #123c32;
+          opacity: 0.35;
+        }
+
+        .f5-paper {
+          position: relative;
+          width: 440px;
+          box-sizing: border-box;
+          padding: 16px 22px 14px;
+          border-radius: 26px;
+          background: #fffdf8;
+          box-shadow:
+            inset 0 0 0 1.5px rgb(18 60 50 / 0.2),
+            0 3px 10px rgb(18 60 50 / 0.08);
+          font: 500 26px/1.36 "Figtree", system-ui, sans-serif;
+          color: #123c32;
+          transform-origin: 0 100%;
+          opacity: 0;
+        }
+        .f5-receipt::before {
+          content: "";
+          position: absolute;
+          left: 20px;
+          right: 20px;
+          top: 0;
+          border-top: 2.5px dashed rgb(18 60 50 / 0.24);
+        }
+        .f5-cap {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          font: 500 20px/1.2 "Figtree", system-ui, sans-serif;
+          color: #4f6a5e;
+        }
+        .f5-cap > b {
+          font-weight: 700;
+          font-size: 21px;
+          color: #123c32;
+        }
+        .f5-cap > span {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .f5-cap svg {
+          width: 21px;
+          height: 21px;
+          fill: none;
+          stroke: currentColor;
+          stroke-width: 1.6;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+        }
+        .f5-lines {
+          margin-top: 8px;
+        }
+        .f5-li {
+          display: flex;
+          justify-content: space-between;
+          gap: 14px;
+          padding: 3px 0;
+        }
+        .f5-num {
+          white-space: nowrap;
+          font-family: "Space Grotesk", system-ui, sans-serif;
+          font-weight: 500;
+          font-variant-numeric: tabular-nums;
+        }
+        .f5-tot {
+          display: flex;
+          justify-content: space-between;
+          margin-top: 6px;
+          padding-top: 8px;
+          border-top: 1.5px solid rgb(18 60 50 / 0.12);
+          font-weight: 700;
+        }
+        .f5-tot .f5-num {
+          font-weight: 700;
+          font-size: 29px;
+        }
+        .f5-meta {
+          margin: 6px 0 0;
+          color: #4f6a5e;
+          font-size: 21px;
+        }
+        .f5-pix {
+          display: flex;
+          gap: 18px;
+          align-items: center;
+          margin-top: 12px;
+        }
+        .f5-qr {
+          flex: none;
+          width: 132px;
+          height: 132px;
+          padding: 6px;
+          border-radius: 12px;
+          background: #fff;
+          box-shadow: inset 0 0 0 1.5px rgb(18 60 50 / 0.16);
+        }
+        .f5-qr svg {
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+        .f5-pixk {
+          display: grid;
+          gap: 2px;
+          font-size: 21px;
+          color: #4f6a5e;
+        }
+        .f5-pixk b {
+          font: 600 44px/1.05 "Space Grotesk", system-ui, sans-serif;
+          letter-spacing: -0.02em;
+          color: #123c32;
+        }
+        .f5-code {
+          margin: 12px 0 0;
+          padding: 8px 12px;
+          border-radius: 12px;
+          background: #efe9d8;
+          font-size: 18px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          color: #4f6a5e;
+        }
+        .f5-copy {
+          margin-top: 10px;
+          height: 52px;
+          border-radius: 999px;
+          background: #123c32;
+          color: #fffdf8;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font: 650 23px/1 "Figtree", system-ui, sans-serif;
+        }
+        .f5-lead {
+          margin: 10px 0 0;
+        }
+        .f5-hint {
+          margin: 4px 0 0;
+          color: #4f6a5e;
+          font-size: 22px;
+        }
+        .f5-hint b {
+          color: #123c32;
+        }
+        .f5-ok {
+          display: inline-block;
+          width: 30px;
+          height: 30px;
+          vertical-align: -5px;
+          margin-right: 6px;
+          border-radius: 50%;
+          background: #d9f875;
+        }
+        .f5-ok svg {
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+
+        .f5-foot {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 972px;
+          bottom: 0;
+          background: #efe9d8;
+          border-top: 1.5px solid rgb(18 60 50 / 0.1);
+        }
+        .f5-chips {
+          position: absolute;
+          left: 20px;
+          right: 20px;
+          top: 14px;
+          display: flex;
+          justify-content: flex-end;
+          gap: 12px;
+          visibility: hidden;
+        }
+        .f5-chip {
+          display: flex;
+          align-items: center;
+          height: 60px;
+          padding: 0 22px;
+          border-radius: 999px;
+          background: #fffdf8;
+          box-shadow: inset 0 0 0 1.5px rgb(18 60 50 / 0.2);
+          font: 600 24px/1 "Figtree", system-ui, sans-serif;
+          color: #123c32;
+          white-space: nowrap;
+        }
+        .f5-comp {
+          position: absolute;
+          left: 20px;
+          right: 20px;
+          top: 92px;
+          display: flex;
+          gap: 12px;
+          align-items: center;
+        }
+        .f5-field {
+          flex: 1;
+          height: 62px;
+          border-radius: 999px;
+          background: #fffdf8;
+          display: flex;
+          align-items: center;
+          padding: 0 26px;
+          color: #4f6a5e;
+          font: 500 24px/1 "Figtree", system-ui, sans-serif;
+        }
+        .f5-send {
+          width: 62px;
+          height: 62px;
+          border-radius: 50%;
+          background: #25d366;
+          flex: none;
+          display: grid;
+          place-items: center;
+        }
+        .f5-send svg {
+          width: 28px;
+          height: 28px;
+        }
+      </style>
+
+      <div id="stage" data-composition-id="05-dua" data-width="1080" data-height="1920">
+        <div id="f5-bgn" class="f5-layer f5-bg-night"></div>
+        <div id="f5-bgl" class="f5-layer f5-bg-lime"></div>
+
+        <div id="f5-cam" class="f5-layer">
+          <div id="f5-punch" class="f5-layer">
+            <div id="f5-shake" class="f5-layer">
+              <!-- g1: lime drop -->
+              <div id="f5-g1" class="f5-layer">
+                <div id="f5-head" class="f5-head">
+                  <span class="f5-hl"><span id="f5-h1">Conheça</span></span>
+                  <span class="f5-hl"><span id="f5-h2">o Duá.</span></span>
+                </div>
+                <div id="f5-ring" class="f5-ring"></div>
+                <div id="f5-sub" class="f5-sub">
+                  <span class="f5-sl"><span id="f5-s1">o vendedor com IA</span></span>
+                  <span class="f5-sl"><span id="f5-s2">no WhatsApp da sua loja</span></span>
+                </div>
+              </div>
+
+              <!-- g2: the chat -->
+              <div id="f5-g2" class="f5-layer">
+                <div class="f5-verbs">
+                  <div class="f5-verb" id="f5-v1"><span>Responde.</span></div>
+                  <div class="f5-verb" id="f5-v2"><span>Sugere.</span></div>
+                  <div class="f5-verb" id="f5-v3"><span>Anota.</span></div>
+                  <div class="f5-verb" id="f5-v4"><span>Fecha.</span></div>
+                  <div class="f5-verb f5-sm" id="f5-v5"><span>Cobra no Pix.</span></div>
+                  <div class="f5-verb" id="f5-v6">
+                    <span class="f5-mk"><i class="f5-mk-bg" id="f5-mkbg"></i><span class="f5-mk-tx">Vendido.</span></span>
+                  </div>
+                </div>
+
+                <div class="f5-phone-wrap" id="f5-pw">
+                  <div class="f5-phone">
+                    <div class="f5-phone-body">
+                      <div class="f5-phone-screen">
+                        <span class="f5-phone-island"></span>
+                        <div class="f5-top">
+                          <div class="f5-clock">
+                            <span id="f5-k41">9:41</span><span id="f5-k42">9:42</span><span id="f5-k43">9:43</span
+                            ><span id="f5-k44">9:44</span><span id="f5-k45">9:45</span><span id="f5-k46">9:46</span>
+                          </div>
+                          <span class="f5-batt"></span>
+                          <span class="f5-back"></span>
+                          <span class="f5-av" id="f5-av"><i class="f5-im f5-im-ola"></i></span>
+                          <div class="f5-who">
+                            <strong>Bolos da Nena</strong>
+                            <span class="f5-st"
+                              ><span class="f5-st-on" id="f5-on">online</span
+                              ><span class="f5-st-ty" id="f5-ty">digitando…</span></span
+                            >
+                          </div>
+                        </div>
+
+                        <div class="f5-view">
+                          <div class="f5-log" id="f5-log">
+                            <p class="f5-day">hoje</p>
+
+                            <div class="f5-slot" id="f5-s-1"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b" id="f5-b-1"><p>Oi! Sou o Duá, assistente virtual da Bolos da Nena. Quer ver o que tem hoje ou já sabe o que vai pedir?</p><time>9:41</time>
+                                <span class="f5-face" id="f5-f-1"><i class="f5-im f5-im-ola"></i></span></div>
+                            </div></div></div>
+
+                            <div class="f5-slot" id="f5-s-2"><div class="f5-in"><div class="f5-row f5-m">
+                              <div class="f5-b" id="f5-b-2"><p>Tem bolo de cenoura?</p><time>9:42</time></div>
+                            </div></div></div>
+
+                            <div class="f5-slot" id="f5-s-t3"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b f5-typing" id="f5-b-t3"><i class="f5-dot"></i><i class="f5-dot"></i><i class="f5-dot"></i>
+                                <span class="f5-face" style="visibility: inherit"><i class="f5-im f5-im-pensando"></i></span></div>
+                            </div></div></div>
+                            <div class="f5-slot" id="f5-s-3"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b" id="f5-b-3"><p>Tem sim! O bolo de cenoura com brigadeiro inteiro sai R$&nbsp;45,00.</p><time>9:42</time>
+                                <span class="f5-face" id="f5-f-3"><i class="f5-im f5-im-ola"></i></span></div>
+                            </div></div></div>
+
+                            <div class="f5-slot" id="f5-s-t4"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b f5-typing" id="f5-b-t4"><i class="f5-dot"></i><i class="f5-dot"></i><i class="f5-dot"></i>
+                                <span class="f5-face" style="visibility: inherit"><i class="f5-im f5-im-pensando"></i></span></div>
+                            </div></div></div>
+                            <div class="f5-slot" id="f5-s-4"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b" id="f5-b-4"><p>Quer levar também uma fatia de chocolate para comer hoje? Sai R$&nbsp;9,50.</p><time>9:42</time>
+                                <span class="f5-face" id="f5-f-4"><i class="f5-im f5-im-ola"></i></span></div>
+                            </div></div></div>
+
+                            <div class="f5-slot" id="f5-s-5"><div class="f5-in"><div class="f5-row f5-m">
+                              <div class="f5-b" id="f5-b-5"><p>Quero a fatia também</p><time>9:43</time></div>
+                            </div></div></div>
+
+                            <div class="f5-slot" id="f5-s-t6"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b f5-typing" id="f5-b-t6"><i class="f5-dot"></i><i class="f5-dot"></i><i class="f5-dot"></i>
+                                <span class="f5-face" style="visibility: inherit"><i class="f5-im f5-im-pensando"></i></span></div>
+                            </div></div></div>
+                            <div class="f5-slot" id="f5-s-6"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b" id="f5-b-6"><p>Anotei a fatia também. É para entregar ou você vem buscar?</p><time>9:43</time>
+                                <span class="f5-face" id="f5-f-6"><i class="f5-im f5-im-ola"></i></span></div>
+                            </div></div></div>
+
+                            <div class="f5-slot" id="f5-s-7"><div class="f5-in"><div class="f5-row f5-m">
+                              <div class="f5-b" id="f5-b-7"><p>Entrega, na Rua das Acácias, 120</p><time>9:44</time></div>
+                            </div></div></div>
+
+                            <div class="f5-slot" id="f5-s-t8"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b f5-typing" id="f5-b-t8"><i class="f5-dot"></i><i class="f5-dot"></i><i class="f5-dot"></i>
+                                <span class="f5-face" style="visibility: inherit"><i class="f5-im f5-im-pensando"></i></span></div>
+                            </div></div></div>
+                            <div class="f5-slot" id="f5-s-8"><div class="f5-in"><div class="f5-row f5-d">
+                              <figure class="f5-paper f5-receipt" id="f5-b-8" style="margin: 0">
+                                <div class="f5-cap"><b>Seu pedido</b><span><svg viewBox="0 0 16 16"><path d="M8 1.6 2.6 3.6v3.9c0 3.2 2.3 5.8 5.4 6.9 3.1-1.1 5.4-3.7 5.4-6.9V3.6Z" /><path d="m5.6 8 1.7 1.7 3.2-3.3" /></svg>calculado pela loja</span></div>
+                                <div class="f5-lines">
+                                  <div class="f5-li"><span>1× Bolo de cenoura com brigadeiro</span><span class="f5-num">R$&nbsp;45,00</span></div>
+                                  <div class="f5-li"><span>1× Fatia de chocolate</span><span class="f5-num">R$&nbsp;9,50</span></div>
+                                  <div class="f5-li"><span>Entrega · Rua das Acácias, 120</span><span class="f5-num">R$&nbsp;8,00</span></div>
+                                </div>
+                                <div class="f5-tot"><span>Total</span><span class="f5-num">R$&nbsp;62,50</span></div>
+                                <p class="f5-meta">chega em 40–60 min · pagamento: Pix</p>
+                                <span class="f5-face" id="f5-f-8"><i class="f5-im f5-im-ola"></i></span>
+                              </figure>
+                            </div></div></div>
+
+                            <div class="f5-slot" id="f5-s-t9"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b f5-typing" id="f5-b-t9"><i class="f5-dot"></i><i class="f5-dot"></i><i class="f5-dot"></i>
+                                <span class="f5-face" style="visibility: inherit"><i class="f5-im f5-im-pensando"></i></span></div>
+                            </div></div></div>
+                            <div class="f5-slot" id="f5-s-9"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b" id="f5-b-9"><p>Pedido feito! Aqui está o Pix:</p><time>9:45</time></div>
+                            </div></div></div>
+                            <div class="f5-slot" id="f5-s-9b"><div class="f5-in"><div class="f5-row f5-d">
+                              <figure class="f5-paper" id="f5-b-9b" style="margin: 0">
+                                <div class="f5-cap"><b>Pix</b><span><svg viewBox="0 0 16 16"><path d="M8 1.6 2.6 3.6v3.9c0 3.2 2.3 5.8 5.4 6.9 3.1-1.1 5.4-3.7 5.4-6.9V3.6Z" /><path d="m5.6 8 1.7 1.7 3.2-3.3" /></svg>calculado pela loja</span></div>
+                                <div class="f5-pix">
+                                  <div class="f5-qr"><svg id="f5-qrsvg" viewBox="0 0 25 25" shape-rendering="crispEdges"></svg></div>
+                                  <div class="f5-pixk"><span>Pix do pedido #30</span><b>R$&nbsp;62,50</b><span>válido até 10:15</span></div>
+                                </div>
+                                <p class="f5-code">00020126580014br.gov.bcb.pix0136nena-5f2e-4b1a-9c3d-7a8e2f61b0d45204000053039865802BR6304E2CA</p>
+                                <div class="f5-copy">copiar código</div>
+                                <span class="f5-face" id="f5-f-9b"><i class="f5-im f5-im-ola"></i></span>
+                              </figure>
+                            </div></div></div>
+
+                            <div class="f5-slot" id="f5-s-10"><div class="f5-in"><div class="f5-row f5-m">
+                              <div class="f5-b" id="f5-b-10"><p>Já paguei</p><time>9:46</time></div>
+                            </div></div></div>
+
+                            <div class="f5-slot" id="f5-s-t11"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b f5-typing" id="f5-b-t11"><i class="f5-dot"></i><i class="f5-dot"></i><i class="f5-dot"></i>
+                                <span class="f5-face" style="visibility: inherit"><i class="f5-im f5-im-pensando"></i></span></div>
+                            </div></div></div>
+                            <div class="f5-slot" id="f5-s-11"><div class="f5-in"><div class="f5-row f5-d">
+                              <div class="f5-b" id="f5-b-11"><p>Pagamento confirmado! Seu pedido já foi para a cozinha.</p><time>9:46</time></div>
+                            </div></div></div>
+                            <div class="f5-slot" id="f5-s-11b"><div class="f5-in"><div class="f5-row f5-d">
+                              <figure class="f5-paper" id="f5-b-11b" style="margin: 0">
+                                <div class="f5-cap"><b>Pedido</b><span><svg viewBox="0 0 16 16"><path d="M8 1.6 2.6 3.6v3.9c0 3.2 2.3 5.8 5.4 6.9 3.1-1.1 5.4-3.7 5.4-6.9V3.6Z" /><path d="m5.6 8 1.7 1.7 3.2-3.3" /></svg>calculado pela loja</span></div>
+                                <p class="f5-lead"><span class="f5-ok"><svg viewBox="0 0 128 128"><path d="M32 66 L56 90 L98 40" fill="none" stroke="#123c32" stroke-width="15" stroke-linecap="round" stroke-linejoin="round" /></svg></span><b>Pedido #30</b> · aceito pela loja</p>
+                                <p class="f5-hint">Total <b class="f5-num">R$&nbsp;62,50</b> · Pix</p>
+                                <span class="f5-face" id="f5-f-11b"><i class="f5-im f5-im-feliz"></i></span>
+                              </figure>
+                            </div></div></div>
+                          </div>
+                        </div>
+
+                        <div class="f5-foot">
+                          <div class="f5-chips" id="f5-c0"><span class="f5-chip">Tem bolo de cenoura?</span><span class="f5-chip">O que tem hoje?</span></div>
+                          <div class="f5-chips" id="f5-c1"><span class="f5-chip">Só o bolo</span><span class="f5-chip">Quero a fatia também</span></div>
+                          <div class="f5-chips" id="f5-c2"><span class="f5-chip">Entrega</span><span class="f5-chip">Vou buscar</span></div>
+                          <div class="f5-chips" id="f5-c4"><span class="f5-chip">Já paguei</span></div>
+                          <div class="f5-comp">
+                            <span class="f5-field">Mensagem</span>
+                            <span class="f5-send"><svg viewBox="0 0 24 24"><path d="M4 12 20 4l-5 16-3-6.5Z" fill="#fff" /></svg></span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Duá: the lime drop's hero, who flies into the chat header -->
+              <div id="f5-hero" class="f5-hero"><i class="f5-im f5-im-ola"></i></div>
+            </div>
+          </div>
+        </div>
+
+        <svg class="f5-grain" xmlns="http://www.w3.org/2000/svg">
+          <filter id="f5-noise">
+            <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" />
+          </filter>
+          <rect width="100%" height="100%" filter="url(#f5-noise)" />
+        </svg>
+      </div>
+
+      <script>
+        (function () {
+          window.__timelines = window.__timelines || {};
+          const DUR = 7.5;
+          const B = 0.46875; // beat
+          const T0 = 22.5;
+          const L = (track) => track - T0; // track → local seconds
+          const $ = (s) => document.querySelector(s);
+
+          // mock Pix QR: 25×25 modules, three finder squares + index-hashed data (deterministic)
+          (function buildQR() {
+            const svg = $("#f5-qrsvg");
+            const N = 25;
+            const ns = "http://www.w3.org/2000/svg";
+            const finder = (x, y) => {
+              const inBox = (ox, oy) => x >= ox && x < ox + 7 && y >= oy && y < oy + 7;
+              const ring = (ox, oy) => {
+                const dx = x - ox, dy = y - oy;
+                return dx === 0 || dy === 0 || dx === 6 || dy === 6 || (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
+              };
+              if (inBox(0, 0)) return ring(0, 0) ? 1 : 0;
+              if (inBox(N - 7, 0)) return ring(N - 7, 0) ? 1 : 0;
+              if (inBox(0, N - 7)) return ring(0, N - 7) ? 1 : 0;
+              if ((x < 8 && y < 8) || (x >= N - 8 && y < 8) || (x < 8 && y >= N - 8)) return 0;
+              return -1;
+            };
+            let d = "";
+            for (let y = 0; y < N; y++) {
+              for (let x = 0; x < N; x++) {
+                let on = finder(x, y);
+                if (on === -1) {
+                  const h = ((x * 73856093) ^ (y * 19349663) ^ (x * y * 83492791)) >>> 0;
+                  on = h % 11 < 5 ? 1 : 0;
+                }
+                if (on) d += "M" + x + " " + y + "h1v1h-1z";
+              }
+            }
+            const p = document.createElementNS(ns, "path");
+            p.setAttribute("d", d);
+            p.setAttribute("fill", "#123c32");
+            svg.appendChild(p);
+          })();
+
+          const tl = gsap.timeline({ paused: true });
+
+          // ── base state ──
+          tl.set("#f5-cam", { y: 0, skewY: 0, filter: "blur(0px)" }, 0);
+          tl.set("#f5-punch", { scale: 1 }, 0);
+          tl.set("#f5-shake", { x: 0, y: 0, rotation: 0 }, 0);
+          tl.set("#f5-bgl", { autoAlpha: 1 }, 0);
+          tl.set("#f5-g1", { autoAlpha: 1 }, 0);
+
+          const slam = (sel, at, from) => {
+            tl.fromTo(
+              sel,
+              Object.assign({ scale: 1.18, filter: "blur(14px)", opacity: 0 }, from || {}),
+              { scale: 1, filter: "blur(0px)", opacity: 1, duration: 0.16, ease: "power4.out" },
+              Math.max(0, at - 0.06),
+            );
+          };
+
+          // ═════ g1 — DROP on lime (local 0 → 1.875) ═════
+          // already mid-slam at t=0
+          tl.fromTo("#f5-hero", { scale: 1.2, filter: "blur(6px)", opacity: 0.85 }, { scale: 1, filter: "blur(0px)", opacity: 1, duration: 0.15, ease: "power4.out" }, 0);
+          tl.to("#f5-hero", { scale: 1.045, rotation: -2.5, duration: 1.875 - 0.15, ease: "sine.inOut" }, 0.15);
+          tl.fromTo("#f5-ring", { scale: 1.02, opacity: 1 }, { scale: 1.75, opacity: 0, duration: 0.6, ease: "power2.out" }, 0.02);
+          tl.fromTo("#f5-h1", { scale: 1.08, filter: "blur(4px)", opacity: 0.85 }, { scale: 1, filter: "blur(0px)", opacity: 1, duration: 0.12, ease: "power4.out" }, 0);
+          slam("#f5-h2", L(22.96875));
+          tl.fromTo("#f5-head", { scale: 1 }, { scale: 1.035, duration: 1.875, ease: "none" }, 0);
+          slam("#f5-s1", L(23.4375), { scale: 1.12 });
+          slam("#f5-s2", L(23.4375) + 0.05, { scale: 1.12 });
+          tl.fromTo("#f5-sub", { y: 0 }, { y: -10, duration: 0.95, ease: "sine.out" }, L(23.4375));
+          // hit on "o Duá.": the disc kicks
+          tl.fromTo("#f5-hero", { y: 0 }, { y: 0, keyframes: [{ y: -16, duration: 0.07 }, { y: 0, duration: 0.25, ease: "power2.out" }] }, L(22.96875));
+
+          // shake on the drop
+          const SH = [[8, -6, 0.6], [-7, 5, -0.5], [6, 7, 0.4], [-8, -4, -0.6], [5, 4, 0.3], [-4, -5, -0.3], [3, 2, 0.2], [-2, -2, -0.1]];
+          SH.forEach((s, i) => tl.to("#f5-shake", { x: s[0], y: s[1], rotation: s[2], duration: 0.03, ease: "steps(1)" }, i * 0.03));
+          tl.to("#f5-shake", { x: 0, y: 0, rotation: 0, duration: 0.05, ease: "power2.out" }, SH.length * 0.03);
+
+          // ═════ g2 — the chat (local 1.875 → 7.5) ═════
+          const G2 = L(24.375);
+          tl.set("#f5-bgl", { autoAlpha: 0 }, G2);
+          tl.set("#f5-g1", { autoAlpha: 0 }, G2);
+          tl.set("#f5-g2", { autoAlpha: 1 }, G2);
+
+          // phone whips up; Duá flies into the header avatar
+          tl.fromTo("#f5-pw", { y: 820, skewY: 4, filter: "blur(10px)" }, { y: 0, skewY: 0, filter: "blur(0px)", duration: 0.3, ease: "expo.out" }, G2);
+          tl.to("#f5-hero", { x: -192.2, y: -292.2, scale: 72 / 560, rotation: 0, boxShadow: "0 0 0 0px #123c32", backgroundColor: "#d9f875", duration: 0.3, ease: "expo.out" }, G2);
+          tl.set("#f5-hero", { autoAlpha: 0 }, G2 + 0.3);
+          tl.set("#f5-av", { autoAlpha: 1 }, G2 + 0.3);
+          tl.fromTo("#f5-pw", { y: 0 }, { y: -14, duration: DUR - G2 - 0.3, ease: "none" }, G2 + 0.3);
+
+          // punch-ins on the bar lines
+          [L(24.375), L(26.25), L(28.125)].forEach((t) => {
+            tl.to("#f5-punch", { scale: 1.06, duration: B, ease: "power2.out" }, t);
+            tl.to("#f5-punch", { scale: 1, duration: 1.875 - B, ease: "sine.inOut" }, t + B);
+          });
+
+          // overlay verbs (0 ms swaps)
+          const VERBS = [["#f5-v1", 24.375], ["#f5-v2", 25.78125], ["#f5-v3", 26.71875], ["#f5-v4", 27.65625], ["#f5-v5", 28.125], ["#f5-v6", 29.0625]];
+          VERBS.forEach(([id, tt], i) => {
+            const at = L(tt);
+            const end = i + 1 < VERBS.length ? L(VERBS[i + 1][1]) : DUR;
+            tl.set(id, { visibility: "visible" }, at - 0.06);
+            tl.set(id, { visibility: "hidden" }, end - 0.06);
+            tl.fromTo(id + " > span", { scale: 1.22, filter: "blur(14px)", opacity: 0 }, { scale: 1, filter: "blur(0px)", opacity: 1, duration: 0.16, ease: "power4.out" }, at - 0.06);
+            tl.to(id + " > span", { scale: 1.04, duration: Math.max(0.2, end - at - 0.12), ease: "power1.out" }, at + 0.1);
+          });
+          // "Vendido." lands on the lime marker + a small punch
+          const VD = L(29.0625);
+          tl.fromTo("#f5-mkbg", { scaleX: 0 }, { scaleX: 1, duration: 0.18, ease: "power3.out" }, VD - 0.04);
+          tl.fromTo("#f5-v6", { scale: 1 }, { keyframes: [{ scale: 1.1, duration: 0.07, ease: "power2.out" }, { scale: 1, duration: 0.28, ease: "power3.out" }] }, VD + 0.14);
+
+          // ── messages ──
+          const OPEN = 0.24;
+          const openSlot = (n, at) => tl.fromTo("#f5-s-" + n, { gridTemplateRows: "0fr" }, { gridTemplateRows: "1fr", duration: OPEN, ease: "power3.out" }, at);
+          const pop = (n, at) => {
+            openSlot(n, at);
+            tl.fromTo("#f5-b-" + n, { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.14, ease: "back.out(2.2)" }, at);
+          };
+          const showFace = (n, from, to) => {
+            tl.set("#f5-f-" + n, { visibility: "visible" }, from);
+            if (to != null) tl.set("#f5-f-" + n, { visibility: "hidden" }, to);
+          };
+          const typing = (n, from, to) => {
+            // header status + the bubble with three dots and Duá thinking
+            tl.set("#f5-on", { visibility: "hidden" }, from);
+            tl.set("#f5-ty", { visibility: "visible" }, from);
+            tl.set("#f5-on", { visibility: "visible" }, to);
+            tl.set("#f5-ty", { visibility: "hidden" }, to);
+            openSlot("t" + n, from);
+            tl.fromTo("#f5-b-t" + n, { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.12, ease: "back.out(2)" }, from);
+            tl.set("#f5-b-t" + n, { opacity: 0 }, to);
+            tl.fromTo("#f5-s-t" + n, { gridTemplateRows: "1fr" }, { immediateRender: false, gridTemplateRows: "0fr", duration: OPEN, ease: "power3.out" }, to);
+          };
+          const clock = (m, at) => {
+            tl.set("#f5-k" + m, { visibility: "visible" }, at);
+            if (m > 41) tl.set("#f5-k" + (m - 1), { visibility: "hidden" }, at);
+          };
+          const chips = (id, from, to) => {
+            tl.set(id, { visibility: "visible" }, from);
+            tl.fromTo(id + " .f5-chip", { scale: 0.85, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.12, ease: "back.out(2)", stagger: 0.04 }, from);
+            tl.set(id, { visibility: "hidden" }, to);
+          };
+          const E = 0.05; // land a hair early so the bubble is whole on the beat
+          const A = (tt) => L(tt) - E;
+          const TY = 0.11; // typing starts this long after the previous message
+
+          clock(41, 0);
+          pop(1, A(24.375));
+          showFace(1, A(24.375));
+          chips("#f5-c0", L(24.375) + 0.2, A(24.84375));
+
+          pop(2, A(24.84375));
+          clock(42, A(24.84375));
+          typing(3, A(24.84375) + TY, A(25.3125));
+          pop(3, A(25.3125));
+          showFace(3, A(25.3125), A(25.3125) + TY);
+          typing(4, A(25.3125) + TY, A(25.78125));
+          pop(4, A(25.78125));
+          showFace(4, A(25.78125));
+          chips("#f5-c1", A(25.78125) + 0.16, A(26.25));
+
+          pop(5, A(26.25));
+          clock(43, A(26.25));
+          typing(6, A(26.25) + TY, A(26.71875));
+          pop(6, A(26.71875));
+          showFace(6, A(26.71875));
+          chips("#f5-c2", A(26.71875) + 0.16, A(27.1875));
+
+          pop(7, A(27.1875));
+          clock(44, A(27.1875));
+          typing(8, A(27.1875) + TY, A(27.65625));
+          pop(8, A(27.65625));
+          showFace(8, A(27.65625), A(27.65625) + TY);
+          typing(9, A(27.65625) + TY, A(28.125));
+          clock(45, A(28.125));
+          pop(9, A(28.125));
+          pop("9b", A(28.125) + 0.06);
+          showFace("9b", A(28.125) + 0.06);
+          chips("#f5-c4", A(28.125) + 0.2, A(28.59375));
+
+          pop(10, A(28.59375));
+          clock(46, A(28.59375));
+          typing(11, A(28.59375) + TY, A(29.0625));
+          pop(11, A(29.0625));
+          pop("11b", A(29.0625) + 0.06);
+          showFace("11b", A(29.0625) + 0.06);
+
+          // typing dots breathe (finite, index-staggered)
+          document.querySelectorAll(".f5-typing").forEach((b) => {
+            b.querySelectorAll(".f5-dot").forEach((d, i) => {
+              tl.fromTo(d, { opacity: 0.3 }, { opacity: 0.9, duration: 0.14, yoyo: true, repeat: 33, ease: "sine.inOut" }, G2 + i * 0.07);
+            });
+          });
+
+          // ── exit whip ──
+          const W = L(29.85);
+          tl.to("#f5-cam", { y: -1300, skewY: -5, filter: "blur(22px)", duration: DUR - W, ease: "expo.in" }, W);
+
+          tl.set({}, {}, DUR);
+          window.__timelines["05-dua"] = tl;
+          tl.seek(0);
+        })();
+      </script>
+    </template>
+  </body>
+</html>
