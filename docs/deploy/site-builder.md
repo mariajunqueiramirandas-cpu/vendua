@@ -33,8 +33,8 @@ configurada" and nothing breaks.
      database.
 2. **Routine** at claude.ai/code/routines → New routine:
    - Name: `Venduá — site sob medida`
-   - Model: Opus 5.5 (`claude-opus-5-5`). The session leads; the skill has it build the UI with
-     Opus 5.5 subagents and spawn nothing smaller.
+   - Model: Haiku 5.5 (`claude-haiku-5-5`). The skill has the session build the UI with Haiku 5.5
+     subagents and never use a bigger model.
    - Repository: this repo. Environment: `storefront-gen`. Connectors: remove all.
    - Prompt (word for word):
 
