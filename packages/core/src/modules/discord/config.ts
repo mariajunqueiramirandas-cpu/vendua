@@ -282,3 +282,20 @@ export function discordContext(sql: Sql): Promise<DiscordContext> {
 }
 
 export const crmLink = (base: string, path: string) => `${base}/control/#${path}`;
+
+/** Duá's poses for the cards, on a cream tile so the forest green survives Discord's dark theme
+ * (apps/control/public/discord, cut from brand/mascote). Served with the CRM, from Core. */
+export const DUA_POSES = [
+  'avatar-ajuda',
+  'avatar-feliz',
+  'boas-vindas',
+  'erro',
+  'horarios',
+  'offline',
+  'pagamento',
+  'publicar',
+  'seguranca',
+  'sucesso',
+] as const;
+export type DuaPose = (typeof DUA_POSES)[number];
+export const artLink = (base: string, pose: DuaPose) => `${base}/control/discord/${pose}.webp`;

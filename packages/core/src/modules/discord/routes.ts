@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import type { Context, Hono } from 'hono';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError, bodyJson, boundedText, parseJsonObject } from '../../platform/http.ts';
@@ -19,6 +20,7 @@ import {
   CHANNEL_KEYS,
   DEFAULT_TOKEN_ENV,
   SNOWFLAKE_RE,
+  artLink,
   channelFor,
   discordContext,
   discordSettingOf,
@@ -54,6 +56,8 @@ export const CHANNEL_NAMES: Record<StaffCategory, string> = {
 };
 const CATEGORY_NAME = 'Venduá';
 const ENDPOINT_PATH = '/control/v1/discord/interactions';
+// Duá's head on a lime disc: the bot's avatar and the app's icon (served with the CRM too)
+const AVATAR_PNG = join(import.meta.dir, '../../../../../apps/control/public/discord/avatar.png');
 
 export function inviteUrl(applicationId: string, guildId: string | null): string {
   const q = new URLSearchParams({
@@ -299,12 +303,15 @@ export function mountDiscord(o: {
         `coloque o token do bot em ${tokenEnv} no ambiente do Core e reinicie`,
       );
     const client = discordClient(token, o.fetch);
-    const [me, guilds] = await Promise.all([
-      client.request<{ id: string; verify_key: string; interactions_endpoint_url?: string | null }>(
-        'GET',
-        '/applications/@me',
-      ),
+    const [me, guilds, bot] = await Promise.all([
+      client.request<{
+        id: string;
+        verify_key: string;
+        icon?: string | null;
+        interactions_endpoint_url?: string | null;
+      }>('GET', '/applications/@me'),
       client.request<{ id: string; name: string }[]>('GET', '/users/@me/guilds'),
+      client.request<{ avatar?: string | null }>('GET', '/users/@me'),
     ]).catch(discordFail);
     const inGuild = (id: unknown) => guilds.some((g) => g.id === id);
     if (wanted && !inGuild(wanted))
@@ -348,6 +355,16 @@ export function mountDiscord(o: {
       } catch (e) {
         endpointError = e instanceof DiscordError ? e.message : String(e);
         rlog.warn({ err: endpointError, endpointUrl }, 'interactions url not accepted');
+      }
+    }
+    // Duá's face on a bot and app still wearing Discord's default; a picture the team chose stays
+    if (!bot.avatar || !me.icon) {
+      try {
+        const image = `data:image/png;base64,${Buffer.from(await Bun.file(AVATAR_PNG).arrayBuffer()).toString('base64')}`;
+        if (!bot.avatar) await client.request('PATCH', '/users/@me', { avatar: image });
+        if (!me.icon) await client.request('PATCH', '/applications/@me', { icon: image });
+      } catch (e) {
+        rlog.warn({ err: e instanceof Error ? e.message : String(e) }, 'bot avatar not set');
       }
     }
     return c.json({
@@ -464,6 +481,7 @@ export function mountDiscord(o: {
                     .map((k) => `${CATEGORY_META[k].emoji} ${k}`)
                     .join(', ')}`,
                   color: COLORS.success,
+                  thumbnail: { url: artLink(ctx.crmBase, 'sucesso') },
                 },
               ],
               allowed_mentions: { parse: [] },

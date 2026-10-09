@@ -12,6 +12,7 @@ import {
 import { ensureCommands } from './commands.ts';
 import {
   channelFor,
+  artLink,
   crmLink,
   discordAppOf,
   discordContext,
@@ -239,6 +240,7 @@ async function renderCtx(
   }
   return {
     crm: (path) => crmLink(p.ctx.crmBase, path),
+    art: (pose) => artLink(p.ctx.crmBase, pose),
     excerpts: p.ctx.setting.excerpts,
     storeUrl: await urlFor(p, sql, ev.tenant_id),
     store,

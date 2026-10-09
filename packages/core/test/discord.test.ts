@@ -272,6 +272,43 @@ describe('discord cards', () => {
     );
   });
 
+  test("Duá's art marks the moments, not the routine", () => {
+    const withArt = rctx({ art: (p) => `https://crm.test/control/discord/${p}.webp` });
+    const thumb = (r: { card: { embeds?: { thumbnail?: { url: string } }[] } }) =>
+      r.card.embeds![0]!.thumbnail?.url ?? null;
+    const opened = ev(
+      'incident.opened',
+      {
+        incidentId: 'i2',
+        kind: 'probe_failing',
+        severity: 'warning',
+        subject: 'loja.test',
+        summary: 'sonda falhando',
+        storeName: 'Loja',
+      },
+      { anchor: 'incident:i2', severity: 'warning' },
+    );
+    expect(thumb(render(opened, [opened], withArt))).toEndWith('/discord/erro.webp');
+    const res = ev(
+      'incident.updated',
+      { incidentId: 'i2', change: 'resolved', by: null, summary: null },
+      { anchor: 'incident:i2', severity: 'success' },
+    );
+    expect(thumb(render(res, [opened, res], withArt))).toEndWith('/discord/sucesso.webp');
+    // no art function (old callers), no thumbnail
+    expect(thumb(render(opened, [opened], rctx()))).toBeNull();
+    const replied = ev('lead.replied', {
+      leadId: 'l1',
+      leadName: 'Ana',
+      business: null,
+      channel: 'whatsapp',
+      threadId: 't1',
+      messageId: 'm1',
+      excerpt: 'oi',
+    });
+    expect(thumb(render(replied, [replied], withArt))).toBeNull();
+  });
+
   test('every kind renders inside the limits', () => {
     const kinds: [StaffEventKind, unknown][] = [
       [
@@ -907,6 +944,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
       expect(j.endpoint.url).toEndWith('/control/v1/discord/interactions');
       const patch = calls.find((c) => c.method === 'PATCH' && c.path === '/applications/@me')!;
       expect(patch.body).toEqual({ interactions_endpoint_url: j.endpoint.url });
+      // a bot still on Discord's default picture gets Duá's, as avatar and app icon
+      const avatar = calls.find((c) => c.method === 'PATCH' && c.path === '/users/@me')!;
+      expect(String(avatar.body!.avatar)).toStartWith('data:image/png;base64,iVBOR');
+      const icon = calls.find((c) => c.method === 'PATCH' && c.body?.icon)!;
+      expect(icon.path).toBe('/applications/@me');
       expect(await config()).toEqual({ config: { applicationId: APP, publicKey }, enabled: true });
 
       const stranger = await ctl('POST', '/control/v1/discord/connect', {

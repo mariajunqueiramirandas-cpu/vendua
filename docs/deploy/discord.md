@@ -20,7 +20,9 @@ The token is the only thing copied by hand: Core reads everything else from Disc
    key with the token (`GET /applications/@me`), saves and enables the integration, then sets
    the app's Interactions Endpoint URL to `https://<crm-domain>/control/v1/discord/interactions`
    (Discord verifies it on the spot against the key just saved). If Discord refuses it, the
-   panel shows the URL to paste in _General Information → Interactions Endpoint URL_.
+   panel shows the URL to paste in _General Information → Interactions Endpoint URL_. A bot or
+   app still on Discord's default picture gets Duá's face as avatar and app icon; one the team
+   set is left alone.
 3. **adicionar ao servidor** opens Discord's invite with exactly the permissions it needs (view
    channels, send messages, embed links, read history, mention roles, manage channels). Pick the
    team's server; back in the CRM, Core finds it among the bot's servers on its own (**já
@@ -57,6 +59,13 @@ whenever they change); **registrar comandos** forces it.
 Every event's level is editable in **o que avisar**: `desligado`, `silencioso` (posted without
 a notification), `normal`, `com menção` (mentions the team role). Critical events mention the role
 unless set silent. "mostrar trechos das conversas" off keeps lead and draft text out of Discord.
+
+Cards that mark a moment carry a Duá thumbnail: help and handoffs (headset), first order, a new
+store's onboarding (boas-vindas, then sucesso), store or site live (publicar), first plan payment,
+chargebacks (segurança), billing and deployment failures and incidents (erro, then sucesso), a
+channel down (offline, then sucesso) and the daily summary (horários). Routine cards stay bare.
+The art lives in `apps/control/public/discord/` (cut from `brand/mascote` on a cream tile so the
+green survives Discord's dark theme) and is served by Core at `<crm>/control/discord/<pose>.webp`.
 
 Cards are living: follow-ups edit the original message (an order, a draft, a handoff, an
 incident, a store's onboarding) instead of posting new ones; only changes that matter (an
