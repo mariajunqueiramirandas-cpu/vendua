@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "page": "layout",
+  "sections": [
+    {
+      "id": "announcement",
+      "type": "sdk:announcement-bar",
+      "settings": {
+        "text": ""
+      }
+    },
+    {
+      "id": "header",
+      "type": "sdk:header",
+      "settings": {
+        "brand": "Quero Pudim Gourmet",
+        "showStatus": false,
+        "links": [
+          {
+            "label": "Pedidos",
+            "href": "/pedidos"
+          }
+        ]
+      }
+    },
+    {
+      "id": "content",
+      "type": "sdk:page-content"
+    },
+    {
+      "id": "bag",
+      "type": "sdk:bag-bar",
+      "settings": {
+        "label": "Ver sacola"
+      }
+    },
+    {
+      "id": "footer",
+      "type": "sdk:footer",
+      "settings": {
+        "note": "Pudins gourmet de qualidade artesanal. Escolha no cardápio e finalize pela sacola.",
+        "showHours": true,
+        "showContacts": true
+      }
+    }
+  ]
+}

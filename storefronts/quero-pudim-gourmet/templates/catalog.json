@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "page": "catalog",
+  "sections": [
+    { "id": "menu", "type": "store:menu", "settings": { "title": "Cardápio" } },
+    {
+      "id": "instagram",
+      "type": "store:instagram",
+      "settings": {
+        "title": "Acompanhe a Quero Pudim Gourmet de perto",
+        "text": "Novidades, lançamentos e os detalhes de cada doce estão no nosso perfil.",
+        "handle": "@queropudim_gourmet",
+        "href": "https://www.instagram.com/queropudim_gourmet",
+        "ctaLabel": "Siga no Instagram",
+        "newTabLabel": "abre em nova aba"
+      }
+    }
+  ]
+}

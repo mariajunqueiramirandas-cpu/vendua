@@ -320,6 +320,26 @@
         "vite": "5.4.19",
       },
     },
+    "storefronts/quero-pudim-gourmet": {
+      "name": "@vendua/storefront-quero-pudim-gourmet",
+      "version": "0.0.0",
+      "dependencies": {
+        "@fontsource-variable/figtree": "5.3.0",
+        "@fontsource-variable/space-grotesk": "5.3.0",
+        "@vendua/kernel": "workspace:*",
+        "lucide-react": "0.468.0",
+        "react": "18.3.1",
+        "react-dom": "18.3.1",
+        "react-router-dom": "6.30.0",
+      },
+      "devDependencies": {
+        "@types/react": "18.3.18",
+        "@types/react-dom": "18.3.5",
+        "@vitejs/plugin-react": "4.3.4",
+        "typescript": "6.0.3",
+        "vite": "5.4.19",
+      },
+    },
   },
   "patchedDependencies": {
     "postgres@3.4.7": "patches/postgres@3.4.7.patch",
@@ -814,6 +834,8 @@
     "@vendua/status": ["@vendua/status@workspace:apps/status"],
 
     "@vendua/storefront-quero-pudim": ["@vendua/storefront-quero-pudim@workspace:storefronts/quero-pudim"],
+
+    "@vendua/storefront-quero-pudim-gourmet": ["@vendua/storefront-quero-pudim-gourmet@workspace:storefronts/quero-pudim-gourmet"],
 
     "@vendua/storefront-template": ["@vendua/storefront-template@workspace:storefronts/_template"],
 
