@@ -5,6 +5,7 @@ import { HttpError } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import type { SignupReadiness } from '../modules/billing/signup-gate.ts';
+import type { DomainProviders } from '../modules/domains/providers.ts';
 import type { AdminHub } from './live.ts';
 
 export type Role = 'owner' | 'manager' | 'attendant';
@@ -41,11 +42,24 @@ export interface AdminDeps {
   geocode: Geocoder;
   /** may a visitor sign up now (modules/billing/signup-gate.ts) */
   signupReady: () => Promise<SignupReadiness>;
+  /** the registrar, DNS host and probes behind own domains (ADR 0038) */
+  domains: DomainProviders;
+}
+
+/** How a platform WhatsApp message rides the outbox once the number is on the gateway (ignored
+ *  before the cutover, when it is sent at once). */
+export interface WhatsAppNotifyOpts {
+  /** default 'notice' */
+  purpose?: 'otp' | 'notice';
+  /** one per logical message, so a retried caller doesn't send it twice */
+  dedupeKey?: string;
+  /** wait this long for the gateway to send it; anything but sent throws */
+  waitMs?: number;
 }
 
 /** Messages to store people (not shoppers) from the platform's own number and address. */
 export interface MerchantNotify {
-  whatsapp: (phone: string, text: string) => Promise<void>;
+  whatsapp: (phone: string, text: string, opts?: WhatsAppNotifyOpts) => Promise<void>;
   email: (to: string, subject: string, text: string, idemKey: string) => Promise<void>;
 }
 
@@ -117,6 +131,16 @@ export function oneOf<T extends string>(v: unknown, name: string, allowed: reado
 
 export const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 export const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+/** A real calendar day: DATE_RE lets 2026-02-31 and year 0 through, and Postgres answers them
+ *  with a 500. */
+export function isDate(v: unknown): v is string {
+  return (
+    typeof v === 'string' &&
+    DATE_RE.test(v) &&
+    v >= '0001-01-01' &&
+    new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v
+  );
+}
 
 /** The one slug fold (store addresses and catalog handles): accents off, `&` read as "e",
  *  every other run of non-alphanumerics one dash, trimmed and capped at `max`. */

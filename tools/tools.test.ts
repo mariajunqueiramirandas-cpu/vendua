@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { mapFiles } from './affected.mjs';
@@ -95,8 +95,50 @@ describe('mapFiles', () => {
     }
   });
 
-  test('a single storefront change skips conformance', () => {
-    expect(mapFiles(['storefronts/acme/routes/index.tsx']).conformance).toBe(false);
+  test('a single storefront change runs conformance for that slug, not the ci-smoke scaffold', () => {
+    const r = mapFiles(['storefronts/acme/routes/index.tsx'], undefined, () => true);
+    expect(r.conformance).toBe(true);
+    expect(r.smoke).toBe(false);
+    expect(r.storefronts).toEqual(['acme']);
+  });
+
+  test('storefronts lists touched slugs, sorted and deduplicated, never _-prefixed dirs', () => {
+    const r = mapFiles(
+      [
+        'storefronts/zeta/a.ts',
+        'storefronts/acme/b.ts',
+        'storefronts/acme/c/d.ts',
+        'storefronts/_template/routes/index.tsx',
+      ],
+      undefined,
+      () => true,
+    );
+    expect(r.storefronts).toEqual(['acme', 'zeta']);
+    expect(mapFiles(['storefronts/_template/routes/index.tsx']).storefronts).toEqual([]);
+    expect(mapFiles(['docs/roadmap.md']).storefronts).toEqual([]);
+  });
+
+  test('a deleted storefront is not checked', () => {
+    expect(mapFiles(['storefronts/gone/a.ts'], undefined, () => false).storefronts).toEqual([]);
+  });
+
+  test('allStorefronts expands to every non-underscore storefront with a package.json', () => {
+    const r = mapFiles(['packages/kernel/src/api.ts'], () => ['a', 'b']);
+    expect(r.storefronts).toEqual(['a', 'b']);
+    const real = mapFiles(['bun.lock']).storefronts;
+    expect(real).toContain('quero-pudim');
+    expect(real.some((s) => s.startsWith('_'))).toBe(false);
+  });
+
+  test('smoke keeps the old conformance rule: template, shared packages and CI only', () => {
+    for (const f of [
+      'storefronts/_template/routes/index.tsx',
+      'packages/kernel/src/a.ts',
+      '.github/workflows/ci.yml',
+    ])
+      expect(mapFiles([f]).smoke).toBe(true);
+    expect(mapFiles(['apps/control/src/App.tsx']).smoke).toBe(false);
+    expect(mapFiles(['apps/control/src/App.tsx']).conformance).toBe(false);
   });
 
   test('workflow, CI action or root dependency changes run everything', () => {
@@ -106,7 +148,7 @@ describe('mapFiles', () => {
       'bun.lock',
     ]) {
       const r = mapFiles([f]);
-      expect([r.coreTests, r.conformance]).toEqual([true, true]);
+      expect([r.coreTests, r.conformance, r.smoke]).toEqual([true, true, true]);
     }
   });
 });
@@ -290,6 +332,34 @@ describe('check-storefront-paths', () => {
     expect(r.status).toBe(1);
   });
 
+  test("a store's package.json can't build for another tenant", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sf-paths-'));
+    const pkg = (body: object) => {
+      mkdirSync(join(dir, 'storefronts/acme'), { recursive: true });
+      writeFileSync(join(dir, 'storefronts/acme/package.json'), JSON.stringify(body));
+    };
+    const check = () =>
+      spawnSync(
+        'bun',
+        [checker, '--slug', 'storefront:acme', '--files', 'storefronts/acme/package.json'],
+        { encoding: 'utf8', cwd: dir },
+      );
+    try {
+      pkg({ name: '@vendua/storefront-acme' });
+      expect(check().status).toBe(0);
+      pkg({ name: '@vendua/storefront-acme', vendua: { tenant: 'acme' } });
+      expect(check().status).toBe(0);
+      pkg({ name: '@vendua/storefront-rival' });
+      expect(check().status).toBe(1);
+      pkg({ name: '@vendua/storefront-acme', vendua: { tenant: 'rival' } });
+      const r = check();
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('"rival"');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("'platform' label is the deliberate bypass for fleet-wide changes", () => {
     const r = run([
       '--slug',
@@ -300,5 +370,104 @@ describe('check-storefront-paths', () => {
     ]);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('platform');
+  });
+});
+
+// A new store's `bun install` registers its workspace in bun.lock; that entry may ride on its PR
+describe('bun.lock on a store PR', () => {
+  const tools = import.meta.dir;
+  const realLock = readFileSync(join(tools, '../bun.lock'), 'utf8');
+  type Lock = {
+    workspaces: Record<string, Record<string, unknown>>;
+    packages: Record<string, unknown>;
+  };
+  const withStore = (slug: string, extra: (l: Lock) => void = () => {}) => {
+    const lock = Bun.JSONC.parse(realLock) as Lock;
+    const name = `@vendua/storefront-${slug}`;
+    lock.workspaces[`storefronts/${slug}`] = { ...lock.workspaces['storefronts/_template'], name };
+    lock.packages[name] = [`${name}@workspace:storefronts/${slug}`];
+    extra(lock);
+    return JSON.stringify(lock, null, 2);
+  };
+  const git = (cwd: string, ...args: string[]) => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(r.stderr);
+    return r.stdout;
+  };
+  // a repo whose `main` has the real lock and whose HEAD adds storefronts/acme with `headLock`
+  const repo = (headLock: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'sf-lock-'));
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'config', 'user.email', 't@t');
+    git(dir, 'config', 'user.name', 't');
+    writeFileSync(join(dir, 'bun.lock'), realLock);
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-qm', 'base');
+    git(dir, 'checkout', '-qb', 'store');
+    mkdirSync(join(dir, 'storefronts/acme'), { recursive: true });
+    writeFileSync(
+      join(dir, 'storefronts/acme/package.json'),
+      JSON.stringify({ name: '@vendua/storefront-acme' }),
+    );
+    writeFileSync(join(dir, 'bun.lock'), headLock);
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-qm', 'scaffold');
+    return dir;
+  };
+  const paths = (dir: string, slug = 'acme') =>
+    spawnSync(
+      'bun',
+      [
+        join(tools, 'check-storefront-paths.mjs'),
+        '--slug',
+        `storefront:${slug}`,
+        '--base',
+        'main',
+        '--files',
+        ...git(dir, 'diff', '--name-only', 'main...HEAD').split('\n').filter(Boolean),
+      ],
+      { cwd: dir, encoding: 'utf8' },
+    );
+  const affected = (dir: string) =>
+    JSON.parse(
+      spawnSync('bun', [join(tools, 'affected.mjs'), '--base', 'main'], {
+        cwd: dir,
+        encoding: 'utf8',
+      }).stdout,
+    );
+  const dirs: string[] = [];
+  afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
+
+  test("the store's own workspace entry passes and only rebuilds that store", () => {
+    const dir = repo(withStore('acme'));
+    dirs.push(dir);
+    const r = paths(dir);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('bun.lock entry');
+    const a = affected(dir);
+    expect(a.allStorefronts).toBe(false);
+    expect(a.storefronts).toEqual(['acme']);
+    expect(a.coreTests).toBe(false);
+  });
+
+  test('a new third-party package in the lock fails and stays fleet-wide', () => {
+    const dir = repo(
+      withStore('acme', (l) => {
+        l.packages['left-pad'] = ['left-pad@1.3.0', '', {}, 'sha512-x'];
+      }),
+    );
+    dirs.push(dir);
+    const r = paths(dir);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('bun.lock — bun.lock changes more than');
+    expect(affected(dir).allStorefronts).toBe(true);
+  });
+
+  test("another store's entry fails on this store's PR", () => {
+    const dir = repo(withStore('acme', (l) => void (l.workspaces['storefronts/rival'] = {})));
+    dirs.push(dir);
+    const r = paths(dir);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("other stores' entries: rival");
   });
 });

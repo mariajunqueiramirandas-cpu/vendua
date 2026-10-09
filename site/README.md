@@ -14,7 +14,9 @@ spring up, the accent and the dot land, Duá climbs out and waves, the paragraph
 the two phones come up one after the other and the order push drops onto the front one; scrolling
 plays it back (Duá ducks, the letters sink) while the header's logo takes over. All CSS (`linear()`
 springs, scroll-driven animations); without support or with reduced motion it's the finished poster.
-Other pages: `/privacidade/` and the 404.
+Other pages: one per kind of shop (`/para/doceiras/`, `/para/marmitarias/`,
+`/para/hamburguerias/`, `/para/padarias/`), the guides (`/guias/` and four articles), the news (`/novidades/` and twelve posts), `/sobre/`,
+`/privacidade/` and the 404. See "Search" below for why they exist and the rules they follow.
 
 ## Launch decisions the copy encodes
 
@@ -56,16 +58,17 @@ Other pages: `/privacidade/` and the 404.
   beyond the three plans (the +100-conversation pack is sold in the admin, not quoted here), and no
   date for the custom site. Plan names, prices, conversations and the trial live in `plans` in
   `src/lib/content.ts`.
-- **Prices follow the CRM by themselves.** On the home page, `src/lib/plans/live.svelte.ts` reads
-  `/precos.json` once. In production the site's nginx answers it from Core's public catalog
-  (`/site/v1/plans`, a minute of cache), and the plan cards, the comparison table, the calculator,
-  the trial strip, the FAQ and the closing line update in place.
+- **Prices follow the CRM by themselves.** On the home page (and in the closing of every inner
+  page), `src/lib/plans/live.svelte.ts` reads `/precos.json` once. In production the site's nginx
+  answers it from Core's public catalog (`/site/v1/plans`, a minute of cache), and the plan cards,
+  the comparison table, the calculator, the trial strip, the FAQ and the closing line update in
+  place.
   - It covers the price (any the CRM takes), the trial, Duá's conversations, `available`, the
     name and the features. The cards' perks, the "Sem …" line, the "Tudo do …" lines and the
     comparison table come from the feature flags, so a feature switched on or off in the CRM
     shows.
-  - The request is first-party, like the visit counter, so the privacy page's "seu navegador não
-    conversa com nenhum outro serviço" stays true.
+  - The request is first-party, like the visit counter (the privacy page's "Tudo vem daqui
+    mesmo" names Google Analytics as the only other service, in a build that has it).
   - The built page carries `content.ts`'s values, which crawlers, readers without JavaScript and a
     Core that's down get. The build prerenders the same values as `/precos.json`, for the preview
     and the tests.
@@ -112,16 +115,74 @@ Other pages: `/privacidade/` and the 404.
 - Page views are counted first-party and cookieless (`src/lib/analytics.ts` → nginx
   `/analytics/v1/collect` → Core, ADR 0028); `/privacidade/` describes exactly what is kept, so
   keep the two in step.
+- **Google Analytics, for Google Ads** (owner, 2026-10-04: Google Ads' credit needs it, with the
+  sign-up confirmed on this domain). Only in a build with a Google tag id (see Settings), and only
+  for a visit the counter would count (no automation, no Do Not Track / GPC, not localhost).
+  `/loja-criada/` is the confirmation page: when a sign-up ends, the admin (in production, on
+  `painel.<storeDomain>`) sends the owner there instead of straight to its `/bem-vindo`; the page
+  sends GA4's `sign_up`, then forwards to `<PUBLIC_ADMIN_URL>/admin/bem-vindo` (2,5 s at most;
+  without JS, a meta refresh). noindex and linked from nowhere. Deploy the site before an admin
+  carrying that redirect, or new stores land on the 404.
+  In Google Ads the conversion is the page itself (a URL conversion on `vendua.com.br/loja-criada/`,
+  which the Google tag's page view satisfies), or GA4's `sign_up` imported as a key event; the site
+  sends no Ads `conversion` event with a label.
 - No generic template chrome: no eyebrow labels above headings, no all-caps labels, no `A · B`
   meta strings, no numbers on lists that aren't steps, no sparkle bullets, no pulsing dots, no single
   italic or highlighted word in a headline, no identical card grids. Instrument Serif appears only
   inside the admin screens (the greeting), not in site copy. See `.claude/skills/frontend-design/`.
+
+## Novidades
+
+`/novidades/<slug>/` posts say what a feature does in the shop's day (layout `Article`, listed in
+`posts` in `src/lib/pages.ts`, each post's closing links three others). Each carries custom widgets
+in `src/lib/posts/<slug>/`: hand-drawn SVG/CSS, no chart library, and one motif taken from its
+subject (the kitchen ticket rail, thermal paper, the map, the stamp card, the door sign).
+
+- A widget either computes with the product's **real rule** (ported from the file its comment names:
+  thresholds, limits, formulas, parsers; money in integer cents) or shows **example data** that says
+  so ("Exemplo", "Simulação com a Bolos da Nena") and reconciles with `screens.facts.json`. No
+  measured claims: Venduá has no conversion, time-saved or revenue numbers, so none are quoted.
+- It renders its finished state without JavaScript and becomes interactive with it. Its inputs and
+  buttons send nothing anywhere; the e2e allows them only inside `.prose` and still forbids `<form>`.
+- `Prose` styles `p`, `li`, `ul`, `h2`, `h3` inside a post at specificity (0,2,1), so a widget
+  overrides them with a class on its own root (`figure.w p`); no class named `skip`. Dark styles use
+  `@media (prefers-color-scheme: dark)` like everywhere.
+- The posts name plans, never prices or dates. What isn't built (card machines, NFC-e, routing a
+  printer by station, anota.ai and iFood import…) is said plainly or left out.
+
+## Search
+
+The site is found two ways: by the name, and by what a shop owner types ("cardápio digital para
+marmitaria", "como vender pelo WhatsApp"). Both have rules.
+
+- **The name without the accent.** People type "vendua", as in the address, and Google used to
+  correct it to another brand. Every indexable page carries JSON-LD (`src/lib/seo.ts`, rendered by
+  `Seo`): an `Organization` and a `WebSite` named Venduá with `alternateName` Vendua, plus what the
+  page is (`SoftwareApplication` with the open plans on the home, `Article` on guides, `FAQPage`
+  on the pages per kind of shop, `BreadcrumbList` on every inner page). `/sobre/` says it in words:
+  "Venduá, ou vendua". noindex pages carry none.
+- **Pages that answer a search.** `/para/<kind>/` (layout `NichePage`, each page only its words)
+  and `/guias/<slug>/` (layout `Article`, text styled by `Prose`). `src/lib/pages.ts` lists them:
+  the home's "para quem" tiles, the footer, `/guias/` and each page's closing read it, so a page
+  added there is linked from everywhere.
+- Their copy follows the launch decisions above, and states only what the admin does (its help
+  topics in `apps/admin/src/features/help/topics.tsx` are the source). Prices appear only in
+  `Closing`, which reads the live catalog like the home; the body names plans, never prices or
+  dates. A screen shows Bolos da Nena, so on the pages for other kitchens its `alt` says so.
+- `postbuild.ts` builds `sitemap.xml` from the build (every page without noindex) and fails the
+  build when an indexable page has a canonical that isn't its own URL, JSON-LD that doesn't parse,
+  or a title or description another page already uses.
+- Outside the repo, and the owner's to do: the domain verified in Google Search Console with the
+  sitemap submitted, and the Instagram profile linking to vendua.com.br.
 
 ## Settings
 
 - `PUBLIC_ADMIN_URL` (build time, default `https://painel.vendua.com.br`): the merchant admin the
   sign-up links point to. `vite.config.ts` bakes it into the build; the Playwright suite reads the
   same variable, so set it for both.
+- `PUBLIC_GA_ID` (`G-…`) and `PUBLIC_GOOGLE_ADS_ID` (`AW-…`), build time, both optional: the Google
+  tag (`src/lib/gtag.ts`). Unset, the site loads nothing from Google; set (in the Dokploy `.env`,
+  which `docker-compose.yml` passes to the site's build), it loads gtag.js and `/privacidade/` switches to the copy that names Google Analytics.
 
 ## Run
 
@@ -151,14 +212,17 @@ Images are committed; `scripts/assets.ts` rebuilds them (no argument = all three
 
 ## Structure
 
-- `src/routes/`: home, `/privacidade/`, 404.
+- `src/routes/`: home, `para/<kind>/`, `guias/` and its articles, `novidades/` and its posts, `/sobre/`, `/privacidade/`, 404.
 - `src/lib/sections/`: the five moments (`Hero`, `WhoFor`, `Demos`, `Plans`, `Night`).
 - `src/lib/demos/`: `DemoFrame` (example note, recomeçar, reduced motion, hydration) and the four
   demos (`Vendedor` (Duá's chat, tab "Duá"), `Pedido`, `Cozinha`, `Loja`, each with its parts in a folder). `Demos.svelte`
   opens one from `?demo=<id>` or `#demo-<id>`.
 - `src/lib/plans/`: the cards, the comparison table, the calculator and its cents math.
 - `src/lib/components/`: `Section`, device frames, `Screen`, `Notification`, `LockScreen`, `Dua`,
-  `Start` (the sign-up link), header, footer, SEO, 404.
+  `Start` (the sign-up link), header, footer, SEO, 404; for inner pages `Band` (the dawn intro),
+  `Closing` (the sunset call to action), `NextReads`, `KindArt` (the four shop drawings),
+  `NichePage`, `Article` and `Prose`.
+- `src/lib/pages.ts`: the inner pages; `src/lib/seo.ts`: the JSON-LD.
 - `src/lib/content.ts`: site facts and the store's numbers; `src/lib/screens.ts`: screen registry.
 - `src/lib/styles/`: `theme.css` (tokens) and `base.css` (layout and type classes).
 - `static/`: `screens/`, `dua/`, `assets/brand/`, `og.png`.

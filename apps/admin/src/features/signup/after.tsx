@@ -16,6 +16,7 @@ import { Confetti } from '../../ui/Celebration.tsx';
 import { ErrorState, messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PixCode, useIssuePix } from '../../ui/PixCode.tsx';
+import { DocumentGate, needsDocument } from '../account/DocumentGate.tsx';
 import { ChapterList } from '../onboarding/Overview.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import type { Draft } from './progress.ts';
@@ -257,6 +258,8 @@ export function PixPay({
   const inv =
     a?.invoices.find((i) => i.id === invoiceId) ?? a?.invoices.find((i) => i.status === 'open');
   const done = paid(a) || inv?.status === 'paid';
+  // a signup from before the CPF/CNPJ field: no Pix until it's given (Core then reissues it)
+  const gate = needsDocument(a);
   useEffect(() => {
     if (done) onPaid();
   }, [done, onPaid]);
@@ -267,7 +270,7 @@ export function PixPay({
   // an invoice without its Pix yet (or one whose Pix expired): ask for it, once per code
   useIssuePix(
     inv,
-    (inv?.status === 'open' || inv?.status === 'failed') && !issue.isPending,
+    (inv?.status === 'open' || inv?.status === 'failed') && !issue.isPending && !gate,
     issue.mutate,
   );
   const toCard = useMutation({
@@ -292,7 +295,9 @@ export function PixPay({
         </p>
       </div>
       <div className="rounded-lg bg-surface p-5 depth-1">
-        {!a || (inv && !inv.pix && (issue.isPending || !issue.error)) ? (
+        {gate ? (
+          <DocumentGate />
+        ) : !a || (inv && !inv.pix && (issue.isPending || !issue.error)) ? (
           <div
             className="grid gap-5 md:grid-cols-[auto_minmax(0,1fr)]"
             role="status"

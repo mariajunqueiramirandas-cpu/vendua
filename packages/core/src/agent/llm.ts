@@ -1,5 +1,17 @@
-import { OpenRouter } from '@openrouter/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
+import type { OpenRouter } from '@openrouter/sdk';
 import type { IntegrationRow } from '../modules/integrations.ts';
+import {
+  ANTHROPIC_LONG_PRICING,
+  ANTHROPIC_MODEL,
+  ANTHROPIC_PRICING,
+  anthropicClient,
+  DEFAULT_EFFORT,
+  isEffort,
+  LONG_PROMPT_TOKENS,
+  refusalOf,
+  THINKING_HEADROOM,
+} from '../platform/anthropic.ts';
 
 export interface ToolCall {
   id: string;
@@ -28,6 +40,17 @@ export interface LlmResult {
   costUsd: number | null;
 }
 
+/** The provider billed the call but declined to answer; `billed` belongs on the run's ledger. */
+export class LlmRefusalError extends Error {
+  override readonly name = 'LlmRefusalError';
+  constructor(
+    message: string,
+    readonly billed: { tokensIn: number; tokensOut: number; costUsd: number },
+  ) {
+    super(message);
+  }
+}
+
 export interface LlmProvider {
   name: string;
   chat(input: { system: string; messages: AgentMessage[]; tools: AgentTool[] }): Promise<LlmResult>;
@@ -40,6 +63,7 @@ const MODEL_USD_PER_1M: Record<string, { in: number; out: number }> = {
   'claude-opus-5-5': { in: 4.0, out: 20.0 },
   'claude-opus-5': { in: 5.0, out: 25.0 },
   'claude-sonnet-5': { in: 2.0, out: 10.0 },
+  [ANTHROPIC_MODEL]: { in: ANTHROPIC_PRICING.inputPerMTok, out: ANTHROPIC_PRICING.outputPerMTok },
   'claude-haiku-4-5': { in: 1.0, out: 5.0 },
   'claude-sonnet-4-5': { in: 3.0, out: 15.0 },
   'gpt-4o-mini': { in: 0.15, out: 0.6 },
@@ -66,7 +90,11 @@ export function anthropicCostUsd(
   model: string,
   u: { input: number; cacheRead: number; cacheWrite: number; output: number },
 ): number {
-  const rate = MODEL_USD_PER_1M[model] ?? FALLBACK_USD_PER_1M;
+  const long =
+    model === ANTHROPIC_MODEL && u.input + u.cacheRead + u.cacheWrite > LONG_PROMPT_TOKENS;
+  const rate = long
+    ? { in: ANTHROPIC_LONG_PRICING.inputPerMTok, out: ANTHROPIC_LONG_PRICING.outputPerMTok }
+    : (MODEL_USD_PER_1M[model] ?? FALLBACK_USD_PER_1M);
   return (
     (u.input * rate.in +
       u.cacheRead * rate.in * 0.1 +
@@ -155,6 +183,9 @@ async function llmFetch(
   return res;
 }
 
+// The SDK takes ~400 ms to import, most of Core's boot: it loads on the first chat instead.
+let openrouterSdk: Promise<typeof import('@openrouter/sdk')> | null = null;
+
 // openrouter — official SDK
 function openrouterProvider(
   config: Record<string, unknown>,
@@ -166,7 +197,15 @@ function openrouterProvider(
   }
   const model =
     typeof config.model === 'string' && config.model ? config.model : 'liquid/lfm-2.5-2.6b:free';
-  const client = new OpenRouter({ apiKey, timeoutMs: configTimeoutMs(config) });
+  let client: Promise<OpenRouter> | null = null;
+  // a failed import is retried on the next chat, not remembered
+  const openrouter = () =>
+    (client ??= (openrouterSdk ??= import('@openrouter/sdk'))
+      .then(({ OpenRouter }) => new OpenRouter({ apiKey, timeoutMs: configTimeoutMs(config) }))
+      .catch((err) => {
+        openrouterSdk = client = null;
+        throw err;
+      }));
   return {
     name: `openrouter:${model}`,
     async chat({ system, messages, tools }) {
@@ -198,8 +237,8 @@ function openrouterProvider(
         }
       }
       // the SDK narrows on a top-level stream flag, so the cast is the honest read
-      const res = (await llmCall('openrouter', 0, () =>
-        client.chat.send({
+      const res = (await llmCall('openrouter', 0, async () =>
+        (await openrouter()).chat.send({
           chatRequest: {
             model,
             messages: orMessages as never,
@@ -380,16 +419,18 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
   };
 }
 
-// anthropic / openai — thin fetch drivers
+// anthropic — official SDK; its own retries replace llmCall's (429/5xx/timeouts, Retry-After).
+// Always ANTHROPIC_MODEL: config.model is ignored, config.effort picks the effort.
 function anthropicProvider(config: Record<string, unknown>, secretRef: string | null): LlmProvider {
   const apiKey = secretRef ? process.env[secretRef] : process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error(`missing API key — set ${secretRef ?? 'ANTHROPIC_API_KEY'}`);
-  const model =
-    typeof config.model === 'string' && config.model ? config.model : 'claude-sonnet-4-5';
+  const model = ANTHROPIC_MODEL;
+  const effort = isEffort(config.effort) ? config.effort : DEFAULT_EFFORT;
+  const client = anthropicClient({ apiKey, timeoutMs: configTimeoutMs(config), maxRetries: 5 });
   return {
     name: `anthropic:${model}`,
     async chat({ system, messages, tools }) {
-      const amMessages = messages.map((m) => {
+      const amMessages = messages.map((m): Anthropic.MessageParam => {
         if (m.role === 'tool') {
           return {
             role: 'user',
@@ -400,9 +441,9 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
           return {
             role: 'assistant',
             content: [
-              ...(m.content ? [{ type: 'text', text: m.content }] : []),
+              ...(m.content ? [{ type: 'text' as const, text: m.content }] : []),
               ...m.toolCalls.map((t) => ({
-                type: 'tool_use',
+                type: 'tool_use' as const,
                 id: t.id,
                 name: t.name,
                 input: t.args,
@@ -412,72 +453,52 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
         }
         return { role: m.role, content: m.content };
       });
-      const data = await llmCall('anthropic', 0, async () => {
-        const res = await llmFetch(
-          'https://api.anthropic.com/v1/messages',
-          {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              'x-api-key': apiKey,
-              'anthropic-version': '2023-06-01',
-            },
-            // the system prompt is stable per install/kind — its own breakpoint; the
-            // top-level one caches the run's growing conversation turn to turn
-            body: JSON.stringify({
-              model,
-              max_tokens: 16_000,
-              cache_control: { type: 'ephemeral' },
-              system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-              messages: amMessages,
-              tools: tools.map((t) => ({
-                name: t.name,
-                description: t.description,
-                input_schema: t.parameters,
-              })),
-            }),
-          },
-          'anthropic',
-          configTimeoutMs(config),
-        );
-        return (await res.json()) as {
-          content?: { type: string; text?: string; id?: string; name?: string; input?: unknown }[];
-          usage?: {
-            input_tokens?: number;
-            output_tokens?: number;
-            cache_read_input_tokens?: number;
-            cache_creation_input_tokens?: number;
-          };
-        };
+      // the system prompt is stable per install/kind — its own breakpoint; the top-level one
+      // caches the run's growing conversation turn to turn
+      const res = await client.messages.create({
+        model,
+        max_tokens: 16_000 + THINKING_HEADROOM[effort],
+        output_config: { effort },
+        cache_control: { type: 'ephemeral' },
+        system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+        messages: amMessages,
+        tools: tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.parameters as Anthropic.Tool.InputSchema,
+        })),
       });
-      const text = (data.content ?? [])
-        .filter((b) => b.type === 'text')
-        .map((b) => b.text ?? '')
-        .join('');
-      const toolCalls = (data.content ?? [])
-        .filter((b) => b.type === 'tool_use')
-        .map((b) => ({
-          id: b.id!,
-          name: b.name!,
-          args: (b.input ?? {}) as Record<string, unknown>,
-        }));
       const u = {
-        input: data.usage?.input_tokens ?? 0,
-        cacheRead: data.usage?.cache_read_input_tokens ?? 0,
-        cacheWrite: data.usage?.cache_creation_input_tokens ?? 0,
-        output: data.usage?.output_tokens ?? 0,
+        input: res.usage.input_tokens,
+        cacheRead: res.usage.cache_read_input_tokens ?? 0,
+        cacheWrite: res.usage.cache_creation_input_tokens ?? 0,
+        output: res.usage.output_tokens,
       };
-      return {
-        text: text || null,
-        toolCalls,
+      const billed = {
         tokensIn: u.input + u.cacheRead + u.cacheWrite,
         tokensOut: u.output,
         costUsd: anthropicCostUsd(model, u),
       };
+      const refusal = refusalOf(res);
+      if (refusal) throw new LlmRefusalError(`anthropic ${refusal}`, billed);
+      let text = '';
+      const toolCalls: ToolCall[] = [];
+      for (const b of res.content) {
+        if (b.type === 'text') text += b.text;
+        else if (b.type === 'tool_use') {
+          toolCalls.push({
+            id: b.id,
+            name: b.name,
+            args: (b.input ?? {}) as Record<string, unknown>,
+          });
+        }
+      }
+      return { text: text || null, toolCalls, ...billed };
     },
   };
 }
 
+// openai — thin fetch driver
 function openaiProvider(config: Record<string, unknown>, secretRef: string | null): LlmProvider {
   const apiKey = secretRef ? process.env[secretRef] : process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error(`missing API key — set ${secretRef ?? 'OPENAI_API_KEY'}`);

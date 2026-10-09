@@ -8,6 +8,9 @@ import type { Sql } from '../platform/db.ts';
 export type Coverage = 'rehearsal' | 'when_slow' | 'after_hours' | 'always';
 export type Tone = 'relaxed' | 'balanced' | 'formal';
 export type IncentiveReason = 'recovery' | 'first_order' | 'hesitation';
+/** Who Duá answers on a number that may also be the owner's own (ADR 0033). */
+export type AnswerWho = 'known_and_new' | 'known_only' | 'everyone';
+export const ANSWER_WHO = ['known_and_new', 'known_only', 'everyone'] as const;
 
 export interface StoreAgentSettings {
   name: string;
@@ -25,7 +28,7 @@ export interface StoreAgentSettings {
     newCashCustomer: boolean;
   };
   humanSilenceMin: number;
-  unknownNumbers: 'shoppers_only' | 'all';
+  answerWho: AnswerWho;
   recovery: { enabled: boolean; delayMin: number };
   incentives: null | {
     couponIds: string[];
@@ -54,7 +57,7 @@ export const DEFAULT_SETTINGS: StoreAgentSettings = {
   pinnedPairings: [],
   handoff: { complaint: true, allergy: true, aboveCents: null, newCashCustomer: false },
   humanSilenceMin: 30,
-  unknownNumbers: 'shoppers_only',
+  answerWho: 'known_and_new',
   recovery: { enabled: true, delayMin: 15 },
   incentives: null,
   pixOnlyAfterCancels: null,
@@ -72,7 +75,13 @@ export interface StoreAgentRow {
   packVersion: number;
   enabledAt: Date | null;
   firstSaleAt: Date | null;
+  /** "pausar 1 h / até amanhã": out of every conversation until then (`pausedNow`) */
+  pausedUntil: Date | null;
 }
+
+/** A pause is read against the clock, so it lapses on its own with nothing to clear. */
+export const pausedNow = (a: Pick<StoreAgentRow, 'pausedUntil'>, now = new Date()) =>
+  !!a.pausedUntil && a.pausedUntil > now;
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -83,11 +92,18 @@ export function withDefaults(stored: unknown): StoreAgentSettings {
   const d = DEFAULT_SETTINGS;
   const sub = <T extends object>(k: string, base: T): T =>
     isObj(s[k]) ? ({ ...base, ...(s[k] as object) } as T) : base;
+  const { unknownNumbers, ...rest } = s;
   return {
     ...d,
-    ...(s as Partial<StoreAgentSettings>),
+    ...(rest as Partial<StoreAgentSettings>),
     // a row from when stores named their seller still reads as Duá
     name: AGENT_NAME,
+    // a row from before ADR 0033: "all" meant every number, anything else the new default
+    answerWho: ANSWER_WHO.includes(s.answerWho as AnswerWho)
+      ? (s.answerWho as AnswerWho)
+      : unknownNumbers === 'all'
+        ? 'everyone'
+        : 'known_and_new',
     capabilities: sub('capabilities', d.capabilities),
     handoff: sub('handoff', d.handoff),
     recovery: sub('recovery', d.recovery),
@@ -107,8 +123,9 @@ export async function loadAgent(tx: Sql, tenantId: string): Promise<StoreAgentRo
       pack_version: string;
       enabled_at: Date | null;
       first_sale_at: Date | null;
+      paused_until: Date | null;
     }[]
-  >`select enabled, settings, onboarding, pack_version, enabled_at, first_sale_at
+  >`select enabled, settings, onboarding, pack_version, enabled_at, first_sale_at, paused_until
     from store_agent where tenant_id = ${tenantId}`;
   const switchedOn = row?.enabled ?? false;
   return {
@@ -119,6 +136,7 @@ export async function loadAgent(tx: Sql, tenantId: string): Promise<StoreAgentRo
     packVersion: Number(row?.pack_version ?? 1),
     enabledAt: row?.enabled_at ?? null,
     firstSaleAt: row?.first_sale_at ?? null,
+    pausedUntil: row?.paused_until ?? null,
   };
 }
 
@@ -268,9 +286,15 @@ export function parseSettingsPatch(
         mark(k);
         next.humanSilenceMin = int(v, k, 5, 240);
         break;
-      case 'unknownNumbers':
+      case 'answerWho':
         mark(k);
-        next.unknownNumbers = oneOf(v, k, ['shoppers_only', 'all'] as const);
+        next.answerWho = oneOf(v, k, ANSWER_WHO);
+        break;
+      // the field answerWho replaced, still accepted from an older admin
+      case 'unknownNumbers':
+        mark('answerWho');
+        next.answerWho =
+          oneOf(v, k, ['shoppers_only', 'all'] as const) === 'all' ? 'everyone' : 'known_and_new';
         break;
       case 'recovery': {
         if (!isObj(v)) bad(k, 'recovery must be an object');

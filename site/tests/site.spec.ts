@@ -7,7 +7,30 @@ import { gzipSync } from 'node:zlib';
 const HOME = '/';
 const PRIVACY = '/privacidade/';
 const MISSING = '/nao-existe/';
-const PAGES = [HOME, PRIVACY, MISSING];
+// the pages written to be found on search (src/lib/pages.ts): one per kind of shop, the guides, about
+const NICHES = ['/para/doceiras/', '/para/marmitarias/', '/para/hamburguerias/', '/para/padarias/'];
+const GUIDES = [
+  '/guias/vender-comida-pelo-whatsapp/',
+  '/guias/cardapio-digital/',
+  '/guias/encomendas-de-bolos-e-doces/',
+  '/guias/delivery-proprio/',
+];
+const POSTS = [
+  '/novidades/dua-fecha-o-pedido/',
+  '/novidades/dua-chama-voce/',
+  '/novidades/dua-entende-audios/',
+  '/novidades/dua-aprende-e-mostra-resultado/',
+  '/novidades/tela-da-cozinha/',
+  '/novidades/impressao-automatica/',
+  '/novidades/pdv-mesas-e-qr/',
+  '/novidades/entrega-por-distancia/',
+  '/novidades/importar-cardapio-por-link/',
+  '/novidades/seu-dia-e-aviso-de-pedido/',
+  '/novidades/cupons-e-cartao-fidelidade/',
+  '/novidades/pausar-a-loja/',
+];
+const CONTENT = [...NICHES, '/guias/', ...GUIDES, '/novidades/', ...POSTS, '/sobre/'];
+const PAGES = [HOME, ...CONTENT, PRIVACY, MISSING];
 const DOMAIN = 'https://vendua.com.br';
 const INSTAGRAM = 'https://www.instagram.com/vendua.digital/';
 // sign-up lives in the merchant admin (src/lib/content.ts); the build bakes PUBLIC_ADMIN_URL in
@@ -45,14 +68,14 @@ async function scrollThrough(page: Page) {
 }
 
 test.describe('rotas', () => {
-  test('/ e /privacidade/ respondem 200; o resto, 404 com a página de não encontrada', async ({
+  test('as páginas do site respondem 200; o resto, 404 com a página de não encontrada', async ({
     page,
   }) => {
-    for (const path of [HOME, PRIVACY]) {
+    for (const path of [HOME, ...CONTENT, PRIVACY]) {
       const res = await page.goto(path);
       expect(res?.status(), path).toBe(200);
     }
-    for (const path of [MISSING, '/privacidade/nada/', '/pedidos']) {
+    for (const path of [MISSING, '/privacidade/nada/', '/pedidos', '/para/', '/guias/nada/']) {
       const res = await page.goto(path);
       expect(res?.status(), path).toBe(404);
       await expect(page.locator('h1')).toHaveText('Essa página saiu para entrega.');
@@ -81,6 +104,75 @@ test.describe('rotas', () => {
     const png = await res.body();
     // IHDR: width and height are big-endian u32 at bytes 16 and 20
     expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([1200, 630]);
+  });
+});
+
+test.describe('busca', () => {
+  const ld = (page: Page) =>
+    page
+      .locator('script[type="application/ld+json"]')
+      .evaluateAll((els) => els.map((e) => JSON.parse(e.textContent ?? '')));
+
+  test('o Google aprende que vendua, sem acento, é a Venduá', async ({ page }) => {
+    await page.goto(HOME);
+    const [data] = await ld(page);
+    const nodes: Record<string, unknown>[] = data['@graph'];
+    const of = (type: string) => nodes.find((n) => n['@type'] === type)!;
+    expect(of('Organization')).toMatchObject({ name: 'Venduá', alternateName: 'Vendua' });
+    expect(of('Organization').sameAs).toContain(INSTAGRAM);
+    expect(of('WebSite')).toMatchObject({ name: 'Venduá', url: `${DOMAIN}/` });
+    expect(of('WebSite').alternateName).toContain('Vendua');
+    // the product with the plans open for sign-up, never the closed Pangolim
+    const offers = (of('SoftwareApplication').offers as { name: string; url: string }[]).map(
+      (o) => o.name,
+    );
+    expect(offers).toEqual(['Venduá Mirim', 'Venduá Bandeira']);
+    // the about page says it in words too
+    await page.goto('/sobre/');
+    await expect(page.locator('main')).toContainText('vendua, sem acento');
+  });
+
+  test('cada página tem os seus dados estruturados, e só as indexáveis', async ({ page }) => {
+    for (const path of CONTENT) {
+      await page.goto(path);
+      const types = (await ld(page)).flatMap((d) =>
+        (d['@graph'] as { '@type': string }[]).map((n) => n['@type']),
+      );
+      expect(types, path).toContain('BreadcrumbList');
+      if (GUIDES.includes(path)) expect(types, path).toContain('Article');
+      if (NICHES.includes(path)) expect(types, path).toContain('FAQPage');
+    }
+    for (const path of [PRIVACY, MISSING]) {
+      await page.goto(path);
+      expect(await ld(page), path).toEqual([]);
+    }
+  });
+
+  test('o sitemap lista as páginas indexáveis, e o robots aponta para ele', async ({ request }) => {
+    const xml = await (await request.get('/sitemap.xml')).text();
+    const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+    expect(locs.sort()).toEqual([HOME, ...CONTENT].map((p) => new URL(p, DOMAIN).href).sort());
+    const robots = await (await request.get('/robots.txt')).text();
+    expect(robots).toContain(`Sitemap: ${DOMAIN}/sitemap.xml`);
+  });
+
+  test('toda página nova tem link de outras: a home, o rodapé e as leituras do fim', async ({
+    page,
+  }) => {
+    await page.goto(HOME);
+    for (const path of NICHES)
+      await expect(page.locator(`#para-quem a[href="${path}"]`), path).toHaveCount(1);
+    const footer = await page
+      .locator('footer a[href^="/"]')
+      .evaluateAll((els) => els.map((a) => a.getAttribute('href')));
+    for (const path of [...NICHES, '/guias/', '/novidades/', '/sobre/', PRIVACY])
+      expect(footer).toContain(path);
+    await page.goto('/guias/');
+    for (const path of GUIDES)
+      await expect(page.locator(`main a[href="${path}"]`).first(), path).toBeVisible();
+    await page.goto('/novidades/');
+    for (const path of POSTS)
+      await expect(page.locator(`main a[href="${path}"]`).first(), path).toBeVisible();
   });
 });
 
@@ -255,14 +347,16 @@ test.describe('conteúdo', () => {
     for (const path of PAGES) {
       await page.goto(path);
       // the only control is the plans' calculator (a number, no submit): nothing collects data
-      await expect(page.locator('form, textarea, select'), path).toHaveCount(0);
-      expect(
-        await page
-          .locator('input')
-          .evaluateAll((els) => els.filter((e) => !e.closest('#preco')).length),
-        path,
-      ).toBe(0);
-      await expect(page.locator('button[type="submit"], [role="button"]'), path).toHaveCount(0);
+      // (a news post's widgets are simulations: their sliders, fields and buttons live inside the
+      // post's text, send nothing anywhere, and no <form> exists on any page)
+      await expect(page.locator('form'), path).toHaveCount(0);
+      const outsideText = (sel: string) =>
+        page
+          .locator(sel)
+          .evaluateAll((els) => els.filter((e) => !e.closest('#preco, .prose')).length);
+      expect(await outsideText('textarea, select'), path).toBe(0);
+      expect(await outsideText('input'), path).toBe(0);
+      expect(await outsideText('button[type="submit"], [role="button"]'), path).toBe(0);
       // the header's call to action, on every page
       await expect(page.locator(`header a[href="${START}"]`), path).toHaveCount(1);
 
@@ -279,10 +373,12 @@ test.describe('conteúdo', () => {
         const legal = path === PRIVACY && /^mailto:[^@]+@vendua\.com\.br$/.test(l.raw);
         if (legal) continue;
         expect(l.raw, `${path}: ${l.text}`).not.toMatch(/^(mailto|tel|sms|whatsapp):/i);
-        expect(l.href, `${path}: ${l.text}`).not.toMatch(
-          /wa\.me|whatsapp|ig\.me|forms?\.|typeform/i,
-        );
         const url = new URL(l.href);
+        // a chat or form elsewhere; the site's own pages may say WhatsApp (a guide's address)
+        if (url.origin !== new URL(page.url()).origin)
+          expect(l.href, `${path}: ${l.text}`).not.toMatch(
+            /wa\.me|whatsapp|ig\.me|forms?\.|typeform/i,
+          );
         if (url.origin === ADMIN.origin) {
           // the admin only at its sign-up, with no plan or an open one (Pangolim is closed)
           expect(url.pathname, `${path}: ${l.text}`).toBe('/admin/comecar');
@@ -293,7 +389,9 @@ test.describe('conteúdo', () => {
           expect(url.hostname, `${path}: link externo "${l.text}"`).toMatch(
             /(^|\.)instagram\.com$/,
           );
-        else expect(l.text, `${path}: ${l.href}`).not.toMatch(CTA);
+        // a guide's or news post's title names a topic ("vender pelo WhatsApp"), not a call to action
+        else if (!/^\/(guias|novidades)\/./.test(url.pathname))
+          expect(l.text, `${path}: ${l.href}`).not.toMatch(CTA);
       }
       const instagram = links.filter((l) => l.href === INSTAGRAM);
       expect(
@@ -302,11 +400,11 @@ test.describe('conteúdo', () => {
       ).toHaveLength(1);
       // at most one "acompanhe no Instagram" line near the closing call to action
       expect(instagram.filter((l) => !l.footer).length, path).toBeLessThanOrEqual(1);
-      // the demos' buttons are the visitor's lines in a simulation ("Quero a fatia também"), not calls to action
+      // the demos' and the posts' widget buttons are the visitor's lines in a simulation ("Quero a fatia também", "imprimir teste"), not calls to action
       for (const b of await page
         .locator('button')
         .evaluateAll((els) =>
-          els.filter((e) => !e.closest('.demo')).map((e) => e.textContent ?? ''),
+          els.filter((e) => !e.closest('.demo, .prose')).map((e) => e.textContent ?? ''),
         ))
         expect(b, `${path}: botão`).not.toMatch(CTA);
     }
@@ -527,7 +625,7 @@ test.describe('imagens', () => {
         const failed: string[] = [];
         page.on('response', (r) => r.status() >= 400 && failed.push(`${r.status()} ${r.url()}`));
         page.on('requestfailed', (r) => failed.push(`falhou ${r.url()}`));
-        for (const path of [HOME, PRIVACY]) {
+        for (const path of [HOME, PRIVACY, NICHES[0]!, GUIDES[0]!]) {
           await page.goto(path);
           await scrollThrough(page);
           const imgs = await page.locator('img').evaluateAll((els) =>
@@ -602,5 +700,29 @@ test.describe('rede', () => {
     // raise them only on purpose.
     expect(jsBytes, report).toBeLessThanOrEqual(80_000);
     expect(fontBytes, report).toBeLessThanOrEqual(78_000);
+  });
+});
+
+test.describe('loja criada', () => {
+  const WELCOME = new URL('/admin/bem-vindo', ADMIN).href;
+
+  test('a confirmação do cadastro segue para os primeiros passos no painel', async ({ page }) => {
+    await page.route(WELCOME, (r) => r.fulfill({ contentType: 'text/html', body: 'painel' }));
+    // automation never loads the Google tag (gtag.ts), so the page goes on at once
+    await page.goto('/loja-criada/');
+    await page.waitForURL(WELCOME);
+  });
+
+  test('sem JavaScript, segue do mesmo jeito; e fica fora da busca', async ({ browser }) => {
+    const ctx = await browser.newContext({ javaScriptEnabled: false });
+    const page = await ctx.newPage();
+    await page.route(WELCOME, (r) => r.fulfill({ contentType: 'text/html', body: 'painel' }));
+    await page.goto('/loja-criada/', { waitUntil: 'commit' });
+    await page.waitForURL(WELCOME);
+    const res = await page.request.get('/loja-criada/');
+    const html = await res.text();
+    expect(html).toContain('<meta name="robots" content="noindex"');
+    expect(html).toContain(`href="${WELCOME}"`);
+    await ctx.close();
   });
 });

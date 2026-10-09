@@ -2,14 +2,18 @@ import {
   Compass,
   Hand,
   HandPalm,
+  MagnifyingGlass,
   Package,
+  Pause,
+  Question,
   ShieldCheck,
   SpeakerSimpleSlash,
+  User,
   Warning,
   type Icon,
 } from '@phosphor-icons/react';
 import type { ReactNode } from 'react';
-import type { ThreadFloor } from '../../lib/api.ts';
+import type { ThreadClass, ThreadFloor } from '../../lib/api.ts';
 import { cn } from '../cn.ts';
 import { SELLER_EDGE } from './tones.ts';
 
@@ -104,6 +108,14 @@ export function FloorChip({
         você
       </>
     );
+  } else if (floor === 'paused') {
+    tone = 'bg-sunken text-ink';
+    body = (
+      <>
+        <Pause weight="bold" className="size-[15px]" aria-hidden />
+        Duá pausado
+      </>
+    );
   } else if (floor === 'muted') {
     tone = 'bg-sunken text-muted';
     body = (
@@ -118,3 +130,25 @@ export function FloorChip({
   }
   return <span className={cn(CHIP, tone, className)}>{body}</span>;
 }
+
+const CLASSES: Partial<Record<ThreadClass, { word: string; tone: string; Icon: Icon }>> = {
+  checking: { word: 'vendo se é cliente', tone: 'bg-sunken text-muted', Icon: MagnifyingGlass },
+  ask: { word: 'para decidir', tone: 'bg-warning-soft text-warning', Icon: Question },
+  personal: { word: 'pessoal', tone: 'bg-sunken text-muted', Icon: User },
+};
+
+/** Where Duá stands on who a contact is, when he isn't answering them: null for the rest. */
+export function ClassChip({ cls, className }: { cls: ThreadClass; className?: string }) {
+  const c = CLASSES[cls];
+  if (!c) return null;
+  return (
+    <span className={cn(CHIP, c.tone, className)}>
+      <c.Icon weight="bold" className="size-[15px] shrink-0" aria-hidden />
+      {c.word}
+    </span>
+  );
+}
+
+/** A thread Duá stays out of until it knows who the contact is (or knows it's personal). */
+export const triaged = (cls: ThreadClass) =>
+  cls === 'checking' || cls === 'ask' || cls === 'personal';

@@ -24,8 +24,9 @@ The playbook is `videos/README.md`: read it first. This skill is the checklist.
 - **The voice sets the pace**: generate the lines first, then size each frame to its line (voice +
   short lead/tail, rounded up to whole eighths). Never speed a take up or cut it to fit a planned
   frame; if it is too slow, generate a faster take or trim words.
-- The brand is said **ven-du-Á**: spell it `Vendu-á` in every TTS prompt and have the author hear
-  one line with it before generating the rest.
+- The brand is said **ven-du-Á**: spell it `Vendu-á` in every TTS prompt (`Ven-du-á` on
+  `eleven_v4` at a sentence start or before a plan name, where `Vendu-á` turns into "Van-duá") and
+  have the author hear one line with it before generating the rest.
 - Sound effects are the premium set: soft, tonal UI sounds mixed low under the voice, one per
   moment, an accent (never an impact) on the logo. Prompts and processing are in
   `videos/README.md` → Premium SFX; `scripts/build-audio.py sfx` rebuilds them from the takes.

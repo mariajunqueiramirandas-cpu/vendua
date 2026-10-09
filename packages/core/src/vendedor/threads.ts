@@ -12,6 +12,25 @@ export type Channel = 'whatsapp' | 'test' | 'web' | 'instagram';
 export type Stage =
   'browsing' | 'building' | 'checkout' | 'confirming' | 'paying' | 'ordered' | 'after';
 
+/**
+ * Who this number is (ADR 0033): `checking` while its chat is read, `ask` when the owner decides,
+ * `personal` never answered, `other` not a shopper (or muted).
+ */
+export type ThreadClass = 'unknown' | 'shopper' | 'other' | 'checking' | 'personal' | 'ask';
+export type ClassSource =
+  'orders' | 'owner' | 'command' | 'history' | 'new_contact' | 'message' | 'setting' | 'content';
+export type ClassReason =
+  | 'ordered_before'
+  | 'owner_marked'
+  | 'no_prior_chat'
+  | 'looks_personal'
+  | 'looks_customer'
+  | 'unclear'
+  | 'history_unavailable'
+  | 'known_only'
+  | 'everyone'
+  | 'not_a_shopper';
+
 export interface SummaryRef {
   id: string;
   hash: string;
@@ -33,7 +52,11 @@ export interface Thread {
   ownerReason: string | null;
   humanUntil: Date | null;
   waitingSince: Date | null;
-  class: 'unknown' | 'shopper' | 'other';
+  class: ThreadClass;
+  classSource: ClassSource | null;
+  classReason: ClassReason | null;
+  classAt: Date | null;
+  askedAt: Date | null;
   cartId: string | null;
   stage: Stage;
   summary: SummaryRef | null;
@@ -64,6 +87,10 @@ interface ThreadDbRow {
   human_until: Date | null;
   waiting_since: Date | null;
   class: Thread['class'];
+  class_source: ClassSource | null;
+  class_reason: ClassReason | null;
+  class_at: Date | null;
+  asked_at: Date | null;
   cart_id: string | null;
   stage: Stage;
   summary: SummaryRef | null;
@@ -95,6 +122,10 @@ export function threadOf(r: ThreadDbRow): Thread {
     humanUntil: r.human_until,
     waitingSince: r.waiting_since,
     class: r.class,
+    classSource: r.class_source ?? null,
+    classReason: r.class_reason ?? null,
+    classAt: r.class_at ?? null,
+    askedAt: r.asked_at ?? null,
     cartId: r.cart_id,
     stage: r.stage,
     summary: r.summary,
@@ -159,7 +190,7 @@ export function storeStatus(settings: StoreSettingsRow | null, now: Date): Deriv
 
 export function threadFloor(
   t: Thread,
-  agent: Pick<StoreAgentRow, 'enabled' | 'settings'>,
+  agent: Pick<StoreAgentRow, 'enabled' | 'settings'> & { pausedUntil?: Date | null },
   status: DerivedStatus,
   now: Date,
 ): FloorResult {

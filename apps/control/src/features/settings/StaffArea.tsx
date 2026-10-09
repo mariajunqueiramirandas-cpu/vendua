@@ -1,19 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { toast } from 'sonner';
-import { Check, Plus, Send, Trash2, X } from 'lucide-react';
-import { api } from '@/lib/api.ts';
-import { cn } from '@/lib/cn.ts';
-import { errorMessage } from '@/lib/query.ts';
+import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button.tsx';
 import { Panel } from '@/components/ui/card.tsx';
-import { Switch } from '@/components/ui/controls.tsx';
 import { Input, Label, Textarea } from '@/components/ui/input.tsx';
 import { ErrorHint, SaveBar, SectionHead } from './bits.tsx';
 import { str } from './queries.ts';
 
 type Member = { name: string; email: string; whatsapp: string; discord: string };
-type Events = { handoff: boolean; meeting: boolean; fleet: boolean };
 type Save = (v: Record<string, unknown>) => void;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -77,24 +70,6 @@ const readMembers = (v: unknown): Member[] =>
       })
     : [];
 
-const EVENTS: { key: keyof Events; label: string; hint: string }[] = [
-  {
-    key: 'handoff',
-    label: 'agente pediu ajuda',
-    hint: 'handoff — o agente pausou o lead e a equipe assume',
-  },
-  {
-    key: 'meeting',
-    label: 'call marcada',
-    hint: 'lead marcou pelo link ou o agente agendou',
-  },
-  {
-    key: 'fleet',
-    label: 'alertas da frota',
-    hint: 'sonda falhando, implantação que falhou, loja nova no ar',
-  },
-];
-
 export function StaffArea({
   value,
   onSave,
@@ -104,15 +79,7 @@ export function StaffArea({
   onSave: Save;
   saving: boolean;
 }) {
-  const ev = (value.events ?? {}) as Record<string, unknown>;
-  const cur = {
-    members: readMembers(value.members),
-    events: {
-      handoff: ev.handoff !== false,
-      meeting: ev.meeting !== false,
-      fleet: ev.fleet !== false,
-    } as Events,
-  };
+  const cur = { members: readMembers(value.members) };
   const curKey = JSON.stringify(cur);
   const [edit, setEdit] = useState(cur);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,34 +94,14 @@ export function StaffArea({
   const add = (more: Member[]) =>
     setEdit({ ...edit, members: [...edit.members, ...more].slice(0, MAX_MEMBERS) });
 
-  const test = useMutation({
-    mutationFn: api.testStaff,
-    onSuccess: ({ deliveries }) => {
-      const ok = deliveries.filter((d) => d.ok).length;
-      if (!deliveries.length) toast.error('ninguém para avisar — cadastre a equipe');
-      else if (ok === deliveries.length) toast.success(`teste enviado para ${ok} destino(s)`);
-      else toast.error(`${deliveries.length - ok} de ${deliveries.length} envios falharam`);
-    },
-    onError: (e) => toast.error(`teste: ${errorMessage(e)}`),
-  });
-
   const pasted = paste ? parsePasted(paste) : [];
 
   return (
     <section className="max-w-4xl">
       <SectionHead
         title="equipe"
-        sub="quem fica sabendo quando o agente precisa de alguém — por email e/ou whatsapp. o ID do Discord libera os comandos e botões do bot. esses números nunca viram lead e o agente nunca manda mensagem pra eles"
+        sub="os avisos da equipe chegam todos no Discord — o ID do Discord libera os comandos e botões do bot para a pessoa. esses números nunca viram lead e o agente nunca manda mensagem pra eles"
       />
-      <datalist id="staff-emails">
-        {cur.members
-          .filter((m) => m.email)
-          .map((m) => (
-            <option key={m.email} value={m.email}>
-              {m.name}
-            </option>
-          ))}
-      </datalist>
       <Panel>
         <div className="flex flex-col gap-3">
           {edit.members.length === 0 && (
@@ -295,54 +242,12 @@ export function StaffArea({
               </div>
             </div>
           )}
-
-          <div className="flex flex-col gap-2.5 border-t pt-3">
-            <p className="text-xs font-medium text-foreground/80">avisar quando</p>
-            {EVENTS.map((e) => (
-              <div key={e.key} className="flex items-start gap-2.5">
-                <Switch
-                  id={`staff-ev-${e.key}`}
-                  checked={edit.events[e.key]}
-                  onCheckedChange={(on) =>
-                    setEdit({ ...edit, events: { ...edit.events, [e.key]: on } })
-                  }
-                />
-                <Label htmlFor={`staff-ev-${e.key}`} className="flex flex-col text-sm">
-                  <span className="text-foreground">{e.label}</span>
-                  <span className="text-xs font-normal text-muted-foreground">{e.hint}</span>
-                </Label>
-              </div>
-            ))}
-          </div>
-
-          {test.data && test.data.deliveries.length > 0 && !dirty && (
-            <ul
-              className="flex flex-col gap-1 border-t pt-3 text-xs"
-              aria-label="resultado do teste"
-            >
-              {test.data.deliveries.map((d, i) => (
-                <li key={i} className="flex items-start gap-1.5">
-                  {d.ok ? (
-                    <Check className="mt-px size-3.5 shrink-0 text-agent-ink" />
-                  ) : (
-                    <X className="mt-px size-3.5 shrink-0 text-destructive-foreground" />
-                  )}
-                  <span className={cn(!d.ok && 'text-destructive-foreground')}>
-                    {d.name || d.to} · {d.channel} {d.name ? `(${d.to})` : ''}
-                    {d.error ? ` — ${d.error}` : ''}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
         </div>
         <SaveBar inCard pinned={dirty}>
           <Button
             disabled={!dirty || invalid || saving}
             onClick={() =>
               onSave({
-                ...value,
-                events: edit.events,
                 members: edit.members.map((m) => ({
                   name: m.name.trim(),
                   email: m.email.trim().toLowerCase(),
@@ -354,18 +259,9 @@ export function StaffArea({
           >
             salvar equipe
           </Button>
-          {dirty ? (
+          {dirty && (
             <Button variant="ghost" onClick={() => setEdit(cur)}>
               desfazer
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              disabled={!cur.members.length || test.isPending}
-              title="manda uma mensagem de teste para todo mundo da lista"
-              onClick={() => test.mutate()}
-            >
-              <Send /> {test.isPending ? 'enviando…' : 'enviar teste'}
             </Button>
           )}
         </SaveBar>

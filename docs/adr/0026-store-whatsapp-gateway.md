@@ -64,15 +64,24 @@ entrega" that late is worse than none. Rows are kept 30 days.
 figures (money is integer cents formatted by Core; times in the store's timezone). The merchant
 chooses the steps: by default pedido recebido, pagamento confirmado, aceito (with the promised
 time), pronto para retirar (pickup only), saiu para entrega and cancelado. The admin previews each
-one on a sample order. No order link is sent: the order page needs the device's cart session.
+one on a sample order. Each message ends with the order's page on the store's own address,
+`/pedido/<id>?t=vot.…` (amended 2026-10-06): a 30-day, tenant-bound token that reads only the
+order's status, promised time, steps, items with their notes and the store's name. It never shows
+the shopper's name, phone, address or payment details, and pay, card and reorder refuse it; the
+device's cart session still reads everything. The Kernel strips it from the address bar and keeps
+it on the device. Anyone the message is forwarded to sees the same status-only page.
 
 **Shoppers can stop it.** The first message a store sends a number ends with "responda SAIR". A
 bare SAIR/PARAR/STOP from a number the store texted about an order in the last 90 days records an
 opt-out and an acknowledgement; VOLTAR undoes it. Anything else is the store's conversation: the
 gateway doesn't store or read it, and it ignores groups, broadcasts and channels entirely.
 
-**Bounded against bans and runaways.** Only order updates to people who ordered, and the
-merchant's own test. Per store: a pause between messages (`WA_MIN_SEND_GAP_MS`, 1.5 s plus
+**Bounded against bans and runaways.** Only order updates to people who ordered, the merchant's
+own test, and (amended 2026-10-06, the owner's call) two messages a shopper asked for: the bag
+reminder (one per bag, only after an explicit opt-in at checkout, off by default per store, never
+for stores with the Vendedor, which recovers carts itself) and the "avise-me quando abrir" notice.
+Both carry the SAIR footer, honour SAIR, queue behind order updates, expire after 1 h and have
+their own hourly ceilings (20 reminders, 60 opening notices; one reminder per number a week). Per store: a pause between messages (`WA_MIN_SEND_GAP_MS`, 1.5 s plus
 jitter) and an hourly ceiling (`WA_MAX_PER_HOUR`, 200). The device never marks itself online, so
 the merchant's phone keeps its notifications. History sync is limited to the bootstrap Baileys
 needs for its LID↔number map.
@@ -91,7 +100,9 @@ is reconnecting" from "Venduá's WhatsApp service is down" from the same data.
   per-message charge, and the merchant keeps the Business app.
 - It is unauthorised by WhatsApp's terms. A number can be restricted (403); the gateway then stops
   that store and tells the merchant and the team. The pacing and the narrow scope reduce the risk;
-  they don't remove it. Broadcasts and campaigns (P-018) must not run on this transport.
+  they don't remove it. Broadcasts and campaigns (P-018) must not run on this transport. The bag
+  reminder and the opening notice widen the scope a little past order updates; the owner accepted
+  that risk for stores that turn the reminder on.
 - WhatsApp unlinks devices of a phone that stays offline for weeks; the store then shows
   "desvinculado" and the owner is pushed to re-pair.
 - Baileys follows WhatsApp Web's protocol and breaks when it changes. The gateway deploys from

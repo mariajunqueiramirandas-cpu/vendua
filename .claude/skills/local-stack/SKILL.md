@@ -6,7 +6,32 @@ description: Start Venduá's stack in a cloud session (Core API on :8787, CRM ap
 # Running Venduá locally
 
 The SessionStart hook (`.claude/hooks/session-start.sh`) installs deps and starts a migrated,
-seeded Postgres 16 on :5433. Then:
+seeded Postgres 16 on :5433. Then one command starts the rest:
+
+```sh
+bun run dev:stack              # Core :8787, merchant admin :5196, CRM :5195
+bun run dev:stack --seed       # ... plus the seeds, in dependency order (below)
+bun run dev:stack --dry-run    # print every command it would run, start nothing
+bun run dev:stack status       # what answers on each port, and which pids are ours
+bun run dev:stop               # stop what dev:stack started
+```
+
+`tools/dev-stack.mjs` starts Core with the dev env (`CONTROL_SECRET=dev SESSION_SECRET=devsecret
+VENDUA_WEBHOOK_SECRET=devhook VENDUA_ADMIN_DEV_OTP=1`: fixed, whatever secrets your shell has don't
+reach it), then the two Vite apps, each in its own process group with a pidfile and a log under
+`/tmp/vendua-dev/` (`VENDUA_DEV_DIR` moves it): `core.pid`, `core.log`, `admin.*`, `control.*`.
+A service whose port already answers is left alone (and `dev:stop` leaves it alone too: it only
+signals the process groups named by its own pidfiles, never `pkill -f`). `--only core,admin`
+starts a subset. It needs Postgres on :5433 and fails fast without it.
+
+`--seed` runs, in this order: `migrate` and `seed:fixtures` (packages/core; before Core boots, so
+nothing is cached from the old rows), then once Core answers `apps/control/scripts/dev-seed.ts`
+(40 leads; skips itself when they exist) and `apps/admin/scripts/demo-orders.ts 40` (through
+checkout, so it needs the fixtures' menu; skipped when quero-pudim already has orders). Note that
+`seed:fixtures` replaces the blank onboarding store with a menu'd one: leave `--seed` off to test
+`/bem-vindo`.
+
+The manual equivalents, for one service at a time:
 
 ```sh
 # Core API on :8787 (the hook doesn't start it)

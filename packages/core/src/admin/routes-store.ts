@@ -3,6 +3,8 @@ import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import {
   deriveStatus,
   instagramHandle,
+  SPECIAL_RANGE_MAX_DAYS,
+  upcomingSpecialDays,
   whatsappDigits,
   type SpecialDay,
   type StoreSettingsRow,
@@ -23,7 +25,7 @@ import {
   type AdminCtx,
   type AdminDeps,
 } from './context.ts';
-import { handlers } from './handlers.ts';
+import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { nextLocalMidnight } from './routes-catalog.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
@@ -55,6 +57,17 @@ export function assertNoBillingHold(s: StoreSettingsRow) {
       'BILLING_HOLD',
       'the store opens when the first plan payment is confirmed',
     );
+}
+
+/** "Muitos pedidos agora" turned on without a length (Loja's switch, the CRM) lasts a meal rush. */
+export const DEMAND_DEFAULT_MINUTES = 120;
+
+/** "Muitos pedidos agora", and until when; one whose time is up reads as over before the sweep. */
+export function demandOf(s: StoreSettingsRow): { level: 'normal' | 'high'; until: string | null } {
+  const until = s.demand_until ? new Date(s.demand_until) : null;
+  return s.demand_level === 'high' && (!until || until.getTime() > Date.now())
+    ? { level: 'high', until: until?.toISOString() ?? null }
+    : { level: 'normal', until: null };
 }
 
 export function statusOf(s: StoreSettingsRow) {
@@ -137,6 +150,12 @@ export async function storeView(
     },
     hours: s.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
     specialDays: s.special_days ?? [],
+    // the dates they cover from today on, ranges and yearly repeats spelled out (todayHours' shape)
+    specialDaysAhead: upcomingSpecialDays(
+      s.special_days,
+      s.hours?.timezone ?? 'America/Sao_Paulo',
+      new Date(),
+    ),
     operations: {
       prepTimeMinutes: s.prep_time_minutes,
       acceptTargetMinutes: s.accept_target_minutes ?? 5,
@@ -145,7 +164,8 @@ export async function storeView(
       pickupAddress: s.pickup_address ?? null,
       pickupInstructions: s.pickup_instructions ?? null,
       deliveryEnabled: s.delivery_enabled,
-      demand: s.demand_level ?? 'normal',
+      demand: demandOf(s).level,
+      demandUntil: demandOf(s).until,
     },
     location:
       s.latitude != null && s.longitude != null
@@ -196,19 +216,49 @@ function parseSpecialDays(v: unknown): SpecialDay[] {
   if (!Array.isArray(v) || v.length > 60)
     throw new HttpError(422, 'BAD_REQUEST', 'at most 60 special days', { field: 'specialDays' });
   const seen = new Set<string>();
+  // a real calendar day: DATE_RE alone lets 2026-02-31 through
+  const calendar = (s: unknown): s is string => {
+    if (typeof s !== 'string' || !DATE_RE.test(s)) return false;
+    const t = Date.parse(`${s}T00:00:00Z`);
+    return !Number.isNaN(t) && new Date(t).toISOString().startsWith(s);
+  };
   return v
     .map((d, i) => {
-      if (!isObj(d) || typeof d.date !== 'string' || !DATE_RE.test(d.date))
+      if (!isObj(d) || !calendar(d.date))
         throw new HttpError(422, 'BAD_REQUEST', 'special days need a date', {
           field: `specialDays[${i}]`,
         });
-      if (seen.has(d.date))
+      // a range: the last day, inclusive (the same day = just that day)
+      let until: string | undefined;
+      if (d.until !== undefined && d.until !== null && d.until !== d.date) {
+        if (!calendar(d.until) || d.until < d.date)
+          throw new HttpError(422, 'BAD_REQUEST', 'a range ends on a date after it starts', {
+            field: `specialDays[${i}].until`,
+          });
+        const days = (Date.parse(d.until) - Date.parse(d.date)) / 86_400_000;
+        if (days > SPECIAL_RANGE_MAX_DAYS)
+          throw new HttpError(
+            422,
+            'BAD_REQUEST',
+            `a range runs at most ${SPECIAL_RANGE_MAX_DAYS} days`,
+            { field: `specialDays[${i}].until` },
+          );
+        until = d.until;
+      }
+      const yearly = d.yearly === undefined ? false : bool(d.yearly, 'yearly');
+      const key = `${d.date}|${until ?? ''}|${yearly}`;
+      if (seen.has(key))
         throw new HttpError(422, 'BAD_REQUEST', `${d.date} is listed twice`, {
           field: `specialDays[${i}]`,
         });
-      seen.add(d.date);
+      seen.add(key);
       const closed = bool(d.closed, 'closed');
-      const out: SpecialDay = { date: d.date, closed };
+      const out: SpecialDay = {
+        date: d.date,
+        closed,
+        ...(until ? { until } : {}),
+        ...(yearly ? { yearly } : {}),
+      };
       if (!closed) {
         if (
           typeof d.open !== 'string' ||
@@ -326,7 +376,7 @@ function polygonMismatch(err: unknown): never {
 
 export function mountStore(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
   const view = (tx: Sql, t: { id: string; slug: string; name: string }) =>
     storeView(tx, t.id, t.slug, t.name, d.storeDomain);
 
@@ -353,13 +403,13 @@ export function mountStore(d: AdminDeps) {
   // attendants read it too: the status pill and today's hours are on every screen
   admin.get(
     '/store',
-    read('attendant', async (tx, t) => view(tx, t)),
+    named('store').read('attendant', async (tx, t) => view(tx, t)),
   );
 
   admin.patch(
     '/store',
-    write('manager', async (tx, t, m, c) => {
-      const body = await bodyJson(c, 64 * 1024);
+    named('store.patch').write('manager', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 64 * 1024);
       const s = await loadSettings(tx, t.id);
       const set: Record<string, unknown> = {};
       const changed: string[] = [];
@@ -436,8 +486,17 @@ export function mountStore(d: AdminDeps) {
           set.pickup_enabled = bool(o.pickupEnabled, 'pickupEnabled');
         if (o.deliveryEnabled !== undefined)
           set.delivery_enabled = bool(o.deliveryEnabled, 'deliveryEnabled');
-        if (o.demand !== undefined)
+        if (o.demand !== undefined) {
           set.demand_level = oneOf(o.demand, 'demand', ['normal', 'high'] as const);
+          // on without a length: a running one keeps its end, a new one gets the default
+          const running = demandOf(s);
+          set.demand_until =
+            set.demand_level === 'normal'
+              ? null
+              : running.level === 'high' && running.until
+                ? new Date(running.until)
+                : new Date(Date.now() + DEMAND_DEFAULT_MINUTES * 60_000);
+        }
         if (o.pickupAddress !== undefined)
           set.pickup_address = optText(o.pickupAddress, 'pickupAddress', 200) ?? null;
         if (o.pickupInstructions !== undefined)
@@ -549,8 +608,8 @@ export function mountStore(d: AdminDeps) {
   // "Pausar agora": 15 min · 1 h · rest of the day · until I resume · custom minutes.
   admin.post(
     '/store/pause',
-    write('attendant', async (tx, t, m, c) => {
-      const body = await bodyJson(c);
+    named('store.pause').write('attendant', async (tx, t, m, c) => {
+      const body = await bodyOf(c);
       const span = oneOf(body.for, 'for', ['15m', '1h', 'today', 'indefinite', 'minutes'] as const);
       const settings = await loadSettings(tx, t.id);
       // a timed pause ends by opening the store — not while the plan is unpaid
@@ -585,13 +644,44 @@ export function mountStore(d: AdminDeps) {
 
   admin.post(
     '/store/resume',
-    write('attendant', async (tx, t, m) => {
+    named('store.resume').write('attendant', async (tx, t, m) => {
       assertNoBillingHold(await loadSettings(tx, t.id));
       await tx`update store_settings set status_override = null, resumes_at = null where tenant_id = ${t.id}`;
       await audit(tx, t.id, m, {
         action: 'store.resume',
         entity: 'store',
         summary: 'voltou a aceitar pedidos',
+      });
+      await emitAdminTx(tx, t.id, 'store');
+      return { status: 200, body: await view(tx, t) };
+    }),
+  );
+
+  // "Muitos pedidos agora" for 30 min · 1 h · 2 h · the rest of the day, or off. It always ends:
+  // the admin sweep sets it back to normal at `demand_until`.
+  admin.post(
+    '/store/demand',
+    write('attendant', async (tx, t, m, c) => {
+      const body = await bodyJson(c, 1024);
+      const span = oneOf(body.for, 'for', ['30m', '1h', '2h', 'today', 'off'] as const);
+      await loadSettings(tx, t.id);
+      const until =
+        span === 'off'
+          ? null
+          : span === 'today'
+            ? await nextLocalMidnight(tx, t.id)
+            : new Date(Date.now() + { '30m': 30, '1h': 60, '2h': 120 }[span] * 60_000);
+      await tx`
+        update store_settings set demand_level = ${until ? 'high' : 'normal'}, demand_until = ${until}
+        where tenant_id = ${t.id}
+      `;
+      await audit(tx, t.id, m, {
+        action: 'store.demand',
+        entity: 'store',
+        summary: until
+          ? `avisou "muitos pedidos agora" até ${until.toISOString()}`
+          : 'tirou o aviso de muitos pedidos',
+        after: { until },
       });
       await emitAdminTx(tx, t.id, 'store');
       return { status: 200, body: await view(tx, t) };

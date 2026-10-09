@@ -1,10 +1,11 @@
-import { Bag, CalendarBlank, DotsThree, Moped, NotePencil, Timer } from '@phosphor-icons/react';
+import { CalendarBlank, ClockClockwise, DotsThree, NotePencil, Timer } from '@phosphor-icons/react';
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { Order } from '../lib/api.ts';
 import { dateShort, minutesSince, money } from '../lib/format.ts';
 import { haptic } from '../lib/haptics.ts';
 import { reducedMotion, SPRING, springEasing } from '../lib/spring.ts';
 import { cn } from './cn.ts';
+import { modeOf } from './orderMode.ts';
 import { PaymentChip } from './PaymentChip.tsx';
 import { nextStep, STATE_META, StateChip } from './StateChip.tsx';
 
@@ -109,6 +110,7 @@ export function OrderCard({
   const first = order.customer.name.trim().split(/\s+/)[0];
   const items = order.items.map((i) => `${i.qty}× ${i.name}`);
   const nextMeta = next ? STATE_META[next.to] : null;
+  const mode = modeOf(order.delivery);
   const advance = () => onAdvance(order, order.state === 'placed' ? prep : undefined);
 
   const setX = (x: number) => {
@@ -355,15 +357,17 @@ export function OrderCard({
           type="button"
           data-open
           onClick={() => onOpen(order)}
-          className="block w-full text-left"
+          className="@container block w-full text-left"
           aria-label={`abrir pedido ${order.number}`}
         >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="t-display tnum leading-none">#{order.number}</p>
+          {/* side by side only where a five-digit number and the longest chip both fit; narrower
+              (board lanes on a laptop) the chip and age go on a line of their own above */}
+          <div className="flex flex-col-reverse items-start gap-2 @min-[17.5rem]:flex-row @min-[17.5rem]:justify-between @min-[17.5rem]:gap-3">
+            <div className="w-full min-w-0 @min-[17.5rem]:w-auto @min-[17.5rem]:flex-1">
+              <p className="t-display tnum leading-none @max-[11rem]:t-title-1">#{order.number}</p>
               <p className="t-body-lg mt-1.5 truncate font-semibold">{first}</p>
             </div>
-            <div className="flex flex-col items-end gap-1.5">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 @min-[17.5rem]:shrink-0 @min-[17.5rem]:flex-col @min-[17.5rem]:items-end @min-[17.5rem]:gap-1.5">
               <StateChip state={order.state} mode={order.delivery.mode} />
               <span
                 className={cn(
@@ -398,14 +402,12 @@ export function OrderCard({
             <span className="tnum font-semibold text-ink">{money(order.totalCents)}</span>
             <PaymentChip payment={order.payment} quiet className="h-6 px-2" />
             <span className="inline-flex items-center gap-1">
-              {order.delivery.mode === 'delivery' ? (
-                <Moped className="size-4" />
-              ) : (
-                <Bag className="size-4" />
-              )}
+              <mode.Icon className="size-4" />
               {order.delivery.mode === 'delivery'
                 ? (order.delivery.neighborhood ?? 'entrega')
-                : 'retirada'}
+                : order.delivery.mode === 'dine_in'
+                  ? mode.label
+                  : 'retirada'}
             </span>
             {order.scheduledFor ? (
               <span className="inline-flex items-center gap-1">
@@ -415,6 +417,12 @@ export function OrderCard({
             {order.notes ? (
               <span className="inline-flex items-center gap-1 text-warning">
                 <NotePencil className="size-4" /> obs.
+              </span>
+            ) : null}
+            {order.delivery.delayMinutes ? (
+              <span className="tnum inline-flex items-center gap-1 text-warning">
+                <ClockClockwise className="size-4" /> +{order.delivery.delayMinutes} min
+                <span className="sr-only"> de atraso avisado</span>
               </span>
             ) : null}
           </div>

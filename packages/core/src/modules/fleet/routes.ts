@@ -10,6 +10,7 @@ import { RESERVED_SLUGS, normalizeSlug, slugStatus } from '../billing/signup.ts'
 import { claimControl, controlTx } from '../control.ts';
 import { emitControlEvent } from '../control-events.ts';
 import { validPhone } from '../customer.ts';
+import { customRedirect } from '../domains/redirect.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { RINGS } from '../storefront-platform.ts';
 import { BUNDLE_RE, DEFAULT_BUNDLE, RELEASE_RE, type FleetDeps } from './deps.ts';
@@ -120,7 +121,13 @@ export function mountFleet(o: {
             await tx<Tenant[]>`select id, slug, name, status from tenants where slug = ${slug}`
           )[0];
       }
-      if (!tenant) return null;
+      if (!tenant) {
+        // an alias of a live domain, or a lapsed one: the edge redirects (ADR 0038)
+        const r = await customRedirect(tx, hostname, d.storeDomain);
+        return r
+          ? { host, tenant: r.tenant, primaryHost: host, release: null, redirect: r.redirect }
+          : null;
+      }
       const ops = (
         await tx<{ bundle: string; live_release_id: string | null }[]>`
           select bundle, live_release_id from storefront_ops where tenant_id = ${tenant.id}
@@ -153,6 +160,7 @@ export function mountFleet(o: {
         release: release
           ? { id: release.id, bundle: release.bundle, uri: release.artifact_uri, fallback }
           : null,
+        redirect: null,
       };
     });
     if (!out) throw new HttpError(404, 'UNKNOWN_HOST', 'no store at this host');

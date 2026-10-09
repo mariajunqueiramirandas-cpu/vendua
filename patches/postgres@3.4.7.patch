@@ -1,0 +1,100 @@
+diff --git a/src/index.js b/src/index.js
+index 944d50cf2b599ee84c750e8530b5433caa6d8a4a..4f30fd228e3f8a5587272b3a50630a6027cee4b3 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -237,12 +237,21 @@ function Postgres(a, b) {
+     let savepoints = 0
+       , connection
+       , prepare = null
++      , closed = null
+ 
+     try {
+       await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
+       return await Promise.race([
+         scope(connection, fn),
+-        new Promise((_, reject) => connection.onclose = reject)
++        new Promise((_, reject) => connection.onclose = e => {
++          // venduá patch: the pool may reconnect this connection for someone else, so from here
++          // no statement of this transaction is written to it (Postgres rolled it back); writing
++          // to the closed socket was an uncaught TypeError that exited the process
++          closed = e
++          while (queries.length)
++            queries.shift().reject(e)
++          reject(e)
++        })
+       ])
+     } catch (error) {
+       throw error
+@@ -255,7 +264,10 @@ function Postgres(a, b) {
+       let uncaughtError
+         , result
+ 
+-      name && await sql`savepoint ${ sql(name) }`
++      // venduá patch: SAVEPOINT goes out with the block's first statements, not a round trip ahead;
++      // one that fails aborts the transaction, so nothing behind it runs
++      const saved = name ? sql`savepoint ${ sql(name) }`.execute() : null
++      saved && saved.catch(() => { /* awaited below */ })
+       try {
+         result = await new Promise((resolve, reject) => {
+           const x = fn(sql)
+@@ -264,7 +276,14 @@ function Postgres(a, b) {
+ 
+         if (uncaughtError)
+           throw uncaughtError
++        saved && await saved
+       } catch (e) {
++        // a savepoint that never opened has nothing to roll back to: its own error, as before
++        const unsaved = saved && await saved.then(() => null, x => x)
++        if (unsaved)
++          throw unsaved
++        if (closed)
++          throw e
+         await (name
+           ? sql`rollback to ${ sql(name) }`
+           : sql`rollback`
+@@ -290,6 +309,8 @@ function Postgres(a, b) {
+ 
+       function handler(q) {
+         q.catch(e => uncaughtError || (uncaughtError = e))
++        if (closed)
++          return q.reject(closed)
+         c.queue === full
+           ? queries.push(q)
+           : c.execute(q) || move(c, full)
+@@ -330,8 +351,11 @@ function Postgres(a, b) {
+     if (ending)
+       return query.reject(Errors.connection('CONNECTION_ENDED', options, options))
+ 
++    // venduá patch: the most recently idle connection, not the oldest. A connection prepares each
++    // statement once (a describe round trip that stalls its pipeline), so light traffic stays on
++    // the few connections that have already prepared what it runs instead of cycling through all.
+     if (open.length)
+-      return go(open.shift(), query)
++      return go(open.pop(), query)
+ 
+     if (closed.length)
+       return connect(closed.shift(), query)
+diff --git a/src/queue.js b/src/queue.js
+index c4ef97164f057db99dce1b9af3401dbb1af37e31..3ea8c3ef77aa1c0f224cd3a1626a74e0ef32cd11 100644
+--- a/src/queue.js
++++ b/src/queue.js
+@@ -15,6 +15,19 @@ function Queue(initial = []) {
+         : (xs.splice(index, 1), x)
+     },
+     push: (x) => (xs.push(x), x),
++    // venduá patch: the newest entry, for the pool to hand out its warmest idle connection
++    pop: () => {
++      if (xs.length === index)
++        return undefined
++
++      const out = xs.pop()
++      if (index === xs.length) {
++        index = 0
++        xs = []
++      }
++
++      return out
++    },
+     shift: () => {
+       const out = xs[index++]
+ 

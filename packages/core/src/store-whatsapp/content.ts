@@ -11,7 +11,9 @@ export type ChatKind =
   | 'contact'
   | 'document'
   | 'video'
-  | 'other';
+  | 'other'
+  /** the owner's #pessoal / #cliente / #dua, typed on the store's phone */
+  | 'command';
 
 export interface ChatContent {
   kind: ChatKind;
@@ -132,6 +134,22 @@ export function parseContent(message: unknown): ChatContent | null {
   }
   for (const k of OTHER) if (m[k]) return base('other', m[k], null, { type: k.slice(0, 40) });
   return null;
+}
+
+export type PhoneCommand = 'pessoal' | 'cliente' | 'dua';
+
+const COMMAND = /^\s*#(pessoal|cliente|du[aá])\s*$/i;
+
+/** The owner's command when a message is nothing but one. */
+export function phoneCommand(text: string | null | undefined): PhoneCommand | null {
+  const m = COMMAND.exec((text ?? '').normalize('NFC'));
+  if (!m) return null;
+  const w = m[1]!.toLowerCase();
+  return w === 'pessoal' || w === 'cliente' ? w : 'dua';
+}
+
+export function commandContent(command: PhoneCommand): ChatContent {
+  return { kind: 'command', body: command, meta: {}, quotedId: null, media: null };
 }
 
 /** shown to the shopper as a message, but nothing the Vendedor reads */

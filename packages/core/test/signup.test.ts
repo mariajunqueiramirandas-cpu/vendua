@@ -1,21 +1,34 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { foldSlug, slugify } from '../src/admin/context.ts';
 import { createApp } from '../src/app.ts';
-import { validEmail } from '../src/modules/billing/input.ts';
+import { cpfCnpj, validDocument, validEmail } from '../src/modules/billing/input.ts';
 import { runBillingTick } from '../src/modules/billing/jobs.ts';
 import {
+  ipRateKey,
   normalizeSlug,
   readSignupToken,
+  RESERVED_SLUGS,
   signupToken,
   startSignupOtp,
 } from '../src/modules/billing/signup.ts';
-import { billingStaff } from '../src/modules/billing/subscriptions.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
+import type { PixRequest } from '../src/modules/payments/provider.ts';
 import { migrate } from '../src/platform/db.ts';
 
 describe('signup units', () => {
+  test('the per-IP key is the address for IPv4, the /64 for IPv6', () => {
+    expect(ipRateKey('203.0.113.7')).toBe('203.0.113.7');
+    expect(ipRateKey('::ffff:203.0.113.7')).toBe('203.0.113.7');
+    expect(ipRateKey('2001:db8:1:2:aaaa::1')).toBe('2001:db8:1:2::/64');
+    expect(ipRateKey('2001:0DB8:0001:0002:ffff:1:2:3')).toBe('2001:db8:1:2::/64');
+    expect(ipRateKey('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(ipRateKey('2001:db8:1:3::1')).not.toBe(ipRateKey('2001:db8:1:2::1'));
+    expect(ipRateKey('unknown')).toBe('unknown');
+  });
+
   test('only an email Mercado Pago takes as the payer passes', () => {
     expect(validEmail('  Ana.Lima+doces@Gmail.com ', 'email')).toBe('ana.lima+doces@gmail.com');
     expect(validEmail('ana_lima@doces-da-ana.com.br', 'email')).toBe(
@@ -36,11 +49,39 @@ describe('signup units', () => {
       expect(() => validEmail(bad, 'email')).toThrow('email looks wrong');
   });
 
+  test('CPF and CNPJ: any formatting, check digits verified, alphanumeric CNPJ too', () => {
+    expect(cpfCnpj('529.982.247-25')).toBe('52998224725');
+    expect(cpfCnpj(' 390 533 447 05 ')).toBe('39053344705');
+    expect(cpfCnpj('11.222.333/0001-81')).toBe('11222333000181');
+    // the Receita Federal's own example of the alphanumeric CNPJ (July 2026)
+    expect(cpfCnpj('12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
+    expect(cpfCnpj('12abc34501de35')).toBe('12ABC34501DE35');
+    for (const bad of [
+      '529.982.247-24',
+      '111.111.111-11',
+      '11.222.333/0001-82',
+      '00000000000000',
+      '12ABC34501DE34',
+      '12ABC34501DEAB',
+      '1234567890',
+      '',
+    ])
+      expect(cpfCnpj(bad)).toBeNull();
+    expect(validDocument('529.982.247-25', 'document')).toBe('52998224725');
+    expect(() => validDocument('529.982.247-24', 'document')).toThrow('cpf or cnpj looks wrong');
+    expect(() => validDocument(52998224725, 'document')).toThrow();
+  });
+
   test('slugs normalize like slugify, capped at 40', () => {
     expect(normalizeSlug('Açaí da Praia!!')).toBe('acai-da-praia');
     expect(normalizeSlug('  --Doces   da Maria-- ')).toBe('doces-da-maria');
     expect(normalizeSlug('!!!')).toBe('');
     expect(normalizeSlug('a'.repeat(50))).toHaveLength(40);
+  });
+
+  test("the platform's own hosts are reserved", () => {
+    for (const label of ['edge', 'core', 'auto', 'status', 'api', 'app', 'mail', 'cdn', 'crm'])
+      expect(RESERVED_SLUGS.has(label)).toBe(true);
   });
 
   test('& reads as "e", and slugify shares the same fold', () => {
@@ -80,7 +121,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   (fake as unknown as { seq: number }).seq = Math.floor(Math.random() * 1e9);
   const wa: { phone: string; text: string }[] = [];
   const mails: { to: string; subject: string; text: string; key: string }[] = [];
-  const staff: { subject: string; body: string }[] = [];
   const deps = {
     sql: appSql,
     sessionSecret: 's',
@@ -99,10 +139,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   };
   const app = createApp(deps);
   const nonce = crypto.randomUUID().slice(0, 6);
-  const mkPhone = (n: number) => `219${String(Date.now() + n * 17).slice(-8)}`;
+  // one base and a counter: Date.now() at each call let two tests' phones meet 17 ms apart
+  const phoneBase = Date.now();
+  let phones = 0;
+  const mkPhone = () => `219${String(phoneBase + ++phones * 17).slice(-8)}`;
   const created: string[] = [];
   let idem = 0;
-  const originalStaff = billingStaff.notify;
 
   const call = async (
     method: string,
@@ -145,6 +187,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     slug: string,
     extra: Record<string, unknown> = {},
     via = app,
+    headers: Record<string, string> = {},
   ) => {
     const r = await call(
       'POST',
@@ -157,9 +200,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         slug,
         ownerName: 'Ana Lima',
         email: 'ana@example.com',
+        document: '529.982.247-25',
         ...extra,
       },
-      {},
+      headers,
       via,
     );
     if (r.body?.store?.id && !created.includes(r.body.store.id)) created.push(r.body.store.id);
@@ -176,11 +220,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
     // these run billing on the top plan, which launches closed to new stores (ADR 0032)
     await sql`update plans set available = true where id = 'pangolim'`;
-    billingStaff.notify = async (_sql, n) => void staff.push({ subject: n.subject, body: n.body });
   });
 
   afterAll(async () => {
-    billingStaff.notify = originalStaff;
     if (created.length) await sql`delete from tenants where id in ${sql(created)}`;
     if (appSql !== sql) await appSql.end();
     await sql.end();
@@ -191,6 +233,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(plans.status).toBe(200);
     expect(plans.body.storeDomain).toBe('vendua.test');
     expect(plans.body.billing.available).toBe(true);
+    // MercadoPago.js loads with MP_PUBLIC_KEY on Mercado Pago only; the fake has none
+    expect(plans.body.billing.publicKey).toBeNull();
     expect(plans.body.plans.map((p: any) => p.id)).toEqual(['mirim', 'bandeira', 'pangolim']);
     const mirim = plans.body.plans.find((p: any) => p.id === 'mirim');
     expect(mirim).toEqual({
@@ -205,6 +249,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         printing: false,
         loyalty: false,
         vendedor: false,
+        copilot: false,
+        pdv: false,
       },
       trialDays: 0,
       recommended: false,
@@ -230,7 +276,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   });
 
   test('otp: wrong codes fail, a login code never verifies a signup', async () => {
-    const phone = mkPhone(1);
+    const phone = mkPhone();
     await call('POST', '/admin/v1/signup/otp/start', { phone });
     const code = /(\d{6})/.exec(wa.filter((m) => m.phone === phone).at(-1)!.text)![1]!;
     const bad = await call('POST', '/admin/v1/signup/otp/verify', {
@@ -252,7 +298,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   const pixSlug = `signup-${nonce}-pix`;
 
   test('pix signup: store paused behind the hold → pay → open, period set', async () => {
-    const phone = mkPhone(2);
+    const phone = mkPhone();
     pixToken = (await verified(phone)).signupToken;
     const r = await signup(pixToken, pixSlug.toUpperCase());
     expect(r.status).toBe(201);
@@ -320,6 +366,79 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     expect(inv2).toHaveLength(1);
   });
 
+  test('the payer CPF/CNPJ: required, checked, stored, sent to MP, changed in Conta', async () => {
+    // its own app: three signups here would spend the shared one's per-IP limit
+    const other = createApp(deps);
+    const token = (await verified(mkPhone(), other)).signupToken;
+    const slug = `signup-${nonce}-doc`;
+    const missing = await signup(token, slug, { document: undefined }, other);
+    expect(missing.status).toBe(422);
+    expect(missing.body.error.details).toEqual({ field: 'document' });
+    const wrong = await signup(token, slug, { document: '529.982.247-24' }, other);
+    expect(wrong.body.error.details).toEqual({ field: 'document' });
+    expect((await sql`select 1 from tenants where slug = ${slug}`).length).toBe(0);
+
+    const seen: PixRequest[] = [];
+    const realPix = fake.platformPix.bind(fake);
+    fake.platformPix = async (req) => {
+      seen.push(req);
+      return realPix(req);
+    };
+    let r: Awaited<ReturnType<typeof signup>>;
+    try {
+      r = await signup(token, slug, { document: '12.abc.345/01de-35' }, other, {
+        'x-vendua-device': 'armor.s1gnup',
+      });
+    } finally {
+      fake.platformPix = realPix;
+    }
+    expect(r.status).toBe(201);
+    expect(seen).toHaveLength(1);
+    // the signup's MercadoPago.js device id goes with the first Pix
+    expect(seen[0]).toMatchObject({
+      payerDocument: '12ABC34501DE35',
+      payerName: 'Ana Lima',
+      deviceId: 'armor.s1gnup',
+    });
+
+    const owner = session(r.cookie);
+    expect((await owner('GET', '/account')).body.subscription.payerDocument).toBe('12ABC34501DE35');
+    // a signup resumed from before it asked: the replay fills the document in, never overwrites it
+    const docOf = async () =>
+      (await sql`select payer_document from subscriptions where tenant_id = ${r.body.store.id}`)[0]!
+        .payer_document;
+    await sql`update subscriptions set payer_document = null where tenant_id = ${r.body.store.id}`;
+    // …and its live Pix, issued without one, is replaced by one that carries it
+    fake.platformPix = async (req) => {
+      seen.push(req);
+      return realPix(req);
+    };
+    try {
+      expect((await signup(token, slug, { document: '390.533.447-05' }, other)).status).toBe(201);
+    } finally {
+      fake.platformPix = realPix;
+    }
+    expect(await docOf()).toBe('39053344705');
+    expect(seen.map((q) => q.payerDocument)).toEqual(['12ABC34501DE35', '39053344705']);
+    expect((await signup(token, slug, { document: '529.982.247-25' }, other)).status).toBe(201);
+    expect(await docOf()).toBe('39053344705');
+    const bad = await owner('PATCH', '/account/subscription', { payerDocument: '123' });
+    expect(bad.status).toBe(422);
+    expect(bad.body.error.details).toEqual({ field: 'payerDocument' });
+    const changed = await owner('PATCH', '/account/subscription', {
+      payerDocument: '529.982.247-25',
+    });
+    expect(changed.status).toBe(200);
+    expect(changed.body.subscription.payerDocument).toBe('52998224725');
+    // the audit names the change, never the number
+    const audit = await sql`
+      select summary, after::text as after from audit_log
+      where tenant_id = ${r.body.store.id} and action = 'subscription.change'
+    `;
+    expect(audit[0]!.summary).toContain('CPF/CNPJ de cobrança');
+    expect(JSON.stringify(audit)).not.toContain('52998224725');
+  });
+
   test('the same token+slug again is the same store — no second store, no second charge', async () => {
     const again = await signup(pixToken, pixSlug);
     expect(again.status).toBe(201);
@@ -334,16 +453,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   test('closed until the CRM switch, WhatsApp, email and billing are all there', async () => {
     let gate = { on: false, whatsapp: true, email: true, billing: true, open: false };
     const closed = createApp({ ...deps, signupReady: async () => gate });
-    const phone = mkPhone(12);
+    const phone = mkPhone();
     expect(
       (await call('GET', '/admin/v1/signup/plans', undefined, {}, closed)).body.signup,
     ).toEqual({
       open: false,
     });
+    // only this request's messages: mkPhone is clock-based, and an earlier test's number can
+    // come out the same
+    const sent = wa.length;
     const otp = await call('POST', '/admin/v1/signup/otp/start', { phone }, {}, closed);
     expect(otp.status).toBe(503);
     expect(otp.body.error.code).toBe('SIGNUP_CLOSED');
-    expect(wa.some((m) => m.phone === phone)).toBe(false);
+    expect(wa.slice(sent).some((m) => m.phone === phone)).toBe(false);
     // a token from when it was open can't create a store once it closed
     const token = (await verified(phone, createApp(deps))).signupToken;
     const r = await signup(token, `signup-${nonce}-shut`, {}, closed);
@@ -430,7 +552,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         },
       },
     });
-    const token = (await verified(mkPhone(13), flaky)).signupToken;
+    const token = (await verified(mkPhone(), flaky)).signupToken;
     const slug = `signup-${nonce}-flaky`;
     const r = await signup(token, slug, {}, flaky);
     expect(r.status).toBe(201);
@@ -451,7 +573,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
 
   test('a first charge MP refuses: its own code, the team hears why once, a retry goes through', async () => {
     const own = createApp(deps);
-    const token = (await verified(mkPhone(14), own)).signupToken;
+    const token = (await verified(mkPhone(), own)).signupToken;
     const slug = `signup-${nonce}-mprefused`;
     fake.revoked.add('platform');
     try {
@@ -479,7 +601,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
 
   test('a plan that is listed but closed is refused before anything is created', async () => {
     const other = createApp(deps);
-    const token = (await verified(mkPhone(11), other)).signupToken;
+    const token = (await verified(mkPhone(), other)).signupToken;
     await sql`update plans set available = false where id = 'pangolim'`;
     try {
       const r = await signup(token, `signup-${nonce}-closed`, { planId: 'pangolim' }, other);
@@ -509,7 +631,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   test('segment: kept with the store, onboarding marked from signup; a replay changes neither', async () => {
     // its own app: the shared one's per-IP signup budget belongs to the tests below
     const other = createApp(deps);
-    const token = (await verified(mkPhone(10), other)).signupToken;
+    const token = (await verified(mkPhone(), other)).signupToken;
     const slug = `signup-${nonce}-seg`;
     const bad = await signup(token, slug, { segment: 'sorvetes' }, other);
     expect(bad.status).toBe(422);
@@ -543,7 +665,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   });
 
   test('taken and reserved slugs', async () => {
-    const other = (await verified(mkPhone(3))).signupToken;
+    const other = (await verified(mkPhone())).signupToken;
     const taken = await signup(other, pixSlug);
     expect(taken.status).toBe(409);
     expect(taken.body.error.code).toBe('SLUG_TAKEN');
@@ -564,7 +686,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   });
 
   test('card signup → assinatura authorized → active', async () => {
-    const token = (await verified(mkPhone(4))).signupToken;
+    const token = (await verified(mkPhone())).signupToken;
     const r = await signup(token, `signup-${nonce}-card`, { method: 'card' });
     expect(r.status).toBe(201);
     expect(r.body.next.kind).toBe('card');
@@ -598,14 +720,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   });
 
   test('Pangolim signup opens a site request for the team once paid', async () => {
-    const token = (await verified(mkPhone(5))).signupToken;
+    const token = (await verified(mkPhone())).signupToken;
     const r = await signup(token, `signup-${nonce}-pro`, { planId: 'pangolim' });
     expect(r.status).toBe(201);
     const tenant = r.body.store.id;
     await call('POST', `/admin/v1/dev/billing/invoices/${r.body.next.invoiceId}/pay`, {});
     const reqs = await sql`select status from site_requests where tenant_id = ${tenant}`;
     expect([...reqs]).toEqual([{ status: 'requested' }]);
-    expect(staff.some((n) => n.subject.includes('Site sob medida'))).toBe(true);
+    const told = await sql`
+      select data->>'title' as title from staff_events
+      where tenant_id = ${tenant} and kind = 'store.request'
+    `;
+    expect([...told]).toEqual([{ title: 'site sob medida' }]);
     const acct = await session(r.cookie)('GET', '/account');
     expect(acct.body.plan.features).toEqual({
       customDomain: true,
@@ -614,25 +740,74 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       printing: true,
       loyalty: true,
       vendedor: true,
+      copilot: true,
+      pdv: true,
     });
     expect(acct.body.siteRequest.status).toBe('requested');
   });
 
+  // the shared test database holds every run's codes: the platform-wide ceiling is its own test
+  const roomy = { perHour: 1e9, perDay: 1e9 };
+
   test('signup codes: a durable daily cap per IP', async () => {
     const ip = `203.0.113.${Math.floor(Math.random() * 250)}-${nonce}`;
     const notify = { whatsapp: async () => {}, email: async () => {} };
-    await startSignupOtp(appSql, mkPhone(7), notify, { ip, perIpDay: 2 });
-    await startSignupOtp(appSql, mkPhone(8), notify, { ip, perIpDay: 2 });
+    await startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2, ...roomy });
+    await startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2, ...roomy });
     await expect(
-      startSignupOtp(appSql, mkPhone(9), notify, { ip, perIpDay: 2 }),
+      startSignupOtp(appSql, mkPhone(), notify, { ip, perIpDay: 2, ...roomy }),
     ).rejects.toMatchObject({
       status: 429,
     });
   });
 
+  test('signup codes: an IPv6 client is capped by its /64, not its address', async () => {
+    const net = `2001:db8:${(Date.now() % 0xffff).toString(16)}:${nonce.slice(0, 4)}`;
+    const notify = { whatsapp: async () => {}, email: async () => {} };
+    const o = { perIpDay: 1, ...roomy };
+    await startSignupOtp(appSql, mkPhone(), notify, { ip: `${net}::1`, ...o });
+    await expect(
+      startSignupOtp(appSql, mkPhone(), notify, { ip: `${net}:0:0:0:2`, ...o }),
+    ).rejects.toMatchObject({ status: 429, code: 'RATE_LIMITED' });
+    // another /64 is another client
+    await startSignupOtp(appSql, mkPhone(), notify, {
+      ip: `${net.replace('2001:db8', '2001:db9')}::1`,
+      ...o,
+    });
+  });
+
+  test('signup codes: past the platform-wide hourly or daily ceiling nothing is sent', async () => {
+    const sent: string[] = [];
+    const notify = {
+      whatsapp: async (to: string) => {
+        sent.push(to);
+      },
+      email: async () => {},
+    };
+    const phone = mkPhone();
+    const ip = `198.51.100.${Math.floor(Math.random() * 250)}-${nonce}`;
+    for (const ceiling of [
+      { perHour: 0, perDay: 1e9 },
+      { perHour: 1e9, perDay: 0 },
+    ])
+      await expect(startSignupOtp(appSql, phone, notify, { ip, ...ceiling })).rejects.toMatchObject(
+        { status: 429, code: 'RATE_LIMITED' },
+      );
+    expect(sent).toEqual([]);
+    const rows = await sql`select 1 from merchant_login_codes where phone = ${phone}`;
+    expect(rows).toHaveLength(0);
+    // the ceiling is checked before the IP's own count: refused codes don't spend the IP's day
+    const ipRows = await sql`
+      select 1 from signup_otp_sends
+      where ip_hash = ${createHash('sha256').update(`vendua.signup.ip|${ip}`).digest('hex')}
+    `;
+    expect(ipRows).toHaveLength(0);
+  });
+
   test('at most 3 stores per phone per day; billing off → 503', async () => {
     const other = createApp(deps);
-    const phone = mkPhone(6);
+    // a mobile number: it has a spelling without the 9th digit
+    const phone = `2199${mkPhone().slice(-7)}`;
     const token = (await verified(phone, other)).signupToken;
     // four at once: the per-phone lock lets exactly three through
     const res = await Promise.all(
@@ -643,6 +818,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     // the verified phone now sees its stores
     const again = await verified(phone, other);
     expect(again.existingStores).toHaveLength(3);
+    // the same WhatsApp spelled without its 9th digit is the same phone
+    const ten = `${phone.slice(0, 2)}${phone.slice(3)}`;
+    const viaTen = await signup(
+      (await verified(ten, other)).signupToken,
+      `signup-${nonce}-cap5`,
+      {},
+      other,
+    );
+    expect(viaTen.status).toBe(429);
 
     fake.platformConfigured = false;
     try {
@@ -656,7 +840,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
 
   test('access code: no Mercado Pago, the store waits on its invoice until the team marks it paid', async () => {
     const other = createApp(deps);
-    const token = (await verified(mkPhone(7), other)).signupToken;
+    const token = (await verified(mkPhone(), other)).signupToken;
     const slug = `signup-${nonce}-code`;
     const before = process.env.VENDUA_SIGNUP_ACCESS_CODE;
     fake.platformConfigured = false;
@@ -665,6 +849,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       expect((await call('GET', '/admin/v1/signup/plans')).body.billing).toEqual({
         available: false,
         accessCode: false,
+        publicKey: null,
       });
       const short = await signup(token, slug, { accessCode: 'short-code' }, other);
       expect(short.body.error.code).toBe('INVALID_ACCESS_CODE');
@@ -717,6 +902,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       const audit =
         await sql`select action from audit_log where tenant_id = ${id} and action = 'store.signup'`;
       expect(audit).toHaveLength(1);
+
+      // a replay from before signup asked for the CPF/CNPJ fills it in; its invoice is still the
+      // team's, so nothing is asked of MP even once the platform can take a Pix
+      await sql`update subscriptions set payer_document = null where tenant_id = ${id}`;
+      fake.platformConfigured = true;
+      const resumed = await signup(token, slug, { accessCode: 'abre-sem-mp-1234' }, other);
+      fake.platformConfigured = false;
+      expect(resumed.body.next).toEqual({ kind: 'manual', invoiceId });
+      expect(
+        (await sql`select payer_document from subscriptions where tenant_id = ${id}`)[0]!
+          .payer_document,
+      ).toEqual(expect.any(String));
+      expect(
+        (await sql`select pix_copy_paste from invoices where id = ${invoiceId}`)[0]!.pix_copy_paste,
+      ).toBeNull();
 
       // the CRM sees the invoice, and marking it paid activates the plan and opens the store
       const control = (method: string, path: string, key = crypto.randomUUID()) =>
@@ -785,7 +985,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     const control = (path: string) =>
       call('POST', path, {}, { 'x-vendua-control': 'ctl', 'idempotency-key': crypto.randomUUID() });
     const other = createApp(deps);
-    const token = (await verified(mkPhone(8), other)).signupToken;
+    const token = (await verified(mkPhone(), other)).signupToken;
     const pix = await signup(token, `signup-${nonce}-crm-pix`, {}, other);
     expect(pix.body.next.kind).toBe('pix');
     const before = (

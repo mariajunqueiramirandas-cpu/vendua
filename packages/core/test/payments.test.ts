@@ -9,7 +9,8 @@ import {
   refreshConnections,
 } from '../src/modules/payments/jobs.ts';
 import { upsertConnection } from '../src/modules/payments/connections.ts';
-import { ProviderError } from '../src/modules/payments/provider.ts';
+import { ProviderError, type PixRequest } from '../src/modules/payments/provider.ts';
+import { shopperPayerEmail } from '../src/modules/payments/store-payments.ts';
 import { migrate, withTenant } from '../src/platform/db.ts';
 
 // Shopper → merchant online payments end to end (13-payments.md) against a real Postgres, with
@@ -99,13 +100,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     ).toBe(200);
     return auth;
   };
-  const place = async (method: string) => {
+  const place = async (
+    method: string,
+    customer = { name: 'Joana Lima', phone: '(22) 98888-7777' },
+  ) => {
     const auth = await shopper();
     const r = await call(
       'POST',
       '/checkout/v1/checkout',
       {
-        customer: { name: 'Joana Lima', phone: '(22) 98888-7777' },
+        customer,
         delivery: { mode: 'pickup' },
         payment: { method },
       },
@@ -335,6 +339,62 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     const awaiting = (await owner('GET', '/payments')).body.awaitingPix.map((a: any) => a.id);
     expect(awaiting).not.toContain(order.id);
     paidPix = { id: order.id, auth: o.auth, providerId };
+  });
+
+  test('Pix: each shopper is their own payer, with name, phone and items — never one shared email', async () => {
+    const seen: PixRequest[] = [];
+    const createPix = fake.createPix;
+    fake.createPix = (token, req) => {
+      seen.push(req);
+      return createPix.call(fake, token, req);
+    };
+    try {
+      const joana = await place('pix');
+      const joanaAgain = await place('pix');
+      const bruno = await place('pix', { name: 'Bruno Souza Reis', phone: '(21) 97777-6666' });
+      // Kernel 1.20 sends the shopper's MP device id with the Pix /pay; a malformed one is dropped
+      const payWith = (o: typeof joana, body: unknown) =>
+        call('POST', `/checkout/v1/orders/${o.body.order.id}/pay`, body, o.auth);
+      expect(
+        (await payWith(joana, { card: 'form', deviceId: 'armor.d3v1c3' })).body.next.kind,
+      ).toBe('pix');
+      expect((await payWith(joanaAgain, { deviceId: 'not a device id!' })).body.next.kind).toBe(
+        'pix',
+      );
+      expect((await pay(bruno.body.order.id, bruno.auth)).body.next.kind).toBe('pix');
+      expect(seen).toHaveLength(3);
+      const [a, again, b] = seen as [PixRequest, PixRequest, PixRequest];
+      expect([a.deviceId, again.deviceId, b.deviceId]).toEqual(['armor.d3v1c3', null, null]);
+
+      expect(a.payerEmail).toBe(
+        shopperPayerEmail('s', '22988887777', joana.body.order.id, 'vendua.test'),
+      );
+      expect(a.payerEmail).toMatch(/^cliente\.[0-9a-f]{20}@vendua\.test$/);
+      expect(a.payerEmail).not.toContain('98888');
+      // the same shopper is the same payer on every order; another shopper is another payer
+      expect(again.payerEmail).toBe(a.payerEmail);
+      expect(b.payerEmail).not.toBe(a.payerEmail);
+
+      expect(a).toMatchObject({ payerName: 'Joana Lima', payerPhone: '22988887777' });
+      expect(b).toMatchObject({ payerName: 'Bruno Souza Reis', payerPhone: '21977776666' });
+      const [line] = await sql<{ line_total_cents: number }[]>`
+        select line_total_cents from order_items where order_id = ${joana.body.order.id}
+      `;
+      expect(a.items).toEqual([
+        {
+          id: productId,
+          title: expect.stringMatching(/^2× /),
+          description: expect.any(String),
+          categoryId: 'others',
+          quantity: 1,
+          unitPriceCents: line!.line_total_cents,
+        },
+      ]);
+      expect(a.statementDescriptor).toBe(b.statementDescriptor);
+      expect(a.statementDescriptor).toEqual(expect.any(String));
+    } finally {
+      fake.createPix = createPix;
+    }
   });
 
   test('a payment into another account is ignored', async () => {

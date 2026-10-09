@@ -4,7 +4,13 @@ import { lineText } from './cards.ts';
 import { describeGuard, type CompiledGuard } from './knowledge.ts';
 import { customerCard, type CustomerCard } from './pack.ts';
 import { aiAllowanceTx } from '../modules/billing/ai-allowance.ts';
-import { DEFAULT_SETTINGS, introduction, loadAgent, type StoreAgentSettings } from './settings.ts';
+import {
+  DEFAULT_SETTINGS,
+  introduction,
+  loadAgent,
+  pausedNow,
+  type StoreAgentSettings,
+} from './settings.ts';
 import {
   loadStoreSettings,
   maskPhone,
@@ -19,7 +25,7 @@ import {
 // and only reach its own staff; staff events and logs never carry them.
 
 export type Presence =
-  'off' | 'answering' | 'rehearsal' | 'covering' | 'disconnected' | 'budget' | 'trouble';
+  'off' | 'paused' | 'answering' | 'rehearsal' | 'covering' | 'disconnected' | 'budget' | 'trouble';
 
 export interface WaitingRow {
   threadId: string;
@@ -39,6 +45,8 @@ export interface HomeView {
     slowAfterMin: number;
     enabledAt: string | null;
     firstSaleAt: string | null;
+    /** set only while a pause holds */
+    pausedUntil: string | null;
   };
   presence: Presence;
   /** what Duá can still take this period (ADR 0032): 0 left means shoppers go to the store */
@@ -160,15 +168,18 @@ export async function homeView(tx: Sql, tenantId: string, now = new Date()): Pro
       and last_in_at > now() - interval '30 minutes' and owner in ('open', 'agent')`;
   const p50 = await replyPercentiles(tx, tenantId, since);
   const linked = wa?.state === 'open';
+  const paused = pausedNow(agent, now);
   const presence: Presence = !agent.enabled
     ? 'off'
-    : !linked
-      ? 'disconnected'
-      : agent.settings.coverage === 'rehearsal'
-        ? 'rehearsal'
-        : agent.settings.coverage === 'always'
-          ? 'answering'
-          : 'covering';
+    : paused
+      ? 'paused'
+      : !linked
+        ? 'disconnected'
+        : agent.settings.coverage === 'rehearsal'
+          ? 'rehearsal'
+          : agent.settings.coverage === 'always'
+            ? 'answering'
+            : 'covering';
   const ai = await aiAllowanceTx(tx, tenantId, now);
   const ob = agent.onboarding as { started?: boolean; finished?: boolean; part?: string };
   return {
@@ -181,6 +192,7 @@ export async function homeView(tx: Sql, tenantId: string, now = new Date()): Pro
       slowAfterMin: agent.settings.slowAfterMin,
       enabledAt: agent.enabledAt?.toISOString() ?? null,
       firstSaleAt: agent.firstSaleAt?.toISOString() ?? null,
+      pausedUntil: paused ? agent.pausedUntil!.toISOString() : null,
     },
     presence,
     allowance: {
@@ -254,7 +266,17 @@ export async function replyPercentiles(
 
 // ── conversations ────────────────────────────────────────────────────────────
 
-export type ThreadFilter = 'all' | 'waiting' | 'orders' | 'agent' | 'others';
+/** `ask` "para decidir", `personal` "pessoais" (ADR 0033); `others` is class other. */
+export type ThreadFilter = 'all' | 'waiting' | 'orders' | 'agent' | 'others' | 'ask' | 'personal';
+export const THREAD_FILTERS = [
+  'all',
+  'waiting',
+  'orders',
+  'agent',
+  'others',
+  'ask',
+  'personal',
+] as const satisfies readonly ThreadFilter[];
 
 export interface ThreadRow {
   id: string;
@@ -266,11 +288,48 @@ export interface ThreadRow {
   waitingSince: string | null;
   stage: Thread['stage'];
   class: Thread['class'];
+  /** why it has that class: a code (ADR 0033), never text about the person */
+  classReason: Thread['classReason'];
+  classSource: Thread['classSource'];
   preview: string | null;
   previewAuthor: string | null;
   lastAt: string;
   orderNumber: number | null;
+  /** the shopper wrote last, after the store last opened it */
   unread: boolean;
+  /** a search that matched a message: the words around the match */
+  match?: string | null;
+}
+
+// Postgres here has no unaccent: "pao" finds "Pão" by folding both sides the same way
+const ACCENTED = 'ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑáàâãäéèêëíìîïóòôõöúùûüçñ';
+const PLAIN = 'AAAAAEEEEIIIIOOOOOUUUUCNaaaaaeeeeiiiiooooouuuucn';
+/** message text is searched this far back, and only from this many characters */
+export const SEARCH_DAYS = 90;
+const SEARCH_TEXT_MIN = 3;
+
+const likeOf = (q: string) => `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
+/** Per character, so an index in the folded text is the same index in the original. */
+const foldKeep = (s: string) =>
+  [...s]
+    .map((c) => {
+      const f = c.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+      return f.length === c.length ? f : c;
+    })
+    .join('');
+
+/**
+ * "…de calabresa sem cebola, e…": the matched words with a little around them, little before so
+ * the match survives a one-line list row.
+ */
+export function snippet(text: string, q: string, before = 24, after = 72): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const at = foldKeep(flat).indexOf(q);
+  if (at < 0) return flat.slice(0, before + after);
+  const from = Math.max(0, at - before);
+  const to = Math.min(flat.length, at + q.length + after);
+  return `${from > 0 ? '…' : ''}${flat.slice(from, to).trim()}${to < flat.length ? '…' : ''}`;
 }
 
 export async function threadList(
@@ -278,10 +337,27 @@ export async function threadList(
   tenantId: string,
   o: { filter: ThreadFilter; q: string; before: string | null; limit: number },
   now = new Date(),
-): Promise<{ threads: ThreadRow[]; next: string | null }> {
+): Promise<{ threads: ThreadRow[]; next: string | null; counts: { ask: number } }> {
   const agent = await loadAgent(tx, tenantId);
   const status = storeStatus(await loadStoreSettings(tx, tenantId), now);
   const q = o.q.trim();
+  const pat = likeOf(q);
+  const digits = q.replace(/\D/g, '');
+  // "128" or "#128": the order of that number, whichever conversation it came from
+  const orderNumber = /^#?\d{1,7}$/.test(q) ? Number(digits) : null;
+  const byText = q.length >= SEARCH_TEXT_MIN;
+  const since = new Date(now.getTime() - SEARCH_DAYS * 86_400_000);
+  const plain = (col: 'name' | 'checkout') =>
+    col === 'name'
+      ? tx`lower(translate(t.profile_name, ${ACCENTED}, ${PLAIN}))`
+      : tx`lower(translate(t.checkout ->> 'name', ${ACCENTED}, ${PLAIN}))`;
+  // a friend's words are the owner's own: never searched (ADR 0033)
+  const said = () => tx`exists (
+    select 1 from shopper_messages m
+    where m.thread_id = t.id and m.tenant_id = ${tenantId} and m.created_at > ${since}
+      and m.kind <> 'command' and t.class <> 'personal'
+      and (lower(translate(m.body, ${ACCENTED}, ${PLAIN})) like ${pat}
+           or lower(translate(m.transcript, ${ACCENTED}, ${PLAIN})) like ${pat}))`;
   const rows = await tx<
     (Record<string, unknown> & {
       id: string;
@@ -293,20 +369,25 @@ export async function threadList(
       waiting_since: Date | null;
       stage: Thread['stage'];
       class: Thread['class'];
+      class_reason: Thread['classReason'];
+      class_source: Thread['classSource'];
       updated_at: Date;
       human_until: Date | null;
       pending_since: Date | null;
+      seen_at: Date | null;
       channel: Thread['channel'];
       order_number: number | null;
       preview: string | null;
       preview_author: string | null;
+      preview_at: Date | null;
     })[]
   >`
-    select t.*, o.number as order_number, last.body as preview, last.author as preview_author
+    select t.*, o.number as order_number, last.body as preview, last.author as preview_author,
+      last.created_at as preview_at
     from shopper_threads t
     left join orders o on o.id = t.order_id
     left join lateral (
-      select coalesce(m.transcript, m.body) as body, m.author from shopper_messages m
+      select coalesce(m.transcript, m.body) as body, m.author, m.created_at from shopper_messages m
       where m.thread_id = t.id order by m.created_at desc limit 1) last on true
     where t.tenant_id = ${tenantId} and t.channel in ('whatsapp', 'web')
       and (${o.before}::timestamptz is null or t.updated_at < ${o.before}::timestamptz)
@@ -316,15 +397,40 @@ export async function threadList(
           : o.filter === 'orders'
             ? tx`t.order_id is not null`
             : o.filter === 'agent'
-              ? tx`t.owner in ('open', 'agent') and t.class <> 'other'`
+              ? tx`t.owner in ('open', 'agent') and t.class in ('shopper', 'unknown')`
               : o.filter === 'others'
                 ? tx`t.class = 'other'`
-                : tx`t.class <> 'other'`
+                : o.filter === 'ask'
+                  ? tx`t.class = 'ask'`
+                  : o.filter === 'personal'
+                    ? tx`t.class = 'personal'`
+                    : tx`t.class not in ('other', 'personal')`
       }
-      and (${q} = '' or t.profile_name ilike ${'%' + q + '%'} or t.checkout ->> 'name' ilike ${'%' + q + '%'}
-           or t.phone like ${'%' + q.replace(/\D/g, '') + '%'} and ${q.replace(/\D/g, '').length >= 4})
+      and (${q} = '' or ${plain('name')} like ${pat} or ${plain('checkout')} like ${pat}
+           or (t.phone like ${'%' + digits + '%'} and ${digits.length >= 4})
+           or ${
+             orderNumber === null
+               ? tx`false`
+               : tx`o.number = ${orderNumber} or t.id in (
+                   select x.thread_id from orders x
+                   where x.tenant_id = ${tenantId} and x.number = ${orderNumber} and x.thread_id is not null)`
+           }
+           or ${byText ? said() : tx`false`})
     order by t.updated_at desc limit ${o.limit + 1}`;
   const page = rows.slice(0, o.limit);
+  // the words that matched, for the rows on this page only
+  const hits = new Map<string, string>();
+  if (byText && page.length) {
+    const found = await tx<{ thread_id: string; body: string }[]>`
+      select distinct on (m.thread_id) m.thread_id, coalesce(m.transcript, m.body) as body
+      from shopper_messages m join shopper_threads t on t.id = m.thread_id
+      where m.tenant_id = ${tenantId} and m.thread_id = any(${page.map((r) => r.id)}::uuid[])
+        and m.created_at > ${since} and m.kind <> 'command' and t.class <> 'personal'
+        and (lower(translate(m.body, ${ACCENTED}, ${PLAIN})) like ${pat}
+             or lower(translate(m.transcript, ${ACCENTED}, ${PLAIN})) like ${pat})
+      order by m.thread_id, m.created_at desc`;
+    for (const f of found) if (f.body) hits.set(f.thread_id, snippet(f.body, q));
+  }
   return {
     threads: page.map((r) => {
       const t = {
@@ -344,15 +450,28 @@ export async function threadList(
         waitingSince: r.waiting_since?.toISOString() ?? null,
         stage: r.stage,
         class: r.class,
+        classReason: r.class_reason ?? null,
+        classSource: r.class_source ?? null,
         preview: r.preview?.slice(0, 120) ?? null,
         previewAuthor: r.preview_author,
         lastAt: r.updated_at.toISOString(),
         orderNumber: r.order_number,
-        unread: r.preview_author === 'shopper',
+        unread:
+          r.preview_author === 'shopper' &&
+          (!r.seen_at || (!!r.preview_at && r.preview_at > r.seen_at)),
+        ...(byText ? { match: hits.get(r.id) ?? null } : {}),
       };
     }),
     next: rows.length > o.limit ? page[page.length - 1]!.updated_at.toISOString() : null,
+    counts: { ask: await askCount(tx, tenantId) },
   };
+}
+
+async function askCount(tx: Sql, tenantId: string): Promise<number> {
+  const [r] = await tx<{ n: number }[]>`
+    select count(*)::int as n from shopper_threads
+    where tenant_id = ${tenantId} and class = 'ask' and channel = 'whatsapp' and owner <> 'muted'`;
+  return r?.n ?? 0;
 }
 
 export interface MessageView {
@@ -397,6 +516,8 @@ export interface ThreadDetail {
     paymentStatus: string;
   } | null;
   humanSilenceMin: number;
+  /** the store paused Duá until then (null when he isn't paused) */
+  pausedUntil: string | null;
 }
 
 export async function threadDetail(
@@ -426,6 +547,8 @@ export async function threadDetail(
       exists (select 1 from shopper_media x where x.message_id = m.id) as has_media,
       (select x.seconds from shopper_media x where x.message_id = m.id limit 1) as seconds
     from shopper_messages m where m.tenant_id = ${tenantId} and m.thread_id = ${id}
+      -- a personal contact's chat is the owner's alone; what remains is erased rows
+      and ${t.class !== 'personal'}
     order by m.created_at desc limit 200`;
   const suggested = new Set(
     (
@@ -492,6 +615,8 @@ export async function threadDetail(
       waitingSince: t.waitingSince?.toISOString() ?? null,
       stage: t.stage,
       class: t.class,
+      classReason: t.classReason,
+      classSource: t.classSource,
       preview: null,
       previewAuthor: null,
       lastAt: t.updatedAt.toISOString(),
@@ -529,6 +654,7 @@ export async function threadDetail(
       : null,
     order,
     humanSilenceMin: agent.settings.humanSilenceMin,
+    pausedUntil: pausedNow(agent, now) ? agent.pausedUntil!.toISOString() : null,
   };
 }
 
@@ -770,12 +896,14 @@ export async function clienteOcultoView(tx: Sql, tenantId: string) {
       passed: number | null;
       total: number | null;
       results: unknown;
+      skipped: number;
       error: string | null;
       created_at: Date;
       finished_at: Date | null;
     }[]
-  >`select id, trigger, status, passed, total, results, error, created_at, finished_at from vendedor_runs
-    where tenant_id = ${tenantId} order by created_at desc limit 10`;
+  >`select id, trigger, status, passed, total, results, error, created_at, finished_at,
+      (select count(*) from jsonb_array_elements(results) e where e ->> 'skipped' = 'true')::int as skipped
+    from vendedor_runs where tenant_id = ${tenantId} order by created_at desc limit 10`;
   return {
     latest: runs[0]
       ? {
@@ -784,6 +912,7 @@ export async function clienteOcultoView(tx: Sql, tenantId: string) {
           status: runs[0].status,
           passed: runs[0].passed,
           total: runs[0].total,
+          skipped: runs[0].skipped,
           results: runs[0].results,
           error: runs[0].error,
           at: runs[0].created_at.toISOString(),
@@ -794,6 +923,7 @@ export async function clienteOcultoView(tx: Sql, tenantId: string) {
       id: r.id,
       passed: r.passed,
       total: r.total,
+      skipped: r.skipped,
       status: r.status,
       at: r.created_at.toISOString(),
     })),

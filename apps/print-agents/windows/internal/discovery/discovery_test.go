@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -142,7 +143,7 @@ func TestCollectMergesFiltersAndCaps(t *testing.T) {
 			return nil, errors.New("refused")
 		}},
 	}
-	if err := d.ScanNetwork(context.Background()); err != nil {
+	if _, err := d.ScanNetwork(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	got := d.Collect(context.Background())
@@ -180,5 +181,45 @@ func TestCollectKeepsLastLocalListingWhenEnumerationFails(t *testing.T) {
 	got := d.Collect(context.Background())
 	if len(got) != 2 || got[0].Key != "spooler:EPSON TM-T20X" {
 		t.Fatalf("a failed listing must not shrink the report: %+v", got)
+	}
+}
+
+func TestScanNetworkKeepsAPrinterMissedOnce(t *testing.T) {
+	up := map[string]bool{"192.168.0.50:9100": true, "192.168.0.51:9100": true}
+	d := &Discoverer{
+		Log:   slog.New(slog.DiscardHandler),
+		Local: func(context.Context) ([]api.Discovered, error) { return nil, nil },
+		Addrs: func() ([]netip.Addr, error) { return []netip.Addr{netip.MustParseAddr("192.168.0.10")}, nil },
+		Probe: Probe{Dial: func(_ context.Context, _, addr string) (net.Conn, error) {
+			if up[addr] {
+				return conn{}, nil
+			}
+			return nil, errors.New("refused")
+		}},
+	}
+	if d.NetworkScanned() {
+		t.Fatal("scanned before any scan")
+	}
+	scan := func() (bool, []string) {
+		t.Helper()
+		changed, err := d.ScanNetwork(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return changed, keys(d.Collect(context.Background()))
+	}
+	if changed, got := scan(); !changed || len(got) != 2 || !d.NetworkScanned() {
+		t.Fatalf("first scan: changed=%v %v", changed, got)
+	}
+	up["192.168.0.51:9100"] = false
+	if changed, got := scan(); changed || len(got) != 2 {
+		t.Fatalf("one miss must keep it: changed=%v %v", changed, got)
+	}
+	if changed, got := scan(); !changed || !slices.Equal(got, []string{"tcp:192.168.0.50:9100"}) {
+		t.Fatalf("two misses drop it: changed=%v %v", changed, got)
+	}
+	up["192.168.0.51:9100"] = true
+	if changed, got := scan(); !changed || len(got) != 2 {
+		t.Fatalf("back again: changed=%v %v", changed, got)
 	}
 }

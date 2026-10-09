@@ -1,0 +1,317 @@
+{
+  "bpm": 128,
+  "eighth_s": 0.234375,
+  "frames": {
+    "1": {
+      "name": "chegou",
+      "start_s": 0.0,
+      "duration_s": 7.5,
+      "eighths": 32,
+      "lines": {
+        "L01": {
+          "start": 0.12,
+          "end": 1.426,
+          "text": "Chegou o Venduá!"
+        },
+        "L02": {
+          "start": 1.566,
+          "end": 7.078,
+          "text": "A sua loja online, com um vendedor que nunca larga o WhatsApp e uma cozinha que vê tudo na hora."
+        }
+      },
+      "words": [
+        {
+          "id": "w1-0",
+          "text": "Chegou",
+          "start": 0.12,
+          "end": 0.58,
+          "line": "L01"
+        },
+        {
+          "id": "w1-1",
+          "text": "o",
+          "start": 0.58,
+          "end": 0.7,
+          "line": "L01"
+        },
+        {
+          "id": "w1-2",
+          "text": "Venduá!",
+          "start": 0.7,
+          "end": 1.16,
+          "line": "L01"
+        },
+        {
+          "id": "w1-3",
+          "text": "A",
+          "start": 1.57,
+          "end": 1.67,
+          "line": "L02"
+        },
+        {
+          "id": "w1-4",
+          "text": "sua",
+          "start": 1.67,
+          "end": 1.87,
+          "line": "L02"
+        },
+        {
+          "id": "w1-5",
+          "text": "loja",
+          "start": 1.87,
+          "end": 2.15,
+          "line": "L02"
+        },
+        {
+          "id": "w1-6",
+          "text": "online,",
+          "start": 2.15,
+          "end": 2.53,
+          "line": "L02"
+        },
+        {
+          "id": "w1-7",
+          "text": "com",
+          "start": 2.73,
+          "end": 2.87,
+          "line": "L02"
+        },
+        {
+          "id": "w1-8",
+          "text": "um",
+          "start": 2.87,
+          "end": 2.99,
+          "line": "L02"
+        },
+        {
+          "id": "w1-9",
+          "text": "vendedor",
+          "start": 2.99,
+          "end": 3.39,
+          "line": "L02"
+        },
+        {
+          "id": "w1-10",
+          "text": "que",
+          "start": 3.39,
+          "end": 3.55,
+          "line": "L02"
+        },
+        {
+          "id": "w1-11",
+          "text": "nunca",
+          "start": 3.55,
+          "end": 3.89,
+          "line": "L02"
+        },
+        {
+          "id": "w1-12",
+          "text": "larga",
+          "start": 3.89,
+          "end": 4.39,
+          "line": "L02"
+        },
+        {
+          "id": "w1-13",
+          "text": "o",
+          "start": 4.39,
+          "end": 4.45,
+          "line": "L02"
+        },
+        {
+          "id": "w1-14",
+          "text": "WhatsApp",
+          "start": 4.45,
+          "end": 4.83,
+          "line": "L02"
+        },
+        {
+          "id": "w1-15",
+          "text": "e",
+          "start": 4.83,
+          "end": 5.13,
+          "line": "L02"
+        },
+        {
+          "id": "w1-16",
+          "text": "uma",
+          "start": 5.13,
+          "end": 5.25,
+          "line": "L02"
+        },
+        {
+          "id": "w1-17",
+          "text": "cozinha",
+          "start": 5.25,
+          "end": 5.67,
+          "line": "L02"
+        },
+        {
+          "id": "w1-18",
+          "text": "que",
+          "start": 5.67,
+          "end": 5.81,
+          "line": "L02"
+        },
+        {
+          "id": "w1-19",
+          "text": "vê",
+          "start": 5.81,
+          "end": 5.95,
+          "line": "L02"
+        },
+        {
+          "id": "w1-20",
+          "text": "tudo",
+          "start": 5.95,
+          "end": 6.31,
+          "line": "L02"
+        },
+        {
+          "id": "w1-21",
+          "text": "na",
+          "start": 6.31,
+          "end": 6.55,
+          "line": "L02"
+        },
+        {
+          "id": "w1-22",
+          "text": "hora.",
+          "start": 6.55,
+          "end": 6.81,
+          "line": "L02"
+        }
+      ]
+    },
+    "2": {
+      "name": "bandeira",
+      "start_s": 7.5,
+      "duration_s": 7.03125,
+      "eighths": 30,
+      "lines": {
+        "L14": {
+          "start": 0.12,
+          "end": 5.162,
+          "text": "Venduá. Comece pelo Venduá Bandeira: catorze dias grátis, sem cartão."
+        }
+      },
+      "words": [
+        {
+          "id": "w2-0",
+          "text": "Venduá.",
+          "start": 0.12,
+          "end": 0.72,
+          "line": "L14"
+        },
+        {
+          "id": "w2-1",
+          "text": "Comece",
+          "start": 0.94,
+          "end": 1.4,
+          "line": "L14"
+        },
+        {
+          "id": "w2-2",
+          "text": "pelo",
+          "start": 1.4,
+          "end": 1.62,
+          "line": "L14"
+        },
+        {
+          "id": "w2-3",
+          "text": "Venduá",
+          "start": 1.62,
+          "end": 2.14,
+          "line": "L14"
+        },
+        {
+          "id": "w2-4",
+          "text": "Bandeira:",
+          "start": 2.14,
+          "end": 2.64,
+          "line": "L14"
+        },
+        {
+          "id": "w2-5",
+          "text": "catorze",
+          "start": 2.86,
+          "end": 3.28,
+          "line": "L14"
+        },
+        {
+          "id": "w2-6",
+          "text": "dias",
+          "start": 3.28,
+          "end": 3.6,
+          "line": "L14"
+        },
+        {
+          "id": "w2-7",
+          "text": "grátis,",
+          "start": 3.6,
+          "end": 4.24,
+          "line": "L14"
+        },
+        {
+          "id": "w2-8",
+          "text": "sem",
+          "start": 4.36,
+          "end": 4.54,
+          "line": "L14"
+        },
+        {
+          "id": "w2-9",
+          "text": "cartão.",
+          "start": 4.54,
+          "end": 4.98,
+          "line": "L14"
+        }
+      ]
+    }
+  },
+  "sfx": [
+    {
+      "frame": 1,
+      "name": "accent",
+      "offset_s": 0.0,
+      "abs_s": 0.0
+    },
+    {
+      "frame": 1,
+      "name": "pop-1",
+      "offset_s": 1.866,
+      "abs_s": 1.866
+    },
+    {
+      "frame": 1,
+      "name": "pop-2",
+      "offset_s": 2.986,
+      "abs_s": 2.986
+    },
+    {
+      "frame": 1,
+      "name": "pop-3",
+      "offset_s": 5.246,
+      "abs_s": 5.246
+    },
+    {
+      "frame": 1,
+      "name": "whoosh",
+      "offset_s": 7.35,
+      "abs_s": 7.35
+    },
+    {
+      "frame": 2,
+      "name": "accent",
+      "offset_s": 0.0,
+      "abs_s": 7.5
+    },
+    {
+      "frame": 2,
+      "name": "swipe",
+      "offset_s": 2.14,
+      "abs_s": 9.64
+    }
+  ],
+  "total_s": 14.53125
+}

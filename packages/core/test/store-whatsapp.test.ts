@@ -9,6 +9,7 @@ import { authStore, LeaseLost } from '../src/store-whatsapp/auth-store.ts';
 import { Gateway } from '../src/store-whatsapp/gateway.ts';
 import {
   enqueueOrderMessageTx,
+  firstName,
   OPT_OUT_FOOTER,
   renderOrderMessage,
   type OrderFacts,
@@ -20,7 +21,8 @@ import type {
   WaRuntime,
   WaSocket,
 } from '../src/store-whatsapp/session.ts';
-import { housekeeping } from '../src/store-whatsapp/state.ts';
+import { fetchCapped, mediaRef } from '../src/store-whatsapp/runtime.ts';
+import { handleInbound, housekeeping } from '../src/store-whatsapp/state.ts';
 import {
   jidForPhone,
   messageIdFor,
@@ -208,6 +210,87 @@ async function until(cond: () => boolean | Promise<boolean>, ms = 4_000): Promis
   }
   throw new Error('condition not met in time');
 }
+
+describe('store whatsapp: what a shopper controls', () => {
+  test('media is fetched from WhatsApp’s CDN only, whatever url or path the sender set', () => {
+    const key = new Uint8Array([1]);
+    const audio = (m: Record<string, unknown>) =>
+      mediaRef({ audioMessage: { mediaKey: key, ...m } });
+    expect(audio({ directPath: '/v/t62/x?a=1' })!.url).toBe('https://mmg.whatsapp.net/v/t62/x?a=1');
+    expect(
+      audio({ url: 'https://media-gru1-1.cdn.whatsapp.net/v/y', directPath: '/v/y' })!.url,
+    ).toBe('https://media-gru1-1.cdn.whatsapp.net/v/y');
+    expect(audio({ url: 'https://mmg.whatsapp.net/v/z' })!.url).toBe(
+      'https://mmg.whatsapp.net/v/z',
+    );
+    expect(audio({ url: 'http://10.0.0.5/bomb.gz' })).toBeNull();
+    expect(audio({ url: 'https://evil.example/x', directPath: '/v/y' })).toBeNull();
+    expect(audio({ url: 'https://whatsapp.net.evil.example/x' })).toBeNull();
+    expect(audio({ url: 'http://mmg.whatsapp.net/x' })).toBeNull();
+    expect(audio({ url: 'https://mmg.whatsapp.net:8443/x' })).toBeNull();
+    expect(audio({ directPath: '@evil.example/x' })).toBeNull();
+    expect(audio({ directPath: '//evil.example/x' })!.url).toStartWith('https://mmg.whatsapp.net/');
+    expect(mediaRef({ imageMessage: { directPath: '/v/i' } })).toBeNull();
+  });
+
+  test('a download stops reading past the cap and when aborted', async () => {
+    let pulled = 0;
+    const endless = () =>
+      new Response(
+        new ReadableStream({
+          pull(c) {
+            pulled++;
+            c.enqueue(new Uint8Array(1024));
+          },
+        }),
+      );
+    const never = new AbortController().signal;
+    await expect(
+      fetchCapped('https://mmg.whatsapp.net/x', { maxBytes: 10_000, signal: never }, async () =>
+        endless(),
+      ),
+    ).rejects.toThrow(/size cap/);
+    expect(pulled).toBeLessThan(20);
+    const small = await fetchCapped(
+      'https://mmg.whatsapp.net/x',
+      { maxBytes: 10, signal: never },
+      async () => new Response(new Uint8Array([1, 2, 3])),
+    );
+    expect([...small]).toEqual([1, 2, 3]);
+    await expect(
+      fetchCapped(
+        'https://mmg.whatsapp.net/x',
+        { maxBytes: 10, signal: never },
+        async () => new Response('x', { status: 410 }),
+      ),
+    ).rejects.toThrow(/410/);
+    const ac = new AbortController();
+    const slow = fetchCapped(
+      'https://mmg.whatsapp.net/x',
+      { maxBytes: 1e9, signal: ac.signal },
+      async (_u, init) =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              init!.signal!.addEventListener('abort', () => c.error(new Error('aborted')));
+            },
+          }),
+        ),
+    );
+    ac.abort();
+    await expect(slow).rejects.toThrow(/aborted/);
+  });
+
+  test('a first name that could be a link or formatting is left out', () => {
+    expect(firstName('  Ana Maria ')).toBe('Ana');
+    expect(firstName('Conceição')).toBe('Conceição');
+    expect(firstName('pix-loja.com/pagar')).toBe('');
+    expect(firstName('*Ana*')).toBe('');
+    expect(firstName('ana@x')).toBe('');
+    expect(firstName('R2D2')).toBe('');
+    expect(firstName('')).toBe('');
+  });
+});
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
@@ -812,8 +895,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
   test('a code nobody typed expires; disconnect unlinks and forgets the login', async () => {
     const r = await owner('POST', '/whatsapp/pair', { phone: ownerPhone });
     expect(r.status).toBe(200);
-    await gw.tick();
+    // counted before the tick: it may open the socket before it returns
     const before = world.sockets.length;
+    await gw.tick();
     await until(() => world.sockets.length === before + 1);
     world.last.connection({ qr: 'ref' });
     await until(async () => (await waRow())?.state === 'pairing');
@@ -879,6 +963,47 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
     }
     await sql`update store_whatsapp set wanted = false, state = 'off' where tenant_id = ${tenantId}`;
     await sql`delete from staff_events where anchor = 'channel:whatsapp_lojas'`;
+  });
+
+  test('SAIR from a shopper whose number is hidden is kept by the chat’s address', async () => {
+    const lid = `9${stamp}11@lid`;
+    await sql`
+      insert into store_wa_messages (tenant_id, kind, jid, body, status, sent_at)
+      values (${tenantId}, 'chat', ${lid}, 'sua sacola', 'sent', now())`;
+    await handleInbound(appSql, tenantId, { phone: null, jid: lid, text: 'SAIR', id: 'in-lid-1' });
+    const outs = await sql`select phone, jid from store_wa_optouts where tenant_id = ${tenantId}`;
+    expect(outs.map((o) => [o.phone, o.jid])).toEqual([[null, lid]]);
+    const ack = await sql`
+      select jid from store_wa_messages where tenant_id = ${tenantId} and kind = 'opt_out'`;
+    expect(ack.map((a) => a.jid)).toEqual([lid]);
+    await handleInbound(appSql, tenantId, {
+      phone: null,
+      jid: lid,
+      text: 'VOLTAR',
+      id: 'in-lid-2',
+    });
+    expect((await sql`select 1 from store_wa_optouts where tenant_id = ${tenantId}`).length).toBe(
+      0,
+    );
+    await sql`delete from store_wa_messages where tenant_id = ${tenantId} and (jid = ${lid} or kind in ('opt_out', 'opt_in'))`;
+  });
+
+  test('SAIR still counts 90 days after the last contact, past the queue rows’ 30', async () => {
+    const old = `2197${stamp}`;
+    await sql`
+      insert into store_wa_messages (tenant_id, kind, phone, body, status, created_at)
+      values (${tenantId}, 'store_open', ${old}, 'abrimos', 'sent', now() - interval '40 days')`;
+    await housekeeping(appSql);
+    expect(
+      (await sql`select 1 from store_wa_messages where tenant_id = ${tenantId} and phone = ${old}`)
+        .length,
+    ).toBe(0);
+    await handleInbound(appSql, tenantId, { phone: old, text: 'SAIR', id: 'in-old-1' });
+    const outs = await sql`select phone from store_wa_optouts where tenant_id = ${tenantId}`;
+    expect(outs.map((o) => o.phone)).toEqual([old]);
+    await sql`delete from store_wa_optouts where tenant_id = ${tenantId}`;
+    await sql`delete from store_wa_contacts where tenant_id = ${tenantId}`;
+    await sql`delete from store_wa_messages where tenant_id = ${tenantId} and kind = 'opt_out'`;
   });
 
   test('disconnect with no gateway alive forgets the login in Core', async () => {

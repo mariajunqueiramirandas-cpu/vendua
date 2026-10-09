@@ -4,9 +4,13 @@ import {
   MercadoPagoProvider,
   mapPayment,
   mpDate,
+  mpPhone,
+  splitName,
+  statementDescriptor,
   toCents,
   toReais,
 } from '../src/modules/payments/mercadopago.ts';
+import { platformPublicKey } from '../src/modules/payments/index.ts';
 import { ProviderError } from '../src/modules/payments/provider.ts';
 
 interface Seen {
@@ -142,8 +146,21 @@ describe('mercado pago adapter', () => {
     const pay = await p.createPix('merchant-token', {
       amountCents: 13860,
       description: 'Pedido #12 — Doces',
-      payerEmail: 'pagador@vendua.com.br',
-      payerName: 'Joana',
+      payerEmail: 'cliente.3f9a@vendua.com.br',
+      payerName: '  Joana   da Silva ',
+      payerPhone: '11987654321',
+      items: [
+        {
+          id: 'p-1',
+          title: '2× Brigadeiro',
+          description: 'Brigadeiro: granulado',
+          categoryId: 'others',
+          quantity: 1,
+          unitPriceCents: 1260,
+        },
+        { id: 'p-2', title: 'Bolo de pote', quantity: 1, unitPriceCents: 12600 },
+      ],
+      statementDescriptor: 'Doces da Praia',
       externalReference: PAYMENT.external_reference,
       idempotencyKey: 'order:1',
       notificationUrl: 'https://painel.x/admin/v1/hooks/mercadopago?t=abc',
@@ -158,7 +175,26 @@ describe('mercado pago adapter', () => {
       transaction_amount: 138.6,
       description: 'Pedido #12 — Doces',
       payment_method_id: 'pix',
-      payer: { email: 'pagador@vendua.com.br', first_name: 'Joana' },
+      payer: { email: 'cliente.3f9a@vendua.com.br', first_name: 'Joana', last_name: 'da Silva' },
+      additional_info: {
+        items: [
+          {
+            id: 'p-1',
+            title: '2× Brigadeiro',
+            description: 'Brigadeiro: granulado',
+            category_id: 'others',
+            quantity: 1,
+            unit_price: 12.6,
+          },
+          { id: 'p-2', title: 'Bolo de pote', quantity: 1, unit_price: 126 },
+        ],
+        payer: {
+          first_name: 'Joana',
+          last_name: 'da Silva',
+          phone: { area_code: '11', number: '987654321' },
+        },
+      },
+      statement_descriptor: 'DOCESDAPRAIA',
       external_reference: PAYMENT.external_reference,
       notification_url: 'https://painel.x/admin/v1/hooks/mercadopago?t=abc',
       date_of_expiration: '2026-09-30T12:30:00.000-03:00',
@@ -179,6 +215,74 @@ describe('mercado pago adapter', () => {
     });
     expect(seen[1]!.body.application_fee).toBe(1.5);
     expect(seen[1]!.body.notification_url).toBeUndefined();
+    expect(seen[1]!.body.payer).toEqual({ email: 'a@b.co' });
+    expect(seen[1]!.body.additional_info).toBeUndefined();
+
+    // the payer's CPF/CNPJ goes as identification; its kind follows from the length
+    for (const [doc, type] of [
+      ['52998224725', 'CPF'],
+      ['12ABC34501DE35', 'CNPJ'],
+    ] as const) {
+      await p.createPix('t', {
+        amountCents: 1000,
+        description: 'x',
+        payerEmail: 'a@b.co',
+        payerDocument: doc,
+        externalReference: 'r',
+        idempotencyKey: `k-${doc}`,
+        notificationUrl: null,
+        applicationFeeCents: 0,
+        expiresAt: new Date(),
+      });
+      expect(seen.at(-1)!.body.payer).toEqual({
+        email: 'a@b.co',
+        identification: { type, number: doc },
+      });
+    }
+    // the payer's device fingerprint goes as X-meli-session-id, as on a card payment
+    expect(seen.at(-1)!.headers['x-meli-session-id']).toBeUndefined();
+    await p.createPix('t', {
+      amountCents: 1000,
+      description: 'x',
+      payerEmail: 'a@b.co',
+      deviceId: 'armor.abc123',
+      externalReference: 'r',
+      idempotencyKey: 'k-device',
+      notificationUrl: null,
+      applicationFeeCents: 0,
+      expiresAt: new Date(),
+    });
+    expect(seen.at(-1)!.headers['x-meli-session-id']).toBe('armor.abc123');
+  });
+
+  test('the platform public key is MP_PUBLIC_KEY, on Mercado Pago only', () => {
+    expect(platformPublicKey({ name: 'mercadopago' }, { MP_PUBLIC_KEY: ' APP_USR-1 ' })).toBe(
+      'APP_USR-1',
+    );
+    expect(platformPublicKey({ name: 'mercadopago' }, {})).toBeNull();
+    expect(platformPublicKey({ name: 'fake' }, { MP_PUBLIC_KEY: 'APP_USR-1' })).toBeNull();
+  });
+
+  test("the statement descriptor: only what fits every reading of MP's format", () => {
+    expect(statementDescriptor('Venduá')).toBe('VENDUA');
+    expect(statementDescriptor('Açaí & Cia — São João')).toBe('ACAICIASAOJOA');
+    expect(statementDescriptor('Pão 24h')).toBe('PAO24H');
+    expect(statementDescriptor('—')).toBeNull();
+    expect(statementDescriptor(undefined)).toBeNull();
+  });
+
+  test('payer name and phone in the shape MP wants', () => {
+    expect(splitName('Ana')).toEqual({ first_name: 'Ana' });
+    expect(splitName(' Ana  Maria Souza ')).toEqual({
+      first_name: 'Ana',
+      last_name: 'Maria Souza',
+    });
+    expect(splitName('   ')).toBeNull();
+    expect(splitName(undefined)).toBeNull();
+    expect(mpPhone('1133334444')).toEqual({ area_code: '11', number: '33334444' });
+    expect(mpPhone('+55 (21) 98765-4321')).toEqual({ area_code: '21', number: '987654321' });
+    expect(mpPhone('987654321')).toBeNull();
+    expect(mpPhone(undefined)).toBeNull();
   });
 
   test('payment mapping: fees, net, refunds, statuses', () => {
@@ -238,6 +342,7 @@ describe('mercado pago adapter', () => {
       notificationUrl: 'https://painel.x/hook',
       backUrl: 'https://doces.vendua.com.br/pedido/order-1?pagamento=retorno',
       applicationFeeCents: 0,
+      statementDescriptor: 'Doces da Praia',
       expiresAt: new Date('2026-09-30T17:00:00.000Z'),
     });
     expect(out).toEqual({
@@ -254,6 +359,7 @@ describe('mercado pago adapter', () => {
       notification_url: 'https://painel.x/hook',
       back_urls: { success: back, failure: back, pending: back },
       auto_return: 'approved',
+      statement_descriptor: 'DOCESDAPRAIA',
       expires: true,
       expiration_date_to: '2026-09-30T14:00:00.000-03:00',
       payment_methods: {
@@ -295,6 +401,7 @@ describe('mercado pago adapter', () => {
       notificationUrl: 'https://painel.x/hook',
       applicationFeeCents: 50,
       deviceId: 'dev-123',
+      statementDescriptor: 'Doces da Praia',
     });
     expect(out).toMatchObject({
       id: '777',
@@ -322,6 +429,7 @@ describe('mercado pago adapter', () => {
       },
       external_reference: 'order-1',
       metadata: { vendua_attempt: 2 },
+      statement_descriptor: 'DOCESDAPRAIA',
       notification_url: 'https://painel.x/hook',
       application_fee: 0.5,
       capture: true,

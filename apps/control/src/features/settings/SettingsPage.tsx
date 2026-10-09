@@ -73,7 +73,7 @@ export default function SettingsPage() {
 
   const integrations = integQ.data?.integrations ?? [];
   const settings = settingsQ.data ?? {};
-  const wa = waQ.data ? { qr: waQ.data.qr, status: waQ.data.status, me: waQ.data.me } : WA_IDLE;
+  const wa = waQ.data ?? WA_IDLE;
   // 'err' = the status probe itself failed — report it instead of guessing
   const mStatus = mQ.isError ? 'err' : (mQ.data ?? null);
   // gate on first answers so empty defaults don't read as 'não configurado'
@@ -208,9 +208,7 @@ export default function SettingsPage() {
           <div hidden={area !== 'relatorios'}>
             <ReportsArea
               forecast={obj(settings.forecast)}
-              digest={obj(settings.digest)}
               saveForecast={save('forecast')}
-              saveDigest={save('digest')}
               saving={savingKey}
             />
           </div>

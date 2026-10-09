@@ -74,6 +74,8 @@ export type { CartMutations, CustomerProfile, QueryError } from './hooks.ts';
 export { useErrorSurface } from './errors.ts';
 // Kernel 1.18 — the store's assistant (the Vendedor) chatting on the site
 export { useStoreChat } from './chat.ts';
+// Kernel 1.22 — the table whose QR code opened the store (ADR 0036)
+export { useTable } from './table.ts';
 
 // Kernel 1.14 — presentation rules (pure; also `@vendua/kernel/rules`) and display components
 export * from './rules/index.ts';
@@ -202,4 +204,8 @@ export type {
   // Kernel 1.18
   StoreChat,
   StoreChatMessage,
+  // Kernel 1.21
+  OrderTracking,
+  // Kernel 1.22
+  TableInfo,
 } from './api.ts';

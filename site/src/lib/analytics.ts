@@ -5,11 +5,16 @@
 
 let first = true;
 
-export function trackPageview(): void {
-  if (typeof navigator === 'undefined' || navigator.webdriver) return;
+/** Measuring this visit is fine: the counter and Google Analytics (gtag.ts) both ask. */
+export function measured(): boolean {
+  if (typeof navigator === 'undefined' || navigator.webdriver) return false;
   const n = navigator as Navigator & { globalPrivacyControl?: boolean };
-  if (n.globalPrivacyControl || n.doNotTrack === '1') return;
-  if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return;
+  if (n.globalPrivacyControl || n.doNotTrack === '1') return false;
+  return !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+}
+
+export function trackPageview(): void {
+  if (!measured()) return;
   let ref = '';
   // a client-side navigation keeps the landing page's referrer: only the landing counts it
   if (first && document.referrer) {

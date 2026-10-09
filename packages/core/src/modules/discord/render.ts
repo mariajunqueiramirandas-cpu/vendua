@@ -27,6 +27,7 @@ import {
   type EmbedField,
   type MessagePayload,
 } from './format.ts';
+import type { DuaPose } from './config.ts';
 import { onboardingSteps, type StoreSnapshot } from './snapshot.ts';
 
 // One card per event; events that share an anchor are rendered from the anchor's whole
@@ -53,6 +54,8 @@ export interface RenderCtx {
   /** which categories land in this channel (the test card lists them) */
   routedHere: string[];
   now: Date;
+  /** Duá's art for the cards that mark a moment; without it cards go out bare */
+  art?: ((pose: DuaPose) => string) | undefined;
 }
 
 export interface Rendered {
@@ -92,6 +95,10 @@ function card(ev: EventRow, embed: CardInput, components: ActionRow[] = []): Mes
   };
 }
 
+// only key moments carry art: a mascot on every routine card turns a busy channel into wallpaper
+const art = (ctx: Pick<RenderCtx, 'art'>, pose: DuaPose | null) =>
+  pose && ctx.art ? { url: ctx.art(pose) } : undefined;
+
 const field = (name: string, value: string | null | undefined, inline = true): EmbedField | null =>
   value ? { name, value, inline } : null;
 const fields = (...f: (EmbedField | null)[]) => f.filter((x): x is EmbedField => !!x);
@@ -128,6 +135,7 @@ function handoff(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
       url,
       description: [d ? quote(d.reason, 1200) : '', '', status].join('\n').trim(),
       fields: fields(field('canal', d?.channel ? label('channel', d.channel) : null)),
+      thumbnail: art(ctx, done ? 'avatar-feliz' : 'avatar-ajuda'),
       color: done ? COLOR_DONE : taken ? COLORS.info : COLORS.warning,
       at: open?.created_at,
     },
@@ -195,9 +203,10 @@ function merchantHelp(ev: Ev<'merchant.help'>, ctx: RenderCtx): Rendered {
         title: `${esc(d.storeName)} pediu ajuda${d.topic && d.topic !== 'geral' ? ` · ${esc(d.topic)}` : ''}`,
         description: quote(d.message, 1800, 30),
         fields: fields(field('quem', esc(d.who)), field('contato', esc(d.contact))),
+        thumbnail: art(ctx, 'avatar-ajuda'),
       },
       row(
-        linkButton('abrir lojas no CRM', ctx.crm('/lojas')),
+        ev.tenant_id ? null : linkButton('abrir lojas no CRM', ctx.crm('/lojas')),
         linkButton('ver loja', ctx.storeUrl),
       ),
     ),
@@ -213,6 +222,69 @@ function storeRequest(ev: Ev<'store.request'>, ctx: RenderCtx): Rendered {
       row(linkButton('abrir no CRM', ctx.crm('/lojas/planos'))),
     ),
   };
+}
+
+// ── site sob medida ──────────────────────────────────────────────────────────
+
+type SiteEv =
+  | Ev<'site.task_queued'>
+  | Ev<'site.ready'>
+  | Ev<'site.escalated'>
+  | Ev<'site.due_soon'>
+  | Ev<'site.overdue'>
+  | Ev<'site.delivered'>;
+
+const SITE_KIND = { generate: 'site', revision: 'ajuste do site' } as const;
+
+function siteCard(
+  ev: SiteEv,
+  ctx: RenderCtx,
+  title: string,
+  description: string,
+  prUrl: string | null = null,
+  pose: DuaPose | null = null,
+): Rendered {
+  return {
+    card: card(
+      ev,
+      { title: `${esc(ev.data.storeName)} · ${title}`, description, thumbnail: art(ctx, pose) },
+      row(
+        prUrl ? linkButton('ver o PR', prUrl) : null,
+        linkButton('abrir no CRM', ctx.crm(`/lojas/sites/${ev.data.taskId}`)),
+      ),
+    ),
+  };
+}
+
+function siteQueued(ev: Ev<'site.task_queued'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return siteCard(ev, ctx, `${SITE_KIND[d.kind]} na fila`, `prazo ${ts(d.dueAt, 'R')}`);
+}
+
+function siteReady(ev: Ev<'site.ready'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  const title = `${SITE_KIND[d.kind]} pronto para aprovar`;
+  return siteCard(ev, ctx, title, 'o CI ficou verde', d.prUrl);
+}
+
+function siteEscalated(ev: Ev<'site.escalated'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return siteCard(ev, ctx, `${SITE_KIND[d.kind]} precisa da equipe`, quote(d.reason, 300, 5));
+}
+
+function siteDueSoon(ev: Ev<'site.due_soon'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return siteCard(ev, ctx, `${SITE_KIND[d.kind]} perto do prazo`, `prazo ${ts(d.dueAt, 'R')}`);
+}
+
+function siteOverdue(ev: Ev<'site.overdue'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return siteCard(ev, ctx, `${SITE_KIND[d.kind]} atrasado`, `o prazo era ${ts(d.dueAt, 'f')}`);
+}
+
+function siteDelivered(ev: Ev<'site.delivered'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return siteCard(ev, ctx, `${SITE_KIND[d.kind]} no ar`, `\`${esc(d.slug)}\``, null, 'publicar');
 }
 
 function billingManual(ev: Ev<'billing.manual'>, ctx: RenderCtx): Rendered {
@@ -394,6 +466,7 @@ function firstOrder(ev: Ev<'store.first_order'>, ctx: RenderCtx): Rendered {
       {
         title: `🎉 primeiro pedido da ${esc(d.storeName)}!`,
         description: `pedido #${d.number} · **${brl(d.totalCents)}** · ${label('method', d.method)}`,
+        thumbnail: art(ctx, 'sucesso'),
       },
       row(linkButton('ver loja', ctx.storeUrl)),
     ),
@@ -413,6 +486,7 @@ function paymentProblem(ev: Ev<'payment.problem'>, ctx: RenderCtx): Rendered {
         ]
           .filter(Boolean)
           .join(' · '),
+        thumbnail: art(ctx, 'seguranca'),
       },
       row(linkButton('ver loja', ctx.storeUrl)),
     ),
@@ -455,7 +529,11 @@ function whatsappStore(ev: Ev<'whatsapp.store'>, ctx: RenderCtx): Rendered {
   return {
     card: card(
       ev,
-      { title: `${esc(d.storeName)} ${title}`, description },
+      {
+        title: `${esc(d.storeName)} ${title}`,
+        description,
+        thumbnail: art(ctx, d.step === 'connected' || d.step === 'back' ? null : 'offline'),
+      },
       row(linkButton('ver loja', ctx.storeUrl)),
     ),
   };
@@ -518,10 +596,14 @@ function onboarding(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
         .join('\n')
         .trim(),
       footer: { text: `onboarding ${done}/${steps.length}` },
+      thumbnail: art(ctx, complete ? 'sucesso' : 'boas-vindas'),
       color: complete ? COLORS.success : COLORS.info,
       at: created?.created_at ?? s?.createdAt,
     },
-    row(linkButton('ver loja', ctx.storeUrl), linkButton('lojas no CRM', ctx.crm('/lojas'))),
+    row(
+      linkButton('ver loja', ctx.storeUrl),
+      ev.tenant_id ? null : linkButton('lojas no CRM', ctx.crm('/lojas')),
+    ),
   );
   const reply =
     ev.kind === 'store.onboarding'
@@ -546,6 +628,7 @@ function billingPaid(ev: Ev<'billing.paid'>, ctx: RenderCtx): Rendered {
         ]
           .filter(Boolean)
           .join(' · '),
+        thumbnail: art(ctx, d.first ? 'pagamento' : null),
       },
       row(linkButton('planos no CRM', ctx.crm('/lojas/planos'))),
     ),
@@ -566,7 +649,11 @@ function billingProblem(ev: Ev<'billing.problem'>, ctx: RenderCtx): Rendered {
   return {
     card: card(
       ev,
-      { title: `${PROBLEM[d.problem]} · ${esc(d.storeName)}`, description: esc(d.detail) },
+      {
+        title: `${d.title ? esc(d.title) : PROBLEM[d.problem]} · ${esc(d.storeName)}`,
+        description: esc(d.detail),
+        thumbnail: art(ctx, 'erro'),
+      },
       row(linkButton('planos no CRM', ctx.crm('/lojas/planos'))),
     ),
   };
@@ -620,6 +707,7 @@ function deploymentFailed(ev: Ev<'deployment.failed'>, ctx: RenderCtx): Rendered
             : '⚠️ não havia release anterior para voltar',
         ].join('\n'),
         fields: fields(field('release', d.releaseId.slice(0, 8)), field('host', esc(d.host))),
+        thumbnail: art(ctx, 'erro'),
       },
       row(
         linkButton('frota no CRM', ctx.crm('/lojas/frota')),
@@ -660,6 +748,7 @@ function storeLive(ev: Ev<'store.live'>, ctx: RenderCtx): Rendered {
         title: `🚀 ${esc(d.storeName)} está no ar`,
         url: url ?? undefined,
         description: esc(d.host),
+        thumbnail: art(ctx, 'publicar'),
       },
       row(linkButton('ver loja', url)),
     ),
@@ -700,6 +789,7 @@ function incident(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
         field('loja', d?.storeName ? esc(d.storeName) : d ? 'frota inteira' : null),
         field('assunto', d ? esc(clip(d.subject, 200)) : null, false),
       ),
+      thumbnail: art(ctx, resolved ? 'sucesso' : 'erro'),
       color: resolved ? COLORS.success : COLORS[severity],
       at: open?.created_at,
     },
@@ -830,6 +920,7 @@ function channel(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
       ]
         .filter(Boolean)
         .join('\n'),
+      thumbnail: art(ctx, up ? 'sucesso' : 'offline'),
       color: up ? COLORS.success : COLORS.critical,
       at: down?.created_at,
     },
@@ -970,7 +1061,7 @@ function dayLabel(date: string): string {
 export function digestCard(
   ev: EventRow,
   r: DailyDigest,
-  ctx: Pick<RenderCtx, 'crm'>,
+  ctx: Pick<RenderCtx, 'crm' | 'art'>,
 ): MessagePayload {
   const v = r.vendas;
   const top = v.top
@@ -1062,6 +1153,7 @@ export function digestCard(
       title: `resumo de ${dayLabel(r.date)}`,
       description: 'as últimas 24 horas',
       fields: f,
+      thumbnail: art(ctx, 'horarios'),
       color: 0x5865f2,
     },
     row(linkButton('abrir o CRM', ctx.crm('/'))),
@@ -1078,6 +1170,12 @@ const STANDALONE: Standalone = {
   'vendedor.monitor': vendedorMonitor,
   'merchant.help': merchantHelp,
   'store.request': storeRequest,
+  'site.task_queued': siteQueued,
+  'site.ready': siteReady,
+  'site.escalated': siteEscalated,
+  'site.due_soon': siteDueSoon,
+  'site.overdue': siteOverdue,
+  'site.delivered': siteDelivered,
   'billing.manual': billingManual,
   'lead.created': leadCreated,
   'lead.replied': leadReplied,
@@ -1120,6 +1218,10 @@ export function familyOf(anchor: string | null): string | null {
 }
 
 export function render(ev: EventRow, history: EventRow[], ctx: RenderCtx): Rendered {
+  return withStorePage(renderCard(ev, history, ctx), ev, ctx);
+}
+
+function renderCard(ev: EventRow, history: EventRow[], ctx: RenderCtx): Rendered {
   const family = familyOf(ev.anchor);
   if (family && FAMILIES[family]) return FAMILIES[family](ev, history.length ? history : [ev], ctx);
   const one = STANDALONE[ev.kind] as ((e: EventRow, c: RenderCtx) => Rendered) | undefined;
@@ -1131,4 +1233,20 @@ export function render(ev: EventRow, history: EventRow[], ctx: RenderCtx): Rende
       description: code(JSON.stringify(ev.data, null, 2), 1500),
     }),
   };
+}
+
+/** An event about one store links to that store's page in the CRM, whatever its card. */
+function withStorePage(out: Rendered, ev: EventRow, ctx: RenderCtx): Rendered {
+  if (!ev.tenant_id) return out;
+  const btn = linkButton('loja no CRM', ctx.crm(`/lojas/${ev.tenant_id}`))!;
+  const rows = out.card.components ?? [];
+  const last = rows.at(-1);
+  // Discord: at most 5 buttons per row and 5 rows
+  const components =
+    last && last.components.length < 5
+      ? [...rows.slice(0, -1), { ...last, components: [...last.components, btn] }]
+      : rows.length < 5
+        ? [...rows, ...row(btn)]
+        : rows;
+  return { ...out, card: { ...out.card, components } };
 }

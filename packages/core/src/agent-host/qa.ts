@@ -2,6 +2,8 @@ import type { HostHooks, Json } from '@vendua/agent-runtime';
 import { defineOnlineQa, RollingScore, type OnlineQaAgent } from '@vendua/agent-runtime/evals';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import type { Sql } from '../platform/db.ts';
+import { COPILOT_AGENT_ID } from './agents/copilot/shared.ts';
+import { ONBOARDING_AGENT_ID } from './agents/vendedor-onboarding/index.ts';
 import { dispatchTx } from './dispatch.ts';
 
 export const QA_RUBRIC = `- Respondeu ao que o cliente perguntou, sem enrolar.
@@ -82,6 +84,10 @@ export function hostOnlineQa(
   const turnEnded: NonNullable<HostHooks<Sql>['turnEnded']> = async (tx, end) => {
     if (
       end.agentId === agent.def.id ||
+      // the rubric scores a seller with shoppers; Copilot and the onboarding interview talk to
+      // the store's own people
+      end.agentId === COPILOT_AGENT_ID ||
+      end.agentId === ONBOARDING_AGENT_ID ||
       !end.state.repliedSinceLastInput ||
       !agent.qa.shouldSample(end.actorId)
     )

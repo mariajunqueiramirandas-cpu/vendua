@@ -49,6 +49,8 @@ export const SLOT_KEYS = [
   'system.Chat',
   // Kernel 1.19 — the in-page card form (Mercado Pago's Secure Fields) on the order page
   'checkout.CardPayment',
+  // Kernel 1.21 — the order's status through the link in the store's WhatsApp updates
+  'order.TrackingPage',
 ] as const;
 export type SlotKey = (typeof SLOT_KEYS)[number];
 

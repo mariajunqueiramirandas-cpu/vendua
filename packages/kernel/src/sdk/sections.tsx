@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { matchPath, Outlet, useLocation } from 'react-router-dom';
 import {
   productDraw,
@@ -11,6 +11,8 @@ import {
   useCopy,
   useLineQuote,
   useProduct,
+  useReducedMotion,
+  useScrollSpy,
   useStore,
 } from '../hooks.ts';
 import {
@@ -26,11 +28,12 @@ import type { SectionProps } from '../composition/registry.ts';
 import { Slot } from '../slot.tsx';
 import { useKernel } from '../provider.tsx';
 import { productHref, resolvePaths } from '../config.ts';
-import type { CatalogProduct, ComboSelection } from '../api.ts';
+import { ITEM_NOTE_MAX, type CatalogProduct, type ComboSelection } from '../api.ts';
 import { errorCopy, showInfo } from '../errors.ts';
 import { MAX_LINE_QTY } from '../rules/card.ts';
+import { DIETARY_FILTERS, DIETARY_LABEL, dietaryBadges } from '../rules/dietary.ts';
 import { formatCents, formatDay, mediaSrcSet, plural } from '../rules/format.ts';
-import { contactLinks } from '../rules/links.ts';
+import { absoluteUrl, contactLinks } from '../rules/links.ts';
 import { arrangeMenu } from '../rules/menu.ts';
 import {
   groupMissing,
@@ -263,9 +266,15 @@ export function BagBar({ settings }: SectionProps<typeof S.bagBar>) {
   );
 }
 
-export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>) {
+export function PurchasePanel(props: SectionProps<typeof S.purchasePanel>) {
   const { params } = usePageContext();
-  const slug = settings.product || params.slug || '';
+  const slug = props.settings.product || params.slug || '';
+  // /produto/a → /produto/b reuses the route's element: a fresh panel, so A's options, kit
+  // picks, qty and note never ride B's add
+  return <Purchase key={slug} slug={slug} {...props} />;
+}
+
+function Purchase({ settings, slug }: SectionProps<typeof S.purchasePanel> & { slug: string }) {
   const { product, loading, error, refetch } = useProduct(slug);
   const { store, status } = useStore();
   const { config } = useKernel();
@@ -275,6 +284,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const [modQty, setModQty] = useState<Record<string, number>>({});
   const [combo, setCombo] = useState<ComboSelection[]>([]);
   const [qty, setQty] = useState(1);
+  const [note, setNote] = useState('');
   const [cartError, setCartError] = useState<string | null>(null);
   const [added, setAdded] = useState(false);
   const currency = store?.currency ?? 'BRL';
@@ -379,6 +389,32 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const soldOut = product.status !== 'active';
   const shown = priceDisplay(product);
   const Title = settings.product ? 'h2' : 'h1';
+  const badges = dietaryBadges(product);
+  // Kernel 1.21 — the product's own link: the share sheet, else the clipboard
+  const share = async () => {
+    const url = absoluteUrl(
+      store?.publicUrl || globalThis.location?.origin || '',
+      productHref(config, product.slug),
+    );
+    const nav = globalThis.navigator as Navigator | undefined;
+    if (nav?.share) {
+      // a closed sheet rejects (AbortError): nothing to say
+      await nav
+        .share({
+          title: product.name,
+          text: store ? `${product.name} · ${store.name}` : product.name,
+          url,
+        })
+        .catch(() => {});
+      return;
+    }
+    try {
+      await nav!.clipboard.writeText(url);
+      showInfo('share-product', 'Link copiado', 'Cole numa conversa para mandar.');
+    } catch {
+      showInfo('share-product', 'Copie o link do produto', url);
+    }
+  };
   return (
     <section className="v-section" data-part="root">
       {!settings.product ? (
@@ -441,6 +477,15 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
             <p className="v-pp-promo" data-part="promo">
               Promoção: {shown.promoLabel}
             </p>
+          ) : null}
+          {badges.length ? (
+            <ul className="v-diet" data-part="dietary" aria-label="Dieta e alergênicos">
+              {badges.map((b) => (
+                <li key={b.tag} className="v-diet-badge" data-kind={b.kind} data-tag={b.tag}>
+                  {b.label}
+                </li>
+              ))}
+            </ul>
           ) : null}
           {product.requiresPreorder ? (
             <p className="v-note" data-part="preorder" role="note">
@@ -508,6 +553,26 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
               }}
             />
           ) : null}
+          {settings.showNote && !soldOut ? (
+            <div className="v-field v-pp-note" data-part="note">
+              <label className="v-label" htmlFor={`pp-note-${product.id}`}>
+                Alguma observação? <span className="v-muted">(opcional)</span>
+              </label>
+              <textarea
+                id={`pp-note-${product.id}`}
+                name="note"
+                className="v-input v-textarea"
+                rows={2}
+                maxLength={ITEM_NOTE_MAX}
+                placeholder="Ex.: sem cebola, ponto da carne"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+              <p className="v-muted v-num v-counter" aria-hidden="true">
+                {note.length}/{ITEM_NOTE_MAX}
+              </p>
+            </div>
+          ) : null}
           {soldOut && product.availabilityLabel ? (
             <p className="v-note" role="status" data-part="availability">
               <strong>Indisponível agora</strong> · {product.availabilityLabel}
@@ -549,9 +614,12 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                 modifierIds={pickedIds}
                 {...(Object.keys(pickedQty).length ? { modifierQty: pickedQty } : {})}
                 {...(slots.length ? { comboSelections: combo } : {})}
+                {...(settings.showNote && note.trim() ? { note } : {})}
                 asChild
                 onAdded={() => {
                   setAdded(true);
+                  // the next one starts plain: a note belongs to the line just added
+                  setNote('');
                   // the full sacola, as before 1.11: a sheet would sit over the page's own triggers
                   if (settings.afterAdd === 'cart') go(resolvePaths(config).cart);
                 }}
@@ -616,6 +684,17 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
             </p>
           ) : null}
           <BlockArea name="after-cta" className="v-pp-area" />
+          {settings.showShare ? (
+            <button
+              type="button"
+              className="v-link-btn v-pp-share"
+              data-part="share"
+              onClick={() => void share()}
+            >
+              <ShareGlyph />
+              Compartilhar
+            </button>
+          ) : null}
         </div>
       </article>
     </section>
@@ -657,6 +736,11 @@ function GridCard({ product: p, currency }: { product: CatalogProduct; currency:
   const { config } = useKernel();
   const { vocabulary } = useCopy();
   const card = useCardState(p);
+  // the card's link label replaces its contents for screen readers: the diets ride along
+  const diets = dietaryBadges(p)
+    .filter((b) => b.kind !== 'allergen')
+    .map((b) => `, ${b.label.toLowerCase()}`)
+    .join('');
   return (
     <Slot
       name="catalog.ProductCard"
@@ -670,8 +754,8 @@ function GridCard({ product: p, currency }: { product: CatalogProduct; currency:
           <a
             aria-label={
               card.soldOut
-                ? `${p.name}, esgotado`
-                : `${p.name}, ${priceWords(priceDisplay(p), currency)}`
+                ? `${p.name}${diets}, esgotado`
+                : `${p.name}${diets}, ${priceWords(priceDisplay(p), currency)}`
             }
           >
             {children}
@@ -697,25 +781,90 @@ function GridCard({ product: p, currency }: { product: CatalogProduct; currency:
   );
 }
 
+// a category lights its jump tab once its top passes under the header and the tab strip
+const SPY_MARGIN = '-140px 0px -55% 0px';
+const categoryAnchor = (slug: string) => `categoria-${slug}`;
+
 export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
   const { store } = useStore();
   const { page } = usePageContext();
   const [active, setActive] = useState<string>('all');
   const [query, setQuery] = useState('');
+  // Kernel 1.21 — diets the shopper narrowed the menu to (`DIETARY_FILTERS`)
+  const [diet, setDiet] = useState<string[]>([]);
   const currency = store?.currency ?? 'BRL';
   const q = query.trim();
   const { categories, loading, error, refetch } = useCatalog();
+  // Kernel 1.21 — 'jump': every category stays on the page and the tabs scroll to it
+  const jump = settings.categoryNav === 'jump';
+  const still = useReducedMotion();
+  const dietKey = diet.join(',');
+  const filters = useMemo(
+    () =>
+      settings.showDietFilter
+        ? DIETARY_FILTERS.filter((t) =>
+            categories.some((c) => c.products.some((p) => p.dietary?.includes(t))),
+          )
+        : [],
+    [categories, settings.showDietFilter],
+  );
+  // a filter the catalog no longer offers stops narrowing it
+  const chosen = useMemo(
+    () => (dietKey ? dietKey.split(',') : []).filter((t) => filters.includes(t)),
+    [dietKey, filters],
+  );
   // empty categories drop out and sold-out items sink to the end of theirs; a search spans
   // every category
-  const visible = useMemo(() => arrangeMenu(categories), [categories]);
+  const visible = useMemo(() => arrangeMenu(categories, { dietary: chosen }), [categories, chosen]);
+  const current = visible.some((c) => c.id === active) ? active : 'all';
   const filtered = useMemo(
     () =>
       q
-        ? arrangeMenu(categories, { query: q })
-        : visible.filter((c) => active === 'all' || c.id === active),
-    [categories, visible, q, active],
+        ? arrangeMenu(categories, { query: q, dietary: chosen })
+        : jump
+          ? visible
+          : visible.filter((c) => current === 'all' || c.id === current),
+    [categories, visible, q, current, chosen, jump],
   );
   const hits = filtered.reduce((n, c) => n + c.products.length, 0);
+  const narrowed = q !== '' || chosen.length > 0;
+
+  // jump navigation: the category being read lights its tab; a tapped tab owns the highlight
+  // until its scroll lands
+  const anchors = jump && !q ? visible.map((c) => categoryAnchor(c.slug)) : [];
+  const spied = useScrollSpy(anchors, { rootMargin: SPY_MARGIN });
+  const jumping = useRef(false);
+  const [tapped, setTapped] = useState<string | null>(null);
+  useEffect(() => {
+    if (!jumping.current) setTapped(null);
+  }, [spied]);
+  const lit = tapped ?? spied;
+  const strip = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = strip.current;
+    const tab = lit ? el?.querySelector<HTMLElement>(`[href="#${lit}"]`) : null;
+    if (!el || !tab || typeof el.scrollTo !== 'function') return;
+    el.scrollTo({
+      left: tab.offsetLeft - el.clientWidth / 2 + tab.clientWidth / 2,
+      behavior: still ? 'auto' : 'smooth',
+    });
+  }, [lit, still]);
+  const goTo = (anchor: string) => {
+    setTapped(anchor);
+    jumping.current = true;
+    const release = () => {
+      jumping.current = false;
+      window.removeEventListener('scrollend', release);
+    };
+    window.addEventListener('scrollend', release);
+    // without scrollend (or a jump that doesn't move) the strip is handed back anyway
+    window.setTimeout(release, 1200);
+    document
+      .getElementById(anchor)
+      ?.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
+  };
+  const toggleDiet = (tag: string) =>
+    setDiet((d) => (d.includes(tag) ? d.filter((t) => t !== tag) : [...d, tag]));
 
   return (
     <section className="v-section" data-part="root" id="cardapio">
@@ -749,7 +898,7 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
               maxLength={80}
               placeholder="Nome, sabor, categoria…"
               autoComplete="off"
-              aria-describedby={q ? 'v-catalog-hits' : undefined}
+              aria-describedby={narrowed ? 'v-catalog-hits' : undefined}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') setQuery('');
@@ -766,37 +915,85 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
               </button>
             ) : null}
           </div>
-          {q ? (
-            <p id="v-catalog-hits" className="v-muted v-search-hits" role="status">
-              {hits === 0
-                ? 'Nenhum resultado'
-                : `${hits} ${plural(hits, 'resultado', 'resultados')}`}
-            </p>
-          ) : null}
         </form>
       ) : null}
-      {settings.showCategoryTabs && visible.length > 1 && !q ? (
-        <nav className="v-tabs" aria-label="Categorias" data-part="tabs">
-          <button
-            type="button"
-            className="v-tab"
-            aria-pressed={active === 'all'}
-            onClick={() => setActive('all')}
-          >
-            {settings.allLabel}
-          </button>
-          {visible.map((c) => (
+      {filters.length ? (
+        <div
+          className="v-diet-filter"
+          role="group"
+          aria-label="Filtrar por dieta"
+          data-part="diet-filter"
+        >
+          {filters.map((t) => (
             <button
-              key={c.id}
+              key={t}
               type="button"
-              className="v-tab"
-              aria-pressed={active === c.id}
-              onClick={() => setActive(c.id)}
+              className="v-chip"
+              data-tag={t}
+              aria-pressed={chosen.includes(t)}
+              onClick={() => toggleDiet(t)}
             >
-              {c.name}
+              {DIETARY_LABEL[t]}
             </button>
           ))}
-        </nav>
+        </div>
+      ) : null}
+      {narrowed ? (
+        <p id="v-catalog-hits" className="v-muted v-search-hits" role="status">
+          {hits === 0 ? 'Nenhum resultado' : `${hits} ${plural(hits, 'resultado', 'resultados')}`}
+        </p>
+      ) : null}
+      {settings.showCategoryTabs && visible.length > 1 && !q ? (
+        jump ? (
+          <nav
+            className="v-tabs"
+            data-mode="jump"
+            aria-label="Categorias"
+            data-part="tabs"
+            ref={strip}
+          >
+            {visible.map((c) => {
+              const anchor = categoryAnchor(c.slug);
+              return (
+                <a
+                  key={c.id}
+                  href={`#${anchor}`}
+                  className="v-tab"
+                  aria-current={lit === anchor ? 'true' : undefined}
+                  onClick={(e) => {
+                    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                    e.preventDefault();
+                    goTo(anchor);
+                  }}
+                >
+                  {c.name}
+                </a>
+              );
+            })}
+          </nav>
+        ) : (
+          <nav className="v-tabs" aria-label="Categorias" data-part="tabs">
+            <button
+              type="button"
+              className="v-tab"
+              aria-pressed={current === 'all'}
+              onClick={() => setActive('all')}
+            >
+              {settings.allLabel}
+            </button>
+            {visible.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className="v-tab"
+                aria-pressed={current === c.id}
+                onClick={() => setActive(c.id)}
+              >
+                {c.name}
+              </button>
+            ))}
+          </nav>
+        )
       ) : null}
       {loading && categories.length === 0 ? (
         <div className="v-grid" aria-busy="true" aria-label="Carregando cardápio">
@@ -812,10 +1009,17 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
         />
       ) : filtered.length === 0 ? (
         <p className="v-muted" data-part="empty">
-          {q ? (
+          {narrowed ? (
             <>
-              Nada encontrado para “{query.trim()}”.{' '}
-              <button type="button" className="v-link-btn" onClick={() => setQuery('')}>
+              {q ? `Nada encontrado para “${q}”.` : 'Nenhum produto com esses filtros.'}{' '}
+              <button
+                type="button"
+                className="v-link-btn"
+                onClick={() => {
+                  setQuery('');
+                  setDiet([]);
+                }}
+              >
                 Ver tudo
               </button>
             </>
@@ -825,8 +1029,12 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
         </p>
       ) : (
         filtered.map((c) => (
-          <div key={c.id} data-part="category">
-            {filtered.length > 1 || active === 'all' ? (
+          <div
+            key={c.id}
+            data-part="category"
+            {...(jump && !q ? { id: categoryAnchor(c.slug), 'data-anchor': '' } : {})}
+          >
+            {filtered.length > 1 || current === 'all' ? (
               <h3 className="v-cat-title">
                 {c.name} <span className="v-cat-count v-num">{c.products.length}</span>
               </h3>
@@ -932,6 +1140,26 @@ function SkeletonCard() {
       <div className="v-skeleton v-skeleton-line" />
       <div className="v-skeleton v-skeleton-line" data-short="" />
     </div>
+  );
+}
+
+function ShareGlyph() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 3v12" />
+      <path d="m7 8 5-5 5 5" />
+      <path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" />
+    </svg>
   );
 }
 

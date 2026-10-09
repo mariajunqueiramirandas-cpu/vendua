@@ -26,6 +26,8 @@ export interface EdgeOptions {
   stateWaitMs?: number;
   snapshotIntervalMs?: number;
   maxHosts?: number;
+  /** byte budget of the last-known-good API bodies (all hosts; they go into every snapshot) */
+  maxApiBytes?: number;
   fetchImpl?: FetchImpl;
 }
 
@@ -36,6 +38,11 @@ export interface Edge {
   stop(): Promise<void>;
   stats(): { routes: number; states: number; api: number; core: 'ok' | 'down' };
 }
+
+/** Bun.serve's maxRequestBodySize. Only /storefront/v1, /checkout/v1 and /v1 bodies reach Core
+ *  through here, and its largest cap on them is 64 KiB (checkout's cart import); the margin
+ *  leaves Core's own 413 to answer anything modestly over. */
+export const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 
 const HOST_RE = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/;
 
@@ -105,7 +112,12 @@ export function createEdge(o: EdgeOptions): Edge {
     const at = key.indexOf(' ');
     return { value: await core.product(key.slice(0, at), key.slice(at + 1)), ttl: stateTtl };
   });
-  const lkg = new Lru<string, Lkg>(maxHosts);
+  // state, state?templates=1 and surfaces per host, plus the shared v.js
+  const lkg = new Lru<string, Lkg>(
+    maxHosts * 3 + 1,
+    (v) => v.body.length,
+    o.maxApiBytes ?? 64 * 1024 * 1024,
+  );
 
   const snap = readSnapshot(snapshotFile);
   if (snap) {

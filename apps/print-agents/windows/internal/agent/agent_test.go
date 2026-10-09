@@ -118,6 +118,16 @@ func newFakeCore(t *testing.T) *fakeCore {
 		defer c.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"printers": c.printers})
 	})
+	mux.HandleFunc("POST /admin/v1/agent/printers/{id}/test", func(w http.ResponseWriter, r *http.Request) {
+		if !c.authorized(w, r) {
+			return
+		}
+		if r.PathValue("id") == "gone" {
+			writeJSON(w, 404, map[string]any{"error": map[string]string{"code": "PRINTER_NOT_FOUND", "message": "printer not found"}})
+			return
+		}
+		writeJSON(w, 202, map[string]string{"jobId": "t1"})
+	})
 	mux.HandleFunc("DELETE /admin/v1/agent/self", func(w http.ResponseWriter, r *http.Request) {
 		if !c.authorized(w, r) {
 			return
@@ -477,4 +487,50 @@ func TestDisconnect(t *testing.T) {
 	h.agent.RequestPairing()
 	recv(t, h.opened, "browser open on Conectar à loja")
 	eventually(t, "paired again", func() bool { return h.agent.Status().State == Online })
+}
+
+func TestPrinterTestFailureIsExplained(t *testing.T) {
+	core := newFakeCore(t)
+	core.tokens["tok-1"] = true
+	dataDir := t.TempDir()
+	store := config.NewStore(filepath.Join(dataDir, "config.json"), secret.Plain{})
+	core.printers = []api.Printer{{ID: "p1", Name: "Cozinha"}, {ID: "gone", Name: "Balcão"}}
+	if err := store.Save(config.Config{APIBase: core.srv.URL, Token: "tok-1"}); err != nil {
+		t.Fatal(err)
+	}
+	h := startAgent(t, core, dataDir, func(o *Options) { o.ScanOnStart = false })
+	recv(t, core.streams, "stream")
+	eventually(t, "online", func() bool { return h.agent.Status().State == Online })
+
+	err := h.agent.TestPrinters(context.Background())
+	if err == nil {
+		t.Fatal("test print for a removed printer succeeded")
+	}
+	msg := TestFailure(err)
+	if !strings.Contains(msg, "Balcão: impressora não encontrada na loja") || strings.Contains(msg, "Cozinha") {
+		t.Fatalf("message = %q", msg)
+	}
+}
+
+func TestFirstReportWaitsForTheNetworkScan(t *testing.T) {
+	core := newFakeCore(t)
+	core.tokens["tok-1"] = true
+	dataDir := t.TempDir()
+	store := config.NewStore(filepath.Join(dataDir, "config.json"), secret.Plain{})
+	if err := store.Save(config.Config{APIBase: core.srv.URL, Token: "tok-1"}); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	h := startAgent(t, core, dataDir, func(o *Options) {
+		o.Discoverer.Addrs = func() ([]netip.Addr, error) { <-release; return nil, nil }
+	})
+	recv(t, core.streams, "stream")
+	eventually(t, "online", func() bool { return h.agent.Status().State == Online })
+	select {
+	case put := <-core.puts:
+		t.Fatalf("reported %+v before the network scan ended", put)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	recv(t, core.puts, "PUT once the scan ended")
 }

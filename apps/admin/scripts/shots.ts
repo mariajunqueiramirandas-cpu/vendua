@@ -1,7 +1,8 @@
 // Screenshots + layout/a11y gate for the merchant admin (docs/merchant-admin.md — quality gates).
 //   bun scripts/shots.ts [route ...]      (defaults to every area)
 // Env: CHROMIUM, BASE (http://localhost:5196/admin/), PHONE (22999990001, the seed's owner), STORE (quero-pudim),
-//      OUT (./shots), THEMES (creme,noite), AXE=1 (fail on serious/critical axe violations)
+//      OUT (./shots), THEMES (creme,noite), SIZES (phone,tablet,desktop), AXE=1 (fail on serious/critical
+//      axe violations), LOCAL='{"vendua-copilot-dock":"1"}' (localStorage every page starts with)
 // Core must run with VENDUA_ADMIN_DEV_OTP=1 so the sign-in code comes back in the response.
 import AxeBuilder from '@axe-core/playwright';
 import { chromium, type BrowserContext } from '@playwright/test';
@@ -13,6 +14,8 @@ const STORE = process.env.STORE ?? 'quero-pudim';
 const OUT = process.env.OUT ?? 'shots';
 const THEMES = (process.env.THEMES ?? 'creme,noite').split(',') as ('creme' | 'noite')[];
 const AXE = process.env.AXE === '1';
+const SIZES = (process.env.SIZES ?? 'phone,tablet,desktop').split(',');
+const LOCAL = process.env.LOCAL ? (JSON.parse(process.env.LOCAL) as Record<string, string>) : null;
 const AUTH = process.env.AUTH_STATE ?? '/tmp/vendua-admin-auth.json';
 const routes = process.argv.slice(2).length
   ? process.argv.slice(2)
@@ -47,6 +50,7 @@ const routes = process.argv.slice(2).length
       '/vendedor/resultados',
       '/vendedor/configurar',
       '/vendedor/testar',
+      '/copiloto',
       '/comecar',
       '/bem-vindo',
       '/_ui',
@@ -64,7 +68,7 @@ const browser = await chromium.launch(
 await ensureAuth();
 let failures = 0;
 for (const theme of THEMES) {
-  for (const vp of VIEWPORTS) {
+  for (const vp of VIEWPORTS.filter((v) => SIZES.includes(v.name))) {
     const ctx: BrowserContext = await browser.newContext({
       viewport: { width: vp.width, height: vp.height },
       isMobile: vp.mobile,
@@ -75,6 +79,10 @@ for (const theme of THEMES) {
       locale: 'pt-BR',
       timezoneId: 'America/Sao_Paulo',
     });
+    if (LOCAL)
+      await ctx.addInitScript((entries) => {
+        for (const [k, v] of Object.entries(entries)) localStorage.setItem(k, v);
+      }, LOCAL);
     const page = await ctx.newPage();
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(e.message));
@@ -98,7 +106,27 @@ for (const theme of THEMES) {
       const file = `${OUT}/${theme}-${vp.name}${r.replace(/[/?=&#]+/g, '_') || '_home'}.png`;
       await page.screenshot({ path: file, fullPage: vp.name === 'phone' });
       let flag = overflow > 0 ? `  ✗ horizontal overflow ${overflow}px` : '';
-      if (overflow > 0) failures++;
+      if (overflow > 0) {
+        failures++;
+        // name what sticks out, so a failure on CI's data can be fixed without reproducing it
+        const culprits = await page.evaluate(() => {
+          const w = document.documentElement.clientWidth;
+          const past = Array.from(document.querySelectorAll<HTMLElement>('body *')).filter((el) => {
+            const b = el.getBoundingClientRect();
+            return b.width > 0 && b.right > w + 0.5;
+          });
+          // the innermost ones: an element whose children all fit is the one to look at
+          return past
+            .filter((el) => !past.some((o) => o !== el && el.contains(o)))
+            .slice(0, 5)
+            .map((el) => {
+              const cls = typeof el.className === 'string' ? el.className.slice(0, 80) : '';
+              const right = el.getBoundingClientRect().right.toFixed(1);
+              return `${el.tagName.toLowerCase()}.${cls} right=${right} "${(el.textContent ?? '').trim().slice(0, 40)}"`;
+            });
+        });
+        for (const c of culprits) console.log(`    ↳ ${c}`);
+      }
       if (AXE && vp.name !== 'tablet') {
         const res = await new AxeBuilder({ page })
           .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])

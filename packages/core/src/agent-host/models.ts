@@ -1,5 +1,4 @@
 import {
-  anthropicAdapter,
   createGateway,
   openAiCompatibleAdapter,
   type ModelGateway,
@@ -9,16 +8,19 @@ import {
   type Tier,
 } from '@vendua/agent-runtime';
 import { controlTx } from '../modules/control.ts';
+import { ANTHROPIC_MODEL, ANTHROPIC_PRICING, isEffort } from '../platform/anthropic.ts';
 import type { Sql } from '../platform/db.ts';
+import { anthropicAdapter } from './anthropic.ts';
 
 /**
  * Model routes, set by staff in `control_settings` key `agent_runtime.routes`:
  *   { "default": { "fast": [route…], "strong": [route…] },
  *     "agents":  { "<agentId>": { "fast": […] } },
  *     "tenants": { "<tenantId>": { "strong": […] } } }
- * a route is { provider, model, zdr, pricing?, timeoutMs? }. The most specific list wins, and the
- * gateway refuses any route whose `zdr` isn't true (the owner's rule, 2026-10-03). With no
- * setting, `AGENT_MODEL_ROUTES` (same JSON) is the fallback.
+ * a route is { provider, model, zdr, endpoint?, effort?, pricing?, timeoutMs? }. The most specific list wins. `zdr`
+ * (zero data retention) is staff's per-route choice since 2026-10-05 (default on in the CRM):
+ * OpenRouter enforces it per request when on; on a direct provider it's the account's contract.
+ * With no setting, `AGENT_MODEL_ROUTES` (same JSON) is the fallback.
  */
 type TierRoutes = Partial<Record<Tier, ModelRoute[]>>;
 interface RoutesSetting {
@@ -40,7 +42,28 @@ export function routesFrom(
     setting.agents?.[agentId]?.[tier] ??
     setting.default?.[tier] ??
     []
-  ).filter((r) => r && typeof r.provider === 'string' && typeof r.model === 'string');
+  )
+    .filter(
+      (r) =>
+        r &&
+        typeof r.provider === 'string' &&
+        typeof r.model === 'string' &&
+        // AGENT_MODEL_ROUTES never goes through validateSetting: a route that doesn't say whether
+        // it wants zero retention isn't guessed at
+        typeof r.zdr === 'boolean' &&
+        (r.endpoint === undefined || typeof r.endpoint === 'string'),
+    )
+    .map((r) => {
+      const { effort, ...rest } = r;
+      if (r.provider !== 'anthropic') return rest;
+      // the adapter runs ANTHROPIC_MODEL whatever the route says: price the estimate by it too
+      return {
+        ...rest,
+        model: ANTHROPIC_MODEL,
+        pricing: ANTHROPIC_PRICING,
+        ...(isEffort(effort) ? { effort } : {}),
+      };
+    });
 }
 
 export function settingRoutes(sql: Sql): RouteResolver {
@@ -79,8 +102,12 @@ export function adaptersFromEnv(
         id: 'openrouter',
         baseUrl: 'https://openrouter.ai/api/v1',
         apiKey: env.OPENROUTER_API_KEY,
-        // only endpoints with a zero-data-retention policy, and never for training
-        extraBody: { provider: { zdr: true, data_collection: 'deny' } },
+        // never a provider that trains on what Duá sends; a `zdr` route also only endpoints with a
+        // zero-data-retention policy
+        extraBody: { provider: { data_collection: 'deny' } },
+        zdrBody: { provider: { zdr: true, data_collection: 'deny' } },
+        // a pinned route means that endpoint: the route list is the fallback chain, not OpenRouter's
+        endpointBody: (tag) => ({ provider: { order: [tag], allow_fallbacks: false } }),
         cacheMarkers: true,
       }),
     );

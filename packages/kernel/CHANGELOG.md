@@ -3,6 +3,125 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.23.0
+
+Checkout and product-page fixes — additive; no storefront edit.
+
+- `CheckoutInput.expectedTotalCents` (optional, integer cents): the Kernel checkout sends the
+  total on the confirm button — Core's, priced for the chosen payment method — and Core answers
+  409 `PRICES_CHANGED` when its total moved since. That 409 now also asks Core for the method's
+  price again (not only the cart), so the shopper sees the new total before retrying. While
+  Core's price for a method without a rule loads, the cart's total (the one shown) is sent. Not
+  sent while the delivery didn't sync or while a method with a rule waits for Core's price.
+- The checkout's Idempotency-Key is kept in sessionStorage (`vendua.checkoutKey`, a hash of the
+  cart session + body, never the body) while an attempt's outcome is unknown: a reload after a
+  lost response retries with the same key and gets Core's first order back. Cleared once the
+  outcome is known.
+- `NOTIFY_LIMIT` is a known error code (with copy): Core caps "avise-me quando abrir" sign-ups per
+  store and per client network a day.
+- `sdk:purchase-panel` starts fresh on each product: `/produto/a` → `/produto/b` no longer carries
+  A's options, kit picks, qty or note into B's add (Core's 422 `INVALID_MODIFIER`).
+- A pickup-only store opened cold at `/checkout` starts on "Retirada" once its profile loads.
+- `api.product(slug)` encodes the slug as one path segment.
+- A font source's `weight`/`style` that `validateTokens` would refuse is dropped from the
+  `@font-face` rule, never written raw.
+- `ERROR_CODES` and `ERROR_COPY` gain `CART_FULL` (a bag holds at most 50 lines) and
+  `ORDER_TOO_LARGE` (an order over Core's ceiling).
+
+## 1.22.1
+
+Checkout retries — patch; no storefront edit, no new export.
+
+- `checkout` keeps one Idempotency-Key per cart and request body while an attempt's outcome is
+  unknown (network error, 5xx, `IDEMPOTENCY_IN_PROGRESS`), so a retry of an order Core already
+  placed gets that order back instead of 409 `CART_NOT_OPEN` (or a second order). A definite
+  refusal (`PRICES_CHANGED`, a validation error) or a placed order takes a new key.
+
+## 1.22.0
+
+Ordering at the table from its QR code (ADR 0036) — additive; no storefront edit. Checkout stays
+the Kernel's; every total is still Core's.
+
+- `?mesa=<token>` (the table's QR): `VenduaProvider` asks Core (`GET /storefront/v1/table`, api
+  `table`), keeps the table for the browser session (sessionStorage), strips the param and says
+  "Você está na Mesa 5" — or why ordering is off, closed or paused. A token Core doesn't know is
+  dropped with a gentle message. New hook `useTable()` → `{ table: TableInfo | null, leave() }`
+  (read-only; no token) and type `TableInfo`.
+- `StoreProfile.dineIn?: { enabled }`. With a table and `dineIn.enabled`, checkout asks only the
+  name (`checkout.AddressForm` `nameOnly`), the delivery step is a locked "Na Mesa 5" (mode
+  `dine_in`, `setDelivery({ mode: 'dine_in' })`, "Não estou na mesa"), payment offers "Pagar na
+  mesa" (`tab`) and the online Pix/card only, with no change field and no encomenda date; it
+  submits `delivery: { mode: 'dine_in', table }`. Without a table checkout is unchanged.
+- `ERROR_CODES` and `ERROR_COPY`: `TABLE_NOT_FOUND`, `TABLE_ORDERS_OFF`, `TABLE_ORDERS_PENDING`,
+  `TABLE_BUSY` (the comanda changed in that instant: "A mesa acabou de mudar — tente de novo").
+- The order page: the table on the status and tracking pages, "Servido" at the end
+  (`orderStepLabel`, new rule `orderStateLabel`, `order.Timeline` optional `mode`), `tab` reads
+  "Pagar na mesa" (`PAYMENT_METHOD_LABEL`, `PAYMENT_METHOD_DETAIL`).
+- Widened unions (Contract 2: enums are open on the wire): delivery `mode` gains `'dine_in'`
+  (`Cart`, `CheckoutInput`, `Order`, `OrderTracking`, `OrderSummary`, `setDelivery`,
+  `DeliveryOption`), payment method `'tab'` (`CheckoutInput`, `PaymentMethod`);
+  `Order.delivery.table` / `OrderTracking.delivery.table` optional; `CheckoutInput.customer.phone`
+  optional. An override switching on `DeliveryOption['mode']` (or `PaymentMethod['id']`) sees the
+  new value only at stores with QR ordering.
+
+## 1.21.0
+
+Shopper conveniences — additive; no storefront edit. Every figure shown is still Core's.
+
+- The bag and past orders outlive the tab: the cart session and the order tokens (the newest 20)
+  move from sessionStorage to localStorage, shared by the device's tabs, so a shopper reopens the
+  full order page of a past order on a later visit. A tab's older sessionStorage copy is still
+  read and moves over; a cart Core no longer knows reads as an empty bag (a fresh one starts on the
+  next add), a refused order token is dropped quietly. Another tab's new cart rereads the bag;
+  coming back online rereads everything in place.
+- Allergen and diet tags: `CatalogProduct.dietary`; rules `DIETARY_LABEL`, `DIETARY_FILTERS`,
+  `dietaryBadges` (`DietaryBadge`); `matchProduct`/`arrangeMenu`/`useMenu` take `dietary`, and a
+  search finds a stated diet. Cards show the diets, the product page every tag (allergens
+  marked), `sdk:catalog-grid` offers diet chips (`showDietFilter`).
+- "Calcular entrega" in the sacola before the delivery step (`[data-vendua="delivery-estimate"]`):
+  the remembered address or a CEP, quoted on the cart — `api.quote`/`useDeliveryQuote().quote`
+  take `withCart` — showing Core's fee, total, minimum and free-delivery gap.
+  `sdk:delivery-eta` adds the minimum order and "grátis acima de" (`showMinOrder`).
+- `sdk:notify-me` also shows while the store is closed (`storeTitle`, when it opens); Core
+  messages each subscriber once when the store opens.
+- The checkout keeps its answers through a reload (this tab, this cart; cleared once the order
+  is placed) and remembers the address's "ponto de referência".
+- Up to three saved addresses on the device: `CustomerProfile.addresses`,
+  `CustomerProfile.address.reference`; `checkout.AddressForm` gains optional `savedAddresses`,
+  `savedAddressId`, `onPickAddress` (the default: radios plus "Outro endereço").
+- New block `sdk:recent-order` (`recentOrder`): "Acompanhar pedido" / "Pedir de novo" for the
+  device's last order; template migration `2026-10-recent-order-on-home`.
+- Order page: "Falar com a loja" (WhatsApp) always there; the state in the tab title.
+- The link in the store's WhatsApp updates (`/pedido/:id?t=…`): the provider keeps the
+  status-only credential and strips it; `useOrder` answers `tracking` (`OrderTracking`) on a device
+  without the order's own token; new slot `order.TrackingPage`; api `addTrackingToken`,
+  `tracksOnly`, `orderStatus`, `orderStatusWait`, `orderStatusStream`.
+- A note per line ("sem cebola", ≤ 140): `CartItem.note`, `OrderItem.note`, `ImportLine.note`;
+  `add`/`addLine`/`AddToCart` take it, `mutations.setNote`; "Alguma observação?" on
+  `sdk:purchase-panel` (`showNote`); `cart.LineItem` `onNote`/`noteMax`, edited in the bag.
+- The bag reminder opt-in at checkout (`StoreProfile.cartReminder`, `api.cartReminder`,
+  `api.cancelCartReminder`); `ERROR_CODES` gain `REMINDER_OFF` and `INVALID_PHONE`.
+- `sdk:catalog-grid` `categoryNav: 'jump'` — sticky category links with scroll-spy (default
+  `filter`; `DEFAULT_TEMPLATES` use `jump`).
+- `sdk:purchase-panel` "Compartilhar" (`showShare`): the share sheet, else the copied link.
+- Focus moves to the new page's heading and its title is announced on route change; an offline
+  banner; bag and order pages load as skeletons.
+
+## 1.20.0
+
+Mercado Pago's device fingerprint on the online Pix — additive; no storefront edit.
+
+- The order page asks Core for an online Pix with Mercado Pago's device id (its anti-fraud):
+  it loads `https://www.mercadopago.com/v2/security.js` (`view="checkout"`) once and waits up
+  to 1.5 s for `MP_DEVICE_SESSION_ID` — reusing the card form's when MercadoPago.js already set
+  it. A blocked or slow script only means the Pix goes without one; card orders never wait.
+- The checkout starts loading that script as soon as online Pix is picked on the payment step,
+  so the fingerprint is usually there before the order page asks.
+- `api.payOrder(id, { deviceId })` sends `{ "deviceId": "…" }` in the `/pay` body (with
+  `card: "form"` when asked); anything but `[A-Za-z0-9_:.-]{1,200}` is left out.
+- A store with its own CSP must allow `https://www.mercadopago.com` (scripts), as it already
+  allows `sdk.mercadopago.com`.
+
 ## 1.19.0
 
 The card in the page — additive; no storefront edit.

@@ -1,5 +1,6 @@
 import {
   ArrowCounterClockwise,
+  ArrowsClockwise,
   CalendarPlus,
   Clock,
   Crosshair,
@@ -44,7 +45,9 @@ import { PhotoField } from '../../ui/PhotoField.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { fromWeek, TimeRangeField, toWeek, type WeekModel } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { useHeld } from '../menu/held.ts';
 import { BillingHoldNotice } from './BillingHold.tsx';
+import { holidaysAhead, type Holiday } from './holidays.ts';
 import { StatusPill, useStoreQuery } from './StatusPill.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 
@@ -231,6 +234,40 @@ function Hours({ s, patch }: { s: StoreView; patch: (b: Record<string, unknown>)
   );
 }
 
+/** Core's cap on a range (modules/store.ts SPECIAL_RANGE_MAX_DAYS) */
+const RANGE_MAX_DAYS = 62;
+const DAY_MS = 86_400_000;
+const addDays = (iso: string, n: number) =>
+  new Date(Date.parse(`${iso}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+const spanDays = (from: string, to: string) =>
+  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
+/** one entry per (date, until, yearly) in Core's list */
+const dayKey = (d: SpecialDay) => `${d.date}|${d.until ?? ''}|${d.yearly ? 'y' : ''}`;
+/** "25 dez", no weekday: a yearly day falls on a different one each year */
+const dayMonth = (iso: string) =>
+  new Intl.DateTimeFormat('pt-BR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+    .format(new Date(`${iso}T12:00:00Z`))
+    .replace(/\./g, '')
+    .replace(/ de /g, ' ');
+/** the next time a yearly day comes round, from `today` */
+const nextTurn = (d: SpecialDay, today: string) => {
+  const y = Number(today.slice(0, 4));
+  for (const year of [y - 1, y, y + 1]) {
+    const shift = year - Number(d.date.slice(0, 4));
+    const from = `${year}${d.date.slice(4)}`;
+    const to = d.until ? `${Number(d.until.slice(0, 4)) + shift}${d.until.slice(4)}` : from;
+    if (to >= today && from >= d.date) return { from, to };
+  }
+  return { from: d.date, to: d.until ?? d.date };
+};
+const whenText = (d: SpecialDay, today: string) => {
+  if (d.yearly) {
+    const t = nextTurn(d, today);
+    return d.until ? `${dayMonth(t.from)} a ${dayMonth(t.to)}` : dayMonth(t.from);
+  }
+  return d.until ? `${dateShort(d.date)} a ${dateShort(d.until)}` : dateShort(d.date);
+};
+
 function SpecialDays({
   s,
   run,
@@ -238,60 +275,103 @@ function SpecialDays({
   s: StoreView;
   run: (b: Record<string, unknown>) => Promise<StoreView>;
 }) {
-  const [open, setOpen] = useState(false);
-  const [date, setDate] = useState(isoDate(new Date()));
-  const [closed, setClosed] = useState(true);
-  const [from, setFrom] = useState('09:00');
-  const [to, setTo] = useState('14:00');
-  const [label, setLabel] = useState('');
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState<SpecialDay | 'new' | null>(null);
   const today = isoDate(new Date(), s.hours.timezone);
-  const upcoming = s.specialDays.filter((d) => d.date >= today);
-  const add = () => {
-    const day: SpecialDay = closed
-      ? { date, closed: true, ...(label.trim() ? { label: label.trim() } : {}) }
-      : {
-          date,
-          closed: false,
-          open: from,
-          close: to,
-          ...(label.trim() ? { label: label.trim() } : {}),
-        };
-    void run({ specialDays: [...s.specialDays.filter((d) => d.date !== date), day] }).then(() => {
-      setOpen(false);
-      setLabel('');
-      toast(`${dateShort(date)} salvo`);
-    });
+  // every change goes from what Core holds now, so an undo never brings back a stale list
+  const latest = () => qc.getQueryData<StoreView>(qk.store)?.specialDays ?? s.specialDays;
+  const save = (days: SpecialDay[]) => run({ specialDays: days });
+  const upcoming = s.specialDays
+    .filter((d) => d.yearly || (d.until ?? d.date) >= today)
+    .map((d) => ({ d, at: d.yearly ? nextTurn(d, today).from : d.date }))
+    .sort((a, b) => a.at.localeCompare(b.at))
+    .map((x) => x.d);
+  // the national holidays still free, the nearest first
+  const taken = new Set((s.specialDaysAhead ?? []).map((d) => d.date));
+  const holidays = holidaysAhead(today)
+    .filter((h) => !taken.has(h.date))
+    .slice(0, 6);
+  const remove = (d: SpecialDay) =>
+    void save(latest().filter((x) => dayKey(x) !== dayKey(d))).then(
+      () =>
+        toast(`${d.label ?? whenText(d, today)}: tirado`, {
+          undo: () =>
+            void save([...latest().filter((x) => dayKey(x) !== dayKey(d)), d]).catch(
+              () => undefined,
+            ),
+        }),
+      () => undefined,
+    );
+  const addHoliday = (h: Holiday) => {
+    const day: SpecialDay = {
+      date: h.date,
+      closed: true,
+      label: h.label,
+      ...(h.until ? { until: h.until } : {}),
+      ...(h.yearly ? { yearly: true } : {}),
+    };
+    void save([...latest().filter((x) => dayKey(x) !== dayKey(day)), day]).then(
+      () =>
+        toast(`${h.label}: fechado${h.yearly ? ', todo ano' : ''}`, {
+          undo: () =>
+            void save(latest().filter((x) => dayKey(x) !== dayKey(day))).catch(() => undefined),
+        }),
+      () => undefined,
+    );
   };
   return (
     <Section
+      id="dias-especiais"
       title="Feriados e dias especiais"
-      hint="Um dia fechado ou com horário diferente, sem mexer na semana."
+      hint="Dias fechados ou com horário diferente, sem mexer na semana."
       action={
-        <Button variant="secondary" size="sm" icon={<CalendarPlus />} onClick={() => setOpen(true)}>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<CalendarPlus />}
+          aria-label="adicionar dia"
+          onClick={() => setEditing('new')}
+        >
           adicionar
         </Button>
       }
     >
       {upcoming.length ? (
-        <Card className="divide-y divide-line">
+        <Card className="divide-y divide-line overflow-hidden">
           {upcoming.map((d) => (
-            <div key={d.date} className="flex min-h-16 items-center gap-3 px-4 py-2">
-              <Clock className="size-5 shrink-0 text-muted" />
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold capitalize">
-                  {dateShort(d.date)}
-                  {d.label ? <span className="font-normal text-muted"> · {d.label}</span> : null}
-                </p>
-                <p className="t-caption text-muted">
-                  {d.closed ? 'fechado o dia todo' : `${hhmm(d.open!)} às ${hhmm(d.close!)}`}
-                </p>
-              </div>
+            <div key={dayKey(d)} className="flex min-h-16 items-center gap-1 pr-3">
+              <button
+                type="button"
+                onClick={() => setEditing(d)}
+                aria-label={`mudar ${d.label ?? whenText(d, today)}`}
+                className="press-row flex min-w-0 flex-1 items-center gap-3 py-2 pl-4 pr-2 text-left hover:bg-hover"
+              >
+                {d.yearly ? (
+                  <ArrowsClockwise className="size-5 shrink-0 text-muted" aria-hidden />
+                ) : (
+                  <Clock className="size-5 shrink-0 text-muted" aria-hidden />
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block font-semibold">
+                    <span className="first-letter:uppercase inline-block">
+                      {whenText(d, today)}
+                    </span>
+                    {d.label ? <span className="font-normal text-muted"> · {d.label}</span> : null}
+                  </span>
+                  <span className="t-caption block text-muted">
+                    {d.closed
+                      ? d.until
+                        ? 'fechado esses dias'
+                        : 'fechado o dia todo'
+                      : `${hhmm(d.open!)} às ${hhmm(d.close!)}`}
+                    {d.yearly ? ' · todo ano' : ''}
+                  </span>
+                </span>
+              </button>
               <IconButton
-                label={`tirar ${dateShort(d.date)}`}
+                label={`tirar ${d.label ?? whenText(d, today)}`}
                 size="sm"
-                onClick={() =>
-                  void run({ specialDays: s.specialDays.filter((x) => x.date !== d.date) })
-                }
+                onClick={() => remove(d)}
               >
                 <Trash />
               </IconButton>
@@ -300,57 +380,204 @@ function SpecialDays({
         </Card>
       ) : (
         <DuaNote pose="horarios" title="Nenhum dia especial marcado">
-          Natal, Ano-Novo, uma folga: é só adicionar.
+          Natal, Ano-Novo, uma folga, as férias: é só adicionar.
         </DuaNote>
       )}
-      <Sheet
-        open={open}
-        onOpenChange={setOpen}
-        title="Dia especial"
-        footer={
-          <Button size="lg" block onClick={add}>
-            salvar dia
-          </Button>
-        }
-      >
-        <div className="space-y-5 pt-2">
-          <Field label="Data" htmlFor="sd-date">
+      {holidays.length ? (
+        <div className="mt-4">
+          <p className="t-label mb-2 px-1">Feriados nacionais que vêm aí</p>
+          <div className="scroll-row -mx-4 px-4 md:-mx-0 md:px-0">
+            <ul className="flex w-max gap-2 pb-1">
+              {holidays.map((h) => (
+                <li key={h.date}>
+                  <button
+                    type="button"
+                    onClick={() => addHoliday(h)}
+                    aria-label={`fechar no ${h.label}, ${whenText({ date: h.date, closed: true, ...(h.until ? { until: h.until } : {}) }, today)}`}
+                    className="press t-label inline-flex min-h-12 items-center gap-2 rounded-full bg-surface pl-3 pr-4 ring-1 ring-line-strong hover:bg-hover"
+                  >
+                    <Plus className="size-4 shrink-0 text-muted" aria-hidden />
+                    {h.label}
+                    <span className="font-normal text-muted">
+                      {h.until ? `${dayMonth(h.date)}–${dayMonth(h.until)}` : dayMonth(h.date)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <p className="t-caption mt-1 px-1 text-muted">
+            Um toque marca a loja fechada nesse dia. Para abrir em outro horário, toque no dia
+            depois.
+          </p>
+        </div>
+      ) : null}
+      <SpecialDaySheet
+        day={editing}
+        today={today}
+        onClose={() => setEditing(null)}
+        onSave={(day, was) => {
+          const rest = latest().filter(
+            (x) => dayKey(x) !== dayKey(day) && (!was || dayKey(x) !== dayKey(was)),
+          );
+          return save([...rest, day]).then(() => {
+            setEditing(null);
+            toast(`${day.label ?? whenText(day, today)} salvo`);
+          });
+        }}
+      />
+    </Section>
+  );
+}
+
+function SpecialDaySheet({
+  day,
+  today,
+  onClose,
+  onSave,
+}: {
+  day: SpecialDay | 'new' | null;
+  today: string;
+  onClose: () => void;
+  /** `was`: the entry being changed, replaced by the new one */
+  onSave: (d: SpecialDay, was: SpecialDay | null) => Promise<unknown>;
+}) {
+  const was = day && day !== 'new' ? day : null;
+  const [date, setDate] = useState(today);
+  const [many, setMany] = useState(false);
+  const [until, setUntil] = useState(today);
+  const [closed, setClosed] = useState(true);
+  const [from, setFrom] = useState('09:00');
+  const [to, setTo] = useState('14:00');
+  const [yearly, setYearly] = useState(false);
+  const [label, setLabel] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!day) return;
+    const d = day === 'new' ? null : day;
+    setDate(d?.date ?? today);
+    setMany(!!d?.until);
+    setUntil(d?.until ?? addDays(d?.date ?? today, 1));
+    setClosed(d?.closed ?? true);
+    setFrom(d?.open ?? '09:00');
+    setTo(d?.close ?? '14:00');
+    setYearly(!!d?.yearly);
+    setLabel(d?.label ?? '');
+  }, [day, today]);
+  const span = many ? spanDays(date, until) : 0;
+  const problem = !date
+    ? 'Escolha a data.'
+    : many && (!until || span < 1)
+      ? 'O último dia precisa ser depois do primeiro.'
+      : span > RANGE_MAX_DAYS
+        ? `Dá para marcar até ${RANGE_MAX_DAYS} dias seguidos.`
+        : !closed && from >= to
+          ? 'O horário de fechar precisa ser depois do de abrir.'
+          : null;
+  const submit = () => {
+    if (problem) return;
+    const d: SpecialDay = {
+      date,
+      closed,
+      ...(closed ? {} : { open: from, close: to }),
+      ...(many ? { until } : {}),
+      ...(yearly ? { yearly: true } : {}),
+      ...(label.trim() ? { label: label.trim() } : {}),
+    };
+    setSaving(true);
+    void onSave(d, was)
+      .catch(() => undefined)
+      .finally(() => setSaving(false));
+  };
+  return (
+    <Sheet
+      open={!!day}
+      onOpenChange={(v) => !v && onClose()}
+      title={was ? 'Mudar dia especial' : 'Dia especial'}
+      footer={
+        <Button size="lg" block loading={saving} disabled={!!problem} onClick={submit}>
+          {many ? 'salvar dias' : 'salvar dia'}
+        </Button>
+      }
+    >
+      <div className="space-y-5 pt-2">
+        <div className={cn('grid gap-3', many && 'grid-cols-2')}>
+          <Field label={many ? 'De' : 'Data'} htmlFor="sd-date">
             <TextInput
               id="sd-date"
               type="date"
-              min={today}
+              min={yearly ? undefined : today}
               value={date}
-              onChange={(e) => setDate(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setDate(v);
+                if (v && until <= v) setUntil(addDays(v, 1));
+              }}
             />
           </Field>
-          <Chips
-            label="nesse dia"
-            value={closed ? 'closed' : 'open'}
-            onChange={(v) => setClosed(v === 'closed')}
-            options={[
-              { value: 'closed', label: 'fechado' },
-              { value: 'open', label: 'horário diferente' },
-            ]}
-          />
-          {!closed ? (
-            <div className="flex items-center gap-3">
-              <TimeInput label="abre às" value={from} onCommit={setFrom} />
-              <span className="text-muted">às</span>
-              <TimeInput label="fecha às" value={to} onCommit={setTo} />
-            </div>
+          {many ? (
+            <Field label="Até" htmlFor="sd-until">
+              <TextInput
+                id="sd-until"
+                type="date"
+                min={date ? addDays(date, 1) : today}
+                max={date ? addDays(date, RANGE_MAX_DAYS) : undefined}
+                value={until}
+                onChange={(e) => setUntil(e.target.value)}
+              />
+            </Field>
           ) : null}
-          <Field label="Nome" optional htmlFor="sd-label">
-            <TextInput
-              id="sd-label"
-              maxLength={60}
-              placeholder="Ex.: Natal"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-            />
-          </Field>
         </div>
-      </Sheet>
-    </Section>
+        <div className="-mt-2 divide-y divide-line">
+          <Toggle
+            checked={many}
+            onChange={setMany}
+            label="Mais de um dia"
+            description="Férias, a semana do Natal: do primeiro ao último dia."
+          />
+          <Toggle
+            checked={yearly}
+            onChange={setYearly}
+            label="Repetir todo ano"
+            description={
+              yearly
+                ? 'Nas mesmas datas, todos os anos.'
+                : 'Só desta vez. Para Natal e Ano-Novo, ligue.'
+            }
+          />
+        </div>
+        <Chips
+          label={many ? 'nesses dias' : 'nesse dia'}
+          value={closed ? 'closed' : 'open'}
+          onChange={(v) => setClosed(v === 'closed')}
+          options={[
+            { value: 'closed', label: 'fechado' },
+            { value: 'open', label: 'horário diferente' },
+          ]}
+        />
+        {!closed ? (
+          <div className="flex items-center gap-3">
+            <TimeInput label="abre às" value={from} onCommit={setFrom} />
+            <span className="text-muted">às</span>
+            <TimeInput label="fecha às" value={to} onCommit={setTo} />
+          </div>
+        ) : null}
+        <Field label="Nome" optional htmlFor="sd-label">
+          <TextInput
+            id="sd-label"
+            maxLength={60}
+            placeholder="Ex.: Natal"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+          />
+        </Field>
+        {problem ? (
+          <p className="t-body text-danger" role="alert">
+            {problem}
+          </p>
+        ) : null}
+      </div>
+    </Sheet>
   );
 }
 
@@ -365,6 +592,9 @@ function Delivery({
 }) {
   const qc = useQueryClient();
   const [edit, setEdit] = useState<Zone | 'new' | null>(null);
+  // an area deleted a moment ago stays off the list while "desfazer" is up; Core hears after
+  const { held, hold } = useHeld();
+  const zones = s.zones.filter((z) => !held.has(z.id));
   const [locating, setLocating] = useState(false);
   const [finding, setFinding] = useState(false);
   const o = s.operations;
@@ -395,7 +625,7 @@ function Delivery({
       setFinding(false);
     }
   };
-  const neighborhoodZones = s.zones.filter((z) => z.kind === 'neighborhood');
+  const neighborhoodZones = zones.filter((z) => z.kind === 'neighborhood');
   return (
     <Section id="entrega" title="Entrega e retirada">
       <Card className="space-y-2 p-5">
@@ -540,7 +770,7 @@ function Delivery({
             <Suspense fallback={<div className="skeleton h-72" />}>
               <ZoneMap
                 center={s.location}
-                zones={s.zones}
+                zones={zones}
                 className="h-72 w-full"
                 onPick={
                   locating
@@ -564,7 +794,7 @@ function Delivery({
             </div>
           ) : null}
           <Card className="divide-y divide-line">
-            {s.zones.map((z) => (
+            {zones.map((z) => (
               <button
                 key={z.id}
                 type="button"
@@ -623,10 +853,25 @@ function Delivery({
       <ZoneSheet
         zone={edit}
         center={s.location}
-        zones={s.zones}
+        zones={zones}
         hasLocation={!!s.location}
         onClose={() => setEdit(null)}
         onSaved={() => void qc.invalidateQueries({ queryKey: qk.store })}
+        onDelete={(z) => {
+          setEdit(null);
+          hold(
+            z.id,
+            `Área “${z.name}” apagada`,
+            (leaving) =>
+              void api.deleteZone(z.id, { keepalive: leaving }).then(
+                () => qc.invalidateQueries({ queryKey: qk.store }),
+                (e) => {
+                  toast.error(messageOf(e));
+                  void qc.invalidateQueries({ queryKey: qk.store });
+                },
+              ),
+          );
+        }}
       />
     </Section>
   );
@@ -746,6 +991,7 @@ function ZoneSheet({
   hasLocation,
   onClose,
   onSaved,
+  onDelete,
 }: {
   zone: Zone | 'new' | null;
   center: StoreView['location'];
@@ -753,6 +999,8 @@ function ZoneSheet({
   hasLocation: boolean;
   onClose: () => void;
   onSaved: () => void;
+  /** held behind "desfazer" by the section */
+  onDelete: (z: Zone) => void;
 }) {
   const isNew = zone === 'new';
   const z = zone && zone !== 'new' ? zone : null;
@@ -826,15 +1074,6 @@ function ZoneSheet({
           : messageOf(e),
       ),
   });
-  const del = useMutation({
-    mutationFn: () => api.deleteZone(z!.id),
-    onSuccess: () => {
-      onSaved();
-      onClose();
-      toast('Área apagada');
-    },
-    onError: (e) => toast.error(messageOf(e)),
-  });
   return (
     <Sheet
       open={!!zone}
@@ -845,10 +1084,9 @@ function ZoneSheet({
           {!isNew ? (
             <Button
               variant="ghost"
-              className="text-danger"
+              className="text-danger!"
               icon={<Trash />}
-              loading={del.isPending}
-              onClick={() => del.mutate()}
+              onClick={() => onDelete(z!)}
             >
               apagar
             </Button>

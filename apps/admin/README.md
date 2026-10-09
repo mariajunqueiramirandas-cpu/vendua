@@ -9,6 +9,14 @@ and identity in [ADR 0020](../../docs/adr/0020-merchant-identity.md). Copy is pt
 ## Run it
 
 ```sh
+bun run dev:stack            # from the repo root: Core :8787 (dev sign-in codes on), this app :5196, the CRM :5195
+bun run dev:stack --seed     # also the fixtures (menu), CRM leads and demo orders
+bun run dev:stop             # stops what dev:stack started (logs and pidfiles in /tmp/vendua-dev/)
+```
+
+Or by hand:
+
+```sh
 # Core with dev sign-in codes (the code comes back in the /auth/otp/start response)
 cd packages/core && (CONTROL_SECRET=dev SESSION_SECRET=devsecret VENDUA_WEBHOOK_SECRET=devhook \
   VENDUA_ADMIN_DEV_OTP=1 nohup bun src/index.ts > /tmp/core.log 2>&1 & echo $! > /tmp/core.pid)
@@ -28,6 +36,9 @@ tenants instead: `cd packages/core && bun run seed:fixtures`. `bun scripts/demo-
 first (finish the onboarding), then places a few live orders.
 
 ## Gates (CI job `admin-gate`)
+
+The screenshot gate runs as six parallel shards (`admin-shots`: theme × size, through `THEMES` and
+`SIZES`), and `admin-gate` is green when all six are.
 
 - `bun run check`: typecheck.
 - `bun run build`: Vite build plus `scripts/budget.ts`. The limits are shell
@@ -111,7 +122,18 @@ localStorage under `vendua-kds-*` / `vendua-painel-*`. Item marks, rush and stat
 "Pronto" is held for `UNDO_MS` with "desfazer" before it's sent. To see a busy service, give the
 store a menu (`seed:fixtures`) and place orders (`bun scripts/demo-orders.ts`).
 
-## Rules
+## Duá Copilot
+
+`/copiloto` is Duá working for the store's people ([ADR 0034](../../docs/adr/0034-dua-copilot.md),
+`features/copilot`): managers and owners ask about the store and get changes prepared as action
+cards (`ui/copilot/ActionCard.tsx`) that only "confirmar" applies. On phones it's a screen (the
+Duá button in the header carries the screen you were on); from 1200 px the rail's Copiloto button
+(⌘J / Ctrl+J) docks it beside any screen (`app/dock.ts`, per device). Duá's replies use a tiny
+markdown, rendered as React nodes by `ui/copilot/DuaText.tsx`. Only Pangolim has it; other plans
+see the upsell. To see it in dev, put the store on Pangolim (`update tenants set plan='pangolim'`)
+and set an `OPENROUTER_API_KEY` plus `AGENT_MODEL_ROUTES` on Core for real replies; without a
+model a new message ends in Duá's fallback line. `SIZES` and `LOCAL` (localStorage, e.g.
+`'{"vendua-copilot-dock":"1"}'`) narrow `scripts/shots.ts`.
 
 - **Tokens only.** Colours, radii, type and motion live in `src/ui/theme.css`
   (Creme + Noite; `noite:` is the dark variant). No hex values in features,

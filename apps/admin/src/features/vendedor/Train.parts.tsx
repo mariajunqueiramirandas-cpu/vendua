@@ -18,6 +18,7 @@ export function TrainFrame({
   children,
   next,
   nextLabel = 'continuar',
+  nextSecondary = false,
   busy,
   disabled,
   back,
@@ -30,6 +31,8 @@ export function TrainFrame({
   children?: ReactNode;
   next?: (() => void) | undefined;
   nextLabel?: ReactNode;
+  /** a way past the step that isn't its main action ("conectar depois") */
+  nextSecondary?: boolean;
   busy?: boolean | undefined;
   disabled?: boolean | undefined;
   back?: (() => void) | null | undefined;
@@ -70,7 +73,13 @@ export function TrainFrame({
             </div>
           ) : null}
           {next ? (
-            <Button size="lg" loading={!!busy} disabled={disabled} onClick={next}>
+            <Button
+              size="lg"
+              variant={nextSecondary ? 'secondary' : 'primary'}
+              loading={!!busy}
+              disabled={disabled}
+              onClick={next}
+            >
               {nextLabel} <ArrowRight />
             </Button>
           ) : null}

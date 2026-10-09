@@ -1,10 +1,10 @@
 import { createHash, createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { sendWhatsApp } from '../agent/channels/whatsapp.ts';
 import { getIntegration } from '../modules/integrations.ts';
 import { normalizePhone } from '../modules/customer.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
+import { sendPlatformText } from '../platform-whatsapp/send.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE, windowCounter } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
@@ -23,8 +23,14 @@ const CODE_TTL_MIN = 10;
 const CODE_MAX_ATTEMPTS = 5;
 /** per phone, per rolling hour — a phone can't be spammed with codes */
 const CODES_PER_HOUR = 5;
-/** per phone, per rolling day: wrong codes across all of its codes */
-const FAILED_CODES_PER_DAY = 10;
+/** per (phone, ip), per rolling day: wrong codes across all of the phone's codes */
+const FAILED_CODES_PER_IP_DAY = 10;
+/**
+ * per phone, per rolling day, from any IP: the brute-force ceiling. Past it, a guess needs a new
+ * code asked from an IP with no failures yet — at most CODES_PER_HOUR × 24 more a day — so the
+ * owner still gets in while strangers burn their own budget.
+ */
+const FAILED_CODES_PER_DAY = 30;
 const PICKER_TTL_MS = 10 * 60_000;
 const LINK_TTL_MIN = 15;
 /** per address, per rolling hour */
@@ -107,14 +113,22 @@ export function whatsappOtpSender(sql: Sql): OtpSender {
       return;
     }
     if (!wa) throw new HttpError(503, 'OTP_UNAVAILABLE', 'code delivery is unavailable right now');
-    await sendWhatsApp(sql, wa, `55${phone}`, text);
+    await sendPlatformText(sql, wa, {
+      to: `55${phone}`,
+      text,
+      purpose: 'otp',
+      dedupeKey: `otp:${phone}:${crypto.randomUUID()}`,
+    });
   };
 }
+
+const ipHash = (ip: string) => sha256(`admin-otp-ip|${ip}`);
 
 export async function startOtp(
   sql: Sql,
   phone: string,
   send: OtpSender,
+  ip = 'local',
 ): Promise<{ sent: boolean; devCode?: string; expiresAt: string }> {
   const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60_000);
   // unknown phones get the same answer (no enumeration) but no code
@@ -130,15 +144,17 @@ export async function startOtp(
     )[0]!.n;
     if (recent >= CODES_PER_HOUR) return true;
     await tx`delete from merchant_login_codes where created_at < now() - interval '1 day'`;
+    await tx`delete from merchant_login_failures where created_at < now() - interval '1 day'`;
     if (known)
       await tx`
-        insert into merchant_login_codes (phone, code_hash, expires_at, purpose)
-        values (${phone}, ${sha256(`${phone}|${code}`)}, ${expiresAt}, 'login')
+        insert into merchant_login_codes (phone, code_hash, expires_at, purpose, ip_hash)
+        values (${phone}, ${sha256(`${phone}|${code}`)}, ${expiresAt}, 'login', ${ipHash(ip)})
       `;
     return false;
   });
-  if (limited)
-    throw new HttpError(429, 'RATE_LIMITED', 'too many codes for this phone — try again later');
+  // over the cap answers like any other start, with no code: only known phones store codes,
+  // so a 429 here would tell which phones have a store
+  if (limited) return { sent: true, expiresAt: expiresAt.toISOString() };
   // not awaited: a known phone must answer as fast as an unknown one (no enumeration by
   // timing); a failed delivery only shows in the log — the person asks for a new code
   if (known)
@@ -155,28 +171,38 @@ export async function startOtp(
   };
 }
 
-export async function verifyOtp(sql: Sql, phone: string, code: string): Promise<boolean> {
+export async function verifyOtp(
+  sql: Sql,
+  phone: string,
+  code: string,
+  ip = 'local',
+): Promise<boolean> {
   if (!/^\d{6}$/.test(code)) return false;
+  const from = ipHash(ip);
   return authTx(sql, async (tx) => {
     // serializes verifies per phone, so parallel guesses can't all read the count under the cap
     await tx`select pg_advisory_xact_lock(hashtextextended(${`admin-otp:${phone}`}, 0))`;
     const failed = (
-      await tx<{ n: number }[]>`
-        select coalesce(sum(attempts), 0)::int as n from merchant_login_codes
-        where phone = ${phone} and purpose = 'login' and created_at > now() - interval '1 day'
+      await tx<{ mine: number; total: number }[]>`
+        select (count(*) filter (where ip_hash = ${from}))::int as mine, count(*)::int as total
+        from merchant_login_failures
+        where phone = ${phone} and created_at > now() - interval '1 day'
       `
-    )[0]!.n;
-    if (failed >= FAILED_CODES_PER_DAY) return false;
+    )[0]!;
+    if (failed.mine >= FAILED_CODES_PER_IP_DAY) return false;
     const row = (
-      await tx<{ id: string; code_hash: string; attempts: number }[]>`
-        select id, code_hash, attempts from merchant_login_codes
+      await tx<{ id: string; code_hash: string; attempts: number; ip_hash: string | null }[]>`
+        select id, code_hash, attempts, ip_hash from merchant_login_codes
         where phone = ${phone} and purpose = 'login' and consumed_at is null and expires_at > now()
         order by created_at desc limit 1 for update
       `
     )[0];
     if (!row || row.attempts >= CODE_MAX_ATTEMPTS) return false;
+    if (failed.total >= FAILED_CODES_PER_DAY && !(row.ip_hash === from && failed.mine === 0))
+      return false;
     if (!safeEq(row.code_hash, sha256(`${phone}|${code}`))) {
       await tx`update merchant_login_codes set attempts = attempts + 1 where id = ${row.id}`;
+      await tx`insert into merchant_login_failures (phone, ip_hash) values (${phone}, ${from})`;
       return false;
     }
     await tx`update merchant_login_codes set consumed_at = now() where id = ${row.id}`;
@@ -254,18 +280,71 @@ export async function startEmailLink(
   };
 }
 
+/**
+ * Proof of a member's new address (Perfil): a one-time link sent to it. Until it's opened the
+ * address only sits in merchant_users.pending_email and signs nobody in — the session that
+ * typed it may be a borrowed phone, and a typo would hand the store to a stranger's inbox.
+ */
+export async function startEmailChange(
+  sql: Sql,
+  who: { tenantId: string; userId: string; email: string },
+  linkFor: (token: string) => string,
+  send: LinkSender,
+  /** an invite's link waits for someone who may read their email days later */
+  ttlMin = LINK_TTL_MIN,
+): Promise<{ sent: boolean; devLink?: string }> {
+  const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const id = await authTx(sql, async (tx) => {
+    const recent = (
+      await tx<{ n: number }[]>`
+        select count(*)::int as n from merchant_login_links
+        where (email = ${who.email} or user_id = ${who.userId}) and created_at > now() - interval '1 hour'
+      `
+    )[0]!.n;
+    if (recent >= LINKS_PER_HOUR) return null;
+    return (
+      await tx<{ id: string }[]>`
+        insert into merchant_login_links (email, token_hash, expires_at, purpose, tenant_id, user_id)
+        values (${who.email}, ${sha256(token)}, now() + make_interval(mins => ${ttlMin}),
+                'email_change', ${who.tenantId}, ${who.userId})
+        returning id
+      `
+    )[0]!.id;
+  });
+  if (!id) return { sent: false };
+  const link = linkFor(token);
+  detach(() => send(who.email, link, id), 'email change link delivery failed');
+  return {
+    sent: true,
+    ...(process.env.NODE_ENV !== 'production' && process.env.VENDUA_ADMIN_DEV_OTP === '1'
+      ? { devLink: link }
+      : {}),
+  };
+}
+
+export type EmailLink = { email: string; change: { tenantId: string; userId: string } | null };
+
 /** The address the link was sent to, once; null when unknown, used or expired. */
-export async function verifyEmailLink(sql: Sql, token: unknown): Promise<string | null> {
+export async function verifyEmailLink(sql: Sql, token: unknown): Promise<EmailLink | null> {
   if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
   return authTx(sql, async (tx) => {
     const row = (
-      await tx<{ email: string }[]>`
+      await tx<
+        { email: string; purpose: string; tenant_id: string | null; user_id: string | null }[]
+      >`
         update merchant_login_links set consumed_at = now()
         where token_hash = ${sha256(token)} and consumed_at is null and expires_at > now()
-        returning email
+        returning email, purpose, tenant_id, user_id
       `
     )[0];
-    return row?.email ?? null;
+    if (!row) return null;
+    return {
+      email: row.email,
+      change:
+        row.purpose === 'email_change' && row.tenant_id && row.user_id
+          ? { tenantId: row.tenant_id, userId: row.user_id }
+          : null,
+    };
   });
 }
 
@@ -499,9 +578,11 @@ export function forgetGate() {
 
 export async function revokeSession(sql: Sql, tenantId: string, sessionId: string) {
   gateCache.delete(gateKey(tenantId, sessionId));
-  await withTenant(
-    sql,
-    tenantId,
-    (tx) => tx`update merchant_sessions set revoked_at = now() where id = ${sessionId}`,
-  );
+  // a signed-out device stops getting the store's pushes (orders, shopper previews) too
+  await withTenant(sql, tenantId, async (tx) => {
+    await Promise.all([
+      tx`update merchant_sessions set revoked_at = now() where id = ${sessionId}`.execute(),
+      tx`delete from push_subscriptions where tenant_id = ${tenantId} and session_id = ${sessionId}`.execute(),
+    ]);
+  });
 }

@@ -345,7 +345,8 @@ A **model gateway** sits between the engine and the providers.
 - **Routing** by policy: a fast tier and a strong tier per agent, mapped per tenant to the
   providers reached only through a zero-data-retention arrangement (owner, 2026-10-03; a
   `zdr` flag per provider route, set by staff, enforced here); escalation rules in the
-  definition.
+  definition. 2026-10-05: ZDR is a per-route choice (default on in the CRM); OpenRouter
+  enforces it per request when on; on a direct provider it's the account's contract.
 - **Resilience.** A circuit breaker per provider, a fallback chain, and for the interactive lane
   a hedged second request when the first passes the p95 latency, cancelled when either answers.
   Hedging only repeats a model call (never a tool), and a hedge usually misses the prompt cache,

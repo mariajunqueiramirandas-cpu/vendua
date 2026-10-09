@@ -3,9 +3,11 @@ import type { Context } from 'hono';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import {
+  ORDER_CHANNEL,
   ORDER_STATES,
   canTransition,
   loadOrderView,
+  loadOrderViews,
   recordOrderStep,
   transitionOrder,
   type DeliveryMode,
@@ -29,7 +31,7 @@ import {
 } from '../modules/payments/store-payments.ts';
 import { log } from '../platform/log.ts';
 import { audit } from './audit.ts';
-import { DATE_RE, int, need, oneOf, optInt, optText, type AdminDeps } from './context.ts';
+import { int, isDate, need, oneOf, optInt, optText, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 
@@ -37,6 +39,11 @@ const refundLog = log.child({ mod: 'refunds' });
 
 const ACTIVE = ['placed', 'confirmed', 'preparing', 'ready', 'out_for_delivery'];
 const DONE = ['delivered', 'cancelled', 'refunded'];
+/** accepted and still on its way: the steps whose promise "atrasou" can move */
+const DELAYABLE: readonly OrderState[] = ['confirmed', 'preparing', 'ready', 'out_for_delivery'];
+const METHODS = ['pix', 'card_online', 'card_on_delivery', 'cash', 'meal_voucher'] as const;
+const MODES = ['delivery', 'pickup', 'scheduled'] as const;
+const UNPAID = ['pending', 'failed', 'expired'];
 
 export const STATE_LABEL: Record<OrderState, string> = {
   placed: 'novo',
@@ -66,7 +73,7 @@ export interface OrderListRow {
   phone: string | null;
   totalCents: number;
   placedAt: string;
-  mode: 'pickup' | 'delivery';
+  mode: DeliveryMode;
   neighborhood: string | null;
   paymentMethod: string;
   paymentStatus: string;
@@ -85,10 +92,15 @@ export function orderListColumns(tx: Sql) {
   `;
 }
 
-async function views(tx: Sql, tenantId: string, ids: { id: string }[]): Promise<OrderView[]> {
-  const out: OrderView[] = [];
-  for (const { id } of ids) out.push(await loadOrderView(tx, tenantId, id));
-  return out;
+const BOARD_ACTIVE_MAX = 300;
+const BOARD_DONE_MAX = 100;
+
+function views(tx: Sql, tenantId: string, ids: { id: string }[]): Promise<OrderView[]> {
+  return loadOrderViews(
+    tx,
+    tenantId,
+    ids.map((r) => r.id),
+  );
 }
 
 /** An admin request (or an automatic one) to give money back; `key` makes it replayable. */
@@ -218,7 +230,8 @@ export async function refundOrderPayments(
     const outcome = await withTenant(d.sql, tenantId, (tx) =>
       recordRefund(tx, tenantId, r, refund),
     );
-    if (outcome === 'amount') await resyncPayment(d, tenantId, plan.tok, r.provider_payment_id);
+    if (outcome === 'amount' || outcome === 'stale')
+      await resyncPayment(d, tenantId, plan.tok, r.provider_payment_id);
     if (outcome === 'duplicate') throw refundFailed('duplicate');
     if (refund.status === 'rejected') throw refundFailed('rejected');
   }
@@ -260,7 +273,7 @@ async function recordRefund(
   tenantId: string,
   r: Reservation,
   refund: { id: string; amountCents: number; status: 'pending' | 'approved' | 'rejected' },
-): Promise<'ok' | 'duplicate' | 'amount'> {
+): Promise<'ok' | 'duplicate' | 'amount' | 'stale'> {
   const pay = (
     await tx<PaymentRow[]>`select * from payments where id = ${r.payment_id} for update`
   )[0]!;
@@ -280,9 +293,12 @@ async function recordRefund(
     }
   }
   const amount = refund.amountCents > 0 ? refund.amountCents : r.amount_cents;
+  // a webhook's reconcile may already have approved this reservation (it sets no provider id):
+  // MP's slower synchronous "pending" never takes that back
   await tx`
     update payment_refunds set provider_refund_id = ${refundId}, amount_cents = ${amount},
-      status = ${refund.status}, updated_at = now()
+      status = case when status = 'approved' then status else ${refund.status} end,
+      updated_at = now()
     where id = ${r.id} and provider_refund_id is null
   `;
   const approved = (
@@ -311,7 +327,10 @@ async function recordRefund(
     await markReview(tx, tenantId, pay, 'refund_amount_mismatch');
     return 'amount';
   }
-  return 'ok';
+  // MP already held refunds made outside Venduá (its panel): this one adds to them, which only
+  // MP's own total can tell
+  const before = approved - (refund.status === 'approved' ? amount : 0);
+  return pay.refunded_cents > before ? 'stale' : 'ok';
 }
 
 /** Provider truth for one payment, applied (outside any tx for the fetch). */
@@ -421,7 +440,7 @@ const PAID_ONLINE = ['paid', 'partially_refunded'];
 
 export function mountOrders(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
   const pay = { sql: d.sql, provider: d.provider, sessionSecret: d.sessionSecret };
   const lockPayment = async (tx: Sql, tenantId: string, id: string) =>
     (
@@ -444,32 +463,41 @@ export function mountOrders(d: AdminDeps) {
   admin.get(
     '/orders/board',
     read('attendant', async (tx, t) => {
-      const tz = await storeTz(tx, t.id);
-      const ids = await tx<{ id: string }[]>`
-        select id from orders
-        where tenant_id = ${t.id} and (
-          (state = any(${ACTIVE}) and (scheduled_for is null or scheduled_for <= (now() at time zone ${tz})::date))
-          or (state = any(${DONE}) and (updated_at at time zone ${tz})::date = (now() at time zone ${tz})::date)
-        )
-        order by placed_at
-        limit 200
-      `;
-      const upcoming = (
-        await tx<{ n: number }[]>`
+      const settings = (
+        await tx<{ tz: string | null; m: number }[]>`
+          select hours ->> 'timezone' as tz, coalesce(accept_target_minutes, 5) as m
+          from store_settings where tenant_id = ${t.id}
+        `
+      )[0];
+      const tz = settings?.tz || 'America/Sao_Paulo';
+      // the board's orders (with their views) and the upcoming count go out together
+      const [orders, [upcoming]] = await Promise.all([
+        // each part capped on its own, newest kept: a busy day's finished sales (a counter sale
+        // is delivered at once) must never push a new order off the board
+        tx<{ id: string }[]>`
+          select id from (
+            (select id, placed_at from orders
+             where tenant_id = ${t.id} and state = any(${ACTIVE})
+               and (scheduled_for is null or scheduled_for <= (now() at time zone ${tz})::date)
+             order by placed_at desc limit ${BOARD_ACTIVE_MAX})
+            union all
+            (select id, placed_at from orders
+             where tenant_id = ${t.id} and state = any(${DONE})
+               and (updated_at at time zone ${tz})::date = (now() at time zone ${tz})::date
+             order by placed_at desc limit ${BOARD_DONE_MAX})
+          ) b
+          order by placed_at
+        `.then((ids) => views(tx, t.id, ids)),
+        tx<{ n: number }[]>`
           select count(*)::int as n from orders
           where tenant_id = ${t.id} and state = any(${ACTIVE})
             and scheduled_for > (now() at time zone ${tz})::date
-        `
-      )[0]!.n;
-      const target = (
-        await tx<{ m: number }[]>`
-          select coalesce(accept_target_minutes, 5) as m from store_settings where tenant_id = ${t.id}
-        `
-      )[0]?.m;
+        `,
+      ]);
       return {
-        orders: await views(tx, t.id, ids),
-        scheduledUpcoming: upcoming,
-        acceptTargetMinutes: target ?? 5,
+        orders,
+        scheduledUpcoming: upcoming!.n,
+        acceptTargetMinutes: settings?.m ?? 5,
         now: new Date().toISOString(),
       };
     }),
@@ -478,18 +506,30 @@ export function mountOrders(d: AdminDeps) {
   // History with search + filters; keyset on placed_at so paging is stable while orders arrive.
   admin.get(
     '/orders',
-    read('attendant', async (tx, t, _m, c) => {
+    named('orders').read('attendant', async (tx, t, _m, c) => {
       const q = (c.req.query('q') ?? '').trim().slice(0, 80);
       const state = c.req.query('state');
       if (state && state !== 'active' && !(ORDER_STATES as readonly string[]).includes(state))
         throw new HttpError(400, 'BAD_REQUEST', 'unknown state');
       const from = c.req.query('from');
       const to = c.req.query('to');
-      if ((from && !DATE_RE.test(from)) || (to && !DATE_RE.test(to)))
+      if ((from && !isDate(from)) || (to && !isDate(to)))
         throw new HttpError(400, 'BAD_REQUEST', 'from/to must be YYYY-MM-DD');
       const before = c.req.query('before');
-      if (before && Number.isNaN(Date.parse(before)))
+      const beforeAt = before ? Date.parse(before) : 0;
+      // postgres refuses years past 9999 (and Date.parse takes ±YYYYYY): a 400, not a 500
+      if (before && !(beforeAt > 0 && beforeAt < Date.UTC(10000, 0, 1)))
         throw new HttpError(400, 'BAD_REQUEST', 'before must be a timestamp');
+      const filter = <T extends string>(name: string, allowed: readonly T[]): T | undefined => {
+        const v = c.req.query(name);
+        if (!v) return undefined;
+        if (!(allowed as readonly string[]).includes(v))
+          throw new HttpError(400, 'BAD_REQUEST', `unknown ${name}`);
+        return v as T;
+      };
+      const method = filter('method', METHODS);
+      const mode = filter('mode', MODES);
+      const unpaid = ['1', 'true'].includes(filter('unpaid', ['1', 'true', '0', 'false']) ?? '');
       const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 40) || 40));
       const tz = await storeTz(tx, t.id);
       const digits = q.replace(/\D/g, '');
@@ -501,6 +541,9 @@ export function mountOrders(d: AdminDeps) {
           ${from ? tx`and (o.placed_at at time zone ${tz})::date >= ${from}::date` : tx``}
           ${to ? tx`and (o.placed_at at time zone ${tz})::date <= ${to}::date` : tx``}
           ${before ? tx`and o.placed_at < ${new Date(before)}` : tx``}
+          ${method ? tx`and o.payment ->> 'method' = ${method}` : tx``}
+          ${mode === 'scheduled' ? tx`and o.scheduled_for is not null` : mode ? tx`and o.delivery ->> 'mode' = ${mode}` : tx``}
+          ${unpaid ? tx`and coalesce(o.payment ->> 'status', 'pending') = any(${UNPAID}) and o.state <> 'cancelled'` : tx``}
           ${
             q
               ? tx`and (${/^#?\d{1,8}$/.test(q) ? tx`o.number = ${Number(q.replace('#', ''))} or` : tx``}
@@ -523,7 +566,7 @@ export function mountOrders(d: AdminDeps) {
     read('attendant', async (tx, t, _m, c) => {
       const from = c.req.query('from');
       const to = c.req.query('to');
-      if (!from || !to || !DATE_RE.test(from) || !DATE_RE.test(to))
+      if (!isDate(from) || !isDate(to))
         throw new HttpError(400, 'BAD_REQUEST', 'from and to are required (YYYY-MM-DD)');
       const span = (Date.parse(to) - Date.parse(from)) / 86_400_000;
       if (!(span >= 0 && span <= 62))
@@ -551,27 +594,32 @@ export function mountOrders(d: AdminDeps) {
 
   admin.get(
     '/orders/:id',
-    read('attendant', async (tx, t, _m, c) => {
+    named('order').read('attendant', async (tx, t, _m, c) => {
       const id = uuidParam(c, 'id');
-      const order = await loadOrderView(tx, t.id, id);
-      const phone = (
-        await tx<{ customer_phone: string | null }[]>`
-          select customer_phone from orders where tenant_id = ${t.id} and id = ${id}
-        `
-      )[0]?.customer_phone;
-      const customer = phone
-        ? (
-            await tx<{ orders: number; firstAt: string; spentCents: number }[]>`
-              select count(*)::int as orders, min(placed_at) as "firstAt",
-                     coalesce(sum(total_cents) filter (where state not in ('cancelled', 'refunded')), 0)::int as "spentCents"
-              from orders where tenant_id = ${t.id} and customer_phone = ${phone}
-            `
-          )[0]
-        : null;
+      // one batch: the view, the customer's totals (keyed by this order's phone) and the payments
+      const [order, [customer], payments] = await Promise.all([
+        loadOrderView(tx, t.id, id),
+        tx<{ phone: string | null; orders: number; firstAt: string; spentCents: number }[]>`
+          select (select customer_phone from orders where tenant_id = ${t.id} and id = ${id}) as phone,
+                 count(*)::int as orders, min(placed_at) as "firstAt",
+                 coalesce(sum(total_cents) filter (where state not in ('cancelled', 'refunded')), 0)::int as "spentCents"
+          from orders
+          where tenant_id = ${t.id}
+            and customer_phone = (select customer_phone from orders where tenant_id = ${t.id} and id = ${id})
+        `,
+        orderPayments(tx, t.id, id),
+      ]);
       return {
         order,
-        customer: customer ? { phone, ...customer } : null,
-        payments: await orderPayments(tx, t.id, id),
+        customer: customer?.phone
+          ? {
+              phone: customer.phone,
+              orders: customer.orders,
+              firstAt: customer.firstAt,
+              spentCents: customer.spentCents,
+            }
+          : null,
+        payments,
       };
     }),
   );
@@ -591,36 +639,47 @@ export function mountOrders(d: AdminDeps) {
         ? null
         : int(body.prepMinutes, 'prepMinutes', 1, 600);
     const key = requestKey(c);
+    let refunded = 0;
     // Before the recorded tx, and outside any tx: money captured online goes back to the shopper
     // (if MP refuses, the order is untouched and the code says why), unpaid attempts stop.
     // A replay finds the order already moved (no refund) or its own reservation (no second one).
-    const pre = await withTenant(
-      d.sql,
-      t0.id,
-      async (tx) =>
-        (
-          await tx<
-            {
-              state: OrderState;
-              mode: DeliveryMode;
-              payment: { online?: boolean; status?: string };
-            }[]
-          >`
-            select state, delivery ->> 'mode' as mode, payment
-            from orders where tenant_id = ${t0.id} and id = ${id}
-          `
-        )[0],
-    );
-    if (!pre) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
-    // cancelling money captured online refunds it: the same role as an explicit refund
+    // Only a cancel or a refund touches money; every other step goes straight to its tx.
+    const pre =
+      to === 'cancelled' || to === 'refunded'
+        ? await withTenant(
+            d.sql,
+            t0.id,
+            async (tx) =>
+              (
+                await tx<
+                  {
+                    state: OrderState;
+                    mode: DeliveryMode;
+                    payment: { online?: boolean; status?: string };
+                    counter_paid: boolean;
+                  }[]
+                >`
+                  select state, delivery ->> 'mode' as mode, payment,
+                    exists (
+                      select 1 from pdv_payments p
+                      where p.tenant_id = ${t0.id} and p.voided_at is null
+                        and (p.order_id = ${id} or p.tab_id = orders.tab_id)
+                    ) as counter_paid
+                  from orders where tenant_id = ${t0.id} and id = ${id}
+                `
+              )[0] ?? null,
+          )
+        : undefined;
+    if (pre === null) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+    // cancelling money captured online refunds it, and cancelling a sale paid at the caixa takes
+    // its money out of the drawer's expected count: the same role as an explicit refund
     if (
+      pre &&
       to === 'cancelled' &&
-      pre.payment.online &&
-      PAID_ONLINE.includes(String(pre.payment.status))
+      (pre.counter_paid || (pre.payment.online && PAID_ONLINE.includes(String(pre.payment.status))))
     )
       need(c, 'manager');
-    let refunded = 0;
-    if (canTransition(pre.state, to, pre.mode) && pre.payment.online) {
+    if (pre && canTransition(pre.state, to, pre.mode) && pre.payment.online) {
       if (
         (to === 'cancelled' || to === 'refunded') &&
         PAID_ONLINE.includes(String(pre.payment.status))
@@ -636,7 +695,7 @@ export function mountOrders(d: AdminDeps) {
         ).refundedCents;
       else if (to === 'cancelled') await cancelOpenAttempts(pay, t0.id, id);
     }
-    const res = await write('attendant', async (tx, t, m) => {
+    const step = write('attendant', async (tx, t, m) => {
       const meta: Record<string, unknown> = { by: m.name };
       if (reason) meta.reason = reason;
       if (prep) meta.prepMinutes = prep;
@@ -658,16 +717,50 @@ export function mountOrders(d: AdminDeps) {
           `;
       }
       await transitionOrder(tx, t.id, id, to, 'merchant', meta);
-      await audit(tx, t.id, m, {
-        action: `order.${to}`,
-        entity: 'order',
-        entityId: id,
-        summary: `pedido #${before.number}: ${STATE_LABEL[before.state]} → ${STATE_LABEL[to]}${reason ? ` (${reason})` : ''}${refunded ? ` · estornou ${brl(refunded)} no Mercado Pago` : ''}`,
-        before: { state: before.state },
-        after: { state: to, ...meta },
-      });
-      return { status: 200, body: { order: await loadOrderView(tx, t.id, id) } };
-    })(c);
+      // the audit row and the answer's read go out together
+      const [, order] = await Promise.all([
+        audit(tx, t.id, m, {
+          action: `order.${to}`,
+          entity: 'order',
+          entityId: id,
+          summary: `pedido #${before.number}: ${STATE_LABEL[before.state]} → ${STATE_LABEL[to]}${reason ? ` (${reason})` : ''}${refunded ? ` · estornou ${brl(refunded)} no Mercado Pago` : ''}`,
+          before: { state: before.state },
+          after: { state: to, ...meta },
+        }),
+        loadOrderView(tx, t.id, id),
+      ]);
+      return { status: 200, body: { order } };
+    });
+    let res: Response;
+    try {
+      res = await step(c);
+    } catch (err) {
+      // the money already went back but the order moved on meanwhile (delivered, say): it ends
+      // refunded rather than an active order with nothing paid
+      if (refunded && to === 'cancelled' && err instanceof HttpError && err.status === 409)
+        await withTenant(d.sql, t0.id, async (tx) => {
+          const before = await loadOrderView(tx, t0.id, id);
+          await transitionOrder(tx, t0.id, id, 'refunded', 'merchant', {
+            by: m0.name,
+            refundedCents: refunded,
+            ...(reason ? { reason } : {}),
+          });
+          await audit(tx, t0.id, m0, {
+            action: 'order.refunded',
+            entity: 'order',
+            entityId: id,
+            summary: `pedido #${before.number}: ${STATE_LABEL[before.state]} → ${STATE_LABEL.refunded} · estornou ${brl(refunded)} no Mercado Pago ao cancelar`,
+            before: { state: before.state },
+            after: { state: 'refunded', refundedCents: refunded },
+          });
+        }).catch((e) =>
+          refundLog.warn(
+            { err: e, tenantId: t0.id, orderId: id },
+            'refunded cancel left the order as it was',
+          ),
+        );
+      throw err;
+    }
     if (res.status === 200 && (to === 'cancelled' || to === 'refunded'))
       await refundLeftovers(pay, t0.id, id);
     return res;
@@ -689,6 +782,9 @@ export function mountOrders(d: AdminDeps) {
       if (!cur) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
       if (cur.payment.online)
         throw new HttpError(409, 'PAYMENT_ONLINE', 'Mercado Pago confirms this payment');
+      // the caixa holds it (ADR 0035): it changes there, by cancelling or voiding
+      if (cur.payment.provider === 'pdv')
+        throw new HttpError(409, 'PAYMENT_PDV', 'this payment was taken at the PDV');
       const patch =
         status === 'paid'
           ? { status, paidAt: new Date().toISOString(), confirmedBy: m.name }
@@ -715,6 +811,71 @@ export function mountOrders(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'order.changed', id);
       return { status: 200, body: { order: await loadOrderView(tx, t.id, id) } };
+    }),
+  );
+
+  // "Atrasou": an accepted order's promise moves later by a few minutes, the shopper's order page
+  // follows it (rev + notify) and the store's WhatsApp tells them the new time.
+  admin.post(
+    '/orders/:id/delay',
+    write('attendant', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyJson(c, 1024);
+      const minutes = int(body.minutes, 'minutes', 5, 120);
+      const cur = (
+        await tx<
+          {
+            number: number;
+            state: OrderState;
+            delivery: OrderView['delivery'];
+            scheduled: boolean;
+          }[]
+        >`
+          select number, state, delivery, scheduled_for is not null as scheduled from orders
+          where tenant_id = ${t.id} and id = ${id} for update
+        `
+      )[0];
+      if (!cur) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+      if (!DELAYABLE.includes(cur.state))
+        throw new HttpError(
+          409,
+          'ORDER_NOT_DELAYABLE',
+          `a ${cur.state} order has no promise to move`,
+        );
+      if (cur.scheduled)
+        throw new HttpError(409, 'ORDER_NOT_DELAYABLE', 'an encomenda is promised for its day');
+      const d = cur.delivery;
+      const now = Date.now();
+      const to0 = Date.parse(d.promisedTo ?? '');
+      const from0 = Date.parse(d.promisedFrom ?? '');
+      // a promise already past starts again from now; the window keeps its width
+      const to = (Number.isFinite(to0) ? Math.max(to0, now) : now) + minutes * 60_000;
+      const width = Number.isFinite(to0) && Number.isFinite(from0) ? Math.max(0, to0 - from0) : 0;
+      const patch = {
+        promisedFrom: new Date(to - width).toISOString(),
+        promisedTo: new Date(to).toISOString(),
+        delayMinutes: (d.delayMinutes ?? 0) + minutes,
+      };
+      // rev is the live cursor: the shopper's order page re-reads on it
+      await tx`
+        update orders set delivery = delivery || ${tx.json(patch)}, rev = rev + 1, updated_at = now()
+        where tenant_id = ${t.id} and id = ${id}
+      `;
+      await tx`select pg_notify(${ORDER_CHANNEL}, ${id})`;
+      await emitAdminTx(tx, t.id, 'order.changed', id);
+      const notified = await enqueueOrderMessageTx(tx, t.id, id, 'delayed', {
+        occurrence: String(to),
+      });
+      await audit(tx, t.id, m, {
+        action: 'order.delayed',
+        entity: 'order',
+        entityId: id,
+        summary: `pedido #${cur.number}: atrasou ${minutes} min`,
+        before: { promisedFrom: d.promisedFrom ?? null, promisedTo: d.promisedTo ?? null },
+        after: patch,
+      });
+      // whether the shopper hears of it: the store's WhatsApp sends this step to their number
+      return { status: 200, body: { order: await loadOrderView(tx, t.id, id), notified } };
     }),
   );
 

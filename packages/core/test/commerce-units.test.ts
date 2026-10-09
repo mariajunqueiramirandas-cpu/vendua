@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { crc16, normalizePixKey, pixPayload } from '../src/modules/pix.ts';
+import { phoneVariants } from '../src/store-whatsapp/text.ts';
 import {
   effectiveFee,
   foldName,
@@ -58,6 +59,13 @@ describe('pix BR Code', () => {
     expect(normalizePixKey('(22) 99999-0000', 'phone')).toBe('+5522999990000');
     expect(normalizePixKey('Loja@X.com', 'email')).toBe('loja@x.com');
     expect(normalizePixKey('12', 'cnpj')).toBeNull();
+    // the DICT's 77-character cap, ASCII only: a longer key makes a code no bank accepts
+    expect(normalizePixKey(`${'a'.repeat(64)}@${'b'.repeat(8)}.com.br`, 'email')).toBeNull();
+    expect(normalizePixKey('lojá@exemplo.com', 'email')).toBeNull();
+    const longest = normalizePixKey(`${'a'.repeat(64)}@${'b'.repeat(8)}.com`, 'email')!;
+    expect(longest).toHaveLength(77);
+    const code = pixPayload({ key: longest, keyType: 'email', beneficiary: 'Loja', city: 'Rio' });
+    expect(code.slice(6, 10)).toBe('2699');
   });
 });
 
@@ -322,6 +330,13 @@ describe('preorder calendar', () => {
       bookableDates({ ...hours, windows: [] }, 0, 0, new Date('2026-09-25T02:30:00Z')),
     ).toEqual(['2026-09-24']);
   });
+  test('today, with no lead time, only while the store still works today', () => {
+    // Thu 10:00 open → today is bookable; Thu 19:00, closed for the day → it starts tomorrow
+    expect(bookableDates(hours, 0, 1, now)).toEqual(['2026-09-24', '2026-09-25']);
+    expect(bookableDates(hours, 0, 1, new Date('2026-09-24T22:00:00Z'))).toEqual(['2026-09-25']);
+    // Thu 07:00, before opening: it still opens today
+    expect(bookableDates(hours, 0, 0, new Date('2026-09-24T10:00:00Z'))).toEqual(['2026-09-24']);
+  });
   test('schedule gate', () => {
     const v = scheduleView(
       [{ requiresPreorder: true, preorderLeadDays: 2 }],
@@ -342,6 +357,22 @@ describe('preorder calendar', () => {
     expect(validateSchedule(v, '2026-09-26', 'pix')).toBe('2026-09-26');
     const plain = scheduleView([{ requiresPreorder: false, preorderLeadDays: 0 }], { hours }, now);
     expect(validateSchedule(plain, undefined, 'cash')).toBeNull();
+  });
+  test('special days: holidays and vacations close a date, a special opening adds one', () => {
+    const special_days = [
+      { date: '2026-09-26', closed: true, label: 'Feriado' },
+      { date: '2026-09-27', closed: false, open: '10:00', close: '14:00' },
+      { date: '2026-09-30', until: '2026-10-01', closed: true, label: 'Férias' },
+    ];
+    expect(bookableDates(hours, 2, 7, now, special_days)).toEqual(['2026-09-27', '2026-09-29']);
+    const v = scheduleView(
+      [{ requiresPreorder: true, preorderLeadDays: 2 }],
+      { hours, preorder_max_days: 7, special_days },
+      now,
+    );
+    expect(() => validateSchedule(v, '2026-09-26', 'pix')).toThrow('that date is not available');
+    expect(() => validateSchedule(v, '2026-09-30', 'pix')).toThrow('that date is not available');
+    expect(validateSchedule(v, '2026-09-27', 'pix')).toBe('2026-09-27');
   });
 });
 
@@ -395,6 +426,10 @@ describe('coupons', () => {
         { phone: '2188', usage: { total: 0, byPhone: 0, priorOrders: 2 } },
       ).reason,
     ).toBe('COUPON_FIRST_ORDER_ONLY');
+    // a phone with no digits is nobody's: per-phone and first-order rules can't hold
+    expect(ev({ per_phone_limit: 1 }, { phone: '' }).reason).toBe('COUPON_ALREADY_USED');
+    expect(ev({ first_order_only: true }, { phone: '' }).reason).toBe('COUPON_FIRST_ORDER_ONLY');
+    expect(ev({}, { phone: '' }).ok).toBe(true);
     // unknown phone (cart preview): phone rules wait for checkout
     expect(ev({ first_order_only: true, phone: '2299' }).ok).toBe(true);
     expect(ev({ active: false }).reason).toBe('COUPON_NOT_FOUND');
@@ -529,5 +564,14 @@ describe('customer + address', () => {
       composeAddress({ mode: 'delivery', street: ' Rua A ', number: '10', complement: 'ap 3' }),
     ).toBe('Rua A, 10 — ap 3');
     expect(composeAddress({ mode: 'delivery', address: 'Rua B, 2' })).toBe('Rua B, 2');
+  });
+});
+
+describe('9th-digit spellings', () => {
+  test('only a mobile that had an old 8-digit form has two', () => {
+    expect(phoneVariants('11987654321')).toEqual(['11987654321', '1187654321']);
+    // 9 + 1–5 is a newer mobile: dropping the 9 is a landline's number, someone else
+    expect(phoneVariants('11941234567')).toEqual(['11941234567']);
+    expect(phoneVariants('1141234567')).toEqual(['1141234567']);
   });
 });

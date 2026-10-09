@@ -4,6 +4,7 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { createSession } from '../src/admin/auth.ts';
 import { migrate } from '../src/platform/db.ts';
+import { configureVendedor, vendedorDeps } from '../src/vendedor/deps.ts';
 
 // The Vendedor's admin API (ADR 0031): roles, bounded writes, stable 4xx on bad ids, and each
 // action's effect on the floor and the mailbox.
@@ -133,12 +134,35 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('vendedor admin API (db)', () =>
       },
     });
     expect(bad.status).toBe(422);
+    // he answers on the store's WhatsApp: no linked number, no switching on (Ensaio included)
+    for (const body of [{ enabled: true }, { enabled: true, coverage: 'rehearsal' }]) {
+      const early = await owner('PATCH', '/vendedor/settings', body);
+      expect(early.status).toBe(409);
+      expect(early.body.error.code).toBe('WHATSAPP_REQUIRED');
+    }
+    await sql`insert into store_whatsapp (tenant_id, wanted, state) values (${tenantId}, true, 'pairing')`;
+    expect((await owner('PATCH', '/vendedor/settings', { enabled: true })).status).toBe(409);
+    expect(
+      await sql`select 1 from store_agent where tenant_id = ${tenantId} and enabled`,
+    ).toHaveLength(0);
+    await sql`update store_whatsapp set state = 'open' where tenant_id = ${tenantId}`;
     const on = await owner('PATCH', '/vendedor/settings', { enabled: true });
     expect(on.body.enabled).toBe(true);
     const [row] = await sql<
       { enabled_at: Date | null }[]
     >`select enabled_at from store_agent where tenant_id = ${tenantId}`;
     expect(row!.enabled_at).not.toBeNull();
+    // the number drops: he stays on, settings still save, and switching off is never gated
+    await sql`update store_whatsapp set state = 'error' where tenant_id = ${tenantId}`;
+    const still = await owner('PATCH', '/vendedor/settings', { enabled: true, tone: 'formal' });
+    expect(still.status).toBe(200);
+    expect(still.body.enabled).toBe(true);
+    const off = await owner('PATCH', '/vendedor/settings', { enabled: false });
+    expect(off.status).toBe(200);
+    expect(off.body.enabled).toBe(false);
+    expect((await owner('PATCH', '/vendedor/settings', { enabled: true })).status).toBe(409);
+    await sql`update store_whatsapp set state = 'open' where tenant_id = ${tenantId}`;
+    expect((await owner('PATCH', '/vendedor/settings', { enabled: true })).body.enabled).toBe(true);
   });
 
   test('take, reply, release and mute move the floor and wake the actor', async () => {
@@ -247,5 +271,28 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('vendedor admin API (db)', () =>
     expect(
       (await manager('DELETE', `/customers/${phone}/vendedor/facts/preferencia.massa`)).status,
     ).toBe(404);
+  });
+
+  test('suggested replies: only on a plan with the Vendedor, and a few a minute per person', async () => {
+    const before = vendedorDeps().gateway;
+    configureVendedor({
+      gateway: { generate: async () => ({ text: '{"replies":["Já te respondo!"]}' }) } as never,
+    });
+    try {
+      const path = `/vendedor/threads/${threadId}/suggestions`;
+      const [t] = await sql<{ plan: string }[]>`select plan from tenants where id = ${tenantId}`;
+      await sql`update tenants set plan = 'mirim' where id = ${tenantId}`;
+      expect((await attendant('GET', path)).status).toBe(403);
+      await sql`update tenants set plan = ${t!.plan} where id = ${tenantId}`;
+      const first = await attendant('GET', path);
+      expect(first).toMatchObject({ status: 200, body: { replies: ['Já te respondo!'] } });
+      let status = 200;
+      for (let i = 0; i < 25 && status === 200; i++) status = (await attendant('GET', path)).status;
+      expect(status).toBe(429);
+      // per person: the manager still gets theirs
+      expect((await manager('GET', path)).status).toBe(200);
+    } finally {
+      configureVendedor({ gateway: before });
+    }
   });
 });

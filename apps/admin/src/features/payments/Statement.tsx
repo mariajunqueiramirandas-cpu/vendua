@@ -1,4 +1,11 @@
-import { CaretLeft, CaretRight, CreditCard, PixLogo, Receipt } from '@phosphor-icons/react';
+import {
+  CaretLeft,
+  CaretRight,
+  CreditCard,
+  DownloadSimple,
+  PixLogo,
+  Receipt,
+} from '@phosphor-icons/react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -149,6 +156,15 @@ function StatementSheet({
             {data.payments.length ? (
               <>
                 <Totals t={data.totals} big />
+                {/* Core writes the spreadsheet, money included: the month as shown, row by row */}
+                <a
+                  href={`/admin/v1/payments/statement.csv?month=${data.month}`}
+                  download
+                  className="press t-label inline-flex min-h-12 items-center gap-2 rounded-md px-4 ring-1 ring-line-strong hover:bg-hover"
+                >
+                  <DownloadSimple className="size-5" aria-hidden /> baixar planilha de{' '}
+                  {monthName(data.month)}
+                </a>
                 <List rows={data.payments} onOpen={() => onOpenChange(false)} />
               </>
             ) : (

@@ -51,6 +51,17 @@ func OpenURL(u string) error {
 	return nil
 }
 
+// OpenFile shows a local text file (the log) in Notepad: a .log may have no
+// program associated with it.
+func OpenFile(path string) error {
+	cmd := exec.Command("notepad.exe", path)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
+	return nil
+}
+
 // SingleInstance holds a named mutex for the process lifetime. The mutex is
 // only used for its existence: ownership is per OS thread, which Go does
 // not pin.

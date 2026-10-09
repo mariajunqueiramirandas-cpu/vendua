@@ -1,3 +1,4 @@
+import { ANTHROPIC_MODEL, EFFORTS, isEffort } from '../platform/anthropic.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
@@ -6,6 +7,7 @@ import { LEAD_STATES, type LeadState } from './leads.ts';
 import { JOB_KINDS } from '../agent/tool-meta.ts';
 import { normalizeStaff } from './staff-config.ts';
 import { validateDiscordConfig, validateDiscordSetting } from './discord/config.ts';
+import { validateMediaRoutes } from '../vendedor/media.ts';
 
 // modular provider config: `secret_ref` is the NAME of the env var holding the
 // credential — secret values never enter the DB
@@ -151,6 +153,8 @@ export async function upsertIntegration(
     throw new HttpError(422, 'BAD_REQUEST', 'config must be an object', { field: 'config' });
   }
   if (kind === 'discord' && input.config) validateDiscordConfig(input.config);
+  if (kind === 'llm' && driver === 'anthropic' && input.config)
+    validateAnthropicConfig(input.config);
   const secretRef =
     input.secretRef === undefined || input.secretRef === null
       ? null
@@ -413,12 +417,157 @@ export async function getPitch(sql: Sql): Promise<Pitch> {
   return { ...DEFAULT_PITCH, ...stored };
 }
 
+// the CRM agent's anthropic driver: the model is fixed, effort is the choice
+function validateAnthropicConfig(config: Record<string, unknown>) {
+  const bad = (field: string, why: string) =>
+    new HttpError(422, 'BAD_REQUEST', `config.${field} ${why}`, { field: `config.${field}` });
+  if (config.model !== undefined && config.model !== ANTHROPIC_MODEL)
+    throw bad('model', `is fixed: anthropic runs ${ANTHROPIC_MODEL} (leave it out)`);
+  if (config.effort !== undefined && !isEffort(config.effort))
+    throw bad('effort', `must be ${EFFORTS.join(' | ')}`);
+}
+
+// ── agent_runtime.routes / agent_runtime.budgets (Agent Runtime v3, read by agent-host/models.ts
+// and agent-host/spend.ts): staff edit them in the CRM's IA hub, so every shape is checked here
+const RUNTIME_KEY = /^[a-z0-9_-]{1,60}$/;
+// lowercase: spend.ts and models.ts look stores up by the id Postgres prints
+const TENANT_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ROUTE_PROVIDERS = ['anthropic', 'openrouter', 'openai', 'gemini'];
+const ROUTE_MODEL = /^[A-Za-z0-9._/:@-]{1,200}$/;
+type Bad = (field: string, why: string) => HttpError;
+
+const plainObject = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === 'object' && !Array.isArray(v);
+
+function validateRoute(r: unknown, at: string, bad: Bad) {
+  if (!plainObject(r)) throw bad(at, 'must be a route object');
+  for (const k of Object.keys(r))
+    if (!['provider', 'model', 'zdr', 'endpoint', 'effort', 'pricing', 'timeoutMs'].includes(k))
+      throw bad(`${at}.${k}`, 'is not a route field');
+  if (!ROUTE_PROVIDERS.includes(r.provider as string))
+    throw bad(`${at}.provider`, `must be ${ROUTE_PROVIDERS.join(' | ')}`);
+  if (typeof r.model !== 'string' || !ROUTE_MODEL.test(r.model))
+    throw bad(`${at}.model`, 'must be 1–200 characters of A–Z a–z 0–9 . _ / : @ -');
+  if (r.provider === 'anthropic') {
+    // models.ts runs and prices every anthropic route as ANTHROPIC_MODEL; say so instead
+    if (r.model !== ANTHROPIC_MODEL)
+      throw bad(`${at}.model`, `is fixed for anthropic: ${ANTHROPIC_MODEL}`);
+    if (r.pricing !== undefined)
+      throw bad(`${at}.pricing`, 'is fixed for anthropic (leave it out)');
+  }
+  if (r.effort !== undefined) {
+    if (r.provider !== 'anthropic') throw bad(`${at}.effort`, 'is only for the anthropic provider');
+    if (!isEffort(r.effort)) throw bad(`${at}.effort`, `must be ${EFFORTS.join(' | ')}`);
+  }
+  // a per-route choice since 2026-10-05 (default on in the CRM), but never left implicit
+  if (typeof r.zdr !== 'boolean') throw bad(`${at}.zdr`, 'must be true or false');
+  if (r.endpoint !== undefined) {
+    if (r.provider !== 'openrouter')
+      throw bad(`${at}.endpoint`, 'is only for the openrouter provider');
+    if (typeof r.endpoint !== 'string' || !ROUTE_MODEL.test(r.endpoint))
+      throw bad(`${at}.endpoint`, 'must be 1–200 characters of A–Z a–z 0–9 . _ / : @ -');
+  }
+  if (r.pricing !== undefined) {
+    const p = r.pricing;
+    if (!plainObject(p)) throw bad(`${at}.pricing`, 'must be an object');
+    for (const k of Object.keys(p))
+      if (!['inputPerMTok', 'outputPerMTok', 'cacheReadPerMTok', 'cacheWritePerMTok'].includes(k))
+        throw bad(`${at}.pricing.${k}`, 'is not a pricing field');
+    for (const k of ['inputPerMTok', 'outputPerMTok', 'cacheReadPerMTok', 'cacheWritePerMTok']) {
+      const n = p[k];
+      const optional = k.startsWith('cache');
+      if (n === undefined && optional) continue;
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0 || n > 1000)
+        throw bad(`${at}.pricing.${k}`, 'must be a number in [0, 1000] (USD per million tokens)');
+    }
+  }
+  if (r.timeoutMs !== undefined) {
+    const t = r.timeoutMs;
+    if (typeof t !== 'number' || !Number.isInteger(t) || t < 1000 || t > 300_000)
+      throw bad(`${at}.timeoutMs`, 'must be an integer in [1000, 300000]');
+  }
+}
+
+function validateTierRoutes(v: unknown, at: string, bad: Bad) {
+  if (!plainObject(v)) throw bad(at, 'must be { fast?, strong? }');
+  for (const [tier, list] of Object.entries(v)) {
+    if (tier !== 'fast' && tier !== 'strong')
+      throw bad(`${at}.${tier}`, 'is not a tier (fast | strong)');
+    // an empty list would win over the levels below it and leave the agent with no model
+    if (!Array.isArray(list) || list.length < 1 || list.length > 5)
+      throw bad(`${at}.${tier}`, 'must be a list of 1 to 5 routes (leave the tier out to inherit)');
+    list.forEach((r, i) => validateRoute(r, `${at}.${tier}.${i}`, bad));
+  }
+}
+
+function validateKeyed(
+  v: unknown,
+  at: string,
+  max: number,
+  key: RegExp,
+  what: string,
+  bad: Bad,
+): Record<string, unknown> {
+  if (!plainObject(v)) throw bad(at, 'must be an object');
+  const keys = Object.keys(v);
+  if (keys.length > max) throw bad(at || '*', `takes at most ${max} entries`);
+  for (const k of keys)
+    if (!key.test(k)) throw bad(at ? `${at}.${k}` : k, `must be keyed by ${what}`);
+  return v;
+}
+
+function validateModelRoutes(value: unknown, bad: Bad) {
+  if (!plainObject(value)) throw bad('*', 'must be an object');
+  for (const k of Object.keys(value))
+    if (!['default', 'agents', 'tenants'].includes(k)) throw bad(k, 'is not a routes field');
+  if (value.default !== undefined) validateTierRoutes(value.default, 'default', bad);
+  if (value.agents !== undefined) {
+    const agents = validateKeyed(value.agents, 'agents', 20, RUNTIME_KEY, 'agent id', bad);
+    for (const [k, v] of Object.entries(agents)) validateTierRoutes(v, `agents.${k}`, bad);
+  }
+  if (value.tenants !== undefined) {
+    const tenants = validateKeyed(value.tenants, 'tenants', 2000, TENANT_KEY, 'store id', bad);
+    for (const [k, v] of Object.entries(tenants)) validateTierRoutes(v, `tenants.${k}`, bad);
+  }
+}
+
+function validateUsdByKey(v: unknown, at: string, bad: Bad) {
+  const o = validateKeyed(v, at, 20, RUNTIME_KEY, 'budget key', bad);
+  for (const [k, n] of Object.entries(o)) {
+    const field = at ? `${at}.${k}` : k;
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < 0 || n > 10_000)
+      throw bad(field, 'must be a number in [0, 10000] (USD per day)');
+  }
+}
+
+function validateBudgets(value: unknown, bad: Bad) {
+  if (!plainObject(value)) throw bad('*', 'must be an object');
+  const { tenants, ...keys } = value;
+  validateUsdByKey(keys, '', bad);
+  if (tenants !== undefined) {
+    const t = validateKeyed(tenants, 'tenants', 2000, TENANT_KEY, 'store id', bad);
+    for (const [k, v] of Object.entries(t)) validateUsdByKey(v, `tenants.${k}`, bad);
+  }
+}
+
 // write-time validation for the settings the safety layer reads — a malformed
 // guardrails object must never silently disable the caps; unknown keys pass
 export function validateSetting(key: string, value: unknown): void {
   const bad = (field: string, why: string) =>
     new HttpError(422, 'BAD_REQUEST', `settings.${key}.${field} ${why}`, { field });
 
+  if (key === 'agent_runtime.routes') {
+    validateModelRoutes(value, bad);
+    return;
+  }
+  if (key === 'agent_runtime.budgets') {
+    validateBudgets(value, bad);
+    return;
+  }
+  if (key === 'agent_runtime.media_routes') {
+    validateMediaRoutes(value, bad);
+    return;
+  }
   if (key === 'signup') {
     const v = value as Record<string, unknown> | null;
     if (!v || typeof v !== 'object' || Array.isArray(v) || typeof v.enabled !== 'boolean')
@@ -639,36 +788,8 @@ export function validateSetting(key: string, value: unknown): void {
     return;
   }
 
-  // 'digest' daily staff email
-  if (key === 'digest') {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      throw bad('*', 'must be an object');
-    }
-    const v = value as Record<string, unknown>;
-    if (v.enabled !== undefined && typeof v.enabled !== 'boolean') {
-      throw bad('enabled', 'must be a boolean');
-    }
-    if (v.hour !== undefined) {
-      if (typeof v.hour !== 'number' || !Number.isInteger(v.hour) || v.hour < 0 || v.hour > 23) {
-        throw bad('hour', 'must be an integer 0–23');
-      }
-    }
-    if (v.to !== undefined) {
-      if (typeof v.to !== 'string' || v.to.length > 320) {
-        throw bad('to', 'must be a string (≤320 chars)');
-      }
-      if (v.to !== v.to.trim()) {
-        throw bad('to', 'must not have surrounding whitespace');
-      }
-      if (v.to && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.to)) {
-        throw bad('to', 'must be an email address');
-      }
-    }
-    if (v.enabled === true && !v.to) {
-      throw bad('to', 'is required when the digest is enabled');
-    }
-    return;
-  }
+  // retired: the daily summary is Discord's (`discord.digest`), staff hear nothing by email
+  if (key === 'digest') throw bad('*', 'is retired: the daily summary is set in settings.discord');
 
   if (key === 'agent') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {

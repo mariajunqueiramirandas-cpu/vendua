@@ -13,6 +13,10 @@ on:
       base_ref:
         type: string
         default: ''
+      # the PR's labels at the autofix, forwarded by the format job: a storefront:<slug> PR keeps K05 on the fixed head
+      labels:
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -56,8 +60,9 @@ jobs:
           # refs reach the shell as env, never spliced into the script (branch names are attacker-chosen)
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
           BASE_REF: ${{ github.base_ref }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
         # workflow_dispatch runs on the branch ref, so checks attach to the autofix commit and surface on the PR
-        run: gh workflow run ci.yml --ref "$HEAD_REF" -f base_ref="$BASE_REF"
+        run: gh workflow run ci.yml --ref "$HEAD_REF" -f base_ref="$BASE_REF" -f labels="$PR_LABELS"
 
   # a `storefront:<slug>` PR may only touch storefronts/<slug>/** (unlabeled = no-op pass) — the only job label events must rerun
   storefront-isolation:
@@ -92,6 +97,25 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
 
+  # services/stt is Python — the Bun jobs never see it
+  stt:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    defaults:
+      run:
+        working-directory: services/stt
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: services/stt/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m unittest discover -s tests -t . -v
+
   # validates the merge ref (PR) / pushed commit (main) — the code that lands
   check:
     runs-on: ubuntu-latest
@@ -108,16 +132,8 @@ jobs:
           bun-version: '1.4.2'
       - run: bun install --frozen-lockfile
       - name: Typecheck
-        run: |
-          # every workspace dir with a `check` script — new packages need zero CI edits
-          for dir in packages/* site apps/* storefronts/*; do
-            [ -d "$dir" ] || continue
-            [ -f "$dir/package.json" ] || continue
-            if jq -e '.scripts.check' "$dir/package.json" > /dev/null; then
-              echo "check $dir"
-              (cd "$dir" && bun run check)
-            fi
-          done
+        # every workspace dir with a `check` script — new packages need zero CI edits (tools/workspaces.mjs, also `bun run check`)
+        run: bun tools/workspaces.mjs check
       - name: Isolation tools tests
         run: bun test tools/
       - name: Agent runtime boundary (ADR 0030)
@@ -154,16 +170,8 @@ jobs:
             fi
           done
       - name: Unit tests (conformance, the status page + any package with a test script but core)
-        run: |
-          for dir in packages/* apps/status tools; do
-            [ "$dir" = packages/core ] && continue # core-tests job
-            [ -d "$dir" ] || continue
-            [ -f "$dir/package.json" ] || continue
-            if jq -e '.scripts.test' "$dir/package.json" > /dev/null 2>&1; then
-              echo "test $dir"
-              (cd "$dir" && bun test)
-            fi
-          done
+        # packages/core is the core-tests job's; the same script serves `bun run test` locally
+        run: bun tools/workspaces.mjs test
 
   # Postgres-backed core tests, split from `check` so the two run in parallel
   core-tests:
@@ -194,24 +202,22 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      # boot compose Postgres so TEST_DATABASE_URL tests actually run instead of skipping
-      - name: Postgres for core tests
+      # Postgres so TEST_DATABASE_URL tests actually run instead of skipping
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          # a broken container must fail here, not as an indirect test-step error
-          docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua
+        uses: ./.github/actions/postgres
+      # the suite only accepts a database named *_test (test/hermetic.ts), so it never shares one with a dev Core
+      - name: Test database
+        if: steps.scope.outputs.run == 'true'
+        run: PGPASSWORD=vendua /usr/lib/postgresql/16/bin/createdb -h localhost -p 5433 -U vendua vendua_test
       - name: Core tests
         if: steps.scope.outputs.run == 'true'
-        run: cd packages/core && TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua bun test
+        run: cd packages/core && TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua_test bun test
 
   # exit criterion: scaffold a fresh storefront, boot Postgres + Core, run the conformance e2e through the preview proxy
   conformance:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
@@ -231,23 +237,25 @@ jobs:
           base="$BASE_REF"
           if [ -z "$base" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "smoke=true" >> "$GITHUB_OUTPUT"
+            # main pushes judge the stores the pushed commit touched (all of them when shared code changed)
+            affected="$(bun tools/affected.mjs --base HEAD~1)"
+            echo "storefronts=$(echo "$affected" | jq -r '.storefronts | join(" ")')" >> "$GITHUB_OUTPUT"
           else
             affected="$(bun tools/affected.mjs --base "origin/$base")" # a failed diff fails the step, never a silent skip
             echo "run=$(echo "$affected" | jq -r '.conformance')" >> "$GITHUB_OUTPUT"
+            echo "smoke=$(echo "$affected" | jq -r '.smoke')" >> "$GITHUB_OUTPUT"
+            echo "storefronts=$(echo "$affected" | jq -r '.storefronts | join(" ")')" >> "$GITHUB_OUTPUT"
           fi
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      - name: Postgres + migrate
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          # check TCP not the unix socket — the image's init server also answers pg_isready there
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          (cd packages/core && bun run migrate)
+        uses: ./.github/actions/postgres
+      - name: Migrate
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && bun run migrate
       - name: Core API
         if: steps.scope.outputs.run == 'true'
         run: |
@@ -260,12 +268,47 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         uses: ./.github/actions/playwright-chromium
       - name: Scaffold + check + qa (exit criterion)
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && steps.scope.outputs.smoke == 'true'
         run: |
           bunx vendua scaffold ci-smoke
           bun install
           bunx vendua check ci-smoke
           bunx vendua qa ci-smoke
+      # the storefronts this diff touches (every one on main pushes): static K-rules, K05 (the PR
+      # touches only its own storefront dir) and the conformance e2e; every slug runs before the step fails
+      - name: Affected storefronts (check + K05 + qa)
+        if: steps.scope.outputs.run == 'true' && steps.scope.outputs.storefronts != ''
+        env:
+          STOREFRONTS: ${{ steps.scope.outputs.storefronts }}
+          BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref }}
+          PR_LABELS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.labels || join(github.event.pull_request.labels.*.name, ' ') }}
+        run: |
+          failed=""
+          for slug in $STOREFRONTS; do
+            echo "::group::$slug"
+            ok=1
+            bunx vendua check "$slug" || ok=0
+            # K05 judges a store's own PR (labelled storefront:<slug>); a platform PR touches more by design.
+            # After a prettier autofix the only run on the head is the dispatch one, which carries the PR's labels
+            if [ -n "$BASE_REF" ] && [[ " $PR_LABELS " == *" storefront:$slug "* ]]; then
+              bunx vendua-conformance k05 "$slug" "origin/$BASE_REF" || ok=0
+            fi
+            bunx vendua qa "$slug" || ok=0
+            echo "::endgroup::"
+            if [ "$ok" = 1 ]; then echo "PASS $slug"; else echo "FAIL $slug"; failed="$failed $slug"; fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::storefront conformance failed:$failed"
+            exit 1
+          fi
+      - name: Upload qa-report
+        if: always() && steps.scope.outputs.run == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qa-report
+          path: storefronts/*/qa-report
+          retention-days: 7
+          if-no-files-found: ignore
 
   # Control Plane smoke (Phase 4): a staff invite provisions a store, the `_template` build is
   # published as a release, a real edge serves it with vendua-state, Core's probes verify it
@@ -297,15 +340,12 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      - name: Postgres + migrate
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          (cd packages/core && bun run migrate)
+        uses: ./.github/actions/postgres
+      - name: Migrate
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && bun run migrate
       - name: Build the template storefront
         if: steps.scope.outputs.run == 'true'
         run: cd storefronts/_template && bun run build
@@ -332,11 +372,21 @@ jobs:
   # merchant admin quality gate (docs/merchant-admin.md): every screen at 375/820/1440 in
   # Creme and Noite against a seeded store — no horizontal overflow, no console errors,
   # zero serious/critical axe violations. The bundle budget runs inside `bun run build`.
-  admin-gate:
+  # The screenshots took ~290 s of one job, so each theme × size is its own runner (scripts/shots.ts
+  # THEMES / SIZES): together they cover exactly what the single run did. The `admin-gate` job
+  # below only reports their verdict under the old check name.
+  admin-shots:
+    name: admin-gate shots (${{ matrix.theme }}, ${{ matrix.size }})
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    strategy:
+      # every shard reports its own findings instead of the first failure cancelling the rest
+      fail-fast: false
+      matrix:
+        theme: [creme, noite]
+        size: [phone, tablet, desktop]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -362,15 +412,12 @@ jobs:
       - name: Build the admin
         if: steps.scope.outputs.run == 'true'
         run: cd apps/admin && bun run build
-      - name: Postgres + migrate + seed
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          (cd packages/core && bun run migrate && bun run seed:fixtures)
+        uses: ./.github/actions/postgres
+      - name: Migrate + seed
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && bun run migrate && bun run seed:fixtures
       - name: Core API (serves apps/admin/dist at /admin/)
         if: steps.scope.outputs.run == 'true'
         run: |
@@ -387,17 +434,36 @@ jobs:
         uses: ./.github/actions/playwright-chromium
       - name: Screenshots + overflow + axe
         if: steps.scope.outputs.run == 'true'
+        env:
+          THEMES: ${{ matrix.theme }}
+          SIZES: ${{ matrix.size }}
         run: cd apps/admin && BASE=http://localhost:8787/admin/ AXE=1 bun scripts/shots.ts
       - name: Upload screenshots
         if: always() && steps.scope.outputs.run == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: admin-screenshots
+          name: admin-screenshots-${{ matrix.theme }}-${{ matrix.size }}
           path: apps/admin/shots
           retention-days: 7
       - name: Core log on failure
         if: failure() && steps.scope.outputs.run == 'true'
         run: tail -200 /tmp/core.log
+
+  # one required-check name for the shards above: green only when every shard is, and when the
+  # shards were skipped (label events) so is this
+  admin-gate:
+    needs: admin-shots
+    runs-on: ubuntu-latest
+    if: >-
+      !cancelled() && (github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action))
+    steps:
+      - name: Every admin-gate shard passed
+        env:
+          RESULT: ${{ needs.admin-shots.result }}
+        run: |
+          echo "admin-shots: $RESULT"
+          [ "$RESULT" = success ]
 
   # the staleness guarantee (11): a storefront built on the oldest supported Kernel
   # line, never rebuilt, keeps passing the S-series against Core main
@@ -429,15 +495,12 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      - name: Postgres + migrate
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          (cd packages/core && bun run migrate)
+        uses: ./.github/actions/postgres
+      - name: Migrate
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && bun run migrate
       - name: Core API
         if: steps.scope.outputs.run == 'true'
         run: |
@@ -486,15 +549,12 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      - name: Postgres + migrate + seed
+      - name: Postgres
         if: steps.scope.outputs.run == 'true'
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          (cd packages/core && bun run migrate && bun run seed:fixtures)
+        uses: ./.github/actions/postgres
+      - name: Migrate + seed
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && bun run migrate && bun run seed:fixtures
       - name: Core API
         if: steps.scope.outputs.run == 'true'
         run: |

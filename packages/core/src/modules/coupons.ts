@@ -1,5 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
+import { phoneVariants } from '../store-whatsapp/text.ts';
 
 // Coupons: Core computes every discount (money invariant). A coupon applied to a
 // cart is re-evaluated on every read — one that stops applying (subtotal dropped,
@@ -84,13 +85,16 @@ export function evaluateCoupon(
       minSubtotalCents: c.min_subtotal_cents,
       remainingCents: c.min_subtotal_cents - ctx.subtotalCents,
     });
-  if (c.phone && ctx.provenPhone !== undefined && c.phone !== ctx.provenPhone)
+  // a number's two 9th-digit spellings are one WhatsApp, one customer
+  const same = (a: string, b: string | null | undefined) => !!b && phoneVariants(b).includes(a);
+  if (c.phone && ctx.provenPhone !== undefined && !same(c.phone, ctx.provenPhone))
     return fail('COUPON_NOT_YOURS');
   if (ctx.phone != null) {
-    if (c.phone && c.phone !== ctx.phone) return fail('COUPON_NOT_YOURS');
-    if (c.per_phone_limit != null && (ctx.usage.byPhone ?? 0) >= c.per_phone_limit)
+    if (c.phone && !same(c.phone, ctx.phone)) return fail('COUPON_NOT_YOURS');
+    // a phone without digits is nobody's: it can't show it is under the limit or new here
+    if (c.per_phone_limit != null && (!ctx.phone || (ctx.usage.byPhone ?? 0) >= c.per_phone_limit))
       return fail('COUPON_ALREADY_USED');
-    if (c.first_order_only && (ctx.usage.priorOrders ?? 0) > 0)
+    if (c.first_order_only && (!ctx.phone || (ctx.usage.priorOrders ?? 0) > 0))
       return fail('COUPON_FIRST_ORDER_ONLY');
   }
   let discount = 0;
@@ -125,27 +129,29 @@ export async function couponUsage(
   couponId: string,
   phone?: string | null,
 ): Promise<CouponUsage> {
-  const total = (
-    await tx<{ n: number }[]>`
+  const count = (q: Promise<{ n: number }[]>) => q.then((rows) => rows[0]!.n);
+  const total = count(tx<{ n: number }[]>`
+    select count(*)::int as n from coupon_redemptions r join orders o on o.id = r.order_id
+    where r.tenant_id = ${tenantId} and r.coupon_id = ${couponId} and o.state not in ('cancelled')
+  `);
+  if (!phone) return { total: await total };
+  // under either 9th-digit spelling: typing the other one mustn't make a used coupon (or a
+  // returning customer) new
+  const phones = phoneVariants(phone);
+  // the three counts go out together
+  const [all, byPhone, priorOrders] = await Promise.all([
+    total,
+    count(tx<{ n: number }[]>`
       select count(*)::int as n from coupon_redemptions r join orders o on o.id = r.order_id
-      where r.tenant_id = ${tenantId} and r.coupon_id = ${couponId} and o.state not in ('cancelled')
-    `
-  )[0]!.n;
-  if (!phone) return { total };
-  const byPhone = (
-    await tx<{ n: number }[]>`
-      select count(*)::int as n from coupon_redemptions r join orders o on o.id = r.order_id
-      where r.tenant_id = ${tenantId} and r.coupon_id = ${couponId} and r.phone = ${phone}
+      where r.tenant_id = ${tenantId} and r.coupon_id = ${couponId} and r.phone = any(${phones})
         and o.state not in ('cancelled')
-    `
-  )[0]!.n;
-  const priorOrders = (
-    await tx<{ n: number }[]>`
+    `),
+    count(tx<{ n: number }[]>`
       select count(*)::int as n from orders
-      where tenant_id = ${tenantId} and customer_phone = ${phone} and state not in ('cancelled')
-    `
-  )[0]!.n;
-  return { total, byPhone, priorOrders };
+      where tenant_id = ${tenantId} and customer_phone = any(${phones}) and state not in ('cancelled')
+    `),
+  ]);
+  return { total: all, byPhone, priorOrders };
 }
 
 export function parseCode(v: unknown): string {

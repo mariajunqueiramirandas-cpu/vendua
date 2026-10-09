@@ -246,6 +246,46 @@ describe('durability', () => {
     expect(store.actor(actorId)!.attempts).toBe(0);
   });
 
+  test('a degrade send that fails is rolled back alone and the turn still fails', async () => {
+    const { store, clock, say } = setup([]);
+    const agent = defineAgent(
+      agentDef({ degrade: async () => ({ text: 'Peça pelo link.' }), maxAttempts: 2 }),
+    );
+    const memory = store.transport('memory');
+    const runtime = new Runtime({
+      agents: [agent],
+      store,
+      gateway: createGateway({
+        adapters: [scriptedAdapter([reply('Oi!'), reply('Oi!'), reply('Oi!')])],
+        routes: { routes: async () => [{ provider: 'scripted', model: 'm', zdr: true }] },
+      }),
+      transports: [
+        {
+          id: 'memory',
+          send: async (tx, msg) => {
+            if (msg.step !== 'degrade') return memory.send(tx, msg);
+            // a write then an error: in Postgres, outside a savepoint, this aborts the transaction
+            tx.host.kv.set('half-sent', true);
+            throw new Error('wa_ref out of range');
+          },
+        },
+      ],
+      owner: 'w',
+      clock,
+    });
+    const { actorId } = await say('oi');
+    for (let i = 0; i < 3; i++) {
+      store.failOnAppend = 'message.sent';
+      await drive(runtime, clock, { horizonMs: 60_000, maxPumps: 1 });
+      clock.advance(120_000);
+    }
+    await drive(runtime, clock, { horizonMs: 600_000 });
+    expect(types(store, actorId)).toContain('degrade.failed');
+    expect(types(store, actorId)).toContain('turn.failed');
+    expect(store.kv.get('half-sent')).toBeUndefined();
+    expect(store.actor(actorId)!.attempts).toBe(0);
+  });
+
   test('a turn that runs out of steps without answering sends the safe line once', async () => {
     const blocked = { toolCalls: [{ name: 'reply', args: { text: 'Custa R$ 12,00.' } }] };
     const { store, runtime, clock, say } = setup([blocked, blocked, blocked, blocked], {

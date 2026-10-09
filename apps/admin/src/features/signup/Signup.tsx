@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, type Session } from '../../lib/api.ts';
 import { resetClient } from '../../lib/persist.ts';
 import { qk } from '../../lib/query.ts';
+import { useMercadoPago } from '../../lib/mercadopago.ts';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState } from '../../ui/feedback.tsx';
 import type { Pose } from '../../ui/Mascote.tsx';
@@ -126,6 +127,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
     queryFn: api.signup.plans,
     staleTime: 5 * 60_000,
   });
+  useMercadoPago(plans.data?.billing);
   const first = useRef<ReturnType<typeof resume>>();
   first.current ??= resume(
     signedIn ? prefill(loadDraft(), qc.getQueryData<Session>(qk.session)) : loadDraft(),
@@ -190,10 +192,15 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
     }
   }, [plans.data, patch]);
 
+  const storeDomain = plans.data?.storeDomain;
   const finish = useCallback(() => {
     clearDraft();
-    nav('/bem-vindo', { replace: true });
-  }, [nav]);
+    // in production (the admin on painel.<storeDomain>) the way to the first steps passes the site's
+    // /loja-criada/: Google Ads counts sign-ups on the site's own domain (site/src/lib/gtag.ts)
+    if (storeDomain && window.location.hostname.endsWith(`.${storeDomain}`))
+      window.location.replace(`https://${storeDomain}/loja-criada/`);
+    else nav('/bem-vindo', { replace: true });
+  }, [nav, storeDomain]);
   const toPronto = useCallback(() => go('pronto'), [go]);
 
   const step = d.step;

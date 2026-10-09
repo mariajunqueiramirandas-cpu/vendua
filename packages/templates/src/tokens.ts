@@ -31,6 +31,7 @@ const MAX_VALUE = 200;
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown) => typeof v === 'string' && v.length > 0 && v.length <= MAX_VALUE;
+const FONT_WEIGHT = /^\d{3}( \d{3})?$|^(normal|bold)$/;
 // values land in CSS custom properties — no way to break out of the declaration
 const cssSafe = (v: string) => !/[;{}<>]|\/\*|url\s*\(\s*['"]?\s*javascript:/i.test(v);
 
@@ -74,6 +75,13 @@ export function validateTokens(
           errors.push(`font.srcs[${i}] needs family + src`);
         else if (!/^(\/|https:\/\/)/.test(f.src as string))
           errors.push(`font.srcs[${i}].src must be a path or https URL`);
+        // both land raw in an @font-face rule
+        else if (f.weight !== undefined && !FONT_WEIGHT.test(String(f.weight)))
+          errors.push(
+            `font.srcs[${i}].weight must be a 3-digit weight (or a "400 700" range), normal or bold`,
+          );
+        else if (f.style !== undefined && f.style !== 'normal' && f.style !== 'italic')
+          errors.push(`font.srcs[${i}].style must be normal or italic`);
       });
   }
   if (errors.length) return { ok: false, errors };

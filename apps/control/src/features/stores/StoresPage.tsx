@@ -1,174 +1,51 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { Search, Store, X } from 'lucide-react';
-import type { BillingStore } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
-import { fmtDate, fmtDay } from '@/lib/format.ts';
 import { useDebounced } from '@/lib/hooks.ts';
-import { DataList, type Column } from '@/components/DataList.tsx';
+import { DataList } from '@/components/DataList.tsx';
 import { Page } from '@/components/Page.tsx';
 import { EmptyState, ErrorState } from '@/components/common.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card } from '@/components/ui/card.tsx';
-import { Input } from '@/components/ui/input.tsx';
+import { Input, Select } from '@/components/ui/input.tsx';
+import { FilterChips } from './bits.tsx';
+import { riskWeight } from './fleetBits.tsx';
+import { useBillingStores, useCustomers } from './queries.ts';
 import {
-  DOMAIN_STATUS,
-  FilterChips,
-  METHOD_LABEL,
-  MP_STATUS,
-  SITE_STATUS,
-  StoreLink,
-  SUB_STATUS,
-  Tag,
-} from './bits.tsx';
-import { useBillingStores } from './queries.ts';
-import { StoreSheet } from './StoreSheet.tsx';
-import { STORES_TABS } from './tabs.ts';
+  isActionFilter,
+  MATCH,
+  storeColumns,
+  StoreMobileRow,
+  type StoreFilter,
+  type StoreListRow,
+} from './storeRows.tsx';
+import { useStoresTabs } from './tabs.ts';
 
-type StoreFilter = '' | 'atencao' | 'dominios' | 'sites';
+const FILTERS = Object.keys(MATCH) as StoreFilter[];
 
-const billingIssue = (s: BillingStore) =>
-  s.subscription?.status === 'pending' || s.subscription?.status === 'past_due';
-const domainReady = (s: BillingStore) => s.customDomain?.status === 'dns_ok';
-const siteOpen = (s: BillingStore) =>
-  s.siteRequest?.status === 'requested' || s.siteRequest?.status === 'in_progress';
+const SORTS = [
+  ['', 'mais recentes'],
+  ['risco', 'risco'],
+  ['mrr', 'MRR'],
+  ['pedidos', 'pedidos 30d'],
+  ['gmv', 'GMV 30d'],
+  ['ultimo', 'último pedido'],
+  ['ia', 'uso de IA'],
+  ['nome', 'nome'],
+] as const;
+type Sort = (typeof SORTS)[number][0];
 
-const MATCH: Record<StoreFilter, (s: BillingStore) => boolean> = {
-  '': () => true,
-  atencao: billingIssue,
-  dominios: domainReady,
-  sites: siteOpen,
+const time = (iso: string | null) => (iso ? new Date(iso).getTime() : 0);
+/** Descending by a number; `''` keeps Core's order (newest first). */
+const SORT_KEY: Record<Exclude<Sort, '' | 'nome'>, (r: StoreListRow) => number> = {
+  risco: (r) => riskWeight(r.c.risk),
+  mrr: (r) => r.c.mrrCents,
+  pedidos: (r) => r.c.orders.count30d,
+  gmv: (r) => r.c.orders.gmv30dCents,
+  ultimo: (r) => time(r.c.orders.lastAt),
+  ia: (r) => (r.c.ai.included ? r.c.ai.used : -1),
 };
-
-function Subscription({ s, table }: { s: BillingStore; table?: boolean }) {
-  const sub = s.subscription;
-  if (!sub) return <span className="text-xs text-muted-foreground/70">sem assinatura</span>;
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <Tag map={SUB_STATUS} value={sub.status} />
-      <span className={cn('text-xs text-muted-foreground', table && 'max-lg:hidden')}>
-        {METHOD_LABEL[sub.method] ?? sub.method}
-      </span>
-    </span>
-  );
-}
-
-/** Period end; overdue (past_due) reads red — that's the charge that failed. */
-function NextCharge({ s, className }: { s: BillingStore; className?: string }) {
-  const sub = s.subscription;
-  if (!sub || sub.status === 'cancelled')
-    return <span className={cn('text-muted-foreground/70', className)}>—</span>;
-  if (sub.status === 'trialing')
-    return (
-      <span className={cn('tnum', className)}>
-        teste até {fmtDay(sub.trialEndsAt ?? sub.currentPeriodEnd)}
-      </span>
-    );
-  return (
-    <span
-      className={cn(
-        'tnum',
-        className,
-        sub.status === 'past_due' && 'font-medium text-destructive-foreground',
-      )}
-    >
-      {fmtDay(sub.currentPeriodEnd)}
-    </span>
-  );
-}
-
-const COLUMNS: Column<BillingStore>[] = [
-  {
-    key: 'store',
-    header: 'loja',
-    className: 'max-w-[11rem] lg:max-w-[16rem]',
-    cell: (s) => (
-      <div className="flex min-w-0 items-baseline gap-2">
-        <span className="min-w-0 truncate font-medium">{s.name}</span>
-        <StoreLink store={s} className="max-w-[40%] shrink-0 max-lg:hidden" />
-      </div>
-    ),
-  },
-  {
-    key: 'plan',
-    header: 'plano',
-    className: 'whitespace-nowrap',
-    cell: (s) => s.plan.name,
-  },
-  {
-    key: 'sub',
-    header: 'assinatura',
-    className: 'whitespace-nowrap',
-    cell: (s) => <Subscription s={s} table />,
-  },
-  {
-    key: 'next',
-    header: 'próx. cobrança',
-    className: 'whitespace-nowrap tnum max-lg:hidden',
-    cell: (s) => <NextCharge s={s} />,
-  },
-  {
-    key: 'mp',
-    header: 'mercado pago',
-    className: 'whitespace-nowrap',
-    cell: (s) => <Tag map={MP_STATUS} value={s.mercadoPago} empty="não conectado" />,
-  },
-  {
-    key: 'domain',
-    header: 'domínio',
-    className: 'max-w-[14rem]',
-    cell: (s) =>
-      s.customDomain ? (
-        <span className="flex min-w-0 items-center gap-1.5">
-          <Tag map={DOMAIN_STATUS} value={s.customDomain.status} />
-          <span className="min-w-0 truncate text-xs text-muted-foreground max-lg:hidden">
-            {s.customDomain.host}
-          </span>
-        </span>
-      ) : (
-        <span className="text-xs text-muted-foreground/70">—</span>
-      ),
-  },
-  {
-    key: 'site',
-    header: 'site',
-    className: 'whitespace-nowrap',
-    cell: (s) => <Tag map={SITE_STATUS} value={s.siteRequest?.status} />,
-  },
-  {
-    key: 'created',
-    header: 'criada',
-    align: 'end',
-    className: 'whitespace-nowrap text-muted-foreground max-xl:hidden',
-    cell: (s) => fmtDate(s.createdAt),
-  },
-];
-
-function MobileRow({ s }: { s: BillingStore }) {
-  const flags = [
-    s.customDomain?.status === 'dns_ok' && <Tag key="d" map={DOMAIN_STATUS} value="dns_ok" />,
-    s.siteRequest && siteOpen(s) && <Tag key="s" map={SITE_STATUS} value={s.siteRequest.status} />,
-    s.mercadoPago && s.mercadoPago !== 'connected' && (
-      <Tag key="m" map={MP_STATUS} value={s.mercadoPago} />
-    ),
-  ].filter(Boolean);
-  return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <div className="flex min-w-0 items-baseline gap-2">
-        <span className="truncate text-sm font-medium">{s.name}</span>
-        <span className="ml-auto shrink-0 text-xs text-muted-foreground">{s.plan.name}</span>
-      </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        <StoreLink store={s} className="max-w-[45%]" />
-        <Subscription s={s} />
-        {s.subscription && s.subscription.status !== 'cancelled' && (
-          <NextCharge s={s} className="text-xs text-muted-foreground" />
-        )}
-      </div>
-      {flags.length > 0 && <div className="flex flex-wrap gap-1">{flags}</div>}
-    </div>
-  );
-}
 
 /** Search box that owns its keystrokes and commits to the URL after a pause. */
 function SearchBox({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
@@ -177,7 +54,7 @@ function SearchBox({ value, onCommit }: { value: string; onCommit: (v: string) =
   useEffect(() => void (deb !== value && onCommit(deb)), [deb]);
   useEffect(() => setV(value), [value]);
   return (
-    <div className="relative min-w-0 flex-1 md:w-56 md:flex-none">
+    <div className="relative min-w-0 flex-1 md:w-56 md:flex-none 2xl:w-48">
       <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
       <Input
         type="search"
@@ -192,16 +69,27 @@ function SearchBox({ value, onCommit }: { value: string; onCommit: (v: string) =
 }
 
 export default function StoresPage() {
+  const tabs = useStoresTabs();
   const [sp, setSp] = useSearchParams();
-  const f = (
-    ['atencao', 'dominios', 'sites'].includes(sp.get('f') ?? '') ? sp.get('f') : ''
-  ) as StoreFilter;
+  const navigate = useNavigate();
+  const rawF = sp.get('f') ?? '';
+  const f = (FILTERS.includes(rawF as StoreFilter) ? rawF : '') as StoreFilter;
+  const rawSort = sp.get('o') ?? '';
+  const sort = (SORTS.some(([v]) => v === rawSort) ? rawSort : '') as Sort;
   const q = sp.get('q') ?? '';
-  const openId = sp.get('loja');
-  const query = useBillingStores();
-  const all = query.data;
+  const legacyOpen = sp.get('loja');
 
-  const set = (next: Record<string, string | null>, push = false) =>
+  const customers = useCustomers();
+  const billing = useBillingStores();
+  const all = customers.data;
+
+  const joined = useMemo(() => {
+    if (!all) return undefined;
+    const byId = new Map((billing.data ?? []).map((b) => [b.tenantId, b]));
+    return all.map((c): StoreListRow => ({ c, b: byId.get(c.id) }));
+  }, [all, billing.data]);
+
+  const set = (next: Record<string, string | null>) =>
     setSp(
       (prev) => {
         const p = new URLSearchParams(prev);
@@ -211,50 +99,82 @@ export default function StoresPage() {
         }
         return p;
       },
-      { replace: !push },
+      { replace: true },
     );
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return (all ?? []).filter(
-      (s) =>
-        MATCH[f](s) &&
+    const out = (joined ?? []).filter(
+      (r) =>
+        MATCH[f](r) &&
         (!needle ||
-          s.name.toLowerCase().includes(needle) ||
-          s.slug.includes(needle) ||
-          !!s.customDomain?.host.includes(needle)),
+          r.c.name.toLowerCase().includes(needle) ||
+          r.c.slug.includes(needle) ||
+          !!r.b?.customDomain?.host.includes(needle) ||
+          !!r.b?.domainOrder?.host.includes(needle)),
     );
-  }, [all, f, q]);
+    if (sort === 'nome') return out.sort((a, b) => a.c.name.localeCompare(b.c.name, 'pt-BR'));
+    if (sort) {
+      const k = SORT_KEY[sort];
+      return out.sort((a, b) => k(b) - k(a));
+    }
+    return out;
+  }, [joined, f, q, sort]);
 
-  const count = (fn: (s: BillingStore) => boolean) => all?.filter(fn).length;
-  const open = all?.find((s) => s.tenantId === openId) ?? null;
+  const columns = useMemo(() => storeColumns(f), [f]);
+
+  // the list used to open a sheet at ?loja=<id>; the store has its own page now
+  if (legacyOpen) return <Navigate to={`/lojas/${encodeURIComponent(legacyOpen)}`} replace />;
+
+  const count = (k: StoreFilter) => {
+    if (!joined) return undefined;
+    if ((k === 'dominios' || k === 'sites') && !billing.data) return undefined;
+    return joined.filter(MATCH[k]).length;
+  };
   const filtered = !!(f || q);
+  const needsBilling = f === 'dominios' || f === 'sites';
 
   const toolbar = (
-    <div className="flex flex-col gap-2 md:flex-row md:items-center">
+    <div className="flex flex-col gap-2 2xl:flex-row 2xl:items-center">
       <FilterChips
         label="filtro"
         value={f}
         onChange={(v) => set({ f: v === f ? null : v || null })}
         options={[
           { value: '', label: 'todas', count: all?.length },
+          { value: 'risco', label: 'em risco', count: count('risco'), tone: 'warn' },
+          { value: 'teste', label: 'em teste', count: count('teste') },
           {
-            value: 'atencao',
-            label: 'cobrança pendente',
-            count: count(billingIssue),
+            value: 'inadimplentes',
+            label: 'inadimplentes',
+            count: count('inadimplentes'),
             tone: 'warn',
           },
+          { value: 'canceladas', label: 'canceladas', count: count('canceladas') },
+          { value: 'atencao', label: 'cobrança pendente', count: count('atencao'), tone: 'warn' },
           {
             value: 'dominios',
             label: 'domínio para ativar',
-            count: count(domainReady),
+            count: count('dominios'),
             tone: 'warn',
           },
-          { value: 'sites', label: 'pedido de site', count: count(siteOpen), tone: 'warn' },
+          { value: 'sites', label: 'pedido de site', count: count('sites'), tone: 'warn' },
         ]}
       />
-      <div className="flex min-w-0 items-center gap-2 md:ml-auto">
+      <div className="flex min-w-0 items-center gap-2 2xl:ml-auto">
         <SearchBox value={q} onCommit={(v) => set({ q: v.trim() || null })} />
+        <Select
+          aria-label="ordenar por"
+          value={sort}
+          onChange={(e) => set({ o: e.target.value || null })}
+          className="w-36 shrink-0"
+        >
+          {SORTS.map(([v, l]) => (
+            <option key={v} value={v}>
+              {l}
+            </option>
+          ))}
+        </Select>
         {filtered && (
           <Button
             variant="ghost"
@@ -270,27 +190,36 @@ export default function StoresPage() {
   );
 
   let body;
-  if (query.isError && !all) {
-    body = <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  if (customers.isError && !all) {
+    body = <ErrorState error={customers.error} onRetry={() => void customers.refetch()} />;
+  } else if (needsBilling && billing.isError && !billing.data) {
+    body = <ErrorState error={billing.error} onRetry={() => void billing.refetch()} />;
   } else {
     body = (
       <Card className="-mx-3 overflow-hidden rounded-none border-x-0 md:mx-0 md:rounded-lg md:border-x">
         <DataList
           rows={rows}
-          rowKey={(s) => s.tenantId}
-          columns={COLUMNS}
-          mobileRow={(s) => <MobileRow s={s} />}
-          onRowClick={(s) => set({ loja: s.tenantId }, true)}
-          loading={query.isPending}
-          rowClassName={(s) =>
-            cn(s.subscription?.status === 'past_due' && 'bg-destructive-soft/40')
+          rowKey={(r) => r.c.id}
+          columns={columns}
+          mobileRow={(r) => <StoreMobileRow r={r} f={f} />}
+          onRowClick={(r) => navigate(`/lojas/${r.c.id}`)}
+          loading={customers.isPending || (needsBilling && billing.isPending)}
+          rowClassName={({ c }) =>
+            cn(
+              c.subscription?.status === 'past_due' && 'bg-destructive-soft/40',
+              c.subscription?.status === 'cancelled' && 'text-muted-foreground',
+            )
           }
           empty={
             filtered ? (
               <EmptyState
                 title="nada aqui"
                 hint={
-                  f && !q ? 'nenhuma loja precisa disso agora' : 'nenhuma loja corresponde à busca'
+                  f && !q
+                    ? isActionFilter(f)
+                      ? 'nenhuma loja precisa disso agora'
+                      : 'nenhuma loja nesse filtro'
+                    : 'nenhuma loja corresponde à busca'
                 }
                 action={
                   <Button size="sm" variant="outline" onClick={() => set({ f: null, q: null })}>
@@ -312,14 +241,8 @@ export default function StoresPage() {
   }
 
   return (
-    <Page title="Lojas" count={all?.length} tabs={STORES_TABS} toolbar={toolbar}>
+    <Page title="Lojas" count={all?.length} tabs={tabs} toolbar={toolbar}>
       {body}
-      <StoreSheet
-        store={open}
-        open={!!openId}
-        loading={query.isPending}
-        onClose={() => set({ loja: null })}
-      />
     </Page>
   );
 }

@@ -1,7 +1,7 @@
 # 12 — Domains and TLS
 
-> Status: Accepted — default hostnames implemented (Phase 4), custom-domain automation Phase 7 · Last reviewed: 2026-09-30
-> Decisions: [ADR 0010](../adr/0010-automated-domains-tls.md), [ADR 0021](../adr/0021-self-serve-signup-and-plan-billing.md), [ADR 0022](../adr/0022-control-plane-v0-and-edge.md)
+> Status: Accepted — default hostnames implemented (Phase 4), own domains automated and included `.com.br` built (ADR 0038, 2026-10-08) · Last reviewed: 2026-10-08
+> Decisions: [ADR 0010](../adr/0010-automated-domains-tls.md), [ADR 0038](../adr/0038-included-domains.md), [ADR 0021](../adr/0021-self-serve-signup-and-plan-billing.md), [ADR 0022](../adr/0022-control-plane-v0-and-edge.md)
 
 **Where it stands (2026-09-30).** The default hostname path is live and fully automated: one
 wildcard DNS record `*.vendua.com.br` → the VPS, one wildcard certificate on Dokploy's Traefik
@@ -9,8 +9,15 @@ wildcard DNS record `*.vendua.com.br` → the VPS, one wildcard certificate on D
 `domains` row — no per-store DNS or certificate step. The provisioner's `verify` step probes
 `https://<host>` through all of it. Custom domains are verified by Core (CNAME + TXT, every
 15 min, ADR 0021) and activated by staff after they attach the host to the `edge` service in
-Dokploy, which issues its certificate; on-demand TLS with the `ask` gate below (and Caddy in
-front) is Phase 7's custom-domain automation.
+Dokploy, which issues its certificate.
+
+**Decided 2026-10-08 ([ADR 0038](../adr/0038-included-domains.md)), replacing parts of this doc:**
+Pangolim includes one `.com.br` that Venduá registers through a reseller API (holder: the store's
+CNPJ, else the owner's CPF) at the first payment, and renews while the plan has it. Venduá hosts
+the zone of included domains and of connected ones (nameserver delegation; CNAME + TXT for
+subdomains). Certificates come from Dokploy's Traefik through a route file a sidecar writes, not
+from Caddy on-demand TLS; only Core-verified hosts reach it, so no `ask` endpoint. Where the
+sections below disagree, ADR 0038 wins.
 
 Every tenant gets a working hostname at provisioning and a custom domain when
 they want one. Both paths are fully automated — DNS, cert issuance, attachment,

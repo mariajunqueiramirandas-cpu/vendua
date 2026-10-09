@@ -20,11 +20,23 @@ import { sendEmail } from './channels/email.ts';
 import { sendWhatsApp } from './channels/whatsapp.ts';
 import { sendInstagram } from './channels/instagram.ts';
 import { applyDeliveryEventTx } from './channels/email-inbound.ts';
+import { enqueuePlatformWaTx } from '../platform-whatsapp/outbox.ts';
+import { platformTransport } from '../platform-whatsapp/transport.ts';
+import { isMerchantPhone } from '../admin/phones.ts';
+import { e164Phone } from '../modules/leads.ts';
+import { log } from '../platform/log.ts';
+
+const sendLog = log.child({ mod: 'agent' });
 
 /**
  * Outbound dispatch: claim tx (row-lock → 'sending'), provider call outside
  * any tx, finalize tx. A crash mid-flight leaves 'sending', never 'queued'
  * again — at-most-once delivery by construction.
+ *
+ * With Venduá's number on the gateway (WA_PLATFORM_TRANSPORT=gateway) a WhatsApp
+ * send is instead a platform_wa_outbox row written in the claim tx, and the
+ * result is `{ ok: true, reason: 'queued' }`: the gateway delivers it at least
+ * once and crm-settle.ts runs the finalize when it settles.
  */
 export async function dispatchMessage(
   sql: Sql,
@@ -143,12 +155,29 @@ export async function dispatchMessage(
         wroteTid = msg.thread_id;
         return { fail: 'lead has no whatsapp' };
       }
+      // bare digits go out as-is: a number without its country code reaches someone else
+      if (!to.includes('@')) {
+        const e164 = e164Phone(to);
+        if (!e164) {
+          sendLog.warn({ messageId, leadId: lead.id }, 'whatsapp number without a country code');
+          await markMessageFailed(tx, messageId, 'número de whatsapp sem DDI');
+          wroteTid = msg.thread_id;
+          return { fail: 'número de whatsapp sem DDI' };
+        }
+        to = e164;
+      }
       // team numbers never get agent traffic — the net for leads created before
       // the number joined the team
       if (phoneIsIgnored(await blockedPhonesTx(tx), to, lead.whatsapp, lead.phone)) {
         await markMessageFailed(tx, messageId, 'número ignorado');
         wroteTid = msg.thread_id;
         return { fail: 'número ignorado' };
+      }
+      // a store owner gets their admin codes from this number and talks to Duá, not to sales
+      if (msg.author === 'agent' && (await isMerchantPhone(tx, to, lead.whatsapp, lead.phone))) {
+        await markMessageFailed(tx, messageId, 'número de lojista');
+        wroteTid = msg.thread_id;
+        return { fail: 'número de lojista' };
       }
       integration = await getIntegrationTx(tx, 'whatsapp');
     } else if (thread.channel === 'instagram') {
@@ -176,6 +205,23 @@ export async function dispatchMessage(
       return { fail: refused };
     }
 
+    const viaGateway =
+      thread.channel === 'whatsapp' &&
+      integration!.driver === 'baileys' &&
+      platformTransport() === 'gateway';
+    if (viaGateway) {
+      const bad = !msg.body.trim()
+        ? 'empty message'
+        : !to!.includes('@') && to!.replace(/\D/g, '').length < 10
+          ? 'invalid whatsapp number'
+          : null;
+      if (bad) {
+        await markMessageFailed(tx, messageId, bad);
+        wroteTid = msg.thread_id;
+        return { fail: bad };
+      }
+    }
+
     // 'sending' is the point of no return — stamp the attempt so dedupe
     // can tell it from a pre-wire refusal
     const upd = await tx<{ sending_at: string }[]>`
@@ -184,6 +230,16 @@ export async function dispatchMessage(
       where id = ${messageId} returning updated_at as sending_at
     `;
     wroteTid = thread.id;
+    if (viaGateway) {
+      await enqueuePlatformWaTx(tx, {
+        to: to!,
+        body: msg.body,
+        purpose: 'crm',
+        dedupeKey: `crm:${messageId}`,
+        ref: messageId,
+      });
+      return { fail: null, queued: true as const };
+    }
     return {
       send: {
         threadId: thread.id,
@@ -206,6 +262,7 @@ export async function dispatchMessage(
   if (wroteTid) emitControlEvent('thread.message', wroteTid);
   if ('alreadySent' in job) return { ok: true, reason: 'already sent' };
   if ('inFlight' in job) return { ok: true, reason: 'dispatch in flight' };
+  if ('queued' in job) return { ok: true, reason: 'queued' };
   if ('fail' in job && job.fail != null) return { ok: false, reason: job.fail };
   const { send } = job;
 
@@ -243,117 +300,147 @@ export async function dispatchMessage(
       await markMessageFailed(tx, messageId, sendError);
       return { ok: false, reason: sendError };
     }
-    const pmid = providerMessageId ? `${send.channel}:${providerMessageId}` : null;
-    // advisory key serializes against webhook parkers so one can't slip
-    // between the pmid write and the drain replay
-    if (providerMessageId) {
-      await tx`select pg_advisory_xact_lock(hashtext(${`pev:${send.channel}:${providerMessageId}`}))`;
-    }
-    await markMessageSent(tx, messageId, pmid);
-    // pin the resolved account id so the lead's reply lands on this thread
-    if (igFbid && /^\d+$/.test(igFbid)) {
-      await tx`
-        update lead_threads set external_id = coalesce(external_id, ${igFbid})
-        where id = ${send.threadId}`;
-    }
-    // cadence: an agent send with no answer books a follow-up on the lead's agenda unless
-    // something is already there (the agent's own date or a promise wins); skipped when a
-    // real inbound post-dates 'sending' — 'historical' imports and NULL received_at
-    // (0030 backfill legacy) are never answers
-    if (send.author === 'agent') {
-      const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
-      const days = g.followupCadenceDays ?? DEFAULT_GUARDRAILS.followupCadenceDays;
-      const eligible = (
-        await tx`
-          select 1 from leads l
-          where l.id = ${send.leadId}
-            and l.archived_at is null and l.unsubscribed_at is null and l.agent_mode <> 'off'
-            and not exists (
-              select 1 from lead_messages im
-              join lead_threads it on it.id = im.thread_id
-              where it.lead_id = ${send.leadId}
-                and im.direction = 'in'
-                and not im.historical
-                and im.received_at is not null
-                and im.received_at > ${send.sendingAt}::timestamptz
-            )
-        `
-      ).length;
-      if (days > 0 && eligible) {
-        const { scheduleCadenceTx } = await import('./wakeups.ts');
-        await scheduleCadenceTx(tx, send.leadId, days, null);
-      }
-    }
-    // replay provider_events parked before the pmid existed so the message
-    // lands in the event-described state
-    if (providerMessageId) {
-      const pending = await tx<{ event: string; payload: { to?: string[] } }[]>`
-        select event, payload from provider_events
-        where channel = ${send.channel} and provider_id = ${providerMessageId}
-        order by id
-      `;
-      for (const ev of pending) {
-        if (ev.event === 'email.delivered') {
-          await tx`
-            update lead_messages set status = 'delivered', updated_at = now()
-            where id = ${messageId} and status = 'sent'`;
-        } else if (
-          ev.event === 'email.bounced' ||
-          ev.event === 'email.failed' ||
-          ev.event === 'email.complained'
-        ) {
-          const applied = await applyDeliveryEventTx(
-            tx,
-            ev.event as 'email.bounced' | 'email.failed' | 'email.complained',
-            providerMessageId,
-            ev.payload?.to,
-          );
-          if ('leadId' in applied) {
-            leadsTouched.add(applied.leadId);
-            for (const t of applied.threadIds) threadsTouched.add(t);
-          }
-        }
-      }
-      if (pending.length) {
-        await tx`
-          delete from provider_events
-          where channel = ${send.channel} and provider_id = ${providerMessageId}`;
-      }
-    }
-    // sent outbound IS first contact → deterministic lead→contacted (model
-    // can't be relied on); runs after the parked-event replay so a bounced
-    // send can't promote; forward-only, and 'manual' never counts
-    // (it dispatches nothing)
-    const promoted =
-      send.channel === 'manual'
-        ? []
-        : await tx<{ id: string }[]>`
-      update leads set state = 'contacted', updated_at = now()
-      where id = ${send.leadId} and state = 'lead'
-        and exists (
-          select 1 from lead_messages m
-          where m.id = ${messageId} and m.status in ('sent', 'delivered')
-        )
-      returning id
-    `;
-    if (promoted[0]) {
-      const actor = send.author === 'agent' || send.author === 'staff' ? send.author : 'system';
-      await tx`
-        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
-        select ${send.leadId}, 'lead', 'contacted', ${actor}, deal_value_cents
-        from leads where id = ${send.leadId}
-      `;
-      await tx`
-        insert into lead_activities (lead_id, kind, body, meta, created_by)
-        values (${send.leadId}, 'state_change', 'lead → contacted',
-                ${tx.json({ from: 'lead', to: 'contacted' } as never)}, ${actor})
-      `;
-      leadsTouched.add(send.leadId);
-    }
+    await finalizeSentTx(
+      tx,
+      { messageId, ...send },
+      providerMessageId,
+      igFbid,
+      threadsTouched,
+      leadsTouched,
+    );
     return { ok: true };
   });
   threadsTouched.add(send.threadId);
   for (const t of threadsTouched) emitControlEvent('thread.message', t);
   for (const l of leadsTouched) emitControlEvent('lead.change', l);
   return out;
+}
+
+export interface SentMessage {
+  messageId: string;
+  threadId: string;
+  /** when it went 'sending': an inbound after it counts as an answer */
+  sendingAt: string;
+  channel: Channel;
+  leadId: string;
+  author: string;
+}
+
+/** Everything that follows a provider accepting the message, in the caller's control tx:
+ *  shared by the inline send and by the settle of a gateway send (crm-settle.ts). */
+export async function finalizeSentTx(
+  tx: Sql,
+  f: SentMessage,
+  providerMessageId: string | null,
+  igFbid: string | null,
+  threadsTouched: Set<string>,
+  leadsTouched: Set<string>,
+): Promise<void> {
+  const pmid = providerMessageId ? `${f.channel}:${providerMessageId}` : null;
+  // advisory key serializes against webhook parkers so one can't slip
+  // between the pmid write and the drain replay
+  if (providerMessageId) {
+    await tx`select pg_advisory_xact_lock(hashtext(${`pev:${f.channel}:${providerMessageId}`}))`;
+  }
+  await markMessageSent(tx, f.messageId, pmid);
+  // pin the resolved account id so the lead's reply lands on this thread
+  if (igFbid && /^\d+$/.test(igFbid)) {
+    await tx`
+      update lead_threads set external_id = coalesce(external_id, ${igFbid})
+      where id = ${f.threadId}`;
+  }
+  // cadence: an agent send with no answer books a follow-up on the lead's agenda unless
+  // something is already there (the agent's own date or a promise wins); skipped when a
+  // real inbound post-dates 'sending' — 'historical' imports and NULL received_at
+  // (0030 backfill legacy) are never answers
+  if (f.author === 'agent') {
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const days = g.followupCadenceDays ?? DEFAULT_GUARDRAILS.followupCadenceDays;
+    const eligible = (
+      await tx`
+        select 1 from leads l
+        where l.id = ${f.leadId}
+          and l.archived_at is null and l.unsubscribed_at is null and l.agent_mode <> 'off'
+          and not exists (
+            select 1 from lead_messages im
+            join lead_threads it on it.id = im.thread_id
+            where it.lead_id = ${f.leadId}
+              and im.direction = 'in'
+              and not im.historical
+              and im.received_at is not null
+              and im.received_at > ${f.sendingAt}::timestamptz
+          )
+      `
+    ).length;
+    if (days > 0 && eligible) {
+      const { scheduleCadenceTx } = await import('./wakeups.ts');
+      await scheduleCadenceTx(tx, f.leadId, days, null);
+    }
+  }
+  // replay provider_events parked before the pmid existed so the message
+  // lands in the event-described state
+  if (providerMessageId) {
+    const pending = await tx<{ event: string; payload: { to?: string[] } }[]>`
+      select event, payload from provider_events
+      where channel = ${f.channel} and provider_id = ${providerMessageId}
+      order by id
+    `;
+    for (const ev of pending) {
+      if (ev.event === 'email.delivered') {
+        await tx`
+          update lead_messages set status = 'delivered', updated_at = now()
+          where id = ${f.messageId} and status = 'sent'`;
+      } else if (
+        ev.event === 'email.bounced' ||
+        ev.event === 'email.failed' ||
+        ev.event === 'email.complained'
+      ) {
+        const applied = await applyDeliveryEventTx(
+          tx,
+          ev.event as 'email.bounced' | 'email.failed' | 'email.complained',
+          providerMessageId,
+          ev.payload?.to,
+        );
+        if ('leadId' in applied) {
+          leadsTouched.add(applied.leadId);
+          for (const t of applied.threadIds) threadsTouched.add(t);
+        }
+      }
+    }
+    if (pending.length) {
+      await tx`
+        delete from provider_events
+        where channel = ${f.channel} and provider_id = ${providerMessageId}`;
+    }
+  }
+  // sent outbound IS first contact → deterministic lead→contacted (model
+  // can't be relied on); runs after the parked-event replay so a bounced
+  // send can't promote; forward-only, and 'manual' never counts
+  // (it dispatches nothing)
+  const promoted =
+    f.channel === 'manual'
+      ? []
+      : await tx<{ id: string }[]>`
+    update leads set state = 'contacted', updated_at = now()
+    where id = ${f.leadId} and state = 'lead'
+      and exists (
+        select 1 from lead_messages m
+        where m.id = ${f.messageId} and m.status in ('sent', 'delivered')
+      )
+    returning id
+  `;
+  if (promoted[0]) {
+    const actor = f.author === 'agent' || f.author === 'staff' ? f.author : 'system';
+    await tx`
+      insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+      select ${f.leadId}, 'lead', 'contacted', ${actor}, deal_value_cents
+      from leads where id = ${f.leadId}
+    `;
+    await tx`
+      insert into lead_activities (lead_id, kind, body, meta, created_by)
+      values (${f.leadId}, 'state_change', 'lead → contacted',
+              ${tx.json({ from: 'lead', to: 'contacted' } as never)}, ${actor})
+    `;
+    leadsTouched.add(f.leadId);
+  }
 }

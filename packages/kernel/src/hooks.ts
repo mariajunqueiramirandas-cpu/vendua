@@ -20,6 +20,7 @@ import type {
   Notice,
   Order,
   OrderSummary,
+  OrderTracking,
   ProductDetail,
   QuoteResult,
   StoreProfile,
@@ -29,7 +30,7 @@ import type { ConsentPurpose } from './config.ts';
 import { refreshOnStatus } from './errors.ts';
 import { cardState, type CardInput, type CardState } from './rules/card.ts';
 import { couponMessage } from './rules/errors.ts';
-import { countdown, formatCents, interpolate } from './rules/format.ts';
+import { countdown, foldText, formatCents, interpolate } from './rules/format.ts';
 import { deliverySummary, type DeliverySummary } from './rules/delivery.ts';
 import {
   hoursRows,
@@ -194,6 +195,8 @@ export interface CartMutations {
     comboSelections?: ComboSelection[],
     /** Kernel 1.12 — units per option id, for options with `maxQty` > 1 (absent = 1 each) */
     modifierQty?: Record<string, number>,
+    /** Kernel 1.21 — the line's note ("sem cebola", ≤ 140): another note is another line */
+    note?: string,
   ) => Promise<Cart>;
   /** Kernel 1.14 — `add`, also answering what Core added (`added`: units and Core's price).
    *  Optional here so a store's own `CartMutations` (a wrapper, a test double) still type-checks;
@@ -204,10 +207,15 @@ export interface CartMutations {
     modifierIds?: string[],
     comboSelections?: ComboSelection[],
     modifierQty?: Record<string, number>,
+    note?: string,
   ) => Promise<{ cart: Cart; added?: AddedLine }>;
   updateQty: (itemId: string, qty: number) => Promise<Cart>;
+  /** Kernel 1.21 — a line's note ('' clears it); the line folds into an identical one. Optional
+   *  like `addLine`; `useCart().mutations` always has it. */
+  setNote?: (itemId: string, note: string) => Promise<Cart>;
   remove: (itemId: string) => Promise<Cart>;
-  setDelivery: (d: { mode: 'pickup' | 'delivery' } & DeliveryAddress) => Promise<Cart>;
+  /** Kernel 1.22: `{ mode: 'dine_in' }` at a table */
+  setDelivery: (d: { mode: 'pickup' | 'delivery' | 'dine_in' } & DeliveryAddress) => Promise<Cart>;
   /** Kernel 1.2 — Core validates and prices; a coupon short of its minimum stays on, not applying */
   applyCoupon: (code: string) => Promise<Cart>;
   removeCoupon: () => Promise<Cart>;
@@ -219,8 +227,8 @@ export interface CartMutations {
   reorder: (orderId: string) => Promise<{ cart: Cart; report: ImportReport }>;
 }
 
-/** The Kernel's own cart mutations: every one, `addLine` included. */
-type KernelCartMutations = CartMutations & Required<Pick<CartMutations, 'addLine'>>;
+/** The Kernel's own cart mutations: every one, `addLine` and `setNote` included. */
+type KernelCartMutations = CartMutations & Required<Pick<CartMutations, 'addLine' | 'setNote'>>;
 
 export function useCart(): {
   /** null = no session/cart yet (or a resolved empty read). */
@@ -231,9 +239,22 @@ export function useCart(): {
   refetch: () => void;
 } {
   const { api, invalidate } = useKernel();
-  const q = useQuery('cart', () =>
-    api.sessionToken ? api.cart().then((r) => r.cart) : Promise.resolve(null),
-  );
+  const q = useQuery('cart', () => {
+    const asked = api.sessionToken;
+    if (!asked) return Promise.resolve(null);
+    return api.cart().then(
+      (r) => r.cart,
+      (err: unknown) => {
+        // Kernel 1.21: the session outlives the tab — a cart Core no longer knows is an empty
+        // bag, and the next add starts a fresh one (unless another tab already did)
+        if (err instanceof ApiError && (err.status === 401 || err.code === 'CART_NOT_FOUND')) {
+          if (api.sessionToken === asked) api.clearSession();
+          return null;
+        }
+        throw err;
+      },
+    );
+  });
 
   const bump = useCallback(
     (cart: Cart) => {
@@ -248,14 +269,15 @@ export function useCart(): {
 
   const mutations = useMemo<KernelCartMutations>(
     () => ({
-      add: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty) =>
-        api.addItem(productId, qty, modifierIds, comboSelections, modifierQty).then(bump),
-      addLine: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty) =>
-        api.addLine(productId, qty, modifierIds, comboSelections, modifierQty).then((r) => {
+      add: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty, note) =>
+        api.addItem(productId, qty, modifierIds, comboSelections, modifierQty, note).then(bump),
+      addLine: (productId, qty = 1, modifierIds = [], comboSelections, modifierQty, note) =>
+        api.addLine(productId, qty, modifierIds, comboSelections, modifierQty, note).then((r) => {
           bump(r.cart);
           return r;
         }),
       updateQty: (itemId, qty) => api.updateItem(itemId, qty).then(bump),
+      setNote: (itemId, note) => api.setItemNote(itemId, note).then(bump),
       remove: (itemId) => api.removeItem(itemId).then(bump),
       setDelivery: (d) => api.setDelivery(d).then(bump),
       applyCoupon: (code) => api.applyCoupon(code).then(bump),
@@ -377,6 +399,9 @@ export function useStockLeft(
 }
 
 const TERMINAL_ORDER = TERMINAL_ORDER_STATES;
+
+const isTracking = (o: Order | OrderTracking): o is OrderTracking =>
+  (o as OrderTracking).statusOnly === true;
 const FIRST_WAIT_DELAY_MS = 1500;
 
 /** Live by default (Kernel 1.2; SSE since 1.3): a Kernel-owned stream of the
@@ -389,6 +414,9 @@ export function useOrder(
   opts: { live?: boolean } = {},
 ): {
   order: Order | undefined;
+  /** Kernel 1.21 — the order read through the link in the store's WhatsApp updates, on a device
+   *  that holds no token of its own for it: status and items only (`order` stays undefined) */
+  tracking: OrderTracking | undefined;
   loading: boolean;
   error: QueryError | undefined;
   refetch: () => void;
@@ -398,14 +426,19 @@ export function useOrder(
   transport: 'stream' | 'poll' | null;
 } {
   const { api } = useKernel();
-  const q = useQuery(`order:${id}`, () => api.order(id));
-  const [fresh, setFresh] = useState<Order>();
+  // the device's own token reads it all; a tracking link alone, its status
+  const statusOnly = api.tracksOnly(id);
+  const q = useQuery<Order | OrderTracking>(
+    statusOnly ? `order-status:${id}` : `order:${id}`,
+    () => (statusOnly ? api.orderStatus(id) : api.order(id)),
+  );
+  const [fresh, setFresh] = useState<Order | OrderTracking>();
   const [live, setLive] = useState(false);
   const [transport, setTransport] = useState<'stream' | 'poll' | null>(null);
   const armed = useRef(false);
   const want = opts.live !== false;
   // whichever read is newer wins: the live answer or a refetch
-  const own = fresh?.id === id ? fresh : undefined;
+  const own = fresh?.id === id && isTracking(fresh) === statusOnly ? fresh : undefined;
   const current = own && (own.version ?? 0) >= (q.data?.version ?? 0) ? own : (q.data ?? own);
   const versionRef = useRef<number | undefined>(undefined);
   const seen = current?.version;
@@ -433,7 +466,7 @@ export function useOrder(
         const t = setTimeout(r, ms);
         master.signal.addEventListener('abort', () => (clearTimeout(t), r()), { once: true });
       });
-    const accept = (o: Order) => {
+    const accept = (o: Order | OrderTracking) => {
       if ((o.version ?? 0) <= (versionRef.current ?? 0)) return;
       versionRef.current = o.version;
       setFresh(o);
@@ -466,12 +499,22 @@ export function useOrder(
         setTransport(mode);
         try {
           if (mode === 'stream') {
-            await api.orderStream(id, versionRef.current ?? 0, accept, round.signal);
+            await (statusOnly ? api.orderStatusStream : api.orderStream)(
+              id,
+              versionRef.current ?? 0,
+              accept,
+              round.signal,
+            );
             failures = 0;
             // Core closed it (lifetime or terminal) — a beat before reconnecting
             await sleep(1000);
           } else {
-            const r = await api.orderWait(id, versionRef.current ?? 0, 25, round.signal);
+            const r = await (statusOnly ? api.orderStatusWait : api.orderWait)(
+              id,
+              versionRef.current ?? 0,
+              25,
+              round.signal,
+            );
             failures = 0;
             if (r.changed) accept(r.order);
           }
@@ -504,10 +547,11 @@ export function useOrder(
       setLive(false);
       setTransport(null);
     };
-  }, [api, id, want, ready, terminal]);
+  }, [api, id, want, ready, terminal, statusOnly]);
 
   return {
-    order: current,
+    order: current && !isTracking(current) ? current : undefined,
+    tracking: current && isTracking(current) ? current : undefined,
     loading: q.loading && !current,
     error: current ? undefined : q.error,
     refetch: q.refetch,
@@ -568,7 +612,16 @@ export function useDeliveryQuote(): {
   /** a bairro, or Kernel 1.2 `{ lat, lng }` (e.g. from the device's location); Kernel 1.12
    *  `paymentMethod` adds the cart's `totals` priced for it */
   quote: (
-    where: string | { neighborhood?: string; lat?: number; lng?: number; paymentMethod?: string },
+    where:
+      | string
+      | {
+          neighborhood?: string;
+          lat?: number;
+          lng?: number;
+          paymentMethod?: string;
+          /** Kernel 1.21 — ride the cart session: `totals` come back with this delivery */
+          withCart?: boolean;
+        },
   ) => Promise<QuoteResult>;
   result: QuoteResult | undefined;
   pending: boolean;
@@ -581,7 +634,15 @@ export function useDeliveryQuote(): {
   const seq = useRef(0);
   const quote = useCallback(
     async (
-      where: string | { neighborhood?: string; lat?: number; lng?: number; paymentMethod?: string },
+      where:
+        | string
+        | {
+            neighborhood?: string;
+            lat?: number;
+            lng?: number;
+            paymentMethod?: string;
+            withCart?: boolean;
+          },
     ) => {
       const n = ++seq.current;
       setPending(true);
@@ -619,15 +680,60 @@ export interface CustomerProfile {
     /** Kernel 1.15 — the delivery pin the shopper confirmed on the map */
     lat?: number;
     lng?: number;
+    /** Kernel 1.21 — "ponto de referência" */
+    reference?: string;
   };
+  /** Kernel 1.21 — the delivery addresses remembered on this device, most recent first (at most
+   *  `MAX_SAVED_ADDRESSES`; `address` is the first). `remember` adds the one it's given. */
+  addresses?: CustomerProfile['address'][];
 }
 
 const CUSTOMER_KEY = 'vendua.customer';
+const MAX_SAVED_ADDRESSES = 3;
 let customerMem: CustomerProfile | null | undefined;
 const customerListeners = new Set<() => void>();
 
 const isPin = (lat: unknown, lng: unknown): boolean =>
   typeof lat === 'number' && typeof lng === 'number' && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+
+type SavedAddress = CustomerProfile['address'];
+
+function cleanAddress(a: Partial<SavedAddress> | null | undefined): SavedAddress | null {
+  const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
+  if (!a || typeof a !== 'object') return null;
+  const out: SavedAddress = {
+    street: str(a.street, 120),
+    number: str(a.number, 10),
+    neighborhood: str(a.neighborhood, 80),
+    complement: str(a.complement, 80),
+    ...(typeof a.cep === 'string' && a.cep ? { cep: digitsOf(a.cep).slice(0, 8) } : {}),
+    ...(isPin(a.lat, a.lng) ? { lat: a.lat, lng: a.lng } : {}),
+    ...(typeof a.reference === 'string' && a.reference.trim()
+      ? { reference: a.reference.slice(0, 120) }
+      : {}),
+  };
+  return out;
+}
+
+/** The same door: street, number and complement, accents and case aside. */
+export function sameAddress(a: SavedAddress, b: SavedAddress): boolean {
+  const k = (x: SavedAddress) =>
+    [x.street, x.number, x.complement].map((v) => foldText(v.trim())).join('|');
+  return k(a) === k(b);
+}
+
+/** Kernel 1.21 — the device's addresses, most recent first (a profile from an older Kernel
+ *  holds only `address`). */
+export function savedAddresses(p: CustomerProfile | null | undefined): SavedAddress[] {
+  if (!p) return [];
+  const list = Array.isArray(p.addresses) && p.addresses.length ? p.addresses : [p.address];
+  const out: SavedAddress[] = [];
+  for (const raw of list) {
+    const a = cleanAddress(raw);
+    if (a && a.street.trim() && !out.some((x) => sameAddress(x, a))) out.push(a);
+  }
+  return out.slice(0, MAX_SAVED_ADDRESSES);
+}
 
 function readCustomer(): CustomerProfile | null {
   if (customerMem !== undefined) return customerMem;
@@ -643,7 +749,8 @@ function readCustomer(): CustomerProfile | null {
 
 /** Guest customer remembered on this device, only when they opt in at checkout
  *  (03 — storage only via Kernel session utilities). Phone-OTP accounts land
- *  with the merchant admin (Phase 3) behind this same hook. */
+ *  with the merchant admin (Phase 3) behind this same hook. Kernel 1.21: up to three delivery
+ *  addresses (`addresses`); remembering one puts it first, a pickup (no street) keeps them. */
 export function useCustomer(): {
   customer: CustomerProfile | null;
   status: 'guest' | 'remembered';
@@ -659,17 +766,18 @@ export function useCustomer(): {
     () => null,
   );
   const remember = useCallback((p: CustomerProfile) => {
+    const given = cleanAddress(p.address);
+    const before = savedAddresses(readCustomer());
+    const list = p.addresses
+      ? savedAddresses({ ...p, addresses: p.addresses })
+      : given?.street.trim()
+        ? [given, ...before.filter((a) => !sameAddress(a, given))].slice(0, MAX_SAVED_ADDRESSES)
+        : before;
     const clean: CustomerProfile = {
       name: p.name.slice(0, 120),
       phone: digitsOf(p.phone).slice(0, 13),
-      address: {
-        street: p.address.street.slice(0, 120),
-        number: p.address.number.slice(0, 10),
-        neighborhood: p.address.neighborhood.slice(0, 80),
-        complement: p.address.complement.slice(0, 80),
-        ...(p.address.cep ? { cep: digitsOf(p.address.cep).slice(0, 8) } : {}),
-        ...(isPin(p.address.lat, p.address.lng) ? { lat: p.address.lat, lng: p.address.lng } : {}),
-      },
+      address: list[0] ?? given ?? cleanAddress({})!,
+      ...(list.length ? { addresses: list } : {}),
     };
     customerMem = clean;
     try {
@@ -885,8 +993,9 @@ export function useCardState(
 }
 
 /** The catalog arranged for browsing: `query` searches (accents ignored), empty categories
- *  drop out, sold-out products sink within their category. */
-export function useMenu(opts: { query?: string } = {}): {
+ *  drop out, sold-out products sink within their category; Kernel 1.21: `dietary` narrows it
+ *  to products stating every one of those tags. */
+export function useMenu(opts: { query?: string; dietary?: readonly string[] } = {}): {
   categories: CatalogCategory[];
   /** products shown */
   count: number;
@@ -896,7 +1005,12 @@ export function useMenu(opts: { query?: string } = {}): {
 } {
   const { categories, loading, error, refetch } = useCatalog();
   const query = opts.query ?? '';
-  const arranged = useMemo(() => arrangeMenu(categories, { query }), [categories, query]);
+  // Kernel 1.21 — diet filters (`DIETARY_FILTERS`)
+  const diet = (opts.dietary ?? []).join(',');
+  const arranged = useMemo(
+    () => arrangeMenu(categories, { query, dietary: diet ? diet.split(',') : [] }),
+    [categories, query, diet],
+  );
   return {
     categories: arranged,
     count: arranged.reduce((n, c) => n + c.products.length, 0),

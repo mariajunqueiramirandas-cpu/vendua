@@ -3,16 +3,9 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { accountView } from '../modules/billing/account.ts';
-import {
-  checkCustomDomain,
-  hostTaken,
-  newVerifyToken,
-  normalizeHost,
-} from '../modules/billing/domains.ts';
-import { validEmail } from '../modules/billing/input.ts';
+import { validDocument, validEmail } from '../modules/billing/input.ts';
 import { heldPlans, publicPlanOr422, requireFeature } from '../modules/billing/plans.ts';
 import {
-  afterResponse,
   buyAiPack,
   cancelSubscription,
   lockBilling,
@@ -20,32 +13,55 @@ import {
   openSiteRequest,
   reissuePix,
   resumeSubscription,
+  runEffects,
   startSubscription,
   type BillingCtx,
 } from '../modules/billing/subscriptions.ts';
+import { deviceIdOr } from '../modules/payments/store-payments.ts';
 import { audit } from './audit.ts';
-import { oneOf, text, type AdminDeps, type Merchant } from './context.ts';
-import { handlers } from './handlers.ts';
+import { oneOf, text, type AdminCtx, type AdminDeps, type Merchant, type Role } from './context.ts';
+import { bodyOf, handlers, isReplay } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
+import { buildSiteTx, reviseSiteTx } from '../modules/site-builder/admin.ts';
+import { siteRequestViewTx } from '../modules/site-builder/tasks.ts';
 
 const METHODS = ['card', 'pix'] as const;
 const validPayerEmail = (v: unknown) => validEmail(v, 'payerEmail');
+const payerDocumentOr = (v: unknown) =>
+  v === undefined ? undefined : validDocument(v, 'payerDocument');
 
 // Conta e plano: the plan and its subscription (card assinatura or monthly Pix), invoices,
 // the Pangolim own domain and site request. Owner only; every write is idempotent (handlers.write).
 export function mountAccount(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
+  const queues = new WeakMap<Context, BillingCtx['later']>();
+  // a billing write's effects (a superseded Pix cancelled at MP, the owner's messages) wait for
+  // the claim tx to commit; a handler that throws rolls them back with its rows
+  const billingWrite =
+    (role: Role, fn: Parameters<typeof write>[1]) =>
+    async (c: AdminCtx): Promise<Response> => {
+      const effects: (() => Promise<unknown>)[] = [];
+      queues.set(c, (e) => void effects.push(e));
+      const res = await write(role, fn)(c);
+      void runEffects(effects);
+      return res;
+    };
 
   const view = (tx: Sql, t: Tenant) =>
-    accountView(tx, t, { storeDomain: d.storeDomain, provider: d.provider });
+    accountView(tx, t, { storeDomain: d.storeDomain, provider: d.provider, domains: d.domains });
   const ctxFor = (c: Context): BillingCtx => ({
     sql: d.sql,
     provider: d.provider,
     notify: d.notify,
     origin: d.publicOrigin(c),
-    later: afterResponse,
+    later:
+      queues.get(c) ??
+      (() => {
+        throw new Error('billing effects need billingWrite');
+      }),
+    deviceId: deviceIdOr(c.req.header('x-vendua-device')),
   });
   const billingOn = () => {
     if (!d.provider.platformConfigured)
@@ -62,16 +78,19 @@ export function mountAccount(d: AdminDeps) {
 
   admin.post(
     '/account/subscription',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       const body = await bodyJson(c);
       const plan = await publicPlanOr422(tx, body.planId, await heldPlans(tx, t.id));
       const method = oneOf(body.method, 'method', METHODS);
       const payerEmail = validPayerEmail(body.payerEmail);
+      // starting a plan issues its first Pix at once: it needs the document, as signup does
+      const payerDocument = validDocument(body.payerDocument, 'payerDocument');
       await startSubscription(ctxFor(c), tx, t.id, {
         plan,
         method,
         payerEmail,
+        payerDocument,
         key: idemKey(c),
         now: new Date(),
       });
@@ -85,7 +104,7 @@ export function mountAccount(d: AdminDeps) {
 
   admin.patch(
     '/account/subscription',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       const body = await bodyJson(c);
       const plan =
@@ -95,10 +114,12 @@ export function mountAccount(d: AdminDeps) {
       const method = body.method === undefined ? undefined : oneOf(body.method, 'method', METHODS);
       const payerEmail =
         body.payerEmail === undefined ? undefined : validPayerEmail(body.payerEmail);
+      const payerDocument = payerDocumentOr(body.payerDocument);
       const { before, after } = await changeSubscription(ctxFor(c), tx, t.id, {
         plan,
         method,
         payerEmail,
+        payerDocument,
         key: idemKey(c),
         now: new Date(),
       });
@@ -111,6 +132,7 @@ export function mountAccount(d: AdminDeps) {
               : `trocou para ${plan.name}`),
         method && `pagamento por ${method === 'card' ? 'cartão' : 'Pix'}`,
         payerEmail && 'email de cobrança',
+        payerDocument && 'CPF/CNPJ de cobrança',
       ].filter(Boolean);
       await audit(tx, t.id, m, {
         action: 'subscription.change',
@@ -135,7 +157,7 @@ export function mountAccount(d: AdminDeps) {
 
   admin.post(
     '/account/subscription/cancel',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       await cancelSubscription(ctxFor(c), tx, t.id);
       await log(tx, t, m, 'subscription.cancel', 'cancelou o plano (vale até o fim do período)');
@@ -145,7 +167,7 @@ export function mountAccount(d: AdminDeps) {
 
   admin.post(
     '/account/subscription/resume',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       await resumeSubscription(ctxFor(c), tx, t.id, new Date());
       await log(tx, t, m, 'subscription.resume', 'desfez o cancelamento do plano');
@@ -155,7 +177,7 @@ export function mountAccount(d: AdminDeps) {
 
   admin.post(
     '/account/invoices/:id/pix',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       const id = uuidParam(c, 'id');
       const inv = await reissuePix(ctxFor(c), tx, t.id, id, new Date());
@@ -172,7 +194,7 @@ export function mountAccount(d: AdminDeps) {
   // the Vendedor's extra conversations (ADR 0032): a one-off Pix, credited when it is paid
   admin.post(
     '/account/ai-packs',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       billingOn();
       const body = await bodyJson(c, 1024);
       const inv = await buyAiPack(ctxFor(c), tx, t.id, body.packId, new Date(), {
@@ -190,123 +212,10 @@ export function mountAccount(d: AdminDeps) {
     }),
   );
 
-  // ── Pangolim: own domain ─────────────────────────────────────────────────
-  admin.post(
-    '/account/domains',
-    write('owner', async (tx, t, m, c) => {
-      await requireFeature(tx, t.id, 'customDomain');
-      const body = await bodyJson(c);
-      const host = normalizeHost(body.host, d.storeDomain);
-      await lockBilling(tx, t.id);
-      const current = (
-        await tx<{ id: string; host: string; status: string }[]>`
-          select id, host, status from custom_domains where tenant_id = ${t.id} for update
-        `
-      )[0];
-      if (current?.host === host) {
-        // trying again after giving up: a fresh week to set the DNS (same TXT token)
-        if (current.status === 'failed' && !(await hostTaken(d.sql, host, t.id)))
-          await tx`
-            update custom_domains set status = 'pending_dns', created_at = now(), last_error = null
-            where id = ${current.id}
-          `;
-        return { status: 200, body: await view(tx, t) };
-      }
-      if (current?.status === 'active')
-        throw new HttpError(409, 'DOMAIN_ACTIVE', 'the store already serves its own domain');
-      if (await hostTaken(d.sql, host, t.id))
-        throw new HttpError(409, 'DOMAIN_TAKEN', 'this domain is in use by another store', {
-          field: 'host',
-        });
-      // one own domain per store: a new one replaces one that never went live
-      if (current) await tx`delete from custom_domains where id = ${current.id}`;
-      let row: { id: string };
-      try {
-        row = (
-          await tx<{ id: string }[]>`
-            insert into custom_domains (tenant_id, host, verify_token)
-            values (${t.id}, ${host}, ${newVerifyToken()})
-            returning id
-          `
-        )[0]!;
-      } catch (err) {
-        if ((err as { code?: string }).code === '23505')
-          throw new HttpError(409, 'DOMAIN_TAKEN', 'this domain is in use by another store', {
-            field: 'host',
-          });
-        throw err;
-      }
-      await emitAdminTx(tx, t.id, 'billing');
-      await audit(tx, t.id, m, {
-        action: 'domain.add',
-        entity: 'custom_domain',
-        entityId: row.id,
-        summary: `adicionou o domínio ${host}`,
-        before: current ? { host: current.host } : null,
-        after: { host },
-      });
-      return { status: 201, body: await view(tx, t) };
-    }),
-  );
-
-  admin.post(
-    '/account/domains/:id/check',
-    write('owner', async (tx, t, m, c) => {
-      const id = uuidParam(c, 'id');
-      const row = (
-        await tx<{ host: string }[]>`
-          select host from custom_domains where tenant_id = ${t.id} and id = ${id}
-        `
-      )[0];
-      if (!row) throw new HttpError(404, 'DOMAIN_NOT_FOUND', 'domain not found');
-      // its own tx (DNS answers can take seconds); the result lands before we read the view
-      await checkCustomDomain(d.sql, {
-        tenantId: t.id,
-        domainId: id,
-        storeDomain: d.storeDomain,
-        now: new Date(),
-        manual: true,
-      });
-      await audit(tx, t.id, m, {
-        action: 'domain.check',
-        entity: 'custom_domain',
-        entityId: id,
-        summary: `verificou o domínio ${row.host}`,
-      });
-      return { status: 200, body: await view(tx, t) };
-    }),
-  );
-
-  admin.delete(
-    '/account/domains/:id',
-    write('owner', async (tx, t, m, c) => {
-      const id = uuidParam(c, 'id');
-      const row = (
-        await tx<{ host: string; status: string }[]>`
-          select host, status from custom_domains where tenant_id = ${t.id} and id = ${id} for update
-        `
-      )[0];
-      if (!row) throw new HttpError(404, 'DOMAIN_NOT_FOUND', 'domain not found');
-      // a live domain is the store's primary address — the team takes it down with the TLS
-      if (row.status === 'active')
-        throw new HttpError(409, 'DOMAIN_ACTIVE', 'a live domain is removed by the Venduá team');
-      await tx`delete from custom_domains where tenant_id = ${t.id} and id = ${id}`;
-      await emitAdminTx(tx, t.id, 'billing');
-      await audit(tx, t.id, m, {
-        action: 'domain.remove',
-        entity: 'custom_domain',
-        entityId: id,
-        summary: `removeu o domínio ${row.host}`,
-        before: row,
-      });
-      return { status: 200, body: await view(tx, t) };
-    }),
-  );
-
   // ── Pangolim: a site made by our agent ───────────────────────────────────
   admin.post(
     '/account/site-request',
-    write('owner', async (tx, t, m, c) => {
+    billingWrite('owner', async (tx, t, m, c) => {
       await requireFeature(tx, t.id, 'customSite');
       const body = await bodyJson(c);
       const brief = text(body.brief, 'brief', 2000, 3);
@@ -341,6 +250,37 @@ export function mountAccount(d: AdminDeps) {
         brief,
       });
       return { status: 200, body: await view(tx, t) };
+    }),
+  );
+
+  // the site builder (Duá's cards replay these, and dry-run them: rows only, never HTTP)
+  admin.post(
+    '/account/site-request/build',
+    named('site.build').write('owner', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 32 * 1024);
+      const source = isReplay(c) ? 'copilot' : 'owner';
+      const task = await buildSiteTx(tx, t.id, { spec: body.spec, source });
+      await log(tx, t, m, 'site_request.build', 'aprovou o projeto do site sob medida', {
+        taskId: task.id,
+        source,
+      });
+      return { status: 201, body: await siteRequestViewTx(tx, t.id) };
+    }),
+  );
+
+  admin.post(
+    '/account/site-request/revision',
+    named('site.revise').write('owner', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 32 * 1024);
+      const note = text(body.note, 'note', 1000, 3);
+      const source = isReplay(c) ? 'copilot' : 'owner';
+      const task = await reviseSiteTx(tx, t.id, { note, spec: body.spec, source });
+      await log(tx, t, m, 'site_request.revise', 'pediu o ajuste do site sob medida', {
+        taskId: task.id,
+        note,
+        source,
+      });
+      return { status: 201, body: await siteRequestViewTx(tx, t.id) };
     }),
   );
 }

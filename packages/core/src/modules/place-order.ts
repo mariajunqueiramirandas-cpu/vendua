@@ -1,7 +1,7 @@
 import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
-import { loadCartView, loadZoneRows, repriceLines, storeCoords } from './cart.ts';
+import { loadCartRow, loadCartView, loadZoneRows, repriceLines, storeCoords } from './cart.ts';
 import { getProductsById, type ProductDetail } from './catalog.ts';
 import { addressParts, composeAddress, validateCheckout, type CheckoutInput } from './checkout.ts';
 import { couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
@@ -10,15 +10,27 @@ import { enqueueOrderPrintTx } from './printing/jobs.ts';
 import { normalizePhone } from './customer.ts';
 import { effectiveFee, routeMatches, validCoords, type RouteQuote } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
-import { offlinePayment, onlineOffer, onlinePayment } from './payments/store-payments.ts';
+import {
+  freePayment,
+  offlinePayment,
+  onlineOffer,
+  onlinePayment,
+} from './payments/store-payments.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 import { validateSchedule } from './preorder.ts';
+import { planHas } from './billing/plans.ts';
+import type { QrTable } from './pdv/qr.ts';
 import { recordStaffEventTx } from './staff-events.ts';
 import { drawStock, stockDemand } from './stock.ts';
 import { deriveStatus, type StoreSettingsRow } from './store.ts';
 
 /** R$ 10.000: no shopper pays a delivery with more than that in cash */
 export const MAX_CHANGE_CENTS = 1_000_000;
+/** orders' money columns are int4: a cart of many priciest lines must stop at a 422 first */
+export const MAX_ORDER_CENTS = 1_000_000_000;
+
+/** QR orders a table may have waiting for the staff at once (ADR 0036) */
+export const MAX_PENDING_AT_TABLE = 5;
 
 /**
  * The one place an order is born (checkout invariant: at most one order per cart).
@@ -42,39 +54,65 @@ export async function placeOrderTx(
     source?: string;
     /** the Vendedor conversation that sold it */
     threadId?: string | null;
+    /** dine_in: the QR's table, its open comanda already locked (tableForToken) */
+    table?: QrTable | null;
   } = {},
 ): Promise<string> {
-  // Lock the cart row first — concurrent checkouts would both see 'open' and mint duplicates.
-  const [locked] = await tx<{ delivery_route: RouteQuote | null }[]>`
-    select delivery_route from carts where tenant_id = ${tenantId} and id = ${cartId} for update
-  `;
-  const cart = await loadCartView(tx, tenantId, cartId, now);
+  // One pipelined batch. postgres.js sends a query when it is first executed, so the locks are
+  // executed here in their order, ahead of every query the helpers below send: the cart row first
+  // (concurrent checkouts would both see 'open' and mint duplicates), then the advisory lock
+  // before reading eligibility (choke point vs concurrent settings/zone/product writes), then
+  // settings, then zones; the payment connection and the cart view's lines are plain reads after
+  // them. The view prices from the locked rows themselves.
+  const lockCart = loadCartRow(tx, tenantId, cartId, { forUpdate: true });
+  const choke = tx`select pg_advisory_xact_lock(hashtext(${tenantId}))`.execute();
+  const lockSettings = tx<StoreSettingsRow[]>`
+    select * from store_settings where tenant_id = ${tenantId} for update
+  `.then((rows) => rows[0] ?? null);
+  const lockZones = loadZoneRows(tx, tenantId, { forUpdate: true });
+  const [locked, , settings, zones, offer, cart] = await Promise.all([
+    lockCart,
+    choke,
+    lockSettings,
+    lockZones,
+    onlineOffer(tx, tenantId, provider),
+    loadCartView(tx, tenantId, cartId, now, {
+      have: { cart: lockCart, settings: lockSettings, zones: lockZones },
+    }),
+  ]);
   // A completed cart must not mint a second order.
   if (cart.status !== 'open') {
     throw new HttpError(409, 'CART_NOT_OPEN', 'cart already checked out', {
       cartStatus: cart.status,
     });
   }
-  // Advisory lock before reading eligibility — choke point vs concurrent settings/zone/product writes.
-  await tx`select pg_advisory_xact_lock(hashtext(${tenantId}))`;
-  const settings =
-    (
-      await tx<
-        StoreSettingsRow[]
-      >`select * from store_settings where tenant_id = ${tenantId} for update`
-    )[0] ?? null;
-  // zones lock after settings, as always; the payment connection is a plain read beside it
-  const [zones, offer] = await Promise.all([
-    loadZoneRows(tx, tenantId, { forUpdate: true }),
-    onlineOffer(tx, tenantId, provider),
+  // Re-validate modifier ids / kit picks against current defs — nothing retired slips through
+  // underpriced. The order number rides along: numbering relies on the advisory lock above (else
+  // two checkouts read the same max), and only this function inserts orders.
+  // Every product the order touches, kit picks included, locked first in one id-ordered pass
+  // (sent ahead of the read below): locking the cart's products here and the picks later in
+  // drawStock let a cancel or a stock edit, each locking in id order, deadlock with a checkout.
+  const touched = [
+    ...new Set(
+      cart.items.flatMap((i) => [i.productId, ...i.comboSelections.map((c) => c.productId)]),
+    ),
+  ];
+  const lockAll = tx`
+    select 1 from products where tenant_id = ${tenantId} and id = any(${touched}::uuid[])
+    order by id for update
+  `.execute();
+  const [, found, number] = await Promise.all([
+    lockAll,
+    getProductsById(
+      tx,
+      tenantId,
+      cart.items.map((i) => i.productId),
+      { forUpdate: true, tz: settings?.hours?.timezone || 'America/Sao_Paulo' },
+    ),
+    tx<{ n: number }[]>`
+      select coalesce(max(number), 0) + 1 as n from orders where tenant_id = ${tenantId}
+    `.then((rows) => rows[0]!.n),
   ]);
-  // Re-validate modifier ids / kit picks against current defs — nothing retired slips through underpriced.
-  const found = await getProductsById(
-    tx,
-    tenantId,
-    cart.items.map((i) => i.productId),
-    { forUpdate: true },
-  );
   const products = new Map<string, ProductDetail | null>(
     cart.items.map((i) => [i.productId, found.get(i.productId) ?? null]),
   );
@@ -108,6 +146,21 @@ export async function placeOrderTx(
     { card: offer.online },
     route,
   );
+  const atTable = body.delivery.mode === 'dine_in';
+  const table = atTable ? (opts.table ?? null) : null;
+  if (atTable) {
+    if (!table) throw new HttpError(404, 'TABLE_NOT_FOUND', 'this table QR is not valid anymore');
+    if (!(settings?.pdv_qr_orders ?? true) || !(await planHas(tx, tenantId, 'pdv')))
+      throw new HttpError(
+        423,
+        'TABLE_ORDERS_OFF',
+        'this store is not taking orders from its tables',
+      );
+    if (body.payment.method === 'pix' && !(offer.online && offer.provider))
+      throw new HttpError(422, 'PAYMENT_METHOD_UNAVAILABLE', 'pix at a table is paid online', {
+        field: 'payment.method',
+      });
+  }
   const scheduledFor = validateSchedule(
     cart.schedule,
     body.scheduledFor ?? undefined,
@@ -129,7 +182,7 @@ export async function placeOrderTx(
           subtotal,
         )
       : 0;
-  const phone = normalizePhone(body.customer.phone);
+  const phone = (body.customer.phone && normalizePhone(body.customer.phone)) || null;
 
   // coupon: re-evaluated with the phone (per-phone limits, first order, personal rewards)
   let discount = 0;
@@ -152,12 +205,37 @@ export async function placeOrderTx(
         field: 'coupon',
         ...out.details,
       });
-    discount = out.discountCents;
-    if (row.kind !== 'free_delivery') itemDiscount = discount;
-    coupon = { id: row.id, code: row.code };
+    // a free delivery on a trip that costs nothing: no redemption to spend the reward on
+    if (out.discountCents > 0) {
+      if (!phone)
+        throw new HttpError(422, 'INVALID_CUSTOMER', 'a coupon needs the phone number', {
+          field: 'customer.phone',
+        });
+      discount = out.discountCents;
+      if (row.kind !== 'free_delivery') itemDiscount = discount;
+      coupon = { id: row.id, code: row.code };
+    }
   }
 
-  await drawStock(
+  // from the locked settings row, before the payment is built: Pix/MP charge the adjusted total
+  const paymentAdjustment = Math.max(
+    paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, body.payment.method)),
+    -(subtotal + deliveryFee - discount),
+  );
+  const total = subtotal + deliveryFee - discount + paymentAdjustment;
+  if (subtotal > MAX_ORDER_CENTS || total > MAX_ORDER_CENTS)
+    throw new HttpError(422, 'ORDER_TOO_LARGE', 'this order is larger than a store can take', {
+      maxCents: MAX_ORDER_CENTS,
+    });
+  // a fee, coupon or payment adjustment that moved since the shopper's screen: nothing is written
+  // yet, so the caller's committed refusal carries no side effect
+  if (body.expectedTotalCents != null && body.expectedTotalCents !== total)
+    throw new HttpError(409, 'PRICES_CHANGED', 'the total changed — review the order', {
+      totalCents: total,
+      expectedTotalCents: body.expectedTotalCents,
+    });
+
+  const stockDrawn = await drawStock(
     tx,
     tenantId,
     stockDemand(
@@ -165,19 +243,7 @@ export async function placeOrderTx(
     ),
   );
 
-  // Numbering relies on the advisory lock above — else two checkouts read the same max.
-  const number = (
-    await tx<
-      { n: number }[]
-    >`select coalesce(max(number), 0) + 1 as n from orders where tenant_id = ${tenantId}`
-  )[0]!.n;
   const orderId = crypto.randomUUID();
-  // from the locked settings row, before the payment is built: Pix/MP charge the adjusted total
-  const paymentAdjustment = Math.max(
-    paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, body.payment.method)),
-    -(subtotal + deliveryFee - discount),
-  );
-  const total = subtotal + deliveryFee - discount + paymentAdjustment;
   const changeFor = body.payment.changeForCents ?? null;
   if (changeFor !== null) {
     if (
@@ -200,12 +266,16 @@ export async function placeOrderTx(
   // a store that isn't connected keeps today's static Pix from its own key
   const method = body.payment.method;
   const payment = {
-    ...(offer.online && offer.provider && (method === 'pix' || method === 'card_online')
-      ? onlinePayment(offer.provider, method, total)
-      : offlinePayment(settings, method, total, number)),
+    ...(method === 'tab'
+      ? { provider: 'pdv', method: 'tab', status: 'pending', online: false }
+      : total === 0
+        ? freePayment(method, now)
+        : offer.online && offer.provider && (method === 'pix' || method === 'card_online')
+          ? onlinePayment(offer.provider, method, total)
+          : offlinePayment(settings, method, total, number)),
     ...(changeFor !== null ? { changeForCents: changeFor } : {}),
   };
-  const source = opts.source ?? 'storefront';
+  const source = atTable ? 'table_qr' : (opts.source ?? 'storefront');
 
   const prep = settings?.prep_time_minutes ?? 30;
   const at = (min: number) => new Date(now.getTime() + min * 60_000).toISOString();
@@ -228,33 +298,106 @@ export async function placeOrderTx(
           promisedFrom: scheduledFor ? null : at(match.zone?.eta_min_minutes ?? prep),
           promisedTo: scheduledFor ? null : at(match.zone?.eta_max_minutes ?? prep),
         }
-      : {
-          mode: 'pickup' as const,
-          neighborhood: null,
-          address: null,
-          feeCents: 0,
-          etaMin: null,
-          etaMax: null,
-          promisedFrom: scheduledFor ? null : at(prep),
-          promisedTo: scheduledFor ? null : at(prep),
-        };
+      : atTable
+        ? {
+            mode: 'dine_in' as const,
+            neighborhood: null,
+            address: null,
+            feeCents: 0,
+            etaMin: null,
+            etaMax: null,
+            promisedFrom: at(prep),
+            promisedTo: at(prep),
+            table: table!.label,
+            tabId: null as string | null,
+          }
+        : {
+            mode: 'pickup' as const,
+            neighborhood: null,
+            address: null,
+            feeCents: 0,
+            etaMin: null,
+            etaMax: null,
+            promisedFrom: scheduledFor ? null : at(prep),
+            promisedTo: scheduledFor ? null : at(prep),
+          };
 
-  const customer = { name: body.customer.name.trim(), phone: body.customer.phone.trim() };
+  const customer = {
+    name: body.customer.name.trim().slice(0, atTable ? 80 : 200),
+    phone: body.customer.phone?.trim() ?? '',
+  };
+  // the table's comanda: the open one, or one opened by this first order (a waiter opening the
+  // same table at the same moment wins the index, and the order joins theirs)
+  let tabId: string | null = null;
+  if (table) {
+    tabId = table.tabId;
+    // a waiter may open (or close) the table's comanda at the same moment: the index lets one
+    // opening through; a comanda found that way is locked, and a closed one means open anew
+    for (let tries = 0; !tabId && tries < 3; tries++) {
+      const [opened] = await tx<{ id: string }[]>`
+        insert into pdv_tabs (tenant_id, table_id, label, service_bps, service_fee, opened_by)
+        values (${tenantId}, ${table.id}, ${table.label}, ${table.serviceBps}, ${table.serviceBps > 0},
+                'QR da mesa')
+        on conflict (tenant_id, table_id) where status = 'open' and table_id is not null do nothing
+        returning id
+      `;
+      tabId =
+        opened?.id ??
+        (
+          await tx<{ id: string; status: string }[]>`
+            select id, status from pdv_tabs
+            where tenant_id = ${tenantId} and table_id = ${table.id} and status = 'open'
+            for update
+          `
+        ).find((r) => r.status === 'open')?.id ??
+        null;
+    }
+    if (!tabId) throw new HttpError(409, 'TABLE_BUSY', 'the table changed — try again');
+    // a prank stops at the staff, who accept every QR order; this keeps the queue short
+    const waiting = (
+      await tx<{ n: number }[]>`
+        select count(*)::int as n from orders
+        where tenant_id = ${tenantId} and tab_id = ${tabId} and source = 'table_qr'
+          and state = 'placed'
+      `
+    )[0]!.n;
+    if (waiting >= MAX_PENDING_AT_TABLE)
+      throw new HttpError(
+        429,
+        'TABLE_ORDERS_PENDING',
+        'this table has orders waiting for the staff',
+        {
+          pending: waiting,
+        },
+      );
+    (delivery as { tabId?: string | null }).tabId = tabId;
+  }
   await tx`
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
-                        total_cents, coupon_code, notes, scheduled_for, source, thread_id)
+                        total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id,
+                        stock_drawn)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
-            ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null})
+            ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId},
+            ${tx.json(stockDrawn)})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
-  await Promise.all([
+  const [store] = await Promise.all([
+    // the staff events' store name, whether this is its first order (counts the row above), and
+    // whether the store has the WhatsApp sender or an auto printer the hooks below look for
+    tx<{ name: string; orders: number; whatsapp: boolean; printers: boolean }[]>`
+      select name,
+        (select count(*) from (select 1 from orders where tenant_id = ${tenantId} limit 2) o)::int as orders,
+        exists (select 1 from store_whatsapp where tenant_id = ${tenantId} and wanted) as whatsapp,
+        exists (select 1 from printers where tenant_id = ${tenantId} and auto) as printers
+      from tenants where id = ${tenantId}
+    `.then((rows) => rows[0]),
     ...cart.items.map(
       (i, sort) => tx`
         insert into order_items (tenant_id, order_id, product_id, slug, name, qty, unit_price_cents,
-                                 modifiers, combo, line_total_cents, sort)
+                                 modifiers, combo, line_total_cents, sort, note)
         values (${tenantId}, ${orderId}, ${i.productId}, ${i.slug}, ${i.name}, ${i.qty}, ${i.unitPriceCents},
                 ${tx.json(i.modifiers.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents, qty: m.qty })))},
                 ${tx.json(
@@ -266,7 +409,7 @@ export async function placeOrderTx(
                     qty: c.qty,
                   })) as never,
                 )},
-                ${i.lineTotalCents}, ${sort})
+                ${i.lineTotalCents}, ${sort}, ${i.note ?? null})
       `,
     ),
     coupon &&
@@ -291,17 +434,12 @@ export async function placeOrderTx(
     `,
     // the merchant admin's live board rings on commit
     emitAdminTx(tx, tenantId, 'order.placed', orderId),
+    // a QR order lands on its table's comanda (ADR 0036)
+    tabId && emitAdminTx(tx, tenantId, 'pdv', tabId),
   ]);
 
   // staff events (ADR 0023) after the batch: each one is a savepoint, which must not interleave
   // with other statements of this tx
-  const store = (
-    await tx<{ name: string; orders: number }[]>`
-      select name,
-        (select count(*) from (select 1 from orders where tenant_id = ${tenantId} limit 2) o)::int as orders
-      from tenants where id = ${tenantId}
-    `
-  )[0];
   const storeName = store?.name ?? '';
   await recordStaffEventTx(
     tx,
@@ -332,7 +470,9 @@ export async function placeOrderTx(
       { tenantId, dedupeKey: `onboarding:${tenantId}:first_order` },
     );
   }
-  await enqueueOrderMessageTx(tx, tenantId, orderId, 'placed');
-  await enqueueOrderPrintTx(tx, tenantId, orderId, 'placed');
+  // each hook re-checks everything in a savepoint of its own; the flags only skip a store that
+  // has neither, which is what their first read would have found
+  if (store?.whatsapp !== false) await enqueueOrderMessageTx(tx, tenantId, orderId, 'placed');
+  if (store?.printers !== false) await enqueueOrderPrintTx(tx, tenantId, orderId, 'placed');
   return orderId;
 }

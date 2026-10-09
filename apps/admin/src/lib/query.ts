@@ -29,9 +29,11 @@ export const qk = {
   customer: (phone: string) => ['customers', 'one', phone] as const,
   marketing: ['marketing'] as const,
   share: ['share'] as const,
-  reports: (from: string, to: string) => ['reports', from, to] as const,
+  // a preset is one key whatever day it is: Core resolves its days and says which in `range`
+  reports: (period: string, from = '', to = '') => ['reports', period, from, to] as const,
   team: ['team'] as const,
   activity: ['activity'] as const,
+  activityOf: (kind: string) => ['activity', kind] as const,
   account: ['account'] as const,
   appearance: ['appearance'] as const,
   sessions: ['me', 'sessions'] as const,
@@ -57,6 +59,22 @@ export const qk = {
     onboarding: ['vendedor', 'onboarding'] as const,
   },
   customerFacts: (phone: string) => ['customers', 'facts', phone] as const,
+  // this person's conversation with Duá Copilot (the live topic `copilot`)
+  copilot: ['copilot'] as const,
+  // the PDV under one root: the live topic `pdv` refreshes them all
+  pdv: {
+    state: ['pdv', 'state'] as const,
+    caixa: ['pdv', 'caixa'] as const,
+    tab: (id: string, ways = 0) => ['pdv', 'tab', id, ways] as const,
+    history: ['pdv', 'history'] as const,
+    session: (id: string) => ['pdv', 'session', id] as const,
+    tables: ['pdv', 'tables'] as const,
+  },
+  pdvCustomer: (phone: string) => ['pdv-customer', phone] as const,
+  pdvGeocode: (address: string) => ['pdv-geocode', address] as const,
+  // outside the `pdv` root: a write elsewhere doesn't re-price an open ticket
+  pdvQuote: (body: string) => ['pdv-quote', body] as const,
+  pdvPix: (cents: number) => ['pdv-pix', cents] as const,
 };
 
 // 408 and 429 pass with time; other 4xx won't change by asking again

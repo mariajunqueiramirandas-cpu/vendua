@@ -1,25 +1,43 @@
+import { printTroubleTx } from '../modules/printing/jobs.ts';
 import type { Sql } from '../platform/db.ts';
+import { waLinkedTx } from '../store-whatsapp/proactive.ts';
 import { roleAtLeast, type AdminDeps, type Role } from './context.ts';
 import { handlers } from './handlers.ts';
 import { onboardingOf, setupChecklist } from './routes-onboarding.ts';
-import { storeTz } from './routes-orders.ts';
-import { loadSettings, statusOf } from './routes-store.ts';
+import { demandOf, loadSettings, statusOf } from './routes-store.ts';
 
 // Início in one read: the living header, "precisa de você", the setup checklist
 // and the live feed. Everything is scoped to the store's local day.
 
 export function mountHome(d: AdminDeps) {
   const { admin } = d;
-  const { read } = handlers(d);
+  const { read, named } = handlers(d);
 
   admin.get(
     '/home',
-    read('attendant', async (tx, t, m) => {
-      const tz = await storeTz(tx, t.id);
+    named('home').read('attendant', async (tx, t, m) => {
       const s = await loadSettings(tx, t.id);
+      const tz = s.hours?.timezone || 'America/Sao_Paulo';
       const st = statusOf(s);
-      const today = (
-        await tx<
+      const manager = roleAtLeast(m.role, 'manager');
+      // every read below is independent: one batch, one round trip
+      const [
+        [todayRow],
+        spark,
+        waitingRows,
+        inProgressRows,
+        platform,
+        pix,
+        low,
+        wl,
+        { checklist, orders: totalOrders },
+        feed,
+        liveRows,
+        best,
+        [busiestRow],
+        prints,
+      ] = await Promise.all([
+        tx<
           {
             salesCents: number;
             orders: number;
@@ -44,31 +62,89 @@ export function mountHome(d: AdminDeps) {
           from bounds b left join orders o on o.tenant_id = ${t.id} and o.state not in ('cancelled', 'refunded')
             and o.placed_at >= b.day_start - interval '7 days'
           group by b.day_start, b.elapsed
-        `
-      )[0] ?? { salesCents: 0, orders: 0, lastWeekSalesCents: 0, lastWeekOrders: 0 };
-      const spark = await tx<{ date: string; salesCents: number }[]>`
+        `,
+        tx<{ date: string; salesCents: number }[]>`
         select d::date::text as date,
                coalesce(sum(o.total_cents), 0)::int as "salesCents"
         from generate_series((now() at time zone ${tz})::date - 6, (now() at time zone ${tz})::date, interval '1 day') d
         left join orders o on o.tenant_id = ${t.id} and o.state not in ('cancelled', 'refunded')
           and (o.placed_at at time zone ${tz})::date = d::date
         group by d order by d
-      `;
-      const waiting = (
-        await tx<{ n: number; late: number; oldest: string | null }[]>`
+      `,
+        tx<{ n: number; late: number; oldest: string | null }[]>`
           select count(*)::int as n,
                  count(*) filter (where placed_at < now() - make_interval(mins => ${s.accept_target_minutes ?? 5}))::int as late,
                  min(placed_at) as oldest
           from orders where tenant_id = ${t.id} and state = 'placed'
             and (scheduled_for is null or scheduled_for <= (now() at time zone ${tz})::date)
-        `
-      )[0]!;
-      const inProgress = (
-        await tx<{ n: number }[]>`
+        `,
+        tx<{ n: number }[]>`
           select count(*)::int as n from orders
           where tenant_id = ${t.id} and state in ('confirmed', 'preparing', 'ready', 'out_for_delivery')
-        `
-      )[0]!.n;
+        `,
+        platformAttention(tx, t.id, m.role, !!s.billing_hold),
+        manager
+          ? tx<{ n: number }[]>`
+              select count(*)::int as n from orders
+              where tenant_id = ${t.id} and payment ->> 'method' = 'pix' and payment ->> 'status' = 'pending'
+                and state not in ('cancelled', 'refunded') and placed_at > now() - interval '3 days'
+            `
+          : [],
+        manager
+          ? tx<{ id: string; name: string; stock: number }[]>`
+              select id, name, stock_quantity as stock from products
+              where tenant_id = ${t.id} and status = 'active' and stock_quantity is not null
+                and (stock_quantity = 0 or (low_stock_threshold is not null and stock_quantity <= low_stock_threshold))
+              order by stock_quantity limit 5
+            `
+          : [],
+        manager
+          ? tx<{ id: string; name: string; n: number }[]>`
+              select p.id, p.name, count(*)::int as n from notify_requests n join products p on p.id = n.product_id
+              where n.tenant_id = ${t.id} and n.subject = 'product' and n.notified_at is null
+                and p.deleted_at is null
+              group by p.id order by n desc limit 3
+            `
+          : [],
+        setupChecklist(tx, t.id, s),
+        tx`
+          select e.at, e.to_state as "to", e.from_state as "from", e.actor, o.id as "orderId", o.number,
+                 o.customer ->> 'name' as name, o.total_cents as "totalCents"
+          from order_events e join orders o on o.id = e.order_id
+          where e.tenant_id = ${t.id} and e.at > now() - interval '24 hours'
+          order by e.at desc limit 12
+        `,
+        tx<{ visitors: number; carts: number }[]>`
+          select count(distinct session_id) filter (where name in ('page_view', 'product_view'))::int as visitors,
+                 count(distinct session_id) filter (where name = 'add_to_cart')::int as carts
+          from analytics_events where tenant_id = ${t.id} and at > now() - interval '30 minutes'
+        `,
+        tx`
+          select i.product_id as "productId", (array_agg(i.name))[1] as name, sum(i.qty)::int as qty,
+                 (select url from product_media m where m.product_id = i.product_id order by sort limit 1) as "imageUrl"
+          from order_items i join orders o on o.id = i.order_id
+          where o.tenant_id = ${t.id} and o.state not in ('cancelled', 'refunded')
+            and o.placed_at >= (date_trunc('day', now() at time zone ${tz}) at time zone ${tz})
+          group by i.product_id order by qty desc limit 3
+        `,
+        tx<{ hour: number; orders: number }[]>`
+          select extract(hour from placed_at at time zone ${tz})::int as hour, count(*)::int as orders
+          from orders where tenant_id = ${t.id} and state not in ('cancelled', 'refunded')
+            and placed_at >= (date_trunc('day', now() at time zone ${tz}) at time zone ${tz})
+          group by 1 order by 2 desc limit 1
+        `,
+        printTroubleTx(tx, t.id),
+      ]);
+      const today = todayRow ?? {
+        salesCents: 0,
+        orders: 0,
+        lastWeekSalesCents: 0,
+        lastWeekOrders: 0,
+      };
+      const busiest = busiestRow ?? null;
+      const waiting = waitingRows[0]!;
+      const inProgress = inProgressRows[0]!.n;
+      const live = liveRows[0]!;
 
       const attention: {
         kind: string;
@@ -94,15 +170,25 @@ export function mountHome(d: AdminDeps) {
           title: `A loja está ${st.status === 'paused' ? 'pausada' : 'fechada'} com pedidos em andamento`,
           href: '/pedidos',
         });
-      attention.push(...(await platformAttention(tx, t.id, m.role, !!s.billing_hold)));
-      if (roleAtLeast(m.role, 'manager')) {
-        const pendingPix = (
-          await tx<{ n: number }[]>`
-            select count(*)::int as n from orders
-            where tenant_id = ${t.id} and payment ->> 'method' = 'pix' and payment ->> 'status' = 'pending'
-              and state not in ('cancelled', 'refunded') and placed_at > now() - interval '3 days'
-          `
-        )[0]!.n;
+      attention.push(...platform);
+      if (prints.length) {
+        const p = prints[0]!;
+        const orders = new Set(prints.map((x) => x.orderId)).size;
+        attention.push({
+          kind: 'print_failed',
+          count: orders,
+          title:
+            orders === 1
+              ? `A comanda do pedido #${p.number} não imprimiu`
+              : `As comandas de ${orders} pedidos não imprimiram`,
+          detail: p.waiting
+            ? `${p.printer} não respondeu. Confira se o aparelho está ligado.`
+            : `${p.printer}: ${p.error ?? 'falha ao imprimir'}`,
+          href: orders === 1 ? `/pedidos/${p.orderId}` : '/impressoras',
+        });
+      }
+      if (manager) {
+        const pendingPix = pix[0]!.n;
         if (pendingPix)
           attention.push({
             kind: 'pix_to_confirm',
@@ -111,12 +197,6 @@ export function mountHome(d: AdminDeps) {
             detail: 'Confira no seu banco e marque como pago',
             href: '/pagamentos',
           });
-        const low = await tx<{ id: string; name: string; stock: number }[]>`
-          select id, name, stock_quantity as stock from products
-          where tenant_id = ${t.id} and status = 'active' and stock_quantity is not null
-            and (stock_quantity = 0 or (low_stock_threshold is not null and stock_quantity <= low_stock_threshold))
-          order by stock_quantity limit 5
-        `;
         for (const p of low)
           attention.push({
             kind: 'low_stock',
@@ -125,11 +205,6 @@ export function mountHome(d: AdminDeps) {
             href: `/cardapio/estoque?p=${p.id}`,
             productId: p.id,
           });
-        const wl = await tx<{ id: string; name: string; n: number }[]>`
-          select p.id, p.name, count(*)::int as n from notify_requests n join products p on p.id = n.product_id
-          where n.tenant_id = ${t.id} and n.subject = 'product' and n.notified_at is null
-          group by p.id order by n desc limit 3
-        `;
         for (const w of wl)
           attention.push({
             kind: 'waitlist',
@@ -139,42 +214,23 @@ export function mountHome(d: AdminDeps) {
             href: '/marketing',
             productId: w.id,
           });
+        // with WhatsApp linked they hear it on opening; without it only the store can tell them
+        const openWaiters = (
+          await tx<{ n: number }[]>`
+            select count(*)::int as n from notify_requests
+            where tenant_id = ${t.id} and subject = 'store' and notified_at is null`
+        )[0]!.n;
+        if (openWaiters && !(await waLinkedTx(tx, t.id)))
+          attention.push({
+            kind: 'waitlist_open',
+            count: openWaiters,
+            title: `${openWaiters} ${openWaiters === 1 ? 'pessoa quer' : 'pessoas querem'} saber quando abrir`,
+            detail: 'Conecte o WhatsApp para avisar sozinho',
+            href: '/whatsapp',
+          });
       }
 
-      const { checklist, orders: totalOrders } = await setupChecklist(tx, t.id, s);
       const ob = onboardingOf(s);
-
-      const feed = await tx`
-        select e.at, e.to_state as "to", e.from_state as "from", e.actor, o.id as "orderId", o.number,
-               o.customer ->> 'name' as name, o.total_cents as "totalCents"
-        from order_events e join orders o on o.id = e.order_id
-        where e.tenant_id = ${t.id} and e.at > now() - interval '24 hours'
-        order by e.at desc limit 12
-      `;
-      const live = (
-        await tx<{ visitors: number; carts: number }[]>`
-          select count(distinct session_id) filter (where name in ('page_view', 'product_view'))::int as visitors,
-                 count(distinct session_id) filter (where name = 'add_to_cart')::int as carts
-          from analytics_events where tenant_id = ${t.id} and at > now() - interval '30 minutes'
-        `
-      )[0]!;
-      const best = await tx`
-        select i.product_id as "productId", (array_agg(i.name))[1] as name, sum(i.qty)::int as qty,
-               (select url from product_media m where m.product_id = i.product_id order by sort limit 1) as "imageUrl"
-        from order_items i join orders o on o.id = i.order_id
-        where o.tenant_id = ${t.id} and o.state not in ('cancelled', 'refunded')
-          and o.placed_at >= (date_trunc('day', now() at time zone ${tz}) at time zone ${tz})
-        group by i.product_id order by qty desc limit 3
-      `;
-      const busiest =
-        (
-          await tx<{ hour: number; orders: number }[]>`
-          select extract(hour from placed_at at time zone ${tz})::int as hour, count(*)::int as orders
-          from orders where tenant_id = ${t.id} and state not in ('cancelled', 'refunded')
-            and placed_at >= (date_trunc('day', now() at time zone ${tz}) at time zone ${tz})
-          group by 1 order by 2 desc limit 1
-        `
-        )[0] ?? null;
 
       return {
         greetingName: m.name.split(' ')[0],
@@ -185,6 +241,7 @@ export function mountHome(d: AdminDeps) {
           changesAt: st.resumesAt ?? st.closesAt ?? null,
           override: s.status_override,
         },
+        demand: demandOf(s),
         hours: s.hours,
         specialDays: s.special_days ?? [],
         today: {
@@ -231,21 +288,56 @@ async function platformAttention(
   billingHold: boolean,
 ): Promise<Attention[]> {
   const out: Attention[] = [];
-  if (roleAtLeast(role, 'owner')) {
-    const sub = (
-      await tx<
-        {
-          status: string;
-          trial_ends_at: Date | null;
-          cancel_at_period_end: boolean;
-          ever_paid: boolean;
-        }[]
-      >`
-        select status, trial_ends_at, cancel_at_period_end,
-               exists (select 1 from invoices where tenant_id = ${tenantId} and status = 'paid') as ever_paid
-        from subscriptions where tenant_id = ${tenantId}
-      `
-    )[0];
+  const owner = roleAtLeast(role, 'owner');
+  const manager = roleAtLeast(role, 'manager');
+  // independent reads: one batch
+  const [subs, invs, mps, missedRows, incidents] = await Promise.all([
+    owner
+      ? tx<
+          {
+            status: string;
+            trial_ends_at: Date | null;
+            cancel_at_period_end: boolean;
+            ever_paid: boolean;
+          }[]
+        >`
+          select status, trial_ends_at, cancel_at_period_end,
+                 exists (select 1 from invoices where tenant_id = ${tenantId} and status = 'paid') as ever_paid
+          from subscriptions where tenant_id = ${tenantId}
+        `
+      : [],
+    owner
+      ? tx<{ n: number; due: Date | null; cents: number | null }[]>`
+          select count(*)::int as n, min(due_at) as due,
+                 (array_agg(amount_cents order by due_at))[1] as cents
+          from invoices
+          where tenant_id = ${tenantId} and status = 'open' and kind = 'period'
+            and due_at < now() + interval '5 days'
+        `
+      : [],
+    manager
+      ? tx<
+          { status: string }[]
+        >`select status from payment_connections where tenant_id = ${tenantId}`
+      : [],
+    tx<{ n: number }[]>`
+      select count(*)::int as n from orders o
+      where o.tenant_id = ${tenantId} and o.placed_at > now() - interval '24 hours'
+        and exists (
+          select 1 from push_attempts a where a.tenant_id = o.tenant_id and a.channel = 'push'
+            and a.event = 'order.placed' and a.ref = o.id::text
+        )
+        and not exists (
+          select 1 from push_attempts a where a.tenant_id = o.tenant_id and a.channel = 'push'
+            and a.event = 'order.placed' and a.ref = o.id::text and a.result = 'ok'
+        )
+    `,
+    tx<{ title: string; body: string | null }[]>`
+      select title, body from platform_incidents where resolved_at is null order by started_at desc
+    `,
+  ]);
+  if (owner) {
+    const sub = subs[0];
     if (billingHold && sub?.status === 'pending')
       out.push(
         // a trial that never converted, not a store that paid once and came back later
@@ -290,15 +382,7 @@ async function platformAttention(
         detail: 'Regularize em Conta para a loja continuar no ar',
         href: '/conta',
       });
-    const inv = (
-      await tx<{ n: number; due: Date | null; cents: number | null }[]>`
-        select count(*)::int as n, min(due_at) as due,
-               (array_agg(amount_cents order by due_at))[1] as cents
-        from invoices
-        where tenant_id = ${tenantId} and status = 'open' and kind = 'period'
-          and due_at < now() + interval '5 days'
-      `
-    )[0]!;
+    const inv = invs[0]!;
     if (inv.n > 0 && !out.some((a) => a.kind === 'billing_pending' || a.kind === 'trial_ending')) {
       const days = Math.ceil((new Date(inv.due!).getTime() - Date.now()) / 86_400_000);
       out.push({
@@ -317,12 +401,8 @@ async function platformAttention(
       });
     }
   }
-  if (roleAtLeast(role, 'manager')) {
-    const mp = (
-      await tx<{ status: string }[]>`
-        select status from payment_connections where tenant_id = ${tenantId}
-      `
-    )[0]?.status;
+  if (manager) {
+    const mp = mps[0]?.status;
     if (mp === 'expiring')
       out.push({
         kind: 'mp_expiring',
@@ -348,20 +428,7 @@ async function platformAttention(
         href: '/pagamentos',
       });
   }
-  const missed = (
-    await tx<{ n: number }[]>`
-      select count(*)::int as n from orders o
-      where o.tenant_id = ${tenantId} and o.placed_at > now() - interval '24 hours'
-        and exists (
-          select 1 from push_attempts a where a.tenant_id = o.tenant_id and a.channel = 'push'
-            and a.event = 'order.placed' and a.ref = o.id::text
-        )
-        and not exists (
-          select 1 from push_attempts a where a.tenant_id = o.tenant_id and a.channel = 'push'
-            and a.event = 'order.placed' and a.ref = o.id::text and a.result = 'ok'
-        )
-    `
-  )[0]!.n;
+  const missed = missedRows[0]!.n;
   if (missed)
     out.push({
       kind: 'alerts_failing',
@@ -373,9 +440,6 @@ async function platformAttention(
       detail: 'Confira as notificações no seu perfil',
       href: '/perfil',
     });
-  const incidents = await tx<{ title: string; body: string | null }[]>`
-    select title, body from platform_incidents where resolved_at is null order by started_at desc
-  `;
   if (incidents.length)
     out.push({
       kind: 'incident',

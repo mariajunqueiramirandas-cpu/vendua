@@ -28,15 +28,28 @@ type Topic =
   | 'kitchen'
   | 'vendedor'
   | 'vendedor.waiting'
-  | 'vendedor.exhausted';
+  | 'vendedor.ask'
+  | 'vendedor.exhausted'
+  | 'copilot'
+  | 'pdv';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
-  'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity],
-  'order.changed': [['orders'], qk.home, qk.payments, ['customers'], ['reports'], qk.activity],
+  // an order from a table's QR lands on its comanda (ADR 0036): Mesas and the comanda follow it
+  'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity, ['pdv']],
+  'order.changed': [
+    ['orders'],
+    qk.home,
+    qk.payments,
+    ['customers'],
+    ['reports'],
+    qk.activity,
+    ['pdv'],
+  ],
   catalog: [['catalog'], qk.home, qk.share, qk.activity],
   store: [qk.store, qk.home, qk.payments, qk.activity],
   marketing: [qk.marketing, qk.home, qk.activity],
-  team: [qk.team, qk.activity],
+  // the session carries Perfil's "Duá pelo WhatsApp", which the owner's switch in Equipe gates
+  team: [qk.team, qk.activity, qk.session],
   appearance: [qk.appearance, qk.activity],
   // storefront operations changed elsewhere (prep time, demand) show in Loja too
   surfaces: [qk.store],
@@ -52,7 +65,13 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   // a conversation counted moves Conta's usage meter too
   vendedor: [['vendedor'], qk.session, qk.account],
   'vendedor.waiting': [['vendedor'], qk.session],
+  // a new contact Duá won't answer until the owner says who it is ("para decidir")
+  'vendedor.ask': [['vendedor']],
   'vendedor.exhausted': [['vendedor'], qk.account],
+  // Duá Copilot's reply (or a card decided on another device) for this person
+  copilot: [qk.copilot],
+  // a comanda or the caixa moved; its rounds and receipts are orders too
+  pdv: [['pdv'], ['orders'], qk.home],
 };
 
 // ── connection + alert state (a tiny external store) ───────────────────────
@@ -94,6 +113,20 @@ export function untilChange(iso: string | null | undefined): number | false {
   if (!iso) return false;
   const ms = Date.parse(iso) - Date.now() + 2000;
   return Number.isFinite(ms) ? Math.min(Math.max(ms, 5000), 6 * 60 * 60_000) : false;
+}
+
+const pausedCount = () =>
+  queryClient
+    .getMutationCache()
+    .getAll()
+    .filter((m) => m.state.isPaused).length;
+
+/** Writes waiting for the connection: what the offline banner counts. */
+export function usePendingWrites(): number {
+  return useSyncExternalStore(
+    (fn) => queryClient.getMutationCache().subscribe(() => fn()),
+    pausedCount,
+  );
 }
 
 export function useLiveState(): LiveState {

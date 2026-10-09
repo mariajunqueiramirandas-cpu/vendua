@@ -35,6 +35,9 @@ interface ActorDb {
   lease_until: Date | null;
 }
 
+// a store's turns at once while its Cliente oculto run plays: its test shoppers all write together
+const TEST_RUN_TENANT_CAP = 5;
+
 const ACTOR_COLS = `id, tenant_id, agent_id, subject_kind, subject_id, lane, version_pin, seq::int as seq,
   projection, projection_seq::int as projection_seq, next_wake_at, attempts, owner,
   lease_epoch::float8 as lease_epoch, lease_until`;
@@ -136,19 +139,35 @@ export class PgActorStore implements ActorStore<Sql> {
           where lane = $1 and agent_id = any($2::text[]) and next_wake_at <= now()
             and (lease_until is null or lease_until <= now())
         ),
-        -- each store's own earliest, up to what its cap leaves: one store's backlog can't crowd out the rest
+        -- each store's own earliest, up to what its cap leaves: one store's backlog can't crowd out the rest.
+        -- Within a store, real shoppers go first, then the owner's test chat, then Cliente oculto's
+        -- test shoppers, which all arrive at once and would otherwise queue ahead of a customer.
         due as (
           select d.id, d.next_wake_at, d.rn
           from ready r
           left join held h using (tenant_id)
+          -- a store whose Cliente oculto run is playing gets more turns at once (its real shoppers still go first)
           cross join lateral (
-            select a.id, a.next_wake_at, row_number() over (order by a.next_wake_at, a.id) as rn
+            select case when exists (select 1 from vendedor_runs v where v.tenant_id = r.tenant_id
+                                       and v.status = 'running' and v.lease_until > now())
+              then greatest($3::int, $7::int) else $3::int end as n
+          ) cap
+          cross join lateral (
+            select a.id, a.next_wake_at, row_number() over (order by p.rank, a.next_wake_at, a.id) as rn
             from agent_actors a
+            cross join lateral (
+              -- the cast only runs on a uuid: seeds and tests use other ids for this kind
+              select case when a.subject_kind = 'shopper_thread' and pg_input_is_valid(a.subject_id, 'uuid')
+                then coalesce(
+                  (select case t.test_kind when 'cliente_oculto' then 2 when 'owner' then 1 else 0 end
+                   from shopper_threads t where t.tenant_id = a.tenant_id and t.id = a.subject_id::uuid), 0)
+                else 0 end as rank
+            ) p
             where a.tenant_id = r.tenant_id and a.lane = $1 and a.agent_id = any($2::text[])
               and a.next_wake_at <= now()
               and (a.lease_until is null or a.lease_until <= now())
-            order by a.next_wake_at, a.id
-            limit greatest($3 - coalesce(h.n, 0), 0)
+            order by p.rank, a.next_wake_at, a.id
+            limit greatest(cap.n - coalesce(h.n, 0), 0)
           ) d
         ),
         -- round robin: every store's first actor, then every store's second
@@ -174,7 +193,15 @@ export class PgActorStore implements ActorStore<Sql> {
         where a.id = locked.id
         returning ${ACTOR_COLS_A}
         `,
-        [q.lane, q.agentIds as string[], q.perTenantCap, q.limit, q.owner, leaseSecs],
+        [
+          q.lane,
+          q.agentIds as string[],
+          q.perTenantCap,
+          q.limit,
+          q.owner,
+          leaseSecs,
+          TEST_RUN_TENANT_CAP,
+        ],
       ),
     );
     return rows.map((a) => ({

@@ -142,7 +142,7 @@ only on step 1's verdicts. One PR per adapter, each green before the next starts
 7. **Docs.** §3 verdict, Appendix A as built, §9 status.
 8. **Checks.** `bun run check` in `packages/core`, `apps/admin` and `apps/control`; Core tests;
    `bun run build` and the screenshot gate in `apps/admin` if its copy changed; then the
-   `invariant-reviewer` (Opus) on the diff, since it touches money.
+   invariant review (`CLAUDE.md`, Subagents) on the diff, since it touches money.
 
 ### Per platform
 

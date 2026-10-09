@@ -1,6 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE, bodyJson, uuidParam } from '../platform/http.ts';
-import { transitionOrder, type OrderState } from '../modules/orders.ts';
+import { transitionOrder, type DeliveryMode, type OrderState } from '../modules/orders.ts';
 import { requireFeature } from '../modules/billing/plans.ts';
 import { audit } from './audit.ts';
 import { bool, isObj, text, type AdminDeps } from './context.ts';
@@ -33,6 +33,8 @@ export interface KitchenItem {
   qty: number;
   modifiers: { name: string; qty: number }[];
   combo: { slotName: string; name: string; qty: number }[];
+  /** the shopper's note for this line ("sem cebola"); absent = none */
+  note?: string;
   categoryId: string | null;
   stationId: string | null;
   doneAt: string | null;
@@ -42,7 +44,9 @@ export interface KitchenTicket {
   id: string;
   number: number;
   state: KitchenState;
-  mode: 'pickup' | 'delivery';
+  mode: DeliveryMode;
+  /** dine_in: the table's label (null for "no local" at the counter) */
+  table: string | null;
   name: string;
   notes: string | null;
   scheduledFor: string | null;
@@ -117,7 +121,7 @@ async function ticketsTx(
   which: { tz: string } | { ids: string[] },
 ): Promise<KitchenTicket[]> {
   const rows = await tx<TicketRow[]>`
-    select o.id, o.number, o.state, o.delivery ->> 'mode' as mode,
+    select o.id, o.number, o.state, o.delivery ->> 'mode' as mode, o.delivery ->> 'table' as "table",
            coalesce(split_part(trim(o.customer ->> 'name'), ' ', 1), '') as name,
            o.notes, o.scheduled_for::text as "scheduledFor", o.placed_at as "placedAt",
            coalesce(k.rush, false) as rush,
@@ -132,21 +136,25 @@ async function ticketsTx(
           : tx`and o.state = any(${BOARD})
                and (o.scheduled_for is null or o.scheduled_for <= (now() at time zone ${which.tz})::date)`
       }
-    order by o.placed_at
+    order by o.placed_at desc
     limit 200`;
   if (rows.length === 0) return [];
+  // the newest 200, oldest first: tickets left open for days never push a new one off the screen
+  rows.reverse();
   const ids = rows.map((r) => r.id);
 
-  const events = await tx<
-    {
-      orderId: string;
-      n: number;
-      acceptedAt: string | null;
-      startedAt: string | null;
-      readyAt: string | null;
-      prep: number | null;
-    }[]
-  >`
+  // the tickets' events and items go out together
+  const [events, items] = await Promise.all([
+    tx<
+      {
+        orderId: string;
+        n: number;
+        acceptedAt: string | null;
+        startedAt: string | null;
+        readyAt: string | null;
+        prep: number | null;
+      }[]
+    >`
     select e.order_id as "orderId", count(*)::int as n,
            min(e.at) filter (where e.to_state = 'confirmed') as "acceptedAt",
            min(e.at) filter (where e.to_state = 'preparing') as "startedAt",
@@ -155,28 +163,29 @@ async function ticketsTx(
               filter (where e.to_state = 'confirmed'))[1] as prep
     from order_events e
     where e.tenant_id = ${tenantId} and e.order_id = any(${ids})
-    group by e.order_id`;
-  const eventsBy = new Map(events.map((e) => [e.orderId, e]));
-
-  const items = await tx<
-    {
-      id: string;
-      orderId: string;
-      name: string;
-      qty: number;
-      modifiers: { name: string; qty?: number }[];
-      combo: { slotName: string; name: string; qty: number }[];
-      categoryId: string | null;
-      doneAt: string | null;
-    }[]
-  >`
-    select i.id, i.order_id as "orderId", i.name, i.qty, i.modifiers, i.combo,
+    group by e.order_id`,
+    tx<
+      {
+        id: string;
+        orderId: string;
+        name: string;
+        qty: number;
+        modifiers: { name: string; qty?: number }[];
+        combo: { slotName: string; name: string; qty: number }[];
+        note: string | null;
+        categoryId: string | null;
+        doneAt: string | null;
+      }[]
+    >`
+    select i.id, i.order_id as "orderId", i.name, i.qty, i.modifiers, i.combo, i.note,
            p.category_id as "categoryId", km.done_at as "doneAt"
     from order_items i
     left join products p on p.tenant_id = i.tenant_id and p.id = i.product_id
     left join kitchen_marks km on km.tenant_id = i.tenant_id and km.order_item_id = i.id
     where i.tenant_id = ${tenantId} and i.order_id = any(${ids})
-    order by i.sort, i.id`;
+    order by i.sort, i.id`,
+  ]);
+  const eventsBy = new Map(events.map((e) => [e.orderId, e]));
   const stationOf = new Map<string, string>();
   for (const s of stations) for (const c of s.categoryIds) stationOf.set(c, s.id);
   const itemsBy = new Map<string, KitchenItem[]>();
@@ -189,6 +198,7 @@ async function ticketsTx(
       qty: i.qty,
       modifiers: (i.modifiers ?? []).map((m) => ({ name: m.name, qty: m.qty ?? 1 })),
       combo: (i.combo ?? []).map((c) => ({ slotName: c.slotName, name: c.name, qty: c.qty })),
+      ...(i.note ? { note: i.note } : {}),
       categoryId: i.categoryId,
       stationId: (i.categoryId && stationOf.get(i.categoryId)) || null,
       doneAt: i.doneAt,
@@ -345,21 +355,29 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 
 export function mountKitchen(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   admin.get(
     '/kitchen',
-    read('attendant', async (tx, t) => {
-      await requireFeature(tx, t.id, 'kds');
-      const tz = await storeTz(tx, t.id);
-      const s = await settingsTx(tx, t.id);
-      const categories = await categoriesTx(tx, t.id);
+    named('kitchen').read('attendant', async (tx, t) => {
+      // independent reads in one batch (the plan gate rejects the whole of it), then the
+      // tickets and the stats, which need the settings, in another
+      const [, tz, s, categories] = await Promise.all([
+        requireFeature(tx, t.id, 'kds'),
+        storeTz(tx, t.id),
+        settingsTx(tx, t.id),
+        categoriesTx(tx, t.id),
+      ]);
       const stations = storedStations(s.kitchen, new Set(categories.map((c) => c.id)));
+      const [tickets, stats] = await Promise.all([
+        ticketsTx(tx, t.id, s.prepDefault, stations, { tz }),
+        statsTx(tx, t.id, tz, s.prepDefault),
+      ]);
       return {
-        tickets: await ticketsTx(tx, t.id, s.prepDefault, stations, { tz }),
+        tickets,
         stations,
         categories,
-        stats: await statsTx(tx, t.id, tz, s.prepDefault),
+        stats,
         prepDefaultMinutes: s.prepDefault,
         acceptTargetMinutes: s.acceptTarget,
         now: new Date().toISOString(),

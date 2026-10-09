@@ -8,8 +8,16 @@ import {
   WifiSlash,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { StatusPill } from '../features/store/StatusPill.tsx';
 import { api } from '../lib/api.ts';
 import {
@@ -17,6 +25,7 @@ import {
   useLiveState,
   useLiveStream,
   setSoundOn,
+  usePendingWrites,
   usePollWhenOffline,
 } from '../lib/live.ts';
 import { applyUpdate, onUpdate, setBadge, updateReady } from '../lib/pwa.ts';
@@ -28,6 +37,8 @@ import { cn } from '../ui/cn.ts';
 import { Loading } from '../ui/feedback.tsx';
 import { onHelp } from '../ui/help.ts';
 import { toast, Toaster } from '../ui/Toast.tsx';
+import { PersonaAvatar } from '../ui/vendedor/PersonaAvatar.tsx';
+import { dockKeys, useDockOpen, useMedia, WIDE } from './dock.ts';
 import { moreOf, navFor } from './nav.ts';
 import { chunks, intent, screen, warmUp } from './routes.ts';
 import { useScrollMemory, useTabNav } from './nativeFeel.ts';
@@ -42,6 +53,8 @@ void chunks.skeletons().catch(() => undefined);
 const SearchSheet = screen(chunks.search, (m) => m.SearchSheet);
 const MoreSheet = screen(chunks.sheets, (m) => m.MoreSheet);
 const SwitchStoreSheet = screen(chunks.sheets, (m) => m.SwitchStoreSheet);
+// Duá Copilot beside every screen from 1200 px: its code arrives with the /copiloto chunk
+const CopilotDock = screen(chunks.copilot, (m) => m.CopilotDock);
 const HelpSheet = lazy(() => import('../features/help/HelpSheet.tsx'));
 const Banner = lazy(() => import('../features/help/Banner.tsx'));
 
@@ -55,6 +68,7 @@ function useSeen(open: boolean) {
 }
 import { StoreAvatar } from './StoreAvatar.tsx';
 import { resetClient } from '../lib/persist.ts';
+import { disablePush } from '../lib/push.ts';
 
 function usePlacedCount() {
   // orders are pushed over the stream; a slow safety net stays for the one screen that can't miss
@@ -81,6 +95,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const placed = usePlacedCount();
   useEffect(() => setBadge(placed + waiting), [placed, waiting]);
   const live = useLiveState();
+  const pending = usePendingWrites();
   const loc = useLocation();
   const nav = useNavigate();
   const liveRegion = useRef<HTMLDivElement>(null);
@@ -97,6 +112,42 @@ export function Shell({ children }: { children: ReactNode }) {
     document.documentElement.dataset.bare = '';
     return () => void delete document.documentElement.dataset.bare;
   }, [bare]);
+
+  // Duá Copilot (managers and owners; a plan without it opens the upsell): the phone header's
+  // Duá and the rail's button open /copiloto; from 1200 px the button docks it beside the screen
+  const copilot = can(role, 'manager');
+  const wide = useMedia(WIDE);
+  const [dockOpen, setDockOpen] = useDockOpen();
+  const [dockFocus, setDockFocus] = useState(0);
+  const onCopilotScreen = loc.pathname === '/copiloto';
+  const docked = copilot && wide && dockOpen && !bare && !onCopilotScreen;
+  const toCopilot = () => nav('/copiloto', { state: { from: loc.pathname } });
+  const openCopilot = () => {
+    if (onCopilotScreen) return;
+    if (!wide) return toCopilot();
+    setDockOpen((o) => !o);
+    if (!dockOpen) setDockFocus((n) => n + 1);
+  };
+  const copilotRef = useRef(openCopilot);
+  copilotRef.current = openCopilot;
+  useLayoutEffect(() => {
+    if (!docked) return;
+    document.documentElement.dataset.dock = '';
+    return () => void delete document.documentElement.dataset.dock;
+  }, [docked]);
+  useEffect(() => {
+    if (!copilot) return;
+    // ⌘J / Ctrl+J opens and closes the dock, even while typing in it
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'j')
+        return;
+      if (bareRef.current) return;
+      e.preventDefault();
+      copilotRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [copilot]);
 
   useLiveStream(true);
   useScrollMemory();
@@ -187,51 +238,76 @@ export function Shell({ children }: { children: ReactNode }) {
             <span className="hidden flex-1 text-left lg:inline">Buscar</span>
             <kbd className="t-caption hidden rounded bg-sunken px-1.5 lg:inline">/</kbd>
           </button>
+          {copilot ? (
+            <button
+              type="button"
+              onClick={openCopilot}
+              onPointerDown={() => void chunks.copilot().catch(() => undefined)}
+              aria-label={`Copiloto do Duá (${dockKeys()})`}
+              aria-pressed={wide && !onCopilotScreen ? docked : undefined}
+              title={`Copiloto do Duá (${dockKeys()})`}
+              className={cn(
+                't-body flex h-11 w-11 items-center justify-center gap-2 rounded-md ring-1 hover:bg-hover lg:w-full lg:justify-start lg:px-2.5',
+                docked || onCopilotScreen
+                  ? 'bg-spark-soft text-ink ring-spark'
+                  : 'text-muted ring-line hover:text-ink',
+              )}
+            >
+              <PersonaAvatar size="sm" />
+              <span className="hidden flex-1 text-left lg:inline">Copiloto</span>
+              <kbd className="t-caption hidden whitespace-nowrap rounded bg-sunken px-1.5 font-sans lg:inline">
+                {dockKeys()}
+              </kbd>
+            </button>
+          ) : null}
         </div>
         <nav aria-label="principal" className="flex-1 overflow-y-auto px-3 py-2 lg:px-4">
           <ul className="space-y-1">
-            {items.map((n) => (
-              <li key={n.to}>
-                <NavLink
-                  to={n.to}
-                  end={n.to === '/'}
-                  onClick={tab(n.to)}
-                  {...intent(qc, n.to)}
-                  className={({ isActive }) =>
-                    cn(
-                      'group relative flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 py-1.5 transition-colors lg:flex-row lg:justify-start lg:gap-3 lg:px-3',
-                      isActive
-                        ? 'bg-surface text-ink depth-1'
-                        : 'text-muted hover:bg-hover hover:text-ink',
-                    )
-                  }
-                >
-                  {({ isActive }) => (
-                    <>
-                      <n.Icon
-                        weight="duotone"
-                        className={cn(
-                          'size-6 shrink-0',
-                          isActive && '[&_*[opacity]]:fill-(--spark) [&_*[opacity]]:opacity-100',
-                        )}
-                      />
-                      <span className="t-caption text-center leading-tight lg:t-body lg:font-semibold">
-                        {n.label}
-                      </span>
-                      {badge(n.to) ? (
-                        <NavBadge
-                          n={badge(n.to)}
-                          to={n.to}
-                          className="absolute right-2 top-1 lg:static lg:ml-auto"
+            {/* the button above is Copiloto's way in on the rail */}
+            {items
+              .filter((n) => !(copilot && n.to === '/copiloto'))
+              .map((n) => (
+                <li key={n.to}>
+                  <NavLink
+                    to={n.to}
+                    end={n.to === '/'}
+                    onClick={tab(n.to)}
+                    {...intent(qc, n.to)}
+                    className={({ isActive }) =>
+                      cn(
+                        'group relative flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 py-1.5 transition-colors lg:flex-row lg:justify-start lg:gap-3 lg:px-3',
+                        isActive
+                          ? 'bg-surface text-ink depth-1'
+                          : 'text-muted hover:bg-hover hover:text-ink',
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <n.Icon
+                          weight="duotone"
+                          className={cn(
+                            'size-6 shrink-0',
+                            isActive && '[&_*[opacity]]:fill-(--spark) [&_*[opacity]]:opacity-100',
+                          )}
                         />
-                      ) : n.feature && !featureOpen(session, n.feature) ? (
-                        <NavLock className="absolute right-2 top-1.5 lg:static lg:ml-auto" />
-                      ) : null}
-                    </>
-                  )}
-                </NavLink>
-              </li>
-            ))}
+                        <span className="t-caption text-center leading-tight lg:t-body lg:font-semibold">
+                          {n.label}
+                        </span>
+                        {badge(n.to) ? (
+                          <NavBadge
+                            n={badge(n.to)}
+                            to={n.to}
+                            className="absolute right-2 top-1 lg:static lg:ml-auto"
+                          />
+                        ) : n.feature && !featureOpen(session, n.feature) ? (
+                          <NavLock className="absolute right-2 top-1.5 lg:static lg:ml-auto" />
+                        ) : null}
+                      </>
+                    )}
+                  </NavLink>
+                </li>
+              ))}
           </ul>
         </nav>
         <div className="space-y-2 border-t border-line p-3 lg:p-4">
@@ -266,6 +342,17 @@ export function Shell({ children }: { children: ReactNode }) {
           >
             <MagnifyingGlass className="size-6" />
           </button>
+          {copilot && !onCopilotScreen ? (
+            <Link
+              to="/copiloto"
+              state={{ from: loc.pathname }}
+              aria-label="Copiloto do Duá"
+              {...intent(qc, '/copiloto')}
+              className="press -mr-1.5 grid size-12 shrink-0 place-items-center rounded-full"
+            >
+              <PersonaAvatar size="sm" />
+            </Link>
+          ) : null}
         </header>
 
         {!live.online && !kitchen ? (
@@ -273,8 +360,13 @@ export function Shell({ children }: { children: ReactNode }) {
             role="status"
             className="t-body sticky top-0 z-40 flex items-center justify-center gap-2 bg-warning-soft px-4 py-2 text-warning md:top-0 kb:static"
           >
-            <WifiSlash className="size-5" aria-hidden /> Sem conexão, tentando de novo. O que você
-            fizer agora é enviado quando voltar.
+            <WifiSlash className="size-5 shrink-0" aria-hidden />
+            <span>
+              Sem conexão, tentando de novo.
+              {pending
+                ? ` ${pending === 1 ? '1 ação esperando' : `${pending} ações esperando`} conexão.`
+                : ' O que você fizer agora é enviado quando voltar.'}
+            </span>
           </div>
         ) : null}
 
@@ -296,6 +388,17 @@ export function Shell({ children }: { children: ReactNode }) {
           </Boundary>
         </main>
       </div>
+
+      {docked ? (
+        <aside
+          aria-label="Copiloto do Duá"
+          className="vt-dock sticky top-0 flex h-dvh w-96 shrink-0 flex-col border-l border-line bg-bg"
+        >
+          <Suspense fallback={null}>
+            <CopilotDock onClose={() => setDockOpen(false)} focus={dockFocus} />
+          </Suspense>
+        </aside>
+      ) : null}
 
       {/* phone bottom bar: five items, always labelled (§3.1) */}
       <nav
@@ -494,6 +597,7 @@ export function UserMenu() {
         aria-label="sair"
         title="sair"
         onClick={async () => {
+          await disablePush().catch(() => undefined);
           await api.auth.logout().catch(() => undefined);
           await resetClient(qc);
           window.location.assign('/admin/entrar');

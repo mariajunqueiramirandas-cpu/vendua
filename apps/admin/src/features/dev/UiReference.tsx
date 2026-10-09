@@ -26,6 +26,7 @@ import {
 } from '../../ui/skeletons.tsx';
 import {
   Chips,
+  DocumentInput,
   Field,
   MoneyField,
   PhoneInput,
@@ -51,6 +52,10 @@ import { Notice } from '../../ui/Notice.tsx';
 import { CodeInput } from '../../ui/CodeInput.tsx';
 import { CopyValue } from '../../ui/CopyValue.tsx';
 import { PaymentChip } from '../../ui/PaymentChip.tsx';
+import { Keypad, QuickAmount } from '../../ui/pdv/Keypad.tsx';
+import { CaixaBadge, MethodPicker } from '../../ui/pdv/MethodPicker.tsx';
+import { TableTile } from '../../ui/pdv/TableTile.tsx';
+import type { PdvMethod } from '../../lib/api.ts';
 import { PixCode } from '../../ui/PixCode.tsx';
 import { PlanCardSkeleton } from '../../ui/PlanCard.tsx';
 import { PlanCards, PlanCompare, PlanTrialStrip } from '../../ui/PlanPicker.tsx';
@@ -60,7 +65,11 @@ import { StepFrame } from '../../ui/StepFrame.tsx';
 import { OutcomeList, OutcomeRow } from '../../ui/Outcome.tsx';
 import { HelpButton } from '../../ui/Page.tsx';
 import { PlatformStatus } from '../help/status.tsx';
-import type { SummaryCardData } from '../../lib/api.ts';
+import type { CopilotAction, SummaryCardData } from '../../lib/api.ts';
+import { ActionCard, DuaText } from '../../ui/copilot/index.ts';
+import { Progress, RadioRows } from '../account/domain/kit.tsx';
+import { DnsRecordView, NameServers } from '../account/domain/Records.tsx';
+import { DOMAIN, DomainChip, type Domain } from '../account/domain/status.tsx';
 import {
   ActionReceipt,
   AgentGuide,
@@ -72,6 +81,7 @@ import {
   Discordance,
   EventChip,
   Floor,
+  ClassChip,
   FloorChip,
   GuaranteeChip,
   MiniChat,
@@ -81,6 +91,7 @@ import {
   SacolaBar,
   SalesFunnel,
   ScoreRing,
+  Typing,
   VoiceNote,
 } from '../../ui/vendedor/index.ts';
 
@@ -228,6 +239,7 @@ export default function UiReference() {
   const [step, setStep] = useState(30);
   const [cents, setCents] = useState<number | null>(1250);
   const [ph, setPh] = useState('');
+  const [doc, setDoc] = useState('');
   const [sheet, setSheet] = useState(false);
   const [sales, setSales] = useState(34890);
   const [phase, setPhase] = useState<DayPhase>('open');
@@ -369,6 +381,13 @@ export default function UiReference() {
           <Field label="Celular" htmlFor="u-ph">
             <PhoneInput id="u-ph" value={ph} onChange={(v) => setPh(v)} />
           </Field>
+          <Field
+            label="CPF ou CNPJ"
+            htmlFor="u-doc"
+            helper="Máscara de CPF; vira CNPJ depois de 11."
+          >
+            <DocumentInput id="u-doc" value={doc} onChange={(v) => setDoc(v)} />
+          </Field>
           <Field label="Com erro" htmlFor="u-err" error="O preço precisa ser maior que zero.">
             <TextInput id="u-err" aria-invalid defaultValue="0" />
           </Field>
@@ -475,6 +494,36 @@ export default function UiReference() {
             onOpen={() => undefined}
           />
         </div>
+        <p className="t-caption mb-2 mt-6 text-muted">
+          Numa coluna estreita (o quadro num notebook): situação e tempo numa linha acima do número
+        </p>
+        <div className="grid grid-cols-[repeat(auto-fill,13rem)] items-start gap-3">
+          <OrderCard
+            order={order(10428, 'preparing', 34, {
+              delivery: {
+                mode: 'delivery',
+                neighborhood: 'Itaúna',
+                address: 'Rua das Flores, 120',
+                feeCents: 500,
+                delayMinutes: 15,
+              },
+            })}
+            now={now}
+            acceptTarget={5}
+            onAdvance={() => undefined}
+            onMore={() => undefined}
+            onOpen={() => undefined}
+          />
+          <OrderCard
+            order={order(9999, 'out_for_delivery', 52)}
+            now={now}
+            acceptTarget={5}
+            onAdvance={() => undefined}
+            onMore={() => undefined}
+            onOpen={() => undefined}
+            compact
+          />
+        </div>
       </Block>
 
       <Block title="Cozinha">
@@ -518,6 +567,8 @@ export default function UiReference() {
           />
         </div>
       </Block>
+
+      <PdvReference now={now} />
 
       <Block title="Cardápio">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -825,6 +876,7 @@ export default function UiReference() {
         </div>
       </Block>
       <VendedorReference />
+      <DomainReference />
       <Sheet
         open={sheet}
         onOpenChange={setSheet}
@@ -848,6 +900,8 @@ const NONE = {
   printing: false,
   loyalty: false,
   vendedor: false,
+  copilot: false,
+  pdv: false,
 };
 const SAMPLE_PLANS: Plan[] = [
   {
@@ -867,7 +921,7 @@ const SAMPLE_PLANS: Plan[] = [
     name: 'Venduá Bandeira',
     priceCents: 16900,
     feeBps: 0,
-    features: { ...NONE, kds: true, printing: true, loyalty: true, vendedor: true },
+    features: { ...NONE, kds: true, printing: true, loyalty: true, vendedor: true, pdv: true },
     trialDays: 14,
     recommended: true,
     aiConversations: 250,
@@ -886,6 +940,8 @@ const SAMPLE_PLANS: Plan[] = [
       printing: true,
       loyalty: true,
       vendedor: true,
+      copilot: true,
+      pdv: true,
     },
     trialDays: 0,
     recommended: false,
@@ -904,6 +960,52 @@ const SAMPLE_SESSION = {
   support: { whatsapp: null },
   plan: { id: 'mirim', name: 'Venduá Mirim', features: NONE },
 } satisfies Session;
+
+function PdvReference({ now }: { now: number }) {
+  const [methods, setMethods] = useState<PdvMethod[]>(['cash']);
+  const [tendered, setTendered] = useState(5000);
+  const ago = (min: number) => new Date(now - min * 60_000).toISOString();
+  return (
+    <Block title="PDV: mesas, formas e caixa">
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <CaixaBadge open detail="desde 08h12" />
+            <CaixaBadge open={false} detail="abrir" />
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <TableTile label="1" now={now} />
+            <TableTile
+              label="Mesa 2"
+              now={now}
+              tab={{ totalCents: 18_790, openedAt: ago(47), rounds: 2, customerName: 'Ana' }}
+            />
+            <TableTile
+              label="Varanda com um nome bem comprido de quarenta"
+              now={now}
+              tab={{ totalCents: 1_000_000, openedAt: ago(130), rounds: 12, customerName: null }}
+            />
+            <TableTile label="Mesa 4" now={now} editing />
+          </div>
+          <MethodPicker
+            value={methods}
+            onPick={(m) =>
+              setMethods((v) => (v.includes(m) ? v.filter((x) => x !== m) : [...v, m]))
+            }
+          />
+        </div>
+        <Keypad label="Dinheiro recebido (de R$ 42,50)" cents={tendered} onChange={setTendered}>
+          <QuickAmount on={tendered === 0} onClick={() => setTendered(0)}>
+            exato
+          </QuickAmount>
+          <QuickAmount on={tendered === 5000} onClick={() => setTendered(5000)}>
+            R$ 50,00
+          </QuickAmount>
+        </Keypad>
+      </div>
+    </Block>
+  );
+}
 
 function Block({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -946,8 +1048,77 @@ const LONG: SummaryCardData = {
   test: true,
 };
 
+const QUICK_REPLY = 'Seu pedido já saiu para entrega!';
+
+const NS_DOMAIN: Domain = {
+  id: 'd1',
+  host: 'forno-da-vila.com.br',
+  status: 'pending_dns',
+  source: 'connected',
+  method: 'ns',
+  aliasHost: 'www.forno-da-vila.com.br',
+  cnameTarget: '',
+  txtName: '',
+  txtValue: '',
+  nameServers: ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'],
+  records: [],
+  recordsConfirmed: true,
+  dnssecSigned: true,
+  expiresAt: null,
+  lastCheckedAt: null,
+  lastError: null,
+};
+
+/** Domínio próprio (ADR 0038): its states, steps, the way in and what the owner copies */
+function DomainReference() {
+  const [path, setPath] = useState<'register' | 'connect'>('register');
+  return (
+    <Block title="Domínio próprio">
+      <div className="space-y-5">
+        <div className="flex flex-wrap gap-2">
+          {(Object.keys(DOMAIN) as (keyof typeof DOMAIN)[]).map((s) => (
+            <DomainChip key={s} status={s} />
+          ))}
+        </div>
+        <Card className="grid gap-5 p-5 md:grid-cols-3">
+          <Progress steps={['Criar os registros', 'DNS conferido', 'No ar']} at={1} />
+          <Progress steps={['Conferir registros', 'Trocar servidores', 'No ar']} at={1} failed />
+          <Progress steps={['Registro', 'Configuração', 'No ar']} at={2} />
+        </Card>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card className="space-y-4 p-5">
+            <RadioRows
+              label="Domínio próprio"
+              value={path}
+              onChange={setPath}
+              options={[
+                {
+                  value: 'register',
+                  title: 'Registrar um domínio novo',
+                  detail: 'Incluso no seu plano. Fica no nome da sua empresa.',
+                },
+                { value: 'connect', title: 'Já tenho um domínio' },
+              ]}
+            />
+            <DnsRecordView
+              type="CNAME"
+              name="www.forno-da-vila.com.br"
+              value="lojas.vendua.com.br"
+            />
+          </Card>
+          <Card className="p-5">
+            <NameServers d={NS_DOMAIN} />
+          </Card>
+        </div>
+      </div>
+    </Block>
+  );
+}
+
 function VendedorReference() {
   const [owner, setOwner] = useState(false);
+  // "respostas prontas" opens a sheet in the app; here a tap drops one into the composer
+  const [quick, setQuick] = useState<{ text: string; n: number }>();
   return (
     <>
       <Block title="Duá: as três vozes">
@@ -1008,10 +1179,30 @@ function VendedorReference() {
                   onSend={(t) => toast(`enviado: ${t}`)}
                   silenceMin={30}
                   keys
+                  onQuick={() => setQuick((q) => ({ text: QUICK_REPLY, n: (q?.n ?? 0) + 1 }))}
+                  prefill={quick}
                 />
               ) : (
                 <Floor variant="agent" onTake={() => setOwner(true)} keys />
               )}
+            </div>
+            <p className="t-caption -mb-2 text-muted">
+              Duá pausado: quem responde é a loja, com as respostas prontas
+            </p>
+            <div className="overflow-hidden rounded-lg ring-1 ring-line">
+              <Floor
+                variant="owner"
+                title={
+                  <>
+                    Você está atendendo
+                    <span className="t-caption block font-normal text-muted">
+                      O Duá está pausado e volta sozinho amanhã às 9h.
+                    </span>
+                  </>
+                }
+                onSend={(t) => toast(`enviado: ${t}`)}
+                onQuick={() => toast('respostas prontas')}
+              />
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <ReasonChip reason="alergia" />
@@ -1022,7 +1213,11 @@ function VendedorReference() {
               <FloorChip floor="rehearsal" />
               <FloorChip floor="store" />
               <FloorChip floor="agent" waiting />
+              <FloorChip floor="paused" />
               <FloorChip floor="muted" />
+              <ClassChip cls="checking" />
+              <ClassChip cls="ask" />
+              <ClassChip cls="personal" />
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <GuaranteeChip guaranteed />
@@ -1196,6 +1391,121 @@ function VendedorReference() {
           </div>
         </div>
       </Block>
+      <CopilotReference />
     </>
+  );
+}
+
+// Duá Copilot (ADR 0034): the cards Duá prepares in the admin, in every state
+const card = (over: Partial<CopilotAction>): CopilotAction => ({
+  id: 'c1',
+  kind: 'products.price',
+  title: 'Aumentar 10% o preço de 3 produtos',
+  lines: [
+    { label: 'Pudim de Leite Grande', from: 'R$ 89,90', to: 'R$ 98,90' },
+    { label: 'Pudim de Pistache Grande', from: 'R$ 109,90', to: 'R$ 120,90' },
+    {
+      label: 'Pudim de Doce de Leite com Nozes Caramelizadas Grande',
+      from: 'R$ 94,90',
+      to: 'R$ 104,40',
+    },
+  ],
+  money: true,
+  status: 'proposed',
+  error: null,
+  done: null,
+  link: null,
+  canDecide: true,
+  at: new Date(now).toISOString(),
+  decidedAt: null,
+  expiresAt: new Date(now + 30 * 60_000).toISOString(),
+  ...over,
+});
+const PAUSE: Partial<CopilotAction> = {
+  kind: 'store.pause',
+  title: 'Pausar a loja',
+  money: false,
+  lines: [
+    { label: 'Loja', from: 'Aberta, aceitando pedidos', to: 'Pausada' },
+    { label: 'Volta a aceitar pedidos', from: null, to: '30 minutos depois de confirmar' },
+    { label: 'Aviso para os clientes', from: null, to: 'Cozinha cheia, voltamos já!' },
+  ],
+};
+const COUPON: Partial<CopilotAction> = {
+  kind: 'coupon.create',
+  title: 'Criar um cupom',
+  lines: [
+    { label: 'Código', from: null, to: 'VOLTA10' },
+    { label: 'Desconto', from: null, to: '10% de desconto' },
+    { label: 'Por cliente', from: null, to: '1 vez' },
+  ],
+};
+
+function CopilotReference() {
+  const [busy, setBusy] = useState<'confirm' | 'decline' | null>(null);
+  return (
+    <Block title="Duá Copiloto: conversa e cartões">
+      <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
+        <div className="flex flex-col gap-1.5 rounded-lg bg-bg p-3 ring-1 ring-line">
+          <Bubble voice="you" author="você" time="10:17">
+            Como estão as vendas hoje?
+          </Bubble>
+          <Bubble voice="seller" align="start" time="10:18">
+            <DuaText
+              text={
+                'Hoje até agora: **R$ 1.284,50** em 23 pedidos.\nNa mesma hora da semana passada eram R$ 1.010,00, então **+27%**.\n- Mais vendidos: Pudim de Leite (14), Pudim de Pistache (9)\n- 2 pedidos esperando aceite, veja em [Pedidos](/pedidos)\nQuer que eu veja o que está acabando no estoque?'
+              }
+            />
+          </Bubble>
+          <Bubble voice="you" author="você" time="10:30">
+            Pausa a loja por 30 minutos, a cozinha tá lotada
+          </Bubble>
+          <Bubble voice="seller" align="start" time="10:31">
+            <DuaText text="Preparei a pausa de 30 minutos com um aviso para os clientes. Confere e confirma no cartão." />
+          </Bubble>
+          <ActionCard
+            action={card({ ...PAUSE, id: 'p1' })}
+            busy={busy}
+            onConfirm={() => setBusy('confirm')}
+            onDecline={() => setBusy('decline')}
+            className="my-1 self-start"
+          />
+          <Typing owner />
+        </div>
+        <div className="flex flex-col gap-4">
+          <ActionCard
+            action={card({})}
+            onConfirm={() => toast('confirmar')}
+            onDecline={() => toast('agora não')}
+          />
+          <ActionCard
+            action={card({ ...COUPON, id: 'c2', money: true })}
+            busy="confirm"
+            onConfirm={() => undefined}
+            onDecline={() => undefined}
+          />
+          <ActionCard action={card({ ...PAUSE, canDecide: false })} />
+          <ActionCard
+            action={card({
+              status: 'applied',
+              done: 'Preço de 3 produtos aumentado',
+              link: '/cardapio',
+            })}
+          />
+          <ActionCard action={card({ ...COUPON, status: 'declined' })} />
+          <ActionCard action={card({ ...PAUSE, status: 'expired' })} />
+          <ActionCard
+            action={card({
+              ...COUPON,
+              status: 'failed',
+              error: 'Já existe um cupom com esse código. Peça de novo com outro código.',
+            })}
+          />
+          <SessionCtx.Provider value={SAMPLE_SESSION}>
+            <PlanLocked feature="copilot" plans={SAMPLE_PLANS} compact />
+          </SessionCtx.Provider>
+        </div>
+      </div>
+    </Block>
   );
 }

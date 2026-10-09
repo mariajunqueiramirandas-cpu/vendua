@@ -1,8 +1,10 @@
 import {
   BellRinging,
+  ChatCircleText,
   CheckCircle,
   CurrencyCircleDollar,
   DeviceMobile,
+  DownloadSimple,
   EnvelopeSimple,
   Moon,
   SignOut,
@@ -15,7 +17,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api, type Alerts, type Session } from '../../lib/api.ts';
-import { ago, when } from '../../lib/format.ts';
+import { ago, phone, when } from '../../lib/format.ts';
 import { setSoundOn } from '../../lib/live.ts';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../../lib/push.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
@@ -59,7 +61,13 @@ export default function Profile() {
   const patch = (body: Parameters<typeof api.updateMe>[0]) =>
     void save
       .track(api.updateMe(body))
-      .then(() => qc.invalidateQueries({ queryKey: qk.session }))
+      .then((r) => {
+        // a new email signs in once proven: it waits for the link sent to it
+        if (r.emailConfirmation === 'sent') toast('Enviamos um link para confirmar o e-mail');
+        else if (r.emailConfirmation === 'rate_limited')
+          toast.error('Muitos pedidos de confirmação. Tente de novo em uma hora.');
+        return qc.invalidateQueries({ queryKey: qk.session });
+      })
       .catch((e) => toast.error(messageOf(e)));
   // toggles flip at once; a failed save puts them back
   const setPref = async (p: Partial<Session['user']['prefs']>) => {
@@ -106,7 +114,11 @@ export default function Profile() {
               label="E-mail"
               optional
               htmlFor="me-mail"
-              helper="Para receber avisos se o WhatsApp falhar."
+              helper={
+                s.user.pendingEmail
+                  ? `Confirme ${s.user.pendingEmail} pelo link que enviamos para lá.`
+                  : 'Para receber avisos se o WhatsApp falhar.'
+              }
             >
               <CommitInput
                 id="me-mail"
@@ -119,6 +131,14 @@ export default function Profile() {
             </Field>
           </Card>
         </Section>
+        {s.duaWhatsapp ? (
+          <DuaWhatsappSection
+            dua={s.duaWhatsapp}
+            on={prefs.duaWhatsapp === true}
+            myPhone={s.user.phone}
+            onChange={(v) => void setPref({ duaWhatsapp: v })}
+          />
+        ) : null}
         <Section title="Pedido novo" hint="Como o painel te chama quando chega um pedido.">
           <Card className="space-y-4 p-5">
             <Toggle
@@ -218,6 +238,18 @@ export default function Profile() {
               }
               description="Um aviso no celular quando um pagamento online é aprovado."
             />
+            {s.vendedor?.enabled ? (
+              <Toggle
+                checked={prefs.pushWaiting !== false}
+                onChange={(v) => void setPref({ pushWaiting: v })}
+                label={
+                  <span className="inline-flex items-center gap-2">
+                    <ChatCircleText className="size-5" /> Cliente esperando por você
+                  </span>
+                }
+                description="Quando o Duá passa uma conversa para você. Se ninguém responder, avisa de novo em 5 e em 15 minutos."
+              />
+            ) : null}
             {manager ? (
               <Toggle
                 checked={prefs.whatsappAlerts !== false}
@@ -227,7 +259,11 @@ export default function Profile() {
                     <WhatsappLogo className="size-5" /> WhatsApp se o aviso falhar
                   </span>
                 }
-                description="Se um pedido novo passar do tempo de aceite e nenhum aviso tiver chegado, mandamos uma mensagem no seu WhatsApp."
+                description={
+                  s.vendedor?.enabled
+                    ? 'Se um pedido novo passar do tempo de aceite, ou um cliente esperar 5 minutos, e nenhum aviso tiver chegado, mandamos uma mensagem no seu WhatsApp.'
+                    : 'Se um pedido novo passar do tempo de aceite e nenhum aviso tiver chegado, mandamos uma mensagem no seu WhatsApp.'
+                }
               />
             ) : null}
             {owner ? (
@@ -317,7 +353,8 @@ export default function Profile() {
             className="mt-3 text-danger"
             icon={<SignOut />}
             onClick={async () => {
-              await api.auth.logout();
+              await disablePush().catch(() => undefined);
+              await api.auth.logout().catch(() => undefined);
               await resetClient(qc);
               window.location.assign('/admin/entrar');
             }}
@@ -327,6 +364,105 @@ export default function Profile() {
         </Section>
       </div>
     </PageBody>
+  );
+}
+
+/** "+55 (11) 98765-4321" for Brazil; other countries as "+<digits>" */
+function intlPhone(d: string) {
+  return d.startsWith('55') && (d.length === 12 || d.length === 13) ? `+55 ${phone(d)}` : `+${d}`;
+}
+
+function vcard(d: string) {
+  const card = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    'FN:Duá · Venduá',
+    'N:Venduá;Duá;;;',
+    'ORG:Venduá',
+    `TEL;TYPE=CELL:+${d}`,
+    'END:VCARD',
+    '',
+  ].join('\r\n');
+  return `data:text/vcard;charset=utf-8,${encodeURIComponent(card)}`;
+}
+
+/** Perfil's opt-in to talk to Duá from the person's own WhatsApp (dua-no-whatsapp §6). */
+function DuaWhatsappSection({
+  dua,
+  on,
+  myPhone,
+  onChange,
+}: {
+  dua: NonNullable<Session['duaWhatsapp']>;
+  on: boolean;
+  myPhone: string;
+  onChange: (v: boolean) => void;
+}) {
+  const active = on && dua.allowed;
+  return (
+    <Section
+      id="dua-whatsapp"
+      title="Duá pelo WhatsApp"
+      hint="Pergunte e peça mudanças na loja sem abrir o painel."
+    >
+      <Card className="space-y-4 p-5">
+        <Toggle
+          checked={active}
+          disabled={!dua.allowed}
+          onChange={onChange}
+          label={
+            <span className="inline-flex items-center gap-2">
+              <WhatsappLogo className="size-5" /> Falar com o Duá pelo WhatsApp
+            </span>
+          }
+          description={
+            dua.allowed
+              ? `Escrevendo ou por áudio, do seu número ${phone(myPhone)}.`
+              : 'O dono da loja desligou o Duá pelo WhatsApp para gerentes.'
+          }
+        />
+        {active ? (
+          <div className="space-y-4 border-t border-line pt-4">
+            {dua.number ? (
+              <div>
+                <p className="t-label text-muted">Número da Venduá</p>
+                <p className="t-title-2 mt-0.5 whitespace-nowrap tabular-nums">
+                  {intlPhone(dua.number)}
+                </p>
+                <p className="t-caption mt-1 text-muted">
+                  É o mesmo número que manda seus códigos de acesso.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <a
+                    href={`https://wa.me/${dua.number}?text=oi`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-whatsapp px-4 text-on-whatsapp depth-1 transition-transform active:scale-[0.97]"
+                  >
+                    <WhatsappLogo weight="fill" className="size-5" /> abrir no WhatsApp
+                  </a>
+                  <a
+                    href={vcard(dua.number)}
+                    download="dua-vendua.vcf"
+                    className="t-label inline-flex min-h-12 items-center gap-2 rounded-md bg-surface px-4 text-ink ring-1 ring-line-strong depth-1 transition-transform hover:bg-hover active:scale-[0.97]"
+                  >
+                    <DownloadSimple className="size-5" /> salvar contato
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <p className="t-body text-muted">
+                Mande uma mensagem para o número que manda seus códigos de acesso.
+              </p>
+            )}
+            <ul className="t-caption list-disc space-y-1 pl-5 text-muted">
+              <li>Quando o Duá preparar uma mudança, responda SIM para aplicar.</li>
+              <li>Mudanças de preço e desconto continuam só pelo painel.</li>
+            </ul>
+          </div>
+        ) : null}
+      </Card>
+    </Section>
   );
 }
 
@@ -344,6 +480,9 @@ function deviceName(ua: string) {
 const EVENT: Record<string, string> = {
   'order.placed': 'Pedido novo',
   'order.whatsapp': 'Pedido esperando',
+  'vendedor.waiting': 'Cliente esperando',
+  'vendedor.whatsapp': 'Cliente esperando',
+  'vendedor.ask': 'Contato novo',
   'payment.received': 'Pagamento recebido',
   test: 'Aviso de teste',
 };

@@ -12,6 +12,29 @@ import { errorMessage, qk } from '@/lib/query.ts';
 export const useBillingStores = () =>
   useQuery({ queryKey: qk.billingStores(), queryFn: api.billingStores, select: (r) => r.stores });
 
+export const useCustomers = () =>
+  useQuery({ queryKey: qk.customers(), queryFn: api.customers, select: (r) => r.stores });
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isStoreId = (id: string) => UUID.test(id);
+
+/** A malformed id never reaches Core — the page shows "não encontrada" for it directly. */
+export const useCustomer = (id: string) =>
+  useQuery({
+    queryKey: qk.customer(id),
+    queryFn: () => api.customer(id),
+    enabled: isStoreId(id),
+  });
+
+/** One store's billing row (domain, site request, open invoice), read on its own. */
+export const useBillingStore = (id: string) =>
+  useQuery({
+    queryKey: qk.billingStore(id),
+    queryFn: () => api.billingStore(id),
+    select: (r) => r.stores[0] ?? null,
+    enabled: isStoreId(id),
+  });
+
 export const useControlPlans = () =>
   useQuery({ queryKey: qk.controlPlans(), queryFn: api.controlPlans, select: (r) => r.plans });
 
@@ -37,7 +60,10 @@ export function useMarkInvoicePaid() {
     mutationFn: (id: string) => api.markInvoicePaid(id),
     onSuccess: () => toast.success('pagamento confirmado'),
     onError: (e) => toast.error(`não confirmou: ${errorMessage(e)}`),
-    onSettled: () => void qc.invalidateQueries({ queryKey: qk.billingStores() }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.billingStores() });
+      void qc.invalidateQueries({ queryKey: qk.customers() });
+    },
   });
 }
 
@@ -50,6 +76,16 @@ export function useActivateDomain() {
       void qc.invalidateQueries({ queryKey: qk.billingStores() });
     },
     onError: (e) => toast.error(`não ativou: ${errorMessage(e)}`),
+  });
+}
+
+export function useRetryDomainOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.retryDomainOrder(id),
+    onSuccess: () => toast.success('pedido de domínio de volta na fila'),
+    onError: (e) => toast.error(`não reenviou: ${errorMessage(e)}`),
+    onSettled: () => void qc.invalidateQueries({ queryKey: qk.billingStores() }),
   });
 }
 
@@ -81,6 +117,7 @@ export function usePatchPlan() {
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.controlPlans() });
       void qc.invalidateQueries({ queryKey: qk.billingStores() });
+      void qc.invalidateQueries({ queryKey: qk.customers() });
     },
   });
 }

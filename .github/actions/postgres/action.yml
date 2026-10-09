@@ -1,0 +1,32 @@
+name: Postgres
+description: >-
+  Postgres 16 on localhost:5433 with user, password and database `vendua`, as
+  packages/core/docker-compose.yml serves it locally, but from the runner's own PostgreSQL
+  install: no image pull, so a registry refusing an anonymous pull (Docker Hub's
+  "unauthorized: authentication required") can't fail a job before its tests run.
+  C.UTF-8 keeps the alpine image's byte-order collation.
+runs:
+  using: composite
+  steps:
+    - name: Postgres 16
+      shell: bash
+      run: |
+        set -euo pipefail
+        bin=/usr/lib/postgresql/16/bin
+        if [ ! -x "$bin/initdb" ]; then
+          # the runner image ships it; a future image without it installs from the Ubuntu archive
+          echo "PostgreSQL 16 not on the runner image, installing"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-16
+        fi
+        data="$RUNNER_TEMP/pg"
+        pw="$RUNNER_TEMP/pg-pw"
+        echo vendua > "$pw"
+        "$bin/initdb" -D "$data" -U vendua --pwfile="$pw" --auth-local=trust \
+          --auth-host=scram-sha-256 --locale=C.UTF-8 --encoding=UTF8 > /dev/null
+        rm "$pw"
+        "$bin/pg_ctl" -D "$data" -l "$RUNNER_TEMP/pg.log" -w -t 60 \
+          -o "-p 5433 -k $RUNNER_TEMP -c listen_addresses=localhost" start
+        PGPASSWORD=vendua "$bin/createdb" -h localhost -p 5433 -U vendua vendua
+        # a server that isn't answering must fail here, not as an indirect test-step error
+        "$bin/pg_isready" -h localhost -p 5433 -U vendua -d vendua

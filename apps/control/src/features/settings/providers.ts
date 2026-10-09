@@ -1,4 +1,4 @@
-import type { IgStatus, Integration } from '@/lib/api.ts';
+import type { IgStatus, Integration, WaQr } from '@/lib/api.ts';
 
 export type Driver = {
   d: string;
@@ -17,8 +17,18 @@ export type Driver = {
     hint?: string;
     /** stored as a JSON number — the driver reads `typeof config.x === 'number'` */
     number?: boolean;
+    /** shown, never sent: the driver always uses the placeholder (Core rejects any other value) */
+    locked?: boolean;
+    /** a choice among these values instead of free text; the placeholder is the default */
+    options?: readonly (readonly [value: string, label: string])[];
   }[];
 };
+
+/** the config a save sends: locked fields are the driver's, not the row's */
+export function configOut(drv: Driver | undefined, config: Record<string, string | number>) {
+  const locked = new Set(drv?.fields?.filter((f) => f.locked).map((f) => f.key));
+  return Object.fromEntries(Object.entries(config).filter(([k]) => !locked.has(k)));
+}
 
 export type Kind = { key: string; label: string; sub: string; drivers: Driver[] };
 
@@ -59,7 +69,28 @@ export const KINDS: Kind[] = [
         hint: 'direto na API da Anthropic',
         secret: true,
         secretName: 'ANTHROPIC_API_KEY',
-        fields: [{ key: 'model', label: 'modelo', placeholder: 'claude-sonnet-4-5' }],
+        fields: [
+          {
+            key: 'model',
+            label: 'modelo',
+            placeholder: 'claude-haiku-5-5',
+            locked: true,
+            hint: 'fixo: toda chamada direta à Anthropic usa este modelo',
+          },
+          {
+            key: 'effort',
+            label: 'esforço',
+            placeholder: 'medium',
+            options: [
+              ['low', 'baixo'],
+              ['medium', 'médio'],
+              ['high', 'alto'],
+              ['xhigh', 'extra'],
+              ['max', 'máximo'],
+            ],
+            hint: 'quanto o modelo pensa antes de responder: mais esforço, mais tokens e mais demora',
+          },
+        ],
       },
       {
         d: 'openai',
@@ -156,10 +187,17 @@ export const KINDS: Kind[] = [
   },
 ];
 
-export type WaState = {
-  qr: string | null;
-  status: string;
-  me: { phone: string | null; name: string | null } | null;
+export type WaState = WaQr;
+
+/** the gateway session's state, in the screen's words */
+export const WA_GATEWAY_STATE: Record<NonNullable<WaQr['state']>, string> = {
+  off: 'desligado',
+  connecting: 'conectando…',
+  pairing: 'aguardando código',
+  open: 'conectado',
+  logged_out: 'desvinculado',
+  banned: 'número bloqueado',
+  error: 'com erro',
 };
 export const WA_IDLE: WaState = { qr: null, status: 'off', me: null };
 
@@ -184,6 +222,8 @@ export function providerStatus(
   }
   if (kindKey === 'whatsapp' && cur.driver === 'baileys') {
     if (wa.status === 'open') return { tone: 'live', text: 'conectado' };
+    if (wa.transport === 'gateway')
+      return { tone: 'warn', text: WA_GATEWAY_STATE[wa.state ?? 'off'] ?? 'desligado' };
     if (wa.status === 'qr') return { tone: 'warn', text: 'escanear QR' };
     if (wa.status === 'connecting') return { tone: 'warn', text: 'conectando…' };
     return { tone: 'warn', text: 'socket offline' };

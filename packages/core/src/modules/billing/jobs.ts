@@ -2,17 +2,19 @@ import type { MerchantNotify } from '../../admin/context.ts';
 import { emitAdminTx } from '../../admin/live.ts';
 import { withTenant, type Sql } from '../../platform/db.ts';
 import { controlTx } from '../control.ts';
+import type { Rdap } from '../domains/providers.ts';
 import type { PaymentProvider } from '../payments/provider.ts';
 import { checkCustomDomain, DNS_GIVE_UP_MS, DNS_RECHECK_MS } from './domains.ts';
 import {
   billingLog,
   DAY_MS,
   pixIsLive,
-  payerEmailFor,
+  payerFor,
   PIX_TTL_MS,
   requestPix,
   storePix,
   upsertInvoice,
+  type BillingPayer,
   type InvoiceRow,
   type PixCharge,
 } from './invoices.ts';
@@ -41,6 +43,7 @@ import {
   RENEW_AHEAD_MS,
   settlePixPayment,
   stopPreapproval,
+  voidUnpaidTx,
   withEffects,
   type BillingCtx,
 } from './subscriptions.ts';
@@ -58,9 +61,9 @@ export interface BillingJobOpts {
   storeDomain?: string;
 }
 
-// Invoices and renewals, reminders, holds, DNS checks — every 10 minutes. Each step picks its
-// candidates across stores (controlTx), then re-checks under the store's own lock, so two
-// Core instances ticking together do each thing once.
+// Invoices and renewals, reminders, holds — every 10 minutes (custom-domain checks run in
+// modules/domains/jobs.ts). Each step picks its candidates across stores (controlTx), then
+// re-checks under the store's own lock, so two Core instances ticking together do each thing once.
 export function startBillingJobs(sql: Sql, o: BillingJobOpts): () => void {
   let running = false;
   const tick = async () => {
@@ -74,25 +77,11 @@ export function startBillingJobs(sql: Sql, o: BillingJobOpts): () => void {
       running = false;
     }
   };
-  let checking = false;
-  const dnsTick = async () => {
-    if (checking) return;
-    checking = true;
-    try {
-      await runDomainChecks(sql, o, new Date());
-    } catch (err) {
-      billingLog.error({ err }, 'custom-domain checks failed');
-    } finally {
-      checking = false;
-    }
-  };
   const first = setTimeout(() => void tick(), 30_000);
   const every = setInterval(() => void tick(), TICK_MS);
-  const dnsEvery = setInterval(() => void dnsTick(), DNS_RECHECK_MS);
   return () => {
     clearTimeout(first);
     clearInterval(every);
-    clearInterval(dnsEvery);
   };
 }
 
@@ -145,7 +134,7 @@ interface PixNeed {
   tenantId: string;
   /** as reserved: its pix_attempt keys this Pix */
   invoice: InvoiceRow;
-  payerEmail: string;
+  payer: BillingPayer;
   planName: string;
 }
 
@@ -155,7 +144,7 @@ async function reservePix(
   tx: Sql,
   tenantId: string,
   inv: InvoiceRow,
-  payerEmail: string,
+  payer: BillingPayer,
   planName: string,
 ): Promise<PixNeed> {
   const invoice = (
@@ -163,12 +152,12 @@ async function reservePix(
       update invoices set pix_attempt = pix_attempt + 1 where id = ${inv.id} returning *
     `
   )[0]!;
-  return { tenantId, invoice, payerEmail, planName };
+  return { tenantId, invoice, payer, planName };
 }
 
 const askPix = (base: Omit<BillingCtx, 'later'>, need: PixNeed, now: Date) =>
   requestPix(base.provider, need.invoice, need.invoice.pix_attempt, {
-    payerEmail: need.payerEmail,
+    payer: need.payer,
     planName: need.planName,
     origin: base.origin,
     now,
@@ -280,7 +269,7 @@ const endCancelled: Step = async (sql, base, now) => {
           checkout_url = null, updated_at = now(), status_changed_at = now()
         where tenant_id = ${tenant_id}
       `;
-        await tx`update invoices set status = 'void' where tenant_id = ${tenant_id} and status in ('open', 'failed')`;
+        await voidUnpaidTx(ctx, tx, tenant_id);
         await applyHold(tx, tenant_id);
         await emitAdminTx(tx, tenant_id, 'billing');
         await noticeCancelled(ctx, tx, sub, true);
@@ -496,7 +485,9 @@ const issueRenewals: Step = async (sql, base, now) => {
         and not s.cancel_at_period_end and s.current_period_end <= ${horizon}
         and not exists (select 1 from invoices i where i.tenant_id = s.tenant_id
                           and i.period_start = s.current_period_end and i.status <> 'void'
-                          and (${!pix} or i.status <> 'open' or i.pix_copy_paste is not null))
+                          and (${!pix} or i.status <> 'open' or i.pix_copy_paste is not null
+                               -- held for want of a CPF/CNPJ: saving one issues it
+                               or s.payer_document is null))
       -- a renewal not yet issued goes before a retry of one MP refused, so retries can't crowd it out
       order by exists (select 1 from invoices i where i.tenant_id = s.tenant_id
                          and i.period_start = s.current_period_end and i.status <> 'void'),
@@ -515,9 +506,10 @@ const issueRenewals: Step = async (sql, base, now) => {
         if (!pix && inv.status === 'open')
           await recordManualInvoice(tx, inv, (await planRow(tx, inv.plan_id))?.name ?? inv.plan_id);
         if (!pix || inv.status !== 'open' || pixIsLive(inv, now)) return null;
-        const payerEmail = await payerEmailFor(tx, tenant_id, sub.payer_email);
-        const plan = payerEmail ? await planRow(tx, inv.plan_id) : null;
-        return payerEmail && plan ? reservePix(tx, tenant_id, inv, payerEmail, plan.name) : null;
+        const payer = await payerFor(tx, tenant_id, sub.payer_email);
+        const plan = payer ? await planRow(tx, inv.plan_id) : null;
+        // no CPF/CNPJ yet: the invoice waits, without its Pix, and the reminders say why
+        return payer?.document && plan ? reservePix(tx, tenant_id, inv, payer, plan.name) : null;
       }),
     );
     if (need) await issueReserved(sql, base, need, now);
@@ -565,15 +557,15 @@ const sendReminders: Step = async (sql, base, now) => {
           await tx<InvoiceRow[]>`select * from invoices where id = ${inv.id} and status = 'open'`
         )[0];
         if (!cur || cur.reminded.includes(stage) || pixIsLive(cur, now)) return null;
-        const payerEmail = await payerEmailFor(tx, inv.tenant_id, sub?.payer_email);
-        return payerEmail ? reservePix(tx, inv.tenant_id, cur, payerEmail, inv.plan_name) : null;
+        const payer = await payerFor(tx, inv.tenant_id, sub?.payer_email);
+        return payer?.document ? reservePix(tx, inv.tenant_id, cur, payer, inv.plan_name) : null;
       });
       if (need) pix = { need, charge: await askPix(base, need, now) };
     }
     // claim first: a failed send is logged, never repeated into a second message
     const claimed = await withEffects(base, (ctx) =>
       withTenant(sql, inv.tenant_id, async (tx) => {
-        await lockSub(tx, inv.tenant_id);
+        const sub = await lockSub(tx, inv.tenant_id);
         const cur = (
           await tx<InvoiceRow[]>`select * from invoices where id = ${inv.id} and status = 'open'`
         )[0];
@@ -597,14 +589,14 @@ const sendReminders: Step = async (sql, base, now) => {
           `
         )[0];
         if (row) await emitAdminTx(tx, inv.tenant_id, 'billing', inv.id);
-        return row ?? null;
+        return row ? { row, held: !sub?.payer_document } : null;
       }),
     );
     if (!claimed) return;
     await messageOwners(
       base,
       inv.tenant_id,
-      reminderMessage(stage, claimed, inv.plan_name, base.origin),
+      reminderMessage(stage, claimed.row, inv.plan_name, base.origin, claimed.held),
       `invoice-reminder:${inv.id}:${stage}`,
     );
   });
@@ -757,15 +749,15 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       withTenant(sql, tenant_id, async (tx) => {
         const got = await load(tx);
         if (!got) return null;
-        const payerEmail = got.inv.pix_copy_paste
-          ? await payerEmailFor(tx, tenant_id, got.sub.payer_email)
+        const payer = got.inv.pix_copy_paste
+          ? await payerFor(tx, tenant_id, got.sub.payer_email)
           : null;
-        if (!payerEmail) {
+        if (!payer?.document) {
           const next = await reprice(ctx, tx, got.inv, got.plan.price_cents);
           await emitAdminTx(tx, tenant_id, 'billing', next.id);
           return null;
         }
-        const r = await reservePix(tx, tenant_id, got.inv, payerEmail, got.plan.name);
+        const r = await reservePix(tx, tenant_id, got.inv, payer, got.plan.name);
         return { ...r, from: r.invoice.amount_cents, to: got.plan.price_cents };
       }),
     );
@@ -800,7 +792,11 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
 }
 
 /** pending_dns domains, each at most every DNS_RECHECK_MS */
-export async function runDomainChecks(sql: Sql, o: BillingJobOpts, now: Date) {
+export async function runDomainChecks(
+  sql: Sql,
+  o: { storeDomain?: string; rdap?: Rdap; edgeIps?: readonly string[] },
+  now: Date,
+) {
   const storeDomain = o.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br';
   const rows = await controlTx(
     sql,
@@ -812,14 +808,27 @@ export async function runDomainChecks(sql: Sql, o: BillingJobOpts, now: Date) {
     `,
   );
   await each(rows, 'dns', async (r) => {
-    await checkCustomDomain(sql, { tenantId: r.tenant_id, domainId: r.id, storeDomain, now });
+    await checkCustomDomain(sql, {
+      tenantId: r.tenant_id,
+      domainId: r.id,
+      storeDomain,
+      now,
+      ...(o.rdap ? { rdap: o.rdap } : {}),
+      ...(o.edgeIps ? { edgeIps: o.edgeIps } : {}),
+    });
   });
-  // a claim that gave up a week ago is gone: it never held the host, it only clutters
-  await controlTx(
-    sql,
-    (tx) => tx`
+  // a claim that gave up a week ago is gone: it never held the host, it only clutters (one with
+  // a Cloudflare zone leaves through the domain jobs, which delete the zone first)
+  const stale = new Date(now.getTime() - DNS_GIVE_UP_MS);
+  await controlTx(sql, async (tx) => {
+    await tx`
+      update custom_domains set status = 'removing'
+      where status = 'failed' and zone_id is not null
+        and coalesce(last_checked_at, created_at) < ${stale}
+    `;
+    await tx`
       delete from custom_domains
-      where status = 'failed' and coalesce(last_checked_at, created_at) < ${new Date(now.getTime() - DNS_GIVE_UP_MS)}
-    `,
-  );
+      where status = 'failed' and zone_id is null and coalesce(last_checked_at, created_at) < ${stale}
+    `;
+  });
 }

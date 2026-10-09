@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { DETAIL, PRODUCT, STORE, flush, mockCore, mount, type Mounted } from './harness.tsx';
 
 // Kernel 1.2 (roadmap Phase 2): kits, live orders, share links, cross-device history.
@@ -387,6 +388,116 @@ describe('checkout carries the phone’s customer token', () => {
   });
 });
 
+describe('checkout keeps its Idempotency-Key while an attempt’s outcome is unknown', () => {
+  const INPUT = {
+    customer: { name: 'Ana', phone: '(22) 99999-0001' },
+    delivery: { mode: 'pickup' },
+    payment: { method: 'pix' },
+  };
+  async function run(replies: (() => Response)[], inputs: unknown[], reload = false) {
+    const { createApi } = await import('../src/api.ts');
+    const keys: string[] = [];
+    const outcomes: string[] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path !== '/checkout/v1/checkout')
+        return json(201, { sessionToken: 'st2', cart: { status: 'open' } });
+      keys.push(new Headers(init?.headers).get('idempotency-key') ?? '');
+      const reply = replies.shift();
+      if (!reply) throw new TypeError('no reply');
+      return reply();
+    }) as typeof fetch;
+    try {
+      let api = createApi('http://shop.test');
+      for (const i of inputs) {
+        // a reload: a new client, this tab's storage as the last attempt left it
+        if (reload) api = createApi('http://shop.test');
+        outcomes.push(
+          await api.checkout(i as never).then(
+            (o) => `order:${o.id}`,
+            (e: { code: string }) => e.code,
+          ),
+        );
+      }
+    } finally {
+      globalThis.fetch = real;
+    }
+    return { keys, outcomes };
+  }
+  const placed = () => json(201, { order: { id: 'o1' } });
+
+  test('a lost response, a 5xx or IDEMPOTENCY_IN_PROGRESS retries with the same key', async () => {
+    const lost = () => {
+      throw new TypeError('network down');
+    };
+    const { keys, outcomes } = await run(
+      [
+        lost,
+        () => json(502, {}),
+        () => json(409, { error: { code: 'IDEMPOTENCY_IN_PROGRESS', message: 'retry' } }),
+        placed,
+      ],
+      [INPUT, INPUT, INPUT, INPUT],
+    );
+    expect(outcomes).toEqual(['NETWORK_ERROR', 'INTERNAL', 'IDEMPOTENCY_IN_PROGRESS', 'order:o1']);
+    expect(new Set(keys).size).toBe(1);
+  });
+
+  test('a definite refusal, a changed body or a placed order takes a new key', async () => {
+    const { keys, outcomes } = await run(
+      [
+        () => json(409, { error: { code: 'PRICES_CHANGED', message: 'repriced' } }),
+        () => json(502, {}),
+        placed,
+        placed,
+      ],
+      [INPUT, INPUT, { ...INPUT, payment: { method: 'cash' } }, INPUT],
+    );
+    expect(outcomes).toEqual(['PRICES_CHANGED', 'INTERNAL', 'order:o1', 'order:o1']);
+    expect(keys[1]).not.toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[1]);
+    expect(keys[3]).not.toBe(keys[2]);
+  });
+
+  test('a reload after a lost response retries the same cart and body with the same key', async () => {
+    sessionStorage.clear();
+    localStorage.setItem('vendua.session', 'tok');
+    const lost = () => {
+      throw new TypeError('network down');
+    };
+    const { keys, outcomes } = await run(
+      [lost, () => json(502, {}), placed, placed],
+      [INPUT, INPUT, INPUT, INPUT],
+      true,
+    );
+    expect(outcomes).toEqual(['NETWORK_ERROR', 'INTERNAL', 'order:o1', 'order:o1']);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).toBe(keys[0]);
+    // the order is placed: the next checkout is a new one
+    expect(keys[3]).not.toBe(keys[2]);
+    expect(sessionStorage.getItem('vendua.checkoutKey')).toBeNull();
+    localStorage.clear();
+  });
+
+  test('after a reload a changed body takes a new key', async () => {
+    sessionStorage.clear();
+    localStorage.setItem('vendua.session', 'tok');
+    const { keys } = await run(
+      [() => json(502, {}), () => json(502, {})],
+      [INPUT, { ...INPUT, payment: { method: 'cash' } }],
+      true,
+    );
+    expect(keys[1]).not.toBe(keys[0]);
+    const stored = sessionStorage.getItem('vendua.checkoutKey') ?? '';
+    expect(JSON.parse(stored).key).toBe(keys[1]);
+    // a hash of the body, never the shopper's data
+    expect(stored).not.toContain('Ana');
+    sessionStorage.clear();
+    localStorage.clear();
+  });
+});
+
 describe('stock already in the cart', () => {
   const STOCKED = { ...DETAIL, modifierGroups: [], stockQuantity: 3 };
   const cartWith = (qty: number) => ({
@@ -692,4 +803,67 @@ describe('a closed store takes only encomendas (Kernel 1.16)', () => {
     expect(button.disabled).toBe(true);
     expect(note).toContain('Estamos fechados — abrimos');
   });
+});
+
+describe('product → product keeps nothing of the last product', () => {
+  test("B's add carries only B's picks, qty and note", async () => {
+    const BOLO = {
+      ...DETAIL,
+      id: '66666666-6666-4666-8666-666666666666',
+      slug: 'bolo',
+      name: 'Bolo',
+      modifierGroups: [
+        {
+          id: 'g2',
+          name: 'Cobertura',
+          required: false,
+          minSelect: 0,
+          maxSelect: 1,
+          modifiers: [{ id: 'm3', name: 'Chocolate', priceDeltaCents: 0, status: 'active' }],
+        },
+      ],
+    };
+    const c = core((url) =>
+      url.pathname === '/storefront/v1/products/bolo' ? json(200, { product: BOLO }) : null,
+    );
+    let go: (to: string) => void = () => {};
+    function Nav() {
+      go = useNavigate();
+      return null;
+    }
+    m = await mount({ path: '/produto/pudim', children: <Nav /> });
+    await act(async () => ($('[role="radio"]:last-of-type') as HTMLElement).click());
+    await act(async () => ($('[aria-label="Aumentar quantidade"]') as HTMLElement).click());
+    await flush();
+    expect($('output')?.textContent).toBe('2');
+    await act(async () => go('/produto/bolo'));
+    await flush();
+    expect($('h1')?.textContent).toBe('Bolo');
+    expect($('output')?.textContent).toBe('1');
+    await act(async () => ($('[data-vendua="add-to-cart"]') as HTMLButtonElement).click());
+    await flush();
+    const add = c.calls.filter((x) => x.path === '/checkout/v1/cart/items').at(-1)!;
+    const body = add.body as { productId: string; qty: number; modifierIds?: string[] };
+    expect(body.productId).toBe(BOLO.id);
+    expect(body.qty).toBe(1);
+    expect(body.modifierIds ?? []).toEqual([]);
+  });
+});
+
+test("a product slug is one path segment: '/', '?' and '#' never reach another route", async () => {
+  const { createApi } = await import('../src/api.ts');
+  const seen: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    seen.push(String(input));
+    return json(404, { error: { code: 'PRODUCT_NOT_FOUND', message: 'x' } });
+  }) as typeof fetch;
+  try {
+    await createApi('http://shop.test')
+      .product('../cart?x=1#y')
+      .catch(() => {});
+  } finally {
+    globalThis.fetch = real;
+  }
+  expect(seen[0]).toBe('http://shop.test/storefront/v1/products/..%2Fcart%3Fx%3D1%23y');
 });

@@ -230,6 +230,26 @@ const cart = (adjustment = 0) => ({
   delivery: { mode: 'pickup' },
 });
 const ADJ: Record<string, number> = { pix: -235, cash: 150 };
+const PLACED = {
+  id: '77777777-7777-4777-8777-777777777777',
+  number: 9,
+  state: 'placed',
+  customer: { name: 'Ana', phone: '22999990001' },
+  delivery: {
+    mode: 'pickup',
+    etaMin: null,
+    etaMax: null,
+    address: null,
+    feeCents: 0,
+    neighborhood: null,
+  },
+  payment: { method: 'meal_voucher', status: 'pending', provider: 'sandbox' },
+  subtotalCents: 4700,
+  deliveryFeeCents: 0,
+  totalCents: 4700,
+  placedAt: '2026-10-01T12:00:00Z',
+  timeline: [],
+};
 
 describe('checkout — payment adjustments and the meal voucher', () => {
   test('labels each rule, shows Core’s adjustment line (hidden at 0) and its total', async () => {
@@ -240,29 +260,7 @@ describe('checkout — payment adjustments and the meal voucher', () => {
         return json(200, { cart: cart(ADJ[method] ?? 0) });
       }
       if (url.pathname === '/checkout/v1/cart/delivery') return json(200, { cart: cart() });
-      if (url.pathname === '/checkout/v1/checkout')
-        return json(201, {
-          order: {
-            id: '77777777-7777-4777-8777-777777777777',
-            number: 9,
-            state: 'placed',
-            customer: { name: 'Ana', phone: '22999990001' },
-            delivery: {
-              mode: 'pickup',
-              etaMin: null,
-              etaMax: null,
-              address: null,
-              feeCents: 0,
-              neighborhood: null,
-            },
-            payment: { method: 'meal_voucher', status: 'pending', provider: 'sandbox' },
-            subtotalCents: 4700,
-            deliveryFeeCents: 0,
-            totalCents: 4700,
-            placedAt: '2026-10-01T12:00:00Z',
-            timeline: [],
-          },
-        });
+      if (url.pathname === '/checkout/v1/checkout') return json(201, { order: PLACED });
       return null;
     });
     m = await mount({ path: '/checkout', session: 'tok' });
@@ -309,7 +307,53 @@ describe('checkout — payment adjustments and the meal voucher', () => {
     await flush();
     expect(c.calls.find((x) => x.path === '/checkout/v1/checkout')?.body).toMatchObject({
       payment: { method: 'meal_voucher' },
+      // the total on the button, Core's for the method
+      expectedTotalCents: 4700,
     });
+  });
+
+  test('a total that moved (409 PRICES_CHANGED) is priced again before the retry', async () => {
+    let pix = -235;
+    let refuse = true;
+    const c = core((url) => {
+      if (url.pathname === '/storefront/v1/store') return json(200, ADJ_STORE);
+      if (url.pathname === '/checkout/v1/cart') {
+        const method = url.searchParams.get('paymentMethod');
+        return json(200, { cart: cart(method === 'pix' ? pix : 0) });
+      }
+      if (url.pathname === '/checkout/v1/cart/delivery') return json(200, { cart: cart() });
+      if (url.pathname === '/checkout/v1/checkout') {
+        if (!refuse) return json(201, { order: PLACED });
+        refuse = false;
+        // the store moved Pix's discount since the shopper's screen
+        pix = -470;
+        return json(409, {
+          error: { code: 'PRICES_CHANGED', message: 'x', details: { totalCents: 4230 } },
+        });
+      }
+      return null;
+    });
+    m = await mount({ path: '/checkout', session: 'tok' });
+    await act(async () => {
+      setValue('#checkout-name', 'Ana');
+      setValue('#checkout-phone', '(22) 99999-0001');
+    });
+    await submitForm();
+    await click($('input[value="pickup"]'));
+    await submitForm();
+    await flush();
+    expect(button('Confirmar pedido')?.textContent).toMatch(/44,65/);
+    await submitForm();
+    await flush();
+    const sent = () => c.calls.filter((x) => x.path === '/checkout/v1/checkout');
+    expect(sent()[0]?.body).toMatchObject({ expectedTotalCents: 4465 });
+    expect($('[data-vendua="checkout-error"]')?.getAttribute('data-code')).toBe('PRICES_CHANGED');
+    // the cart's own totals held: the method's price is still asked again
+    expect(button('Confirmar pedido')?.textContent).toMatch(/42,30/);
+    expect(text('[data-vendua="total"]')).toMatch(/R\$\s42,30/);
+    await submitForm();
+    await flush();
+    expect(sent()[1]?.body).toMatchObject({ expectedTotalCents: 4230 });
   });
 });
 
@@ -359,5 +403,26 @@ describe('checkout — polygon zones', () => {
       if (had) Object.defineProperty(nav, 'geolocation', had);
       else delete (nav as { geolocation?: unknown }).geolocation;
     }
+  });
+});
+
+describe('checkout — a pickup-only store', () => {
+  test('opened cold at /checkout, the delivery step starts on Retirada', async () => {
+    core((url) => {
+      if (url.pathname === '/storefront/v1/store')
+        return json(200, { ...STORE, deliveryEnabled: false });
+      if (url.pathname === '/checkout/v1/cart') return json(200, { cart: cart() });
+      if (url.pathname === '/checkout/v1/cart/delivery') return json(200, { cart: cart() });
+      return null;
+    });
+    m = await mount({ path: '/checkout', session: 'tok' });
+    await act(async () => {
+      setValue('#checkout-name', 'Ana');
+      setValue('#checkout-phone', '(22) 99999-0001');
+    });
+    await submitForm();
+    await flush();
+    expect(($('input[value="pickup"]') as HTMLInputElement).checked).toBe(true);
+    expect(($('input[value="delivery"]') as HTMLInputElement).disabled).toBe(true);
   });
 });

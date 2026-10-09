@@ -57,21 +57,33 @@ export function assertTz(tz: string): string {
   return tz;
 }
 
+// formatToParts is most of the cost of status and schedule math, and an instant's wall clock in
+// a zone never changes: the last few thousand (zone, second) answers are kept
+const partsMemo = new Map<string, LocalParts>();
+const PARTS_MEMO_MAX = 4096;
+
 export function localParts(instant: Date, tz: string): LocalParts {
-  const parts = dtf(tz).formatToParts(instant);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-  const hour = Number(get('hour'));
-  const minute = Number(get('minute'));
-  return {
-    year: Number(get('year')),
-    month: Number(get('month')),
-    day: Number(get('day')),
-    weekday: WEEKDAY[get('weekday')] ?? 0,
-    hour,
-    minute,
-    second: Number(get('second')),
-    minutes: hour * 60 + minute,
-  };
+  const key = `${tz}|${Math.floor(instant.getTime() / 1000)}`;
+  let p = partsMemo.get(key);
+  if (!p) {
+    const parts = dtf(tz).formatToParts(instant);
+    const get = (type: string) => parts.find((x) => x.type === type)?.value ?? '';
+    const hour = Number(get('hour'));
+    const minute = Number(get('minute'));
+    p = {
+      year: Number(get('year')),
+      month: Number(get('month')),
+      day: Number(get('day')),
+      weekday: WEEKDAY[get('weekday')] ?? 0,
+      hour,
+      minute,
+      second: Number(get('second')),
+      minutes: hour * 60 + minute,
+    };
+    if (partsMemo.size >= PARTS_MEMO_MAX) partsMemo.clear();
+    partsMemo.set(key, p);
+  }
+  return { ...p };
 }
 
 // ms the zone's wall clock leads UTC at `instant` (seconds resolution is enough)
@@ -82,13 +94,17 @@ function tzOffsetMs(instant: Date, tz: string): number {
 }
 
 // instant for wall time `minutes`-after-midnight on `date` in `tz` — one
-// correction pass lands slots straddling a DST jump on the right minute
+// correction pass lands slots straddling a DST jump on the right minute. A wall time a
+// spring-forward skips (02:30 in New York, 00:00 in São Paulo's old DST) moves forward past the
+// gap, never an hour back onto the day before.
 export function zonedInstant(tz: string, date: LocalDate, minutes: number): Date {
   const guess = Date.UTC(date.year, date.month - 1, date.day, 0, minutes);
+  const wallOf = (t: number) => t + tzOffsetMs(new Date(t), tz);
   let t = guess - tzOffsetMs(new Date(guess), tz);
-  const second = tzOffsetMs(new Date(t), tz);
-  const corrected = guess - second;
-  if (corrected !== t) t = corrected;
+  if (wallOf(t) !== guess) {
+    const corrected = guess - tzOffsetMs(new Date(t), tz);
+    t = wallOf(corrected) === guess ? corrected : Math.max(t, corrected);
+  }
   return new Date(t);
 }
 

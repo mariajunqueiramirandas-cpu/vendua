@@ -13,9 +13,13 @@
   ],
   "scripts": {
     "dev": "bun --filter @vendua/site dev",
+    "dev:stack": "bun tools/dev-stack.mjs",
+    "dev:stop": "bun tools/dev-stack.mjs stop",
     "build": "bun --filter @vendua/site build",
     "preview": "bun --filter @vendua/site preview",
-    "check": "bun --filter @vendua/site check",
+    "check": "bun tools/workspaces.mjs check",
+    "check:site": "bun --filter @vendua/site check",
+    "test": "bun tools/workspaces.mjs test",
     "test:e2e": "bun --filter @vendua/site test:e2e",
     "format": "bun --filter @vendua/site format",
     "format:check": "bun --filter @vendua/site format:check"
@@ -25,5 +29,8 @@
     "@vendua/conformance": "workspace:*",
     "prettier": "3.9.6",
     "prettier-plugin-svelte": "4.1.1"
+  },
+  "patchedDependencies": {
+    "postgres@3.4.7": "patches/postgres@3.4.7.patch"
   }
 }

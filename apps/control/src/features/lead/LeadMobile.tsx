@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Mail, MessageCircle, NotebookPen } from 'lucide-react';
 import type { LeadListItem } from '@/lib/api.ts';
+import { useBottomBar } from '@/lib/bottomBar.ts';
 import { AGENT_MODE_LABEL } from '@/lib/labels.ts';
 import { ScoreBar } from '@/components/common.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
@@ -39,6 +40,7 @@ export function LeadActionBar({ lead }: { lead: LeadListItem }) {
   const go = (ch: 'whatsapp' | 'email') =>
     open.mutate(ch, { onSuccess: (threadId) => nav(`/inbox/${threadId}`) });
   const busy = (ch: string) => open.isPending && open.variables === ch;
+  useBottomBar();
 
   return (
     <>

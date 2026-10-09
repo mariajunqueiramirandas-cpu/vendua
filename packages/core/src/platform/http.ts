@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { withTenant, type Sql } from './db.ts';
@@ -106,9 +106,10 @@ export function tenantMiddleware(
   };
 }
 
-/** Constant-time string compare; hashing first hides the length too. */
+/** Constant-time string compare; hashing first hides the length too. An empty expected value
+ *  matches nothing (an unset secret must never open a gate to an empty header). */
 export function constantTimeEqual(a: string | undefined | null, b: string): boolean {
-  if (a == null) return false;
+  if (a == null || !b) return false;
   const ha = createHash('sha256').update(a).digest();
   const hb = createHash('sha256').update(b).digest();
   return timingSafeEqual(ha, hb) && a.length === b.length;
@@ -186,7 +187,7 @@ const inProgress = () =>
 // claimTx's own keys (the Vendedor's place_order); a client key can't occupy one
 const INTERNAL_KEY = /^vendedor:/;
 
-function checkKey(key: string | undefined | null, internal = false): asserts key is string {
+export function checkKey(key: string | undefined | null, internal = false): asserts key is string {
   if (!key) {
     throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
   }
@@ -205,8 +206,8 @@ const fingerprintOf = (f: string) =>
 export type Claimed<T> = { status: number; body: T; replayed: boolean };
 
 /** First result for (tenant, key) is stored; a replay returns it to the same caller
- *  (`fingerprint`), 422 IDEMPOTENCY_KEY_REUSED to anyone else. `run`'s writes and the stored
- *  result commit in one tx. */
+ *  (`fingerprint`), 422 IDEMPOTENCY_KEY_REUSED to anyone else. The claim, `run`'s writes and the
+ *  stored result commit or roll back in one tx. */
 export async function claim<T>(
   sql: Sql,
   tenantId: string,
@@ -216,14 +217,33 @@ export async function claim<T>(
   run: (tx: Sql) => Promise<{ status: number; body: T }>,
 ): Promise<Claimed<T>> {
   checkKey(key);
+  return withTenant(sql, tenantId, (tx) =>
+    claimTx(tx, tenantId, key, fingerprint, () => run(tx), {
+      // a sweep on ~1 in 50 claims still bounds the table, sent with the claim
+      sweep: Math.random() < 0.02,
+    }),
+  );
+}
+
+/** `claim` inside the caller's transaction: the key row, `run`'s writes and the stored result
+ *  commit or roll back together. */
+export async function claimTx<T>(
+  tx: Sql,
+  tenantId: string,
+  key: string,
+  fingerprint: string,
+  run: () => Promise<{ status: number; body: T }>,
+  opts: { sweep?: boolean } = {},
+): Promise<Claimed<T>> {
+  checkKey(key, true);
   fingerprint = fingerprintOf(fingerprint);
-  // one owner per (tenant,key): on-conflict "steals" only a dead claim (pending >30s);
-  // the claim commits in its own tx so peers see the pending row; the sweep below bounds the table
   const owner = crypto.randomUUID();
-  // null = a row from before fingerprints existed: replayable to anyone, as it was
-  const sameCaller = (fp: string | null | undefined) => fp == null || fp === fingerprint;
-  const claimed = await withTenant(sql, tenantId, async (tx) => {
-    const rows = await tx<{ key: string }[]>`
+  // The key row is only ever committed with its result, so the unique index serializes owners: a
+  // concurrent same-key insert waits for this tx, then replays what it committed (or claims a key
+  // whose first attempt rolled back). The 30s steal is for a pending row an older Core committed
+  // in a claim tx of its own and never finished.
+  const [claimed] = await Promise.all([
+    tx<{ key: string }[]>`
       insert into idempotency_keys (tenant_id, key, owner, fingerprint)
       values (${tenantId}, ${key}, ${owner}, ${fingerprint})
       on conflict (tenant_id, key) do update
@@ -231,106 +251,17 @@ export async function claim<T>(
         where idempotency_keys.response is null
           and idempotency_keys.created_at < now() - interval '30 seconds'
       returning key
-    `;
-    // a sweep on ~1 in 50 claims still bounds the table, without a round trip on every write
-    if (Math.random() < 0.02)
-      await tx`delete from idempotency_keys where created_at < now() - interval '7 days'`;
-    return rows;
-  });
-  if (!claimed[0]) {
-    // another owner holds the key: replay its stored response, waiting briefly for it to land
-    const replay = await withTenant(sql, tenantId, async (tx) => {
-      for (let i = 0; i < 25; i++) {
-        const rows = await tx<
-          { response: unknown; status_code: number; fingerprint: string | null }[]
-        >`
-          select response, status_code, fingerprint from idempotency_keys
-          where tenant_id = ${tenantId} and key = ${key}
-        `;
-        const hit = rows[0];
-        if (hit && !sameCaller(hit.fingerprint)) throw keyReused();
-        if (hit?.response != null && hit.status_code != null) return hit;
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      return null;
-    });
-    if (replay) return { status: replay.status_code, body: replay.response as T, replayed: true };
-    throw inProgress();
-  }
-  // handler writes + recorded response commit in one tx; the per-key advisory lock serializes owners,
-  // so a stale-claim stealer waits for the original's tx then replays its result instead of double-applying
-  try {
-    return await withTenant(sql, tenantId, async (tx): Promise<Claimed<T>> => {
-      await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`;
-      const cur = (
-        await tx<
-          {
-            owner: string | null;
-            response: unknown;
-            status_code: number;
-            fingerprint: string | null;
-          }[]
-        >`
-          select owner, response, status_code, fingerprint from idempotency_keys
-          where tenant_id = ${tenantId} and key = ${key}
-        `
-      )[0];
-      if (cur?.response != null && cur.status_code != null) {
-        if (!sameCaller(cur.fingerprint)) throw keyReused();
-        return { status: cur.status_code, body: cur.response as T, replayed: true };
-      }
-      // our claim was stolen (>30s between claim and lock) — the other owner is committing; abort, don't double up
-      if (cur?.owner !== owner) throw inProgress();
-      const r = await run(tx);
-      const stored = await tx`
-        update idempotency_keys set response = ${tx.json(r.body as never)}, status_code = ${r.status}
-        where tenant_id = ${tenantId} and key = ${key} and owner = ${owner}
-      `;
-      if (stored.count === 0) throw inProgress();
-      return { status: r.status, body: r.body, replayed: false };
-    });
-  } catch (err) {
-    // release our pending claim so an immediate retry re-executes instead of hitting IDEMPOTENCY_IN_PROGRESS
-    // for the 30s stale window (failed responses aren't persisted); the owner predicate spares a stolen claim
-    try {
-      await withTenant(
-        sql,
-        tenantId,
-        (tx) =>
-          tx`delete from idempotency_keys
-             where tenant_id = ${tenantId} and key = ${key} and owner = ${owner}`,
-      );
-    } catch {
-      /* best effort — the 30s stale window + 7-day sweep still bound it */
-    }
-    throw err;
-  }
-}
-
-/** `claim` inside the caller's transaction: the key row, `run`'s writes and the stored result
- *  commit or roll back together. A key pending under another owner → 409 IDEMPOTENCY_IN_PROGRESS
- *  (no polling: the caller holds a tx open). */
-export async function claimTx<T>(
-  tx: Sql,
-  tenantId: string,
-  key: string,
-  fingerprint: string,
-  run: () => Promise<{ status: number; body: T }>,
-): Promise<Claimed<T>> {
-  checkKey(key, true);
-  fingerprint = fingerprintOf(fingerprint);
-  const owner = crypto.randomUUID();
-  // serializes with claim()'s second tx, so a dead-claim steal never runs beside its owner
-  await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}|${key}`}, 0))`;
-  const claimed = await tx<{ key: string }[]>`
-    insert into idempotency_keys (tenant_id, key, owner, fingerprint)
-    values (${tenantId}, ${key}, ${owner}, ${fingerprint})
-    on conflict (tenant_id, key) do update
-      set created_at = now(), owner = excluded.owner, fingerprint = excluded.fingerprint
-      where idempotency_keys.response is null
-        and idempotency_keys.created_at < now() - interval '30 seconds'
-    returning key
-  `;
+    `,
+    // inside the work tx, its row locks last as long as the handler: skip locked, so two sweeps
+    // never wait on (or deadlock with) each other; bounded, so it never lengthens a request much
+    opts.sweep
+      ? tx`
+          delete from idempotency_keys where (tenant_id, key) in (
+            select tenant_id, key from idempotency_keys
+            where created_at < now() - interval '7 days'
+            limit 500 for update skip locked)`
+      : null,
+  ]);
   if (!claimed[0]) {
     const hit = (
       await tx<{ response: unknown; status_code: number; fingerprint: string | null }[]>`
@@ -338,6 +269,7 @@ export async function claimTx<T>(
         where tenant_id = ${tenantId} and key = ${key}
       `
     )[0];
+    // null = a row from before fingerprints existed: replayable to anyone, as it was
     if (hit && hit.fingerprint != null && hit.fingerprint !== fingerprint) throw keyReused();
     if (hit?.response != null && hit.status_code != null) {
       return { status: hit.status_code, body: hit.response as T, replayed: true };
@@ -452,21 +384,9 @@ export function rateLimit(
   };
 }
 
-const encoder = new TextEncoder();
-
-async function hmac(secret: string, msg: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(msg));
-  return btoa(String.fromCharCode(...new Uint8Array(sig)))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replace(/=+$/, '');
+// unpadded base64url HMAC-SHA256 — synchronous: WebCrypto imported the key on every call
+function hmac(secret: string, msg: string): string {
+  return createHmac('sha256', secret).update(msg).digest('base64url');
 }
 
 /** `vst.<cartId>.<hmac>` checkout session token — the HMAC input binds the tenant, so tokens can't cross tenants. */
@@ -475,7 +395,7 @@ export async function mintSessionToken(
   tenantId: string,
   secret: string,
 ): Promise<string> {
-  return `vst.${cartId}.${await hmac(secret, `${tenantId}|${cartId}`)}`;
+  return `vst.${cartId}.${hmac(secret, `${tenantId}|${cartId}`)}`;
 }
 
 export async function verifySessionToken(
@@ -487,7 +407,7 @@ export async function verifySessionToken(
   if (parts.length !== 3 || parts[0] !== 'vst') return null;
   const [, cartId, sig] = parts;
   if (!cartId || !sig) return null;
-  const expected = await hmac(secret, `${tenantId}|${cartId}`);
+  const expected = hmac(secret, `${tenantId}|${cartId}`);
   if (expected.length !== sig.length) return null;
   let diff = 0;
   for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ sig.charCodeAt(i);

@@ -156,6 +156,8 @@ export function messageOf(err: unknown): string {
 }
 
 const FRIENDLY: Record<string, string> = {
+  PAYER_DOCUMENT_REQUIRED:
+    'Antes, informe o CPF ou o CNPJ da cobrança em Conta e plano, em Pagamento do plano.',
   INVALID_CODE: 'Código errado ou vencido. Confira ou peça outro.',
   INVALID_PHONE: 'Digite o celular com DDD, como (22) 99999-0000.',
   REASON_REQUIRED: 'Escolha um motivo para avisar o cliente.',
@@ -164,6 +166,7 @@ const FRIENDLY: Record<string, string> = {
   CATEGORY_NOT_EMPTY: 'Essa categoria ainda tem produtos. Mova ou esconda eles antes.',
   COUPON_EXISTS: 'Já existe um cupom com esse código.',
   LAST_OWNER: 'A loja precisa ter pelo menos um dono.',
+  WHATSAPP_REQUIRED: 'Conecte o WhatsApp da loja antes de ligar o Duá.',
   MEMBER_EXISTS: 'Esse celular já faz parte da equipe. Toque na pessoa para mudar o papel.',
   AI_PACK_NEEDS_PAID_PLAN:
     'Os pacotes de conversas ficam disponíveis depois do primeiro pagamento do plano.',

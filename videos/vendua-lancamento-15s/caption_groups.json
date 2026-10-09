@@ -1,0 +1,244 @@
+{
+  "total_duration_s": 14.531,
+  "width": 1080,
+  "height": 1920,
+  "groups": [
+    {
+      "id": "caption-group-0",
+      "frame": 1,
+      "start": 0.12,
+      "end": 1.28,
+      "text": "Chegou o Venduá!",
+      "words": [
+        {
+          "id": "caption-word-0-0",
+          "text": "Chegou",
+          "start": 0.12,
+          "end": 0.58
+        },
+        {
+          "id": "caption-word-0-1",
+          "text": "o",
+          "start": 0.58,
+          "end": 0.7
+        },
+        {
+          "id": "caption-word-0-2",
+          "text": "Venduá!",
+          "start": 0.7,
+          "end": 1.16
+        }
+      ]
+    },
+    {
+      "id": "caption-group-1",
+      "frame": 1,
+      "start": 1.57,
+      "end": 1.87,
+      "text": "A sua",
+      "words": [
+        {
+          "id": "caption-word-1-0",
+          "text": "A",
+          "start": 1.57,
+          "end": 1.67
+        },
+        {
+          "id": "caption-word-1-1",
+          "text": "sua",
+          "start": 1.67,
+          "end": 1.87
+        }
+      ]
+    },
+    {
+      "id": "caption-group-2",
+      "frame": 1,
+      "start": 1.87,
+      "end": 2.65,
+      "text": "loja online,",
+      "words": [
+        {
+          "id": "caption-word-2-0",
+          "text": "loja",
+          "start": 1.87,
+          "end": 2.15
+        },
+        {
+          "id": "caption-word-2-1",
+          "text": "online,",
+          "start": 2.15,
+          "end": 2.53
+        }
+      ]
+    },
+    {
+      "id": "caption-group-3",
+      "frame": 1,
+      "start": 2.73,
+      "end": 2.99,
+      "text": "com um",
+      "words": [
+        {
+          "id": "caption-word-3-0",
+          "text": "com",
+          "start": 2.73,
+          "end": 2.87
+        },
+        {
+          "id": "caption-word-3-1",
+          "text": "um",
+          "start": 2.87,
+          "end": 2.99
+        }
+      ]
+    },
+    {
+      "id": "caption-group-4",
+      "frame": 1,
+      "start": 2.99,
+      "end": 3.55,
+      "text": "vendedor que",
+      "words": [
+        {
+          "id": "caption-word-4-0",
+          "text": "vendedor",
+          "start": 2.99,
+          "end": 3.39
+        },
+        {
+          "id": "caption-word-4-1",
+          "text": "que",
+          "start": 3.39,
+          "end": 3.55
+        }
+      ]
+    },
+    {
+      "id": "caption-group-5",
+      "frame": 1,
+      "start": 3.55,
+      "end": 4.39,
+      "text": "nunca larga",
+      "words": [
+        {
+          "id": "caption-word-5-0",
+          "text": "nunca",
+          "start": 3.55,
+          "end": 3.89
+        },
+        {
+          "id": "caption-word-5-1",
+          "text": "larga",
+          "start": 3.89,
+          "end": 4.39
+        }
+      ]
+    },
+    {
+      "id": "caption-group-6",
+      "frame": 1,
+      "start": 4.39,
+      "end": 4.83,
+      "text": "o WhatsApp",
+      "words": [
+        {
+          "id": "caption-word-6-0",
+          "text": "o",
+          "start": 4.39,
+          "end": 4.45
+        },
+        {
+          "id": "caption-word-6-1",
+          "text": "WhatsApp",
+          "start": 4.45,
+          "end": 4.83
+        }
+      ]
+    },
+    {
+      "id": "caption-group-7",
+      "frame": 1,
+      "start": 4.83,
+      "end": 5.25,
+      "text": "e uma",
+      "words": [
+        {
+          "id": "caption-word-7-0",
+          "text": "e",
+          "start": 4.83,
+          "end": 5.13
+        },
+        {
+          "id": "caption-word-7-1",
+          "text": "uma",
+          "start": 5.13,
+          "end": 5.25
+        }
+      ]
+    },
+    {
+      "id": "caption-group-8",
+      "frame": 1,
+      "start": 5.25,
+      "end": 5.81,
+      "text": "cozinha que",
+      "words": [
+        {
+          "id": "caption-word-8-0",
+          "text": "cozinha",
+          "start": 5.25,
+          "end": 5.67
+        },
+        {
+          "id": "caption-word-8-1",
+          "text": "que",
+          "start": 5.67,
+          "end": 5.81
+        }
+      ]
+    },
+    {
+      "id": "caption-group-9",
+      "frame": 1,
+      "start": 5.81,
+      "end": 6.31,
+      "text": "vê tudo",
+      "words": [
+        {
+          "id": "caption-word-9-0",
+          "text": "vê",
+          "start": 5.81,
+          "end": 5.95
+        },
+        {
+          "id": "caption-word-9-1",
+          "text": "tudo",
+          "start": 5.95,
+          "end": 6.31
+        }
+      ]
+    },
+    {
+      "id": "caption-group-10",
+      "frame": 1,
+      "start": 6.31,
+      "end": 6.93,
+      "text": "na hora.",
+      "words": [
+        {
+          "id": "caption-word-10-0",
+          "text": "na",
+          "start": 6.31,
+          "end": 6.55
+        },
+        {
+          "id": "caption-word-10-1",
+          "text": "hora.",
+          "start": 6.55,
+          "end": 6.81
+        }
+      ]
+    }
+  ]
+}

@@ -77,7 +77,7 @@ export function SettingsEditor({
         switch (f.kind) {
           case 'text':
             return (
-              <Field key={f.key} label={f.label} htmlFor={id}>
+              <Field key={f.key} label={f.label} htmlFor={id} helper={f.help}>
                 {f.long ? (
                   <TextArea
                     id={id}
@@ -125,11 +125,12 @@ export function SettingsEditor({
                 checked={typeof v === 'boolean' ? v : (f.def ?? false)}
                 onChange={(b) => set(f.key, b)}
                 label={f.label}
+                description={f.help}
               />
             );
           case 'select':
             return (
-              <Field key={f.key} label={f.label}>
+              <Field key={f.key} label={f.label} helper={f.help}>
                 <Chips
                   label={f.label}
                   value={(v as string) ?? f.def ?? f.options[0] ?? ''}

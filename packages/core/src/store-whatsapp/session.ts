@@ -1,6 +1,14 @@
 import type { Logger } from 'pino';
 import { LeaseLost, type AuthStore, type BufferCodec } from './auth-store.ts';
 import { parseContent, type ChatContent } from './content.ts';
+import {
+  answerFor,
+  HISTORY_COUNT,
+  historyLines,
+  type HistoryLine,
+  type HistorySet,
+  type HistoryWait,
+} from './history.ts';
 import { jidForPhone, phoneVariants, reconnectDelayMs, userJid } from './text.ts';
 
 // One store's linked WhatsApp device. The gateway owns the lifecycle (start, pair, stop,
@@ -23,6 +31,8 @@ export interface StateUpdate {
 export interface Inbound {
   /** national digits when the sender's number is known, else null */
   phone: string | null;
+  /** the chat's address, what a SAIR is kept by when the number is hidden */
+  jid?: string | null;
   text: string;
   id: string;
 }
@@ -42,8 +52,11 @@ export interface WaInbound {
   content: ChatContent | null;
   /** the PN jid behind a LID, from the device's own mapping */
   pnForLid(lid: string): Promise<string | null>;
-  /** the media bytes (audio, image), bounded */
-  download(): Promise<Uint8Array>;
+  /** the media bytes (audio, image): refused past `maxBytes`, aborted on a timeout */
+  download(maxBytes: number): Promise<Uint8Array>;
+  /** the normalized message, for readers with their own rules (platform sessions) */
+  message?: unknown;
+  timestamp?: unknown;
 }
 
 export type OutContent =
@@ -71,20 +84,34 @@ export interface WaSocket {
       event: 'messages.update',
       cb: (u: { key?: WaKey; update?: { status?: number | null } }[]) => void,
     ): void;
+    on(event: 'messaging-history.set', cb: (h: HistorySet) => void): void;
+    on(event: 'lid-mapping.update', cb: (m: { lid?: string; pn?: string }) => void): void;
     on(
       event: 'presence.update',
       cb: (p: { id: string; presences: Record<string, { lastKnownPresence?: string }> }) => void,
     ): void;
   };
   user?: { id?: string; phoneNumber?: string; name?: string } | undefined;
-  signalRepository?: { lidMapping?: { getPNForLID(lid: string): Promise<string | null> } };
+  signalRepository?: {
+    lidMapping?: {
+      getPNForLID(lid: string): Promise<string | null>;
+      getLIDForPN?(pn: string): Promise<string | null>;
+    };
+  };
   requestPairingCode(phone: string): Promise<string>;
   onWhatsApp(...jids: string[]): Promise<{ jid: string; exists: boolean }[] | undefined>;
   sendMessage(
     jid: string,
-    content: OutContent,
+    content: OutContent | { delete: WaKey },
     opts?: { messageId?: string },
   ): Promise<{ key?: { id?: string | null } } | undefined>;
+  /** asks the phone for `count` messages of one chat older than `oldest`; the answer arrives as
+   *  an ON_DEMAND `messaging-history.set`. Resolves to the request message's id. */
+  fetchMessageHistory?(
+    count: number,
+    oldest: { remoteJid: string; id: string; fromMe: boolean },
+    oldestTimestampMs: number,
+  ): Promise<string>;
   /** asks the phone that sent a media message to upload it again (expired links) */
   updateMediaMessage(message: WaMessage): Promise<WaMessage>;
   presenceSubscribe(jid: string): Promise<void>;
@@ -98,6 +125,7 @@ export interface WaMessage {
   key?: WaKey;
   message?: unknown;
   pushName?: string | null;
+  messageTimestamp?: unknown;
 }
 
 export interface ConnectionUpdate {
@@ -128,10 +156,25 @@ export interface WaRuntime {
     keys: SocketKeys;
     logger: Logger;
     getMessage: (key: WaKey) => Promise<{ conversation: string } | undefined>;
+    /** the store's history stays unsynced, except an on-demand answer someone is waiting for */
+    wantsOnDemand?: () => boolean;
+    /** import the bulk syncs (recent, full) a pairing brings — platform sessions only */
+    syncHistory?: () => boolean;
   }): Promise<WaSocket>;
   normalize(message: unknown): unknown;
-  /** a media message's bytes (baileys `downloadMediaMessage`, re-upload on expired links) */
-  download(message: WaMessage, sock: WaSocket, logger: Logger): Promise<Uint8Array>;
+  /** a media message's decrypted bytes, from WhatsApp's own CDN only (re-upload on expired
+   *  links); stops reading past `maxBytes` and when `signal` aborts */
+  download(
+    message: WaMessage,
+    sock: WaSocket,
+    logger: Logger,
+    limits: MediaLimits,
+  ): Promise<Uint8Array>;
+}
+
+export interface MediaLimits {
+  maxBytes: number;
+  signal: AbortSignal;
 }
 
 export interface SessionHooks {
@@ -146,6 +189,19 @@ export interface SessionHooks {
   messageText(waId: string): Promise<string | null>;
   /** wipe this store's login (logout, logged out by the phone, fresh pairing) */
   wipe(): Promise<void>;
+  /** every sync but on-demand answers (absent for stores: they ignore them) */
+  onHistory?(
+    h: HistorySet,
+    ctx: { pnForLid(lid: string): Promise<string | null>; ownPhone: string | null },
+  ): void;
+  onLidMapping?(m: { lid?: string; pn?: string }): void;
+}
+
+/** What sets a platform session apart from a store's; the defaults are the store's. */
+export interface SessionOptions {
+  /** the digits to request a pair code for; default: a Brazilian national number */
+  pairPhone?: (phone: string) => string | null;
+  syncHistory?: () => boolean;
 }
 
 export class NotOnWhatsApp extends Error {
@@ -160,6 +216,20 @@ export class SessionClosed extends Error {
   }
 }
 
+export class HistoryTimeout extends Error {
+  constructor(ms: number) {
+    super(`no history answer in ${ms}ms`);
+  }
+}
+
+/** proto.HistorySync.HistorySyncType.ON_DEMAND */
+export const ON_DEMAND_SYNC = 6;
+
+interface PendingHistory extends HistoryWait {
+  settle(messages: WaMessage[]): void;
+  fail(e: Error): void;
+}
+
 const SEND_TIMEOUT_MS = 30_000;
 const PROBE_TIMEOUT_MS = 10_000;
 const LOGOUT_TIMEOUT_MS = 10_000;
@@ -169,18 +239,25 @@ export const PAIR_WINDOW_MS = 200_000;
 /** consecutive failed connections before the state says error (it keeps retrying) */
 const ERROR_AFTER_FAILURES = 6;
 const JID_CACHE_MAX = 2_000;
+/** a "not on WhatsApp" answer can be a hiccup: ask again after this */
+const JID_MISS_TTL_MS = 5 * 60_000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const PRESENCE_TIMEOUT_MS = 5_000;
 /** WhatsApp forgets a presence subscription after a while; renewing more often is noise */
 const PRESENCE_EVERY_MS = 10 * 60_000;
 
-async function bounded<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+async function bounded<T>(
+  p: Promise<T>,
+  ms: number,
+  what: string,
+  timeout = () => new Error(`${what} timed out after ${ms}ms`),
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       p,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms);
+        timer = setTimeout(() => reject(timeout()), ms);
       }),
     ]);
   } finally {
@@ -192,6 +269,11 @@ async function bounded<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
  *  pairing-code request sets makes the next start try to log in and die on a 401 */
 export function pairingConfirmed(creds: Creds): boolean {
   return !!creds.registered || !!creds.account;
+}
+
+function ownPhone(sock: WaSocket): string | null {
+  const raw = sock.user?.phoneNumber ?? sock.user?.id;
+  return raw?.split('@')[0]?.split(':')[0]?.replace(/\D/g, '') || null;
 }
 
 function statusOf(u: ConnectionUpdate): number | undefined {
@@ -210,8 +292,10 @@ export class StoreSession {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pairing: { phone: string; issued: boolean } | null = null;
   private credsTail: Promise<void> = Promise.resolve();
-  private jids = new Map<string, string | null>();
+  /** null = not on WhatsApp, until `missUntil` */
+  private jids = new Map<string, { jid: string | null; missUntil: number }>();
   private subscribed = new Map<string, number>();
+  private historyWaits = new Set<PendingHistory>();
 
   constructor(
     readonly tenantId: string,
@@ -220,6 +304,7 @@ export class StoreSession {
     private hooks: SessionHooks,
     private log: Logger,
     private reconnectDelay: (failures: number) => number = reconnectDelayMs,
+    private opts: SessionOptions = {},
   ) {}
 
   get state(): SessionState {
@@ -266,6 +351,7 @@ export class StoreSession {
     this.reconnectTimer = null;
     const s = this.sock;
     this.sock = null;
+    this.failHistory();
     try {
       s?.end();
     } catch {
@@ -322,6 +408,8 @@ export class StoreSession {
           const text = key.id ? await this.hooks.messageText(key.id) : null;
           return text ? { conversation: text } : undefined;
         },
+        wantsOnDemand: () => this.historyWaits.size > 0,
+        ...(this.opts.syncHistory ? { syncHistory: this.opts.syncHistory } : {}),
       });
     } catch (e) {
       this.log.error({ err: e }, 'socket start failed');
@@ -358,6 +446,29 @@ export class StoreSession {
         this.log.warn({ err: e }, 'inbound processing failed'),
       );
     });
+    sock.ev.on('messaging-history.set', (h) => {
+      if (this.sock !== sock) return;
+      if (h.syncType !== ON_DEMAND_SYNC) {
+        this.hooks.onHistory?.(h, {
+          pnForLid: async (lid) =>
+            userJid(await sock.signalRepository?.lidMapping?.getPNForLID(lid).catch(() => null)),
+          ownPhone: ownPhone(sock),
+        });
+        return;
+      }
+      for (const w of this.historyWaits) {
+        const got = answerFor(h, w);
+        if (!got) continue;
+        this.historyWaits.delete(w);
+        w.settle(got);
+        return;
+      }
+    });
+    const onLid = this.hooks.onLidMapping?.bind(this.hooks);
+    if (onLid)
+      sock.ev.on('lid-mapping.update', (m) => {
+        if (this.sock === sock) onLid(m);
+      });
     sock.ev.on('presence.update', ({ id, presences }) => {
       if (this.sock !== sock) return;
       const jid = userJid(id);
@@ -394,7 +505,9 @@ export class StoreSession {
     if (u.qr && this.pairing && !this.pairing.issued) {
       // the code only registers while this socket's registration stream is live (first qr)
       this.pairing.issued = true;
-      const phone = jidForPhone(this.pairing.phone)?.split('@')[0];
+      const phone = this.opts.pairPhone
+        ? this.opts.pairPhone(this.pairing.phone)
+        : jidForPhone(this.pairing.phone)?.split('@')[0];
       if (!phone) {
         this.set({ state: 'off', detail: 'bad_phone' });
         await this.stop();
@@ -427,13 +540,11 @@ export class StoreSession {
     if (u.connection === 'open') {
       this.failures = 0;
       this.pairing = null;
-      const raw = sock.user?.phoneNumber ?? sock.user?.id;
-      const digits = raw?.split('@')[0]?.split(':')[0]?.replace(/\D/g, '') || null;
       this.log.info('socket open');
       this.set({
         state: 'open',
         detail: null,
-        phone: digits,
+        phone: ownPhone(sock),
         name: sock.user?.name ?? null,
         pairCode: null,
         pairCodeExpiresAt: null,
@@ -442,6 +553,7 @@ export class StoreSession {
     }
     if (u.connection !== 'close') return;
     this.sock = null;
+    this.failHistory();
     const code = statusOf(u);
     if (this.stopped) return;
     if (!pairingConfirmed(creds)) {
@@ -514,15 +626,28 @@ export class StoreSession {
         content: parseContent(content),
         pnForLid: async (lid) =>
           userJid(await sock.signalRepository?.lidMapping?.getPNForLID(lid).catch(() => null)),
-        download: () =>
-          bounded(this.runtime.download(m, sock, this.log), DOWNLOAD_TIMEOUT_MS, 'media download'),
+        download: (maxBytes) => {
+          const ac = new AbortController();
+          return bounded(
+            this.runtime.download(m, sock, this.log, { maxBytes, signal: ac.signal }),
+            DOWNLOAD_TIMEOUT_MS,
+            'media download',
+            () => {
+              ac.abort();
+              return new Error(`media download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`);
+            },
+          );
+        },
+        message: content,
+        timestamp: m.messageTimestamp,
       });
     }
   }
 
   /** The jid WhatsApp knows this number by (9th-digit variants), cached; null = not on WhatsApp. */
   async resolveJid(phone: string): Promise<string | null> {
-    if (this.jids.has(phone)) return this.jids.get(phone)!;
+    const known = this.jids.get(phone);
+    if (known && (known.jid || known.missUntil > Date.now())) return known.jid;
     const sock = this.sock;
     if (!sock || this.stateNow !== 'open') throw new SessionClosed(this.stateNow);
     // a foreign number ('+…', a Vendedor conversation) has one form
@@ -535,7 +660,7 @@ export class StoreSession {
     if (res === undefined) throw new Error('onWhatsApp returned nothing');
     const hit = res.find((r) => r.exists)?.jid ?? null;
     if (this.jids.size >= JID_CACHE_MAX) this.jids.clear();
-    this.jids.set(phone, hit);
+    this.jids.set(phone, { jid: hit, missUntil: hit ? 0 : Date.now() + JID_MISS_TTL_MS });
     return hit;
   }
 
@@ -568,6 +693,76 @@ export class StoreSession {
     if (this.subscribed.size >= JID_CACHE_MAX) this.subscribed.clear();
     this.subscribed.set(jid, now);
     await bounded(sock.presenceSubscribe(jid), PRESENCE_TIMEOUT_MS, 'presence subscribe');
+  }
+
+  private failHistory() {
+    const waits = [...this.historyWaits];
+    this.historyWaits.clear();
+    for (const w of waits) w.fail(new SessionClosed(this.stateNow));
+  }
+
+  /** The chat's latest messages before `anchorId`, fetched from the phone on demand (≤10, oldest
+   *  first); [] when WhatsApp answered with none. Nothing else of the answer is kept. */
+  async fetchHistory(
+    req: { chatJid: string; jids: string[]; anchorId: string; anchorAt: Date },
+    timeoutMs: number,
+  ): Promise<HistoryLine[]> {
+    const sock = this.sock;
+    if (!sock || this.stateNow !== 'open') throw new SessionClosed(this.stateNow);
+    if (!sock.fetchMessageHistory) throw new Error('history fetch unsupported');
+    const fetch = sock.fetchMessageHistory.bind(sock);
+    const jids = new Set(
+      [req.chatJid, ...req.jids].map((j) => userJid(j)).filter((j): j is string => !!j),
+    );
+    // the phone may file the chat under either form
+    const map = sock.signalRepository?.lidMapping;
+    for (const j of [...jids]) {
+      const other = await bounded(
+        j.endsWith('@lid')
+          ? (map?.getPNForLID(j) ?? Promise.resolve(null))
+          : (map?.getLIDForPN?.(j) ?? Promise.resolve(null)),
+        PROBE_TIMEOUT_MS,
+        'lid mapping',
+      ).catch(() => null);
+      const u = userJid(other);
+      if (u) jids.add(u);
+    }
+    let wait!: PendingHistory;
+    const answered = new Promise<WaMessage[]>((settle, fail) => {
+      wait = { jids, sessionId: null, settle, fail };
+    });
+    // a close can fail it before anyone awaits it
+    answered.catch(() => undefined);
+    this.historyWaits.add(wait);
+    try {
+      return await bounded(
+        (async () => {
+          wait.sessionId =
+            (await fetch(
+              HISTORY_COUNT,
+              { remoteJid: req.chatJid, id: req.anchorId, fromMe: false },
+              req.anchorAt.getTime(),
+            )) || null;
+          return historyLines(await answered, (c) => this.runtime.normalize(c), req);
+        })(),
+        timeoutMs,
+        'history fetch',
+        () => new HistoryTimeout(timeoutMs),
+      );
+    } finally {
+      this.historyWaits.delete(wait);
+    }
+  }
+
+  /** Delete one of the store's own messages for everyone (the owner's phone commands). */
+  async revoke(jid: string, id: string): Promise<void> {
+    const sock = this.sock;
+    if (!sock || this.stateNow !== 'open') throw new SessionClosed(this.stateNow);
+    await bounded(
+      sock.sendMessage(jid, { delete: { remoteJid: jid, id, fromMe: true } }),
+      SEND_TIMEOUT_MS,
+      'whatsapp revoke',
+    );
   }
 
   /** "digitando…" in the shopper's chat while a reply is being written. */

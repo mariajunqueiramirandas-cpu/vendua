@@ -10,7 +10,6 @@ import { getSettingTx, type Guardrails } from './integrations.ts';
 import { recordMilestoneTx, type LeadRow } from './leads.ts';
 import * as gcal from './gcal.ts';
 import * as rooms from './rooms.ts';
-import { notifyStaff } from './staff.ts';
 import { recordStaffEventTx } from './staff-events.ts';
 
 const mlog = log.child({ mod: 'meetings' });
@@ -575,8 +574,16 @@ export async function bookMeetingTx(
     }
     // a booked call means the lead engaged — bump top-of-funnel leads to 'invited'
     const actor = input.source === 'staff' ? 'staff' : 'system';
-    if (lead.state === 'lead' || lead.state === 'contacted') {
-      await tx`update leads set state = 'invited', updated_at = now() where id = ${leadId}`;
+    // the lead was read without a lock: only move it if no one moved it since (e.g. to live)
+    const moved =
+      (lead.state === 'lead' || lead.state === 'contacted') &&
+      (
+        await tx`
+          update leads set state = 'invited', updated_at = now()
+          where id = ${leadId} and state = ${lead.state} returning id
+        `
+      ).length > 0;
+    if (moved) {
       await tx`
         insert into lead_state_history (lead_id, from_state, to_state, actor)
         values (${leadId}, ${lead.state}, 'invited', ${actor})
@@ -619,13 +626,6 @@ export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResul
   if (txResult.created) {
     emitControlEvent('meeting.change', txResult.meeting.id);
     emitControlEvent('lead.change', txResult.lead.id);
-    if (bookInput.source !== 'staff') {
-      void notifyStaff(sql, 'meeting', {
-        subject: `Venduá — call marcada com ${txResult.lead.name}`,
-        body: `${txResult.lead.name} marcou uma call para ${fmtWhen(txResult.meeting.starts_at, txResult.cfg.tz)}.`,
-        idemKey: `meeting:${txResult.meeting.id}`,
-      });
-    }
   }
   // run effects for replays too — a crash post-commit leaves them unfinished; each step fills what's missing
   await meetingEffects(sql, txResult.meeting, txResult.cfg, txResult.lead, bookInput.bookerContact);
@@ -1137,6 +1137,9 @@ export async function patchMeeting(
     const updated = (
       await tx<MeetingRow[]>`
         update meetings set starts_at = ${start.toISOString()}, ends_at = ${end.toISOString()},
+          -- a new time earns its own reminders; the right-hand starts_at is the old value
+          reminder_24h_at = case when starts_at = ${start.toISOString()}::timestamptz then reminder_24h_at end,
+          reminder_1h_at = case when starts_at = ${start.toISOString()}::timestamptz then reminder_1h_at end,
           updated_at = now()
         where id = ${row.id} returning *
       `

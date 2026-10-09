@@ -1,3 +1,4 @@
+import { controlTx } from '../modules/control.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { seal, unseal } from '../platform/secrets.ts';
 
@@ -30,6 +31,23 @@ export interface AuthStore {
   hasCreds(): Promise<boolean>;
 }
 
+/** One auth row's `data`: the value through the Buffer codec, sealed. */
+export function sealAuthValue(value: unknown, codec: BufferCodec, sealSecret: string): string {
+  return JSON.stringify(seal(JSON.stringify(value, codec.replacer), sealSecret));
+}
+
+export function openAuthValue(box: unknown, codec: BufferCodec, sealSecret: string): unknown {
+  let parsed: unknown = null;
+  try {
+    parsed = typeof box === 'string' ? JSON.parse(box) : null;
+  } catch {
+    return null;
+  }
+  const plain = unseal(parsed, sealSecret);
+  // a box we can't open (rotated key) reads as missing: the session re-pairs instead of crashing
+  return plain == null ? null : JSON.parse(plain, codec.reviver);
+}
+
 export function authStore(
   sql: Sql,
   tenantId: string,
@@ -37,17 +55,7 @@ export function authStore(
   codec: BufferCodec,
   sealSecret: string,
 ): AuthStore {
-  const decode = (box: unknown) => {
-    let parsed: unknown = null;
-    try {
-      parsed = typeof box === 'string' ? JSON.parse(box) : null;
-    } catch {
-      return null;
-    }
-    const plain = unseal(parsed, sealSecret);
-    // a box we can't open (rotated key) reads as missing: the session re-pairs instead of crashing
-    return plain == null ? null : JSON.parse(plain, codec.reviver);
-  };
+  const decode = (box: unknown) => openAuthValue(box, codec, sealSecret);
   const readMany = async (category: string, names: string[]) => {
     const out: Record<string, unknown> = {};
     if (names.length === 0) return out;
@@ -87,7 +95,7 @@ export function authStore(
             tenant_id: tenantId,
             category: p.category,
             name: p.name,
-            data: JSON.stringify(seal(JSON.stringify(p.value, codec.replacer), sealSecret)),
+            data: sealAuthValue(p.value, codec, sealSecret),
           }));
           await tx`
             insert into store_wa_auth ${tx(rows as never, 'tenant_id', 'category', 'name', 'data')}
@@ -111,4 +119,72 @@ export function authStore(
  *  only called by the lease holder or by Core when no gateway is alive to do it. */
 export async function wipeAuth(tx: Sql, tenantId: string): Promise<void> {
   await tx`delete from store_wa_auth where tenant_id = ${tenantId}`;
+}
+
+/** A number Venduá itself runs (platform_wa_auth, control scope), fenced on platform_wa_sessions
+ *  exactly as a store's login is on store_whatsapp. */
+export function platformAuthStore(
+  sql: Sql,
+  session: string,
+  fence: Fence,
+  codec: BufferCodec,
+  sealSecret: string,
+): AuthStore {
+  const readMany = async (category: string, names: string[]) => {
+    const out: Record<string, unknown> = {};
+    if (names.length === 0) return out;
+    const rows = await controlTx(
+      sql,
+      (tx) => tx<{ name: string; data: unknown }[]>`
+        select name, data from platform_wa_auth
+        where session = ${session} and category = ${category} and name = any(${names})`,
+    );
+    for (const r of rows) {
+      const v = openAuthValue(r.data, codec, sealSecret);
+      if (v != null) out[r.name] = v;
+    }
+    return out;
+  };
+  return {
+    read: async (category, name) => (await readMany(category, [name]))[name] ?? null,
+    readMany,
+    writeMany: async (entries) => {
+      if (entries.length === 0) return;
+      await controlTx(sql, async (tx) => {
+        const held = await tx`
+          select 1 from platform_wa_sessions
+          where name = ${session} and owner = ${fence.owner} and lease_epoch = ${fence.epoch}
+            and lease_until > now()
+          for share`;
+        if (held.length === 0) throw new LeaseLost(`platform:${session}`);
+        for (const d of entries.filter((e) => e.value == null))
+          await tx`delete from platform_wa_auth
+            where session = ${session} and category = ${d.category} and name = ${d.name}`;
+        const puts = entries.filter((e) => e.value != null);
+        if (puts.length) {
+          const rows = puts.map((p) => ({
+            session,
+            category: p.category,
+            name: p.name,
+            data: sealAuthValue(p.value, codec, sealSecret),
+          }));
+          await tx`
+            insert into platform_wa_auth ${tx(rows as never, 'session', 'category', 'name', 'data')}
+            on conflict (session, category, name) do update set data = excluded.data, updated_at = now()`;
+        }
+      });
+    },
+    hasCreds: async () => {
+      const rows = await controlTx(
+        sql,
+        (tx) => tx`select 1 from platform_wa_auth
+          where session = ${session} and category = 'creds' and name = 'main'`,
+      );
+      return rows.length > 0;
+    },
+  };
+}
+
+export async function wipePlatformAuth(tx: Sql, session: string): Promise<void> {
+  await tx`delete from platform_wa_auth where session = ${session}`;
 }

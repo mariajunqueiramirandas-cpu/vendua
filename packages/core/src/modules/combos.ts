@@ -1,3 +1,4 @@
+import type { Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE } from '../platform/http.ts';
 
 // Combos / kits (roadmap 2b): a product of kind 'combo' whose customer picks items
@@ -146,4 +147,79 @@ export function comboFloorCents(
     total += best;
   }
   return total;
+}
+
+export interface KitStep {
+  id: string | null;
+  name: string;
+  minSelect: number;
+  maxSelect: number;
+  qtyPerItem: number;
+  items: { productId: string; priceDeltaCents: number }[];
+}
+
+/**
+ * Writes a kit's steps in place. Bags, shared carts and "pedir de novo" hold slotIds, so a step
+ * keeps its id when the client sends it back or, when it sends none, when it sits at the same
+ * position under the same name. Items key on (slot, product), which is what a selection names.
+ */
+export async function saveKitStepsTx(
+  tx: Sql,
+  tenantId: string,
+  productId: string,
+  steps: KitStep[],
+) {
+  const existing = await tx<{ id: string; name: string; sort: number }[]>`
+    select id, name, sort from combo_slots where tenant_id = ${tenantId} and product_id = ${productId}
+  `;
+  const claimed = new Set<string>();
+  const ids: (string | null)[] = steps.map((s) => {
+    if (!s.id || claimed.has(s.id) || !existing.some((e) => e.id === s.id)) return null;
+    claimed.add(s.id);
+    return s.id;
+  });
+  for (const [sort, s] of steps.entries()) {
+    if (s.id) continue;
+    const same = existing.find((e) => e.sort === sort && e.name === s.name && !claimed.has(e.id));
+    if (same) claimed.add((ids[sort] = same.id));
+  }
+  await tx`
+    delete from combo_slots where tenant_id = ${tenantId} and product_id = ${productId}
+      and not (id = any(${[...claimed]}::uuid[]))
+  `;
+  for (const [sort, s] of steps.entries()) {
+    const kept = ids[sort];
+    if (kept)
+      await tx`
+        update combo_slots set name = ${s.name}, min_select = ${s.minSelect}, max_select = ${s.maxSelect},
+          qty_per_item = ${s.qtyPerItem}, sort = ${sort}
+        where tenant_id = ${tenantId} and id = ${kept}
+      `;
+    const slotId =
+      kept ??
+      (
+        await tx<{ id: string }[]>`
+          insert into combo_slots (tenant_id, product_id, name, min_select, max_select, qty_per_item, sort)
+          values (${tenantId}, ${productId}, ${s.name}, ${s.minSelect}, ${s.maxSelect}, ${s.qtyPerItem}, ${sort})
+          returning id
+        `
+      )[0]!.id;
+    // a product listed twice keeps its first price
+    const items = s.items.filter(
+      (i, k) => s.items.findIndex((j) => j.productId === i.productId) === k,
+    );
+    const pids = items.map((i) => i.productId);
+    await tx`
+      delete from combo_slot_items where tenant_id = ${tenantId} and slot_id = ${slotId}
+        and not (product_id = any(${pids}::uuid[]))
+    `;
+    await tx`
+      insert into combo_slot_items (tenant_id, slot_id, product_id, price_delta_cents, sort)
+      select ${tenantId}, ${slotId}, v.product_id, v.delta, v.sort
+      from unnest(${pids}::uuid[], ${items.map((i) => i.priceDeltaCents)}::int[],
+                  ${items.map((_, i) => i)}::int[]) as v(product_id, delta, sort)
+      on conflict (slot_id, product_id) do update
+        set price_delta_cents = excluded.price_delta_cents, sort = excluded.sort
+    `;
+  }
 }

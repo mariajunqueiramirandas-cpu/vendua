@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { cn } from '@/lib/cn.ts';
-import { fmtMoney } from '@/lib/format.ts';
+import { fmtMoney, parseMoney } from '@/lib/format.ts';
 import { editableValueClass } from './EditableText.tsx';
 import { Input } from './ui/input.tsx';
 
@@ -41,10 +41,10 @@ export function MoneyEdit({
   const commit = (raw: string) => {
     if (settled.current) return;
     settled.current = true;
-    const v = Number(raw.replace(/\./g, '').replace(',', '.'));
+    const v = parseMoney(raw);
     if (raw === '') {
       if (cents !== null) onSave(null);
-    } else if (!Number.isNaN(v) && Math.round(v * 100) !== cents) onSave(Math.round(v * 100));
+    } else if (v !== null && v !== cents) onSave(v);
     setEditing(false);
   };
   return (

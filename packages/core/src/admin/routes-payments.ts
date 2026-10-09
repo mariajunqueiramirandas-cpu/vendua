@@ -25,10 +25,11 @@ import {
   type PaymentAdjustments,
 } from '../modules/payment-adjustments.ts';
 import { audit } from './audit.ts';
-import { isObj, oneOf, optText, text, type AdminCtx, type AdminDeps } from './context.ts';
+import { isObj, need, oneOf, optText, text, type AdminCtx, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { storeTz } from './routes-orders.ts';
+import { csvMoney, csvResponse } from './routes-reports.ts';
 import { loadSettings } from './routes-store.ts';
 
 // Pagamentos (A3): offline methods and the store's Pix key, plus the Mercado Pago connection
@@ -48,6 +49,15 @@ const STATE_TTL_MS = 10 * 60_000;
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 const payLog = log.child({ mod: 'admin-payments' });
+
+/** the statement's words for a settled attempt, as Pagamentos shows them */
+const STATUS_WORD: Record<string, string> = {
+  approved: 'aprovado',
+  partially_refunded: 'reembolso parcial',
+  refunded: 'reembolsado',
+  charged_back: 'contestado',
+  in_mediation: 'em disputa',
+};
 
 // OAuth `state`: which store and person started the connect, signed, 10 minutes. The callback
 // only accepts it back in that same person's session — a link from someone else connects nothing.
@@ -427,4 +437,63 @@ export function mountPayments(d: AdminDeps) {
       };
     }),
   );
+  // the month's statement as a spreadsheet: one month (≤ 20000 rows), Core's money formatting
+  admin.get('/payments/statement.csv', async (c) => {
+    need(c, 'manager');
+    const t = c.get('tenant');
+    const { month, rows } = await withTenant(d.sql, t.id, async (tx) => {
+      const tz = await storeTz(tx, t.id);
+      const month = c.req.query('month') ?? currentMonth(tz);
+      if (!MONTH_RE.test(month)) throw new HttpError(400, 'BAD_REQUEST', 'month must be YYYY-MM');
+      const rows = await tx<
+        {
+          number: number;
+          approved: string | null;
+          kind: string;
+          status: string;
+          amount: number;
+          fee: number | null;
+          app: number;
+          net: number;
+          refunded: number;
+        }[]
+      >`
+        select o.number, to_char(p.approved_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as approved,
+               p.kind, p.status, p.amount_cents as amount, p.provider_fee_cents as fee,
+               p.application_fee_cents as app,
+               coalesce(p.net_cents, p.amount_cents - coalesce(p.provider_fee_cents, 0) - p.application_fee_cents)::int as net,
+               p.refunded_cents as refunded
+        from payments p join orders o on o.id = p.order_id
+        where p.tenant_id = ${t.id} and p.status = any(${SETTLED_SQL})
+          and to_char(p.approved_at at time zone ${tz}, 'YYYY-MM') = ${month}
+        order by p.approved_at
+        limit 20000
+      `;
+      return { month, rows };
+    });
+    const head = [
+      'pedido',
+      'aprovado em',
+      'forma',
+      'situação',
+      'valor',
+      'taxa Mercado Pago',
+      'taxa Venduá',
+      // before refunds, like the statement on screen; refunds are the next column
+      'você recebe',
+      'reembolsado',
+    ];
+    const lines = rows.map((p) => [
+      p.number,
+      p.approved,
+      p.kind === 'pix' ? 'Pix' : 'cartão',
+      STATUS_WORD[p.status] ?? p.status,
+      csvMoney(p.amount),
+      p.fee === null ? '' : csvMoney(p.fee),
+      csvMoney(p.app),
+      csvMoney(p.net),
+      csvMoney(p.refunded),
+    ]);
+    return csvResponse(c, `extrato-mercado-pago-${month}.csv`, head, lines);
+  });
 }

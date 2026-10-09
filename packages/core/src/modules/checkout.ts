@@ -1,4 +1,5 @@
 import { HttpError } from '../platform/http.ts';
+import { validPhone } from './customer.ts';
 import { deliveryPricing, validateLine, type CartView } from './cart.ts';
 import type { ProductDetail } from './catalog.ts';
 import {
@@ -16,7 +17,10 @@ import type { DerivedStatus, StoreSettingsRow } from './store.ts';
 export interface CheckoutInput {
   customer: { name: string; phone: string };
   delivery: {
-    mode: 'pickup' | 'delivery';
+    /** dine_in: ordered from a table's QR code (ADR 0036) */
+    mode: 'pickup' | 'delivery' | 'dine_in';
+    /** dine_in: the table's signed QR token */
+    table?: string;
     neighborhood?: string;
     /** freeform line — still accepted; structured fields below win when present */
     address?: string;
@@ -30,11 +34,14 @@ export interface CheckoutInput {
   };
   /** card_online: Mercado Pago's hosted checkout — offered only while the store is connected */
   /** changeForCents: cash only — the note the shopper will pay with (≥ the total) */
-  payment: { method: PaymentMethod; changeForCents?: number | null };
+  /** tab: dine_in only — paid at the table, on its comanda */
+  payment: { method: PaymentMethod | 'tab'; changeForCents?: number | null };
   /** "Alguma observação?" */
   notes?: string;
   /** encomenda date, YYYY-MM-DD in the store's timezone */
   scheduledFor?: string;
+  /** the total Core showed the shopper; a different one now → 409 PRICES_CHANGED */
+  expectedTotalCents?: number | null;
 }
 
 export type ZoneRowLike = ZoneLike;
@@ -115,7 +122,11 @@ export function validateCheckout<Z extends ZoneLike>(
       ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
     });
   }
-  if (status.status === 'closed' && !takesOrdersWhileClosed(settings, cart, products)) {
+  const atTable = input.delivery.mode === 'dine_in';
+  if (
+    status.status === 'closed' &&
+    (atTable || !takesOrdersWhileClosed(settings, cart, products))
+  ) {
     throw new HttpError(423, 'STORE_CLOSED', 'store is closed', {
       ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
       preordersOnly: preordersWhileClosed(settings),
@@ -126,10 +137,13 @@ export function validateCheckout<Z extends ZoneLike>(
   }
   // the merchant turns methods off in the admin; absent setting = the three offline ones (pre-0052 rows)
   const methods = offeredMethods(settings);
-  const offered =
-    input.payment.method === 'card_online'
+  // at a table: the comanda, or the store's online payments (checked against its provider in
+  // placeOrderTx)
+  const offered = atTable
+    ? input.payment.method === 'tab' || input.payment.method === 'pix' || online.card
+    : input.payment.method === 'card_online'
       ? online.card && methods.includes('card_online')
-      : methods.includes(input.payment.method);
+      : methods.includes(input.payment.method as PaymentMethod);
   if (!offered) {
     throw new HttpError(422, 'PAYMENT_METHOD_UNAVAILABLE', 'this payment method is not accepted', {
       field: 'payment.method',
@@ -197,6 +211,8 @@ export function validateCheckout<Z extends ZoneLike>(
       ...(match.distanceSource ? { distanceSource: match.distanceSource } : {}),
     };
   }
+  // the minimum order is for orders that travel; a table's are eaten here
+  if (atTable) return { zone: null, distanceKm: null, feeCents: 0 };
   const minOrder = settings?.min_order_cents ?? 0;
   if (cart.totals.subtotalCents < minOrder) {
     throw new HttpError(422, 'ORDER_MIN_NOT_MET', `minimum order is ${minOrder} cents`, {
@@ -225,16 +241,61 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
       field: 'customer.name',
     });
   }
-  if (!bounded(i.customer?.phone, 40) || i.customer.phone.trim().length < 8) {
+  const atTable = i.delivery?.mode === 'dine_in';
+  // a table asks only for a name (ADR 0036); a phone, when sent, is still bounded
+  if (
+    atTable
+      ? i.customer.phone !== undefined &&
+        i.customer.phone !== null &&
+        !bounded(i.customer.phone, 40)
+      : !bounded(i.customer?.phone, 40) || !i.customer.phone.trim()
+  ) {
     throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.phone is required', {
       field: 'customer.phone',
     });
   }
-  if (i.delivery?.mode !== 'pickup' && i.delivery?.mode !== 'delivery') {
+  // per-phone coupon limits and first-order rewards key on these digits
+  if (!atTable && !validPhone(i.customer.phone))
+    throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.phone must have DDD and number', {
+      field: 'customer.phone',
+    });
+  if (i.delivery?.mode !== 'pickup' && i.delivery?.mode !== 'delivery' && !atTable) {
     throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.mode must be pickup or delivery', {
       field: 'delivery.mode',
     });
   }
+  if (atTable) {
+    // no phone is asked at a table; one sent anyway must be a real one (it mints a customer token)
+    const phone = typeof i.customer.phone === 'string' ? i.customer.phone.trim() : '';
+    if (phone && !validPhone(phone))
+      throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.phone must have DDD and number', {
+        field: 'customer.phone',
+      });
+    if (!bounded(i.delivery.table, 200) || !i.delivery.table)
+      throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.table is required', {
+        field: 'delivery.table',
+      });
+    if (!['tab', 'pix', 'card_online'].includes(i.payment?.method as string))
+      throw new HttpError(
+        422,
+        'PAYMENT_METHOD_UNAVAILABLE',
+        'at a table: tab, pix or card_online',
+        {
+          field: 'payment.method',
+        },
+      );
+    if (i.payment.changeForCents != null || i.scheduledFor != null)
+      throw new HttpError(422, 'BAD_REQUEST', 'a table order takes no change and no date', {
+        field: i.scheduledFor != null ? 'scheduledFor' : 'payment.changeForCents',
+      });
+  }
+  if (
+    i.expectedTotalCents != null &&
+    (!Number.isSafeInteger(i.expectedTotalCents) || i.expectedTotalCents < 0)
+  )
+    throw new HttpError(422, 'BAD_REQUEST', 'expectedTotalCents must be a whole number of cents', {
+      field: 'expectedTotalCents',
+    });
   if (i.delivery.mode === 'delivery') {
     const d = i.delivery;
     optional(d.neighborhood, 200, 'delivery.neighborhood');
@@ -262,7 +323,7 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
       });
     }
   }
-  if (!isPaymentMethod(i.payment?.method)) {
+  if (!atTable && !isPaymentMethod(i.payment?.method)) {
     throw new HttpError(
       422,
       'INVALID_PAYMENT',

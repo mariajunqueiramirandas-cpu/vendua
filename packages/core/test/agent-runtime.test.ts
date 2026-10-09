@@ -21,6 +21,8 @@ import { dispatchTx } from '../src/agent-host/dispatch.ts';
 import { forgetSubjectTx } from '../src/agent-host/forget.ts';
 import { hostHooks } from '../src/agent-host/hooks.ts';
 import { hostOnlineQa } from '../src/agent-host/qa.ts';
+import { COPILOT_AGENT_ID } from '../src/agent-host/agents/copilot/shared.ts';
+import { ONBOARDING_AGENT_ID } from '../src/agent-host/agents/vendedor-onboarding/index.ts';
 import { registerAgent } from '../src/agent-host/registry.ts';
 import { ensurePartitions, startAgentRuntime, WAKE_CHANNEL } from '../src/agent-host/scheduler.ts';
 import { pgMemory } from '../src/agent-host/store/memory.ts';
@@ -289,6 +291,103 @@ describe.skipIf(!OWNER_URL)('agent runtime v3 on Postgres', () => {
     await sql`update agent_actors set next_wake_at = null where agent_id = 'rt_test'`;
   });
 
+  test('a store whose Cliente oculto run is playing gets five turns at once, then two again', async () => {
+    await sql`update agent_actors set next_wake_at = null where agent_id = 'rt_test'`;
+    const prefix = `cap${n}-`;
+    for (let i = 0; i < 7; i++) await say('oi', `${prefix}${i}`);
+    const store = new PgActorStore(app);
+    const claim = () =>
+      store.claim({
+        lane: 'interactive',
+        owner: 'cap',
+        leaseMs: 60_000,
+        limit: 10,
+        agentIds: ['rt_test'],
+        perTenantCap: 2,
+        backoffMs: () => 0,
+      });
+    const [run] = await sql<{ id: string }[]>`
+      insert into vendedor_runs (tenant_id, trigger, status, lease_until)
+      values (${tenantId}, 'manual', 'running', now() + interval '1 hour') returning id`;
+    const during = await claim();
+    expect(during).toHaveLength(5);
+    for (const c of during) await store.release(c.lease, { clean: true });
+    await sql`update agent_actors set next_wake_at = now() where agent_id = 'rt_test' and subject_id like ${`${prefix}%`}`;
+    await sql`update vendedor_runs set status = 'done' where id = ${run!.id}`;
+    const after = await claim();
+    expect(after).toHaveLength(2);
+    for (const c of after) await store.release(c.lease, { clean: true });
+    await sql`delete from vendedor_runs where id = ${run!.id}`;
+    await sql`update agent_actors set next_wake_at = null where agent_id = 'rt_test'`;
+  });
+
+  test('within a store, a real shopper is claimed before test chats and Cliente oculto', async () => {
+    await sql`update agent_actors set next_wake_at = null where agent_id = 'rt_test'`;
+    const thread = async (channel: string, address: string, testKind: string | null) => {
+      const [t] = await sql<{ id: string }[]>`
+        insert into shopper_threads (tenant_id, channel, address, test_kind, class)
+        values (${tenantId}, ${channel}, ${address}, ${testKind}, 'shopper') returning id`;
+      const { actorId } = await withTenant(app, tenantId, (tx) =>
+        dispatchTx(tx, {
+          actor: { tenantId, agentId: 'rt_test', subject: { kind: 'shopper_thread', id: t!.id } },
+          kind: 'message.inbound',
+          source: 'whatsapp',
+          dedupeKey: `prio:${t!.id}`,
+          payload: { text: 'oi' },
+        }),
+      );
+      return actorId;
+    };
+    // the test shoppers wrote first
+    const co = await thread('test', `co:prio:${n}`, 'cliente_oculto');
+    const own = await thread('test', `owner:prio:${n}`, 'owner');
+    const real = await thread('whatsapp', `5522900000${n}@s.whatsapp.net`, null);
+    await sql`update agent_actors set next_wake_at = now() - interval '3 seconds' where id = ${co}`;
+    await sql`update agent_actors set next_wake_at = now() - interval '2 seconds' where id = ${own}`;
+    await sql`update agent_actors set next_wake_at = now() - interval '1 second' where id = ${real}`;
+    const store = new PgActorStore(app);
+    const order: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const [c] = await store.claim({
+        lane: 'interactive',
+        owner: 'prio',
+        leaseMs: 60_000,
+        limit: 1,
+        agentIds: ['rt_test'],
+        perTenantCap: 5,
+        backoffMs: () => 0,
+      });
+      order.push(c!.actor.id);
+    }
+    expect(order).toEqual([real, own, co]);
+    // a shopper_thread subject that isn't a uuid (seeds use one) ranks as real, never breaks the claim
+    await sql`update agent_actors set next_wake_at = null, lease_until = null, owner = null where agent_id = 'rt_test'`;
+    const { actorId: odd } = await withTenant(app, tenantId, (tx) =>
+      dispatchTx(tx, {
+        actor: {
+          tenantId,
+          agentId: 'rt_test',
+          subject: { kind: 'shopper_thread', id: `seed-${n}` },
+        },
+        kind: 'message.inbound',
+        source: 'whatsapp',
+        dedupeKey: `prio:seed:${n}`,
+        payload: { text: 'oi' },
+      }),
+    );
+    const [c] = await store.claim({
+      lane: 'interactive',
+      owner: 'prio',
+      leaseMs: 60_000,
+      limit: 1,
+      agentIds: ['rt_test'],
+      perTenantCap: 5,
+      backoffMs: () => 0,
+    });
+    expect(c!.actor.id).toBe(odd);
+    await sql`update agent_actors set next_wake_at = null, lease_until = null, owner = null where agent_id = 'rt_test'`;
+  });
+
   test('a turn that keeps failing ends in turn.failed and a staff event for that store', async () => {
     const failing = defineAgent(def({ id: 'rt_fail', maxAttempts: 1 }));
     registerAgent(failing);
@@ -428,6 +527,30 @@ describe.skipIf(!OWNER_URL)('agent runtime v3 on Postgres', () => {
     expect(alerts).toHaveLength(1);
     expect(alerts[0]!.data.mean).toBeCloseTo(0.2);
     await sql`delete from staff_events where kind = 'agent.qa_alert' and tenant_id = ${tenantId}`;
+
+    // the owner's interview (and Copilot) is not a shopper conversation: never sampled
+    const sampled = (() => {
+      throw new Error('sampled');
+    }) as unknown as Sql;
+    for (const agentId of [ONBOARDING_AGENT_ID, COPILOT_AGENT_ID])
+      await qa.turnEnded({ host: sampled } as never, {
+        actorId,
+        tenantId,
+        agentId,
+        subject: { kind: 'merchant_user', id: 'u1' },
+        turnId: 't1',
+        version: 'v',
+        state: { repliedSinceLastInput: true } as never,
+      });
+
+    // erasing the conversation erases the QA actor too: its log holds the transcript it scored
+    expect(
+      await withTenant(app, tenantId, (tx) =>
+        forgetSubjectTx(tx, tenantId, { kind: 'thread', id: 'qa' }),
+      ),
+    ).toBe(1);
+    expect(await sql`select 1 from agent_actors where id = ${sample!.actor_id}`).toHaveLength(0);
+    expect(await events(sample!.actor_id)).toHaveLength(0);
   });
 
   test('review fixes: stray rows leave the default partition; stale stages, unknown stores and byte limits are refused', async () => {

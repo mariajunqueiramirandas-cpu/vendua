@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-do
 import { LoadingRows } from '@/components/common.tsx';
 import { Page, type PageTab } from '@/components/Page.tsx';
 import { AGENT_TABS } from '@/features/agent/tabs.ts';
+import { AI_TABS } from '@/features/ai/tabs.ts';
 import { PIPELINE_TABS } from '@/features/pipeline/tabs.ts';
 import { STORES_TABS } from '@/features/stores/tabs.ts';
 
@@ -39,6 +40,7 @@ function lazy<T extends ComponentType>(load: () => Promise<{ default: T }>) {
   );
 }
 
+const OverviewPage = lazy(() => import('@/features/overview/OverviewPage.tsx'));
 const HomePage = lazy(() => import('@/features/home/HomePage.tsx'));
 const PipelinePage = lazy(() => import('@/features/pipeline/PipelinePage.tsx'));
 const LeadPage = lazy(() => import('@/features/lead/LeadPage.tsx'));
@@ -51,8 +53,14 @@ const PlansPage = lazy(() => import('@/features/agent/plans/PlansPage.tsx'));
 const DiscoveryPage = lazy(() => import('@/features/agent/discovery/DiscoveryPage.tsx'));
 const StudioPage = lazy(() => import('@/features/agent/studio/StudioPage.tsx'));
 const StoresPage = lazy(() => import('@/features/stores/StoresPage.tsx'));
+const StorePage = lazy(() => import('@/features/stores/StorePage.tsx'));
+const AiUsagePage = lazy(() => import('@/features/ai/UsagePage.tsx'));
+const AiModelsPage = lazy(() => import('@/features/ai/ModelsPage.tsx'));
+const AiVoicePage = lazy(() => import('@/features/ai/VoicePage.tsx'));
 const BillingPlansPage = lazy(() => import('@/features/stores/PlansPage.tsx'));
 const IncidentsPage = lazy(() => import('@/features/stores/IncidentsPage.tsx'));
+const SiteTasksPage = lazy(() => import('@/features/sites/SiteTasksPage.tsx'));
+const SiteTaskPage = lazy(() => import('@/features/sites/SiteTaskPage.tsx'));
 const FleetPage = lazy(() => import('@/features/fleet/FleetPage.tsx'));
 const SettingsPage = lazy(() => import('@/features/settings/SettingsPage.tsx'));
 const NotFoundPage = lazy(() => import('@/features/notfound/NotFoundPage.tsx'));
@@ -86,9 +94,13 @@ function chrome(path: string): { title: string; tabs?: PageTab[]; back?: string 
   if (path.startsWith('/inbox')) return { title: 'Inbox' };
   if (path.startsWith('/agenda')) return { title: 'Agenda' };
   if (path.startsWith('/agente')) return { title: 'Agente', tabs: AGENT_TABS };
+  if (path.startsWith('/lojas/sites/')) return { title: 'Site sob medida', back: '/lojas/sites' };
+  if (/^\/lojas\/[0-9a-f-]{36}/.test(path)) return { title: 'Loja', back: '/lojas' };
   if (path.startsWith('/lojas')) return { title: 'Lojas', tabs: STORES_TABS };
+  if (path.startsWith('/ia')) return { title: 'IA', tabs: AI_TABS };
+  if (path.startsWith('/vendas')) return { title: 'Vendas' };
   if (path.startsWith('/config')) return { title: 'Config' };
-  return { title: 'Hoje' };
+  return { title: 'Visão' };
 }
 
 function RouteFallback() {
@@ -123,7 +135,8 @@ export function AppRoutes() {
   return (
     <Lazy>
       <Routes>
-        <Route path="/" element={<HomePage />} />
+        <Route path="/" element={<OverviewPage />} />
+        <Route path="/vendas" element={<HomePage />} />
         <Route path="/pipeline" element={<PipelinePage />} />
         <Route path="/pipeline/relatorios" element={<ReportsPage />} />
         <Route path="/pipeline/analytics" element={<AnalyticsPage />} />
@@ -141,6 +154,12 @@ export function AppRoutes() {
         <Route path="/lojas/planos" element={<BillingPlansPage />} />
         <Route path="/lojas/incidentes" element={<IncidentsPage />} />
         <Route path="/lojas/frota" element={<FleetPage />} />
+        <Route path="/lojas/sites" element={<SiteTasksPage />} />
+        <Route path="/lojas/sites/:id" element={<SiteTaskPage />} />
+        <Route path="/lojas/:id" element={<StorePage />} />
+        <Route path="/ia" element={<AiUsagePage />} />
+        <Route path="/ia/modelos" element={<AiModelsPage />} />
+        <Route path="/ia/voz" element={<AiVoicePage />} />
         <Route path="/config" element={<SettingsPage />} />
         <Route path="/_ui" element={<UiPreview />} />
 
@@ -148,7 +167,7 @@ export function AppRoutes() {
         <Route path="/leads" element={<Legacy to="/pipeline" />} />
         <Route path="/leads/:id" element={<Legacy to={(p) => `/pipeline/${p.id}`} />} />
         <Route path="/aprovacoes" element={<Legacy to="/inbox?f=rascunhos" />} />
-        <Route path="/tarefas" element={<Legacy to="/?t=tarefas" />} />
+        <Route path="/tarefas" element={<Legacy to="/vendas?t=tarefas" />} />
         <Route path="/descoberta" element={<Legacy to="/agente/descoberta" />} />
         <Route path="/lancar" element={<Legacy to="/agente/descoberta" />} />
         <Route path="/estudio" element={<Legacy to="/agente/estudio" />} />

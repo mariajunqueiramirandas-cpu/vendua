@@ -12,9 +12,22 @@ import {
   type TemplateMigration,
   type TemplateSet,
 } from '@vendua/templates';
+import { createHash } from 'node:crypto';
 import { emitAdminTx } from '../admin/live.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
-import { HttpError } from '../platform/http.ts';
+import { HttpError, UUID_RE } from '../platform/http.ts';
+import { storeOrigin } from '../platform/store-origin.ts';
+import { ipRateKey } from './billing/signup.ts';
+import { optedOutTx } from '../store-whatsapp/messages.ts';
+import { phoneVariants } from '../store-whatsapp/text.ts';
+import {
+  PROACTIVE_TTL,
+  nationalPhone,
+  proactiveRoomTx,
+  storeOpenMessage,
+  storeOpenNowTx,
+  waLinkedTx,
+} from '../store-whatsapp/proactive.ts';
 
 // Phase 1b data plane for storefronts: templates (17), tokens as store data (04),
 // ring + v.js kill switch (05), build manifests, template migrations by ring.
@@ -110,7 +123,10 @@ export async function rollbackTemplateTx(
   `;
   if (!rows[0] || target >= cur.version)
     throw new HttpError(404, 'TEMPLATE_NOT_FOUND', `no earlier version ${target} for ${page}`);
-  const saved = await saveTemplateTx(tx, tenantId, page, rows[0].template, `rollback:${target}`);
+  // saveTemplateTx takes the page lock after this read: an edit in between is a conflict
+  const saved = await saveTemplateTx(tx, tenantId, page, rows[0].template, `rollback:${target}`, {
+    expectVersion: cur.version,
+  });
   return { ...saved, restored: target };
 }
 
@@ -349,11 +365,12 @@ export async function runTemplateMigration(
 }
 
 /** Rolls back every page a migration applied for the given stores — only where
- *  the migration's version is still current (a later edit wins over the undo). */
+ *  the migration's version is still current (a later edit wins over the undo). A dry run
+ *  reports what it would do and writes nothing. */
 export async function rollbackTemplateMigration(
   sql: Sql,
   migrationId: string,
-  opts: { ring?: Ring; tenants?: string[] },
+  opts: { dry?: boolean; ring?: Ring; tenants?: string[] },
 ): Promise<MigrationReportRow[]> {
   const tenants = await sql<{ id: string; slug: string }[]>`
     select id, slug from tenants where status = 'active' order by slug
@@ -370,6 +387,8 @@ export async function rollbackTemplateMigration(
         order by page, created_at desc
       `;
       for (const r of runs) {
+        // locked before the check, as a migration does, so an edit can't land between the two
+        if (!opts.dry) await tx`select pg_advisory_xact_lock(hashtext(${`tpl:${t.id}:${r.page}`}))`;
         const cur = await currentTemplateTx(tx, t.id, r.page as PageId);
         if (!cur || cur.version !== r.to_version) {
           report.push({
@@ -378,6 +397,17 @@ export async function rollbackTemplateMigration(
             page: r.page,
             status: 'skipped',
             reason: 'template changed after the migration — leaving it',
+          });
+          continue;
+        }
+        if (opts.dry) {
+          report.push({
+            tenant: t.slug,
+            ring: ops.ring,
+            page: r.page,
+            status: 'applied',
+            reason: `would roll back to v${r.from_version}`,
+            fromVersion: r.to_version,
           });
           continue;
         }
@@ -403,33 +433,134 @@ export async function rollbackTemplateMigration(
 
 // ── notify-me ────────────────────────────────────────────────────────────────
 
+const STORE_OPEN_PER_PHONE = '7 days';
+/** new "store open" subscriptions a day, per store and per client network: each one is a message
+ *  the store's own WhatsApp will send to a number anyone could have typed */
+export const STORE_OPEN_SUBS_PER_DAY = 50;
+export const STORE_OPEN_SUBS_PER_IP_DAY = 5;
+
 export async function subscribeNotifyTx(
   tx: Sql,
   tenantId: string,
   body: Record<string, unknown>,
+  o: { ip?: string } = {},
 ): Promise<{ status: number; body: { subscribed: true } }> {
   const subject = body.subject;
   if (subject !== 'store' && subject !== 'product')
     throw new HttpError(400, 'INVALID_NOTIFY', "subject must be 'store' or 'product'");
-  const contact = typeof body.phone === 'string' ? body.phone.replace(/\D/g, '') : '';
-  if (contact.length < 10 || contact.length > 13)
-    throw new HttpError(400, 'INVALID_NOTIFY', 'phone must have 10–13 digits');
+  // national digits, as the store's WhatsApp queue keys a number: 11… and 5511… are one
+  const contact =
+    typeof body.phone === 'string' && body.phone.length <= 40 ? nationalPhone(body.phone) : null;
+  if (!contact)
+    throw new HttpError(400, 'INVALID_NOTIFY', 'phone must be a Brazilian number with DDD');
   let productId: string | null = null;
   if (subject === 'product') {
-    if (typeof body.productId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.productId))
+    if (typeof body.productId !== 'string' || !UUID_RE.test(body.productId))
       throw new HttpError(400, 'INVALID_NOTIFY', 'productId required for product subscriptions');
     const hit =
       await tx`select 1 from products where tenant_id = ${tenantId} and id = ${body.productId}`;
     if (!hit[0]) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
     productId = body.productId;
   }
+  // Anyone can type any number: a ceiling per store and per client network a day, checked before
+  // anything about the number; then one "store open" message per number a week, with the same
+  // answer whether or not this request will ever reach it.
+  let ipHash: string | null = null;
+  if (subject === 'store') {
+    if (o.ip && o.ip !== 'local')
+      ipHash = createHash('sha256')
+        .update(`vendua.notify.ip|${ipRateKey(o.ip)}`)
+        .digest('hex');
+    // parallel requests (or replicas) can't each read the count under the ceiling
+    await tx`select pg_advisory_xact_lock(hashtextextended(${`notify-store:${tenantId}`}, 0))`;
+    const [today] = await tx<{ total: number; mine: number }[]>`
+      select count(*)::int as total, count(*) filter (where ip_hash = ${ipHash})::int as mine
+      from notify_requests
+      where tenant_id = ${tenantId} and subject = 'store' and created_at > now() - interval '1 day'`;
+    if (today!.total >= STORE_OPEN_SUBS_PER_DAY || today!.mine >= STORE_OPEN_SUBS_PER_IP_DAY)
+      throw new HttpError(429, 'NOTIFY_LIMIT', 'too many sign-ups for this notice today');
+    const [capped] = await tx`
+      select 1 from notify_requests
+      where tenant_id = ${tenantId} and subject = 'store' and contact = any(${phoneVariants(contact)})
+        and (notified_at is null or notified_at > now() - ${STORE_OPEN_PER_PHONE}::interval)
+      limit 1`;
+    if (capped) return { status: 201, body: { subscribed: true } };
+  }
   await tx`
-    insert into notify_requests (tenant_id, subject, product_id, channel, contact)
-    values (${tenantId}, ${subject}, ${productId}, 'whatsapp', ${contact})
+    insert into notify_requests (tenant_id, subject, product_id, channel, contact, ip_hash)
+    values (${tenantId}, ${subject}, ${productId}, 'whatsapp', ${contact}, ${ipHash})
     on conflict do nothing
   `;
   await emitAdminTx(tx, tenantId, 'marketing');
   return { status: 201, body: { subscribed: true } };
+}
+
+/**
+ * "Avise-me quando abrir" (Kernel 1.21): once the store is open — its hours came round, or a
+ * pause or close was lifted — each pending store subscriber gets one message from the store's own
+ * WhatsApp, queued in the transaction that marks the request notified. Without a linked WhatsApp
+ * nothing is consumed: the requests wait (Início lists them) until it is linked. The burst is
+ * held under the store's ceiling for messages it starts; the rest go in the next minutes, while
+ * it's open. A number that asked to stop, or that can't be reached, is consumed unsent. Run
+ * inside the tenant's transaction (the admin sweep, once a minute). Returns how many were queued.
+ */
+export async function wakeStoreWaitlist(tx: Sql, tenantId: string, now = new Date()) {
+  const [pending] = await tx<{ one: number }[]>`
+    select 1 as one from notify_requests
+    where tenant_id = ${tenantId} and subject = 'store' and notified_at is null limit 1
+  `;
+  if (!pending) return 0;
+  if (!(await storeOpenNowTx(tx, tenantId, now))) return 0;
+  if (!(await waLinkedTx(tx, tenantId))) return 0;
+  const room = await proactiveRoomTx(tx, tenantId, 'store_open');
+  if (room <= 0) return 0;
+  // a second sweep running alongside skips the rows this one holds; materialized, so the limit
+  // is taken once and not per row the update visits
+  const woken = await tx<{ contact: string }[]>`
+    with picked as materialized (
+      select id from notify_requests
+      where tenant_id = ${tenantId} and subject = 'store' and notified_at is null
+      order by created_at limit ${room}
+      for update skip locked)
+    update notify_requests n set notified_at = now()
+    from picked where n.id = picked.id
+    returning n.contact
+  `;
+  if (!woken.length) return 0;
+  const [store] = await tx<{ name: string; slug: string }[]>`
+    select name, slug from tenants where id = ${tenantId}`;
+  const url = await storeOrigin(
+    tx,
+    { id: tenantId, slug: store!.slug },
+    process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+  );
+  const body = storeOpenMessage(store!.name, url);
+  let queued = 0;
+  // one lock per number (either spelling), taken in key order so two sweeps can't deadlock
+  const lockKey = (phone: string) => [...phoneVariants(phone)].sort()[0]!;
+  const phones = [...new Set(woken.map((w) => nationalPhone(w.contact)))]
+    .filter((p): p is string => !!p)
+    .sort((a, b) => (lockKey(a) < lockKey(b) ? -1 : lockKey(a) > lockKey(b) ? 1 : 0));
+  for (const phone of phones) {
+    if (await optedOutTx(tx, tenantId, phone)) continue;
+    // a subscription from before the cap, or the same number with and without its 9: a sweep
+    // alongside holding the other spelling waits on the lock, then sees this one's message
+    const variants = phoneVariants(phone);
+    await tx`select pg_advisory_xact_lock(hashtextextended(${`store-open:${tenantId}:${lockKey(phone)}`}, 0))`;
+    const [recent] = await tx`
+      select 1 from store_wa_messages
+      where tenant_id = ${tenantId} and kind = 'store_open' and phone = any(${variants})
+        and created_at > now() - ${STORE_OPEN_PER_PHONE}::interval
+      limit 1`;
+    if (recent) continue;
+    await tx`
+      insert into store_wa_messages (tenant_id, kind, phone, body, expires_at)
+      values (${tenantId}, 'store_open', ${phone}, ${body}, now() + ${PROACTIVE_TTL}::interval)`;
+    queued++;
+  }
+  await emitAdminTx(tx, tenantId, 'marketing');
+  if (queued) await emitAdminTx(tx, tenantId, 'whatsapp', 'message');
+  return queued;
 }
 
 // ── analytics beacon ─────────────────────────────────────────────────────────

@@ -32,7 +32,7 @@ export interface VendedorDeps {
 }
 
 let deps: VendedorDeps = {
-  sessionSecret: process.env.SESSION_SECRET ?? 'vendedor-dev',
+  sessionSecret: process.env.SESSION_SECRET || 'vendedor-dev',
   storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
 };
 

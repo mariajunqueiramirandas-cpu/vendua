@@ -16,6 +16,7 @@ import {
   ModifierPicker,
   OrderStatusPage,
   OrderTimeline,
+  OrderTrackingPage,
   ProductCard,
 } from './commerce.tsx';
 import {
@@ -85,6 +86,7 @@ export const SLOT_DEFAULTS: SlotDefaults = {
   'checkout.PaymentStatus': PaymentStatus,
   'system.Chat': StoreChat,
   'checkout.CardPayment': CardPayment,
+  'order.TrackingPage': OrderTrackingPage,
 };
 
 export { noticeSeverity, noticeLinks, NoticeCard } from './system.tsx';

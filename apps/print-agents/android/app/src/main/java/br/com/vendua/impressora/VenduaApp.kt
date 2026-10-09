@@ -31,6 +31,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.File
 
 class VenduaApp : Application() {
@@ -55,7 +56,12 @@ class AppGraph(private val context: Context) {
     val http = agentHttpClient(BuildConfig.VERSION_NAME)
     val api = ApiClient(http, ::apiBase, tokens, onUnauthorized = ::onUnpaired)
     val usbPermission = UsbPermission(context)
-    val discovery = PrinterDiscovery(context) { store.pickedBluetooth }
+    val discovery = PrinterDiscovery(
+        context,
+        pickedBluetooth = { store.pickedBluetooth },
+        known = { state.printers.value },
+        requestUsbPermission = { usbPermission.request(it) },
+    )
     val updateInstaller = UpdateInstaller(context, http)
 
     val state = AgentState().apply {
@@ -91,7 +97,8 @@ class AppGraph(private val context: Context) {
         scope.launch { state.lastResults.drop(1).collect { store.lastResults = it } }
     }
 
-    fun apiBase(): String = store.apiBase ?: BuildConfig.API_BASE
+    // a saved base okhttp can't parse would throw inside every request
+    fun apiBase(): String = store.apiBase?.takeIf { it.toHttpUrlOrNull() != null } ?: BuildConfig.API_BASE
 
     fun onPaired(storeName: String) {
         state.storeName.value = storeName

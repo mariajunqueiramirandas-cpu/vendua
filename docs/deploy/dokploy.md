@@ -26,6 +26,16 @@ Copy `.env.example` into the service's environment and fill it in:
 | `SEED_DOMAINS`                             | `slug:public-domain` per storefront — registers real domains      |
 | `VENDUA_PROXY_HOPS`                        | XFF trusted suffix length — `1` for the Traefik→edge/nginx chain  |
 | `VENDUA_EDGE_SECRET`                       | the edge's key for Core's `/edge/v1/resolve` — required           |
+| `VENDUA_SYNC_SECRET`                       | domains-sync's key for Core's `/sync/v1` (own domains)            |
+| `DOMAINS_SYNC_DENY`                        | admin, CRM and site hosts domains-sync must never route           |
+| `VENDUA_SITE_ROUTINE_URL` / `_TOKEN`       | the site builder's Claude Code routine ([setup](site-builder.md)) |
+| `VENDUA_GITHUB_REPO` / `_TOKEN`            | the site builder merges PRs and reads the merged design           |
+| `VENDUA_GITHUB_WEBHOOK_SECRET`             | verifies GitHub's webhook at `/control/v1/github/webhook`         |
+| `VENDUA_EDGE_IPV4` / `VENDUA_EDGE_IPV6`    | the VPS's public addresses, written into hosted zones             |
+| `CLOUDFLARE_API_TOKEN` / `_ACCOUNT_ID`     | Cloudflare hosts delegated and included domains (Zone+DNS Edit)   |
+| `OPENPROVIDER_USERNAME` / `_PASSWORD`      | the Openprovider API user that registers Pangolim's `.com.br`     |
+| `OPENPROVIDER_CONTACT_HANDLE`              | Venduá's Openprovider contact: admin/tech/billing of each domain  |
+| `OPENPROVIDER_PROVIDER_NAME`               | the provider name owners pick at registro.br (conflict steps)     |
 | `VENDUA_ARTIFACTS`                         | release store: unset = the `artifacts` volume; `s3://bucket/pfx`  |
 | `S3_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY`  | with an `s3://` store: R2/MinIO credentials                       |
 | `S3_ENDPOINT` / `S3_REGION`                | with an `s3://` store: the endpoint (R2: account URL), region     |
@@ -48,12 +58,11 @@ Copy `.env.example` into the service's environment and fill it in:
 | `MP_CLIENT_ID` / `MP_CLIENT_SECRET`        | Venduá's Mercado Pago application — stores connect by OAuth       |
 | `MP_WEBHOOK_SECRET`                        | the application's webhook signing secret (x-signature)            |
 | `MP_PLATFORM_ACCESS_TOKEN`                 | Venduá's own MP account — plan billing (assinatura + Pix)         |
-| `MP_PUBLIC_KEY`                            | optional: card-form key for a store whose OAuth gave none         |
+| `MP_PUBLIC_KEY`                            | optional: card-form fallback key; MercadoPago.js in the admin     |
 | `VENDUA_SIGNUP_ACCESS_CODE`                | signup without MP; staff mark the plan invoices paid (≥ 12 chars) |
 | `VENDUA_SECRETS_KEY`                       | seals stores' MP tokens at rest (falls back to SESSION_SECRET)    |
 | `WA_MAX_SESSIONS`                          | stores' WhatsApp sockets one `wa-gateway` holds (default 300)     |
 | `WA_MIN_SEND_GAP_MS` / `WA_MAX_PER_HOUR`   | per-store pacing of shopper messages (1500 ms, 200/h)             |
-| `MP_PAYER_EMAIL`                           | payer email MP requires on Pix (default `pagador@<store domain>`) |
 
 Generate secrets with `openssl rand -hex 32`.
 
@@ -63,8 +72,9 @@ and its webhook URL to `https://<VENDUA_ADMIN_HOST>/admin/v1/hooks/mercadopago?t
 (events: payments, subscriptions). Store payments carry their own notification URL. Leave PKCE
 off (Core's OAuth sends no `code_verifier`). The in-page card form runs under each store's
 own `public_key` from OAuth, so its tokens are charged on that store's own token. `MP_PUBLIC_KEY`
-(the application's production public key) is only a fallback for a store whose OAuth answer
-carried no key. Without
+(the application's production public key) is the fallback for a store whose OAuth answer
+carried no key, and the key the admin starts MercadoPago.js with on the plan's payment screens
+(its device fingerprint goes with the plan's Pix; without it the admin loads MP's security script). Without
 `MP_CLIENT_ID`/`MP_CLIENT_SECRET` stores keep the offline methods (static Pix, cash, card on
 delivery) and the admin says online payments aren't available; without
 `MP_PLATFORM_ACCESS_TOKEN` self-serve signup stays closed, except to whoever has
@@ -112,14 +122,15 @@ In Dokploy, assign a domain to each web service (port 80):
   and which release it is (`/edge/v1/resolve`, cached 30 s and served stale while Core is down),
   serves that release's files from the artifact store and injects the store's state and live
   design into the page; unknown hosts get the "loja não encontrada" 404. Exact hosts in the
-  Domains UI (`admin`, `crm`, `site`) outrank the wildcard. TLS: the router sets `tls=true`
-  with no resolver, so Traefik needs the wildcard certificate itself — either a DNS-01 resolver
-  on Dokploy's Traefik for `*.vendua.com.br` (then add
-  `traefik.http.routers.vendua-edge.tls.certresolver=<name>` and
-  `tls.domains[0].main=vendua.com.br` / `tls.domains[0].sans=*.vendua.com.br`), or Cloudflare
-  proxying with SSL mode "Full". DNS: one wildcard record `*.vendua.com.br` → the VPS; new
-  stores need nothing else. A domain outside the wildcard (`pudim.com.br`) goes on `edge` in the
-  Domains UI (port 8080), plus its `domains` row.
+  Domains UI (`admin`, `crm`, `site`) outrank the wildcard. TLS: the router takes the wildcard
+  certificate from the `cloudflare` DNS-01 resolver on Dokploy's Traefik
+  ([Wildcard certificate](#wildcard-certificate)); without that resolver Traefik serves its
+  default certificate. Keep `*.vendua.com.br` **DNS only** in
+  Cloudflare: proxied, Core sees Cloudflare's IPs as every client (one shared rate-limit bucket)
+  and stores' own domains that CNAME to `<slug>.vendua.com.br` land on Cloudflare, which has no
+  zone or certificate for them. DNS: one wildcard record `*.vendua.com.br` → the VPS; new
+  stores need nothing else. A store's own domain (`pudim.com.br`) needs no Domains UI step either:
+  `domains-sync` routes it ([Own domains](#own-domains)).
 
 Store links (share, QR, "ver loja") always use the store's **primary** domain
 row, then any public row, then `<slug>.<VENDUA_STORE_DOMAIN>` — never a URL
@@ -143,17 +154,74 @@ update domains set is_primary = (host = 'pudim.example.com')
 
 (Exec into the `db` container or use Dokploy's database console.)
 
-### PRO+ custom domains
+### Wildcard certificate
 
-A PRO+ owner adds their domain in the admin (Conta → Endereços) and follows the DNS steps
-shown there: a CNAME to `<slug>.<VENDUA_STORE_DOMAIN>` and a TXT `_vendua.<host>` with their
-verification value. Core checks DNS every 15 minutes; when both match the domain turns
-`dns_ok` and staff get an email. Then, in this order:
+Once, before the `*` record goes DNS only:
 
-1. Dokploy → `edge` → Domains → add the host (port 8080, HTTPS on, Let's Encrypt).
-2. Wait for the certificate (open `https://<host>` — the "loja não encontrada" page is fine).
-3. CRM → Lojas → the store → "Ativar domínio". Core adds it to `domains` as the primary host,
-   so every link the admin builds moves to it.
+1. A Cloudflare API token with **Zone → DNS → Edit** and **Zone → Zone → Read** on
+   `vendua.com.br`.
+2. Dokploy's Traefik config (`traefik.yml`), beside the existing `letsencrypt` resolver:
+
+   ```yaml
+   certificatesResolvers:
+     cloudflare:
+       acme:
+         email: suporte@vendua.com.br
+         storage: /etc/dokploy/traefik/dynamic/acme-cf.json
+         dnsChallenge:
+           provider: cloudflare
+   ```
+
+   and `CF_DNS_API_TOKEN=<token>` in Traefik's environment. Reload Traefik.
+
+3. Deploy; the `edge` router's labels ask that resolver for `vendua.com.br` + `*.vendua.com.br`.
+   Check from the VPS:
+   `echo | openssl s_client -connect 127.0.0.1:443 -servername x.vendua.com.br 2>/dev/null | openssl x509 -noout -issuer -ext subjectAltName`
+   shows a Let's Encrypt issuer and `DNS:*.vendua.com.br` among the names (the subject carries
+   only the apex). Then set the `*` record to DNS only.
+4. Optional. A store that had its own certificate before keeps it: Traefik serves an exact SNI
+   match before the wildcard, loads every certificate in `acme.json` (on the host, untouched by a
+   compose redeploy) and renews each one whether or not a router still asks for it. Those stores
+   stay on valid HTTPS; only new ones use the wildcard. To move them over too, remove any
+   `<slug>.vendua.com.br` entry from the Domains UI (or its router asks again), then from the VPS:
+   `docker exec <domains-sync container> bun src/prune-acme.ts` lists them (`painel.`/`crm.` in
+   `DOMAINS_SYNC_DENY`, the apex and other domains stay). Traefik rewrites `acme.json` from memory
+   and would put them back, so stop it around the write (a few seconds of downtime):
+   `docker stop dokploy-traefik`, the same command with `--write` (it keeps
+   `acme.json.bak-<time>`), `docker start dokploy-traefik`.
+
+### Own domains
+
+Pangolim stores get their own domain with no staff step ([ADR 0038](../adr/0038-included-domains.md)).
+In the admin (Conta → Domínio próprio) the owner either connects a domain they have, with a CNAME
+(or A records) to `<slug>.<VENDUA_STORE_DOMAIN>` plus a TXT `_vendua.<host>`, or by pointing its
+nameservers at a Cloudflare zone Venduá hosts; or has Venduá register a `.com.br` in the store's
+name (placed at the plan's first payment). Core checks DNS every 15 minutes. Once it verifies,
+**domains-sync** writes a Traefik router for the host (and its `www.`/root alias) into
+`/etc/dokploy/traefik/dynamic/vendua-custom-domains.yml`, Traefik gets a Let's Encrypt certificate
+over HTTP-01, and Core's job probes `https://<host>` and switches the host on. A live domain that
+stops pointing at Venduá goes under repair (links move to the platform host); a store that loses
+the plan's domain gets a redirect to its platform host.
+
+Setup, once:
+
+1. `VENDUA_SYNC_SECRET` (`openssl rand -hex 32`) on the compose; `DOMAINS_SYNC_DENY` = the admin,
+   CRM and site hosts. `TRAEFIK_DYNAMIC_DIR` only if Dokploy's dynamic directory isn't
+   `/etc/dokploy/traefik/dynamic` (`docker inspect dokploy-traefik` shows the mount). Redeploy;
+   `domains-sync` logs each write.
+2. `VENDUA_EDGE_IPV4` (and `VENDUA_EDGE_IPV6` if the VPS has one) = the addresses
+   `*.<VENDUA_STORE_DOMAIN>` resolves to. Owners with A records point at the IPv4, so keep it stable
+   (a floating IP).
+3. Cloudflare: an API token with **Zone → Zone → Edit** and **Zone → DNS → Edit** on the account's
+   zones (plus account-level zone creation), and the account id. Records are written DNS-only.
+4. Openprovider: membership with prepaid balance, an API user, and a contact handle for Venduá
+   (admin/tech/billing of every domain). Do one real `.com.br` registration through the API first
+   and fill `OPENPROVIDER_PROVIDER_NAME` with the provider name shown at registro.br.
+
+Without Cloudflare + IPv4 only the CNAME method is offered; without Openprovider nothing is sold.
+The probe goes to `https://<host>` from the Core container: if the VPS can't reach its own public
+IP, the host stays "ativando" and a `domain.tls_stuck` event arrives after an hour; CRM → Lojas →
+the store → "ativar domínio" switches it on by hand after you open `https://<host>`.
 
 Signup reserves the admin's label (`painel`) and the other platform names from store slugs.
 
@@ -192,6 +260,28 @@ people who never wrote first, and Instagram can challenge or restrict the accoun
 
 A logged-out session shows up on the card as "reconectar conta" — log in again
 there. The sidecar is AGPL-3.0 (its `LICENSE`); keep it a separate service.
+
+## Voice-note transcription (stt)
+
+The `stt` service ([ADR 0037](../adr/0037-self-hosted-stt.md), `services/stt`) transcribes
+shoppers' voice notes for the Vendedor on this host's CPU, with Parakeet-TDT-0.6B-v3. No audio
+goes to a third party and there is no per-minute charge.
+
+1. Set `STT_SECRET`. It is one value, and compose hands it to both `core` and `stt`. Without it,
+   the service idles and Core keeps using the cloud routes (or none).
+2. Deploy. The first build downloads the 0.8 GB compiled model from this repo's GitHub Release
+   (`stt-models-v*`), the build that fits the host's CPU, and caches it. The container needs
+   about 1.5 GB at runtime.
+3. Check the CRM, under IA → Voz. It shows whether the voice server is up and which model it
+   runs, and it sets the order of the transcription routes. With no route saved, Core uses the
+   voice server. Saving a list there picks another order or adds a cloud fallback. Keep
+   "Venduá" first, because when a cloud route comes first the audio leaves the platform.
+
+`STT_CPUS` (default 2) caps the cores it may use, so Core and Postgres keep theirs.
+`STT_MODEL=parakeet-tdt-0.6b-v3-ptbr` builds the Brazilian Portuguese fine-tune instead: better
+on spontaneous speech, worse on read speech (ADR 0037). If the image is built on another machine for a host without
+AVX-512/AVX-VNNI, build with `--build-arg STT_REDUCE_RANGE=1`. If the release is missing a file,
+the build downloads the 2.5 GB fp32 export and compiles it instead, which needs about 6 GB of RAM.
 
 ## Stores' own WhatsApp (order updates to shoppers)
 
@@ -253,6 +343,7 @@ through the edge with the store's Host header (DNS and TLS unchecked).
 | `site`       | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
 | `ig-sidecar` | `services/ig-sidecar/Dockerfile` (Go)                      | 8790, internal |
 | `wa-gateway` | `packages/core/Dockerfile`, entrypoint `src/wa-gateway.ts` | 8791, internal |
+| `stt`        | `services/stt/Dockerfile` (Python, ONNX Runtime)           | 8792, internal |
 
 `site` and `publish` share the storefronts Dockerfile's `build` stage, so a deploy runs one
 `bun install` + one vite pass for both (compose/bake dedupe the shared stage).

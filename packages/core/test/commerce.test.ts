@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
+import { MAX_WATCHERS_PER_ORDER } from '../src/modules/commerce-routes.ts';
 import { migrate } from '../src/platform/db.ts';
 
 // Phase 2 end to end over HTTP: every roadmap 2a–2c item against a real Postgres.
@@ -447,6 +448,54 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     expect(ok.body.order.discountCents).toBe(0);
   });
 
+  test('a phone without digits is refused; free delivery on a pickup spends no reward', async () => {
+    const auth = await session();
+    await call('POST', '/checkout/v1/cart/items', { productId: ids.coco, qty: 1 }, auth);
+    expect((await call('POST', '/checkout/v1/cart/coupon', { code: 'frete' }, auth)).status).toBe(
+      200,
+    );
+    const input = (phone: string) => ({
+      customer: { name: 'Bia', phone },
+      delivery: { mode: 'pickup' },
+      payment: { method: 'cash' },
+    });
+    const blank = await call('POST', '/checkout/v1/checkout', input('--------'), auth);
+    expect(blank.status).toBe(422);
+    expect(blank.body.error).toMatchObject({
+      code: 'INVALID_CUSTOMER',
+      details: { field: 'customer.phone' },
+    });
+    const ok = await call('POST', '/checkout/v1/checkout', input('22977770000'), auth);
+    expect(ok.status).toBe(201);
+    expect(ok.body.order.discountCents).toBe(0);
+    const [row] = await sql<{ coupon_code: string | null; redemptions: number }[]>`
+      select coupon_code, (select count(*)::int from coupon_redemptions where order_id = o.id) as redemptions
+      from orders o where id = ${ok.body.order.id}
+    `;
+    expect(row).toEqual({ coupon_code: null, redemptions: 0 });
+  });
+
+  test('staff coupon dates: a bad date or an end before the start is a 400', async () => {
+    const make = (extra: Record<string, unknown>) =>
+      ctl('POST', '/coupons', { code: `D${++idem}`, kind: 'fixed', value: 100, ...extra });
+    expect((await make({ endsAt: 'foo' })).status).toBe(400);
+    expect(
+      (await make({ startsAt: '2026-10-10T00:00:00Z', endsAt: '2026-10-01T00:00:00Z' })).status,
+    ).toBe(400);
+    const made = await make({ startsAt: '2026-10-10T00:00:00Z' });
+    expect(made.status).toBe(201);
+    const code = made.body.coupon.code;
+    const bad = await ctl('PATCH', `/coupons/${code}`, { endsAt: 'foo' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.code).toBe('BAD_REQUEST');
+    expect(
+      (await ctl('PATCH', `/coupons/${code}`, { endsAt: '2026-10-09T00:00:00Z' })).status,
+    ).toBe(400);
+    const ok = await ctl('PATCH', `/coupons/${code}`, { endsAt: '2026-10-11T00:00:00Z' });
+    expect(ok.status).toBe(200);
+    expect(new Date(ok.body.coupon.ends_at).toISOString()).toBe('2026-10-11T00:00:00.000Z');
+  });
+
   test('live order: a waiting read wakes on the transition', async () => {
     const auth = { authorization: `Bearer ${orderToken}` };
     const waiting = call('GET', `/checkout/v1/orders/${orderId}?since=1&wait=10`, undefined, auth);
@@ -511,6 +560,48 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
       headers: { host, ...other },
     });
     expect(denied.status).toBe(404);
+  });
+
+  test('live order: one order holds at most MAX_WATCHERS_PER_ORDER streams and long-polls', async () => {
+    const headers = { host, authorization: `Bearer ${orderToken}` };
+    const open: { a: AbortController; res: Response }[] = [];
+    for (let i = 0; i < MAX_WATCHERS_PER_ORDER; i++) {
+      const a = new AbortController();
+      const res = await app.request(`http://${host}/checkout/v1/orders/${orderId}/events`, {
+        headers,
+        signal: a.signal,
+      });
+      expect(res.status).toBe(200);
+      open.push({ a, res });
+    }
+    const over = await app.request(`http://${host}/checkout/v1/orders/${orderId}/events`, {
+      headers,
+    });
+    expect(over.status).toBe(503);
+    expect(((await over.json()) as any).error.code).toBe('STREAM_UNAVAILABLE');
+    // the long-poll shares the order's slots; a plain read doesn't take one
+    const poll = await call('GET', `/checkout/v1/orders/${orderId}?since=99&wait=1`, undefined, {
+      authorization: `Bearer ${orderToken}`,
+    });
+    expect(poll.status).toBe(503);
+    const plain = await call('GET', `/checkout/v1/orders/${orderId}`, undefined, {
+      authorization: `Bearer ${orderToken}`,
+    });
+    expect(plain.status).toBe(200);
+    for (const o of open) {
+      o.a.abort();
+      await o.res.body?.cancel().catch(() => {});
+    }
+    let again = 503;
+    for (let i = 0; i < 100 && again !== 200; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      again = (
+        await call('GET', `/checkout/v1/orders/${orderId}?since=99&wait=1`, undefined, {
+          authorization: `Bearer ${orderToken}`,
+        })
+      ).status;
+    }
+    expect(again).toBe(200);
   });
 
   test('customer: orders by phone need a token for that phone; verification by order number', async () => {
@@ -602,6 +693,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     expect(
       (await sql`select stock_quantity from products where id = ${ids.pudim!}`)[0]!.stock_quantity,
     ).toBe(3);
+
+    // tracked only after the sale: the cancel gives back nothing it never took
+    expect(
+      (await sql`select stock_quantity from products where id = ${ids.coco!}`)[0]!.stock_quantity,
+    ).toBeNull();
+    const untracked = await session();
+    await call('POST', '/checkout/v1/cart/items', { productId: ids.coco, qty: 2 }, untracked);
+    const o2 = await call(
+      'POST',
+      '/checkout/v1/checkout',
+      {
+        customer: { name: 'Cris', phone: '21977776666' },
+        delivery: { mode: 'pickup' },
+        payment: { method: 'cash' },
+      },
+      untracked,
+    );
+    await sql`update products set stock_quantity = 10 where id = ${ids.coco!}`;
+    await ctl('POST', `/orders/${o2.body.order.id}/transition`, { to: 'cancelled' });
+    expect(
+      (await sql`select stock_quantity from products where id = ${ids.coco!}`)[0]!.stock_quantity,
+    ).toBe(10);
+    await sql`update products set stock_quantity = null where id = ${ids.coco!}`;
 
     const w = await call('POST', '/storefront/v1/waitlist', {
       productId: ids.maracuja,
@@ -738,5 +852,121 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
         where tenant_id = ${tenantId}
       `;
     }
+  });
+  test("a coupon's per-phone limit holds under either 9th-digit spelling", async () => {
+    expect(
+      (
+        await ctl('POST', '/coupons', {
+          code: 'UMAVEZ',
+          kind: 'fixed',
+          value: 100,
+          perPhoneLimit: 1,
+        })
+      ).status,
+    ).toBe(201);
+    const order = async (phone: string) => {
+      const auth = await session();
+      await call('POST', '/checkout/v1/cart/items', { productId: ids.coco, qty: 1 }, auth);
+      await call('POST', '/checkout/v1/cart/coupon', { code: 'UMAVEZ' }, auth);
+      return call(
+        'POST',
+        '/checkout/v1/checkout',
+        {
+          customer: { name: 'Edu', phone },
+          delivery: { mode: 'pickup' },
+          payment: { method: 'cash' },
+        },
+        auth,
+      );
+    };
+    expect((await order('21987651234')).status).toBe(201);
+    // the same WhatsApp typed without the 9th digit is the same customer
+    const again = await order('2187651234');
+    expect(again.status).toBe(422);
+    expect(again.body.error.code).toBe('COUPON_ALREADY_USED');
+  });
+
+  test('a coupon that covers the whole order leaves nothing to charge', async () => {
+    expect(
+      (await ctl('POST', '/coupons', { code: 'TUDO', kind: 'percent', value: 100 })).status,
+    ).toBe(201);
+    const auth = await session();
+    await call('POST', '/checkout/v1/cart/items', { productId: ids.coco, qty: 1 }, auth);
+    expect((await call('POST', '/checkout/v1/cart/coupon', { code: 'TUDO' }, auth)).status).toBe(
+      200,
+    );
+    const o = await call(
+      'POST',
+      '/checkout/v1/checkout',
+      {
+        customer: { name: 'Gil', phone: '21944443333' },
+        delivery: { mode: 'pickup' },
+        payment: { method: 'pix' },
+      },
+      auth,
+    );
+    expect(o.status).toBe(201);
+    expect(o.body.order.totalCents).toBe(0);
+    // no open-amount Pix, no R$ 0 charge at Mercado Pago
+    expect(o.body.order.payment).toMatchObject({ status: 'paid', online: false, pix: null });
+  });
+
+  test('a bag stops at 50 lines; checkout refuses a total the shopper did not see', async () => {
+    const auth = await session();
+    for (let i = 0; i < 50; i++)
+      expect(
+        (
+          await call(
+            'POST',
+            '/checkout/v1/cart/items',
+            { productId: ids.coco, qty: 1, note: `n${i}` },
+            auth,
+          )
+        ).status,
+      ).toBe(200);
+    const full = await call(
+      'POST',
+      '/checkout/v1/cart/items',
+      { productId: ids.coco, qty: 1, note: 'one more' },
+      auth,
+    );
+    expect(full.status).toBe(422);
+    expect(full.body.error.code).toBe('CART_FULL');
+    // a merge into a line already there still works
+    expect(
+      (
+        await call(
+          'POST',
+          '/checkout/v1/cart/items',
+          { productId: ids.coco, qty: 1, note: 'n0' },
+          auth,
+        )
+      ).status,
+    ).toBe(200);
+
+    const small = await session();
+    await call('POST', '/checkout/v1/cart/items', { productId: ids.coco, qty: 1 }, small);
+    const body = {
+      customer: { name: 'Lia', phone: '21955554444' },
+      delivery: { mode: 'pickup' },
+      payment: { method: 'cash' },
+    };
+    const stale = await call(
+      'POST',
+      '/checkout/v1/checkout',
+      { ...body, expectedTotalCents: 1000 },
+      small,
+    );
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe('PRICES_CHANGED');
+    expect(stale.body.error.details).toMatchObject({ totalCents: 1500, expectedTotalCents: 1000 });
+    const ok = await call(
+      'POST',
+      '/checkout/v1/checkout',
+      { ...body, expectedTotalCents: 1500 },
+      small,
+    );
+    expect(ok.status).toBe(201);
+    expect(ok.body.order.totalCents).toBe(1500);
   });
 });

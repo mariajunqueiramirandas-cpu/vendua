@@ -2,7 +2,7 @@ import { createApp } from './app.ts';
 import { AdminHub } from './admin/live.ts';
 import { startAdminSweeper, startPushNotifier } from './admin/workers.ts';
 import { log } from './platform/log.ts';
-import { createSql, migrate } from './platform/db.ts';
+import { createSql, jobsPoolMax, migrate, warmPool } from './platform/db.ts';
 import { join } from 'node:path';
 import { ingestInbound } from './agent/inbound.ts';
 import { startScheduler, stopScheduler } from './agent/scheduler.ts';
@@ -18,6 +18,10 @@ import {
   onLidMapping,
 } from './agent/channels/whatsapp.ts';
 import { adoptLidMappings } from './modules/threads.ts';
+import { socketMessageToInbox, startPlatformInbox } from './platform-whatsapp/inbox.ts';
+import { startCrmSettle } from './platform-whatsapp/crm-settle.ts';
+import { startSocketPump } from './platform-whatsapp/socket-pump.ts';
+import { platformTransport } from './platform-whatsapp/transport.ts';
 import { startInstagramReconcile } from './agent/channels/instagram.ts';
 import { getIntegration } from './modules/integrations.ts';
 import { setBookingSecret } from './modules/meetings.ts';
@@ -25,13 +29,18 @@ import { platformNotify } from './admin/notify.ts';
 import { createPaymentProvider } from './modules/payments/index.ts';
 import { startPaymentJobs } from './modules/payments/jobs.ts';
 import { startBillingJobs } from './modules/billing/jobs.ts';
+import { domainProvidersFromEnv } from './modules/domains/config.ts';
+import { startDomainJobs } from './modules/domains/jobs.ts';
 import { signupAccessCode } from './modules/billing/signup.ts';
 import { fleetDeps } from './modules/fleet/deps.ts';
 import { startFleetJobs } from './modules/fleet/jobs.ts';
 import { startMenuImportJobs } from './modules/menu-import/jobs.ts';
 import { startWebAnalyticsJobs } from './modules/web-analytics.ts';
 import { startStoreWhatsappWatch } from './store-whatsapp/watch.ts';
+import { configureOrderLinks } from './store-whatsapp/messages.ts';
+import { orderTrackToken } from './modules/orders.ts';
 import { onUnhandledError } from './platform/http.ts';
+import { StoreReadCache } from './platform/read-cache.ts';
 import { recordBoot, unhandledErrorReporter } from './modules/system-events.ts';
 
 const databaseUrl =
@@ -43,7 +52,8 @@ const migrationUrl =
 const port = Number(process.env.PORT ?? 8787);
 // SESSION_SECRET signs cart session tokens and is the dev fallback for the control
 // gate — deployments must set it. CONTROL_SECRET is the staff key for /control/v1.
-const sessionSecret = process.env.SESSION_SECRET ?? crypto.randomUUID();
+// an empty value counts as unset: an empty HMAC key or staff key is no secret at all
+const sessionSecret = process.env.SESSION_SECRET || crypto.randomUUID();
 if (!process.env.SESSION_SECRET) {
   log.warn(
     'SESSION_SECRET unset — using a random per-boot secret. Sessions do not survive restarts and replicas disagree; set SESSION_SECRET in any shared environment.',
@@ -75,56 +85,78 @@ if (migrationUrl) {
 }
 
 const sql = createSql(databaseUrl);
+void warmPool(sql);
+// Background work (jobs, the scheduler, agents, inbound messages) gets a small pool of its own: a
+// request never waits behind a job for a connection, and since a connection prepares each
+// statement once, the request pool stays on statements requests have already prepared.
+const jobsSql = createSql(databaseUrl, jobsPoolMax);
 const adminHub = new AdminHub(sql);
 // one provider for the API and the jobs: the fake driver keeps its state in memory
 const paymentProvider = createPaymentProvider();
 const notify = platformNotify(sql);
+// storefront reads served from memory, dropped by the notify a committed write sends
+const readCache = new StoreReadCache(sql);
+void readCache.ready();
 const app = createApp({
   sql,
   sessionSecret,
-  controlSecret: process.env.CONTROL_SECRET,
+  controlSecret: process.env.CONTROL_SECRET || undefined,
   adminHub,
   paymentProvider,
   notify,
+  readCache,
 });
 const adminHost = process.env.VENDUA_ADMIN_HOST?.trim().toLowerCase();
 const adminOrigin = adminHost ? `https://${adminHost}` : null;
 // Mercado Pago: token refresh + connection health, pending-payment reconciliation;
 // the plan: invoices, renewals, reminders, custom-domain DNS checks
-const stopPaymentJobs = startPaymentJobs(sql, {
+const stopPaymentJobs = startPaymentJobs(jobsSql, {
   provider: paymentProvider,
   sessionSecret,
   notify,
   adminOrigin,
 });
-const stopBillingJobs = startBillingJobs(sql, {
+const stopBillingJobs = startBillingJobs(jobsSql, {
   provider: paymentProvider,
   notify,
   adminOrigin,
   storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
 });
 
+// own domains (ADR 0038): DNS checks, certificates, repair and lapse, .com.br registrations
+const stopDomainJobs = startDomainJobs(jobsSql, {
+  providers: domainProvidersFromEnv(),
+  notify,
+  storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+});
+
 // Control Plane (Phase 4): provisioner, synthetic probes, deployment verification, drift
-const stopFleetJobs = startFleetJobs(fleetDeps(sql, { notify }));
+const stopFleetJobs = startFleetJobs(fleetDeps(jobsSql, { notify }));
 
 // menu import ("cole o link do seu cardápio"): reads pasted stores, re-hosts their photos
-const stopMenuImportJobs = startMenuImportJobs({ sql });
+const stopMenuImportJobs = startMenuImportJobs({ sql: jobsSql });
 
 // privacy-first page views (ADR 0028): the daily salt and 13-month retention expire on a clock
-const stopWebAnalyticsJobs = startWebAnalyticsJobs(sql);
+const stopWebAnalyticsJobs = startWebAnalyticsJobs(jobsSql);
 // stores' own WhatsApp runs in the wa-gateway process (ADR 0026); Core only watches it beat
-const stopStoreWhatsappWatch = startStoreWhatsappWatch(sql);
+const stopStoreWhatsappWatch = startStoreWhatsappWatch(jobsSql);
+// each order message ends with the order's status-only link, signed like the cart sessions
+configureOrderLinks({
+  storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+  token: (tenantId, orderId, placedAt) =>
+    orderTrackToken(sessionSecret, tenantId, orderId, placedAt),
+});
 
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
-const stopPushNotifier = startPushNotifier(sql, adminHub);
-const stopAdminSweeper = startAdminSweeper(sql, { notify, adminOrigin });
+const stopPushNotifier = startPushNotifier(jobsSql, adminHub);
+const stopAdminSweeper = startAdminSweeper(jobsSql, { notify, adminOrigin });
 
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
-setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
+setBookingSecret(process.env.CONTROL_SECRET || sessionSecret);
 
 // Scheduler (work loop + job loop over the durable pg queue, woken by LISTEN/NOTIFY) +
 // WhatsApp socket when the baileys driver is enabled.
-startScheduler(sql);
+startScheduler(jobsSql);
 // Agent Runtime v3 (ADR 0030) with the Vendedor (ADR 0031): its tools reach checkout and
 // payments through these deps; its worker ingests the stores' conversations
 configureVendedor({
@@ -134,57 +166,119 @@ configureVendedor({
   storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
   publicOrigin: adminOrigin,
 });
-const agentGateway = hostGateway(sql);
+const agentGateway = hostGateway(jobsSql);
 configureVendedor({ gateway: agentGateway });
-const agentRuntime = startAgentRuntime(sql, { gateway: agentGateway });
-const stopVendedor = startVendedorWorker(sql, {
+const agentRuntime = startAgentRuntime(jobsSql, { gateway: agentGateway });
+const stopVendedor = startVendedorWorker(jobsSql, {
   gateway: agentGateway,
-  media: mediaProviders(sql),
+  media: mediaProviders(jobsSql),
 });
+// ingestInbound caps a body at 8000 chars: a longer WhatsApp message is cut, not dropped
+const waBody = (text: string) => (text.length > 8000 ? text.slice(0, 8000) : text);
 onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
-  await ingestInbound(sql, {
+  // a merchant phone is Duá's (docs/features/dua-no-whatsapp.md), everyone else the CRM's
+  const m = {
+    jid,
+    text,
+    providerId,
+    ...(pushName ? { pushName } : {}),
+    ...(altJid ? { altJid } : {}),
+  };
+  if (await socketMessageToInbox(jobsSql, m)) return;
+  await ingestInbound(jobsSql, {
     channel: 'whatsapp',
     from: jid,
     ...(pushName ? { fromName: pushName } : {}),
     ...(altJid ? { fromAlias: altJid } : {}),
-    body: text,
+    body: waBody(text),
     providerMessageId: providerId,
   });
 });
 // Pairing-time history lands as context only (never queues a reply); fromMe echoes staff's phone replies.
 onHistoryMessage(async (m) => {
-  await ingestInbound(sql, {
+  await ingestInbound(jobsSql, {
     channel: 'whatsapp',
     from: m.jid,
     direction: m.fromMe ? 'out' : 'in',
     ...(m.pushName ? { fromName: m.pushName } : {}),
     ...(m.altJid ? { fromAlias: m.altJid } : {}),
     ...(m.sentAt ? { sentAt: m.sentAt } : {}),
-    body: m.text,
+    body: waBody(m.text),
     providerMessageId: m.providerId,
     historical: true,
   });
 });
 // LID↔PN pairs learned by the socket move LID-keyed leads onto the real number.
 onLidMapping(async (pairs) => {
-  const ids = await adoptLidMappings(sql, pairs);
+  const ids = await adoptLidMappings(jobsSql, pairs);
   if (ids.length) {
     log.child({ mod: 'whatsapp' }).info({ count: ids.length }, 'lid leads re-keyed to phone');
   }
 });
-void getIntegration(sql, 'whatsapp')
-  .then((i) => ensureSocket(sql, i))
-  .catch((e) => log.child({ mod: 'whatsapp' }).error({ err: e }, 'socket start failed'));
+// Venduá's number: Core's socket until the cutover, then a platform session on the wa-gateway
+// (WA_PLATFORM_TRANSPORT). Either way its inbox is routed here, and Duá's replies go out its outbox.
+const waTransport = platformTransport();
+if (waTransport === 'socket')
+  void getIntegration(jobsSql, 'whatsapp')
+    .then((i) => ensureSocket(jobsSql, i))
+    .catch((e) => log.child({ mod: 'whatsapp' }).error({ err: e }, 'socket start failed'));
+const platformInbox = startPlatformInbox({
+  sql: jobsSql,
+  jobsSql,
+  media: mediaProviders(jobsSql),
+  origin: adminOrigin,
+});
+const socketPump = waTransport === 'socket' ? startSocketPump(jobsSql) : null;
+// CRM sends finish (lead state, cadence) when their outbox row settles; in socket mode too, for
+// rows queued before a rollback that the socket pump then sends
+const stopCrmSettle = startCrmSettle(jobsSql);
 // Instagram's live session sits in the ig-sidecar; this re-pushes the stored one after a sidecar restart.
-const stopInstagramReconcile = startInstagramReconcile(sql);
+const stopInstagramReconcile = startInstagramReconcile(jobsSql);
 
 // a 500 and a boot reach the team (ADR 0023): system.error is throttled per route
 onUnhandledError(unhandledErrorReporter(sql));
 
 // idleTimeout must clear the SSE heartbeat (20s): Bun's default 10s kills a
 // quiet event stream before the first `:ka`, looping clients forever.
-const server = Bun.serve({ port, fetch: app.fetch, idleTimeout: 60 });
+// Hono compiles its router on the first request it matches (~15 ms with Core's routes): spend it
+// here rather than on a shopper's first request
+await app.request('http://localhost/healthz');
+// Routes cap their own bodies (32 KB by default, media 2 MB), but only once read: a chunked upload
+// with no length would be buffered whole first, up to Bun's 128 MB default. 4 MiB covers every
+// route's cap with room.
+const server = Bun.serve({
+  port,
+  fetch: app.fetch,
+  idleTimeout: 60,
+  maxRequestBodySize: 4 * 1024 * 1024,
+});
 log.info({ port }, 'listening');
+// One active store's storefront reads, in the background: their code compiles and their statements
+// are prepared on the connection the next request gets, so the first shopper after a deploy finds
+// that path warm. Read-only, best effort.
+void (async () => {
+  // any active store: the code paths and statements are the same for all of them
+  const [store] = await sql<{ host: string }[]>`
+    select coalesce(
+      (select d.host from domains d where d.tenant_id = t.id order by d.is_primary desc limit 1),
+      t.slug || '.' || ${process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br'}
+    ) as host
+    from tenants t where t.status = 'active' limit 1
+  `;
+  if (!store) return;
+  const get = async (path: string) =>
+    (
+      await app.request(`http://${store.host}/storefront/v1${path}`, {
+        headers: { host: store.host },
+      })
+    )
+      .json()
+      .catch(() => null) as Promise<{ categories?: { products?: { slug?: string }[] }[] } | null>;
+  await get('/store');
+  await get('/surfaces?design=1');
+  const slug = (await get('/catalog'))?.categories?.[0]?.products?.[0]?.slug;
+  if (slug) await get(`/products/${encodeURIComponent(slug)}`);
+})().catch(() => undefined);
 void recordBoot(sql);
 
 // Deploys send SIGTERM: stop taking requests and let those in flight finish, stop claiming,
@@ -199,11 +293,16 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     stopAdminSweeper();
     stopPaymentJobs();
     stopBillingJobs();
+    stopDomainJobs();
     stopFleetJobs();
     stopMenuImportJobs();
     stopWebAnalyticsJobs();
     stopStoreWhatsappWatch();
     stopInstagramReconcile();
+    void platformInbox.stop();
+    void socketPump?.stop();
+    void stopCrmSettle();
+    readCache.stop();
     void stopPushNotifier.then((stop) => stop()).catch(() => undefined);
     // event streams never finish on their own: requests get a few seconds, then the rest close
     const drained = Promise.race([
@@ -211,7 +310,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
       new Promise((r) => setTimeout(r, 5_000)).then(() => server.stop(true)),
     ]);
     void Promise.all([drained, stopScheduler(), agentRuntime.stop(), stopVendedor()])
-      .then(() => sql.end({ timeout: 5 }))
+      .then(() => Promise.all([sql.end({ timeout: 5 }), jobsSql.end({ timeout: 5 })]))
       .finally(() => process.exit(0));
   });
 }

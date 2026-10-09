@@ -8,12 +8,14 @@ import {
   UUID_RE,
   bodyJson,
   boundedText,
+  clientIp,
   parseJsonObject,
   rateLimit,
   sessionCartId,
   str,
   uuidParam,
   verifySessionToken,
+  windowCounter,
 } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
@@ -54,17 +56,23 @@ import {
 import { normalizeCep, parsePolygon, resolveZone, type CepLookup, type LatLng } from './geo.ts';
 import type { Geocoder } from './geocode.ts';
 import type { OrderHub } from './order-live.ts';
+import type { LiveSlots } from './storefront-live.ts';
 import {
   ORDER_STATES,
   TERMINAL_STATES,
   canTransition,
   loadOrderView,
+  loadOrderViews,
+  readStorefrontOrder,
+  storefrontOrderAccess,
   transitionOrder,
   type DeliveryMode,
   type OrderState,
+  type OrderStatusView,
   type OrderView,
 } from './orders.ts';
 import { normalizePixKey, type PixKeyType } from './pix.ts';
+import { saveKitStepsTx } from './combos.ts';
 import { setStock } from './stock.ts';
 import { subscribeNotifyTx } from './storefront-platform.ts';
 import type { StoreSettingsRow } from './store.ts';
@@ -73,6 +81,7 @@ import type { PaymentProvider } from './payments/provider.ts';
 import { refundLeftovers, refundOrderPayments } from '../admin/routes-orders.ts';
 import {
   cancelOpenAttempts,
+  deviceIdOr,
   parseCardInput,
   payWithCard,
   preparePayment,
@@ -102,6 +111,8 @@ interface Deps {
   /** address → approximate point for the checkout's pin map (ADR 0024) */
   geocode: Geocoder;
   orderHub: OrderHub;
+  /** open order streams and long-polls — each re-reads the order on every wake */
+  orderWatch: LiveSlots;
   provider: PaymentProvider;
   /** `https://<admin host>` — Mercado Pago's notification_url base */
   publicOrigin: (c: Context) => string;
@@ -114,6 +125,9 @@ const CUSTOMER_HEADER = 'x-vendua-customer';
 const STREAM_HEARTBEAT_MS = 20_000;
 const STREAM_RECHECK_MS = 15_000;
 const STREAM_MAX_MS = 10 * 60_000;
+/** a shopper's tabs and devices; more is a flood re-reading one order on every wake */
+export const MAX_WATCHERS_PER_ORDER = 5;
+export const CEP_PER_IP_PER_MIN = 20;
 
 /** Phase 2 commerce surfaces (roadmap 2a–2c): public reads, checkout mutations, staff admin. */
 export function mountCommerce(d: Deps) {
@@ -124,13 +138,21 @@ export function mountCommerce(d: Deps) {
       { trustForwardedFor: d.trustProxy, proxyHops: d.proxyHops ?? 0 },
     );
 
+  const ipOf = (c: Context) =>
+    clientIp(c, { trustForwardedFor: d.trustProxy, proxyHops: d.proxyHops ?? 0 });
+
   // ── storefront (public reads) ──────────────────────────────────────────────
 
+  // ViaCEP is shared by every store: one client (across stores) gets a share of it (the
+  // process-wide budget is viaCep's, spent on cache misses only)
+  const cepByIp = windowCounter({ windowMs: 60_000, max: CEP_PER_IP_PER_MIN });
   storefront.use('/cep/*', limiter(30));
   storefront.get('/cep/:cep', async (c) => {
     const tenant = c.get('tenant');
     const cep = normalizeCep(c.req.param('cep'));
     if (!cep) throw new HttpError(400, 'INVALID_CEP', 'cep must have 8 digits');
+    if (!cepByIp(ipOf(c)))
+      throw new HttpError(429, 'RATE_LIMITED', 'too many requests — retry later');
     let found;
     try {
       found = await d.cepLookup(cep);
@@ -168,13 +190,16 @@ export function mountCommerce(d: Deps) {
       if (v && v.length > max) throw new HttpError(400, 'BAD_REQUEST', `${k} is too long`);
       return v || null;
     };
-    const point = await d.geocode({
-      cep: q('cep', 12),
-      street: q('street', 120),
-      number: q('number', 10),
-      city: q('city', 80),
-      state: q('state', 40),
-    });
+    const point = await d.geocode(
+      {
+        cep: q('cep', 12),
+        street: q('street', 120),
+        number: q('number', 10),
+        city: q('city', 80),
+        state: q('state', 40),
+      },
+      ipOf(c),
+    );
     if (point) c.header('cache-control', 'public, max-age=86400');
     return c.json({ point });
   });
@@ -290,7 +315,7 @@ export function mountCommerce(d: Deps) {
       await assertCartOpen(tx, tenant.id, cartId);
       let lines: ImportLine[];
       if (body.shareCode !== undefined) {
-        lines = await readShare(tx, tenant.id, str(body.shareCode, 'shareCode', 16));
+        lines = await readShare(tx, tenant.id, str(body.shareCode, 'shareCode', 16), cartId);
       } else {
         lines = parseImportLines(body.items);
       }
@@ -354,12 +379,19 @@ export function mountCommerce(d: Deps) {
   // lost while LISTEN reconnects; `Last-Event-ID` skips a version already seen.
   checkout.get('/orders/:id/events', async (c) => {
     const tenant = c.get('tenant');
-    const cartId = await sessionCartId(c, sessionSecret);
+    // a tracking link (vot.…) streams the status-only view
+    const access = await storefrontOrderAccess(
+      c.req.header('authorization'),
+      tenant.id,
+      c.req.param('id'),
+      sessionSecret,
+    );
     const orderId = uuidParam(c, 'id');
     const read = () =>
-      withTenant(sql, tenant.id, (tx) => loadOrderView(tx, tenant.id, orderId, cartId));
+      withTenant(sql, tenant.id, (tx) => readStorefrontOrder(tx, tenant.id, orderId, access));
     // 404 before the stream opens — a stream is only for an order this session owns
     const first = await read();
+    const release = d.orderWatch.take(ipOf(c), orderId);
     const lastId = Number(c.req.header('last-event-id'));
     const res = streamSSE(c, async (stream) => {
       let sent = Number.isInteger(lastId) && lastId > 0 ? lastId : 0;
@@ -373,7 +405,7 @@ export function mountCommerce(d: Deps) {
         };
       });
       stream.onAbort(finish);
-      const push = async (o: OrderView) => {
+      const push = async (o: OrderView | OrderStatusView) => {
         if (o.version > sent) {
           sent = o.version;
           await stream.writeSSE({ event: 'order', id: String(o.version), data: JSON.stringify(o) });
@@ -393,18 +425,23 @@ export function mountCommerce(d: Deps) {
           }
         });
       };
-      const unsubscribe = await d.orderHub.subscribe(orderId, refresh);
+      let unsubscribe = () => {};
       const beat = setInterval(() => void stream.write(':ka\n\n'), STREAM_HEARTBEAT_MS);
       const recheck = setInterval(refresh, STREAM_RECHECK_MS);
       const lifetime = setTimeout(finish, STREAM_MAX_MS);
-      // re-read after subscribing: a change between `first` and now isn't lost
-      await push(first);
-      refresh();
-      await done;
-      unsubscribe();
-      clearInterval(beat);
-      clearInterval(recheck);
-      clearTimeout(lifetime);
+      try {
+        unsubscribe = await d.orderHub.subscribe(orderId, refresh);
+        // re-read after subscribing: a change between `first` and now isn't lost
+        await push(first);
+        refresh();
+        await done;
+      } finally {
+        release();
+        unsubscribe();
+        clearInterval(beat);
+        clearInterval(recheck);
+        clearTimeout(lifetime);
+      }
     });
     c.header('cache-control', 'no-cache, no-transform');
     c.header('x-accel-buffering', 'no');
@@ -416,7 +453,6 @@ export function mountCommerce(d: Deps) {
   const payCtx = (c: Context, cardForm: boolean, challengeDone = false): PayCtx => ({
     publicOrigin: d.publicOrigin(c),
     storeDomain: d.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
-    ...(process.env.MP_PAYER_EMAIL ? { payerEmail: process.env.MP_PAYER_EMAIL } : {}),
     cardForm,
     challengeDone,
     ...(d.provider.name === 'mercadopago' && process.env.MP_PUBLIC_KEY
@@ -458,7 +494,10 @@ export function mountCommerce(d: Deps) {
           tenant,
           orderId,
           cartId,
-          payCtx(c, cardForm, cardForm && body.challenge === 'complete'),
+          {
+            ...payCtx(c, cardForm, cardForm && body.challenge === 'complete'),
+            deviceId: deviceIdOr(body.deviceId),
+          },
         );
     return d.idempotency(sql, async (_c, tx) => ({
       status: 200,
@@ -520,13 +559,18 @@ export function mountCommerce(d: Deps) {
       const anchor = await verifyByOrder(tx, tenant.id, phone, number);
       // one answer for "no such order" and "not this phone" — no enumeration signal
       if (!anchor) {
-        // own tx: the throw below rolls this one back (the phone's advisory lock is still held)
-        await withTenant(sql, tenant.id, (t2) => recordSessionFailure(t2, tenant.id, phone));
-        throw new HttpError(
-          404,
-          'CUSTOMER_NOT_VERIFIED',
-          'no order with that number for this phone',
-        );
+        // answered, not thrown: the failure row commits with the claim. A second tx here would
+        // hold two pool connections per guess and starve the pool under parallel wrong guesses.
+        await recordSessionFailure(tx, tenant.id, phone);
+        return {
+          status: 404,
+          body: {
+            error: {
+              code: 'CUSTOMER_NOT_VERIFIED',
+              message: 'no order with that number for this phone',
+            },
+          },
+        };
       }
       const t = mintCustomerToken(sessionSecret, tenant.id, phone, anchor);
       return { status: 201, body: { customerToken: t.token, expiresAt: t.expiresAt, phone } };
@@ -712,6 +756,7 @@ export function mountCommerce(d: Deps) {
       if (!Array.isArray(s.items) || s.items.length === 0 || s.items.length > 40)
         throw new HttpError(400, 'BAD_REQUEST', `slots[${i}].items must have 1–40 entries`);
       return {
+        id: typeof s.id === 'string' && UUID_RE.test(s.id) ? s.id : null,
         name: str(s.name, `slots[${i}].name`, 80),
         minSelect,
         maxSelect,
@@ -724,25 +769,24 @@ export function mountCommerce(d: Deps) {
     });
     const res = await claimTenant(c, t.id, async (tx) => {
       const id = await productIdOf(tx, t.id, c.req.param('product'));
-      await tx`delete from combo_slots where tenant_id = ${t.id} and product_id = ${id}`;
-      for (const [sort, s] of slots.entries()) {
-        const slotId = (
-          await tx<{ id: string }[]>`
-            insert into combo_slots (tenant_id, product_id, name, min_select, max_select, qty_per_item, sort)
-            values (${t.id}, ${id}, ${s.name}, ${s.minSelect}, ${s.maxSelect}, ${s.qtyPerItem}, ${sort})
-            returning id
-          `
-        )[0]!.id;
-        for (const [isort, it] of s.items.entries()) {
-          const itemId = await productIdOf(tx, t.id, it.ref);
-          if (itemId === id) throw new HttpError(400, 'BAD_REQUEST', 'a kit cannot contain itself');
-          await tx`
-            insert into combo_slot_items (tenant_id, slot_id, product_id, price_delta_cents, sort)
-            values (${t.id}, ${slotId}, ${itemId}, ${it.priceDeltaCents}, ${isort})
-            on conflict (slot_id, product_id) do nothing
-          `;
+      const steps = [];
+      for (const [i, s] of slots.entries()) {
+        const items = [];
+        for (const it of s.items) {
+          const productId = await productIdOf(tx, t.id, it.ref);
+          if (productId === id)
+            throw new HttpError(400, 'BAD_REQUEST', 'a kit cannot contain itself');
+          items.push({ productId, priceDeltaCents: it.priceDeltaCents });
         }
+        if (s.minSelect > new Set(items.map((x) => x.productId)).size * s.qtyPerItem)
+          throw new HttpError(
+            400,
+            'BAD_REQUEST',
+            `slots[${i}]: minSelect is more than its items offer`,
+          );
+        steps.push({ ...s, items });
       }
+      await saveKitStepsTx(tx, t.id, id, steps);
       await tx`update products set kind = ${slots.length ? 'combo' : 'simple'} where tenant_id = ${t.id} and id = ${id}`;
       await emitAdminTx(tx, t.id, 'catalog', id);
       return { status: 200, body: { product: await getProductByIdAny(tx, t.id, id) } };
@@ -765,6 +809,14 @@ export function mountCommerce(d: Deps) {
     return c.json({ coupons });
   });
 
+  const date = (v: unknown, name: string) => {
+    if (v === undefined || v === null) return null;
+    const d = new Date(str(v, name, 40));
+    if (Number.isNaN(d.getTime()))
+      throw new HttpError(400, 'BAD_REQUEST', `${name} must be a date`);
+    return d;
+  };
+
   app.post(`${base}/coupons`, async (c) => {
     controlGate(c);
     const t = await tenantBySlug(c.req.param('slug'));
@@ -779,13 +831,10 @@ export function mountCommerce(d: Deps) {
       kind === 'free_delivery'
         ? 0
         : int(body.value, 'value', 1, kind === 'percent' ? 100 : 10_000_000);
-    const date = (v: unknown, name: string) => {
-      if (v === undefined || v === null) return null;
-      const d = new Date(str(v, name, 40));
-      if (Number.isNaN(d.getTime()))
-        throw new HttpError(400, 'BAD_REQUEST', `${name} must be a date`);
-      return d;
-    };
+    const startsAt = date(body.startsAt, 'startsAt');
+    const endsAt = date(body.endsAt, 'endsAt');
+    if (startsAt && endsAt && endsAt <= startsAt)
+      throw new HttpError(400, 'BAD_REQUEST', 'endsAt must be after startsAt');
     const phone = body.phone === undefined || body.phone === null ? null : validPhone(body.phone);
     if (body.phone && !phone)
       throw new HttpError(400, 'BAD_REQUEST', 'phone must have DDD + number');
@@ -799,7 +848,7 @@ export function mountCommerce(d: Deps) {
                     ${body.label === undefined || body.label === null ? null : str(body.label, 'label', 120)},
                     ${optInt(body.minSubtotalCents, 'minSubtotalCents', 0, 10_000_000) ?? 0},
                     ${optInt(body.maxDiscountCents, 'maxDiscountCents', 1, 10_000_000) ?? null},
-                    ${date(body.startsAt, 'startsAt')}, ${date(body.endsAt, 'endsAt')},
+                    ${startsAt}, ${endsAt},
                     ${optInt(body.maxRedemptions, 'maxRedemptions', 1, 1_000_000) ?? null},
                     ${optInt(body.perPhoneLimit, 'perPhoneLimit', 1, 1000) ?? null},
                     ${body.firstOrderOnly === true}, ${phone}, 'staff')
@@ -824,15 +873,19 @@ export function mountCommerce(d: Deps) {
     const body = await bodyJson(c);
     if (body.active !== undefined && typeof body.active !== 'boolean')
       throw new HttpError(400, 'BAD_REQUEST', 'active must be a boolean');
+    const endsAt = date(body.endsAt, 'endsAt');
     const res = await claimTenant(c, t.id, async (tx) => {
       const row = (
-        await tx`
+        await tx<{ starts_at: Date | null; ends_at: Date | null }[]>`
           update coupons set active = ${body.active === undefined ? tx`active` : (body.active as boolean)},
-            ends_at = ${body.endsAt === undefined ? tx`ends_at` : body.endsAt === null ? null : new Date(str(body.endsAt, 'endsAt', 40))}
+            ends_at = ${body.endsAt === undefined ? tx`ends_at` : endsAt}
           where tenant_id = ${t.id} and code = ${code} returning *
         `
       )[0];
       if (!row) throw new HttpError(404, 'COUPON_NOT_FOUND', 'coupon not found');
+      // thrown after the update: it rolls back with the tx
+      if (row.starts_at && row.ends_at && row.ends_at <= row.starts_at)
+        throw new HttpError(400, 'BAD_REQUEST', 'endsAt must be after startsAt');
       await emitAdminTx(tx, t.id, 'marketing');
       return { status: 200, body: { coupon: row } };
     });
@@ -1039,9 +1092,11 @@ export function mountCommerce(d: Deps) {
         select id from orders where tenant_id = ${t.id} ${state ? tx`and state = ${state}` : tx``}
         order by placed_at desc limit ${limit}
       `;
-      const out = [];
-      for (const { id } of ids) out.push(await loadOrderView(tx, t.id, id));
-      return out;
+      return loadOrderViews(
+        tx,
+        t.id,
+        ids.map((r) => r.id),
+      );
     });
     return c.json({ orders });
   });

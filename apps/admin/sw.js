@@ -216,7 +216,9 @@ self.addEventListener('notificationclick', (e) => {
         headers: {
           'content-type': 'application/json',
           'x-vendua-admin': '1',
-          'idempotency-key': `push-take-${threadId}`,
+          // one take per notification: Core keeps keys for days, so a later push's tap must not
+          // replay an earlier one's answer
+          'idempotency-key': `push-take-${threadId}-${e.notification.timestamp || Date.now()}`,
         },
         body: '{}',
       })

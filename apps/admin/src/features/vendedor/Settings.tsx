@@ -1,3 +1,4 @@
+import { CaretRight, WhatsappLogo } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -16,11 +17,14 @@ import { Chips, Field, MoneyField, Segmented, Toggle } from '../../ui/fields.tsx
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { Bubble, PersonaAvatar } from '../../ui/vendedor/index.ts';
+import { PauseRow } from './Pause.tsx';
 import {
+  AnswerWhoField,
   CoverageField,
   greetingFor,
   Group,
   OwnerOnly,
+  PhoneCommands,
   SaveStatus,
   ToneField,
   useSettingsPatch,
@@ -57,6 +61,7 @@ function Editor({ v, owner }: { v: VendedorSettings; owner: boolean }) {
       <Power v={v} owner={owner} />
       <Persona s={s} intro={v.intro} owner={owner} />
       <When s={s} />
+      <Who s={s} />
       <Can v={v} owner={owner} />
       <Handoff s={s} />
     </div>
@@ -65,7 +70,12 @@ function Editor({ v, owner }: { v: VendedorSettings; owner: boolean }) {
 
 function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
   const { run, state, retry } = useSettingsPatch();
-  const live = v.enabled && v.settings.coverage !== 'rehearsal';
+  const live = v.enabled && v.settings.coverage !== 'rehearsal' && !v.pausedUntil;
+  // he answers on the store's WhatsApp: switching on waits for it (Core: WHATSAPP_REQUIRED, on
+  // the same `linked` as Início's). Unknown yet counts as linked, so the switch doesn't flash.
+  const home = useQuery({ queryKey: qk.vendedor.home, queryFn: api.vendedor.home });
+  const linked = home.data?.whatsapp.linked ?? true;
+  const blocked = !v.enabled && !linked;
   return (
     <Group
       title={
@@ -78,14 +88,20 @@ function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
     >
       <Toggle
         checked={v.enabled}
-        disabled={!owner}
+        disabled={!owner || blocked}
         onChange={(enabled) => void run({ enabled })}
         label={v.enabled ? 'Ligado' : 'Desligado'}
         description={
           <>
-            {v.enabled
-              ? 'Atendendo no WhatsApp da loja. Desligue e as conversas ficam com você.'
-              : 'As conversas ficam com você até você ligar.'}
+            {!v.enabled
+              ? 'As conversas ficam com você até você ligar.'
+              : v.pausedUntil
+                ? 'Ligado, mas em pausa agora. Desligue e as conversas ficam com você.'
+                : linked
+                  ? v.settings.coverage === 'rehearsal'
+                    ? 'Em ensaio no WhatsApp da loja: escreve, mas não manda. Desligue e as conversas ficam com você.'
+                    : 'Atendendo no WhatsApp da loja. Desligue e as conversas ficam com você.'
+                  : 'O WhatsApp da loja está sem conexão: ele volta a atender quando conectar. Desligue e as conversas ficam com você.'}
             {owner ? null : (
               <>
                 {' '}
@@ -95,6 +111,17 @@ function Power({ v, owner }: { v: VendedorSettings; owner: boolean }) {
           </>
         }
       />
+      {v.enabled ? <PauseRow pausedUntil={v.pausedUntil} /> : null}
+      {blocked ? (
+        <Link
+          to={owner ? '/vendedor/comecar?passo=whatsapp' : '/whatsapp'}
+          className="t-label -mx-4 -mb-3 flex min-h-13 items-center gap-3 rounded-b-lg border-t border-line px-4 hover:bg-hover"
+        >
+          <WhatsappLogo weight="fill" className="size-5 shrink-0 text-whatsapp" aria-hidden />
+          <span className="min-w-0 flex-1">Conecte o WhatsApp da loja primeiro</span>
+          <CaretRight weight="bold" className="size-4 shrink-0 text-muted" aria-hidden />
+        </Link>
+      ) : null}
     </Group>
   );
 }
@@ -143,6 +170,16 @@ function When({ s }: { s: StoreAgentSettings }) {
         onChange={(coverage) => void run({ coverage })}
         onWait={(slowAfterMin) => void run({ slowAfterMin })}
       />
+    </Group>
+  );
+}
+
+function Who({ s }: { s: StoreAgentSettings }) {
+  const { run, state, retry } = useSettingsPatch();
+  return (
+    <Group title="Quem o Duá atende" status={<SaveStatus state={state} retry={retry} />}>
+      <AnswerWhoField value={s.answerWho} onChange={(answerWho) => void run({ answerWho })} />
+      <PhoneCommands />
     </Group>
   );
 }

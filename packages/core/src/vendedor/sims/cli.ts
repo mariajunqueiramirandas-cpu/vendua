@@ -43,6 +43,7 @@ function throttled(a: ProviderAdapter, rpm: number, max: number): ProviderAdapte
   const gap = rpm > 0 ? Math.ceil(60_000 / rpm) : 0;
   return {
     id: a.id,
+    ...(a.outputTokens ? { outputTokens: a.outputTokens.bind(a) } : {}),
     async generate(req, signal) {
       if (max && used >= max) throw new Error(`SIM_MAX_REQUESTS (${max}) reached`);
       used++;
@@ -65,7 +66,7 @@ if (!process.env.AGENT_MODEL_ROUTES && process.env.GEMINI_API_KEY) {
   process.env.AGENT_MODEL_ROUTES = JSON.stringify({ default: { fast: [route], strong: [route] } });
 }
 if (!adapters.length) {
-  console.error('no provider keys in env: the suite needs a live model (ZDR routes only)');
+  console.error('no provider keys in env: the suite needs a live model');
   process.exit(2);
 }
 const agentGateway = createGateway({ adapters, routes: routesOf(process.env.AGENT_MODEL_ROUTES) });

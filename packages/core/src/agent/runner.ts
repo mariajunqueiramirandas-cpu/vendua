@@ -23,6 +23,7 @@ import {
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import {
   estimateModelCostUsd,
+  LlmRefusalError,
   providerFor,
   type AgentMessage,
   type AgentTool,
@@ -2054,11 +2055,22 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
 // One chat() turn: usage folds into the ledger and the turn journals verbatim.
 async function modelTurn(att: Attempt): Promise<void> {
   await refreshLeadGate(att);
-  const res = (att.res = await att.provider.chat({
-    system: att.system,
-    messages: att.messages,
-    tools: att.tools,
-  }));
+  let res: LlmResult;
+  try {
+    res = att.res = await att.provider.chat({
+      system: att.system,
+      messages: att.messages,
+      tools: att.tools,
+    });
+  } catch (e) {
+    // a declined call is still billed: failAttempt writes these totals with the failed run
+    if (e instanceof LlmRefusalError) {
+      att.tokensIn += e.billed.tokensIn;
+      att.tokensOut += e.billed.tokensOut;
+      att.costUsd += e.billed.costUsd;
+    }
+    throw e;
+  }
   att.tokensIn += res.tokensIn;
   att.tokensOut += res.tokensOut;
   // Provider-reported USD wins; else estimate from tokens × list rate.
@@ -2676,6 +2688,11 @@ async function drainOnce(sql: Sql, limit: number, orphans: boolean): Promise<num
     (tx) => tx<{ thread_id: string }[]>`
       update lead_messages set status = 'failed', error = 'dispatch-interrupted', updated_at = now()
       where status = 'sending' and updated_at < now() - make_interval(mins => ${RUN_LEASE_MIN})
+        -- on the platform gateway the send is an outbox row, settled when it goes out
+        and not exists (
+          select 1 from platform_wa_outbox o
+          where o.purpose = 'crm' and o.ref = lead_messages.id::text and o.settled_at is null
+            and o.expires_at > now())
       returning thread_id
     `,
   );

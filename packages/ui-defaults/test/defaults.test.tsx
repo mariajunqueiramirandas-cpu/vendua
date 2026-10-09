@@ -216,6 +216,41 @@ describe('slot defaults', () => {
     expect(card({ requiresPreorder: true })).toContain('Encomenda');
   });
 
+  test('Kernel 1.21: cards show what a product is (diets), never its allergen warnings', () => {
+    const C = SLOT_DEFAULTS['catalog.ProductCard'];
+    const fx = SLOT_FIXTURES['catalog.ProductCard'];
+    const html = renderToStaticMarkup(
+      <C
+        {...fx}
+        product={{ ...fx.product, dietary: ['contem_ovo', 'sem_lactose', 'vegano', 'novo_tag'] }}
+      />,
+    );
+    expect(tags(html)).toContain('VeganoSem lactose');
+    expect(html).not.toContain('Contém ovo');
+    expect(html).not.toContain('novo_tag');
+    expect(renderToStaticMarkup(<C {...fx} />)).not.toContain('data-part="dietary"');
+  });
+
+  test('Kernel 1.21: the address form offers the saved addresses, then "Outro endereço"', () => {
+    const C = SLOT_DEFAULTS['checkout.AddressForm'];
+    const fx = SLOT_FIXTURES['checkout.AddressForm'];
+    const html = renderToStaticMarkup(
+      <C
+        {...fx}
+        part="address"
+        savedAddresses={[
+          { id: '0', label: 'Rua A, 10 — Centro', detail: 'Portão azul' },
+          { id: '1', label: 'Rua B, 2 — Praia' },
+        ]}
+        savedAddressId="1"
+        onPickAddress={() => {}}
+      />,
+    );
+    expect(tags(html)).toContain('Rua A, 10 — CentroPortão azulRua B, 2 — PraiaOutro endereço');
+    expect(html).toMatch(/checked="" value="1"/);
+    expect(renderToStaticMarkup(<C {...fx} part="address" />)).not.toContain('saved-address');
+  });
+
   test('one badge per card, by the Kernel’s priority; low stock is what the bag leaves', () => {
     const C = SLOT_DEFAULTS['catalog.ProductCard'];
     const fx = SLOT_FIXTURES['catalog.ProductCard'];

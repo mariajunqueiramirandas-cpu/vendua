@@ -31,10 +31,16 @@ export type AdminTopic =
   | 'printers'
   // the kitchen display: lines marked done, a rush flag, the stations (id = order id | 'stations')
   | 'kitchen'
+  // the PDV: a sale, a comanda, the caixa, the tables (id = comanda | caixa id | 'tables' | 'settings')
+  | 'pdv'
   // the Vendedor: a conversation moved (id = thread id), its settings or knowledge (id = 'settings' | 'knowledge')
   | 'vendedor'
+  // Duá Copilot: a message or a proposal moved in one person's conversation (id = merchant user id)
+  | 'copilot'
   // a shopper is waiting for the store in a Vendedor conversation (id = thread id): may push (law 13)
   | 'vendedor.waiting'
+  // a WhatsApp number Duá can't tell is a customer (id = thread id): may push, once a day per thread
+  | 'vendedor.ask'
   // Duá ran out of conversations (id = the period: its month's reset date, or 'trial'): may push
   | 'vendedor.exhausted';
 

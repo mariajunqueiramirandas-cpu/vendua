@@ -8,14 +8,14 @@ import {
 } from '../agent-host/agents/vendedor-onboarding/index.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { requireFeature } from '../modules/billing/plans.ts';
-import { HttpError, UUID_RE, bodyJson } from '../platform/http.ts';
+import { HttpError, UUID_RE, bodyJson, windowCounter } from '../platform/http.ts';
 import { vendedorDeps } from '../vendedor/deps.ts';
 import { menuGaps } from '../vendedor/gaps.ts';
 import { compileRule, describeGuard, fold } from '../vendedor/knowledge.ts';
 import { sendDirectTx } from '../vendedor/outbound.ts';
 import { resultsView, type Period } from '../vendedor/results.ts';
-import { introduction, loadAgent, parseSettingsPatch } from '../vendedor/settings.ts';
-import { AGENT_ID, SUBJECT_KIND, mustThread } from '../vendedor/threads.ts';
+import { introduction, loadAgent, parseSettingsPatch, pausedNow } from '../vendedor/settings.ts';
+import { AGENT_ID, SUBJECT_KIND, loadThread, mustThread } from '../vendedor/threads.ts';
 import {
   clienteOcultoView,
   ensaioView,
@@ -24,15 +24,19 @@ import {
   threadDetail,
   threadList,
   whyView,
+  THREAD_FILTERS,
   type ThreadFilter,
 } from '../vendedor/views.ts';
+import { setClassTx } from '../vendedor/triage.ts';
 import { audit } from './audit.ts';
-import { isObj, need, oneOf, text, type AdminCtx, type AdminDeps } from './context.ts';
+import { isObj, need, oneOf, optInt, text, type AdminCtx, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 
 // The Vendedor's admin API (sales-agent-ux.md §2, §8). Roles: attendant works the inbox;
 // manager teaches and configures; owner turns it on and sets disclosure and money.
+
+const allowSuggestions = windowCounter({ windowMs: 60_000, max: 20 });
 
 function idParam(c: Context, name: string): string {
   const v = c.req.param(name) ?? '';
@@ -51,6 +55,31 @@ async function storeThread(tx: Sql, tenantId: string, id: string) {
   return t;
 }
 
+/** classify several "para decidir" at once */
+const BULK_MAX = 100;
+/** the store's own quick replies: how many, and how long each */
+const QUICK_MAX = 30;
+const QUICK_LEN = 500;
+/** what the store writes about a customer for Duá, per customer */
+const NOTES_MAX = 20;
+const NOTE_LEN = 200;
+const NOTE_KEY = 'nota_da_loja';
+/** health and diet, as the store words it: Duá confirms these before using them (ADR 0031 §8) */
+const SENSITIVE_NOTE = /alerg|intoler|celiac|gluten|lactose|diabet|vegan|vegetarian|restri/;
+
+/** "Até amanhã": the next 6 a.m. in the store's own time zone. */
+async function nextMorning(tx: Sql, tenantId: string): Promise<Date> {
+  const [s] = await tx<{ tz: string | null }[]>`
+    select hours ->> 'timezone' as tz from store_settings where tenant_id = ${tenantId}`;
+  const tz =
+    s?.tz && /^[A-Za-z_]+(\/[A-Za-z0-9_+-]+){1,2}$/.test(s.tz) ? s.tz : 'America/Sao_Paulo';
+  const [r] = await tx<{ at: Date }[]>`
+    select (date_trunc('day', now() at time zone ${tz})
+      + case when (now() at time zone ${tz})::time < '06:00' then interval '6 hours'
+             else interval '30 hours' end) at time zone ${tz} as at`;
+  return new Date(r!.at);
+}
+
 export function mountVendedor(d: AdminDeps) {
   const { admin } = d;
   const { read, write } = handlers(d);
@@ -64,13 +93,11 @@ export function mountVendedor(d: AdminDeps) {
   admin.get(
     '/vendedor/threads',
     read('attendant', async (tx, t, _m, c) => {
-      const filter = oneOf(c.req.query('filter') ?? 'all', 'filter', [
-        'all',
-        'waiting',
-        'orders',
-        'agent',
-        'others',
-      ] as const) as ThreadFilter;
+      const filter = oneOf(
+        c.req.query('filter') ?? 'all',
+        'filter',
+        THREAD_FILTERS,
+      ) as ThreadFilter;
       const before = c.req.query('before') ?? null;
       if (before && Number.isNaN(Date.parse(before)))
         throw new HttpError(400, 'BAD_REQUEST', 'before must be a date');
@@ -102,6 +129,9 @@ export function mountVendedor(d: AdminDeps) {
       const id = idParam(c, 'id');
       const th = await storeThread(tx, t.id, id);
       if (th.owner === 'muted') throw new HttpError(409, 'THREAD_MUTED', 'this number is muted');
+      // a personal contact is the owner's own: the store doesn't take, hand back or write to it here
+      if (th.class === 'personal')
+        throw new HttpError(409, 'THREAD_PERSONAL', 'this number is a personal contact');
       const agent = await loadAgent(tx, t.id);
       await tx`update shopper_threads set owner = 'human', owner_reason = coalesce(owner_reason, 'a loja assumiu'),
         human_until = now() + make_interval(mins => ${agent.settings.humanSilenceMin}), waiting_since = null,
@@ -123,6 +153,9 @@ export function mountVendedor(d: AdminDeps) {
       const id = idParam(c, 'id');
       const th = await storeThread(tx, t.id, id);
       if (th.owner === 'muted') throw new HttpError(409, 'THREAD_MUTED', 'this number is muted');
+      // a personal contact is the owner's own: the store doesn't take, hand back or write to it here
+      if (th.class === 'personal')
+        throw new HttpError(409, 'THREAD_PERSONAL', 'this number is a personal contact');
       await tx`update shopper_threads set owner = 'agent', owner_reason = null, human_until = null,
         waiting_since = null, updated_at = now() where id = ${id}`;
       // the shopper's last message, if still unanswered, gets one answer now
@@ -151,6 +184,9 @@ export function mountVendedor(d: AdminDeps) {
       if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
       const msg = text(body.text, 'text', 2000, 1);
       const th = await storeThread(tx, t.id, id);
+      // a personal contact is the owner's own: the store doesn't take, hand back or write to it here
+      if (th.class === 'personal')
+        throw new HttpError(409, 'THREAD_PERSONAL', 'this number is a personal contact');
       const agent = await loadAgent(tx, t.id);
       const key = c.req.header('idempotency-key') ?? crypto.randomUUID();
       const messageId = await sendDirectTx(tx, th, {
@@ -216,14 +252,98 @@ export function mountVendedor(d: AdminDeps) {
     }),
   );
 
+  /** The owner says who this number is (ADR 0033): sticky, and it moves the held messages. */
+  admin.post(
+    '/vendedor/threads/:id/classify',
+    write('attendant', async (tx, t, m, c) => {
+      const id = idParam(c, 'id');
+      const body = await bodyJson(c);
+      if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
+      const as = oneOf(body.as, 'as', ['shopper', 'personal'] as const);
+      // "pessoal" erases what the contact wrote, for good: a manager's call, not an attendant's
+      if (as === 'personal') need(c, 'manager');
+      const th = await storeThread(tx, t.id, id);
+      if (th.channel !== 'whatsapp')
+        throw new HttpError(409, 'NOT_WHATSAPP', 'only WhatsApp conversations are classified');
+      if (th.owner === 'muted') throw new HttpError(409, 'THREAD_MUTED', 'this number is muted');
+      await setClassTx(tx, th, { cls: as, source: 'owner', reason: 'owner_marked' });
+      await audit(tx, t.id, m, {
+        action: 'vendedor.classify',
+        entity: 'thread',
+        entityId: id,
+        summary: as === 'shopper' ? 'Marcou como cliente' : 'Marcou como contato pessoal',
+      });
+      return { status: 200, body: await threadDetail(tx, t.id, id) };
+    }),
+  );
+
+  /** The store opened it: "unread" is a shopper message after this (the list's bold rows). */
+  admin.post(
+    '/vendedor/threads/:id/seen',
+    write('attendant', async (tx, t, _m, c) => {
+      const id = idParam(c, 'id');
+      // updated_at stays: opening a conversation doesn't move it up the list
+      const [row] = await tx<{ seen_at: Date }[]>`
+        update shopper_threads set seen_at = now() where tenant_id = ${t.id} and id = ${id}
+        returning seen_at`;
+      if (!row) throw new HttpError(404, 'THREAD_NOT_FOUND', 'conversation not found');
+      return { status: 200, body: { seenAt: row.seen_at.toISOString() } };
+    }),
+  );
+
+  /** "Para decidir", several at once: each as the single classify, skipping what can't be. */
+  admin.post(
+    '/vendedor/threads/classify',
+    write('attendant', async (tx, t, m, c) => {
+      const body = await bodyJson(c);
+      if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
+      const as = oneOf(body.as, 'as', ['shopper', 'personal'] as const);
+      if (as === 'personal') need(c, 'manager');
+      const ids = body.ids;
+      if (
+        !Array.isArray(ids) ||
+        ids.length < 1 ||
+        ids.length > BULK_MAX ||
+        ids.some((x) => typeof x !== 'string' || !UUID_RE.test(x))
+      )
+        throw new HttpError(422, 'BAD_REQUEST', `ids must be 1–${BULK_MAX} conversation ids`, {
+          field: 'ids',
+        });
+      const classified: string[] = [];
+      const skipped: string[] = [];
+      // one lock order for every caller: two overlapping batches never wait on each other
+      for (const id of [...new Set(ids as string[])].sort()) {
+        const th = await loadThread(tx, t.id, id, { forUpdate: true });
+        if (!th || th.channel !== 'whatsapp' || th.owner === 'muted') {
+          skipped.push(id);
+          continue;
+        }
+        await setClassTx(tx, th, { cls: as, source: 'owner', reason: 'owner_marked' });
+        classified.push(id);
+      }
+      if (classified.length)
+        await audit(tx, t.id, m, {
+          action: 'vendedor.classify',
+          entity: 'thread',
+          summary: `Marcou ${classified.length} ${classified.length === 1 ? 'contato' : 'contatos'} como ${as === 'shopper' ? 'cliente' : 'pessoal'}`,
+          after: { ids: classified, as },
+        });
+      return { status: 200, body: { classified, skipped } };
+    }),
+  );
+
   /** Two or three replies for the store to tap, checked by the verifier (UX §3.3, F8). */
   admin.get('/vendedor/threads/:id/suggestions', async (c: AdminCtx) => {
-    need(c, 'attendant');
+    const m = need(c, 'attendant');
     const t = c.get('tenant');
     const id = idParam(c, 'id');
     const gateway = vendedorDeps().gateway;
     if (!gateway) return c.json({ replies: [] });
+    // each call is a model call: a GET escapes the gate's mutation limit
+    if (!allowSuggestions(`${t.id}|${m.userId}`))
+      throw new HttpError(429, 'RATE_LIMITED', 'too many suggestions — wait a minute');
     const lines = await withTenant(d.sql, t.id, async (tx) => {
+      await requireFeature(tx, t.id, 'vendedor');
       await mustThread(tx, t.id, id);
       return tx<{ author: string; body: string | null; transcript: string | null }[]>`
         select author, body, transcript from shopper_messages where tenant_id = ${t.id} and thread_id = ${id}
@@ -307,6 +427,7 @@ export function mountVendedor(d: AdminDeps) {
       intro: introduction(agent.settings, tenant?.name ?? ''),
       coupons,
       incentivesUsedCents: used,
+      pausedUntil: pausedNow(agent) ? agent.pausedUntil!.toISOString() : null,
     };
   };
 
@@ -323,6 +444,18 @@ export function mountVendedor(d: AdminDeps) {
       const patch = parseSettingsPatch(body, agent.settings, m.role);
       // the plan opens it (ADR 0032); switching it off is always allowed
       if (patch.enabled) await requireFeature(tx, t.id, 'vendedor');
+      // he answers on the store's WhatsApp: switching him on (Ensaio too) needs it linked. A store
+      // already on whose number drops stays on, and Início says "O Duá parou".
+      if (patch.enabled && !agent.switchedOn) {
+        const [wa] = await tx<{ state: string }[]>`
+          select state from store_whatsapp where tenant_id = ${t.id}`;
+        if (wa?.state !== 'open')
+          throw new HttpError(
+            409,
+            'WHATSAPP_REQUIRED',
+            'Conecte o WhatsApp da loja antes de ligar o Duá.',
+          );
+      }
       const { categoryIds, productIds, couponIds } = patch.refs;
       if (categoryIds.length) {
         const n =
@@ -366,6 +499,162 @@ export function mountVendedor(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'vendedor', 'settings');
       return { status: 200, body: await settingsView(tx, t.id) };
+    }),
+  );
+
+  /** Threads whose shopper wrote in the last 24 h and still waits for an answer Duá may give. */
+  const owedThreads = (tx: Sql, tenantId: string) =>
+    tx<{ id: string }[]>`
+      select id from shopper_threads
+      where tenant_id = ${tenantId} and channel in ('whatsapp', 'web') and pending_since is not null
+        and class in ('shopper', 'unknown') and last_in_at > now() - interval '24 hours'
+        and (owner in ('open', 'agent') or (owner = 'human' and (human_until is null or human_until <= now())))
+      order by last_in_at desc limit 50`;
+
+  /** "Pausar 1 h / até amanhã": a gate on every conversation's floor, lifted by the clock. */
+  admin.post(
+    '/vendedor/pause',
+    write('manager', async (tx, t, m, c) => {
+      const body = await bodyJson(c);
+      if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
+      const span = oneOf(body.for, 'for', ['1h', 'tomorrow'] as const);
+      const agent = await loadAgent(tx, t.id);
+      if (!agent.enabled) throw new HttpError(409, 'VENDEDOR_OFF', 'Duá is not on');
+      const until = span === '1h' ? new Date(Date.now() + 3600_000) : await nextMorning(tx, t.id);
+      await tx`update store_agent set paused_until = ${until}, updated_at = now() where tenant_id = ${t.id}`;
+      // a turn that lands inside the pause does nothing and books no timer: who is waiting now
+      // (or whose 1 h timer this pause outlasts) is answered when this pause lapses
+      for (const th of await owedThreads(tx, t.id))
+        await dispatchTx(tx, {
+          actor: actorOf(t.id, th.id),
+          kind: 'timer.handback',
+          source: `admin:${m.userId}`,
+          dedupeKey: `pause:${th.id}:${until.toISOString()}`,
+          deliverAt: new Date(until.getTime() + 1_000),
+        });
+      await audit(tx, t.id, m, {
+        action: 'vendedor.pause',
+        entity: 'store_agent',
+        entityId: t.id,
+        summary: span === '1h' ? 'Pausou o Duá por 1 hora' : 'Pausou o Duá até amanhã',
+        after: { until },
+      });
+      await emitAdminTx(tx, t.id, 'vendedor', 'settings');
+      return { status: 200, body: await settingsView(tx, t.id) };
+    }),
+  );
+
+  admin.post(
+    '/vendedor/resume',
+    write('manager', async (tx, t, m) => {
+      const agent = await loadAgent(tx, t.id);
+      await tx`update store_agent set paused_until = null, updated_at = now()
+        where tenant_id = ${t.id} and paused_until is not null`;
+      if (agent.enabled && agent.pausedUntil && pausedNow(agent)) {
+        // who wrote meanwhile and still has no answer hears from him now, not at the old time
+        const owed = await owedThreads(tx, t.id);
+        for (const th of owed)
+          await dispatchTx(tx, {
+            actor: actorOf(t.id, th.id),
+            kind: 'timer.handback',
+            source: `admin:${m.userId}`,
+            dedupeKey: `resume:${th.id}:${agent.pausedUntil.toISOString()}`,
+          });
+      }
+      await audit(tx, t.id, m, {
+        action: 'vendedor.resume',
+        entity: 'store_agent',
+        entityId: t.id,
+        summary: 'Tirou o Duá da pausa',
+      });
+      await emitAdminTx(tx, t.id, 'vendedor', 'settings');
+      return { status: 200, body: await settingsView(tx, t.id) };
+    }),
+  );
+
+  // ── the store's quick replies ─────────────────────────────────────────────
+  const quickView = async (tx: Sql, tenantId: string) => ({
+    replies: (
+      await tx<{ id: string; body: string; position: number; updated_at: Date }[]>`
+        select id, body, position, updated_at from vendedor_quick_replies where tenant_id = ${tenantId}
+        order by position, created_at limit ${QUICK_MAX}`
+    ).map((r) => ({
+      id: r.id,
+      text: r.body,
+      position: r.position,
+      at: r.updated_at.toISOString(),
+    })),
+  });
+
+  admin.get(
+    '/vendedor/quick-replies',
+    read('attendant', async (tx, t) => quickView(tx, t.id)),
+  );
+
+  admin.post(
+    '/vendedor/quick-replies',
+    write('manager', async (tx, t, m, c) => {
+      const body = await bodyJson(c);
+      if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
+      const reply = text(body.text, 'text', QUICK_LEN, 1);
+      const at = optInt(body.position, 'position', 0, 1000);
+      // a count under the store's lock: two devices adding at once stay under the cap
+      await tx`select pg_advisory_xact_lock(hashtext(${`vendedor.quick:${t.id}`}))`;
+      const [n] = await tx<{ n: number; last: number | null }[]>`
+        select count(*)::int as n, max(position) as last from vendedor_quick_replies
+        where tenant_id = ${t.id}`;
+      if ((n?.n ?? 0) >= QUICK_MAX)
+        throw new HttpError(409, 'QUICK_REPLIES_FULL', `up to ${QUICK_MAX} quick replies`);
+      const position = at ?? Math.min(1000, (n?.last ?? -1) + 1);
+      await tx`insert into vendedor_quick_replies (tenant_id, body, position, created_by)
+        values (${t.id}, ${reply}, ${position}, ${m.userId})`;
+      await audit(tx, t.id, m, {
+        action: 'vendedor.quick_reply',
+        entity: 'vendedor_quick_replies',
+        summary: 'Criou uma resposta pronta',
+      });
+      await emitAdminTx(tx, t.id, 'vendedor', 'quick-replies');
+      return { status: 201, body: await quickView(tx, t.id) };
+    }),
+  );
+
+  admin.patch(
+    '/vendedor/quick-replies/:id',
+    write('manager', async (tx, t, m, c) => {
+      const id = idParam(c, 'id');
+      const body = await bodyJson(c);
+      if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
+      const reply = text(body.text, 'text', QUICK_LEN, 1);
+      const done = await tx`update vendedor_quick_replies set body = ${reply}, updated_at = now()
+        where tenant_id = ${t.id} and id = ${id} returning id`;
+      if (!done.length) throw new HttpError(404, 'QUICK_REPLY_NOT_FOUND', 'not found');
+      await audit(tx, t.id, m, {
+        action: 'vendedor.quick_reply',
+        entity: 'vendedor_quick_replies',
+        entityId: id,
+        summary: 'Mudou uma resposta pronta',
+      });
+      await emitAdminTx(tx, t.id, 'vendedor', 'quick-replies');
+      return { status: 200, body: await quickView(tx, t.id) };
+    }),
+  );
+
+  admin.delete(
+    '/vendedor/quick-replies/:id',
+    write('manager', async (tx, t, m, c) => {
+      const id = idParam(c, 'id');
+      const gone =
+        await tx`delete from vendedor_quick_replies where tenant_id = ${t.id} and id = ${id}
+        returning id`;
+      if (!gone.length) throw new HttpError(404, 'QUICK_REPLY_NOT_FOUND', 'not found');
+      await audit(tx, t.id, m, {
+        action: 'vendedor.quick_reply.delete',
+        entity: 'vendedor_quick_replies',
+        entityId: id,
+        summary: 'Apagou uma resposta pronta',
+      });
+      await emitAdminTx(tx, t.id, 'vendedor', 'quick-replies');
+      return { status: 200, body: await quickView(tx, t.id) };
     }),
   );
 
@@ -527,7 +816,7 @@ export function mountVendedor(d: AdminDeps) {
       const [open] =
         await tx`select id from vendedor_runs where tenant_id = ${t.id} and status in ('queued', 'running') limit 1`;
       if (!open)
-        await tx`insert into vendedor_runs (tenant_id, trigger) values (${t.id}, 'manual')`;
+        await tx`insert into vendedor_runs (tenant_id, trigger) values (${t.id}, 'manual') on conflict do nothing`;
       await audit(tx, t.id, m, {
         action: 'vendedor.cliente_oculto',
         entity: 'vendedor_runs',
@@ -714,26 +1003,80 @@ export function mountVendedor(d: AdminDeps) {
   };
 
   const factsOf = async (tx: Sql, tenantId: string, phone: string) =>
-    tx<{ scope: string; key: string; value: unknown; sensitive: boolean; updated_at: Date }[]>`
-      select m.scope, m.key, m.value, m.sensitive, m.updated_at from agent_memory m
+    (
+      await tx<
+        {
+          scope: string;
+          key: string;
+          value: unknown;
+          sensitive: boolean;
+          provenance: string;
+          updated_at: Date;
+        }[]
+      >`
+      select m.scope, m.key, m.value, m.sensitive, m.provenance, m.updated_at from agent_memory m
       where m.tenant_id = ${tenantId} and m.scope in (
         select ${SUBJECT_KIND} || ':' || t.id from shopper_threads t where t.tenant_id = ${tenantId} and t.phone = ${phone})
-      order by m.updated_at desc limit 100`;
+      order by m.updated_at desc limit 100`
+    ).map((f) => ({
+      key: f.key,
+      label: f.key.split('.')[0],
+      value: f.value,
+      sensitive: f.sensitive,
+      // who wrote it: the store by hand, or Duá from the conversation
+      source: f.provenance.startsWith('merchant:') ? ('store' as const) : ('agent' as const),
+      at: f.updated_at.toISOString(),
+    }));
 
   admin.get(
     '/customers/:phone/vendedor',
     read('manager', async (tx, t, _m, c) => {
       const phone = phoneParam(c);
-      const facts = await factsOf(tx, t.id, phone);
-      return {
-        facts: facts.map((f) => ({
-          key: f.key,
-          label: f.key.split('.')[0],
-          value: f.value,
-          sensitive: f.sensitive,
-          at: f.updated_at.toISOString(),
-        })),
-      };
+      const [th] = await tx`
+        select 1 from shopper_threads
+        where tenant_id = ${t.id} and phone = ${phone} and channel = 'whatsapp' and class <> 'personal'
+        limit 1`;
+      // a note needs a conversation of theirs to live in
+      return { facts: await factsOf(tx, t.id, phone), canNote: !!th };
+    }),
+  );
+
+  /**
+   * "Sem cebola", "paga no Pix": the store tells Duá something about a customer. It lands in the
+   * memory of their latest WhatsApp conversation, marked as the store's, and reaches the model as
+   * a note about the customer (agents/vendedor/prompt.ts), never as an instruction.
+   */
+  admin.post(
+    '/customers/:phone/vendedor/facts',
+    write('manager', async (tx, t, m, c) => {
+      const phone = phoneParam(c);
+      const body = await bodyJson(c);
+      if (!isObj(body)) throw new HttpError(422, 'BAD_REQUEST', 'expected an object');
+      const note = text(body.text, 'text', NOTE_LEN, 2).replace(/\s+/g, ' ');
+      const [th] = await tx<{ id: string }[]>`
+        select id from shopper_threads
+        where tenant_id = ${t.id} and phone = ${phone} and channel = 'whatsapp' and class <> 'personal'
+        order by updated_at desc limit 1`;
+      if (!th)
+        throw new HttpError(409, 'NO_CONVERSATION', 'Duá has not talked to this customer yet');
+      const [n] = await tx<{ n: number }[]>`
+        select count(*)::int as n from agent_memory
+        where tenant_id = ${t.id} and split_part(key, '.', 1) = ${NOTE_KEY} and scope in (
+          select ${SUBJECT_KIND} || ':' || id from shopper_threads where tenant_id = ${t.id} and phone = ${phone})`;
+      if ((n?.n ?? 0) >= NOTES_MAX)
+        throw new HttpError(409, 'NOTES_FULL', `up to ${NOTES_MAX} notes per customer`);
+      await tx`
+        insert into agent_memory (tenant_id, scope, key, value, confidence, provenance, sensitive)
+        values (${t.id}, ${`${SUBJECT_KIND}:${th.id}`}, ${`${NOTE_KEY}.n${Date.now().toString(36)}`},
+                ${tx.json(note)}, 1, ${`merchant:${m.userId}`}, ${SENSITIVE_NOTE.test(fold(note))})
+        on conflict (tenant_id, scope, key) do nothing`;
+      await audit(tx, t.id, m, {
+        action: 'vendedor.add_fact',
+        entity: 'customer',
+        entityId: phone.slice(-4),
+        summary: 'Anotou algo sobre o cliente para o Duá',
+      });
+      return { status: 201, body: { facts: await factsOf(tx, t.id, phone) } };
     }),
   );
 
@@ -755,18 +1098,7 @@ export function mountVendedor(d: AdminDeps) {
         entityId: phone.slice(-4),
         summary: 'Apagou algo que o Duá sabia do cliente',
       });
-      return {
-        status: 200,
-        body: {
-          facts: (await factsOf(tx, t.id, phone)).map((f) => ({
-            key: f.key,
-            label: f.key.split('.')[0],
-            value: f.value,
-            sensitive: f.sensitive,
-            at: f.updated_at.toISOString(),
-          })),
-        },
-      };
+      return { status: 200, body: { facts: await factsOf(tx, t.id, phone) } };
     }),
   );
 }

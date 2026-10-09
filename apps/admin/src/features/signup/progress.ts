@@ -29,6 +29,8 @@ export interface Draft {
   segment: string | null;
   ownerName: string;
   email: string;
+  /** CPF or CNPJ, as typed (masked); Core checks it */
+  document: string;
   phone: string | null;
   codeSentAt: number | null;
   codeExpiresAt: number | null;
@@ -53,6 +55,7 @@ export const EMPTY: Draft = {
   segment: null,
   ownerName: '',
   email: '',
+  document: '',
   phone: null,
   codeSentAt: null,
   codeExpiresAt: null,
@@ -77,12 +80,29 @@ export function loadDraft(): Draft {
   } catch {
     /* private mode or a bad value: start over */
   }
+  // an abandoned draft holds the owner's CPF/CNPJ and contacts: gone once it can't be resumed
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    /* ignore */
+  }
   return EMPTY;
+}
+
+/** At boot, on any screen: a signup abandoned on a shared device doesn't wait for /comecar. */
+export function dropStaleDraft() {
+  try {
+    if (localStorage.getItem(KEY) !== null) loadDraft();
+  } catch {
+    /* ignore */
+  }
 }
 
 export function saveDraft(d: Draft) {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ ...d, at: Date.now() }));
+    // once the store exists Core holds the CPF/CNPJ, and nothing here sends it again
+    const kept = d.created ? { ...d, document: '' } : d;
+    localStorage.setItem(KEY, JSON.stringify({ ...kept, at: Date.now() }));
   } catch {
     /* private mode: the flow lives in memory only */
   }

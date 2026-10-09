@@ -12,9 +12,10 @@ import { withTenant, type Sql } from '../../platform/db.ts';
 import { HttpError, bodyJson, clientIp, windowCounter } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
 import { platformHost, storeOrigin } from '../../platform/store-origin.ts';
+import { phoneVariants } from '../../store-whatsapp/text.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { mountBillingDev } from './dev-routes.ts';
-import { validEmail } from './input.ts';
+import { validDocument, validEmail } from './input.ts';
 import {
   heldPlans,
   openOr409,
@@ -31,6 +32,7 @@ import {
   segmentOr422,
   signupAccessCode,
   phoneHadTrial,
+  phoneLockKey,
   signupToken,
   slugStatus,
   startSignupOtp,
@@ -40,13 +42,16 @@ import {
   beginPayment,
   lockSub,
   recordBillingProblem,
+  reissueOpenPix,
   startSubscription,
   startTrial,
   withEffects,
   type PayNext,
 } from './subscriptions.ts';
 import { FakeProvider } from '../payments/fake.ts';
+import { platformPublicKey } from '../payments/index.ts';
 import { ProviderError } from '../payments/provider.ts';
+import { deviceIdOr } from '../payments/store-payments.ts';
 
 const signupLog = log.child({ mod: 'signup' });
 
@@ -89,7 +94,12 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     c.header('cache-control', 'no-store');
     return c.json({
       plans: await publicPlans(sql),
-      billing: { available: d.provider.platformConfigured, accessCode: !!signupAccessCode() },
+      billing: {
+        available: d.provider.platformConfigured,
+        accessCode: !!signupAccessCode(),
+        // MercadoPago.js in the signup: its device fingerprint goes with the first Pix
+        publicKey: platformPublicKey(d.provider),
+      },
       // the CRM switch and what signup relies on; which part is missing is for the team (CRM)
       signup: { open: (await d.signupReady()).open },
       storeDomain: d.storeDomain,
@@ -158,6 +168,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     const storeName = text(body.storeName, 'storeName', 60, 2);
     const ownerName = text(body.ownerName, 'ownerName', 80, 2);
     const email = validEmail(body.email, 'email');
+    const document = validDocument(body.document, 'document');
     const segment = segmentOr422(body.segment);
     const slug = normalizeSlug(body.slug);
     if (!/^[a-z0-9]([a-z0-9-]{1,38}[a-z0-9])$/.test(slug))
@@ -172,9 +183,6 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       });
 
     let owned = await ownedStore(sql, phone, slug);
-    // one trial per owner phone; a replay of this very signup finds its store first
-    const trialUsed = () =>
-      new HttpError(409, 'TRIAL_USED', 'this phone already had its free trial', { field: 'trial' });
     // a replay or a resumed signup may only ask again for the plan the store already holds
     openOr409(
       plan,
@@ -182,6 +190,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     );
     // a replay of a store already made goes through even if signup closed since
     if (!owned) await signupOpenOr503(d, 'create');
+    // one trial per owner phone; a replay of this very signup finds its store first
     if (!owned && trial && (await phoneHadTrial(sql, phone))) throw trialUsed();
     if (!owned) {
       if ((await slugStatus(sql, slug, d.storeDomain)).reason === 'taken')
@@ -190,10 +199,13 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
         // count + create under one per-phone lock, so parallel signups can't all pass the cap
         await sql.begin(async (t) => {
           const tx = t as unknown as Sql;
-          await tx`select pg_advisory_xact_lock(hashtextextended(${`signup:${phone}`}, 0))`;
+          // both 9th-digit spellings are one WhatsApp: one lock, one count
+          await tx`select pg_advisory_xact_lock(hashtextextended(${`signup:${phoneLockKey(phone)}`}, 0))`;
           const recent = (
             await tx<{ n: number }[]>`
-              select count(*)::int as n from merchant_memberships_for_phone(${phone}) m
+              select count(distinct m.tenant_id)::int as n
+              from unnest(${phoneVariants(phone)}::text[]) p
+                cross join lateral merchant_memberships_for_phone(p) m
                 join tenants t on t.id = m.tenant_id
               where m.role = 'owner' and t.created_at > now() - interval '24 hours'
             `
@@ -231,6 +243,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
             const next = await startTrial(tx, tenantId, {
               plan,
               payerEmail: email,
+              payerDocument: document,
               provider: d.provider.name,
               now: new Date(),
               phone,
@@ -284,8 +297,11 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       plan,
       method,
       email,
+      document,
       ownerName,
       manual,
+      trial,
+      phone,
     }).catch(async (err: unknown) => {
       // the store exists but its first charge didn't go out: the team hears MP's own reason
       // (the owner only sees "try again"), once per store and kind — the owner's retries add nothing
@@ -434,6 +450,9 @@ async function sendWelcome(
   );
 }
 
+const trialUsed = () =>
+  new HttpError(409, 'TRIAL_USED', 'this phone already had its free trial', { field: 'trial' });
+
 async function ownedStore(sql: Sql, phone: string, slug: string) {
   return (
     (await membershipsFor(sql, phone)).find((m) => m.slug === slug && m.role === 'owner') ?? null
@@ -445,7 +464,17 @@ async function ensureFirstCharge(
   d: Omit<AdminDeps, 'admin'>,
   c: Context,
   owner: Membership,
-  o: { plan: PlanRow; method: 'card' | 'pix'; email: string; ownerName: string; manual: boolean },
+  o: {
+    plan: PlanRow;
+    method: 'card' | 'pix';
+    email: string;
+    document: string;
+    ownerName: string;
+    manual: boolean;
+    trial: boolean;
+    /** the verified owner phone */
+    phone: string;
+  },
 ): Promise<PayNext> {
   const origin = d.publicOrigin(c);
   const now = new Date();
@@ -456,52 +485,93 @@ async function ensureFirstCharge(
     phone: '',
     role: 'owner',
   };
-  return withEffects({ sql: d.sql, provider: d.provider, notify: d.notify, origin }, (ctx) =>
-    withTenant(d.sql, owner.tenant_id, async (tx) => {
-      const sub = await lockSub(tx, owner.tenant_id);
-      if (!sub) {
-        // a resumed signup (its first charge failed before): the plan is reread under the
-        // availability lock, so one closed meanwhile can't start a subscription unless held
-        await tx`select pg_advisory_xact_lock_shared(hashtextextended(${`plan-available:${o.plan.id}`}, 0))`;
-        const plan = await planRow(tx, o.plan.id);
-        if (!plan || !plan.public)
-          throw new HttpError(422, 'UNKNOWN_PLAN', 'pick one of the plans offered', {
-            field: 'planId',
+  const deviceId = deviceIdOr(c.req.header('x-vendua-device'));
+  return withEffects(
+    { sql: d.sql, provider: d.provider, notify: d.notify, origin, deviceId },
+    (ctx) =>
+      withTenant(d.sql, owner.tenant_id, async (tx) => {
+        // the order the first try took (phone, then plan): two signups can't both start a trial
+        if (o.trial)
+          await tx`select pg_advisory_xact_lock(hashtextextended(${`signup:${phoneLockKey(o.phone)}`}, 0))`;
+        const sub = await lockSub(tx, owner.tenant_id);
+        if (!sub) {
+          // a resumed signup (its first charge failed before): the plan is reread under the
+          // availability lock, so one closed meanwhile can't start a subscription unless held
+          await tx`select pg_advisory_xact_lock_shared(hashtextextended(${`plan-available:${o.plan.id}`}, 0))`;
+          const plan = await planRow(tx, o.plan.id);
+          if (!plan || !plan.public)
+            throw new HttpError(422, 'UNKNOWN_PLAN', 'pick one of the plans offered', {
+              field: 'planId',
+            });
+          openOr409(plan, await heldPlans(tx, owner.tenant_id));
+          // a store whose first charge failed, tried again as a trial, gets the trial
+          if (o.trial) {
+            if (plan.trial_days <= 0)
+              throw new HttpError(422, 'TRIAL_UNAVAILABLE', 'this plan has no free trial', {
+                field: 'trial',
+              });
+            if (await phoneHadTrial(tx, o.phone)) throw trialUsed();
+            const next = await startTrial(tx, owner.tenant_id, {
+              plan,
+              payerEmail: o.email,
+              payerDocument: o.document,
+              provider: d.provider.name,
+              now,
+              phone: o.phone,
+            });
+            await audit(tx, owner.tenant_id, actor, {
+              action: 'store.signup',
+              entity: 'account',
+              entityId: owner.tenant_id,
+              summary: `criou a loja no plano ${plan.name}, com ${plan.trial_days} dias de teste grátis`,
+              after: { planId: plan.id, trialEndsAt: next.kind === 'trial' ? next.endsAt : null },
+            });
+            return next;
+          }
+          const next = await startSubscription(ctx, tx, owner.tenant_id, {
+            plan,
+            method: o.method,
+            payerEmail: o.email,
+            payerDocument: o.document,
+            key: `signup:${owner.tenant_id}`,
+            now,
+            manual: o.manual,
           });
-        openOr409(plan, await heldPlans(tx, owner.tenant_id));
-        const next = await startSubscription(ctx, tx, owner.tenant_id, {
-          plan,
-          method: o.method,
-          payerEmail: o.email,
-          key: `signup:${owner.tenant_id}`,
-          now,
-          manual: o.manual,
-        });
-        await audit(tx, owner.tenant_id, actor, {
-          action: 'store.signup',
-          entity: 'account',
-          entityId: owner.tenant_id,
-          summary: `criou a loja no plano ${o.plan.name} (${o.manual ? 'código de acesso, pagamento confirmado pela equipe' : o.method === 'card' ? 'cartão' : 'Pix'})`,
-          after: { planId: o.plan.id, method: o.manual ? 'manual' : o.method },
-        });
-        return next;
-      }
-      if (sub.status === 'trialing' && sub.trial_ends_at)
-        return { kind: 'trial', endsAt: sub.trial_ends_at.toISOString() };
-      if (sub.status === 'pending')
-        return beginPayment(ctx, tx, sub, `signup:${owner.tenant_id}`, now, {
-          manual: o.manual && sub.method === 'pix',
-        });
-      // already paid (a late replay): point at what was paid
-      if (sub.method === 'pix') {
-        const inv = (
-          await tx<{ id: string }[]>`
+          await audit(tx, owner.tenant_id, actor, {
+            action: 'store.signup',
+            entity: 'account',
+            entityId: owner.tenant_id,
+            summary: `criou a loja no plano ${o.plan.name} (${o.manual ? 'código de acesso, pagamento confirmado pela equipe' : o.method === 'card' ? 'cartão' : 'Pix'})`,
+            after: { planId: o.plan.id, method: o.manual ? 'manual' : o.method },
+          });
+          return next;
+        }
+        // a signup resumed from before it asked for the CPF/CNPJ: fill it in, never overwrite one
+        // (the owner may have changed it in Conta since)
+        if (!sub.payer_document) {
+          await tx`
+          update subscriptions set payer_document = ${o.document}, updated_at = now()
+          where tenant_id = ${owner.tenant_id} and payer_document is null
+        `;
+          // its first Pix went out without one: the owner gets a new Pix that carries it
+          if (sub.status === 'pending') await reissueOpenPix(ctx, tx, owner.tenant_id, now);
+        }
+        if (sub.status === 'trialing' && sub.trial_ends_at)
+          return { kind: 'trial', endsAt: sub.trial_ends_at.toISOString() };
+        if (sub.status === 'pending')
+          return beginPayment(ctx, tx, sub, `signup:${owner.tenant_id}`, now, {
+            manual: o.manual && sub.method === 'pix',
+          });
+        // already paid (a late replay): point at what was paid
+        if (sub.method === 'pix') {
+          const inv = (
+            await tx<{ id: string }[]>`
             select id from invoices where tenant_id = ${owner.tenant_id} order by number desc limit 1
           `
-        )[0];
-        if (inv) return { kind: 'pix', invoiceId: inv.id };
-      }
-      return { kind: 'card', url: `${origin}/admin/` };
-    }),
+          )[0];
+          if (inv) return { kind: 'pix', invoiceId: inv.id };
+        }
+        return { kind: 'card', url: `${origin}/admin/` };
+      }),
   );
 }

@@ -1,8 +1,8 @@
-import { ArrowRight, Check, Copy, Robot, WhatsappLogo } from '@phosphor-icons/react';
+import { ArrowRight, CaretDown, Check, Copy, Robot, WhatsappLogo } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, type AgentTone, type VendedorOnboarding } from '../../lib/api.ts';
+import { api, type AgentTone, type AnswerWho, type VendedorOnboarding } from '../../lib/api.ts';
 import { phone as phoneText } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { usePollWhenOffline } from '../../lib/live.ts';
@@ -17,6 +17,7 @@ import { Field, PhoneInput, Segmented, Toggle } from '../../ui/fields.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { PhoneCommands } from './Settings.parts.tsx';
 import type { Persona } from './Train.model.ts';
 import { TrainFrame } from './Train.parts.tsx';
 
@@ -87,19 +88,19 @@ export function NotReady({ ob }: { ob: VendedorOnboarding }) {
   );
 }
 
-/** The first screen (step id `nome`, kept in Core's progress): how Duá introduces himself. */
+/** Conhecer's last screen (step id `nome`, kept in Core's progress): how Duá introduces himself. */
 export function VoiceStep({
-  ob,
   draft,
   setDraft,
   onNext,
+  back,
   busy,
   eyebrow,
 }: {
-  ob: VendedorOnboarding;
   draft: Persona;
   setDraft: (p: Partial<Persona>) => void;
   onNext: () => void;
+  back: () => void;
   busy: boolean;
   eyebrow: string;
 }) {
@@ -110,8 +111,8 @@ export function VoiceStep({
       hint="Como ele se apresenta aos seus clientes e o tom das respostas. Dá para mudar depois."
       next={onNext}
       busy={busy}
+      back={back}
     >
-      <NotReady ob={ob} />
       <Card className="divide-y divide-line px-4">
         <Toggle
           checked={draft.disclose}
@@ -139,13 +140,15 @@ export function VoiceStep({
 const accountPhone = (p: string | null) =>
   p ? (p.startsWith('55') ? phoneText(p.slice(2)) : `+${p}`) : null;
 
+/** The first screen: Duá answers on the store's number, so it's linked before anything else.
+ *  It can wait ("conectar depois") so the owner trains and tests, but he can't be switched on. */
 export function WhatsappStep({
+  ob,
   onNext,
-  back,
   eyebrow,
 }: {
+  ob: VendedorOnboarding;
   onNext: () => void;
-  back: () => void;
   eyebrow: string;
 }) {
   const poll = usePollWhenOffline(4_000, 20_000);
@@ -170,8 +173,10 @@ export function WhatsappStep({
       hint="O Duá atende no número que seus clientes já usam. Você continua usando o celular normalmente."
       next={onNext}
       nextLabel={linked || lost || !wa.data ? 'continuar' : 'conectar depois'}
-      back={back}
+      // connecting is the step's own action (the form above); putting it off stays secondary
+      nextSecondary={!(linked || lost || !wa.data)}
     >
+      <NotReady ob={ob} />
       <Card className="p-4">
         <div className="flex items-center gap-3">
           <span className="grid size-12 shrink-0 place-items-center rounded-full bg-whatsapp text-on-whatsapp">
@@ -216,6 +221,114 @@ export function WhatsappStep({
         Se o app do WhatsApp Business tem respostas automáticas ou um assistente de IA ligado,
         desligue nas ferramentas comerciais do app. Duas IAs respondendo confunde o cliente.
       </Notice>
+    </TrainFrame>
+  );
+}
+
+const WHO: { value: AnswerWho; title: string; detail: string }[] = [
+  {
+    value: 'everyone',
+    title: 'Só da loja',
+    detail: 'Quem escreve é cliente. O Duá atende todo mundo.',
+  },
+  {
+    value: 'known_and_new',
+    title: 'Também é o meu pessoal',
+    detail: 'O Duá atende clientes e números novos. Seus amigos e sua família ficam com você.',
+  },
+];
+const ONLY_KNOWN = {
+  value: 'known_only' as const,
+  title: 'Só quem já é cliente',
+  detail: 'Quem já pediu na loja ou você marcou como cliente. Os outros esperam você decidir.',
+};
+
+/** Whose number it is (ADR 0033): many owners sell from their own WhatsApp. */
+export function NumberStep({
+  value,
+  onChange,
+  onNext,
+  back,
+  busy,
+  eyebrow,
+}: {
+  value: AnswerWho;
+  onChange: (v: AnswerWho) => void;
+  onNext: () => void;
+  back: () => void;
+  busy: boolean;
+  eyebrow: string;
+}) {
+  const [more, setMore] = useState(value === 'known_only');
+  const options = more ? [...WHO, ONLY_KNOWN] : WHO;
+  return (
+    <TrainFrame
+      eyebrow={eyebrow}
+      title="Esse número é só da loja ou também é seu?"
+      hint="Muita gente vende pelo mesmo WhatsApp que usa com a família. Tudo bem: ele se ajeita."
+      next={onNext}
+      busy={busy}
+      back={back}
+    >
+      <div role="radiogroup" aria-label="De quem é o número" className="space-y-2.5">
+        {options.map((o) => {
+          const on = value === o.value;
+          return (
+            <div
+              key={o.value}
+              className={cn(
+                'rounded-lg transition-[background-color,box-shadow] duration-(--duration-quick)',
+                on
+                  ? 'bg-spark-soft ring-2 ring-primary depth-1 noite:ring-spark'
+                  : 'bg-surface depth-1',
+              )}
+            >
+              <button
+                type="button"
+                role="radio"
+                aria-checked={on}
+                onClick={() => {
+                  haptic.tick();
+                  onChange(o.value);
+                }}
+                className="press flex min-h-18 w-full items-start gap-3 rounded-lg px-4 py-3.5 text-left"
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    'mt-0.5 grid size-6 shrink-0 place-items-center rounded-full ring-2',
+                    on ? 'bg-primary ring-primary' : 'ring-line-strong',
+                  )}
+                >
+                  {on ? <span className="size-2.5 rounded-full bg-on-primary" /> : null}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[1.0625rem] font-semibold">{o.title}</span>
+                  <span className="t-body block text-muted">{o.detail}</span>
+                </span>
+              </button>
+              {on && o.value !== 'everyone' ? (
+                <p className="t-body px-4 pb-4 pl-13">
+                  {o.value === 'known_and_new'
+                    ? 'Quando escreve alguém que nunca pediu na loja, ele lê as últimas mensagens daquela conversa para saber se é cliente. Na dúvida, te pergunta antes de responder.'
+                    : 'Ele te avisa quando um número novo escrever, e espera o seu ok.'}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      {more ? null : (
+        <button
+          type="button"
+          aria-expanded={false}
+          onClick={() => setMore(true)}
+          className="t-label -mt-2 inline-flex min-h-11 items-center gap-1.5 rounded-md text-muted underline-offset-2 hover:underline"
+        >
+          outras opções <CaretDown weight="bold" className="size-4" aria-hidden />
+        </button>
+      )}
+      {value === 'everyone' ? null : <PhoneCommands />}
     </TrainFrame>
   );
 }
@@ -290,7 +403,7 @@ function Pair({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.whatsa
           </div>
         </div>
         <Link
-          to="/whatsapp"
+          to="/whatsapp?de=dua"
           className="t-label inline-flex min-h-11 items-center gap-1 text-muted underline underline-offset-2"
         >
           ver o passo a passo

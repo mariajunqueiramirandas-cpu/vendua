@@ -1,10 +1,11 @@
+import { join } from 'node:path';
 import type { Context, Hono } from 'hono';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError, bodyJson, boundedText, parseJsonObject } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
 import type { Tenant } from '../../platform/tenancy.ts';
 import { claimControl, controlTx } from '../control.ts';
-import { getSettingTx } from '../integrations.ts';
+import { getSettingTx, upsertIntegration } from '../integrations.ts';
 import {
   CATEGORY_META,
   STAFF_CATEGORIES,
@@ -19,6 +20,7 @@ import {
   CHANNEL_KEYS,
   DEFAULT_TOKEN_ENV,
   SNOWFLAKE_RE,
+  artLink,
   channelFor,
   discordContext,
   discordSettingOf,
@@ -53,6 +55,9 @@ export const CHANNEL_NAMES: Record<StaffCategory, string> = {
   resumo: 'resumo',
 };
 const CATEGORY_NAME = 'Venduá';
+const ENDPOINT_PATH = '/control/v1/discord/interactions';
+// Duá's head on a lime disc: the bot's avatar and the app's icon (served with the CRM too)
+const AVATAR_PNG = join(import.meta.dir, '../../../../../apps/control/public/discord/avatar.png');
 
 export function inviteUrl(applicationId: string, guildId: string | null): string {
   const q = new URLSearchParams({
@@ -70,6 +75,7 @@ interface DiscordChannel {
   type: number;
   parent_id?: string | null;
   position?: number;
+  permission_overwrites?: { id: string; type: number; allow: string; deny: string }[];
 }
 
 export function mountDiscord(o: {
@@ -117,7 +123,7 @@ export function mountDiscord(o: {
 
   // Discord → Core. Not behind the staff gate: Ed25519 over timestamp+body is the credential;
   // a bad or missing signature is 401, which is what Discord's endpoint check expects.
-  app.post('/control/v1/discord/interactions', async (c) => {
+  app.post(ENDPOINT_PATH, async (c) => {
     const ctx = await discordContext(sql);
     const publicKey = ctx.app.ok ? ctx.app.app.publicKey : ctx.app.publicKey;
     if (!publicKey) throw new HttpError(404, 'NOT_FOUND', 'not found');
@@ -209,7 +215,8 @@ export function mountDiscord(o: {
         invite: SNOWFLAKE_RE.test(applicationId)
           ? inviteUrl(applicationId, SNOWFLAKE_RE.test(guildId) ? guildId : null)
           : null,
-        endpointPath: '/control/v1/discord/interactions',
+        endpointPath: ENDPOINT_PATH,
+        endpointUrl: `${ctx.crmBase}${ENDPOINT_PATH}`,
       },
       setting: ctx.setting,
       state: {
@@ -269,6 +276,109 @@ export function mountDiscord(o: {
     }
   });
 
+  // "conectar": everything but the token comes from Discord. The token reads the application's
+  // id and public key and the servers the bot is in (one → that's the team's), and sets the
+  // interactions URL — after the commit, since Discord PINGs it with the key we just saved.
+  app.post('/control/v1/discord/connect', async (c) => {
+    controlGate(c);
+    const key = idemKey(c, 'connect');
+    const body = await bodyJson(c);
+    const wanted = body.guildId === undefined || body.guildId === '' ? null : body.guildId;
+    if (wanted !== null && (typeof wanted !== 'string' || !SNOWFLAKE_RE.test(wanted)))
+      throw new HttpError(422, 'BAD_REQUEST', 'guildId must be a Discord id', {
+        field: 'guildId',
+      });
+    const [row] = await controlTx(
+      sql,
+      (tx) => tx<{ config: Record<string, unknown>; secret_ref: string | null }[]>`
+        select config, secret_ref from control_integrations
+        where kind = 'discord' and driver = 'bot'
+      `,
+    );
+    const tokenEnv = row?.secret_ref ?? DEFAULT_TOKEN_ENV;
+    const token = (process.env[tokenEnv] || process.env[DEFAULT_TOKEN_ENV] || '').trim();
+    if (!token)
+      throw new HttpError(
+        422,
+        'DISCORD_TOKEN_MISSING',
+        `coloque o token do bot em ${tokenEnv} no ambiente do Core e reinicie`,
+      );
+    const client = discordClient(token, o.fetch);
+    const [me, guilds, bot] = await Promise.all([
+      client.request<{
+        id: string;
+        verify_key: string;
+        icon?: string | null;
+        interactions_endpoint_url?: string | null;
+      }>('GET', '/applications/@me'),
+      client.request<{ id: string; name: string }[]>('GET', '/users/@me/guilds'),
+      // only the avatar needs it: a failed read skips the avatar, never the connection
+      client.request<{ avatar?: string | null }>('GET', '/users/@me').catch(() => null),
+    ]).catch(discordFail);
+    const inGuild = (id: unknown) => guilds.some((g) => g.id === id);
+    if (wanted && !inGuild(wanted))
+      throw new HttpError(
+        422,
+        'BAD_REQUEST',
+        'o bot não está nesse servidor — adicione pelo convite',
+        { field: 'guildId' },
+      );
+    const g0 = row?.config.guildId;
+    const current = typeof g0 === 'string' && SNOWFLAKE_RE.test(g0) ? g0 : null;
+    const guildId =
+      wanted ??
+      (current && inGuild(current) ? current : guilds.length === 1 ? guilds[0]!.id : null);
+
+    const res = await upsertIntegration(
+      sql,
+      {
+        kind: 'discord',
+        driver: 'bot',
+        enabled: true,
+        config: {
+          applicationId: me.id,
+          publicKey: me.verify_key.toLowerCase(),
+          ...(guildId ? { guildId } : {}),
+        },
+        secretRef: row?.secret_ref ?? null,
+      },
+      key,
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+
+    const { crmBase } = await discordContext(sql);
+    const endpointUrl = `${crmBase}${ENDPOINT_PATH}`;
+    let endpointError: string | null = null;
+    if (me.interactions_endpoint_url !== endpointUrl) {
+      try {
+        await client.request('PATCH', '/applications/@me', {
+          interactions_endpoint_url: endpointUrl,
+        });
+      } catch (e) {
+        endpointError = e instanceof DiscordError ? e.message : String(e);
+        rlog.warn({ err: endpointError, endpointUrl }, 'interactions url not accepted');
+      }
+    }
+    // Duá's face on a bot and app still wearing Discord's default; a picture the team chose stays
+    const needsAvatar = !!bot && !bot.avatar;
+    if (needsAvatar || !me.icon) {
+      try {
+        const image = `data:image/png;base64,${Buffer.from(await Bun.file(AVATAR_PNG).arrayBuffer()).toString('base64')}`;
+        if (needsAvatar) await client.request('PATCH', '/users/@me', { avatar: image });
+        if (!me.icon) await client.request('PATCH', '/applications/@me', { icon: image });
+      } catch (e) {
+        rlog.warn({ err: e instanceof Error ? e.message : String(e) }, 'bot avatar not set');
+      }
+    }
+    return c.json({
+      applicationId: me.id,
+      guildId,
+      guilds: guilds.map((g) => ({ id: g.id, name: g.name })),
+      invite: inviteUrl(me.id, guildId),
+      endpoint: { url: endpointUrl, ok: !endpointError, error: endpointError },
+    });
+  });
+
   // "criar canais": a private category with one channel per category, saved as the routing.
   // Idempotent by name — running it again only fills what's missing.
   app.post('/control/v1/discord/setup', async (c) => {
@@ -276,33 +386,55 @@ export function mountDiscord(o: {
     const key = idemKey(c, 'setup');
     const body = await bodyJson(c);
     const ctx = await ready();
-    const roleId =
-      typeof body.staffRoleId === 'string' && SNOWFLAKE_RE.test(body.staffRoleId)
-        ? body.staffRoleId
-        : ctx.setting.staffRoleId;
-    if (!roleId)
-      throw new HttpError(
-        422,
-        'BAD_REQUEST',
-        'escolha o cargo da equipe antes de criar os canais',
-        {
-          field: 'staffRoleId',
-        },
-      );
+    // absent: the saved role; '' or null: explicitly none (the channels open to the server)
+    const asked = body.staffRoleId;
+    if (
+      asked !== undefined &&
+      asked !== null &&
+      asked !== '' &&
+      (typeof asked !== 'string' || !SNOWFLAKE_RE.test(asked))
+    )
+      throw new HttpError(422, 'BAD_REQUEST', 'staffRoleId must be a Discord role id', {
+        field: 'staffRoleId',
+      });
+    const roleId: string | null =
+      asked === undefined ? ctx.setting.staffRoleId : (asked as string | null) || null;
     const client = clientFor(ctx);
     const g = ctx.app.app.guildId;
     const res = await claimControl(sql, key, async (tx) => {
       try {
         const me = await client.request<{ id: string }>('GET', '/users/@me');
+        // with a team role the category is private to it; without one (a fresh server has no
+        // roles) the whole server sees it — the server is the team's own
         const overwrites = [
-          { id: g, type: 0, allow: '0', deny: String(VIEW) },
-          { id: roleId, type: 0, allow: String(VIEW + SEND + HISTORY), deny: '0' },
+          ...(roleId
+            ? [
+                { id: g, type: 0, allow: '0', deny: String(VIEW) },
+                { id: roleId, type: 0, allow: String(VIEW + SEND + HISTORY), deny: '0' },
+              ]
+            : []),
           { id: me.id, type: 1, allow: String(VIEW + SEND + EMBED + HISTORY), deny: '0' },
         ];
         const existing = await client.request<DiscordChannel[]>('GET', `/guilds/${g}/channels`);
+        // a role picked after the channels were made public: lock what already exists
+        // The bot owns these channels' permissions: what Discord has (not what the CRM saved)
+        // must be exactly what this run would set, or it's reset — a role saved before this
+        // click, "sem cargo" over a private category, or an old role still allowed in.
+        // Bitfields outgrow 2^53, so they compare as BigInt.
+        const key = (w: { id: string; allow: string; deny: string }) =>
+          `${w.id}:${BigInt(w.allow || '0')}:${BigInt(w.deny || '0')}`;
+        const wanted = overwrites.map(key).sort().join(',');
+        const lock = async (ch: DiscordChannel) => {
+          const has = (ch.permission_overwrites ?? []).map(key).sort().join(',');
+          if (has !== wanted)
+            await client.request('PATCH', `/channels/${ch.id}`, {
+              permission_overwrites: overwrites,
+            });
+        };
         let parent = existing.find(
           (ch) => ch.type === 4 && ch.name.toLowerCase() === CATEGORY_NAME.toLowerCase(),
         );
+        if (parent) await lock(parent);
         parent ??= await client.request<DiscordChannel>('POST', `/guilds/${g}/channels`, {
           name: CATEGORY_NAME,
           type: 4,
@@ -324,7 +456,7 @@ export function mountDiscord(o: {
               permission_overwrites: overwrites,
             });
             created.push(name);
-          }
+          } else await lock(ch);
           channels[cat] = ch.id;
         }
         const stored = await getSettingTx<Record<string, unknown>>(tx, 'discord', {});
@@ -374,6 +506,7 @@ export function mountDiscord(o: {
                     .map((k) => `${CATEGORY_META[k].emoji} ${k}`)
                     .join(', ')}`,
                   color: COLORS.success,
+                  thumbnail: { url: artLink(ctx.crmBase, 'sucesso') },
                 },
               ],
               allowed_mentions: { parse: [] },

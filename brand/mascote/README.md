@@ -24,6 +24,13 @@ mesmo formato, salvar aqui, e incluir o nome em `Pose` em `apps/admin/src/ui/Mas
 - `alt=""` quando decorativo: erro/sucesso/carregamento precisam de texto no HTML.
 - Carregue só as poses usadas; não sirva o pacote todo.
 
+## Uso no Discord
+
+O bot da equipe usa 10 poses em `apps/control/public/discord/` (256 px, sobre um bloco creme
+para o verde aparecer no tema escuro do Discord) e `avatar.png` (cabeça do `avatar-ola` sobre
+disco lima-claro), que o **conectar** do CRM põe como avatar do bot e ícone do app.
+Veja `docs/deploy/discord.md`.
+
 ## Uso no admin
 
 ```tsx

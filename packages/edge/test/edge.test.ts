@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { artifactPath } from '../src/storefront.ts';
 import { peerAddress } from '../src/proxy.ts';
+import { MAX_REQUEST_BODY_BYTES } from '../src/server.ts';
 import {
   INDEX_HTML,
   harness,
@@ -238,7 +239,7 @@ describe('Core outages', () => {
   test('last-known-good v.js, state and surfaces are served stale on errors and 5xx', async () => {
     await live();
     const vjs = await (await h.get('/v1/v.js')).text();
-    const state = await (await h.get('/storefront/v1/state?cart=1')).json();
+    const state = await (await h.get('/storefront/v1/state?templates=1')).json();
     const surf = await (await h.get('/storefront/v1/surfaces')).json();
 
     h.core.down = true;
@@ -246,23 +247,56 @@ describe('Core outages', () => {
     expect(s1.status).toBe(200);
     expect(s1.headers.get('x-vendua-edge-stale')).toBe('1');
     expect(await s1.text()).toBe(vjs);
-    const s2 = await h.get('/storefront/v1/state?cart=1');
+    const s2 = await h.get('/storefront/v1/state?templates=1');
     expect(s2.headers.get('x-vendua-edge-stale')).toBe('1');
     expect(await s2.json()).toEqual(state);
     expect(await (await h.get('/storefront/v1/surfaces')).json()).toEqual(surf);
     // per host + query
-    expect((await h.get('/storefront/v1/state?cart=2')).status).toBe(502);
-    expect((await h.get('/storefront/v1/state?cart=1', 'other.test')).status).toBe(502);
+    expect((await h.get('/storefront/v1/state')).status).toBe(502);
+    expect((await h.get('/storefront/v1/state?templates=1', 'other.test')).status).toBe(502);
 
     h.core.down = false;
     h.core.status5xx = true;
-    const s3 = await h.get('/storefront/v1/state?cart=1');
+    const s3 = await h.get('/storefront/v1/state?templates=1');
     expect(s3.status).toBe(200);
     expect(s3.headers.get('x-vendua-edge-stale')).toBe('1');
     h.core.status5xx = false;
     expect(
-      (await h.get('/storefront/v1/state?cart=1')).headers.get('x-vendua-edge-stale'),
+      (await h.get('/storefront/v1/state?templates=1')).headers.get('x-vendua-edge-stale'),
     ).toBeNull();
+  });
+
+  test('last-known-good keeps only the queries the loader and Kernel send', async () => {
+    await live();
+    const before = h.edge.stats().api;
+    for (let i = 0; i < 20; i++) {
+      const r = await h.get(`/storefront/v1/state?templates=1&x=${i}`);
+      expect(r.status).toBe(200);
+      expect(await r.json()).toMatchObject({ q: `?templates=1&x=${i}` });
+      expect((await h.get(`/v1/v.js?x=${i}`)).status).toBe(200);
+      expect((await h.get(`/storefront/v1/surfaces?x=${i}`)).status).toBe(200);
+    }
+    expect(h.edge.stats().api).toBe(before);
+    await h.get('/storefront/v1/state');
+    await h.get('/storefront/v1/state?templates=1');
+    await h.get('/v1/v.js');
+    expect(h.edge.stats().api).toBe(before + 3);
+
+    h.core.down = true;
+    expect((await h.get('/storefront/v1/state?templates=1&x=1')).status).toBe(502);
+    expect(
+      (await h.get('/storefront/v1/state?templates=1')).headers.get('x-vendua-edge-stale'),
+    ).toBe('1');
+  });
+
+  test('last-known-good bodies are bounded by bytes, oldest first', async () => {
+    h = await harness({ maxApiBytes: 100 });
+    for (const host of ['a.test', 'b.test', 'c.test'])
+      expect((await h.get('/storefront/v1/state', host)).status).toBe(200);
+    expect(h.edge.stats().api).toBe(2); // each body is 38 bytes
+    h.core.down = true;
+    expect((await h.get('/storefront/v1/state', 'a.test')).status).toBe(502);
+    expect((await h.get('/storefront/v1/state', 'c.test')).status).toBe(200);
   });
 
   test('a restart during a Core outage serves from the snapshot', async () => {
@@ -454,6 +488,21 @@ describe('API proxy', () => {
     expect(dec.decode(second.value)).toBe('data: second\n\n');
     h.core.sse.close();
     expect((await reader.read()).done).toBe(true);
+  });
+
+  test('request bodies past the edge cap are refused before reaching Core', async () => {
+    await live();
+    const big = await h.get('/checkout/v1/echo', 'loja.test', {
+      method: 'POST',
+      body: 'x'.repeat(MAX_REQUEST_BODY_BYTES + 1),
+    });
+    expect(big.status).toBe(413);
+    expect(h.core.echo).toEqual([]);
+    const ok = await h.get('/checkout/v1/echo', 'loja.test', {
+      method: 'POST',
+      body: 'x'.repeat(64 * 1024),
+    });
+    expect(ok.status).toBe(201);
   });
 
   test('Core down on a plain API call → 502 JSON', async () => {

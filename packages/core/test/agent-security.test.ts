@@ -154,7 +154,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead-bound tool fences (db)', (
     })) as { error?: string };
     expect(hijack.error).toContain('CONTACT_LOCKED');
     expect(hijack.error).toContain('request_human');
-    expect((await row(id)).whatsapp).toBe('+55 11 97777-0000');
+    expect((await row(id)).whatsapp).toBe('+5511977770000');
 
     const clear = (await executeTool(ctx, 'h2', 'update_lead', { id, whatsapp: null })) as {
       error?: string;
@@ -168,7 +168,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead-bound tool fences (db)', (
       city: 'Campinas',
     })) as { error?: string };
     expect(same.error).toBeUndefined();
-    expect(await row(id)).toMatchObject({ whatsapp: '+55 11 97777-0000', whatsapp_verified: true });
+    expect(await row(id)).toMatchObject({ whatsapp: '+5511977770000', whatsapp_verified: true });
 
     // a blank field fills
     const fill = (await executeTool(ctx, 'h4', 'update_lead', {
@@ -191,7 +191,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead-bound tool fences (db)', (
     })) as { error?: string };
     expect(filled.error).toBeUndefined();
     expect(await row(blank)).toMatchObject({
-      whatsapp: '+55 11 95555-2222',
+      whatsapp: '+5511955552222',
       whatsapp_verified: false,
     });
   });

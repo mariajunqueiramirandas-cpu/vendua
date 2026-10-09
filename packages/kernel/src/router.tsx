@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   matchPath,
   Navigate,
@@ -54,6 +54,52 @@ function PageViews() {
     });
   }, [pathname]);
   return null;
+}
+
+/** Kernel 1.21 — a new page takes focus on its main heading (`#main h1`, else `#main` itself)
+ *  and its title is announced: a screen reader would otherwise stay on the link that was tapped,
+ *  now gone. The first load, a same-page change (?query, a checkout step), a #hash and the bag
+ *  sheet leave focus alone. */
+function RouteFocus() {
+  const location = useLocation();
+  const page = backgroundOf(location) ?? location;
+  const { pathname, hash } = page;
+  const [said, setSaid] = useState('');
+  const prev = useRef<string | null>(null);
+  useEffect(() => {
+    const was = prev.current;
+    prev.current = pathname;
+    if (was === null || was === pathname || hash) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
+    const land = () => {
+      const main = document.getElementById('main');
+      const heading = main?.querySelector<HTMLElement>('h1');
+      // the page's data is still on its way: its heading comes with it (≤ 2 s)
+      if (!heading && main?.querySelector('[aria-busy="true"]') && tries++ < 20) {
+        timer = setTimeout(land, 100);
+        return;
+      }
+      const target = heading ?? main;
+      if (!target) return;
+      // something inside the new page already has focus (an autofocus, the shopper): keep it
+      const active = document.activeElement;
+      if (active && active !== document.body && main?.contains(active)) return;
+      if (!target.hasAttribute('tabindex')) {
+        target.setAttribute('tabindex', '-1');
+        target.addEventListener('blur', () => target.removeAttribute('tabindex'), { once: true });
+      }
+      target.focus({ preventScroll: true });
+      setSaid(document.title);
+    };
+    timer = setTimeout(land, 0);
+    return () => clearTimeout(timer);
+  }, [pathname, hash]);
+  return (
+    <p className="v-sr" data-vendua="route-announcer" aria-live="polite" aria-atomic="true">
+      {said}
+    </p>
+  );
 }
 
 // <Routes location> hands the pages a fresh location object and a POP type on every render;
@@ -168,6 +214,7 @@ export function StorefrontRoutes() {
       <NativeNavigation depth={depth}>
         <PageViews />
         <ScrollManager />
+        <RouteFocus />
         <PageRoutes />
       </NativeNavigation>
     </RegistryProvider>

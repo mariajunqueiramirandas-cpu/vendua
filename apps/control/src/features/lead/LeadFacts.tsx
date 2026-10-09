@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { ExternalLink, MailWarning } from 'lucide-react';
 import type { LeadListItem } from '@/lib/api.ts';
+import { ContactLink } from '@/components/ContactLinks.tsx';
 import { EditableText } from '@/components/EditableText.tsx';
 import { MoneyEdit } from '@/components/MoneyEdit.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
@@ -66,6 +67,17 @@ export function LeadFacts({ lead, patch }: { lead: LeadListItem; patch: (p: Lead
                 </span>
               </Tooltip>
             )}
+            <ContactLink kind="whatsapp" value={lead.whatsapp} />
+          </KV>
+          <KV label="telefone">
+            <EditableText
+              label="telefone"
+              type="tel"
+              value={lead.phone}
+              placeholder="(85) 9…"
+              onSave={(v) => patch({ phone: v })}
+            />
+            <ContactLink kind="tel" value={lead.phone} />
           </KV>
           {TEXT_FIELDS.map(([label, field, ph, type]) => (
             <KV key={field} label={label}>
@@ -81,6 +93,7 @@ export function LeadFacts({ lead, patch }: { lead: LeadListItem; patch: (p: Lead
                   <MailWarning className="size-3.5 shrink-0 text-warning-foreground" />
                 </Tooltip>
               )}
+              {field === 'email' && <ContactLink kind="email" value={lead.email} />}
             </KV>
           ))}
           <KV label="site">

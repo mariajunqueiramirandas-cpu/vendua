@@ -11,7 +11,7 @@ import {
 import { readLoyalty, type StoredLoyalty } from '../modules/customer.ts';
 import { audit } from './audit.ts';
 import { bool, int, isObj, oneOf, optInt, optText, text, type AdminDeps } from './context.ts';
-import { handlers } from './handlers.ts';
+import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { loadSettings } from './routes-store.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
@@ -33,7 +33,7 @@ async function couponsView(tx: Sql, tenantId: string) {
       where r.tenant_id = ${tenantId} and o.state not in ('cancelled', 'refunded')
       group by r.coupon_id
     ) r on r.coupon_id = c.id
-    where c.tenant_id = ${tenantId} and c.source <> 'loyalty'
+    where c.tenant_id = ${tenantId} and c.source <> 'loyalty' and c.archived_at is null
     order by c.active desc, c.created_at desc
     limit 200
   `;
@@ -49,18 +49,20 @@ function loyaltyView(p: StoredLoyalty | null) {
 function date(v: unknown, name: string): Date | null {
   if (v === undefined || v === null || v === '') return null;
   const d = new Date(text(v, name, 40));
-  if (Number.isNaN(d.getTime()))
+  // postgres.js sends years past 9999 as +010000, which Postgres rejects
+  const y = d.getUTCFullYear();
+  if (Number.isNaN(d.getTime()) || y < 2000 || y > 9999)
     throw new HttpError(422, 'BAD_REQUEST', `${name} must be a date`, { field: name });
   return d;
 }
 
 export function mountMarketing(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   admin.get(
     '/marketing',
-    read('manager', async (tx, t) => {
+    named('marketing').read('manager', async (tx, t) => {
       const s = await loadSettings(tx, t.id);
       const loyalty = loyaltyView(readLoyalty(s.loyalty));
       const loyaltyStats = (
@@ -79,6 +81,7 @@ export function mountMarketing(d: AdminDeps) {
                json_agg(json_build_object('contact', n.contact, 'since', n.created_at) order by n.created_at) as contacts
         from notify_requests n join products p on p.id = n.product_id
         where n.tenant_id = ${t.id} and n.subject = 'product' and n.notified_at is null
+          and p.deleted_at is null
         group by p.id order by waiting desc limit 50
       `;
       return {
@@ -92,8 +95,8 @@ export function mountMarketing(d: AdminDeps) {
 
   admin.post(
     '/coupons',
-    write('manager', async (tx, t, m, c) => {
-      const body = await bodyJson(c);
+    named('coupon.create').write('manager', async (tx, t, m, c) => {
+      const body = await bodyOf(c);
       const code = normalizeCode(text(body.code, 'code', 32, 3));
       if (!COUPON_CODE_RE.test(code))
         throw new HttpError(422, 'BAD_REQUEST', 'use 3–32 letters, numbers, _ or -', {
@@ -108,6 +111,7 @@ export function mountMarketing(d: AdminDeps) {
       const endsAt = date(body.endsAt, 'endsAt');
       if (startsAt && endsAt && endsAt <= startsAt)
         throw new HttpError(422, 'BAD_REQUEST', 'the end is before the start', { field: 'endsAt' });
+      await assertCodeFree(tx, t.id, code);
       const row = await mintCouponTx(
         tx,
         t.id,
@@ -141,29 +145,43 @@ export function mountMarketing(d: AdminDeps) {
 
   admin.patch(
     '/coupons/:id',
-    write('manager', async (tx, t, m, c) => {
+    named('coupon.patch').write('manager', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
-      const body = await bodyJson(c);
+      const body = await bodyOf(c);
       const set: Record<string, unknown> = {};
+      // "desfazer" after apagar: archived: false brings it back as it was (active as sent)
+      const restoring = body.archived !== undefined && !bool(body.archived, 'archived');
+      if (body.archived === true) throw new HttpError(422, 'BAD_REQUEST', 'use DELETE to archive');
+      if (restoring) set.archived_at = null;
       if (body.active !== undefined) set.active = bool(body.active, 'active');
       if (body.label !== undefined) set.label = optText(body.label, 'label', 120) ?? null;
       if (body.endsAt !== undefined) set.ends_at = date(body.endsAt, 'endsAt');
       if (body.maxRedemptions !== undefined)
         set.max_redemptions = optInt(body.maxRedemptions, 'maxRedemptions', 1, 1_000_000) ?? null;
       if (!Object.keys(set).length) throw new HttpError(422, 'BAD_REQUEST', 'nothing to change');
-      const row = (
-        await tx<{ code: string }[]>`
-          update coupons set ${tx(set as never)} where tenant_id = ${t.id} and id = ${id} and source <> 'loyalty'
-          returning code
+      const cur = (
+        await tx<{ starts_at: Date | null; archived: boolean }[]>`
+          select starts_at, archived_at is not null as archived from coupons
+          where tenant_id = ${t.id} and id = ${id} and source <> 'loyalty' for update
         `
       )[0];
-      if (!row) throw new HttpError(404, 'COUPON_NOT_FOUND', 'coupon not found');
+      if (!cur || (cur.archived && !restoring))
+        throw new HttpError(404, 'COUPON_NOT_FOUND', 'coupon not found');
+      if (set.ends_at && cur.starts_at && (set.ends_at as Date) <= cur.starts_at)
+        throw new HttpError(422, 'BAD_REQUEST', 'the end is before the start', { field: 'endsAt' });
+      const row = (
+        await tx<{ code: string }[]>`
+          update coupons set ${tx(set as never)} where tenant_id = ${t.id} and id = ${id}
+          returning code
+        `
+      )[0]!;
       await audit(tx, t.id, m, {
-        action: 'coupon.update',
+        action: restoring ? 'coupon.restore' : 'coupon.update',
         entity: 'coupon',
         entityId: id,
-        summary:
-          set.active === false
+        summary: restoring
+          ? `recuperou o cupom ${row.code}`
+          : set.active === false
             ? `desativou o cupom ${row.code}`
             : set.active === true
               ? `reativou o cupom ${row.code}`
@@ -172,6 +190,88 @@ export function mountMarketing(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'marketing');
       return { status: 200, body: { coupons: await couponsView(tx, t.id) } };
+    }),
+  );
+
+  // "apagar": archived, so its redemptions (and the reports on them) stay; PATCH archived: false undoes it
+  admin.delete(
+    '/coupons/:id',
+    write('manager', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const row = (
+        await tx<{ code: string }[]>`
+          update coupons set archived_at = now(), active = false
+          where tenant_id = ${t.id} and id = ${id} and source <> 'loyalty' and archived_at is null
+          returning code
+        `
+      )[0];
+      if (!row) throw new HttpError(404, 'COUPON_NOT_FOUND', 'coupon not found');
+      await audit(tx, t.id, m, {
+        action: 'coupon.archive',
+        entity: 'coupon',
+        entityId: id,
+        summary: `apagou o cupom ${row.code}`,
+      });
+      await emitAdminTx(tx, t.id, 'marketing');
+      return { status: 200, body: { coupons: await couponsView(tx, t.id) } };
+    }),
+  );
+
+  // a copy with every rule and a new code; dates already past are left off
+  admin.post(
+    '/coupons/:id/clone',
+    write('manager', async (tx, t, m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyJson(c);
+      const code = normalizeCode(text(body.code, 'code', 32, 3));
+      if (!COUPON_CODE_RE.test(code))
+        throw new HttpError(422, 'BAD_REQUEST', 'use 3–32 letters, numbers, _ or -', {
+          field: 'code',
+        });
+      const src = (
+        await tx<(CouponRow & { created_at: Date })[]>`
+          select id, code, kind, value, label, min_subtotal_cents, max_discount_cents, starts_at, ends_at,
+                 max_redemptions, per_phone_limit, first_order_only, phone, source, active, created_at
+          from coupons
+          where tenant_id = ${t.id} and id = ${id} and source <> 'loyalty' and archived_at is null
+        `
+      )[0];
+      if (!src) throw new HttpError(404, 'COUPON_NOT_FOUND', 'coupon not found');
+      // a personal coupon is one shopper's; a copy would hand it to everyone
+      if (src.phone)
+        throw new HttpError(409, 'COUPON_PERSONAL', 'a personal coupon cannot be copied');
+      await assertCodeFree(tx, t.id, code);
+      const now = Date.now();
+      const future = (d: string | Date | null) => (d && new Date(d).getTime() > now ? d : null);
+      const row = await mintCouponTx(
+        tx,
+        t.id,
+        {
+          code,
+          kind: src.kind,
+          value: src.value,
+          label: src.label,
+          minSubtotalCents: src.min_subtotal_cents,
+          maxDiscountCents: src.max_discount_cents,
+          startsAt: future(src.starts_at),
+          endsAt: future(src.ends_at),
+          maxRedemptions: src.max_redemptions,
+          perPhoneLimit: src.per_phone_limit,
+          firstOrderOnly: src.first_order_only,
+        },
+        'merchant',
+      );
+      await audit(tx, t.id, m, {
+        action: 'coupon.clone',
+        entity: 'coupon',
+        entityId: row.id,
+        summary: `copiou o cupom ${src.code} como ${row.code}`,
+      });
+      await emitAdminTx(tx, t.id, 'marketing');
+      return {
+        status: 201,
+        body: { coupon: { id: row.id, code: row.code }, coupons: await couponsView(tx, t.id) },
+      };
     }),
   );
 
@@ -185,6 +285,15 @@ export function mountMarketing(d: AdminDeps) {
         throw new HttpError(422, 'BAD_REQUEST', 'the card needs 2–50 stamps and a reward', {
           field: 'program',
         });
+      // the reward is minted as a coupon: the same bounds, checked now rather than at a delivery
+      if (program && program.reward.kind !== 'free_delivery') {
+        const v = program.reward.value;
+        const [lo, hi] = program.reward.kind === 'percent' ? [1, 100] : [1, 10_000_000];
+        if (!Number.isInteger(v) || v < lo || v > hi)
+          throw new HttpError(422, 'BAD_REQUEST', `the reward must be a whole ${lo}–${hi}`, {
+            field: 'program.reward.value',
+          });
+      }
       // switching it off is always allowed: a plan without loyalty only blocks turning it on
       if (program) await requireFeature(tx, t.id, 'loyalty');
       await tx`update store_settings set loyalty = ${program ? tx.json(program as never) : null} where tenant_id = ${t.id}`;
@@ -277,4 +386,17 @@ export function mountMarketing(d: AdminDeps) {
       };
     }),
   );
+}
+
+/** An apagado coupon keeps its code (its orders name it): say so instead of "already exists". */
+async function assertCodeFree(tx: Sql, tenantId: string, code: string) {
+  const held = (
+    await tx<{ archived: boolean }[]>`
+      select archived_at is not null as archived from coupons where tenant_id = ${tenantId} and code = ${code}
+    `
+  )[0];
+  if (held?.archived)
+    throw new HttpError(409, 'COUPON_ARCHIVED', `${code} belongs to a deleted coupon`, {
+      field: 'code',
+    });
 }

@@ -2,6 +2,7 @@ import { defineTool, s, ToolError, type Json } from '@vendua/agent-runtime';
 import { addItem, type CartDelivery } from '../../../modules/cart.ts';
 import {
   applyCouponTx,
+  editLineTx,
   removeLineTx,
   setDeliveryTx,
   setLineQtyTx,
@@ -14,8 +15,10 @@ import type { Sql } from '../../../platform/db.ts';
 import { brl } from '../../../vendedor/cards.ts';
 import { fold } from '../../../vendedor/knowledge.ts';
 import {
+  askForPin,
   briefText,
   cartBrief,
+  checkPaymentGuards,
   core,
   ensureCart,
   pack,
@@ -25,9 +28,11 @@ import {
   viewCart,
   type Ctx,
 } from './shared.ts';
+import { phoneKeys } from '../../../store-whatsapp/text.ts';
+import { savedAddresses } from '../../../vendedor/pack.ts';
 
 const opSchema = s.object({
-  op: s.enum(['add', 'qty', 'remove']),
+  op: s.enum(['add', 'qty', 'remove', 'note']),
   product: s
     .string({ max: 80 })
     .optional()
@@ -53,22 +58,29 @@ const opSchema = s.object({
     )
     .optional()
     .describe('add de combo: escolha por parte [sN] e item [pN] de get_product'),
-  line: s.string({ max: 12 }).optional().describe('qty/remove: id da linha [lN] da sacola'),
+  line: s.string({ max: 12 }).optional().describe('qty/remove/note: id da linha [lN] da sacola'),
+  note: s
+    .string({ max: 140 })
+    .optional()
+    .describe(
+      'add: observação do cliente para esse item ("sem cebola"); note: nova observação da linha [lN] ("" apaga)',
+    ),
 });
 
 type Op = {
-  op: 'add' | 'qty' | 'remove';
+  op: 'add' | 'qty' | 'remove' | 'note';
   product?: string | undefined;
   qty?: number | undefined;
   options?: { id: string; qty?: number | undefined }[] | undefined;
   combo?: { slot: string; product: string; qty?: number | undefined }[] | undefined;
   line?: string | undefined;
+  note?: string | undefined;
 };
 
 export const cartEditTool = defineTool<{ ops: Op[] }, Sql>({
   name: 'cart_edit',
   description:
-    'Monta a sacola: adicionar itens (com opções e combos), mudar quantidade ou remover linhas. Várias operações de uma vez ("2 X-Salada, um sem cebola, e uma coca"). Devolve a sacola calculada pela loja e o que falta.',
+    'Monta a sacola: adicionar itens (com opções, combos e observação), mudar quantidade, trocar a observação ou remover linhas. Várias operações de uma vez ("2 X-Salada, um sem cebola, e uma coca": um X-Salada com note "sem cebola" e outro sem). Devolve a sacola calculada pela loja e o que falta.',
   effect: 'write',
   input: s.object({ ops: s.array(opSchema, { min: 1, max: 10 }) }),
   run: async (ctx: Ctx, input) => {
@@ -98,7 +110,13 @@ export const cartEditTool = defineTool<{ ops: Op[] }, Sql>({
             ctx.tx,
             ctx.tenantId,
             cartId,
-            { productId, qty, modifiers, comboSelections },
+            {
+              productId,
+              qty,
+              modifiers,
+              comboSelections,
+              ...(op.note?.trim() ? { note: op.note } : {}),
+            },
             getProductById,
           );
         } catch (e) {
@@ -110,10 +128,18 @@ export const cartEditTool = defineTool<{ ops: Op[] }, Sql>({
             `${where} (${product.name}): ${msg}${groups.length ? `. Obrigatórios: ${groups.join(', ')}. Pergunte ao cliente e use get_product para os ids.` : ''}`,
           );
         }
-        done.push(`+${qty} ${product.name}`);
+        done.push(`+${qty} ${product.name}${op.note?.trim() ? ` (${op.note.trim()})` : ''}`);
       } else {
         if (!op.line) throw new ToolError(`${where}: falta a linha [lN]`);
         const itemId = ctx.resolve(op.line, 'line');
+        if (op.op === 'note') {
+          if (op.note === undefined) throw new ToolError(`${where}: falta a observação`);
+          await core(() =>
+            editLineTx(ctx.tx, ctx.tenantId, cartId, itemId, { note: op.note ?? '' }),
+          );
+          done.push(`${op.line}: ${op.note.trim() ? `obs. "${op.note.trim()}"` : 'sem obs.'}`);
+          continue;
+        }
         if (op.op === 'remove' || op.qty === 0)
           await core(() => removeLineTx(ctx.tx, ctx.tenantId, cartId, itemId));
         else {
@@ -151,7 +177,7 @@ export const reorderTool = defineTool<
       throw new ToolError('Sem o número do cliente não dá para achar pedidos anteriores.');
     const [o] = await ctx.tx<{ id: string; number: number }[]>`
       select id, number from orders
-      where tenant_id = ${ctx.tenantId} and customer_phone = ${t.phone}
+      where tenant_id = ${ctx.tenantId} and customer_phone = any(${phoneKeys(t.phone)})
         and (${input.order ?? null}::int is null or number = ${input.order ?? null}::int)
       order by placed_at desc limit 1`;
     if (!o) throw new ToolError('Nenhum pedido anterior deste cliente com esse número.');
@@ -239,22 +265,11 @@ export const setFulfillmentTool = defineTool<
       delivery = { mode: 'delivery' };
       if (input.saved_address) {
         if (!t.phone) throw new ToolError('Sem endereços anteriores para este cliente.');
-        const rows = await ctx.tx<{ delivery: Record<string, unknown> }[]>`
-          select delivery from orders where tenant_id = ${ctx.tenantId} and customer_phone = ${t.phone}
-            and delivery ->> 'mode' = 'delivery' order by placed_at desc limit 30`;
-        const seen = new Set<string>();
-        const distinct = rows.filter((r) => {
-          const k = JSON.stringify([
-            r.delivery.street,
-            r.delivery.number,
-            r.delivery.address,
-            r.delivery.neighborhood,
-          ]);
-          if (seen.has(k)) return false;
-          seen.add(k);
-          return true;
-        });
-        const d = distinct[input.saved_address - 1]?.delivery;
+        // the rows the customer card numbered, so N is the address shown as N
+        const rows = await ctx.tx<{ delivery: Record<string, unknown> | null }[]>`
+          select delivery from orders where tenant_id = ${ctx.tenantId} and customer_phone = any(${phoneKeys(t.phone)})
+          order by placed_at desc limit 30`;
+        const d = savedAddresses(rows)[input.saved_address - 1]?.delivery;
         if (!d) throw new ToolError('Esse endereço salvo não existe.');
         for (const k of [
           'street',
@@ -307,7 +322,10 @@ export const setFulfillmentTool = defineTool<
       scheduledFor = input.scheduled_for;
     }
     const checkout = await saveCheckout(ctx, { ...t, cartId }, { scheduledFor });
-    if (delivery.mode === 'delivery' && !cart.delivery?.zoneId)
+    // with no pin yet, a location-priced store hasn't said no: that's not out-of-zone demand
+    const pinFirst =
+      delivery.mode === 'delivery' && delivery.lat == null && pack(ctx).fulfilment.needsPin;
+    if (delivery.mode === 'delivery' && !cart.delivery?.zoneId && !pinFirst)
       await ctx.tx`insert into vendedor_demand (tenant_id, kind, term)
         values (${ctx.tenantId}, 'out_of_zone', ${fold(delivery.neighborhood ?? delivery.cep ?? 'localização').slice(0, 80)})`;
     await ctx.tx`update shopper_threads set stage = 'building', updated_at = now() where id = ${t.id}`;
@@ -316,7 +334,7 @@ export const setFulfillmentTool = defineTool<
     const d = fresh?.delivery;
     let note = delivery.mode === 'pickup' ? 'Retirada na loja.' : '';
     if (d?.mode === 'delivery') {
-      if (!d.zoneId) note = 'Fora da área de entrega. Ofereça retirada.';
+      if (!d.zoneId) note = pinFirst ? askForPin(t) : 'Fora da área de entrega. Ofereça retirada.';
       else if (d.etaMin != null && d.etaMax != null) {
         ctx.figure('entrega.prazo', {
           value: [d.etaMin, d.etaMax],
@@ -353,18 +371,7 @@ export const setPaymentTool = defineTool<
       );
     const cart = await viewCart(ctx, t);
     const total = cart?.totals.totalCents ?? 0;
-    for (const g of p.guards) {
-      if (g.kind === 'cash_max' && method === 'cash' && total > g.cents) {
-        ctx.figure('regra.dinheiro_max', { value: g.cents, text: brl(g.cents), kind: 'money' });
-        throw new ToolError(
-          'Regra da loja: dinheiro só até {{regra.dinheiro_max}}. Ofereça outra forma.',
-        );
-      }
-      if (g.kind === 'pix_only_above' && method !== 'pix' && total > g.cents) {
-        ctx.figure('regra.pix_acima', { value: g.cents, text: brl(g.cents), kind: 'money' });
-        throw new ToolError('Regra da loja: acima de {{regra.pix_acima}} só Pix.');
-      }
-    }
+    checkPaymentGuards(ctx, method, total);
     const cancelled =
       (ctx.state.context.subject as { customer?: { cancelledRecently?: number } | null } | null)
         ?.customer?.cancelledRecently ?? 0;

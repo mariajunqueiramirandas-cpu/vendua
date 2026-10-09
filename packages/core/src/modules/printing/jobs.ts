@@ -4,7 +4,13 @@ import { log } from '../../platform/log.ts';
 import { planHas } from '../billing/plans.ts';
 import { loadOrderView } from '../orders.ts';
 import type { CodePage, Paper } from './escpos.ts';
-import { renderOrderTicket, renderTestTicket } from './ticket.ts';
+import type { CaixaDetail, TabDetail } from '../pdv/ledger.ts';
+import {
+  renderBillTicket,
+  renderCaixaTicket,
+  renderOrderTicket,
+  renderTestTicket,
+} from './ticket.ts';
 
 const printLog = log.child({ mod: 'printing' });
 
@@ -15,7 +21,12 @@ export const PRINT_CHANNEL = 'vendua_print';
 export const ONLINE_WINDOW_S = 70;
 /** a job handed to an agent that hasn't answered by now is handed over again */
 const RESEND_AFTER_S = 60;
-const MAX_ATTEMPTS = 5;
+/** a job is given up only when both hold: handed over this many times (an agent that was offline
+ *  gets it again on reconnect, it isn't failed for the time it was away) and unanswered this long
+ *  since it first reached the agent (more than its own retries and result reports take: it may sit
+ *  behind a slow printer, resends alone don't fail it) */
+const GIVE_UP_ATTEMPTS = 5;
+const GIVE_UP_AFTER_S = 15 * 60;
 const BATCH = 20;
 
 export type PrinterKind = 'spooler' | 'tcp' | 'serial' | 'usb' | 'bluetooth';
@@ -139,10 +150,12 @@ export async function queueJobsTx(
   tenantId: string,
   printerIds: string[],
   job: {
-    kind: 'order' | 'test';
+    kind: 'order' | 'test' | 'bill' | 'caixa';
     trigger: PrintTrigger | 'manual' | 'test';
     orderId?: string | null;
     requestedBy?: string | null;
+    /** bill | caixa: what to print, as Core computed it when it was asked for */
+    doc?: unknown;
   },
 ): Promise<string[]> {
   if (printerIds.length === 0) return [];
@@ -156,9 +169,9 @@ export async function queueJobsTx(
       delete from print_jobs where tenant_id = ${tenantId} and created_at < now() - interval '30 days'`;
   }
   const rows = await tx<{ id: string }[]>`
-    insert into print_jobs (tenant_id, printer_id, device_id, order_id, kind, trigger, requested_by)
+    insert into print_jobs (tenant_id, printer_id, device_id, order_id, kind, trigger, requested_by, doc)
     select ${tenantId}, p.id, p.device_id, ${job.orderId ?? null}, ${job.kind}, ${job.trigger},
-           ${job.requestedBy ?? null}
+           ${job.requestedBy ?? null}, ${job.doc === undefined ? null : tx.json(job.doc as never)}
     from printers p where p.tenant_id = ${tenantId} and p.id = any(${printerIds}::uuid[])
     on conflict (printer_id, order_id) where trigger in ('placed', 'confirmed') do nothing
     returning id`;
@@ -168,7 +181,9 @@ export async function queueJobsTx(
 /**
  * Queue this order's ticket on every automatic printer: on arrival when the store prints then,
  * and on accept always — an order that arrived before the store switched to "assim que chega"
- * still prints once, and one already printed on arrival is skipped by the unique index.
+ * still prints once, and one already printed on arrival is skipped by the unique index. A printer
+ * the agent's last report missed still gets it: a report can miss one that is there (a scan not
+ * done yet, a USB permission), and a ticket that never prints shows in printTrouble.
  * Call inside the tenant transaction that commits the step, after any Promise.all batch: it runs
  * in a savepoint and never throws, so a printing bug can't block an order.
  */
@@ -185,7 +200,7 @@ export async function enqueueOrderPrintTx(
       const printers = await sp<{ id: string }[]>`
         select p.id from printers p
         left join store_settings s on s.tenant_id = p.tenant_id
-        where p.tenant_id = ${tenantId} and p.auto and p.present
+        where p.tenant_id = ${tenantId} and p.auto
           and (${trigger} = 'confirmed' or coalesce(s.print_on, 'confirmed') = 'placed')`;
       if (printers.length === 0 || !(await planHas(sp, tenantId, 'printing'))) return 0;
       const ids = await queueJobsTx(
@@ -237,14 +252,19 @@ export async function claimDueJobsTx(
     update print_jobs set status = 'failed', finished_at = now(),
            error = 'O aparelho não confirmou a impressão'
     where tenant_id = ${tenantId} and device_id = ${deviceId} and status = 'sent'
-      and attempts >= ${MAX_ATTEMPTS}
-      and sent_at < now() - make_interval(secs => ${RESEND_AFTER_S})`;
+      and attempts >= ${GIVE_UP_ATTEMPTS}
+      and coalesce(first_sent_at, sent_at) < now() - make_interval(secs => ${GIVE_UP_AFTER_S})
+      and sent_at < now() - make_interval(secs => ${RESEND_AFTER_S})
+      -- a device that was away gets each one once more before its silence counts
+      and sent_at >= coalesce((select d.connected_at from print_devices d
+                               where d.tenant_id = ${tenantId} and d.id = ${deviceId}), '-infinity')`;
   const due = await tx<
     {
       id: string;
       printer_id: string;
       order_id: string | null;
-      kind: 'order' | 'test';
+      kind: 'order' | 'test' | 'bill' | 'caixa';
+      doc: unknown;
       created_at: Date;
       printer_name: string;
       paper: Paper;
@@ -253,7 +273,7 @@ export async function claimDueJobsTx(
       cut: boolean;
     }[]
   >`
-    select j.id, j.printer_id, j.order_id, j.kind, j.created_at,
+    select j.id, j.printer_id, j.order_id, j.kind, j.doc, j.created_at,
            coalesce(p.label, p.name) as printer_name, p.paper, p.codepage, p.copies, p.cut
     from print_jobs j join printers p on p.id = j.printer_id
     where j.tenant_id = ${tenantId} and j.device_id = ${deviceId}
@@ -274,15 +294,19 @@ export async function claimDueJobsTx(
     const opts = { paper: j.paper, codepage: j.codepage, copies: j.copies, cut: j.cut };
     try {
       const bytes =
-        j.kind === 'test' || !j.order_id
-          ? renderTestTicket(shop, { name: j.printer_name }, opts, now)
-          : renderOrderTicket(
-              await loadOrderView(tx, tenantId, j.order_id),
-              shop,
-              opts,
-              new Date(j.created_at),
-              now,
-            );
+        j.kind === 'bill' && j.doc
+          ? renderBillTicket(j.doc as TabDetail, shop, opts, new Date(j.created_at))
+          : j.kind === 'caixa' && j.doc
+            ? renderCaixaTicket(j.doc as CaixaDetail, shop, opts, new Date(j.created_at))
+            : j.kind === 'test' || !j.order_id
+              ? renderTestTicket(shop, { name: j.printer_name }, opts, now)
+              : renderOrderTicket(
+                  await loadOrderView(tx, tenantId, j.order_id),
+                  shop,
+                  opts,
+                  new Date(j.created_at),
+                  now,
+                );
       out.push({
         id: j.id,
         printerId: j.printer_id,
@@ -296,7 +320,8 @@ export async function claimDueJobsTx(
   }
   if (out.length > 0)
     await tx`
-      update print_jobs set status = 'sent', attempts = attempts + 1, sent_at = now()
+      update print_jobs set status = 'sent', attempts = attempts + 1, sent_at = now(),
+             first_sent_at = coalesce(first_sent_at, now())
       where tenant_id = ${tenantId} and id = any(${out.map((j) => j.id)}::uuid[])`;
   for (const b of broken)
     await tx`
@@ -305,21 +330,25 @@ export async function claimDueJobsTx(
   return out;
 }
 
-/** The agent's answer. A late "printed" still wins over expired/failed: the paper is out. */
+/**
+ * The agent's answer. A late "printed" still wins over expired/failed: the paper is out.
+ * Returns the order whose print status Início shows when this answer changes it (a failure, or
+ * a success after one), else null.
+ */
 export async function recordJobResultTx(
   tx: Sql,
   tenantId: string,
   deviceId: string,
   jobId: string,
   result: { ok: boolean; error: string | null },
-): Promise<void> {
-  const rows = await tx<{ printer_id: string; status: string }[]>`
-    select printer_id, status from print_jobs
+): Promise<string | null> {
+  const rows = await tx<{ printer_id: string; status: string; order_id: string | null }[]>`
+    select printer_id, status, order_id from print_jobs
     where tenant_id = ${tenantId} and id = ${jobId} and device_id = ${deviceId}
     for update`;
   const job = rows[0];
   if (!job) throw new HttpError(404, 'JOB_NOT_FOUND', 'job not found');
-  if (job.status === 'done') return;
+  if (job.status === 'done') return null;
   await tx`
     update print_jobs
     set status = ${result.ok ? 'done' : 'failed'}, finished_at = now(),
@@ -333,6 +362,93 @@ export async function recordJobResultTx(
     await tx`
       update printers set last_error = ${result.error}, last_error_at = now()
       where tenant_id = ${tenantId} and id = ${job.printer_id}`;
+  if (!job.order_id) return null;
+  if (!result.ok) return job.order_id;
+  const failed = await tx`
+    select 1 from print_jobs
+    where tenant_id = ${tenantId} and order_id = ${job.order_id} and status = 'failed' limit 1`;
+  return failed.length ? job.order_id : null;
+}
+
+export interface OrderPrintJob {
+  id: string;
+  status: 'pending' | 'sent' | 'done' | 'failed' | 'expired';
+  trigger: 'placed' | 'confirmed' | 'manual';
+  printerId: string;
+  printer: string;
+  device: string;
+  deviceOnline: boolean;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+/** One order's tickets, newest first: what the order screen says about printing. */
+export async function orderJobsTx(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+): Promise<OrderPrintJob[]> {
+  const rows = await tx<
+    (Omit<OrderPrintJob, 'createdAt' | 'finishedAt'> & {
+      createdAt: Date;
+      finishedAt: Date | null;
+    })[]
+  >`
+    select j.id, j.status, j.trigger, j.printer_id as "printerId",
+           coalesce(p.label, p.name) as printer, d.name as device,
+           coalesce(d.connected_at is not null
+                    and (d.disconnected_at is null or d.disconnected_at < d.connected_at)
+                    and d.last_seen_at > now() - make_interval(secs => ${ONLINE_WINDOW_S}), false)
+             as "deviceOnline",
+           j.error, j.created_at as "createdAt", j.finished_at as "finishedAt"
+    from print_jobs j
+      join printers p on p.id = j.printer_id
+      join print_devices d on d.id = j.device_id
+    where j.tenant_id = ${tenantId} and j.order_id = ${orderId} and j.kind = 'order'
+    order by j.created_at desc, j.id
+    limit 20`;
+  return rows.map((r) => ({
+    ...r,
+    createdAt: new Date(r.createdAt).toISOString(),
+    finishedAt: r.finishedAt ? new Date(r.finishedAt).toISOString() : null,
+  }));
+}
+
+/**
+ * Tickets that didn't come out lately for orders still on the board, and that no later ticket
+ * of the same order made up for: failed, or waiting minutes on a device that isn't there.
+ */
+export async function printTroubleTx(tx: Sql, tenantId: string) {
+  return tx<
+    {
+      orderId: string;
+      number: number;
+      printer: string;
+      error: string | null;
+      waiting: boolean;
+      at: Date;
+    }[]
+  >`
+    select j.order_id as "orderId", o.number, coalesce(p.label, p.name) as printer, j.error,
+           j.status <> 'failed' as waiting, coalesce(j.finished_at, j.created_at) as at
+    from print_jobs j
+      join orders o on o.tenant_id = j.tenant_id and o.id = j.order_id
+      join printers p on p.id = j.printer_id
+    where j.tenant_id = ${tenantId} and j.kind = 'order'
+      and o.state in ('placed', 'confirmed', 'preparing', 'ready', 'out_for_delivery')
+      and (
+        (j.status = 'failed' and j.finished_at > now() - interval '3 hours')
+        or (j.status in ('pending', 'sent') and j.created_at < now() - interval '3 minutes'
+            and j.expires_at > now())
+      )
+      and not exists (
+        select 1 from print_jobs k
+        where k.tenant_id = j.tenant_id and k.order_id = j.order_id and k.status = 'done'
+          and k.created_at > j.created_at
+      )
+    order by at desc
+    limit 10`;
 }
 
 export interface ReportedPrinter {

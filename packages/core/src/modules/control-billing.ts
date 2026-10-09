@@ -104,6 +104,13 @@ export function mountControlBilling(o: {
 
   app.get('/control/v1/billing/stores', async (c) => {
     controlGate(c);
+    // ?tenant=<uuid>: one store, for its detail page (the list stops at its cap)
+    const only = c.req.query('tenant') ?? null;
+    if (
+      only !== null &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(only)
+    )
+      throw new HttpError(400, 'BAD_REQUEST', 'tenant must be a store id', { field: 'tenant' });
     const stores = await controlTx(sql, async (tx) => {
       const rows = await tx<
         {
@@ -121,10 +128,19 @@ export function mountControlBilling(o: {
           cd_id: string | null;
           cd_host: string | null;
           cd_status: string | null;
+          cd_source: string | null;
+          cd_method: string | null;
+          do_id: string | null;
+          do_host: string | null;
+          do_status: string | null;
+          do_error: string | null;
           sr_id: string | null;
           sr_status: string | null;
           sr_brief: string | null;
           sr_note: string | null;
+          st_id: string | null;
+          st_status: string | null;
+          st_due: Date | null;
           inv_id: string | null;
           inv_number: number | null;
           inv_amount: number | null;
@@ -138,7 +154,11 @@ export function mountControlBilling(o: {
                s.trial_ends_at as sub_trial_end,
                pc.status as mp,
                cd.id as cd_id, cd.host as cd_host, cd.status as cd_status,
+               cd.source as cd_source, cd.method as cd_method,
+               dor.id as do_id, dor.host as do_host, dor.status as do_status,
+               dor.last_error as do_error,
                sr.id as sr_id, sr.status as sr_status, sr.brief as sr_brief, sr.staff_note as sr_note,
+               st.id as st_id, st.status as st_status, st.due_at as st_due,
                inv.id as inv_id, inv.number as inv_number, inv.amount_cents as inv_amount,
                inv.kind as inv_kind, inv.period_start as inv_start, inv.due_at as inv_due
         from tenants t
@@ -146,21 +166,37 @@ export function mountControlBilling(o: {
           left join subscriptions s on s.tenant_id = t.id
           left join payment_connections pc on pc.tenant_id = t.id
           left join lateral (
-            select id, host, status from custom_domains where tenant_id = t.id
+            select id, host, status, source, method from custom_domains
+            where tenant_id = t.id and status <> 'removing'
             order by created_at desc limit 1
           ) cd on true
+          left join lateral (
+            select id, host, status, last_error from domain_orders
+            where tenant_id = t.id and kind = 'register'
+              and (status in ('awaiting_payment', 'queued', 'pending', 'conflict', 'failed')
+                or updated_at > now() - interval '30 days')
+            order by (status in ('awaiting_payment', 'queued', 'pending', 'conflict', 'failed')) desc,
+              created_at desc
+            limit 1
+          ) dor on true
           left join lateral (
             select id, status, brief, staff_note from site_requests where tenant_id = t.id
             order by (status in ('requested', 'in_progress')) desc, created_at desc limit 1
           ) sr on true
+          -- the site builder's task: the live one, else the latest
+          left join lateral (
+            select id, status, due_at from site_tasks where tenant_id = t.id
+            order by (status not in ('delivered', 'cancelled')) desc, created_at desc limit 1
+          ) st on true
           -- the oldest plan invoice still to pay: the one "marcar como pago" settles next
           left join lateral (
             select id, number, amount_cents, kind, period_start, due_at from invoices
             where tenant_id = t.id and status in ('open', 'failed') and kind <> 'ai_pack'
             order by period_start, number limit 1
           ) inv on true
+        where ${only}::uuid is null or t.id = ${only}
         order by t.created_at desc
-        limit 500
+        limit 2000
       `;
       const out = [];
       for (const r of rows)
@@ -180,10 +216,22 @@ export function mountControlBilling(o: {
               }
             : null,
           mercadoPago: r.mp,
-          customDomain: r.cd_id ? { id: r.cd_id, host: r.cd_host, status: r.cd_status } : null,
+          customDomain: r.cd_id
+            ? {
+                id: r.cd_id,
+                host: r.cd_host,
+                status: r.cd_status,
+                source: r.cd_source,
+                method: r.cd_method,
+              }
+            : null,
+          domainOrder: r.do_id
+            ? { id: r.do_id, host: r.do_host, status: r.do_status, lastError: r.do_error }
+            : null,
           siteRequest: r.sr_id
             ? { id: r.sr_id, status: r.sr_status, brief: r.sr_brief, staffNote: r.sr_note }
             : null,
+          siteTask: r.st_id ? { id: r.st_id, status: r.st_status, dueAt: r.st_due } : null,
           openInvoice: r.inv_id
             ? {
                 id: r.inv_id,

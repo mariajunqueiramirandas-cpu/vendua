@@ -5,7 +5,7 @@ import type { Server } from 'bun';
 import { openArtifactStore, type ArtifactStore } from '../src/artifacts.ts';
 import type { FetchImpl, Route } from '../src/core.ts';
 import { createManifest, uploadRelease, type StorefrontManifest } from '../src/manifest.ts';
-import { createEdge, type Edge, type EdgeOptions } from '../src/server.ts';
+import { MAX_REQUEST_BODY_BYTES, createEdge, type Edge, type EdgeOptions } from '../src/server.ts';
 
 process.env.VENDUA_EDGE_QUIET = '1';
 
@@ -74,6 +74,8 @@ export interface FakeCore {
   url: string;
   server: Server<unknown>;
   routes: Map<string, Route['release'] | 'unknown'>;
+  /** host → the `redirect` its route carries (with its `routes` release, else null) */
+  redirects: Map<string, unknown>;
   states: Map<string, unknown>;
   /** `<host> <slug>` → the product Core serves, or a status code to answer with */
   products: Map<string, unknown>;
@@ -96,6 +98,7 @@ export function fakeCore(): FakeCore {
     url: '',
     server: null as unknown as Server<unknown>,
     routes: new Map(),
+    redirects: new Map(),
     states: new Map(),
     products: new Map(),
     productDelayMs: 0,
@@ -129,6 +132,14 @@ export function fakeCore(): FakeCore {
         core.calls.secrets.push(req.headers.get('x-vendua-edge') ?? '');
         if (req.headers.get('x-vendua-edge') !== SECRET)
           return Response.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
+        if (core.redirects.has(h))
+          return Response.json({
+            host: h,
+            tenant: { id: 't-1', slug: h.split('.')[0], status: 'active' },
+            primaryHost: h,
+            release: core.routes.get(h) ?? null,
+            redirect: core.redirects.get(h),
+          });
         const release = core.routes.get(h);
         if (release === undefined || release === 'unknown')
           return Response.json({ error: { code: 'UNKNOWN_HOST' } }, { status: 404 });
@@ -220,7 +231,12 @@ export async function harness(opts: Partial<EdgeOptions> = {}): Promise<Harness>
       ...o,
     });
   const serve = (edge: Edge) =>
-    Bun.serve({ port: 0, idleTimeout: 0, fetch: (req, srv) => edge.fetch(req, srv) });
+    Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
+      fetch: (req, srv) => edge.fetch(req, srv),
+    });
   const h: Harness = {
     core,
     store,

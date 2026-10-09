@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkCompat, type ArtifactManifest } from '@vendua/templates';
+import { parseOrDie } from './args.ts';
 import { control, coreOrigin } from './core.ts';
 import { select, type FleetStore } from './fleet.ts';
 import { die } from './paths.ts';
@@ -41,14 +42,18 @@ interface Row {
 }
 
 export async function cmdTrain(args: string[], root: string): Promise<never> {
-  const withCore = args.includes('--core');
-  const record = args.includes('--record');
-  const ri = args.indexOf('--report');
-  const reportFile = ri >= 0 ? args[ri + 1] : undefined;
-  const slugs = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--report');
+  const p = parseOrDie(
+    args,
+    { bool: ['--core', '--record', '--pending'], value: ['--report'] },
+    'train',
+  );
+  const withCore = p.has('--core');
+  const record = p.has('--record');
+  const reportFile = p.get('--report');
+  const slugs = p.positionals;
   // --pending: rebuild exactly the stores whose design data changed in Core
   // (token edits queue storefront.rebuild_requested), then acknowledge them
-  const pending = args.includes('--pending');
+  const pending = p.has('--pending');
   let queue: { tenant: string; id: number }[] = [];
   let stores: FleetStore[];
   try {

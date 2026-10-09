@@ -33,6 +33,7 @@ const cart: Cart = {
       productStatus: 'active',
       modifiers: [{ id: 'fx-mod', name: 'Calda extra', priceDeltaCents: 300, status: 'active' }],
       lineTotalCents: 4200,
+      note: 'Sem granulado',
     },
   ],
   totals: {
@@ -188,9 +189,46 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
     pending: false,
     onQty: noop,
     onRemove: noop,
+    onNote: noop,
+    noteMax: 140,
   },
   'order.StatusPage': { order, currency: 'BRL', timeline: <ol />, timeZone },
   'order.Timeline': { events: order.timeline, timeZone },
+  'order.TrackingPage': {
+    order: {
+      statusOnly: true,
+      id: order.id,
+      number: 42,
+      state: 'preparing',
+      storeName: 'Quero Pudim',
+      delivery: {
+        mode: 'delivery',
+        promisedFrom: '2026-09-26T15:40:00Z',
+        promisedTo: '2026-09-26T15:55:00Z',
+        etaMin: 30,
+        etaMax: 50,
+      },
+      scheduledFor: null,
+      placedAt: '2026-09-26T15:00:00Z',
+      updatedAt: '2026-09-26T15:05:00Z',
+      version: 2,
+      timeline: [
+        { at: '2026-09-26T15:00:00Z', to: 'placed' },
+        { at: '2026-09-26T15:05:00Z', to: 'preparing' },
+      ],
+      items: [
+        {
+          name: 'Pudim tradicional',
+          qty: 2,
+          modifiers: [{ name: 'Calda extra', qty: 1 }],
+          combo: [],
+          note: 'Sem granulado',
+        },
+      ],
+    },
+    timeline: <ol />,
+    timeZone,
+  },
   'store.HoursTable': {
     hours: {
       timezone: 'America/Sao_Paulo',

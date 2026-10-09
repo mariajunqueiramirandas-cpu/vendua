@@ -269,7 +269,8 @@ describe('document title per page', () => {
       },
     });
     m = await mount({ path: `/pedido/${id}` });
-    expect(document.title).toBe('Pedido #42 · Loja Teste');
+    // Kernel 1.21: the state rides in the tab title
+    expect(document.title).toBe('Pedido #42 · Recebido · Loja Teste');
   });
 });
 

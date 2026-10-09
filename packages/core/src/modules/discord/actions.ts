@@ -2,10 +2,11 @@ import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
 import { completeTask } from '../activities.ts';
-import { controlTx } from '../control.ts';
+import { claimControl, controlTx } from '../control.ts';
+import { emitControlEvent } from '../control-events.ts';
 import { ackIncident } from '../fleet/incidents.ts';
-import { updateLead } from '../leads.ts';
-import { recordStaffEvent } from '../staff-events.ts';
+import { updateLeadTx } from '../leads.ts';
+import { recordStaffEventTx } from '../staff-events.ts';
 import { approveMessage, rejectMessage } from '../threads.ts';
 import { pendingView, say, type CommandCtx, type InteractionResponse } from './commands.ts';
 import { renderAnchor } from './deliver.ts';
@@ -97,13 +98,17 @@ export async function runAction(
       if (!task) return say(REASONS.TASK_NOT_FOUND!);
       if (task.done_at) return after(c, click, `handoff:${id}`);
       if (action === 'take') {
-        await updateLead(c.sql, task.lead_id, { owner: by.slice(0, 80) }, key, 'staff');
-        await recordStaffEvent(
-          c.sql,
-          'handoff.taken',
-          { taskId: id, leadId: task.lead_id, by },
-          { dedupeKey: `handoff.taken:${id}:${click.interactionId}` },
-        );
+        const res = await claimControl(c.sql, key, async (tx) => {
+          const lead = await updateLeadTx(tx, task.lead_id, { owner: by.slice(0, 80) }, 'staff');
+          await recordStaffEventTx(
+            tx,
+            'handoff.taken',
+            { taskId: id, leadId: task.lead_id, by },
+            { dedupeKey: `handoff.taken:${id}:${click.interactionId}` },
+          );
+          return { status: 200, body: { lead } };
+        });
+        if (!res.replayed) emitControlEvent('lead.change', task.lead_id);
       } else if (action === 'done') {
         await completeTask(c.sql, id, true, key, by);
       }

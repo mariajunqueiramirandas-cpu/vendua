@@ -6,7 +6,12 @@ import {
   Receipt,
   SpeakerSimpleSlash,
 } from '@phosphor-icons/react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+  type QueryClient,
+} from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { prevIs } from '../../app/Router.tsx';
@@ -14,6 +19,7 @@ import {
   ApiError,
   api,
   type ThreadDetail,
+  type ThreadList,
   type ThreadMessage,
   type ThreadRow,
   type VendedorHome,
@@ -28,8 +34,16 @@ import { Notice } from '../../ui/Notice.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { Bone } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { FloorChip, Floor, ReasonChip, SACOLA_STEPS, SacolaBar } from '../../ui/vendedor/index.ts';
-import { money } from '../../lib/format.ts';
+import {
+  ClassChip,
+  FloorChip,
+  Floor,
+  ReasonChip,
+  SACOLA_STEPS,
+  SacolaBar,
+  triaged,
+} from '../../ui/vendedor/index.ts';
+import { money, until } from '../../lib/format.ts';
 import {
   CustomerFacts,
   Initials,
@@ -42,6 +56,8 @@ import {
   whyTitle,
   type Outgoing,
 } from './Conversation.parts.tsx';
+import { TriageFloor, WhyShopper, type ClassifyAs } from './Conversation.triage.tsx';
+import { QuickRepliesSheet } from './QuickReplies.tsx';
 
 const DESKTOP = '(min-width: 1200px)';
 
@@ -55,6 +71,52 @@ export function useMedia(q: string) {
     return () => mq.removeEventListener('change', on);
   }, [q]);
   return m;
+}
+
+const LISTS = ['vendedor', 'threads'] as const;
+
+/** the row as the conversation list last had it, from any of its cached filters */
+function listRow(qc: QueryClient, id: string): ThreadRow | undefined {
+  for (const [, data] of qc.getQueriesData<InfiniteData<ThreadList>>({ queryKey: LISTS }))
+    for (const page of data?.pages ?? []) {
+      const r = page.threads.find((t) => t.id === id);
+      if (r) return r;
+    }
+  return undefined;
+}
+
+function markRead(qc: QueryClient, id: string) {
+  qc.setQueriesData<InfiniteData<ThreadList>>({ queryKey: LISTS }, (old) =>
+    old
+      ? {
+          ...old,
+          pages: old.pages.map((p) => ({
+            ...p,
+            threads: p.threads.map((t) => (t.id === id && t.unread ? { ...t, unread: false } : t)),
+          })),
+        }
+      : old,
+  );
+}
+
+/**
+ * Opening a conversation reads it (Core's `seen_at`): its row stops being bold. A shopper message
+ * that arrives while it's open is read too. One call per new message, none for a read thread.
+ */
+function useMarkRead(id: string, d: ThreadDetail | undefined) {
+  const qc = useQueryClient();
+  const lastIn = d
+    ? ([...d.messages].reverse().find((m) => m.author === 'shopper')?.id ?? null)
+    : null;
+  const done = useRef<string | null>(null);
+  useEffect(() => {
+    if (!d || d.thread.test || !lastIn || done.current === lastIn) return;
+    const first = done.current === null;
+    done.current = lastIn;
+    if (first && listRow(qc, id)?.unread === false) return;
+    markRead(qc, id);
+    api.vendedor.seen(id).catch(() => undefined);
+  }, [qc, id, d, lastIn]);
 }
 
 /** `/vendedor/conversas/:id`: on phones its own screen; from 1200 px it opens in the inbox. */
@@ -96,8 +158,10 @@ export function ConversationPane({
   const [outgoing, setOutgoing] = useState<Outgoing[]>([]);
   const [why, setWhy] = useState<ThreadMessage | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
-  const [sheet, setSheet] = useState<'sacola' | 'customer' | null>(null);
+  const [sheet, setSheet] = useState<'sacola' | 'customer' | 'quick' | null>(null);
+  const [prefill, setPrefill] = useState<{ text: string; n: number }>();
   useFollow(embedded ? scroller : null, (d?.messages.length ?? 0) + outgoing.length, !!d);
+  useMarkRead(id, d);
 
   const put = (next: ThreadDetail) => {
     qc.setQueryData(qk.vendedor.thread(id), next);
@@ -135,10 +199,29 @@ export function ConversationPane({
     },
     onError: fail,
   });
-  const reply = useMutation({ mutationFn: (text: string) => api.vendedor.reply(id, text) });
-  const send = (text: string, key = `${Date.now()}-${Math.random()}`) => {
+  const classify = useMutation({
+    mutationFn: (as: ClassifyAs) => api.vendedor.classify(id, as),
+    onSuccess: (r, as) => {
+      if (r && 'thread' in r) put(r);
+      else {
+        void qc.invalidateQueries({ queryKey: qk.vendedor.thread(id) });
+        void qc.invalidateQueries({ queryKey: ['vendedor', 'threads'] });
+      }
+      toast(
+        as === 'shopper'
+          ? 'Marcado como cliente. O Duá atende este contato.'
+          : 'Marcado como pessoal. O Duá não responde este contato.',
+      );
+    },
+    onError: fail,
+  });
+  const reply = useMutation({
+    mutationFn: (v: { text: string; key: string }) => api.vendedor.reply(id, v.text, v.key),
+  });
+  // the bubble's key is the request's: a retried bubble that reached Core is replayed, not resent
+  const send = (text: string, key: string = crypto.randomUUID()) => {
     setOutgoing((o) => [...o.filter((x) => x.key !== key), { key, text, failed: false }]);
-    reply.mutateAsync(text).then(
+    reply.mutateAsync({ text, key }).then(
       (r) => {
         put(r);
         setOutgoing((o) => o.filter((x) => x.key !== key));
@@ -205,7 +288,9 @@ export function ConversationPane({
               <FloorChip floor={t.floor} waiting />
               {t.reason ? <ReasonChip reason={t.reason} /> : null}
             </span>
-          ) : t.test ? null : (
+          ) : t.test ? null : triaged(t.class) ? (
+            <ClassChip cls={t.class} />
+          ) : (
             <FloorChip floor={t.floor} />
           )
         ) : null
@@ -245,6 +330,13 @@ export function ConversationPane({
             Um cliente de teste falando com o Duá. Nada daqui foi para a cozinha.
           </Notice>
         ) : null}
+        {d.thread.test ? null : (
+          <WhyShopper
+            t={d.thread}
+            onPersonal={() => classify.mutate('personal')}
+            busy={classify.isPending && classify.variables === 'personal'}
+          />
+        )}
         {d.messages.length ? (
           <ThreadMessages
             detail={d}
@@ -271,7 +363,11 @@ export function ConversationPane({
         sending={reply.isPending}
         onUnmute={() => unmute.mutate()}
         unmuting={unmute.isPending}
+        onClassify={(as) => classify.mutate(as)}
+        classifying={classify.isPending ? (classify.variables ?? null) : null}
         keys={keys}
+        onQuick={() => setSheet('quick')}
+        prefill={prefill}
       />
     ) : null;
 
@@ -337,6 +433,11 @@ export function ConversationPane({
       >
         <CustomerFacts detail={d} />
       </Sheet>
+      <QuickRepliesSheet
+        open={sheet === 'quick'}
+        onOpenChange={(o) => setSheet(o ? 'quick' : null)}
+        onPick={(text) => setPrefill((p) => ({ text, n: (p?.n ?? 0) + 1 }))}
+      />
       {!rail ? (
         <Sheet open={whyOpen} onOpenChange={setWhyOpen} title={whyTitle(why)}>
           {why ? <WhyBody threadId={id} message={why} /> : null}
@@ -456,7 +557,11 @@ function FloorFor({
   sending,
   onUnmute,
   unmuting,
+  onClassify,
+  classifying,
   keys,
+  onQuick,
+  prefill,
 }: {
   d: ThreadDetail;
   onTake: () => void;
@@ -466,11 +571,16 @@ function FloorFor({
   sending: boolean;
   onUnmute: () => void;
   unmuting: boolean;
+  onClassify: (as: ClassifyAs) => void;
+  classifying: ClassifyAs | null;
   keys?: boolean | undefined;
+  onQuick: () => void;
+  prefill: { text: string; n: number } | undefined;
 }) {
   const qc = useQueryClient();
   const t = d.thread;
-  const owner = t.floor !== 'agent' && t.floor !== 'muted';
+  // a contact Duá stays out of gets no suggested replies: each ask is a model call
+  const owner = t.floor !== 'agent' && t.floor !== 'muted' && !triaged(t.class);
   const suggestions = useSuggestions(d, owner);
   if (t.floor === 'muted')
     return (
@@ -485,22 +595,28 @@ function FloorFor({
         </Button>
       </section>
     );
+  if (triaged(t.class) && t.channel === 'whatsapp')
+    return <TriageFloor t={t} onClassify={onClassify} busy={classifying} />;
   if (t.floor === 'agent') return <Floor variant="agent" onTake={onTake} busy={busy} keys={keys} />;
   const slow = qc.getQueryData<VendedorHome>(qk.vendedor.home)?.agent.slowAfterMin;
   const hint =
-    t.floor === 'rehearsal'
-      ? 'O Duá está em ensaio: escreve o que diria, sem mandar.'
-      : t.floor === 'wait'
-        ? slow
-          ? `Se ninguém responder em ${slow} min, o Duá entra.`
-          : 'Se ninguém responder logo, o Duá entra.'
-        : t.floor === 'off'
-          ? t.class === 'other'
-            ? 'Número em “outros”: o Duá não responde.'
-            : 'O Duá está desligado. Quem responde é você.'
-          : t.owner !== 'human'
-            ? 'Com a loja aberta, quem responde é você. O Duá atende quando a loja fecha.'
-            : null;
+    t.floor === 'paused'
+      ? d.pausedUntil
+        ? `O Duá está pausado e volta sozinho ${until(d.pausedUntil)}.`
+        : 'O Duá está pausado.'
+      : t.floor === 'rehearsal'
+        ? 'O Duá está em ensaio: escreve o que diria, sem mandar.'
+        : t.floor === 'wait'
+          ? slow
+            ? `Se ninguém responder em ${slow} min, o Duá entra.`
+            : 'Se ninguém responder logo, o Duá entra.'
+          : t.floor === 'off'
+            ? t.class === 'other'
+              ? 'Número em “outros”: o Duá não responde.'
+              : 'O Duá está desligado. Quem responde é você.'
+            : t.owner !== 'human'
+              ? 'Com a loja aberta, quem responde é você. O Duá atende quando a loja fecha.'
+              : null;
   return (
     <Floor
       variant="owner"
@@ -517,6 +633,8 @@ function FloorFor({
       sending={sending}
       silenceMin={t.owner === 'human' && t.floor === 'store' ? d.humanSilenceMin : undefined}
       keys={keys}
+      onQuick={onQuick}
+      prefill={prefill}
     />
   );
 }

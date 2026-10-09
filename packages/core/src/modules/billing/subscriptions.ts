@@ -3,7 +3,6 @@ import { emitAdminTx } from '../../admin/live.ts';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { recordStaffEventTx, type StaffEventMap } from '../staff-events.ts';
-import { notifyStaff, type StaffNotice } from '../staff.ts';
 import {
   ProviderError,
   type PaymentProvider,
@@ -13,8 +12,9 @@ import {
   billingLog,
   DAY_MS,
   hookUrl,
+  documentRequired,
   issuePix,
-  payerEmailFor,
+  payerFor,
   pixIsLive,
   supersedePix,
   upsertInvoice,
@@ -71,6 +71,8 @@ export interface SubRow {
   provider_subscription_id: string | null;
   checkout_url: string | null;
   payer_email: string | null;
+  /** CPF (11 digits) or CNPJ (14), normalized */
+  payer_document: string | null;
   current_period_start: Date | null;
   current_period_end: Date | null;
   cancel_at_period_end: boolean;
@@ -92,12 +94,9 @@ export interface BillingCtx {
   origin: string | null;
   /** side effects that must not run inside the tx (staff messages) */
   later: (fn: () => Promise<unknown>) => void;
+  /** the owner's MP device id (the admin's x-vendua-device); none in jobs, webhooks and the CRM */
+  deviceId?: string | null;
 }
-
-/** Tests swap this to see staff notices; production goes through notifyStaff. */
-export const billingStaff = {
-  notify: (sql: Sql, notice: StaffNotice): Promise<unknown> => notifyStaff(sql, null, notice),
-};
 
 async function storeName(tx: Sql, tenantId: string) {
   return (
@@ -121,26 +120,29 @@ export async function recordManualInvoice(tx: Sql, inv: InvoiceRow, planName: st
   );
 }
 
-/** One event per `key` (an invoice, a period, a payment): a replay or a sweep adds nothing. */
+/** One event per `key` (an invoice, a period, a payment): a replay or a sweep adds nothing.
+ *  `title` names the case when the problem kind alone is too broad (a Pix paid twice). */
 export async function recordBillingProblem(
   tx: Sql,
   tenantId: string,
   problem: StaffEventMap['billing.problem']['problem'],
   detail: string,
   key: string,
+  title?: string,
 ) {
   await recordStaffEventTx(
     tx,
     'billing.problem',
-    { storeName: await storeName(tx, tenantId), problem, detail },
+    { storeName: await storeName(tx, tenantId), problem, detail, ...(title ? { title } : {}) },
     { tenantId, dedupeKey: `billing.problem:${tenantId}:${problem}:${key}` },
   );
 }
 
-/** `later` for request paths: after the handler returns (its tx commits right after). */
-export const afterResponse = (fn: () => Promise<unknown>) => {
-  setTimeout(() => void fn().catch((err) => billingLog.warn({ err }, 'billing effect failed')), 0);
-};
+/** Queued effects, in order; one failing never stops the rest. Only ever after the tx committed. */
+export async function runEffects(effects: (() => Promise<unknown>)[]) {
+  for (const fn of effects)
+    await fn().catch((err) => billingLog.warn({ err }, 'billing effect failed'));
+}
 
 /** Run `work`, then its queued effects — for webhooks, jobs and signup (we own the tx). */
 export async function withEffects<T>(
@@ -149,8 +151,7 @@ export async function withEffects<T>(
 ): Promise<T> {
   const effects: (() => Promise<unknown>)[] = [];
   const out = await work({ ...base, later: (fn) => void effects.push(fn) });
-  for (const fn of effects)
-    await fn().catch((err) => billingLog.warn({ err }, 'billing effect failed'));
+  await runEffects(effects);
   return out;
 }
 
@@ -202,6 +203,7 @@ export async function startSubscription(
     plan: PlanRow;
     method: BillingMethod;
     payerEmail: string | null;
+    payerDocument?: string | null | undefined;
     key: string;
     now: Date;
     manual?: boolean;
@@ -213,12 +215,16 @@ export async function startSubscription(
   // a restart never carries the old preapproval, period or pending downgrade
   const sub = (
     await tx<SubRow[]>`
-      insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email)
-      values (${tenantId}, ${o.plan.id}, ${o.method}, 'pending', ${ctx.provider.name}, ${o.payerEmail})
+      insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email,
+                                 payer_document)
+      values (${tenantId}, ${o.plan.id}, ${o.method}, 'pending', ${ctx.provider.name}, ${o.payerEmail},
+              ${o.payerDocument ?? null})
       on conflict (tenant_id) do update set
         plan_id = excluded.plan_id, pending_plan_id = null, method = excluded.method,
         status = 'pending', provider = excluded.provider, provider_subscription_id = null,
-        checkout_url = null, payer_email = excluded.payer_email, current_period_start = null,
+        checkout_url = null, payer_email = excluded.payer_email,
+        payer_document = coalesce(excluded.payer_document, subscriptions.payer_document),
+        current_period_start = null,
         current_period_end = null, cancel_at_period_end = false, upgrade_plan_id = null,
         upgrade_invoice_id = null, updated_at = now(), status_changed_at = now()
       returning *
@@ -240,15 +246,23 @@ export async function startSubscription(
 export async function startTrial(
   tx: Sql,
   tenantId: string,
-  o: { plan: PlanRow; payerEmail: string | null; provider: string; now: Date; phone: string },
+  o: {
+    plan: PlanRow;
+    payerEmail: string | null;
+    payerDocument: string | null;
+    provider: string;
+    now: Date;
+    phone: string;
+  },
 ): Promise<PayNext> {
   const endsAt = new Date(o.now.getTime() + o.plan.trial_days * DAY_MS);
   // trial_phone: the phone that took it keeps it taken, whatever its role in the store becomes
   await tx`
     insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email,
-                               current_period_start, current_period_end, trial_ends_at, trial_phone)
+                               payer_document, current_period_start, current_period_end,
+                               trial_ends_at, trial_phone)
     values (${tenantId}, ${o.plan.id}, 'pix', 'trialing', ${o.provider}, ${o.payerEmail},
-            ${o.now}, ${endsAt}, ${endsAt}, ${o.phone})
+            ${o.payerDocument}, ${o.now}, ${endsAt}, ${endsAt}, ${o.phone})
   `;
   await setTenantPlan(tx, tenantId, o.plan.id);
   await releaseHold(tx, tenantId);
@@ -271,8 +285,8 @@ export async function beginPayment(
   o: { manual?: boolean | undefined } = {},
 ): Promise<PayNext> {
   const plan = await planOrThrow(tx, sub.plan_id);
-  const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
-  if (!payerEmail)
+  const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
+  if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
@@ -299,21 +313,24 @@ export async function beginPayment(
       await recordManualInvoice(tx, inv, plan.name);
       return { kind: 'manual', invoiceId: inv.id };
     }
-    if (!pixIsLive(inv, now))
+    if (!pixIsLive(inv, now)) {
+      if (!payer.document) throw documentRequired();
       inv = await viaProvider(() =>
         issuePix(tx, ctx.provider, inv, {
-          payerEmail,
+          payer,
           planName: plan.name,
           origin: ctx.origin,
+          deviceId: ctx.deviceId ?? null,
           now,
           drop: dropPix(ctx),
         }),
       );
+    }
     return { kind: 'pix', invoiceId: inv.id };
   }
   if (sub.checkout_url && sub.provider_subscription_id)
     return { kind: 'card', url: sub.checkout_url };
-  const url = await createPreapproval(ctx, tx, sub, plan, payerEmail, key);
+  const url = await createPreapproval(ctx, tx, sub, plan, payer.email, key);
   return { kind: 'card', url };
 }
 
@@ -370,6 +387,16 @@ export async function setChargeAmount(ctx: BillingCtx, tx: Sql, sub: SubRow, cen
   await tx`update subscriptions set charge_cents = ${cents} where tenant_id = ${sub.tenant_id}`;
 }
 
+/** A voided invoice's Pix is withdrawn too: paid late, it would only reach the team. */
+export async function voidUnpaidTx(ctx: BillingCtx, tx: Sql, tenantId: string) {
+  const rows = await tx<{ method: string; provider_payment_id: string | null }[]>`
+    update invoices set status = 'void' where tenant_id = ${tenantId} and status in ('open', 'failed')
+    returning method, provider_payment_id
+  `;
+  for (const r of rows)
+    if (r.method === 'pix' && r.provider_payment_id) dropPix(ctx)(r.provider_payment_id);
+}
+
 export const dropPix =
   (ctx: BillingCtx): DropPix =>
   (id) =>
@@ -424,12 +451,14 @@ export async function ensureRenewal(
     dueAt: sub.current_period_end,
   });
   if (o.issue !== false && inv.status === 'open' && !pixIsLive(inv, now)) {
-    const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
-    if (payerEmail)
+    const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
+    // no CPF/CNPJ yet: the invoice waits open, without its Pix, until the owner adds one
+    if (payer?.document)
       inv = await issuePix(tx, ctx.provider, inv, {
-        payerEmail,
+        payer,
         planName: plan.name,
         origin: ctx.origin,
+        deviceId: ctx.deviceId ?? null,
         now,
         drop: dropPix(ctx),
       });
@@ -444,6 +473,7 @@ export async function reissuePix(
   tenantId: string,
   invoiceId: string,
   now: Date,
+  o: { force?: boolean } = {},
 ) {
   const sub = await lockSub(tx, tenantId);
   const inv = (
@@ -458,12 +488,13 @@ export async function reissuePix(
     (inv.kind === 'upgrade' && (!sub || !upgradeLive(sub, inv, now)))
   )
     throw new HttpError(409, 'INVOICE_NOT_OPEN', 'only an open Pix invoice gets a new Pix');
-  if (pixIsLive(inv, now)) return inv;
-  const payerEmail = await payerEmailFor(tx, tenantId, sub?.payer_email);
-  if (!payerEmail)
+  if (pixIsLive(inv, now) && !o.force) return inv;
+  const payer = await payerFor(tx, tenantId, sub?.payer_email);
+  if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
+  if (!payer.document) throw documentRequired();
   // a pack's Pix keeps the pack's description, not the plan's month
   const label =
     inv.kind === 'ai_pack'
@@ -471,15 +502,45 @@ export async function reissuePix(
       : (await planOrThrow(tx, inv.plan_id)).name;
   const out = await viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
-      payerEmail,
+      payer,
       planName: label,
       origin: ctx.origin,
+      deviceId: ctx.deviceId ?? null,
       now,
       drop: dropPix(ctx),
     }),
   );
   await emitAdminTx(tx, tenantId, 'billing');
   return out;
+}
+
+/**
+ * The payer's CPF/CNPJ just changed: a renewal held for want of one gets its Pix, and a live Pix
+ * is replaced (MP scores the payer's document when the money arrives). MP down keeps what there
+ * was; the next Pix carries it.
+ */
+export async function reissueOpenPix(ctx: BillingCtx, tx: Sql, tenantId: string, now: Date) {
+  const open = await tx<{ id: string }[]>`
+    select i.id from invoices i join subscriptions s on s.tenant_id = i.tenant_id
+    where i.tenant_id = ${tenantId} and i.status = 'open' and i.method = 'pix'
+      and ((i.pix_copy_paste is not null and i.pix_expires_at > ${now})
+        -- a renewal held for want of one; a first charge (an access code's is the team's) and an
+        -- unpaid pack stay as they were: nobody asked for their Pix
+        or (i.kind = 'period' and s.status in ('active', 'past_due', 'trialing')))
+  `;
+  for (const { id } of open)
+    await reissuePix(ctx, tx, tenantId, id, now, { force: true }).catch((err: unknown) => {
+      // all three throw before anything is written: the transaction goes on, and the saved
+      // document reaches the next Pix
+      if (
+        err instanceof HttpError &&
+        (err.code === 'BILLING_PROVIDER_ERROR' ||
+          err.code === 'INVOICE_NOT_OPEN' ||
+          err.code === 'PAYER_EMAIL_REQUIRED')
+      )
+        return;
+      throw err;
+    });
 }
 
 // ── changing ────────────────────────────────────────────────────────────────
@@ -511,13 +572,14 @@ async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow
       reuse: inv,
     });
     if (hadPix && next.method === 'pix') {
-      const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
-      if (payerEmail)
+      const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
+      if (payer?.document)
         next = await viaProvider(() =>
           issuePix(tx, ctx.provider, next, {
-            payerEmail,
+            payer,
             planName: plan.name,
             origin: ctx.origin,
+            deviceId: ctx.deviceId ?? null,
             now,
             drop: dropPix(ctx),
           }),
@@ -569,17 +631,19 @@ export async function cancelPendingUpgrade(ctx: BillingCtx, tx: Sql, sub: SubRow
 }
 
 async function upgradePix(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceRow, now: Date) {
-  const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
-  if (!payerEmail)
+  const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
+  if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
+  if (!payer.document) throw documentRequired();
   const plan = await planOrThrow(tx, inv.plan_id);
   return viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
-      payerEmail,
+      payer,
       planName: plan.name,
       origin: ctx.origin,
+      deviceId: ctx.deviceId ?? null,
       now,
       drop: dropPix(ctx),
     }),
@@ -615,12 +679,13 @@ async function startUpgrade(
       pending_plan_id = null, pending_plan_at = null, updated_at = now()
     where tenant_id = ${sub.tenant_id}
   `;
-  // a downgrade that was waiting is dropped: the next charge is the current plan again
-  if (sub.pending_plan_id) {
-    await setChargeAmount(ctx, tx, sub, current.price_cents);
-    await repriceAhead(ctx, tx, { ...sub, pending_plan_id: null }, current, now);
-  }
   await upgradePix(ctx, tx, sub, inv, now);
+  // a downgrade that was waiting is dropped: the next charge is the current plan again. The
+  // assinatura's new amount goes last: a rollback after it would leave MP charging it unseen.
+  if (sub.pending_plan_id) {
+    await repriceAhead(ctx, tx, { ...sub, pending_plan_id: null }, current, now);
+    await setChargeAmount(ctx, tx, sub, current.price_cents);
+  }
 }
 
 export interface AiPackRow {
@@ -721,16 +786,18 @@ async function packPix(
   pack: AiPackRow,
   now: Date,
 ) {
-  const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
-  if (!payerEmail)
+  const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
+  if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
       field: 'payerEmail',
     });
+  if (!payer.document) throw documentRequired();
   return viaProvider(() =>
     issuePix(tx, ctx.provider, inv, {
-      payerEmail,
+      payer,
       planName: `Duá ${pack.name}`,
       origin: ctx.origin,
+      deviceId: ctx.deviceId ?? null,
       now,
       drop: dropPix(ctx),
     }),
@@ -790,6 +857,7 @@ export async function changeSubscription(
     plan?: PlanRow | undefined;
     method?: BillingMethod | undefined;
     payerEmail?: string | undefined;
+    payerDocument?: string | undefined;
     key: string;
     now: Date;
   },
@@ -802,6 +870,11 @@ export async function changeSubscription(
 
   if (o.payerEmail !== undefined && o.payerEmail !== sub.payer_email) {
     await tx`update subscriptions set payer_email = ${o.payerEmail}, updated_at = now() where tenant_id = ${tenantId}`;
+    await reload();
+  }
+  if (o.payerDocument !== undefined && o.payerDocument !== sub.payer_document) {
+    await tx`update subscriptions set payer_document = ${o.payerDocument}, updated_at = now() where tenant_id = ${tenantId}`;
+    await reissueOpenPix(ctx, tx, tenantId, o.now);
     await reload();
   }
 
@@ -820,7 +893,10 @@ export async function changeSubscription(
   if (o.plan && !upgradeWaits && o.plan.id !== chargePlanId(sub)) {
     const target = o.plan;
     const current = await planOrThrow(tx, sub.plan_id);
-    const card = sub.method === 'card' && sub.provider_subscription_id;
+    // a card this same request drops for Pix isn't re-priced at MP: if the switch then fails, the
+    // rollback can't take back an amount MP already holds
+    const card =
+      sub.method === 'card' && sub.provider_subscription_id && (!o.method || o.method === 'card');
     const unpaid = sub.status === 'pending' || sub.status === 'trialing';
     const upgradeCents =
       !unpaid && sub.current_period_end && target.price_cents > current.price_cents
@@ -863,6 +939,14 @@ export async function changeSubscription(
   }
 
   if (o.method && o.method !== sub.method) {
+    // a pending plan's first Pix goes out with this switch: refuse it before MP drops the card,
+    // which no rollback brings back
+    if (
+      o.method === 'pix' &&
+      sub.status === 'pending' &&
+      !(await payerFor(tx, tenantId, sub.payer_email))?.document
+    )
+      throw documentRequired();
     const oldPreapproval = sub.method === 'card' ? sub.provider_subscription_id : null;
     await tx`
       update subscriptions set method = ${o.method}, provider_subscription_id = null,
@@ -871,7 +955,6 @@ export async function changeSubscription(
     `;
     await reload();
     if (o.method === 'pix') {
-      await viaProvider(() => stopPreapproval(ctx, oldPreapproval, 'cancelled'));
       // unpaid card charges become the Pix invoice for the same period
       for (const inv of await unpaidAhead(tx, sub))
         await tx`
@@ -880,6 +963,8 @@ export async function changeSubscription(
         `;
       if (sub.status === 'pending') await beginPayment(ctx, tx, sub, o.key, o.now);
       else await viaProvider(() => ensureRenewal(ctx, tx, sub!, o.now));
+      // last: no rollback brings a cancelled card back, so the Pix that replaces it goes out first
+      await viaProvider(() => stopPreapproval(ctx, oldPreapproval, 'cancelled'));
     } else {
       // the card takes over: an unpaid Pix is withdrawn (one paid meanwhile still counts)
       for (const inv of await unpaidAhead(tx, sub)) {
@@ -890,12 +975,12 @@ export async function changeSubscription(
         `;
       }
       const plan = await planOrThrow(tx, chargePlanId(sub));
-      const payerEmail = await payerEmailFor(tx, tenantId, sub.payer_email);
-      if (!payerEmail)
+      const payer = await payerFor(tx, tenantId, sub.payer_email);
+      if (!payer)
         throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
           field: 'payerEmail',
         });
-      await createPreapproval(ctx, tx, sub, plan, payerEmail, o.key);
+      await createPreapproval(ctx, tx, sub, plan, payer.email, o.key);
     }
   }
   await emitAdminTx(tx, tenantId, 'billing');
@@ -913,7 +998,7 @@ export async function cancelSubscription(ctx: BillingCtx, tx: Sql, tenantId: str
         checkout_url = null, updated_at = now(), status_changed_at = now()
       where tenant_id = ${tenantId}
     `;
-    await tx`update invoices set status = 'void' where tenant_id = ${tenantId} and status in ('open', 'failed')`;
+    await voidUnpaidTx(ctx, tx, tenantId);
     if (sub.method === 'card')
       await viaProvider(() => stopPreapproval(ctx, sub.provider_subscription_id, 'cancelled'));
     await noticeCancelled(ctx, tx, sub, false);
@@ -922,8 +1007,10 @@ export async function cancelSubscription(ctx: BillingCtx, tx: Sql, tenantId: str
       update subscriptions set cancel_at_period_end = true, updated_at = now()
       where tenant_id = ${tenantId}
     `;
-    for (const inv of await unpaidAhead(tx, sub))
+    for (const inv of await unpaidAhead(tx, sub)) {
       await tx`update invoices set status = 'void' where id = ${inv.id}`;
+      if (inv.method === 'pix' && inv.provider_payment_id) dropPix(ctx)(inv.provider_payment_id);
+    }
     await cancelPendingUpgrade(ctx, tx, sub);
     // paused, not cancelled: "voltar atrás" before the period ends re-authorizes the same card
     if (sub.method === 'card')
@@ -988,14 +1075,14 @@ export async function markInvoicePaid(
         >`select name, slug from tenants where id = ${tenantId}`
       )[0];
       const body = `A fatura ${inv.number} (pacote de conversas do Duá, ${formatBRL(inv.amount_cents)}) da loja ${t?.name} (${t?.slug}) foi paga quando o plano já não tinha o Duá. As conversas não entraram: devolva pelo Mercado Pago.`;
-      ctx.later(() =>
-        billingStaff.notify(ctx.sql, {
-          subject: `Pacote do Duá pago sem o Duá: ${t?.name ?? tenantId}`,
-          body,
-          idemKey: `invoice-pack-unusable:${inv.id}`,
-        }),
+      await recordBillingProblem(
+        tx,
+        tenantId,
+        'pix_mismatch',
+        body,
+        `pack-unusable:${inv.id}`,
+        'Pacote do Duá pago sem o Duá',
       );
-      await recordBillingProblem(tx, tenantId, 'pix_mismatch', body, `pack-unusable:${inv.id}`);
     }
   } else if (inv.kind === 'upgrade') {
     if (upgradeLive(sub, { ...inv, status: 'open' }, paidAt))
@@ -1007,14 +1094,14 @@ export async function markInvoicePaid(
         >`select name, slug from tenants where id = ${tenantId}`
       )[0];
       const body = `A fatura ${inv.number} (diferença de plano, ${formatBRL(inv.amount_cents)}) da loja ${t?.name} (${t?.slug}) foi paga depois de cancelada ou vencida. O plano não mudou: devolva pelo Mercado Pago.`;
-      ctx.later(() =>
-        billingStaff.notify(ctx.sql, {
-          subject: `Upgrade pago fora do prazo: ${t?.name ?? tenantId}`,
-          body,
-          idemKey: `invoice-upgrade-late:${inv.id}`,
-        }),
+      await recordBillingProblem(
+        tx,
+        tenantId,
+        'pix_mismatch',
+        body,
+        `upgrade-late:${inv.id}`,
+        'Upgrade pago fora do prazo',
       );
-      await recordBillingProblem(tx, tenantId, 'pix_mismatch', body, `upgrade-late:${inv.id}`);
     }
   } else if (sub.status === 'pending' || sub.status === 'cancelled') {
     await activate(ctx, tx, sub, inv, paidAt);
@@ -1166,13 +1253,6 @@ export async function openSiteRequest(
       { name: string; slug: string }[]
     >`select name, slug from tenants where id = ${tenantId}`
   )[0];
-  ctx.later(() =>
-    billingStaff.notify(ctx.sql, {
-      subject: `Site sob medida: ${t?.name ?? tenantId}`,
-      body: `A loja ${t?.name} (${t?.slug}) tem um plano com site sob medida e um pedido de site aberto.${brief ? `\n\n${brief}` : ''}`,
-      idemKey: `site-request:${row.id}`,
-    }),
-  );
   await recordStaffEventTx(
     tx,
     'store.request',
@@ -1300,7 +1380,7 @@ export async function syncPreapproval(
           status_changed_at = now()
         where tenant_id = ${tenantId}
       `;
-      await tx`update invoices set status = 'void' where tenant_id = ${tenantId} and status in ('open', 'failed')`;
+      await voidUnpaidTx(ctx, tx, tenantId);
       await noticeCancelled(ctx, tx, sub, false, 'mercadopago');
     } else if (sub.status !== 'cancelled' && !sub.cancel_at_period_end) {
       // cancelled on MP's side: the paid period is still the store's, then it ends (jobs.ts)
@@ -1400,17 +1480,27 @@ export async function settlePixPayment(
       { name: string; slug: string }[]
     >`select name, slug from tenants where id = ${tenantId}`
   )[0];
-  const flag = async (subject: string, body: string, key: string) => {
-    ctx.later(() => billingStaff.notify(ctx.sql, { subject, body, idemKey: key }));
-    await recordBillingProblem(tx, tenantId, 'pix_mismatch', body, key);
-  };
+  const flag = (title: string, body: string, key: string) =>
+    recordBillingProblem(tx, tenantId, 'pix_mismatch', body, key, title);
   if (inv.status === 'paid') {
     if (inv.provider_payment_id !== pay.id)
       await flag(
-        `Fatura paga duas vezes: ${t?.name ?? tenantId}`,
+        'Fatura paga duas vezes',
         `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) já estava paga e recebeu outro Pix (${pay.id}, ${formatBRL(pay.amountCents)}). Confira e devolva pelo Mercado Pago.`,
         `invoice-dup:${pay.id}`,
       );
+    return false;
+  }
+  // a voided plan invoice's QR still pays at Mercado Pago; activating on it would give the plan the
+  // subscription has now (maybe pricier) for this invoice's old amount. Upgrades and packs settle
+  // their own late payments (markInvoicePaid).
+  if (inv.status === 'void' && inv.kind !== 'upgrade' && inv.kind !== 'ai_pack') {
+    await flag(
+      'Pix numa fatura cancelada',
+      `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) estava cancelada e recebeu um Pix (${pay.id}, ${formatBRL(pay.amountCents)}). Nada foi ativado: devolva pelo Mercado Pago ou acerte com a loja.`,
+      `invoice-void:${pay.id}`,
+    );
+    await emitAdminTx(tx, tenantId, 'billing', inv.id);
     return false;
   }
   if (pay.amountCents < inv.amount_cents) {
@@ -1418,7 +1508,7 @@ export async function settlePixPayment(
     if (!inv.short_payments.includes(pay.id))
       await tx`update invoices set short_payments = array_append(short_payments, ${pay.id}) where id = ${inv.id}`;
     await flag(
-      `Pix com valor menor: ${t?.name ?? tenantId}`,
+      'Pix com valor menor',
       `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) é de ${formatBRL(inv.amount_cents)} e recebeu ${formatBRL(pay.amountCents)} (Pix ${pay.id}, emitido antes de uma mudança de preço). A fatura continua em aberto: devolva esse Pix pelo Mercado Pago ou acerte a diferença.`,
       `invoice-amount:${pay.id}`,
     );
@@ -1427,7 +1517,7 @@ export async function settlePixPayment(
   }
   if (pay.amountCents > inv.amount_cents)
     await flag(
-      `Pix com valor diferente: ${t?.name ?? tenantId}`,
+      'Pix com valor diferente',
       `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) era de ${formatBRL(inv.amount_cents)} e foi paga com ${formatBRL(pay.amountCents)} (Pix ${pay.id}). A fatura foi dada como paga; devolva a diferença pelo Mercado Pago.`,
       `invoice-amount:${pay.id}`,
     );

@@ -251,6 +251,12 @@ export async function applyImportTx(
     });
   }
   if (!row.doc) throw new HttpError(409, 'IMPORT_NOT_READY', 'this import expired');
+  // replace archives the live menu: a read that came back empty would leave the store with nothing
+  if (
+    opts.mode === 'replace' &&
+    !row.doc.categories.some((c) => c.products.some((p) => p.status !== 'archived'))
+  )
+    throw new HttpError(422, 'IMPORT_EMPTY', 'nothing to import: the menu read has no products');
   const result = await applyImport(tx, tenantId, actor, id, row.doc, opts);
   // another preview of the old store would apply the same menu twice
   await tx`

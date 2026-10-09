@@ -12,6 +12,10 @@ export interface PlanFeatures {
   loyalty: boolean;
   /** the Vendedor, the store's AI seller on WhatsApp (ADR 0031) */
   vendedor: boolean;
+  /** Duá Copilot, Duá working for the store's people inside the admin (ADR 0034) */
+  copilot: boolean;
+  /** the PDV: counter sales, mesas and the caixa (ADR 0035) */
+  pdv: boolean;
 }
 export type PlanFeature = keyof PlanFeatures;
 export const PLAN_FEATURES: readonly PlanFeature[] = [
@@ -21,6 +25,8 @@ export const PLAN_FEATURES: readonly PlanFeature[] = [
   'printing',
   'loyalty',
   'vendedor',
+  'copilot',
+  'pdv',
 ];
 /** features a trial doesn't open: they wait for the first payment (ADR 0025) */
 const PAID_ONLY: ReadonlySet<PlanFeature> = new Set(['customDomain', 'customSite']);
@@ -94,6 +100,8 @@ export function legacyPlan(id: string): Plan {
       printing: true,
       loyalty: true,
       vendedor: true,
+      copilot: false,
+      pdv: true,
     },
     trialDays: 0,
     recommended: false,
@@ -115,10 +123,25 @@ export async function planRow(tx: Sql, id: string): Promise<PlanRow | null> {
 
 /** The plan a store is on (tenants.plan), legacy ids included. */
 export async function tenantPlan(tx: Sql, tenantId: string): Promise<Plan> {
-  const t = (await tx<{ plan: string }[]>`select plan from tenants where id = ${tenantId}`)[0];
-  const id = t?.plan ?? 'spike';
-  const row = await planRow(tx, id);
-  return row ? planView(row) : legacyPlan(id);
+  return (await storePlan(tx, tenantId, false)).plan;
+}
+
+/** tenantPlan in one statement; `standing` adds the subscription's status and the billing hold. */
+async function storePlan(tx: Sql, tenantId: string, standing: boolean) {
+  const r = (
+    await tx<{ id: string; row: PlanRow | null; status: string | null; hold: boolean | null }[]>`
+      select coalesce(t.plan, 'spike') as id, to_jsonb(p) as row,
+        ${standing ? tx`(select status from subscriptions where tenant_id = ${tenantId})` : tx`null::text`} as status,
+        ${standing ? tx`(select billing_hold from store_settings where tenant_id = ${tenantId})` : tx`null::boolean`} as hold
+      from (values (1)) one (x)
+        left join tenants t on t.id = ${tenantId}
+        left join plans p on p.id = coalesce(t.plan, 'spike')
+    `
+  )[0];
+  const id = r?.id ?? 'spike';
+  // planRow's guard: an id outside the catalog's shape is a legacy one
+  const plan = r?.row && /^[a-z0-9_]{2,30}$/.test(id) ? planView(r.row) : legacyPlan(id);
+  return { plan, status: r?.status ?? null, hold: r?.hold ?? null };
 }
 
 /**
@@ -163,16 +186,10 @@ export async function heldPlans(tx: Sql, tenantId: string): Promise<string[]> {
 
 /** Where the store's plan stands for its features: on it and paid for, or in its trial. */
 async function planStanding(tx: Sql, tenantId: string) {
-  const plan = await tenantPlan(tx, tenantId);
-  const row = (
-    await tx<{ status: string | null; hold: boolean | null }[]>`
-      select (select status from subscriptions where tenant_id = ${tenantId}) as status,
-             (select billing_hold from store_settings where tenant_id = ${tenantId}) as hold
-    `
-  )[0];
+  const { plan, status, hold } = await storePlan(tx, tenantId, true);
   // a store the team put on a plan without a subscription counts while it isn't held for payment
-  const paid = row?.status ? row.status === 'active' || row.status === 'past_due' : !row?.hold;
-  return { plan, paid, trialing: row?.status === 'trialing' };
+  const paid = status ? status === 'active' || status === 'past_due' : !hold;
+  return { plan, paid, trialing: status === 'trialing' };
 }
 
 function opens(s: Awaited<ReturnType<typeof planStanding>>, feature: PlanFeature) {

@@ -7,9 +7,9 @@ import type { ProviderAdapter, ProviderRequest } from '../types.ts';
  * (`https://openrouter.ai/api/v1`) and Gemini's compatible endpoint
  * (`https://generativelanguage.googleapis.com/v1beta/openai`).
  *
- * OpenRouter only routes to zero-data-retention endpoints when the host passes
- * `extraBody: { provider: { zdr: true, data_collection: 'deny' } }` — set it on every
- * OpenRouter route marked `zdr`.
+ * OpenRouter only routes to zero-data-retention endpoints when the request asks for it: pass
+ * `zdrBody: { provider: { zdr: true, data_collection: 'deny' } }` and it is merged into requests
+ * whose route has `zdr: true`; a route with `zdr: false` gets OpenRouter's default routing.
  */
 export interface OpenAiCompatibleOpts {
   id: string;
@@ -18,6 +18,10 @@ export interface OpenAiCompatibleOpts {
   headers?: Record<string, string>;
   /** Merged into the top level of every request body. */
   extraBody?: Record<string, unknown>;
+  /** Merged after `extraBody` into requests whose route has `zdr: true`. */
+  zdrBody?: Record<string, unknown>;
+  /** Merged last into requests whose route pins an `endpoint` (OpenRouter: provider order). */
+  endpointBody?: (endpoint: string) => Record<string, unknown>;
   fetch?: FetchLike;
   timeoutMs?: number;
   /** Newer OpenAI models take `max_completion_tokens`. */
@@ -86,6 +90,23 @@ export function openAiCompatibleAdapter(opts: OpenAiCompatibleOpts): ProviderAda
   const baseUrl = opts.baseUrl.replace(/\/$/, '');
   // provider-specific tool-call fields to echo back on the next step, by call id
   const extras = new Map<string, unknown>();
+
+  // `provider` objects merge, so a pinned endpoint keeps the retention rules of extraBody/zdrBody
+  function routing(req: ProviderRequest): { [k: string]: unknown } {
+    const parts = [
+      opts.extraBody,
+      req.zdr === true ? opts.zdrBody : undefined,
+      req.endpoint && opts.endpointBody ? opts.endpointBody(req.endpoint) : undefined,
+    ];
+    const out: { [k: string]: unknown } = {};
+    for (const part of parts)
+      for (const [k, v] of Object.entries(part ?? {}))
+        out[k] =
+          k === 'provider' && typeof v === 'object' && v && typeof out[k] === 'object'
+            ? { ...(out[k] as object), ...v }
+            : v;
+    return out;
+  }
 
   function body(req: ProviderRequest): { [k: string]: unknown } {
     const messages: { [k: string]: unknown }[] = [];
@@ -156,7 +177,7 @@ export function openAiCompatibleAdapter(opts: OpenAiCompatibleOpts): ProviderAda
             })),
           }
         : {}),
-      ...opts.extraBody,
+      ...routing(req),
     };
   }
 

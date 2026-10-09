@@ -20,6 +20,15 @@ export function thread(ctx: Ctx, opts: { forUpdate?: boolean } = {}): Promise<Th
   return mustThread(ctx.tx, ctx.tenantId, ctx.subject.id, opts);
 }
 
+/** A typed address matched no bairro zone, but the store also prices by location (pack.needsPin). */
+export function askForPin(t: Thread): string {
+  const how =
+    t.channel === 'web' || t.channel === 'instagram'
+      ? 'mande o link (send_link) para o cliente marcar o endereço no mapa ao finalizar no site'
+      : 'peça ao cliente para mandar a localização pelo WhatsApp e use use_pin';
+  return `Pelo bairro não deu para confirmar: esta loja calcula a entrega pela localização. Não diga que não entrega; ${how}.`;
+}
+
 export function isTest(t: Thread): boolean {
   return t.channel === 'test';
 }
@@ -176,6 +185,22 @@ export async function saveCheckout(
 }
 
 export const paymentLabel = (m: PaymentMethod) => PAYMENT_LABEL[m];
+
+/** The store's payment rules (cash_max, pix_only_above) against a total Core computed. */
+export function checkPaymentGuards(ctx: Ctx, method: PaymentMethod, totalCents: number): void {
+  for (const g of pack(ctx).guards) {
+    if (g.kind === 'cash_max' && method === 'cash' && totalCents > g.cents) {
+      ctx.figure('regra.dinheiro_max', { value: g.cents, text: brl(g.cents), kind: 'money' });
+      throw new ToolError(
+        'Regra da loja: dinheiro só até {{regra.dinheiro_max}}. Ofereça outra forma.',
+      );
+    }
+    if (g.kind === 'pix_only_above' && method !== 'pix' && totalCents > g.cents) {
+      ctx.figure('regra.pix_acima', { value: g.cents, text: brl(g.cents), kind: 'money' });
+      throw new ToolError('Regra da loja: acima de {{regra.pix_acima}} só Pix.');
+    }
+  }
+}
 
 /** The product behind a slug from the pack or an alias a tool handed out. */
 export async function productIdOf(ctx: Ctx, ref: string): Promise<string> {

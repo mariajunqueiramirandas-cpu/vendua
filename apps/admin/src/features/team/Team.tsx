@@ -1,4 +1,5 @@
 import {
+  CaretRight,
   ClockCounterClockwise,
   Copy,
   EnvelopeSimple,
@@ -8,18 +9,31 @@ import {
   WarningCircle,
   WhatsappLogo,
 } from '@phosphor-icons/react';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { whatsappUrl } from '@vendua/kernel/rules';
-import { api, type InviteResult, type Member, type Role } from '../../lib/api.ts';
-import { ago, phone, when } from '../../lib/format.ts';
+import {
+  api,
+  type ActivityEntry,
+  type InviteResult,
+  type Member,
+  type Role,
+} from '../../lib/api.ts';
+import { ago, phone, plural, when } from '../../lib/format.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL, useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
-import { Chips, Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
+import { Chips, Field, PhoneInput, TextInput, Toggle } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { OutcomeList, OutcomeRow } from '../../ui/Outcome.tsx';
@@ -33,13 +47,21 @@ const ROLE_HELP: Record<Role, string> = {
   attendant: 'Pedidos e pausar a loja. Ideal para quem fica no balcão.',
 };
 
+type TeamData = Awaited<ReturnType<typeof api.team>>;
+
+/** a member write answers the list only: the store's switches stay as they were */
+function setMembers(qc: QueryClient, members: Member[]) {
+  qc.setQueryData<TeamData>(qk.team, (d) => ({ ...d, members }));
+}
+
 export default function Team() {
   const owner = useCan('owner');
   const { data, error, refetch } = useQuery({ queryKey: qk.team, queryFn: api.team });
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
   const [result, setResult] = useState<InviteOutcome | null>(null);
-  const me = useSession().user.id;
+  const session = useSession();
+  const me = session.user.id;
   return (
     <PageBody wide>
       <PageHeader
@@ -54,51 +76,89 @@ export default function Team() {
         }
       />
       <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
-        <Section title="Pessoas">
-          {error && !data ? (
-            <ErrorState error={error} retry={() => void refetch()} />
-          ) : !data ? (
-            <RowsSkeleton rows={3} />
-          ) : (
-            <Card as="section" aria-label="pessoas da equipe">
-              <ul className="divide-y divide-line">
-                {data.members.map((m) => (
-                  <MemberRow
-                    key={m.id}
-                    m={m}
-                    me={m.id === me}
-                    owner={owner}
-                    onOpen={() => setEditing(m)}
-                    onResent={setResult}
-                  />
-                ))}
-              </ul>
-            </Card>
-          )}
-          {owner && data && data.members.filter((m) => m.status !== 'revoked').length === 1 ? (
-            <DuaNote pose="carinho" title="Tocando a loja sem ajuda?" className="mt-3">
-              Chame quem ajuda no balcão ou na cozinha. Cada pessoa entra com o próprio celular, e
-              você escolhe o que ela pode fazer.
-            </DuaNote>
+        <div className="space-y-8">
+          <Section title="Pessoas">
+            {error && !data ? (
+              <ErrorState error={error} retry={() => void refetch()} />
+            ) : !data ? (
+              <RowsSkeleton rows={3} />
+            ) : (
+              <Card as="section" aria-label="pessoas da equipe">
+                <ul className="divide-y divide-line">
+                  {data.members.map((m) => (
+                    <MemberRow
+                      key={m.id}
+                      m={m}
+                      me={m.id === me}
+                      owner={owner}
+                      onOpen={() => setEditing(m)}
+                      onResent={setResult}
+                    />
+                  ))}
+                </ul>
+              </Card>
+            )}
+            {owner && data && data.members.filter((m) => m.status !== 'revoked').length === 1 ? (
+              <DuaNote pose="carinho" title="Tocando a loja sem ajuda?" className="mt-3">
+                Chame quem ajuda no balcão ou na cozinha. Cada pessoa entra com o próprio celular, e
+                você escolhe o que ela pode fazer.
+              </DuaNote>
+            ) : null}
+            {owner ? (
+              <Button
+                variant="secondary"
+                block
+                className="mt-3 md:hidden"
+                icon={<Plus />}
+                onClick={() => setAdding(true)}
+              >
+                adicionar pessoa
+              </Button>
+            ) : null}
+          </Section>
+          {owner && session.duaWhatsapp && data ? (
+            <DuaWhatsappManagers on={data.duaWhatsappManagers !== false} />
           ) : null}
-          {owner ? (
-            <Button
-              variant="secondary"
-              block
-              className="mt-3 md:hidden"
-              icon={<Plus />}
-              onClick={() => setAdding(true)}
-            >
-              adicionar pessoa
-            </Button>
-          ) : null}
-        </Section>
+        </div>
         <Activity />
       </div>
       <AddSheet open={adding} onOpenChange={setAdding} />
       <InviteResultSheet result={result} onClose={() => setResult(null)} />
       <EditSheet member={editing} onClose={() => setEditing(null)} />
     </PageBody>
+  );
+}
+
+/** the owner's per-store switch: managers may talk to Duá by WhatsApp (dua-no-whatsapp §6) */
+function DuaWhatsappManagers({ on }: { on: boolean }) {
+  const qc = useQueryClient();
+  const set = useMutation({
+    mutationFn: (v: boolean) => api.teamSettings({ duaWhatsappManagers: v }),
+    onMutate: (v) => optimistic<TeamData>(qc, qk.team, (d) => ({ ...d, duaWhatsappManagers: v })),
+    onSuccess: (r) => {
+      qc.setQueryData<TeamData>(qk.team, (d) => d && { ...d, ...r });
+      void qc.invalidateQueries({ queryKey: qk.activity });
+    },
+    onError: (e, _v, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
+  });
+  return (
+    <Section title="Duá pelo WhatsApp">
+      <Card className="px-5 py-1">
+        <Toggle
+          checked={on}
+          onChange={(v) => set.mutate(v)}
+          label={
+            <span className="inline-flex items-center gap-2">
+              <WhatsappLogo className="size-5" /> Duá pelo WhatsApp para gerentes
+            </span>
+          }
+          description="Gerentes podem ligar no Perfil e falar com o Duá pelo próprio WhatsApp. Você sempre pode."
+        />
+      </Card>
+    </Section>
   );
 }
 
@@ -162,9 +222,10 @@ function MemberRow({
   const resend = useMutation({
     mutationFn: () => api.resendInvite(m.id),
     onSuccess: (r) => {
-      qc.setQueryData(qk.team, { members: r.members });
+      setMembers(qc, r.members);
       onResent({
-        member: m,
+        // an invitee's address waits unconfirmed: the invite still went to it
+        member: { ...m, email: m.email ?? m.pendingEmail ?? null },
         invite: r.invite,
         signInUrl: '/admin/',
         resent: true,
@@ -242,7 +303,7 @@ function AddSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boo
     mutationFn: (v: { name: string; phone: string; role: Role; email: string | null }) =>
       api.addMember(v),
     onSuccess: (r, v) => {
-      qc.setQueryData(qk.team, { members: r.members });
+      setMembers(qc, r.members);
       void qc.invalidateQueries({ queryKey: qk.activity });
       setName('');
       setPh('');
@@ -471,7 +532,7 @@ function EditSheet({ member, onClose }: { member: Member | null; onClose: () => 
     if (member) setRole(member.role);
   }, [member]);
   const done = (r: { members: Member[] }, msg: string) => {
-    qc.setQueryData(qk.team, r);
+    setMembers(qc, r.members);
     void qc.invalidateQueries({ queryKey: qk.activity });
     toast(msg);
   };
@@ -480,7 +541,8 @@ function EditSheet({ member, onClose }: { member: Member | null; onClose: () => 
     mutationFn: (v: { id: string; role: Role }) => api.updateMember(v.id, { role: v.role }),
     onMutate: (v) => {
       onClose();
-      return optimistic<{ members: Member[] }>(qc, qk.team, (d) => ({
+      return optimistic<TeamData>(qc, qk.team, (d) => ({
+        ...d,
         members: d.members.map((m) => (m.id === v.id ? { ...m, role: v.role } : m)),
       }));
     },
@@ -494,7 +556,8 @@ function EditSheet({ member, onClose }: { member: Member | null; onClose: () => 
     mutationFn: (v: { id: string; name: string }) => api.removeMember(v.id),
     onMutate: (v) => {
       onClose();
-      return optimistic<{ members: Member[] }>(qc, qk.team, (d) => ({
+      return optimistic<TeamData>(qc, qk.team, (d) => ({
+        ...d,
         members: d.members.filter((m) => m.id !== v.id),
       }));
     },
@@ -534,31 +597,135 @@ function EditSheet({ member, onClose }: { member: Member | null; onClose: () => 
   );
 }
 
+// Core's kinds (admin/routes-team.ts ACTIVITY_KINDS), in the order a store thinks of them
+const KINDS = [
+  ['pedidos', 'pedidos'],
+  ['cardapio', 'cardápio'],
+  ['loja', 'loja'],
+  ['clientes', 'clientes'],
+  ['marketing', 'marketing'],
+  ['pagamentos', 'pagamentos'],
+  ['equipe', 'equipe'],
+  ['conta', 'conta'],
+] as const;
+
+// a chip chosen from the address may sit past the row's edge: bring it into view once, sideways only
+const revealChecked = (row: HTMLElement | null) => {
+  const chip = row?.querySelector<HTMLElement>('[aria-checked="true"]');
+  if (!row || !chip) return;
+  const r = row.getBoundingClientRect();
+  const c = chip.getBoundingClientRect();
+  if (c.left < r.left || c.right > r.right)
+    row.scrollLeft += c.left - r.left - (r.width - c.width) / 2;
+};
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** where the thing an entry changed lives; none for this page's own people or a customer
+ *  (the log keeps only a phone's last digits) */
+function linkOf(e: ActivityEntry): string | null {
+  const id = e.entityId && UUID.test(e.entityId) ? e.entityId : null;
+  const gone = e.action.endsWith('.delete') || e.action.endsWith('.remove');
+  switch (e.entity) {
+    case 'order':
+      return id ? `/pedidos/${id}` : '/pedidos';
+    case 'product':
+      return id && !gone ? `/cardapio/produto/${id}` : '/cardapio';
+    case 'category':
+    case 'import':
+    case 'catalog':
+    case 'modifier':
+      return '/cardapio';
+    case 'store':
+      return '/loja';
+    case 'zone':
+      return '/loja#entrega';
+    case 'kitchen':
+      return '/cozinha';
+    case 'printer':
+    case 'printers':
+    case 'print_device':
+      return '/impressoras';
+    case 'whatsapp':
+      return '/whatsapp';
+    case 'page':
+    case 'tokens':
+      return '/aparencia';
+    case 'coupon':
+    case 'loyalty':
+      return '/marketing';
+    case 'payments':
+      return '/pagamentos';
+    case 'account':
+    case 'invoice':
+    case 'custom_domain':
+      return '/conta';
+    case 'thread':
+      return id ? `/vendedor/conversas/${id}` : '/vendedor/conversas';
+    case 'store_agent':
+      return '/vendedor/configurar';
+    case 'store_knowledge':
+      return '/vendedor/ensinar';
+    case 'vendedor_runs':
+      return '/vendedor';
+    default:
+      return null;
+  }
+}
+
 function Activity() {
+  const s = useSession();
+  const [params, setParams] = useSearchParams();
+  const kinds: { value: string; label: string }[] = [
+    { value: '', label: 'tudo' },
+    ...KINDS.map(([value, label]) => ({ value, label })),
+    ...(s.vendedor ? [{ value: 'vendedor', label: s.vendedor.name }] : []),
+  ];
+  const k = params.get('atividade') ?? '';
+  const kind = kinds.some((o) => o.value === k) ? k : '';
   const list = useInfiniteQuery({
-    queryKey: qk.activity,
-    queryFn: ({ pageParam }) => api.activity(pageParam || undefined),
+    queryKey: qk.activityOf(kind),
+    queryFn: ({ pageParam }) => api.activity(pageParam || undefined, kind || undefined),
     initialPageParam: 0,
     getNextPageParam: (p) => p.next ?? undefined,
+    placeholderData: keepPreviousData,
   });
   const rows = list.data?.pages.flatMap((p) => p.entries) ?? [];
+  const label = kinds.find((o) => o.value === kind)?.label;
   return (
     <Section title="Quem mudou o quê" hint="Tudo o que a equipe fez no painel.">
+      <div ref={revealChecked} className="scroll-row -mx-4 mb-3 px-4 md:mx-0 md:px-0">
+        <Chips
+          label="mostrar"
+          value={kind}
+          onChange={(v) =>
+            setParams(
+              (prev) => {
+                const next = new URLSearchParams(prev);
+                if (v) next.set('atividade', v);
+                else next.delete('atividade');
+                return next;
+              },
+              { replace: true },
+            )
+          }
+          className="w-max flex-nowrap md:w-auto md:flex-wrap"
+          options={kinds}
+        />
+      </div>
       {list.isPending ? (
         <RowsSkeleton rows={5} avatar={false} />
       ) : rows.length ? (
-        <Card className="overflow-hidden">
+        <Card
+          className={cn(
+            'overflow-hidden transition-opacity',
+            list.isPlaceholderData && 'opacity-60',
+          )}
+          aria-busy={list.isPlaceholderData || undefined}
+        >
           <ol className="divide-y divide-line">
             {rows.map((e) => (
-              <li key={e.id} className="flex gap-3 px-4 py-3">
-                <ClockCounterClockwise className="mt-0.5 size-5 shrink-0 text-muted" />
-                <div className="min-w-0">
-                  <p className="t-body">
-                    <strong>{e.actor}</strong> {e.summary}
-                  </p>
-                  <p className="t-caption text-muted">{when(e.at)}</p>
-                </div>
-              </li>
+              <ActivityRow key={e.id} e={e} />
             ))}
           </ol>
           {list.hasNextPage ? (
@@ -577,10 +744,77 @@ function Activity() {
       ) : (
         <Card className="p-5">
           <p className="t-body text-muted">
-            As mudanças feitas no painel aparecem aqui, com quem fez e quando.
+            {kind
+              ? `Nada mudou em ${label} ainda.`
+              : 'As mudanças feitas no painel aparecem aqui, com quem fez e quando.'}
           </p>
         </Card>
       )}
     </Section>
+  );
+}
+
+const ORDER_DID: Record<string, (n: string) => string> = {
+  'order.confirmed': (n) => `aceitou o pedido #${n}`,
+  'order.preparing': (n) => `começou o preparo do pedido #${n}`,
+  'order.ready': (n) => `marcou o pedido #${n} como pronto`,
+  'order.out_for_delivery': (n) => `mandou o pedido #${n} para entrega`,
+  'order.delivered': (n) => `concluiu o pedido #${n}`,
+  'order.cancelled': (n) => `cancelou o pedido #${n}`,
+  'order.refunded': (n) => `estornou o pedido #${n}`,
+};
+
+/** Core writes a move as "pedido #882: novo → aceito"; after the name it reads as a verb, and
+ *  the move itself is already in the changes under it. Its reason and refund stay. */
+function summaryOf(e: ActivityEntry) {
+  const m = /^pedido #(\d+): .+? → .+?((?: \(.*\))?(?: · .*)?)$/.exec(e.summary);
+  const did = ORDER_DID[e.action];
+  return m && did ? `${did(m[1]!)}${m[2] ?? ''}` : e.summary;
+}
+
+function ActivityRow({ e }: { e: ActivityEntry }) {
+  const to = linkOf(e);
+  const body = (
+    <>
+      <ClockCounterClockwise className="mt-0.5 size-5 shrink-0 text-muted" aria-hidden />
+      <div className="min-w-0 flex-1">
+        <p className="t-body">
+          <strong>{e.actor}</strong> {summaryOf(e)}
+        </p>
+        {e.changes?.length ? (
+          <ul className="t-caption mt-1 space-y-0.5 text-muted">
+            {e.changes.map((c) => (
+              <li key={c.label} className="break-words">
+                <span className="text-ink">{c.label}:</span>{' '}
+                {c.hidden ? (
+                  'mudou'
+                ) : c.from !== null ? (
+                  <>
+                    {c.from} <span aria-hidden>→</span>
+                    <span className="sr-only">para</span> {c.to ?? '—'}
+                  </>
+                ) : (
+                  (c.to ?? '—')
+                )}
+              </li>
+            ))}
+            {e.more ? <li>e mais {plural(e.more, 'mudança', 'mudanças')}</li> : null}
+          </ul>
+        ) : null}
+        <p className="t-caption mt-0.5 text-muted">{when(e.at)}</p>
+      </div>
+      {to ? <CaretRight className="mt-0.5 size-5 shrink-0 text-muted" aria-hidden /> : null}
+    </>
+  );
+  return (
+    <li>
+      {to ? (
+        <Link to={to} className="press-row flex gap-3 px-4 py-3 hover:bg-hover">
+          {body}
+        </Link>
+      ) : (
+        <div className="flex gap-3 px-4 py-3">{body}</div>
+      )}
+    </li>
   );
 }

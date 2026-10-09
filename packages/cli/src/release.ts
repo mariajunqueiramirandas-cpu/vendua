@@ -14,6 +14,7 @@ import {
   type StorefrontManifest,
 } from '@vendua/edge/manifest';
 import { checkCompat, type ArtifactManifest } from '@vendua/templates';
+import { didYouMean } from './args.ts';
 import { control } from './core.ts';
 import { fleet, select, type FleetStore } from './fleet.ts';
 import { die } from './paths.ts';
@@ -49,6 +50,11 @@ async function gitCommit(root: string): Promise<string> {
 export function bundleOf(root: string, s: FleetStore): string {
   const bundle = relative(join(root, 'storefronts'), s.dir).split(sep).join('/');
   if (!BUNDLE_RE.test(bundle)) throw new Error(`'${bundle}' is not a valid bundle name`);
+  // Core gives a bundle to the store it is named after; `_` dirs are platform-owned
+  if (!bundle.startsWith('_') && s.tenant !== bundle)
+    throw new Error(
+      `${s.rel}: builds for tenant '${s.tenant}' — a store's package name and vendua.tenant must be '${bundle}'`,
+    );
   return bundle;
 }
 
@@ -162,7 +168,8 @@ export async function cmdRelease(args: string[], root: string): Promise<never> {
   if (ai >= 0 && !rest[ai + 1]) die('--artifacts needs a uri', 2);
   const known = new Set(['--no-build', '--no-register', '--all', '--core', '--artifacts']);
   const unknown = rest.find((a) => a.startsWith('--') && !known.has(a));
-  if (unknown) die(`unknown option '${unknown}'\nusage:\n${USAGE}`, 2);
+  if (unknown)
+    die(`unknown option '${unknown}'${didYouMean(unknown, [...known])}\nusage:\n${USAGE}`, 2);
   // bundle names (`_template`, `quero-pudim`) work as well as slugs and tenants
   const slugs = rest
     .filter((a, i) => !a.startsWith('--') && (ai < 0 || i !== ai + 1))

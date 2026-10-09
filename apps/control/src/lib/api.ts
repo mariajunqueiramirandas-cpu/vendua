@@ -93,6 +93,8 @@ export interface Lead {
 export interface LeadListItem extends Lead {
   score: number;
   openTasks: number;
+  /** open tasks past their due date */
+  overdueTasks: number;
   pendingDrafts: number;
   lastActivityAt: string | null;
 }
@@ -104,6 +106,34 @@ export interface Activity {
   meta: Record<string, unknown>;
   createdBy: string;
   at: string;
+}
+export interface TaskPatch {
+  title?: string;
+  dueAt?: string | null;
+  snooze?: '1d' | '1w';
+  done?: boolean;
+}
+export interface BulkLeadPatch {
+  ids: string[];
+  state?: Lead['state'];
+  archived?: boolean;
+  addTags?: string[];
+  removeTags?: string[];
+}
+export interface BulkLeadResult {
+  id: string;
+  state: Lead['state'];
+  archivedAt: string | null;
+  tags: string[];
+}
+/** a staff member's named pipeline filters (URL params of /pipeline) */
+export interface SavedView {
+  id: string;
+  member: string;
+  name: string;
+  params: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
 }
 export interface Task {
   id: string;
@@ -225,6 +255,7 @@ export interface DiscordOverview {
     tokenPresent: boolean;
     invite: string | null;
     endpointPath: string;
+    endpointUrl: string;
   };
   setting: DiscordSetting;
   state: {
@@ -244,6 +275,13 @@ export interface DiscordOverview {
   };
   failures: { kind: string; error: string | null; at: string }[];
   team: { members: number; linked: number };
+}
+export interface DiscordConnect {
+  applicationId: string;
+  guildId: string | null;
+  guilds: { id: string; name: string }[];
+  invite: string;
+  endpoint: { url: string; ok: boolean; error: string | null };
 }
 export interface DiscordGuild {
   guild: { id: string; name: string };
@@ -558,6 +596,24 @@ const apiBase = {
     }),
   setTaskDone: (id: string, done: boolean) =>
     req<{ task: Task }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ done }) }),
+  /** title / dueAt (null clears) / snooze pushes the due date from max(due, now) */
+  patchTask: (id: string, patch: TaskPatch) =>
+    req<{ task: Task }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteTask: (id: string) =>
+    req<{ ok: true; leadId: string }>(`/tasks/${id}`, { method: 'DELETE' }),
+  /** the pipeline's selection: same effects as one PATCH per lead, ≤ 200 ids, all or nothing */
+  bulkLeads: (b: BulkLeadPatch) =>
+    req<{ updated: number; leads: BulkLeadResult[] }>('/leads/bulk', {
+      method: 'POST',
+      body: JSON.stringify(b),
+    }),
+  views: (member: string) =>
+    req<{ views: SavedView[] }>(`/views?member=${encodeURIComponent(member)}`),
+  createView: (v: { member: string; name: string; params: Record<string, string> }) =>
+    req<{ view: SavedView }>('/views', { method: 'POST', body: JSON.stringify(v) }),
+  patchView: (id: string, v: { name?: string; params?: Record<string, string> }) =>
+    req<{ view: SavedView }>(`/views/${id}`, { method: 'PATCH', body: JSON.stringify(v) }),
+  deleteView: (id: string) => req<{ ok: true }>(`/views/${id}`, { method: 'DELETE' }),
 
   threads: (q: { channel?: string; q?: string } = {}) => {
     const params = new URLSearchParams(
@@ -597,15 +653,12 @@ const apiBase = {
       method: 'PUT',
       body: JSON.stringify({ value }),
     }),
-  waQr: () =>
-    req<{
-      qr: string | null;
-      status: string;
-      /** the paired account, once the socket is open — null while unpaired */
-      me: { phone: string | null; name: string | null } | null;
-    }>('/wa/qr'),
+  waQr: () => req<WaQr>('/wa/qr'),
   waPairCode: (phone: string) =>
-    req<{ code: string }>('/wa/pair-code', { method: 'POST', body: JSON.stringify({ phone }) }),
+    req<{ code: string | null }>('/wa/pair-code', {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
+    }),
   waLogout: () => req<{ ok: true }>('/wa/logout', { method: 'POST' }),
   igStatus: () => req<IgStatus>('/ig/status'),
   igLoginStart: () => req<{ step: IgStep }>('/ig/login/start', { method: 'POST' }),
@@ -618,21 +671,16 @@ const apiBase = {
     }),
   igLoginCancel: () => req<{ ok: true }>('/ig/login/cancel', { method: 'POST' }),
   igLogout: () => req<{ ok: true }>('/ig/logout', { method: 'POST' }),
-  testStaff: () =>
-    req<{
-      deliveries: {
-        name: string;
-        channel: 'email' | 'whatsapp';
-        to: string;
-        ok: boolean;
-        error?: string;
-      }[];
-    }>('/staff/test', { method: 'POST' }),
   testIntegration: (kind: string) =>
     req<{ ok: boolean; detail: string }>(`/integrations/${kind}/test`, { method: 'POST' }),
 
   discord: () => req<DiscordOverview>('/discord'),
   discordGuild: () => req<DiscordGuild>('/discord/guild'),
+  discordConnect: (guildId?: string) =>
+    req<DiscordConnect>('/discord/connect', {
+      method: 'POST',
+      body: JSON.stringify(guildId ? { guildId } : {}),
+    }),
   discordSetup: (staffRoleId: string) =>
     req<{ channels: Record<string, string>; created: string[] }>('/discord/setup', {
       method: 'POST',
@@ -841,7 +889,10 @@ const agentV2 = {
 
 export type SubscriptionStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'cancelled';
 export type MpStatus = 'connected' | 'expiring' | 'disconnected' | 'restricted';
-export type CustomDomainStatus = 'pending_dns' | 'dns_ok' | 'active' | 'failed';
+export type CustomDomainStatus =
+  'ordering' | 'pending_dns' | 'dns_ok' | 'active' | 'repairing' | 'lapsed' | 'failed';
+export type DomainOrderStatus =
+  'awaiting_payment' | 'queued' | 'pending' | 'registered' | 'conflict' | 'failed' | 'cancelled';
 export type SiteRequestStatus = 'requested' | 'in_progress' | 'delivered' | 'cancelled';
 export type IncidentSeverity = 'info' | 'degraded' | 'outage';
 
@@ -861,13 +912,30 @@ export interface BillingStore {
     trialEndsAt: string | null;
   } | null;
   mercadoPago: MpStatus | null;
-  customDomain: { id: string; host: string; status: CustomDomainStatus } | null;
+  customDomain: {
+    id: string;
+    host: string;
+    status: CustomDomainStatus;
+    /** included = registered by Venduá with the plan; connected = the merchant's own */
+    source: 'connected' | 'included';
+    /** ns = delegated to Venduá's nameservers; cname = records at the merchant's provider */
+    method: 'cname' | 'ns';
+  } | null;
+  /** the latest registrar order for an included domain */
+  domainOrder: {
+    id: string;
+    host: string;
+    status: DomainOrderStatus;
+    lastError: string | null;
+  } | null;
   siteRequest: {
     id: string;
     status: SiteRequestStatus;
     brief: string | null;
     staffNote?: string | null | undefined;
   } | null;
+  /** the site builder's task: the live one, else the latest */
+  siteTask?: { id: string; status: SiteTaskStatus; dueAt: string } | null | undefined;
   /** the oldest plan invoice still to pay — "marcar como pago" settles it */
   openInvoice?: {
     id: string;
@@ -879,7 +947,7 @@ export interface BillingStore {
   } | null;
 }
 export type PlanFeature =
-  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor';
+  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor' | 'copilot';
 export type PlanFeatures = Record<PlanFeature, boolean>;
 export interface ControlPlan {
   id: string;
@@ -954,6 +1022,8 @@ export interface Incident {
 
 const fleet = {
   billingStores: () => req<{ stores: BillingStore[] }>('/billing/stores'),
+  billingStore: (tenantId: string) =>
+    req<{ stores: BillingStore[] }>(`/billing/stores?tenant=${encodeURIComponent(tenantId)}`),
   controlPlans: () => req<{ plans: ControlPlan[] }>('/plans'),
   patchPlan: (id: string, patch: PlanPatch) =>
     req<{ plan: ControlPlan }>(`/plans/${encodeURIComponent(id)}`, {
@@ -972,6 +1042,9 @@ const fleet = {
     req<{ ok: boolean }>(`/billing/invoices/${id}/mark-paid`, { method: 'POST' }),
   activateDomain: (id: string) =>
     req<{ ok: boolean }>(`/custom-domains/${id}/activate`, { method: 'POST' }),
+  /** conflict/failed → queued */
+  retryDomainOrder: (id: string) =>
+    req<{ ok: true }>(`/domain-orders/${id}/retry`, { method: 'POST' }),
   patchSiteRequest: (id: string, patch: { status: SiteRequestStatus; staffNote?: string }) =>
     req<{ ok: boolean }>(`/site-requests/${id}`, {
       method: 'PATCH',
@@ -1278,4 +1351,445 @@ const menuImports = {
     req<MenuImport>(`/imports/${encodeURIComponent(id)}/discard`, { method: 'POST' }),
 };
 
-export const api = Object.assign(apiBase, agentV2, fleet, { ...controlPlane, ...menuImports });
+// ── fleet console: the stores we serve, their revenue, activity and Duá ─────────
+
+export type CustomerRisk =
+  | 'cancelled'
+  | 'suspended'
+  | 'past_due'
+  | 'payment_pending'
+  | 'probe_failing'
+  | 'incident_open'
+  | 'whatsapp_down'
+  | 'ai_exhausted'
+  | 'trial_ending'
+  | 'no_orders_14d'
+  | 'admin_idle_14d';
+export type StoreWhatsappState =
+  'off' | 'connecting' | 'pairing' | 'open' | 'logged_out' | 'banned' | 'error';
+
+export interface CustomerRow {
+  id: string;
+  slug: string;
+  name: string;
+  createdAt: string;
+  status: 'active' | 'suspended';
+  /** the store's public address */
+  url: string;
+  plan: { id: string; name: string; priceCents: number };
+  subscription: {
+    status: SubscriptionStatus;
+    method: string | null;
+    currentPeriodEnd: string | null;
+    trialEndsAt: string | null;
+  } | null;
+  /** the plan's monthly price when the subscription is active or past due, else 0 */
+  mrrCents: number;
+  /** the oldest open invoice */
+  openInvoice: {
+    id: string;
+    number: number;
+    amountCents: number;
+    kind: string;
+    dueAt: string | null;
+  } | null;
+  /** orders not cancelled or refunded */
+  orders: { count30d: number; gmv30dCents: number; lastAt: string | null };
+  /** latest merchant_users.last_seen_at */
+  adminLastSeenAt: string | null;
+  ai: {
+    /** the plan has the Vendedor and is paid for or trialing */
+    included: boolean;
+    period: 'month' | 'trial' | null;
+    limit: number;
+    used: number;
+    packRemaining: number;
+    remaining: number;
+    /** USD, model.responded costs over 30 days */
+    spend30dUsd: number;
+  };
+  whatsapp: { state: StoreWhatsappState; stateChangedAt: string } | null;
+  printing: { devices: number; lastSeenAt: string | null } | null;
+  storefront: { probe: 'ok' | 'failing' | 'unknown'; openIncidents: number };
+  /** most severe first */
+  risk: CustomerRisk[];
+}
+
+export interface CustomersOverview {
+  asOf: string;
+  revenue: {
+    mrrCents: number;
+    byPlan: { planId: string; name: string; stores: number; mrrCents: number }[];
+    payingStores: number;
+    trialing: number;
+    pastDue: number;
+    openInvoices: { count: number; amountCents: number };
+    trialsEndingSoon: {
+      id: string;
+      slug: string;
+      name: string;
+      plan: string;
+      trialEndsAt: string;
+    }[];
+    newStores30d: number;
+    cancelled30d: number;
+  };
+  activity: {
+    orders30d: number;
+    gmv30dCents: number;
+    /** stores with at least one order in 30 days */
+    activeStores30d: number;
+    /** oldest first, one entry per São Paulo day, 30 entries */
+    daily: { day: string; orders: number; gmvCents: number }[];
+  };
+  ai: {
+    conversationsThisMonth: number;
+    spend30dUsd: number;
+    byModel: { provider: string; model: string; calls: number; usd: number }[];
+    exhaustedStores: number;
+    top: {
+      id: string;
+      slug: string;
+      name: string;
+      used: number;
+      limit: number;
+      spend30dUsd: number;
+    }[];
+  };
+  /** up to 20, most severe first */
+  atRisk: { id: string; slug: string; name: string; risk: CustomerRisk[] }[];
+  totals: { stores: number; active: number; suspended: number };
+}
+
+export interface StoreHit {
+  id: string;
+  slug: string;
+  name: string;
+  status: 'active' | 'suspended';
+  host: string | null;
+}
+/** a staff event about one store (staff_events, pruned after 30 days) */
+export interface StoreEvent {
+  id: number;
+  kind: string;
+  label: string;
+  category: string;
+  severity: 'info' | 'success' | 'warning' | 'critical';
+  data: Record<string, unknown>;
+  createdAt: string;
+}
+export interface StoreEventsPage {
+  events: StoreEvent[];
+  /** pass as `before` for the next (older) page */
+  nextBefore: number | null;
+}
+
+export interface CustomerDetail {
+  store: CustomerRow;
+  /** the store's first owner — whom staff call or write to */
+  owner: { name: string | null; phone: string; email: string | null } | null;
+  ai: {
+    included: boolean;
+    period: 'month' | 'trial' | null;
+    limit: number;
+    used: number;
+    packRemaining: number;
+    packExpiresAt: string | null;
+    remaining: number;
+    resetsAt: string | null;
+  };
+  /** oldest first, 30 São Paulo days */
+  daily: { day: string; orders: number; gmvCents: number; aiUsd: number; conversations: number }[];
+  /** latest 12 */
+  invoices: {
+    id: string;
+    number: number;
+    kind: string;
+    status: 'open' | 'paid' | 'failed' | 'void';
+    amountCents: number;
+    createdAt: string;
+    dueAt: string | null;
+    paidAt: string | null;
+  }[];
+  users: { id: string; name: string | null; role: string; lastSeenAt: string | null }[];
+  printers: { id: string; name: string; lastSeenAt: string | null }[];
+  whatsapp: {
+    state: StoreWhatsappState;
+    connectedAt: string | null;
+    stateChangedAt: string;
+  } | null;
+  storefront: {
+    probe: 'ok' | 'failing' | 'unknown';
+    lastProbeAt: string | null;
+    openIncidents: number;
+    kernel: string | null;
+  };
+}
+
+export type ModelTier = 'fast' | 'strong';
+export type ModelProviderId = 'anthropic' | 'openrouter' | 'openai' | 'gemini';
+export type ModelEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export interface ModelRouteSetting {
+  provider: ModelProviderId;
+  model: string;
+  /** OpenRouter: only zero-retention providers; direct: staff's word on the account's contract */
+  zdr: boolean;
+  /** OpenRouter only: pin this endpoint's tag (`deepinfra/turbo`), no OpenRouter fallbacks;
+   *  absent = OpenRouter's own routing */
+  endpoint?: string;
+  /** Anthropic only: how much the model reasons before answering; absent = medium */
+  effort?: ModelEffort;
+  /** not on Anthropic routes: Core prices them as the model it locks them to */
+  pricing?: {
+    inputPerMTok: number;
+    outputPerMTok: number;
+    cacheReadPerMTok?: number;
+    cacheWritePerMTok?: number;
+  };
+  timeoutMs?: number;
+}
+export type TierRoutesSetting = Partial<Record<ModelTier, ModelRouteSetting[]>>;
+/** control_settings `agent_runtime.routes` */
+export interface ModelRoutesSetting {
+  default?: TierRoutesSetting;
+  agents?: Record<string, TierRoutesSetting>;
+  tenants?: Record<string, TierRoutesSetting>;
+}
+/** control_settings `agent_runtime.budgets`: USD per day per budget key */
+export interface AiBudgetsSetting {
+  [budgetKey: string]: number | Record<string, Record<string, number>> | undefined;
+  tenants?: Record<string, Record<string, number>>;
+}
+export interface AiModelsView {
+  routes: ModelRoutesSetting;
+  /** settings: control_settings row; env: AGENT_MODEL_ROUTES fallback; none: Duá can't answer */
+  routesSource: 'settings' | 'env' | 'none';
+  budgets: AiBudgetsSetting;
+  providers: { id: ModelProviderId; configured: boolean; secretName: string }[];
+  agents: {
+    id: string;
+    label: string;
+    /** what the agent does, one plain line */
+    hint: string | null;
+    budgetKey: string | null;
+    defaultTier: ModelTier;
+  }[];
+}
+/** control_settings `agent_runtime.media_routes`: voice notes in (transcribe) and voice replies (speak) */
+export type MediaProviderId = 'sidecar' | 'openai' | 'elevenlabs';
+export interface MediaRouteSetting {
+  provider: MediaProviderId;
+  model: string;
+  zdr: boolean;
+  voice?: string;
+}
+export interface MediaRoutesSetting {
+  transcribe?: MediaRouteSetting[];
+  speak?: MediaRouteSetting[];
+}
+/** GET /ai/voice: the routes, the self-hosted STT sidecar's state and the cloud keys */
+export interface AiVoiceView {
+  routes: MediaRoutesSetting;
+  /** false = no row yet: the sidecar is used when it's configured */
+  saved: boolean;
+  sidecar: { configured: boolean; reachable: boolean; model: string | null };
+  providers: { id: Exclude<MediaProviderId, 'sidecar'>; configured: boolean; secretName: string }[];
+}
+export interface AiPricing {
+  /** USD per 1M tokens */
+  inputPerMTok: number;
+  outputPerMTok: number;
+  cacheReadPerMTok?: number;
+  cacheWritePerMTok?: number;
+}
+export type DirectProviderId = Exclude<ModelProviderId, 'openrouter'>;
+/** GET /ai/catalog: OpenRouter's tool-capable models, also the source for the direct providers */
+export interface AiCatalogModel {
+  /** OpenRouter id, e.g. "anthropic/claude-haiku-4.5" */
+  id: string;
+  name: string;
+  contextLength: number | null;
+  /** normal routing; for a model with `direct`, also that provider's list price */
+  pricing: AiPricing;
+  /** null: no zero-retention provider serves it on OpenRouter */
+  zdr: null | { providers: number; pricing: AiPricing };
+  /** the id on that provider's own API; `verified: false` = derived, the server couldn't check */
+  direct: null | { provider: DirectProviderId; model: string; verified: boolean };
+}
+export interface AiCatalogView {
+  fetchedAt: string;
+  source: 'openrouter';
+  models: AiCatalogModel[];
+}
+/** GET /ai/endpoints?model=: the providers (endpoints) that serve one OpenRouter model */
+export interface AiEndpoint {
+  /** what a pinned route stores as `endpoint` */
+  tag: string;
+  /** display name */
+  provider: string;
+  pricing: AiPricing;
+  /** median output tokens/s, last 30 min; null = no samples */
+  tps: number | null;
+  latencyMs: number | null;
+  /** 0–100 */
+  uptime: number | null;
+  zdr: boolean;
+}
+export interface AiEndpointsView {
+  model: string;
+  fetchedAt: string;
+  endpoints: AiEndpoint[];
+}
+export interface AiUsageView {
+  days: 7 | 30;
+  totals: {
+    calls: number;
+    usd: number;
+    conversations: number;
+    inputTokens: number;
+    outputTokens: number;
+  };
+  byModel: { provider: string; model: string; calls: number; usd: number }[];
+  byStore: {
+    id: string;
+    slug: string;
+    name: string;
+    calls: number;
+    usd: number;
+    conversations: number;
+    /** the allowance right now (not over the period) */
+    used: number;
+    limit: number;
+    remaining: number;
+    /** the store's daily USD limit for the Vendedor budget key, null = no cap */
+    dailyLimitUsd: number | null;
+  }[];
+}
+
+const fleetConsole = {
+  customers: () => req<{ asOf: string; stores: CustomerRow[] }>('/customers'),
+  customersOverview: () => req<CustomersOverview>('/customers/overview'),
+  customer: (id: string) => req<CustomerDetail>(`/customers/${encodeURIComponent(id)}`),
+  searchStores: (q: string) =>
+    req<{ stores: StoreHit[] }>(`/customers/search?q=${encodeURIComponent(q)}&limit=6`),
+  storeEvents: (id: string, q: { before?: number | undefined; category?: string | undefined }) => {
+    const params = new URLSearchParams({ limit: '30' });
+    if (q.before) params.set('before', String(q.before));
+    if (q.category) params.set('category', q.category);
+    return req<StoreEventsPage>(`/customers/${encodeURIComponent(id)}/events?${params}`);
+  },
+  aiModels: () => req<AiModelsView>('/ai/models'),
+  aiVoice: () => req<AiVoiceView>('/ai/voice'),
+  aiCatalog: () => req<AiCatalogView>('/ai/catalog'),
+  aiEndpoints: (model: string) =>
+    req<AiEndpointsView>(`/ai/endpoints?model=${encodeURIComponent(model)}`),
+  aiUsage: (days: 7 | 30) => req<AiUsageView>(`/ai/usage?days=${days}`),
+};
+
+/** `GET /wa/qr`: the CRM's number. On the gateway (`transport: 'gateway'`) pairing is by code
+ *  only, so `qr` is always null and the session row's state, detail and code come along. */
+export type WaQr = {
+  qr: string | null;
+  status: string;
+  /** the paired account, once the socket is open — null while unpaired */
+  me: { phone: string | null; name: string | null } | null;
+  transport?: 'socket' | 'gateway';
+  state?: 'off' | 'connecting' | 'pairing' | 'open' | 'logged_out' | 'banned' | 'error';
+  detail?: string | null;
+  pairCode?: string | null;
+  pairCodeExpiresAt?: string | null;
+};
+
+// ── site sob medida: the builder's tasks (/site-tasks) ──
+
+export type SiteTaskStatus =
+  | 'queued'
+  | 'firing'
+  | 'running'
+  | 'pr_open'
+  | 'approved'
+  | 'merged'
+  | 'delivered'
+  | 'escalated'
+  | 'cancelled';
+export type SiteTaskKind = 'generate' | 'revision';
+export type SiteMotion = 'none' | 'subtle' | 'expressive';
+
+/** Duá's brief for the build (Core validates it; version 1) */
+export interface DesignSpec {
+  version: number;
+  summary: string;
+  brand: {
+    personality: string[];
+    palette: { primary: string | null; accents: string[]; notes: string | null };
+    typography: string;
+    references: { url: string; note: string }[];
+  };
+  experience: {
+    mustHave: string[];
+    differentials: string[];
+    motion: SiteMotion;
+    avoid: string[];
+  };
+  copy: { tone: string; language: string };
+}
+
+export interface SiteTask {
+  id: string;
+  tenantId: string;
+  storeName: string;
+  slug: string;
+  kind: SiteTaskKind;
+  status: SiteTaskStatus;
+  runner: 'claude_routine' | 'human';
+  attempt: number;
+  branch: string;
+  sessionUrl: string | null;
+  prNumber: number | null;
+  prUrl: string | null;
+  ci: 'pending' | 'success' | 'failure' | null;
+  /** failed CI runs on distinct shas; past 4 the task escalates */
+  iterations: number;
+  dueAt: string;
+  /** why it escalated — or, once cancelled, the staff's reason */
+  escalatedReason: string | null;
+  approvedBy: string | null;
+  createdAt: string;
+  firedAt: string | null;
+  mergedAt: string | null;
+  deliveredAt: string | null;
+  spec: DesignSpec;
+  /** the owner's revision request (kind 'revision') */
+  note: string | null;
+}
+
+export interface SiteTaskEvent {
+  at: string;
+  kind: string;
+  detail: Record<string, unknown>;
+}
+
+const siteTasks = {
+  siteTasks: (status: 'open' | 'all') => req<{ tasks: SiteTask[] }>(`/site-tasks?status=${status}`),
+  siteTask: (id: string) =>
+    req<{ task: SiteTask; events: SiteTaskEvent[] }>(`/site-tasks/${encodeURIComponent(id)}`),
+  /** pr_open + ci success only; the merge job takes it from there */
+  approveSiteTask: (id: string) =>
+    req<{ task: SiteTask }>(`/site-tasks/${encodeURIComponent(id)}/approve`, { method: 'POST' }),
+  retrySiteTask: (id: string) =>
+    req<{ task: SiteTask }>(`/site-tasks/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
+  takeSiteTask: (id: string) =>
+    req<{ task: SiteTask }>(`/site-tasks/${encodeURIComponent(id)}/human`, { method: 'POST' }),
+  cancelSiteTask: (id: string, reason: string) =>
+    req<{ task: SiteTask }>(`/site-tasks/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+};
+
+export const api = Object.assign(apiBase, agentV2, fleet, {
+  ...controlPlane,
+  ...siteTasks,
+  ...menuImports,
+  ...fleetConsole,
+});

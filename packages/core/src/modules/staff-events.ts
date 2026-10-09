@@ -56,6 +56,7 @@ export type Severity = (typeof SEVERITIES)[number];
 type Id = string;
 type Name = string;
 type Opt<T> = T | null;
+type SiteKind = 'generate' | 'revision';
 
 export type OrderStep =
   | 'paid'
@@ -137,6 +138,13 @@ export interface StaffEventMap {
     contact: Opt<string>;
   };
   'store.request': { storeName: Name; title: string; detail: Opt<string> };
+  // site sob medida (the site builder): one task's way from Duá's card to the store's site
+  'site.task_queued': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; dueAt: string };
+  'site.ready': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; prUrl: Opt<string> };
+  'site.escalated': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; reason: string };
+  'site.due_soon': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; dueAt: string };
+  'site.overdue': { storeName: Name; slug: string; taskId: Id; kind: SiteKind; dueAt: string };
+  'site.delivered': { storeName: Name; slug: string; taskId: Id; kind: SiteKind };
   'billing.manual': {
     storeName: Name;
     invoiceId: Id;
@@ -257,8 +265,19 @@ export interface StaffEventMap {
     storeName: Name;
     problem: 'card_rejected' | 'past_due' | 'cancelled' | 'trial_ended' | 'pix_mismatch' | 'other';
     detail: Opt<string>;
+    /** the specific case, when `problem` is broader ("Fatura paga duas vezes") */
+    title?: string;
   };
   'domain.ready': { storeName: Name; host: string };
+  'domain.live': { storeName: Name; host: string };
+  'domain.tls_stuck': { storeName: Name; host: string };
+  'domain.repairing': { storeName: Name; host: string };
+  'domain.lapsed': { storeName: Name; host: string };
+  'domain.ordered': { storeName: Name; host: string };
+  'domain.registered': { storeName: Name; host: string };
+  'domain.order_failed': { storeName: Name; host: string; reason: 'conflict' | 'error' };
+  'domain.renewed': { storeName: Name; host: string; until: Opt<string> };
+  'domain.renewal_failed': { storeName: Name; host: string };
   // frota
   'release.published': {
     releaseId: Id;
@@ -433,6 +452,48 @@ export const STAFF_EVENT_KINDS: Catalog = {
     label: 'pedido de uma loja',
     hint: 'site sob medida e outros pedidos que a equipe atende',
   },
+  'site.task_queued': {
+    category: 'atendimento',
+    level: 'normal',
+    severity: 'info',
+    label: 'site sob medida na fila',
+    hint: 'o lojista aplicou o cartão do Duá: o site (ou o ajuste) começou a ser feito',
+  },
+  'site.ready': {
+    category: 'atendimento',
+    level: 'ping',
+    severity: 'info',
+    label: 'site sob medida para aprovar',
+    hint: 'o PR ficou verde — aprove no CRM para publicar',
+  },
+  'site.escalated': {
+    category: 'atendimento',
+    level: 'ping',
+    severity: 'warning',
+    label: 'site sob medida travou',
+    hint: 'o disparo falhou, o CI não ficou verde ou o PR fechou — a equipe assume',
+  },
+  'site.due_soon': {
+    category: 'atendimento',
+    level: 'ping',
+    severity: 'warning',
+    label: 'site sob medida perto do prazo',
+    hint: 'faltam menos de 8 horas para o prazo de 1 dia',
+  },
+  'site.overdue': {
+    category: 'atendimento',
+    level: 'ping',
+    severity: 'critical',
+    label: 'site sob medida atrasado',
+    hint: 'o prazo de 1 dia passou e o site não está no ar',
+  },
+  'site.delivered': {
+    category: 'atendimento',
+    level: 'normal',
+    severity: 'success',
+    label: 'site sob medida no ar',
+    hint: 'o design do PR aprovado foi publicado na loja',
+  },
   'billing.manual': {
     category: 'atendimento',
     level: 'normal',
@@ -564,6 +625,60 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'silent',
     severity: 'success',
     label: 'domínio próprio pronto',
+  },
+  'domain.live': {
+    category: 'assinaturas',
+    level: 'silent',
+    severity: 'success',
+    label: 'domínio próprio no ar',
+  },
+  'domain.tls_stuck': {
+    category: 'assinaturas',
+    level: 'normal',
+    severity: 'warning',
+    label: 'certificado do domínio próprio travado',
+  },
+  'domain.repairing': {
+    category: 'assinaturas',
+    level: 'normal',
+    severity: 'warning',
+    label: 'domínio próprio parou de apontar para a Venduá',
+  },
+  'domain.lapsed': {
+    category: 'assinaturas',
+    level: 'silent',
+    severity: 'info',
+    label: 'domínio próprio desligado (plano sem domínio)',
+  },
+  'domain.ordered': {
+    category: 'assinaturas',
+    level: 'silent',
+    severity: 'info',
+    label: 'domínio pedido ao registrador',
+  },
+  'domain.registered': {
+    category: 'assinaturas',
+    level: 'silent',
+    severity: 'success',
+    label: 'domínio registrado',
+  },
+  'domain.order_failed': {
+    category: 'assinaturas',
+    level: 'normal',
+    severity: 'warning',
+    label: 'registro de domínio falhou',
+  },
+  'domain.renewed': {
+    category: 'assinaturas',
+    level: 'silent',
+    severity: 'success',
+    label: 'domínio renovado',
+  },
+  'domain.renewal_failed': {
+    category: 'assinaturas',
+    level: 'normal',
+    severity: 'critical',
+    label: 'renovação de domínio falhou',
   },
   'release.published': {
     category: 'frota',
@@ -823,4 +938,62 @@ export async function recordStaffEvent<K extends StaffEventKind>(
   } catch (e) {
     eventLog.warn({ err: e, kind }, 'staff event not recorded');
   }
+}
+
+export interface StoreEventItem {
+  id: number;
+  kind: StaffEventKind;
+  label: string;
+  category: StaffCategory;
+  severity: Severity;
+  data: Record<string, unknown>;
+  createdAt: string;
+}
+
+export const STORE_EVENTS_MAX = 100;
+
+/** One store's events, newest first, paged by id (`before` = the last id of the previous page).
+ *  Rows are pruned after 30 days, so this is the store's recent history, not an archive. */
+export async function listStoreEventsTx(
+  tx: Sql,
+  tenantId: string,
+  o: { before?: number | null; limit?: number; category?: StaffCategory | null } = {},
+): Promise<{ events: StoreEventItem[]; nextBefore: number | null }> {
+  const limit = Math.min(Math.max(o.limit ?? 30, 1), STORE_EVENTS_MAX);
+  const kinds = o.category
+    ? STAFF_EVENT_KIND_LIST.filter((k) => STAFF_EVENT_KINDS[k].category === o.category)
+    : null;
+  const rows = await tx<
+    {
+      id: string;
+      kind: string;
+      severity: Severity;
+      data: Record<string, unknown>;
+      created_at: Date;
+    }[]
+  >`
+    select id, kind, severity, data, created_at from staff_events
+    where tenant_id = ${tenantId}
+      and (${o.before ?? null}::bigint is null or id < ${o.before ?? null}::bigint)
+      and (${kinds}::text[] is null or kind = any(${kinds}::text[]))
+    order by id desc
+    limit ${limit + 1}
+  `;
+  const events = rows
+    .slice(0, limit)
+    .filter((r) => isStaffEventKind(r.kind))
+    .map((r) => {
+      const kind = r.kind as StaffEventKind;
+      return {
+        id: Number(r.id),
+        kind,
+        label: STAFF_EVENT_KINDS[kind].label,
+        category: STAFF_EVENT_KINDS[kind].category,
+        severity: r.severity,
+        data: r.data ?? {},
+        createdAt: r.created_at.toISOString(),
+      };
+    });
+  const last = rows[limit - 1];
+  return { events, nextBefore: rows.length > limit && last ? Number(last.id) : null };
 }

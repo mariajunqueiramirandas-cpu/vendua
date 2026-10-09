@@ -7,11 +7,13 @@ import {
   ClockCountdown,
   CloudWarning,
   Eye,
+  Fire,
   Package,
   Pause,
   Play,
   CreditCard,
   Plugs,
+  Printer,
   Receipt,
   ShieldWarning,
   ShoppingBag,
@@ -21,6 +23,7 @@ import {
   WarningCircle,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { formatTime } from '@vendua/kernel/rules';
 import { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { api, type Home as HomeData } from '../../lib/api.ts';
@@ -64,6 +67,14 @@ export default function Home() {
   useEffect(() => {
     if (data) setMilestone(unseenMilestone(s.store.id, data.totalOrders));
   }, [data, s.store.id]);
+  // an order step the app closed on before Core answered goes out now, without opening Pedidos
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('vendua.moves')) void import('../orders/transition.ts');
+    } catch {
+      /* private mode: nothing was kept */
+    }
+  }, []);
 
   // a store nobody has touched yet opens the step-by-step, and so does one fresh from signup that
   // never chose to leave it; "continuar depois" is kept by Core, so no device steers them back
@@ -94,7 +105,9 @@ export default function Home() {
       <div className="-mt-1 mb-1 flex justify-end md:-mt-4">
         <HelpButton className="-mr-2" />
       </div>
-      <div className="grid gap-5 lg:grid-cols-[2fr_1fr] lg:items-start lg:gap-6">
+      {/* minmax(0, …) tracks: an `auto` column grows to its widest item's min-content, so a
+          longer name or total on the day pushed the phone layout past the screen */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
         <div className="contents space-y-5 lg:block lg:space-y-6">
           {data ? <Hero data={data} /> : <Skeleton className="h-[340px] rounded-xl" delay={0} />}
           <Section title="Agora na loja" className="order-3 lg:order-none">
@@ -155,7 +168,8 @@ function Hero({ data }: { data: HomeData }) {
   // held for the first plan payment: "voltar agora" can't work, so say what can
   const hold = !!store?.status.billingHold;
   const owner = useCan('owner');
-  const [sheet, setSheet] = useState(false);
+  const [sheet, setSheet] = useState<false | 'pause' | 'demand'>(false);
+  const demand = store?.operations.demand === 'high';
   const qc = useQueryClient();
   const phase = phaseOf(data);
   const light = phase === 'dusk';
@@ -212,7 +226,7 @@ function Hero({ data }: { data: HomeData }) {
         {w ? (
           <button
             type="button"
-            onClick={() => setSheet(true)}
+            onClick={() => setSheet('pause')}
             className={cn(
               'press t-label inline-flex min-h-10 items-center gap-2 rounded-full px-3.5 ring-1',
               light ? 'bg-white/10 ring-white/20' : 'bg-surface/70 ring-line',
@@ -252,17 +266,35 @@ function Hero({ data }: { data: HomeData }) {
             <Play weight="fill" className="size-4" /> voltar agora
           </button>
         ) : phase === 'open' ? (
-          <button
-            type="button"
-            onClick={() => setSheet(true)}
-            className={cn(
-              'press t-label inline-flex min-h-10 items-center gap-1.5 rounded-full px-3',
-              muted,
-              'hover:bg-hover',
-            )}
-          >
-            <Pause className="size-4" /> pausar
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setSheet('pause')}
+              className={cn(
+                'press t-label inline-flex min-h-10 items-center gap-1.5 rounded-full px-3',
+                muted,
+                'hover:bg-hover',
+              )}
+            >
+              <Pause className="size-4" /> pausar
+            </button>
+            {store ? (
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                onClick={() => setSheet('demand')}
+                className={cn(
+                  'press t-label inline-flex min-h-10 items-center gap-1.5 rounded-full px-3',
+                  demand ? 'bg-warning-soft px-3.5 text-warning' : cn(muted, 'hover:bg-hover'),
+                )}
+              >
+                <Fire weight={demand ? 'fill' : 'regular'} className="size-4" />
+                {demand
+                  ? `muitos pedidos${store.operations.demandUntil ? ` até ${formatTime(store.operations.demandUntil, data.timezone)}` : ''}`
+                  : 'muitos pedidos?'}
+              </button>
+            ) : null}
+          </>
         ) : null}
       </div>
 
@@ -324,7 +356,14 @@ function Hero({ data }: { data: HomeData }) {
         </div>
       ) : null}
 
-      {store ? <StatusSheet open={sheet} onOpenChange={setSheet} store={store} /> : null}
+      {store ? (
+        <StatusSheet
+          open={!!sheet}
+          onOpenChange={(v) => !v && setSheet(false)}
+          store={store}
+          {...(sheet === 'demand' ? { startWith: 'demand' as const } : {})}
+        />
+      ) : null}
     </HeroCard>
   );
 }
@@ -336,6 +375,7 @@ const ATTENTION: Record<string, { Icon: typeof Bell; tone: Tone; cta: string }> 
   pix_to_confirm: { Icon: Wallet, tone: 'warning', cta: 'conferir' },
   low_stock: { Icon: Package, tone: 'warning', cta: 'resolver' },
   waitlist: { Icon: UsersThree, tone: 'warning', cta: 'ver' },
+  waitlist_open: { Icon: UsersThree, tone: 'info', cta: 'conectar' },
   alerts_failing: { Icon: BellSlash, tone: 'warning', cta: 'resolver' },
   mp_expiring: { Icon: ClockCountdown, tone: 'warning', cta: 'reconectar' },
   mp_disconnected: { Icon: Plugs, tone: 'danger', cta: 'reconectar' },
@@ -344,6 +384,7 @@ const ATTENTION: Record<string, { Icon: typeof Bell; tone: Tone; cta: string }> 
   billing_past_due: { Icon: WarningCircle, tone: 'danger', cta: 'pagar' },
   invoice_open: { Icon: Receipt, tone: 'warning', cta: 'pagar' },
   trial_ending: { Icon: ClockCountdown, tone: 'info', cta: 'escolher' },
+  print_failed: { Icon: Printer, tone: 'warning', cta: 'resolver' },
   // our problem, not theirs: informative, never alarming
   incident: { Icon: CloudWarning, tone: 'info', cta: 'ver' },
 };

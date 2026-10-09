@@ -38,6 +38,37 @@ services:
       VENDUA_PROXY_HOPS: ${VENDUA_PROXY_HOPS:-1}
       # Control Plane (docs/architecture/08): the edge's key for /edge/v1/resolve — same value below.
       VENDUA_EDGE_SECRET: ${VENDUA_EDGE_SECRET:?set VENDUA_EDGE_SECRET in .env}
+      # Own domains (ADR 0038): domains-sync's key for /sync/v1 (same value below), the VPS's
+      # public addresses for hosted zones, Cloudflare (DNS host) and Openprovider (.com.br
+      # registrar). Unset Cloudflare/IPv4 = no delegation; unset Openprovider = no purchase.
+      VENDUA_SYNC_SECRET: ${VENDUA_SYNC_SECRET:-}
+      VENDUA_EDGE_IPV4: ${VENDUA_EDGE_IPV4:-}
+      VENDUA_EDGE_IPV6: ${VENDUA_EDGE_IPV6:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      OPENPROVIDER_USERNAME: ${OPENPROVIDER_USERNAME:-}
+      OPENPROVIDER_PASSWORD: ${OPENPROVIDER_PASSWORD:-}
+      OPENPROVIDER_CONTACT_HANDLE: ${OPENPROVIDER_CONTACT_HANDLE:-}
+      OPENPROVIDER_PROVIDER_NAME: ${OPENPROVIDER_PROVIDER_NAME:-}
+      # unset = Openprovider's production API; its OTE sandbox URL for a staging stack
+      OPENPROVIDER_URL: ${OPENPROVIDER_URL:-}
+      # Site builder (ADR 0039, docs/deploy/site-builder.md): the Claude Code routine that builds
+      # sites, and the GitHub repo whose PRs staff approval merges. Unset = tasks wait / merge by hand.
+      VENDUA_SITE_ROUTINE_URL: ${VENDUA_SITE_ROUTINE_URL:-}
+      VENDUA_SITE_ROUTINE_TOKEN: ${VENDUA_SITE_ROUTINE_TOKEN:-}
+      VENDUA_GITHUB_REPO: ${VENDUA_GITHUB_REPO:-}
+      VENDUA_GITHUB_TOKEN: ${VENDUA_GITHUB_TOKEN:-}
+      VENDUA_GITHUB_WEBHOOK_SECRET: ${VENDUA_GITHUB_WEBHOOK_SECRET:-}
+      # Venduá's own WhatsApp number: Core's socket (default) or `gateway` after the cutover
+      # (platform-whatsapp/cutover-cli.ts).
+      WA_PLATFORM_TRANSPORT: ${WA_PLATFORM_TRANSPORT:-}
+      # Postgres pool sizes (default 10 each); unset/empty = default.
+      DB_POOL_MAX: ${DB_POOL_MAX:-}
+      DB_JOBS_POOL_MAX: ${DB_JOBS_POOL_MAX:-}
+      # signup codes sent from Venduá's number: per IP per day / platform per hour / per day (30/60/300)
+      VENDUA_SIGNUP_OTP_PER_IP_DAY: ${VENDUA_SIGNUP_OTP_PER_IP_DAY:-}
+      VENDUA_SIGNUP_OTP_PER_HOUR: ${VENDUA_SIGNUP_OTP_PER_HOUR:-}
+      VENDUA_SIGNUP_OTP_PER_DAY: ${VENDUA_SIGNUP_OTP_PER_DAY:-}
       # Synthetic probes verify deployments and watch every live host (default on in production).
       VENDUA_PROBES: ${VENDUA_PROBES:-1}
       # unset = probe https://<host> (DNS + TLS + edge); http://edge:8080 = through the edge only
@@ -60,9 +91,8 @@ services:
       MP_PLATFORM_ACCESS_TOKEN: ${MP_PLATFORM_ACCESS_TOKEN:-}
       # signup with this code skips Mercado Pago; the team marks its invoices paid in the CRM
       VENDUA_SIGNUP_ACCESS_CODE: ${VENDUA_SIGNUP_ACCESS_CODE:-}
-      # the payer email MP requires on Pix (shoppers don't give one); unset = pagador@<store domain>
-      MP_PAYER_EMAIL: ${MP_PAYER_EMAIL:-}
-      # card-form key for a store whose OAuth answer carried none (the app's production public key)
+      # the app's production public key: card-form fallback for a store whose OAuth gave none, and
+      # MercadoPago.js in the admin (its device fingerprint goes with the plan's Pix)
       MP_PUBLIC_KEY: ${MP_PUBLIC_KEY:-}
       # Seals stores' MP tokens at rest (optional); unset = derived from SESSION_SECRET (warns at
       # boot). Setting it later is safe: tokens sealed under the derived key still open.
@@ -91,6 +121,8 @@ services:
       AGENT_MODEL_ROUTES: ${AGENT_MODEL_ROUTES:-}
       # Delivery by road distance (ADR 0024); unset = straight line × 1.3.
       ORS_API_KEY: ${ORS_API_KEY:-}
+      # a self-hosted OpenRouteService; unset = api.openrouteservice.org
+      ORS_URL: ${ORS_URL:-}
       # Pin maps: geocoder and raster tiles; unset = OSM's public Nominatim and tiles.
       NOMINATIM_URL: ${NOMINATIM_URL:-}
       NOMINATIM_USER_AGENT: ${NOMINATIM_USER_AGENT:-}
@@ -110,6 +142,9 @@ services:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       # optional: the commit the "Core reiniciou" card shows
       GIT_COMMIT: ${GIT_COMMIT:-}
+      # Voice-note transcription via the stt service below (ADR 0037); unset secret = off.
+      STT_URL: http://stt:8792
+      STT_SECRET: ${STT_SECRET:-}
       # Instagram DMs via the ig-sidecar service below; the same secret signs both directions.
       IG_SIDECAR_URL: http://ig-sidecar:8790
       IG_SIDECAR_SECRET: ${IG_SIDECAR_SECRET:-}
@@ -136,8 +171,8 @@ services:
 
   # Every store, one service (docs/architecture/07): the edge maps Host → store → release through
   # Core, serves that release's immutable files from the artifact store and injects vendua-state.
-  # New stores and releases need no compose change; only a PRO+ store's own domain is added in
-  # Dokploy's Domains UI (service edge, port 8080) — see docs/deploy/dokploy.md.
+  # New stores, releases and own domains need no compose change: domains-sync (below) routes the
+  # stores' own domains to this service — see docs/deploy/dokploy.md.
   edge:
     build:
       context: .
@@ -151,6 +186,9 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_REGION: ${S3_REGION:-auto}
+      # how long a Host → store route / a store's state is cached (ms, default 30000 each)
+      VENDUA_EDGE_ROUTE_TTL_MS: ${VENDUA_EDGE_ROUTE_TTL_MS:-}
+      VENDUA_EDGE_STATE_TTL_MS: ${VENDUA_EDGE_STATE_TTL_MS:-}
     volumes:
       - artifacts:/var/lib/vendua/artifacts:ro
       # route/state snapshot + verified files: a restart during a Core outage keeps serving
@@ -173,16 +211,50 @@ services:
       - traefik.docker.network=dokploy-network
       - traefik.http.services.vendua-edge.loadbalancer.server.port=8080
       - traefik.http.routers.vendua-edge-http.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
+      # the rule is v3 regex syntax: pinned, or a Traefik whose core.defaultRuleSyntax is v2 never
+      # matches it and every store 404s
+      - traefik.http.routers.vendua-edge-http.ruleSyntax=v3
       - traefik.http.routers.vendua-edge-http.entrypoints=web
       - traefik.http.routers.vendua-edge-http.priority=1
       - traefik.http.routers.vendua-edge-http.middlewares=vendua-edge-https
       - traefik.http.middlewares.vendua-edge-https.redirectscheme.scheme=https
       - traefik.http.routers.vendua-edge.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
+      - traefik.http.routers.vendua-edge.ruleSyntax=v3
       - traefik.http.routers.vendua-edge.entrypoints=websecure
       - traefik.http.routers.vendua-edge.priority=1
       - traefik.http.routers.vendua-edge.tls=true
+      # wildcard certificate over DNS-01: the `cloudflare` resolver in Dokploy's traefik.yml
+      # (docs/deploy/dokploy.md). Stores' own domains must reach the VPS directly, so the
+      # `*` record stays DNS only and Traefik, not Cloudflare, holds this certificate.
+      - traefik.http.routers.vendua-edge.tls.certresolver=cloudflare
+      - traefik.http.routers.vendua-edge.tls.domains[0].main=vendua.com.br
+      - traefik.http.routers.vendua-edge.tls.domains[0].sans=*.vendua.com.br
       - traefik.http.routers.vendua-edge.service=vendua-edge
       - traefik.http.routers.vendua-edge-http.service=vendua-edge
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Writes the Traefik dynamic file that routes verified custom domains to the edge (ADR 0038).
+  # Internal network only, no labels: nothing reaches it, and the internet-facing edge never gets
+  # this mount. Without VENDUA_SYNC_SECRET it idles.
+  domains-sync:
+    build:
+      context: .
+      dockerfile: packages/domains-sync/Dockerfile
+    environment:
+      VENDUA_CORE_URL: http://core:8787
+      VENDUA_SYNC_SECRET: ${VENDUA_SYNC_SECRET:-}
+      VENDUA_STORE_DOMAIN: ${VENDUA_STORE_DOMAIN:-vendua.com.br}
+      # the platform's own hosts (admin, CRM, site), comma-separated: never routed from the file
+      DOMAINS_SYNC_DENY: ${DOMAINS_SYNC_DENY:-}
+      # Traefik's certificate resolver for those routes (default letsencrypt, Dokploy's)
+      DOMAINS_SYNC_RESOLVER: ${DOMAINS_SYNC_RESOLVER:-}
+      DOMAINS_SYNC_INTERVAL_MS: ${DOMAINS_SYNC_INTERVAL_MS:-}
+    volumes:
+      - ${TRAEFIK_DYNAMIC_DIR:-/etc/dokploy/traefik/dynamic}:/traefik-dynamic
+    networks: [default]
     restart: unless-stopped
     logging:
       driver: json-file
@@ -235,6 +307,16 @@ services:
       # per store: pause between messages (plus jitter) and an hourly ceiling
       WA_MIN_SEND_GAP_MS: ${WA_MIN_SEND_GAP_MS:-1500}
       WA_MAX_PER_HOUR: ${WA_MAX_PER_HOUR:-200}
+      # per store: gap between messages in one chat / between conversations (ms)
+      WA_CHAT_GAP_MS: ${WA_CHAT_GAP_MS:-1500}
+      WA_CONVERSATION_GAP_MS: ${WA_CONVERSATION_GAP_MS:-250}
+      # Venduá's own number: 0 = this gateway leaves it alone; pacing of its messages (ms)
+      WA_PLATFORM_SESSIONS: ${WA_PLATFORM_SESSIONS:-}
+      WA_PLATFORM_MIN_SEND_GAP_MS: ${WA_PLATFORM_MIN_SEND_GAP_MS:-1500}
+      # the version this gateway records in wa_gateways
+      VENDUA_VERSION: ${GIT_COMMIT:-}
+      DB_POOL_MAX: ${DB_POOL_MAX:-}
+      DB_JOBS_POOL_MAX: ${DB_JOBS_POOL_MAX:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       BAILEYS_LOG_LEVEL: ${BAILEYS_LOG_LEVEL:-warn}
     depends_on:
@@ -281,6 +363,50 @@ services:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
 
+  # Self-hosted speech-to-text for shoppers' voice notes (services/stt, ADR 0037): Parakeet-TDT
+  # 0.6B v3 on CPU. Internal only; without STT_SECRET it idles and refuses every call. The first
+  # build downloads the 0.8 GB compiled model for this host's CPU from our GitHub Release.
+  # `cpus` keeps it off Core's and Postgres' cores; the engine sizes its threads to it.
+  stt:
+    build:
+      context: ./services/stt
+      args:
+        # parakeet-tdt-0.6b-v3-ptbr = the Brazilian Portuguese fine-tune (ADR 0037)
+        STT_MODEL: ${STT_MODEL:-parakeet-tdt-0.6b-v3}
+        # release = the compiled model from GitHub; compile = build it here from the fp32 export
+        STT_FROM: ${STT_FROM:-release}
+        # auto = from this host's CPU; 1 when the image runs on CPUs without VNNI
+        STT_REDUCE_RANGE: ${STT_REDUCE_RANGE:-auto}
+    cpus: ${STT_CPUS:-2}
+    mem_limit: ${STT_MEM_LIMIT:-3g}
+    environment:
+      STT_SECRET: ${STT_SECRET:-}
+      # defaults spelled out: the service parses these with int()/float(), so empty would crash it.
+      # Threads follow `cpus` (STT_CPUS); STT_THREADS has no safe empty value, so it isn't passed.
+      STT_MAX_BATCH: ${STT_MAX_BATCH:-8}
+      STT_MAX_WAIT_MS: ${STT_MAX_WAIT_MS:-0}
+      STT_MAX_QUEUE: ${STT_MAX_QUEUE:-64}
+      STT_MAX_SECONDS: ${STT_MAX_SECONDS:-200}
+      STT_MAX_BYTES: ${STT_MAX_BYTES:-10485760}
+      STT_REQUEST_TIMEOUT_S: ${STT_REQUEST_TIMEOUT_S:-120}
+      LOG_LEVEL: ${STT_LOG_LEVEL:-info}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8792/healthz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 6
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
   # Staff CRM — attach the staff domain here, never on core (shortens the proxy
   # chain and breaks VENDUA_PROXY_HOPS accounting for the login limiter).
   crm:
@@ -314,6 +440,9 @@ services:
       args:
         # where "Criar minha loja" goes: the admin's own domain (VENDUA_ADMIN_HOST), https
         PUBLIC_ADMIN_URL: ${PUBLIC_ADMIN_URL:-https://painel.vendua.com.br}
+        # Google Analytics (G-…) / Google Ads (AW-…) tag ids (site/src/lib/gtag.ts); empty = no Google tag
+        PUBLIC_GA_ID: ${PUBLIC_GA_ID:-}
+        PUBLIC_GOOGLE_ADS_ID: ${PUBLIC_GOOGLE_ADS_ID:-}
     restart: unless-stopped
     logging:
       driver: json-file

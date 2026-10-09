@@ -6,7 +6,6 @@ import { createSession, membershipsFor } from '../src/admin/auth.ts';
 import { pushExhausted } from '../src/admin/workers.ts';
 import { aiAllowanceTx, claimAiConversationTx } from '../src/modules/billing/ai-allowance.ts';
 import { planHas, requireFeature } from '../src/modules/billing/plans.ts';
-import { billingStaff } from '../src/modules/billing/subscriptions.ts';
 import { handleBillingWebhook } from '../src/modules/billing/webhook.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { enqueueOrderPrintTx } from '../src/modules/printing/jobs.ts';
@@ -27,6 +26,8 @@ const NONE = {
   printing: false,
   loyalty: false,
   vendedor: false,
+  copilot: false,
+  pdv: false,
 };
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
@@ -54,7 +55,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
   const aiPlan = `pt_${nonce}_ai`;
   const tempPack = `pt_${nonce}_pack`;
   let idem = 0;
-  const originalStaff = billingStaff.notify;
 
   const call = async (
     method: string,
@@ -106,15 +106,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
     if (sub === 'trialing')
       await sql`
         insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email,
-                                   current_period_start, current_period_end, trial_ends_at)
-        values (${id}, ${plan}, 'pix', 'trialing', 'fake', 'bia@example.com',
+                                   payer_document, current_period_start, current_period_end,
+                                   trial_ends_at)
+        values (${id}, ${plan}, 'pix', 'trialing', 'fake', 'bia@example.com', '52998224725',
                 now(), now() + interval '14 days', now() + interval '14 days')
       `;
     else if (sub)
       await sql`
         insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email,
-                                   current_period_start, current_period_end)
-        values (${id}, ${plan}, 'pix', ${sub}, 'fake', 'bia@example.com',
+                                   payer_document, current_period_start, current_period_end)
+        values (${id}, ${plan}, 'pix', ${sub}, 'fake', 'bia@example.com', '52998224725',
                 now(), now() + interval '30 days')
       `;
     if (sub === 'active' || sub === 'trialing')
@@ -146,7 +147,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
 
   beforeAll(async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
-    billingStaff.notify = async () => {};
     await sql`
       insert into plans (id, name, price_cents, features, public, sort, ai_conversations,
                          ai_trial_conversations)
@@ -162,7 +162,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
   });
 
   afterAll(async () => {
-    billingStaff.notify = originalStaff;
     // the catalog is shared with every other test: the launch plan leads again
     await sql`update plans set recommended = false where recommended and id <> 'bandeira'`;
     await sql`update plans set recommended = true where id = 'bandeira'`;
@@ -191,6 +190,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       printing: true,
       loyalty: true,
       vendedor: true,
+      pdv: true,
     });
     expect(Object.values(plans[2].features).every((v) => v === true)).toBe(true);
     expect(plans.map((p) => [p.aiConversations, p.aiTrialConversations])).toEqual([
@@ -237,6 +237,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       planId: 'pangolim',
       method: 'pix',
       payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
     });
     expect(st.status).toBe(200);
 
@@ -367,7 +368,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
     expect((await trial.owner('GET', '/session')).body.plan).toEqual({
       id: 'pangolim',
       name: 'Venduá Pangolim',
-      features: { ...NONE, kds: true, printing: true, loyalty: true, vendedor: true },
+      features: {
+        ...NONE,
+        kds: true,
+        printing: true,
+        loyalty: true,
+        vendedor: true,
+        copilot: true,
+        pdv: true,
+      },
     });
     const paid = await store('sess-p', 'pangolim', 'active');
     expect((await paid.owner('GET', '/session')).body.plan.features).toEqual({
@@ -377,6 +386,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
       printing: true,
       loyalty: true,
       vendedor: true,
+      copilot: true,
+      pdv: true,
     });
     // any role gets it
     const attendant = `217${String(Date.now() + 999).slice(-8)}`;
@@ -1042,6 +1053,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
         planId: 'bandeira',
         method: 'pix',
         payerEmail: 'bia@example.com',
+        payerDocument: '529.982.247-25',
       });
       expect(st.status).toBe(200);
       expect((await payInvoice(st.body.invoices[0].id)).status).toBe(200);
@@ -1134,6 +1146,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
         planId: 'bandeira',
         method: 'pix',
         payerEmail: 'bia@example.com',
+        payerDocument: '529.982.247-25',
       });
       expect((await payInvoice(st.body.invoices[0].id)).status).toBe(200);
       const t0 = Date.now() - 40 * DAY;
@@ -1166,6 +1179,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
         planId: 'bandeira',
         method: 'pix',
         payerEmail: 'bia@example.com',
+        payerDocument: '529.982.247-25',
       });
       await payInvoice(st.body.invoices[0].id);
       await sql`update ai_packs set public = true where id = ${tempPack}`;

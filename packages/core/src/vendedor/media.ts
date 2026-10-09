@@ -3,16 +3,18 @@ import { controlTx } from '../modules/control.ts';
 import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 
-// Voice notes, photos and spoken replies (sales-agent.md §4.5). Every call goes to a provider
-// only through a route staff marked zero-data-retention (the owner's rule, 2026-10-03), set in
-// `control_settings` key `agent_runtime.media_routes`:
+// Voice notes, photos and spoken replies (sales-agent.md §4.5). Calls go to a provider through
+// the routes staff set in `control_settings` key `agent_runtime.media_routes`:
 //   { "transcribe": [route…], "speak": [route…] }   route = { provider, model, zdr, voice? }
-// A route without `zdr: true` is never used. Photos go through the model gateway's own ZDR routes.
+// `zdr` is staff's record of the provider account's retention terms (a per-route choice since
+// 2026-10-05); every route is used either way. Photos go through the model gateway's routes.
+// Provider `sidecar` is the self-hosted STT service (services/stt, ADR 0037) at STT_URL: when
+// staff named no transcribe route and it is configured, voice notes go there by default.
 
 const mediaLog = log.child({ mod: 'vendedor-media' });
 
 export interface MediaRoute {
-  provider: 'openai' | 'elevenlabs';
+  provider: 'openai' | 'elevenlabs' | 'sidecar';
   model: string;
   zdr: boolean;
   voice?: string;
@@ -25,8 +27,13 @@ export interface Transcript {
   language: string | null;
 }
 
+export interface TranscribeHints {
+  /** words the audio likely contains (the store's product names); the sidecar boosts them */
+  phrases?: readonly string[];
+}
+
 export interface MediaProviders {
-  transcribe(audio: Uint8Array, mime: string): Promise<Transcript | null>;
+  transcribe(audio: Uint8Array, mime: string, hints?: TranscribeHints): Promise<Transcript | null>;
   /** Ogg/Opus bytes for a WhatsApp voice note, or null. */
   speak(text: string): Promise<{ bytes: Uint8Array; mime: string; seconds: number } | null>;
 }
@@ -39,6 +46,87 @@ export interface PhotoReading {
 
 const TIMEOUT_MS = 20_000;
 const CACHE_MS = 30_000;
+const SIDECAR_ROUTE: MediaRoute = { provider: 'sidecar', model: 'parakeet-tdt-0.6b-v3', zdr: true };
+// services/stt caps: 300 phrases of up to 80 characters; the header itself stays well under the
+// sidecar's 64 KB header-line limit
+const MAX_PHRASES = 300;
+const MAX_PHRASE_CHARS = 80;
+const MAX_HEADER_BYTES = 16_384;
+
+const MAX_ROUTES = 5;
+const MODEL_ID = /^[A-Za-z0-9._:/-]{1,80}$/;
+const PROVIDERS_FOR = {
+  transcribe: ['sidecar', 'openai', 'elevenlabs'],
+  speak: ['openai', 'elevenlabs'],
+} as const;
+
+/** write-time check for `agent_runtime.media_routes` (validateSetting); paths are `transcribe.0.model` */
+export function validateMediaRoutes(
+  value: unknown,
+  bad: (field: string, why: string) => Error,
+): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw bad('value', 'must be an object with transcribe and speak lists');
+  for (const key of Object.keys(value))
+    if (key !== 'transcribe' && key !== 'speak') throw bad(key, 'is not a media route list');
+  for (const kind of ['transcribe', 'speak'] as const) {
+    const list = (value as Record<string, unknown>)[kind];
+    if (list === undefined) continue;
+    if (!Array.isArray(list)) throw bad(kind, 'must be a list');
+    if (list.length > MAX_ROUTES) throw bad(kind, `holds at most ${MAX_ROUTES} routes`);
+    list.forEach((raw, i) => {
+      const at = `${kind}.${i}`;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw bad(at, 'must be a route');
+      const r = raw as Record<string, unknown>;
+      if (!(PROVIDERS_FOR[kind] as readonly unknown[]).includes(r.provider))
+        throw bad(`${at}.provider`, `must be one of ${PROVIDERS_FOR[kind].join(', ')}`);
+      if (typeof r.model !== 'string' || !MODEL_ID.test(r.model))
+        throw bad(`${at}.model`, 'must be a model id (up to 80 letters, digits, . _ : / -)');
+      if (typeof r.zdr !== 'boolean') throw bad(`${at}.zdr`, 'must be true or false');
+      if (r.voice !== undefined && (typeof r.voice !== 'string' || !MODEL_ID.test(r.voice)))
+        throw bad(`${at}.voice`, 'must be a voice id');
+      if (kind === 'speak' && r.provider === 'elevenlabs' && r.voice === undefined)
+        throw bad(`${at}.voice`, 'is required for ElevenLabs');
+    });
+  }
+}
+
+/** The STT sidecar as the CRM shows it: configured by env, answering /healthz, its model. */
+export async function sidecarStatus(
+  env: Record<string, string | undefined> = process.env,
+): Promise<{ configured: boolean; reachable: boolean; model: string | null }> {
+  if (!env.STT_URL || !env.STT_SECRET) return { configured: false, reachable: false, model: null };
+  try {
+    const res = await fetch(`${env.STT_URL.replace(/\/+$/, '')}/healthz`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    const j = (await res.json().catch(() => ({}))) as { model?: unknown };
+    return {
+      configured: true,
+      reachable: res.ok,
+      model: typeof j.model === 'string' ? j.model.slice(0, 80) : null,
+    };
+  } catch {
+    return { configured: true, reachable: false, model: null };
+  }
+}
+
+/** The sidecar's x-stt-phrases header: percent-encoded JSON, within its caps. */
+export function phrasesHeader(phrases: readonly string[] | undefined): string | null {
+  const list = [
+    ...new Set(
+      (phrases ?? [])
+        .map((p) => p.replace(/\s+/g, ' ').trim())
+        .filter((p) => p && p.length <= MAX_PHRASE_CHARS),
+    ),
+  ].slice(0, MAX_PHRASES);
+  let header = encodeURIComponent(JSON.stringify(list));
+  while (header.length > MAX_HEADER_BYTES && list.length) {
+    list.pop();
+    header = encodeURIComponent(JSON.stringify(list));
+  }
+  return list.length ? header : null;
+}
 
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
   const res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
@@ -55,7 +143,7 @@ function confidenceOf(segments: unknown): number | null {
   return Math.max(0, Math.min(1, Math.exp(lp.reduce((a, b) => a + b, 0) / lp.length)));
 }
 
-/** Providers reached with this process's keys, through the staff-set ZDR routes. */
+/** Providers reached with this process's keys, through the staff-set routes. */
 export function mediaProviders(
   sql: Sql,
   env: Record<string, string | undefined> = process.env,
@@ -71,13 +159,34 @@ export function mediaProviders(
       );
       cached = { at: Date.now(), value: rows[0]?.value ?? {} };
     }
-    return (cached.value[kind] ?? []).filter((r) => r && r.zdr === true);
+    return (cached.value[kind] ?? []).filter((r) => r && typeof r.model === 'string');
   };
 
   return {
-    async transcribe(audio, mime) {
-      for (const r of await routes('transcribe')) {
+    async transcribe(audio, mime, hints) {
+      const sidecar = env.STT_URL && env.STT_SECRET ? env.STT_URL.replace(/\/+$/, '') : null;
+      const configured = await routes('transcribe');
+      for (const r of configured.length || !sidecar ? configured : [SIDECAR_ROUTE]) {
         try {
+          if (r.provider === 'sidecar' && sidecar) {
+            const headers: Record<string, string> = {
+              authorization: `Bearer ${env.STT_SECRET}`,
+              'content-type': mime,
+            };
+            const phrases = phrasesHeader(hints?.phrases);
+            if (phrases) headers['x-stt-phrases'] = phrases;
+            const j = (await fetchJson(`${sidecar}/v1/transcribe`, {
+              method: 'POST',
+              headers,
+              body: audio,
+            })) as { text?: string; confidence?: number | null; language?: string | null };
+            if (typeof j.text === 'string')
+              return {
+                text: j.text.trim().slice(0, 4000),
+                confidence: typeof j.confidence === 'number' ? j.confidence : null,
+                language: j.language ?? null,
+              };
+          }
           if (r.provider === 'openai' && env.OPENAI_API_KEY) {
             const form = new FormData();
             form.set('file', new Blob([audio], { type: mime.split(';')[0] ?? mime }), 'audio.ogg');
@@ -101,9 +210,9 @@ export function mediaProviders(
             form.set('file', new Blob([audio], { type: mime.split(';')[0] ?? mime }), 'audio.ogg');
             form.set('model_id', r.model);
             form.set('language_code', 'por');
-            // zero-retention mode: nothing is logged or kept on their side
+            // zero-retention mode (enterprise accounts): nothing is logged or kept on their side
             const j = (await fetchJson(
-              'https://api.elevenlabs.io/v1/speech-to-text?enable_logging=false',
+              `https://api.elevenlabs.io/v1/speech-to-text${r.zdr ? '?enable_logging=false' : ''}`,
               {
                 method: 'POST',
                 headers: { 'xi-api-key': env.ELEVENLABS_API_KEY },
@@ -129,7 +238,7 @@ export function mediaProviders(
         try {
           if (r.provider === 'elevenlabs' && env.ELEVENLABS_API_KEY && r.voice) {
             const res = await fetch(
-              `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(r.voice)}?enable_logging=false&output_format=opus_48000_64`,
+              `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(r.voice)}?output_format=opus_48000_64${r.zdr ? '&enable_logging=false' : ''}`,
               {
                 method: 'POST',
                 headers: {

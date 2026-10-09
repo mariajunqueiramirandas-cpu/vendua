@@ -9,7 +9,7 @@ import { claimForTurnTx } from './allowance.ts';
 import { readPhoto, type MediaProviders } from './media.ts';
 import { sendDirectTx, typingTx } from './outbound.ts';
 import { loadAgent } from './settings.ts';
-import { readsAsShopper, triggerOf } from './signals.ts';
+import { triggerOf } from './signals.ts';
 import {
   AGENT_ID,
   SUBJECT_KIND,
@@ -19,6 +19,7 @@ import {
   threadFloor,
   type Thread,
 } from './threads.ts';
+import { askOwnerTx, firstLookTx, requestHistoryTx, setClassTx } from './triage.ts';
 
 // The ingest (sales-agent.md §4.5): each message the gateway stored becomes text — a voice
 // note is transcribed, a photo described and matched against the menu — and then, in one
@@ -44,23 +45,38 @@ interface Row {
   body: string | null;
   meta: Record<string, unknown>;
   quoted_wa_id: string | null;
+  wa_id: string | null;
   created_at: Date;
   ingest_attempts: number;
 }
 
+/**
+ * Due pending messages, except one whose thread has an older one still pending (in flight on
+ * another Core or retrying): a thread's messages are dispatched in order, so a slow voice note
+ * can't land after the text sent behind it.
+ */
 export async function claimPending(sql: Sql, limit = 10): Promise<Row[]> {
-  return controlTx(
-    sql,
-    (tx) => tx<Row[]>`
+  return controlTx(sql, async (tx) => {
+    // one whose handling kept killing the worker (no throw to fail it) would hold its thread
+    await tx`
+      update shopper_messages set ingest = 'failed', ingest_lease_until = null
+      where ingest = 'pending' and ingest_attempts >= ${MAX_ATTEMPTS}
+        and ingest_lease_until < now()`;
+    return tx<Row[]>`
       update shopper_messages m set ingest_lease_until = now() + make_interval(secs => ${LEASE_S}),
         ingest_attempts = m.ingest_attempts + 1
-      where m.id in (
-        select id from shopper_messages
-        where ingest = 'pending' and (ingest_lease_until is null or ingest_lease_until < now())
-        order by created_at limit ${limit} for update skip locked)
+      -- array() picks once; an IN subquery can be rescanned and claim past the limit
+      where m.id = any(array(
+        select s.id from shopper_messages s
+        where s.ingest = 'pending' and (s.ingest_lease_until is null or s.ingest_lease_until < now())
+          and not exists (
+            select 1 from shopper_messages o
+            where o.thread_id = s.thread_id and o.ingest = 'pending'
+              and (o.created_at, o.id) < (s.created_at, s.id))
+        order by s.created_at, s.id limit ${limit} for update skip locked))
       returning m.id, m.tenant_id, m.thread_id, m.author, m.kind, m.body, m.meta, m.quoted_wa_id,
-        m.created_at, m.ingest_attempts`,
-  );
+        m.wa_id, m.created_at, m.ingest_attempts`;
+  });
 }
 
 interface Derived {
@@ -81,6 +97,21 @@ async function derive(d: IngestDeps, r: Row): Promise<Derived> {
     receipt: false,
   };
   if (r.author !== 'shopper' || (r.kind !== 'audio' && r.kind !== 'image')) return out;
+  // paid calls only for what ingestOne could dispatch; a held message is still derived (triage
+  // reads its transcript)
+  const skipped = await withTenant(d.sql, r.tenant_id, async (tx) => {
+    const [thread, agent] = await Promise.all([
+      mustThread(tx, r.tenant_id, r.thread_id),
+      loadAgent(tx, r.tenant_id),
+    ]);
+    return (
+      thread.owner === 'muted' ||
+      (!agent.enabled && thread.channel !== 'test') ||
+      thread.class === 'personal' ||
+      thread.class === 'other'
+    );
+  });
+  if (skipped) return out;
   const media = await withTenant(
     d.sql,
     r.tenant_id,
@@ -90,29 +121,29 @@ async function derive(d: IngestDeps, r: Row): Promise<Derived> {
   );
   const m = media[0];
   if (!m) return out;
+  const productNames = async () =>
+    (
+      await withTenant(
+        d.sql,
+        r.tenant_id,
+        (tx) =>
+          tx<
+            { name: string }[]
+          >`select name from products where tenant_id = ${r.tenant_id} and status = 'active' limit 120`,
+      )
+    ).map((n) => n.name);
   if (r.kind === 'audio' && d.media) {
-    const t = await d.media.transcribe(m.bytes, m.mime);
+    // the catalog's names steer the transcription toward what this store sells
+    const phrases = await productNames().catch(() => []); // a hint: never blocks the note
+    const t = await d.media.transcribe(m.bytes, m.mime, { phrases });
     if (t) {
       out.transcript = t.text;
       out.confidence = t.confidence;
     }
   }
   if (r.kind === 'image' && d.gateway) {
-    const names = await withTenant(
-      d.sql,
-      r.tenant_id,
-      (tx) =>
-        tx<
-          { name: string }[]
-        >`select name from products where tenant_id = ${r.tenant_id} and status = 'active' limit 120`,
-    );
-    const p = await readPhoto(
-      d.gateway,
-      r.tenant_id,
-      m.bytes,
-      m.mime,
-      names.map((n) => n.name),
-    );
+    const names = await productNames();
+    const p = await readPhoto(d.gateway, r.tenant_id, m.bytes, m.mime, names);
     if (p) {
       out.description = p.description;
       out.receipt = p.looksLikeReceipt;
@@ -157,7 +188,13 @@ export async function ingestOne(d: IngestDeps, r: Row): Promise<void> {
       subject: { kind: SUBJECT_KIND, id: thread.id },
     };
     const at = new Date(r.created_at).toISOString();
-    const done = async (state: 'done' | 'skipped') => {
+    const done = async (state: 'done' | 'skipped' | 'held') => {
+      // marked personal while this message was being transcribed: what was derived stays unwritten
+      if (thread.class === 'personal') {
+        await tx`update shopper_messages set ingest = ${state}, ingest_lease_until = null
+          where id = ${r.id}`;
+        return emitAdminTx(tx, r.tenant_id, 'vendedor', thread.id);
+      }
       await tx`update shopper_messages set ingest = ${state}, ingest_lease_until = null,
         transcript = coalesce(${derived.transcript}, transcript),
         meta = meta || ${tx.json({
@@ -170,7 +207,24 @@ export async function ingestOne(d: IngestDeps, r: Row): Promise<void> {
       await emitAdminTx(tx, r.tenant_id, 'vendedor', thread.id);
     };
 
+    // the owner's phone command (ADR 0033): a decision, never a takeover, never learned from
+    if (r.kind === 'command') {
+      if (r.author === 'merchant' && thread.channel === 'whatsapp')
+        await commandTx(tx, thread, (r.body ?? '').trim().toLowerCase(), r.id);
+      return done('done');
+    }
+
     if (r.author === 'merchant') {
+      // the owner's own chats (a friend, a number still being checked) are not Duá's to follow;
+      // but on a number still undecided the owner answering by hand holds the floor, so a later
+      // "cliente" doesn't send Duá after questions the owner already answered
+      if (thread.channel === 'whatsapp' && !['shopper', 'unknown'].includes(thread.class)) {
+        if ((thread.class === 'checking' || thread.class === 'ask') && thread.owner !== 'muted')
+          await tx`update shopper_threads set owner = 'human', owner_reason = coalesce(owner_reason, 'a loja respondeu'),
+            human_until = now() + make_interval(mins => ${agent.settings.humanSilenceMin}),
+            waiting_since = null, pending_since = null, updated_at = now() where id = ${thread.id}`;
+        return done('done');
+      }
       // the store answered: it holds the floor for its window, and the shopper isn't waiting anymore
       if (thread.owner !== 'muted')
         await tx`update shopper_threads set owner = 'human', owner_reason = coalesce(owner_reason, 'a loja respondeu'),
@@ -199,19 +253,26 @@ export async function ingestOne(d: IngestDeps, r: Row): Promise<void> {
 
     if (thread.owner === 'muted' || (!agent.enabled && thread.channel !== 'test'))
       return done('skipped');
+    // who Duá answers (ADR 0033): a number is classified once, before anything is dispatched
     let cls = thread.class;
-    if (cls === 'unknown' && thread.channel === 'whatsapp') {
-      const [o] = thread.phone
-        ? await tx<{ n: number }[]>`select count(*)::int as n from orders
-            where tenant_id = ${r.tenant_id} and customer_phone = ${thread.phone}`
-        : [{ n: 0 }];
-      cls =
-        (o?.n ?? 0) > 0 || agent.settings.unknownNumbers === 'all' || readsAsShopper(r.body)
-          ? 'shopper'
-          : 'other';
-      await tx`update shopper_threads set class = ${cls} where id = ${thread.id}`;
+    if (thread.channel === 'whatsapp') {
+      if (cls === 'checking') return done('held');
+      if (cls === 'ask') {
+        await askOwnerTx(tx, thread, now);
+        return done('held');
+      }
+      if (cls === 'unknown') {
+        const look = await firstLookTx(tx, thread, agent.settings.answerWho, r.body);
+        if (look.kind === 'checking') {
+          await requestHistoryTx(tx, thread, { waId: r.wa_id, at: new Date(r.created_at) });
+          return done('held');
+        }
+        await setClassTx(tx, thread, look.decision, now);
+        if (look.kind === 'ask') return done('held');
+        cls = look.decision.cls;
+      }
     }
-    if (cls === 'other') return done('skipped');
+    if (cls !== 'shopper' && cls !== 'unknown') return done('skipped');
 
     const floor = threadFloor({ ...thread, class: cls }, agent, status, now);
     const text = derived.transcript ?? r.body;
@@ -290,10 +351,58 @@ export async function ingestOne(d: IngestDeps, r: Row): Promise<void> {
         dedupeKey: `slow:${thread.id}:${(thread.pendingSince ?? new Date(r.created_at)).toISOString()}`,
         deliverAt: floor.until,
       });
+    // paused: once it lapses he takes back, and the turn answers only what is still unanswered
+    if (floor.floor === 'paused' && floor.until)
+      await dispatchTx(tx, {
+        actor,
+        kind: 'timer.handback',
+        source: 'vendedor:pause',
+        dedupeKey: `pause:${thread.id}:${floor.until.toISOString()}`,
+        deliverAt: new Date(floor.until.getTime() + 1_000),
+      });
     if (floor.floor === 'agent' && !trigger && thread.channel === 'whatsapp')
       await typingTx(tx, r.tenant_id, thread.id);
     return done('done');
   });
+}
+
+/**
+ * `#pessoal`, `#cliente`, `#dua` typed on the store's phone (the gateway revoked it already):
+ * pessoal → never answered; cliente → a shopper; dua → a shopper and Duá takes the floor now.
+ */
+async function commandTx(tx: Sql, thread: Thread, word: string, messageId: string) {
+  if (word !== 'pessoal' && word !== 'cliente' && word !== 'dua') return;
+  const decision = {
+    cls: word === 'pessoal' ? ('personal' as const) : ('shopper' as const),
+    source: 'command' as const,
+    reason: 'owner_marked' as const,
+  };
+  if (word !== 'dua' || thread.class !== 'shopper') await setClassTx(tx, thread, decision);
+  if (word === 'pessoal') return;
+  // "não é cliente" was the old way to say it: the owner's word now says otherwise
+  if (word === 'cliente') {
+    await tx`update shopper_threads set owner = 'open', owner_reason = null
+      where id = ${thread.id} and owner = 'muted'`;
+    return;
+  }
+  await tx`update shopper_threads set owner = 'agent', owner_reason = null, human_until = null,
+    waiting_since = null, updated_at = now() where id = ${thread.id}`;
+  const [held] = await tx<{ n: number }[]>`
+    select count(*)::int as n from shopper_messages
+    where tenant_id = ${thread.tenantId} and thread_id = ${thread.id} and ingest = 'pending'
+      and author = 'shopper'`;
+  // released messages reach Duá through the ingest; otherwise the last one gets its answer now
+  if (!held?.n)
+    await dispatchTx(tx, {
+      actor: {
+        tenantId: thread.tenantId,
+        agentId: AGENT_ID,
+        subject: { kind: SUBJECT_KIND, id: thread.id },
+      },
+      kind: 'timer.handback',
+      source: 'whatsapp:command',
+      dedupeKey: `handback:${thread.id}:command:${messageId}`,
+    });
 }
 
 /**
@@ -337,10 +446,24 @@ export async function presenceOne(sql: Sql, tenantId: string, threadId: string):
   });
 }
 
+/** The batch is handled one message at a time: each one's lease restarts when its turn comes. */
+async function renewLease(sql: Sql, r: Row): Promise<boolean> {
+  const kept = await controlTx(
+    sql,
+    (tx) => tx`
+      update shopper_messages set ingest_lease_until = now() + make_interval(secs => ${LEASE_S})
+      where id = ${r.id} and ingest = 'pending' and ingest_attempts = ${r.ingest_attempts}
+      returning id`,
+  );
+  return kept.length > 0;
+}
+
 export async function ingestPass(d: IngestDeps): Promise<number> {
   const rows = await claimPending(d.sql);
   for (const r of rows) {
     try {
+      // the lease lapsed while earlier messages were handled and another Core took this one
+      if (!(await renewLease(d.sql, r))) continue;
       await ingestOne(d, r);
     } catch (err) {
       ingestLog.error({ err, messageId: r.id, attempts: r.ingest_attempts }, 'ingest failed');

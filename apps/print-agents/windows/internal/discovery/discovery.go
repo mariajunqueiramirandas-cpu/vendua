@@ -21,7 +21,7 @@ const (
 )
 
 // Discoverer combines the quick local inventory (queues, serial ports), done
-// on every report, with the network scan, which only runs when asked.
+// on every report, with the network scan, which runs at start, periodically and when asked.
 type Discoverer struct {
 	Local func(ctx context.Context) ([]api.Discovered, error)
 	Addrs func() ([]netip.Addr, error)
@@ -30,6 +30,9 @@ type Discoverer struct {
 
 	mu      sync.Mutex
 	network []api.Discovered
+	// network printers the last scan missed once: kept until a second miss
+	missed  map[string]bool
+	scanned bool
 	// the last complete local listing: Core marks whatever a report omits as absent, so a
 	// spooler or registry hiccup must not report an empty set
 	local     []api.Discovered
@@ -40,21 +43,51 @@ func New(log *slog.Logger) *Discoverer {
 	return &Discoverer{Local: Local, Addrs: LocalAddrs, Probe: Probe{}, Log: log}
 }
 
-// ScanNetwork probes the local /24s and remembers what answered.
-func (d *Discoverer) ScanNetwork(ctx context.Context) error {
+// ScanNetwork probes the local /24s and remembers what answered. A printer
+// busy with a job may not take the probe, so one missed scan keeps it listed.
+// changed reports whether the network set differs from before.
+func (d *Discoverer) ScanNetwork(ctx context.Context) (changed bool, err error) {
 	own, err := d.Addrs()
 	if err != nil {
-		return err
+		d.mu.Lock()
+		d.scanned = true
+		d.mu.Unlock()
+		return false, err
 	}
 	found := d.Probe.Scan(ctx, own)
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return false, ctx.Err()
 	}
 	d.Log.Info("network scan done", "subnets", len(subnets(own)), "printers", len(found))
 	d.mu.Lock()
-	d.network = found
-	d.mu.Unlock()
-	return nil
+	defer d.mu.Unlock()
+	next, missed := found, map[string]bool{}
+	for _, p := range d.network {
+		if !slices.ContainsFunc(found, func(f api.Discovered) bool { return f.Key == p.Key }) && !d.missed[p.Key] {
+			next = append(next, p)
+			missed[p.Key] = true
+		}
+	}
+	changed = !slices.Equal(keys(d.network), keys(next))
+	d.network, d.missed, d.scanned = next, missed, true
+	return changed, nil
+}
+
+// NetworkScanned reports whether a network scan has finished: until then a
+// report would leave out every network printer, and Core marks those absent.
+func (d *Discoverer) NetworkScanned() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.scanned
+}
+
+func keys(ps []api.Discovered) []string {
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = p.Key
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Collect is the set to PUT: local printers plus the last network scan.

@@ -389,6 +389,9 @@ img {
 /* ── header ─────────────────────────────────────────────────────────────── */
 
 .site-header {
+  /* the desktop row switches on the header's own width, not the viewport's: under
+     page zoom (WCAG 1.4.4) the viewport stays wide while the header gets narrow */
+  container: site-header / inline-size;
   position: sticky;
   top: 0;
   z-index: 40;
@@ -537,7 +540,7 @@ img {
   background: var(--caramel-100);
   color: var(--caramel-800);
 }
-@media (min-width: 900px) {
+@container site-header (min-width: 900px) {
   .brand-tag {
     display: block;
   }

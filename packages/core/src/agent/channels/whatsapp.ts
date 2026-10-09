@@ -4,6 +4,9 @@ import { controlTx } from '../../modules/control.ts';
 import { emitControlEvent } from '../../modules/control-events.ts';
 import { recordChannelState } from '../../modules/system-events.ts';
 import { log } from '../../platform/log.ts';
+import { probeWhatsApp } from '../../platform-whatsapp/probe.ts';
+import { cachedPlatformIdentity, cachedPlatformState } from '../../platform-whatsapp/session.ts';
+import { platformTransport, VENDUA_SESSION } from '../../platform-whatsapp/transport.ts';
 
 const waLog = log.child({ mod: 'whatsapp' });
 
@@ -141,15 +144,28 @@ function trackAuthWrite<T>(p: Promise<T>): Promise<T> {
   );
   return p;
 }
+// after the cutover the number lives on the gateway: these readers answer from its session row
 export function waStatus(): string {
+  if (platformTransport() === 'gateway') {
+    const st = cachedPlatformState();
+    return st === 'open' ? 'open' : st === 'connecting' || st === 'pairing' ? 'connecting' : 'off';
+  }
   return connState;
 }
 
 /** free existence probe — 'true' upgrades a derived number to verified;
- *  null = can't tell (never a negative). Never boots the socket. */
-export async function whatsappRegistered(phone: string): Promise<boolean | null> {
+ *  null = can't tell (never a negative). Never boots the socket. `sql` is needed on the gateway
+ *  (a probe row it answers); without it the answer there is null. */
+export async function whatsappRegistered(phone: string, sql?: Sql): Promise<boolean | null> {
   const digits = phone.replace(/\D/g, '');
   if (digits.length < 10 || digits.length > 15) return false;
+  if (platformTransport() === 'gateway') {
+    if (!sql || cachedPlatformState() !== 'open') return null;
+    return probeWhatsApp(sql, digits).catch((e) => {
+      waLog.warn({ err: e }, 'gateway probe failed');
+      return null;
+    });
+  }
   const sock = socket;
   if (!sock || connState !== 'open') return null;
   try {
@@ -166,6 +182,7 @@ export async function whatsappRegistered(phone: string): Promise<boolean | null>
   }
 }
 export function waIdentity(): { phone: string | null; name: string | null } | null {
+  if (platformTransport() === 'gateway') return cachedPlatformIdentity();
   return waMe;
 }
 // identity of the integration that opened `socket` — config changes must close it
@@ -545,8 +562,15 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
           );
           if (key.remoteJid)
             rememberUnread(dm, { remoteJid: key.remoteJid, id: key.id, fromMe: false });
+          const id = key.id;
           for (const fn of handlers) {
-            void fn(dm.jid, text, key.id, m.pushName, dm.alias);
+            void (async () => {
+              try {
+                await fn(dm.jid, text, id, m.pushName, dm.alias);
+              } catch (e) {
+                waLog.warn({ err: e, id }, 'inbound message ingest failed');
+              }
+            })();
           }
         }
       })
@@ -761,6 +785,8 @@ export async function ensureSocket(
   sql: Sql,
   integration: IntegrationRow | null,
 ): Promise<BaileysSocket | null> {
+  // the gateway holds the login: a second socket here would fight it for the same device
+  if (platformTransport() === 'gateway') return null;
   const wanted =
     integration && integration.driver === 'baileys' && integration.enabled
       ? fingerprintOf(integration)
@@ -845,6 +871,7 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
   const pending = pairInFlight.get(digits);
   if (pending) return pending;
   const p = (async () => {
+    if (platformTransport() === 'gateway') return gatewayPairCode(sql, digits);
     const deadline = Date.now() + 20_000;
     for (;;) {
       // re-read config + socket every pass — settings can change mid-wait
@@ -870,6 +897,38 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
   });
   pairInFlight.set(digits, p);
   return p;
+}
+
+// The gateway answers a pair request on the session row: the code shows up there once its
+// socket's registration stream is live. Clearing the old code first is what makes a code fresh.
+async function gatewayPairCode(sql: Sql, digits: string): Promise<string> {
+  const [row] = await controlTx(
+    sql,
+    (tx) => tx<{ state: string }[]>`
+      update platform_wa_sessions set wanted = true, pair_phone = ${digits},
+        pair_requested_at = now(), pair_code = null, pair_code_expires_at = null,
+        updated_at = now()
+      where name = ${VENDUA_SESSION} and state <> 'open'
+      returning state`,
+  );
+  if (!row) throw new Error('whatsapp já está conectado');
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+    const [s] = await controlTx(
+      sql,
+      (tx) => tx<{ state: string; pair_code: string | null; pair_phone: string | null }[]>`
+        select state, pair_code, pair_phone from platform_wa_sessions
+        where name = ${VENDUA_SESSION}
+          and (pair_code_expires_at is null or pair_code_expires_at > now())`,
+    );
+    if (s?.state === 'open') throw new Error('whatsapp já está conectado');
+    if (s?.pair_code && s.pair_phone === digits) {
+      waLog.info({ phone: maskPhone(digits) }, 'pairing code issued by the gateway');
+      return s.pair_code;
+    }
+  }
+  throw new Error('whatsapp ainda conectando — tente de novo em alguns segundos');
 }
 
 // logouts serialize on a chain; loggingOut stays held while ANY call is

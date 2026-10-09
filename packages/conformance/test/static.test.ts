@@ -597,6 +597,93 @@ describe('K09 / K11 / K03 extensions', () => {
     expect(k03.detail).not.toContain(':4:');
   });
 
+  test('K09: cart mutations taken from useCart under any name fail', async () => {
+    const dir = bare({
+      'sections/sneaky.tsx': [
+        'export function A() {',
+        '  const { mutations: m } = useCart();',
+        "  void m.add('x');",
+        '}',
+        'export function B() {',
+        '  const {',
+        '    cart,',
+        '    mutations,',
+        '  } = useCart();',
+        '  const { add } = mutations;',
+        '}',
+        'export function C() {',
+        '  const { mutations: { reorder } } = useCart();',
+        '}',
+        'export const d = (mutations: Muts) => mutations.importItems([]);',
+        "export const e = (mutations: Muts) => mutations.setNote('i', 'n');",
+        "export const f = (mutations: Muts) => mutations.applyCoupon('X');",
+      ].join('\n'),
+    });
+    const k09 = (await runLint(dir)).find((r) => r.id === 'K09')!;
+    expect(k09.status).toBe('fail');
+    expect(k09.detail!.split('\n').map((r) => r.split(':')[1])).toEqual([
+      '2',
+      '8',
+      '13',
+      '15',
+      '16',
+      '17',
+    ]);
+    expect(k09.detail).toContain('sections/sneaky.tsx:2: cart mutations taken from useCart()');
+  });
+
+  test('K09 passes the cart read alone and an unrelated `mutations`', async () => {
+    const dir = bare({
+      'sections/ok.tsx': [
+        'export function A() {',
+        '  const { cart, loading } = useCart();',
+        '  new MutationObserver((mutations) => mutations.forEach(() => {}));',
+        '  return cart && !loading;',
+        '}',
+      ].join('\n'),
+    });
+    expect((await runLint(dir)).find((r) => r.id === 'K09')?.status).toBe('pass');
+  });
+
+  test('K10: attribute selectors on class that reach v-* fail', async () => {
+    const css = [
+      '[class*="v-btn"] { color: red; }',
+      "[class^='v-'] { color: red; }",
+      '.card [class~=v-card] { color: red; }',
+      '[class|="v"] { color: red; }',
+      '[class*="nav-"] { color: blue; }',
+      '[class^="menu-"] { color: blue; }',
+    ].join('\n');
+    const k10 = (await runLint(bare({ 'styles/x.css': css }))).find((r) => r.id === 'K10')!;
+    expect(k10.status).toBe('fail');
+    expect(k10.detail!.split('\n').map((r) => r.split(':')[1])).toEqual(['1', '2', '3', '4']);
+  });
+
+  test('K03: any reference to fetch fails, not only a call', async () => {
+    const dir = bare({
+      'sections/net.tsx': [
+        "export const a = () => window.fetch('/x');",
+        "export const b = () => globalThis['fetch']('/x');",
+        "export const c = () => fetch.call(null, '/x');",
+        'export const d = fetch;',
+        'export const e = () => refetch();',
+        'export const f = <img fetchPriority="high" src="/a.png" />;',
+        'export const g = () => api.fetch();',
+        "export const h = 'x'; // we never fetch here",
+        "export const i = 'fetch';",
+        'export const j = <p>fetch failed, try again</p>;',
+        'export const k = `fetch ${n}`;',
+        'export const l = `${fetch}`;',
+        'export const m = "globalThis[\'fetch\']";',
+        "export const n = <p>use window['fetch'] never</p>;",
+      ].join('\n'),
+    });
+    const k03 = (await runStatic(dir)).find((r) => r.id === 'K03')!;
+    expect(k03.status).toBe('fail');
+    const rows = k03.detail!.split('\n').filter((r) => r.startsWith('sections/net.tsx'));
+    expect(rows.map((r) => r.split(':')[1])).toEqual(['1', '2', '3', '4', '12']);
+  });
+
   test('Q07 uses the templates package contrast pairs, not its own list', () => {
     const suite = readFileSync(join(import.meta.dir, '../src/suite/conformance.e2e.ts'), 'utf8');
     expect(suite).toContain("import { CONTRAST_PAIRS, checkCompat } from '@vendua/templates'");

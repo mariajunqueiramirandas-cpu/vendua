@@ -1,16 +1,16 @@
 import {
   ArrowSquareOut,
-  ArrowsClockwise,
+  CaretDown,
   ChatCircleDots,
+  Check,
   CheckCircle,
   Clock,
-  Copy,
   CreditCard,
   Gift,
-  Globe,
-  type Icon,
+  IdentificationCard,
   Info,
-  MagicWand,
+  PaintBrush,
+  PencilSimpleLine,
   PixLogo,
   Receipt,
   Sparkle,
@@ -18,27 +18,37 @@ import {
   XCircle,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { usePreload } from '../../app/routes.ts';
 import {
   api,
   ApiError,
   type Account as AccountData,
-  type DomainStatus,
   type AiPack,
+  type DesignSpec,
   type Invoice,
   type Plan,
   type PlanFeature,
+  type SiteRequest as SiteReq,
 } from '../../lib/api.ts';
-import { ago, dateShort, money } from '../../lib/format.ts';
+import { ago, dateShort, money, until } from '../../lib/format.ts';
+import { maskDocument, parseDocument } from '../../lib/parse.ts';
 import { qk, useMutation } from '../../lib/query.ts';
+import { useMercadoPago } from '../../lib/mercadopago.ts';
 import { can, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Divided, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { copyText, CopyValue } from '../../ui/CopyValue.tsx';
 import { DuaNote, ErrorState, messageOf, Skeleton } from '../../ui/feedback.tsx';
-import { CommitInput, Field, Segmented, TextArea, TextInput } from '../../ui/fields.tsx';
+import {
+  CommitInput,
+  DocumentInput,
+  Field,
+  Segmented,
+  TextArea,
+  TextInput,
+} from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
@@ -58,74 +68,20 @@ import {
 import { FEATURE_LABEL, PlanCards, PlanCompare, promiseOf } from '../../ui/PlanPicker.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { PAYER_EMAIL_RE } from '../auth/pending.ts';
+import { DOCUMENT_ERR, PAYER_EMAIL_RE } from '../auth/pending.ts';
+import { DocumentGate, needsDocument } from './DocumentGate.tsx';
+import { Addresses } from './domain/Addresses.tsx';
+import { CustomDomain } from './domain/CustomDomain.tsx';
+import { Callout, Chip, hostOf, useAccountWrite } from './domain/kit.tsx';
 
 type Sub = NonNullable<AccountData['subscription']>;
 type Method = 'card' | 'pix';
 
 const METHOD_LABEL: Record<Method, string> = { card: 'cartão', pix: 'Pix' };
-/** a host that wraps at its dots, never inside a word */
-const Host = ({ h }: { h: string }) => (
-  <>
-    {h.split('.').map((part, i) => (
-      <span key={i}>
-        {i ? '.' : ''}
-        {part}
-        <wbr />
-      </span>
-    ))}
-  </>
-);
-const hostOf = (url: string) => url.replace(/^https?:\/\//, '').replace(/\/$/, '');
 const monthOf = (iso: string) =>
   new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' })
     .format(new Date(iso.length === 10 ? `${iso}T12:00:00` : iso))
     .replace(' de ', ' ');
-
-/** Every account write answers with the whole account: put it in place, refresh what shows it. */
-function useAccountWrite<V>(
-  fn: (v: V) => Promise<AccountData>,
-  done?: (a: AccountData, v: V) => void,
-) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: fn,
-    onSuccess: (a, v) => {
-      qc.setQueryData(qk.account, a);
-      // the plan opens and closes screens (session.plan.features): the locks follow
-      void qc.invalidateQueries({ queryKey: qk.session });
-      void qc.invalidateQueries({ queryKey: qk.home });
-      void qc.invalidateQueries({ queryKey: qk.store });
-      done?.(a, v);
-    },
-    onError: (e) => toast.error(messageOf(e)),
-  });
-}
-
-// ── chips: color + icon + word (§4.2) ───────────────────────────────────────
-
-type Tone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
-const TONE: Record<Tone, string> = {
-  success: 'bg-success-soft text-success',
-  warning: 'bg-warning-soft text-warning',
-  danger: 'bg-danger-soft text-danger',
-  info: 'bg-info-soft text-info',
-  neutral: 'bg-sunken text-muted',
-};
-
-function Chip({ tone, icon: I, children }: { tone: Tone; icon: Icon; children: ReactNode }) {
-  return (
-    <span
-      className={cn(
-        't-caption inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 font-semibold',
-        TONE[tone],
-      )}
-    >
-      <I weight="bold" className="size-4" aria-hidden />
-      {children}
-    </span>
-  );
-}
 
 function SubChip({ s }: { s: Sub }) {
   if (s.status === 'trialing' && !s.cancelAtPeriodEnd)
@@ -240,53 +196,6 @@ function InvoiceChip({ i }: { i: Invoice }) {
   );
 }
 
-const DOMAIN: Record<DomainStatus, { tone: Tone; icon: Icon; label: string }> = {
-  active: { tone: 'success', icon: CheckCircle, label: 'no ar' },
-  pending_dns: { tone: 'warning', icon: Clock, label: 'esperando o DNS' },
-  dns_ok: { tone: 'info', icon: ArrowsClockwise, label: 'ativando' },
-  failed: { tone: 'danger', icon: WarningCircle, label: 'com problema' },
-};
-
-function DomainChip({ status }: { status: DomainStatus }) {
-  const m = DOMAIN[status];
-  return (
-    <Chip tone={m.tone} icon={m.icon}>
-      {m.label}
-    </Chip>
-  );
-}
-
-/** A banner that needs the merchant: what happened, and the one thing to do. */
-function Callout({
-  tone,
-  icon: I,
-  title,
-  children,
-  action,
-}: {
-  tone: Exclude<Tone, 'neutral'>;
-  icon: Icon;
-  title: ReactNode;
-  children?: ReactNode;
-  action?: ReactNode;
-}) {
-  return (
-    <div
-      className={cn('flex flex-col gap-3 rounded-lg p-4 sm:flex-row sm:items-center', TONE[tone])}
-      role={tone === 'danger' ? 'alert' : 'status'}
-    >
-      <div className="flex min-w-0 flex-1 gap-3">
-        <I weight="fill" className="mt-0.5 size-6 shrink-0" aria-hidden />
-        <div className="min-w-0 text-ink">
-          <p className="font-semibold">{title}</p>
-          {children ? <p className="t-body mt-0.5 text-muted">{children}</p> : null}
-        </div>
-      </div>
-      {action ? <div className="shrink-0 sm:ml-2">{action}</div> : null}
-    </div>
-  );
-}
-
 // ── the screen ──────────────────────────────────────────────────────────────
 
 export default function Account() {
@@ -297,6 +206,7 @@ export default function Account() {
     queryFn: api.account,
     enabled: owner,
   });
+  useMercadoPago(data?.billing);
   if (!owner)
     return (
       <PageBody>
@@ -349,6 +259,27 @@ function AccountView({ a }: { a: AccountData }) {
 
   return (
     <div className="space-y-8">
+      {a.billing.available && needsDocument(a) ? (
+        <Callout
+          tone="warning"
+          icon={IdentificationCard}
+          title="Falta o CPF ou o CNPJ da cobrança"
+          action={
+            <Button
+              size="sm"
+              onClick={() => {
+                const field = document.getElementById('payer-doc');
+                field?.scrollIntoView({ block: 'center' });
+                field?.focus();
+              }}
+            >
+              informar agora
+            </Button>
+          }
+        >
+          Sem ele, o Pix do plano não é gerado. Informe em Pagamento do plano.
+        </Callout>
+      ) : null}
       {!a.billing.available && s?.status === 'pending' ? (
         <Callout tone="warning" icon={Clock} title="Falta o primeiro pagamento">
           A equipe da Venduá confirma o pagamento do plano e a loja abre para pedidos.
@@ -450,7 +381,8 @@ function AccountView({ a }: { a: AccountData }) {
         <Addresses a={a} />
       </Section>
 
-      {a.plan.features.customDomain ? (
+      {/* a lapsed domain stays in view after the plan loses the feature: it's still the owner's */}
+      {a.plan.features.customDomain || a.customDomain ? (
         <Section
           title="Domínio próprio"
           id="dominio"
@@ -462,9 +394,13 @@ function AccountView({ a }: { a: AccountData }) {
 
       {a.plan.features.customSite ? (
         <Section
-          title="Site personalizado"
+          title="Site sob medida"
           id="site"
-          hint="Um site feito para a sua loja pelo nosso agente de IA."
+          hint={
+            a.plan.features.copilot
+              ? 'Feito só para a sua loja, a partir de uma conversa com o Duá.'
+              : 'Um site feito para a sua loja pelo nosso agente de IA.'
+          }
         >
           <SiteRequest a={a} />
         </Section>
@@ -940,6 +876,8 @@ function PlanSheet({
   const [method, setMethod] = useState<Method>(s?.method ?? 'pix');
   const [email, setEmail] = useState('');
   const [emailErr, setEmailErr] = useState<string | null>(null);
+  const [doc, setDoc] = useState('');
+  const [docErr, setDocErr] = useState<string | null>(null);
   useEffect(() => {
     if (!mode) return;
     setSel(
@@ -951,6 +889,8 @@ function PlanSheet({
     setMethod(s?.method ?? 'pix');
     setEmail(s?.payerEmail ?? session.user.email ?? '');
     setEmailErr(null);
+    setDoc(maskDocument(s?.payerDocument ?? ''));
+    setDocErr(null);
     // only when the sheet opens
   }, [mode]);
   const plan = offered.find((p) => p.id === sel);
@@ -969,7 +909,8 @@ function PlanSheet({
     },
   );
   const start = useAccountWrite(
-    (v: { planId: string; method: Method; payerEmail: string }) => api.startSubscription(v),
+    (v: { planId: string; method: Method; payerEmail: string; payerDocument: string }) =>
+      api.startSubscription(v),
     (n) => {
       const url = n.subscription?.checkoutUrl;
       if (n.subscription?.method === 'card' && url) return window.location.assign(url);
@@ -1050,10 +991,11 @@ function PlanSheet({
         icon={method === 'card' ? <ArrowSquareOut /> : undefined}
         onClick={() => {
           const e = email.trim();
-          if (!PAYER_EMAIL_RE.test(e))
-            return setEmailErr('Confira o e-mail, como maria@gmail.com.');
-          setEmailErr(null);
-          if (plan) start.mutate({ planId: plan.id, method, payerEmail: e });
+          const payerDocument = parseDocument(doc);
+          setEmailErr(PAYER_EMAIL_RE.test(e) ? null : 'Confira o e-mail, como maria@gmail.com.');
+          setDocErr(payerDocument ? null : DOCUMENT_ERR);
+          if (plan && payerDocument && PAYER_EMAIL_RE.test(e))
+            start.mutate({ planId: plan.id, method, payerEmail: e, payerDocument });
         }}
       >
         {method === 'card'
@@ -1143,6 +1085,19 @@ function PlanSheet({
                 onChange={(e) => setEmail(e.target.value)}
               />
             </Field>
+            <Field
+              label="CPF ou CNPJ"
+              htmlFor="payer-doc"
+              helper="Vai na cobrança do plano: o seu CPF ou o CNPJ da loja."
+              error={docErr}
+            >
+              <DocumentInput
+                id="payer-doc"
+                value={doc}
+                invalid={!!docErr}
+                onChange={(v) => setDoc(v)}
+              />
+            </Field>
           </>
         ) : null}
         <p className="t-caption text-muted">
@@ -1191,6 +1146,10 @@ function MethodSection({ a, s }: { a: AccountData; s: Sub }) {
   const email = useAccountWrite(
     (payerEmail: string) => api.updateSubscription({ payerEmail }),
     () => toast('E-mail dos recibos salvo ✓'),
+  );
+  const doc = useAccountWrite(
+    (payerDocument: string) => api.updateSubscription({ payerDocument }),
+    () => toast('CPF/CNPJ da cobrança salvo ✓'),
   );
   const needsAuth = s.method === 'card' && !!s.checkoutUrl;
   return (
@@ -1262,6 +1221,36 @@ function MethodSection({ a, s }: { a: AccountData; s: Sub }) {
               PAYER_EMAIL_RE.test(v.trim()) ? null : 'Confira o e-mail, como maria@gmail.com.'
             }
             onCommit={(v) => email.mutate(v)}
+          />
+        </Field>
+        <Field
+          label="CPF ou CNPJ"
+          htmlFor="payer-doc"
+          helper={
+            s.payerDocument
+              ? 'Vai na cobrança do plano: o seu CPF ou o CNPJ da loja.'
+              : 'Falta preencher. Sem o seu CPF ou o CNPJ da loja, o Pix do plano não é gerado.'
+          }
+          state={doc.isPending ? 'saving' : doc.isSuccess ? 'saved' : 'idle'}
+        >
+          <CommitInput
+            id="payer-doc"
+            autoComplete="off"
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
+            maxLength={18}
+            placeholder="000.000.000-00"
+            className="tnum"
+            value={maskDocument(s.payerDocument ?? '')}
+            // a store from before signup asked for it may leave it blank; once set, it stays set
+            validate={(v) =>
+              parseDocument(v) || (!v.trim() && !s.payerDocument) ? null : DOCUMENT_ERR
+            }
+            onCommit={(v) => {
+              const next = parseDocument(v);
+              if (next && next !== s.payerDocument) doc.mutate(next);
+            }}
           />
         </Field>
         {a.invoices.length === 0 ? null : (
@@ -1360,12 +1349,16 @@ function InvoiceSheet({
     mutationFn: (x: string) => api.invoicePix(x),
     onSuccess: (n) => qc.setQueryData(qk.account, n),
   });
+  // no CPF/CNPJ yet: Core holds the Pix until the owner gives one, here
+  const gate =
+    needsDocument(a) && inv?.method === 'pix' && inv.status !== 'paid' && inv.status !== 'void';
   useIssuePix(
     inv,
     !!inv &&
       inv.method === 'pix' &&
       inv.status !== 'paid' &&
       inv.status !== 'void' &&
+      !gate &&
       !issue.isPending,
     issue.mutate,
   );
@@ -1392,7 +1385,9 @@ function InvoiceSheet({
               : `${inv.planName} · nº ${inv.number}`
       }
     >
-      {!inv ? null : inv.status === 'paid' ? (
+      {!inv ? null : gate ? (
+        <DocumentGate />
+      ) : inv.status === 'paid' ? (
         <div className="animate-fade-up flex flex-col items-center py-6 text-center" role="status">
           <span className="dua-disc grid size-32 place-items-center">
             <Mascote pose="sucesso" size={120} className="w-28" />
@@ -1462,174 +1457,373 @@ function InvoiceSheet({
   );
 }
 
-// ── addresses and the custom domain ─────────────────────────────────────────
+// ── the site sob medida ─────────────────────────────────────────────────────
 
-function Addresses({ a }: { a: AccountData }) {
-  const list = a.domains.length
-    ? a.domains
-    : [
-        {
-          host: hostOf(a.address),
-          kind: 'store' as const,
-          status: 'active' as const,
-          primary: true,
-        },
-      ];
+// The owner's way in is a conversation: Duá writes the brief with them and proposes it as a card,
+// and confirming that card is the only approval they give (Core: site.build / site.revise).
+const SITE_PROMPT = {
+  build: 'Quero montar meu site sob medida.',
+  revise: 'Quero pedir o ajuste do meu site.',
+};
+
+function useAskDua() {
+  const nav = useNavigate();
+  const preload = usePreload();
+  return {
+    go: (prompt: string) => nav('/copiloto', { state: { from: '/conta', prompt } }),
+    preload: preload('/copiloto'),
+  };
+}
+
+function SiteRequest({ a }: { a: AccountData }) {
+  const r = a.siteRequest;
+  // a plan with the site but not the Copilot (older plans) sends the brief to the team as before
+  const viaDua = a.plan.features.copilot;
+  if (r?.status === 'in_progress') return <SiteBuilding r={r} />;
+  if (r?.status === 'delivered') return <SiteDelivered r={r} viaDua={viaDua} />;
+  return <SiteStart r={r} viaDua={viaDua} />;
+}
+
+/** Before the build: what happens, and the conversation with Duá that starts it. */
+function SiteStart({ r, viaDua }: { r: SiteReq | null; viaDua: boolean }) {
+  const dua = useAskDua();
+  // a request is open (Core opens one with the plan): Duá's card needs it, so the ideas are optional
+  const open = r?.status === 'requested';
+  const [writing, setWriting] = useState(false);
+  const [brief, setBrief] = useState(r?.brief ?? '');
+  useEffect(() => setBrief(r?.brief ?? ''), [r?.brief]);
+  const saved = r?.brief?.trim() ?? '';
+  const ask = useAccountWrite(
+    (b: string) => (open ? api.updateSiteRequest(b) : api.requestSite(b)),
+    () => {
+      setWriting(false);
+      toast(viaDua ? 'Ideias guardadas ✓ O Duá vai ler.' : 'Pedido enviado ✓');
+    },
+  );
+  // no open request (none yet, or the last one was cancelled): the ideas open it, then Duá
+  const start = useAccountWrite(
+    (b: string) => api.requestSite(b),
+    () => dua.go(SITE_PROMPT.build),
+  );
+
+  if (!viaDua)
+    return (
+      <Card className="space-y-4 p-5">
+        {r?.status === 'cancelled' ? <Cancelled /> : null}
+        {open && saved && !writing ? (
+          <SavedIdeas text={saved} title="O que você pediu" onEdit={() => setWriting(true)} />
+        ) : (
+          <BriefForm
+            value={brief}
+            onChange={setBrief}
+            busy={ask.isPending}
+            label={open ? 'salvar pedido' : 'pedir meu site'}
+            onSend={(b) => ask.mutate(b)}
+            onCancel={open && saved ? () => setWriting(false) : undefined}
+          />
+        )}
+      </Card>
+    );
+
   return (
-    <Card>
-      <Divided>
-        {list.map((d) => {
-          const url = `https://${d.host}`;
-          return (
-            <div key={d.host} className="flex items-start gap-3 p-4">
-              <Globe className="mt-0.5 size-6 shrink-0 text-muted" aria-hidden />
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                  {d.status === 'active' ? (
-                    <a
-                      href={url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="min-w-0 break-words font-semibold underline underline-offset-2"
-                    >
-                      <Host h={d.host} />
-                    </a>
-                  ) : (
-                    <span className="min-w-0 break-words font-semibold">
-                      <Host h={d.host} />
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                  <DomainChip status={d.status} />
-                  <span className="t-caption text-muted">
-                    {d.kind === 'store' ? 'endereço Venduá' : 'domínio próprio'}
-                    {d.primary && a.domains.length > 1 ? ' · principal' : ''}
-                  </span>
-                </div>
-              </div>
-              {d.status === 'active' ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="shrink-0"
-                  icon={<Copy />}
-                  aria-label={`copiar ${d.host}`}
-                  onClick={() => void copyText(url).then((ok) => ok && toast('Endereço copiado'))}
-                >
-                  copiar
-                </Button>
-              ) : null}
-            </div>
-          );
-        })}
-      </Divided>
+    <Card className="overflow-hidden">
+      <div className="space-y-5 p-5">
+        {r?.status === 'cancelled' ? <Cancelled /> : null}
+        <div className="flex items-center gap-4">
+          <span className="dua-disc grid size-16 shrink-0 place-items-center overflow-hidden bg-spark-soft">
+            <Mascote pose="avatar-ola" size={64} />
+          </span>
+          <p className="t-title-2 min-w-0">Começa numa conversa com o Duá</p>
+        </div>
+        <ol className="grid gap-3 md:grid-cols-3 md:gap-4" aria-label="como funciona">
+          {[
+            ['O Duá monta o briefing com você', 'cores, fotos, o jeito da loja'],
+            ['Você aprova o cartão dele', 'é a sua única aprovação'],
+            ['O site fica pronto em 1 dia', 'fim de semana também'],
+          ].map(([t, sub], i) => (
+            <li key={t} className="flex min-w-0 items-start gap-3">
+              <span
+                aria-hidden
+                className="tnum t-label grid size-7 shrink-0 place-items-center rounded-full bg-sunken text-ink"
+              >
+                {i + 1}
+              </span>
+              <span className="min-w-0 pt-0.5">
+                <span className="block font-semibold leading-6">{t}</span>
+                <span className="t-caption block text-muted">{sub}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+        {open ? (
+          <Button
+            size="lg"
+            icon={<ChatCircleDots weight="bold" />}
+            className="max-sm:w-full"
+            onClick={() => dua.go(SITE_PROMPT.build)}
+            {...dua.preload}
+          >
+            Montar meu site com o Duá
+          </Button>
+        ) : null}
+      </div>
+      {open ? (
+        <div className="border-t border-line px-5 py-4">
+          {writing ? (
+            <BriefForm
+              value={brief}
+              onChange={setBrief}
+              busy={ask.isPending}
+              label="guardar ideias"
+              title="Suas ideias para o site"
+              autoFocus
+              onSend={(b) => ask.mutate(b)}
+              onCancel={() => {
+                setWriting(false);
+                setBrief(r?.brief ?? '');
+              }}
+            />
+          ) : saved ? (
+            <SavedIdeas text={saved} title="Suas ideias" onEdit={() => setWriting(true)} />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setWriting(true)}
+              className="press-row -mx-2 flex min-h-12 w-[calc(100%+1rem)] items-center gap-3 rounded-md px-2 text-left"
+            >
+              <PencilSimpleLine weight="bold" className="size-5 shrink-0 text-muted" aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block font-semibold">Já tem ideias? Escreva aqui</span>
+                <span className="t-caption block text-muted">
+                  Opcional. O Duá lê antes de conversar com você.
+                </span>
+              </span>
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="border-t border-line px-5 py-4">
+          <BriefForm
+            value={brief}
+            onChange={setBrief}
+            busy={start.isPending}
+            label="Montar meu site com o Duá"
+            title="Para começar, conte como você imagina o site"
+            onSend={(b) => start.mutate(b)}
+          />
+        </div>
+      )}
     </Card>
   );
 }
 
-const cleanHost = (v: string) =>
-  v
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, '')
-    .replace(/[/?#].*$/, '')
-    .replace(/\.$/, '');
-
-function CustomDomain({ a }: { a: AccountData }) {
-  const d = a.customDomain;
-  const [host, setHost] = useState('');
-  const [err, setErr] = useState<string | null>(null);
-  const qc = useQueryClient();
-  const add = useMutation({
-    mutationFn: (h: string) => api.addDomain(h),
-    onSuccess: (n) => {
-      qc.setQueryData(qk.account, n);
-      setHost('');
-      toast('Domínio adicionado. Agora é criar os registros.');
-    },
-    onError: (e) =>
-      setErr(
-        e instanceof ApiError && e.code === 'INVALID_DOMAIN'
-          ? 'Esse domínio não pode ser usado. Confira, como www.sualoja.com.br.'
-          : messageOf(e),
-      ),
-  });
-  if (!d)
-    return (
-      <Card className="p-5">
-        <form
-          noValidate
-          onSubmit={(e) => {
-            e.preventDefault();
-            const h = cleanHost(host);
-            if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(h))
-              return setErr('Digite o endereço, como www.sualoja.com.br.');
-            setErr(null);
-            add.mutate(h);
-          }}
-          className="space-y-4"
-        >
-          <p className="t-body text-muted">
-            Tem um domínio? Conecte aqui. Se ainda não tem, dá para registrar um no Registro.br ou
-            em outro site de domínios.
-          </p>
-          <Field label="Seu domínio" htmlFor="custom-host" error={err}>
-            <TextInput
-              id="custom-host"
-              inputMode="url"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              maxLength={253}
-              placeholder="www.sualoja.com.br"
-              value={host}
-              aria-invalid={err ? true : undefined}
-              onChange={(e) => setHost(e.target.value)}
-            />
-          </Field>
-          <Button type="submit" loading={add.isPending} icon={<Globe />}>
-            conectar domínio
-          </Button>
-        </form>
-      </Card>
-    );
-  return <DomainSetup d={d} />;
+function Cancelled() {
+  return (
+    <p className="t-body rounded-md bg-sunken p-3 text-muted">
+      O pedido anterior foi cancelado. Quando quiser, é só pedir de novo.
+    </p>
+  );
 }
 
-const DOMAIN_STEPS = ['Criar os registros', 'DNS conferido', 'No ar'];
-const stepIndex = (s: DomainStatus) => (s === 'active' ? 2 : s === 'dns_ok' ? 1 : 0);
-
-function Progress({ steps, at, failed }: { steps: string[]; at: number; failed?: boolean }) {
+function SavedIdeas({ text, title, onEdit }: { text: string; title: string; onEdit: () => void }) {
   return (
-    <ol
-      className="grid gap-2"
-      style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}
+    <div className="flex items-start gap-3">
+      <div className="min-w-0 flex-1">
+        <p className="t-caption text-muted">{title}</p>
+        <p className="t-body mt-1 line-clamp-4 whitespace-pre-line break-words">{text}</p>
+      </div>
+      <Button variant="ghost" size="sm" className="-mr-2 shrink-0" onClick={onEdit}>
+        editar
+      </Button>
+    </div>
+  );
+}
+
+function BriefForm({
+  value,
+  onChange,
+  onSend,
+  onCancel,
+  busy,
+  label,
+  title = 'Como você imagina o site?',
+  autoFocus,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSend: (b: string) => void;
+  onCancel?: (() => void) | undefined;
+  busy: boolean;
+  label: string;
+  title?: string;
+  /** opened by a tap: the cursor goes in */
+  autoFocus?: boolean;
+}) {
+  const ok = value.trim().length >= 10;
+  return (
+    <form
+      noValidate
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ok) onSend(value.trim());
+      }}
     >
-      {steps.map((t, i) => {
-        const done = i < at || (i === at && i === steps.length - 1);
-        const now = i === at && !done;
+      <Field
+        label={title}
+        htmlFor="site-brief"
+        helper="Cores, fotos, o que não pode faltar, sites de que você gosta."
+      >
+        <TextArea
+          id="site-brief"
+          maxLength={2000}
+          rows={4}
+          autoFocus={autoFocus}
+          placeholder="Ex.: cores da logo (vinho e creme), fotos grandes dos bolos, uma parte contando a história da confeitaria…"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </Field>
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" loading={busy} disabled={!ok} className="max-sm:flex-1">
+          {label}
+        </Button>
+        {onCancel ? (
+          <Button variant="ghost" onClick={onCancel}>
+            cancelar
+          </Button>
+        ) : null}
+      </div>
+    </form>
+  );
+}
+
+const STAGES = [
+  { id: 'fila', label: 'Na fila', now: 'Entrou na fila de produção.' },
+  { id: 'construindo', label: 'Construindo', now: 'Sendo feito a partir do seu briefing.' },
+  {
+    id: 'revisao',
+    label: 'Revisão final da equipe',
+    now: 'A equipe da Venduá confere tudo antes de publicar.',
+  },
+  {
+    id: 'publicando',
+    label: 'Publicando',
+    now: 'Falta pouco: o visual novo está entrando na loja.',
+  },
+] as const;
+
+/** Approved and being built (or the adjustment): where it stands and when it's ready. */
+function SiteBuilding({ r }: { r: SiteReq }) {
+  const b = r.building;
+  const revision = b?.kind === 'revision';
+  const late = !!r.dueAt && new Date(r.dueAt).getTime() < Date.now();
+  return (
+    <Card className="space-y-6 p-5">
+      <div className="flex items-start gap-4">
+        <span className="dua-disc grid size-16 shrink-0 place-items-center overflow-hidden bg-spark-soft">
+          <Mascote pose="avatar-pensando" size={64} />
+        </span>
+        <div className="min-w-0 pt-0.5">
+          <p className="t-caption font-semibold text-muted">
+            {revision ? 'Ajuste em produção' : 'Em produção'}
+          </p>
+          <p className="t-title-2 mt-0.5">
+            {!r.dueAt
+              ? revision
+                ? 'O ajuste está sendo feito'
+                : 'O seu site está sendo feito'
+              : late
+                ? 'Está levando um pouco mais'
+                : `Fica pronto até ${until(r.dueAt)}`}
+          </p>
+          <p className="t-body mt-1 text-muted">
+            {late
+              ? 'Passou do prazo combinado, e a equipe da Venduá já foi avisada.'
+              : revision
+                ? 'É o ajuste incluído no seu site, e você já aprovou: não precisa aprovar mais nada.'
+                : 'Você já aprovou o briefing, não precisa aprovar mais nada.'}{' '}
+            Quando ficar pronto, o visual novo entra sozinho na sua loja.
+          </p>
+        </div>
+      </div>
+      <div className="grid gap-6 md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] md:gap-8">
+        {b ? <Stages stage={b.stage} revision={revision} /> : null}
+        {r.spec ? (
+          <div className={cn('min-w-0', !b && 'md:col-span-2')}>
+            <p className="t-caption font-semibold text-muted">
+              {revision ? 'O briefing, já com o ajuste' : 'O briefing que você aprovou'}
+            </p>
+            <SpecSummary spec={r.spec} className="mt-2" />
+          </div>
+        ) : r.brief ? (
+          <div className={cn('min-w-0 rounded-md bg-sunken p-4', !b && 'md:col-span-2')}>
+            <p className="t-caption text-muted">O que você pediu</p>
+            <p className="t-body mt-1 whitespace-pre-line break-words">{r.brief}</p>
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
+function Stages({
+  stage,
+  revision,
+}: {
+  stage: NonNullable<SiteReq['building']>['stage'];
+  revision: boolean;
+}) {
+  const at = Math.max(
+    0,
+    STAGES.findIndex((s) => s.id === stage),
+  );
+  return (
+    <ol aria-label={revision ? 'andamento do ajuste' : 'andamento do site'}>
+      {STAGES.map((s, i) => {
+        const done = i < at;
+        const now = i === at;
         return (
-          <li key={t} className="min-w-0" aria-current={now ? 'step' : undefined}>
+          <li
+            key={s.id}
+            className="relative flex gap-3 pb-5 last:pb-0"
+            aria-current={now ? 'step' : undefined}
+          >
+            {i < STAGES.length - 1 ? (
+              <span
+                aria-hidden
+                className={cn(
+                  'absolute bottom-0 left-[11px] top-7 w-0.5 rounded-full',
+                  done ? 'bg-success' : 'bg-line-strong',
+                )}
+              />
+            ) : null}
             <span
+              aria-hidden
               className={cn(
-                'block h-1.5 rounded-full',
+                'relative mt-0.5 grid size-6 shrink-0 place-items-center rounded-full',
                 done
-                  ? 'bg-success'
+                  ? 'bg-success text-surface'
                   : now
-                    ? failed
-                      ? 'bg-danger'
-                      : 'bg-[var(--chart)]'
-                    : 'bg-line-strong',
-              )}
-            />
-            <span
-              className={cn(
-                't-caption mt-1.5 block',
-                done || now ? 'font-semibold text-ink' : 'text-muted',
+                    ? 'bg-spark-soft ring-2 ring-inset ring-[var(--chart)]'
+                    : 'bg-surface ring-2 ring-inset ring-line-strong',
               )}
             >
-              {t}
+              {done ? (
+                <Check weight="bold" className="size-3.5" />
+              ) : now ? (
+                <span className="animate-pulse-dot size-2.5 rounded-full bg-[var(--chart)]" />
+              ) : null}
+            </span>
+            <span className="min-w-0">
+              <span
+                className={cn('block leading-7', now ? 'font-semibold' : done ? '' : 'text-muted')}
+              >
+                {s.label}
+                {done ? <span className="sr-only"> (feito)</span> : null}
+                {now ? <span className="sr-only"> (agora)</span> : null}
+              </span>
+              {now ? <span className="t-caption block text-muted">{s.now}</span> : null}
             </span>
           </li>
         );
@@ -1638,259 +1832,165 @@ function Progress({ steps, at, failed }: { steps: string[]; at: number; failed?:
   );
 }
 
-function DomainSetup({ d }: { d: NonNullable<AccountData['customDomain']> }) {
-  const check = useAccountWrite(
-    () => api.checkDomain(d.id),
-    (n) => {
-      const s = n.customDomain?.status;
-      toast(
-        s === 'pending_dns' || s === 'failed'
-          ? 'Ainda não achamos os registros. Pode levar algumas horas.'
-          : 'DNS conferido ✓',
-        { tone: s === 'pending_dns' || s === 'failed' ? 'info' : 'ok' },
-      );
-    },
-  );
-  const remove = useAccountWrite(
-    () => api.removeDomain(d.id),
-    () => toast('Domínio removido'),
-  );
-  const [removing, setRemoving] = useState(false);
-  const needsDns = d.status === 'pending_dns' || d.status === 'failed';
+/** Delivered: when, and the one adjustment the plan includes (asked through Duá, too). */
+function SiteDelivered({ r, viaDua }: { r: SiteReq; viaDua: boolean }) {
+  const dua = useAskDua();
+  const used = r.revisionsUsed >= r.revisionsIncluded;
   return (
-    <Card className="space-y-5 p-5">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Globe className="size-6 shrink-0 text-muted" aria-hidden />
-        <p className="min-w-0 flex-1 break-words font-display text-lg font-semibold">
-          <Host h={d.host} />
-        </p>
-        <DomainChip status={d.status} />
+    <Card className="overflow-hidden">
+      <div className="flex items-start gap-4 p-5">
+        <span className="dua-disc grid size-16 shrink-0 place-items-center overflow-hidden bg-spark-soft">
+          <Mascote pose="avatar-feliz" size={64} />
+        </span>
+        <div className="min-w-0 pt-0.5">
+          <p className="t-caption font-semibold text-success">
+            <CheckCircle weight="fill" className="-mt-0.5 mr-1 inline size-4" aria-hidden />
+            Site no ar
+          </p>
+          <p className="t-title-2 mt-0.5">Entregue em {dateShort(r.deliveredAt ?? r.updatedAt)}</p>
+          <p className="t-body mt-1 text-muted">O visual novo já está na sua loja.</p>
+        </div>
       </div>
-      <Progress steps={DOMAIN_STEPS} at={stepIndex(d.status)} failed={d.status === 'failed'} />
-
-      {d.status === 'active' ? (
-        <p className="t-body">
-          Pronto: a loja está no ar em{' '}
-          <a
-            href={`https://${d.host}`}
-            target="_blank"
-            rel="noreferrer"
-            className="font-semibold underline underline-offset-2"
-          >
-            {d.host}
-          </a>
-          .
-        </p>
-      ) : d.status === 'dns_ok' ? (
-        <p className="t-body rounded-md bg-info-soft p-3">
-          Os registros estão certos ✓. Agora a equipe Venduá ativa o certificado de segurança, e o
-          endereço entra no ar. Não precisa fazer mais nada.
-        </p>
-      ) : (
-        <>
-          {d.status === 'failed' ? (
-            <Callout tone="danger" icon={WarningCircle} title="Não conseguimos confirmar o DNS">
-              {d.lastError ?? 'Confira se os dois registros abaixo estão iguais no seu provedor.'}
-            </Callout>
-          ) : null}
-          <div>
-            <p className="font-semibold">Crie estes dois registros</p>
-            <p className="t-body mt-0.5 text-muted">
-              No painel de onde você comprou o domínio (Registro.br, GoDaddy, Hostinger…), procure
-              por DNS ou zona de DNS e adicione:
+      {viaDua ? (
+        <div className="flex flex-col gap-3 border-t border-line px-5 py-4 sm:flex-row sm:items-center">
+          <div className="min-w-0 flex-1">
+            <Chip tone={used ? 'neutral' : 'success'} icon={used ? CheckCircle : PaintBrush}>
+              {used ? 'Ajuste já usado' : '1 ajuste incluído'}
+            </Chip>
+            <p className="t-body mt-2 text-muted">
+              {used
+                ? 'O ajuste incluído já foi feito neste site.'
+                : 'Quer mudar alguma coisa? Conte ao Duá o que ajustar. O ajuste também fica pronto em 1 dia.'}
             </p>
           </div>
-          <div className="space-y-3">
-            <DnsRecord type="CNAME" name={d.host} value={d.cnameTarget} />
-            <DnsRecord type="TXT" name={d.txtName} value={d.txtValue} />
-          </div>
-          <p className="t-caption text-muted">
-            Depois de salvar, pode levar algumas horas até a internet toda enxergar.
-          </p>
-        </>
-      )}
-
-      {needsDns || d.status === 'dns_ok' ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant={needsDns ? 'primary' : 'secondary'}
-            icon={<ArrowsClockwise />}
-            loading={check.isPending}
-            onClick={() => check.mutate(undefined)}
-          >
-            {d.status === 'failed' ? 'tentar de novo' : 'verificar agora'}
-          </Button>
-          {d.lastCheckedAt ? (
-            <span className="t-caption text-muted">conferido {ago(d.lastCheckedAt)}</span>
-          ) : null}
+          {used ? null : (
+            <Button
+              icon={<ChatCircleDots weight="bold" />}
+              className="shrink-0 max-sm:w-full"
+              onClick={() => dua.go(SITE_PROMPT.revise)}
+              {...dua.preload}
+            >
+              Pedir um ajuste ao Duá
+            </Button>
+          )}
         </div>
       ) : null}
-
-      <div className="border-t border-line pt-4">
-        {removing ? (
-          <div className="space-y-2">
-            <p className="t-body text-muted">
-              A loja sai de {d.host} e continua no endereço Venduá.
-            </p>
-            <HoldButton onConfirm={() => remove.mutate(undefined)} disabled={remove.isPending}>
-              segure para remover o domínio
-            </HoldButton>
-            <Button variant="ghost" block onClick={() => setRemoving(false)}>
-              deixar como está
-            </Button>
+      {r.spec ? (
+        <details className="group border-t border-line">
+          <summary className="press-row flex min-h-14 cursor-pointer list-none items-center gap-2 px-5 font-semibold [&::-webkit-details-marker]:hidden">
+            <span className="min-w-0 flex-1">Ver o briefing aprovado</span>
+            <CaretDown
+              weight="bold"
+              className="size-4 shrink-0 text-muted transition-transform group-open:rotate-180"
+              aria-hidden
+            />
+          </summary>
+          <div className="px-5 pb-5">
+            <SpecSummary spec={r.spec} />
           </div>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="!text-danger"
-            onClick={() => setRemoving(true)}
+        </details>
+      ) : null}
+    </Card>
+  );
+}
+
+const MOTION_LABEL = { none: 'Nenhum', subtle: 'Discreto', expressive: 'Marcante' } as const;
+
+/** The DesignSpec as the owner said it: words, colours as colours, lists as lists. */
+function SpecSummary({ spec, className }: { spec: DesignSpec; className?: string }) {
+  const colors = [spec.brand.palette.primary, ...spec.brand.palette.accents].filter(
+    (c): c is string => !!c && /^#[0-9a-f]{6}$/i.test(c),
+  );
+  const list = (xs: string[]) =>
+    xs.length === 1 ? (
+      xs[0]
+    ) : (
+      <ul className="list-disc space-y-0.5 pl-5 marker:text-faint">
+        {xs.map((x, i) => (
+          <li key={i}>{x}</li>
+        ))}
+      </ul>
+    );
+  const rows: [string, ReactNode][] = [];
+  if (spec.brand.personality.length)
+    rows.push([
+      'Jeito',
+      <span className="flex flex-wrap gap-1.5">
+        {spec.brand.personality.map((p) => (
+          <span
+            key={p}
+            className="t-caption rounded-full bg-surface px-2.5 py-1 font-semibold ring-1 ring-inset ring-line noite:bg-raised"
           >
-            remover domínio
-          </Button>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function DnsRecord({ type, name, value }: { type: string; name: string; value: string }) {
-  return (
-    <div className="rounded-md ring-1 ring-line">
-      <p className="t-caption flex items-center gap-2 border-b border-line px-3 py-2 font-semibold">
-        <span className="rounded-sm bg-sunken px-1.5 py-0.5 font-mono">{type}</span>
-        registro {type}
-      </p>
-      <div className="grid gap-3 p-3 sm:grid-cols-2">
-        <CopyValue label="Nome" value={name} copied="Nome copiado" />
-        <CopyValue
-          label={type === 'CNAME' ? 'Aponta para' : 'Valor'}
-          value={value}
-          copied="Valor copiado"
-        />
-      </div>
-    </div>
-  );
-}
-
-// ── the custom site ─────────────────────────────────────────────────────────
-
-const SITE_STEPS = ['Pedido recebido', 'Em produção', 'Entregue'];
-const siteAt = { requested: 0, in_progress: 1, delivered: 2, cancelled: 0 } as const;
-
-function SiteRequest({ a }: { a: AccountData }) {
-  const r = a.siteRequest;
-  const [editing, setEditing] = useState(false);
-  const [brief, setBrief] = useState(r?.brief ?? '');
-  useEffect(() => setBrief(r?.brief ?? ''), [r?.brief]);
-  const ask = useAccountWrite(
-    (b: string) => api.requestSite(b),
-    () => toast('Pedido enviado ✓'),
-  );
-  const edit = useAccountWrite(
-    (b: string) => api.updateSiteRequest(b),
-    () => {
-      setEditing(false);
-      toast('Pedido atualizado ✓');
-    },
-  );
-  const form = (onSend: (b: string) => void, busy: boolean, label: string, cancel?: () => void) => (
-    <form
-      noValidate
-      className="space-y-3"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (brief.trim().length >= 10) onSend(brief.trim());
-      }}
-    >
-      <Field
-        label="Como você imagina o site?"
-        htmlFor="site-brief"
-        helper="Cores, fotos, o que não pode faltar, sites de que você gosta. Quanto mais contar, melhor."
-      >
-        <TextArea
-          id="site-brief"
-          maxLength={2000}
-          rows={5}
-          placeholder="Ex.: cores da logo (vinho e creme), fotos grandes dos bolos, uma parte contando a história da confeitaria…"
-          value={brief}
-          onChange={(e) => setBrief(e.target.value)}
-        />
-      </Field>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="submit"
-          loading={busy}
-          disabled={brief.trim().length < 10}
-          icon={<MagicWand />}
-        >
-          {label}
-        </Button>
-        {cancel ? (
-          <Button variant="ghost" onClick={cancel}>
-            cancelar
-          </Button>
+            {p}
+          </span>
+        ))}
+      </span>,
+    ]);
+  if (colors.length || spec.brand.palette.notes)
+    rows.push([
+      'Cores',
+      <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        {colors.length ? (
+          <span className="flex gap-1.5">
+            {colors.map((c) => (
+              <span
+                key={c}
+                role="img"
+                aria-label={`cor ${c}`}
+                title={c}
+                className="size-7 rounded-full ring-1 ring-inset ring-line-strong"
+                style={{ background: c }}
+              />
+            ))}
+          </span>
         ) : null}
-      </div>
-    </form>
-  );
-  // Core opens an empty request with the plan: the brief is still the merchant's to write
-  if (r && r.status === 'requested' && !r.brief?.trim())
-    return (
-      <Card className="space-y-4 p-5">
-        <p className="t-body text-muted">
-          Conte como você imagina o site da loja, e o nosso agente de IA monta para você.
-        </p>
-        {form((b) => edit.mutate(b), edit.isPending, 'enviar pedido')}
-      </Card>
-    );
-  if (!r || r.status === 'cancelled')
-    return (
-      <Card className="space-y-4 p-5">
-        {r?.status === 'cancelled' ? (
-          <p className="t-body rounded-md bg-sunken p-3 text-muted">
-            O pedido anterior foi cancelado. Quando quiser, é só pedir de novo.
-          </p>
-        ) : (
-          <p className="t-body text-muted">
-            Conte como você imagina o site da loja, e o nosso agente de IA monta para você.
-          </p>
-        )}
-        {form((b) => ask.mutate(b), ask.isPending, 'pedir meu site')}
-      </Card>
-    );
+        {spec.brand.palette.notes ? (
+          <span className="min-w-0">{spec.brand.palette.notes}</span>
+        ) : null}
+      </span>,
+    ]);
+  if (spec.brand.typography) rows.push(['Letras', spec.brand.typography]);
+  rows.push(['Movimento', MOTION_LABEL[spec.experience.motion] ?? spec.experience.motion]);
+  if (spec.copy.tone) rows.push(['Tom', spec.copy.tone]);
+  if (spec.experience.mustHave.length)
+    rows.push(['Não pode faltar', list(spec.experience.mustHave)]);
+  if (spec.experience.differentials.length)
+    rows.push(['Diferenciais', list(spec.experience.differentials)]);
+  if (spec.experience.avoid.length) rows.push(['Evitar', list(spec.experience.avoid)]);
+  if (spec.brand.references.length)
+    rows.push([
+      'Referências',
+      <ul className="space-y-0.5">
+        {spec.brand.references.map((ref) => (
+          <li key={ref.url}>
+            <a
+              href={ref.url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="font-semibold underline underline-offset-2"
+            >
+              {hostOf(ref.url)}
+            </a>
+            {ref.note ? <span className="text-muted"> · {ref.note}</span> : null}
+          </li>
+        ))}
+      </ul>,
+    ]);
   return (
-    <Card className="space-y-5 p-5">
-      <Progress steps={SITE_STEPS} at={siteAt[r.status]} />
-      <p className="t-body">
-        {r.status === 'requested'
-          ? `Pedido recebido ${ago(r.createdAt)}. O próximo passo é a produção do site.`
-          : r.status === 'in_progress'
-            ? 'O seu site está sendo feito. Avisamos por aqui quando ficar pronto.'
-            : `Entregue ${ago(r.updatedAt)}. O visual novo já está na sua loja.`}
-      </p>
-      {editing ? (
-        form(
-          (b) => edit.mutate(b),
-          edit.isPending,
-          'salvar pedido',
-          () => {
-            setEditing(false);
-            setBrief(r.brief ?? '');
-          },
-        )
-      ) : (
-        <div className="rounded-md bg-sunken p-4">
-          <p className="t-caption text-muted">O que você pediu</p>
-          <p className="t-body mt-1 whitespace-pre-line break-words">{r.brief || '—'}</p>
-          {r.status !== 'delivered' ? (
-            <Button variant="secondary" size="sm" className="mt-3" onClick={() => setEditing(true)}>
-              editar pedido
-            </Button>
-          ) : null}
-        </div>
-      )}
-    </Card>
+    <div className={cn('rounded-md bg-sunken p-4', className)}>
+      {spec.summary ? <p className="t-body-lg break-words font-medium">“{spec.summary}”</p> : null}
+      <dl className="mt-3 divide-y divide-line [overflow-wrap:anywhere]">
+        {rows.map(([label, value]) => (
+          <div
+            key={label}
+            className="grid gap-0.5 py-2.5 sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-4"
+          >
+            <dt className="t-caption pt-0.5 text-muted">{label}</dt>
+            <dd className="t-body min-w-0">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
 

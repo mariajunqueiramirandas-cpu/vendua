@@ -5,6 +5,7 @@ import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import {
   getLeadDetail,
+  agentDateFloor,
   insertLeadTx,
   leadInsert,
   leadPatch,
@@ -46,10 +47,9 @@ import {
 import { instagramHandle } from '../modules/threads.ts';
 import { dispatchMessage } from './send.ts';
 import { whatsappRegistered } from './channels/whatsapp.ts';
-import { notifyStaff } from '../modules/staff.ts';
 import { leadBoundArg, toolAvailable } from './tool-meta.ts';
 import { ladderTags } from './prompts.ts';
-import { parseWakeupAt, scheduleWakeupTx } from './wakeups.ts';
+import { cancelAgentWakeupsTx, parseWakeupAt, scheduleWakeupTx } from './wakeups.ts';
 import { automationAllowedTx, discoveryBudgetTx } from './policy.ts';
 import { RETIRED_BY_INBOUND, type TriggerSource } from './sources.ts';
 import { messageStyleIssues, normalizeMessageBody } from './style.ts';
@@ -158,6 +158,10 @@ const LEAD_FIELDS = {
   },
   intentReason: { type: 'string', description: 'one line: the intent signals observed' },
 } as const;
+
+const CREATE_LEAD_ARGS: ReadonlySet<string> = new Set(
+  ['name', ...Object.keys(LEAD_FIELDS)].filter((k) => k !== 'nextActionRequested'),
+);
 
 const REGISTRY: { def: AgentTool }[] = [
   {
@@ -804,6 +808,22 @@ export async function executeTool(
         error: `LEAD_MISMATCH — this run is bound to lead ${ctx.leadId}; pass that leadId`,
       };
     }
+  } else if (boundArg) {
+    // a run with no lead (discovery reads untrusted pages) may only touch the leads its own
+    // create_lead made or merged into — the claim rows survive a reclaim, memory doesn't
+    const target = String(args[boundArg] ?? '');
+    const own = await controlTx(
+      sql,
+      (tx) => tx`
+        select 1 from control_idempotency_keys
+        where key like ${`agent:${runId}:%:create_lead:%`}
+          and (response->'lead'->>'id' = ${target} or response->'existing'->>'id' = ${target})
+        limit 1
+      `,
+    );
+    if (!own.length) {
+      return { error: `LEAD_MISMATCH — this run may only touch leads it created with create_lead` };
+    }
   }
 
   if ((name === 'send_message' || name === 'draft_message') && typeof args.body === 'string') {
@@ -884,16 +904,16 @@ export async function executeTool(
       };
     }
     case 'create_lead': {
-      const payload = { ...args };
+      // only what the tool declares: agentMode, state and the other staff columns stay staff's
+      const payload: Record<string, unknown> = Object.fromEntries(
+        Object.entries(args).filter(([k]) => CREATE_LEAD_ARGS.has(k)),
+      );
       const findings = typeof args.findings === 'string' ? args.findings.trim() : '';
       const sources = (Array.isArray(args.sources) ? args.sources : [])
         .map((s) => String(s ?? '').trim())
         // over-long "sources" are dropped, not truncated — a stored URL is never a fragment.
         .filter((s) => s.length > 0 && s.length <= 500)
         .slice(0, 10);
-      // findings/sources are writeup args, not lead columns — strip them.
-      delete payload.findings;
-      delete payload.sources;
       // phone-derived whatsapp is reachable but NOT verified evidence — the autocontact gate must not treat it as confirmed.
       let whatsappDerived = false;
       if (ctx.runKind === 'discovery') {
@@ -975,6 +995,7 @@ export async function executeTool(
         payload.tags = tags;
       }
       const input = leadInsert(payload);
+      agentDateFloor((input.next_action_at as string | null | undefined) ?? null);
       // explicit whatsapp is verified; the mobile-derived fill stays unverified. Only
       // discovery's printed-source rule counts — triage's text came from the lead's own messages.
       const mayVerify = ctx.runKind === 'discovery';
@@ -992,7 +1013,7 @@ export async function executeTool(
           score !== null &&
           score >= (g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore)
         ) {
-          if ((await whatsappRegistered(input.whatsapp).catch(() => null)) === true) {
+          if ((await whatsappRegistered(input.whatsapp, sql).catch(() => null)) === true) {
             whatsappDerived = false;
             input.whatsapp_verified = true;
           }
@@ -1250,12 +1271,14 @@ export async function executeTool(
           input.instagram,
         );
         // an agent-found lead starts where the workspace says; autocontact below may still promote it
-        const created = await insertLeadTx(tx, {
-          ...input,
-          agent_mode:
-            input.agent_mode ??
-            newLeadModesOf(await getSettingTx<unknown>(tx, 'agent', null)).discovery,
-        });
+        const created = await insertLeadTx(
+          tx,
+          {
+            ...input,
+            agent_mode: newLeadModesOf(await getSettingTx<unknown>(tx, 'agent', null)).discovery,
+          },
+          'agent',
+        );
         await writeFindings(created.body.lead.id as string);
         if (whatsappDerived) {
           (created.body as Record<string, unknown>).whatsappUnverified = true;
@@ -1763,7 +1786,7 @@ export async function executeTool(
       const reason = String(args.reason).slice(0, 500);
       // the whole handoff commits under ONE claim — sub-claims could half-commit
       // on crash and a retry would duplicate the task/note.
-      const res = await claimControl(sql, key, async (tx) => {
+      await claimControl(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
         const exists = await tx<{ name: string; business_name: string | null }[]>`
           select name, business_name from leads where id = ${leadId}
@@ -1771,6 +1794,9 @@ export async function executeTool(
         if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
         let thread: { id: string; channel: string } | null = null;
         if (ctx.threadId) {
+          // the pause holds this thread only: a date the agent booked would fire an unbound
+          // run that writes on another channel mid-handoff — staff owns the next touch
+          await cancelAgentWakeupsTx(tx, leadId, 'handoff para humano');
           const rows = await tx<{ id: string; channel: string }[]>`
             update lead_threads set agent_enabled = false where id = ${ctx.threadId}
             returning id, channel
@@ -1806,13 +1832,6 @@ export async function executeTool(
         });
         return { status: 200, body: { handedOff: true, leadName: exists[0].name } };
       });
-      if (!res.replayed) {
-        void notifyStaff(sql, 'handoff', {
-          subject: `Venduá — ${res.body.leadName} precisa de você`,
-          body: `O agente pausou e passou a conversa para a equipe.\n\nMotivo: ${reason}`,
-          idemKey: `handoff:${key}`,
-        });
-      }
       return { handedOff: true };
     }
     case 'unsubscribe': {

@@ -66,6 +66,8 @@ export function reminderMessage(
   inv: Pick<InvoiceRow, 'number' | 'amount_cents' | 'due_at'>,
   planName: string,
   origin: string | null,
+  /** no CPF/CNPJ on file: the Pix waits for it (invoices.ts documentRequired) */
+  held = false,
 ): OwnerMessage {
   const what = `a fatura ${inv.number} do plano ${planName} (${formatBRL(inv.amount_cents)})`;
   const line =
@@ -74,9 +76,13 @@ export function reminderMessage(
       : stage === 'due'
         ? `Venduá: ${what} vence hoje.`
         : `Venduá: ${what} venceu em ${dayMonth(inv.due_at)} e ainda está em aberto.`;
-  const pix = origin
-    ? ` O Pix está em Conta: ${origin}/admin/conta`
-    : ' O Pix está em Conta, no painel.';
+  const pix = held
+    ? origin
+      ? ` Para gerar o Pix, informe o CPF ou o CNPJ da cobrança em Conta: ${origin}/admin/conta`
+      : ' Para gerar o Pix, informe o CPF ou o CNPJ da cobrança em Conta, no painel.'
+    : origin
+      ? ` O Pix está em Conta: ${origin}/admin/conta`
+      : ' O Pix está em Conta, no painel.';
   const subject =
     stage === 'due_soon'
       ? `Fatura ${inv.number} vence em ${dayMonth(inv.due_at)}`

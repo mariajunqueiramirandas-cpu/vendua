@@ -6,6 +6,9 @@ const RULES_V1 = [
   'COUPON_REASON',
   'DEFAULT_PATHS',
   'DEFAULT_VOCABULARY',
+  // Kernel 1.21 — allergen and diet tags
+  'DIETARY_FILTERS',
+  'DIETARY_LABEL',
   'ERROR_COPY',
   'KERNEL_PATHS',
   'LOCALE',
@@ -33,6 +36,7 @@ const RULES_V1 = [
   'couponMessage',
   'deliverySummary',
   'deliveryWords',
+  'dietaryBadges',
   'digitsOf',
   'errorCopy',
   'foldText',
@@ -65,6 +69,7 @@ const RULES_V1 = [
   'noticeSeverity',
   'orderPath',
   'orderProgress',
+  'orderStateLabel',
   'orderStepLabel',
   'phoneDisplay',
   'phoneKey',
@@ -114,6 +119,8 @@ const SDK_CATALOG_V1 = [
   'productList',
   'promoBadge',
   'purchasePanel',
+  // Kernel 1.21 — the returning shopper's last order
+  'recentOrder',
   'resolveSettings',
   'richTextSection',
   'stockCounter',
@@ -201,6 +208,8 @@ const FROZEN_V1 = [
   'useStoreStatus',
   // Kernel 1.18 — the store's assistant (the Vendedor) chatting on the site
   'useStoreChat',
+  // Kernel 1.22 — the table whose QR code opened the store
+  'useTable',
   // …and every rule (RULES_V1), also served by the main entry
   ...RULES_V1,
 ];

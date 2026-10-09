@@ -68,45 +68,53 @@ Then per topic as needed:
 | Feature deep dives (iFood, WhatsApp bot) | [features/](features/README.md)                                                  |
 | Merchant's AI sales agent (design)       | [features/sales-agent](features/sales-agent.md)                                  |
 | Vendedor features and screens            | [features](features/sales-agent-features.md), [UX](features/sales-agent-ux.md)   |
+| Differentiators (proposed)               | [features/ § Differentiators](features/README.md#differentiators)                |
 
 ## ADRs
 
 Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 
-| #                                                      | Decision                                                       |
-| ------------------------------------------------------ | -------------------------------------------------------------- |
-| [0001](adr/0001-monorepo-for-storefronts.md)           | One monorepo for all storefronts                               |
-| [0002](adr/0002-single-storefront-framework-react.md)  | React as the single storefront framework                       |
-| [0003](adr/0003-storefronts-as-artifacts.md)           | Storefronts are deployable artifacts, not services             |
-| [0004](adr/0004-kernel-owned-checkout.md)              | Checkout and system surfaces are Kernel-owned                  |
-| [0005](adr/0005-server-driven-system-surfaces.md)      | System surfaces are server-driven                              |
-| [0006](adr/0006-runtime-loader.md)                     | A tiny runtime loader (`v.js`) as the last-resort channel      |
-| [0007](adr/0007-headless-primitives.md)                | Headless primitives are the commerce API                       |
-| [0008](adr/0008-contract-versioning.md)                | Three-axis versioning; majors require codemods                 |
-| [0009](adr/0009-mercado-pago-marketplace.md)           | Mercado Pago Marketplace + OAuth + application fee             |
-| [0010](adr/0010-automated-domains-tls.md)              | Automated domains and TLS                                      |
-| [0011](adr/0011-ring-based-fleet-releases.md)          | Ring-based fleet releases with artifact promotion              |
-| [0012](adr/0012-agent-agnostic-pipeline.md)            | Agent-agnostic generation pipeline, CI as judge                |
-| [0013](adr/0013-modular-monolith-core.md)              | Core is a modular monolith on Postgres                         |
-| [0014](adr/0014-crm-agent-v2.md)                       | CRM agent v2 (tools, policy, wakeups, memory)                  |
-| [0015](adr/0015-one-agent-config.md)                   | One agent, several jobs                                        |
-| [0016](adr/0016-agent-dispatch-and-scheduler.md)       | One dispatcher, one agenda, one scheduler                      |
-| [0017](adr/0017-due-time-scheduler.md)                 | Scheduler sleeps until due, wakes on change                    |
-| [0018](adr/0018-page-composition.md)                   | Pages are composed from SDK and store sections                 |
-| [0019](adr/0019-customer-identity-without-accounts.md) | Customer identity without accounts (phone + order number)      |
-| [0020](adr/0020-merchant-identity.md)                  | Merchant identity: phone OTP, tenant-scoped sessions, roles    |
-| [0021](adr/0021-self-serve-signup-and-plan-billing.md) | Self-serve signup and plan billing                             |
-| [0022](adr/0022-control-plane-v0-and-edge.md)          | Control Plane v0 in Core, a Bun edge, pointer-flip releases    |
-| [0023](adr/0023-staff-events-on-discord.md)            | Staff events, delivered to Discord by an HTTP-only bot         |
-| [0024](adr/0024-distance-based-delivery-pricing.md)    | Delivery priced by road distance from a confirmed pin          |
-| [0025](adr/0025-free-trial-on-basic.md)                | A 14-day free trial on Venduá Basic, no card                   |
-| [0026](adr/0026-store-whatsapp-gateway.md)             | Each store's own WhatsApp, on a Baileys gateway                |
-| [0027](adr/0027-print-agents.md)                       | Kitchen printing through a store-side print agent              |
-| [0028](adr/0028-privacy-first-platform-analytics.md)   | Privacy-first analytics on every surface, read in the CRM      |
-| [0029](adr/0029-kitchen-display.md)                    | Kitchen display (Cozinha) and the customers' pickup screen     |
-| [0030](adr/0030-agent-runtime-v3.md)                   | Agent Runtime v3: durable actors on Postgres (accepted, built) |
-| [0031](adr/0031-vendedor.md)                           | The Vendedor, an AI seller on the store's WhatsApp (proposed)  |
-| [0032](adr/0032-three-plans-for-launch.md)             | Three plans for the launch, the middle one recommended         |
+| #                                                      | Decision                                                                                 |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| [0001](adr/0001-monorepo-for-storefronts.md)           | One monorepo for all storefronts                                                         |
+| [0002](adr/0002-single-storefront-framework-react.md)  | React as the single storefront framework                                                 |
+| [0003](adr/0003-storefronts-as-artifacts.md)           | Storefronts are deployable artifacts, not services                                       |
+| [0004](adr/0004-kernel-owned-checkout.md)              | Checkout and system surfaces are Kernel-owned                                            |
+| [0005](adr/0005-server-driven-system-surfaces.md)      | System surfaces are server-driven                                                        |
+| [0006](adr/0006-runtime-loader.md)                     | A tiny runtime loader (`v.js`) as the last-resort channel                                |
+| [0007](adr/0007-headless-primitives.md)                | Headless primitives are the commerce API                                                 |
+| [0008](adr/0008-contract-versioning.md)                | Three-axis versioning; majors require codemods                                           |
+| [0009](adr/0009-mercado-pago-marketplace.md)           | Mercado Pago Marketplace + OAuth + application fee                                       |
+| [0010](adr/0010-automated-domains-tls.md)              | Automated domains and TLS                                                                |
+| [0011](adr/0011-ring-based-fleet-releases.md)          | Ring-based fleet releases with artifact promotion                                        |
+| [0012](adr/0012-agent-agnostic-pipeline.md)            | Agent-agnostic generation pipeline, CI as judge                                          |
+| [0013](adr/0013-modular-monolith-core.md)              | Core is a modular monolith on Postgres                                                   |
+| [0014](adr/0014-crm-agent-v2.md)                       | CRM agent v2 (tools, policy, wakeups, memory)                                            |
+| [0015](adr/0015-one-agent-config.md)                   | One agent, several jobs                                                                  |
+| [0016](adr/0016-agent-dispatch-and-scheduler.md)       | One dispatcher, one agenda, one scheduler                                                |
+| [0017](adr/0017-due-time-scheduler.md)                 | Scheduler sleeps until due, wakes on change                                              |
+| [0018](adr/0018-page-composition.md)                   | Pages are composed from SDK and store sections                                           |
+| [0019](adr/0019-customer-identity-without-accounts.md) | Customer identity without accounts (phone + order number)                                |
+| [0020](adr/0020-merchant-identity.md)                  | Merchant identity: phone OTP, tenant-scoped sessions, roles                              |
+| [0021](adr/0021-self-serve-signup-and-plan-billing.md) | Self-serve signup and plan billing                                                       |
+| [0022](adr/0022-control-plane-v0-and-edge.md)          | Control Plane v0 in Core, a Bun edge, pointer-flip releases                              |
+| [0023](adr/0023-staff-events-on-discord.md)            | Staff events, delivered to Discord by an HTTP-only bot                                   |
+| [0024](adr/0024-distance-based-delivery-pricing.md)    | Delivery priced by road distance from a confirmed pin                                    |
+| [0025](adr/0025-free-trial-on-basic.md)                | A 14-day free trial on Venduá Basic, no card                                             |
+| [0026](adr/0026-store-whatsapp-gateway.md)             | Each store's own WhatsApp, on a Baileys gateway                                          |
+| [0027](adr/0027-print-agents.md)                       | Kitchen printing through a store-side print agent                                        |
+| [0028](adr/0028-privacy-first-platform-analytics.md)   | Privacy-first analytics on every surface, read in the CRM                                |
+| [0029](adr/0029-kitchen-display.md)                    | Kitchen display (Cozinha) and the customers' pickup screen                               |
+| [0030](adr/0030-agent-runtime-v3.md)                   | Agent Runtime v3: durable actors on Postgres (accepted, built)                           |
+| [0031](adr/0031-vendedor.md)                           | The Vendedor, an AI seller on the store's WhatsApp (proposed)                            |
+| [0032](adr/0032-three-plans-for-launch.md)             | Three plans for the launch, the middle one recommended                                   |
+| [0033](adr/0033-who-dua-answers.md)                    | Who Duá answers: on-demand chat check, owner decides                                     |
+| [0034](adr/0034-dua-copilot.md)                        | Duá Copilot: the admin's own routes, proposals a tap applies (and, amended, by WhatsApp) |
+| [0035](adr/0035-pdv.md)                                | The PDV: counter sales, mesas with comandas, the caixa                                   |
+| [0036](adr/0036-qr-table-ordering.md)                  | Ordering from the table's QR code                                                        |
+| [0037](adr/0037-self-hosted-stt.md)                    | Shoppers' voice notes transcribed on our own hardware                                    |
+| [0038](adr/0038-included-domains.md)                   | Pangolim's domain bought, hosted and renewed by Venduá                                   |
+| [0039](adr/0039-site-builder-on-claude-code.md)        | Pangolim's site built by a cloud Claude Code routine, judged by CI                       |
 
 ## Conventions
 

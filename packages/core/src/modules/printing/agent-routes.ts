@@ -16,7 +16,7 @@ import {
   type AuthedDevice,
 } from './devices.ts';
 import { planHas } from '../billing/plans.ts';
-import { PrintHub } from './hub.ts';
+import { PrintHub, type DeviceSignal } from './hub.ts';
 import {
   PRINTER_KINDS,
   agentPrintersTx,
@@ -59,6 +59,36 @@ const agentVersion = (c: Context) => {
   const v = c.req.header('x-agent-version');
   return v && VERSION_RE.test(v) ? v : null;
 };
+
+export type StreamState = 'ok' | 'revoked' | 'superseded' | 'inactive';
+
+/**
+ * What an open stream's beat finds: its credential no longer opens the device (removed or paired
+ * again: the agent must forget it), a newer stream of the device took over (a client path that
+ * died silently leaves the old one open, and it must not keep claiming jobs into it), or the
+ * store is suspended (the reconnect is refused, so the agent keeps its token).
+ */
+export async function streamStateTx(
+  tx: Sql,
+  tenantId: string,
+  deviceId: string,
+  tokenHash: string,
+  connectedAt: string,
+): Promise<StreamState> {
+  const [r] = await tx<{ token_ok: boolean; latest: boolean; active: boolean }[]>`
+    select d.token_hash is not distinct from ${tokenHash} as token_ok,
+           d.connected_at::text is not distinct from ${connectedAt} as latest,
+           t.status = 'active' as active
+    from print_devices d join tenants t on t.id = d.tenant_id
+    where d.tenant_id = ${tenantId} and d.id = ${deviceId}`;
+  if (!r?.token_ok) return 'revoked';
+  if (!r.latest) return 'superseded';
+  if (!r.active) return 'inactive';
+  await tx`
+    update print_devices set last_seen_at = now()
+    where tenant_id = ${tenantId} and id = ${deviceId}`;
+  return 'ok';
+}
 
 function shortText(v: unknown, name: string, max: number): string {
   if (typeof v !== 'string' || v.trim().length === 0 || v.length > max)
@@ -142,6 +172,9 @@ export function mountPrintAgent(o: PrintAgentOpts) {
       stream.onAbort(() => finish());
       const send = (event: string, data: unknown) =>
         stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => finish());
+      // compared as text: the column keeps microseconds that a Date (or a parameter postgres.js
+      // types as timestamptz) drops, and the close below must match this connection exactly
+      let connectedAt: string | undefined;
 
       // serialized: a NOTIFY burst becomes one more pass, never two claims racing
       let busy = false;
@@ -155,9 +188,17 @@ export function mountPrintAgent(o: PrintAgentOpts) {
         try {
           do {
             again = false;
-            const jobs: AgentJob[] = await withTenant(sql, tenantId, (tx) =>
-              claimDueJobsTx(tx, tenantId, d.id),
-            );
+            if (!connectedAt) return;
+            // only the device's newest stream claims: an older one may be writing into a dead
+            // socket, possibly from another Core process
+            const at = connectedAt;
+            const jobs: AgentJob[] | null = await withTenant(sql, tenantId, async (tx) => {
+              const [cur] = await tx`
+                select 1 from print_devices
+                where tenant_id = ${tenantId} and id = ${d.id} and connected_at::text = ${at}`;
+              return cur ? claimDueJobsTx(tx, tenantId, d.id) : null;
+            });
+            if (!jobs) return void finish();
             for (const j of jobs) await send('job', j);
           } while (again);
         } catch (err) {
@@ -181,20 +222,20 @@ export function mountPrintAgent(o: PrintAgentOpts) {
         finish();
       };
 
-      const unsubscribe = await hub.subscribe(d.id, (s) => {
+      const onSignal = (s: DeviceSignal) => {
         if (s === 'job') void deliver();
         else if (s === 'config') void sendConfig();
         else if (s === 'revoked') void revoke();
+        // deliver checks the row, which knows which of two racing opens landed last
+        else if (s === 'superseded') void deliver();
         else {
           void sendConfig();
           void deliver();
         }
-      });
+      };
+      const unsubscribe = await hub.subscribe(d.id, onSignal);
       let beat: ReturnType<typeof setInterval> | undefined;
       let lifetime: ReturnType<typeof setTimeout> | undefined;
-      // compared as text: the column keeps microseconds that a Date (or a parameter postgres.js
-      // types as timestamptz) drops, and the close below must match this connection exactly
-      let connectedAt: string | undefined;
       try {
         const opened = await withTenant(sql, tenantId, async (tx) => {
           const [row] = await tx<{ connected_at: string; name: string }[]>`
@@ -211,6 +252,7 @@ export function mountPrintAgent(o: PrintAgentOpts) {
           return;
         }
         connectedAt = opened.connected_at;
+        hub.supersede(d.id, onSignal);
         await send('hello', {
           device: { id: d.id, name: opened.name },
           store: { name: d.tenant.name },
@@ -218,23 +260,16 @@ export function mountPrintAgent(o: PrintAgentOpts) {
         });
         void deliver();
 
-        // each beat proves this credential still opens this device in an active store (a new
-        // pairing rotates it, a suspension closes the store), rescans what's due and keeps
-        // proxies awake
+        // each beat proves this credential still opens this device, as its newest stream, in an
+        // active store; rescans what's due and keeps proxies awake
+        const at = connectedAt;
         beat = setInterval(async () => {
           try {
-            const alive = await withTenant(
-              sql,
-              tenantId,
-              (tx) => tx`
-                update print_devices d set last_seen_at = now()
-                from tenants t
-                where d.tenant_id = ${tenantId} and d.id = ${d.id}
-                  and d.token_hash = ${d.tokenHash}
-                  and t.id = d.tenant_id and t.status = 'active'
-                returning d.id`,
+            const state = await withTenant(sql, tenantId, (tx) =>
+              streamStateTx(tx, tenantId, d.id, d.tokenHash, at),
             );
-            if (alive.length === 0) return void revoke();
+            if (state === 'revoked') return void revoke();
+            if (state !== 'ok') return void finish();
             // a plan that lost printing ends the stream; the reconnect is refused PLAN_REQUIRED
             if (!(await withTenant(sql, tenantId, (tx) => planHas(tx, tenantId, 'printing'))))
               return void finish();
@@ -278,8 +313,13 @@ export function mountPrintAgent(o: PrintAgentOpts) {
         : typeof body.error === 'string' && body.error.trim()
           ? body.error.trim().slice(0, 200)
           : 'Falha ao imprimir';
-      await recordJobResultTx(tx, d.tenant.id, d.id, jobId, { ok: body.ok, error });
+      const orderId = await recordJobResultTx(tx, d.tenant.id, d.id, jobId, {
+        ok: body.ok,
+        error,
+      });
       await emitAdminTx(tx, d.tenant.id, 'printers', jobId);
+      // Início's "a comanda não imprimiu" follows the order's tickets
+      if (orderId) await emitAdminTx(tx, d.tenant.id, 'order.changed', orderId);
       return { status: 200, body: {} };
     })(c);
   });

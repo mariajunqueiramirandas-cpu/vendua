@@ -52,7 +52,12 @@ export function normalizePixKey(key: string, type: PixKeyType): string | null {
       return d.length === 14 ? d : null;
     }
     case 'email':
-      return /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/i.test(k) ? k.toLowerCase() : null;
+      // the DICT caps an email key at 77 characters, and the BR Code is ASCII with a two-digit
+      // length per field: a longer key makes a code every bank refuses
+      return k.length <= 77 &&
+        /^[^\s@\x00-\x20\x7f-\uffff]{1,64}@[^\s@\x00-\x20\x7f-\uffff]{1,72}\.[a-z]{2,}$/i.test(k)
+        ? k.toLowerCase()
+        : null;
     case 'phone': {
       const d = k.replace(/\D/g, '');
       const national = d.startsWith('55') && d.length >= 12 ? d.slice(2) : d;

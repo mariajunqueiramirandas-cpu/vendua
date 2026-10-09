@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { NavLink, useMatch, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useMatch, useNavigate } from 'react-router-dom';
 import {
+  ChevronRight,
   ChevronsUpDown,
   Download,
   Keyboard,
@@ -14,6 +15,7 @@ import { cn } from '@/lib/cn.ts';
 import { useStoredState } from '@/lib/hooks.ts';
 import { useBadges, useLlmDriver } from '@/lib/queries.ts';
 import { THEME_LABEL, useTheme } from '@/lib/theme.ts';
+import { CountDot } from '@/components/ui/badge.tsx';
 import { Kbd, Tooltip } from '@/components/ui/controls.tsx';
 import {
   Dialog,
@@ -24,7 +26,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/overlay.tsx';
-import { CONFIG, HUBS, SHORTCUTS, type Hub } from './nav.ts';
+import {
+  CONFIG,
+  HUBS,
+  isSalesPath,
+  SALES,
+  SALES_GROUP,
+  salesBadge,
+  SHORTCUTS,
+  type Hub,
+} from './nav.ts';
+import { useAttentionCount } from './attention.ts';
 import { CommandPalette } from './CommandPalette.tsx';
 import { Onboarding } from './Onboarding.tsx';
 import { ShellContext, type ShellApi } from './shell-context.ts';
@@ -40,6 +52,7 @@ export function AppShell({ onLogout, children }: { onLogout: () => void; childre
   const [collapsed, setCollapsed] = useStoredState('vendua-control-rail', false);
   const [installEvt, setInstallEvt] = useState<BeforeInstallPromptEvent | null>(null);
   const badges = useBadges();
+  useAttentionCount(badges.drafts + badges.overdue + badges.sites);
   const llmDriver = useLlmDriver();
   const nav = useNavigate();
 
@@ -88,7 +101,7 @@ export function AppShell({ onLogout, children }: { onLogout: () => void; childre
         e.preventDefault();
         return nav('/pipeline?novo=1');
       }
-      const hub = [...HUBS, CONFIG].find((h) => h.k === e.key);
+      const hub = [...HUBS, ...SALES, CONFIG].find((h) => h.k === e.key);
       if (hub) {
         e.preventDefault();
         nav(hub.to);
@@ -127,6 +140,7 @@ export function AppShell({ onLogout, children }: { onLogout: () => void; childre
           shell={shell}
         />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col md:py-2 md:pr-2 max-md:bg-background max-md:pt-safe max-md:px-safe">
+          <SalesSubNav badges={badges} />
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background md:rounded-xl md:shadow-panel">
             {children}
           </div>
@@ -180,10 +194,24 @@ function Sidebar({
 }) {
   const theme = useTheme();
   const nav = useNavigate();
+  const { pathname } = useLocation();
+  const inSales = isSalesPath(pathname);
+  const [salesOpen, setSalesOpen] = useStoredState('vendua-control-sales-open', true);
+  // entering the sales area opens the group; collapsing it there sticks until you leave
+  useEffect(() => {
+    if (inSales) setSalesOpen(true);
+  }, [inSales, setSalesOpen]);
+  const salesN = salesBadge(badges);
   // md–lg is always the icon rail; lg+ follows the stored preference
   const label = wide ? 'hidden lg:inline' : 'hidden';
   const item =
     'group relative flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] font-medium text-nav-foreground transition-colors hover:bg-nav-hover [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-nav-muted';
+  const active =
+    'bg-nav-active text-foreground shadow-card hover:bg-nav-active [&_svg]:text-foreground';
+  const badgeCls = cn(
+    'rounded-full bg-primary px-1.5 text-[10.5px] leading-4 font-semibold text-primary-foreground tnum',
+    wide ? 'max-lg:absolute max-lg:top-0 max-lg:right-0' : 'absolute top-0 right-0',
+  );
 
   const link = (h: Hub) => {
     const n = h.badge ? (badges[h.badge] ?? 0) : 0;
@@ -193,26 +221,12 @@ function Sidebar({
           to={h.to}
           end={h.to === '/'}
           className={({ isActive }) =>
-            cn(
-              item,
-              wide ? 'max-lg:justify-center' : 'justify-center',
-              isActive &&
-                'bg-nav-active text-foreground shadow-card hover:bg-nav-active [&_svg]:text-foreground',
-            )
+            cn(item, wide ? 'max-lg:justify-center' : 'justify-center', isActive && active)
           }
         >
           <h.icon />
           <span className={cn(label, 'flex-1')}>{h.label}</span>
-          {n > 0 && (
-            <span
-              className={cn(
-                'rounded-full bg-primary px-1.5 text-[10.5px] leading-4 font-semibold text-primary-foreground tnum',
-                wide ? 'max-lg:absolute max-lg:top-0 max-lg:right-0' : 'absolute top-0 right-0',
-              )}
-            >
-              {n}
-            </span>
-          )}
+          {n > 0 && <span className={badgeCls}>{n}</span>}
         </NavLink>
       </Tooltip>
     );
@@ -267,6 +281,36 @@ function Sidebar({
       </Tooltip>
 
       {HUBS.map(link)}
+
+      <Tooltip content={wide ? null : 'Vendas'} side="right">
+        <button
+          type="button"
+          aria-expanded={salesOpen}
+          onClick={() => setSalesOpen((v) => !v)}
+          className={cn(
+            item,
+            'mt-3 w-full',
+            wide ? 'max-lg:justify-center' : 'justify-center',
+            !salesOpen && inSales && active,
+          )}
+        >
+          <SALES_GROUP.icon />
+          <span className={cn(label, 'flex-1 text-left')}>{SALES_GROUP.label}</span>
+          {!salesOpen && salesN > 0 && <span className={badgeCls}>{salesN}</span>}
+          <ChevronRight
+            className={cn(
+              wide ? 'hidden lg:block' : 'hidden',
+              'size-3.5! transition-transform motion-reduce:transition-none',
+              salesOpen && 'rotate-90',
+            )}
+          />
+        </button>
+      </Tooltip>
+      {salesOpen && (
+        <div className={cn('flex flex-col gap-0.5', wide && 'lg:ml-[15px] lg:border-l lg:pl-1.5')}>
+          {SALES.map(link)}
+        </div>
+      )}
 
       <div className="mt-auto flex flex-col gap-0.5">
         {link(CONFIG)}
@@ -332,38 +376,76 @@ function Sidebar({
 }
 
 function TabBar({ badges }: { badges: Record<string, number> }) {
+  const { pathname } = useLocation();
   // an open conversation owns the bottom edge (composer above the keyboard)
   if (useMatch('/inbox/:threadId')) return null;
+  const inSales = isSalesPath(pathname);
+  const tab = (
+    h: { to: string; label: string; icon: Hub['icon'] },
+    n: number,
+    on?: boolean | undefined,
+  ) => (
+    <NavLink
+      key={h.to}
+      to={h.to}
+      end={h.to === '/'}
+      className={({ isActive }) =>
+        cn(
+          'relative flex h-[52px] flex-1 flex-col items-center justify-center gap-0.5 text-[10.5px] font-medium text-nav-muted transition-colors',
+          (on ?? isActive) && 'text-foreground',
+        )
+      }
+    >
+      {({ isActive }) => (
+        <>
+          <h.icon className="size-[22px]" strokeWidth={(on ?? isActive) ? 2.1 : 1.6} />
+          {h.label}
+          {n > 0 && (
+            <span className="absolute top-1 left-[calc(50%+5px)] min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] leading-4 font-semibold text-white tnum">
+              {n}
+            </span>
+          )}
+        </>
+      )}
+    </NavLink>
+  );
   return (
     <nav
       aria-label="seções"
       className="pb-safe px-safe flex shrink-0 border-t bg-background/85 backdrop-blur-xl backdrop-saturate-150 md:hidden kb:hidden"
     >
-      {HUBS.map((h) => {
+      {HUBS.map((h) => tab(h, h.badge ? (badges[h.badge] ?? 0) : 0))}
+      {tab(SALES_GROUP, salesBadge(badges), inSales)}
+    </nav>
+  );
+}
+
+/** Phones: the sales hubs share one tab, so the shell puts their switcher above the page. */
+function SalesSubNav({ badges }: { badges: Record<string, number> }) {
+  const { pathname } = useLocation();
+  const lead = useMatch('/pipeline/:id');
+  const thread = useMatch('/inbox/:threadId');
+  const run = useMatch('/agente/atividade/:id');
+  const detail =
+    !!thread || !!run || (!!lead && !['relatorios', 'analytics'].includes(lead.params.id ?? ''));
+  if (!isSalesPath(pathname) || detail) return null;
+  return (
+    <nav
+      aria-label="vendas"
+      className="no-scrollbar flex shrink-0 overflow-x-auto border-b px-1.5 md:hidden kb:hidden"
+    >
+      {SALES.map((h) => {
         const n = h.badge ? (badges[h.badge] ?? 0) : 0;
         return (
           <NavLink
             key={h.to}
             to={h.to}
-            end={h.to === '/'}
-            className={({ isActive }) =>
-              cn(
-                'relative flex h-[52px] flex-1 flex-col items-center justify-center gap-0.5 text-[10.5px] font-medium text-nav-muted transition-colors',
-                isActive && 'text-foreground',
-              )
-            }
+            className="group inline-flex h-11 shrink-0 items-center px-0.5"
           >
-            {({ isActive }) => (
-              <>
-                <h.icon className="size-[22px]" strokeWidth={isActive ? 2.1 : 1.6} />
-                {h.label}
-                {n > 0 && (
-                  <span className="absolute top-1 left-[calc(50%+5px)] min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] leading-4 font-semibold text-white tnum">
-                    {n}
-                  </span>
-                )}
-              </>
-            )}
+            <span className="inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-muted-foreground transition-colors group-aria-[current=page]:bg-secondary group-aria-[current=page]:text-foreground">
+              {h.label}
+              <CountDot n={n} />
+            </span>
           </NavLink>
         );
       })}

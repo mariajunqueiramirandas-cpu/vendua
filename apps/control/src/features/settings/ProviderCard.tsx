@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, FlaskConical, Loader2, X } from 'lucide-react';
+import { Check, FlaskConical, Loader2, Lock, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type IgStatus, type Integration } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
@@ -11,6 +11,7 @@ import { Segmented } from '@/components/ui/controls.tsx';
 import { Field, Input } from '@/components/ui/input.tsx';
 import { ConfirmButton } from '@/components/common.tsx';
 import {
+  configOut,
   providerStatus,
   TONE_BADGE,
   type Driver,
@@ -92,8 +93,8 @@ export function ProviderCard({
   const liveDetail = current
     ? [
         current.driver,
-        ...(kind.drivers.find((x) => x.d === current.driver)?.fields ?? []).map(
-          (f) => String(current.config[f.key] ?? '') || f.placeholder,
+        ...(kind.drivers.find((x) => x.d === current.driver)?.fields ?? []).map((f) =>
+          f.locked ? f.placeholder : String(current.config[f.key] ?? '') || f.placeholder,
         ),
       ]
         .filter(Boolean)
@@ -229,11 +230,17 @@ export function ProviderCard({
 
         <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
           {!selIsActive ? (
-            <Button disabled={saving} onClick={() => onSave({ driver, secretRef, config }, true)}>
+            <Button
+              disabled={saving}
+              onClick={() => onSave({ driver, secretRef, config: configOut(drv, config) }, true)}
+            >
               usar {drv?.label ?? driver}
             </Button>
           ) : dirty ? (
-            <Button disabled={saving} onClick={() => onSave({ driver, secretRef, config }, true)}>
+            <Button
+              disabled={saving}
+              onClick={() => onSave({ driver, secretRef, config: configOut(drv, config) }, true)}
+            >
               salvar
             </Button>
           ) : null}
@@ -262,7 +269,10 @@ export function ProviderCard({
                   {
                     driver: current.driver,
                     secretRef: baseline.secretRef,
-                    config: baseline.config,
+                    config: configOut(
+                      kind.drivers.find((x) => x.d === current.driver),
+                      baseline.config,
+                    ),
                   },
                   false,
                 )
@@ -350,25 +360,54 @@ function DriverFields({
           />
         </Field>
       )}
-      {drv.fields?.map((f) => (
-        <Field key={f.key} label={f.label} hint={f.hint} htmlFor={`${kind.key}-${f.key}`}>
-          <Input
-            id={`${kind.key}-${f.key}`}
-            type={f.number ? 'number' : undefined}
-            inputMode={f.number ? 'numeric' : undefined}
-            value={config[f.key] ?? ''}
-            placeholder={f.placeholder}
-            spellCheck={false}
-            onChange={(e) =>
-              setConfig({
-                ...config,
-                [f.key]:
-                  f.number && e.target.value !== '' ? Number(e.target.value) : e.target.value,
-              })
-            }
-          />
-        </Field>
-      ))}
+      {drv.fields?.map((f) =>
+        f.locked ? (
+          <Field key={f.key} label={f.label} hint={f.hint} htmlFor={`${kind.key}-${f.key}`}>
+            <div className="relative">
+              <Input
+                id={`${kind.key}-${f.key}`}
+                readOnly
+                value={f.placeholder}
+                className="bg-secondary pr-14 font-mono shadow-none"
+              />
+              <span className="pointer-events-none absolute top-1/2 right-2.5 flex -translate-y-1/2 items-center gap-1 text-xs text-muted-foreground">
+                <Lock className="size-3" aria-hidden />
+                fixo
+              </span>
+            </div>
+          </Field>
+        ) : f.options ? (
+          <Field key={f.key} label={f.label} hint={f.hint}>
+            <div className="no-scrollbar -mx-1 overflow-x-auto px-1">
+              <Segmented
+                size="sm"
+                label={f.label}
+                value={String(config[f.key] || f.placeholder)}
+                onChange={(v) => setConfig({ ...config, [f.key]: v })}
+                options={f.options}
+              />
+            </div>
+          </Field>
+        ) : (
+          <Field key={f.key} label={f.label} hint={f.hint} htmlFor={`${kind.key}-${f.key}`}>
+            <Input
+              id={`${kind.key}-${f.key}`}
+              type={f.number ? 'number' : undefined}
+              inputMode={f.number ? 'numeric' : undefined}
+              value={config[f.key] ?? ''}
+              placeholder={f.placeholder}
+              spellCheck={false}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  [f.key]:
+                    f.number && e.target.value !== '' ? Number(e.target.value) : e.target.value,
+                })
+              }
+            />
+          </Field>
+        ),
+      )}
     </div>
   );
 }

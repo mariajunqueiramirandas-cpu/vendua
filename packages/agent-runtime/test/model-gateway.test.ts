@@ -3,8 +3,9 @@ import type { ModelRequest, ModelResponse } from '../src/types.ts';
 import {
   AllRoutesFailedError,
   BudgetExceededError,
+  NoRouteError,
   NoZdrRouteError,
-  anthropicAdapter,
+  ProviderError,
   createGateway,
   createPiiVault,
   openAiCompatibleAdapter,
@@ -43,15 +44,17 @@ function request(over: Partial<ModelRequest> = {}): ModelRequest {
 const fastRetry = { retry: { baseMs: 1, maxMs: 1 } };
 
 describe('routing', () => {
-  test('refuses routes without zero data retention', async () => {
+  test('throws NoRouteError (and the old NoZdrRouteError) when there is no route', async () => {
     const a = scriptedAdapter([{ text: 'x' }], 'a');
-    const gw = createGateway({ adapters: [a], routes: resolver([route('a', { zdr: false })]) });
-    await expect(gw.generate(request())).rejects.toBeInstanceOf(NoZdrRouteError);
+    const gw = createGateway({ adapters: [a], routes: resolver([]) });
+    const err = await gw.generate(request()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NoRouteError);
+    expect(err).toBeInstanceOf(NoZdrRouteError);
     expect(a.requests).toHaveLength(0);
   });
 
-  test('skips a non-zdr route and uses the next', async () => {
-    const a = scriptedAdapter([{ text: 'from a' }], 'a');
+  test("uses a route without zero data retention and passes each route's zdr", async () => {
+    const a = scriptedAdapter(() => ({ error: { status: 400, message: 'bad' } }), 'a');
     const b = scriptedAdapter([{ text: 'from b' }], 'b');
     const gw = createGateway({
       adapters: [a, b],
@@ -60,9 +63,17 @@ describe('routing', () => {
     const res = await gw.generate(request());
     expect(res.text).toBe('from b');
     expect(res.provider).toBe('b');
-    expect(a.requests).toHaveLength(0);
+    expect(a.requests).toHaveLength(1);
+    expect(a.requests[0]!.zdr).toBe(false);
+    expect(b.requests[0]!.zdr).toBe(true);
     expect(b.requests[0]!.model).toBe('b-m');
     expect('meta' in b.requests[0]!).toBe(false);
+  });
+
+  test('a lone non-zdr route answers', async () => {
+    const a = scriptedAdapter([{ text: 'ok' }], 'a');
+    const gw = createGateway({ adapters: [a], routes: resolver([route('a', { zdr: false })]) });
+    expect((await gw.generate(request())).text).toBe('ok');
   });
 
   test('retries a 500 once, then falls back', async () => {
@@ -239,6 +250,63 @@ describe('metering', () => {
     expect(res.usage.costUsd).toBe(seen.after!.costUsd);
   });
 
+  test("the estimate takes the adapter's output limit when it bills past maxTokens", async () => {
+    const a = {
+      ...scriptedAdapter([{ text: 'ok' }], 'a'),
+      outputTokens: (req: { maxTokens: number; effort?: string }) =>
+        req.maxTokens + (req.effort === 'high' ? 8000 : 1000),
+    };
+    let seen: CostEstimate | undefined;
+    const meter = {
+      before: (e: CostEstimate) => {
+        seen = e;
+      },
+      after: () => {},
+    };
+    const gw = createGateway({
+      adapters: [a],
+      routes: resolver([route('a', { pricing, effort: 'high' })]),
+    });
+    await gw.generate(request(), { meter });
+    expect(seen!.maxOutputTokens).toBe(500 + 8000);
+    expect(a.requests[0]!.maxTokens).toBe(500);
+    expect(a.requests[0]!.effort).toBe('high');
+  });
+
+  test('a route that billed but answered unusably adds its usage to the one that lands', async () => {
+    const billed = { inputTokens: 300, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    const refusing: ProviderAdapter = {
+      id: 'a',
+      generate: async () => {
+        throw new ProviderError('a: refusal', {
+          retryable: false,
+          usage: { ...billed, costUsd: 0.001 },
+        });
+      },
+    };
+    const b = scriptedAdapter(
+      [{ text: 'ok', usage: { inputTokens: 100, outputTokens: 10, costUsd: 0.002 } }],
+      'b',
+    );
+    let after: Usage | undefined;
+    const gw = createGateway({
+      adapters: [refusing, b],
+      routes: resolver([route('a', { pricing }), route('b', { pricing })]),
+    });
+    const res = await gw.generate(request(), {
+      meter: {
+        before: () => {},
+        after: (u) => {
+          after = u;
+        },
+      },
+    });
+    expect(res.text).toBe('ok');
+    expect(res.usage).toMatchObject({ inputTokens: 400, outputTokens: 10 });
+    expect(res.usage.costUsd).toBeCloseTo(0.003, 12);
+    expect(after).toEqual(res.usage);
+  });
+
   test('a budget refusal never reaches the provider', async () => {
     const a = scriptedAdapter([{ text: 'x' }], 'a');
     const gw = createGateway({ adapters: [a], routes: resolver([route('a', { pricing })]) });
@@ -351,116 +419,6 @@ function fakeFetch(json: unknown, status = 200) {
   return { fetch, calls };
 }
 
-describe('anthropic adapter', () => {
-  test('cache breakpoints, volatile placement and tool mapping', async () => {
-    const { fetch, calls } = fakeFetch({
-      model: 'claude-x',
-      content: [
-        { type: 'text', text: 'Vou buscar.' },
-        { type: 'tool_use', id: 'tu_1', name: 'search', input: { q: 'bolo' } },
-      ],
-      stop_reason: 'tool_use',
-      usage: {
-        input_tokens: 50,
-        output_tokens: 20,
-        cache_read_input_tokens: 4000,
-        cache_creation_input_tokens: 300,
-      },
-    });
-    const adapter = anthropicAdapter({ apiKey: 'k', fetch });
-    const gw = createGateway({ adapters: [adapter], routes: resolver([route('anthropic')]) });
-    const res = await gw.generate(
-      request({
-        system: [
-          { id: 's1', tier: 'static', text: 'S1', cache: true },
-          { id: 's2', tier: 'static', text: 'S2', cache: true },
-          { id: 't1', tier: 'tenant', text: 'T1', cache: true },
-          { id: 'u1', tier: 'subject', text: 'U1', cache: true },
-          { id: 'c1', tier: 'conversation', text: 'C1', cache: false },
-        ],
-        messages: [
-          { role: 'user', parts: [{ type: 'text', text: 'quero bolo' }] },
-          {
-            role: 'assistant',
-            text: '',
-            toolCalls: [{ id: 'c0', name: 'search', args: { q: 'bolo' } }],
-          },
-          { role: 'tool', callId: 'c0', name: 'search', content: '[]', isError: false },
-        ],
-      }),
-    );
-    const { url, init, body } = calls[0]!;
-    expect(url).toBe('https://api.anthropic.com/v1/messages');
-    expect((init.headers as Record<string, string>)['x-api-key']).toBe('k');
-    expect(body.model).toBe('anthropic-m');
-    expect(body.max_tokens).toBe(500);
-    expect(body.system.map((b: any) => Boolean(b.cache_control))).toEqual([
-      false,
-      true,
-      true,
-      true,
-      false,
-    ]);
-    const last = body.messages.at(-1);
-    expect(last.role).toBe('user');
-    expect(last.content).toEqual([
-      {
-        type: 'tool_result',
-        tool_use_id: 'c0',
-        content: '[]',
-        cache_control: { type: 'ephemeral' },
-      },
-      { type: 'text', text: 'AGORA: sexta 10h' },
-    ]);
-    expect(body.messages[1]).toEqual({
-      role: 'assistant',
-      content: [{ type: 'tool_use', id: 'c0', name: 'search', input: { q: 'bolo' } }],
-    });
-    expect(JSON.stringify(body).match(/cache_control/g)).toHaveLength(4);
-    expect(body.tools[0]).toEqual({
-      name: 'search',
-      description: 'busca',
-      input_schema: { type: 'object' },
-    });
-
-    expect(res.finish).toBe('tool_calls');
-    expect(res.toolCalls).toEqual([{ id: 'tu_1', name: 'search', args: { q: 'bolo' } }]);
-    expect(res.usage).toMatchObject({
-      inputTokens: 50,
-      outputTokens: 20,
-      cacheReadTokens: 4000,
-      cacheWriteTokens: 300,
-    });
-  });
-
-  test('volatile becomes its own user turn after an assistant message; errors carry status', async () => {
-    const { fetch, calls } = fakeFetch({ error: { type: 'overloaded_error' } }, 529);
-    const adapter = anthropicAdapter({ apiKey: 'k', fetch });
-    const err = await adapter
-      .generate(
-        {
-          model: 'm',
-          system: [],
-          messages: [{ role: 'assistant', text: 'Oi!', toolCalls: [] }],
-          volatile: 'AGORA',
-          tools: [],
-          maxTokens: 10,
-        },
-        new AbortController().signal,
-      )
-      .catch((e: unknown) => e);
-    expect(calls[0]!.body.messages).toEqual([
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'Oi!', cache_control: { type: 'ephemeral' } }],
-      },
-      { role: 'user', content: [{ type: 'text', text: 'AGORA' }] },
-    ]);
-    expect(calls[0]!.body.system).toBeUndefined();
-    expect(err).toMatchObject({ status: 529, retryable: true });
-  });
-});
-
 describe('openai-compatible adapter', () => {
   test('request shape and parse of tool calls and usage', async () => {
     const { fetch, calls } = fakeFetch({
@@ -491,12 +449,13 @@ describe('openai-compatible adapter', () => {
       id: 'openrouter',
       baseUrl: 'https://openrouter.ai/api/v1/',
       apiKey: 'k',
-      extraBody: { provider: { zdr: true, data_collection: 'deny' } },
+      zdrBody: { provider: { zdr: true, data_collection: 'deny' } },
       fetch,
     });
     const res = await adapter.generate(
       {
         model: 'openai/gpt-x',
+        zdr: true,
         system: [
           { id: 'a', tier: 'static', text: 'A', cache: true },
           { id: 'b', tier: 'tenant', text: 'B', cache: true },
@@ -546,6 +505,62 @@ describe('openai-compatible adapter', () => {
       cacheWriteTokens: 0,
       costUsd: 0.00042,
     });
+  });
+
+  test('zdrBody rides only on requests for a zdr route', async () => {
+    const { fetch, calls } = fakeFetch({ choices: [{ message: { content: 'ok' } }] });
+    const adapter = openAiCompatibleAdapter({
+      id: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'k',
+      extraBody: { usage: { include: true } },
+      zdrBody: { provider: { zdr: true, data_collection: 'deny' } },
+      fetch,
+    });
+    const gw = createGateway({
+      adapters: [adapter],
+      routes: { routes: async (_t, agentId) => [route('openrouter', { zdr: agentId === 'zdr' })] },
+    });
+    const meta = request().meta;
+    await gw.generate(request({ meta: { ...meta, agentId: 'zdr' } }));
+    await gw.generate(request({ meta: { ...meta, agentId: 'open' } }));
+    expect(calls[0]!.body.provider).toEqual({ zdr: true, data_collection: 'deny' });
+    expect(calls[1]!.body.provider).toBeUndefined();
+    expect(calls[0]!.body.usage).toEqual({ include: true });
+    expect(calls[1]!.body.usage).toEqual({ include: true });
+    expect('zdr' in calls[1]!.body).toBe(false);
+  });
+
+  test('a pinned endpoint merges into provider without dropping the retention rules', async () => {
+    const { fetch, calls } = fakeFetch({ choices: [{ message: { content: 'ok' } }] });
+    const adapter = openAiCompatibleAdapter({
+      id: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'k',
+      extraBody: { provider: { data_collection: 'deny' } },
+      zdrBody: { provider: { zdr: true, data_collection: 'deny' } },
+      endpointBody: (tag) => ({ provider: { order: [tag], allow_fallbacks: false } }),
+      fetch,
+    });
+    const gw = createGateway({
+      adapters: [adapter],
+      routes: {
+        routes: async (_t, agentId) => [
+          route('openrouter', {
+            zdr: agentId === 'zdr',
+            ...(agentId === 'plain' ? {} : { endpoint: 'deepinfra/turbo' }),
+          }),
+        ],
+      },
+    });
+    const meta = request().meta;
+    await gw.generate(request({ meta: { ...meta, agentId: 'zdr' } }));
+    await gw.generate(request({ meta: { ...meta, agentId: 'open' } }));
+    await gw.generate(request({ meta: { ...meta, agentId: 'plain' } }));
+    const pin = { order: ['deepinfra/turbo'], allow_fallbacks: false };
+    expect(calls[0]!.body.provider).toEqual({ zdr: true, data_collection: 'deny', ...pin });
+    expect(calls[1]!.body.provider).toEqual({ data_collection: 'deny', ...pin });
+    expect(calls[2]!.body.provider).toEqual({ data_collection: 'deny' });
   });
 
   test('replays provider extras (Gemini thought signatures) on the next step', async () => {

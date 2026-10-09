@@ -10,6 +10,7 @@ import type {
   NoticeAction,
   Order,
   OrderItem,
+  OrderTracking,
   ProductDetail,
   StoreProfile,
   CatalogProduct,
@@ -44,7 +45,9 @@ export interface CustomerDraft {
 }
 
 export interface DeliveryOption {
-  mode: 'pickup' | 'delivery';
+  /** Kernel 1.22 adds 'dine_in': at a table (ADR 0036) it is the only option, already chosen —
+   *  only stores with QR ordering ever show it */
+  mode: 'pickup' | 'delivery' | 'dine_in';
   label: string;
   detail?: string;
   disabled?: boolean;
@@ -54,8 +57,9 @@ export interface DeliveryOption {
 
 export interface PaymentMethod {
   /** Kernel 1.7 adds 'card_online' — card through Mercado Pago (in the page since 1.19);
-   *  Kernel 1.12 adds 'meal_voucher' ("Vale-refeição", paid on delivery) */
-  id: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher';
+   *  Kernel 1.12 adds 'meal_voucher' ("Vale-refeição", paid on delivery); Kernel 1.22 'tab'
+   *  ("Pagar na mesa": on the table's comanda, offered only at a table) */
+  id: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' | 'meal_voucher' | 'tab';
   label: string;
   detail?: string;
   /** Kernel 1.12 — the store's discount/surcharge for this method, as a label ("−5%",
@@ -172,6 +176,8 @@ export interface SlotProps {
     errors: Partial<Record<keyof CustomerDraft, string>>;
     /** 'customer' = name/phone; 'address' = delivery address */
     part: 'customer' | 'address';
+    /** Kernel 1.22 — part 'customer' asks only the name (an order at a table: no phone) */
+    nameOnly?: boolean;
     neighborhoods: string[];
     /** Kernel 1.2 — CEP autofill (Core lookup); absent = no CEP field */
     onCep?: (cep: string) => void;
@@ -181,6 +187,14 @@ export interface SlotProps {
     locateStatus?: 'idle' | 'pending' | 'located' | 'denied' | 'out_of_zone';
     /** what Core answered for the address: zone + fee, when known */
     zoneHint?: string;
+    /** Kernel 1.21 — the addresses remembered on this device (at most 3, most recent first;
+     *  `label` "Rua A, 10 — Centro", `detail` the complement/reference). Picking one fills the
+     *  form. Absent = none saved */
+    savedAddresses?: { id: string; label: string; detail?: string }[];
+    /** Kernel 1.21 — the saved address the form holds now; null = another one */
+    savedAddressId?: string | null;
+    /** Kernel 1.21 — pick a saved address, or null to type another (the fields empty) */
+    onPickAddress?: (id: string | null) => void;
   };
   /** Kernel 1.15 — distance pricing (ADR 0024): the shopper confirms where the order goes on a
    *  map; the confirmed point is what Core prices. Rendered under the address form. */
@@ -241,6 +255,10 @@ export interface SlotProps {
     max?: number;
     onQty: (qty: number) => void;
     onRemove: () => void;
+    /** Kernel 1.21 — set the line's note (`item.note`; '' clears it), up to `noteMax`
+     *  characters. Present where the bag can be edited; the line may fold into an identical one */
+    onNote?: (note: string) => void;
+    noteMax?: number;
   } & StoreWords;
   'order.StatusPage': {
     order: Order;
@@ -249,7 +267,22 @@ export interface SlotProps {
     /** Kernel 1.7 — the store's pickup address/instructions, for pickup orders */
     pickup?: { address: string | null; instructions: string | null };
   } & StoreTime;
-  'order.Timeline': { events: Order['timeline'] } & StoreTime;
+  'order.Timeline': {
+    events: Order['timeline'];
+    /** Kernel 1.22 — the order's mode, for the words ("Servido" at a table) */
+    mode?: Order['delivery']['mode'];
+  } & StoreTime;
+  /** Kernel 1.21 — the order page opened from the link in the store's WhatsApp updates, on a
+   *  device that didn't place it: where the order stands and what was ordered — nothing about
+   *  the shopper, the address or the payment, and no money */
+  'order.TrackingPage': {
+    order: OrderTracking;
+    /** the `order.Timeline` slot, rendered */
+    timeline: ReactNode;
+    /** the store's pickup address/instructions, for pickup orders */
+    pickup?: { address: string | null; instructions: string | null };
+  } & StoreTime &
+    StoreWords;
   'store.HoursTable': { hours: StoreProfile['hours']; status?: StoreProfile['status'] };
   'catalog.ProductCard': {
     product: CatalogProduct;

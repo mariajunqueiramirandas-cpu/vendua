@@ -42,6 +42,10 @@ export const qk = {
   duplicates: () => ['duplicates'] as const,
   snapshots: () => ['snapshots'] as const,
   billingStores: () => ['billing-stores'] as const,
+  // under billingStores, so invalidating the list refreshes it too
+  billingStore: (tenantId: string) => ['billing-stores', tenantId] as const,
+  siteTasks: (status: 'open' | 'all') => ['site-tasks', status] as const,
+  siteTask: (id: string) => ['site-task', id] as const,
   controlPlans: () => ['control-plans'] as const,
   aiPacks: () => ['ai-packs'] as const,
   signupReadiness: () => ['signup-readiness'] as const,
@@ -54,6 +58,18 @@ export const qk = {
   menuImport: (id: string) => ['menu-import', id] as const,
   fleetIncidents: () => ['fleet-incidents'] as const,
   fleetSlug: (slug: string) => ['fleet-slug', slug] as const,
+  customers: () => ['customers'] as const,
+  customersOverview: () => ['customers', 'overview'] as const,
+  customer: (id: string) => ['customers', 'one', id] as const,
+  storeSearch: (q: string) => ['customers', 'search', q] as const,
+  // pages merged by useInfiniteQuery — its own key segment, never shared with the detail
+  storeEvents: (id: string, category: string) => ['customers', 'events', id, category] as const,
+  views: (member: string) => ['views', member] as const,
+  aiModels: () => ['ai-models'] as const,
+  aiVoice: () => ['ai-voice'] as const,
+  aiCatalog: () => ['ai-catalog'] as const,
+  aiEndpoints: (model: string) => ['ai-endpoints', model] as const,
+  aiUsage: (days: number) => ['ai-usage', days] as const,
 };
 
 type AuthListener = () => void;

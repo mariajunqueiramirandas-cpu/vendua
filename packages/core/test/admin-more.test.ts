@@ -418,6 +418,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
     expect(member.inviteChannels).toEqual(['whatsapp', 'email']);
     expect(member.inviteSentAt).toBeTruthy();
     expect(member.inviteError).toBeNull();
+    // the typed address is a sign-in factor only once the link in the invite is opened;
+    const daviMail = `ta-d-${nonce}@exemplo.com`;
+    expect(member).toMatchObject({ email: null, pendingEmail: daviMail });
+    // the invite carries the link that proves it (opening it: sec-merchant-auth.test.ts, C1)
+    expect(lastMail(daviMail)!.text).toMatch(/\/admin\/entrar\?link=[A-Za-z0-9_-]{43}/);
+    // and lasts long enough for someone who reads their email the next day
+    const [inviteLink] = await sql<{ hours: number }[]>`
+      select extract(epoch from expires_at - created_at)::int / 3600 as hours
+      from merchant_login_links where email = ${daviMail} order by created_at desc limit 1`;
+    expect(inviteLink!.hours).toBe(48);
 
     const replay = await owner(
       'POST',
@@ -450,6 +460,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
     expect((await owner('POST', `/team/${crypto.randomUUID()}/invite`)).status).toBe(404);
     const t = await owner('GET', '/team');
     expect(t.body.members.find((x: any) => x.id === fm.id).inviteChannels).toEqual(['whatsapp']);
+    // back after leaving: the old address isn't carried over (it may not be theirs any more)
+    await sql`update merchant_users set status = 'revoked' where tenant_id = ${tenantId} and phone = ${phone}`;
+    const back = await owner('POST', '/team', { name: 'Davi Atendente', phone, role: 'attendant' });
+    expect(back.status).toBe(201);
+    expect(back.body.invite.email).toBe('skipped');
+    expect(back.body.members.find((x: any) => x.phone === phone)).toMatchObject({
+      email: null,
+      pendingEmail: null,
+    });
     // these two must not get alert WhatsApps later
     await sql`update merchant_users set status = 'revoked' where tenant_id = ${tenantId} and phone in (${phone}, ${lost})`;
   });
@@ -626,6 +645,31 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
     expect(again.status).toBe(201);
     expect(again.headers.get('x-idempotent-replay')).toBe('true');
     expect(again.body.id).toBe(res.body.id);
+    // a key another route stored (or a reserved one) is never replayed here
+    const pushKey = `${mediaKey}-push`;
+    await owner(
+      'POST',
+      '/push/subscribe',
+      {
+        endpoint: `https://fcm.googleapis.com/fcm/send/${mediaKey}`,
+        keys: { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) },
+      },
+      { 'idempotency-key': pushKey },
+    );
+    const foreign = await owner('POST', '/media', new Uint8Array([1]), {
+      'content-type': 'image/jpeg',
+      'idempotency-key': pushKey,
+    });
+    expect(foreign.headers.get('x-idempotent-replay')).toBeNull();
+    expect(foreign.status).not.toBe(201);
+    expect(
+      (
+        await owner('POST', '/media', new Uint8Array([1]), {
+          'content-type': 'image/jpeg',
+          'idempotency-key': 'vendedor:x',
+        })
+      ).status,
+    ).toBe(400);
     expect(
       (
         await owner('POST', '/media', withExif, {

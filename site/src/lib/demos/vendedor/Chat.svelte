@@ -365,7 +365,9 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    overscroll-behavior: contain;
+    /* chain to the page at the chat's edges: on a phone the mock fills the screen, and a
+       contained scroller traps the finger inside it */
+    overscroll-behavior: auto;
     scrollbar-width: thin;
     background: var(--surface-sunken);
     /* the scroll starts, and stays, at the newest message: no script needed */

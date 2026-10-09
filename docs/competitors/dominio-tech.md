@@ -92,7 +92,7 @@ P-IDs point at [`competitor-parity.md`](../competitor-parity.md). Paths are unde
 | AI menu import from a photo or print     | "Até 120 produtos por foto", reviewed before saving; from an iFood or Anota AI print too                                                                                | partial: deterministic Instadelivery adapter only (`src/modules/menu-import/adapters/index.ts:6`) |
 | AI product descriptions                  | One click, editable                                                                                                                                                     | gap (P-020)                                                                                       |
 | AI-drafted WhatsApp templates            | "Descreva o objetivo para a IA montar um rascunho"                                                                                                                      | gap (P-018)                                                                                       |
-| Daily summary push                       | 21h in the store's time zone: orders and total sold                                                                                                                     | gap: the existing daily digest is for staff (`src/modules/digest.ts`)                             |
+| Daily summary push                       | 21h in the store's time zone: orders and total sold                                                                                                                     | gap: the existing daily digest is for staff (`src/modules/discord/digest.ts`)                     |
 | Shopper ordering app in ChatGPT          | "Dominio Tech Delivery": find stores, browse menus, build the cart, check status; checkout on the web                                                                   | declined (owner, 2026-10-01)                                                                      |
 | Lis on the website                       | Answers prospects, creates the account, hands off to staff                                                                                                              | partial: our sales agent works WhatsApp, Instagram and email; no site chat                        |
 | Lis in the help center                   | Answers from the published articles                                                                                                                                     | gap                                                                                               |
@@ -562,6 +562,11 @@ Six properties. Domínio has half of the first and half of the fifth:
 
 ### 4.3 Design (proposal, not decided)
 
+> **Built in part (2026-10-06):** A and B shipped as Duá Copilot,
+> [ADR 0034](../adr/0034-dua-copilot.md). Named admin routes play the part of the tool registry,
+> proposals stand in for previews, and the only plan with it is Pangolim. C and D3–D4 are still
+> proposals. §4.1 predates the store's own WhatsApp (ADR 0026) and the shopper status messages.
+
 All of it stays inside the invariants in `CLAUDE.md`. Tools run through the same module code as
 the HTTP handlers, so tenant isolation (`SET LOCAL vendua.tenant_id`), the Idempotency-Key claim
 pattern, Core-computed money and bounded inputs come for free. Every run is requested through
@@ -748,3 +753,4 @@ Caveats:
   totals. The proposal now follows the owner's decision: no Claude, ChatGPT or MCP integration,
   and a copilot inside the admin.
 - 2026-10-02: step 5 of §5 written up as [`features/sales-agent.md`](../features/sales-agent.md).
+- 2026-10-06: §4.3 A and B built as Duá Copilot ([ADR 0034](../adr/0034-dua-copilot.md)).

@@ -22,6 +22,7 @@ import { setStatusRefresher, showError, showInfo } from './errors.ts';
 import { beacon } from './telemetry.ts';
 import type { StorefrontBundle } from './composition/registry.ts';
 import { setThemeColor } from './theme-color.ts';
+import { takeTableLink } from './table.ts';
 
 // tenant context, api client, token emission — mounted once per storefront root
 // (03-storefront-contract.md#required-mounts); Phase 0 uses a minimal in-flight
@@ -77,7 +78,32 @@ function tokensToVars(tokens: StorefrontTokens): Record<string, string> {
   return vars;
 }
 
+// @vendua/templates' validateTokens rule, again at the point the value is written
+const FONT_WEIGHT = /^\d{3}( \d{3})?$|^(normal|bold)$/;
+
+const tableTaken = new WeakSet<VenduaApi>();
+
 const EMPTY_BUNDLE: StorefrontBundle = { sections: {}, snapshot: { templates: {}, tokens: null } };
+
+/** Kernel 1.21 — `/pedido/<id>?t=vot.…`, the link at the end of the store's WhatsApp order
+ *  updates: the status-only credential goes to the api client (and the device's storage, so a
+ *  reload still reads) and leaves the address bar, so a shared screenshot or link doesn't carry it. */
+function takeTrackingLink(api: VenduaApi) {
+  const loc = globalThis.location;
+  if (!loc) return;
+  const params = new URLSearchParams(loc.search);
+  const token = params.get('t');
+  const order = /\/pedido\/([0-9a-f-]{36})\/?$/.exec(loc.pathname)?.[1];
+  if (token === null || !order) return;
+  api.addTrackingToken(order, token);
+  params.delete('t');
+  const rest = params.toString();
+  globalThis.history?.replaceState(
+    globalThis.history.state,
+    '',
+    `${loc.pathname}${rest ? `?${rest}` : ''}${loc.hash}`,
+  );
+}
 
 export function VenduaProvider({
   config,
@@ -100,6 +126,8 @@ export function VenduaProvider({
     // backend — drop the session and mint a fresh client
     apiRef.current?.api.clearSession();
     apiRef.current = { api: createApi(baseUrl), baseUrl };
+    // before any page's first read: the order page must ask with the link's credential
+    takeTrackingLink(apiRef.current.api);
   }
   const api = apiRef.current.api;
   const listeners = useRef(new Map<string, Set<() => void>>());
@@ -204,6 +232,36 @@ export function VenduaProvider({
     };
   }, [api, baseUrl]);
 
+  // Kernel 1.21: the cart session is the device's — another tab starting or closing a cart
+  // rereads this one's bag; back online, every read asks Core again (in place, no flash)
+  useEffect(() => {
+    const cache = cacheFor(api);
+    const refresh = (key: string) => {
+      const subs = listeners.current.get(key);
+      if (subs?.size) subs.forEach((fn) => fn());
+      else cache.delete(key);
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === 'vendua.session') refresh('cart');
+    };
+    const onOnline = () => {
+      for (const key of [...cache.keys()]) refresh(key);
+    };
+    globalThis.addEventListener?.('storage', onStorage);
+    globalThis.addEventListener?.('online', onOnline);
+    return () => {
+      globalThis.removeEventListener?.('storage', onStorage);
+      globalThis.removeEventListener?.('online', onOnline);
+    };
+  }, [api]);
+
+  // Kernel 1.22 (ADR 0036): `?mesa=<token>`, the table's QR code — once per client
+  useEffect(() => {
+    if (tableTaken.has(api)) return;
+    tableTaken.add(api);
+    takeTableLink(api);
+  }, [api]);
+
   // Kernel 1.2 links: `?cart=CODE` restores a shared sacola, `?cupom=CODE` applies a
   // coupon — both land on /sacola with the params stripped (the URL stays shareable once)
   useEffect(() => {
@@ -289,8 +347,11 @@ export function VenduaProvider({
         (s) =>
           `@font-face{font-family:${JSON.stringify(s.family)};` +
           `src:url(${JSON.stringify(s.src)});font-display:swap;` +
-          (s.weight != null ? `font-weight:${s.weight};` : '') +
-          (s.style ? `font-style:${s.style};` : '') +
+          // raw in the rule: a value the token validator would refuse is dropped
+          (s.weight != null && FONT_WEIGHT.test(String(s.weight))
+            ? `font-weight:${s.weight};`
+            : '') +
+          (s.style === 'normal' || s.style === 'italic' ? `font-style:${s.style};` : '') +
           '}',
       )
       .join('');

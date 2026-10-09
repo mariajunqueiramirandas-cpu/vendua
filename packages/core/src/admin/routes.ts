@@ -3,11 +3,17 @@ import { planAccess } from '../modules/billing/plans.ts';
 import { getCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
 import { withTenant, type Sql } from '../platform/db.ts';
-import { HttpError, UUID_RE, bodyJson, clientIp, windowCounter } from '../platform/http.ts';
-import { log } from '../platform/log.ts';
+import {
+  HttpError,
+  UUID_RE,
+  bodyJson,
+  checkKey,
+  clientIp,
+  idempotencyFingerprint,
+  windowCounter,
+} from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
-import { notifyStaff } from '../modules/staff.ts';
 import { audit } from './audit.ts';
 import {
   ADMIN_COOKIE,
@@ -23,6 +29,7 @@ import {
   sessionAlive,
   sessionStores,
   setAdminCookie,
+  startEmailChange,
   startEmailLink,
   startOtp,
   validAdminEmail,
@@ -54,11 +61,14 @@ import { mountPrintAgent } from '../modules/printing/agent-routes.ts';
 import { publicIncidents, statusProbeHosts } from '../modules/incidents.ts';
 import { mountImports } from '../modules/menu-import/routes.ts';
 import { mountAccount } from './routes-account.ts';
+import { mountDomains } from './routes-domains.ts';
 import { mountAppearance } from './routes-appearance.ts';
 import { mountCatalog } from './routes-catalog.ts';
+import { mountCopilot } from './routes-copilot.ts';
 import { mountCustomers } from './routes-customers.ts';
 import { mountHome } from './routes-home.ts';
 import { mountKitchen } from './routes-kitchen.ts';
+import { mountPdv } from './routes-pdv.ts';
 import { mountVendedor } from './routes-vendedor.ts';
 import { AGENT_NAME } from '../vendedor/settings.ts';
 import { mountMarketing } from './routes-marketing.ts';
@@ -70,13 +80,12 @@ import { mountStore } from './routes-store.ts';
 import { mountTeam } from './routes-team.ts';
 import { mountWhatsapp } from './routes-whatsapp.ts';
 import { mountPrinting } from './routes-print.ts';
-import { processImage } from './media.ts';
+import { MEDIA_QUOTA_BYTES, mediaBytesUsed, processedBytes, processImage } from './media.ts';
 import { isPushEndpoint, pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
 import { recordPushAttempt } from './workers.ts';
 import { getIntegration } from '../modules/integrations.ts';
+import { waIdentity } from '../agent/channels/whatsapp.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
-
-const adminLog = log.child({ mod: 'admin' });
 
 export interface MountAdminOpts {
   app: Hono<{ Variables: { tenant: Tenant } }>;
@@ -96,6 +105,7 @@ export interface MountAdminOpts {
   publicOrigin: (c: Context) => string;
   geocode: AdminDeps['geocode'];
   signupReady: AdminDeps['signupReady'];
+  domains: AdminDeps['domains'];
 }
 
 const STREAM_HEARTBEAT_MS = 20_000;
@@ -114,14 +124,15 @@ export function mountAdmin(o: MountAdminOpts) {
 
   // ── sign-in (pre-tenant) ─────────────────────────────────────────────────
   // one bucket per client IP for the whole auth surface — codes are the scarce thing
-  const authLimit = rateLimitByIp(20, { trustForwardedFor: o.trustProxy, proxyHops: o.proxyHops });
+  const ipFlags = { trustForwardedFor: o.trustProxy, proxyHops: o.proxyHops };
+  const authLimit = rateLimitByIp(20, ipFlags);
 
   admin.post('/auth/otp/start', authLimit, async (c) => {
     const body = await bodyJson(c);
     const phone = validAdminPhone(body.phone);
     if (!phone)
       throw new HttpError(422, 'INVALID_PHONE', 'type the phone with DDD', { field: 'phone' });
-    return c.json(await startOtp(sql, phone, o.otpSender));
+    return c.json(await startOtp(sql, phone, o.otpSender, clientIp(c, ipFlags)));
   });
 
   // one or several stores behind the verified phone/address: a session, or the picker
@@ -145,7 +156,7 @@ export function mountAdmin(o: MountAdminOpts) {
     const body = await bodyJson(c);
     const phone = validAdminPhone(body.phone);
     const code = typeof body.code === 'string' ? body.code.replace(/\D/g, '') : '';
-    if (!phone || !(await verifyOtp(sql, phone, code)))
+    if (!phone || !(await verifyOtp(sql, phone, code, clientIp(c, ipFlags))))
       throw new HttpError(422, 'INVALID_CODE', 'wrong or expired code', { field: 'code' });
     const stores = await membershipsFor(sql, phone);
     if (stores.length === 0)
@@ -181,9 +192,44 @@ export function mountAdmin(o: MountAdminOpts) {
     );
   });
 
+  // the member opened the link sent to the address they typed in Perfil: now it signs in
+  const confirmEmail = (email: string, to: { tenantId: string; userId: string }) =>
+    withTenant(sql, to.tenantId, async (tx) => {
+      const cur = (
+        await tx<{ name: string; email: string | null }[]>`
+          select name, email from merchant_users
+          where tenant_id = ${to.tenantId} and id = ${to.userId} and status = 'active'
+            and pending_email = ${email}
+          for update
+        `
+      )[0];
+      if (!cur) return false;
+      await tx`
+        update merchant_users set email = pending_email, pending_email = null
+        where tenant_id = ${to.tenantId} and id = ${to.userId}
+      `;
+      await audit(
+        tx,
+        to.tenantId,
+        { userId: to.userId, name: cur.name },
+        {
+          action: 'me.email',
+          entity: 'member',
+          entityId: to.userId,
+          summary: cur.email ? 'trocou o e-mail de acesso' : 'cadastrou um e-mail de acesso',
+          before: { email: cur.email },
+          after: { email },
+        },
+      );
+      await emitAdminTx(tx, to.tenantId, 'team');
+      return true;
+    });
+
   admin.post('/auth/email/verify', authLimit, async (c) => {
     const body = await bodyJson(c);
-    const email = await verifyEmailLink(sql, body.token);
+    const link = await verifyEmailLink(sql, body.token);
+    const email =
+      link && (!link.change || (await confirmEmail(link.email, link.change))) ? link.email : null;
     const stores = email ? await membershipsOf(sql, { kind: 'email', subject: email }) : [];
     if (!email || stores.length === 0)
       throw new HttpError(422, 'INVALID_LINK', 'this link is used or expired — ask for a new one', {
@@ -223,6 +269,7 @@ export function mountAdmin(o: MountAdminOpts) {
     publicOrigin: o.publicOrigin,
     geocode: o.geocode,
     signupReady: o.signupReady,
+    domains: o.domains,
   };
   mountPaymentsPublic(admin, shared);
   mountSignup(admin, shared);
@@ -257,30 +304,38 @@ export function mountAdmin(o: MountAdminOpts) {
   admin.get('/session', async (c) => {
     const tenant = c.get('tenant');
     const m = c.get('merchant');
-    const { stores } = await sessionStores(sql, tenant.id, m.sessionId, currentMembership(c));
-    const { settings, url, plan, agent } = await withTenant(sql, tenant.id, async (tx) => ({
-      url: await storeOrigin(tx, tenant, o.storeDomain),
-      // which screens open and which show the plan that has them (ADR 0032)
-      plan: await planAccess(tx, tenant.id),
-      settings: (
-        await tx<
-          { logo_url: string | null; prefs: Record<string, unknown>; email: string | null }[]
-        >`
-          select s.logo_url, u.prefs, u.email from merchant_users u
-            left join store_settings s on s.tenant_id = u.tenant_id
-          where u.id = ${m.userId}
-        `
-      )[0],
-      // the nav: Duá's tab and its "precisa de você" badge (sales-agent-ux §2)
-      agent: (
-        await tx<{ enabled: boolean; waiting: number }[]>`
-          select coalesce(a.enabled, false) as enabled,
-            (select count(*) from shopper_threads t where t.tenant_id = ${tenant.id}
-               and t.waiting_since is not null and t.owner <> 'muted' and t.channel = 'whatsapp')::int as waiting
-          from (select 1) one left join store_agent a on a.tenant_id = ${tenant.id}
-        `
-      )[0],
-    }));
+    // the session's stores and the store's own reads run side by side, the latter in one batch
+    const [{ stores }, { settings, url, plan, agent }] = await Promise.all([
+      sessionStores(sql, tenant.id, m.sessionId, currentMembership(c)),
+      withTenant(sql, tenant.id, async (tx) => {
+        const [url, plan, [settings], [agent]] = await Promise.all([
+          storeOrigin(tx, tenant, o.storeDomain),
+          // which screens open and which show the plan that has them (ADR 0032)
+          planAccess(tx, tenant.id),
+          tx<
+            {
+              logo_url: string | null;
+              prefs: Record<string, unknown>;
+              email: string | null;
+              pending_email: string | null;
+              dua_whatsapp_managers: boolean | null;
+            }[]
+          >`
+            select s.logo_url, u.prefs, u.email, u.pending_email, s.dua_whatsapp_managers from merchant_users u
+              left join store_settings s on s.tenant_id = u.tenant_id
+            where u.id = ${m.userId}
+          `,
+          // the nav: Duá's tab and its "precisa de você" badge (sales-agent-ux §2)
+          tx<{ enabled: boolean; waiting: number }[]>`
+            select coalesce(a.enabled, false) as enabled,
+              (select count(*) from shopper_threads t where t.tenant_id = ${tenant.id}
+                 and t.waiting_since is not null and t.owner <> 'muted' and t.channel = 'whatsapp')::int as waiting
+            from (select 1) one left join store_agent a on a.tenant_id = ${tenant.id}
+          `,
+        ]);
+        return { url, plan, settings, agent };
+      }),
+    ]);
     return c.json({
       user: {
         id: m.userId,
@@ -288,6 +343,8 @@ export function mountAdmin(o: MountAdminOpts) {
         phone: m.phone,
         role: m.role,
         email: settings?.email ?? null,
+        // typed in Perfil, waiting for its link to be opened
+        pendingEmail: settings?.pending_email ?? null,
         prefs: settings?.prefs ?? {},
       },
       store: {
@@ -308,6 +365,14 @@ export function mountAdmin(o: MountAdminOpts) {
         name: AGENT_NAME,
         waiting: agent?.waiting ?? 0,
       },
+      // Perfil's "Duá pelo WhatsApp": owners and managers on a plan with the copilot
+      duaWhatsapp:
+        (m.role === 'owner' || m.role === 'manager') && plan.features.copilot
+          ? {
+              number: waIdentity()?.phone?.replace(/\D/g, '') || null,
+              allowed: m.role === 'owner' || (settings?.dua_whatsapp_managers ?? true),
+            }
+          : null,
     });
   });
 
@@ -334,11 +399,13 @@ export function mountAdmin(o: MountAdminOpts) {
   admin.patch('/me', async (c) => {
     const m = c.get('merchant');
     const tenant = c.get('tenant');
-    return o.idempotency(sql, async (c, tx) => {
+    let confirm = null as string | null;
+    const res = await o.idempotency(sql, async (c, tx) => {
       const body = await bodyJson(c);
       const name = body.name === undefined ? undefined : text(body.name, 'name', 80, 1);
-      const email = optText(body.email, 'email', 200);
-      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
+      const typed = optText(body.email, 'email', 200);
+      const email = typed ? validAdminEmail(typed) : typed;
+      if (email === null && typed)
         throw new HttpError(422, 'BAD_REQUEST', 'email looks wrong', { field: 'email' });
       let prefs: Record<string, unknown> | undefined;
       if (body.prefs !== undefined) {
@@ -346,19 +413,66 @@ export function mountAdmin(o: MountAdminOpts) {
           throw new HttpError(422, 'BAD_REQUEST', 'prefs must be a small object');
         prefs = pickPrefs(body.prefs);
       }
+      const cur = (
+        await tx<{ email: string | null }[]>`
+          select email from merchant_users where tenant_id = ${tenant.id} and id = ${m.userId} for update
+        `
+      )[0]!;
+      // the address is a sign-in factor: a new one waits for its link; removing one is immediate
+      const same = email && cur.email?.toLowerCase() === email;
+      const pending = email && !same ? email : null;
       const row = (
-        await tx<{ id: string; name: string; email: string | null; prefs: unknown }[]>`
+        await tx<
+          {
+            id: string;
+            name: string;
+            email: string | null;
+            pendingEmail: string | null;
+            prefs: unknown;
+          }[]
+        >`
           update merchant_users set
             name = ${name ?? tx`name`},
-            email = ${email === undefined ? tx`email` : email},
+            email = ${email === null ? null : tx`email`},
+            pending_email = ${email === undefined ? tx`pending_email` : pending},
             prefs = ${prefs ? tx`prefs || ${tx.json(prefs as never)}` : tx`prefs`}
           where tenant_id = ${tenant.id} and id = ${m.userId}
-          returning id, name, email, prefs
+          returning id, name, email, pending_email as "pendingEmail", prefs
         `
-      )[0];
+      )[0]!;
+      if (email === null && cur.email)
+        await audit(tx, tenant.id, m, {
+          action: 'me.email',
+          entity: 'member',
+          entityId: m.userId,
+          summary: 'removeu o e-mail de acesso',
+          before: { email: cur.email },
+          after: { email: null },
+        });
+      confirm = pending;
       await emitAdminTx(tx, tenant.id, 'team');
       return { status: 200, body: { user: row } };
     })(c);
+    if (!confirm || res.status !== 200) return res;
+    const origin = o.publicOrigin(c);
+    const out = await startEmailChange(
+      sql,
+      { tenantId: tenant.id, userId: m.userId, email: confirm },
+      (token) => `${origin}/admin/entrar?link=${token}`,
+      (to, link, linkId) =>
+        o.notify.email(
+          to,
+          'Confirme seu email na Venduá',
+          `${m.name}, toque no link para confirmar este email no painel da ${tenant.name}:\n\n${link}\n\nEle vale por 15 minutos e funciona uma vez. Depois disso, você também pode entrar com este email. Se não foi você que pediu, ignore este email.`,
+          `admin-email-change:${linkId}`,
+        ),
+    );
+    const { user } = (await res.json()) as { user: unknown };
+    return c.json({
+      user,
+      emailConfirmation: out.sent ? 'sent' : 'rate_limited',
+      ...(out.devLink ? { devLink: out.devLink } : {}),
+    });
   });
 
   admin.get('/me/sessions', async (c) => {
@@ -394,6 +508,12 @@ export function mountAdmin(o: MountAdminOpts) {
         update merchant_sessions set revoked_at = now()
         where tenant_id = ${tenant.id} and user_id = ${m.userId} and id = ${id}
       `;
+      // the device it ended stops getting the store's pushes too
+      await tx`
+        delete from push_subscriptions
+        where tenant_id = ${tenant.id} and user_id = ${m.userId}
+          and (session_id = ${id} or session_id is null)
+      `;
       forgetGate();
       return { status: 200, body: { ok: true } };
     })(c);
@@ -414,10 +534,11 @@ export function mountAdmin(o: MountAdminOpts) {
       const p256dh = text(keys.p256dh, 'keys.p256dh', 200, 20);
       const auth = text(keys.auth, 'keys.auth', 100, 8);
       await tx`
-        insert into push_subscriptions (tenant_id, user_id, endpoint, p256dh, auth)
-        values (${tenant.id}, ${m.userId}, ${endpoint}, ${p256dh}, ${auth})
+        insert into push_subscriptions (tenant_id, user_id, session_id, endpoint, p256dh, auth)
+        values (${tenant.id}, ${m.userId}, ${m.sessionId}, ${endpoint}, ${p256dh}, ${auth})
         on conflict (tenant_id, endpoint) do update set user_id = excluded.user_id,
-          p256dh = excluded.p256dh, auth = excluded.auth, last_error = null
+          session_id = excluded.session_id, p256dh = excluded.p256dh, auth = excluded.auth,
+          last_error = null
       `;
       // a browser re-subscribes with a fresh endpoint now and then: keep the newest few
       await tx`
@@ -438,6 +559,24 @@ export function mountAdmin(o: MountAdminOpts) {
       const endpoint = text(body.endpoint, 'endpoint', 1000);
       await tx`delete from push_subscriptions where tenant_id = ${tenant.id} and endpoint = ${endpoint}`;
       return { status: 200, body: { subscribed: false } };
+    })(c);
+  });
+
+  // a subscription saved before pushes were tied to a session (null session_id) is claimed by
+  // the device's next sign-in: until then, ending any of the member's sessions drops it
+  admin.post('/push/rebind', async (c) => {
+    const m = c.get('merchant');
+    const tenant = c.get('tenant');
+    return o.idempotency(sql, async (c, tx) => {
+      const body = await bodyJson(c);
+      const endpoint = text(body.endpoint, 'endpoint', 1000);
+      const rows = await tx`
+        update push_subscriptions set session_id = ${m.sessionId}
+        where tenant_id = ${tenant.id} and user_id = ${m.userId} and endpoint = ${endpoint}
+          and session_id is null
+        returning id
+      `;
+      return { status: 200, body: { rebound: rows.length > 0 } };
     })(c);
   });
 
@@ -463,7 +602,7 @@ export function mountAdmin(o: MountAdminOpts) {
       const products = await tx`
         select p.id, p.name, p.status, p.base_price_cents as "priceCents",
           (select url from product_media where product_id = p.id order by sort limit 1) as "imageUrl"
-        from products p where p.tenant_id = ${tenant.id}
+        from products p where p.tenant_id = ${tenant.id} and p.deleted_at is null
           and translate(lower(p.name), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') like ${like}
         order by p.status = 'archived', p.name limit 8
       `;
@@ -554,16 +693,16 @@ export function mountAdmin(o: MountAdminOpts) {
     if (!['image/webp', 'image/jpeg', 'image/png'].includes(mime))
       throw new HttpError(415, 'UNSUPPORTED_MEDIA', 'send a webp, jpeg or png image');
     const key = c.req.header('idempotency-key');
-    if (!key)
-      throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
-    if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
-    // a retry replays the stored answer before the body is read or decoded again
+    checkKey(key);
+    // a retry replays the stored answer before the body is read or decoded again — only to the
+    // caller and route that stored it (claim's own rule); anyone else falls through to its 422
     const done = await withTenant(
       sql,
       tenant.id,
       (tx) => tx<{ response: unknown; status_code: number }[]>`
         select response, status_code from idempotency_keys
         where tenant_id = ${tenant.id} and key = ${key} and response is not null
+          and (fingerprint is null or fingerprint = ${idempotencyFingerprint(c)})
       `,
     );
     if (done[0])
@@ -582,6 +721,12 @@ export function mountAdmin(o: MountAdminOpts) {
     // decode + encode outside the claim tx: it's CPU, not data
     const img = await processImage(bytes);
     return o.idempotency(sql, async (_c, tx) => {
+      if ((await mediaBytesUsed(tx, tenant.id)) + processedBytes(img) > MEDIA_QUOTA_BYTES)
+        throw new HttpError(
+          413,
+          'MEDIA_QUOTA',
+          'this store uploaded too many photos this month — try again in a few days',
+        );
       const dom = dominant && /^#[0-9a-f]{6}$/.test(dominant) ? dominant : null;
       const row = (
         await tx<{ id: string }[]>`
@@ -762,14 +907,6 @@ export function mountAdmin(o: MountAdminOpts) {
         },
         { tenantId: tenant.id },
       );
-      // delivery happens after the claim commits; the staff channel never blocks the reply
-      queueMicrotask(() => {
-        void notifyStaff(sql, null, {
-          subject: `Ajuda: ${tenant.name} (${topic})`,
-          body: `${m.name} · ${formatPhone(m.phone)} · ${m.role}\n\n${message}`,
-          idemKey: `admin-help:${tenant.id}:${Date.now()}`,
-        }).catch((err) => adminLog.warn({ err }, 'help notify failed'));
-      });
       return { status: 201, body: { sent: true } };
     })(c);
   });
@@ -787,10 +924,13 @@ export function mountAdmin(o: MountAdminOpts) {
   mountWhatsapp(deps);
   mountPrinting(deps);
   mountKitchen(deps);
+  mountPdv(deps);
   mountVendedor(deps);
   mountAccount(deps);
+  mountDomains(deps);
   mountAppearance(deps);
   mountImports(deps);
+  mountCopilot(deps);
 
   // public media read — storefront hosts proxy /v1 to Core, so the same URL works everywhere.
   // ?w= picks the smallest stored width that covers it (Kernel Img's srcset), else the original.
@@ -855,8 +995,11 @@ const PREF_KEYS: Record<string, 'boolean' | 'number' | 'string' | 'list'> = {
   volume: 'number',
   push: 'boolean',
   pushPayments: 'boolean',
+  pushWaiting: 'boolean',
   whatsappAlerts: 'boolean',
   emailInvoices: 'boolean',
+  // Duá pelo WhatsApp: opt-in, absent = off
+  duaWhatsapp: 'boolean',
   theme: 'string',
   dismissedHints: 'list',
 };

@@ -9,6 +9,7 @@ import { EmptyState, ErrorState, LoadingRows } from '@/components/common.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { useApprovals, useApprove, useTasks, useThreads } from './queries.ts';
+import { TaskMenu } from './taskActions.tsx';
 import { bucket } from './tasks.ts';
 import { TaskCheck, TaskDue, TaskLead } from './TasksView.tsx';
 
@@ -104,7 +105,12 @@ export function NeedsYou() {
             key={`t-${t.id}`}
             icon={<TaskCheck t={t} />}
             lead={<TaskLead t={t} />}
-            aside={<TaskDue t={t} b={bucket(t, now)} />}
+            aside={
+              <>
+                <TaskDue t={t} b={bucket(t, now)} />
+                <TaskMenu t={t} />
+              </>
+            }
           >
             <span className={cn('text-sm', t.doneAt && 'text-muted-foreground line-through')}>
               {t.title}
@@ -185,7 +191,7 @@ export function NeedsYou() {
       actions={
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           {counts.late > 0 && (
-            <Link to="/?t=tarefas" className="text-destructive-foreground hover:underline">
+            <Link to="/vendas?t=tarefas" className="text-destructive-foreground hover:underline">
               <AlarmClock className="mr-0.5 inline size-3.5 align-[-3px]" />
               {counts.late} atrasada{counts.late > 1 ? 's' : ''}
             </Link>
@@ -214,7 +220,7 @@ export function NeedsYou() {
           {items.length > limit && (
             <div className="flex gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
               + {items.length - limit}
-              <Link to="/?t=tarefas" className="hover:text-foreground hover:underline">
+              <Link to="/vendas?t=tarefas" className="hover:text-foreground hover:underline">
                 tarefas →
               </Link>
               <Link to="/inbox" className="hover:text-foreground hover:underline">

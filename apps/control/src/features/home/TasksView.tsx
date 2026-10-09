@@ -10,6 +10,7 @@ import { Card } from '@/components/ui/card.tsx';
 import { Checkbox } from '@/components/ui/controls.tsx';
 import { Segmented } from '@/components/ui/controls.tsx';
 import { useSetTaskDone, useTasks } from './queries.ts';
+import { TaskMenu } from './taskActions.tsx';
 import { groupTasks, type Bucket } from './tasks.ts';
 
 export function TaskCheck({ t }: { t: Task }) {
@@ -93,6 +94,7 @@ function columns(b: Bucket, n: number): Column<Task>[] {
         </span>
       ),
     },
+    { key: 'menu', header: '', className: 'w-10', cell: (t) => <TaskMenu t={t} /> },
   ];
 }
 
@@ -173,6 +175,7 @@ export function TasksView({
                       {t.createdBy === 'agent' && <AgentChip />}
                     </span>
                   </div>
+                  <TaskMenu t={t} />
                 </div>
               )}
             />

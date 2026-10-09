@@ -22,6 +22,52 @@ export interface SpecialDay {
   open?: string;
   close?: string;
   label?: string;
+  /** last day of a range (24/12–26/12), inclusive; absent = the one day */
+  until?: string;
+  /** the same days every year from `date` on (Natal, a yearly vacation) */
+  yearly?: boolean;
+}
+
+/** a range's longest span (a month's vacation, with room) */
+export const SPECIAL_RANGE_MAX_DAYS = 62;
+
+const dayNumber = (date: string) => Date.parse(`${date}T00:00:00Z`) / 86_400_000;
+/** a range's last day; a stored row is read defensively, so a bad `until` means the one day */
+const untilOf = (d: SpecialDay) =>
+  typeof d.until === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.until) && d.until > d.date
+    ? d.until
+    : d.date;
+/** days after `date` a range runs; 0 for a single day */
+const spanOf = (d: SpecialDay) =>
+  typeof d?.date === 'string'
+    ? Math.min(SPECIAL_RANGE_MAX_DAYS, dayNumber(untilOf(d)) - dayNumber(d.date)) || 0
+    : 0;
+
+/** Whether a special day covers a local date; yearly ones compare month and day (12-30 → 01-02 wraps). */
+export function specialCovers(d: SpecialDay, date: string): boolean {
+  if (typeof d?.date !== 'string' || date < d.date) return false;
+  const until = untilOf(d);
+  if (!d.yearly) return date <= until;
+  const md = date.slice(5);
+  const from = d.date.slice(5);
+  const to = until.slice(5);
+  // a yearly range crossing new year has its end in the next calendar year
+  return until.slice(0, 4) === d.date.slice(0, 4) ? md >= from && md <= to : md >= from || md <= to;
+}
+
+/** The special day that rules a date: a one-off before a yearly one, then the shortest span. */
+export function specialDayOn(special: readonly SpecialDay[], date: string): SpecialDay | undefined {
+  let best: SpecialDay | undefined;
+  let rank = Infinity;
+  for (const d of special) {
+    if (!specialCovers(d, date)) continue;
+    const r = (d.yearly ? 1000 : 0) + spanOf(d);
+    if (r < rank) {
+      best = d;
+      rank = r;
+    }
+  }
+  return best;
 }
 
 /** Stamp card: every qualifying order that reaches `delivered` earns a stamp. */
@@ -48,11 +94,15 @@ export interface StoreSettingsRow {
   prep_time_minutes: number;
   min_order_cents: number;
   pickup_enabled: boolean;
+  /** the PDV's QR codes take orders (ADR 0036, migration 0099) */
+  pdv_qr_orders?: boolean;
   delivery_enabled: boolean;
   promo: { title: string; body?: string } | null;
   currency: string;
   /** 'high' emits the high_demand notice (migration 0049). */
   demand_level?: 'normal' | 'high';
+  /** when 'high' goes back to normal by itself (migration 0089) */
+  demand_until?: Date | string | null;
   // Phase 2 (migration 0051) — optional so pre-0051 fixtures still type
   preorder_payment_methods?: string[];
   preorder_max_days?: number;
@@ -129,7 +179,7 @@ function localParts(
 
 /** The windows that apply on a local date: a special day replaces the weekly ones. */
 function windowsOn(hours: StoreHours, day: number, date: string, special: SpecialDay[]) {
-  const s = special.find((d) => d.date === date);
+  const s = specialDayOn(special, date);
   if (!s) return hours.windows;
   if (s.closed || !s.open || !s.close) return [];
   return [{ days: [day], open: s.open, close: s.close }];
@@ -147,8 +197,9 @@ function openPart(dayMinutes: number, w: WeeklyWindow, day: number): boolean {
 function nextOpen(hours: StoreHours, now: Date, special: SpecialDay[] = []): Date | undefined {
   const tz = hours.timezone;
   let best: { t: number; openMin: number } | undefined;
-  // 15 days: a two-week holiday still finds the reopening
-  for (let d = 0; d <= 15; d++) {
+  // two weeks, or past the longest special range: a month's vacation still finds the reopening
+  const horizon = Math.max(15, ...special.map((s) => spanOf(s) + 2));
+  for (let d = 0; d <= horizon; d++) {
     const probe = new Date(now.getTime() + d * 86_400_000);
     const { day, minutes, seconds, date } = localParts(probe, tz);
     for (const w of windowsOn(hours, day, date, special)) {
@@ -171,7 +222,11 @@ function nextOpen(hours: StoreHours, now: Date, special: SpecialDay[] = []): Dat
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** The special days a storefront can still show: today (store time) on, sorted, at most `max`. */
+/**
+ * The special days a storefront can still show: today (store time) on, sorted, at most `max`.
+ * Ranges and yearly repeats come out as the single dates they cover (within a year), the shape
+ * the Kernel's `todayHours` reads.
+ */
 export function upcomingSpecialDays(
   days: readonly SpecialDay[] | null | undefined,
   timezone: string,
@@ -179,18 +234,24 @@ export function upcomingSpecialDays(
   max = 60,
 ): SpecialDay[] {
   if (!Array.isArray(days)) return [];
+  const valid = days.filter((d) => typeof d?.date === 'string' && DATE_RE.test(d.date));
+  if (!valid.length) return [];
   const today = localParts(now, timezone || 'America/Sao_Paulo').date;
-  return days
-    .filter((d) => typeof d?.date === 'string' && DATE_RE.test(d.date) && d.date >= today)
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
-    .slice(0, max)
-    .map((d) => ({
-      date: d.date,
+  const out: SpecialDay[] = [];
+  const start = dayNumber(today);
+  for (let n = 0; n <= 366 && out.length < max; n++) {
+    const date = new Date((start + n) * 86_400_000).toISOString().slice(0, 10);
+    const d = specialDayOn(valid, date);
+    if (!d) continue;
+    out.push({
+      date,
       closed: d.closed === true,
       ...(typeof d.open === 'string' ? { open: d.open } : {}),
       ...(typeof d.close === 'string' ? { close: d.close } : {}),
       ...(typeof d.label === 'string' && d.label ? { label: d.label } : {}),
-    }));
+    });
+  }
+  return out;
 }
 
 /**

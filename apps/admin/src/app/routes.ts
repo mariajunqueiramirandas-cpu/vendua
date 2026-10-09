@@ -1,10 +1,10 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { createElement, lazy, type ComponentType } from 'react';
-import { api, type Session } from '../lib/api.ts';
+import { api, type PlanFeature, type Session } from '../lib/api.ts';
 import { featureOpen } from '../lib/session.ts';
 import { isoDate } from '../lib/format.ts';
 import { qk } from '../lib/query.ts';
-import { rangeOf } from '../features/reports/range.ts';
+import { DEFAULT_PERIOD, reportsQuery } from '../features/reports/range.ts';
 
 // Every screen in one place: its code chunk and the query it opens with (its skeleton lives in
 // routeSkeletons.tsx). Chunks warm up in the background after the first screen (Shell), and a
@@ -32,6 +32,12 @@ export const chunks = {
   order: once(() => import('../features/orders/OrderPage.tsx')),
   kitchen: once(() => import('../features/kitchen/Kitchen.tsx')),
   pickup: once(() => import('../features/kitchen/Pickup.tsx')),
+  pdv: once(() => import('../features/pdv/Vender.tsx')),
+  pdvMesas: once(() => import('../features/pdv/Mesas.tsx')),
+  pdvQr: once(() => import('../features/pdv/MesasQr.tsx')),
+  pdvComanda: once(() => import('../features/pdv/Comanda.tsx')),
+  pdvCaixa: once(() => import('../features/pdv/Caixa.tsx')),
+  pdvReport: once(() => import('../features/pdv/CaixaReport.tsx')),
   menu: once(() => import('../features/menu/Menu.tsx')),
   product: once(() => import('../features/menu/ProductPage.tsx')),
   importMenu: once(() => import('../features/import/ImportPage.tsx')),
@@ -60,6 +66,8 @@ export const chunks = {
   vendedorResults: once(() => import('../features/vendedor/Results.tsx')),
   vendedorSettings: once(() => import('../features/vendedor/Settings.tsx')),
   vendedorTest: once(() => import('../features/vendedor/TestChat.tsx')),
+  // the route and the wide screens' dock (Shell) share one chunk
+  copilot: once(() => import('../features/copilot/Copilot.tsx')),
   signup: once(() => import('../features/signup/Signup.tsx')),
   notFound: once(() => import('../features/notfound/NotFound.tsx')),
   sheets: once(() => import('./ShellSheets.tsx')),
@@ -89,6 +97,12 @@ export type RouteId =
   | 'orders'
   | 'kitchen'
   | 'pickup'
+  | 'pdv'
+  | 'pdvMesas'
+  | 'pdvQr'
+  | 'pdvComanda'
+  | 'pdvCaixa'
+  | 'pdvReport'
   | 'product'
   | 'importMenu'
   | 'stock'
@@ -115,7 +129,8 @@ export type RouteId =
   | 'vendedorClienteOculto'
   | 'vendedorResults'
   | 'vendedorSettings'
-  | 'vendedorTest';
+  | 'vendedorTest'
+  | 'copilot';
 
 interface RouteDef {
   id: RouteId;
@@ -128,11 +143,13 @@ interface RouteDef {
 const q = (qc: QueryClient, queryKey: readonly unknown[], queryFn: () => Promise<unknown>) =>
   qc.prefetchQuery({ queryKey, queryFn });
 
-// a plan without the kitchen gets its locked page, not a 403 warm-up
-const kds = (qc: QueryClient) => {
+// a plan without the kitchen (or the Copilot) gets its locked page, not a 403 warm-up
+const has = (qc: QueryClient, f: PlanFeature) => {
   const s = qc.getQueryData<Session>(qk.session);
-  return !s || featureOpen(s, 'kds');
+  return !s || featureOpen(s, f);
 };
+const kds = (qc: QueryClient) => has(qc, 'kds');
+const pdv = (qc: QueryClient) => has(qc, 'pdv');
 
 const ROUTES: RouteDef[] = [
   {
@@ -184,6 +201,47 @@ const ROUTES: RouteDef[] = [
     match: /^\/cozinha$/,
     chunk: chunks.kitchen,
     data: (qc) => (kds(qc) ? q(qc, qk.kitchen, api.kitchen) : Promise.resolve()),
+  },
+  {
+    id: 'pdv',
+    match: /^\/pdv$/,
+    chunk: chunks.pdv,
+    data: (qc) =>
+      pdv(qc)
+        ? Promise.all([q(qc, qk.pdv.state, api.pdv.state), q(qc, qk.catalog, api.catalog)])
+        : Promise.resolve(),
+  },
+  {
+    id: 'pdvMesas',
+    match: /^\/pdv\/mesas$/,
+    chunk: chunks.pdvMesas,
+    data: (qc) => (pdv(qc) ? q(qc, qk.pdv.state, api.pdv.state) : Promise.resolve()),
+  },
+  {
+    id: 'pdvQr',
+    match: /^\/pdv\/mesas\/qr$/,
+    chunk: chunks.pdvQr,
+    data: (qc) => (pdv(qc) ? q(qc, qk.pdv.state, api.pdv.state) : Promise.resolve()),
+  },
+  {
+    id: 'pdvComanda',
+    match: /^\/pdv\/comanda\/([^/]+)$/,
+    chunk: chunks.pdvComanda,
+    data: (qc, m) =>
+      pdv(qc) ? q(qc, qk.pdv.tab(m[1]!), () => api.pdv.tab(m[1]!)) : Promise.resolve(),
+  },
+  {
+    id: 'pdvReport',
+    match: /^\/pdv\/caixa\/([^/]+)$/,
+    chunk: chunks.pdvReport,
+    data: (qc, m) =>
+      pdv(qc) ? q(qc, qk.pdv.session(m[1]!), () => api.pdv.session(m[1]!)) : Promise.resolve(),
+  },
+  {
+    id: 'pdvCaixa',
+    match: /^\/pdv\/caixa$/,
+    chunk: chunks.pdvCaixa,
+    data: (qc) => (pdv(qc) ? q(qc, qk.pdv.caixa, api.pdv.caixa) : Promise.resolve()),
   },
   {
     id: 'product',
@@ -267,8 +325,8 @@ const ROUTES: RouteDef[] = [
     match: /^\/relatorios$/,
     chunk: chunks.reports,
     data: (qc) => {
-      const { from, to } = rangeOf('7d');
-      return q(qc, qk.reports(from, to), () => api.reports(from, to));
+      const r = reportsQuery(DEFAULT_PERIOD);
+      return q(qc, r.key, () => api.reports(r.params));
     },
   },
   {
@@ -359,6 +417,12 @@ const ROUTES: RouteDef[] = [
     match: /^\/vendedor\/testar$/,
     chunk: chunks.vendedorTest,
     data: (qc) => q(qc, qk.vendedor.testChat, api.vendedor.testChat),
+  },
+  {
+    id: 'copilot',
+    match: /^\/copiloto$/,
+    chunk: chunks.copilot,
+    data: (qc) => (has(qc, 'copilot') ? q(qc, qk.copilot, api.copilot.view) : Promise.resolve()),
   },
 ];
 

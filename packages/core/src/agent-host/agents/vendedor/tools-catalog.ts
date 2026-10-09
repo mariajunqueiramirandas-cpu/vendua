@@ -1,6 +1,7 @@
 import { defineTool, s, ToolError } from '@vendua/agent-runtime';
 import { getProductById } from '../../../modules/catalog.ts';
 import { searchCatalog } from '../../../modules/catalog-search.ts';
+import { loadCartRow } from '../../../modules/cart.ts';
 import { quoteDeliveryTx } from '../../../modules/cart-ops.ts';
 import { normalizeCep, viaCep } from '../../../modules/geo.ts';
 import type { Sql } from '../../../platform/db.ts';
@@ -8,7 +9,7 @@ import { brl } from '../../../vendedor/cards.ts';
 import { vendedorDeps } from '../../../vendedor/deps.ts';
 import { findAnswers, fold, queueQuestion } from '../../../vendedor/knowledge.ts';
 import { loadStoreSettings, storeStatus } from '../../../vendedor/threads.ts';
-import { core, pack, productIdOf, thread, type Ctx } from './shared.ts';
+import { askForPin, core, pack, productIdOf, thread, type Ctx } from './shared.ts';
 
 const DIETARY_LABEL: Record<string, string> = {
   sem_gluten: 'sem glúten',
@@ -238,6 +239,9 @@ export const quoteDeliveryTool = defineTool<
         );
       neighborhood = found.neighborhood;
     }
+    // a read tool runs in a read-only tx: no cartId, which would log a delivery_quoted row, so
+    // the cart's road leg is passed in by hand
+    const cart = t.cartId ? await loadCartRow(ctx.tx, ctx.tenantId, t.cartId) : undefined;
     const q = await core(() =>
       quoteDeliveryTx(
         ctx.tx,
@@ -246,10 +250,11 @@ export const quoteDeliveryTool = defineTool<
           ...(neighborhood ? { neighborhood } : {}),
           ...(lat !== undefined ? { lat, lng: lng! } : {}),
         },
-        { ...(t.cartId ? { cartId: t.cartId } : {}), route: null },
+        { route: cart?.delivery_route ?? null },
       ),
     );
     if (!q.eligible) {
+      if (lat === undefined && pack(ctx).fulfilment.needsPin) return { content: askForPin(t) };
       const where = fold(neighborhood ?? cep ?? 'localização');
       return {
         data: { demand: { kind: 'out_of_zone', term: where.slice(0, 80) } },

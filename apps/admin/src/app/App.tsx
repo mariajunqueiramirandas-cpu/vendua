@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { useQueryClient } from '@tanstack/react-query';
 import { awaitingCardReturn } from '../features/signup/progress.ts';
 import { trackPageview } from '../lib/analytics.ts';
+import { rebindPush } from '../lib/push.ts';
 import { ApiError } from '../lib/api.ts';
 import { clearPersisted } from '../lib/persist.ts';
 import { qk } from '../lib/query.ts';
@@ -23,6 +24,12 @@ const Scheduled = screen(chunks.scheduled, (m) => m.default);
 const OrderPage = screen(chunks.order, (m) => m.default);
 const Kitchen = screen(chunks.kitchen, (m) => m.default);
 const Pickup = screen(chunks.pickup, (m) => m.default);
+const PdvVender = screen(chunks.pdv, (m) => m.default);
+const PdvMesas = screen(chunks.pdvMesas, (m) => m.default);
+const PdvQr = screen(chunks.pdvQr, (m) => m.default);
+const PdvComanda = screen(chunks.pdvComanda, (m) => m.default);
+const PdvCaixa = screen(chunks.pdvCaixa, (m) => m.default);
+const PdvReport = screen(chunks.pdvReport, (m) => m.default);
 const Menu = screen(chunks.menu, (m) => m.default);
 const ProductPage = screen(chunks.product, (m) => m.default);
 const ImportPage = screen(chunks.importMenu, (m) => m.default);
@@ -53,6 +60,7 @@ const VendedorClienteOculto = screen(chunks.vendedorClienteOculto, (m) => m.defa
 const VendedorResults = screen(chunks.vendedorResults, (m) => m.default);
 const VendedorSettings = screen(chunks.vendedorSettings, (m) => m.default);
 const VendedorTest = screen(chunks.vendedorTest, (m) => m.default);
+const Copilot = screen(chunks.copilot, (m) => m.default);
 const UiReference = lazy(() => import('../features/dev/UiReference.tsx'));
 
 export default function App() {
@@ -77,6 +85,9 @@ export default function App() {
   const retorno = new URLSearchParams(loc.search).get('assinatura') === 'retorno';
   const toSignup = retorno && loc.pathname !== '/comecar' && awaitingCardReturn();
   const hasSession = !!q.data;
+  useEffect(() => {
+    if (hasSession) void rebindPush();
+  }, [hasSession]);
   useEffect(() => {
     if (!retorno || toSignup || loc.pathname === '/comecar' || !hasSession) return;
     for (const k of [qk.account, qk.store, qk.home]) void qc.invalidateQueries({ queryKey: k });
@@ -181,6 +192,12 @@ export default function App() {
                   <Route path="pedidos/:id" element={<OrderPage />} />
                   <Route path="cozinha" element={<Kitchen />} />
                   <Route path="cozinha/painel" element={<Pickup />} />
+                  <Route path="pdv" element={<PdvVender />} />
+                  <Route path="pdv/mesas" element={<PdvMesas />} />
+                  <Route path="pdv/mesas/qr" element={<PdvQr />} />
+                  <Route path="pdv/comanda/:id" element={<PdvComanda />} />
+                  <Route path="pdv/caixa" element={<PdvCaixa />} />
+                  <Route path="pdv/caixa/:id" element={<PdvReport />} />
                   <Route path="cardapio" element={<Menu />} />
                   <Route path="cardapio/produto/:id" element={<ProductPage />} />
                   <Route path="cardapio/importar" element={<ImportPage />} />
@@ -199,6 +216,8 @@ export default function App() {
                   <Route path="conta" element={<Account />} />
                   <Route path="perfil" element={<Profile />} />
                   <Route path="ajuda" element={<Help />} />
+                  {/* Duá Copilot: managers and owners; a plan without it shows the upsell there */}
+                  {manager ? <Route path="copiloto" element={<Copilot />} /> : null}
                   {/* conversations stay open on any plan: threads handed to the store live there */}
                   <Route path="vendedor/conversas" element={<VendedorConversations />} />
                   <Route path="vendedor/conversas/:id" element={<VendedorConversation />} />

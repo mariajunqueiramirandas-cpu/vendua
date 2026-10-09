@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { planHas } from './modules/billing/plans.ts';
 import { signupReadiness, type SignupReadiness } from './modules/billing/signup-gate.ts';
 import { agentSettingTx, automationAllowedTx, explainAutonomyTx } from './agent/policy.ts';
@@ -49,30 +49,38 @@ import {
   whatsappDigits,
   type StoreSettingsRow,
 } from './modules/store.ts';
-import { notifyStaff } from './modules/staff.ts';
 import { normalizeStaff } from './modules/staff-config.ts';
 import { composeNotices, type PageMeta, type SurfacesEnvelope } from './modules/notices.ts';
 import {
   addItem,
   assertCartOpen,
   loadCartView,
+  loadStoreSettings,
   loadZoneRows,
   distancePricingOf,
+  parseItemNote,
   priceLine,
   quoteInput,
   storeCoords,
 } from './modules/cart.ts';
 import {
   createCartTx,
+  editLineTx,
   parseDeliveryInput,
   quoteDeliveryTx,
   removeLineTx,
   setDeliveryTx,
-  setLineQtyTx,
 } from './modules/cart-ops.ts';
 import { preordersWhileClosed, validateCheckoutShape } from './modules/checkout.ts';
-import { loadOrderView, orderVersion, TERMINAL_STATES } from './modules/orders.ts';
+import {
+  loadOrderView,
+  orderVersion,
+  readStorefrontOrder,
+  storefrontOrderAccess,
+  TERMINAL_STATES,
+} from './modules/orders.ts';
 import { placeOrderTx } from './modules/place-order.ts';
+import { readTableToken, tableForToken } from './modules/pdv/qr.ts';
 import { parseSelections } from './modules/combos.ts';
 import {
   mintCustomerToken,
@@ -99,9 +107,12 @@ import { OrderHub } from './modules/order-live.ts';
 import { pixPayload, type PixKeyType } from './modules/pix.ts';
 import { bookableDates } from './modules/preorder.ts';
 import { mountWebChat, webChatProfile } from './vendedor/web-chat.ts';
-import { mountCommerce } from './modules/commerce-routes.ts';
+import { cartReminderOffered, mountCartReminder } from './modules/cart-reminder.ts';
+import { MAX_WATCHERS_PER_ORDER, mountCommerce } from './modules/commerce-routes.ts';
 import {
   agentGoal,
+  bulkLeadPatch,
+  bulkUpdateLeads,
   deleteLead,
   exportLeadsCsv,
   findDuplicates,
@@ -114,6 +125,7 @@ import {
   leadState,
   leadStats,
   listLeads,
+  mountSavedViews,
   parseLeadsCsv,
   segmentStats,
   updateLead,
@@ -123,10 +135,13 @@ import {
 import {
   ACTIVITY_KINDS,
   addActivity,
-  completeTask,
   createTask,
+  deleteTask,
   listActivities,
   listTasks,
+  patchTask,
+  taskDueAt,
+  taskPatch,
   type ActivityKind,
 } from './modules/activities.ts';
 import {
@@ -204,15 +219,26 @@ import { validAdminPhone, whatsappOtpSender, type OtpSender } from './admin/auth
 import type { AdminApp } from './admin/context.ts';
 import { AdminHub } from './admin/live.ts';
 import { PresenceTracker } from './modules/presence.ts';
-import { mountStorefrontEvents } from './modules/storefront-live.ts';
+import {
+  MAX_STOREFRONT_STREAMS,
+  MAX_STREAMS_PER_IP,
+  liveSlots,
+  mountStorefrontEvents,
+} from './modules/storefront-live.ts';
 import { mountAdmin } from './admin/routes.ts';
 import type { MerchantNotify } from './admin/context.ts';
 import { platformNotify } from './admin/notify.ts';
 import { fleetDeps, type FleetDeps } from './modules/fleet/deps.ts';
 import { mountFleet } from './modules/fleet/routes.ts';
+import { mountSiteBuilder } from './modules/site-builder/routes.ts';
+import { domainProvidersFromEnv } from './modules/domains/config.ts';
+import type { DomainProviders } from './modules/domains/providers.ts';
+import { mountDomainRoutes } from './modules/domains/routes.ts';
 import { mountImportsControl } from './modules/menu-import/routes-control.ts';
 import { createPaymentProvider, type PaymentProvider } from './modules/payments/index.ts';
 import { storePaymentsPublic } from './modules/payments/store-payments.ts';
+import { isOnline, loadConnection } from './modules/payments/connections.ts';
+import { StoreReadCache } from './platform/read-cache.ts';
 import {
   DEFAULT_PAYMENT_METHODS,
   isPaymentMethod,
@@ -220,6 +246,8 @@ import {
 } from './modules/payment-adjustments.ts';
 import { mountControlBilling } from './modules/control-billing.ts';
 import { mountAgentRuntimeControl } from './agent-host/control-routes.ts';
+import { mountAgentRuntimeAi } from './agent-host/control-ai.ts';
+import { mountControlCustomers } from './modules/control-customers.ts';
 import { mountIncidentsControl } from './modules/incidents.ts';
 import { mountWebAnalytics } from './modules/web-analytics.ts';
 import { mountSiteCatalog } from './modules/billing/routes-signup.ts';
@@ -264,9 +292,54 @@ export interface AppDeps {
   fleet?: FleetDeps | undefined;
   /** the edge's key for /edge/v1 (default VENDUA_EDGE_SECRET) */
   edgeSecret?: string | undefined;
+  /** the registrar, DNS host, RDAP and TLS probe behind own domains (default: from env); tests
+   *  pass fakes */
+  domains?: DomainProviders | undefined;
+  /** domains-sync's key for /sync/v1 (default VENDUA_SYNC_SECRET) */
+  syncSecret?: string | undefined;
   /** Discord's network for the bot's control routes (default: fetch); tests swap it */
   discordFetch?: DiscordFetch | undefined;
+  /** public storefront reads kept in memory (index.ts passes the notify-driven one); the
+   *  default also waits out pending notifies on each read, so a write is seen right away */
+  readCache?: StoreReadCache | undefined;
 }
+
+// the tables each cached storefront read comes from — migration 0088 notifies on every one
+const STORE_DEPS = [
+  'store_settings',
+  'payment_connections',
+  'domains',
+  'tenants',
+  'plans',
+  'subscriptions',
+  'store_agent',
+  'store_whatsapp',
+];
+const CATALOG_DEPS = [
+  'store_settings',
+  'categories',
+  'products',
+  'product_media',
+  'modifier_groups',
+  'modifiers',
+  'combo_slots',
+  'combo_slot_items',
+];
+const PRODUCT_DEPS = [...CATALOG_DEPS, 'notify_requests'];
+// publicUrl falls back to the slug when the store has no public domain
+const SURFACES_DEPS = [
+  'store_settings',
+  'storefront_templates',
+  'storefront_tokens',
+  'domains',
+  'tenants',
+];
+const STATE_DEPS = ['store_settings', 'storefront_ops', 'storefront_templates'];
+const ZONES_DEPS = ['delivery_zones'];
+const SETTINGS_DEPS = ['store_settings'];
+
+/** a product's face only changes on a minute (its windows are HH:MM in the store's time) */
+const nextMinute = () => (Math.floor(Date.now() / 60_000) + 1) * 60_000;
 
 async function loadSettings(
   tx: Sql,
@@ -285,7 +358,8 @@ const loadZones = loadZoneRows;
 /** The store's Pix for the storefront page — key, beneficiary and an amount-less copia e cola. */
 /** optional `paymentMethod` of the cart/quote previews */
 function paymentMethodParam(v: unknown): string | null {
-  if (v === undefined || v === null || v === '') return null;
+  // 'tab' (paid at the table, ADR 0036) has no discount or surcharge to preview
+  if (v === undefined || v === null || v === '' || v === 'tab') return null;
   if (!isPaymentMethod(v))
     throw new HttpError(422, 'INVALID_PAYMENT', 'paymentMethod is not a payment method', {
       field: 'paymentMethod',
@@ -397,6 +471,16 @@ async function testIntegration(
       if (integration.driver === 'log') {
         return { ok: true, detail: 'driver log — imprime no console' };
       }
+      const { platformTransport } = await import('./platform-whatsapp/transport.ts');
+      if (platformTransport() === 'gateway') {
+        const { readPlatformSession } = await import('./platform-whatsapp/session.ts');
+        const row = await timed(readPlatformSession(sql), 'sessão do gateway');
+        if (!row) return { ok: false, detail: 'sessão do gateway não existe' };
+        if (row.state === 'open') return { ok: true, detail: 'gateway pareado' };
+        if (row.state === 'pairing')
+          return { ok: true, detail: 'aguardando o código de pareamento' };
+        return { ok: false, detail: `gateway ${row.state}${row.detail ? ` (${row.detail})` : ''}` };
+      }
       const { ensureSocket, waStatus } = await import('./agent/channels/whatsapp.ts');
       const s = await timed(ensureSocket(sql, integration), 'socket baileys');
       if (!s) return { ok: false, detail: 'socket não subiu' };
@@ -464,7 +548,12 @@ export function createApp({
   fleet,
   edgeSecret,
   discordFetch,
+  readCache,
+  domains,
+  syncSecret,
 }: AppDeps) {
+  const domainProviders = domains ?? domainProvidersFromEnv();
+  const cache = readCache ?? new StoreReadCache(sql, { strict: true });
   const provider = paymentProvider ?? createPaymentProvider();
   const geocode = geocoder ?? nominatimGeocoder();
   const tiles = mapTiles ?? mapTilesFromEnv();
@@ -478,7 +567,12 @@ export function createApp({
     const key = c.req.header('idempotency-key');
     if (!key || key.length > 200) return null;
     if (!(await sessionCartId(c, sessionSecret).catch(() => null))) return null;
-    const settings = await withTenant(sql, tenantId, (tx) => loadSettings(tx, tenantId));
+    const settings = await cache.read(
+      tenantId,
+      'settings',
+      () => withTenant(sql, tenantId, (tx) => loadSettings(tx, tenantId)),
+      { deps: SETTINGS_DEPS },
+    );
     const from = storeCoords(settings);
     return from && distancePricingOf(settings) ? routeQuote(from, to) : null;
   };
@@ -560,30 +654,67 @@ export function createApp({
   const storefront = new Hono<{ Variables: { tenant: Tenant } }>();
   storefront.use('*', tenantMiddleware(resolver, { trustForwardedHost: trustProxy }));
 
+  // what a table's QR names, and whether it takes orders now (ADR 0036)
+  storefront.get('/table', async (c) => {
+    const tenant = c.get('tenant');
+    const token = (c.req.query('t') ?? '').slice(0, 200);
+    if (!readTableToken(sessionSecret, tenant.id, token))
+      throw new HttpError(404, 'TABLE_NOT_FOUND', 'this table QR is not valid anymore');
+    const out = await withTenant(sql, tenant.id, async (tx) => {
+      const [table, settings, plan] = await Promise.all([
+        tableForToken(tx, tenant.id, sessionSecret, token),
+        loadSettings(tx, tenant.id),
+        planHas(tx, tenant.id, 'pdv'),
+      ]);
+      const status = currentStatus(settings, new Date()).status;
+      const reason =
+        !plan || !(settings?.pdv_qr_orders ?? true)
+          ? ('off' as const)
+          : status === 'paused' || status === 'closed'
+            ? status
+            : null;
+      return { table: { label: table.label, ordering: reason === null, reason } };
+    });
+    c.header('cache-control', 'no-store');
+    return c.json(out);
+  });
+
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
-    const { settings, online, publicUrl, loyaltyOn, chat } = await withTenant(
-      sql,
+    const { settings, online, publicUrl, loyaltyOn, chat, cartReminder, dineIn } = await cache.read(
       tenant.id,
-      async (tx) => {
-        const settings = await loadSettings(tx, tenant.id);
-        const online = await storePaymentsPublic(
-          tx,
-          tenant.id,
-          provider,
-          settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
-          readPaymentAdjustments(settings?.payment_adjustments),
-        );
-        const publicUrl = await storeOrigin(tx, tenant, publicStoreDomain);
-        const loyaltyOn = !!settings?.loyalty && (await planHas(tx, tenant.id, 'loyalty'));
-        return {
-          settings,
-          online,
-          publicUrl,
-          loyaltyOn,
-          chat: await webChatProfile(tx, tenant.id),
-        };
-      },
+      'store',
+      () =>
+        withTenant(sql, tenant.id, async (tx) => {
+          const [settings, conn, publicUrl, loyaltyPlan, chat, cartReminder, pdvPlan] =
+            await Promise.all([
+              loadSettings(tx, tenant.id),
+              loadConnection(tx, tenant.id),
+              storeOrigin(tx, tenant, publicStoreDomain),
+              planHas(tx, tenant.id, 'loyalty'),
+              webChatProfile(tx, tenant.id),
+              cartReminderOffered(tx, tenant.id),
+              planHas(tx, tenant.id, 'pdv'),
+            ]);
+          return {
+            settings,
+            // orders from the tables' QR codes (ADR 0036)
+            dineIn: pdvPlan && (settings?.pdv_qr_orders ?? true),
+            online: storePaymentsPublic(
+              conn,
+              provider,
+              settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
+              readPaymentAdjustments(settings?.payment_adjustments),
+            ),
+            // online payments switch off by themselves when the token expires
+            onlineUntil: isOnline(conn, provider) ? new Date(conn!.expires_at).getTime() : null,
+            publicUrl,
+            loyaltyOn: !!settings?.loyalty && loyaltyPlan,
+            chat,
+            cartReminder,
+          };
+        }),
+      { deps: STORE_DEPS, until: (v) => v.onlineUntil },
     );
     const now = new Date();
     const status = currentStatus(settings, now);
@@ -609,6 +740,7 @@ export function createApp({
       prepTimeMinutes: settings?.prep_time_minutes ?? 30,
       minOrderCents: settings?.min_order_cents ?? 0,
       pickupEnabled: settings?.pickup_enabled ?? true,
+      dineIn: { enabled: dineIn },
       deliveryEnabled: settings?.delivery_enabled ?? true,
       // ADR 0024: on only with the store's own pin — without it every address prices by zone
       distancePricing: (() => {
@@ -651,27 +783,51 @@ export function createApp({
       logoUrl: settings?.logo_url ?? null,
       // Kernel 1.18: the Vendedor's chat on the site, when the merchant turned it on
       chat,
+      // Kernel 1.21: checkout may offer "me lembre pelo WhatsApp" (modules/cart-reminder.ts)
+      cartReminder,
     });
   });
 
   storefront.get('/catalog', async (c) => {
     const tenant = c.get('tenant');
-    const { categories, nextChangeAt } = await withTenant(sql, tenant.id, (tx) =>
-      getCatalogView(tx, tenant.id),
+    // kept as its JSON until nextChangeAt: a promotion or a product's hours turning (an open
+    // page fetches the catalog again then)
+    const view = await cache.read(
+      tenant.id,
+      'catalog',
+      async () => {
+        const { categories, nextChangeAt } = await withTenant(sql, tenant.id, (tx) =>
+          getCatalogView(tx, tenant.id),
+        );
+        return {
+          json: JSON.stringify({
+            categories,
+            ...(nextChangeAt ? { nextChangeAt: nextChangeAt.toISOString() } : {}),
+          }),
+          until: nextChangeAt?.getTime() ?? null,
+        };
+      },
+      { deps: CATALOG_DEPS, until: (v) => v.until },
     );
-    // a promotion or a product's hours turning: an open page fetches the catalog again then
-    return c.json({
-      categories,
-      ...(nextChangeAt ? { nextChangeAt: nextChangeAt.toISOString() } : {}),
-    });
+    return c.body(view.json, 200, { 'content-type': 'application/json' });
   });
 
   storefront.get('/products/:slug', async (c) => {
     const tenant = c.get('tenant');
-    const { product, settings } = await withTenant(sql, tenant.id, async (tx) => ({
-      product: await getProduct(tx, tenant.id, str(c.req.param('slug'), 'slug', 200)),
-      settings: await loadSettings(tx, tenant.id),
-    }));
+    const slug = str(c.req.param('slug'), 'slug', 200);
+    const { product, settings } = await cache.read(
+      tenant.id,
+      `product:${slug}`,
+      () =>
+        withTenant(sql, tenant.id, async (tx) => {
+          const [product, settings] = await Promise.all([
+            getProduct(tx, tenant.id, slug),
+            loadSettings(tx, tenant.id),
+          ]);
+          return { product, settings };
+        }),
+      { deps: PRODUCT_DEPS, until: nextMinute, keep: (v) => v.product !== null },
+    );
     if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
     const earliest = product.requiresPreorder
       ? (bookableDates(
@@ -679,6 +835,7 @@ export function createApp({
           product.preorderLeadDays,
           settings?.preorder_max_days ?? 30,
           new Date(),
+          settings?.special_days ?? [],
         )[0] ?? null)
       : null;
     return c.json({ product: { ...product, preorderEarliestDate: earliest } });
@@ -705,7 +862,12 @@ export function createApp({
       combo: c.req.query('combo'),
     });
     // kit picks a schedule hides stay known, so a stale pick gets add's SOLD_OUT, not "unknown"
-    const product = await withTenant(sql, tenant.id, (tx) => getProduct(tx, tenant.id, slug, {}));
+    const product = await cache.read(
+      tenant.id,
+      `quote:${slug}`,
+      () => withTenant(sql, tenant.id, (tx) => getProduct(tx, tenant.id, slug, {})),
+      { deps: PRODUCT_DEPS, until: nextMinute, keep: (p) => p !== null },
+    );
     if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
     const line = priceLine(product, {
       modifiers: q.modifiers,
@@ -725,15 +887,26 @@ export function createApp({
     // ?design=1 is the edge's read (Kernel 1.10): the page's live templates and tokens ride
     // along in the injected state, so first paint is the store's current look
     const design = c.req.query('design') === '1';
-    const { settings, templates, tokens, publicUrl } = await withTenant(
-      sql,
+    // the design (templates, tokens) is kept as its JSON: only the live parts encode per request
+    const { settings, templatesJson, tokensJson, publicUrl } = await cache.read(
       tenant.id,
-      async (tx) => ({
-        settings: await loadSettings(tx, tenant.id),
-        templates: design ? await currentTemplatesTx(tx, tenant.id) : undefined,
-        tokens: design ? ((await currentTokensTx(tx, tenant.id))?.tokens ?? null) : undefined,
-        publicUrl: design ? await storeOrigin(tx, tenant, publicStoreDomain) : undefined,
-      }),
+      design ? 'surfaces:design' : 'surfaces',
+      () =>
+        withTenant(sql, tenant.id, async (tx) => {
+          const [settings, templates, tokens, publicUrl] = await Promise.all([
+            loadSettings(tx, tenant.id),
+            design ? currentTemplatesTx(tx, tenant.id) : undefined,
+            design ? currentTokensTx(tx, tenant.id).then((t) => t?.tokens ?? null) : undefined,
+            design ? storeOrigin(tx, tenant, publicStoreDomain) : undefined,
+          ]);
+          return {
+            settings,
+            templatesJson: design ? JSON.stringify(templates ?? {}) : null,
+            tokensJson: design ? JSON.stringify(tokens ?? null) : null,
+            publicUrl,
+          };
+        }),
+      { deps: design ? SURFACES_DEPS : SETTINGS_DEPS },
     );
     const status = currentStatus(settings);
     const notices = composeNotices(tenant.slug, settings, status, {
@@ -747,21 +920,26 @@ export function createApp({
         ...(status.closesAt ? { closesAt: status.closesAt } : {}),
       },
       notices,
-      ...(design
-        ? {
-            templates: templates ?? {},
-            tokens: tokens ?? null,
-            meta: pageMeta(tenant.name, settings, publicUrl!),
-          }
-        : {}),
     };
-    return c.json(envelope);
+    if (!design) return c.json(envelope);
+    // SurfacesEnvelope's templates, tokens and meta, spliced in as JSON
+    const meta = JSON.stringify(pageMeta(tenant.name, settings, publicUrl!));
+    return c.body(
+      `${JSON.stringify(envelope).slice(0, -1)},"templates":${templatesJson},"tokens":${tokensJson},"meta":${meta}}`,
+      200,
+      { 'content-type': 'application/json' },
+    );
   });
 
   // Public — storefronts need zones for address/zone UX.
   storefront.get('/zones', async (c) => {
     const tenant = c.get('tenant');
-    const zones = await withTenant(sql, tenant.id, (tx) => loadZones(tx, tenant.id));
+    const zones = await cache.read(
+      tenant.id,
+      'zones',
+      () => withTenant(sql, tenant.id, (tx) => loadZones(tx, tenant.id)),
+      { deps: ZONES_DEPS },
+    );
     return c.json({
       zones: zones.map((z) => ({
         id: z.id,
@@ -791,14 +969,24 @@ export function createApp({
   storefront.get('/state', async (c) => {
     const tenant = c.get('tenant');
     const withTemplates = c.req.query('templates') === '1';
-    const { settings, ops, templates } = await withTenant(sql, tenant.id, async (tx) => ({
-      settings: await loadSettings(tx, tenant.id),
-      ops: await opsTx(tx, tenant.id),
-      templates: withTemplates ? await currentTemplatesTx(tx, tenant.id) : undefined,
-    }));
+    const { settings, ops, templatesJson } = await cache.read(
+      tenant.id,
+      withTemplates ? 'state:templates' : 'state',
+      () =>
+        withTenant(sql, tenant.id, async (tx) => {
+          const [settings, ops, templates] = await Promise.all([
+            loadSettings(tx, tenant.id),
+            opsTx(tx, tenant.id),
+            withTemplates ? currentTemplatesTx(tx, tenant.id) : undefined,
+          ]);
+          // kept as JSON: v.js polls this, and the composition is most of the bytes
+          return { settings, ops, templatesJson: templates ? JSON.stringify(templates) : null };
+        }),
+      { deps: STATE_DEPS },
+    );
     const status = currentStatus(settings);
     const notices = composeNotices(tenant.slug, settings, status);
-    return c.json({
+    const state = {
       version: 1,
       store: {
         status: status.status,
@@ -807,8 +995,14 @@ export function createApp({
       },
       notices: notices.filter((n) => n.severity === 'blocking' || n.kind === 'emergency'),
       loader: ops.loader,
-      ...(templates ? { templates, adminOrigin: previewParent(c) } : {}),
-    });
+    };
+    if (!templatesJson) return c.json(state);
+    const adminOrigin = JSON.stringify(previewParent(c));
+    return c.body(
+      `${JSON.stringify(state).slice(0, -1)},"templates":${templatesJson},"adminOrigin":${adminOrigin}}`,
+      200,
+      { 'content-type': 'application/json' },
+    );
   });
 
   const checkout = new Hono<{ Variables: { tenant: Tenant } }>();
@@ -826,6 +1020,17 @@ export function createApp({
       },
     ),
   );
+
+  const checkoutIpFlags = {
+    trustForwardedFor: trustProxy,
+    proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
+  };
+  // order SSE streams and long-polls share these; one order's watchers are a shopper's tabs
+  const orderWatch = liveSlots({
+    max: MAX_STOREFRONT_STREAMS,
+    perIp: MAX_STREAMS_PER_IP,
+    perKey: MAX_WATCHERS_PER_ORDER,
+  });
 
   checkout.post('/session', async (c) => {
     const tenant = c.get('tenant');
@@ -848,9 +1053,15 @@ export function createApp({
       }
     }
     return idempotency(sql, async (_c, tx) => {
-      const { cartId, sessionToken } = await createCartTx(tx, tenant.id, sessionSecret);
-      const cart = await loadCartView(tx, tenant.id, cartId);
-      return { status: 201, body: { sessionToken, cart } };
+      const [created, settings] = await Promise.all([
+        createCartTx(tx, tenant.id, sessionSecret),
+        loadStoreSettings(tx, tenant.id),
+      ]);
+      // a cart just created holds no lines: its view needs only the store's settings
+      const cart = await loadCartView(tx, tenant.id, created.cartId, new Date(), {
+        have: { cart: created.cart, lines: [], settings },
+      });
+      return { status: 201, body: { sessionToken: created.sessionToken, cart } };
     })(c);
   });
 
@@ -869,7 +1080,11 @@ export function createApp({
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
-      await assertCartOpen(tx, tenant.id, cartId);
+      // the view's settings (and the product's time zone) ride along with the cart's lock
+      const [locked, settings] = await Promise.all([
+        assertCartOpen(tx, tenant.id, cartId),
+        loadStoreSettings(tx, tenant.id),
+      ]);
       // A malformed uuid would raise 22P02 (500, not a contract 4xx) — validate first.
       const productId = str(body.productId, 'productId', 64);
       if (!UUID_RE.test(productId)) {
@@ -895,12 +1110,15 @@ export function createApp({
           })
         : [];
       const comboSelections = parseSelections(body.comboSelections);
+      const note = parseItemNote(body.note);
+      const tz = settings?.hours?.timezone || 'America/Sao_Paulo';
       const { cart, added } = await addItem(
         tx,
         tenant.id,
         cartId,
-        { productId, qty, modifierIds, modifiers, comboSelections },
-        getProductById,
+        { productId, qty, modifierIds, modifiers, comboSelections, note },
+        (t, tid, id) => getProductById(t, tid, id, { tz }),
+        { cart: locked, settings },
       );
       return { status: 200, body: { cart, added } };
     })(c);
@@ -911,13 +1129,10 @@ export function createApp({
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
-      const cart = await setLineQtyTx(
-        tx,
-        tenant.id,
-        cartId,
-        c.req.param('itemId') ?? '',
-        Number(body.qty),
-      );
+      const cart = await editLineTx(tx, tenant.id, cartId, c.req.param('itemId') ?? '', {
+        ...(body.qty !== undefined ? { qty: Number(body.qty) } : {}),
+        ...(body.note !== undefined ? { note: body.note } : {}),
+      });
       return { status: 200, body: { cart } };
     })(c);
   });
@@ -986,11 +1201,19 @@ export function createApp({
         tenant.id,
         header ? verifyCustomerToken(sessionSecret, tenant.id, header) : null,
       );
+      // a table's comanda is locked ahead of checkout's own locks, as the PDV locks it (ADR 0036)
+      const table =
+        body.delivery.mode === 'dine_in'
+          ? await tableForToken(tx, tenant.id, sessionSecret, body.delivery.table, {
+              lockTab: true,
+            })
+          : null;
       let order: string;
       try {
         order = await placeOrderTx(tx, tenant.id, cartId, body, new Date(), provider, {
           provenPhone: known?.proven ? known.phone : null,
           route,
+          table,
         });
       } catch (err) {
         // the repriced lines must commit with the refusal (a thrown error rolls them back)
@@ -1004,7 +1227,13 @@ export function createApp({
       const view = await loadOrderView(tx, tenant.id, order, cartId);
       // Typing a phone proves nothing: the new token sees only this order until it is
       // delivered. A proven token for the same phone keeps its (delivered) anchor.
-      const phone = normalizePhone(body.customer.phone);
+      const phone = body.customer.phone ? normalizePhone(body.customer.phone) : '';
+      // a table order asks no phone: nothing to remember the customer by
+      if (!phone)
+        return {
+          status: 201,
+          body: { order: view, customerToken: null, customerTokenExpiresAt: null },
+        };
       const customer = mintCustomerToken(
         sessionSecret,
         tenant.id,
@@ -1026,10 +1255,16 @@ export function createApp({
   // `since` — the Kernel's live useOrder; without `wait` it's a plain read
   checkout.get('/orders/:id', async (c) => {
     const tenant = c.get('tenant');
-    const cartId = await sessionCartId(c, sessionSecret);
+    // the cart session that placed it reads it all; a tracking link (vot.…), only its status
+    const access = await storefrontOrderAccess(
+      c.req.header('authorization'),
+      tenant.id,
+      c.req.param('id'),
+      sessionSecret,
+    );
     const orderId = uuidParam(c, 'id');
     const read = () =>
-      withTenant(sql, tenant.id, (tx) => loadOrderView(tx, tenant.id, orderId, cartId));
+      withTenant(sql, tenant.id, (tx) => readStorefrontOrder(tx, tenant.id, orderId, access));
     const waitRaw = c.req.query('wait');
     const sinceRaw = c.req.query('since');
     if (waitRaw === undefined || sinceRaw === undefined) return c.json({ order: await read() });
@@ -1044,13 +1279,18 @@ export function createApp({
     )
       throw new HttpError(400, 'BAD_REQUEST', 'wait must be 1–25 and since a version');
     let order = await read();
-    const deadline = Date.now() + waitS * 1000;
-    while (order.version <= since && !TERMINAL_STATES.has(order.state) && Date.now() < deadline) {
-      // 5s slices: a NOTIFY landing between the read and the subscribe costs ≤5s, not the whole wait
-      await orderHub.wait(orderId, Math.min(5000, deadline - Date.now()), c.req.raw.signal);
-      if (c.req.raw.signal.aborted) break;
-      const v = await withTenant(sql, tenant.id, (tx) => orderVersion(tx, tenant.id, orderId));
-      if (v > since) order = await read();
+    const release = orderWatch.take(clientIp(c, checkoutIpFlags), orderId);
+    try {
+      const deadline = Date.now() + waitS * 1000;
+      while (order.version <= since && !TERMINAL_STATES.has(order.state) && Date.now() < deadline) {
+        // 5s slices: a NOTIFY landing between the read and the subscribe costs ≤5s, not the whole wait
+        await orderHub.wait(orderId, Math.min(5000, deadline - Date.now()), c.req.raw.signal);
+        if (c.req.raw.signal.aborted) break;
+        const v = await withTenant(sql, tenant.id, (tx) => orderVersion(tx, tenant.id, orderId));
+        if (v > since) order = await read();
+      }
+    } finally {
+      release();
     }
     c.header('cache-control', 'no-store');
     return c.json({ order, changed: order.version > since });
@@ -1059,7 +1299,7 @@ export function createApp({
   // /control/v1: staff-gated internal surface — X-Vendua-Control key or
   // vendua_control cookie; 404 (not 401) keeps it invisible to scans.
   const CONTROL_COOKIE = 'vendua_control';
-  const staffSecret = controlSecret ?? sessionSecret;
+  const staffSecret = controlSecret || sessionSecret;
   const controlIpFlags = {
     trustForwardedFor: trustProxy,
     proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
@@ -1202,11 +1442,19 @@ export function createApp({
     const q = c.req.query('q');
     const cursor = c.req.query('cursor');
     const sort = c.req.query('sort');
+    const segment = c.req.query('segment');
+    const source = c.req.query('source');
+    const city = c.req.query('city');
     const { leads, nextCursor } = await listLeads(sql, {
       ...(q ? { q } : {}),
       ...(state ? { state: leadState(state) } : {}),
       ...(tag ? { tag: str(tag, 'tag', 60) } : {}),
       ...(archived === 'only' || archived === 'all' ? { archived } : {}),
+      ...(segment ? { segment: str(segment, 'segment', 80) } : {}),
+      ...(source ? { source: str(source, 'source', 100) } : {}),
+      ...(city ? { city: str(city, 'city', 120) } : {}),
+      ...(c.req.query('draft') === '1' ? { hasDraft: true } : {}),
+      ...(c.req.query('overdue') === '1' ? { overdue: true } : {}),
       ...(limit ? { limit: Math.min(Math.max(Number(limit) || 50, 1), 200) } : {}),
       ...(cursor ? { cursor } : {}),
       ...(sort ? { sort: leadSort(sort) } : {}),
@@ -1342,6 +1590,14 @@ export function createApp({
     return c.json(res.body);
   });
 
+  // the pipeline's selection bar: one claim, each lead through the single PATCH's updateLeadTx
+  app.post('/control/v1/leads/bulk', async (c) => {
+    controlGate(c);
+    const res = await bulkUpdateLeads(sql, bulkLeadPatch(await bodyJson(c)), requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
   app.delete('/control/v1/leads/:id', async (c) => {
     controlGate(c);
     const res = await deleteLead(sql, uuidParam(c, 'id'), requireIdemKey(c));
@@ -1437,7 +1693,7 @@ export function createApp({
       uuidParam(c, 'id'),
       {
         title: str(body.title, 'title', 300),
-        dueAt: (body.dueAt as string) ?? null,
+        dueAt: taskDueAt(body.dueAt),
         createdBy: 'staff',
       },
       requireIdemKey(c),
@@ -1463,14 +1719,15 @@ export function createApp({
 
   app.patch('/control/v1/tasks/:id', async (c) => {
     controlGate(c);
-    const body = await bodyJson(c);
-    const res = await completeTask(
-      sql,
-      uuidParam(c, 'id'),
-      body.done !== false,
-      requireIdemKey(c),
-      'staff',
-    );
+    const id = uuidParam(c, 'id');
+    const res = await patchTask(sql, id, taskPatch(await bodyJson(c)), requireIdemKey(c), 'staff');
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.delete('/control/v1/tasks/:id', async (c) => {
+    controlGate(c);
+    const res = await deleteTask(sql, uuidParam(c, 'id'), requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     return c.json(res.body);
   });
@@ -1598,7 +1855,18 @@ export function createApp({
       const { reconcileInstagram } = await import('./agent/channels/instagram.ts');
       void getIntegration(sql, 'instagram').then((i) => reconcileInstagram(sql, i));
     }
-    if (kind === 'whatsapp') {
+    const { platformTransport, VENDUA_SESSION } = await import('./platform-whatsapp/transport.ts');
+    if (kind === 'whatsapp' && platformTransport() === 'gateway') {
+      // on the gateway the number is the session row's: a disable lets go of the socket there
+      const wa = await getIntegration(sql, 'whatsapp');
+      await controlTx(
+        sql,
+        (tx) => tx`
+          update platform_wa_sessions set wanted = ${wa?.driver === 'baileys'}, updated_at = now()
+          where name = ${VENDUA_SESSION}`,
+      );
+    }
+    if (kind === 'whatsapp' && platformTransport() === 'socket') {
       // A disable/switch must close the old Baileys session now, not lazily.
       const { ensureSocket } = await import('./agent/channels/whatsapp.ts');
       void getIntegration(sql, 'whatsapp')
@@ -1640,19 +1908,6 @@ export function createApp({
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     // A lowered cap strands over-cap leads (queued runs park silently) — flag them now; deduped.
     if (key === 'guardrails' && !res.replayed) await flagCappedLeads(sql);
-    return c.json(res.body);
-  });
-
-  app.post('/control/v1/staff/test', async (c) => {
-    controlGate(c);
-    const res = await claimControl(sql, requireIdemKey(c), async () => {
-      const deliveries = await notifyStaff(sql, null, {
-        subject: 'Venduá — teste de notificação',
-        body: 'Tudo certo: é por aqui que a equipe fica sabendo de handoffs e calls marcadas.',
-      });
-      return { status: 200, body: { deliveries } };
-    });
-    if (res.replayed) c.header('x-idempotent-replay', 'true');
     return c.json(res.body);
   });
 
@@ -2426,9 +2681,35 @@ export function createApp({
     return c.json({ channels: await channelHealth(sql) });
   });
 
-  // status = live socket state so the UI doesn't guess from QR presence.
+  // status = live socket state so the UI doesn't guess from QR presence. On the gateway it is the
+  // session row's, and pairing is by code only.
   app.get('/control/v1/wa/qr', async (c) => {
     controlGate(c);
+    const { platformTransport } = await import('./platform-whatsapp/transport.ts');
+    if (platformTransport() === 'gateway') {
+      const { readPlatformSession } = await import('./platform-whatsapp/session.ts');
+      const row = await readPlatformSession(sql);
+      const state = row?.state ?? 'off';
+      const pairing =
+        state === 'pairing' &&
+        !!row?.pair_code &&
+        (!row.pair_code_expires_at || row.pair_code_expires_at > new Date());
+      return c.json({
+        qr: null,
+        status:
+          state === 'open'
+            ? 'open'
+            : state === 'connecting' || state === 'pairing'
+              ? 'connecting'
+              : 'off',
+        me: state === 'open' && row?.phone ? { phone: row.phone, name: row.account_name } : null,
+        transport: 'gateway',
+        state,
+        detail: row?.detail ?? null,
+        pairCode: pairing ? row!.pair_code : null,
+        pairCodeExpiresAt: pairing ? (row!.pair_code_expires_at?.toISOString() ?? null) : null,
+      });
+    }
     const rows = await controlTx(
       sql,
       (tx) =>
@@ -2437,7 +2718,12 @@ export function createApp({
         >`select value from control_settings where key = 'wa_qr'`,
     );
     const { waStatus, waIdentity } = await import('./agent/channels/whatsapp.ts');
-    return c.json({ qr: rows[0]?.value?.qr ?? null, status: waStatus(), me: waIdentity() });
+    return c.json({
+      qr: rows[0]?.value?.qr ?? null,
+      status: waStatus(),
+      me: waIdentity(),
+      transport: 'socket',
+    });
   });
 
   // WhatsApp "conectar com número" flow — staff sends digits, Baileys returns the code.
@@ -2447,6 +2733,7 @@ export function createApp({
     const phone = str(body.phone, 'phone', 40);
     // Claimed so a retry replays the issued code; failures throw for a genuinely fresh retry.
     const res = await claimControl(sql, requireIdemKey(c), async () => {
+      // on the gateway, pairCode asks the session row for a code and waits for it
       const { pairCode } = await import('./agent/channels/whatsapp.ts');
       try {
         return { status: 200, body: { code: await pairCode(sql, phone) } };
@@ -2462,7 +2749,17 @@ export function createApp({
   // Unpair + restart the socket so a fresh QR emits; claimed so a retried logout can't race re-pairing.
   app.post('/control/v1/wa/logout', async (c) => {
     controlGate(c);
-    const res = await claimControl(sql, requireIdemKey(c), async () => {
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      const { platformTransport, VENDUA_SESSION } =
+        await import('./platform-whatsapp/transport.ts');
+      if (platformTransport() === 'gateway') {
+        // the gateway logs out on WhatsApp's side and wipes the login
+        await tx`
+          update platform_wa_sessions set wipe_requested_at = now(), pair_requested_at = null,
+            pair_code = null, pair_code_expires_at = null, updated_at = now()
+          where name = ${VENDUA_SESSION}`;
+        return { status: 200, body: { ok: true } };
+      }
       const { logoutWa, ensureSocket } = await import('./agent/channels/whatsapp.ts');
       const integration = await getIntegration(sql, 'whatsapp');
       const accountId = (integration?.config.accountId as string) ?? 'default';
@@ -2597,13 +2894,9 @@ export function createApp({
   const webhookSecret =
     process.env.VENDUA_WEBHOOK_SECRET ||
     createHmac('sha256', staffSecret).update('vendua.webhook').digest('hex');
-  // Constant-time compare — a leaked timing delta would make the shared
-  // secret byte-by-byte guessable.
-  const webhookSecretBytes = Buffer.from(webhookSecret, 'utf8');
-  const webhookSecretOk = (h: string | undefined) =>
-    h != null &&
-    h.length === webhookSecret.length &&
-    timingSafeEqual(Buffer.from(h, 'utf8'), webhookSecretBytes);
+  // Constant-time compare of digests: no timing delta, no length leak, and a multi-byte header
+  // of the right character count can't make timingSafeEqual throw (a 500)
+  const webhookSecretOk = (h: string | undefined) => constantTimeEqual(h, webhookSecret);
   // Cap inbound — an accepted message writes rows and launches an LLM run.
   let webhookBucket = { count: 0, resetAt: 0 };
   app.post('/control/v1/webhooks/:channel', async (c) => {
@@ -2794,11 +3087,13 @@ export function createApp({
     cepLookup: cepLookup ?? viaCep,
     geocode,
     orderHub,
+    orderWatch,
     provider,
     publicOrigin: (c) => adminOrigin(c),
     storeDomain: publicStoreDomain,
   });
   mountWebChat({ checkout, sql, sessionSecret, idempotency });
+  mountCartReminder({ checkout, sql, sessionSecret, idempotency });
 
   mountControlBilling({
     app,
@@ -2809,8 +3104,11 @@ export function createApp({
     storeDomain: publicStoreDomain,
     signupReady: signupReady ?? (() => signupReadiness(sql, provider)),
   });
+  mountControlCustomers({ app, sql, controlGate, storeDomain: publicStoreDomain });
+  mountSavedViews({ app, sql, controlGate, requireIdemKey });
   mountIncidentsControl({ app, sql, controlGate });
   mountAgentRuntimeControl({ app, sql, controlGate });
+  mountAgentRuntimeAi({ app, sql, controlGate, storeDomain: publicStoreDomain });
   mountSiteCatalog(app, sql);
   mountWebAnalytics({
     app,
@@ -2821,19 +3119,17 @@ export function createApp({
   });
   mountImportsControl({ app, sql, controlGate });
   mountDiscord({ app, sql, controlGate, kickDrain, fetch: discordFetch });
-  mountFleet({
-    app,
-    sql,
-    controlGate,
-    deps:
-      fleet ??
-      fleetDeps(sql, {
-        storeDomain: publicStoreDomain,
-        adminHost: adminDomain ?? null,
-        notify: merchantNotify,
-      }),
-    edgeSecret,
-  });
+  const fleetD =
+    fleet ??
+    fleetDeps(sql, {
+      storeDomain: publicStoreDomain,
+      adminHost: adminDomain ?? null,
+      notify: merchantNotify,
+    });
+  mountFleet({ app, sql, controlGate, deps: fleetD, edgeSecret });
+  // site sob medida: the CRM's queue and GitHub's webhook (signed, so no controlGate)
+  mountSiteBuilder({ app, sql, controlGate, deps: fleetD.site });
+  mountDomainRoutes({ app, sql, controlGate, syncSecret });
 
   mountStorefrontPlatform({
     app,
@@ -2965,6 +3261,7 @@ export function createApp({
     signupReady: signupReady ?? (() => signupReadiness(sql, provider)),
     publicOrigin: adminOrigin,
     geocode,
+    domains: domainProviders,
   });
   app.route('/admin/v1', admin);
   app.get('/admin', (c) => c.redirect('/admin/'));

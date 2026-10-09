@@ -3,6 +3,8 @@
 // Default: OpenStreetMap's public Nominatim — free, keyless, 1 request/second per its usage
 // policy, an identifying User-Agent, results cached. NOMINATIM_URL points at another instance.
 
+import { windowCounter } from '../platform/http.ts';
+
 export interface GeoQuery {
   /** a one-line address ("Rua das Flores, 120 — Centro, Saquarema"), tried first */
   text?: string | null;
@@ -20,8 +22,9 @@ export interface GeoPoint {
   precision: 'address' | 'street' | 'postcode' | 'area';
 }
 
-/** `null` = nothing found or the geocoder is busy; never throws. */
-export type Geocoder = (q: GeoQuery) => Promise<GeoPoint | null>;
+/** `null` = nothing found or the geocoder is busy; never throws. `client` (an IP) spends from its
+ *  own share of the provider's rate. */
+export type Geocoder = (q: GeoQuery, client?: string) => Promise<GeoPoint | null>;
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -38,6 +41,9 @@ const CACHE_TTL_MS = 30 * 86_400_000;
 const GAP_MS = 1100;
 /** a caller waits at most this long for its turn; past it, the map starts elsewhere */
 const MAX_WAIT_MS = 3000;
+/** of the ~54 requests a minute the process may send, one client (an IP, across every store) gets
+ *  this many: a shopper's address is a few, a script can't hold the queue for everyone */
+const CLIENT_REQUESTS_PER_MIN = 6;
 
 function precisionOf(h: NominatimHit): GeoPoint['precision'] {
   const rank = h.place_rank ?? 0;
@@ -59,6 +65,7 @@ export function nominatimGeocoder(
     env.NOMINATIM_USER_AGENT?.trim() || 'Vendua delivery pricing (https://vendua.com.br)';
   const cache = new Map<string, { at: number; value: GeoPoint | null }>();
   let nextSlot = 0;
+  const clientShare = windowCounter({ windowMs: 60_000, max: CLIENT_REQUESTS_PER_MIN });
 
   // one request per GAP_MS across this process; false = the queue is too long, give up
   const turn = async () => {
@@ -70,10 +77,14 @@ export function nominatimGeocoder(
     return true;
   };
 
-  const search = async (params: Record<string, string>): Promise<GeoPoint | null | 'busy'> => {
+  const search = async (
+    params: Record<string, string>,
+    client: string | undefined,
+  ): Promise<GeoPoint | null | 'busy'> => {
     const key = new URLSearchParams(params).toString();
     const hit = cache.get(key);
     if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
+    if (client !== undefined && !clientShare(client)) return 'busy';
     if (!(await turn())) return 'busy';
     const url = `${base}/search?${key}&countrycodes=br&format=jsonv2&limit=1`;
     const res = await fetchImpl(url, {
@@ -94,7 +105,7 @@ export function nominatimGeocoder(
     return value;
   };
 
-  return async (q) => {
+  return async (q, client) => {
     const cep = q.cep?.replace(/\D/g, '');
     const street = q.street?.trim();
     const city = q.city?.trim();
@@ -113,7 +124,7 @@ export function nominatimGeocoder(
     if (city) attempts.push({ city, ...(state ? { state } : {}) });
     try {
       for (const params of attempts) {
-        const found = await search(params);
+        const found = await search(params, client);
         if (found === 'busy') return null;
         if (found) return found;
       }

@@ -7,7 +7,7 @@ import { recordStaffEventTx } from '../staff-events.ts';
 import { storeNameTx, type FleetDeps } from './deps.ts';
 
 // Operations incidents (docs/architecture/16): one open row per (kind, subject), so a probe that
-// keeps failing is one incident and one staff alert, not one per minute. Distinct from
+// keeps failing is one incident and one staff event, not one per minute. Distinct from
 // platform_incidents, which is what merchants read in Ajuda.
 
 export const fleetLog = log.child({ mod: 'fleet' });
@@ -28,8 +28,8 @@ export interface IncidentRow {
   resolved_at: Date | null;
 }
 
-/** Opens the incident unless one is already open; returns it only when newly opened
- *  (the caller alerts after commit). A worse severity upgrades the open one. */
+/** Opens the incident unless one is already open, recording `incident.opened`; returns it only
+ *  when newly opened. A worse severity upgrades the open one. */
 export async function openIncidentTx(
   tx: Sql,
   i: {
@@ -161,19 +161,6 @@ export async function ackIncident(
   });
   if (!res.replayed) emitControlEvent('fleet.change');
   return res;
-}
-
-/** Staff alert for a newly opened (or resolved) incident. Never throws. */
-export function alertStaff(d: FleetDeps, row: IncidentRow, resolved = false) {
-  const subject = resolved
-    ? `Resolvido: ${row.summary}`
-    : `${row.severity === 'critical' ? 'Crítico' : 'Atenção'}: ${row.summary}`;
-  const body = resolved
-    ? 'O Control Plane viu a loja voltar ao normal. Nada a fazer.'
-    : `${row.summary}\n\nVeja em Lojas → frota no CRM.`;
-  void d
-    .staff({ subject, body, idemKey: `fleet:${row.id}:${resolved ? 'resolved' : 'opened'}` })
-    .catch((err) => fleetLog.warn({ err, incident: row.id }, 'staff alert failed'));
 }
 
 export function incidentJson(r: IncidentRow & { tenant_slug?: string | null }) {

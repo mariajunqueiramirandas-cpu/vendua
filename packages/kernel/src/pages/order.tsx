@@ -13,7 +13,7 @@ import {
 import { formatCents, LOCALE } from '../rules/format.ts';
 import { whatsappUrl } from '../rules/links.ts';
 import {
-  ORDER_STATE_LABEL,
+  orderStateLabel,
   PAYMENT_METHOD_LABEL,
   PIX_KEY_LABEL,
   REFUNDED_PAYMENT_STATUSES,
@@ -22,13 +22,17 @@ import type { Vocabulary } from '../rules/copy.ts';
 import { usePageTitle } from '../head.ts';
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+// "Recebido", "Em preparo": the state without repeating "Pedido" next to the number
+const stateWord = (state: string, mode?: Order['delivery']['mode']) =>
+  capitalize(orderStateLabel(state, mode).replace(/^Pedido /, ''));
 import { Slot } from '../slot.tsx';
 import { KLink } from '../sdk/sections.tsx';
-import { KERNEL_PATHS } from '../config.ts';
+import { KERNEL_PATHS, resolvePaths } from '../config.ts';
 import { errorCode, errorCopy, showError, showInfo } from '../errors.ts';
 import { useNavigateTo } from '../primitives.tsx';
 import type { CardPaymentInput, ImportReport, Order, PaymentNext, StoreProfile } from '../api.ts';
 import { CardFields, ChallengeFrame, declineCopy } from '../card-payment.tsx';
+import { mpDeviceId } from '../mp-device.ts';
 import type { PaymentStatusKind, SlotProps } from '../slot-props.ts';
 import { useKernel, invalidateQuery } from '../provider.tsx';
 
@@ -38,7 +42,8 @@ import { useKernel, invalidateQuery } from '../provider.tsx';
 // the purchased items, Pix copia e cola, "pedir de novo", orders from other
 // devices (phone + order number) and the loyalty card.
 
-function useReorder() {
+/** "Pedir de novo": a past order's lines back in the bag, then the bag (also `sdk:recent-order`). */
+export function useReorder() {
   const { mutations } = useCart();
   const { vocabulary } = useCopy();
   const go = useNavigateTo();
@@ -139,7 +144,10 @@ function useOnlinePayment(
     setWork(mode);
     setFailure(null);
     try {
-      const r = await api.payOrder(order.id, { cardForm: true });
+      // the Pix Core creates here carries Mercado Pago's device fingerprint (anti-fraud), waited
+      // for briefly; the card sends its own with the token
+      const deviceId = card ? null : await mpDeviceId();
+      const r = await api.payOrder(order.id, { cardForm: true, deviceId });
       invalidateQuery(`order:${order.id}`, r.order);
       apply(r.next, null);
       if (mode === 'redirect' && r.next.kind === 'redirect') {
@@ -338,14 +346,21 @@ export function OrderPage() {
   const { id = '' } = useParams();
   const { search } = useLocation();
   // live: the Kernel holds a long poll open while the tab is visible (Kernel 1.2)
-  const { order, loading, error, refetch } = useOrder(id);
+  // Kernel 1.21: opened from the store's WhatsApp link on another device, `tracking` (status only)
+  const { order, tracking, loading, error, refetch } = useOrder(id);
   const { store } = useStore();
   const { vocabulary } = useCopy();
   const { reorder, pending } = useReorder();
+  const { config } = useKernel();
   const currency = store?.currency ?? 'BRL';
   const timeZone = store?.hours.timezone || undefined;
   const time = timeZone ? { timeZone } : {};
-  usePageTitle(order ? `Pedido #${order.number}` : null);
+  const shown = order ?? tracking;
+  // Kernel 1.21: the state in the tab title ("Pedido #12 · Em preparo · Loja"), live
+  usePageTitle(
+    shown ? `Pedido #${shown.number} · ${stateWord(shown.state, shown.delivery.mode)}` : null,
+  );
+  const talk = shown ? whatsappUrl(store?.whatsapp, `Oi! Sobre o pedido #${shown.number}.`) : null;
   const params = new URLSearchParams(search);
   const isNew = params.has('novo');
   const online = useOnlinePayment(order, store, params);
@@ -360,8 +375,51 @@ export function OrderPage() {
 
   return (
     <main id="main" className="v-page" data-vendua-page="order">
-      {loading && !order ? (
-        <div className="v-panel" aria-busy="true" aria-label="Carregando pedido" />
+      {loading && !shown ? (
+        <OrderSkeleton />
+      ) : tracking && !order ? (
+        <>
+          <Slot
+            name="order.TrackingPage"
+            order={tracking}
+            vocabulary={vocabulary}
+            {...time}
+            timeline={
+              <Slot
+                name="order.Timeline"
+                events={tracking.timeline.map((e, i) => ({
+                  at: e.at,
+                  from: tracking.timeline[i - 1]?.to ?? null,
+                  to: e.to,
+                  actor: '',
+                  meta: {},
+                }))}
+                mode={tracking.delivery.mode}
+                {...time}
+              />
+            }
+            {...(tracking.delivery.mode === 'pickup' && store?.pickup
+              ? { pickup: store.pickup }
+              : {})}
+          />
+          <p className="v-section-cta v-order-actions" data-part="actions">
+            {talk ? (
+              <a
+                href={talk}
+                className="v-btn v-btn-ghost"
+                data-vendua="order-whatsapp"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Falar com a loja
+                <span className="v-sr"> no WhatsApp (abre em outra aba)</span>
+              </a>
+            ) : null}
+            <KLink href={resolvePaths(config).catalog} className="v-btn v-btn-ghost">
+              Ver o cardápio
+            </KLink>
+          </p>
+        </>
       ) : !order ? (
         <Slot
           name="system.ErrorFallback"
@@ -400,7 +458,14 @@ export function OrderPage() {
             order={order}
             currency={currency}
             {...time}
-            timeline={<Slot name="order.Timeline" events={order.timeline} {...time} />}
+            timeline={
+              <Slot
+                name="order.Timeline"
+                events={order.timeline}
+                mode={order.delivery.mode}
+                {...time}
+              />
+            }
             {...(order.delivery.mode === 'pickup' && store?.pickup ? { pickup: store.pickup } : {})}
           />
           {order.items?.length ? (
@@ -424,7 +489,19 @@ export function OrderPage() {
               reorderPending={pending === order.id}
             />
           ) : null}
-          <p className="v-section-cta">
+          <p className="v-section-cta v-order-actions" data-part="actions">
+            {talk ? (
+              <a
+                href={talk}
+                className="v-btn v-btn-ghost"
+                data-vendua="order-whatsapp"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Falar com a loja
+                <span className="v-sr"> no WhatsApp (abre em outra aba)</span>
+              </a>
+            ) : null}
             <KLink href={KERNEL_PATHS.orders} className="v-btn v-btn-ghost">
               Meus pedidos
             </KLink>
@@ -432,6 +509,30 @@ export function OrderPage() {
         </>
       )}
     </main>
+  );
+}
+
+/** Kernel 1.21 — the order page's shape while it loads (state, progress, facts). */
+function OrderSkeleton() {
+  return (
+    <div
+      className="v-order v-skeleton-page"
+      data-vendua="order-skeleton"
+      aria-busy="true"
+      aria-label="Carregando pedido"
+    >
+      <span className="v-skeleton v-skeleton-line" data-short="" />
+      <div className="v-skeleton v-skeleton-title" />
+      <div className="v-skeleton v-skeleton-bar" />
+      <div className="v-order-grid" aria-hidden="true">
+        <span className="v-skeleton-lines">
+          <span className="v-skeleton v-skeleton-line" />
+          <span className="v-skeleton v-skeleton-line" data-short="" />
+          <span className="v-skeleton v-skeleton-line" />
+        </span>
+        <div className="v-skeleton v-skeleton-block" />
+      </div>
+    </div>
   );
 }
 
@@ -458,12 +559,16 @@ export function OrderHistoryPage() {
       placedAt: o.placedAt,
       totalCents: o.totalCents,
       items: (o.items ?? []).map((i) => ({ name: i.name, qty: i.qty })),
+      mode: o.delivery.mode,
       here: true,
     })),
     ...phone.orders.filter((o) => !localIds.has(o.id)).map((o) => ({ ...o, here: false })),
   ].sort((a, b) => Date.parse(b.placedAt) - Date.parse(a.placedAt));
   const loading = (local.loading || phone.loading) && rows.length === 0;
 
+  // Kernel 1.21: a phone's order placed on this device opens when its token is still here
+  const { api } = useKernel();
+  const held = new Set(api.orderIds());
   const verify = async (p: string, orderNumber: number) => {
     setVerifying(true);
     setVerifyError(undefined);
@@ -525,14 +630,14 @@ export function OrderHistoryPage() {
                     {formatCents(o.totalCents, currency)}
                   </span>
                   <span className="v-order-row-state" data-state={o.state}>
-                    {ORDER_STATE_LABEL[o.state] ?? o.state}
+                    {orderStateLabel(o.state, o.mode)}
                   </span>
                 </span>
               </>
             );
             return (
               <li key={o.id} data-origin={o.here ? 'device' : 'phone'}>
-                {o.here ? (
+                {o.here || held.has(o.id) ? (
                   <KLink href={KERNEL_PATHS.order.replace(':id', o.id)} data-state={o.state}>
                     {head}
                   </KLink>

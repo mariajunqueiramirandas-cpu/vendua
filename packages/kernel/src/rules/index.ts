@@ -23,6 +23,8 @@ export type { PriceDisplay, PriceInput } from './price.ts';
 export { MAX_LINE_QTY, cardState } from './card.ts';
 export type { CardInput, CardState } from './card.ts';
 export { arrangeMenu, matchProduct } from './menu.ts';
+export { DIETARY_LABEL, DIETARY_FILTERS, dietaryBadges } from './dietary.ts';
+export type { DietaryBadge } from './dietary.ts';
 export { hoursRows, todayHours, statusHint, statusWords, takesOrders } from './hours.ts';
 export type { HoursRow, HoursWindow, StatusHint, StoreHours, TodayHours } from './hours.ts';
 export { zoneFeeFloor, deliverySummary, deliveryWords } from './delivery.ts';
@@ -51,6 +53,7 @@ export {
   orderPath,
   orderProgress,
   orderStepLabel,
+  orderStateLabel,
   PAYMENT_METHOD_LABEL,
   PAYMENT_LABEL,
   PAYMENT_METHOD_ORDER,

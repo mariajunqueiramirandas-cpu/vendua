@@ -55,6 +55,10 @@ the same `agent_runs` machinery the Phase-6 generation pipeline will reuse:
   a handoff, an incident, a store's onboarding toward the First-store gate), buttons that
   approve drafts and acknowledge incidents, slash commands and a daily summary. Setup:
   [deploy/discord.md](deploy/discord.md).
+- **Duá Copilot** ([ADR 0034](adr/0034-dua-copilot.md)) — Duá working for the store's people
+  in the admin (Pangolim): answers from the admin's own routes, with every amount a Core figure,
+  and prepares changes (pause, prep time, special days, prices, stock, coupons) as cards that
+  only a tap applies, through the same handler, audit row and live update as the screen.
 
 **Since the 1b/2 exits (2026-09-28 → 30):**
 
@@ -519,16 +523,24 @@ Pilot cohort → Early fleet.**
 Goal: agents produce storefronts through the exact path humans use — the PR
 interface is the only interface.
 
-- [ ] DesignSpec schema + validation ([14](architecture/14-agent-pipeline.md)).
-- [ ] Generation targets Contract v2: the agent writes `store:*` sections,
+- [x] DesignSpec schema + validation ([14](architecture/14-agent-pipeline.md)), written by
+      Duá from the owner's brief and approved by the owner as a copilot card
+      ([ADR 0039](adr/0039-site-builder-on-claude-code.md), 2026-10-08).
+- [x] Generation targets Contract v2: the agent writes `store:*` sections,
       initial templates, content and tokens — never whole pages
-      ([17](architecture/17-page-composition.md#generation-under-v2)).
-- [ ] Agent task runner: sparse checkout per the contract
-      ([06](architecture/06-monorepo.md#agents-in-the-monorepo)) → scaffold →
-      agent PR → conformance + generation QA → fix loop → human approval →
-      provisioner.
-- [ ] Failure-bundle format + agent queue in the Control Plane.
-- [ ] Track the metrics: iterations-to-green, agent-minutes per storefront,
+      ([17](architecture/17-page-composition.md#generation-under-v2)); the
+      `storefront-generate` skill.
+- [x] Agent task runner: a cloud Claude Code routine fired by Core → scaffold →
+      agent PR → conformance + generation QA (CI now judges the PR's own store) →
+      fix loop (4 pushes) → staff approval → merge, release, bundle adoption,
+      design applied, delivered. Routines clone the whole repo: the sparse read
+      set ([06](architecture/06-monorepo.md#agents-in-the-monorepo)) is advice in
+      the skill until an Agent SDK runner replaces it.
+- [x] Agent queue in the Control Plane: `site_tasks` + timeline, the CRM's Sites
+      screen, GitHub webhook; failure details are the CI run and its `qa-report`
+      artifact rather than a bundle in object storage.
+- [ ] Track the metrics: iterations-to-green (recorded per task), agent-minutes per
+      storefront (needs the Agent SDK runner: routines report no cost),
       post-launch defect rate.
 - [ ] Re-run the Contract-major rehearsal (first done in Phase 1b on the
       in-repo storefronts) on a staging cohort of agent-generated stores —
@@ -544,10 +556,13 @@ number. **Stage gate: Early fleet → Growth.**
 - [ ] Core HA: multi-instance, managed Postgres or rehearsed failover,
       last-known-good serving ([16](architecture/16-operations-and-incidents.md)).
 - [ ] Edge ≥2 nodes; status page on separate infra.
-- [ ] Custom-domain automation incl. failure UX
-      ([12](architecture/12-domains-and-tls.md)).
+- [x] Custom-domain automation incl. failure UX, and Pangolim's included `.com.br`
+      ([ADR 0038](adr/0038-included-domains.md), [12](architecture/12-domains-and-tls.md)),
+      built 2026-10-08. Live once Cloudflare and Openprovider are configured and one real
+      registration has been tried; then staff open Pangolim.
 - [ ] WhatsApp intake agent → DesignSpec (only after the generation pipeline
-      is proven; intake automation is its own product).
+      is proven; intake automation is its own product). Pulled partly forward:
+      Duá writes the spec in the admin copilot ([ADR 0039](adr/0039-site-builder-on-claude-code.md)).
 
 Exit: a real failover drill passed; a custom domain live end-to-end; the
 rehearsed Contract major's failure tail measured under 20%.

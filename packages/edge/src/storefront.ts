@@ -102,6 +102,17 @@ export function createStorefront(d: StorefrontDeps) {
       log('warn', 'resolve failed with nothing cached', { host, error: (e as Error).message });
       return page(UNAVAILABLE_HTML, 503, { 'retry-after': '30' });
     }
+    if (route.redirect) {
+      const { to, permanent } = route.redirect;
+      return new Response(null, {
+        status: permanent ? 301 : 302,
+        headers: {
+          location: `${to}${url.pathname}${url.search}`,
+          'cache-control': permanent ? 'public, max-age=300' : 'no-store',
+          ...SECURITY_HEADERS,
+        },
+      });
+    }
     if (!route.release) return page(UNAVAILABLE_HTML, 503, { 'retry-after': '60' });
     const { id, bundle } = route.release;
     const rel = { 'x-vendua-release': id };

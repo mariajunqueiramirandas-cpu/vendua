@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type {
-  BillingStore,
   CustomDomainStatus,
+  DomainOrderStatus,
   IncidentSeverity,
   MpStatus,
   SiteRequestStatus,
@@ -32,10 +32,23 @@ export const MP_STATUS: Record<MpStatus, Tone> = {
 };
 
 export const DOMAIN_STATUS: Record<CustomDomainStatus, Tone> = {
+  ordering: { label: 'registrando', variant: 'default' },
   pending_dns: { label: 'aguardando dns', variant: 'default' },
-  dns_ok: { label: 'dns ok · ativar', variant: 'warn' },
+  dns_ok: { label: 'emitindo certificado', variant: 'warn' },
   active: { label: 'ativo', variant: 'live' },
+  repairing: { label: 'dns quebrado', variant: 'bad' },
+  lapsed: { label: 'desligado · plano', variant: 'default' },
   failed: { label: 'falhou', variant: 'bad' },
+};
+
+export const ORDER_STATUS: Record<DomainOrderStatus, Tone> = {
+  awaiting_payment: { label: 'esperando pagamento', variant: 'default' },
+  queued: { label: 'no registrador', variant: 'default' },
+  pending: { label: 'no registrador', variant: 'default' },
+  registered: { label: 'registrado', variant: 'default' },
+  conflict: { label: 'conflito de provedor', variant: 'warn' },
+  failed: { label: 'falhou', variant: 'bad' },
+  cancelled: { label: 'cancelado', variant: 'default' },
 };
 
 export const SITE_STATUSES = [
@@ -86,7 +99,13 @@ export function Tag<K extends string>({
 }
 
 /** Slug that opens the live store in a new tab — never swallows the row click on its own. */
-export function StoreLink({ store, className }: { store: BillingStore; className?: string }) {
+export function StoreLink({
+  store,
+  className,
+}: {
+  store: { url: string; slug: string };
+  className?: string | undefined;
+}) {
   return (
     <a
       href={store.url}
@@ -140,7 +159,7 @@ export function FilterChips<T extends string>({
               'text-[11px] tnum',
               o.tone === 'warn' && o.count && value !== o.value
                 ? 'rounded-full bg-warning-soft px-1 font-semibold text-warning-foreground'
-                : 'opacity-75',
+                : value === o.value && 'opacity-80',
             )}
           >
             {o.count ?? '·'}

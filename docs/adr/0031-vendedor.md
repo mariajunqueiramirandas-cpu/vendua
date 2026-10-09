@@ -128,6 +128,15 @@ Phases V0–V3 and the storefront chat of V4. Each decision lives in:
 
 Outside turns, `src/vendedor/ingest.ts` turns each stored message into text (voice notes transcribed, photos read and matched to the menu), moves the floor (a merchant reply is a takeover; code triggers hand off with Core's own notice) and dispatches it; `src/vendedor/worker.ts` runs the ingest, voice replies, the sweeper (recovery, Pix expiry, the outbox consumer, the `vendedor.monitor` staff event) and Cliente oculto (`src/vendedor/cliente-oculto.ts`).
 
+Supervision added 2026-10-06 (migration `0092_vendedor_qol.sql`): a read marker per conversation
+(`shopper_threads.seen_at`); a timed pause (`store_agent.paused_until`, the `paused` floor in
+`src/vendedor/floor.ts`) that lapses by the clock through one `timer.handback` per waiting thread
+written with `dispatchTx` (ingest during the pause, and `/vendedor/pause` itself); search over
+message text and order numbers; re-pings at 5 and 15 min with a WhatsApp fallback to owners and
+managers (`vendedorWaitingAlerts` in `src/admin/workers.ts`, its own `pushWaiting` pref); store
+quick replies (`vendedor_quick_replies`); bulk classify; and store-written customer notes
+(`nota_da_loja.*` in `agent_memory`, provenance `merchant:<user>`, given to the model as data).
+
 Not built:
 
 - **Instagram DM and the official Cloud API (V4).** Both need a Meta app with the store's account linked, and the Cloud API's economics is open decision 5.

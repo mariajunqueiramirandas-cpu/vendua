@@ -4,7 +4,7 @@ import { controlTx } from '../modules/control.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import type { MediaProviders } from './media.ts';
-import { loadAgent } from './settings.ts';
+import { loadAgent, pausedNow } from './settings.ts';
 import { AGENT_ID, SUBJECT_KIND, loadStoreSettings, storeStatus } from './threads.ts';
 
 // Proactive touches inside the transport's limits (sales-agent.md §4.13), each a timer row the
@@ -16,6 +16,15 @@ const actorOf = (tenantId: string, threadId: string) => ({
   agentId: AGENT_ID,
   subject: { kind: SUBJECT_KIND, id: threadId },
 });
+
+/** SAIR stops every automatic message (store_wa_optouts), under either spelling of the 9th digit,
+ *  or by the chat's address when the shopper's number is hidden. */
+const notOptedOut = (tx: Sql) => tx`not exists (
+  select 1 from store_wa_optouts x where x.tenant_id = t.tenant_id and (x.jid = t.address or x.phone in (t.phone,
+    case when length(t.phone) = 11 and substr(t.phone, 3, 1) = '9' and substr(t.phone, 4, 1) between '6' and '9'
+           then left(t.phone, 2) || substr(t.phone, 4)
+         when length(t.phone) = 10 and substr(t.phone, 3, 1) between '6' and '9'
+           then left(t.phone, 2) || '9' || substr(t.phone, 3) end)))`;
 
 async function enabledStores(sql: Sql): Promise<string[]> {
   const rows = await controlTx(
@@ -31,6 +40,7 @@ export async function recoveryPass(sql: Sql, tenantId: string, now = new Date())
     const agent = await loadAgent(tx, tenantId);
     if (
       !agent.enabled ||
+      pausedNow(agent, now) ||
       !agent.settings.recovery.enabled ||
       agent.settings.coverage === 'rehearsal'
     )
@@ -46,6 +56,7 @@ export async function recoveryPass(sql: Sql, tenantId: string, now = new Date())
         and t.last_out_at >= t.last_in_at
         and (t.recovery_at is null or t.recovery_at < ${new Date(now.getTime() - 24 * 3600_000)})
         and exists (select 1 from cart_items i where i.cart_id = c.id)
+        and ${notOptedOut(tx)}
       limit 50`;
     for (const t of due) {
       await dispatchTx(tx, {
@@ -63,7 +74,9 @@ export async function recoveryPass(sql: Sql, tenantId: string, now = new Date())
 /** An online Pix that lapsed unpaid: offered once more. */
 export async function pixExpiryPass(sql: Sql, tenantId: string, now = new Date()): Promise<number> {
   return withTenant(sql, tenantId, async (tx) => {
-    if (!(await loadAgent(tx, tenantId)).enabled) return 0;
+    // paused, the lapsed Pix waits: its six-hour window usually outlasts the pause
+    const agent = await loadAgent(tx, tenantId);
+    if (!agent.enabled || pausedNow(agent, now)) return 0;
     const due = await tx<{ thread_id: string; order_id: string; number: number }[]>`
       select distinct on (o.id) t.id as thread_id, o.id as order_id, o.number
       from orders o join shopper_threads t on t.id = o.thread_id
@@ -73,6 +86,7 @@ export async function pixExpiryPass(sql: Sql, tenantId: string, now = new Date()
         and (m.meta -> 'data' ->> 'orderNumber')::int = o.number
         and (m.meta -> 'data' ->> 'expiresAt')::timestamptz < ${now}
         and (m.meta -> 'data' ->> 'expiresAt')::timestamptz > ${new Date(now.getTime() - 6 * 3600_000)}
+        and ${notOptedOut(tx)}
       order by o.id, m.created_at desc
       limit 50`;
     for (const d of due)
@@ -162,8 +176,9 @@ async function outboxRow(
         { name: string }[]
       >`select name from products where tenant_id = ${r.tenant_id} and id = ${productId}`;
       const threads = await tx<{ id: string }[]>`
-          select id from shopper_threads where tenant_id = ${r.tenant_id} and channel = 'whatsapp'
-            and phone = any(${contacts}) and owner <> 'muted' and last_in_at > now() - interval '24 hours'`;
+          select t.id from shopper_threads t where t.tenant_id = ${r.tenant_id} and t.channel = 'whatsapp'
+            and t.phone = any(${contacts}) and t.owner <> 'muted' and t.last_in_at > now() - interval '24 hours'
+            and ${notOptedOut(tx)}`;
       for (const t of threads)
         await dispatchTx(tx, {
           actor: actorOf(r.tenant_id, t.id),
@@ -196,17 +211,19 @@ async function outboxRow(
 export async function voicePass(sql: Sql, media: MediaProviders | null): Promise<number> {
   const due = await controlTx(
     sql,
-    (tx) => tx<{ id: string; tenant_id: string; thread_id: string; body: string }[]>`
-      update shopper_messages set meta = meta || jsonb_build_object('voice', 'working', 'voiceAt', now())
-      where id in (select id from shopper_messages
+    (tx) => tx<{ id: string; tenant_id: string; thread_id: string; body: string; tries: number }[]>`
+      update shopper_messages set meta = meta || jsonb_build_object('voice', 'working', 'voiceAt', now(),
+        'voiceTries', coalesce((meta ->> 'voiceTries')::int, 0) + 1)
+      where id = any(array(select id from shopper_messages
                    where meta ->> 'voice' = 'pending'
                       -- a claim whose worker died: the reply still goes, as voice or as text
                       or (meta ->> 'voice' = 'working' and (meta ->> 'voiceAt')::timestamptz < now() - interval '2 minutes')
-                   order by created_at limit 5 for update skip locked)
-      returning id, tenant_id, thread_id, body`,
+                   order by created_at limit 5 for update skip locked))
+      returning id, tenant_id, thread_id, body, (meta ->> 'voiceTries')::int as tries`,
   );
   for (const m of due) {
-    const spoken = media ? await media.speak(m.body).catch(() => null) : null;
+    // a reply whose speaking keeps killing the worker goes as text
+    const spoken = media && m.tries <= 3 ? await media.speak(m.body).catch(() => null) : null;
     await withTenant(sql, m.tenant_id, async (tx) => {
       const [t] = await tx<{ address: string; phone: string | null }[]>`
         select address, phone from shopper_threads where id = ${m.thread_id}`;
@@ -347,17 +364,23 @@ export async function menuChangePass(
         and not exists (select 1 from vendedor_runs where tenant_id = ${tenantId} and created_at > now() - interval '1 day')
         and exists (select 1 from vendedor_runs where tenant_id = ${tenantId} and status = 'done') as changed`;
     if (!r?.changed) return false;
-    await tx`insert into vendedor_runs (tenant_id, trigger) values (${tenantId}, 'menu_change')`;
+    // another Core's sweep may have queued one (one open run per store, 0112)
+    await tx`insert into vendedor_runs (tenant_id, trigger) values (${tenantId}, 'menu_change') on conflict do nothing`;
     return true;
   });
 }
 
 export async function sweepAll(sql: Sql, now = new Date(), hasModel = false): Promise<void> {
   for (const tenantId of await enabledStores(sql)) {
-    await recoveryPass(sql, tenantId, now);
-    await pixExpiryPass(sql, tenantId, now);
-    await monitorPass(sql, tenantId, now);
-    await menuChangePass(sql, tenantId, hasModel);
+    // one store's failure costs only its own touches this sweep
+    try {
+      await recoveryPass(sql, tenantId, now);
+      await pixExpiryPass(sql, tenantId, now);
+      await monitorPass(sql, tenantId, now);
+      await menuChangePass(sql, tenantId, hasModel);
+    } catch (err) {
+      sweepLog.error({ err, tenantId }, 'store sweep failed');
+    }
   }
   // catch up in batches: a busy hour's outbox is read in one sweep
   for (let i = 0; i < 10 && (await outboxPass(sql)) === 200; i++);

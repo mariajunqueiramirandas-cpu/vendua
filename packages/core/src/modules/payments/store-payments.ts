@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { emitAdminTx } from '../../admin/live.ts';
 import { withTenant, type Sql } from '../../platform/db.ts';
 import { HttpError, UUID_RE } from '../../platform/http.ts';
@@ -20,6 +21,7 @@ import {
 import {
   ProviderError,
   type PaymentProvider,
+  type PixItem,
   type ProviderName,
   type ProviderPayment,
 } from './provider.ts';
@@ -136,20 +138,20 @@ export interface PayDeps {
   sessionSecret: string;
 }
 
-/** What the storefront may offer online right now (GET /storefront/v1/store). */
-export async function storePaymentsPublic(
-  tx: Sql,
-  tenantId: string,
+/** What the storefront may offer online right now (GET /storefront/v1/store), from the
+ *  store's payment_connections row. */
+export function storePaymentsPublic(
+  conn: ConnectionRow | null,
   provider: PaymentProvider,
   methods: string[],
   adjustments: PaymentAdjustments = {},
-): Promise<{
+): {
   onlinePayments: { pix: boolean; card: boolean };
   paymentMethods: string[];
   /** offered methods with a discount/surcharge only — labels; Core computes the cents */
   paymentAdjustments: Record<string, PaymentAdjustment>;
-}> {
-  const online = isOnline(await loadConnection(tx, tenantId), provider);
+} {
+  const online = isOnline(conn, provider);
   const paymentMethods = online ? methods : methods.filter((m) => m !== 'card_online');
   return {
     onlinePayments: {
@@ -218,6 +220,20 @@ export function offlinePayment(
           copyPaste: pixPayload(profile, { amountCents: totalCents }),
         }
       : null,
+  };
+}
+
+/** A coupon that covered the whole order: nothing to charge (MP refuses a R$ 0 payment, and a
+ *  static Pix with no amount would ask the shopper to type one). */
+export function freePayment(method: string, now: Date) {
+  return {
+    provider: 'sandbox',
+    method,
+    status: 'paid',
+    online: false,
+    instructions: 'Nada a pagar: o desconto cobriu o pedido.',
+    pix: null,
+    paidAt: now.toISOString(),
   };
 }
 
@@ -354,8 +370,18 @@ interface OrderLock {
   number: number;
   state: string;
   total_cents: number;
+  delivery_fee_cents: number;
   customer: { name?: string };
+  customer_phone: string | null;
   payment: Record<string, unknown> & { online?: boolean; method?: string; status?: string };
+}
+
+/** Who pays a Pix, as MP's anti-fraud scores it. */
+interface PixBuyer {
+  email: string;
+  name: string | null;
+  phone: string | null;
+  items: PixItem[];
 }
 
 type Plan =
@@ -366,7 +392,9 @@ type Plan =
       row: PaymentRow;
       tok: StoreToken;
       title: string;
-      firstName: string | null;
+      /** the store's name, for the payer's statement */
+      statement: string;
+      buyer: PixBuyer | null;
       backUrl: string | null;
     };
 
@@ -383,13 +411,14 @@ const PAYABLE = ['pending', 'failed', 'expired'];
 export interface PayCtx {
   publicOrigin: string;
   storeDomain: string;
-  payerEmail?: string;
   /** Kernel 1.19+: a card order gets the in-page form, never a hosted checkout */
   cardForm?: boolean;
   /** MP_PUBLIC_KEY: the card fields' key for a store whose OAuth gave none */
   publicKey?: string;
   /** the page saw the bank's 3DS frame say COMPLETE: a still-pending challenge is MP catching up */
   challengeDone?: boolean;
+  /** the shopper's MP device id (Kernel 1.20+ sends it with a Pix /pay) */
+  deviceId?: string | null;
 }
 
 export async function preparePayment(
@@ -418,6 +447,86 @@ export async function preparePayment(
   });
 }
 
+/**
+ * MP requires a payer email and shoppers give none. Each shopper gets one stable address from
+ * their phone — never one address for everyone, which MP's anti-fraud reads as a single payer
+ * paying every store, and refuses. Keyed so the address doesn't spell the phone out.
+ */
+export function shopperPayerEmail(
+  secret: string,
+  phone: string | null,
+  orderId: string,
+  storeDomain: string,
+) {
+  const who = phone?.replace(/\D/g, '') || `order:${orderId}`;
+  const tag = createHmac('sha256', secret).update(`mp-payer:${who}`).digest('hex').slice(0, 20);
+  return `cliente.${tag}@${storeDomain}`;
+}
+
+/** "X-Burguer: bacon extra, 2× sem cebola" — the line's name, then what was chosen with it */
+function lineDescription(l: {
+  name: string;
+  modifiers: { name: string; qty?: number }[];
+  combo: { name: string; qty?: number }[];
+}) {
+  const picked = [...(l.combo ?? []), ...(l.modifiers ?? [])].map((m) =>
+    (m.qty ?? 1) > 1 ? `${m.qty}× ${m.name}` : m.name,
+  );
+  return picked.length ? `${l.name}: ${picked.join(', ')}` : l.name;
+}
+
+async function pixBuyer(
+  tx: Sql,
+  tenantId: string,
+  order: OrderLock,
+  storeDomain: string,
+  secret: string,
+): Promise<PixBuyer> {
+  const lines = await tx<
+    {
+      product_id: string | null;
+      slug: string;
+      name: string;
+      qty: number;
+      line_total_cents: number;
+      modifiers: { name: string; qty?: number }[];
+      combo: { name: string; qty?: number }[];
+    }[]
+  >`
+    select product_id, slug, name, qty, line_total_cents, modifiers, combo from order_items
+    where tenant_id = ${tenantId} and order_id = ${order.id}
+    order by sort limit 50
+  `;
+  return {
+    email: shopperPayerEmail(secret, order.customer_phone, order.id, storeDomain),
+    name: order.customer.name?.trim() || null,
+    phone: order.customer_phone,
+    // a line's total as one unit: modifiers make line / qty inexact
+    items: [
+      ...lines.map((l) => ({
+        id: l.product_id ?? l.slug,
+        title: l.qty > 1 ? `${l.qty}× ${l.name}` : l.name,
+        description: lineDescription(l),
+        categoryId: 'others',
+        quantity: 1,
+        unitPriceCents: l.line_total_cents,
+      })),
+      ...(order.delivery_fee_cents > 0
+        ? [
+            {
+              id: 'entrega',
+              title: 'Entrega',
+              description: 'Taxa de entrega do pedido',
+              categoryId: 'services',
+              quantity: 1,
+              unitPriceCents: order.delivery_fee_cents,
+            },
+          ]
+        : []),
+    ],
+  };
+}
+
 async function planPayment(
   tx: Sql,
   d: PayDeps,
@@ -430,7 +539,8 @@ async function planPayment(
 ): Promise<Plan> {
   const order = (
     await tx<OrderLock[]>`
-      select id, number, state, total_cents, customer, payment from orders
+      select id, number, state, total_cents, delivery_fee_cents, customer, customer_phone, payment
+      from orders
       where tenant_id = ${tenant.id} and id = ${orderId} and cart_id = ${cartId} for update
     `
   )[0];
@@ -472,7 +582,11 @@ async function planPayment(
     row,
     tok,
     title: `Pedido #${order.number} — ${tenant.name}`.slice(0, 200),
-    firstName: order.customer.name?.trim().split(/\s+/)[0]?.slice(0, 60) || null,
+    statement: tenant.name,
+    buyer:
+      row.kind === 'pix'
+        ? await pixBuyer(tx, tenant.id, order, ctx.storeDomain, d.sessionSecret)
+        : null,
     backUrl:
       row.kind === 'card'
         ? `${await storeOrigin(tx, tenant, ctx.storeDomain)}/pedido/${orderId}?pagamento=retorno`
@@ -585,14 +699,20 @@ async function createAttempt(
   let patch: Partial<PaymentRow>;
   try {
     if (row.kind === 'pix') {
+      // planPayment's create() sets one on every Pix attempt
+      const buyer = plan.buyer!;
       const expiresAt = row.pix_expires_at
         ? new Date(row.pix_expires_at)
         : new Date(now.getTime() + PIX_TTL_MIN * 60_000);
       const p = await d.provider.createPix(tok.token, {
         amountCents: row.amount_cents,
         description: plan.title,
-        payerEmail: ctx.payerEmail ?? `pagador@${ctx.storeDomain}`,
-        ...(plan.firstName ? { payerName: plan.firstName } : {}),
+        payerEmail: buyer.email,
+        ...(buyer.name ? { payerName: buyer.name } : {}),
+        ...(buyer.phone ? { payerPhone: buyer.phone } : {}),
+        items: buyer.items,
+        statementDescriptor: plan.statement,
+        deviceId: ctx.deviceId ?? null,
         externalReference: row.order_id,
         idempotencyKey,
         notificationUrl,
@@ -616,6 +736,7 @@ async function createAttempt(
         notificationUrl,
         backUrl: plan.backUrl!,
         applicationFeeCents: row.application_fee_cents,
+        statementDescriptor: plan.statement,
         expiresAt: new Date(new Date(row.created_at).getTime() + CARD_TTL_MIN * 60_000),
       });
       patch = {
@@ -720,6 +841,13 @@ export interface CardInput {
 }
 
 const bad = (message: string) => new HttpError(422, 'INVALID_PAYMENT', message);
+
+/** MP's device fingerprint as browsers send it (MP_DEVICE_SESSION_ID) */
+export const DEVICE_ID_RE = /^[A-Za-z0-9_:.-]{1,200}$/;
+/** An optional device id beside a Pix: anything else is dropped, never refused (it only feeds
+ *  MP's scoring). */
+export const deviceIdOr = (v: unknown) =>
+  typeof v === 'string' && DEVICE_ID_RE.test(v) ? v : null;
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,63}$/;
 
 /** POST /orders/:id/card's body: what MP's card fields hand the Kernel, bounded. Never an amount. */
@@ -754,7 +882,7 @@ export function parseCardInput(b: Record<string, unknown>): CardInput {
     identification = { type: type.toUpperCase(), number };
   }
   const device = b.deviceId;
-  if (device != null && (typeof device !== 'string' || !/^[A-Za-z0-9_:.-]{1,200}$/.test(device)))
+  if (device != null && (typeof device !== 'string' || !DEVICE_ID_RE.test(device)))
     throw bad('deviceId is invalid');
   return {
     token,
@@ -775,6 +903,8 @@ type CardPlan =
       row: PaymentRow;
       tok: StoreToken;
       title: string;
+      /** the store's name, for the card statement */
+      statement: string;
       firstName: string | null;
       /** an older Kernel's hosted checkout the form replaces — expired at MP, best effort */
       supersededCheckout: string | null;
@@ -854,7 +984,8 @@ async function planCard(
 ): Promise<CardPlan> {
   const order = (
     await tx<OrderLock[]>`
-      select id, number, state, total_cents, customer, payment from orders
+      select id, number, state, total_cents, delivery_fee_cents, customer, customer_phone, payment
+      from orders
       where tenant_id = ${tenant.id} and id = ${orderId} and cart_id = ${cartId} for update
     `
   )[0];
@@ -890,6 +1021,7 @@ async function planCard(
     row,
     tok,
     title: `Pedido #${order.number} — ${tenant.name}`.slice(0, 200),
+    statement: tenant.name,
     firstName: order.customer.name?.trim().split(/\s+/)[0]?.slice(0, 60) || null,
     supersededCheckout,
   });
@@ -966,6 +1098,7 @@ async function createCardAttempt(
       notificationUrl: notificationUrlFor(ctx, tenantId),
       applicationFeeCents: row.application_fee_cents,
       deviceId: input.deviceId,
+      statementDescriptor: plan.statement,
     });
   } catch (err) {
     markConnectionLater(d, tenantId, err, tok);
@@ -1161,6 +1294,14 @@ export async function syncOrderPayment(
     );
     await enqueueOrderMessageTx(tx, tenantId, orderId, 'paid');
   }
+  // money given back reaches the shopper once it's approved, whichever path approved it; the
+  // running total names the occurrence, so a replayed sync never texts twice
+  const before = Number(cur.payment.refundedCents ?? 0);
+  if (refunded > before)
+    await enqueueOrderMessageTx(tx, tenantId, orderId, 'refunded', {
+      occurrence: String(refunded),
+      refund: { cents: refunded - before, full: !before && status === 'refunded', online: true },
+    });
   return { changed: true, status };
 }
 

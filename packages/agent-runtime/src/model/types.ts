@@ -10,11 +10,22 @@ export interface Pricing {
   cacheWritePerMTok?: number;
 }
 
-/** One way to reach a model. `zdr` is set by staff per route; the gateway refuses any other. */
+/** How much the model reasons before it answers; an adapter that can't set it ignores it. */
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/**
+ * One way to reach a model. `zdr` (zero data retention) is staff's per-route choice: the gateway
+ * passes it to the adapter (OpenRouter enforces it per request); on a direct provider it's the
+ * account's contract.
+ */
 export interface ModelRoute {
   provider: string;
   model: string;
   zdr: boolean;
+  /** OpenRouter only: pin the call to this endpoint (its `tag`, e.g. `deepinfra/turbo`). */
+  endpoint?: string;
+  /** Anthropic only (`output_config.effort`). */
+  effort?: Effort;
   pricing?: Pricing;
   timeoutMs?: number;
 }
@@ -22,11 +33,22 @@ export interface ModelRoute {
 /** A request as one adapter receives it: the routed model, no Venduá metadata. */
 export interface ProviderRequest extends Omit<ModelRequest, 'meta' | 'tier'> {
   model: string;
+  /** The route's `zdr`; an adapter that can enforce it per request does. */
+  zdr?: boolean;
+  /** The route's `endpoint`; an adapter that can pin one does. */
+  endpoint?: string;
+  /** The route's `effort`; an adapter that can set it does. */
+  effort?: Effort;
 }
 
 export interface ProviderAdapter {
   readonly id: string;
   generate(req: ProviderRequest, signal: AbortSignal): Promise<ModelResponse>;
+  /**
+   * The most output tokens a call for `req` may bill, when it isn't `req.maxTokens` (a provider
+   * that thinks on top of the reply). The pre-call estimate uses it.
+   */
+  outputTokens?(req: ProviderRequest): number;
 }
 
 export interface RouteResolver {

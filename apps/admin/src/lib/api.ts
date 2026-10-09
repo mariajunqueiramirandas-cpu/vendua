@@ -1,4 +1,5 @@
 import type { PageTemplate, SectionInstance, StorefrontTokens } from '@vendua/templates';
+import { mpDeviceId, mpDeviceReady } from './mercadopago.ts';
 
 // Typed client for /admin/v1 — cookie session, x-vendua-admin CSRF marker, and an
 // Idempotency-Key minted per call (a retried mutation reuses its own key).
@@ -17,7 +18,13 @@ export class ApiError extends Error {
   }
 }
 
-type Init = RequestInit & { idem?: string; raw?: boolean; timeoutMs?: number };
+type Init = RequestInit & {
+  idem?: string;
+  raw?: boolean;
+  timeoutMs?: number;
+  /** may issue a plan Pix: waits briefly for Mercado Pago's fingerprint */
+  pix?: boolean;
+};
 
 // A dropped connection or a timeout leaves a write's outcome unknown: Core may have applied it.
 // Inside one mutation (lib/query.ts `useMutation`), its retries resend the same request with the
@@ -39,7 +46,7 @@ export function withRetryScope<T>(owner: object, run: () => T): T {
 const timeoutFor = (mutating: boolean, raw: boolean) => (raw ? 60_000 : mutating ? 30_000 : 20_000);
 
 async function req<T>(path: string, init: Init = {}): Promise<T> {
-  const { idem, raw, timeoutMs, ...rest } = init;
+  const { idem, raw, timeoutMs, pix, ...rest } = init;
   const method = rest.method ?? 'GET';
   const mutating = method !== 'GET';
   // read before the first await: the scope is only set while the mutationFn starts
@@ -52,6 +59,7 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
     keys?.set(print, key);
   }
 
+  const device = pix ? await mpDeviceReady() : mpDeviceId();
   const ctl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(
@@ -80,6 +88,7 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
           ...(raw ? {} : { 'content-type': 'application/json' }),
           'x-vendua-admin': '1',
           ...(key ? { 'idempotency-key': key } : {}),
+          ...(device ? { 'x-vendua-device': device } : {}),
           ...rest.headers,
         },
       });
@@ -116,6 +125,8 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
 const get = <T>(p: string) => req<T>(p);
 const send = <T>(method: string, p: string, body?: unknown) =>
   req<T>(p, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+const sendPix = <T>(method: string, p: string, body?: unknown) =>
+  req<T>(p, { method, pix: true, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
 
 // ── types ───────────────────────────────────────────────────────────────────
 
@@ -146,10 +157,16 @@ export type PaymentStatus =
   | 'partially_refunded'
   | 'charged_back'
   | 'in_mediation';
+/** 'dine_in': taken by the staff at the PDV, on a table or at the counter (ADR 0035) */
+export type OrderMode = 'pickup' | 'delivery' | 'dine_in';
+/** what the counter takes (ADR 0035): its own five, not the storefront's */
+export type PdvMethod = 'cash' | 'pix' | 'credit' | 'debit' | 'voucher';
+/** an order's method: the storefront's, a counter one, several ('mixed') or its comanda ('tab') */
+export type OrderPayMethod = PayMethod | PdvMethod | 'mixed' | 'tab';
 export type MpStatus = 'not_connected' | 'connected' | 'expiring' | 'disconnected' | 'restricted';
 
 export type PlanFeature =
-  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor';
+  'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor' | 'copilot' | 'pdv';
 export type PlanFeatures = Record<PlanFeature, boolean>;
 
 export interface Plan {
@@ -185,15 +202,21 @@ export interface Session {
     phone: string;
     role: Role;
     email: string | null;
+    /** typed in Perfil, waiting for its confirmation link */
+    pendingEmail?: string | null;
     prefs: {
       sound?: boolean;
       volume?: number;
       push?: boolean;
       /** push when an online payment lands (default on) */
       pushPayments?: boolean;
+      /** push (and its re-pings) when a shopper waits in a Duá conversation (default on) */
+      pushWaiting?: boolean;
       /** WhatsApp when an order waits past the accept target and no alert reached a device */
       whatsappAlerts?: boolean;
       emailInvoices?: boolean;
+      /** Duá pelo WhatsApp: opt-in, absent = off */
+      duaWhatsapp?: boolean;
       theme?: string;
       dismissedHints?: string[];
     };
@@ -206,6 +229,10 @@ export interface Session {
   plan: { id: string; name: string; features: PlanFeatures };
   /** the nav: Vendedor in the phone bar once on, its "precisa de você" count as the badge */
   vendedor?: { enabled: boolean; name: string; waiting: number };
+  /** Perfil's "Duá pelo WhatsApp": null unless owner/manager on a plan with the copilot.
+   *  `number` is Venduá's WhatsApp in international digits; `allowed` is false for a manager
+   *  whose owner turned it off for managers */
+  duaWhatsapp?: { number: string | null; allowed: boolean } | null;
 }
 
 export interface Order {
@@ -214,7 +241,10 @@ export interface Order {
   state: OrderState;
   customer: { name: string; phone: string };
   delivery: {
-    mode: 'pickup' | 'delivery';
+    mode: OrderMode;
+    /** dine-in: the table's label (null at the counter) and its comanda */
+    table?: string | null;
+    tabId?: string | null;
     neighborhood?: string | null;
     address?: string | null;
     addressParts?: Record<string, string | null>;
@@ -225,14 +255,20 @@ export interface Order {
     etaMax?: number | null;
     promisedFrom?: string | null;
     promisedTo?: string | null;
+    /** minutes "atrasou" pushed the promise back, summed */
+    delayMinutes?: number;
     lat?: number;
     lng?: number;
   };
   payment: {
     /** 'sandbox' (offline methods) · 'mercadopago' | 'fake' (online) — branch on `online` */
     provider: string;
-    method: PayMethod;
+    method: OrderPayMethod;
     status: PaymentStatus;
+    /** provider 'pdv' with method 'mixed': what each method took */
+    pdv?: { method: PdvMethod; cents: number }[];
+    /** cash on delivery: the note the customer pays with */
+    changeForCents?: number | null;
     /** Mercado Pago handles it (webhook-confirmed); false = the merchant confirms by hand */
     online?: boolean;
     paidAt?: string | null;
@@ -256,6 +292,8 @@ export interface Order {
     modifiers: { name: string; priceDeltaCents: number; qty?: number }[];
     combo: { slotName: string; name: string; qty: number }[];
     lineTotalCents: number;
+    /** the shopper's note for this line ("sem cebola") */
+    note?: string | null;
   }[];
   notes: string | null;
   scheduledFor: string | null;
@@ -318,9 +356,9 @@ export interface OrderRow {
   phone: string | null;
   totalCents: number;
   placedAt: string;
-  mode: 'pickup' | 'delivery';
+  mode: OrderMode;
   neighborhood: string | null;
-  paymentMethod: PayMethod;
+  paymentMethod: OrderPayMethod;
   paymentStatus: string;
   itemCount: number;
   scheduledFor: string | null;
@@ -348,7 +386,9 @@ export interface KitchenTicket {
   id: string;
   number: number;
   state: KitchenState;
-  mode: 'pickup' | 'delivery';
+  mode: OrderMode;
+  /** dine-in: the table's label */
+  table?: string | null;
   /** the customer's first name */
   name: string;
   notes: string | null;
@@ -361,7 +401,7 @@ export interface KitchenTicket {
   prepMinutes: number;
   rush: boolean;
   paid: boolean;
-  payMethod: PayMethod;
+  payMethod: OrderPayMethod;
   version: number;
   items: KitchenItem[];
 }
@@ -371,6 +411,8 @@ export interface KitchenItem {
   qty: number;
   modifiers: { name: string; qty: number }[];
   combo: { slotName: string; name: string; qty: number }[];
+  /** the shopper's note for this line ("sem cebola") */
+  note?: string | null;
   categoryId: string | null;
   stationId: string | null;
   doneAt: string | null;
@@ -419,12 +461,30 @@ export interface Product {
   /** true while one of the promotion's windows holds */
   promoNow?: boolean;
   tags: string[];
+  /** allergens and diets the merchant states (Core's DIETARY_TAGS) */
+  dietary?: DietaryTag[];
   imageUrl: string | null;
   dominant: string | null;
   mediaCount: number;
   groupCount: number;
   waiting: number;
 }
+
+export type DietaryTag =
+  | 'sem_gluten'
+  | 'contem_gluten'
+  | 'sem_lactose'
+  | 'contem_lactose'
+  | 'vegano'
+  | 'vegetariano'
+  | 'contem_amendoim'
+  | 'contem_castanhas'
+  | 'contem_ovo'
+  | 'contem_frutos_do_mar'
+  | 'apimentado';
+
+/** what a bulk change replaced, per product: `revert` with it is the "desfazer" */
+export type BulkBefore = { id: string } & Record<string, unknown>;
 
 export interface AvailabilitySchedule {
   /** days: 0 = domingo … 6 = sábado; no from/to = the whole day */
@@ -515,6 +575,10 @@ export interface SpecialDay {
   open?: string;
   close?: string;
   label?: string;
+  /** last day of a range, inclusive */
+  until?: string;
+  /** the same days every year */
+  yearly?: boolean;
 }
 export interface Zone {
   id: string;
@@ -532,6 +596,8 @@ export interface Zone {
   feePerKmCents: number;
   freeDeliveryOverCents: number | null;
 }
+
+export type DemandSpan = '30m' | '1h' | '2h' | 'today' | 'off';
 
 export interface StoreView {
   url: string;
@@ -561,6 +627,8 @@ export interface StoreView {
   };
   hours: { timezone: string; windows: Window_[] };
   specialDays: SpecialDay[];
+  /** the single dates they cover from today on (ranges and yearly repeats spelled out) */
+  specialDaysAhead?: SpecialDay[];
   operations: {
     prepTimeMinutes: number;
     acceptTargetMinutes: number;
@@ -570,6 +638,8 @@ export interface StoreView {
     pickupInstructions: string | null;
     deliveryEnabled: boolean;
     demand: 'normal' | 'high';
+    /** "muitos pedidos agora" ends by itself then */
+    demandUntil: string | null;
   };
   location: { latitude: number; longitude: number } | null;
   /** ADR 0024: an address with a pin is priced by road distance from `location` */
@@ -600,6 +670,8 @@ export interface Home {
     changesAt: string | null;
     override: string | null;
   };
+  /** "muitos pedidos agora", and when it ends by itself */
+  demand: { level: 'normal' | 'high'; until: string | null };
   hours: { timezone: string; windows: Window_[] };
   specialDays: SpecialDay[];
   today: {
@@ -614,7 +686,7 @@ export interface Home {
   inProgress: number;
   attention: {
     /** orders_waiting | closed_with_orders | pix_to_confirm | low_stock | waitlist |
-     *  alerts_failing | mp_expiring | mp_disconnected | mp_restricted | billing_pending |
+     *  waitlist_open | alerts_failing | mp_expiring | mp_disconnected | mp_restricted | billing_pending |
      *  billing_past_due | invoice_open | trial_ending | incident */
     kind: string;
     count: number;
@@ -649,10 +721,23 @@ export interface Customer {
   spentCents: number;
   firstAt: string;
   lastAt: string;
+  /** list rows: the store's tags on this customer */
+  tags?: string[];
+}
+
+/** what the store wrote down about a customer; autosaved from the customer page */
+export interface CustomerNotes {
+  note: string;
+  tags: string[];
+  updatedAt: string | null;
+  updatedBy: string | null;
 }
 
 export interface CustomerDetail {
-  customer: Customer & { cancelled: number };
+  customer: Customer & { cancelled: number; avgTicketCents: number };
+  notes: CustomerNotes;
+  /** the store's tags, most used first: suggestions */
+  knownTags: string[];
   orders: OrderRow[];
   favorites: { name: string; qty: number }[];
   loyalty: {
@@ -731,7 +816,15 @@ export interface Kpis {
 }
 
 export interface Reports {
-  range: { from: string; to: string; days: number; prevFrom: string; prevTo: string };
+  /** a preset's days are resolved by Core, in the store's calendar */
+  range: {
+    period: string;
+    from: string;
+    to: string;
+    days: number;
+    prevFrom: string;
+    prevTo: string;
+  };
   current: Kpis;
   previous: Kpis;
   series: { date: string; revenueCents: number; orders: number }[];
@@ -772,6 +865,8 @@ export interface Member {
   name: string;
   phone: string;
   email: string | null;
+  /** typed on the invite, waiting for its link to be opened (only then a way to sign in) */
+  pendingEmail?: string | null;
   role: Role;
   status: 'active' | 'revoked';
   createdAt: string;
@@ -794,6 +889,9 @@ export interface ActivityEntry {
   entityId: string | null;
   summary: string;
   at: string;
+  /** Core's readable diff: ≤ 6 fields, `hidden` when the values aren't shown */
+  changes: { label: string; from: string | null; to: string | null; hidden?: true }[];
+  more: number;
 }
 
 /** Order steps the store's WhatsApp can tell shoppers about (ADR 0026). */
@@ -801,11 +899,13 @@ export type WaEvent =
   | 'placed'
   | 'paid'
   | 'confirmed'
+  | 'delayed'
   | 'preparing'
   | 'ready'
   | 'out_for_delivery'
   | 'delivered'
-  | 'cancelled';
+  | 'cancelled'
+  | 'refunded';
 
 export type PrinterKind = 'spooler' | 'tcp' | 'serial' | 'usb' | 'bluetooth';
 export type CodePage = 'cp850' | 'cp860' | 'ascii';
@@ -857,6 +957,20 @@ export interface Pairing {
   expiresAt: string;
   deviceId: string | null;
 }
+/** one ticket of an order (GET /orders/:id/prints), newest first */
+export interface OrderPrintJob {
+  id: string;
+  status: 'pending' | 'sent' | 'done' | 'failed' | 'expired';
+  trigger: 'placed' | 'confirmed' | 'manual';
+  printerId: string;
+  printer: string;
+  /** the computer or phone that holds the printer */
+  device: string;
+  deviceOnline: boolean;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
 export type PrinterPatch = Partial<
   Pick<Printer, 'label' | 'auto' | 'paper' | 'codepage' | 'copies' | 'cut'>
 >;
@@ -865,7 +979,17 @@ export type WaState = 'off' | 'connecting' | 'pairing' | 'open' | 'logged_out' |
 
 export interface WaMessage {
   id: string;
-  kind: 'order' | 'opt_out' | 'opt_in' | 'test';
+  kind:
+    | 'order'
+    | 'opt_out'
+    | 'opt_in'
+    | 'test'
+    | 'agent'
+    | 'chat'
+    /** "lembrete de sacola", once per bag a shopper asked for at checkout */
+    | 'cart_reminder'
+    /** "avise-me quando abrir" */
+    | 'store_open';
   event: WaEvent | null;
   orderId: string | null;
   orderNumber: number | null;
@@ -898,6 +1022,16 @@ export interface Whatsapp {
   /** what the shopper reads at each step (a sample order); null = this step says nothing */
   previews: Record<WaEvent, string | null>;
   stats: { sent: number; failed: number; optouts: number };
+  /** "Lembrete de sacola": one message per bag, to shoppers who asked for it at checkout */
+  cartReminder: {
+    on: boolean;
+    /** the Vendedor is on and follows up open bags itself: this stays off */
+    vendedor: boolean;
+    /** what the shopper reads, in the store's words (a sample bag from its menu) */
+    preview: string;
+    /** reminders queued in the last 7 days, and how many of those bags became orders */
+    week: { sent: number; ordered: number };
+  };
   recent: WaMessage[];
 }
 
@@ -1012,7 +1146,49 @@ export interface Incident {
 
 export type SubscriptionStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'cancelled';
 export type InvoiceStatus = 'open' | 'paid' | 'failed' | 'void';
-export type DomainStatus = 'active' | 'pending_dns' | 'dns_ok' | 'failed';
+/** a custom domain's state (ADR 0038); `removing` never reaches the admin */
+export type CustomDomainStatus =
+  'ordering' | 'pending_dns' | 'dns_ok' | 'active' | 'repairing' | 'lapsed' | 'failed';
+/** an address of the store: the platform one is always `active` */
+export type DomainStatus = CustomDomainStatus;
+
+export type DnsRecordType = 'A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT';
+/** an owner record in a zone Venduá hosts. name: '@' or relative ('mail', '_dmarc');
+ *  '@' and 'www' A/AAAA/CNAME are Venduá's and refused */
+export interface DnsRecord {
+  type: DnsRecordType;
+  name: string;
+  value: string;
+  priority?: number;
+}
+
+export interface HolderAddress {
+  street: string;
+  number: string;
+  complement?: string;
+  district: string;
+  city: string;
+  /** UF */
+  state: string;
+  /** 8 digits */
+  postalCode: string;
+}
+
+export type DomainOrderStatus =
+  'awaiting_payment' | 'queued' | 'pending' | 'registered' | 'conflict' | 'failed' | 'cancelled';
+
+export interface DomainOrderInput {
+  /** label.com.br */
+  host: string;
+  holder: {
+    document: string;
+    name: string;
+    email: string;
+    phone: string;
+    address: HolderAddress;
+  };
+  authorize: true;
+}
 
 export interface ChecklistItem {
   /** profile | hours | delivery | pix | menu | first_order */
@@ -1076,10 +1252,13 @@ export interface Account {
     /** card: where the owner authorizes the recurring charge (while pending) */
     checkoutUrl: string | null;
     payerEmail: string | null;
+    /** the plan payer's CPF (11 digits) or CNPJ (14) */
+    payerDocument: string | null;
     /** the free trial's end (the first charge); kept after it converts */
     trialEndsAt: string | null;
   } | null;
-  billing: { available: boolean };
+  /** publicKey: MercadoPago.js's key (MP_PUBLIC_KEY), null off Mercado Pago */
+  billing: { available: boolean; publicKey: string | null };
   /** Duá's conversations: this month's (or the trial's) allowance, plus packs bought */
   ai: {
     included: boolean;
@@ -1096,23 +1275,99 @@ export interface Account {
   aiPacks: AiPack[];
   invoices: Invoice[];
   address: string;
-  domains: { host: string; kind: 'store' | 'custom'; status: DomainStatus; primary: boolean }[];
+  domains: {
+    host: string;
+    kind: 'store' | 'custom';
+    status: CustomDomainStatus;
+    primary: boolean;
+  }[];
   customDomain: {
     id: string;
     host: string;
-    status: 'pending_dns' | 'dns_ok' | 'active' | 'failed';
+    status: CustomDomainStatus;
+    source: 'connected' | 'included';
+    method: 'cname' | 'ns';
+    /** the www./root counterpart, served too (redirects to host) */
+    aliasHost: string | null;
+    /** method cname: the CNAME target (or A records at `domainOptions.edgeIpv4`) */
     cnameTarget: string;
     txtName: string;
     txtValue: string;
+    /** method ns: the pair to set at the registry, [] until the zone exists */
+    nameServers: string[];
+    /** method ns: the owner's records copied into the zone */
+    records: DnsRecord[];
+    /** method ns: the owner confirmed the list (the zone is then created) */
+    recordsConfirmed: boolean;
+    /** method ns: a DS record at registro.br blocks the delegation */
+    dnssecSigned: boolean;
+    /** registry expiry when known */
+    expiresAt: string | null;
     lastCheckedAt: string | null;
     lastError: string | null;
   } | null;
-  siteRequest: {
+  /** the latest register order: open, or finished in the last 30 days */
+  domainOrder: {
     id: string;
-    status: 'requested' | 'in_progress' | 'delivered' | 'cancelled';
-    brief: string | null;
+    host: string;
+    status: DomainOrderStatus;
+    /** document masked: '12.345.678/0001-**' */
+    holder: { kind: 'cnpj' | 'cpf'; document: string; name: string };
     createdAt: string;
-    updatedAt: string;
+    placedAt: string | null;
+    conflictSince: string | null;
+    /** human pt-BR */
+    lastError: string | null;
+    /** the provider owners pick in registro.br's "Alterar provedor" */
+    providerName: string | null;
+  } | null;
+  domainOptions: {
+    /** owners can point their nameservers at Venduá */
+    delegation: boolean;
+    /** a .com.br can be registered with the plan */
+    purchase: boolean;
+    edgeIpv4: string | null;
+  };
+  siteRequest: SiteRequest | null;
+}
+
+/** The brief Duá writes with the owner and the owner approves on his card (Core's spec.ts). */
+export interface DesignSpec {
+  version: 1;
+  /** one or two sentences: what the site should feel like */
+  summary: string;
+  brand: {
+    personality: string[];
+    palette: { primary: string | null; accents: string[]; notes: string | null };
+    typography: string;
+    references: { url: string; note: string }[];
+  };
+  experience: {
+    mustHave: string[];
+    differentials: string[];
+    motion: 'none' | 'subtle' | 'expressive';
+    avoid: string[];
+  };
+  copy: { tone: string; language: 'pt-BR' };
+}
+
+/** The site sob medida (Pangolim): the owner's request and, while it's built, where it stands. */
+export interface SiteRequest {
+  id: string;
+  status: 'requested' | 'in_progress' | 'delivered' | 'cancelled';
+  brief: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** the brief the owner approved on Duá's card (the adjusted one after the revision) */
+  spec: DesignSpec | null;
+  /** while building: ready by then (24 h from the approval) */
+  dueAt: string | null;
+  deliveredAt: string | null;
+  revisionsUsed: 0 | 1;
+  revisionsIncluded: 1;
+  building: {
+    kind: 'generate' | 'revision';
+    stage: 'fila' | 'construindo' | 'revisao' | 'publicando';
   } | null;
 }
 
@@ -1276,10 +1531,20 @@ export interface MenuImport {
 // cards.ts and the inline shapes of src/admin/routes-vendedor.ts) ─────────────────────────────
 
 export type VendedorPresence =
-  'off' | 'answering' | 'rehearsal' | 'covering' | 'disconnected' | 'budget' | 'trouble';
+  | 'off'
+  /** "pausar 1 h / até amanhã": `agent.pausedUntil` says until when */
+  | 'paused'
+  | 'answering'
+  | 'rehearsal'
+  | 'covering'
+  | 'disconnected'
+  | 'budget'
+  | 'trouble';
 export type Coverage = 'rehearsal' | 'when_slow' | 'after_hours' | 'always';
 export type AgentTone = 'relaxed' | 'balanced' | 'formal';
 export type IncentiveReason = 'recovery' | 'first_order' | 'hesitation';
+/** whose WhatsApp messages Duá answers: the store's number is often the owner's own */
+export type AnswerWho = 'known_and_new' | 'known_only' | 'everyone';
 
 export interface StoreAgentSettings {
   name: string;
@@ -1297,7 +1562,7 @@ export interface StoreAgentSettings {
     newCashCustomer: boolean;
   };
   humanSilenceMin: number;
-  unknownNumbers: 'shoppers_only' | 'all';
+  answerWho: AnswerWho;
   recovery: { enabled: boolean; delayMin: number };
   incentives: null | {
     couponIds: string[];
@@ -1328,6 +1593,8 @@ export interface VendedorHome {
     slowAfterMin: number;
     enabledAt: string | null;
     firstSaleAt: string | null;
+    /** set only while a pause holds; he comes back on his own then */
+    pausedUntil: string | null;
   };
   presence: VendedorPresence;
   /** what Duá can still take this period: 0 left means new shoppers go to the store */
@@ -1366,13 +1633,29 @@ export interface VendedorHome {
   onboarding: { started: boolean; finished: boolean; part: string | null };
 }
 
-export type ThreadFilter = 'all' | 'waiting' | 'orders' | 'agent' | 'others';
-/** who answers now: Ana, Ensaio, the store, the store's grace minutes, muted, nobody */
-export type ThreadFloor = 'agent' | 'rehearsal' | 'store' | 'wait' | 'muted' | 'off';
+export type ThreadFilter = 'all' | 'waiting' | 'ask' | 'orders' | 'agent' | 'personal' | 'others';
+/** who answers now: Duá, Ensaio, the store, the store's grace minutes, muted, Duá paused, nobody */
+export type ThreadFloor = 'agent' | 'rehearsal' | 'store' | 'wait' | 'muted' | 'paused' | 'off';
 export type ThreadOwner = 'open' | 'agent' | 'human' | 'muted';
 export type ThreadStage =
   'browsing' | 'building' | 'checkout' | 'confirming' | 'paying' | 'ordered' | 'after';
 export type ThreadChannel = 'whatsapp' | 'test' | 'web' | 'instagram';
+/** checking: Duá is reading the chat's last messages; ask: the owner decides; personal: never answered */
+export type ThreadClass = 'unknown' | 'checking' | 'ask' | 'shopper' | 'personal' | 'other';
+export type ClassSource =
+  'orders' | 'owner' | 'command' | 'history' | 'new_contact' | 'message' | 'setting' | 'content';
+/** Core's code for why a thread has its class, never the model's words */
+export type ClassReason =
+  | 'ordered_before'
+  | 'owner_marked'
+  | 'no_prior_chat'
+  | 'looks_personal'
+  | 'looks_customer'
+  | 'unclear'
+  | 'history_unavailable'
+  | 'known_only'
+  | 'everyone'
+  | 'not_a_shopper';
 
 export interface ThreadRow {
   id: string;
@@ -1384,12 +1667,25 @@ export interface ThreadRow {
   reason: string | null;
   waitingSince: string | null;
   stage: ThreadStage;
-  class: 'unknown' | 'shopper' | 'other';
+  class: ThreadClass;
+  /** null for threads classified before Core kept the reason */
+  classReason: ClassReason | null;
+  classSource: ClassSource | null;
   preview: string | null;
   previewAuthor: string | null;
   lastAt: string;
   orderNumber: number | null;
+  /** the shopper wrote last, after the store last opened it */
   unread: boolean;
+  /** a search that matched a message: the words around the match */
+  match?: string | null | undefined;
+}
+
+export interface ThreadList {
+  threads: ThreadRow[];
+  next: string | null;
+  /** per filter, when Core sends it ("para decidir · 3") */
+  counts?: Partial<Record<ThreadFilter, number>> | undefined;
 }
 
 export type MessageAuthor = 'shopper' | 'agent' | 'merchant' | 'core';
@@ -1451,6 +1747,8 @@ export interface ThreadDetail {
     paymentStatus: string;
   } | null;
   humanSilenceMin: number;
+  /** the store paused Duá until then (null when he isn't) */
+  pausedUntil?: string | null | undefined;
 }
 
 /** Core's receipt: every figure here is Core's ("calculado pela loja") */
@@ -1527,6 +1825,8 @@ export interface ClienteOcultoResult {
   name: string;
   check: string;
   passed: boolean;
+  /** not scored: the AI failed one side of the conversation */
+  skipped?: boolean;
   why: string;
   turns: number;
   threadId: string | null;
@@ -1539,6 +1839,7 @@ export interface ClienteOculto {
     status: string;
     passed: number | null;
     total: number | null;
+    skipped: number;
     results: ClienteOcultoResult[] | null;
     error: string | null;
     at: string;
@@ -1548,6 +1849,7 @@ export interface ClienteOculto {
     id: string;
     passed: number | null;
     total: number | null;
+    skipped: number;
     status: string;
     at: string;
   }[];
@@ -1582,6 +1884,16 @@ export interface VendedorSettings {
   intro: string;
   coupons: { id: string; code: string; label: string | null; kind: string; value: number }[];
   incentivesUsedCents: number;
+  /** "pausar 1 h / até amanhã": set only while the pause holds */
+  pausedUntil?: string | null | undefined;
+}
+
+/** a short reply the store saved, put into the composer with a tap */
+export interface QuickReply {
+  id: string;
+  text: string;
+  position: number;
+  at: string;
 }
 
 /** partial settings; nested groups merge field by field in Core. The name is always Duá. */
@@ -1638,7 +1950,286 @@ export interface CustomerFact {
   label: string;
   value: unknown;
   sensitive: boolean;
+  /** who wrote it: the store by hand, or Duá from the conversation */
+  source?: 'store' | 'agent' | undefined;
   at: string;
+}
+
+// ── Duá Copilot (ADR 0034): the store's people ask Duá in the admin; he prepares changes as
+// cards and nothing changes until someone with the role confirms one.
+
+export type CopilotActionKind =
+  | 'store.pause'
+  | 'store.resume'
+  | 'store.operations'
+  | 'store.special_day'
+  | 'product.update'
+  | 'products.price'
+  | 'coupon.create'
+  | 'coupon.update'
+  | 'site.build'
+  | 'site.revise';
+
+/** one line of a proposal's diff, formatted by Core (pt-BR); `from: null` is something new */
+export interface CopilotLine {
+  label: string;
+  from: string | null;
+  to: string;
+}
+
+export interface CopilotAction {
+  id: string;
+  kind: CopilotActionKind;
+  /** "Pausar a loja", "Aumentar 10% o preço de 3 produtos" */
+  title: string;
+  lines: CopilotLine[];
+  /** touches prices or discounts */
+  money: boolean;
+  status: 'proposed' | 'applied' | 'declined' | 'expired' | 'failed';
+  /** why the store refused it, when failed (shown as is) */
+  error: string | null;
+  /** what happened, when applied ("Loja pausada até hoje às 15:30") */
+  done: string | null;
+  /** an admin path that shows the result */
+  link: string | null;
+  /** this person may confirm or decline it now */
+  canDecide: boolean;
+  at: string;
+  decidedAt: string | null;
+  expiresAt: string;
+}
+
+export interface CopilotMessage {
+  id: string;
+  author: 'merchant' | 'dua';
+  text: string;
+  at: string;
+  /** the door it came through; missing = 'admin' */
+  channel?: 'admin' | 'whatsapp';
+  /** a WhatsApp voice note (the text is its transcript) */
+  voice?: boolean;
+}
+
+export type CopilotItem =
+  ({ type: 'message' } & CopilotMessage) | ({ type: 'action' } & CopilotAction);
+
+export interface CopilotView {
+  /** oldest first; each of Duá's replies is followed by the cards it proposed */
+  items: CopilotItem[];
+  /** Duá is working on the last message (Core stops saying so after 2 min) */
+  busy: boolean;
+}
+
+// ── PDV (ADR 0035, docs/features/pdv.md): Core prices, splits and makes change ──
+
+export interface PdvLineIn {
+  productId: string;
+  qty: number;
+  modifiers?: { id: string; qty?: number }[];
+  comboSelections?: { slotId: string; productId: string; qty: number }[];
+  note?: string;
+}
+export interface PdvDiscountIn {
+  kind: 'fixed' | 'percent';
+  /** cents (fixed) or basis points (percent) */
+  value: number;
+  reason: string;
+}
+export interface PdvPaymentIn {
+  method: PdvMethod;
+  amountCents: number;
+  /** cash only: the notes handed over */
+  tenderedCents?: number;
+}
+export interface PdvQuoteLine {
+  productId: string;
+  name: string;
+  qty: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+  modifiers: { name: string; qty: number; priceDeltaCents: number }[];
+  combo: { slotName: string; name: string; qty: number }[];
+  note: string | null;
+}
+export interface PdvQuote {
+  lines: PdvQuoteLine[];
+  subtotalCents: number;
+  discountCents: number;
+  /** 0 without a delivery */
+  deliveryFeeCents?: number;
+  delivery?: PdvDeliveryQuote | null;
+  totalCents: number;
+}
+/** a phone order's address (docs/features/pdv.md, "Delivery from the counter") */
+export interface PdvDeliveryIn {
+  street: string;
+  number?: string;
+  complement?: string;
+  neighborhood: string;
+  reference?: string;
+  /** 8 digits */
+  cep?: string;
+  lat?: number;
+  lng?: number;
+  /** manager: a fee typed by hand, skips the zones */
+  feeCents?: number;
+}
+export interface PdvDeliveryQuote {
+  feeCents: number;
+  /** null with a hand-typed fee */
+  zoneName: string | null;
+  etaMin: number | null;
+  etaMax: number | null;
+  distanceKm: number | null;
+}
+export interface PdvCustomer {
+  name: string | null;
+  phone: string;
+  orders: number;
+  lastDelivery: {
+    street?: string | null;
+    number?: string | null;
+    complement?: string | null;
+    neighborhood?: string | null;
+    reference?: string | null;
+    cep?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+  } | null;
+}
+export interface PdvArchivedTable extends PdvTable {
+  archivedAt: string;
+}
+export interface PdvTables {
+  tables: PdvTable[];
+  /** newest first */
+  archived: PdvArchivedTable[];
+}
+/** 422 PRINTER_REQUIRED's details: the screen asks which one */
+export interface PdvPrinterChoice {
+  id: string;
+  name: string;
+}
+export interface PdvPayment {
+  id: string;
+  method: PdvMethod;
+  amountCents: number;
+  tenderedCents: number | null;
+  changeCents: number;
+  at: string;
+  by: string;
+  voided: boolean;
+}
+export interface PdvSale {
+  orderId: string;
+  number: number;
+  totalCents: number;
+  changeCents: number;
+  payments: PdvPayment[];
+}
+export interface PdvTable {
+  id: string;
+  label: string;
+  sort: number;
+  /** what the table's printed QR opens: the store's origin with `?mesa=<signed token>` (ADR 0036) */
+  qrUrl: string;
+}
+export interface TabSummary {
+  id: string;
+  label: string;
+  tableId: string | null;
+  openedAt: string;
+  openedBy: string;
+  customerName: string | null;
+  rounds: number;
+  subtotalCents: number;
+  totalCents: number;
+  paidCents: number;
+}
+export interface TabRound {
+  orderId: string;
+  number: number;
+  state: OrderState;
+  /** 'table_qr': the customer ordered from the table's QR (ADR 0036) */
+  source: 'pdv' | 'table_qr';
+  /** paid online by the customer: listed, but outside the comanda's totals and what remains */
+  paidOnline: boolean;
+  /** chose to pay online and hasn't yet: not owed here, and it holds the comanda open */
+  onlinePending: boolean;
+  placedAt: string;
+  totalCents: number;
+  items: {
+    name: string;
+    qty: number;
+    lineTotalCents: number;
+    modifiers: { name: string; qty: number }[];
+    note: string | null;
+  }[];
+}
+export interface TabDetail extends TabSummary {
+  status: 'open' | 'closed' | 'cancelled';
+  closedAt: string | null;
+  serviceBps: number;
+  serviceFee: boolean;
+  discount: { kind: 'fixed' | 'percent'; value: number; reason: string } | null;
+  discountCents: number;
+  serviceCents: number;
+  /** can go below 0 after a cancelled round */
+  remainingCents: number;
+  roundsList: TabRound[];
+  payments: PdvPayment[];
+  split: { ways: number; sharesCents: number[] } | null;
+}
+export type ByMethod<T> = Record<PdvMethod, T>;
+export interface CaixaDetail {
+  id: string;
+  openedAt: string;
+  openedBy: string;
+  openingCents: number;
+  movements: {
+    id: string;
+    kind: 'sangria' | 'suprimento';
+    amountCents: number;
+    reason: string;
+    by: string;
+    at: string;
+  }[];
+  /** cents null for attendants while it is open: the amounts would give the count away */
+  byMethod: ByMethod<{ count: number; cents: number | null }>;
+  salesCount: number;
+  changeCents: number;
+  serviceCents: number;
+  /** null for attendants: they close blind */
+  expected: ByMethod<number> | null;
+}
+export interface CaixaReport extends CaixaDetail {
+  closedAt: string;
+  closedBy: string;
+  counted: ByMethod<number>;
+  differences: ByMethod<number>;
+  notes: string | null;
+}
+export interface CaixaHistoryRow {
+  id: string;
+  openedAt: string;
+  closedAt: string;
+  openedBy: string;
+  closedBy: string;
+  totalCents: number;
+  differenceCents: number;
+}
+export interface PdvState {
+  caixa: CaixaDetail | null;
+  tables: PdvTable[];
+  /** the open ones */
+  tabs: TabSummary[];
+  serviceBps: number;
+  /** customers order from the table's QR (the store's switch; ADR 0036) */
+  qrOrders: boolean;
+}
+export interface PdvSettings {
+  serviceBps: number;
+  qrOrders: boolean;
 }
 
 export const api = {
@@ -1663,7 +2254,7 @@ export const api = {
     plans: () =>
       get<{
         plans: Plan[];
-        billing: { available: boolean; accessCode: boolean };
+        billing: { available: boolean; accessCode: boolean; publicKey: string | null };
         /** the team turned signup on and its WhatsApp, email and billing are set up */
         signup: { open: boolean };
         storeDomain: string;
@@ -1695,9 +2286,11 @@ export const api = {
       slug: string;
       ownerName: string;
       email: string;
+      /** the plan payer's CPF or CNPJ */
+      document: string;
       segment?: string;
       accessCode?: string;
-    }) => send<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
+    }) => sendPix<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
   },
   session: () => get<Session>('/session'),
   switchStore: (storeId: string) =>
@@ -1706,7 +2299,7 @@ export const api = {
     name?: string;
     email?: string | null;
     prefs?: Partial<Session['user']['prefs']>;
-  }) => send<{ user: unknown }>('PATCH', '/me', patch),
+  }) => send<{ user: unknown; emailConfirmation?: 'sent' | 'rate_limited' }>('PATCH', '/me', patch),
   sessions: () =>
     get<{
       sessions: {
@@ -1720,6 +2313,8 @@ export const api = {
   endSession: (id: string) => send<{ ok: true }>('DELETE', `/me/sessions/${id}`),
   pushSubscribe: (sub: PushSubscriptionJSON) => send('POST', '/push/subscribe', sub),
   pushUnsubscribe: (endpoint: string) => send('POST', '/push/unsubscribe', { endpoint }),
+  pushRebind: (endpoint: string) =>
+    send<{ rebound: boolean }>('POST', '/push/rebind', { endpoint }),
 
   home: () => get<Home>('/home'),
   search: (q: string) => get<SearchResult>(`/search?q=${encodeURIComponent(q)}`),
@@ -1731,6 +2326,10 @@ export const api = {
     from?: string | undefined;
     to?: string | undefined;
     before?: string | undefined;
+    method?: string | undefined;
+    /** delivery | pickup | scheduled */
+    mode?: string | undefined;
+    unpaid?: '1' | undefined;
   }) => {
     const s = new URLSearchParams();
     for (const [k, v] of Object.entries(p)) if (v) s.set(k, v);
@@ -1763,6 +2362,15 @@ export const api = {
     }),
   markPaid: (id: string, status: 'paid' | 'pending') =>
     send<{ order: Order }>('POST', `/orders/${id}/payment`, { status }),
+  /** "atrasou": the promise moves later; the shopper hears the new time on WhatsApp */
+  delay: (id: string, minutes: number, idem: string, opts: { keepalive?: boolean } = {}) =>
+    req<{ order: Order; notified: boolean }>(`/orders/${id}/delay`, {
+      method: 'POST',
+      body: JSON.stringify({ minutes }),
+      idem,
+      ...(opts.keepalive ? { keepalive: true } : {}),
+    }),
+  orderPrints: (id: string) => get<{ jobs: OrderPrintJob[] }>(`/orders/${id}/prints`),
   refund: (id: string, p: { amountCents?: number | null; reason?: string }) =>
     send<{ order: Order; payments: OrderPayment[] }>('POST', `/orders/${id}/refund`, p),
 
@@ -1805,7 +2413,18 @@ export const api = {
       keepalive: true,
     }),
   bulk: (ids: string[], action: string, extra: Record<string, unknown> = {}) =>
-    send<{ updated: number }>('POST', '/products/bulk', { ids, action, ...extra }),
+    send<{ updated: number; before?: BulkBefore[]; waitlistWoken?: number }>(
+      'POST',
+      '/products/bulk',
+      { ids, action, ...extra },
+    ),
+  /** puts back what a bulk change replaced: Core's own `before`, sent back */
+  bulkRevert: (items: BulkBefore[]) =>
+    send<{ updated: number }>('POST', '/products/bulk', { action: 'revert', items }),
+  /** a soft delete: orders keep their lines; restoreProduct undoes it */
+  deleteProduct: (id: string) => send<{ deleted: boolean }>('DELETE', `/products/${id}`),
+  restoreProduct: (id: string) =>
+    send<{ product: ProductDetail }>('POST', `/products/${id}/restore`),
   importPreview: (text: string) =>
     send<{ items: { name: string; priceCents: number }[] }>('POST', '/products/import/preview', {
       text,
@@ -1819,7 +2438,9 @@ export const api = {
     }),
   updateCategory: (id: string, c: { name?: string; description?: string | null }) =>
     send('PATCH', `/categories/${id}`, c),
-  deleteCategory: (id: string) => send('DELETE', `/categories/${id}`),
+  // keepalive: a delete held for "desfazer" is sent as the app closes
+  deleteCategory: (id: string, opts: { keepalive?: boolean } = {}) =>
+    req(`/categories/${id}`, { method: 'DELETE', ...(opts.keepalive ? { keepalive: true } : {}) }),
   orderCategories: (ids: string[]) => send('PUT', '/categories/order', { ids }),
 
   uploadMedia: async (
@@ -1869,9 +2490,15 @@ export const api = {
     message?: string | null;
   }) => send<StoreView>('POST', '/store/pause', p),
   resume: () => send<StoreView>('POST', '/store/resume'),
+  /** "muitos pedidos agora" for a while (it always ends by itself), or off */
+  demand: (span: DemandSpan) => send<StoreView>('POST', '/store/demand', { for: span }),
   createZone: (z: Partial<Zone>) => send<{ zones: Zone[] }>('POST', '/zones', z),
   updateZone: (id: string, z: Partial<Zone>) => send<{ zones: Zone[] }>('PATCH', `/zones/${id}`, z),
-  deleteZone: (id: string) => send<{ zones: Zone[] }>('DELETE', `/zones/${id}`),
+  deleteZone: (id: string, opts: { keepalive?: boolean } = {}) =>
+    req<{ zones: Zone[] }>(`/zones/${id}`, {
+      method: 'DELETE',
+      ...(opts.keepalive ? { keepalive: true } : {}),
+    }),
 
   payments: () => get<Payments>('/payments'),
   updatePayments: (p: {
@@ -1888,6 +2515,8 @@ export const api = {
   whatsapp: () => get<Whatsapp>('/whatsapp'),
   whatsappPair: (phone: string) => send<Whatsapp>('POST', '/whatsapp/pair', { phone }),
   whatsappDisconnect: () => send<Whatsapp>('POST', '/whatsapp/disconnect'),
+  whatsappCartReminder: (on: boolean) =>
+    send<Whatsapp>('PATCH', '/whatsapp/settings', { cartReminder: on }),
   whatsappSettings: (events: Partial<Record<WaEvent, boolean>>) =>
     send<Whatsapp>('PATCH', '/whatsapp/settings', { events }),
   whatsappTest: () => send<Whatsapp>('POST', '/whatsapp/test'),
@@ -1917,18 +2546,23 @@ export const api = {
   testAlert: () => send<{ devices: number; ok: number; failed: number }>('POST', '/alerts/test'),
   helpStatus: () => get<{ incidents: Incident[] }>('/help/status'),
 
-  customers: (p: { q?: string; sort?: string; offset?: number }) => {
+  customers: (p: { q?: string; sort?: string; tag?: string; offset?: number }) => {
     const s = new URLSearchParams();
     if (p.q) s.set('q', p.q);
     if (p.sort) s.set('sort', p.sort);
+    if (p.tag) s.set('tag', p.tag);
     if (p.offset) s.set('offset', String(p.offset));
     return get<{
       customers: Customer[];
       stats: { customers: number; repeat: number; newThisMonth: number };
+      /** the store's tags, most used first */
+      tags: { tag: string; customers: number }[];
       next: number | null;
     }>(`/customers?${s}`);
   },
   customer: (phone: string) => get<CustomerDetail>(`/customers/${phone}`),
+  saveCustomerNotes: (phone: string, p: { note?: string; tags?: string[] }) =>
+    send<{ notes: CustomerNotes; knownTags: string[] }>('PUT', `/customers/${phone}/notes`, p),
   exportCustomer: (phone: string) => get<unknown>(`/customers/${phone}/export`),
   forgetCustomer: (phone: string, confirm: string) =>
     send<{ anonymized: number }>('POST', `/customers/${phone}/forget`, { confirm }),
@@ -1937,6 +2571,14 @@ export const api = {
   createCoupon: (c: Record<string, unknown>) => send<{ coupons: Coupon[] }>('POST', '/coupons', c),
   updateCoupon: (id: string, c: Record<string, unknown>) =>
     send<{ coupons: Coupon[] }>('PATCH', `/coupons/${id}`, c),
+  /** archived: off the list and off carts; updateCoupon({ archived: false }) brings it back */
+  deleteCoupon: (id: string) => send<{ coupons: Coupon[] }>('DELETE', `/coupons/${id}`),
+  cloneCoupon: (id: string, code: string) =>
+    send<{ coupon: { id: string; code: string }; coupons: Coupon[] }>(
+      'POST',
+      `/coupons/${id}/clone`,
+      { code },
+    ),
   setLoyalty: (program: LoyaltyProgram | null) =>
     send<{ program: LoyaltyProgramView | null }>('PUT', '/loyalty', { program }),
   waitlistNotified: (productId: string) =>
@@ -1956,9 +2598,13 @@ export const api = {
       }[];
     }>('/share'),
 
-  reports: (from: string, to: string) => get<Reports>(`/reports?from=${from}&to=${to}`),
+  /** a preset (`period`) or a custom range; Core answers with the days it used */
+  reports: (p: { period: string } | { from: string; to: string }) =>
+    get<Reports>(`/reports?${new URLSearchParams(p)}`),
 
-  team: () => get<{ members: Member[] }>('/team'),
+  team: () => get<{ members: Member[]; duaWhatsappManagers?: boolean }>('/team'),
+  teamSettings: (p: { duaWhatsappManagers: boolean }) =>
+    send<{ duaWhatsappManagers: boolean }>('PATCH', '/team/settings', p),
   addMember: (m: { name: string; phone: string; role: Role; email?: string | null }) =>
     send<{ members: Member[]; invite: InviteResult; signInUrl: string }>('POST', '/team', m),
   resendInvite: (id: string) =>
@@ -1966,29 +2612,67 @@ export const api = {
   updateMember: (id: string, m: { role?: Role; name?: string }) =>
     send<{ members: Member[] }>('PATCH', `/team/${id}`, m),
   removeMember: (id: string) => send<{ members: Member[] }>('DELETE', `/team/${id}`),
-  activity: (before?: number) =>
-    get<{ entries: ActivityEntry[]; next: number | null }>(
-      `/activity${before ? `?before=${before}` : ''}`,
-    ),
+  activity: (before?: number, kind?: string) => {
+    const s = new URLSearchParams();
+    if (before) s.set('before', String(before));
+    if (kind) s.set('kind', kind);
+    return get<{ entries: ActivityEntry[]; next: number | null }>(`/activity?${s}`);
+  },
   account: () => get<Account>('/account'),
-  startSubscription: (p: { planId: string; method: 'card' | 'pix'; payerEmail: string }) =>
-    send<Account>('POST', '/account/subscription', p),
-  updateSubscription: (p: { planId?: string; method?: 'card' | 'pix'; payerEmail?: string }) =>
-    send<Account>('PATCH', '/account/subscription', p),
+  startSubscription: (p: {
+    planId: string;
+    method: 'card' | 'pix';
+    payerEmail: string;
+    payerDocument: string;
+  }) => sendPix<Account>('POST', '/account/subscription', p),
+  updateSubscription: (p: {
+    planId?: string;
+    method?: 'card' | 'pix';
+    payerEmail?: string;
+    payerDocument?: string;
+  }) => sendPix<Account>('PATCH', '/account/subscription', p),
   cancelSubscription: () => send<Account>('POST', '/account/subscription/cancel'),
-  resumeSubscription: () => send<Account>('POST', '/account/subscription/resume'),
-  invoicePix: (id: string) => send<Account>('POST', `/account/invoices/${id}/pix`),
+  resumeSubscription: () => sendPix<Account>('POST', '/account/subscription/resume'),
+  invoicePix: (id: string) => sendPix<Account>('POST', `/account/invoices/${id}/pix`),
   /** a one-off Pix invoice for the pack (an open one is reused); the terms shown go along, so a
    *  pack repriced meanwhile answers AI_PACK_CHANGED instead of charging something else */
   buyAiPack: (pack: Pick<AiPack, 'id' | 'priceCents' | 'conversations'>) =>
-    send<Account & { invoiceId: string }>('POST', '/account/ai-packs', {
+    sendPix<Account & { invoiceId: string }>('POST', '/account/ai-packs', {
       packId: pack.id,
       priceCents: pack.priceCents,
       conversations: pack.conversations,
     }),
-  addDomain: (host: string) => send<Account>('POST', '/account/domains', { host }),
+  addDomain: (host: string, method?: 'cname' | 'ns') =>
+    send<Account>('POST', '/account/domains', method ? { host, method } : { host }),
   checkDomain: (id: string) => send<Account>('POST', `/account/domains/${id}/check`),
   removeDomain: (id: string) => send<Account>('DELETE', `/account/domains/${id}`),
+  /** the records Core finds on the domain's current DNS (read-only) */
+  discoverDomainRecords: (id: string) =>
+    send<{ records: DnsRecord[] }>('POST', `/account/domains/${id}/discover`),
+  saveDomainRecords: (id: string, records: DnsRecord[], confirm?: boolean) =>
+    send<Account>(
+      'PUT',
+      `/account/domains/${id}/records`,
+      confirm ? { records, confirm: true } : { records },
+    ),
+  searchDomains: (q: string) =>
+    get<{
+      query: string;
+      /** available: null = couldn't tell */
+      results: { host: string; available: boolean | null }[];
+      purchase: boolean;
+    }>(`/account/domains/search?q=${encodeURIComponent(q)}`),
+  /** a CNPJ's public record, to pre-fill the holder (a CPF answers nulls) */
+  domainHolder: (document: string) =>
+    get<{
+      kind: 'cnpj' | 'cpf';
+      document: string;
+      name: string | null;
+      address: HolderAddress | null;
+    }>(`/account/domains/holder?document=${encodeURIComponent(document)}`),
+  orderDomain: (body: DomainOrderInput) => send<Account>('POST', '/account/domains/order', body),
+  cancelDomainOrder: (id: string) => send<Account>('POST', `/account/domains/order/${id}/cancel`),
+  retryDomainOrder: (id: string) => send<Account>('POST', `/account/domains/order/${id}/retry`),
   requestSite: (brief: string) => send<Account>('POST', '/account/site-request', { brief }),
   updateSiteRequest: (brief: string) => send<Account>('PATCH', '/account/site-request', { brief }),
 
@@ -2024,6 +2708,21 @@ export const api = {
   help: (message: string, topic?: string) =>
     send<{ sent: true }>('POST', '/help', { message, topic }),
 
+  copilot: {
+    view: () => get<CopilotView>('/copilot'),
+    /** `screen`: the admin path the person is on, so Duá knows what "este pedido" is */
+    send: (text: string, screen?: string, idem?: string) =>
+      req<CopilotView>('/copilot/messages', {
+        method: 'POST',
+        body: JSON.stringify(screen ? { text, screen } : { text }),
+        ...(idem ? { idem } : {}),
+      }),
+    decide: (id: string, decision: 'confirm' | 'decline') =>
+      send<CopilotView>('POST', `/copilot/actions/${encodeURIComponent(id)}`, { decision }),
+    /** "nova conversa": Duá forgets this person's chat; what was applied stays */
+    reset: () => send<CopilotView>('DELETE', '/copilot'),
+  },
+
   vendedor: {
     home: () => get<VendedorHome>('/vendedor'),
     threads: (p: { filter?: ThreadFilter; q?: string; before?: string; limit?: number } = {}) => {
@@ -2033,9 +2732,7 @@ export const api = {
       if (p.before) s.set('before', p.before);
       if (p.limit) s.set('limit', String(p.limit));
       const qs = s.toString();
-      return get<{ threads: ThreadRow[]; next: string | null }>(
-        `/vendedor/threads${qs ? `?${qs}` : ''}`,
-      );
+      return get<ThreadList>(`/vendedor/threads${qs ? `?${qs}` : ''}`);
     },
     thread: (id: string) => get<ThreadDetail>(`/vendedor/threads/${encodeURIComponent(id)}`),
     why: (threadId: string, messageId: string) =>
@@ -2048,15 +2745,57 @@ export const api = {
       send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/take`, {}),
     release: (threadId: string) =>
       send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/release`, {}),
-    reply: (threadId: string, text: string) =>
-      send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/reply`, {
-        text,
+    /** `idem`: the bubble's key, so retrying a failed bubble never sends the reply twice */
+    reply: (threadId: string, text: string, idem?: string) =>
+      req<ThreadDetail>(`/vendedor/threads/${encodeURIComponent(threadId)}/reply`, {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+        ...(idem ? { idem } : {}),
       }),
     /** "não é cliente" */
     mute: (threadId: string) =>
       send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/mute`, {}),
     unmute: (threadId: string) =>
       send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/unmute`, {}),
+    /** the owner decides who a contact is: sticky, and releases what Duá was holding */
+    classify: (threadId: string, as: 'shopper' | 'personal') =>
+      send<ThreadDetail>('POST', `/vendedor/threads/${encodeURIComponent(threadId)}/classify`, {
+        as,
+      }),
+    /** several "para decidir" at once (up to 100); what can't be decided comes back skipped */
+    classifyMany: (ids: string[], as: 'shopper' | 'personal') =>
+      send<{ classified: string[]; skipped: string[] }>('POST', '/vendedor/threads/classify', {
+        ids,
+        as,
+      }),
+    /** the store opened it: no longer bold in the list */
+    seen: (threadId: string) =>
+      send<{ seenAt: string }>(
+        'POST',
+        `/vendedor/threads/${encodeURIComponent(threadId)}/seen`,
+        {},
+      ),
+    pause: (span: '1h' | 'tomorrow') =>
+      send<VendedorSettings>('POST', '/vendedor/pause', { for: span }),
+    resume: () => send<VendedorSettings>('POST', '/vendedor/resume', {}),
+
+    quickReplies: () => get<{ replies: QuickReply[] }>('/vendedor/quick-replies'),
+    addQuickReply: (text: string, position?: number) =>
+      send<{ replies: QuickReply[] }>('POST', '/vendedor/quick-replies', {
+        text,
+        ...(position !== undefined ? { position } : {}),
+      }),
+    updateQuickReply: (id: string, text: string) =>
+      send<{ replies: QuickReply[] }>(
+        'PATCH',
+        `/vendedor/quick-replies/${encodeURIComponent(id)}`,
+        { text },
+      ),
+    deleteQuickReply: (id: string) =>
+      send<{ replies: QuickReply[] }>(
+        'DELETE',
+        `/vendedor/quick-replies/${encodeURIComponent(id)}`,
+      ),
 
     settings: () => get<VendedorSettings>('/vendedor/settings'),
     updateSettings: (patch: VendedorSettingsPatch) =>
@@ -2109,12 +2848,105 @@ export const api = {
     interview: (text: string) =>
       send<VendedorOnboarding>('POST', '/vendedor/onboarding/interview', { text }),
 
+    /** `canNote`: a WhatsApp conversation exists for the store's own notes to live in */
     customerFacts: (phone: string) =>
-      get<{ facts: CustomerFact[] }>(`/customers/${encodeURIComponent(phone)}/vendedor`),
+      get<{ facts: CustomerFact[]; canNote?: boolean }>(
+        `/customers/${encodeURIComponent(phone)}/vendedor`,
+      ),
     forgetFact: (phone: string, key: string) =>
       send<{ facts: CustomerFact[] }>(
         'DELETE',
         `/customers/${encodeURIComponent(phone)}/vendedor/facts/${encodeURIComponent(key)}`,
       ),
+    /** "sem cebola", "paga no Pix": the store tells Duá something about this customer */
+    addFact: (phone: string, text: string) =>
+      send<{ facts: CustomerFact[] }>(
+        'POST',
+        `/customers/${encodeURIComponent(phone)}/vendedor/facts`,
+        { text },
+      ),
+  },
+
+  pdv: {
+    state: () => get<PdvState>('/pdv/state'),
+    quote: (p: { lines: PdvLineIn[]; discount?: PdvDiscountIn; delivery?: PdvDeliveryIn }) =>
+      send<{ quote: PdvQuote }>('POST', '/pdv/quote', p),
+    sale: (p: {
+      lines: PdvLineIn[];
+      discount?: PdvDiscountIn;
+      mode: 'takeaway' | 'here' | 'delivery';
+      delivery?: PdvDeliveryIn;
+      customer?: { name?: string; phone?: string };
+      notes?: string;
+      payments: PdvPaymentIn[];
+      /** a delivery charged at the door: payments [] */
+      payLater?: { method: PdvMethod; changeForCents?: number };
+      quotedTotalCents: number;
+      serveNow?: boolean;
+    }) => send<{ order: Order; sale: PdvSale }>('POST', '/pdv/sales', p),
+    /** the name and last address this phone ordered with */
+    customer: (phone: string) =>
+      get<{ customer: PdvCustomer | null }>(`/pdv/customer?phone=${encodeURIComponent(phone)}`),
+    geocode: (p: { street: string; number?: string; neighborhood: string; cep?: string }) =>
+      get<{ point: { lat: number; lng: number; precision: string } | null }>(
+        `/pdv/geocode?${new URLSearchParams(
+          Object.entries(p).filter((e): e is [string, string] => !!e[1]),
+        ).toString()}`,
+      ),
+    printTab: (id: string, p: { printerId?: string; ways?: number }) =>
+      send<{ jobIds: string[] }>('POST', `/pdv/tabs/${id}/print`, p),
+    printCaixa: (id: string, p: { printerId?: string }) =>
+      send<{ jobIds: string[] }>('POST', `/pdv/caixa/${id}/print`, p),
+    /** the store's static Pix for this amount; null without a Pix key */
+    pix: (amountCents: number) =>
+      send<{ copyPaste: string | null }>('POST', '/pdv/pix', { amountCents }),
+    receive: (orderId: string, payments: PdvPaymentIn[]) =>
+      send<{ order: Order; changeCents: number }>('POST', `/pdv/orders/${orderId}/payments`, {
+        payments,
+      }),
+    openTab: (p: { tableId?: string; label?: string; customerName?: string }) =>
+      send<{ tab: TabDetail }>('POST', '/pdv/tabs', p),
+    tab: (id: string, ways?: number) =>
+      get<{ tab: TabDetail }>(`/pdv/tabs/${id}${ways ? `?ways=${ways}` : ''}`),
+    round: (id: string, p: { lines: PdvLineIn[]; notes?: string; serveNow?: boolean }) =>
+      send<{ tab: TabDetail; orderId: string }>('POST', `/pdv/tabs/${id}/rounds`, p),
+    updateTab: (
+      id: string,
+      patch: {
+        serviceFee?: boolean;
+        tableId?: string;
+        label?: string;
+        customerName?: string;
+        discount?: PdvDiscountIn | null;
+      },
+    ) => send<{ tab: TabDetail }>('PATCH', `/pdv/tabs/${id}`, patch),
+    payTab: (id: string, p: PdvPaymentIn) =>
+      send<{ tab: TabDetail; payment: PdvPayment }>('POST', `/pdv/tabs/${id}/payments`, p),
+    closeTab: (id: string) => send<{ tab: TabDetail }>('POST', `/pdv/tabs/${id}/close`),
+    cancelTab: (id: string, reason: string) =>
+      send<{ tab: TabDetail }>('POST', `/pdv/tabs/${id}/cancel`, { reason }),
+    voidPayment: (id: string, reason: string) =>
+      send<{ tab: TabDetail }>('POST', `/pdv/payments/${id}/void`, { reason }),
+    caixa: () => get<{ caixa: CaixaDetail | null }>('/pdv/caixa'),
+    openCaixa: (openingCents: number) =>
+      send<{ caixa: CaixaDetail }>('POST', '/pdv/caixa/open', { openingCents }),
+    movement: (p: { kind: 'sangria' | 'suprimento'; amountCents: number; reason: string }) =>
+      send<{ caixa: CaixaDetail }>('POST', '/pdv/caixa/movements', p),
+    closeCaixa: (p: { counted: ByMethod<number>; notes?: string }) =>
+      send<{ report: CaixaReport }>('POST', '/pdv/caixa/close', p),
+    history: () => get<{ sessions: CaixaHistoryRow[] }>('/pdv/caixa/history?limit=30'),
+    session: (id: string) =>
+      get<{ report: CaixaReport } | { caixa: CaixaDetail }>(`/pdv/caixa/${id}`),
+    addTables: (labels: string[]) =>
+      send<{ tables: PdvTable[] }>('POST', '/pdv/tables', { labels }),
+    updateTable: (id: string, patch: { label?: string; sort?: number }) =>
+      send<{ table: PdvTable }>('PATCH', `/pdv/tables/${id}`, patch),
+    tables: () => get<PdvTables>('/pdv/tables'),
+    archiveTable: (id: string) => send<PdvTables>('DELETE', `/pdv/tables/${id}`),
+    restoreTable: (id: string) => send<PdvTables>('POST', `/pdv/tables/${id}/restore`),
+    settings: (patch: { serviceBps?: number; qrOrders?: boolean }) =>
+      send<PdvSettings>('PATCH', '/pdv/settings', patch),
+    /** a new QR for this table: the printed one stops working at once */
+    tableQr: (id: string) => send<{ table: PdvTable }>('POST', `/pdv/tables/${id}/qr`),
   },
 };

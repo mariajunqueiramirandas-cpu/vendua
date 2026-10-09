@@ -23,7 +23,7 @@ export function lineText(i: PricedItem): string {
     ...i.modifiers.map((m) => (m.qty > 1 ? `${m.qty}× ${m.name}` : m.name)),
     ...i.combo.map((c) => (c.qty > 1 ? `${c.qty}× ${c.name}` : c.name)),
   ];
-  return `${i.qty}× ${i.name}${opts.length ? ` (${opts.join(', ')})` : ''}`;
+  return `${i.qty}× ${i.name}${opts.length ? ` (${opts.join(', ')})` : ''}${i.note ? ` — obs.: ${i.note}` : ''}`;
 }
 
 export interface SummaryCardData {
@@ -77,7 +77,7 @@ export function summaryCard(
     discountLabel: cart.coupon?.applies ? cart.coupon.label || cart.coupon.code : null,
     adjustmentCents: cart.totals.paymentAdjustmentCents,
     totalCents: cart.totals.totalCents,
-    mode: d?.mode ?? 'pickup',
+    mode: d?.mode === 'delivery' ? 'delivery' : 'pickup',
     address,
     eta,
     payment: o.paymentMethod ? PAYMENT_LABEL[o.paymentMethod] : null,
