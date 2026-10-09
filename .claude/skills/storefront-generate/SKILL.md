@@ -124,9 +124,11 @@ tool (it caps concurrency at 2 here). This overrides the Haiku-first routing in 
    phone numbers or claims.
 
 `kind: 'revision'`: the store exists on `main`. Read `note` (what the owner asked to change) and
-the updated `spec`; change only what the note asks, keep everything else as it is. A change to
-one or more sections goes to an Opus agent per section, as in step 4; tokens and templates stay
-yours.
+the updated `spec`; change only what the note asks, keep everything else as it is. Before any
+agent starts, write `<scratchpad>/site-brief.md` as in step 1, from the store as it stands (its
+`tokens.json`, sections and templates) plus the note, with the sections the note touches and
+what changes in each. A change to one or more sections goes to an Opus agent per section, as in
+step 4; tokens and templates stay yours.
 
 ## 4. Judge it yourself before pushing
 
