@@ -943,7 +943,7 @@
           VERBS.forEach(([id, tt], i) => {
             const at = L(tt);
             const end = i + 1 < VERBS.length ? L(VERBS[i + 1][1]) : DUR;
-            tl.set(id, { visibility: "visible" }, at - 0.06);
+            tl.set(id, { visibility: "inherit" }, at - 0.06);
             tl.set(id, { visibility: "hidden" }, end - 0.06);
             tl.fromTo(id + " > span", { scale: 1.22, filter: "blur(14px)", opacity: 0 }, { scale: 1, filter: "blur(0px)", opacity: 1, duration: 0.16, ease: "power4.out" }, at - 0.06);
             tl.to(id + " > span", { scale: 1.04, duration: Math.max(0.2, end - at - 0.12), ease: "power1.out" }, at + 0.1);
@@ -961,14 +961,14 @@
             tl.fromTo("#f5-b-" + n, { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.14, ease: "back.out(2.2)" }, at);
           };
           const showFace = (n, from, to) => {
-            tl.set("#f5-f-" + n, { visibility: "visible" }, from);
+            tl.set("#f5-f-" + n, { visibility: "inherit" }, from);
             if (to != null) tl.set("#f5-f-" + n, { visibility: "hidden" }, to);
           };
           const typing = (n, from, to) => {
             // header status + the bubble with three dots and Duá thinking
             tl.set("#f5-on", { visibility: "hidden" }, from);
-            tl.set("#f5-ty", { visibility: "visible" }, from);
-            tl.set("#f5-on", { visibility: "visible" }, to);
+            tl.set("#f5-ty", { visibility: "inherit" }, from);
+            tl.set("#f5-on", { visibility: "inherit" }, to);
             tl.set("#f5-ty", { visibility: "hidden" }, to);
             openSlot("t" + n, from);
             tl.fromTo("#f5-b-t" + n, { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.12, ease: "back.out(2)" }, from);
@@ -976,11 +976,11 @@
             tl.fromTo("#f5-s-t" + n, { gridTemplateRows: "1fr" }, { immediateRender: false, gridTemplateRows: "0fr", duration: OPEN, ease: "power3.out" }, to);
           };
           const clock = (m, at) => {
-            tl.set("#f5-k" + m, { visibility: "visible" }, at);
+            tl.set("#f5-k" + m, { visibility: "inherit" }, at);
             if (m > 41) tl.set("#f5-k" + (m - 1), { visibility: "hidden" }, at);
           };
           const chips = (id, from, to) => {
-            tl.set(id, { visibility: "visible" }, from);
+            tl.set(id, { visibility: "inherit" }, from);
             tl.fromTo(id + " .f5-chip", { scale: 0.85, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.12, ease: "back.out(2)", stagger: 0.04 }, from);
             tl.set(id, { visibility: "hidden" }, to);
           };

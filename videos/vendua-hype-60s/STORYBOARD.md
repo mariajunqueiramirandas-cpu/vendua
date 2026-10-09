@@ -1,7 +1,7 @@
 ---
 compositionId: bgm
 duration_s: 60.0
-canvas: { w: 1080, h: 1920, fps: 30 }
+canvas: {"w": 1080, "h": 1920, "fps": 30}
 style:
   font: "Space Grotesk 700 (display) / Figtree 600 (body)"
   palette: ["#0a100d", "#123c32", "#d9f875", "#f7f4ea", "#fffdf8"]

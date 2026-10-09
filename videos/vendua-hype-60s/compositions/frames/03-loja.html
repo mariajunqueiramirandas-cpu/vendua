@@ -177,7 +177,7 @@
           visibility: hidden;
         }
         .phone-screen > .f3-scr-boas {
-          visibility: visible;
+          visibility: inherit;
         }
 
         /* ---------- drawn storefront (shopper view of Bolos da Nena) ---------- */
@@ -666,7 +666,7 @@
 
           // slam: scale 1.18→1, blur 14→0, opacity 0→1 in .16 s, landing on `at`
           const slam = (sel, at, lead = 0.06) => {
-            tl.set(sel, { visibility: "visible" }, at - lead);
+            tl.set(sel, { visibility: "inherit" }, at - lead);
             tl.fromTo(
               sel,
               { opacity: 0, scale: 1.18, filter: "blur(14px)" },
@@ -725,7 +725,7 @@
             0,
           );
           // line 1 already mid-slam on the cut
-          tl.set("#f3-h1a", { visibility: "visible" }, 0);
+          tl.set("#f3-h1a", { visibility: "inherit" }, 0);
           tl.fromTo(
             "#f3-h1a",
             { opacity: 0.8, scale: 1.08, filter: "blur(5px)" },
@@ -811,7 +811,7 @@
           [1, 2, 3].forEach((n, i) => {
             const at = S2 + B * (i + 1);
             const id = "#f3-card" + n;
-            tl.set(id, { visibility: "visible" }, at - 0.09);
+            tl.set(id, { visibility: "inherit" }, at - 0.09);
             tl.fromTo(
               id,
               { opacity: 0, y: -110, scale: 1.1, filter: "blur(10px)" },
@@ -858,7 +858,7 @@
           // ---------- S2 → S3: card flip (rotateY) to the Cardápio screen ----------
           tl.to("#f3-flip", { rotationY: 90, duration: 0.13, ease: "power2.in" }, S3 - 0.13);
           tl.set("#f3-store", { display: "none" }, S3);
-          tl.set("#f3-scr-card", { visibility: "visible" }, S3);
+          tl.set("#f3-scr-card", { visibility: "inherit" }, S3);
           tl.fromTo(
             "#f3-flip",
             { rotationY: -90 },
@@ -872,7 +872,7 @@
           const ticks = ["#f3-t1", "#f3-t2", "#f3-t3", "#f3-t4"];
           ticks.forEach((id, i) => {
             const at = S3 + i * B;
-            tl.set(id, { visibility: "visible" }, at);
+            tl.set(id, { visibility: "inherit" }, at);
             if (i > 0) tl.set(ticks[i - 1], { visibility: "hidden" }, at);
             tl.fromTo(
               id,
@@ -914,7 +914,7 @@
           tl.to("#f3-move", { scale: 1.3, y: -30, duration: 0.12, ease: "expo.in" }, S4 - 0.12);
           tl.to("#f3-phone", { filter: "blur(10px)", duration: 0.12, ease: "expo.in" }, S4 - 0.12);
           tl.set("#f3-scr-card", { visibility: "hidden" }, S4);
-          tl.set("#f3-scr-ini", { visibility: "visible" }, S4);
+          tl.set("#f3-scr-ini", { visibility: "inherit" }, S4);
           tl.fromTo(
             "#f3-move",
             { scale: 1.3, y: -30 },
@@ -952,7 +952,7 @@
             S4,
           );
 
-          tl.set("#f3-plate", { visibility: "visible" }, S4 - 0.02);
+          tl.set("#f3-plate", { visibility: "inherit" }, S4 - 0.02);
           tl.fromTo(
             "#f3-plate",
             { opacity: 0, x: 520, skewX: -10, filter: "blur(12px)" },
@@ -989,7 +989,7 @@
             S4 + 0.08,
           );
           tl.set("#f3-proll", { visibility: "hidden" }, LOCK);
-          tl.set("#f3-pfinal", { visibility: "visible" }, LOCK);
+          tl.set("#f3-pfinal", { visibility: "inherit" }, LOCK);
           tl.fromTo(
             "#f3-plate",
             { scale: 1.08 },

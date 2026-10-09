@@ -265,7 +265,7 @@
           tl.set("#f1-cam", { y: 0, skewY: 0, filter: "blur(0px)", opacity: 1 }, 0);
           tl.set("#f1-punch", { scale: 1 }, 0);
           tl.set("#f1-shake", { x: 0, y: 0, rotation: 0 }, 0);
-          tl.set("#f1-g1", { visibility: "visible" }, 0);
+          tl.set("#f1-g1", { visibility: "inherit" }, 0);
           tl.set("#f1-g2", { visibility: "hidden" }, 0);
           tl.set("#f1-mark", { clipPath: "inset(0% 100% 0% 0% round 0.12em)" }, 0);
           tl.set(["#f1-pa", "#f1-pb"], { opacity: 0, y: -140, scale: 0.9, filter: "blur(10px)" }, 0);
@@ -322,7 +322,7 @@
 
           // ---- 1.875: hard word swap → "A gente / vende." + punch-in ----
           tl.set("#f1-g1", { visibility: "hidden" }, BAR);
-          tl.set("#f1-g2", { visibility: "visible" }, BAR);
+          tl.set("#f1-g2", { visibility: "inherit" }, BAR);
           tl.fromTo(
             "#f1-h2",
             { scale: 1.1, filter: "blur(6px)" },

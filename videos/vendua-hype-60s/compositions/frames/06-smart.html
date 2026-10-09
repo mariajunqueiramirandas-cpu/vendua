@@ -591,7 +591,6 @@
           border-radius: 10px;
           background: #d9f875;
           transform-origin: 0% 50%;
-          transform: scaleX(0);
           z-index: -1;
         }
 
@@ -980,13 +979,13 @@
           }
 
           // group visibility (0 ms cuts)
-          tl.set("#f6-g1", { visibility: "visible" }, 0);
+          tl.set("#f6-g1", { visibility: "inherit" }, 0);
           tl.set("#f6-g1", { visibility: "hidden" }, T2);
-          tl.set("#f6-g2", { visibility: "visible" }, T2);
+          tl.set("#f6-g2", { visibility: "inherit" }, T2);
           tl.set("#f6-g2", { visibility: "hidden" }, T3);
-          tl.set("#f6-g3", { visibility: "visible" }, T3);
+          tl.set("#f6-g3", { visibility: "inherit" }, T3);
           tl.set("#f6-g3", { visibility: "hidden" }, T4);
-          tl.set("#f6-g4", { visibility: "visible" }, T4);
+          tl.set("#f6-g4", { visibility: "inherit" }, T4);
 
           // ── S1 · 0–1.875 · seu dia, resumido ──────────────────────────
           tl.fromTo("#f6-cam", { scale: 1.05 }, { scale: 1, duration: 0.5, ease: "power3.out" }, 0);
@@ -1122,7 +1121,7 @@
           tl.fromTo("#f6-prn", { scale: 1.03 }, { scale: 1, duration: 0.2, ease: "power3.out", immediateRender: false }, TEAR);
           // total gets the marker on the beat
           const TOT = T3 + 3 * B;
-          tl.to("#f6-totmk", { scaleX: 1, duration: 0.18, ease: "power3.out" }, TOT - 0.02);
+          tl.fromTo("#f6-totmk", { scaleX: 0 }, { scaleX: 1, duration: 0.18, ease: "power3.out" }, TOT - 0.02);
           punch(TOT, 1.03);
 
           // ── S4 · 5.625–7.5 · cartão fidelidade ────────────────────────
