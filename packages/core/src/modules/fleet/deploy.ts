@@ -210,7 +210,7 @@ export async function reconcileTx(
   tx: Sql,
   d: FleetDeps,
   tenantId: string,
-  o: { kind?: DeploymentKind; actor?: string } = {},
+  o: { kind?: DeploymentKind; actor?: string; reason?: string } = {},
 ): Promise<DeploymentRow | null> {
   const ops = await lockOpsTx(tx, tenantId);
   if (ops.release_policy === 'pinned' && ops.live_release_id) return null;
@@ -219,9 +219,45 @@ export async function reconcileTx(
   return promoteTx(tx, d, tenantId, desired.id, {
     kind: o.kind ?? 'auto',
     actor: o.actor ?? 'control-plane',
-    reason: `nova versão publicada de ${ops.bundle}`,
+    reason: o.reason ?? `nova versão publicada de ${ops.bundle}`,
     policy: 'keep',
   });
+}
+
+/** Puts the store on `bundle` and keeps it there: a publish naming the store no longer moves it
+ *  (bundle_locked). The caller reconciles, which takes the bundle's newest passed release live;
+ *  the store's saved design for that bundle comes along with it (ADR 0040). Takes the ops lock. */
+export async function setBundleTx(tx: Sql, tenantId: string, bundle: string): Promise<boolean> {
+  const ops = await lockOpsTx(tx, tenantId);
+  if (bundle === ops.bundle) return false;
+  if (!(await latestPassedTx(tx, bundle)))
+    throw new HttpError(409, 'BUNDLE_HAS_NO_RELEASE', `no passed release of ${bundle} yet`);
+  await tx`
+    update storefront_ops set bundle = ${bundle}, bundle_locked = true,
+      release_policy = 'auto', pinned_reason = null, updated_at = now()
+    where tenant_id = ${tenantId}
+  `;
+  return true;
+}
+
+export type SiteMode = 'custom' | 'template';
+
+/** Which site the store shows, when it has a choice: its own bundle (storefronts/<slug>, the
+ *  site sob medida) has a passed release and the store runs it or the template. Null when it has
+ *  no site of its own or staff put it on another bundle. Reads releases: needs vendua.control. */
+export async function siteModeTx(
+  tx: Sql,
+  tenantId: string,
+  slug: string,
+): Promise<{ mode: SiteMode } | null> {
+  const ops = (
+    await tx<{ bundle: string }[]>`select bundle from storefront_ops where tenant_id = ${tenantId}`
+  )[0];
+  const bundle = ops?.bundle ?? DEFAULT_BUNDLE;
+  const mode: SiteMode | null =
+    bundle === slug ? 'custom' : bundle === DEFAULT_BUNDLE ? 'template' : null;
+  if (!mode || slug === DEFAULT_BUNDLE || !(await latestPassedTx(tx, slug))) return null;
+  return { mode };
 }
 
 /** A bundle built for a store (storefronts/<slug>, tenant <slug>) becomes that store's bundle,

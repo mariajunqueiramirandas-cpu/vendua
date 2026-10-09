@@ -209,8 +209,9 @@ function LiveSection({
         <Confirm
           text={
             <>
-              trocar para <Mono>{bundle}</Mono>? a versão mais nova dele entra agora e a loja passa
-              a seguir esse pacote.
+              trocar para <Mono>{bundle}</Mono>? a versão mais nova dele entra agora, com o layout e
+              as cores salvos para ele (os deste pacote ficam guardados), e a loja passa a seguir
+              esse pacote.
             </>
           }
           action="trocar pacote"

@@ -163,7 +163,9 @@ export function mountStorefrontPlatform(d: Deps) {
       (tx) =>
         tx<{ page: string; version: number; template: unknown }[]>`
         select distinct on (page) page, version, template from storefront_templates
-        where tenant_id = ${t.id} order by page, version desc
+        where tenant_id = ${t.id}
+          and bundle = coalesce((select bundle from storefront_ops where tenant_id = ${t.id}), '_template')
+        order by page, version desc
       `,
     );
     return c.json({ templates: rows });

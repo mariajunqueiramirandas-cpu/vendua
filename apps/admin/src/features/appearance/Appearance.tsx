@@ -40,6 +40,7 @@ import { HistorySheet } from './HistorySheet.tsx';
 import { Inspector } from './Inspector.tsx';
 import { Navigator } from './Navigator.tsx';
 import { Preview } from './Preview.tsx';
+import { SiteSwitch } from './SiteSwitch.tsx';
 import { PAGES, tplLabel, useEditor, type PageId, type Selection } from './useEditor.ts';
 
 // Aparência, the edit-what-you-see editor (design §6.7). Wide screens: the list of what's on
@@ -65,8 +66,14 @@ function useMedia(q: string) {
   return on;
 }
 
+/** the edge follows a site switch within its 30 s route cache: the preview reloads after it */
+const SWITCH_SETTLE_MS = 35_000;
+
 export default function Appearance() {
   const poll = usePollWhenOffline(10_000);
+  const [reload, setReload] = useState(0);
+  const settle = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(settle.current), []);
   const { data, error, refetch } = useQuery({
     queryKey: qk.appearance,
     queryFn: api.appearance,
@@ -86,10 +93,29 @@ export default function Appearance() {
         <AppearanceSkeleton />
       </EditorFrame>
     );
-  return <Editor data={data} />;
+  // the other site is another document: a fresh editor on its layout and colours
+  return (
+    <Editor
+      key={data.site?.mode ?? 'one'}
+      data={data}
+      reload={reload}
+      onSwitched={() => {
+        clearTimeout(settle.current);
+        settle.current = setTimeout(() => setReload((r) => r + 1), SWITCH_SETTLE_MS);
+      }}
+    />
+  );
 }
 
-function Editor({ data }: { data: AppearanceData }) {
+function Editor({
+  data,
+  reload,
+  onSwitched,
+}: {
+  data: AppearanceData;
+  reload: number;
+  onSwitched: () => void;
+}) {
   const s = useSession();
   const ed = useEditor(data, s.store.id);
   const wide = useMedia(WIDE);
@@ -112,6 +138,7 @@ function Editor({ data }: { data: AppearanceData }) {
     }
   });
   const origin = new URL(data.previewUrl).origin;
+  useEffect(() => setFrameReady(false), [reload]);
 
   useEffect(() => {
     void api.share().then(
@@ -265,8 +292,12 @@ function Editor({ data }: { data: AppearanceData }) {
   };
   // tablets: one panel, the list or what was picked from it
   const single = ed.sel ? inspector('back') : navigator;
+  const siteSwitch = data.site ? (
+    <SiteSwitch mode={data.site.mode} dirty={ed.dirty} onSwitched={onSwitched} />
+  ) : null;
   const preview = (
     <Preview
+      key={reload}
       src={src}
       device={tablet ? device : 'bare'}
       frameRef={frame}
@@ -425,6 +456,7 @@ function Editor({ data }: { data: AppearanceData }) {
                 </span>
               </header>
 
+              {siteSwitch ? <div className="mb-2">{siteSwitch}</div> : null}
               <div className="mb-2 flex items-center gap-2 md:mb-4">
                 <Segmented
                   label="página"
@@ -587,6 +619,7 @@ function Editor({ data }: { data: AppearanceData }) {
       </header>
 
       <div className="mb-2 flex items-center gap-2 md:mb-4">
+        {siteSwitch}
         <Segmented
           label="página"
           value={ed.page}

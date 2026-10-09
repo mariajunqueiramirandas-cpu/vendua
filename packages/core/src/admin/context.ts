@@ -6,6 +6,7 @@ import type { Tenant } from '../platform/tenancy.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import type { SignupReadiness } from '../modules/billing/signup-gate.ts';
 import type { DomainProviders } from '../modules/domains/providers.ts';
+import type { FleetDeps } from '../modules/fleet/deps.ts';
 import type { AdminHub } from './live.ts';
 
 export type Role = 'owner' | 'manager' | 'attendant';
@@ -44,6 +45,8 @@ export interface AdminDeps {
   signupReady: () => Promise<SignupReadiness>;
   /** the registrar, DNS host and probes behind own domains (ADR 0038) */
   domains: DomainProviders;
+  /** the Control Plane: Aparência's site switch moves the store between bundles (ADR 0040) */
+  fleet: FleetDeps;
 }
 
 /** How a platform WhatsApp message rides the outbox once the number is on the gateway (ignored

@@ -329,6 +329,7 @@ const PRODUCT_DEPS = [...CATALOG_DEPS, 'notify_requests'];
 // publicUrl falls back to the slug when the store has no public domain
 const SURFACES_DEPS = [
   'store_settings',
+  'storefront_ops',
   'storefront_templates',
   'storefront_tokens',
   'domains',
@@ -3262,6 +3263,7 @@ export function createApp({
     publicOrigin: adminOrigin,
     geocode,
     domains: domainProviders,
+    fleet: fleetD,
   });
   app.route('/admin/v1', admin);
   app.get('/admin', (c) => c.redirect('/admin/'));

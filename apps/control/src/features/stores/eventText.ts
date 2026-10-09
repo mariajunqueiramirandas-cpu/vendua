@@ -176,6 +176,8 @@ export function eventText(e: StoreEvent): string | null {
     case 'site.due_soon':
     case 'site.overdue':
       return s(d.dueAt) && `prazo ${fmtDateTime(s(d.dueAt))}`;
+    case 'site.mode_changed':
+      return d.mode === 'custom' ? 'voltou para o site sob medida' : 'trocou para o modelo padrão';
     case 'site.ready':
       return 'CI verde — aprove no CRM para publicar';
     case 'site.escalated':
