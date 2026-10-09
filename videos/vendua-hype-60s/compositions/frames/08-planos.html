@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: "Space Grotesk";
+          src: url("assets/fonts/space-grotesk-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 700;
+        }
+        @font-face {
+          font-family: "Figtree";
+          src: url("assets/fonts/figtree-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 900;
+        }
+        #stage {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+          background: #0a100d;
+          font-family: "Figtree", system-ui, sans-serif;
+          -webkit-font-smoothing: antialiased;
+        }
+        .f8-layer {
+          position: absolute;
+          inset: 0;
+        }
+        .f8-bg-night {
+          background: radial-gradient(1200px 900px at 50% 38%, #123c32 0%, #0a100d 70%);
+        }
+        .f8-bg-glow {
+          background: radial-gradient(760px 760px at 50% 52%, rgb(217 248 117 / 0.2) 0%, rgb(217 248 117 / 0) 70%);
+        }
+        .f8-bg-lime {
+          background: #d9f875;
+        }
+        .f8-grain {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          opacity: 0.07;
+          mix-blend-mode: overlay;
+          pointer-events: none;
+          z-index: 50;
+        }
+
+        /* initial hidden state (the timeline reveals them) */
+        #f8-glow,
+        #f8-g2,
+        #f8-g4 {
+          visibility: hidden;
+          opacity: 0;
+        }
+        #f8-h1,
+        #f8-h2a,
+        #f8-h2b,
+        #f8-h2c,
+        #f8-dua,
+        #f8-pill,
+        #f8-t1,
+        #f8-t2,
+        #f8-t3,
+        #f8-t4 {
+          opacity: 0;
+        }
+
+        /* ── headlines ── */
+        .f8-hl {
+          position: absolute;
+          left: 90px;
+          white-space: nowrap;
+          font: 700 120px/0.9 "Space Grotesk", system-ui, sans-serif;
+          letter-spacing: -0.045em;
+          color: #f7f4ea;
+          transform-origin: 0 80%;
+        }
+        .f8-hl > span {
+          display: inline-block;
+          position: relative;
+        }
+        .f8-mk {
+          color: #123c32;
+          padding: 0.02em 0.12em 0.08em;
+          margin-left: 0.04em;
+        }
+        .f8-mk-bg {
+          position: absolute;
+          inset: 0;
+          background: #d9f875;
+          border-radius: 0.12em;
+          transform-origin: 0 50%;
+        }
+        .f8-mk-tx {
+          position: relative;
+        }
+
+        /* ── plan card ── */
+        .f8-card {
+          position: absolute;
+          left: 90px;
+          width: 900px;
+          box-sizing: border-box;
+          padding: 64px;
+          border-radius: 44px;
+        }
+        .f8-mirim {
+          top: 650px;
+          background: #fffdf8;
+          color: #123c32;
+          box-shadow: 0 50px 110px rgb(0 0 0 / 0.55);
+        }
+        .f8-band {
+          top: 530px;
+          background: #123c32;
+          color: #f7f4ea;
+          border: 4px solid #d9f875;
+          padding: 60px;
+          box-shadow:
+            0 0 0 1px rgb(217 248 117 / 0.25),
+            0 50px 120px rgb(0 0 0 / 0.6);
+        }
+        .f8-name {
+          margin: 0;
+          font: 700 56px/1.1 "Figtree", system-ui, sans-serif;
+          letter-spacing: -0.01em;
+          transform-origin: 0 50%;
+        }
+        .f8-price {
+          display: flex;
+          align-items: flex-end;
+          margin: 18px 0 40px;
+          transform-origin: 0 70%;
+        }
+        .f8-cur {
+          font: 700 84px/1 "Space Grotesk", system-ui, sans-serif;
+          letter-spacing: -0.03em;
+          padding: 0 18px 22px 0;
+        }
+        .f8-num {
+          display: flex;
+          font: 700 200px/1 "Space Grotesk", system-ui, sans-serif;
+          letter-spacing: -0.045em;
+          font-variant-numeric: tabular-nums;
+        }
+        .f8-cell {
+          display: block;
+          height: 1em;
+          overflow: hidden;
+          margin-right: -0.045em;
+        }
+        .f8-reel {
+          display: block;
+        }
+        .f8-reel > b {
+          display: block;
+          height: 1em;
+          font-weight: 700;
+        }
+        .f8-comma {
+          display: block;
+          height: 1em;
+          margin-right: -0.02em;
+        }
+        .f8-per {
+          font: 600 56px/1 "Figtree", system-ui, sans-serif;
+          padding: 0 0 26px 14px;
+          opacity: 0.78;
+        }
+        .f8-band .f8-num,
+        .f8-band .f8-cur {
+          color: #d9f875;
+        }
+        .f8-perks {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 22px;
+        }
+        .f8-perk {
+          display: flex;
+          align-items: flex-start;
+          gap: 24px;
+          font: 600 44px/1.2 "Figtree", system-ui, sans-serif;
+          letter-spacing: -0.005em;
+          opacity: 0;
+        }
+        .f8-ic {
+          flex: none;
+          width: 52px;
+          height: 52px;
+          display: block;
+        }
+        .f8-ic svg {
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+        .f8-chk {
+          border-radius: 50%;
+          background: #d9f875;
+        }
+        .f8-lime {
+          color: #d9f875;
+        }
+        .f8-pill {
+          position: absolute;
+          left: 60px;
+          top: -38px;
+          height: 72px;
+          padding: 0 32px;
+          display: flex;
+          align-items: center;
+          border-radius: 999px;
+          background: #d9f875;
+          color: #123c32;
+          font: 800 36px/1 "Figtree", system-ui, sans-serif;
+          letter-spacing: -0.005em;
+          transform-origin: 30% 50%;
+          box-shadow: 0 0 0 8px #0d2f27;
+        }
+        .f8-sweepclip {
+          position: absolute;
+          inset: -4px;
+          border-radius: 44px;
+          overflow: hidden;
+          pointer-events: none;
+        }
+        .f8-sweep {
+          position: absolute;
+          top: -200px;
+          bottom: -200px;
+          left: 0;
+          width: 380px;
+          background: linear-gradient(
+            90deg,
+            rgb(217 248 117 / 0) 0%,
+            rgb(217 248 117 / 0.1) 30%,
+            rgb(240 252 201 / 0.24) 50%,
+            rgb(217 248 117 / 0.1) 70%,
+            rgb(217 248 117 / 0) 100%
+          );
+          transform: translateX(-400px) skewX(-18deg);
+          mix-blend-mode: screen;
+        }
+        .f8-dua {
+          position: absolute;
+          left: 790px;
+          top: 412px;
+          width: 260px;
+          height: 260px;
+          border-radius: 50%;
+          background: #d9f875;
+          box-shadow:
+            0 0 0 10px #0a100d,
+            0 30px 60px rgb(0 0 0 / 0.45);
+          overflow: hidden;
+        }
+        .f8-dua i {
+          position: absolute;
+          inset: 4% 4% 0 4%;
+          background: url("assets/dua/avatar-feliz.webp") center bottom / contain no-repeat;
+        }
+
+        /* ── g4: lime trial ── */
+        .f8-trial {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 520px;
+          text-align: center;
+          color: #123c32;
+          transform-origin: 50% 40%;
+        }
+        .f8-big {
+          display: block;
+          font: 700 260px/0.86 "Space Grotesk", system-ui, sans-serif;
+          letter-spacing: -0.05em;
+          white-space: nowrap;
+        }
+        .f8-big > span,
+        .f8-nocard > span {
+          display: inline-block;
+        }
+        .f8-nocard {
+          display: block;
+          margin-top: 64px;
+          font: 800 90px/1 "Figtree", system-ui, sans-serif;
+          letter-spacing: -0.02em;
+        }
+        .f8-tpill {
+          display: inline-flex;
+          align-items: center;
+          margin-top: 34px;
+          height: 74px;
+          padding: 0 34px;
+          border-radius: 999px;
+          background: #123c32;
+          color: #d9f875;
+          font: 700 38px/1 "Figtree", system-ui, sans-serif;
+        }
+      </style>
+
+      <div id="stage" data-composition-id="08-planos" data-width="1080" data-height="1920">
+        <div id="f8-bgn" class="f8-layer f8-bg-night"></div>
+        <div id="f8-glow" class="f8-layer f8-bg-glow"></div>
+        <div id="f8-bgl" class="f8-layer f8-bg-lime"></div>
+
+        <div id="f8-cam" class="f8-layer">
+          <div id="f8-punch" class="f8-layer">
+            <div id="f8-shake" class="f8-layer">
+              <!-- ═════ g1 — Mirim ═════ -->
+              <div id="f8-g1" class="f8-layer">
+                <div id="f8-h1" class="f8-hl" style="top: 494px"><span>Pra começar:</span></div>
+                <div id="f8-c1" class="f8-card f8-mirim">
+                  <p id="f8-n1" class="f8-name">Venduá Mirim</p>
+                  <div id="f8-p1" class="f8-price">
+                    <span class="f8-cur">R$</span>
+                    <span class="f8-num">
+                      <span class="f8-cell"><span class="f8-reel" id="f8-r1-0" data-d="6" data-k="2"></span></span>
+                      <span class="f8-cell"><span class="f8-reel" id="f8-r1-1" data-d="9" data-k="3"></span></span>
+                      <span class="f8-comma">,</span>
+                      <span class="f8-cell"><span class="f8-reel" id="f8-r1-2" data-d="9" data-k="3"></span></span>
+                      <span class="f8-cell"><span class="f8-reel" id="f8-r1-3" data-d="0" data-k="4"></span></span>
+                    </span>
+                    <span class="f8-per">/mês</span>
+                  </div>
+                  <ul class="f8-perks">
+                    <li class="f8-perk f8-pk1">
+                      <span class="f8-ic f8-chk"><svg viewBox="0 0 128 128"><path d="M32 48 L61 88 L98 34" fill="none" stroke="#123c32" stroke-width="17" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                      <span>Sua loja online</span>
+                    </li>
+                    <li class="f8-perk f8-pk1">
+                      <span class="f8-ic f8-chk"><svg viewBox="0 0 128 128"><path d="M32 48 L61 88 L98 34" fill="none" stroke="#123c32" stroke-width="17" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                      <span>Cardápio, pedidos e Pix</span>
+                    </li>
+                    <li class="f8-perk f8-pk1">
+                      <span class="f8-ic f8-chk"><svg viewBox="0 0 128 128"><path d="M32 48 L61 88 L98 34" fill="none" stroke="#123c32" stroke-width="17" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                      <span>Cupons</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              <!-- ═════ g2 + g3 — Bandeira ═════ -->
+              <div id="f8-g2" class="f8-layer">
+                <div id="f8-h2a" class="f8-hl" style="top: 300px"><span>O completo:</span></div>
+                <div id="f8-h2b" class="f8-hl" style="top: 300px">
+                  <span>Venda</span>
+                  <span class="f8-mk"><span id="f8-mkbg" class="f8-mk-bg"></span><span class="f8-mk-tx">mais.</span></span>
+                </div>
+                <div id="f8-h2c" class="f8-hl" style="top: 316px; font-size: 90px"><span>Sem trabalhar mais.</span></div>
+                <div id="f8-c2w" class="f8-layer">
+                  <div id="f8-c2" class="f8-card f8-band">
+                    <div class="f8-sweepclip"><div id="f8-sweep" class="f8-sweep"></div></div>
+                    <div id="f8-pill" class="f8-pill">Recomendado</div>
+                    <p id="f8-n2" class="f8-name" style="margin-top: 8px">Venduá Bandeira</p>
+                    <div id="f8-p2" class="f8-price">
+                      <span class="f8-cur">R$</span>
+                      <span class="f8-num">
+                        <span class="f8-cell"><span class="f8-reel" id="f8-r2-0" data-d="1" data-k="2"></span></span>
+                        <span class="f8-cell"><span class="f8-reel" id="f8-r2-1" data-d="6" data-k="3"></span></span>
+                        <span class="f8-cell"><span class="f8-reel" id="f8-r2-2" data-d="9" data-k="4"></span></span>
+                      </span>
+                      <span class="f8-per">/mês</span>
+                    </div>
+                    <ul class="f8-perks">
+                      <li class="f8-perk f8-pk2">
+                        <span class="f8-ic"><svg viewBox="0 0 52 52"><path d="M26 10 V42 M10 26 H42" fill="none" stroke="#d9f875" stroke-width="8" stroke-linecap="round" /></svg></span>
+                        <span>Tudo do Mirim</span>
+                      </li>
+                      <li class="f8-perk f8-pk2">
+                        <span class="f8-ic"><svg viewBox="0 0 52 52"><path d="M26 10 V42 M10 26 H42" fill="none" stroke="#d9f875" stroke-width="8" stroke-linecap="round" /></svg></span>
+                        <span>o Duá, vendedor com IA ·<br /><span class="f8-lime">250 conversas/mês</span></span>
+                      </li>
+                      <li class="f8-perk f8-pk2">
+                        <span class="f8-ic"><svg viewBox="0 0 52 52"><path d="M26 10 V42 M10 26 H42" fill="none" stroke="#d9f875" stroke-width="8" stroke-linecap="round" /></svg></span>
+                        <span>Tela da cozinha</span>
+                      </li>
+                      <li class="f8-perk f8-pk2">
+                        <span class="f8-ic"><svg viewBox="0 0 52 52"><path d="M26 10 V42 M10 26 H42" fill="none" stroke="#d9f875" stroke-width="8" stroke-linecap="round" /></svg></span>
+                        <span>Impressão automática</span>
+                      </li>
+                      <li class="f8-perk f8-pk2">
+                        <span class="f8-ic"><svg viewBox="0 0 52 52"><path d="M26 10 V42 M10 26 H42" fill="none" stroke="#d9f875" stroke-width="8" stroke-linecap="round" /></svg></span>
+                        <span>Cartão fidelidade</span>
+                      </li>
+                    </ul>
+                  </div>
+                  <div id="f8-dua" class="f8-dua"><i></i></div>
+                </div>
+              </div>
+
+              <!-- ═════ g4 — lime trial ═════ -->
+              <div id="f8-g4" class="f8-layer">
+                <div id="f8-trial" class="f8-trial">
+                  <span class="f8-big"><span id="f8-t1">14 dias</span></span>
+                  <span class="f8-big"><span id="f8-t2">grátis.</span></span>
+                  <span class="f8-nocard"><span id="f8-t3">Sem cartão.</span></span>
+                  <span id="f8-t4" class="f8-tpill">no Venduá Bandeira</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <svg class="f8-grain" xmlns="http://www.w3.org/2000/svg">
+          <filter id="f8-noise">
+            <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" />
+          </filter>
+          <rect width="100%" height="100%" filter="url(#f8-noise)" />
+        </svg>
+      </div>
+
+      <script>
+        (function () {
+          window.__timelines = window.__timelines || {};
+          const DUR = 11.25;
+          const B = 0.46875;
+          const T0 = 41.25;
+          const L = (track) => track - T0;
+          const $ = (s) => document.querySelector(s);
+          const PX = 200; // reel row height = price font-size
+
+          // reels: k full 0–9 loops, then 0–9 again so the overshoot shows the next digit
+          document.querySelectorAll("#stage .f8-reel").forEach((r) => {
+            const k = +r.dataset.k;
+            let h = "";
+            for (let i = 0; i < 10 * (k + 1); i++) h += "<b>" + (i % 10) + "</b>";
+            r.innerHTML = h;
+          });
+
+          const tl = gsap.timeline({ paused: true });
+
+          // ── base state ──
+          tl.set("#f8-cam", { y: 0, skewY: 0, filter: "blur(0px)" }, 0);
+          tl.set("#f8-punch", { scale: 1, transformOrigin: "50% 45%" }, 0);
+          tl.set("#f8-shake", { x: 0, y: 0, rotation: 0 }, 0);
+          tl.set("#f8-bgl", { autoAlpha: 1 }, 0);
+          tl.set("#f8-g1", { autoAlpha: 1 }, 0);
+          tl.set("#f8-mkbg", { scaleX: 0 }, 0);
+          tl.set(".f8-reel", { y: 0 }, 0);
+
+          const slam = (sel, at, from, dur) => {
+            tl.fromTo(
+              sel,
+              Object.assign({ scale: 1.18, filter: "blur(14px)", opacity: 0 }, from || {}),
+              { scale: 1, filter: "blur(0px)", opacity: 1, duration: dur || 0.16, ease: "power4.out" },
+              Math.max(0, at - 0.06),
+            );
+          };
+          const shake = (at, amp) => {
+            const SH = [[8, -6, 0.6], [-7, 5, -0.5], [6, 7, 0.4], [-8, -4, -0.6], [5, 4, 0.3], [-4, -5, -0.3], [3, 2, 0.2], [-2, -2, -0.1]];
+            SH.forEach((s, i) => tl.to("#f8-shake", { x: s[0] * amp, y: s[1] * amp, rotation: s[2] * amp, duration: 0.03, ease: "steps(1)" }, at + i * 0.03));
+            tl.to("#f8-shake", { x: 0, y: 0, rotation: 0, duration: 0.05, ease: "power2.out" }, at + SH.length * 0.03);
+          };
+          const punchIn = (at, s) => {
+            tl.to("#f8-punch", { scale: s || 1.06, duration: B, ease: "power2.out" }, at);
+            tl.to("#f8-punch", { scale: 1, duration: 1.875 - B, ease: "sine.inOut" }, at + B);
+          };
+          // slot roll: every reel spins from row 0 and settles on its digit, right-most last on `lock`
+          const roll = (prefix, n, from, lock) => {
+            for (let i = 0; i < n; i++) {
+              const r = $("#" + prefix + i);
+              const idx = 10 * +r.dataset.k + +r.dataset.d;
+              const end = lock - (n - 1 - i) * 0.055;
+              tl.fromTo(r, { y: 0 }, { y: -idx * PX, duration: end - from, ease: "back.out(0.9)" }, from);
+              tl.fromTo(r, { filter: "blur(0px)" }, { keyframes: [{ filter: "blur(5px)", duration: 0.12, ease: "none" }, { filter: "blur(0px)", duration: end - from - 0.12, ease: "power3.in" }] }, from);
+            }
+          };
+          const perks = (sel, times) => {
+            const els = document.querySelectorAll(sel);
+            times.forEach((tt, i) => {
+              const at = L(tt);
+              tl.fromTo(els[i], { opacity: 0, x: -46, scale: 1.08, filter: "blur(12px)" }, { opacity: 1, x: 0, scale: 1, filter: "blur(0px)", duration: 0.18, ease: "power4.out" }, at - 0.07);
+              tl.fromTo(els[i].querySelector(".f8-ic"), { scale: 0, rotation: -40 }, { scale: 1, rotation: 0, duration: 0.26, ease: "back.out(3)" }, at - 0.05);
+            });
+          };
+
+          // ═════ g1 — DROP on lime, then Mirim (local 0 → 3.75) ═════
+          const NIGHT = L(41.484375);
+          // the card is already whipping up on the lime frame at t=0
+          tl.fromTo("#f8-c1", { y: 640, skewY: 7, filter: "blur(14px)", scale: 1.06 }, { y: 0, skewY: 0, filter: "blur(0px)", scale: 1, duration: 0.34, ease: "expo.out" }, 0);
+          shake(0, 1);
+          tl.set("#f8-bgl", { autoAlpha: 0 }, NIGHT);
+          slam("#f8-h1", NIGHT);
+          slam("#f8-n1", NIGHT, { scale: 1.12 });
+          // slow breathing of the whole Mirim block
+          tl.fromTo("#f8-c1", { scale: 1 }, { y: -16, scale: 1.02, duration: L(44.53125) - 0.34, ease: "sine.inOut", immediateRender: false }, 0.34);
+          tl.fromTo("#f8-h1", { x: 0 }, { x: 18, duration: L(44.53125) - NIGHT, ease: "none" }, NIGHT);
+
+          const LOCK1 = L(42.1875);
+          roll("f8-r1-", 4, NIGHT + 0.04, LOCK1);
+          tl.fromTo("#f8-p1", { scale: 1 }, { keyframes: [{ scale: 1.1, duration: 0.06, ease: "power2.out" }, { scale: 1, duration: 0.3, ease: "power3.out" }] }, LOCK1);
+          perks(".f8-pk1", [42.65625, 43.125, 43.59375]);
+          punchIn(L(43.125), 1.04);
+
+          // Mirim whips out left
+          const OUT1 = L(44.53125);
+          tl.to("#f8-c1", { x: -1250, skewX: 10, filter: "blur(14px)", duration: 0.26, ease: "expo.in" }, OUT1);
+          tl.to("#f8-h1", { x: -1150, skewX: 10, filter: "blur(14px)", duration: 0.22, ease: "expo.in" }, OUT1 + 0.03);
+
+          // ═════ g2 — Bandeira (local 3.75 → 7.5) ═════
+          const S2 = L(45.0);
+          tl.set("#f8-g2", { autoAlpha: 1 }, S2 - 0.26);
+          tl.set("#f8-g1", { autoAlpha: 0 }, S2);
+          tl.fromTo("#f8-glow", { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.5, ease: "power2.out" }, S2 - 0.1);
+          tl.fromTo("#f8-c2", { x: 1250, skewX: -10, filter: "blur(14px)" }, { x: 0, skewX: 0, filter: "blur(0px)", duration: 0.32, ease: "expo.out" }, S2 - 0.26);
+          slam("#f8-h2a", S2);
+          slam("#f8-n2", S2 + 0.04, { scale: 1.12 });
+          tl.fromTo("#f8-pill", { scale: 0, rotation: -8, opacity: 1 }, { scale: 1, rotation: -3, opacity: 1, duration: 0.3, ease: "back.out(3.2)" }, S2);
+          punchIn(S2, 1.05);
+          tl.fromTo("#f8-h2a", { x: 0 }, { x: 16, duration: L(48.75) - S2, ease: "none", immediateRender: false }, S2 + 0.12);
+
+          const LOCK2 = L(45.9375);
+          roll("f8-r2-", 3, S2 + 0.06, LOCK2);
+          tl.fromTo("#f8-p2", { scale: 1 }, { keyframes: [{ scale: 1.14, duration: 0.06, ease: "power2.out" }, { scale: 1, duration: 0.34, ease: "power3.out" }] }, LOCK2);
+          shake(LOCK2, 0.9);
+          perks(".f8-pk2", [46.40625, 46.875, 47.34375, 47.8125, 48.28125]);
+
+          // Duá pops on the card's corner
+          const DUA = L(46.875);
+          tl.fromTo("#f8-dua", { scale: 0, rotation: 30, opacity: 1 }, { scale: 1, rotation: 0, opacity: 1, duration: 0.34, ease: "back.out(2.4)" }, DUA - 0.06);
+          tl.to("#f8-dua", { y: 8, rotation: 4, duration: L(50.625) - DUA - 0.3, ease: "sine.inOut" }, DUA + 0.3);
+          punchIn(DUA, 1.03);
+
+          // ═════ g3 — hold, light sweep, headline swap (local 7.5 → 9.375) ═════
+          const S3 = L(48.75);
+          const S3B = L(49.6875);
+          tl.set("#f8-h2a", { opacity: 0 }, S3 - 0.06);
+          slam("#f8-h2b", S3);
+          tl.to("#f8-mkbg", { scaleX: 1, duration: 0.18, ease: "power3.out" }, S3 + 0.08);
+          tl.set("#f8-h2b", { opacity: 0 }, S3B - 0.06);
+          slam("#f8-h2c", S3B);
+          tl.fromTo("#f8-c2w", { scale: 1 }, { scale: 1.03, duration: L(50.625) - S3, ease: "sine.inOut", transformOrigin: "50% 40%" }, S3);
+          tl.fromTo("#f8-sweep", { x: -420 }, { x: 1180, duration: 0.62, ease: "power2.inOut" }, S3 - 0.04);
+          tl.fromTo("#f8-sweep", { x: -420 }, { x: 1180, duration: 0.62, ease: "power2.inOut", immediateRender: false }, S3B - 0.04);
+          tl.fromTo("#f8-p2", { scale: 1 }, { keyframes: [{ scale: 1.06, duration: 0.07 }, { scale: 1, duration: 0.3, ease: "power3.out" }], immediateRender: false }, S3);
+
+          // ═════ g4 — lime trial slam (local 9.375 → 11.25) ═════
+          const S4 = L(50.625);
+          tl.set("#f8-bgl", { autoAlpha: 1 }, S4);
+          tl.set(["#f8-g2", "#f8-glow"], { autoAlpha: 0 }, S4);
+          tl.set("#f8-g4", { autoAlpha: 1 }, S4);
+          slam("#f8-t1", S4, { scale: 1.45, filter: "blur(22px)" }, 0.2);
+          slam("#f8-t2", L(51.09375), { scale: 1.45, filter: "blur(22px)" }, 0.2);
+          slam("#f8-t3", L(51.5625), { scale: 1.22 });
+          tl.fromTo("#f8-t4", { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.24, ease: "back.out(2.6)" }, L(52.03125) - 0.06);
+          tl.fromTo("#f8-trial", { scale: 1 }, { scale: 1.035, duration: L(52.35) - S4, ease: "none" }, S4);
+          punchIn(S4, 1.05);
+
+          // ── exit whip ──
+          const W = L(52.35);
+          tl.to("#f8-cam", { y: -1300, skewY: -5, filter: "blur(22px)", duration: DUR - W, ease: "expo.in" }, W);
+
+          tl.set({}, {}, DUR);
+          window.__timelines["08-planos"] = tl;
+          tl.seek(0);
+        })();
+      </script>
+    </template>
+  </body>
+</html>
