@@ -1,6 +1,6 @@
 // CI/fleet fixtures — NOT the dev seed (that one is blank: `bun run seed`). Fills quero-pudim with a menu, zones, coupons, Pix and
 // loyalty, plus the canary tenants that `vendua train` / template migrations run over. Idempotent wipe+recreate (orders/carts preserved).
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readTemplatesDir } from '@vendua/templates/node';
 import { createSql } from './db.ts';
@@ -370,6 +370,41 @@ TENANTS.push({
     tagline: 'A base de todo vendua scaffold',
   }))(quero.settings),
 });
+
+// A store the site builder adds (storefronts/<slug>, its tenant in package.json, its port in
+// vite.config.ts — what `vendua scaffold` writes) gets a fixture too: the fleet train builds it
+// against Core by Host localhost:<port>, and its PR may only touch its own folder.
+const fixtured = new Set(TENANTS.map((t) => t.storefront));
+for (const name of readdirSync(join(REPO, 'storefronts')).sort()) {
+  const dir = join(REPO, 'storefronts', name);
+  if (fixtured.has(`storefronts/${name}`) || !existsSync(join(dir, 'vendua.config.ts'))) continue;
+  let pkg: { name?: unknown; vendua?: { tenant?: unknown } };
+  try {
+    pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+  } catch {
+    continue;
+  }
+  const slug =
+    typeof pkg.vendua?.tenant === 'string'
+      ? pkg.vendua.tenant
+      : typeof pkg.name === 'string'
+        ? pkg.name.replace(/^@vendua\/(storefront-)?/, '')
+        : null;
+  if (!slug || TENANTS.some((t) => t.slug === slug)) continue;
+  const vite = existsSync(join(dir, 'vite.config.ts'))
+    ? readFileSync(join(dir, 'vite.config.ts'), 'utf8')
+    : '';
+  const port = /port\s*:\s*(\d+)/.exec(vite)?.[1];
+  TENANTS.push({
+    ...quero,
+    slug,
+    name: slug,
+    hosts: [`${slug}.localhost`, ...(port ? [`localhost:${port}`, `127.0.0.1:${port}`] : [])],
+    storefront: `storefronts/${name}`,
+    ring: 'stable',
+    settings: (({ promo: _promo, ...rest }) => ({ ...rest, tagline: slug }))(quero.settings),
+  });
+}
 
 // demo storefronts removed from the repo; drop their tenants from already-seeded DBs (FKs cascade)
 await sql`delete from tenants where slug in ('brasa', 'forn', 'example-quero-pudim')`;
