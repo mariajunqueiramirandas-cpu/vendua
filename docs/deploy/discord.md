@@ -29,7 +29,9 @@ The token is the only thing copied by hand: Core reads everything else from Disc
    adicionei** checks again). A bot already in several servers asks which one.
 
 4. **Channels**: in **canais**, pick the team's role (it gets mentioned on urgent events and is
-   the only role that sees the bot's channels), then **criar canais**. It creates a private
+   the only role that sees the bot's channels), then **criar canais**. A fresh server has no
+   roles: leave it on "sem cargo" and the channels are made for the whole server, with nobody
+   mentioned; pick a role later and run **criar canais** again to lock them to it. It creates a private
    "Venduá" category with `#atendimento #crm #vendas #assinaturas #frota #agente #sistema
 #resumo` and wires them. Prefer existing channels? Pick them in the selects instead —
    anything unmapped falls back to **padrão**. **enviar teste** posts a card in each.

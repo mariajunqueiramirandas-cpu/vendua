@@ -387,29 +387,34 @@ export function mountDiscord(o: {
       typeof body.staffRoleId === 'string' && SNOWFLAKE_RE.test(body.staffRoleId)
         ? body.staffRoleId
         : ctx.setting.staffRoleId;
-    if (!roleId)
-      throw new HttpError(
-        422,
-        'BAD_REQUEST',
-        'escolha o cargo da equipe antes de criar os canais',
-        {
-          field: 'staffRoleId',
-        },
-      );
     const client = clientFor(ctx);
     const g = ctx.app.app.guildId;
     const res = await claimControl(sql, key, async (tx) => {
       try {
         const me = await client.request<{ id: string }>('GET', '/users/@me');
+        // with a team role the category is private to it; without one (a fresh server has no
+        // roles) the whole server sees it — the server is the team's own
         const overwrites = [
-          { id: g, type: 0, allow: '0', deny: String(VIEW) },
-          { id: roleId, type: 0, allow: String(VIEW + SEND + HISTORY), deny: '0' },
+          ...(roleId
+            ? [
+                { id: g, type: 0, allow: '0', deny: String(VIEW) },
+                { id: roleId, type: 0, allow: String(VIEW + SEND + HISTORY), deny: '0' },
+              ]
+            : []),
           { id: me.id, type: 1, allow: String(VIEW + SEND + EMBED + HISTORY), deny: '0' },
         ];
         const existing = await client.request<DiscordChannel[]>('GET', `/guilds/${g}/channels`);
+        // a role picked after the channels were made public: lock what already exists
+        const lock = async (ch: DiscordChannel) => {
+          if (roleId && roleId !== ctx.setting.staffRoleId)
+            await client.request('PATCH', `/channels/${ch.id}`, {
+              permission_overwrites: overwrites,
+            });
+        };
         let parent = existing.find(
           (ch) => ch.type === 4 && ch.name.toLowerCase() === CATEGORY_NAME.toLowerCase(),
         );
+        if (parent) await lock(parent);
         parent ??= await client.request<DiscordChannel>('POST', `/guilds/${g}/channels`, {
           name: CATEGORY_NAME,
           type: 4,
@@ -431,7 +436,7 @@ export function mountDiscord(o: {
               permission_overwrites: overwrites,
             });
             created.push(name);
-          }
+          } else await lock(ch);
           channels[cat] = ch.id;
         }
         const stored = await getSettingTx<Record<string, unknown>>(tx, 'discord', {});
@@ -439,7 +444,7 @@ export function mountDiscord(o: {
         const next = {
           ...stored,
           channels: { ...prev.channels, ...channels },
-          staffRoleId: roleId,
+          staffRoleId: roleId ?? null,
         };
         await tx`
           insert into control_settings (key, value) values ('discord', ${tx.json(next as never)})

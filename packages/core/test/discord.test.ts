@@ -379,6 +379,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
     if (method === 'PATCH' && /^\/channels\/\d+\/messages\/\d+$/.test(path))
       return Response.json({ id: path.split('/').at(-1) });
     if (method === 'PUT' && path.endsWith('/commands')) return Response.json([]);
+    if (method === 'PATCH' && /^\/channels\/\d+$/.test(path))
+      return Response.json({ id: path.split('/').at(-1) });
     if (path === '/users/@me') return Response.json({ id: BOT_USER, username: 'vendua' });
     if (path === '/users/@me/guilds') return Response.json(botGuilds);
     if (path === '/applications/@me' && method === 'GET')
@@ -1021,6 +1023,24 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
     // a second run only fills what is missing
     const again = await ctl('POST', '/control/v1/discord/setup', { staffRoleId: ROLE });
     expect(((await again.json()) as { created: string[] }).created).toHaveLength(0);
+
+    // a fresh server has no roles: the channels are made for the whole server, nobody is pinged
+    await sql`update control_settings set value = value - 'staffRoleId' where key = 'discord'`;
+    channelsInGuild = [];
+    calls.length = 0;
+    const open = await ctl('POST', '/control/v1/discord/setup', {});
+    expect(open.status).toBe(200);
+    const openCat = calls.find((c) => c.method === 'POST' && c.body?.type === 4)!;
+    const openOw = openCat.body!.permission_overwrites as { id: string }[];
+    expect(openOw.map((w) => w.id)).toEqual([BOT_USER]);
+    // picking a role later locks what already exists
+    calls.length = 0;
+    const locked = await ctl('POST', '/control/v1/discord/setup', { staffRoleId: ROLE });
+    expect(((await locked.json()) as { created: string[] }).created).toHaveLength(0);
+    const patches = calls.filter((c) => c.method === 'PATCH');
+    expect(patches).toHaveLength(9);
+    const ow = patches[0]!.body!.permission_overwrites as { id: string; deny: string }[];
+    expect(ow.find((w) => w.id === GUILD)!.deny).toBe(String(1 << 10));
 
     calls.length = 0;
     const t = await ctl('POST', '/control/v1/discord/test');
