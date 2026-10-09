@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { runBillingTick } from '../src/modules/billing/jobs.ts';
-import { billingStaff } from '../src/modules/billing/subscriptions.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { migrate } from '../src/platform/db.ts';
 
@@ -50,7 +49,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
   const mkPhone = () => `218${String(Date.now() + ++seq * 37).slice(-8)}`;
   const created: string[] = [];
   let idem = 0;
-  const originalStaff = billingStaff.notify;
 
   const call = async (
     method: string,
@@ -132,7 +130,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
     // these run billing on the top plan, which launches closed to new stores (ADR 0032)
     await sql`update plans set available = true where id = 'pangolim'`;
-    billingStaff.notify = async () => {};
   });
 
   beforeEach(() => {
@@ -140,7 +137,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
   });
 
   afterAll(async () => {
-    billingStaff.notify = originalStaff;
     if (created.length) await sql`delete from tenants where id in ${sql(created)}`;
     if (appSql !== sql) await appSql.end();
     await sql.end();

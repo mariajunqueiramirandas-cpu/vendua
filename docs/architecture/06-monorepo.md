@@ -43,7 +43,10 @@ vendua/
   the agent pipeline and the scaffold produce) MUST only touch
   `storefronts/<slug>/**`. This is the hard sandbox boundary for agents and
   contributors — a storefront PR that modifies Kernel or another store cannot
-  merge.
+  merge. The one exception is `bun.lock`, and only the store's own workspace
+  entry in it (what `bun install` writes for a new store, which CI's
+  `--frozen-lockfile` install needs): any other lock change — a new package,
+  another store, a platform workspace — still fails.
 - **CODEOWNERS**: `packages/**` → platform team; `storefronts/**` → fleet
   automation + on-call owner; `storefronts/_template` → platform team.
 - Package `exports` maps hide Kernel internals; `vendua check` lints
@@ -91,8 +94,8 @@ git sparse-checkout set \
   fleet is never materialized: clone size stays flat at N=1000, the agent can't
   drown in 1000 storefronts, and one store's bad pattern can't become the fleet's
   reference implementation.
-- **Write scope**: `storefronts/<slug>/**` only, enforced by the changed-path
-  CI check — the agent can't stray even within its sparse view.
+- **Write scope**: `storefronts/<slug>/**` only (plus the store's own `bun.lock`
+  entry), enforced by the changed-path CI check — the agent can't stray even within its sparse view.
 - **Codemod runs are the exception**: they are CI batch jobs, not agent
   sessions, and take a full clone.
 

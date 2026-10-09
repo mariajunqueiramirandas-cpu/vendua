@@ -650,7 +650,7 @@ function billingProblem(ev: Ev<'billing.problem'>, ctx: RenderCtx): Rendered {
     card: card(
       ev,
       {
-        title: `${PROBLEM[d.problem]} · ${esc(d.storeName)}`,
+        title: `${d.title ? esc(d.title) : PROBLEM[d.problem]} · ${esc(d.storeName)}`,
         description: esc(d.detail),
         thumbnail: art(ctx, 'erro'),
       },

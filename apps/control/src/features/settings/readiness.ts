@@ -1,6 +1,6 @@
 import type { DiscordOverview, IgStatus, Integration, MeetingStatus } from '@/lib/api.ts';
 import { KINDS, providerStatus, WA_IDLE, type ProvTone, type WaState } from './providers.ts';
-import { num, obj, str, type SettingsMap } from './queries.ts';
+import { obj, str, type SettingsMap } from './queries.ts';
 
 export const AREAS = [
   { key: 'visao', label: 'visão geral' },
@@ -136,7 +136,6 @@ export function computeReadiness({
 
   const g = obj(settings.guardrails);
   const pitch = obj(settings.pitch);
-  const digest = obj(settings.digest);
   const autonomy = obj(settings.agent);
   const staff = obj(settings.staff);
   const staffCount = Array.isArray(staff.members) ? staff.members.length : 0;
@@ -148,8 +147,7 @@ export function computeReadiness({
           { key: 'autonomia', label: 'autonomia', route: STUDIO },
           { key: 'voz', label: 'voz do agente', route: STUDIO },
           { key: 'regras', label: 'limites', route: `${STUDIO}?s=limites` },
-          { key: 'resumo', label: 'resumo diário', to: 'relatorios' },
-          { key: 'equipe', label: 'avisos da equipe', to: 'equipe' },
+          { key: 'equipe', label: 'equipe', to: 'equipe' },
         ] as const
       ).map((c): Check => ({ ...c, state: 'falha ao ler', tone: 'warn' }))
     : [
@@ -186,18 +184,11 @@ export function computeReadiness({
           route: `${STUDIO}?s=limites`,
         },
         {
-          key: 'resumo',
-          label: 'resumo diário',
-          state: digest.enabled === true ? `todo dia às ${num(digest.hour, 8)}h` : 'desligado',
-          tone: digest.enabled === true ? 'live' : 'off',
-          to: 'relatorios',
-        },
-        {
           key: 'equipe',
-          label: 'avisos da equipe',
+          label: 'equipe',
           state: staffCount
             ? `${staffCount} ${staffCount === 1 ? 'pessoa' : 'pessoas'}`
-            : 'ninguém cadastrado — handoffs passam em silêncio',
+            : 'ninguém cadastrado — ninguém usa os botões do bot',
           tone: staffCount ? 'live' : 'warn',
           to: 'equipe',
         },
@@ -228,7 +219,7 @@ function discordCheck(d: DiscordOverview | 'err' | null): Check {
   });
   if (d === null) return c('lendo status…', 'off');
   if (d === 'err') return c('falha ao ler', 'warn');
-  if (!d.app.enabled) return c('desligado — avisos só por email e whatsapp', 'off');
+  if (!d.app.enabled) return c('desligado — a equipe não fica sabendo de nada', 'warn');
   if (!d.app.ok) return c(d.app.reason ?? 'incompleto', 'warn');
   const recentError =
     d.state.lastError && Date.now() - new Date(d.state.lastError.at).getTime() < 86_400_000;

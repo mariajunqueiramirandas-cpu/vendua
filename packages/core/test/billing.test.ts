@@ -6,11 +6,7 @@ import { createApp } from '../src/app.ts';
 import { createSession, membershipsFor } from '../src/admin/auth.ts';
 import { normalizeHost, setDnsResolver } from '../src/modules/billing/domains.ts';
 import { runBillingTick, runDomainChecks, syncPlanPrices } from '../src/modules/billing/jobs.ts';
-import {
-  billingStaff,
-  CLOSED_MESSAGE,
-  proratedCents,
-} from '../src/modules/billing/subscriptions.ts';
+import { CLOSED_MESSAGE, proratedCents } from '../src/modules/billing/subscriptions.ts';
 import { handleBillingWebhook } from '../src/modules/billing/webhook.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { ProviderError, type PixRequest } from '../src/modules/payments/provider.ts';
@@ -51,7 +47,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
   (fake as unknown as { seq: number }).seq = Math.floor(Math.random() * 1e9);
   const wa: { phone: string; text: string }[] = [];
   const mails: { to: string; subject: string; idemKey: string }[] = [];
-  const staff: { subject: string }[] = [];
   const notify = {
     whatsapp: async (phone: string, text: string) => void wa.push({ phone, text }),
     email: async (to: string, subject: string, _text: string, idemKey: string) =>
@@ -77,7 +72,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
   const nonce = crypto.randomUUID().slice(0, 6);
   const created: string[] = [];
   let idem = 0;
-  const originalStaff = billingStaff.notify;
+  // what the team hears about a store: its staff events' titles (ADR 0023)
+  const flagged = async (tenantId: string) =>
+    (
+      await sql<{ title: string }[]>`
+        select data->>'title' as title from staff_events
+        where tenant_id = ${tenantId} and kind in ('billing.problem', 'store.request')
+        order by id
+      `
+    ).map((e) => e.title);
 
   const call = async (
     method: string,
@@ -152,11 +155,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
     // these run billing on the top plan, which launches closed to new stores (ADR 0032)
     await sql`update plans set available = true where id = 'pangolim'`;
-    billingStaff.notify = async (_sql, n) => void staff.push({ subject: n.subject });
   });
 
   afterAll(async () => {
-    billingStaff.notify = originalStaff;
     setDnsResolver(null);
     if (created.length) await sql`delete from tenants where id in ${sql(created)}`;
     await sql`delete from plans where id like ${`bill_${nonce}%`}`;
@@ -299,8 +300,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(await planOf(s.id)).toBe('pangolim');
     // Pangolim comes with the site request, once paid
     expect(paid.body.siteRequest.status).toBe('requested');
-    await Bun.sleep(20);
-    expect(staff.some((n) => n.subject.includes('Site sob medida'))).toBe(true);
+    expect(await flagged(s.id)).toContain('site sob medida');
     // the paid period itself is unchanged
     expect((await sub(s.id)).current_period_end.getTime()).toBe(
       (await invoices(s.id))[0]!.period_end.getTime(),
@@ -737,7 +737,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     await s.owner('PATCH', '/account/subscription', { planId: 'pangolim' });
     await Bun.sleep(30);
     expect(fake.payments.get(oldPix)!.status).toBe('approved');
-    const staffBefore = staff.length;
     await hook(oldPix);
     await Bun.sleep(30);
     // R$ 69,90 never pays a R$ 449,00 invoice: it stays open, the payment is kept for the team
@@ -755,9 +754,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect((await sub(s.id)).status).toBe('active');
     await hook(oldPix);
     await Bun.sleep(30);
-    const flagged = staff.slice(staffBefore).map((n) => n.subject);
-    expect(flagged.some((x) => x.startsWith('Pix com valor menor'))).toBe(true);
-    expect(flagged.some((x) => x.startsWith('Fatura paga duas vezes'))).toBe(true);
+    const titles = await flagged(s.id);
+    expect(titles).toContain('Pix com valor menor');
+    expect(titles).toContain('Fatura paga duas vezes');
   });
 
   test('a cancelled plan’s Pix paid late activates nothing, whatever plan came after', async () => {
@@ -779,15 +778,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       payerEmail: 'bia@example.com',
       payerDocument: '529.982.247-25',
     });
-    const staffBefore = staff.length;
     await hook(old.provider_payment_id);
     await Bun.sleep(30);
     expect((await invoices(s.id))[0]!.status).toBe('void');
     expect((await sub(s.id)).status).toBe('pending');
     expect((await settings(s.id)).billing_hold).toBe(true);
-    expect(
-      staff.slice(staffBefore).some((n) => n.subject.startsWith('Pix numa fatura cancelada')),
-    ).toBe(true);
+    expect(await flagged(s.id)).toContain('Pix numa fatura cancelada');
   });
 
   test('upgrade then downgrade before paying: Mirim, the invoice void, no site request', async () => {
@@ -807,16 +803,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     await Bun.sleep(20);
     expect(fake.payments.get(pix)!.status).toBe('cancelled');
     // MP charged the QR anyway: the money is flagged, the plan doesn't move
-    const staffBefore = staff.length;
     fake.settle(pix, 'approved');
     await hook(pix);
     await Bun.sleep(30);
     expect(await planOf(s.id)).toBe('mirim');
     expect((await sub(s.id)).plan_id).toBe('mirim');
     expect(await siteRequests(s.id)).toHaveLength(0);
-    expect(staff.slice(staffBefore).some((n) => n.subject.startsWith('Upgrade pago fora'))).toBe(
-      true,
-    );
+    expect(await flagged(s.id)).toContain('Upgrade pago fora do prazo');
   });
 
   test('an upgrade paid after the renewal was paid first does not apply', async () => {
@@ -832,15 +825,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(renewal).toMatchObject({ plan_id: 'mirim', amount_cents: 6990 });
     await payInvoice(renewal.id);
     // the difference was priced for the old period: paying it now must not buy the new one
-    const staffBefore = staff.length;
     fake.settle(pix, 'approved');
     await hook(pix);
     await Bun.sleep(30);
     expect(await planOf(s.id)).toBe('mirim');
     expect(await siteRequests(s.id)).toHaveLength(0);
-    expect(staff.slice(staffBefore).some((n) => n.subject.startsWith('Upgrade pago fora'))).toBe(
-      true,
-    );
+    expect(await flagged(s.id)).toContain('Upgrade pago fora do prazo');
   });
 
   test('the old exploit (Mirim → Pangolim → Mirim, repeated) never yields Pangolim', async () => {
@@ -1231,14 +1221,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     dns[`_vendua.${host}`] = {
       txt: [['vendua-verify=', cd.txtValue.slice('vendua-verify='.length)]],
     };
-    const staffBefore = staff.length;
     await runDomainChecks(appSql, jobOpts, new Date(Date.now() + 20 * 60_000));
     chk = await s.owner('GET', '/account');
     expect(chk.body.customDomain.status).toBe('dns_ok');
     await runDomainChecks(appSql, jobOpts, new Date(Date.now() + 60 * 60_000));
     await s.owner('POST', `/account/domains/${cd.id}/check`, {});
     // the team hears it once, on Discord; nobody has to switch anything on by hand any more
-    expect(staff.slice(staffBefore).filter((n) => n.subject.includes(host))).toHaveLength(0);
     const ready = await sql`
       select 1 from staff_events where kind = 'domain.ready' and tenant_id = ${s.id}
     `;

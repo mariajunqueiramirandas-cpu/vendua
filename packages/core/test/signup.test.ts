@@ -14,7 +14,6 @@ import {
   signupToken,
   startSignupOtp,
 } from '../src/modules/billing/signup.ts';
-import { billingStaff } from '../src/modules/billing/subscriptions.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
 import type { PixRequest } from '../src/modules/payments/provider.ts';
 import { migrate } from '../src/platform/db.ts';
@@ -122,7 +121,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   (fake as unknown as { seq: number }).seq = Math.floor(Math.random() * 1e9);
   const wa: { phone: string; text: string }[] = [];
   const mails: { to: string; subject: string; text: string; key: string }[] = [];
-  const staff: { subject: string; body: string }[] = [];
   const deps = {
     sql: appSql,
     sessionSecret: 's',
@@ -147,7 +145,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
   const mkPhone = () => `219${String(phoneBase + ++phones * 17).slice(-8)}`;
   const created: string[] = [];
   let idem = 0;
-  const originalStaff = billingStaff.notify;
 
   const call = async (
     method: string,
@@ -223,11 +220,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
     // these run billing on the top plan, which launches closed to new stores (ADR 0032)
     await sql`update plans set available = true where id = 'pangolim'`;
-    billingStaff.notify = async (_sql, n) => void staff.push({ subject: n.subject, body: n.body });
   });
 
   afterAll(async () => {
-    billingStaff.notify = originalStaff;
     if (created.length) await sql`delete from tenants where id in ${sql(created)}`;
     if (appSql !== sql) await appSql.end();
     await sql.end();
@@ -732,7 +727,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     await call('POST', `/admin/v1/dev/billing/invoices/${r.body.next.invoiceId}/pay`, {});
     const reqs = await sql`select status from site_requests where tenant_id = ${tenant}`;
     expect([...reqs]).toEqual([{ status: 'requested' }]);
-    expect(staff.some((n) => n.subject.includes('Site sob medida'))).toBe(true);
+    const told = await sql`
+      select data->>'title' as title from staff_events
+      where tenant_id = ${tenant} and kind = 'store.request'
+    `;
+    expect([...told]).toEqual([{ title: 'site sob medida' }]);
     const acct = await session(r.cookie)('GET', '/account');
     expect(acct.body.plan.features).toEqual({
       customDomain: true,

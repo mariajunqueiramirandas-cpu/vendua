@@ -1,6 +1,7 @@
 # ADR 0023: Staff events, delivered to Discord by an HTTP-only bot
 
-- Status: Accepted (implemented 2026-10-01, Core migration 0068)
+- Status: Accepted (implemented 2026-10-01, Core migration 0068; amended 2026-10-09, migration
+  0113: Discord is the only staff channel)
 - Date: 2026-10-01
 
 ## Context
@@ -84,6 +85,17 @@ in the CRM: marking an invoice paid, promote and rollback are links, not buttons
 **Commands:** `/hoje`, `/pendencias`, `/lead`, `/loja`, `/frota`, `/resumo`, `/silenciar`,
 `/bot`, `/ajuda`. They are registered as guild commands (instant) whenever their definition,
 the application or the guild changes. Answers are ephemeral unless asked to publish.
+
+**Amendment (2026-10-09): one channel.** The rollout kept `notifyStaff` and the daily email
+digest running beside the bot, so every handoff, booked call, help request, fleet incident, store
+going live and billing problem reached the team twice, through two configs (the `staff.events`
+toggles and the bot's levels) that disagreed. Both are gone: `recordStaffEventTx` is the only way
+anything reaches the team, and Discord the only sink. `staff` keeps the roster (names, Discord
+ids for the bot's buttons, WhatsApps the agent never treats as leads); its `events` key is
+dropped on the next save. The daily summary is `discord-digest` (it already carried everything the
+email had); the `digest` setting is refused. A billing problem keeps its specific case as `title`
+("Fatura paga duas vezes") instead of only the broad `problem`. If the bot is off, the team hears
+nothing, and the CRM's readiness list says so as a warning.
 
 ## Consequences
 

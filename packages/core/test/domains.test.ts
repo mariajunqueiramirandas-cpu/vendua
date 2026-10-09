@@ -7,7 +7,6 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { createSession, membershipsFor } from '../src/admin/auth.ts';
 import { setDnsResolver } from '../src/modules/billing/domains.ts';
-import { billingStaff } from '../src/modules/billing/subscriptions.ts';
 import {
   aliasOf,
   comBrLabel,
@@ -214,7 +213,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
   const nonce = crypto.randomUUID().slice(0, 6);
   const created: string[] = [];
   let idem = 0;
-  const originalStaff = billingStaff.notify;
 
   // ── DNS: a stub map; a name it lacks has no records ────────────────────────
   interface Rec {
@@ -378,7 +376,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
   beforeAll(async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
     await sql`update plans set available = true where id = 'pangolim'`;
-    billingStaff.notify = async () => {};
     setDnsResolver({
       resolveCname: (h) => answer(h, 'cname'),
       resolve4: (h) => answer(h, 'a'),
@@ -391,7 +388,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
   });
 
   afterAll(async () => {
-    billingStaff.notify = originalStaff;
     setDnsResolver(null);
     if (created.length) await sql`delete from tenants where id in ${sql(created)}`;
     if (appSql !== sql) await appSql.end();
