@@ -695,6 +695,34 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
     expect(fetched).toHaveLength(before);
   });
 
+  test('past 6 a minute the socket fetches no more, and a note asks to be sent again', async () => {
+    const s = await store();
+    const jid = `55${s.phone}@s.whatsapp.net`;
+    let fetched = 0;
+    const note = {
+      type: 'audio' as const,
+      mime: 'audio/ogg; codecs=opus',
+      seconds: 3,
+      size: 10,
+      download: async () => {
+        fetched++;
+        return new Uint8Array([1]);
+      },
+    };
+    for (let i = 0; i < 7; i++)
+      await socketMessageToInbox(appSql, {
+        jid,
+        text: '[áudio]',
+        providerId: `r${i}-${nonce}`,
+        media: note,
+      });
+    expect(fetched).toBe(6);
+    const [last] = await sql<{ body: string; media_id: string | null }[]>`
+      select body, media_id from platform_wa_inbox where provider_id = ${`r6-${nonce}`}`;
+    // "manda de novo", never "passou de 3 minutos"
+    expect(last).toMatchObject({ body: AUDIO_NOT_FETCHED, media_id: null });
+  });
+
   test('a reply goes to the WhatsApp the owner writes from, whichever spelling the store holds', async () => {
     // the store holds the 11-digit spelling; the sender row (the number they write from) the 10
     const eleven = `2198${String(Date.now()).slice(-7)}`;

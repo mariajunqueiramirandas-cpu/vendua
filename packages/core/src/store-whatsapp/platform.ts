@@ -415,18 +415,20 @@ export class PlatformGateway {
         file.type === 'image') &&
       (file.size ?? 0) <= cap &&
       // an 'append' replay of a note already stored is not downloaded again
-      !(await inboxHas(this.o.sql, name, 'message', m.id)) &&
-      this.mediaAllowed(dm.jid)
+      !(await inboxHas(this.o.sql, name, 'message', m.id))
     ) {
-      try {
-        const got = await m.download(cap);
-        if (got.byteLength > 0 && got.byteLength <= cap)
-          media = { mime: file.mime, bytes: got, seconds: file.seconds };
-        else fetchFailed = file.type === 'audio';
-      } catch (e) {
-        fetchFailed = file.type === 'audio';
-        this.log.warn({ err: e, session: name, type: file.type }, 'media not downloaded');
-      }
+      // past the minute's room a note within the caps asks to be sent again, never "too long"
+      if (!this.mediaAllowed(dm.jid)) fetchFailed = file.type === 'audio';
+      else
+        try {
+          const got = await m.download(cap);
+          if (got.byteLength > 0 && got.byteLength <= cap)
+            media = { mime: file.mime, bytes: got, seconds: file.seconds };
+          else fetchFailed = file.type === 'audio';
+        } catch (e) {
+          fetchFailed = file.type === 'audio';
+          this.log.warn({ err: e, session: name, type: file.type }, 'media not downloaded');
+        }
     }
     await writeInboxMessage(
       this.o.sql,

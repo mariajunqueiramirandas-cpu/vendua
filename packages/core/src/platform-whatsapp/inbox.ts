@@ -198,22 +198,22 @@ export async function socketMessageToInbox(
   let body = m.text;
   const f = m.media;
   const cap = f?.type === 'image' ? MAX_IMAGE_BYTES : MAX_MEDIA_BYTES;
-  if (
-    f &&
-    (f.type === 'image' || (f.seconds ?? 0) <= MAX_AUDIO_SECONDS) &&
-    (f.size ?? 0) <= cap &&
-    !(await inboxHasProvider(sql, m.providerId)) &&
-    mediaAllowed(phone)
-  ) {
-    try {
-      const bytes = await f.download(cap);
-      if (bytes.byteLength > 0 && bytes.byteLength <= cap)
-        file = { mime: f.mime, bytes, seconds: f.seconds };
-      else if (f.type === 'audio') body = AUDIO_NOT_FETCHED;
-    } catch (err) {
-      inboxLog.warn({ err, type: f.type }, 'media not downloaded');
+  const fits =
+    !!f && (f.type === 'image' || (f.seconds ?? 0) <= MAX_AUDIO_SECONDS) && (f.size ?? 0) <= cap;
+  if (f && fits && !(await inboxHasProvider(sql, m.providerId))) {
+    // past the minute's room a note within the caps asks to be sent again, never "too long"
+    if (!mediaAllowed(phone)) {
       if (f.type === 'audio') body = AUDIO_NOT_FETCHED;
-    }
+    } else
+      try {
+        const bytes = await f.download(cap);
+        if (bytes.byteLength > 0 && bytes.byteLength <= cap)
+          file = { mime: f.mime, bytes, seconds: f.seconds };
+        else if (f.type === 'audio') body = AUDIO_NOT_FETCHED;
+      } catch (err) {
+        inboxLog.warn({ err, type: f.type }, 'media not downloaded');
+        if (f.type === 'audio') body = AUDIO_NOT_FETCHED;
+      }
   }
   await controlTx(sql, async (tx) => {
     const mediaId = file
