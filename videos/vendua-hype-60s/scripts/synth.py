@@ -487,235 +487,280 @@ def build_music():
 
 
 # ---------------------------------------------------------------- sound effects
-
-def sfx_whoosh(peak=0.28, dur=0.5):
-    n = int(dur * SR)
-    t = np.arange(n) / SR
-    pk = peak / dur
-    r = t / dur
-    shape = np.where(r < pk, (r / pk) ** 2.2, np.exp(-(r - pk) * dur / 0.07))
-    fc = np.where(r < pk, 500 + 4500 * (r / pk) ** 1.5, 5000 * np.exp(-(r - pk) * dur / 0.12) + 800)
-    x = sweep(noise(n), fc, "bp", 1.4) * shape
-    pan = np.clip((r - pk) * 4, -1, 1)
-    l, rr = np.cos((pan + 1) * np.pi / 4), np.sin((pan + 1) * np.pi / 4)
-    return np.vstack([x * l, x * rr]) * 1.4, peak
+# The premium set (videos/README.md → Premium SFX): soft, tonal, rounded UI sounds, band-limited
+# (nothing boomy under 120 Hz, nothing brittle over ~9 kHz), mixed low, one sound per moment.
+# Notes come from F minor / A♭ major so every ping sits in the track's key. Cue times are the
+# frames' own tween times (dumped from the GSAP timelines), not the storyboard's anchors.
 
 
-def sfx_pop(m=84):
-    n = int(0.16 * SR)
-    t = np.arange(n) / SR
-    f = mtof(m) * (1 + 0.5 * np.exp(-t / 0.012))
-    x = sine(f, n) * 0.8 + sine(f * 2, n) * 0.15 * np.exp(-t / 0.02)
-    return fade(x * np.exp(-t / 0.05), 0.0005, 0.02)
+def polish(x, lo=120, hi=9000):
+    return fade(lp(hp(x, lo), hi), 0.001, 0.008)
 
 
-def sfx_tap():
-    n = int(0.06 * SR)
-    t = np.arange(n) / SR
-    return fade(hp(noise(n), 2500) * np.exp(-t / 0.003) * 0.6 + sine(1700, n) * np.exp(-t / 0.012) * 0.5, 0, 0.01)
-
-
-def bell(m, dur=1.0, idx=2.0, tau=0.45):
+def glass(m, dur=0.6, tau=0.35, bright=1.0, det=4.0):
+    """Glassy mallet: a few partials, upper ones decaying faster, a detuned pair for width."""
     n = int(dur * SR)
     t = np.arange(n) / SR
     f = mtof(m)
-    mod = np.sin(2 * np.pi * f * 3.5 * t) * idx * np.exp(-t / 0.25)
-    return fade(np.sin(2 * np.pi * f * t + mod) * np.exp(-t / tau), 0.001, 0.05)
+    out = np.zeros((2, n))
+    for c, cents in enumerate((-det, det)):
+        ff = f * 2 ** (cents / 1200)
+        x = np.sin(2 * np.pi * ff * t) * np.exp(-t / tau)
+        x += 0.32 * bright * np.sin(2 * np.pi * ff * 2.0 * t) * np.exp(-t / (tau * 0.45))
+        x += 0.12 * bright * np.sin(2 * np.pi * ff * 3.01 * t) * np.exp(-t / (tau * 0.25))
+        x += 0.05 * bright * np.sin(2 * np.pi * ff * 4.17 * t) * np.exp(-t / (tau * 0.12))
+        out[c] = x * (1 - np.exp(-t / 0.0015))
+    return np.vstack([polish(out[0], 150), polish(out[1], 150)]) * 0.6
 
 
-def sfx_chime(notes, gap=0.07, dur=1.2):
-    out = np.zeros(int((dur + gap * len(notes)) * SR))
+def ping(notes, gap=0.075, tau=0.38, dur=1.1, bright=1.0):
+    """Notification / success: glass notes rising, each a touch louder."""
+    out = np.zeros((2, int((dur + gap * len(notes)) * SR)))
     for i, m in enumerate(notes):
-        b = bell(m, dur)
+        g = glass(m, dur, tau, bright)
         j = int(i * gap * SR)
-        out[j : j + len(b)] += b * (0.8 + 0.1 * i)
-    return out / len(notes) * 1.6
+        out[:, j : j + g.shape[1]] += g * (0.75 + 0.12 * i)
+    return out / max(1, len(notes)) ** 0.5
 
 
-def sfx_kaching():
-    a = sfx_chime([84, 91], 0.05, 0.7)
-    n = len(a)
+def tap(m=86):
+    """A rounded button tap: a short pitched body and a soft, filtered click."""
+    n = int(0.07 * SR)
     t = np.arange(n) / SR
-    shimmer = hp(noise(n), 6000) * np.exp(-t / 0.18) * 0.25
-    return a + shimmer
+    f = mtof(m) * (1 + 0.25 * np.exp(-t / 0.004))
+    body = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / 0.011)
+    click = bp(noise(n), 1800, 5500) * np.exp(-t / 0.0014) * 0.35
+    low = np.sin(2 * np.pi * 240 * t) * np.exp(-t / 0.014) * 0.35
+    return polish(body * 0.7 + click + low, 160, 8000)
 
 
-def sfx_stamp():
-    n = int(0.25 * SR)
+def tick(m=96, tau=0.014):
+    n = int(0.06 * SR)
     t = np.arange(n) / SR
-    thump = sine(80 + 60 * np.exp(-t / 0.02), n) * np.exp(-t / 0.07)
-    slap = lp(noise(n), 1800) * np.exp(-t / 0.018) * 0.7
-    return fade(np.tanh(1.5 * (thump + slap)), 0, 0.02)
+    x = np.sin(2 * np.pi * mtof(m) * t) * np.exp(-t / tau) + 0.2 * np.sin(2 * np.pi * mtof(m) * 2 * t) * np.exp(-t / (tau / 2))
+    return polish(x * (1 - np.exp(-t / 0.0008)), 400, 9000)
 
 
-def sfx_thump(m=36, tau=0.25):
-    n = int(0.6 * SR)
+def bubble(m):
+    """A chat bubble: a short pluck that rises a hair into pitch."""
+    n = int(0.22 * SR)
     t = np.arange(n) / SR
-    f = mtof(m) * (1 + 1.5 * np.exp(-t / 0.03))
-    return fade(np.tanh(1.4 * sine(f, n) * np.exp(-t / tau)) + lp(noise(n), 1200) * np.exp(-t / 0.02) * 0.3, 0, 0.05)
+    f = mtof(m) * (1 - 0.12 * np.exp(-t / 0.018))
+    x = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / 0.07)
+    x += 0.25 * np.sin(2 * np.pi * np.cumsum(f * 2) / SR) * np.exp(-t / 0.03)
+    return polish(x * (1 - np.exp(-t / 0.002)), 200, 8000)
 
 
-def sfx_tick(m=96):
-    n = int(0.03 * SR)
-    t = np.arange(n) / SR
-    return fade(sine(mtof(m), n) * np.exp(-t / 0.006), 0, 0.005)
-
-
-def sfx_printer(dur):
+def whoosh(peak=0.22, dur=0.55, direction=1.0, bright=1.0):
+    """Silky air: soft noise through a moving band, a smooth swell into `peak`, a quick settle."""
     n = int(dur * SR)
     t = np.arange(n) / SR
-    gate = ((t / S16) % 1 < 0.7).astype(float)
-    gate = lp(gate, 200)
-    x = square(118, n) * 0.4 + bp(noise(n), 1500, 5000) * 0.6
-    return fade(lp(x, 3500) * gate, 0.005, 0.03)
+    pk = int(peak * SR)
+    env = np.where(t < peak, (t / peak) ** 2.6, np.exp(-(t - peak) / 0.085))
+    fc = np.where(t < peak, 350 + 2300 * (t / peak) ** 1.6, 650 + 2000 * np.exp(-(t - peak) / 0.07))
+    src = lp(noise(n), 3000, 1) + 0.5 * lp(noise(n), 600, 1)
+    body = sweep(src, fc * bright, "bp", 0.75)
+    air = hp(noise(n), 5200) * 0.12 * bright
+    x = (body + air) * env
+    pan = np.clip((t - peak) / 0.25, -1, 1) * 0.7 * direction
+    l, r = np.cos((pan + 1) * np.pi / 4), np.sin((pan + 1) * np.pi / 4)
+    x = polish(x, 140, 9000)
+    return np.vstack([x * l, x * r]) * 1.6 / max(1e-9, np.max(np.abs(x)))
 
 
-def sfx_glitch():
-    n = int(0.14 * SR)
-    src = bp(noise(int(0.02 * SR)), 800, 6000) + square(220, int(0.02 * SR)) * 0.5
-    out = np.zeros(n)
-    i = 0
-    k = 0
-    while i < n:
-        seg = src[: len(src) - (k % 3) * 200]
-        out[i : i + len(seg)] = seg[: n - i] * (1 - i / n)
-        i += len(seg) + 120
-        k += 1
-    return out * 0.8
-
-
-def sfx_boing():
-    n = int(0.3 * SR)
-    t = np.arange(n) / SR
-    f = mtof(72) * (0.6 + 0.6 * (1 - np.exp(-t / 0.06)))
-    return fade(sine(f, n) * np.exp(-t / 0.12) * (1 + 0.3 * np.sin(2 * np.pi * 18 * t)), 0.002, 0.03)
-
-
-def sfx_bloom():
-    n = int(2.0 * SR)
-    t = np.arange(n) / SR
-    low = sine(mtof(41), n) * (1 - np.exp(-t / 0.05)) * np.exp(-t / 0.7)
-    glass = sum(bell(m, 2.0, 1.2, 0.8) for m in (77, 84, 89)) / 3
-    return low * 0.7 + glass * 0.6
-
-
-def sfx_swish():
-    n = int(0.22 * SR)
+def swipe(dur=0.2):
+    """A fingertip across glass."""
+    n = int(dur * SR)
     r = np.linspace(0, 1, n)
-    return fade(sweep(noise(n), 2000 + 6000 * r, "bp", 1.5) * np.sin(np.pi * r) ** 2, 0.002, 0.02)
+    x = sweep(noise(n), 2500 + 3500 * r, "bp", 1.1) * np.sin(np.pi * r) ** 1.5
+    return polish(x, 1200, 9000) * 0.8
+
+
+def thock(m=50):
+    """A soft stamp: a felt mallet on card, tuned low, no distortion."""
+    n = int(0.16 * SR)
+    t = np.arange(n) / SR
+    f = mtof(m) * (1 + 0.6 * np.exp(-t / 0.01))
+    x = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / 0.045)
+    x += lp(noise(n), 1400) * np.exp(-t / 0.005) * 0.25
+    return polish(x, 110, 6000)
+
+
+def accent(notes=(77, 84, 89), low=41, dur=2.6):
+    """Logo moment: a warm low sine bloom under a glass chord (an accent, never an impact)."""
+    n = int(dur * SR)
+    t = np.arange(n) / SR
+    bloom = np.sin(2 * np.pi * mtof(low) * t) * (1 - np.exp(-t / 0.03)) * np.exp(-t / 0.55)
+    bloom += 0.3 * np.sin(2 * np.pi * mtof(low + 12) * t) * (1 - np.exp(-t / 0.02)) * np.exp(-t / 0.35)
+    out = np.vstack([bloom, bloom]) * 0.55
+    for i, m in enumerate(notes):
+        g = glass(m, dur, 0.9, 0.7, 6.0)
+        j = int(i * 0.018 * SR)
+        out[:, j : j + g.shape[1] - j] += g[:, : n - j] * 0.55
+    return np.vstack([polish(out[0], 60), polish(out[1], 60)])
+
+
+def swell(dur=0.9, notes=(77, 84, 89)):
+    """A reversed glass chord with rising air: ends exactly at its own end (place it to end on a hit)."""
+    n = int(dur * SR)
+    g = sum(glass(m, dur, 0.5, 0.8) for m in notes)[:, ::-1]
+    t = np.arange(n) / SR
+    air = sweep(noise(n), 800 + 5000 * (t / dur) ** 2, "bp", 0.8) * (t / dur) ** 3 * 0.5
+    x = g * (t / dur) ** 1.5 + np.vstack([air, air])
+    x[:, -int(0.004 * SR) :] *= np.linspace(1, 0, int(0.004 * SR))
+    return x
+
+
+SFX_GAIN = 2.2
 
 
 def build_sfx():
     fx = Bus()
-    W = lambda tpk, g=0.32, dur=0.5: (lambda w: fx.add(w[0], tpk - w[1], g))(sfx_whoosh(0.28, dur))
-    P = lambda t, m=84, g=0.3, pan=0.0: fx.add(sfx_pop(m), t, g, pan)
-    TAP = lambda t, g=0.35: fx.add(sfx_tap(), t, g)
-    TH = lambda t, g=0.35, m=36: fx.add(sfx_thump(m), t, g)
 
-    # F1 hook
-    fx.add(sfx_glitch(), 0.0, 0.35)
-    fx.add(sfx_chime([80, 84], 0.06, 0.8), T(0, 2), 0.3, 0.2)
-    TH(T(1), 0.3)
-    fx.add(sfx_swish(), T(1, 1) - 0.03, 0.22)
-    fx.add(sfx_chime([84, 87, 92], 0.06, 0.9), T(1, 2), 0.32, -0.2)
-    W(T(2), 0.3)
-    # F2 brand
-    for i in range(6):
-        P(T(2) + i * S16, 72 + [0, 3, 5, 7, 10, 12][i], 0.22, -0.4 + i * 0.16)
-    fx.add(sfx_tick(100), T(2, 2), 0.35)
-    fx.add(sfx_swish(), T(2, 2), 0.18)
-    fx.add(sfx_boing(), T(3), 0.32)
-    TAP(T(3, 1), 0.25)
-    # F3 loja
-    W(T(4), 0.3)
-    TAP(T(4, 2), 0.3)
-    W(T(5), 0.28)
-    for i in range(8):
-        fx.add(sfx_tick(98 + (i % 2) * 2), T(5) + i * S16 / 2, 0.14)
-    for i, b in enumerate((1, 2, 3)):
-        P(T(5, b), 79 + 3 * i, 0.3, -0.3 + 0.3 * i)
-    W(T(6), 0.26)
-    for i in range(4):
-        P(T(6, i), [77, 80, 84, 89][i], 0.28)
-    TH(T(7), 0.28, 40)
-    for i in range(int((T(7, 2) - T(7, 0.2)) / (S16 / 2))):
-        fx.add(sfx_tick(102), T(7, 0.2) + i * S16 / 2, 0.08)
-    fx.add(sfx_kaching(), T(7, 2), 0.3)
-    W(T(8), 0.3)
-    # F4 pedido
-    fx.add(sfx_chime([80, 84, 87], 0.08, 1.2), T(8), 0.38)
-    P(T(8, 2), 84, 0.22)
-    W(T(9), 0.28)
-    TAP(T(9, 2), 0.45)
-    fx.add(sfx_chime([84, 89], 0.06, 0.7), T(9, 2) + 0.03, 0.25)
-    W(T(10), 0.26)
-    for i in range(4):
-        P(T(10, i), [72, 75, 79, 84][i], 0.26)
-    for i in range(4):
-        TH(T(11, i), 0.22 + 0.08 * i, 36 + i * 2)
-    # F5 Duá: one pop per chat message, Duá high, the customer lower
-    TH(T(12, 1), 0.3, 41)
-    TAP(T(12, 2), 0.25)
-    W(T(13), 0.26)
-    chat = ["d", "m", "d", "d", "m", "d", "m", "d", "d", "m", "d"]
-    for i, who in enumerate(chat):
-        P(T(13) + i * BEAT, 89 if who == "d" else 82, 0.26, -0.25 if who == "d" else 0.25)
-    fx.add(sfx_chime([84, 91], 0.07, 1.0), T(15, 2), 0.36)
-    W(T(16), 0.3)
-    # F6 smart
-    for b in (1, 2, 3):
-        P(T(16, b), 80 + b * 2, 0.28)
-    W(T(17), 0.26)
-    for b in (1, 2, 3):
-        fx.add(sfx_swish(), T(17, b) - 0.06, 0.22)
-    W(T(18), 0.26)
-    fx.add(sfx_printer(T(18, 2.5) - T(18)), T(18), 0.2)
-    W(T(19), 0.26)
-    for i in range(7):
-        fx.add(sfx_stamp(), T(19) + i * S16 * 2, 0.34)
-    fx.add(sfx_chime([84, 87, 91], 0.06, 1.0), T(19, 3) + 0.05, 0.22)
-    W(T(20), 0.28)
-    # F7 preço (break)
-    TH(T(20), 0.38, 34)
-    TH(T(20, 1), 0.3, 36)
-    TAP(T(20, 3), 0.22)
-    for i in range(3):
-        TH(T(21, i), 0.32 + 0.06 * i, 36 + 3 * i)
-    # F8 planos
-    W(T(22, 0.5), 0.3)
-    for i in range(int((T(22, 2) - T(22, 0.6)) / (S16 / 2))):
-        fx.add(sfx_tick(100 + (i % 3)), T(22, 0.6) + i * S16 / 2, 0.1)
-    fx.add(sfx_kaching(), T(22, 2), 0.38)
-    for i, b in enumerate((3, 4, 5)):
-        P(T(22, b), 82 + 3 * i, 0.27)
-    W(T(23, 3), 0.26)
-    W(T(24), 0.3)
-    P(T(24), 91, 0.25)
-    for i in range(int((T(24, 2) - T(24, 0.2)) / (S16 / 2))):
-        fx.add(sfx_tick(100 + (i % 3)), T(24, 0.2) + i * S16 / 2, 0.1)
-    fx.add(sfx_kaching(), T(24, 2), 0.42)
-    for i, b in enumerate((3, 4, 5, 6, 7)):
-        P(T(24, b), 80 + 2 * i, 0.27)
-    fx.add(sfx_boing(), T(25), 0.24)
-    fx.add(sfx_swish(), T(26), 0.25)
-    TAP(T(26, 2), 0.25)
-    TH(T(27), 0.32, 38)
-    TH(T(27, 1), 0.3, 41)
-    TH(T(27, 2), 0.3, 43)
-    P(T(27, 3), 89, 0.25)
-    W(T(28), 0.3)
-    # F9 cta
-    TAP(T(28, 1), 0.25)
-    fx.add(sfx_swish(), T(28, 2) - 0.08, 0.25)
-    TAP(T(29), 0.5)
-    fx.add(sfx_chime([84, 89, 91], 0.07, 1.1), T(29) + 0.04, 0.32)
-    W(T(29, 2), 0.24)
-    fx.add(sfx_bloom(), T(30), 0.4)
-    TAP(T(30, 1), 0.2)
-    fx.add(sfx_chime([89, 96, 101], 0.09, 1.6), T(31), 0.22)
+    def add(sig, t, g, pan=0.0):
+        fx.add(sig, t, g, pan)
 
-    wet = apply_reverb(fx.x, reverb_ir(1.1, seed=5))
-    return fx.x + 0.18 * wet
+    def W(tpk, g=0.3, dur=0.55, peak=0.22, d=1.0, bright=1.0):
+        add(whoosh(peak, dur, d, bright), tpk - peak, g)
+
+    def SW(t, g=0.18):
+        add(swipe(), t - 0.03, g)
+
+    def TAP(t, g=0.28, m=86, pan=0.0):
+        add(tap(m), t, g, pan)
+
+    def PING(t, notes, g=0.3, gap=0.075, pan=0.0):
+        add(ping(notes, gap), t, g, pan)
+
+    def TICKS(times, g=0.08, m0=94, step=0.0):
+        for i, x in enumerate(times):
+            add(tick(m0 + step * i), x, g, 0.15 * ((i % 2) * 2 - 1))
+
+    def ENDS_AT(sig, t, g):
+        add(sig, t - sig.shape[1] / SR, g)
+
+    # 01 hook: two orders arrive while "você cozinha / a gente vende" slams
+    PING(0.80, [80, 84], 0.26)
+    W(1.875, 0.2, 0.4, 0.16)
+    SW(2.30, 0.14)
+    PING(2.70, [84, 89], 0.28)
+    W(3.75, 0.26, 0.6, 0.3, -1.0)  # the lime floor rises into the drop
+
+    # 02 brand: the wordmark types itself, the accent drops and the check draws
+    TICKS([3.792, 3.909, 4.027, 4.144, 4.261], 0.11, 84, 2.4)
+    add(bubble(91), 4.433, 0.16)
+    add(accent(), 4.56, 0.22)
+    add(bubble(77), 5.58, 0.22, -0.2)  # Duá peeks up
+    TAP(6.04, 0.16, 84)
+    SW(6.53, 0.13)
+    W(7.68, 0.3, 0.6, 0.3)  # the page is yanked up
+
+    # 03 loja: 8 questions → the store fills itself → hours → today's sales
+    TAP(8.38, 0.18, 82)
+    TAP(8.61, 0.2, 86)
+    W(9.375, 0.26, 0.5, 0.16, 1.0)  # lime wipe
+    TICKS([9.40 + i * 0.035 for i in range(12)], 0.035, 98)
+    for i, t in enumerate((9.79, 10.26, 10.73)):
+        add(bubble(80 + 4 * i), t, 0.2, -0.2 + 0.2 * i)
+    W(11.2, 0.16, 0.35, 0.1, -1.0, 1.3)  # the card flips
+    for i, t in enumerate((11.72, 12.19, 12.66)):
+        TAP(t, 0.17, 84 + 3 * i)
+    W(13.12, 0.24, 0.45, 0.14)  # the sales plate whips in
+    # count-up R$ 0 → 718 (power2.out over 13.285–14.063): a tick per R$ 40
+    u = np.linspace(0, 1, 4000)
+    v = 1 - (1 - u) ** 2
+    marks = [13.285 + (14.063 - 13.285) * u[np.searchsorted(v, k / 18)] for k in range(1, 18)]
+    TICKS(marks, 0.07, 96)
+    PING(14.07, [84, 91], 0.3, 0.05)
+    W(15.04, 0.26, 0.55, 0.26)  # zoom through
+
+    # 04 pedido: the new-order push, the tap to accept, the kitchen tabs
+    PING(15.16, [80, 84, 87], 0.36, 0.085)
+    TAP(15.90, 0.14, 82)
+    W(16.80, 0.26, 0.45, 0.16, -1.0)
+    TAP(17.77, 0.32, 86)
+    PING(17.82, [87, 91], 0.24, 0.06)
+    SW(18.68, 0.15)
+    for i, t in enumerate((19.16, 19.63, 20.10)):
+        TAP(t, 0.15 + 0.02 * i, 82 + 2 * i)
+    W(20.56, 0.24, 0.45, 0.14, 1.0)
+    for i, t in enumerate((20.58, 21.05, 21.52, 21.99)):
+        add(thock(53 + 3 * i), t, 0.18 + 0.03 * i)
+    ENDS_AT(swell(1.1, (80, 84, 89)), 22.5, 0.22)
+
+    # 05 Duá: the hero accent, then the chat — customer low on the right, Duá high on the left
+    add(accent((80, 84, 89), 44), 22.5, 0.22)
+    TAP(22.92, 0.16, 84)
+    W(24.42, 0.22, 0.45, 0.16, 1.0)
+    for t in (24.33, 24.80, 26.20, 27.14, 28.55):
+        add(bubble(80), t, 0.17, 0.3)
+    for t in (25.27, 25.74, 26.67, 27.61, 28.08):
+        add(bubble(87), t, 0.17, -0.3)
+    PING(29.01, [84, 89, 92], 0.34, 0.07)  # Pix paid → "Vendido."
+    W(30.02, 0.3, 0.45, 0.06, -1.0, 1.1)  # whip pan
+
+    # 06 smart: the summary, the kitchen screen, the printer, the loyalty card
+    TAP(30.18, 0.16, 86)
+    for i, t in enumerate((30.50, 30.97, 31.44)):
+        add(bubble(82 + 3 * i), t, 0.17, -0.25 + 0.25 * i)
+    W(31.875, 0.22, 0.5, 0.15)
+    SW(32.26, 0.13)
+    add(bubble(84), 32.80, 0.15)
+    SW(33.19, 0.13)
+    PING(33.29, [84, 89], 0.24, 0.05)
+    W(33.75, 0.22, 0.5, 0.15)
+    TICKS([33.80 + i * 0.1172 for i in range(10)], 0.06, 89, 0.7)
+    SW(34.92, 0.12)
+    PING(35.14, [87, 91], 0.2, 0.05)
+    W(35.625, 0.22, 0.5, 0.15)
+    for i, t in enumerate((35.63, 35.86, 36.10, 36.33, 36.57, 36.80)):
+        add(thock(55), t, 0.14)
+        add(glass([77, 80, 82, 84, 87, 89][i], 0.5, 0.18), t + 0.005, 0.12, -0.3 + 0.12 * i)
+    PING(36.98, [89, 92, 96], 0.26, 0.06)
+    W(37.47, 0.24, 0.45, 0.14, 1.0)
+
+    # 07 preço: the question, the answer, the lime flip into the drop
+    TAP(37.92, 0.18, 84)
+    TICKS([38.87 + i * 0.023 for i in range(12)], 0.03, 100)
+    for i, t in enumerate((39.33, 39.80, 40.27)):
+        TAP(t, 0.17 + 0.02 * i, 82 + 2 * i)
+    SW(40.37, 0.13)
+    ENDS_AT(swell(0.9, (77, 84, 89)), 41.25, 0.24)
+
+    # 08 planos: two slot rolls that lock, perks, the recommended plan, 14 days
+    TICKS([41.55 + i * 0.045 for i in range(10)], 0.05, 97)
+    TICKS([42.022, 42.077, 42.132, 42.187], 0.13, 87, 2)
+    PING(42.20, [84, 89], 0.26, 0.05)
+    for i, t in enumerate((42.60, 43.07, 43.54)):
+        add(bubble(82 + 3 * i), t, 0.15, 0.2)
+    W(44.75, 0.26, 0.5, 0.2, -1.0)
+    add(bubble(91), 45.05, 0.15)
+    TICKS([45.09 + i * 0.05 for i in range(14)], 0.05, 97)
+    TICKS([45.827, 45.883, 45.937], 0.14, 89, 3)
+    PING(45.95, [84, 89, 96], 0.32, 0.06)
+    for i, t in enumerate((46.35, 46.82, 47.29, 47.76, 48.23)):
+        add(bubble(80 + 2 * i), t, 0.14, -0.2 + 0.1 * i)
+    W(48.76, 0.12, 0.5, 0.2, 1.0, 1.6)  # the shine sweep
+    W(49.69, 0.12, 0.5, 0.2, 1.0, 1.6)
+    for i, t in enumerate((50.57, 51.04, 51.51, 51.98)):
+        add(thock(53 + 3 * i), t, 0.17 + 0.02 * i)
+    ENDS_AT(swell(0.9, (80, 87, 92)), 52.5, 0.22)
+
+    # 09 cta: "crie sua loja hoje", the tap, the logo, the URL
+    W(52.56, 0.24, 0.5, 0.08, 1.0)  # the shutter closes
+    TAP(52.92, 0.16, 84)
+    SW(53.0, 0.12)
+    W(53.48, 0.16, 0.4, 0.14, -1.0)
+    TAP(54.33, 0.36, 86)
+    PING(54.40, [84, 89, 92], 0.34, 0.07)
+    W(55.08, 0.24, 0.5, 0.2)
+    add(accent((77, 84, 89), 41), 55.30, 0.2)
+    add(bubble(80), 55.80, 0.16, 0.2)
+    TAP(56.21, 0.16, 86)
+    add(accent((80, 84, 89, 96), 41, 3.0), 58.125, 0.22)
+
+    wet = apply_reverb(fx.x, reverb_ir(1.3, pre=0.015, bright=7000, seed=5))
+    return fx.x + 0.24 * wet
 
 
 def main():
@@ -728,7 +773,10 @@ def main():
         y = x[:, :end].copy()
         y[:, -int(0.25 * SR) :] *= np.linspace(1, 0, int(0.25 * SR))
         sf.write(out / f"{name}.wav", y.T.astype(np.float32), SR, subtype="FLOAT")
-    mix = music[:, :end] * 0.9 + sfx[:, :end] * 1.0
+    # a light duck: the music gives ~2.5 dB to each cue, so the cues read without being loud
+    env = lp(np.abs(sfx[:, :end]).mean(axis=0), 25)
+    duck = 1 - 0.25 * np.clip(env / (np.percentile(env, 99.5) + 1e-9), 0, 1)
+    mix = music[:, :end] * 0.9 * duck + sfx[:, :end] * SFX_GAIN
     mix[:, -int(0.25 * SR) :] *= np.linspace(1, 0, int(0.25 * SR))
     peak = np.max(np.abs(mix))
     print(f"music peak {np.max(np.abs(music)):.2f}  sfx peak {np.max(np.abs(sfx)):.2f}  mix peak {peak:.2f}")

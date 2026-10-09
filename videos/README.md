@@ -182,3 +182,13 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
 - `STORYBOARD.md` frontmatter `canvas` must be strict JSON (`{"w": 1080, "h": 1920, "fps": 30}`):
   otherwise `assemble-index.mjs` quietly falls back to 1920×1080.
 - Contrast ✗ on slot-reel digits mid-spin and on exit-whip blur are motion samples, not bugs.
+- Frames authored one by one end on hard cuts. Seams live in `vendua-hype-60s/scripts/seams.js`: tweens on
+  the `#el-<id>` wrappers in the main timeline, and a hold that keeps the outgoing frame mounted
+  past its cut while it leaves. The frames must stack strictly descending (earlier above later):
+  one shared z-index for every held frame put the incoming frame on top and hid the transition.
+- Read cue times off the frames' real GSAP timelines (`tl.getChildren()` in Playwright), not the
+  storyboard: the storyboard anchors drifted from what the frames actually do.
+- No full-stage colour strobes (frame 7 flipped lime/night at 8.5 Hz): hold one flip instead.
+- Don't open the Studio (`hyperframes preview`) on a finished project: it stamps `data-hf-id` into
+  every frame file and reformats them. To inspect state at a time, drive `window.__player.renderSeek`
+  in Playwright against a throwaway preview and `git checkout` the frames afterwards.

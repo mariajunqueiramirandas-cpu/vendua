@@ -267,29 +267,16 @@
           tl.fromTo('#f7-g2', { scale: 1, transformOrigin: '50% 62%' }, { scale: 1.03, duration: T_ST - T_SW, ease: 'power2.in' }, T_SW);
           tl.fromTo('#f7-glow', { scale: 0.9, opacity: 0.7, y: 140 }, { scale: 1.12, opacity: 1, y: -60, duration: T_ST - T_SW, ease: 'power2.in', immediateRender: false }, T_SW);
 
-          // ════ crash zoom + lime/night strobe on sixteenths, ending on a full lime stage ════
-          const LAST = T_ST + 3 * S16; // 41.1328
+          // ════ crash zoom + one lime flip, held into the drop ════
           tl.set('#f7-cam', { transformOrigin: '42% 60%' }, T_ST);
-          tl.to('#f7-cam', { scale: 1.55, filter: 'blur(5px)', duration: LAST - T_ST, ease: 'power3.in' }, T_ST);
+          tl.to('#f7-cam', { scale: 2.1, filter: 'blur(9px)', duration: DUR - T_ST, ease: 'power3.in' }, T_ST);
           const toLime = (at) => {
             tl.set('#f7-lime', { opacity: 1 }, at);
             tl.set('.f7-ink', { color: FOREST }, at);
             tl.set('#f7-mk', { backgroundColor: FOREST, color: LIME }, at);
           };
-          const toNight = (at) => {
-            tl.set('#f7-lime', { opacity: 0 }, at);
-            tl.set('.f7-ink', { color: CREAM }, at);
-            tl.set('#f7-mk', { backgroundColor: LIME, color: FOREST }, at);
-          };
+          // one flip, held: a full-stage strobe at sixteenths is a photosensitivity risk in an ad
           toLime(T_ST);
-          toNight(T_ST + S16 / 2);
-          toLime(T_ST + S16);
-          toNight(T_ST + 1.5 * S16);
-          toLime(T_ST + 2 * S16);
-          toNight(T_ST + 2.5 * S16);
-          // the last sixteenth: lime, clean — nothing left on stage but the colour
-          toLime(LAST);
-          tl.set('#f7-cam', { autoAlpha: 0 }, LAST);
 
           tl.set({}, {}, DUR);
           window.__timelines['07-preco'] = tl;
