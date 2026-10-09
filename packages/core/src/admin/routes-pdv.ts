@@ -264,13 +264,13 @@ const ways = (c: Context) => {
 
 export function mountPdv(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   // ── the screen's state ─────────────────────────────────────────────────────
 
   admin.get(
     '/pdv/state',
-    read('attendant', async (tx, t, m) => {
+    named('pdv').read('attendant', async (tx, t, m) => {
       const [, caixa, tbls, tabs, s] = await Promise.all([
         gate(tx, t.id),
         openCaixaRow(tx, t.id),

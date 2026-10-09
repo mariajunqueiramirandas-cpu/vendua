@@ -563,7 +563,7 @@ export function mountOrders(d: AdminDeps) {
   // Encomendas calendar (scheduled_for is a local date).
   admin.get(
     '/orders/scheduled',
-    read('attendant', async (tx, t, _m, c) => {
+    named('orders.scheduled').read('attendant', async (tx, t, _m, c) => {
       const from = c.req.query('from');
       const to = c.req.query('to');
       if (!isDate(from) || !isDate(to))

@@ -235,13 +235,13 @@ export async function paymentsView(tx: Sql, tenantId: string, provider: PaymentP
 
 export function mountPayments(d: AdminDeps) {
   const { admin, provider } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
   const redirectUri = (c: AdminCtx) =>
     `${d.publicOrigin(c)}/admin/v1/payments/mercadopago/callback`;
 
   admin.get(
     '/payments',
-    read('manager', async (tx, t) => paymentsView(tx, t.id, provider)),
+    named('payments').read('manager', async (tx, t) => paymentsView(tx, t.id, provider)),
   );
 
   admin.patch(

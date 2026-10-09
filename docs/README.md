@@ -109,7 +109,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0031](adr/0031-vendedor.md)                           | The Vendedor, an AI seller on the store's WhatsApp (proposed)                             |
 | [0032](adr/0032-three-plans-for-launch.md)             | Three plans for the launch, the middle one recommended                                    |
 | [0033](adr/0033-who-dua-answers.md)                    | Who Duá answers: on-demand chat check, owner decides                                      |
-| [0034](adr/0034-dua-copilot.md)                        | Duá Copilot: the admin's own routes, proposals a tap applies (and, amended, by WhatsApp)  |
+| [0034](adr/0034-dua-copilot.md)                        | Duá Copilot: the admin's routes, tap-applied proposals (amended: WhatsApp, store context) |
 | [0035](adr/0035-pdv.md)                                | The PDV: counter sales, mesas with comandas, the caixa                                    |
 | [0036](adr/0036-qr-table-ordering.md)                  | Ordering from the table's QR code                                                         |
 | [0037](adr/0037-self-hosted-stt.md)                    | Shoppers' voice notes transcribed on our own hardware                                     |

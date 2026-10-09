@@ -195,11 +195,11 @@ async function setCartReminderTx(
 
 export function mountWhatsapp(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   admin.get(
     '/whatsapp',
-    read('manager', (tx, t) => whatsappView(tx, t.id, t.name)),
+    named('whatsapp').read('manager', (tx, t) => whatsappView(tx, t.id, t.name)),
   );
 
   // Ask the gateway for a pairing code for this number. The code shows up on the screen (live

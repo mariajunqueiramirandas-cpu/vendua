@@ -35,11 +35,11 @@ const PAGE_LABEL: Record<string, string> = {
 
 export function mountAppearance(d: AdminDeps) {
   const { admin } = d;
-  const { read, write } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   admin.get(
     '/appearance',
-    read('manager', async (tx, t) => {
+    named('appearance').read('manager', async (tx, t) => {
       const bundle = await storeBundleTx(tx, t.id);
       const rows = await tx<
         { page: string; version: number; template: unknown; source: string; created_at: string }[]
