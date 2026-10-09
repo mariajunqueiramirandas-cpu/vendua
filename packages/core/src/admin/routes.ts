@@ -80,7 +80,13 @@ import { mountStore } from './routes-store.ts';
 import { mountTeam } from './routes-team.ts';
 import { mountWhatsapp } from './routes-whatsapp.ts';
 import { mountPrinting } from './routes-print.ts';
-import { MEDIA_QUOTA_BYTES, mediaBytesUsed, processedBytes, processImage } from './media.ts';
+import {
+  MEDIA_QUOTA_BYTES,
+  mediaBytesUsed,
+  processedBytes,
+  processImage,
+  sniffImage,
+} from './media.ts';
 import { isPushEndpoint, pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
 import { recordPushAttempt } from './workers.ts';
 import { getIntegration } from '../modules/integrations.ts';
@@ -107,6 +113,7 @@ export interface MountAdminOpts {
   signupReady: AdminDeps['signupReady'];
   domains: AdminDeps['domains'];
   fleet: AdminDeps['fleet'];
+  copilotMedia: AdminDeps['copilotMedia'];
 }
 
 const STREAM_HEARTBEAT_MS = 20_000;
@@ -272,6 +279,7 @@ export function mountAdmin(o: MountAdminOpts) {
     signupReady: o.signupReady,
     domains: o.domains,
     fleet: o.fleet,
+    copilotMedia: o.copilotMedia,
   };
   mountPaymentsPublic(admin, shared);
   mountSignup(admin, shared);
@@ -718,7 +726,7 @@ export function mountAdmin(o: MountAdminOpts) {
     const bytes = await readCapped(c, MEDIA_MAX);
     if (bytes.byteLength === 0)
       throw new HttpError(413, 'PAYLOAD_TOO_LARGE', 'image is empty or larger than 2 MB');
-    if (sniff(bytes) !== mime)
+    if (sniffImage(bytes) !== mime)
       throw new HttpError(415, 'UNSUPPORTED_MEDIA', 'the file is not the image type it claims');
     // decode + encode outside the claim tx: it's CPU, not data
     const img = await processImage(bytes);
@@ -1052,23 +1060,6 @@ async function readCapped(c: Context, max: number): Promise<Uint8Array> {
     o += p.byteLength;
   }
   return out;
-}
-
-function sniff(b: Uint8Array): string | null {
-  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
-  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
-  if (
-    b[0] === 0x52 &&
-    b[1] === 0x49 &&
-    b[2] === 0x46 &&
-    b[3] === 0x46 &&
-    b[8] === 0x57 &&
-    b[9] === 0x45 &&
-    b[10] === 0x42 &&
-    b[11] === 0x50
-  )
-    return 'image/webp';
-  return null;
 }
 
 function rateLimitByIp(max: number, flags: { trustForwardedFor: boolean; proxyHops: number }) {

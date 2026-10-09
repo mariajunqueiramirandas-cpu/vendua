@@ -1,7 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { createGateway, Runtime, type Json, type ScriptedOutput } from '@vendua/agent-runtime';
+import {
+  createGateway,
+  Runtime,
+  type Json,
+  type ModelGateway,
+  type ScriptedOutput,
+} from '@vendua/agent-runtime';
 import { scriptedAdapter } from '@vendua/agent-runtime/testing';
 import { createApp } from '../src/app.ts';
 import { vendedor } from '../src/agent-host/agents/vendedor/index.ts';
@@ -171,5 +177,90 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('the storefront chat (db)', () =
       select t.id from shopper_threads t join ai_conversations a on a.subject_key = 'thread:' || t.id::text
       where t.tenant_id = ${tenantId} and t.channel = 'web' limit 1`;
     expect(await claim(first!.id)).toBe(true);
+  });
+
+  test('a voice message and a photo are stored as WhatsApp’s are, and heard on the ingest', async () => {
+    await sql`update store_agent set settings = settings || '{"webChat": true}'::jsonb where tenant_id = ${tenantId}`;
+    const session = (await call('POST', '/checkout/v1/session', {})).body.sessionToken as string;
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    ).toString('base64');
+    const voice = {
+      kind: 'voice',
+      mime: 'audio/webm;codecs=opus',
+      data: btoa('OggS fake'),
+      seconds: 2,
+    };
+    // this Core has no transcription: the page offers photos only, and a voice message is refused
+    expect((await call('GET', '/checkout/v1/chat', undefined, session)).body.media).toEqual({
+      voice: false,
+      image: true,
+    });
+    expect((await call('POST', '/checkout/v1/chat', voice, session)).status).toBe(415);
+
+    const media = {
+      transcribe: async () => ({ text: 'tem coca de 2 litros?', confidence: 0.9, language: 'pt' }),
+      speak: async () => null,
+      canTranscribe: async () => true,
+    };
+    const hearing = createApp({
+      sql: appSql,
+      sessionSecret: 's',
+      controlSecret: 'ctl',
+      autoDrain: false,
+      cepLookup: async () => null,
+      storeDomain: 'vendua.test',
+      duaMedia: { media, gateway: null },
+    });
+    const post = async (body: unknown) => {
+      const res = await hearing.request(`http://${host}/checkout/v1/chat`, {
+        method: 'POST',
+        headers: {
+          host,
+          'content-type': 'application/json',
+          authorization: `Bearer ${session}`,
+          'idempotency-key': `${nonce}-${++idem}`,
+        },
+        body: JSON.stringify(body),
+      });
+      return { status: res.status, body: (await res.json()) as any };
+    };
+    const v = await post(voice);
+    expect(v.status).toBe(201);
+    expect(v.body.media).toEqual({ voice: true, image: true });
+    expect(v.body.messages.at(-1)).toMatchObject({ kind: 'voice', body: '', author: 'shopper' });
+    const p = await post({ kind: 'image', mime: 'image/png', data: png, text: 'tem dessa?' });
+    expect(p.status).toBe(201);
+    expect(p.body.messages.at(-1)).toMatchObject({ kind: 'image', body: 'tem dessa?' });
+    expect((await post({ kind: 'image', mime: 'image/jpeg', data: png })).status).toBe(415);
+    const rows = await sql<{ kind: string; mime: string; n: number }[]>`
+      select m.kind, d.mime, octet_length(d.bytes)::int as n from shopper_messages m
+      join shopper_media d on d.message_id = m.id join shopper_threads t on t.id = m.thread_id
+      where t.tenant_id = ${tenantId} and t.channel = 'web' order by m.created_at`;
+    expect(rows.map((r) => [r.kind, r.mime])).toEqual([
+      ['audio', 'audio/webm;codecs=opus'],
+      ['image', 'image/png'],
+    ]);
+
+    const gateway = {
+      generate: async () => ({
+        text: JSON.stringify({
+          description: 'Uma garrafa de refrigerante',
+          food: true,
+          receipt: false,
+        }),
+      }),
+    } as unknown as ModelGateway;
+    for (let i = 0; i < 5; i++) if (!(await ingestPass({ sql: appSql, media, gateway }))) break;
+    const chat = await call('GET', '/checkout/v1/chat', undefined, session);
+    expect(chat.body.messages.filter((m: { author: string }) => m.author === 'shopper')).toEqual([
+      expect.objectContaining({ kind: 'voice', body: 'tem coca de 2 litros?' }),
+      expect.objectContaining({ kind: 'image', body: 'tem dessa?' }),
+    ]);
+    const [photo] = await sql<{ meta: { description?: string } }[]>`
+      select m.meta from shopper_messages m join shopper_threads t on t.id = m.thread_id
+      where t.tenant_id = ${tenantId} and t.channel = 'web' and m.kind = 'image'`;
+    expect(photo!.meta.description).toBe('Uma garrafa de refrigerante');
   });
 });

@@ -11,7 +11,7 @@ import { controlTx } from '../modules/control.ts';
 import type { Sql } from '../platform/db.ts';
 import { log as rootLog } from '../platform/log.ts';
 import { LeaseLost, platformAuthStore, type Fence } from './auth-store.ts';
-import { MAX_AUDIO_SECONDS, MAX_MEDIA_BYTES } from './content.ts';
+import { MAX_AUDIO_SECONDS, MAX_IMAGE_BYTES, MAX_MEDIA_BYTES } from './content.ts';
 import type { HistorySet } from './history.ts';
 import {
   finishPlatformWipe,
@@ -115,8 +115,8 @@ const HOUSEKEEPING_MS = 10 * 60_000;
 const SEND_LEASE = '2 minutes';
 const PROBE_MAX_AGE = '30 seconds';
 const LIDS_MAX = 20_000;
-/** voice notes downloaded per sender per minute: anyone can text Venduá's number */
-const AUDIOS_PER_MINUTE = 6;
+/** voice notes and photos downloaded per sender per minute: anyone can text Venduá's number */
+const MEDIA_PER_MINUTE = 6;
 const PURPOSES = ['otp', 'dua', 'notice', 'crm'];
 
 const NEEDS_SOCKET = `(
@@ -166,7 +166,7 @@ export class PlatformGateway {
   private lastHousekeeping = 0;
   private renewedAt = Date.now();
   /** sender jid → download times in the last minute */
-  private audioTimes = new Map<string, number[]>();
+  private mediaTimes = new Map<string, number[]>();
   private log: Logger;
   private o: Required<
     Omit<PlatformGatewayOptions, 'id' | 'log' | 'sessions' | 'reconnectDelay'>
@@ -388,13 +388,13 @@ export class PlatformGateway {
     this.owned.set(name, owned);
   }
 
-  private audioAllowed(jid: string): boolean {
+  private mediaAllowed(jid: string): boolean {
     const now = Date.now();
-    if (this.audioTimes.size >= LIDS_MAX) this.audioTimes.clear();
-    const recent = (this.audioTimes.get(jid) ?? []).filter((t) => t > now - 60_000);
-    if (recent.length >= AUDIOS_PER_MINUTE) return false;
+    if (this.mediaTimes.size >= LIDS_MAX) this.mediaTimes.clear();
+    const recent = (this.mediaTimes.get(jid) ?? []).filter((t) => t > now - 60_000);
+    if (recent.length >= MEDIA_PER_MINUTE) return false;
     recent.push(now);
-    this.audioTimes.set(jid, recent);
+    this.mediaTimes.set(jid, recent);
     return true;
   }
 
@@ -406,23 +406,26 @@ export class PlatformGateway {
     if (!dm) return;
     let media: InboxMedia | null = null;
     let fetchFailed = false;
-    const audio = m.content?.kind === 'audio' ? m.content.media : null;
+    // voice notes and photos (Duá reads both); a lead's are swept with the rest of the inbox
+    const file = m.content?.media ?? null;
+    const cap = file?.type === 'image' ? MAX_IMAGE_BYTES : MAX_MEDIA_BYTES;
     if (
-      audio?.type === 'audio' &&
-      (audio.seconds ?? 0) <= MAX_AUDIO_SECONDS &&
-      (audio.size ?? 0) <= MAX_MEDIA_BYTES &&
+      file &&
+      ((file.type === 'audio' && (file.seconds ?? 0) <= MAX_AUDIO_SECONDS) ||
+        file.type === 'image') &&
+      (file.size ?? 0) <= cap &&
       // an 'append' replay of a note already stored is not downloaded again
       !(await inboxHas(this.o.sql, name, 'message', m.id)) &&
-      this.audioAllowed(dm.jid)
+      this.mediaAllowed(dm.jid)
     ) {
       try {
-        const got = await m.download(MAX_MEDIA_BYTES);
-        if (got.byteLength > 0 && got.byteLength <= MAX_MEDIA_BYTES)
-          media = { mime: audio.mime, bytes: got, seconds: audio.seconds };
-        else fetchFailed = true;
+        const got = await m.download(cap);
+        if (got.byteLength > 0 && got.byteLength <= cap)
+          media = { mime: file.mime, bytes: got, seconds: file.seconds };
+        else fetchFailed = file.type === 'audio';
       } catch (e) {
-        fetchFailed = true;
-        this.log.warn({ err: e, session: name }, 'voice note not downloaded');
+        fetchFailed = file.type === 'audio';
+        this.log.warn({ err: e, session: name, type: file.type }, 'media not downloaded');
       }
     }
     await writeInboxMessage(

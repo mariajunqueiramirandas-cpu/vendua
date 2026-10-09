@@ -226,6 +226,7 @@ const platformInbox = startPlatformInbox({
   sql: jobsSql,
   jobsSql,
   media: mediaProviders(jobsSql),
+  gateway: agentGateway,
   origin: adminOrigin,
 });
 const socketPump = waTransport === 'socket' ? startSocketPump(jobsSql) : null;

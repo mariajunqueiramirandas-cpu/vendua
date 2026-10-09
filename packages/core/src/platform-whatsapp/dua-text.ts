@@ -112,6 +112,9 @@ export const DUA = {
   voiceUnheard: 'Não consegui entender o áudio. Pode mandar de novo ou escrever?',
   textOnly: 'Por enquanto só consigo ler mensagens escritas por aqui.',
   mediaOnly: 'Por aqui eu leio texto e áudio. Escreve o que precisa?',
+  mediaKinds: 'Por aqui eu leio texto, áudio e foto. Escreve o que precisa?',
+  photoUnseen: 'Não consegui ver essa foto. Pode mandar de novo ou escrever?',
+  mediaCap: 'Hoje já foram muitos áudios e fotos. Por hoje, me escreve o que precisa?',
 } as const;
 
 /** Below this, Duá repeats what it heard before proposing anything. */

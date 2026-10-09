@@ -101,11 +101,18 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
   const stamp = String(Date.now()).slice(-6);
   const tenants: string[] = [];
   let heard: { text: string; confidence: number | null } | null = null;
+  let seen: string | null = null;
   const deps = {
     sql: appSql,
     jobsSql: appSql,
     origin: 'https://painel.test',
     media: { transcribe: async () => (heard ? { ...heard, language: 'pt' } : null) },
+    gateway: {
+      generate: async () => {
+        if (seen === null) throw new Error('no route');
+        return { text: seen };
+      },
+    } as unknown as ModelGateway,
   };
 
   let phones = 0;
@@ -494,6 +501,42 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
       if (prev === undefined) delete process.env.WA_PLATFORM_TRANSPORT;
       else process.env.WA_PLATFORM_TRANSPORT = prev;
     }
+  });
+
+  test('a photo is read and joins the conversation with its caption; one it couldn’t see is said so', async () => {
+    const s = await store();
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const media = async (bytes: Buffer, mime: string) =>
+      (
+        await sql<{ id: string }[]>`
+          insert into platform_wa_media (session, mime, bytes)
+          values ('vendua', ${mime}, ${bytes}) returning id`
+      )[0]!.id;
+    seen = JSON.stringify({ description: 'Uma vitrine de pudins', text: 'Pudim R$ 45' });
+    await inbound(s.phone, '[imagem] esse acabou', { media_id: await media(png, 'image/png') });
+    const [m] = await mailbox(s.tenantId);
+    expect(m!.payload.kind).toBe('image');
+    expect(m!.payload.text).toContain('Uma vitrine de pudins');
+    expect(m!.payload.text.endsWith('\nesse acabou')).toBe(true);
+    const v = await view(s);
+    const msg = v.items.find((i) => i.type === 'message')!;
+    expect(msg).toMatchObject({ channel: 'whatsapp', text: 'esse acabou' });
+    expect((msg as { image: string | null }).image).toMatch(/^\/admin\/v1\/copilot\/media\//);
+    // not an image after all, or no model to read it: Duá says it couldn't see it
+    await inbound(s.phone, '[imagem]', {
+      media_id: await media(Buffer.from('nope'), 'image/jpeg'),
+    });
+    expect(await lastSent(s.phone)).toBe(DUA.photoUnseen);
+    seen = null;
+    await inbound(s.phone, '[imagem]', { media_id: await media(png, 'image/png') });
+    expect(await lastSent(s.phone)).toBe(DUA.photoUnseen);
+    expect(await mailbox(s.tenantId)).toHaveLength(1);
+    // a video is still not something Duá reads
+    await inbound(s.phone, '[vídeo]');
+    expect(await lastSent(s.phone)).toBe(DUA.mediaOnly);
   });
 
   test('past 30 messages in 10 minutes: one “calma”, and the rest wait', async () => {

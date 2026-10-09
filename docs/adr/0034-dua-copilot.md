@@ -94,6 +94,25 @@ How it works:
   names the screen instead.
 - **Online QA** skips Copilot: its rubric scores a seller talking to shoppers.
 
+Added 2026-10-09: **voice messages and photos, in the admin and on WhatsApp.** The admin's
+composer records a voice message or attaches a photo; `POST /admin/v1/copilot/messages/media`
+(`{ kind: 'voice' | 'image', mime, data, text?, screen? }`, base64, 2 MB) hears or reads it before
+the idempotency claim (a replay answers from the claim, as `POST /media` does) and then writes the
+same message and mailbox row as a typed one (`copilotInboundTx` in `src/copilot/media.ts`, which
+the WhatsApp door uses too, now that the platform gateway also downloads photos).
+
+- **Duá reads text only.** A voice message is its transcript (the Vendedor's STT, the store's
+  product names as hints; below 0.6 confidence it is marked so Duá repeats what it heard). A photo
+  is shrunk to a metadata-free WebP and read once by a `fast` model (`readStaffPhoto`: what it
+  shows and its legible text, verbatim); Duá gets that reading between `[foto enviada; …]` and
+  `[fim da foto]`, followed by the caption. Bytes never enter the event log, and the money rule
+  holds: prices read from a photo go only into proposals, never into Duá's words.
+- **The photo stays for the screen**: `copilot_media` (migration 0115, tenant RLS), served to its
+  sender alone by `GET /admin/v1/copilot/media/:id`, deleted with its message by "Nova conversa".
+- **Bounded**: 60 voice messages and photos per person per day, both doors (the reading calls are
+  outside the `copilot` budget, which counts turns). `GET /copilot` says what this Core can take
+  (`media: { voice, image }`), so the mic shows only with a transcription route configured.
+
 ## Consequences and known risks
 
 - The route registry is module-level: last mount wins. Production mounts one admin app per

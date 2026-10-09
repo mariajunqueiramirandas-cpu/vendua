@@ -96,3 +96,50 @@ export async function mediaBytesUsed(tx: Sql, tenantId: string): Promise<number>
 
 export const processedBytes = (img: ProcessedImage) =>
   img.bytes.byteLength + img.variants.reduce((s, v) => s + v.bytes.byteLength, 0);
+
+/** One upright, metadata-free WebP no larger than `longEdge` on a side (Duá's photos). */
+export async function shrinkImage(input: Uint8Array, longEdge: number): Promise<Uint8Array> {
+  let meta: { width: number; height: number };
+  try {
+    meta = await new Img(input).metadata();
+  } catch {
+    undecodable();
+  }
+  if (!(meta.width > 0 && meta.height > 0)) undecodable();
+  if (meta.width * meta.height > MAX_PIXELS)
+    throw new HttpError(413, 'PAYLOAD_TOO_LARGE', 'the image has too many pixels');
+  const scale = Math.min(1, longEdge / Math.max(meta.width, meta.height));
+  let bytes: Uint8Array;
+  try {
+    bytes = await new Img(input)
+      .resize(
+        Math.max(1, Math.round(meta.width * scale)),
+        Math.max(1, Math.round(meta.height * scale)),
+      )
+      .webp({ quality: QUALITY })
+      .bytes();
+  } catch {
+    undecodable();
+  }
+  if (bytes.byteLength > MAX_STORED)
+    throw new HttpError(413, 'PAYLOAD_TOO_LARGE', 'image is larger than 2 MB after processing');
+  return bytes;
+}
+
+/** The image type the bytes are, by magic number (never the client's word). */
+export function sniffImage(b: Uint8Array): string | null {
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+  if (
+    b[0] === 0x52 &&
+    b[1] === 0x49 &&
+    b[2] === 0x46 &&
+    b[3] === 0x46 &&
+    b[8] === 0x57 &&
+    b[9] === 0x45 &&
+    b[10] === 0x42 &&
+    b[11] === 0x50
+  )
+    return 'image/webp';
+  return null;
+}

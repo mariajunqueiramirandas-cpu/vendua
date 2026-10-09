@@ -107,6 +107,9 @@ import { OrderHub } from './modules/order-live.ts';
 import { pixPayload, type PixKeyType } from './modules/pix.ts';
 import { bookableDates } from './modules/preorder.ts';
 import { mountWebChat, webChatProfile } from './vendedor/web-chat.ts';
+import { mediaProviders } from './vendedor/media.ts';
+import { hostGateway } from './agent-host/models.ts';
+import type { CopilotMediaDeps } from './admin/context.ts';
 import { cartReminderOffered, mountCartReminder } from './modules/cart-reminder.ts';
 import { MAX_WATCHERS_PER_ORDER, mountCommerce } from './modules/commerce-routes.ts';
 import {
@@ -302,6 +305,9 @@ export interface AppDeps {
   /** public storefront reads kept in memory (index.ts passes the notify-driven one); the
    *  default also waits out pending notifies on each read, so a write is seen right away */
   readCache?: StoreReadCache | undefined;
+  /** voice transcription and photo reading for Duá (default: the staff-set routes); tests pass
+   *  fakes */
+  duaMedia?: CopilotMediaDeps | undefined;
 }
 
 // the tables each cached storefront read comes from — migration 0088 notifies on every one
@@ -552,8 +558,10 @@ export function createApp({
   readCache,
   domains,
   syncSecret,
+  duaMedia,
 }: AppDeps) {
   const domainProviders = domains ?? domainProvidersFromEnv();
+  const ears = duaMedia ?? { media: mediaProviders(sql), gateway: hostGateway(sql) };
   const cache = readCache ?? new StoreReadCache(sql, { strict: true });
   const provider = paymentProvider ?? createPaymentProvider();
   const geocode = geocoder ?? nominatimGeocoder();
@@ -3093,7 +3101,7 @@ export function createApp({
     publicOrigin: (c) => adminOrigin(c),
     storeDomain: publicStoreDomain,
   });
-  mountWebChat({ checkout, sql, sessionSecret, idempotency });
+  mountWebChat({ checkout, sql, sessionSecret, idempotency, media: ears.media });
   mountCartReminder({ checkout, sql, sessionSecret, idempotency });
 
   mountControlBilling({
@@ -3264,6 +3272,7 @@ export function createApp({
     geocode,
     domains: domainProviders,
     fleet: fleetD,
+    copilotMedia: ears,
   });
   app.route('/admin/v1', admin);
   app.get('/admin', (c) => c.redirect('/admin/'));

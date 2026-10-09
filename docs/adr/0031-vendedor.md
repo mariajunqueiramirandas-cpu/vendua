@@ -128,6 +128,13 @@ Phases V0–V3 and the storefront chat of V4. Each decision lives in:
 
 Outside turns, `src/vendedor/ingest.ts` turns each stored message into text (voice notes transcribed, photos read and matched to the menu), moves the floor (a merchant reply is a takeover; code triggers hand off with Core's own notice) and dispatches it; `src/vendedor/worker.ts` runs the ingest, voice replies, the sweeper (recovery, Pix expiry, the outbox consumer, the `vendedor.monitor` staff event) and Cliente oculto (`src/vendedor/cliente-oculto.ts`).
 
+Voice messages and photos on the site's chat added 2026-10-09 (Kernel 1.24): `POST
+/checkout/v1/chat` also takes `{ kind: 'voice' | 'image', mime, data }` (base64, 2 MB, checked in
+`src/modules/media-upload.ts`) and stores a `shopper_messages` row of kind `audio`/`image` plus its
+`shopper_media`, as the gateway does for WhatsApp; the ingest hears and reads them the same way. At
+most 6 per conversation in 10 minutes, and voice only while a transcription route is configured
+(`StoreChat.media`).
+
 Supervision added 2026-10-06 (migration `0092_vendedor_qol.sql`): a read marker per conversation
 (`shopper_threads.seen_at`); a timed pause (`store_agent.paused_until`, the `paused` floor in
 `src/vendedor/floor.ts`) that lapses by the clock through one `timer.handback` per waiting thread
