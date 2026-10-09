@@ -123,15 +123,21 @@ Cardápio · Mais: the Vendedor carries the "precisa de você" count as its badg
 and Loja moves to the top of "Mais"; its everyday tasks stay in the status pill ([ADR 0031](adr/0031-vendedor.md),
 [sales-agent-ux §2](features/sales-agent-ux.md#2-where-it-lives)).
 
-"Mais" opens a sheet with Pagamentos, Clientes, Marketing, Aparência,
-Relatórios, Equipe, Conta e plano and Ajuda, as large tiles with a live hint
-each ("3 cupons ativos", "Mercado Pago conectado"). Pedidos carries a live
-badge count of orders waiting for action.
+Every area sits in one of four groups, the same on the sidebar, the rail and
+"Mais" (`app/nav.ts`): **Dia a dia** (Início, Pedidos, PDV, Cozinha, Copiloto),
+**Sua loja** (Cardápio, Loja, Aparência), **Vender mais** (Duá, Clientes,
+Marketing, Relatórios) and **Ajustes** (Pagamentos, WhatsApp, Impressoras,
+Equipe, Conta e plano), with Ajuda last on its own.
+
+"Mais" opens a sheet with every area the bar doesn't hold, under those group
+headings, as large tiles with a live hint each ("3 cupons ativos", "Mercado
+Pago conectado"). Pedidos carries a live badge count of orders waiting for
+action.
 
 **Tablet (768–1199 px): rail** on the left with the same five plus the Mais
-items expanded, icons + short labels.
+items expanded, icons + short labels, a rule between groups.
 
-**Desktop (≥ 1200 px): sidebar** with every area, the store switcher at the
+**Desktop (≥ 1200 px): sidebar** with every area under its group heading, the store switcher at the
 top, and the status pill pinned at the bottom of the sidebar.
 
 ### 3.2 Always present
