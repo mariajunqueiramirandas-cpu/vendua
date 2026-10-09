@@ -21,6 +21,12 @@ on:
 permissions:
   contents: read
 
+# a new push to a PR supersedes its running checks; every other run (main pushes, label events, the
+# autofix dispatch) is a group of its own, so it never waits on or cancels another
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && !contains(fromJSON('["labeled","unlabeled"]'), github.event.action) && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   # prettier autofix commits back to the branch; same-repo branches only (can't checkout/push fork heads) — the sole write-token job
   format:
@@ -72,6 +78,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # the check diffs origin/<base>...HEAD
+          filter: blob:none # history without file contents: a diff needs trees only
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
@@ -116,29 +123,49 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -t . -v
 
-  # validates the merge ref (PR) / pushed commit (main) — the code that lands
-  check:
+  # validates the merge ref (PR) / pushed commit (main) — the code that lands. Three runners at once:
+  # the typecheck, the unit tests and the builds (+ Core's typecheck, the one long tsc, on its own
+  # CPUs); `check` below reports them under the old name.
+  check-parts:
+    name: check (${{ matrix.part }})
     runs-on: ubuntu-latest
     # label events matter only to storefront-isolation; check/format run the same unchanged head
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [typecheck, unit, builds]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # tools/affected.mjs diffs origin/<base>...HEAD on PRs
+          filter: blob:none # history without file contents: a diff needs trees only
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
       - run: bun install --frozen-lockfile
       - name: Typecheck
-        # every workspace dir with a `check` script — new packages need zero CI edits (tools/workspaces.mjs, also `bun run check`)
-        run: bun tools/workspaces.mjs check
+        if: matrix.part == 'typecheck'
+        # every workspace dir with a `check` script, one per CPU at once — new packages need zero CI
+        # edits (tools/workspaces.mjs, also `bun run check`)
+        run: bun tools/workspaces.mjs check --skip packages/core
+      - name: Typecheck packages/core
+        if: matrix.part == 'builds'
+        run: cd packages/core && bun run check
       - name: Isolation tools tests
+        if: matrix.part == 'unit'
         run: bun test tools/
+      - name: Unit tests (conformance, the status page + any package with a test script but core)
+        if: matrix.part == 'unit'
+        # packages/core is the core-tests job's; the same script serves `bun run test` locally
+        run: bun tools/workspaces.mjs test
       - name: Agent runtime boundary (ADR 0030)
+        if: matrix.part == 'builds'
         run: bun tools/check-agent-runtime-boundary.mjs
       - name: Builds
+        if: matrix.part == 'builds'
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
@@ -169,20 +196,41 @@ jobs:
               if [ -f "$dir/vendua.config.ts" ]; then bunx vendua-conformance manifest "$dir"; fi
             fi
           done
-      - name: Unit tests (conformance, the status page + any package with a test script but core)
-        # packages/core is the core-tests job's; the same script serves `bun run test` locally
-        run: bun tools/workspaces.mjs test
 
-  # Postgres-backed core tests, split from `check` so the two run in parallel
-  core-tests:
+  # one required-check name for the parts above (green only when every part is)
+  check:
+    needs: check-parts
+    runs-on: ubuntu-latest
+    if: >-
+      !cancelled() && (github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action))
+    steps:
+      - name: Every check part passed
+        env:
+          RESULT: ${{ needs.check-parts.result }}
+        run: |
+          echo "check-parts: $RESULT"
+          [ "$RESULT" = success ]
+
+  # Postgres-backed core tests, split from `check` so the two run in parallel, and across 4 runners
+  # (each its own Postgres): `bun test --shard` balances the files by test/timings.json (refresh it
+  # with `bun test --timings=test/timings.json --update-timings`; a file it lacks still runs).
+  # `core-tests` below reports them under the old name.
+  core-tests-shards:
+    name: core-tests (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # Scope diffs origin/<base>...HEAD
+          filter: blob:none # history without file contents: a diff needs trees only
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
@@ -212,19 +260,46 @@ jobs:
         run: PGPASSWORD=vendua /usr/lib/postgresql/16/bin/createdb -h localhost -p 5433 -U vendua vendua_test
       - name: Core tests
         if: steps.scope.outputs.run == 'true'
-        run: cd packages/core && TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua_test bun test
+        env:
+          TEST_DATABASE_URL: postgres://vendua:vendua@localhost:5433/vendua_test
+          SHARD: ${{ matrix.shard }}/4
+        run: cd packages/core && bun test --shard="$SHARD" --timings=test/timings.json
 
-  # exit criterion: scaffold a fresh storefront, boot Postgres + Core, run the conformance e2e through the preview proxy
-  conformance:
+  core-tests:
+    needs: core-tests-shards
+    runs-on: ubuntu-latest
+    if: >-
+      !cancelled() && (github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action))
+    steps:
+      - name: Every core-tests shard passed
+        env:
+          RESULT: ${{ needs.core-tests-shards.result }}
+        run: |
+          echo "core-tests shards: $RESULT"
+          [ "$RESULT" = success ]
+
+  # exit criterion: scaffold a fresh storefront, boot Postgres + Core, run the conformance e2e through the preview proxy.
+  # The e2e suite is split across 3 runners (VENDUA_QA_SHARD → playwright --shard), each with its own
+  # Core, so the per-tenant rate limits stay per runner; `conformance` below reports them.
+  conformance-shards:
+    name: conformance (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      VENDUA_QA_SHARD: ${{ matrix.shard }}/3
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # Scope diffs origin/<base>...HEAD
+          filter: blob:none # history without file contents: a diff needs trees only
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
@@ -256,23 +331,23 @@ jobs:
       - name: Migrate
         if: steps.scope.outputs.run == 'true'
         run: cd packages/core && bun run migrate
+      # Core boots while Playwright installs
       - name: Core API
         if: steps.scope.outputs.run == 'true'
-        run: |
-          (cd packages/core && SESSION_SECRET=ci-secret bun run dev > /tmp/core.log 2>&1 &)
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:8787/healthz && break
-            sleep 1
-          done
+        run: (cd packages/core && SESSION_SECRET=ci-secret bun run dev > /tmp/core.log 2>&1 &)
       - name: Playwright browser
         if: steps.scope.outputs.run == 'true'
         uses: ./.github/actions/playwright-chromium
+      - name: Core ready
+        if: steps.scope.outputs.run == 'true'
+        run: bash .github/scripts/core-ready.sh
       - name: Scaffold + check + qa (exit criterion)
         if: steps.scope.outputs.run == 'true' && steps.scope.outputs.smoke == 'true'
         run: |
           bunx vendua scaffold ci-smoke
           bun install
-          bunx vendua check ci-smoke
+          # static checks aren't sharded: each store's run on one shard (ci-smoke's on 1), the e2e on every one
+          if [ "${{ matrix.shard }}" = 1 ]; then bunx vendua check ci-smoke; fi
           bunx vendua qa ci-smoke
       # the storefronts this diff touches (every one on main pushes): static K-rules, K05 (the PR
       # touches only its own storefront dir) and the conformance e2e; every slug runs before the step fails
@@ -284,15 +359,19 @@ jobs:
           PR_LABELS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.labels || join(github.event.pull_request.labels.*.name, ' ') }}
         run: |
           failed=""
+          i=1 # ci-smoke is 0
           for slug in $STOREFRONTS; do
             echo "::group::$slug"
             ok=1
-            bunx vendua check "$slug" || ok=0
-            # K05 judges a store's own PR (labelled storefront:<slug>); a platform PR touches more by design.
-            # After a prettier autofix the only run on the head is the dispatch one, which carries the PR's labels
-            if [ -n "$BASE_REF" ] && [[ " $PR_LABELS " == *" storefront:$slug "* ]]; then
-              bunx vendua-conformance k05 "$slug" "origin/$BASE_REF" || ok=0
+            if [ $((i % 3 + 1)) = "${{ matrix.shard }}" ]; then
+              bunx vendua check "$slug" || ok=0
+              # K05 judges a store's own PR (labelled storefront:<slug>); a platform PR touches more by design.
+              # After a prettier autofix the only run on the head is the dispatch one, which carries the PR's labels
+              if [ -n "$BASE_REF" ] && [[ " $PR_LABELS " == *" storefront:$slug "* ]]; then
+                bunx vendua-conformance k05 "$slug" "origin/$BASE_REF" || ok=0
+              fi
             fi
+            i=$((i + 1))
             bunx vendua qa "$slug" || ok=0
             echo "::endgroup::"
             if [ "$ok" = 1 ]; then echo "PASS $slug"; else echo "FAIL $slug"; failed="$failed $slug"; fi
@@ -305,10 +384,24 @@ jobs:
         if: always() && steps.scope.outputs.run == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: qa-report
+          name: qa-report-${{ matrix.shard }}
           path: storefronts/*/qa-report
           retention-days: 7
           if-no-files-found: ignore
+
+  conformance:
+    needs: conformance-shards
+    runs-on: ubuntu-latest
+    if: >-
+      !cancelled() && (github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action))
+    steps:
+      - name: Every conformance shard passed
+        env:
+          RESULT: ${{ needs.conformance-shards.result }}
+        run: |
+          echo "conformance shards: $RESULT"
+          [ "$RESULT" = success ]
 
   # Control Plane smoke (Phase 4): a staff invite provisions a store, the `_template` build is
   # published as a release, a real edge serves it with vendua-state, Core's probes verify it
@@ -322,6 +415,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # Scope diffs origin/<base>...HEAD
+          filter: blob:none # history without file contents: a diff needs trees only
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
@@ -346,19 +440,20 @@ jobs:
       - name: Migrate
         if: steps.scope.outputs.run == 'true'
         run: cd packages/core && bun run migrate
-      - name: Build the template storefront
-        if: steps.scope.outputs.run == 'true'
-        run: cd storefronts/_template && bun run build
+      # Core boots while the template builds; a 1 s fleet tick (15 s in prod) so provisioning,
+      # verification and the rollback each take a second or two instead of several ticks
       - name: Core API (probes through the edge)
         if: steps.scope.outputs.run == 'true'
         run: |
           (cd packages/core && SESSION_SECRET=ci-secret CONTROL_SECRET=ci-control \
             VENDUA_EDGE_SECRET=ci-edge VENDUA_PROBES=1 VENDUA_PROBE_ORIGIN=http://localhost:8080 \
-            bun src/index.ts > /tmp/core.log 2>&1 &)
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:8787/healthz && break
-            sleep 1
-          done
+            VENDUA_FLEET_TICK_MS=1000 bun src/index.ts > /tmp/core.log 2>&1 &)
+      - name: Build the template storefront
+        if: steps.scope.outputs.run == 'true'
+        run: cd storefronts/_template && bun run build
+      - name: Core ready
+        if: steps.scope.outputs.run == 'true'
+        run: bash .github/scripts/core-ready.sh
       - name: Smoke
         if: steps.scope.outputs.run == 'true'
         env:
@@ -373,8 +468,8 @@ jobs:
   # Creme and Noite against a seeded store — no horizontal overflow, no console errors,
   # zero serious/critical axe violations. The bundle budget runs inside `bun run build`.
   # The screenshots took ~290 s of one job, so each theme × size is its own runner (scripts/shots.ts
-  # THEMES / SIZES): together they cover exactly what the single run did. The `admin-gate` job
-  # below only reports their verdict under the old check name.
+  # THEMES / SIZES), shooting 4 routes at once (PAGES): together they cover exactly what the single
+  # run did. The `admin-gate` job below only reports their verdict under the old check name.
   admin-shots:
     name: admin-gate shots (${{ matrix.theme }}, ${{ matrix.size }})
     runs-on: ubuntu-latest
@@ -391,6 +486,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # Scope diffs origin/<base>...HEAD
+          filter: blob:none # history without file contents: a diff needs trees only
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
@@ -409,34 +505,34 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      - name: Build the admin
-        if: steps.scope.outputs.run == 'true'
-        run: cd apps/admin && bun run build
       - name: Postgres
         if: steps.scope.outputs.run == 'true'
         uses: ./.github/actions/postgres
       - name: Migrate + seed
         if: steps.scope.outputs.run == 'true'
         run: cd packages/core && bun run migrate && bun run seed:fixtures
+      # Core boots while the admin builds (it reads apps/admin/dist per request) and Playwright installs
       - name: Core API (serves apps/admin/dist at /admin/)
         if: steps.scope.outputs.run == 'true'
-        run: |
-          (cd packages/core && SESSION_SECRET=ci-secret VENDUA_ADMIN_DEV_OTP=1 bun src/index.ts > /tmp/core.log 2>&1 &)
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:8787/healthz && break
-            sleep 1
-          done
-      - name: Demo orders
+        run: (cd packages/core && SESSION_SECRET=ci-secret VENDUA_ADMIN_DEV_OTP=1 bun src/index.ts > /tmp/core.log 2>&1 &)
+      - name: Build the admin
         if: steps.scope.outputs.run == 'true'
-        run: cd apps/admin && bun scripts/demo-orders.ts 40
+        run: cd apps/admin && bun run build
       - name: Playwright browser
         if: steps.scope.outputs.run == 'true'
         uses: ./.github/actions/playwright-chromium
+      - name: Core ready
+        if: steps.scope.outputs.run == 'true'
+        run: bash .github/scripts/core-ready.sh
+      - name: Demo orders
+        if: steps.scope.outputs.run == 'true'
+        run: cd apps/admin && bun scripts/demo-orders.ts 40
       - name: Screenshots + overflow + axe
         if: steps.scope.outputs.run == 'true'
         env:
           THEMES: ${{ matrix.theme }}
           SIZES: ${{ matrix.size }}
+          PAGES: 4
         run: cd apps/admin && BASE=http://localhost:8787/admin/ AXE=1 bun scripts/shots.ts
       - name: Upload screenshots
         if: always() && steps.scope.outputs.run == 'true'
@@ -476,6 +572,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # Scope diffs origin/<base>...HEAD
+          filter: blob:none # history without file contents: a diff needs trees only
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
@@ -501,35 +598,41 @@ jobs:
       - name: Migrate
         if: steps.scope.outputs.run == 'true'
         run: cd packages/core && bun run migrate
+      # Core boots while Playwright installs
       - name: Core API
         if: steps.scope.outputs.run == 'true'
-        run: |
-          (cd packages/core && SESSION_SECRET=ci-secret bun run dev > /tmp/core.log 2>&1 &)
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:8787/healthz && break
-            sleep 1
-          done
+        run: (cd packages/core && SESSION_SECRET=ci-secret bun run dev > /tmp/core.log 2>&1 &)
       - name: Playwright browser
         if: steps.scope.outputs.run == 'true'
         uses: ./.github/actions/playwright-chromium
+      - name: Core ready
+        if: steps.scope.outputs.run == 'true'
+        run: bash .github/scripts/core-ready.sh
       - name: S-series on the Kernel 1.0.0 artifact
         if: steps.scope.outputs.run == 'true'
         run: bunx vendua-conformance e2e packages/conformance/stale/kernel-1.0.0 --prebuilt --grep '\[(S0|K16)'
 
   # fleet operations over every in-repo storefront: a train pulling design data
-  # from Core (zero storefront diffs), a template-migration dry run, and the
-  # Contract-major codemod rehearsal (failure tail measured)
-  fleet:
+  # from Core (zero storefront diffs) and a template-migration dry run on one runner, the
+  # Contract-major codemod rehearsal (failure tail measured; no Core) on another. `fleet` below
+  # reports both.
+  fleet-parts:
+    name: fleet (${{ matrix.part }})
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [train, codemod]
     env:
       CONTROL_SECRET: ci-control
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # Scope diffs origin/<base>...HEAD
+          filter: blob:none # history without file contents: a diff needs trees only
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
@@ -550,28 +653,39 @@ jobs:
       - if: steps.scope.outputs.run == 'true'
         run: bun install --frozen-lockfile
       - name: Postgres
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && matrix.part == 'train'
         uses: ./.github/actions/postgres
       - name: Migrate + seed
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && matrix.part == 'train'
         run: cd packages/core && bun run migrate && bun run seed:fixtures
       - name: Core API
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && matrix.part == 'train'
         run: |
           (cd packages/core && SESSION_SECRET=ci-secret CONTROL_SECRET=ci-control bun run dev > /tmp/core.log 2>&1 &)
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:8787/healthz && break
-            sleep 1
-          done
+          bash .github/scripts/core-ready.sh
       - name: Train (build + check + compat + record, pulling from Core)
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && matrix.part == 'train'
         run: bunx vendua train --core --record
       - name: Template migrations — dry run over the fleet
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && matrix.part == 'train'
         run: |
           for id in $(bunx vendua templates list | cut -d' ' -f1); do
             bunx vendua templates migrate "$id"
           done
       - name: Codemod rehearsal
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && matrix.part == 'codemod'
         run: bunx vendua codemod rehearse c3-rehearsal
+
+  fleet:
+    needs: fleet-parts
+    runs-on: ubuntu-latest
+    if: >-
+      !cancelled() && (github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action))
+    steps:
+      - name: Every fleet part passed
+        env:
+          RESULT: ${{ needs.fleet-parts.result }}
+        run: |
+          echo "fleet parts: $RESULT"
+          [ "$RESULT" = success ]

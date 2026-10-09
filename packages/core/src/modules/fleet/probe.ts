@@ -218,13 +218,15 @@ async function recordTx(
         pending = await pendingTx(tx, row.tenant_id);
       }
     }
+    // a pending store is probed every tick, so a faster loop verifies faster
+    const pendingEvery = Math.min(PENDING_INTERVAL_MS, d.tickMs ?? PENDING_INTERVAL_MS);
     await tx`
       update fleet_probes set status = ${status}, failures = ${failures},
         failing_since = ${failingSince}, last_checked_at = ${now},
         last_ok_at = ${r.ok ? now : row.last_ok_at}, last_error = ${error},
         last_release_id = ${r.release}, latency_ms = ${r.latencyMs},
         checkout_token = ${r.checkoutToken},
-        next_check_at = ${new Date(now.getTime() + (pending ? PENDING_INTERVAL_MS : INTERVAL_MS))},
+        next_check_at = ${new Date(now.getTime() + (pending ? pendingEvery : INTERVAL_MS))},
         lease_until = null
       where host = ${row.host}
     `;

@@ -18,6 +18,8 @@ export interface FleetDeps {
   now: () => Date;
   /** tests: confine the probe loop to these stores (a shared database has others) */
   only: string[] | null;
+  /** the loop's tick, and how often a pending deployment is probed (15 s; CI's edge smoke: 1 s) */
+  tickMs?: number | undefined;
   /** the site builder's routine, GitHub and webhook secret (site-builder/deps.ts) */
   site: SiteDeps;
 }
@@ -42,6 +44,7 @@ export function fleetDeps(
     notify: o.notify,
     now: o.now ?? (() => new Date()),
     only: o.only ?? null,
+    tickMs: o.tickMs ?? (Number(env.VENDUA_FLEET_TICK_MS) || undefined),
     site: o.site ?? siteDepsFromEnv(),
   };
 }

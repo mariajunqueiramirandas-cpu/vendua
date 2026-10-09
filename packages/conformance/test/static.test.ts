@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import {
   mkdirSync,
   mkdtempSync,
@@ -56,7 +56,7 @@ function fixture(patch: Record<string, string | null>): string {
   made.push(dir);
   return dir;
 }
-afterEach(() => {
+afterAll(() => {
   for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
@@ -65,7 +65,7 @@ const byId = async (dir: string) =>
 const config = (extra: string) =>
   BASE['vendua.config.ts']!.replace("budgets: 'default',", `budgets: 'default',\n${extra}`);
 
-describe('runStatic', () => {
+describe.concurrent('runStatic', () => {
   test('storefronts/_template passes every K-check', async () => {
     const results = await runStatic(TEMPLATE);
     expect(
@@ -494,7 +494,7 @@ describe('Kernel ownership rules (K17-K22)', () => {
   });
 });
 
-describe('K09 / K11 / K03 extensions', () => {
+describe.concurrent('K09 / K11 / K03 extensions', () => {
   test('K09: any string holding /produto/ and navigate(/produto…) name ProductLink / useLinks', async () => {
     const dir = bare({
       'sections/links.tsx': [

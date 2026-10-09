@@ -93,6 +93,8 @@ export async function runE2E(storefrontDir: string, opts: E2EOptions = {}): Prom
     const reportDir = join(dir, 'qa-report');
     const argv = ['bunx', 'playwright', 'test', '--config', 'playwright.config.ts'];
     if (opts.grep) argv.push('--grep', opts.grep);
+    // CI splits the suite across runners, each with its own Core (VENDUA_QA_SHARD=2/3)
+    if (process.env.VENDUA_QA_SHARD) argv.push('--shard', process.env.VENDUA_QA_SHARD);
     const proc = Bun.spawn(argv, {
       cwd: PKG_DIR,
       stdout: 'inherit',

@@ -10,6 +10,8 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   // Serial: parallel workers share the per-tenant /checkout/v1 rate limit and trip it.
   workers: 1,
+  // still one test at a time, but --shard (VENDUA_QA_SHARD) splits by test rather than by file
+  fullyParallel: true,
   retries: 0,
   reporter: [['list'], ['./src/suite/reporter.ts']],
   outputDir: process.env.VENDUA_QA_TRACES ?? 'qa-traces',
