@@ -148,6 +148,7 @@ export function StoreChat({
   const fileRef = useRef<HTMLInputElement>(null);
   const recSendRef = useRef<HTMLButtonElement>(null);
   const recording = useRef<Recording | null>(null);
+  const takeGen = useRef(0);
   const startedAt = useRef(0);
   /** the chat is open and mounted: a mic that opens after that is closed again at once */
   const live = useRef(open);
@@ -193,6 +194,8 @@ export function StoreChat({
   }, [open]);
 
   const cancelVoice = () => {
+    // a take still waiting on the mic permission is stale once cancelled
+    takeGen.current++;
     recording.current?.cancel();
     recording.current = null;
     setVoice(null);
@@ -213,9 +216,10 @@ export function StoreChat({
     if (voice || sending) return;
     setNote(null);
     setVoice({ phase: 'starting' });
+    const mine = ++takeGen.current;
     try {
       const r = await startRecording();
-      if (!live.current) {
+      if (!live.current || mine !== takeGen.current) {
         r.cancel();
         setVoice(null);
         return;
@@ -260,7 +264,7 @@ export function StoreChat({
 
   // closing the chat (or leaving the page) drops a recording and frees the mic
   useEffect(() => {
-    if (!open && recording.current) cancelVoice();
+    if (!open && (recording.current || voice?.phase === 'starting')) cancelVoice();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   useEffect(

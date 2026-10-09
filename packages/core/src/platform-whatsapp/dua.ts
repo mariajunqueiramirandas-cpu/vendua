@@ -3,11 +3,10 @@ import type { Merchant, Role } from '../admin/context.ts';
 import { emitAdminTx } from '../admin/live.ts';
 import { decideTx } from '../copilot/actions.ts';
 import {
-  MEDIA_PER_DAY,
   copilotInboundTx,
   hearVoice,
-  mediaToday,
   seePhoto,
+  takeMediaCallTx,
   type Heard,
 } from '../copilot/media.ts';
 import { planHas } from '../modules/billing/plans.ts';
@@ -504,8 +503,10 @@ async function hear(
     return answer(d, row, 'media', photo ? DUA.mediaOnly : DUA.textOnly);
   if (!file) return answer(d, row, 'media', photo ? DUA.photoUnseen : DUA.voiceUnheard);
   // each one is a paid call: the same daily room as the admin's
-  const used = await withTenant(d.sql, e.tenant_id, (tx) => mediaToday(tx, e.tenant_id, e.user_id));
-  if (used >= MEDIA_PER_DAY) return answer(d, row, 'media', DUA.mediaCap);
+  const room = await withTenant(d.sql, e.tenant_id, (tx) =>
+    takeMediaCallTx(tx, e.tenant_id, e.user_id, photo ? 'image' : 'voice'),
+  );
+  if (!room) return answer(d, row, 'media', DUA.mediaCap);
   if (photo) {
     const caption = body.replace(/^\[imagem\]\s*/, '');
     const seen = await seePhoto(d.gateway!, e.tenant_id, file.bytes, caption).catch((err) => {

@@ -109,9 +109,11 @@ the WhatsApp door uses too, now that the platform gateway also downloads photos)
   holds: prices read from a photo go only into proposals, never into Duá's words.
 - **The photo stays for the screen**: `copilot_media` (migration 0115, tenant RLS), served to its
   sender alone by `GET /admin/v1/copilot/media/:id`, deleted with its message by "Nova conversa".
-- **Bounded**: 60 voice messages and photos per person per day, both doors (the reading calls are
-  outside the `copilot` budget, which counts turns). `GET /copilot` says what this Core can take
-  (`media: { voice, image }`), so the mic shows only with a transcription route configured.
+- **Bounded**: 60 voice messages and photos per person per day, both doors, counted before the
+  paid call (an unheard one counts) in `copilot_media_calls` (migration 0116), which "Nova
+  conversa" doesn't touch; the reading calls are outside the `copilot` budget, which counts turns.
+  `GET /copilot` says what this Core can take (`media: { voice, image }`), so the mic shows only
+  with a transcription route configured.
 
 ## Consequences and known risks
 

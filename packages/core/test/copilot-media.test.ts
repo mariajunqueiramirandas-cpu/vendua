@@ -317,18 +317,20 @@ describe.skipIf(!OWNER_URL)('Duá Copilot voice and photos (db)', () => {
     expect(await mailbox()).toHaveLength(box);
   });
 
-  test('voice and photos are capped per person per day', async () => {
+  test('voice and photos are capped per person per day, unheard ones too, and a new conversation keeps the count', async () => {
+    await sql`delete from copilot_media_calls where tenant_id = ${tenantId} and user_id = ${ownerId}`;
     await sql`
-      insert into copilot_messages (tenant_id, user_id, author, body, kind)
-      select ${tenantId}, ${ownerId}, 'merchant', 'x', 'voice' from generate_series(1, 60)`;
+      insert into copilot_media_calls (tenant_id, user_id, kind)
+      select ${tenantId}, ${ownerId}, 'voice' from generate_series(1, 58)`;
+    const voice = { kind: 'voice', mime: 'audio/ogg', data: OGG.toString('base64') };
+    heard = null;
+    expect((await as(owner)('POST', '/copilot/messages/media', voice)).status).toBe(422);
     heard = { text: 'oi', confidence: 0.9 };
-    const r = await as(owner)('POST', '/copilot/messages/media', {
-      kind: 'voice',
-      mime: 'audio/ogg',
-      data: OGG.toString('base64'),
-    });
+    expect((await as(owner)('POST', '/copilot/messages/media', voice)).status).toBe(201);
+    await as(owner)('DELETE', '/copilot');
+    const r = await as(owner)('POST', '/copilot/messages/media', voice);
     expect(r.status).toBe(429);
-    // typed messages are not
+    // typed messages are not capped
     expect((await as(owner)('POST', '/copilot/messages', { text: 'oi' })).status).toBe(201);
     await as(owner)('DELETE', '/copilot');
   });

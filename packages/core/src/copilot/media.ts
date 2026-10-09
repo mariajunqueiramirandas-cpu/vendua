@@ -92,13 +92,30 @@ export async function seePhoto(
   };
 }
 
-/** Voice and photo messages this person sent today, both doors. */
-export async function mediaToday(tx: Sql, tenantId: string, userId: string): Promise<number> {
+/**
+ * A transcription or photo reading this person may have now: one of MEDIA_PER_DAY a day, both
+ * doors, counted before the paid call (an unheard note counts) in a ledger "Nova conversa"
+ * doesn't touch. false when the day's room is used up.
+ */
+export async function takeMediaCallTx(
+  tx: Sql,
+  tenantId: string,
+  userId: string,
+  kind: 'voice' | 'image',
+): Promise<boolean> {
+  // two at once can't both take the last one
+  await tx`select pg_advisory_xact_lock(hashtextextended(${`copilot-media:${userId}`}, 0))`;
+  await tx`
+    delete from copilot_media_calls
+    where tenant_id = ${tenantId} and user_id = ${userId} and created_at < now() - interval '2 days'`;
   const [r] = await tx<{ n: number }[]>`
-    select count(*)::int as n from copilot_messages
-    where tenant_id = ${tenantId} and user_id = ${userId} and author = 'merchant'
-      and kind in ('voice', 'image') and created_at > now() - interval '1 day'`;
-  return r?.n ?? 0;
+    select count(*)::int as n from copilot_media_calls
+    where tenant_id = ${tenantId} and user_id = ${userId} and created_at > now() - interval '1 day'`;
+  if ((r?.n ?? 0) >= MEDIA_PER_DAY) return false;
+  await tx`
+    insert into copilot_media_calls (tenant_id, user_id, kind)
+    values (${tenantId}, ${userId}, ${kind})`;
+  return true;
 }
 
 /**

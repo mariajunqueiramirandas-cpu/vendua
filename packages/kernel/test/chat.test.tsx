@@ -606,4 +606,60 @@ describe('store chat media (Kernel 1.24)', () => {
       });
     }
   });
+
+  test('a cancel while the mic permission is pending leaves nothing recording', async () => {
+    const G = globalThis as Record<string, unknown>;
+    const had = { MediaRecorder: G.MediaRecorder, mediaDevices: navigator.mediaDevices };
+    const stopped: string[] = [];
+    const recorders: { state: string }[] = [];
+    class FakeRecorder {
+      static isTypeSupported = () => true;
+      constructor() {
+        recorders.push(this);
+      }
+      state = 'inactive';
+      mimeType = 'audio/webm;codecs=opus';
+      ondataavailable: ((e: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start() {
+        this.state = 'recording';
+      }
+      stop() {
+        this.state = 'inactive';
+        queueMicrotask(() => this.onstop?.());
+      }
+    }
+    let grant: (v: unknown) => void = () => {};
+    G.MediaRecorder = FakeRecorder;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: () =>
+          new Promise((resolve) => {
+            grant = resolve;
+          }),
+      },
+    });
+    try {
+      fakeCore({ media: { voice: true, image: true }, reply: null });
+      m = await mount({ path: '/', session: 'tok' });
+      await click($('[data-vendua="chat"] [data-part="launcher"]'));
+      await until(() => !!$('[data-vendua="chat"] [data-part="mic"]'));
+      await click($('[data-vendua="chat"] [data-part="mic"]')!);
+      await flush();
+      await click($('[data-vendua="chat"] [data-part="recording-cancel"]')!);
+      grant({ getTracks: () => [{ stop: () => stopped.push('track') }] });
+      await flush();
+      await flush();
+      expect(recorders.every((r) => r.state === 'inactive')).toBe(true);
+      expect(stopped).toEqual(['track']);
+      expect($('[data-vendua="chat"] [data-part="recording"]')).toBeNull();
+    } finally {
+      G.MediaRecorder = had.MediaRecorder;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: had.mediaDevices,
+      });
+    }
+  });
 });

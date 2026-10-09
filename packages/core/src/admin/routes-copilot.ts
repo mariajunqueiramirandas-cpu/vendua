@@ -6,7 +6,7 @@ import {
   MEDIA_PER_DAY,
   copilotInboundTx,
   hearVoice,
-  mediaToday,
+  takeMediaCallTx,
   seePhoto,
   type Heard,
 } from '../copilot/media.ts';
@@ -116,28 +116,28 @@ export function mountCopilot(d: AdminDeps) {
     const body = await bodyJson(c, MEDIA_JSON_MAX);
     const up = mediaUpload(body, { maxBytes: MEDIA_MAX, maxCaption: 2000 });
     const screen = screenOf(body.screen);
-    const room = async (tx: Sql) => {
-      if ((await mediaToday(tx, t.id, m.userId)) >= MEDIA_PER_DAY)
-        throw new HttpError(429, 'RATE_LIMITED', 'too many voice messages and photos today');
-    };
+    if (up.kind === 'voice' ? !media : !gateway)
+      throw new HttpError(503, 'MEDIA_UNAVAILABLE', `${up.kind} messages are off here`);
     await withTenant(d.sql, t.id, async (tx) => {
       await gate(tx, t.id);
-      await room(tx);
+      if (!(await takeMediaCallTx(tx, t.id, m.userId, up.kind)))
+        throw new HttpError(
+          429,
+          'RATE_LIMITED',
+          `at most ${MEDIA_PER_DAY} voice messages and photos a day`,
+        );
     });
     let heard: Heard | null;
     if (up.kind === 'voice') {
-      if (!media) throw new HttpError(503, 'MEDIA_UNAVAILABLE', 'voice messages are off here');
-      heard = await hearVoice(d.sql, media, t.id, up.bytes, up.mime);
+      heard = await hearVoice(d.sql, media!, t.id, up.bytes, up.mime);
       if (!heard) throw new HttpError(422, 'VOICE_UNHEARD', 'não deu para entender o áudio');
     } else {
-      if (!gateway) throw new HttpError(503, 'MEDIA_UNAVAILABLE', 'photos are off here');
-      heard = await seePhoto(gateway, t.id, up.bytes, up.caption ?? '');
+      heard = await seePhoto(gateway!, t.id, up.bytes, up.caption ?? '');
       if (!heard) throw new HttpError(422, 'IMAGE_UNREAD', 'não consegui ver a foto');
     }
     const said = heard;
     return d.idempotency(d.sql, async (_c, tx) => {
       await gate(tx, t.id);
-      await room(tx);
       await copilotInboundTx(tx, {
         tenantId: t.id,
         userId: m.userId,

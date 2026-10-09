@@ -35,10 +35,16 @@ export function useRecorder({
   const done = useRef(onDone);
   done.current = onDone;
   const mounted = useRef(true);
+  // bumped by a cancel while the mic permission is still pending, so that take never starts
+  const gen = useRef(0);
 
   const stop = useCallback((keep: boolean) => {
     const l = live.current;
-    if (!l) return;
+    if (!l) {
+      gen.current++;
+      setState('idle');
+      return;
+    }
     l.keep = keep;
     clearInterval(l.timer);
     if (l.rec.state !== 'inactive') l.rec.stop();
@@ -49,11 +55,12 @@ export function useRecorder({
     if (live.current) return;
     setError(null);
     setState('asking');
+    const mine = ++gen.current;
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
-      if (!mounted.current) return;
+      if (!mounted.current || mine !== gen.current) return;
       const name = e instanceof DOMException ? e.name : '';
       setError(
         name === 'NotAllowedError' || name === 'SecurityError'
@@ -65,7 +72,7 @@ export function useRecorder({
       setState('idle');
       return;
     }
-    if (!mounted.current) {
+    if (!mounted.current || mine !== gen.current) {
       stream.getTracks().forEach((t) => t.stop());
       return;
     }
